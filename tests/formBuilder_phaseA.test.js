@@ -1,14 +1,17 @@
-// Phase A assertions for formBuilder.html — jsdom, no framework.
+// Phase A assertions — public/formBuilder.html under jsdom (jest, same harness
+// as formBuilder_slice25A/25B/26.test.js).
 // Focus: model round-trip (definition → canvas → edits → JSON), canvas
 // structure vs the real fixture, inspector edit semantics, save-draft body.
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const assert = require('assert');
 const { JSDOM } = require('jsdom');
 
-const html = fs.readFileSync('/home/claude/formBuilder.html', 'utf8');
+const ROOT = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(ROOT, 'public/formBuilder.html'), 'utf8');
 const fixtureDef = JSON.parse(fs.readFileSync(
-  '/home/claude/apigcr-main/ref/2026-07-27_test_quick_notes_slice2_definition.json.json', 'utf8'));
+  path.join(ROOT, 'ref/2026-07-27_test_quick_notes_slice2_definition.json'), 'utf8'));
 
 const ROW = {
   id: 1, form_key: 'test_quick_notes', title: 'Quick Notes (Test)', link_type: 'case',
@@ -42,7 +45,7 @@ function makeDom() {
 const tick = () => new Promise(r => setTimeout(r, 30));
 function fire(win, elm, type) { elm.dispatchEvent(new win.Event(type, { bubbles: true })); }
 
-(async () => {
+test('phase A — canvas structure, model round-trip, inspector edits, save draft, publish lock', async () => {
   const dom = makeDom();
   const win = dom.window, doc = win.document;
   await tick(); await tick();   // waitForParent + openTemplate
@@ -122,7 +125,7 @@ function fire(win, elm, type) { elm.dispatchEvent(new win.Event(type, { bubbles:
   assert.strictEqual(win.FB.model.sections[0].rows[0].fields[1].name, 'source_reference',
     'name colliding with a repeater key rejected');
 
-  // ── 5. (superseded) options textarea stub replaced by the structured editor — covered in test_phaseB.js ──
+  // ── 5. (superseded) options textarea stub replaced by the structured editor — covered in formBuilder_phaseB.test.js ──
 
   // ── 6. Settings: dataMode flips the apiColumn helper text (mode-aware) ──
   doc.querySelector('#inspector button.ghost').click();     // ← Form settings
@@ -177,5 +180,4 @@ function fire(win, elm, type) { elm.dispatchEvent(new win.Event(type, { bubbles:
   assert.ok(!doc.getElementById('keyWrap').querySelector('input'), 'no key input when published');
 
   win.close();
-  console.log('ALL PHASE A ASSERTIONS PASSED (9 groups)');
-})().catch(e => { console.error('FAIL:', e.message); process.exit(1); });
+});

@@ -1,5 +1,4 @@
-// Slice 4 service assertions — plain node script (node tests/formTemplates_slice4_service_test.js
-// from the repo root), no framework, matching the formBuilder_phase* precedent.
+// Slice 4 service assertions — jest, matching the formBuilder_phase* precedent.
 //
 // The new service functions are exercised against a STUB mysql2 pool that
 // records every (sql, params) call and returns scripted rows — no database
@@ -45,9 +44,10 @@ async function rejects(promise, status, msgPart) {
   assert.fail('expected rejection with status ' + status);
 }
 
-(async () => {
+describe('slice 4 services — template versions + submission browse', () => {
+
   // ══════════ listVersions: schema_changed vs chronological predecessor ══════════
-  {
+  test('listVersions computes schema_changed against the chronological predecessor', async () => {
     const db = stubDb([
       [{ id: 1 }],                                              // template exists
       [                                                          // versions ORDER BY id ASC
@@ -68,30 +68,29 @@ async function rejects(promise, status, msgPart) {
     out.forEach(v => assert.ok(!('definition' in v), 'list carries no definition bodies'));
     // both string-JSON (MariaDB-style) and parsed (MySQL8 native) definitions handled above
     assert.ok(db.calls[1].sql.includes('ORDER BY v.id ASC'), 'computed in chronological order');
-  }
+  });
 
   // ══════════ listVersions: unknown template → 404 ══════════
-  {
+  test('listVersions 404s on an unknown template', async () => {
     const db = stubDb([[]]);   // no template row
     await rejects(tplSvc.listVersions(db, 999), 404, 'Template 999 not found');
-  }
+  });
 
   // ══════════ getVersion: ownership enforced ══════════
-  {
+  test('getVersion scopes the lookup to its template and parses the definition', async () => {
     const db = stubDb([[{ id: 1 }], []]);   // template exists, version query empty (wrong template_id)
     await rejects(tplSvc.getVersion(db, 1, 55), 404, 'Version 55 not found for template 1');
     assert.ok(db.calls[1].sql.includes('v.id = ? AND v.template_id = ?'), 'version scoped to template');
     assert.deepStrictEqual(db.calls[1].params.slice(0, 2), [55, 1]);
-  }
-  {
-    const db = stubDb([[{ id: 1 }],
+
+    const db2 = stubDb([[{ id: 1 }],
       [{ id: 55, template_id: 1, schema_version: 2, definition: JSON.stringify(defB), published_by: 6, published_at: 't', user_name: 'fred' }]]);
-    const v = await tplSvc.getVersion(db, 1, 55);
+    const v = await tplSvc.getVersion(db2, 1, 55);
     assert.deepStrictEqual(v.definition, defB, 'definition parsed');
-  }
+  });
 
   // ══════════ restoreVersion: SQL column copy, no JSON placeholder ══════════
-  {
+  test('restoreVersion copies column-to-column in SQL, never re-binding the JSON', async () => {
     const tplRow = { id: 1, form_key: 'k', title: 'T', link_type: 'case', schema_version: 2,
       definition: JSON.stringify(defB), draft_definition: JSON.stringify(defA),
       published_at: 't', updated_by: 6, created_at: 'c', updated_at: 'u' };
@@ -109,10 +108,10 @@ async function rejects(promise, status, msgPart) {
     assert.deepStrictEqual(upd.params, [10, 6, 1], 'versionId, userId, templateId');
     assert.deepStrictEqual(out.restored, { version_id: 10, schema_version: 1 });
     assert.deepStrictEqual(out.template.draft_definition, defA, 'full row returned, JSON normalized');
-  }
+  });
 
   // ══════════ browseSubmissions: WHERE building + params ══════════
-  {
+  test('browseSubmissions builds the WHERE, clamps the limit, and validates inputs', async () => {
     const db = stubDb([[]]);
     const out = await formSvc.browseSubmissions(db, {
       form_key: 'test_quick_notes', link_type: 'case', link_id: 'rIxpyvYG',
@@ -126,32 +125,31 @@ async function rejects(promise, status, msgPart) {
     assert.ok(!c.sql.includes('fs.data'), 'no data bodies in browse');
     assert.deepStrictEqual(c.params, ['test_quick_notes', 'case', 'rIxpyvYG', 'submitted', 251, 10]);
     assert.strictEqual(out.limit, 10);
-  }
-  {
-    const db = stubDb([[]]);
-    await formSvc.browseSubmissions(db, {});      // no filters → no WHERE, default limit
-    const c = db.calls[0];
-    assert.ok(!c.sql.includes('WHERE'), 'no WHERE without filters');
-    assert.deepStrictEqual(c.params, [50], 'default limit 50');
-  }
-  {
-    const db = stubDb([[]]);
-    await formSvc.browseSubmissions(db, { limit: '9999' });
-    assert.deepStrictEqual(stripLast(db), 200, 'limit clamped to 200');
-    function stripLast(d) { return d.calls[0].params[d.calls[0].params.length - 1]; }
-  }
-  await rejects(formSvc.browseSubmissions(stubDb([]), { status: 'weird' }), 400, "status must be 'draft' or 'submitted'");
-  await rejects(formSvc.browseSubmissions(stubDb([]), { before_id: 'abc' }), 400, 'before_id');
-  await rejects(formSvc.browseSubmissions(stubDb([]), { before_id: '-4' }), 400, 'before_id');
+
+    const dbNone = stubDb([[]]);
+    await formSvc.browseSubmissions(dbNone, {});      // no filters → no WHERE, default limit
+    const cNone = dbNone.calls[0];
+    assert.ok(!cNone.sql.includes('WHERE'), 'no WHERE without filters');
+    assert.deepStrictEqual(cNone.params, [50], 'default limit 50');
+
+    const dbBig = stubDb([[]]);
+    await formSvc.browseSubmissions(dbBig, { limit: '9999' });
+    const lastParam = dbBig.calls[0].params[dbBig.calls[0].params.length - 1];
+    assert.deepStrictEqual(lastParam, 200, 'limit clamped to 200');
+
+    await rejects(formSvc.browseSubmissions(stubDb([]), { status: 'weird' }), 400, "status must be 'draft' or 'submitted'");
+    await rejects(formSvc.browseSubmissions(stubDb([]), { before_id: 'abc' }), 400, 'before_id');
+    await rejects(formSvc.browseSubmissions(stubDb([]), { before_id: '-4' }), 400, 'before_id');
+  });
 
   // ══════════ getSubmission ══════════
-  {
+  test('getSubmission returns the row with its data body, 404s otherwise', async () => {
     const db = stubDb([[{ id: 251, form_key: 'test_quick_notes', data: { note: 'x' } }]]);
     const s = await formSvc.getSubmission(db, 251);
     assert.strictEqual(s.id, 251);
     assert.ok(db.calls[0].sql.includes('fs.data'), 'data included on the single-row fetch');
-  }
-  await rejects(formSvc.getSubmission(stubDb([[]]), 9), 404, 'Submission 9 not found');
 
-  console.log('formTemplates_slice4_service_test: ALL PASS');
-})().catch(err => { console.error(err); process.exit(1); });
+    await rejects(formSvc.getSubmission(stubDb([[]]), 9), 404, 'Submission 9 not found');
+  });
+
+});

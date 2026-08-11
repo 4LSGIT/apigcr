@@ -1,17 +1,20 @@
-// Phase C assertions for formBuilder.html — jsdom, no framework.
+// Phase C assertions — public/formBuilder.html under jsdom (jest, same harness
+// as formBuilder_slice25A/25B/26.test.js).
 // Covers: client fieldSignature mirror vs the REAL service implementation,
 // preview save-before-refresh + URL construction + link_id persistence,
 // publish flow confirm messages (first / no-change / bump) and result surfacing,
 // and the failed-save guard on both preview and publish.
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const assert = require('assert');
 const { JSDOM } = require('jsdom');
 
-const html = fs.readFileSync('/home/claude/formBuilder.html', 'utf8');
+const ROOT = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(ROOT, 'public/formBuilder.html'), 'utf8');
 const fixtureDef = JSON.parse(fs.readFileSync(
-  '/home/claude/apigcr-main/ref/2026-07-27_test_quick_notes_slice2_definition.json.json', 'utf8'));
-const svc = require('/home/claude/apigcr-main/services/formTemplateService.js');
+  path.join(ROOT, 'ref/2026-07-27_test_quick_notes_slice2_definition.json'), 'utf8'));
+const svc = require(path.join(ROOT, 'services/formTemplateService.js'));
 
 const tick = () => new Promise(r => setTimeout(r, 40));
 function fire(win, elm, type) { elm.dispatchEvent(new win.Event(type, { bubbles: true })); }
@@ -39,9 +42,10 @@ function makeDom(row, hooks) {
   });
 }
 
-(async () => {
+describe('phase C — signature mirror, preview, publish flow', () => {
+
   // ── 1. Signature mirror ≡ real service (fixture, mutations, repeater coverage, empty) ──
-  {
+  test('clientFieldSignature mirrors the real service across mutations', async () => {
     const dom = makeDom({ id: 1, form_key: 'k', title: 't', link_type: 'case',
       schema_version: 2, published_at: 'x', definition: fixtureDef, draft_definition: fixtureDef });
     const win = dom.window;
@@ -69,10 +73,10 @@ function makeDom(row, hooks) {
     assert.notStrictEqual(cfs(retyped), cfs(fixtureDef), 'repeater type change covered');
     assert.strictEqual(cfs(labelOnly), cfs(fixtureDef), 'label tweak does not change signature');
     win.close();
-  }
+  });
 
   // ── 2. Preview: dirty → saved first; URL built; nonce; link_id persisted in page URL ──
-  {
+  test('preview saves a dirty draft first, builds the URL, persists link_id', async () => {
     const row = { id: 5, form_key: 'pv', title: 'PV', link_type: 'case',
       schema_version: 1, published_at: null, definition: null,
       draft_definition: { sections: [{ title: 'S', rows: [] }] } };
@@ -107,10 +111,10 @@ function makeDom(row, hooks) {
     assert.ok(!doc.getElementById('previewFrame').getAttribute('src').includes('link_id'), 'no link_id when empty');
     assert.ok(!win.location.search.includes('link_id'), 'page URL param removed');
     win.close();
-  }
+  });
 
   // ── 3. Preview/publish blocked when the save fails (verbatim error stays visible) ──
-  {
+  test('a failed save blocks both preview and publish, error shown verbatim', async () => {
     const row = { id: 6, form_key: 'bad', title: 'B', link_type: 'case',
       schema_version: 1, published_at: null, definition: null,
       draft_definition: { sections: [{ title: 'S', rows: [] }] } };
@@ -130,10 +134,10 @@ function makeDom(row, hooks) {
     await win.publishFlow();
     assert.strictEqual(publishes, 0, 'publish never fired after failed save');
     win.close();
-  }
+  });
 
   // ── 4. Publish confirm messages + result surfacing + row refetch ──
-  {
+  test('publish confirm messages (first / no-change / bump / cancel) and result surfacing', async () => {
     // 4a: first publish (definition == null) → "first time as v1"
     const row = { id: 7, form_key: 'proof', title: 'P', link_type: 'case',
       schema_version: 1, published_at: null, definition: null,
@@ -200,11 +204,10 @@ function makeDom(row, hooks) {
     assert.strictEqual(posted, false, 'cancelled confirm → no publish');
 
     win.close();
-  }
-
+  });
 
   // ── 5. backToOpener: dirty guard + state reset ──
-  {
+  test('backToOpener: dirty guard, then state reset back to the opener', async () => {
     const row = { id: 8, form_key: 'sw', title: 'S', link_type: 'case',
       schema_version: 1, published_at: null, definition: null,
       draft_definition: { sections: [{ title: 'S', rows: [] }] } };
@@ -226,7 +229,6 @@ function makeDom(row, hooks) {
     assert.strictEqual(doc.getElementById('builderWrap').style.display, 'none');
     assert.strictEqual(doc.getElementById('opener').style.display, '', 'opener shown');
     win.close();
-  }
+  });
 
-  console.log('ALL PHASE C ASSERTIONS PASSED (5 groups)');
-})().catch(e => { console.error('FAIL:', e.message); console.error(e.stack.split('\n').slice(1, 4).join('\n')); process.exit(1); });
+});

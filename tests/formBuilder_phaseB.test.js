@@ -1,17 +1,21 @@
-// Phase B assertions for formBuilder.html — jsdom, no framework.
+// Phase B assertions — public/formBuilder.html under jsdom (jest, same harness
+// as formBuilder_slice25A/25B/26.test.js). Still the ONLY coverage of
+// moveField/moveRow and the repeater type subset — do not delete as superseded.
 // Covers: structural model ops (add/move/delete for fields/rows/sections),
 // repeater subset enforcement, name generation + auto-follow + rename cascade,
 // reference-aware delete cascades, showWhen editor, structured options editor,
 // JSON tab, and end-to-end server validation of a builder-built definition.
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const assert = require('assert');
 const { JSDOM } = require('jsdom');
 
-const html = fs.readFileSync('/home/claude/formBuilder.html', 'utf8');
+const ROOT = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(ROOT, 'public/formBuilder.html'), 'utf8');
 const fixtureDef = JSON.parse(fs.readFileSync(
-  '/home/claude/apigcr-main/ref/2026-07-27_test_quick_notes_slice2_definition.json.json', 'utf8'));
-const svc = require('/home/claude/apigcr-main/services/formTemplateService.js');
+  path.join(ROOT, 'ref/2026-07-27_test_quick_notes_slice2_definition.json'), 'utf8'));
+const svc = require(path.join(ROOT, 'services/formTemplateService.js'));
 
 function makeDom(row) {
   return new JSDOM(html, {
@@ -40,9 +44,10 @@ function propByLabel(doc, labelText) {
     .find(p => p.querySelector('label') && p.querySelector('label').textContent === labelText);
 }
 
-(async () => {
+describe('phase B — builder structural ops (jsdom)', () => {
+
   // ══════════ Suite 1: fixture-based ops ══════════
-  {
+  test('fixture ops: add/move/delete, repeater subset, rename + delete cascades', async () => {
     const row = { id: 1, form_key: 'test_quick_notes', title: 'T', link_type: 'case',
       schema_version: 2, published_at: 'x', definition: fixtureDef, draft_definition: fixtureDef };
     const dom = makeDom(row);
@@ -93,37 +98,39 @@ function propByLabel(doc, labelText) {
     assert.ok(doc.getElementById('flash').textContent.includes('not supported there'));
     const okAdd = ops().addFieldAt('rfields:3', 'date', 0);
     assert.ok(okAdd && win.FB.model.sections[3].fields[0] === okAdd, 'date allowed into repeater');
-    win.deleteSelected && (win.confirm = () => true, win.FB.ops.deleteSelected());   // clean it up
+    win.confirm = () => true;                                   // ycConfirm falls back to window.confirm (no Swal under jsdom)
+    await ops().deleteSelected();                               // clean it up (async since the modal landed)
+    assert.strictEqual(win.FB.model.sections[3].fields.length, before, 'repeater restored to its fixture fields');
 
     // — moveField within a row —
     const r0 = win.FB.model.sections[0].rows[0].fields;
     const [a, b] = [r0[0].name, r0[1].name];
-    ops().moveField('fields:0:0', 0, 'fields:0:0', 1);
+    await ops().moveField('fields:0:0', 0, 'fields:0:0', 1);
     assert.strictEqual(win.FB.model.sections[0].rows[0].fields[0].name, b);
     assert.strictEqual(win.FB.model.sections[0].rows[0].fields[1].name, a, 'same-strip reorder');
-    ops().moveField('fields:0:0', 1, 'fields:0:0', 0);   // restore
+    await ops().moveField('fields:0:0', 1, 'fields:0:0', 0);   // restore
 
     // — moveField across rows —
-    ops().moveField('fields:0:0', 0, 'fields:0:1', 0);
+    await ops().moveField('fields:0:0', 0, 'fields:0:1', 0);
     assert.strictEqual(win.FB.model.sections[0].rows[1].fields[0].name, 'case_id', 'cross-row move');
-    ops().moveField('fields:0:1', 0, 'fields:0:0', 0);   // restore
+    await ops().moveField('fields:0:1', 0, 'fields:0:0', 0);   // restore
 
     // — moveField into repeater: referenced field → confirm cascade —
     // primary_reason is referenced by cond_field_notempty's showWhen
     let confirmMsg = null;
     win.confirm = (m) => { confirmMsg = m; return false; };   // cancel first
-    ops().moveField('fields:0:0', 2, 'rfields:3', 0);
+    await ops().moveField('fields:0:0', 2, 'rfields:3', 0);
     assert.ok(confirmMsg.includes('primary_reason') && confirmMsg.includes('cond_field_notempty'),
       'confirm names the referencing node');
     assert.strictEqual(win.FB.model.sections[0].rows[0].fields[2].name, 'primary_reason',
       'cancel → model untouched');
     win.confirm = () => true;                                  // accept
-    ops().moveField('fields:0:0', 2, 'rfields:3', 0);
+    await ops().moveField('fields:0:0', 2, 'rfields:3', 0);
     assert.strictEqual(win.FB.model.sections[3].fields[0].name, 'primary_reason', 'moved into repeater');
     assert.strictEqual(
       win.FB.model.sections[2].rows[2].fields.find(f => f.name === 'cond_field_notempty').showWhen,
       undefined, 'referencing showWhen cascade-removed');
-    ops().moveField('rfields:3', 0, 'fields:0:0', 2);          // restore position (showWhen stays gone)
+    await ops().moveField('rfields:3', 0, 'fields:0:0', 2);    // restore position (showWhen stays gone)
 
     // — moveRow across sections + moveSection —
     ops().moveRow('rows:0', 2, 'rows:1', 0);
@@ -137,7 +144,7 @@ function propByLabel(doc, labelText) {
     win.select({ t: 'field', si: 1, ri: 1, fi: 1 });           // sample_radio (referenced by cond_field_yes)
     confirmMsg = null;
     win.confirm = (m) => { confirmMsg = m; return true; };
-    ops().deleteSelected();
+    await ops().deleteSelected();
     assert.ok(confirmMsg.includes('sample_radio') && confirmMsg.includes('cond_field_yes'),
       'delete confirm names referencing field');
     assert.ok(!win.FB.model.sections[1].rows[1].fields.some(f => f.name === 'sample_radio'), 'field deleted');
@@ -151,18 +158,18 @@ function propByLabel(doc, labelText) {
     win.select({ t: 'section', si: 1 });
     confirmMsg = null;
     win.confirm = (m) => { confirmMsg = m; return true; };
-    ops().deleteSelected();
-    assert.ok(confirmMsg.includes('will also remove those conditions'), 'outside refs surfaced');
+    await ops().deleteSelected();
+    // wording tracks deleteContainerMsg() in public/formBuilder.html
+    assert.ok(confirmMsg.includes('will also remove those references'), 'outside refs surfaced');
     assert.strictEqual(win.FB.model.sections.length, 3, 'section deleted');
     assert.strictEqual(win.FB.model.sections[1].showWhen, undefined,
       'conditional-demo section showWhen (targeted sample_checkbox) cascade-removed');
 
     win.close();
-    console.log('SUITE 1 PASSED — fixture-based structural ops');
-  }
+  });
 
   // ══════════ Suite 2: fresh template — build a form purely via ops, then server-validate ══════════
-  {
+  test('fresh build via ops: options/showWhen editors, JSON tab, real server validation', async () => {
     const seed = { sections: [{ title: 'Section 1', rows: [] }] };
     const row = { id: 9, form_key: 'newform', title: 'New', link_type: 'contact',
       schema_version: 1, published_at: null, definition: null, draft_definition: seed };
@@ -290,8 +297,6 @@ function propByLabel(doc, labelText) {
     assert.strictEqual(svc.fieldSignature(built).split('|').length, 3, 'signature covers repeater seed field too');
 
     win.close();
-    console.log('SUITE 2 PASSED — fresh build, options/showWhen editors, JSON tab, server validation');
-  }
+  });
 
-  console.log('ALL PHASE B ASSERTIONS PASSED');
-})().catch(e => { console.error('FAIL:', e.message); console.error(e.stack.split('\n').slice(1, 4).join('\n')); process.exit(1); });
+});

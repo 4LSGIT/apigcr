@@ -556,9 +556,9 @@ tests/fixtures/slice26/tpl5_code.js
 tests/fixtures/slice26/tpl5_draft_definition.json
 tests/fixtures/slice26/tpl6_code.js
 tests/fixtures/slice26/tpl6_draft_definition.json
-tests/formBuilder_phaseA_test.js
-tests/formBuilder_phaseB_test.js
-tests/formBuilder_phaseC_test.js
+tests/formBuilder_phaseA.test.js
+tests/formBuilder_phaseB.test.js
+tests/formBuilder_phaseC.test.js
 tests/formBuilder_slice25A.test.js
 tests/formBuilder_slice25B.test.js
 tests/formBuilder_slice26.test.js
@@ -566,7 +566,7 @@ tests/formRender.slice2.test.js
 tests/formRender.slice25A.test.js
 tests/formRender.slice25B.test.js
 tests/formRender.slice26.test.js
-tests/formTemplates_slice4_service_test.js
+tests/formTemplates_slice4_service.test.js
 tests/formtemplates.x1visibility.test.js
 tests/helpers/renderSmoke.js
 tests/hookMapper.test.js
