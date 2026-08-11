@@ -19,12 +19,33 @@ replaces the old `/db-jwt` tool for interactive use.
   dump** (`schema-<timestamp>.sql`) with no data and no database name in it.
 - **Saved queries** — name and store queries you run often; edit and delete them.
 
+## Running a whole script
+
+**Run All** (`Ctrl/Cmd+Shift+Enter`) splits the editor contents on `;` and runs
+every statement in order, then renders a single markdown report — one section
+per statement with its SQL and result — and auto-copies it. That report format
+is meant for pasting into an LLM chat.
+
+Execution happens server-side via `POST /admin/db/batch`, in chunks of 50
+statements per request. A 200-statement script therefore costs 4 requests
+against the rate limit, not 200. Statements are **not** wrapped in a
+transaction — each one commits on its own, exactly as if you'd run them one at
+a time.
+
+Two things stop a batch early: `stopOnError` (API-only flag, off by default) and
+a 240-second server-side time budget. Anything not reached is reported as
+**NOT RUN** rather than silently dropped.
+
 ## Guardrails
 
 - **SU only**, JWT-authed.
-- **Rate limited** to 30 queries/min per user.
+- **Rate limited** to 120 requests/min per user for the DB Console. Each tool
+  has its own independent budget — burning through the console's allowance no
+  longer locks you out of the users admin or API keys. Override per tool with
+  `SU_RATE_LIMIT_DB_CONSOLE`, or globally with `SU_RATE_LIMIT_DEFAULT`.
 - **Every attempt is audited** to `admin_audit_log` — including the query text —
-  before the result comes back. Assume anything you run is recorded.
+  before the result comes back. Batch runs write one row per statement (tagged
+  with `batch_index`) plus a summary row. Assume anything you run is recorded.
 
 ## Gotchas
 

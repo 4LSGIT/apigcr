@@ -8,6 +8,7 @@
 //
 // Endpoints:
 //   POST   /admin/db/query              body { query, allowWrite }
+//   POST   /admin/db/batch              body { statements[], allowWrite, stopOnError }
 //   GET    /admin/db/schema             -> { tables: [...] }
 //   GET    /admin/db/schema.sql         downloads schema-YYYYMMDD-HHMMSS.sql (no data, no DB name)
 //   POST   /admin/db/schema/save-to-ref dev-only: writes the dump to ref/ (Cloud
@@ -21,10 +22,21 @@
 const express = require("express");
 const path    = require("path");
 const fs      = require("fs/promises");
-const { superuserOnly, auditDbConsole } = require("../lib/auth.superuser");
+const { superuserOnly, auditDbConsole, auditAdminAction } = require("../lib/auth.superuser");
 const { buildSchemaDump } = require("../lib/schemaDump");
 
 const router = express.Router();
+
+// ── batch limits ─────────────────────────────────────────────────────────────
+// The RO/RW pools run with multipleStatements off, so a multi-statement script
+// has to be executed one statement at a time. Doing that as N HTTP requests
+// (the old client-side loop) burned N rate-limit tokens and made any script
+// longer than the per-minute ceiling fail halfway through. /admin/db/batch
+// does the loop server-side: one request, one token, every statement still
+// individually audited.
+const MAX_BATCH_STATEMENTS = 200;    // per request; client chunks above this
+const BATCH_ROW_CAP        = 500;    // rows returned per statement (report caps at 200 anyway)
+const BATCH_TIME_BUDGET_MS = 240_000; // stop starting new statements past this — Cloud Run kills the request at 300s
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const ipOf = (req) =>
@@ -153,6 +165,177 @@ router.post("/admin/db/query", ...superuserOnly, async (req, res) => {
     });
     res.status(400).json({ error: err.message, code: err.code || null });
   }
+});
+
+// ── POST /admin/db/batch ─────────────────────────────────────────────────────
+// Run an ordered list of statements in one request.
+//
+// Body:    { statements: string[], allowWrite?: bool, stopOnError?: bool }
+// Returns: { ok, results: [...], statementCount, okCount, errCount, durationMs, aborted }
+//
+// Each result: { index, ok, rows, fields, rowCount, truncated, durationMs,
+//                error, code, notRun, auditError }
+//   - rowCount is the FULL row count; rows may be capped at BATCH_ROW_CAP.
+//   - notRun marks statements skipped after an abort (stopOnError or time budget).
+//
+// Statements are NOT wrapped in a transaction — same semantics as running them
+// one at a time in the old client loop. Each one is audited to admin_audit_log
+// individually, plus one summary row for the batch itself.
+router.post("/admin/db/batch", ...superuserOnly, async (req, res) => {
+  const started = Date.now();
+  const { statements, allowWrite = false, stopOnError = false } = req.body || {};
+
+  const auditBase = {
+    userId: req.auth.userId,
+    username: req.auth.username,
+    route: req.originalUrl,
+    method: req.method,
+    readOnlyMode: !allowWrite,
+    ip: ipOf(req),
+    userAgent: req.headers["user-agent"] || "unknown",
+  };
+
+  if (!Array.isArray(statements) || statements.length === 0) {
+    await auditDbConsole(req.db, {
+      ...auditBase, queryText: "batch: (empty)",
+      status: "rejected_empty", durationMs: Date.now() - started,
+    });
+    return res.status(400).json({ error: "statements[] is required and must be non-empty" });
+  }
+
+  if (statements.length > MAX_BATCH_STATEMENTS) {
+    await auditDbConsole(req.db, {
+      ...auditBase, queryText: `batch: ${statements.length} statements (over cap)`,
+      status: "rejected_batch_too_large", durationMs: Date.now() - started,
+    });
+    return res.status(400).json({
+      error: `Too many statements in one batch (${statements.length} > ${MAX_BATCH_STATEMENTS}). Split the script.`,
+      maxStatements: MAX_BATCH_STATEMENTS,
+    });
+  }
+
+  // Per-statement audit. Deliberately non-fatal: if the audit insert fails
+  // mid-batch we do NOT abort, because bailing out of a half-run write script
+  // leaves the DB in an unknown state — worse than a gap in the log. The
+  // failure is surfaced on the result item and in the summary row instead.
+  async function auditStatement(i, stmt, status, extra = {}) {
+    try {
+      await auditAdminAction(req.db, {
+        tool: "db_console",
+        userId: auditBase.userId,
+        username: auditBase.username,
+        route: auditBase.route,
+        method: auditBase.method,
+        status,
+        errorMessage: extra.errorMessage ?? null,
+        durationMs: extra.durationMs ?? null,
+        ip: auditBase.ip,
+        userAgent: auditBase.userAgent,
+        details: {
+          query_text: stmt,
+          read_only_mode: !allowWrite,
+          row_count: extra.rowCount ?? null,
+          batch: true,
+          batch_index: i,
+          batch_size: statements.length,
+        },
+      });
+      return null;
+    } catch (err) {
+      console.error(`[dbConsole] batch audit insert failed (stmt ${i}):`, err.message);
+      return err.message;
+    }
+  }
+
+  const results = [];
+  let okCount = 0, errCount = 0, aborted = null;
+
+  for (let i = 0; i < statements.length; i++) {
+    const stmt = typeof statements[i] === "string" ? statements[i] : String(statements[i] ?? "");
+
+    if (aborted) {
+      results.push({ index: i, ok: false, notRun: true, error: aborted });
+      continue;
+    }
+
+    if (!stmt.trim()) {
+      results.push({ index: i, ok: false, error: "Empty statement" });
+      errCount++;
+      await auditStatement(i, stmt, "rejected_empty", { durationMs: 0 });
+      if (stopOnError) aborted = "Aborted: earlier statement failed (stopOnError).";
+      continue;
+    }
+
+    if (!allowWrite && !isReadOnlyQuery(stmt)) {
+      const msg = "Read-only mode is on. First keyword must be SELECT/SHOW/DESCRIBE/DESC/EXPLAIN, or enable writes.";
+      results.push({ index: i, ok: false, error: msg });
+      errCount++;
+      await auditStatement(i, stmt, "rejected_write_guard", { durationMs: 0 });
+      if (stopOnError) aborted = "Aborted: earlier statement failed (stopOnError).";
+      continue;
+    }
+
+    if (Date.now() - started > BATCH_TIME_BUDGET_MS) {
+      aborted = `Batch time budget exceeded (${BATCH_TIME_BUDGET_MS / 1000}s) — remaining statements were not run.`;
+      results.push({ index: i, ok: false, notRun: true, error: aborted });
+      continue;
+    }
+
+    const qt0 = Date.now();
+    try {
+      const [rows, fields] = await req.db.query(stmt);
+      const durationMs = Date.now() - qt0;
+      const isArray   = Array.isArray(rows);
+      const rowCount  = isArray ? rows.length : (rows?.affectedRows ?? null);
+      const truncated = isArray && rows.length > BATCH_ROW_CAP;
+
+      const auditError = await auditStatement(i, stmt, "success", { rowCount, durationMs });
+      results.push({
+        index: i,
+        ok: true,
+        rows: truncated ? rows.slice(0, BATCH_ROW_CAP) : rows,
+        fields: Array.isArray(fields) ? fields.map(f => ({ name: f.name, type: f.columnType })) : null,
+        rowCount,
+        truncated,
+        durationMs,
+        ...(auditError ? { auditError } : {}),
+      });
+      okCount++;
+    } catch (err) {
+      const durationMs = Date.now() - qt0;
+      const auditError = await auditStatement(i, stmt, "error", { errorMessage: err.message, durationMs });
+      results.push({
+        index: i,
+        ok: false,
+        error: err.message,
+        code: err.code || null,
+        durationMs,
+        ...(auditError ? { auditError } : {}),
+      });
+      errCount++;
+      if (stopOnError) aborted = "Aborted: earlier statement failed (stopOnError).";
+    }
+  }
+
+  const durationMs = Date.now() - started;
+  await auditDbConsole(req.db, {
+    ...auditBase,
+    queryText: `batch: ${statements.length} statement(s) — ${okCount} ok, ${errCount} err${aborted ? " — ABORTED" : ""}`,
+    status: errCount ? "error" : "success",
+    errorMessage: aborted,
+    rowCount: okCount,
+    durationMs,
+  });
+
+  res.json({
+    ok: true,
+    results,
+    statementCount: statements.length,
+    okCount,
+    errCount,
+    aborted,
+    durationMs,
+  });
 });
 
 // ── GET /admin/db/schema ─────────────────────────────────────────────────────

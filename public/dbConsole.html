@@ -358,18 +358,21 @@ async function runQuery() {
     lastRows = null;
     btnCsv.disabled = true;
     btnCopy.disabled = true;
-    results.innerHTML = `<div class="empty" style="color:var(--danger);">${escapeHtml(err.message || String(err))}</div>`;
-    setStatus(`<span class="err">Error:</span> ${escapeHtml(err.message || String(err))}`);
+    const msg = rateLimitMessage(err) || err.message || String(err);
+    results.innerHTML = `<div class="empty" style="color:var(--danger);">${escapeHtml(msg)}</div>`;
+    setStatus(`<span class="err">Error:</span> ${escapeHtml(msg)}`);
   } finally {
     btnRun.disabled = false;
   }
 }
 
 // ── batch run + markdown report ──────────────────────────────────────────────
-// The pool runs with multipleStatements off, so we split client-side and fire
-// statements one at a time. Output is a single markdown document optimized
-// for pasting into an LLM chat — each statement gets its SQL, a header line,
-// and a result block (markdown table, fenced ddl, or json).
+// The pool runs with multipleStatements off, so a script has to be split and
+// executed one statement at a time. The split happens here; the *execution*
+// loop lives server-side in POST /admin/db/batch, so a 200-statement script
+// costs one rate-limit token instead of 200. Output is a single markdown
+// document optimized for pasting into an LLM chat — each statement gets its
+// SQL, a header line, and a result block (markdown table, fenced ddl, or json).
 
 // State-machine splitter. Handles single/double/backtick string literals,
 // MySQL backslash escapes inside string literals, '' / "" doubled-quote
@@ -448,7 +451,26 @@ function getStatementKind(stmt) {
 
 const REPORT_ROW_CAP = 200;
 
-function renderMdTable(rows, cols) {
+// Statements per /admin/db/batch request. Must stay <= the server's
+// MAX_BATCH_STATEMENTS (200). Smaller chunks = more granular progress and a
+// smaller blast radius if one request fails; each chunk costs exactly one
+// rate-limit token regardless of how many statements it carries.
+const BATCH_CHUNK = 50;
+
+// 429s carry { retryInMs, limit, tool } — turn that into something readable
+// instead of dumping the raw error text at the user.
+function rateLimitMessage(err) {
+  if (err?.status !== 429) return null;
+  const ms = Number(err?.body?.retryInMs);
+  const secs = Number.isFinite(ms) ? Math.max(1, Math.ceil(ms / 1000)) : null;
+  const limit = err?.body?.limit;
+  return `Rate limited${limit ? ` (${limit}/min)` : ""}${secs ? ` — retry in ${secs}s` : ""}.`;
+}
+
+// totalRows is the FULL server-side count, which can exceed rows.length when
+// /admin/db/batch capped the payload. Without it the "omitted" line lies.
+function renderMdTable(rows, cols, totalRows) {
+  const total = Number.isFinite(totalRows) ? totalRows : rows.length;
   const cell = (v) => {
     if (v === null || v === undefined) return "*NULL*";
     let s = typeof v === "object" ? JSON.stringify(v) : String(v);
@@ -461,7 +483,8 @@ function renderMdTable(rows, cols) {
     .map(r => "| " + cols.map(c => cell(r[c])).join(" | ") + " |")
     .join("\n");
   let out = [header, sep, body].join("\n");
-  if (rows.length > REPORT_ROW_CAP) out += `\n\n_… and ${rows.length - REPORT_ROW_CAP} more row(s) omitted._`;
+  const shown = Math.min(rows.length, REPORT_ROW_CAP);
+  if (total > shown) out += `\n\n_… and ${total - shown} more row(s) omitted._`;
   return out;
 }
 
@@ -480,7 +503,7 @@ function renderResultMd(res) {
     const ddl = rows[0][cols[1]];
     return `**Table:** \`${tableName}\`\n\n\`\`\`sql\n${ddl}\n\`\`\``;
   }
-  return renderMdTable(rows, cols);
+  return renderMdTable(rows, cols, Number.isFinite(res.rowCount) ? res.rowCount : rows.length);
 }
 
 async function runBatch() {
@@ -505,30 +528,60 @@ async function runBatch() {
   results.innerHTML = `<div class="empty">Running batch…</div>`;
 
   const t0 = performance.now();
+
+  // One HTTP request per chunk, not per statement. The old loop cost one
+  // rate-limit token per statement, so any script longer than the per-minute
+  // ceiling died halfway through with "Rate limit exceeded". Chunking (rather
+  // than one giant request) keeps the progress indicator alive and stays
+  // under the server's MAX_BATCH_STATEMENTS cap.
+  const items = [];
+  let fatal = null;
+  for (let start = 0; start < statements.length; start += BATCH_CHUNK) {
+    const chunk = statements.slice(start, start + BATCH_CHUNK);
+    const from = start + 1, to = start + chunk.length;
+    setStatus(`Running ${from}–${to} of ${statements.length}…`);
+    try {
+      const res = await api("/admin/db/batch", "POST", { statements: chunk, allowWrite: writeMode });
+      items.push(...(res.results || []));
+      if (res.aborted) { fatal = res.aborted; break; }
+    } catch (err) {
+      fatal = rateLimitMessage(err) || err.message || String(err);
+      break;
+    }
+  }
+
   const parts = [];
   let okCount = 0, errCount = 0;
 
   for (let i = 0; i < statements.length; i++) {
     const stmt = statements[i];
     const kind = getStatementKind(stmt);
-    setStatus(`Running ${i + 1}/${statements.length}: <code>${escapeHtml(kind)}</code>…`);
-    const qt0 = performance.now();
+    const item = items[i];
     let header, body;
-    try {
-      const res = await api("/admin/db/query", "POST", { query: stmt, allowWrite: writeMode });
-      const qms = res.durationMs ?? Math.round(performance.now() - qt0);
-      const rowsLabel = Array.isArray(res.rows)
-        ? `${res.rows.length} row${res.rows.length === 1 ? "" : "s"}`
-        : `${res.rows?.affectedRows ?? 0} affected`;
+
+    if (!item) {
+      header = `## ${i + 1}. — ${kind} · NOT RUN`;
+      body = "```\n" + (fatal || "Not run.") + "\n```";
+      errCount++;
+    } else if (item.ok) {
+      const qms = item.durationMs ?? 0;
+      const rowsLabel = Array.isArray(item.rows)
+        ? `${item.rowCount ?? item.rows.length} row${(item.rowCount ?? item.rows.length) === 1 ? "" : "s"}`
+        : `${item.rows?.affectedRows ?? 0} affected`;
       header = `## ${i + 1}. ✓ ${kind} · ${rowsLabel} · ${qms} ms`;
-      body = renderResultMd(res);
+      body = renderResultMd(item);
       okCount++;
-    } catch (err) {
-      const qms = Math.round(performance.now() - qt0);
-      header = `## ${i + 1}. ✗ ${kind} · ERROR · ${qms} ms`;
-      body = "```\n" + (err.message || String(err)) + "\n```";
+    } else if (item.notRun) {
+      header = `## ${i + 1}. — ${kind} · NOT RUN`;
+      body = "```\n" + (item.error || "Not run.") + "\n```";
+      errCount++;
+    } else {
+      header = `## ${i + 1}. ✗ ${kind} · ERROR · ${item.durationMs ?? 0} ms`;
+      body = "```\n" + (item.error || "Unknown error") + "\n```";
       errCount++;
     }
+
+    if (item?.auditError) body += `\n\n_⚠️ audit-log write failed: ${item.auditError}_`;
     parts.push(`${header}\n\n\`\`\`sql\n${stmt};\n\`\`\`\n\n${body}`);
   }
 
@@ -536,7 +589,8 @@ async function runBatch() {
   const summary =
     `# DB Console — Query Report\n\n` +
     `_${new Date().toISOString()} · ${statements.length} statement${statements.length === 1 ? "" : "s"} · ` +
-    `${okCount} ✓ · ${errCount} ✗ · ${totalMs} ms total_`;
+    `${okCount} ✓ · ${errCount} ✗ · ${totalMs} ms total_` +
+    (fatal ? `\n\n> **Batch stopped:** ${fatal}` : ``);
   const md = summary + "\n\n---\n\n" + parts.join("\n\n---\n\n") + "\n";
 
   lastReportMarkdown = md;
@@ -554,9 +608,10 @@ async function runBatch() {
   try { await navigator.clipboard.writeText(md); copied = true; } catch {}
 
   setStatus(
-    `<span class="${errCount ? "err" : "ok"}">Batch done.</span> ` +
+    `<span class="${errCount ? "err" : "ok"}">${fatal ? "Batch stopped." : "Batch done."}</span> ` +
     `${statements.length} statement(s) · ${okCount} OK · ${errCount} err · ${totalMs} ms` +
-    (copied ? ` · <span class="ok">report copied</span>` : ``)
+    (copied ? ` · <span class="ok">report copied</span>` : ``) +
+    (fatal ? ` · <span class="err">${escapeHtml(fatal)}</span>` : ``)
   );
   if (copied) setCopyHint("Report copied (markdown).", "ok");
 
