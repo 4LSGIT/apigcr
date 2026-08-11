@@ -51,6 +51,7 @@
   .toolbar button.primary:hover { filter: brightness(1.08); }
   .toolbar button.danger-toggle { border-color: var(--danger); color: var(--danger); }
   .toolbar button.danger-toggle.active { background: var(--danger); color: #fff; }
+  .toolbar button.warn-toggle.active { background: var(--warn); color: #201800; border-color: var(--warn); font-weight: 600; }
   .toolbar .sep { flex: 1; }
   .toolbar .hint { color: var(--muted); font-size: 11px; }
 
@@ -164,6 +165,7 @@
       <button id="btnCsv" disabled>Export CSV</button>
       <button id="btnHistory">History</button>
       <span class="sep"></span>
+      <button id="btnStopOnError" class="warn-toggle" title="Run All: stop at the first failed statement instead of continuing. Recommended for write migrations.">▶ Continue on error</button>
       <button id="btnWriteToggle" class="danger-toggle" title="Toggle write mode">🔒 Read-only</button>
       <span class="hint" id="userHint"></span>
     </div>
@@ -247,6 +249,7 @@ const editor   = document.getElementById("editor");
 const status_  = document.getElementById("status");
 const results  = document.getElementById("results");
 const btnWrite = document.getElementById("btnWriteToggle");
+const btnStop  = document.getElementById("btnStopOnError");
 const btnCsv   = document.getElementById("btnCsv");
 const btnCopy  = document.getElementById("btnCopy");
 const btnRun   = document.getElementById("btnRun");
@@ -259,6 +262,7 @@ let lastFields = null;
 let lastReportMarkdown = null;  // set by runBatch; flips btnCopy into "copy markdown report" mode
 let sortState = { key: null, dir: 1 };
 let writeMode = false;
+let stopOnError = false;   // Run All only; persisted, see STOP_KEY below
 let wrapMode  = false;
 let copyHintTimer = null;
 
@@ -284,16 +288,46 @@ let authed = false;
   }
 })();
 
+// ── stop-on-error toggle (Run All only) ──────────────────────────────────────
+// OFF is the right default for the console's main workflow: paste a diagnostic
+// script, get a full report even if statement 5 has a typo. ON is the right
+// default for write migrations, where continuing past a failed ALTER is almost
+// always wrong — so flipping write mode on flips this on too. It stays a real
+// toggle: you can turn it back off in either mode, and the choice persists.
+const STOP_KEY = "dbConsoleStopOnError";
+
+function setStopOnError(on, persist = true) {
+  stopOnError = !!on;
+  btnStop.textContent = stopOnError ? "⏹ Stop on error" : "▶ Continue on error";
+  btnStop.classList.toggle("active", stopOnError);
+  if (persist) { try { localStorage.setItem(STOP_KEY, stopOnError ? "1" : "0"); } catch (_) {} }
+}
+
+btnStop.addEventListener("click", () => setStopOnError(!stopOnError));
+
+try { setStopOnError(localStorage.getItem(STOP_KEY) === "1", false); }
+catch (_) { setStopOnError(false, false); }
+
 // ── write toggle ─────────────────────────────────────────────────────────────
 btnWrite.addEventListener("click", () => {
   if (!writeMode) {
-    if (!confirm("Enable WRITE mode?\n\nYou will be able to run INSERT/UPDATE/DELETE/DROP/ALTER.\nEvery query is audit-logged to admin_audit_log.")) return;    writeMode = true;
+    if (!confirm(
+      "Enable WRITE mode?\n\n" +
+      "You will be able to run INSERT/UPDATE/DELETE/DROP/ALTER.\n" +
+      "Every query is audit-logged to admin_audit_log.\n\n" +
+      "Run All will also switch to stop-on-error (you can turn that back off)."
+    )) return;
+    writeMode = true;
     btnWrite.textContent = "⚠️ WRITES ON";
     btnWrite.classList.add("active");
+    // Don't persist this one — it's a consequence of write mode, not a
+    // preference. The user's own last choice is restored when writes go off.
+    if (!stopOnError) setStopOnError(true, false);
   } else {
     writeMode = false;
     btnWrite.textContent = "🔒 Read-only";
     btnWrite.classList.remove("active");
+    try { setStopOnError(localStorage.getItem(STOP_KEY) === "1", false); } catch (_) {}
   }
 });
 
@@ -541,9 +575,18 @@ async function runBatch() {
     const from = start + 1, to = start + chunk.length;
     setStatus(`Running ${from}–${to} of ${statements.length}…`);
     try {
-      const res = await api("/admin/db/batch", "POST", { statements: chunk, allowWrite: writeMode });
+      const res = await api("/admin/db/batch", "POST", { statements: chunk, allowWrite: writeMode, stopOnError });
       items.push(...(res.results || []));
-      if (res.aborted) { fatal = res.aborted; break; }
+      if (res.aborted) {
+        // The server's index is chunk-local, so build the global one here.
+        // Only claim stop-on-error when it's actually on — the server also
+        // aborts on its time budget, which has nothing to do with failures.
+        const failedAt = stopOnError ? items.findIndex(it => it && !it.ok && !it.notRun) : -1;
+        fatal = failedAt >= 0
+          ? `Stopped at statement ${failedAt + 1} of ${statements.length} — stop-on-error is on.`
+          : res.aborted;
+        break;
+      }
     } catch (err) {
       fatal = rateLimitMessage(err) || err.message || String(err);
       break;
@@ -586,10 +629,14 @@ async function runBatch() {
   }
 
   const totalMs = Math.round(performance.now() - t0);
+  const modeBits = [];
+  if (writeMode) modeBits.push("writes ON");
+  if (stopOnError) modeBits.push("stop-on-error");
   const summary =
     `# DB Console — Query Report\n\n` +
     `_${new Date().toISOString()} · ${statements.length} statement${statements.length === 1 ? "" : "s"} · ` +
-    `${okCount} ✓ · ${errCount} ✗ · ${totalMs} ms total_` +
+    `${okCount} ✓ · ${errCount} ✗ · ${totalMs} ms total` +
+    (modeBits.length ? ` · ${modeBits.join(" · ")}` : ``) + `_` +
     (fatal ? `\n\n> **Batch stopped:** ${fatal}` : ``);
   const md = summary + "\n\n---\n\n" + parts.join("\n\n---\n\n") + "\n";
 

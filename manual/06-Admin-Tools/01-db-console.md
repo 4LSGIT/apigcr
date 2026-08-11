@@ -32,9 +32,26 @@ against the rate limit, not 200. Statements are **not** wrapped in a
 transaction — each one commits on its own, exactly as if you'd run them one at
 a time.
 
-Two things stop a batch early: `stopOnError` (API-only flag, off by default) and
-a 240-second server-side time budget. Anything not reached is reported as
-**NOT RUN** rather than silently dropped.
+Two things stop a batch early: the **stop-on-error** toggle and a 240-second
+server-side time budget. Anything not reached is reported as **NOT RUN** rather
+than silently dropped, and the report header names the statement it stopped at.
+
+### Stop on error
+
+The toolbar toggle next to the write switch controls what Run All does when a
+statement fails:
+
+- **▶ Continue on error** (default) — run everything and report each failure in
+  place. This is what you want for diagnostic scripts: one typo on statement 5
+  shouldn't cost you the other 40 results.
+- **⏹ Stop on error** — halt at the first failure. This is what you want for
+  write migrations, where continuing past a failed `ALTER` is almost always
+  wrong.
+
+Turning **write mode on** switches this on automatically. You can turn it back
+off; the toggle is always live. Your own choice is remembered across reloads —
+the automatic flip that comes with write mode is not, so switching writes back
+off restores whatever you had set.
 
 ## Guardrails
 

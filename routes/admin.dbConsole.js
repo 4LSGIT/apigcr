@@ -38,6 +38,10 @@ const MAX_BATCH_STATEMENTS = 200;    // per request; client chunks above this
 const BATCH_ROW_CAP        = 500;    // rows returned per statement (report caps at 200 anyway)
 const BATCH_TIME_BUDGET_MS = 240_000; // stop starting new statements past this — Cloud Run kills the request at 300s
 
+// Shown on every statement skipped after a stopOnError abort. Phrased to read
+// correctly inside the client's per-statement "NOT RUN" block.
+const STOP_ON_ERROR_ABORT = "Not run — an earlier statement failed and stop-on-error was on.";
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 const ipOf = (req) =>
   req.headers["x-forwarded-for"]?.split(",").shift() || req.socket?.remoteAddress;
@@ -262,7 +266,7 @@ router.post("/admin/db/batch", ...superuserOnly, async (req, res) => {
       results.push({ index: i, ok: false, error: "Empty statement" });
       errCount++;
       await auditStatement(i, stmt, "rejected_empty", { durationMs: 0 });
-      if (stopOnError) aborted = "Aborted: earlier statement failed (stopOnError).";
+      if (stopOnError) aborted = STOP_ON_ERROR_ABORT;
       continue;
     }
 
@@ -271,7 +275,7 @@ router.post("/admin/db/batch", ...superuserOnly, async (req, res) => {
       results.push({ index: i, ok: false, error: msg });
       errCount++;
       await auditStatement(i, stmt, "rejected_write_guard", { durationMs: 0 });
-      if (stopOnError) aborted = "Aborted: earlier statement failed (stopOnError).";
+      if (stopOnError) aborted = STOP_ON_ERROR_ABORT;
       continue;
     }
 
@@ -313,7 +317,7 @@ router.post("/admin/db/batch", ...superuserOnly, async (req, res) => {
         ...(auditError ? { auditError } : {}),
       });
       errCount++;
-      if (stopOnError) aborted = "Aborted: earlier statement failed (stopOnError).";
+      if (stopOnError) aborted = STOP_ON_ERROR_ABORT;
     }
   }
 
