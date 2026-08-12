@@ -70,6 +70,7 @@ const URL_PARAM_RE = /^[a-zA-Z0-9_-]{1,50}$/;
 const URL_PARAM_RESERVED = new Set([
   'form_key', 'ext', 'preview', 'template_id', 'link_id',
   'case_id', 'contact_id', 'appt_id',
+  'f', 't',                    // consumed by the /p/form host page
 ]);
 
 

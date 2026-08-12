@@ -248,6 +248,14 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
           link_type: linkType,
           link_id: linkId,
           submission_id: submitResult.id,
+          // X3.2: the validated values as ONE object, so a SHARED notify
+          // workflow can format any form without a per-form input map —
+          // custom_code sees only its explicit `input`, and the engine's
+          // _variables injection is internal_function-only. The single-
+          // placeholder fast path ({{_values}}) delivers this object intact.
+          // Assigned last in the system block: it wins over any submitted
+          // field or initData key that happened to share the name.
+          _values: body.values,
         }
       );
       const internalFunctions = require('../lib/internal_functions');

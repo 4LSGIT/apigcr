@@ -483,6 +483,24 @@ describe('routes/api.ext.forms.js (live router)', () => {
       reason: 'help', source: 'ext_test',
       form_key: 'intake_test', link_type: 'case', link_id: 'abc12345', submission_id: 101,
     });
+    // X3.2: the validated values ride as ONE object for the shared notify
+    // workflow's generic formatter — and the system block wins name clashes.
+    expect(wfParams.init_data._values).toEqual({ reason: 'help' });
+  });
+
+  test('X3.2: _values is the system copy — a submitted field named _values cannot shadow it', async () => {
+    const defWithValuesField = { ...publicDef, sections: [{ title: 'S', rows: [{ fields: [
+      { name: 'reason', type: 'text', required: true, maxLength: 200 },
+      { name: '_values', type: 'text' },
+    ] }] }] };
+    fixture = { template: tplRow({ definition: defWithValuesField }),
+                caseRow: { case_id: 'abc12345' }, primary: null };
+    const res = await POST('/api/ext/forms/intake_test/submit',
+      { case_id: 'abc12345', values: { reason: 'r', _values: 'spoof' } });
+    expect(res.status).toBe(200);
+    const [wfParams] = internalFunctions.start_workflow.mock.calls[0];
+    expect(wfParams.init_data._values).toEqual({ reason: 'r', _values: 'spoof' });
+    expect(typeof wfParams.init_data._values).toBe('object');  // the object, not the spoof string
   });
 
   test('submit degrade-anonymous: (\'\',\'\') linkage; body workflow/link keys REJECTED (inversion)', async () => {
@@ -545,7 +563,7 @@ describe('validateDefinition — urlParam (X2)', () => {
     const t = (def, part) => expect(() => tplSvc.validateDefinition(def)).toThrow(part);
     t(wrap([{ name: 'a', type: 'text', urlParam: 'has space' }]), /urlParam must match/);
     t(wrap([{ name: 'a', type: 'text', urlParam: 'x'.repeat(51) }]), /urlParam must match/);
-    for (const reserved of ['case_id', 'ext', 'form_key', 'preview', 'template_id', 'link_id', 'contact_id', 'appt_id']) {
+    for (const reserved of ['case_id', 'ext', 'form_key', 'preview', 'template_id', 'link_id', 'contact_id', 'appt_id', 'f', 't']) {
       t(wrap([{ name: 'a', type: 'text', urlParam: reserved }]), /is reserved/);
     }
     t(wrap([
