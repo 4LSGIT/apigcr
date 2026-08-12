@@ -12,8 +12,9 @@
  *      records the submission, dispatches onSubmit.workflow SERVER-SIDE from
  *      the published definition. §5.3.
  *
- * UNAUTHED BY DESIGN — the credential is the case_id bearer param (48-bit
- * crypto-random, the incumbent docReq/intake pattern). The portal-mode slice
+ * UNAUTHED BY DESIGN — the credential is the case_id bearer param (40-bit;
+ * see the entropy note in extFormService.js — the incumbent docReq/intake
+ * pattern). The portal-mode slice
  * adds the portal JWT as a second credential ON THESE ROUTES (wider
  * visibility scope), never a route fork.
  *
@@ -119,6 +120,21 @@ router.get('/api/ext/forms/:form_key', async (req, res) => {
     // 5. (Cache-Control: no-store is set for every branch by noCors above —
     //     prefill is per-case PII, and N3 flagged that the 404 branches were
     //     previously uncovered.)
+    // postSubmit (X3): the one `external.*` key the renderer consumes — the
+    // terminal thank-you panel config. Hoisted to the response top level
+    // rather than widening the definition projection: `external` stays off
+    // the public definition wire (§D allowlist), and the three keys here are
+    // exactly what validateDefinition admitted (message string ≤2000,
+    // edit/new booleans). badLink remains server-only.
+    const ps = tpl.definition.external && tpl.definition.external.postSubmit;
+    const postSubmit = ps && typeof ps === 'object'
+      ? {
+          ...(typeof ps.message === 'string' ? { message: ps.message } : {}),
+          ...(ps.edit === true ? { edit: true } : {}),
+          ...(ps.new === true ? { new: true } : {}),
+        }
+      : null;
+
     return res.json({
       status: 'success',
       title: tpl.title,
@@ -127,6 +143,7 @@ router.get('/api/ext/forms/:form_key', async (req, res) => {
       definition: extSvc.projectDefinition(tpl.definition),
       load,
       linked,
+      ...(postSubmit ? { postSubmit } : {}),
     });
   } catch (err) {
     console.error('[api.ext.forms] GET error:', err);

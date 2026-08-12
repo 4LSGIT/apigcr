@@ -190,6 +190,42 @@ describe('external submit', () => {
     }
   });
 
+  test('X3 postSubmit: successful submit swaps in the terminal panel; Edit restores the filled form', async () => {
+    const page = makePage({
+      getBody: { status: 'success', title: 'Intake', link_type: 'case',
+                 schema_version: 3, definition: EXT_DEF, load: LOAD, linked: true,
+                 postSubmit: { message: 'Thanks — we got it.', edit: true, new: true } },
+    });
+    const w = await ready(page);
+    type(w, 'reason', 'done');
+    w.document.getElementById('saveBtn').click();
+    await sleep(150);
+
+    const panel = w.document.querySelector('.ycr-post-submit');
+    expect(panel).not.toBeNull();
+    expect(panel.querySelector('.ycr-post-submit-msg').textContent).toBe('Thanks — we got it.');
+    // form + header hidden, not destroyed
+    expect(w.document.getElementById('ycRenderForm').style.display).toBe('none');
+    const btns = [...panel.querySelectorAll('button')].map((b) => b.textContent);
+    expect(btns).toEqual(['Edit response', 'Submit another response']);
+
+    // Edit restores the same nodes with values intact
+    panel.querySelectorAll('button')[0].click();
+    expect(w.document.querySelector('.ycr-post-submit')).toBeNull();
+    expect(w.document.getElementById('ycRenderForm').style.display).toBe('');
+    expect(w.document.querySelector('[name="reason"]').value).toBe('done');
+  });
+
+  test('X3 postSubmit absent → pre-X3 behavior: no panel, form stays', async () => {
+    const page = makePage();
+    const w = await ready(page);
+    type(w, 'reason', 'x');
+    w.document.getElementById('saveBtn').click();
+    await sleep(150);
+    expect(w.document.querySelector('.ycr-post-submit')).toBeNull();
+    expect(w.document.getElementById('ycRenderForm').style.display).not.toBe('none');
+  });
+
   test('degrade-anonymous boot: linked:false → submit body has NO case_id', async () => {
     const page = makePage({
       getBody: { status: 'success', title: 'Intake', link_type: 'case',

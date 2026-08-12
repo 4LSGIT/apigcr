@@ -584,12 +584,41 @@ function validateDefinition(def) {
       throw badRequest('external must be an object');
     }
     for (const k of Object.keys(def.external)) {
-      if (k !== 'badLink') {
-        throw badRequest(`external has unknown key "${k}" (allowed: badLink)`);
+      if (k !== 'badLink' && k !== 'postSubmit') {
+        throw badRequest(`external has unknown key "${k}" (allowed: badLink, postSubmit)`);
       }
     }
     if (def.external.badLink !== undefined && !BADLINK_MODES.has(def.external.badLink)) {
       throw badRequest('external.badLink must be "reject" or "degrade"');
+    }
+    // postSubmit (X3, Fred-ratified 2026-08-12): the external renderer's
+    // terminal state after a successful submit — a thank-you panel replacing
+    // the "toast + form stays editable" default, which is right for staff
+    // iteration and wrong for a one-shot public intake. Exact-key enforced
+    // like badLink. `message` is rendered via textContent only (renderer);
+    // `edit` shows a button returning to the filled form; `new` shows a
+    // button reloading the page (same URL → same credential/urlParam
+    // prefill). Absent = today's behavior, so every existing template is
+    // untouched. Internal rendering ignores the whole `external` object.
+    if (def.external.postSubmit !== undefined && def.external.postSubmit !== null) {
+      const ps = def.external.postSubmit;
+      if (typeof ps !== 'object' || Array.isArray(ps)) {
+        throw badRequest('external.postSubmit must be an object');
+      }
+      for (const k of Object.keys(ps)) {
+        if (k !== 'message' && k !== 'edit' && k !== 'new') {
+          throw badRequest(`external.postSubmit has unknown key "${k}" (allowed: message, edit, new)`);
+        }
+      }
+      if (ps.message !== undefined && (typeof ps.message !== 'string' || ps.message.length > 2000)) {
+        throw badRequest('external.postSubmit.message must be a string of at most 2000 characters');
+      }
+      if (ps.edit !== undefined && typeof ps.edit !== 'boolean') {
+        throw badRequest('external.postSubmit.edit must be a boolean');
+      }
+      if (ps.new !== undefined && typeof ps.new !== 'boolean') {
+        throw badRequest('external.postSubmit.new must be a boolean');
+      }
     }
   }
 }

@@ -126,6 +126,45 @@ describe('validateDefinition — external key (X1 §6)', () => {
   });
 });
 
+// ── validateDefinition: external.postSubmit (X3) ────────────────────────────
+
+describe('validateDefinition — external.postSubmit (X3)', () => {
+  const withPS = (postSubmit) => ({
+    ...cleanDef, external: { badLink: 'degrade', postSubmit },
+  });
+
+  test('accepts absent, null, empty object, and every valid shape', () => {
+    expect(() => svc.validateDefinition(withExternal('degrade'))).not.toThrow(); // no postSubmit
+    expect(() => svc.validateDefinition(withPS(null))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({}))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({ message: 'Thanks!' }))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({ edit: true, new: false }))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({ message: 'x', edit: true, new: true }))).not.toThrow();
+  });
+
+  test('exact-key: unknown postSubmit keys rejected', () => {
+    expect(() => svc.validateDefinition(withPS({ redirect: '/x' })))
+      .toThrow(/postSubmit has unknown key "redirect"/);
+    expect(() => svc.validateDefinition(withPS({ Message: 'typo' })))
+      .toThrow(/postSubmit has unknown key "Message"/);
+  });
+
+  test('shape: non-object postSubmit, non-string/over-length message, non-boolean edit/new', () => {
+    expect(() => svc.validateDefinition(withPS('Thanks')))
+      .toThrow(/postSubmit must be an object/);
+    expect(() => svc.validateDefinition(withPS(['x'])))
+      .toThrow(/postSubmit must be an object/);
+    expect(() => svc.validateDefinition(withPS({ message: 7 })))
+      .toThrow(/message must be a string/);
+    expect(() => svc.validateDefinition(withPS({ message: 'x'.repeat(2001) })))
+      .toThrow(/at most 2000 characters/);
+    expect(() => svc.validateDefinition(withPS({ edit: 'yes' })))
+      .toThrow(/edit must be a boolean/);
+    expect(() => svc.validateDefinition(withPS({ new: 1 })))
+      .toThrow(/new must be a boolean/);
+  });
+});
+
 // ── scanExternalRefusals (§4) ───────────────────────────────────────────────
 
 describe('scanExternalRefusals (X1 §4)', () => {

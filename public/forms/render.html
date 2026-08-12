@@ -25,6 +25,14 @@
       padding: 20px;
       font-family: system-ui, sans-serif;
     }
+    /* X3 external postSubmit panel */
+    .ycr-post-submit {
+      padding: 32px 20px;
+      font-family: system-ui, sans-serif;
+      text-align: center;
+    }
+    .ycr-post-submit-msg { font-size: 1.1em; margin: 0 0 20px; }
+    .ycr-post-submit-btns { display: flex; gap: 10px; justify-content: center; }
     #saveBtn[disabled] { opacity: .55; cursor: not-allowed; }
     /* AND-array showWhen wrappers (Slice 2.5A): display:contents keeps them
        out of flex layout (.yc-row equal-width columns) while the inline
@@ -1383,6 +1391,49 @@
       }
     };
 
+    // External postSubmit panel (X3): a one-shot public form should land on
+    // a terminal "thank you" state, not the staff default (success toast,
+    // form stays editable). Shown from onSave — after yc-forms has recorded
+    // the submission, cleared the draft, and re-baselined nothing yet that
+    // matters here. Config comes from the GET payload (EXT.postSubmit),
+    // server-validated; message reaches the DOM via el()'s textContent path
+    // only. Hiding = display:none on every current body child (header, save
+    // bar, form), so Edit can restore the exact same nodes with values
+    // intact; New reloads the same URL (same credential / urlParam prefill).
+    // Absent postSubmit = the pre-X3 behavior, byte-identical.
+    function showPostSubmitPanel() {
+      var ps = EXT.postSubmit;
+      var hidden = [];
+      Array.prototype.forEach.call(document.body.children, function (n) {
+        if (n.style.display !== 'none') { hidden.push(n); n.style.display = 'none'; }
+      });
+      var kids = [
+        el('p', { class: 'ycr-post-submit-msg',
+                  text: (typeof ps.message === 'string' && ps.message)
+                    ? ps.message
+                    : 'Thank you! Your response has been submitted.' })
+      ];
+      var btns = [];
+      if (ps.edit === true) {
+        var editBtn = el('button', { type: 'button',
+          class: 'yc-btn yc-btn-sm yc-btn-secondary', text: 'Edit response' });
+        editBtn.addEventListener('click', function () {
+          panel.remove();
+          hidden.forEach(function (n) { n.style.display = ''; });
+        });
+        btns.push(editBtn);
+      }
+      if (ps.new === true) {
+        var newBtn = el('button', { type: 'button',
+          class: 'yc-btn yc-btn-sm yc-btn-primary', text: 'Submit another response' });
+        newBtn.addEventListener('click', function () { location.reload(); });
+        btns.push(newBtn);
+      }
+      if (btns.length) kids.push(el('div', { class: 'ycr-post-submit-btns' }, btns));
+      var panel = el('div', { class: 'ycr-post-submit' }, kids);
+      document.body.appendChild(panel);
+    }
+
     // Hooks onSave — awaited by save() step 11, then save() re-baselines
     // (unless the user typed during the await; yc-forms fences that).
     config.onSave = async function (result) {
@@ -1390,6 +1441,7 @@
         try { await window.ycHooks.onSave(form_, result); }
         catch (e) { console.warn('[render] ycHooks.onSave failed:', e); }
       }
+      if (EXT && EXT.postSubmit) showPostSubmitPanel();
     };
 
     var form_ = new YCForm(config);
@@ -1556,6 +1608,10 @@
             }
             EXT.load   = body.load || null;
             EXT.linked = !!body.linked;
+            // postSubmit (X3): validated server-side (message string ≤2000,
+            // edit/new booleans), rendered via textContent only below.
+            EXT.postSubmit = (body.postSubmit && typeof body.postSubmit === 'object')
+              ? body.postSubmit : null;
             boot(body.definition, {
               formKey:       extKey,
               schemaVersion: body.schema_version,

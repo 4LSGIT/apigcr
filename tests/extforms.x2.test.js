@@ -449,6 +449,22 @@ describe('routes/api.ext.forms.js (live router)', () => {
     expect(body.load).toEqual({ contact_name: 'N', contact_phone: 'P', contact_email: 'E' });
   });
 
+  test('X3 postSubmit: validated keys pass through top-level; absent stays absent; extra keys dropped', async () => {
+    // Present — exactly the validated keys ride, hoisted beside load/linked;
+    // `external` itself stays off the projected definition (§D allowlist).
+    fixture = { template: tplRow({ definition: { ...publicDef,
+      external: { badLink: 'degrade',
+                  postSubmit: { message: 'Thanks!', edit: true, new: true, sneaky: 'x' } } } }) };
+    let body = await (await GET('/api/ext/forms/intake_test')).json();
+    expect(body.postSubmit).toEqual({ message: 'Thanks!', edit: true, new: true });
+    expect(body.definition.external).toBeUndefined();
+
+    // Absent — no key at all (renderer default = pre-X3 behavior).
+    fixture = { template: tplRow() };
+    body = await (await GET('/api/ext/forms/intake_test')).json();
+    expect('postSubmit' in body).toBe(false);
+  });
+
   test('submit linked: server-resolved linkage, submitted_by NULL, workflow from THE DEFINITION (body ids ignored)', async () => {
     fixture = { template: tplRow(), caseRow: { case_id: 'abc12345' }, primary: null };
     const res = await POST('/api/ext/forms/intake_test/submit',
