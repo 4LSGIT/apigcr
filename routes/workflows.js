@@ -67,12 +67,20 @@ function validateTestInput(v) {
 // mapFn(oldStepNumber) → newStepNumber, or null when the target step was
 // deleted (left as-is + warned; author must fix by hand).
 // ─────────────────────────────────────────────────────────────
+//
+// FLAT SCALAR PARAMS ONLY. evaluate_condition's multi-branch form nests its
+// targets in params.branches[].then — an ARRAY, which this loop can't consume.
+// That form is walked separately below; `branches` must NOT be added here.
 const BRANCH_TARGET_PARAMS = {
   evaluate_condition: ['then', 'else'],
   set_next:           ['value'],
   schedule_resume:    ['nextStep', 'skipToStep'],
   wait_for:           ['nextStep', 'skipToStep'],
   wait_until_time:    ['nextStep'],
+  // foreach.end_step is the loop's EXIT target (the body's loop-back is a
+  // set_next, already covered by `value` above). Omitted until 2026-08, so
+  // every renumber silently left a foreach exit pointing at the old number.
+  foreach:            ['end_step'],
 };
 
 async function remapBranchTargets(connection, workflowId, mapFn) {
@@ -127,6 +135,43 @@ async function remapBranchTargets(connection, workflowId, mapFn) {
         cfg.params[p] = nv;
         changed = true;
         rewritten.push(`step ${row.step_number}: ${cfg.function_name}.${p} ${iv}→${nv}`);
+      }
+    }
+
+    // evaluate_condition multi-branch form: params.branches is an array of
+    // {variable|conditions, …, then} objects. The scalar loop above cannot
+    // reach those `then`s, so they went unremapped AND unwarned. Same value
+    // contract as the flat params (integer / digit-string remapped;
+    // 'cancel'/'fail' left silent; anything else warned). `else` is the flat
+    // sibling and is already handled above. Kept as its own block rather than
+    // folded into the loop so the existing scalar path is untouched.
+    if (cfg.function_name === 'evaluate_condition' && Array.isArray(cfg.params.branches)) {
+      for (let i = 0; i < cfg.params.branches.length; i++) {
+        const br = cfg.params.branches[i];
+        if (!br || typeof br !== 'object') continue;
+        const bv = br.then;
+        if (bv === undefined || bv === null) continue;
+
+        let biv = null;
+        if (Number.isInteger(bv)) biv = bv;
+        else if (typeof bv === 'string' && /^\d+$/.test(bv)) biv = parseInt(bv, 10);
+        else {
+          if (bv !== 'cancel' && bv !== 'fail') {
+            warnings.push(`step ${row.step_number}: evaluate_condition.branches[${i}].then is non-literal (${JSON.stringify(bv)}) — not auto-remapped`);
+          }
+          continue;
+        }
+
+        const bnv = mapFn(biv);
+        if (bnv === null || bnv === undefined) {
+          warnings.push(`step ${row.step_number}: evaluate_condition.branches[${i}].then targeted a deleted step (${biv}) — left as-is, fix manually`);
+          continue;
+        }
+        if (bnv !== biv) {
+          br.then = bnv;
+          changed = true;
+          rewritten.push(`step ${row.step_number}: evaluate_condition.branches[${i}].then ${biv}→${bnv}`);
+        }
       }
     }
 
