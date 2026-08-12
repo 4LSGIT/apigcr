@@ -354,6 +354,7 @@ Reject with a message naming the offending path:
 - `onSubmit.patch` requires at least one field with a SAVE-direction `apiColumn` (a plain string, or an object carrying `save` — load-only columns don't count).
 - `hooks`, if set, matches `^[a-zA-Z0-9_-]{1,50}$` (path traversal guard).
 - `external` (X1): object with only the key `badLink`; `badLink`, if present, is `reject` or `degrade`.
+- `pattern` (X2.1): on non-internal templates, patterns are only applied to inputs of 512 chars or fewer — longer values fail the pattern without being run through the regex (ReDoS containment; staff-authored patterns can backtrack catastrophically).
 - `urlParam` (X2): string matching `^[a-zA-Z0-9_-]{1,50}$`; not a reserved param; unique form-wide; top-level fields only; rejected on embeds and inside repeaters.
 - `note` (form/section/row/field) is explicitly ignored — no validation, no rendering, no signature impact.
 

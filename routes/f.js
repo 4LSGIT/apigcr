@@ -31,6 +31,12 @@ const router = express.Router();
 
 const FORM_KEY_RE = /^[a-z0-9_]{1,50}$/;   // services/formTemplateService.js contract §2
 
+// Renderer/route mode switches — never forwarded (X2.1, N1). form_key and ext
+// are set by this route; preview and template_id belong to the authed preview
+// boot. Mirrors URL_PARAM_RESERVED in formTemplateService.js, minus the
+// credential params (case_id, contact_id, appt_id) which MUST ride through.
+const RESERVED_PARAMS = new Set(['form_key', 'ext', 'preview', 'template_id']);
+
 router.get('/f/:form_key', (req, res) => {
   const formKey = req.params.form_key;
   if (!FORM_KEY_RE.test(formKey)) {
@@ -41,7 +47,14 @@ router.get('/f/:form_key', (req, res) => {
   params.set('form_key', formKey);
   params.set('ext', '1');
   for (const [k, v] of Object.entries(req.query)) {
-    if (k === 'form_key' || k === 'ext') continue;      // ours
+    // Strip the params the RENDERER consumes as mode switches (X2.1, §9
+    // co-review N1). These are already reserved against urlParam declarations
+    // for exactly this reason; forwarding them let an external link flip the
+    // renderer into a mode it cannot serve — /f/x?preview=1 reached the
+    // preview branch, found no parent apiSend, and died on "must run inside
+    // the app". No data leak (preview is authed), but it is a confusing dead
+    // end reachable from a public URL.
+    if (RESERVED_PARAMS.has(k)) continue;
     // Express may deliver repeated params as arrays — forward every value
     // in order (the renderer's urlParam rule is last-wins).
     if (Array.isArray(v)) {

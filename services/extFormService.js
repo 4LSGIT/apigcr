@@ -39,13 +39,36 @@ const badRequest = (msg) => httpError(400, msg);
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
-// case_id shape (routes/api.intake.js:76 — crypto.randomBytes(6) b64url,
-// 8 chars; column varchar(20)). Anything outside this never touches the DB.
+// case_id shape. Anything outside this never touches the DB.
+//
+// ENTROPY — load-bearing, corrected 2026-08-12 (X2.1, §9 co-review F1). The
+// bearer credential is **40 bits**, not the 48 an earlier comment here
+// claimed: lib/caseId.js mints 8 chars of Crockford Base32 (32 symbols) via
+// generateCaseId(), called by routes/api.intake.js:611 and
+// api.intake.petition.js:428. The ~1k legacy mixed-case base64url ids are
+// ~42 bits AS THE DB SEES THEM — cases.case_id is utf8mb4_general_ci, so the
+// collation folds case. caseId.js's "40 bits is ample" reasons about
+// COLLISION (a birthday bound); this route depends on the different property
+// of resistance to ONLINE GUESSING, derived here:
+//   P(hit/guess) ≈ 1075 / 2^40 ≈ 9.8e-10 → ~1.0e9 expected guesses.
+// Per-IP that is unreachable (30 GET/15min ⇒ ~350k IP-days). The vector that
+// made it reachable was wildcard CORS letting any web page read this response
+// from a visitor's browser: ~1M hijacked browsers ⇒ a hit inside a day, with
+// every per-IP bucket intact. api.ext.forms.js now strips the CORS grant, so
+// cross-origin JS cannot read these responses at all. Do NOT re-add a
+// permissive ACAO to /api/ext/* without redoing this arithmetic.
+// The varchar(20) cap admits the legacy ids; the pattern must never narrow to
+// the new alphabet (caseId.js is explicit that legacy ids are never migrated).
 const CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/;
 
 // Per-string storage sanity cap when a field declares no maxLength.
 const MAX_STRING = 20000;
 const MAX_REPEATER_ITEMS = 100;
+// Longest input ever handed to a staff-authored `pattern` regex (X2.1, F6).
+const REGEX_INPUT_CAP = 512;
+// Whole-payload byte cap, enforced on the PARSED body (X2.1, F5) — the
+// Content-Length header it replaced is absent under chunked encoding.
+const MAX_VALUES_BYTES = 64 * 1024;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TEMPLATE GATE — §5.2/§5.3 steps 1–2
@@ -136,8 +159,25 @@ function pick(src, keys) {
   return out;
 }
 
+// Option items are the one nested spot the top-level allowlist doesn't reach:
+// validateDefinition never constrains option-object shape, so any extra key a
+// staff author leaves on one would ride to the public wire verbatim (X2.1,
+// §9 co-review N6). Strings pass through; objects are reduced to the two keys
+// the renderer reads.
+function projectOptions(options) {
+  if (!Array.isArray(options)) return options;
+  return options.map((o) => {
+    if (!o || typeof o !== 'object') return o;
+    const out = {};
+    if (o.value !== undefined) out.value = o.value;
+    if (o.label !== undefined) out.label = o.label;
+    return out;
+  });
+}
+
 function projectField(f) {
   const out = pick(f, FIELD_KEYS);
+  if (out.options !== undefined) out.options = projectOptions(out.options);
   if (typeof f.prefill === 'string' && f.prefill.indexOf('$load') === 0) {
     out.prefill = f.prefill;               // $load only — resolver exprs stay private
   }
@@ -206,8 +246,14 @@ async function resolveCase(db, caseId) {
   );
   if (!caseRow) return { valid: false };
 
+  // contact_id is selected for INTERNAL use only — it binds the workflow
+  // execution to the real Primary contact (X2.1, §9 co-review F7) and is
+  // stripped from `load` below. §5.2.3's "hard three-field projection"
+  // governs THE WIRE; contact_id is not PII and never reaches it. The ban on
+  // `contacts.*` is unchanged: every column is still named explicitly, so
+  // contact_ssn stays unreachable.
   const [[primary]] = await db.query(
-    `SELECT co.contact_name, co.contact_phone, co.contact_email
+    `SELECT co.contact_id, co.contact_name, co.contact_phone, co.contact_email
        FROM contacts co
        JOIN case_relate cr ON co.contact_id = cr.case_relate_client_id
       WHERE cr.case_relate_case_id = ? AND cr.case_relate_type = 'Primary'
@@ -216,6 +262,7 @@ async function resolveCase(db, caseId) {
   );
   return {
     valid: true,
+    // load = exactly the three wire fields, or null.
     load: primary
       ? {
           contact_name:  primary.contact_name,
@@ -223,6 +270,9 @@ async function resolveCase(db, caseId) {
           contact_email: primary.contact_email,
         }
       : null,
+    // Sidecar, never serialized to the client (the route reads it and drops it).
+    contactId: primary && Number.isInteger(Number(primary.contact_id))
+      ? Number(primary.contact_id) : null,
   };
 }
 
@@ -308,6 +358,19 @@ function checkScalar(field, value, path) {
 
   if (isEmpty(value)) return;
   if (typeof field.pattern === 'string' && field.pattern) {
+    // ReDoS containment (X2.1, §9 co-review F6): patterns are staff-authored
+    // and may backtrack catastrophically (nested quantifiers are easy to
+    // write by accident in phone/email validation). The input length is
+    // attacker-controlled up to maxLength — or MAX_STRING (20000) when the
+    // field declares none, which is enough to stall this single-threaded
+    // instance for EVERY user, staff included. Anything longer than
+    // REGEX_INPUT_CAP fails the pattern without being run through it: no
+    // legitimate form field carries a 512+ char patterned value, and failing
+    // closed is the safe direction. (The try/catch below covers UNPARSEABLE
+    // patterns — a different failure; publish already rejects those.)
+    if (str.length > REGEX_INPUT_CAP) {
+      throw badRequest(`${path} ${field.patternMessage || 'does not match the required format'}`);
+    }
     let re = null;
     try { re = new RegExp(field.pattern); } catch (_) { /* staff-authored; unparseable = skip */ }
     if (re && !re.test(str)) {
@@ -341,6 +404,17 @@ function checkScalar(field, value, path) {
 function validateValues(def, values) {
   if (!values || typeof values !== 'object' || Array.isArray(values)) {
     throw badRequest('values must be an object');
+  }
+
+  // Payload size (X2.1, §9 co-review F5): measured on the PARSED object, not
+  // on Content-Length — chunked requests carry no such header, so the old
+  // check passed unconditionally and the only real bound was the global
+  // express.json 10mb. Note the per-field caps do NOT bound the whole: 100
+  // repeater items x N fields x 20000 chars is a legitimately multi-megabyte
+  // payload that every field-level rule accepts, and form_submissions.data
+  // would store it.
+  if (Buffer.byteLength(JSON.stringify(values)) > MAX_VALUES_BYTES) {
+    throw badRequest('submission is too large');
   }
 
   // Registry from the published definition — all containers, one pool.

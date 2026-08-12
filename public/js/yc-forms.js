@@ -116,7 +116,12 @@ class YCForm {
       this.setReadonly(this.config.readonly);
 
 // 7. Fetch live data — prefer parent's entityData, fall back to API
-if (this.config.endpoints.load) {
+// N4 (X2.1): `&& !this.config.external` is defence in depth. External mode is
+// unreachable here today because projectDefinition never emits `endpoints`, so
+// this whole block is skipped — but if a future projection change ever let one
+// through, external mode would silently become a fetcher of authed staff URLs.
+// Cheaper to state the invariant than to rely on a distant allowlist holding.
+if (this.config.endpoints.load && !this.config.external) {
   try {
     let loadResult = null;
 
@@ -993,7 +998,7 @@ if (this.config.endpoints.load) {
     // browsing, quota) — a failed draft save degrades silently.
     if (this.config.external) {
       try {
-        localStorage.setItem(this._localDraftKey(), JSON.stringify({
+        this._draftStore().setItem(this._localDraftKey(), JSON.stringify({
           data: this.collect(),
           updated_at: new Date().toISOString(),
           schema_version: this.config.schemaVersion,
@@ -1040,9 +1045,30 @@ if (this.config.endpoints.load) {
     return 'ycExtDraft:' + this.config.formKey + ':' + (this.config.linkId || 'anon');
   }
 
+  /**
+   * Which store backs the external draft (X2.1, §9 co-review F4).
+   *
+   * LINKED (a resolved case_id) → localStorage: the key is per-case, the
+   * device belongs to that client, and surviving a browser restart is the
+   * point.
+   *
+   * ANONYMOUS → sessionStorage. The key would otherwise be a single shared
+   * slot ('…:anon') for EVERY anonymous visitor on the device, and anonymous
+   * is the normal path for a degrade-mode intake form — so visitor 2 got a
+   * draft-recovery banner offering to restore visitor 1's answers, on a
+   * bankruptcy intake form (debts, garnishments, lawsuits), on exactly the
+   * shared family/library/workplace devices that receive SMS intake links.
+   * sessionStorage is per-tab and dies with it, which still satisfies
+   * §5.3.8's intent (survive an accidental reload) with no cross-visitor
+   * bleed.
+   */
+  _draftStore() {
+    return this.config.linkId ? localStorage : sessionStorage;
+  }
+
   _readLocalDraft() {
     try {
-      const raw = localStorage.getItem(this._localDraftKey());
+      const raw = this._draftStore().getItem(this._localDraftKey());
       if (!raw) return null;
       const d = JSON.parse(raw);
       if (!d || typeof d !== 'object' || !d.data) return null;
@@ -1053,7 +1079,7 @@ if (this.config.endpoints.load) {
   }
 
   _clearLocalDraft() {
-    try { localStorage.removeItem(this._localDraftKey()); } catch (_) { /* ok */ }
+    try { this._draftStore().removeItem(this._localDraftKey()); } catch (_) { /* ok */ }
   }
 
 

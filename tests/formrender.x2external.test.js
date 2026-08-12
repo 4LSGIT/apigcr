@@ -96,6 +96,9 @@ function makePage(opts = {}) {
       if (opts.seedDraft) {
         window.localStorage.setItem(opts.seedDraft.key, JSON.stringify(opts.seedDraft.value));
       }
+      if (opts.seedLocal) {   // deliberately the WRONG store for the anonymous branch
+        window.localStorage.setItem(opts.seedLocal.key, JSON.stringify(opts.seedLocal.value));
+      }
     },
   });
   DOMS.push(dom);
@@ -244,6 +247,39 @@ describe('external localStorage drafts', () => {
     w.document.getElementById('saveBtn').click();
     await sleep(150);
     expect(w.localStorage.getItem(key)).toBeNull();
+  });
+
+  test('F4: the ANONYMOUS draft lives in sessionStorage, not the shared localStorage slot', async () => {
+    const page = makePage({
+      query: 'form_key=intake_test&ext=1',                    // no case_id → degrade
+      getBody: { status: 'success', title: 'Intake', link_type: 'case',
+                 schema_version: 3, definition: EXT_DEF, load: null, linked: false },
+    });
+    const w = await ready(page);
+    const key = 'ycExtDraft:intake_test:anon';
+
+    type(w, 'reason', 'private answers');
+    await sleep(150);
+    // The shared cross-visitor slot must stay empty; the per-tab store holds it.
+    expect(w.localStorage.getItem(key)).toBeNull();
+    expect(JSON.parse(w.sessionStorage.getItem(key)).data.reason).toBe('private answers');
+  });
+
+  test('F4: a stale ANONYMOUS localStorage draft from a previous visitor is NOT offered', async () => {
+    const page = makePage({
+      query: 'form_key=intake_test&ext=1',
+      getBody: { status: 'success', title: 'Intake', link_type: 'case',
+                 schema_version: 3, definition: EXT_DEF, load: null, linked: false },
+      seedLocal: {
+        key: 'ycExtDraft:intake_test:anon',
+        value: { data: { reason: 'visitor ones private answers' },
+                 updated_at: '2026-08-10T12:00:00Z', schema_version: 3 },
+      },
+    });
+    const w = await ready(page);
+    const banner = w.document.getElementById('draftBanner');
+    expect(banner.style.display).toBe('none');
+    expect(w.document.querySelector('[name="reason"]').value).toBe('');
   });
 
   test('a seeded draft shows the recovery banner; restore fills the form', async () => {

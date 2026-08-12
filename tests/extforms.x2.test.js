@@ -177,8 +177,11 @@ describe('extFormService.resolveCase', () => {
                  contact_ssn: 'NEVER' },   // even a sloppy stub row must not leak
     });
     const out = await svc.resolveCase(db, 'abc12345');
-    expect(out).toEqual({ valid: true, load: {
-      contact_name: 'N', contact_phone: 'P', contact_email: 'E' } });
+    expect(out.valid).toBe(true);
+    expect(out.load).toEqual({ contact_name: 'N', contact_phone: 'P', contact_email: 'E' });
+    // contactId is an INTERNAL sidecar (X2.1/F7) — the route uses it to bind
+    // the workflow execution and never serializes it. It must not be in load.
+    expect(out.contactId).toBeNull();       // this stub row has no contact_id
     // §9.2: the projection query itself names exactly the three columns.
     const projSql = db.calls[1].sql;
     expect(projSql).toContain('co.contact_name, co.contact_phone, co.contact_email');
@@ -188,7 +191,9 @@ describe('extFormService.resolveCase', () => {
   test('case without a Primary: valid link, null load', async () => {
     const out = await svc.resolveCase(
       routedDb({ caseRow: { case_id: 'abc12345' }, primary: null }), 'abc12345');
-    expect(out).toEqual({ valid: true, load: null });
+    expect(out.valid).toBe(true);
+    expect(out.load).toBeNull();
+    expect(out.contactId).toBeNull();
   });
 });
 
@@ -248,6 +253,44 @@ describe('extFormService.validateValues', () => {
   });
 });
 
+describe('extFormService — X2.1 hardening', () => {
+  test('F5: whole-payload byte cap on the PARSED values (per-field caps do not bound the total)', () => {
+    const repDef = { sections: [
+      { title: 'S', rows: [{ fields: [{ name: 'a', type: 'text' }] }] },
+      { repeater: 'cars', title: 'Cars', fields: [{ name: 'make', type: 'text' }] },
+    ] };
+    // Every item passes field-level validation; together they exceed 64KB.
+    const cars = Array.from({ length: 100 }, () => ({ make: 'x'.repeat(1000) }));
+    let err; try { svc.validateValues(repDef, { cars }); } catch (e) { err = e; }
+    expect(err && err.status).toBe(400);
+    expect(err.message).toContain('too large');
+    // a normal submission is unaffected
+    expect(() => svc.validateValues(repDef, { a: 'x', cars: [{ make: 'Ford' }] })).not.toThrow();
+  });
+
+  test('F6: a catastrophically-backtracking pattern is never run on a long input', () => {
+    const evilDef = { sections: [{ title: 'S', rows: [{ fields: [
+      { name: 'phone', type: 'text', pattern: '^(a+)+$' },   // classic nested quantifier
+    ] }] }] };
+    const started = Date.now();
+    let err;
+    try { svc.validateValues(evilDef, { phone: 'a'.repeat(600) + '!' }); } catch (e) { err = e; }
+    expect(err && err.status).toBe(400);
+    expect(Date.now() - started).toBeLessThan(1000);         // returns immediately, no stall
+    // short inputs still get real pattern semantics
+    expect(() => svc.validateValues(evilDef, { phone: 'aaaa' })).not.toThrow();
+  });
+
+  test('N6: extra keys on option objects do not reach the public wire', () => {
+    const def = { sections: [{ title: 'S', rows: [{ fields: [
+      { name: 'x', type: 'select', options: [
+        { value: 'a', label: 'A', internalNote: 'staff only', apiColumn: 'leak' }, 'b'],
+      }] }] }] };
+    const p = svc.projectDefinition(def);
+    expect(p.sections[0].rows[0].fields[0].options).toEqual([{ value: 'a', label: 'A' }, 'b']);
+  });
+});
+
 // ── 2. LIVE-ROUTER integration — the §9 route locks ─────────────────────────
 
 describe('routes/api.ext.forms.js (live router)', () => {
@@ -267,23 +310,115 @@ describe('routes/api.ext.forms.js (live router)', () => {
   });
   beforeEach(() => { fixture = {}; internalFunctions.start_workflow.mockClear(); });
 
-  const GET  = (p) => fetch(base + p);
-  const POST = (p, body) => fetch(base + p, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body) });
+  // The limiters in api.ext.forms.js are module-level and persist for the whole
+  // file, so every request gets its own client IP unless a test pins one.
+  // getClientIp takes the LAST XFF element (the GFE-appended true peer), which
+  // is exactly what these headers simulate.
+  let ipSeq = 0;
+  const nextIp = () => `203.0.113.${(ipSeq++ % 250) + 1}`;
+  const hdrs = (ip) => ({ 'Content-Type': 'application/json',
+                          'X-Forwarded-For': `1.2.3.4, ${ip || nextIp()}` });
 
-  test('§9.4 no-oracle: every template refusal branch returns THE SAME 404 body', async () => {
+  const GET  = (p, ip) => fetch(base + p, { headers: hdrs(ip) });
+  const POST = (p, body, ip) => fetch(base + p, {
+    method: 'POST', headers: hdrs(ip), body: JSON.stringify(body) });
+
+  test('§9.4 no-oracle: every template refusal branch returns THE SAME 404 status AND body', async () => {
     const bodies = [];
+    const statuses = [];
     // unknown key
     fixture = { template: null };
-    bodies.push(await (await GET('/api/ext/forms/nope')).json());
+    let r = await GET('/api/ext/forms/nope');
+    statuses.push(r.status); bodies.push(await r.json());
     // wrong visibility
     fixture = { template: tplRow({ visibility: 'internal' }) };
-    bodies.push(await (await GET('/api/ext/forms/intake_test')).json());
+    r = await GET('/api/ext/forms/intake_test');
+    statuses.push(r.status); bodies.push(await r.json());
     // refused keys
     fixture = { template: tplRow({ definition: { ...publicDef, code: 'x=1' } }) };
-    bodies.push(await (await GET('/api/ext/forms/intake_test')).json());
+    r = await GET('/api/ext/forms/intake_test');
+    statuses.push(r.status); bodies.push(await r.json());
+    // bad form_key shape (N8 — gated before the DB is touched)
+    fixture = {};
+    r = await GET('/api/ext/forms/BAD-KEY');
+    statuses.push(r.status); bodies.push(await r.json());
+
     for (const b of bodies) expect(b).toEqual({ status: 'error', message: 'Not found' });
+    expect(statuses).toEqual([404, 404, 404, 404]);   // gap 5: status, not just body
+    expect(fixture._lastCalls).toEqual([]);           // N8: no query at all for a malformed key
+  });
+
+  test('F1: the ambient wildcard CORS grant is revoked on every branch, and no branch is cacheable (N3)', async () => {
+    fixture = { template: tplRow(), caseRow: { case_id: 'abc12345' }, primary: null };
+    const ok = await GET('/api/ext/forms/intake_test?case_id=abc12345');
+    fixture = { template: null };
+    const nf = await GET('/api/ext/forms/nope');
+    for (const r of [ok, nf]) {
+      expect(r.headers.get('access-control-allow-origin')).toBeNull();
+      expect(r.headers.get('cache-control')).toBe('no-store');
+    }
+  });
+
+  test('F5: a 400-validation POST does NOT consume the per-case token (no lockout weapon)', async () => {
+    const caseFixture = () => ({ template: tplRow(), caseRow: { case_id: 'lockout1' }, primary: null });
+    // Six malformed submissions — more than the 5/hour per-case budget.
+    // Each attempt from a different IP — the per-IP cap must not be what saves
+    // us here, or the test would prove nothing about the per-case bucket.
+    for (let i = 0; i < 6; i++) {
+      fixture = caseFixture();
+      const bad = await POST('/api/ext/forms/intake_test/submit',
+        { case_id: 'lockout1', values: { reason: 'r', contact_pref: 'Fax' } });
+      expect(bad.status).toBe(400);
+    }
+    // The legitimate client can still submit.
+    fixture = caseFixture();
+    const good = await POST('/api/ext/forms/intake_test/submit',
+      { case_id: 'lockout1', values: { reason: 'real submission' } });
+    expect(good.status).toBe(200);
+  });
+
+  test('F7: the workflow is bound to the server-resolved Primary contact, not to any submitted value', async () => {
+    fixture = { template: tplRow(), caseRow: { case_id: 'abc12345' },
+      primary: { contact_id: 777, contact_name: 'N', contact_phone: 'P', contact_email: 'E' } };
+    await POST('/api/ext/forms/intake_test/submit',
+      { case_id: 'abc12345', values: { reason: 'help' } });
+    const [wfParams] = internalFunctions.start_workflow.mock.calls[0];
+    expect(wfParams.contact_id_override).toBe(777);
+    // and contact_id never rides the wire in the GET payload
+    fixture = { template: tplRow(), caseRow: { case_id: 'abc12345' },
+      primary: { contact_id: 777, contact_name: 'N', contact_phone: 'P', contact_email: 'E' } };
+    const body = await (await GET('/api/ext/forms/intake_test?case_id=abc12345')).json();
+    expect(body.load).toEqual({ contact_name: 'N', contact_phone: 'P', contact_email: 'E' });
+    expect(JSON.stringify(body)).not.toContain('777');
+  });
+
+  test('limiters fire: per-IP GET budget, and the per-case cap on VALID submissions', async () => {
+    // Per-IP GET: 30 per 15 min, one pinned IP.
+    const ip = '198.51.100.7';
+    let last;
+    for (let i = 0; i < 31; i++) {
+      fixture = { template: null };
+      last = await GET('/api/ext/forms/nope', ip);
+    }
+    expect(last.status).toBe(429);
+    expect((await last.json()).message).toContain('Too many requests');
+
+    // Per-case: 5 VALID submissions per hour, each from a fresh IP.
+    const caseFixture = () => ({ template: tplRow(), caseRow: { case_id: 'capcase1' }, primary: null });
+    let post;
+    for (let i = 0; i < 6; i++) {
+      fixture = caseFixture();
+      post = await POST('/api/ext/forms/intake_test/submit',
+        { case_id: 'capcase1', values: { reason: 'submission ' + i } });
+    }
+    expect(post.status).toBe(429);
+  });
+
+  test('F7: anonymous submissions bind to no contact at all', async () => {
+    fixture = { template: tplRow(), caseRow: null };
+    await POST('/api/ext/forms/intake_test/submit', { values: { reason: 'anon' } });
+    const [wfParams] = internalFunctions.start_workflow.mock.calls[0];
+    expect('contact_id_override' in wfParams).toBe(false);
   });
 
   test('GET degrade: bad case_id → 200 anonymous (load null, linked false) — never confirms the id', async () => {

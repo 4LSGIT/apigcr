@@ -85,3 +85,140 @@ is pre-existing debt, noted, not in forms-arc scope.
   capture arm, detached advance) — a fifth creation site was not minted.
   initData mirrors the internal client's assembly byte-for-byte: values →
   config initData → system fields win.
+
+
+---
+
+# X2.1 — corrective slice (2026-08-12), from the §9 co-review
+
+Co-review verdict: SHIP WITH CONDITIONS. All four blocking conditions are
+closed below, plus every should-fix and every actionable note. Full jest:
+2902 passing / 1 pre-existing skip.
+
+## §E — CREDENTIAL ENTROPY (F1). Supersedes any "48-bit" claim anywhere.
+
+The external bearer credential is **40 bits**. `lib/caseId.js` mints 8 chars
+of Crockford Base32 (32 symbols) via `generateCaseId()`. The ~1k legacy
+mixed-case base64url ids are ~42 bits **as the DB sees them** —
+`cases.case_id` is `utf8mb4_general_ci`, so the collation folds case.
+`caseId.js`'s "40 bits is ample" reasons about COLLISION (birthday bound);
+X2 depends on the different property of ONLINE-GUESSING resistance, derived
+now: P(hit/guess) ≈ 1075/2^40 ≈ 9.8e-10 → ~1.0e9 expected guesses. Per-IP
+that is unreachable (~350k IP-days at 30 GET/15min).
+
+The prior "48-bit crypto-random" figure in §2 and in `extFormService.js`
+came from the X2 boot prompt and described code at a path that does not
+exist. It was never re-derived against `lib/caseId.js`. Corrected in code
+with the arithmetic inline. **§2 of EXTERNAL_FORMS_DESIGN.md should be
+amended to say 40 bits** — supermanager action.
+
+**CORS revoked on `/api/ext/*`** (`api.ext.forms.js`, `noCors`). `server.js`
+applies `cors({origin:'*'})` globally, which let any web page read these
+responses from a visitor's browser — turning per-IP-unreachable into
+botnet-reachable (~1M hijacked browsers ⇒ a hit inside a day, every per-IP
+bucket intact), each hit yielding a bankruptcy client's name, phone, email.
+Removing the header beats naming an origin: nothing legitimate is
+cross-origin (SMS flow is same-origin via `/f/`; a website embed is an
+iframe of that same page). Do not restore a permissive ACAO without redoing
+this arithmetic.
+
+## §F — ReDoS acceptance is now bounded, not accepted (F6)
+
+Staff-authored `pattern` regexes run against attacker-controlled input up to
+`maxLength` — or 20000 when the field declares none. Nested quantifiers
+would stall the single-threaded instance for every user. Inputs longer than
+`REGEX_INPUT_CAP` (512) now fail the pattern without being run through it.
+No legitimate patterned form value is 512+ chars; failing closed is the safe
+direction.
+
+## §G — `linked` flag / §5.2-§6 contradiction (F2): FORMS-MANAGER POSITION
+
+The reviewer is right that §6's "never confirms whether the case_id was
+real" is false as implemented, and right that removing the flag would be
+illusory (`resolveCase` issues 0/1/2 queries for malformed/unknown/valid —
+a timing oracle far larger than the flag). Adding: the case-existence oracle
+has **zero marginal security value to an attacker**. Confirming a case_id
+exists is strictly weaker than what the same request already returns on
+success (the PII payload), and in reject mode the 200-vs-404 split is the
+same signal. An attacker's enumeration rate is identical with or without it.
+
+Recommended resolution: **amend §6's wording, change no code.** §6's real
+guarantee — the one that holds and is worth keeping — is that the ERROR
+COPY does not distinguish malformed from unknown from missing. Suggested
+text: "the badLink response is identical for a malformed, unknown, or
+absent case_id; note that a successful load necessarily confirms the id
+resolved, and that enumeration is bounded by the credential entropy (§2) and
+the CORS posture, not by response shape." Supermanager's call.
+
+## §H — F7 fix: the CORRECT binding, not the contained patch
+
+`resolveCase` now also selects `contact_id` (internal sidecar, stripped
+before the wire) and the submit route passes it as `contact_id_override` to
+`start_workflow`. Precedence there is override > `init_data[workflow's
+default_contact_id_from]` > NULL, so this both binds executions to the real
+Primary contact (what X3's workflow wants anyway) and closes the latent hole
+where a public submitter controlled the value of a declared field whose NAME
+matched that workflow's `default_contact_id_from`. Anonymous submissions
+pass no override and bind to nothing.
+
+**§5.2.3 wording:** the reviewer reads "hard three-field projection" as
+governing THE WIRE, not the query. The forms manager agrees — and the wire
+guarantee is now test-locked (`contact_id` asserted absent from the GET
+payload). The ban on `contacts.*` / `SELECT *` is unchanged: every column is
+still named explicitly, so `contact_ssn` stays unreachable. Recommend §5.2.3
+be amended to say "three fields on the wire". Supermanager action.
+
+## §I — remaining X2.1 changes
+
+- **F4 (blocker):** anonymous external drafts moved to `sessionStorage`
+  (`_draftStore()`). The `…:anon` localStorage key was a single shared slot
+  for every anonymous visitor on a device — and anonymous is the NORMAL path
+  for a degrade-mode intake form, so visitor 2 was offered a Restore button
+  for visitor 1's bankruptcy answers. Linked drafts stay in localStorage
+  (per-case key, client's own device, surviving a restart is the point).
+- **F5:** the 64KB cap moved off `Content-Length` (absent under chunked
+  encoding, so it passed unconditionally) onto the parsed payload inside
+  `validateValues`. Per-field caps do not bound the total: 100 repeater items
+  x N fields x 20000 chars is a multi-megabyte payload every field-level rule
+  accepts. Separately, the per-case limiter now runs AFTER validation — it
+  was a lockout weapon (five malformed POSTs from any link holder, or five
+  honest client mistakes, locked the real client out for an hour). Five VALID
+  submissions still exhaust it; that residue is inherent to per-case capping
+  and is indistinguishable from a real client submitting.
+- **N1:** `/f/` strips `preview` and `template_id` (renderer mode switches);
+  credential params still ride through. **N3:** `no-store` on every branch.
+  **N4:** external mode can never take the authed load-URL fallback.
+  **N6:** option objects projected to `{value,label}` only — the one nested
+  spot the allowlist previously stopped short of. **N8:** `form_key` shape
+  gate on the API route, matching `/f/`.
+- **Tests:** +18. New `tests/f_route.x21.test.js` (gap 2 — the route had none).
+  Anonymous draft store both ways (gap 4). Status codes in the no-oracle test
+  (gap 5). Limiters now locked, including "a 400 does not consume the
+  per-case token" (gap 1). F7 binding + `contact_id` absent from the wire
+  (gap 6). Payload cap, ReDoS timing, option projection.
+
+## §J — accepted, not fixed (with reasons)
+
+- **N2** (repeated `case_id` degrades a valid link): the strict
+  `typeof === 'string'` gate is the right posture; an array-valued credential
+  should not resolve. Real links carry one `case_id`.
+- **N5** (`$load` shape differs internal vs external): real. External
+  `_loadResult` is flat `{contact_name, contact_phone, contact_email}`;
+  internal is the API payload keyed by `endpoints.load.path`. A template
+  therefore cannot prefill in both modes. X3's intake template is
+  external-only, so this does not bite now — **but it must be recorded as an
+  X3 authoring constraint**, and §5.2.4's "no new prefill vocabulary" is
+  loose as written.
+- **N7** (anonymous submissions share one `MAX(version)` bucket): fine at
+  intake volumes; the index covers the prefix. Revisit before high volume.
+- **N9** (`tests/ formrender.x2external.test.js` — leading space in the
+  filename, recorded that way in TRACKED_FILES.txt): introduced by the commit
+  pipeline, not the source. Jest matches it, so it runs, but it is a landmine
+  for any tooling shelling out with an unquoted path. **Fred: rename.**
+  Note the same pipeline lowercases test filenames.
+- **Test-gap 7** (repeater `required`/`requiredWhen` not enforced
+  server-side): genuine spec ambiguity — §5.3.2 does not say, and the client
+  does not enforce them inside repeaters either, so server enforcement would
+  reject submissions the renderer considers complete. Left as-is
+  deliberately; flag to the supermanager if repeater-level requirement is
+  wanted.
