@@ -70,6 +70,30 @@ URL always works.
 
 ---
 
+## Hosting a YisraForm on a page
+
+A landing page is also how a **public YisraForm** gets the firm's branding. The
+form itself lives at `app.4lsg.com/f/<form_key>`, which renders it on a bare
+page — no logo, no phone number. The host page (slug `form`) wraps it in the LSG
+header and footer:
+
+```
+app.4lsg.com/p/form?f=intake&case_id=ABC12345&src=facebook
+```
+
+One page record handles every public form: `f` picks which one, and everything
+else on the link is passed straight through to it. This page uses the form's own
+submission path, **not** the hook wiring described above — don't attach a hook
+to it.
+
+Two caveats: the form must be set to **public** visibility in the Form Builder
+first (otherwise the link 404s), and **Preview will show a broken form** because
+the preview sandbox blocks the form's data calls — use the live URL to test.
+
+See **YisraForms → Part 15, External Forms** for the full picture.
+
+---
+
 ## A few things to know
 
 ### Drafts return "not found"

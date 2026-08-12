@@ -9,7 +9,7 @@ Forms are standalone HTML pages loaded inside iframes. This section covers how t
 Forms call `window.parent.apiSend()` for all API requests. This works through a relay chain:
 
 ```
-a.html              ← apiSend() defined here
+index.html          ← apiSend() defined here
   └─ case.html     ← window.apiSend = P.apiSend   (relay)
        └─ forms/341notes.html   ← calls P.apiSend()
 ```
@@ -27,10 +27,10 @@ This works at any nesting depth. A form always looks exactly one level up.
 
 ## Firm Data Relay
 
-The shell (`a.html`) loads firm-wide data once after auth — phone lines, email senders, active users, current user — into `window.firmData`. Any form that needs this data reads it from the parent:
+The shell (`index.html`) loads firm-wide data once after auth — phone lines, email senders, active users, current user — into `window.firmData`. Any form that needs this data reads it from the parent:
 
 ```js
-// In the shell (a.html): loaded once
+// In the shell (index.html): loaded once
 window.firmData = { phoneLines, emailFrom, currentUser, users };
 
 // In case.html / contact.html: relay
@@ -175,15 +175,25 @@ The form doesn't know or care who its parent is — it just needs `P.apiSend()` 
 
 ---
 
-## External Forms (Future)
+## External Forms
 
-When `external: true`, the form uses `fetch()` directly. No parent iframe, no postMessage. Three auth tiers planned:
+Everything above describes the **internal** hosting mode: a parent page relays
+`apiSend`, the form calls up one level, `postMessage` carries the save event
+back. External forms invert all of that — the renderer boots standalone, calls
+`/api/ext/*` with `fetch()` directly, and has no parent to talk to. There is no
+`apiSend` relay, no `firmData`, no `entityData`, and no `form-saved` message.
+
+The three visibility tiers are shipped, not planned:
 
 | Tier | Auth | Use case |
 |------|------|----------|
-| Internal | JWT via iframe relay | Staff forms |
-| External public | None | Simple intake forms |
-| External portal | Token / magic link | Client portal (future) |
+| `internal` | JWT via iframe relay | Staff forms |
+| `public` | `case_id` bearer param, or anonymous | Intake, lead capture |
+| `portal` | Portal credential | Client portal (future slice) |
+
+**See [Part 15 — External Forms](15-external-forms.md)** for the whole surface:
+the `/f/:form_key` link, `case_id` and `badLink`, URL prefill, `postSubmit`,
+the branded host page, and the CORS/rate-limit posture.
 
 ---
 

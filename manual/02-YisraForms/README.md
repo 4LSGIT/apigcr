@@ -22,3 +22,4 @@ The forms system replaces external form tools (JotForm) with internal, reusable 
 | 12 | [12-database-schema.md](12-database-schema.md) | The form_submissions table and constraints |
 | 13 | [13-template-system.md](13-template-system.md) | Template-driven forms — definitions, publish/versioning, apiColumn, prefill, hooks routing |
 | 14 | [14-form-builder.md](14-form-builder.md) | The Form Builder — admin list, editor, tabs (incl. Live), publish, history & restore |
+| 15 | [15-external-forms.md](15-external-forms.md) | Public forms — visibility tiers, `/f/:form_key`, `case_id`, URL prefill, the branded host page |

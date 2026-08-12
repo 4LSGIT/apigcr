@@ -100,6 +100,7 @@ manual/02-YisraForms/11-api-reference.md
 manual/02-YisraForms/12-database-schema.md
 manual/02-YisraForms/13-template-system.md
 manual/02-YisraForms/14-form-builder.md
+manual/02-YisraForms/15-external-forms.md
 manual/02-YisraForms/README.md
 manual/03-YisraFlow/01-overview.md
 manual/03-YisraFlow/02-workflows.md
