@@ -2255,7 +2255,7 @@
   <br><br>
   <!-- Placeholder buttons: no wiring, just fun. Hover animates the icon like
        every other button here (successor to the old jumping-cat button). -->
-  <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-rectangle-list fa-2xl"></i><br><br>Form Builder</button>
+  <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-pen-to-square fa-2xl"></i><br><br>Form Builder</button>
   <button class="big-button" data-target="reportsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.3s"><i class="fa-solid fa-chart-column fa-2xl"></i><br><br>Reports</button>
   <button class="big-button" data-target="campaignsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br><br>Campaigns</button>
   <br><br>
@@ -2549,15 +2549,7 @@
     const homeIcons = tab.dataset.allIcons || '<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-grip"></i>';
     allPill.innerHTML = homeIcons + '<span class="pill-label">All</span>';
     allPill.title = 'All';
-    allPill.addEventListener('click', () => {
-      // Hide any open panels referenced by this tab's grid buttons
-      tab.querySelectorAll(':scope > .big-button[data-target]').forEach(b => {
-        const panel = document.getElementById(b.dataset.target);
-        if (panel) panel.style.display = 'none';
-      });
-      tab.classList.remove('drill-active');
-      strip.querySelectorAll('.pill-button').forEach(p => p.classList.remove('active'));
-    });
+    allPill.addEventListener('click', () => exitDrillMode(tab));
     strip.appendChild(allPill);
 
     // One pill per grid button (panel buttons AND action buttons)
@@ -2593,6 +2585,22 @@
     const h2 = tab.querySelector(':scope > h2');
     if (h2) h2.after(strip); else tab.prepend(strip);
     return strip;
+  }
+
+  // Back out of a drilled-in panel to the tab's grid: hide every panel this
+  // tab's grid buttons own, drop drilled-in mode, clear the pill highlight.
+  // Called by the "All" pill and by openMainTab() when you re-open the tab you
+  // are already on. No-op on tabs with no grid (every tab but More/Admin).
+  function exitDrillMode(tab) {
+    if (!tab) return;
+    tab.querySelectorAll(':scope > .big-button[data-target]').forEach(b => {
+      const panel = document.getElementById(b.dataset.target);
+      if (panel) panel.style.display = 'none';
+    });
+    tab.classList.remove('drill-active');
+    // The strip only exists once the tab has been drilled into at least once.
+    tab.querySelectorAll(':scope > .feature-strip .pill-button')
+       .forEach(p => p.classList.remove('active'));
   }
 
   // After any panel toggle: enter/exit drilled mode and highlight the active pill.
@@ -2711,6 +2719,11 @@
 
     function openMainTab(tabName) {
       var i, tabs;
+      // Re-opening the tab you are ALREADY on (More Features / Admin) reads as
+      // "take me back to the menu" — you press it because you want a different
+      // feature, so drop out of the drilled-in panel. Arriving from another tab
+      // leaves the drill-in alone, so you land back on whatever you had open.
+      if (currentMainTabId() === tabName) exitDrillMode(E(tabName));
       tabs = document.getElementsByClassName("tab-main");
       for (i = 0; i < tabs.length; i++) {
         tabs[i].style.display = "none";
