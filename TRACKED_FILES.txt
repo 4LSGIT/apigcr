@@ -524,7 +524,6 @@ services/videoService.js
 startup/db.js
 startup/dbReadonly.js
 startup/init.js
-tests/ f_route.x21.test.js
 tests/adminapikeys.k2.test.js
 tests/aiService.attachments.test.js
 tests/aimatch.service.test.js
@@ -556,6 +555,7 @@ tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
 tests/extforms.x2.test.js
+tests/f_route.x21.test.js
 tests/firmConfig.test.js
 tests/fixtures/slice26/legacy_case_details_bk2.js
 tests/fixtures/slice26/legacy_notes_341.js
