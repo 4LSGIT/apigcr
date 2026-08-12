@@ -1643,9 +1643,15 @@ function wfRenderInternalFnBody(fnName, params) {
 function wfRenderParamField(spec, value, visible) {
   const id = `e-pf-${spec.name}`;
   const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:#ef4444">*</span>' : ''}</label>`;
-  const helpHtml = spec.description
-    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
+  // nullTerminates params accept a blank field as an explicit null ("end the
+  // workflow") — gather writes the null rather than deleting the key. Say so,
+  // or a blank required field reads as an unfinished step.
+  const nullHint = spec.nullTerminates
+    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4"><b>Leave blank to end the workflow.</b></p>`
     : '';
+  const helpHtml = (spec.description
+    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
+    : '') + nullHint;
   const wrapperStyle = visible ? '' : 'display:none';
   const wrapperAttrs = `class="field" id="e-pfw-${spec.name}" data-mode-group="${spec.modeGroup || ''}" style="${wrapperStyle}"`;
 
@@ -1892,8 +1898,20 @@ function wfGatherConfig(type) {
       // param that didn't have one, so wait_for's exclusiveOneOf(duration, at)
       // behaves exactly as before for every config that doesn't already carry
       // `at: null`. Removing an existing null is an Edit-as-JSON operation.
+      //
+      // nullTerminates (set_next.value, foreach.end_step) inverts the rule: a
+      // blank field AUTHORS an explicit null = "end the workflow". Without it
+      // the form could only PRESERVE a null it was handed, never create one —
+      // deleting the key on a required+nullishSkipsBlock param 400s ("value is
+      // required"), so "end workflow" was Edit-as-JSON-only. Scoped by its own
+      // meta flag rather than by required+nullishSkipsBlock generally:
+      // schedule_resume.resumeAt carries both of those too, and there a blank
+      // field is almost always a forgotten datetime — a loud 400 beats a
+      // silently skipped wait. wfRenderParamField prints the blank-means-end
+      // hint under every nullTerminates field so the behavior is visible.
       if (!raw) {
         if (spec.nullishSkipsBlock && params[spec.name] === null) continue;
+        if (spec.nullTerminates) { params[spec.name] = null; continue; }
         delete params[spec.name];
         continue;
       }
