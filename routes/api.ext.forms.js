@@ -234,17 +234,24 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
       req.db, tpl.form_key, linkType, linkId, tpl.schema_version, body.values, null
     );
 
-    // 6. onSubmit.workflow — SERVER-SIDE, the sanctioned side-effect channel.
-    //    The workflow id comes from the PUBLISHED DEFINITION, never the
-    //    request body. initData mirrors the internal client's assembly
-    //    exactly (yc-forms.js save() step 5): field values as base, config
-    //    initData overrides, system fields always win. Fire-and-forget via
-    //    the existing wf→wf creation path (lib/internal_functions
-    //    start_workflow: active check, contact resolution, capture,
-    //    detached advance) — a workflow failure never fails the submission,
-    //    which is already recorded.
-    const wf = def.onSubmit && def.onSubmit.workflow;
-    if (wf && Number.isInteger(Number(wf.id)) && Number(wf.id) > 0) {
+    // 6. onSubmit workflow(s) — SERVER-SIDE, the sanctioned side-effect
+    //    channel. Ids come from the PUBLISHED DEFINITION, never the request
+    //    body. X3.4: `onSubmit.workflows` (1–3 entries) beside the legacy
+    //    singular — the shared notify workflow rides as one entry (its
+    //    notify_to/labels/title_field in that entry's initData) and a
+    //    form-specific workflow beside it. Every entry gets the same
+    //    assembly, mirroring the internal client (yc-forms.js save()
+    //    step 5): field values as base, that ENTRY's initData overrides,
+    //    system fields always win. Each dispatch is independently
+    //    fire-and-forget via the existing wf→wf creation path
+    //    (lib/internal_functions start_workflow: active check, contact
+    //    resolution, capture, detached advance) — one workflow failing
+    //    never fails the submission (already recorded) nor its siblings.
+    const wfList = Array.isArray(def.onSubmit && def.onSubmit.workflows)
+      ? def.onSubmit.workflows
+      : (def.onSubmit && def.onSubmit.workflow ? [def.onSubmit.workflow] : []);
+    for (const wf of wfList) {
+      if (!(wf && Number.isInteger(Number(wf.id)) && Number(wf.id) > 0)) continue;
       const initData = Object.assign(
         {},
         body.values,
@@ -290,7 +297,7 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
         )
       ).catch((err) => {
         console.error(
-          `[api.ext.forms] onSubmit.workflow ${wf.id} failed for ${tpl.form_key}:`,
+          `[api.ext.forms] onSubmit workflow ${wf.id} failed for ${tpl.form_key}:`,
           err && err.message
         );
       });

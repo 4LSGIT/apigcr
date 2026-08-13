@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The ?b= back-link carries a case_id bearer credential: keep this page out
+     of search engines and strip the Referer on every outbound request. -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Thank you — Legal Solutions Group</title>
+<link rel="icon" href="https://legalsolutions.group/assets/lsg-logo.webp">
+<style>
+/* ==========================================================================
+   YisraCase post-submit landing — the generic external.postSubmit.redirect
+   target (/p/submitted). Chrome copied from /p/form so the two pages read as
+   one product. Self-contained: inline CSS/JS, no CDN, no web fonts.
+
+   Params owned by THIS page:
+     type  optional — the form's display name for the headline
+                      ("?type=intake" → "Your intake form has been submitted.")
+                      Author it statically on the template's redirect URL:
+                      redirect: "/p/submitted?type=intake"
+     b     optional — appended automatically by the renderer when the
+                      template sets redirectBack:true. The submitted form's
+                      own URL (credential + prefills intact) — rendered as an
+                      "Edit your response" button. When type is absent, the
+                      form key inside b (f= or form_key=) is prettified into
+                      the headline as a fallback.
+
+   SECURITY: b is a URL parameter — ANYONE can craft a link to this page, so
+   the Edit button must never become an open redirect or a javascript: sink.
+   b is honored only when it is a same-origin path ("/…", not "//", no
+   backslash) or an absolute URL whose origin equals THIS page's origin.
+   Everything reaches the DOM via textContent / setAttribute only.
+   ========================================================================== */
+:root{
+  --navy:#0F2343;
+  --cyan:#01B0EB;
+  --gold:#F5C53C;
+  --gray:#A7A9AD;
+  --bg:#f8f9fa;
+  --line:#e4e7eb;
+  --muted:#5b6675;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg);
+  color:var(--navy);
+  font-family:Arial,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,sans-serif;
+  -webkit-text-size-adjust:100%;
+  display:flex;
+  flex-direction:column;
+  min-height:100vh;
+  min-height:100dvh;
+}
+
+/* ── Header (verbatim /p/form chrome) ──────────────────────────────────── */
+.lp-header{
+  position:sticky; top:0; z-index:5;
+  background:#fff;
+  border-bottom:1px solid var(--line);
+}
+.lp-header-inner{
+  max-width:950px; margin:0 auto;
+  padding:12px 16px;
+  display:flex; align-items:center; gap:16px;
+}
+.lp-brand{display:block; line-height:0; flex:0 0 auto}
+.lp-brand img{height:46px; width:auto; display:block}
+.lp-spacer{flex:1 1 auto}
+.lp-phone{
+  flex:0 0 auto;
+  color:var(--navy); text-decoration:none;
+  font-size:15px; font-weight:bold; white-space:nowrap;
+}
+.lp-phone span{
+  display:block; font-size:11px; font-weight:normal;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+}
+.lp-phone:hover,.lp-phone:focus-visible{color:var(--cyan)}
+
+/* Signature: a 3px rule echoing the three discs in the mark. */
+.lp-rule{height:3px; display:flex}
+.lp-rule i{flex:1}
+.lp-rule i:nth-child(1){background:var(--cyan)}
+.lp-rule i:nth-child(2){background:var(--gold)}
+.lp-rule i:nth-child(3){background:var(--gray)}
+
+/* ── Card ──────────────────────────────────────────────────────────────── */
+.lp-main{
+  flex:1 1 auto;
+  display:flex; align-items:center; justify-content:center;
+  padding:32px 16px;
+}
+.ts-card{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:36px 28px;
+  max-width:520px; width:100%;
+  text-align:center;
+}
+.ts-check{
+  width:56px; height:56px; margin:0 auto 18px;
+  border-radius:50%;
+  background:var(--cyan);
+  display:flex; align-items:center; justify-content:center;
+}
+.ts-check svg{display:block}
+.ts-card h1{
+  margin:0 0 8px;
+  font-size:22px; line-height:1.3;
+}
+.ts-card p{
+  margin:0; color:var(--muted); font-size:15px; line-height:1.5;
+}
+.ts-btns{
+  margin-top:22px;
+  display:flex; flex-wrap:wrap; justify-content:center; gap:10px;
+}
+.ts-btns[hidden]{display:none}
+.ts-btn{
+  display:inline-block;
+  padding:10px 18px;
+  border-radius:6px;
+  font-size:14px; font-weight:bold;
+  text-decoration:none;
+  border:1px solid var(--line);
+  color:var(--navy); background:#fff;
+}
+.ts-btn:hover,.ts-btn:focus-visible{border-color:var(--cyan); color:var(--cyan)}
+a:focus-visible,.lp-brand:focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
+
+/* ── Footer (verbatim /p/form chrome) ──────────────────────────────────── */
+.lp-footer{
+  flex:0 0 auto;
+  border-top:1px solid var(--line);
+  background:#fff;
+}
+.lp-footer-inner{
+  max-width:950px; margin:0 auto; padding:12px 16px;
+  display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px;
+  font-size:12px; color:var(--muted);
+}
+.lp-footer a{color:var(--muted); text-decoration:underline}
+.lp-footer a:hover,.lp-footer a:focus-visible{color:var(--cyan)}
+
+@media (max-width:560px){
+  .lp-brand img{height:38px}
+  .lp-header-inner{padding:10px 12px; gap:10px}
+  .lp-phone{font-size:14px}
+  .ts-card{padding:28px 18px}
+  .ts-card h1{font-size:19px}
+}
+</style>
+</head>
+<body>
+
+<header class="lp-header">
+  <div class="lp-header-inner">
+    <a class="lp-brand" href="https://legalsolutions.group" target="_blank" rel="noopener">
+      <img src="https://legalsolutions.group/assets/lsg-logo.webp"
+           alt="Legal Solutions Group" width="400" height="175">
+    </a>
+    <div class="lp-spacer"></div>
+    <a class="lp-phone" href="tel:+12484179800"><span>Questions?</span>(248)&nbsp;417-9800</a>
+  </div>
+  <div class="lp-rule" aria-hidden="true"><i></i><i></i><i></i></div>
+</header>
+
+<main class="lp-main">
+  <div class="ts-card">
+    <div class="ts-check" aria-hidden="true">
+      <svg width="28" height="28" viewBox="0 0 28 28">
+        <path d="M6 14.5 L11.5 20 L22 8.5" fill="none" stroke="#fff"
+              stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h1 id="tsHeadline">Thank you! Your form has been submitted.</h1>
+    <p>We&rsquo;ve received your answers. If anything comes up, call us at
+       <a href="tel:+12484179800" style="color:var(--cyan)">(248) 417-9800</a>.</p>
+    <div class="ts-btns" id="tsBtns" hidden>
+      <a class="ts-btn" id="tsEdit" rel="noopener">Edit your response</a>
+    </div>
+  </div>
+</main>
+
+<footer class="lp-footer">
+  <div class="lp-footer-inner">
+    <span>&copy; Legal Solutions Group</span>
+    <a href="https://legalsolutions.group" target="_blank" rel="noopener">legalsolutions.group</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  var qs = new URLSearchParams(location.search);
+
+  /* Same-origin guard for b — the ONLY shapes the Edit button will carry:
+     a path ("/…", not "//", no backslash) or an absolute URL on THIS origin.
+     Anything else (other origins, javascript:, data:, scheme-relative) is
+     silently ignored: b is craftable by anyone, and this page must not be
+     usable as a redirect hop or link-injection sink. */
+  function safeBack(raw) {
+    if (typeof raw !== 'string' || !raw) return null;
+    if (raw.charAt(0) === '/' && raw.charAt(1) !== '/' && raw.indexOf('\\') === -1) return raw;
+    try {
+      var u = new URL(raw);
+      if (u.origin === location.origin && (u.protocol === 'https:' || u.protocol === 'http:')) return u.href;
+    } catch (e) {}
+    return null;
+  }
+
+  /* Headline: explicit ?type= wins; else derive the form key from inside b
+     (f= on a /p/form back-link, form_key= on a bare renderer back-link) and
+     prettify it; else the generic line. textContent only — never markup. */
+  function typeName() {
+    var t = qs.get('type');
+    if (t && t.trim()) return t.trim();
+    var back = safeBack(qs.get('b'));
+    if (back) {
+      try {
+        var bu = new URL(back, location.origin);
+        var k = bu.searchParams.get('f') || bu.searchParams.get('form_key');
+        if (k) return k.replace(/_/g, ' ');
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  var t = typeName();
+  if (t) {
+    document.getElementById('tsHeadline').textContent =
+      'Thank you! Your ' + t + ' form has been submitted.';
+  }
+
+  var back = safeBack(qs.get('b'));
+  if (back) {
+    var a = document.getElementById('tsEdit');
+    a.setAttribute('href', back);
+    document.getElementById('tsBtns').hidden = false;
+  }
+})();
+</script>
+
+</body>
+</html>

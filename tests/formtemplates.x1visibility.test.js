@@ -213,6 +213,45 @@ describe('validateDefinition — external.postSubmit (X3)', () => {
   });
 });
 
+// ── validateDefinition: onSubmit.workflow / workflows (X3.4) ────────────────
+
+describe('validateDefinition — onSubmit workflows (X3.4)', () => {
+  const withWf = (onSubmit) => ({ ...cleanDef, onSubmit });
+
+  test('legacy singular: valid shapes pass; bad ids and non-object initData fail', () => {
+    expect(() => svc.validateDefinition(withWf({ workflow: { id: 40 } }))).not.toThrow();
+    expect(() => svc.validateDefinition(withWf({ workflow: { id: 40, initData: { a: 1 } } }))).not.toThrow();
+    expect(() => svc.validateDefinition(withWf({ workflow: { id: 0 } })))
+      .toThrow(/workflow.id must be a positive integer/);
+    expect(() => svc.validateDefinition(withWf({ workflow: { id: 'x' } })))
+      .toThrow(/workflow.id must be a positive integer/);
+    expect(() => svc.validateDefinition(withWf({ workflow: 'nope' })))
+      .toThrow(/workflow must be an object/);
+    expect(() => svc.validateDefinition(withWf({ workflow: { id: 40, initData: ['a'] } })))
+      .toThrow(/initData must be a JSON object/);
+  });
+
+  test('workflows list: 1–3 valid entries pass; empty, over-cap, bad entries fail', () => {
+    expect(() => svc.validateDefinition(withWf({ workflows: [{ id: 40 }] }))).not.toThrow();
+    expect(() => svc.validateDefinition(withWf({ workflows: [
+      { id: 40, initData: { notify_to: 'x@y' } }, { id: 55 }, { id: 7 },
+    ] }))).not.toThrow();
+    expect(() => svc.validateDefinition(withWf({ workflows: [] })))
+      .toThrow(/must be a non-empty array/);
+    expect(() => svc.validateDefinition(withWf({ workflows: { id: 40 } })))
+      .toThrow(/must be a non-empty array/);
+    expect(() => svc.validateDefinition(withWf({ workflows: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }] })))
+      .toThrow(/at most 3 workflows/);
+    expect(() => svc.validateDefinition(withWf({ workflows: [{ id: 40 }, { id: 0 }] })))
+      .toThrow(/workflows\[1\].id must be a positive integer/);
+  });
+
+  test('workflow and workflows are mutually exclusive', () => {
+    expect(() => svc.validateDefinition(withWf({ workflow: { id: 40 }, workflows: [{ id: 55 }] })))
+      .toThrow(/mutually exclusive/);
+  });
+});
+
 // ── scanExternalRefusals (§4) ───────────────────────────────────────────────
 
 describe('scanExternalRefusals (X1 §4)', () => {

@@ -499,6 +499,50 @@ function validateDefinition(def) {
     throw badRequest('onSubmit.patch is set but no field declares a save-direction apiColumn');
   }
 
+  // onSubmit.workflow / onSubmit.workflows (X3.4, Fred-ratified 2026-08-13):
+  // multiple workflows per submission — the shared notify workflow (wf 40)
+  // stays a per-form ENTRY (its notify_to/labels/title_field config rides
+  // that entry's initData; the workflow itself has no defaults), and a
+  // form-specific workflow rides beside it. `workflows` is the list form
+  // (1–3 entries); the legacy singular `workflow` stays valid so every
+  // stored definition round-trips byte-identically; carrying both is
+  // rejected (which fires first would be invisible config). Dispatchers —
+  // yc-forms save() step 5 internally, api.ext.forms submit externally —
+  // fire every entry with the same assembly: field values as base, that
+  // ENTRY's initData overriding, system fields (and `_values` externally)
+  // always winning. This block also (first-time) validates the legacy
+  // shape: both live definitions carry integer ids, and a stored id of 0 —
+  // the builder's transient default — was always dead config; failing it at
+  // save with a message beats dispatching /workflows/0/start into a log.
+  const wfEntryShape = (w, path) => {
+    if (!w || typeof w !== 'object' || Array.isArray(w)) {
+      throw badRequest(`${path} must be an object`);
+    }
+    const idn = Number(w.id);
+    if (!Number.isInteger(idn) || idn <= 0) {
+      throw badRequest(`${path}.id must be a positive integer workflow id`);
+    }
+    if (w.initData !== undefined && w.initData !== null &&
+        (typeof w.initData !== 'object' || Array.isArray(w.initData))) {
+      throw badRequest(`${path}.initData must be a JSON object`);
+    }
+  };
+  if (def.onSubmit && def.onSubmit.workflow !== undefined && def.onSubmit.workflow !== null) {
+    wfEntryShape(def.onSubmit.workflow, 'onSubmit.workflow');
+  }
+  if (def.onSubmit && def.onSubmit.workflows !== undefined && def.onSubmit.workflows !== null) {
+    if (def.onSubmit.workflow) {
+      throw badRequest('onSubmit.workflow and onSubmit.workflows are mutually exclusive — use the workflows list');
+    }
+    if (!Array.isArray(def.onSubmit.workflows) || def.onSubmit.workflows.length === 0) {
+      throw badRequest('onSubmit.workflows must be a non-empty array');
+    }
+    if (def.onSubmit.workflows.length > 3) {
+      throw badRequest('onSubmit.workflows allows at most 3 workflows');
+    }
+    def.onSubmit.workflows.forEach((w, i) => wfEntryShape(w, `onSubmit.workflows[${i}]`));
+  }
+
   // derive (2.5B B2): top-level array of { target, from, op, n? } rules.
   // Fixed verb set; target/from reference existing TOP-LEVEL fields; one rule
   // per target (deterministic — last-write-wins is a footgun, reject it).

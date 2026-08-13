@@ -298,7 +298,12 @@ Cloud Run instances.
 `link_id`, and workflow ids in the body are exactly the inputs this surface must
 never accept. Linkage is resolved from the credential server-side, values are
 re-validated server-side against the published definition, and
-`onSubmit.workflow` is dispatched server-side from that same definition.
+the `onSubmit` workflow(s) are dispatched server-side from that same
+definition. **(X3.4)** `onSubmit.workflows` fires up to 3 workflows per
+submission — the shared "Form Submission Notify" workflow rides as one entry
+(its `notify_to` / `labels` / `title_field` in that entry's `initData`) and a
+form-specific workflow beside it. Each fires independently; one failing never
+blocks the others or the submission.
 
 ---
 

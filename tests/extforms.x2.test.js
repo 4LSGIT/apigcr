@@ -503,6 +503,53 @@ describe('routes/api.ext.forms.js (live router)', () => {
     expect(wfParams.init_data._values).toEqual({ reason: 'help' });
   });
 
+  test('X3.4 onSubmit.workflows: every entry fires, each with its OWN initData; system fields + _values on all; F7 binding on all', async () => {
+    fixture = { template: tplRow({ definition: { ...publicDef,
+      onSubmit: { workflows: [
+        { id: 40, initData: { notify_to: 'stuart@4lsg.com', title_field: 'reason' } },
+        { id: 55, initData: { source: 'form_specific' } },
+      ] } } }),
+      caseRow: { case_id: 'abc12345' },
+      primary: { contact_id: 77, contact_name: 'N', contact_phone: 'P', contact_email: 'E' } };
+    const res = await POST('/api/ext/forms/intake_test/submit',
+      { case_id: 'abc12345', values: { reason: 'help' } });
+    expect(res.status).toBe(200);
+
+    expect(internalFunctions.start_workflow).toHaveBeenCalledTimes(2);
+    const [a] = internalFunctions.start_workflow.mock.calls[0];
+    const [b] = internalFunctions.start_workflow.mock.calls[1];
+    expect(a.workflow_id).toBe(40);
+    expect(b.workflow_id).toBe(55);
+    // per-ENTRY initData — no cross-contamination
+    expect(a.init_data.notify_to).toBe('stuart@4lsg.com');
+    expect(b.init_data.notify_to).toBeUndefined();
+    expect(b.init_data.source).toBe('form_specific');
+    expect(a.init_data.source).toBeUndefined();
+    // system fields + _values on both
+    for (const p of [a, b]) {
+      expect(p.init_data).toMatchObject({
+        reason: 'help', form_key: 'intake_test', link_type: 'case',
+        link_id: 'abc12345', submission_id: 101,
+      });
+      expect(p.init_data._values).toEqual({ reason: 'help' });
+      // F7: the server-resolved Primary binds EVERY dispatch
+      expect(p.contact_id_override).toBe(77);
+    }
+  });
+
+  test('X3.4: one workflow failing never blocks its siblings or the submission', async () => {
+    internalFunctions.start_workflow
+      .mockRejectedValueOnce(new Error('wf down'));
+    fixture = { template: tplRow({ definition: { ...publicDef,
+      onSubmit: { workflows: [{ id: 40 }, { id: 55 }] } } }),
+      caseRow: { case_id: 'abc12345' }, primary: null };
+    const res = await POST('/api/ext/forms/intake_test/submit',
+      { case_id: 'abc12345', values: { reason: 'help' } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'success' });
+    expect(internalFunctions.start_workflow).toHaveBeenCalledTimes(2);
+  });
+
   test('X3.2: _values is the system copy — a submitted field named _values cannot shadow it', async () => {
     const defWithValuesField = { ...publicDef, sections: [{ title: 'S', rows: [{ fields: [
       { name: 'reason', type: 'text', required: true, maxLength: 200 },

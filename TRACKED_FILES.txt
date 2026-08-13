@@ -286,6 +286,8 @@ ref/database.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
+ref/pages/form.html
+ref/pages/submitted.html
 ref/plans.md
 ref/review.md
 ref/routes.md

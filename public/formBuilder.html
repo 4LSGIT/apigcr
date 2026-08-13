@@ -2664,41 +2664,76 @@ function insSettings(ins) {
   }
   ins.appendChild(group('Save → entity', patchKids));
 
-  // onSubmit.workflow
-  const hasWf = !!(MODEL.onSubmit && MODEL.onSubmit.workflow);
+  // onSubmit.workflow / onSubmit.workflows (X3.4): one editor for both
+  // shapes. Legacy singular stays legacy until the author actually adds a
+  // second workflow (byte-identical round-trip for untouched forms); adding
+  // one converts to the `workflows` list (server rejects carrying both).
+  const WF_MAX = 3;
+  const wfSingle = MODEL.onSubmit && MODEL.onSubmit.workflow;
+  const wfArray  = MODEL.onSubmit && Array.isArray(MODEL.onSubmit.workflows)
+    ? MODEL.onSubmit.workflows : null;
+  const hasWf = !!(wfSingle || (wfArray && wfArray.length));
   const wfKids = [
-    pCheck('Trigger workflow on save (onSubmit.workflow)', hasWf, v => {
+    pCheck('Trigger workflow(s) on save (onSubmit.workflow / workflows)', hasWf, v => {
       if (v) {
         MODEL.onSubmit = MODEL.onSubmit || {};
         MODEL.onSubmit.workflow = MODEL.onSubmit.workflow || { id: 0 };
       } else if (MODEL.onSubmit) {
         delete MODEL.onSubmit.workflow;
+        delete MODEL.onSubmit.workflows;
         if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
       }
       touched(); renderInspector();
+    }, { help: 'Every listed workflow fires on save (fire-and-forget, failures independent). Typical pair: the shared "Form Submission Notify" workflow (its notify_to / labels / title_field ride ITS init data) plus a form-specific one.' }),
+  ];
+  const wfEditor = (W, label) => [
+    pNum(label ? label + ' — workflow id' : 'Workflow id', W.id != null ? W.id : null, v => { W.id = v == null ? 0 : v; touched(); }),
+    pText('Init data (JSON object)', W.initData ? JSON.stringify(W.initData, null, 2) : '', v => {
+      if (v.trim() === '') { delete W.initData; touched(); return; }
+      W.initData = JSON.parse(v);   // validate() below guarantees parseability
+      touched();
+    }, {
+      textarea: true, mono: true, placeholder: '{ "source": "templated_form" }',
+      validate: raw => {
+        if (raw.trim() === '') return null;
+        try {
+          const p = JSON.parse(raw);
+          if (!p || typeof p !== 'object' || Array.isArray(p)) return 'must be a JSON object';
+          return null;
+        } catch (e) { return 'invalid JSON: ' + e.message; }
+      },
+      help: 'Form data is spread as workflow init vars; THIS entry\'s init data overrides; system fields win.'
     }),
   ];
-  if (hasWf) {
-    const W = MODEL.onSubmit.workflow;
-    wfKids.push(
-      pNum('Workflow id', W.id != null ? W.id : null, v => { W.id = v == null ? 0 : v; touched(); }),
-      pText('Init data (JSON object)', W.initData ? JSON.stringify(W.initData, null, 2) : '', v => {
-        if (v.trim() === '') { delete W.initData; touched(); return; }
-        W.initData = JSON.parse(v);   // validate() below guarantees parseability
-        touched();
-      }, {
-        textarea: true, mono: true, placeholder: '{ "source": "templated_form" }',
-        validate: raw => {
-          if (raw.trim() === '') return null;
-          try {
-            const p = JSON.parse(raw);
-            if (!p || typeof p !== 'object' || Array.isArray(p)) return 'must be a JSON object';
-            return null;
-          } catch (e) { return 'invalid JSON: ' + e.message; }
-        },
-        help: 'Form data is spread as workflow init vars; system fields win.'
-      })
-    );
+  if (hasWf && wfArray) {
+    wfArray.forEach((W, i) => {
+      wfEditor(W, 'Workflow ' + (i + 1)).forEach(k => wfKids.push(k));
+      wfKids.push(el('div', { class: 'prop' }, [
+        el('button', { class: 'ghost small', text: '× Remove workflow ' + (i + 1), onclick: () => {
+          wfArray.splice(i, 1);
+          if (!wfArray.length) { delete MODEL.onSubmit.workflows;
+            if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit; }
+          touched(); renderInspector();
+        }}),
+      ]));
+    });
+    if (wfArray.length < WF_MAX) {
+      wfKids.push(el('div', { class: 'prop' }, [
+        el('button', { class: 'ghost small', text: '+ Add workflow', onclick: () => {
+          wfArray.push({ id: 0 });
+          touched(); renderInspector();
+        }}),
+      ]));
+    }
+  } else if (hasWf && wfSingle) {
+    wfEditor(wfSingle, null).forEach(k => wfKids.push(k));
+    wfKids.push(el('div', { class: 'prop' }, [
+      el('button', { class: 'ghost small', text: '+ Add another workflow (up to ' + WF_MAX + ')', onclick: () => {
+        MODEL.onSubmit.workflows = [wfSingle, { id: 0 }];
+        delete MODEL.onSubmit.workflow;
+        touched(); renderInspector();
+      }}),
+    ]));
   }
   ins.appendChild(group('Save → workflow', wfKids));
 
@@ -2788,6 +2823,48 @@ function insSettings(ins) {
       );
     }
     return group('External rendering', kids);
+  })());
+
+  // ── Share links (X3.4): the URLs that serve this form, with copy buttons.
+  //    Informational only — never touches MODEL. Served from the PUBLISHED
+  //    definition, and only while visibility is portal/public.
+  ins.appendChild((() => {
+    const origin = location.origin;
+    const links = [
+      { label: 'Direct form',
+        url: origin + '/f/' + FKEY,
+        help: 'The bare form on a plain page — for iframing into your own site, or quick tests. Add ?case_id=… to pre-link a case.' },
+      { label: 'Branded page',
+        url: origin + '/p/form?f=' + FKEY,
+        help: 'The LSG-branded host page (logo, phone, footer) wrapping the same form — the link to text or email to clients. Add &case_id=… to pre-link.' },
+      { label: 'Sequence / workflow merge',
+        url: origin + '/p/form?f=' + FKEY + '&case_id={{cases.case_id}}',
+        help: 'Paste into an SMS/email template — the merge field fills the client\'s case id, so the form arrives already tied to their case and prefills their contact info.' },
+    ];
+    const copyRow = (l) => {
+      const inp = el('input', { type: 'text', class: 'mono', value: l.url });
+      inp.readOnly = true;
+      inp.onclick = () => inp.select();
+      const btn = el('button', { class: 'ghost small', text: 'Copy', onclick: () => {
+        const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(l.url).then(done, () => { inp.select(); document.execCommand('copy'); done(); });
+        } else { inp.select(); document.execCommand('copy'); done(); }
+      }});
+      const wrap = el('div', { class: 'prop' }, [
+        el('label', { text: l.label }),
+        el('div', { style: 'display:flex; gap:6px;' }, [inp, btn]),
+        el('div', { class: 'help', text: l.help }),
+      ]);
+      inp.style.flex = '1';
+      return wrap;
+    };
+    return group('Share links', links.map(copyRow).concat([
+      el('div', { class: 'help', text:
+        'These serve the PUBLISHED definition, and only while visibility is portal or public (the header select) — otherwise they return the generic 404. ' +
+        'Optional extras: &t=Your%20Title overrides the branded page\'s heading; any field with a "URL prefill param" accepts its value on either link (e.g. &src=facebook). ' +
+        'f, t, b, case_id and the other route params are reserved.' }),
+    ]));
   })());
 
   // ── Tabbed layout (2.6) ──

@@ -264,3 +264,43 @@ server-only.
   full postSubmit editor) — `external.*` was previously JSON-only.
   `serializeModel()` already round-trips unmanaged keys, so existing
   definitions stay byte-identical until edited.
+
+## §L — X3.4: `onSubmit.workflows` + share links + /p/submitted (2026-08-13)
+
+**Ratified.** Multiple workflows per submission: `onSubmit.workflows` (1–3
+`{id, initData?}` entries) beside the legacy singular (mutually exclusive;
+legacy stays valid — byte-identical round-trip for every stored definition).
+Every entry fires with the same assembly — values as base, that ENTRY's
+initData overriding, system fields + `_values` (external) winning — from BOTH
+dispatchers: yc-forms save() step 5 (one internal loop, the arc's first
+yc-forms change since X2) and the external route (F7 contact binding applied
+to every dispatch). Rationale for the per-entry design over Fred's floated
+"default form workflow" app_setting: wf 40's `notify_to`/`labels`/
+`title_field` config is per-form and rides the entry's initData — the
+workflow itself has NO defaults (step 2 sends to `{{notify_to}}` bare), so an
+ambient setting-fired default couldn't carry the config that makes it work.
+First-time validation of the legacy `workflow` shape rode along (positive-int
+id; live data verified safe: only intake=40 and 341_notes=7 exist; a stored
+id-0 was always dead config).
+
+**WF40 GENERICNESS FLAG (open, for Fred):** wf 40 is *not* yet safe as the
+shared default across forms — step 6's log subject is "Intake questionnaire
+received" and step 7 stamps `case_intake_form` unconditionally. A second form
+firing wf 40 on a linked case would falsely mark intake complete. Before
+reuse: condition steps 6–7 on `form_key == "intake"` (evaluate_condition),
+or fork the tail. Console snippets staged separately.
+
+**Share links (builder):** Form settings gains a read-only "Share links"
+block — direct `/f/<key>`, branded `/p/form?f=<key>`, and the sequence-merge
+variant with `case_id={{cases.case_id}}` — copy buttons, per-link purpose
+text, and the reserved-param note. Origin from `location.origin`.
+
+**/p/submitted:** generic redirect target for `external.postSubmit.redirect`
+(pages system row, Fred-installed). Owns params `type` (headline noun,
+authored statically on the redirect URL) and `b` (the X3.3 back-link →
+"Edit your response" button). `b` is honored ONLY as a same-origin path or a
+same-origin absolute URL — it is craftable by anyone, and the page must not
+become a redirect hop or javascript: sink; everything reaches the DOM via
+textContent/setAttribute. `noindex` + `no-referrer` metas (b carries the
+credential). Headline fallback derives the form key from `f=`/`form_key=`
+inside b and prettifies it.

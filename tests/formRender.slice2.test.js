@@ -505,3 +505,52 @@ describe('yc-forms entityData wrong-entity guard (approved step-7 change)', () =
     expect(w.document.querySelector('[name="src_ref"]').value).toBe('NUMERIC-MATCH');
   });
 });
+// ── onSubmit workflows dispatch — X3.4 (internal client) ────────────────────
+// The internal side of the X3.4 loop: yc-forms save() step 5 fires EVERY
+// entry of `onSubmit.workflows` (legacy singular still fires alone), each
+// with its OWN initData overriding the collected values, system fields
+// winning. Mirrors the external route's assembly exactly (extforms.x2 locks
+// that side).
+describe('yc-forms onSubmit workflows (X3.4)', () => {
+  const wfCalls = (calls) => calls.filter(c => c.url.startsWith('/workflows/'));
+
+  test('workflows list: every entry fires with its OWN initData; system fields win', async () => {
+    const def = JSON.parse(JSON.stringify(FIXTURE_DEF));
+    def.onSubmit = { workflows: [
+      { id: 9,  initData: { notify_to: 'x@y.test', form_key: 'spoof' } },
+      { id: 11, initData: { source: 'form_specific' } },
+    ] };
+    const p = bootPage({ definition: def, caseRow: { case_id: 'CASETEST1' } });
+    const w = await ready(p.dom);
+    const pr = w.document.querySelector('[name="primary_reason"]');
+    pr.value = 'Medical debt'; fire(w, pr, 'input');
+    await w.ycForm.save();
+
+    const wf = wfCalls(p.calls);
+    expect(wf.map(c => c.url)).toEqual(['/workflows/9/start', '/workflows/11/start']);
+    // per-entry initData, no cross-contamination
+    expect(wf[0].body.notify_to).toBe('x@y.test');
+    expect(wf[1].body.notify_to).toBeUndefined();
+    expect(wf[1].body.source).toBe('form_specific');
+    expect(wf[0].body.source).toBeUndefined();
+    // collected values as base; system fields ALWAYS win (spoofed form_key loses)
+    for (const c of wf) {
+      expect(c.body.primary_reason).toBe('Medical debt');
+      expect(c.body.form_key).toBe('test_quick_notes');
+      expect(c.body.link_type).toBe('case');
+      expect(c.body.link_id).toBe('CASETEST1');
+      expect(c.body.submission_id).toBe(77);
+    }
+  });
+
+  test('legacy singular still fires exactly once', async () => {
+    const def = JSON.parse(JSON.stringify(FIXTURE_DEF));
+    def.onSubmit = { workflow: { id: 9 } };
+    const p = bootPage({ definition: def, caseRow: { case_id: 'CASETEST1' } });
+    const w = await ready(p.dom);
+    const pr = w.document.querySelector('[name="primary_reason"]');
+    pr.value = 'x'; fire(w, pr, 'input');
+    await w.ycForm.save();
+    expect(wfCalls(p.calls).map(c => c.url)).toEqual(['/workflows/9/start']);
+  });
+});

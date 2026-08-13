@@ -826,9 +826,15 @@ if (this.config.endpoints.load && !this.config.external) {
       if (this._draftBannerEl) this._draftBannerEl.style.display = 'none';
 
 
-      // 5. Trigger workflow (if configured, fire-and-forget)
-      if (this.config.onSubmit.workflow) {
-        const wfConfig = this.config.onSubmit.workflow;
+      // 5. Trigger workflow(s) (if configured, fire-and-forget).
+      //    X3.4: `onSubmit.workflows` (1–3 entries) beside the legacy
+      //    singular `workflow` — every entry fires with the same assembly,
+      //    each with its OWN initData overrides; failures are independent
+      //    and non-blocking. Mirrored exactly by the external route.
+      const wfList = Array.isArray(this.config.onSubmit.workflows)
+        ? this.config.onSubmit.workflows
+        : (this.config.onSubmit.workflow ? [this.config.onSubmit.workflow] : []);
+      for (const wfConfig of wfList) {
         // Spread form data as top-level vars so workflow can use {{fieldName}} directly.
         // System fields override any collisions. Custom initData overrides form data.
         const initData = Object.assign(

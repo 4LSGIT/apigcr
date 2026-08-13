@@ -116,11 +116,17 @@ Not needed if API keys match form field names exactly.
 ```js
 onSubmit: {
   patch:    { method: 'PATCH', url: '/api/contacts/{linkId}' },  // optional
-  workflow: { id: 12, initData: { source: 'form' } },           // optional
+  workflow: { id: 12, initData: { source: 'form' } },           // optional (singular)
+  // OR (X3.4) up to 3 workflows, each with its own initData —
+  // mutually exclusive with the singular `workflow`:
+  // workflows: [
+  //   { id: 40, initData: { notify_to: 'stuart@4lsg.com', title_field: 'name' } },
+  //   { id: 55, initData: { source: 'form_specific' } },
+  // ],
 }
 ```
 
-Both are optional and can be combined. The form_submissions insert always happens regardless.
+All are optional; patch combines with either workflow shape. The form_submissions insert always happens regardless. With `workflows`, every entry fires (fire-and-forget, failures independent), each with its OWN `initData` overriding the collected values.
 
 Workflow receives all `collect()` values as top-level variables (e.g., `{{outcome}}`, `{{missing_docs}}`), plus `form_key`, `link_type`, `link_id`, `submission_id`, plus anything in `initData`.
 
