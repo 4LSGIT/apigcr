@@ -41,6 +41,7 @@ lib/internal_functions/contacts.js
 lib/internal_functions/control.js
 lib/internal_functions/court.js
 lib/internal_functions/db.js
+lib/internal_functions/decisions.js
 lib/internal_functions/dev.js
 lib/internal_functions/dropbox.js
 lib/internal_functions/esign.js
@@ -115,6 +116,7 @@ manual/03-YisraFlow/10-email-router.md
 manual/03-YisraFlow/11-api-reference.md
 manual/03-YisraFlow/12-database-schema.md
 manual/03-YisraFlow/13-cookbook.md
+manual/03-YisraFlow/14-human-in-the-loop.md
 manual/03-YisraFlow/README.md
 manual/04-Integrations/01-connections.md
 manual/04-Integrations/02-connections-live-test.md
@@ -276,6 +278,7 @@ ref/2026-08-10_portal_s5_1.sql
 ref/2026-08-10_portal_s5_2.sql
 ref/2026-08-10_portal_s5_3.sql
 ref/2026-08-11_form_templates_visibility.sql
+ref/2026-08-13_decision_requests.sql
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/X2_DESIGN_AMENDMENTS.md
@@ -370,6 +373,7 @@ routes/courtReview.js
 routes/db.jwt.js
 routes/db64.js
 routes/dbQuery.js
+routes/decisionActions.js
 routes/dropbox.js
 routes/f.js
 routes/freelook.js

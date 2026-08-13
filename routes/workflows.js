@@ -81,6 +81,13 @@ const BRANCH_TARGET_PARAMS = {
   // set_next, already covered by `value` above). Omitted until 2026-08, so
   // every renumber silently left a foreach exit pointing at the old number.
   foreach:            ['end_step'],
+  // request_decision.nextStep is the resume target after response/timeout
+  // (HITL slice, 2026-08). Note: decision_requests.resume_step on ALREADY-
+  // PAUSED executions is a frozen copy and is NOT remapped here — renumbering
+  // a workflow while a decision is pending leaves that execution resuming at
+  // the old number (same exposure every delayed execution already has via
+  // its scheduled workflow_resume job's nextStep).
+  request_decision:   ['nextStep'],
 };
 
 async function remapBranchTargets(connection, workflowId, mapFn) {
@@ -2033,10 +2040,40 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
       [executionId]
     );
 
-      return {};
+    // Decision cascade (HITL slice): close any pending decision_requests so
+    // their links render "no longer needed" instead of resuming a cancelled
+    // execution. Paired tasks are dismissed post-commit (taskService writes
+    // its own log rows + side effects — keep those off this transaction).
+    const [pendingDecisions] = await connection.query(
+      `SELECT id, paired_task_id FROM decision_requests
+        WHERE workflow_execution_id = ? AND status = 'pending'`,
+      [executionId]
+    );
+    if (pendingDecisions.length > 0) {
+      await connection.query(
+        `UPDATE decision_requests SET status = 'cancelled', updated_at = NOW()
+          WHERE workflow_execution_id = ? AND status = 'pending'`,
+        [executionId]
+      );
+    }
+
+      return { pendingDecisions };
     });
 
     if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+
+    // Post-commit, best-effort: dismiss paired tasks for cancelled decisions.
+    for (const d of (outcome.pendingDecisions || [])) {
+      if (!d.paired_task_id) continue;
+      try {
+        await require('../services/taskService').deleteTask(
+          db, d.paired_task_id, 0, { via: 'workflow_cancelled' }
+        );
+      } catch (taskErr) {
+        // Already completed/deleted races are fine.
+        console.warn(`[CANCEL] Could not dismiss decision task ${d.paired_task_id}:`, taskErr.message);
+      }
+    }
 
     console.log(`[CANCEL] Execution ${executionId} cancelled by user — reason: ${reasonStored}`);
 
