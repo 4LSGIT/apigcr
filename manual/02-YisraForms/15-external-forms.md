@@ -318,7 +318,14 @@ where the work happens:
   preview pulled from the answers. The scope selector switches between
   **Needs linking** (the default), **Linked**, and **All submissions**;
   linked rows show their target and an **Open** button instead of
-  **Link…**, and the badge always counts what still needs linking.
+  **Link…**, and the badge always counts what still needs linking. A second
+  selector filters by **class** — the template's `visibility` (internal /
+  portal / public), plus *External* for portal+public together and *No
+  template* for legacy form keys that have no template row. Class is a live
+  property of the template, so reclassifying a form moves its old submissions
+  between buckets. Both selectors default to showing everything, and any row
+  they hide is announced above the list — a work queue should never drop work
+  quietly.
 - **View** — the full answers, rendered read-only by the *same renderer* the
   submitter used (`render.html?view_submission=<id>`), under the definition
   version the submission was made against. Nothing on the view can write.

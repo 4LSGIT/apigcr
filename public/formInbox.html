@@ -98,6 +98,22 @@
       width: 160px; font-size: 13px; padding: 6px 8px;
       border: 1px solid #cbd5e1; border-radius: 6px;
     }
+    /* Selected-target confirmation (replaces the search box once a row is
+       picked, since CasePicker leaves the typed query in place). */
+    .fx-picked {
+      display: flex; align-items: center; gap: 10px; text-align: left;
+      border: 1px solid #86efac; background: #f0fdf4;
+      border-radius: 6px; padding: 8px 10px;
+    }
+    .fx-picked > i { color: #16a34a; font-size: 15px; }
+    .fx-picked-main { flex: 1; min-width: 0; }
+    .fx-picked-label { font-size: 13.5px; font-weight: 600; color: #14532d; }
+    .fx-picked-sub { font-size: 12px; color: #4d7c0f; margin-top: 1px; }
+    .fx-change {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 4px 10px; font-size: 12.5px; cursor: pointer; color: #334155;
+    }
+    .fx-change:hover { background: #f1f5f9; }
     /* Let picker dropdowns escape the swal container (oad-html precedent). */
     .fx-dlg-html { overflow: visible !important; }
     /* style.css pins inputs to 200px at higher specificity than .cp-input's
@@ -137,6 +153,14 @@
       <option value="unlinked" selected>Needs linking</option>
       <option value="linked">Linked</option>
       <option value="all">All submissions</option>
+    </select>
+    <select class="fx-filter" id="fxClass">
+      <option value="" selected>All classes</option>
+      <option value="ext">External (portal + public)</option>
+      <option value="public">Public</option>
+      <option value="portal">Portal</option>
+      <option value="internal">Internal</option>
+      <option value="none">No template</option>
     </select>
     <select class="fx-filter" id="fxFilter">
       <option value="">All forms</option>
@@ -198,6 +222,28 @@
               'needing a link.',
   };
 
+  // Class = the TEMPLATE's `visibility` (enum: internal | portal | public), so
+  // it is a live property of the form, not something stamped on the submission
+  // — reclassifying a template retroactively moves its old submissions. Rows
+  // whose form_key has no template row at all (legacy hand-built keys, 58 of
+  // them in prod) are their own 'none' bucket rather than silently absent.
+  // "External" is a FILTER grouping over portal+public, not a fourth enum
+  // value; extFormService gates on a scopes ARRAY, which is where that pairing
+  // actually lives.
+  var CLASS_MATCH = {
+    '':         function () { return true; },
+    'ext':      function (c) { return c === 'portal' || c === 'public'; },
+    'public':   function (c) { return c === 'public'; },
+    'portal':   function (c) { return c === 'portal'; },
+    'internal': function (c) { return c === 'internal'; },
+    'none':     function (c) { return c === 'none'; },
+  };
+
+  function classOf(s) {
+    var t = TPL[s.form_key];
+    return t && t.visibility ? t.visibility : 'none';
+  }
+
   // ── List rendering (textContent/createElement only — no innerHTML for
   //    submitter-controlled strings) ──
   function render() {
@@ -205,7 +251,13 @@
     list.textContent = '';
     var scope = E('fxScope').value;
     var filter = E('fxFilter').value;
-    var rows = filter ? SUBS.filter(function (s) { return s.form_key === filter; }) : SUBS;
+    var cls = E('fxClass').value;
+    var matchCls = CLASS_MATCH[cls] || CLASS_MATCH[''];
+
+    var rows = SUBS.filter(function (s) {
+      return (!filter || s.form_key === filter) && matchCls(classOf(s));
+    });
+    var hidden = SUBS.length - rows.length;
 
     E('fxNote').textContent = NOTE[scope] || NOTE.unlinked;
 
@@ -218,12 +270,22 @@
       var empty = document.createElement('div');
       empty.className = 'fx-empty';
       empty.textContent = SUBS.length
-        ? 'No submissions for this form in this view.'
+        ? 'Nothing matches the current filters — ' + SUBS.length + ' hidden.'
         : (scope === 'unlinked'
             ? 'Inbox zero — every submission is linked.'
             : 'Nothing to show.');
       list.appendChild(empty);
       return;
+    }
+
+    // A work queue must never hide work silently: whenever the filters drop
+    // rows, say so out loud.
+    if (hidden > 0) {
+      var hint = document.createElement('div');
+      hint.className = 'fx-note';
+      hint.textContent = hidden + ' more ' + (hidden === 1 ? 'submission is' : 'submissions are')
+        + ' hidden by the class/form filters.';
+      list.appendChild(hint);
     }
 
     rows.forEach(function (s) {
@@ -458,6 +520,7 @@
         typeSelectHtml +
         '<div class="fx-dlg-section-label" id="fxPickLabel"></div>' +
         '<div id="fxPickerMount"></div>' +
+        '<div id="fxPicked" class="fx-picked" style="display:none"></div>' +
         (canCreate
           ? '<div class="fx-dlg-create-row">' +
               '<button type="button" id="fxCreateNew" class="fx-dlg-create-btn">' +
@@ -476,9 +539,57 @@
         var confirmBtn = Swal.getConfirmButton();
         if (confirmBtn) confirmBtn.disabled = true;
 
-        function setSelected(type, id, label) {
+        function setSelected(type, id, label, sub) {
           selected = { link_type: type, link_id: String(id), label: label };
           if (confirmBtn) confirmBtn.disabled = false;
+          if (label) showPicked(label, sub);
+        }
+
+        // CasePicker deliberately does NOT write the chosen row back into its
+        // input ("caller owns input state for cases") and clears its dropdown
+        // on click — so without this the box still reads whatever was typed
+        // and nothing on screen says a case was picked, even though Link works.
+        // Swap the search box for an explicit confirmation the user can undo.
+        function showPicked(label, sub) {
+          var box = E('fxPicked');
+          box.textContent = '';
+          var icon = document.createElement('i');
+          icon.className = 'fa-solid fa-circle-check';
+          var main = document.createElement('div');
+          main.className = 'fx-picked-main';
+          var l1 = document.createElement('div');
+          l1.className = 'fx-picked-label';
+          l1.textContent = label;
+          main.appendChild(l1);
+          if (sub) {
+            var l2 = document.createElement('div');
+            l2.className = 'fx-picked-sub';
+            l2.textContent = sub;
+            main.appendChild(l2);
+          }
+          var change = document.createElement('button');
+          change.type = 'button';
+          change.className = 'fx-change';
+          change.textContent = 'Change';
+          change.addEventListener('click', clearPicked);
+          box.appendChild(icon);
+          box.appendChild(main);
+          box.appendChild(change);
+          box.style.display = '';
+          E('fxPickerMount').style.display = 'none';
+          E('fxPickLabel').style.display = 'none';
+        }
+
+        // The picker stays mounted underneath, so Change restores it with the
+        // previous query still in the box.
+        function clearPicked() {
+          selected = null;
+          if (confirmBtn) confirmBtn.disabled = true;
+          E('fxPicked').style.display = 'none';
+          E('fxPicked').textContent = '';
+          E('fxPickerMount').style.display = '';
+          E('fxPickLabel').style.display = '';
+          if (picker && typeof picker.focus === 'function') picker.focus();
         }
 
         function mountPicker(type) {
@@ -486,13 +597,20 @@
           picker = null;
           selected = null;
           if (confirmBtn) confirmBtn.disabled = true;
+          var picked = E('fxPicked');
+          picked.style.display = 'none';
+          picked.textContent = '';
           var mount = E('fxPickerMount');
+          mount.style.display = '';
           mount.textContent = '';
           var label = E('fxPickLabel');
+          label.style.display = '';
 
           if (type === 'appt') {
             // No ApptPicker exists yet — a plain id input keeps the route's
-            // third type reachable without inventing a picker this slice.
+            // third type reachable without inventing a picker this slice. No
+            // chip here: the id the user typed IS the visible selection, and
+            // swapping the box out mid-keystroke would fight the input event.
             label.textContent = 'Appointment id';
             var inp = document.createElement('input');
             inp.type = 'number'; inp.min = '1';
@@ -500,7 +618,7 @@
             inp.placeholder = 'appt_id';
             inp.addEventListener('input', function () {
               var v = inp.value.trim();
-              if (v && Number(v) > 0) setSelected('appt', v, 'appt ' + v);
+              if (v && Number(v) > 0) setSelected('appt', v, null);
               else { selected = null; if (confirmBtn) confirmBtn.disabled = true; }
             });
             mount.appendChild(inp);
@@ -517,8 +635,23 @@
             // primary contact's name, so the just-created case comes up first.
             initialQuery: seed,
             onSelect: function (id, row) {
+              var r = row || {};
+              if (type === 'contact') {
+                setSelected(type, id,
+                  r.contact_name || ('Contact ' + id),
+                  'contact #' + id);
+                return;
+              }
+              // Cases here read like the picker's own rows: who it belongs to
+              // on top, identifying detail underneath. These cases usually
+              // have no docket number yet, so the contact name is the only
+              // human handle — leading with the case_id would be unreadable.
+              var numRaw = r.case_number_full || r.case_number || '';
+              var num = (numRaw && numRaw !== r.case_id) ? numRaw : '(no case#)';
+              var bits = [num, r.case_id, (typeof fmtCaseType === 'function' ? fmtCaseType(r) : r.case_type), r.case_stage];
               setSelected(type, id,
-                (row && (row.contact_name || row.case_number_full || row.case_number)) || String(id));
+                r.primary_contact_name || r.case_caption || String(id),
+                bits.filter(Boolean).join('  \u00b7  '));
             },
           });
         }
@@ -609,6 +742,7 @@
   E('fxRefresh').addEventListener('click', load);
   E('fxScope').addEventListener('change', load);   // scope is a SERVER filter
   E('fxFilter').addEventListener('change', render); // form is client-side
+  E('fxClass').addEventListener('change', render);  // class is client-side too
 
   (function boot() {
     var tries = 0;

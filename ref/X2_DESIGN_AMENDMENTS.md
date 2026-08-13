@@ -403,3 +403,21 @@ a case and returns the CONTACT result, so the fallback's "no case was
 created" could be false. It now reopens the adopt dialog with the picker
 seeded by the submitter's name (`/api/cases/search` matches primary-contact
 name) instead of asserting anything.
+
+**§M addendum 2 (2026-08-13, post-adopt review):** two Inbox changes after the
+first live adopt. (1) The adopt dialog now renders the chosen target instead
+of leaving the picker's search text on screen — `CasePicker` deliberately does
+not write the selected row back into its input ("caller owns input state for
+cases") and clears its dropdown on click, so a successful pick was invisible
+even though Link worked. The picked case/contact is shown as a confirmation
+line (who it belongs to, then case#/id/type/stage) with a Change button; the
+picker stays mounted underneath so Change restores the previous query. The
+appt path keeps its plain id input — there the typed id IS the visible
+selection. (2) A class filter over the template's `visibility` enum
+(internal | portal | public) with an *External* grouping for portal+public and
+a *No template* bucket for the 58 prod submissions whose form_key has no
+template row. Note visibility is a single enum — "portal + public" is a filter
+grouping, matching how extFormService gates on a scopes ARRAY, not a fourth
+value. Both selectors default to unfiltered and any hidden rows are counted
+above the list: the Inbox is a work queue, so a filter that silently drops a
+submission is the one failure mode worth engineering against.
