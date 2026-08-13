@@ -23,6 +23,7 @@ body{font-family: Arial, Helvetica, sans-serif}
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
+  justify-content: center;
   max-width: 850px;
   margin: 0 auto;
   padding: 0 4px;
@@ -30,6 +31,13 @@ body{font-family: Arial, Helvetica, sans-serif}
 }
 .tab-row .tab {
   flex: 1 0 auto;
+  /* A full line's tabs eat all the space between them, so the cap never binds
+     there. It only bites on a short line — a wrapped remainder of one or two
+     tabs stays button-sized and centred instead of stretching the row. The
+     min-width outranks it (CSS resolves min over max), so a label longer than
+     the cap still gets the width it needs rather than spilling out. */
+  min-width: max-content;
+  max-width: 320px;
   white-space: nowrap;
   text-align: center;
 }
