@@ -1520,7 +1520,8 @@ function wfRenderConfigFields(type, cfg) {
   }
   if (type === 'custom_code') return `${toggle}
     <div class="field"><label>Code</label><textarea id="e-code" rows="10">${esc(cfg.code || '')}</textarea></div>
-    <div class="field"><label>Input (JSON)</label><textarea id="e-input" rows="3">${cfg.input ? JSON.stringify(cfg.input, null, 2) : '{}'}</textarea></div>`;
+    <div class="field"><label>Input (JSON)</label><textarea id="e-input" rows="3">${cfg.input ? JSON.stringify(cfg.input, null, 2) : '{}'}</textarea></div>
+    <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
   return toggle;
 }
 
@@ -2044,8 +2045,11 @@ function wfGatherConfig(type) {
   }
   if (type === 'custom_code') {
     const input = tryParse('e-input', {});
-    if (input === 'ERROR') return null;
-    return { code: val('e-code'), input };
+    const sv = tryParse('e-setvars');
+    if (input === 'ERROR' || sv === 'ERROR') return null;
+    const cfg = { code: val('e-code'), input };
+    if (sv) cfg.set_vars = sv;
+    return cfg;
   }
   return {};
 }
