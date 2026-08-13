@@ -1434,6 +1434,48 @@
       document.body.appendChild(panel);
     }
 
+    // X3.3 postSubmit redirect: navigate to a landing page instead of the
+    // panel (redirect SUPERSEDES message/edit/new — Fred-ratified). Fires
+    // from onSave, i.e. after yc-forms has recorded the submission and
+    // cleared the draft, so nothing stale survives to a Restore banner.
+    //
+    // redirectBack appends the submitter's current URL as ?b=… so the
+    // landing page can render its own "Edit response" link. That URL
+    // CARRIES THE CASE CREDENTIAL — the server refuses redirectBack on
+    // anything but a same-origin path, and this guard re-checks the same
+    // shape (belt and suspenders; a projection bug must not leak the
+    // bearer link off-origin). The back URL prefers the TOP frame's URL:
+    // when this renderer is iframed same-origin (/p/form host) that is the
+    // branded page URL the visitor should return to, not the bare
+    // render.html URL; cross-origin (vanity-domain embed) top is
+    // unreadable and we fall back to our own URL.
+    function doPostSubmitRedirect() {
+      var ps = EXT.postSubmit;
+      var url = ps.redirect;
+      if (ps.redirectBack === true &&
+          url.charAt(0) === '/' && url.charAt(1) !== '/' && url.indexOf('\\') === -1) {
+        var back;
+        try { back = window.top.location.href; }
+        catch (e) { back = window.location.href; }
+        url += (url.indexOf('?') === -1 ? '?' : '&') + 'b=' + encodeURIComponent(back);
+      }
+      window.ycrNavigate(url);
+    }
+
+    // Navigation seam: same-origin frame chain → navigate the TOP page (the
+    // /p/form host leaves with us — no landing page nested inside the form
+    // chrome). Cross-origin embed → navigate ourselves: deterministic (a
+    // cross-origin top navigation can be silently blocked without user
+    // activation, stranding the visitor), and the host page's own chrome
+    // stays. Relative URLs resolve against THIS document's origin either
+    // way, so a "/p/…" target always lands on this app host.
+    window.ycrNavigate = function (url) {
+      var target = window;
+      try { void window.top.location.href; target = window.top; }
+      catch (e) { /* cross-origin parent — navigate in-frame */ }
+      target.location.href = url;
+    };
+
     // Hooks onSave — awaited by save() step 11, then save() re-baselines
     // (unless the user typed during the await; yc-forms fences that).
     config.onSave = async function (result) {
@@ -1441,7 +1483,13 @@
         try { await window.ycHooks.onSave(form_, result); }
         catch (e) { console.warn('[render] ycHooks.onSave failed:', e); }
       }
-      if (EXT && EXT.postSubmit) showPostSubmitPanel();
+      if (EXT && EXT.postSubmit) {
+        if (typeof EXT.postSubmit.redirect === 'string' && EXT.postSubmit.redirect) {
+          doPostSubmitRedirect();
+        } else {
+          showPostSubmitPanel();
+        }
+      }
     };
 
     var form_ = new YCForm(config);
@@ -1608,8 +1656,10 @@
             }
             EXT.load   = body.load || null;
             EXT.linked = !!body.linked;
-            // postSubmit (X3): validated server-side (message string ≤2000,
-            // edit/new booleans), rendered via textContent only below.
+            // postSubmit (X3/X3.3): validated server-side (message string
+            // ≤2000, edit/new/redirectBack booleans, redirect path-or-https
+            // ≤2000), rendered via textContent only below; redirect
+            // navigates instead of the panel.
             EXT.postSubmit = (body.postSubmit && typeof body.postSubmit === 'object')
               ? body.postSubmit : null;
             boot(body.definition, {

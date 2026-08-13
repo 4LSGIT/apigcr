@@ -182,10 +182,30 @@ a terminal state.
 | `message` | string ≤ 2000 | Thank-you copy. Rendered via `textContent` — no markup |
 | `edit` | boolean | Show a button returning to the filled form |
 | `new` | boolean | Show a button reloading for a fresh submission |
+| `redirect` | string ≤ 2000 | **(X3.3)** Navigate here after submit instead of showing the panel — `message`/`edit`/`new` are ignored when set. A same-origin path (`/p/thank-you`) or an absolute `https://` URL. Landing pages are the intended target |
+| `redirectBack` | boolean | **(X3.3)** Append the submitted form's URL as `?b=…` so the landing page can render its own "Edit your response" link. **Same-origin-path redirects only** — the back URL carries the case credential and is never sent off-origin (publish rejects the combination) |
+
+```json
+"postSubmit": {
+  "redirect": "/p/intake-thanks",
+  "redirectBack": true
+}
+```
+
+The back URL is the **top frame's** URL when the frame chain is same-origin —
+a visitor who filled the form inside the branded `/p/form` host gets the branded
+URL back, not the bare renderer URL. The navigation itself targets the top frame
+when same-origin (the host page leaves with the form) and stays in-frame under a
+cross-origin embed. All template-declared `urlParam` prefills survive the round
+trip because `b` preserves the full query string; `b` itself is a reserved
+`urlParam` name.
 
 `badLink` is server-only and never reaches the wire. `postSubmit` is the one
 `external.*` key the renderer receives, hoisted to the response top level so the
 `external` block itself stays off the public definition.
+
+All of `external.*` is editable in the builder under **Form settings → External
+rendering** (X3.3 — previously JSON-only).
 
 ---
 

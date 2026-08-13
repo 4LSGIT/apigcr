@@ -143,8 +143,8 @@ describe('validateDefinition — external.postSubmit (X3)', () => {
   });
 
   test('exact-key: unknown postSubmit keys rejected', () => {
-    expect(() => svc.validateDefinition(withPS({ redirect: '/x' })))
-      .toThrow(/postSubmit has unknown key "redirect"/);
+    expect(() => svc.validateDefinition(withPS({ goto: '/x' })))
+      .toThrow(/postSubmit has unknown key "goto"/);
     expect(() => svc.validateDefinition(withPS({ Message: 'typo' })))
       .toThrow(/postSubmit has unknown key "Message"/);
   });
@@ -162,6 +162,54 @@ describe('validateDefinition — external.postSubmit (X3)', () => {
       .toThrow(/edit must be a boolean/);
     expect(() => svc.validateDefinition(withPS({ new: 1 })))
       .toThrow(/new must be a boolean/);
+  });
+
+  // ── redirect / redirectBack (X3.3) ──
+  test('redirect: same-origin path and absolute https accepted; combos with panel keys accepted', () => {
+    expect(() => svc.validateDefinition(withPS({ redirect: '/p/thank-you' }))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({ redirect: '/p/t?x=1' }))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({ redirect: 'https://www.4lsg.com/thanks' }))).not.toThrow();
+    // redirect supersedes the panel at RENDER time — the definition may carry both
+    expect(() => svc.validateDefinition(withPS({ message: 'hi', edit: true, redirect: '/p/t' }))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({ redirect: '/p/t', redirectBack: true }))).not.toThrow();
+    expect(() => svc.validateDefinition(withPS({ redirect: '/p/t', redirectBack: false }))).not.toThrow();
+  });
+
+  test('redirect: rejects non-string, empty, over-length, non-https schemes, scheme-relative, backslash paths', () => {
+    expect(() => svc.validateDefinition(withPS({ redirect: 7 })))
+      .toThrow(/redirect must be a non-empty string/);
+    expect(() => svc.validateDefinition(withPS({ redirect: '' })))
+      .toThrow(/redirect must be a non-empty string/);
+    expect(() => svc.validateDefinition(withPS({ redirect: '/' + 'x'.repeat(2000) })))
+      .toThrow(/at most 2000 characters/);
+    expect(() => svc.validateDefinition(withPS({ redirect: 'http://insecure.test/x' })))
+      .toThrow(/same-origin path .* or an absolute https/);
+    expect(() => svc.validateDefinition(withPS({ redirect: 'javascript:alert(1)' })))
+      .toThrow(/same-origin path .* or an absolute https/);
+    expect(() => svc.validateDefinition(withPS({ redirect: '//evil.test/x' })))
+      .toThrow(/same-origin path .* or an absolute https/);
+    expect(() => svc.validateDefinition(withPS({ redirect: '/\\evil.test/x' })))
+      .toThrow(/same-origin path .* or an absolute https/);
+    expect(() => svc.validateDefinition(withPS({ redirect: 'p/relative' })))
+      .toThrow(/same-origin path .* or an absolute https/);
+  });
+
+  test('redirectBack: boolean-only, and true REQUIRES a same-origin-path redirect (credential containment)', () => {
+    expect(() => svc.validateDefinition(withPS({ redirect: '/p/t', redirectBack: 'yes' })))
+      .toThrow(/redirectBack must be a boolean/);
+    expect(() => svc.validateDefinition(withPS({ redirectBack: true })))
+      .toThrow(/redirectBack requires redirect to be a same-origin path/);
+    expect(() => svc.validateDefinition(withPS({ redirect: 'https://www.4lsg.com/t', redirectBack: true })))
+      .toThrow(/redirectBack requires redirect to be a same-origin path/);
+    // even https on the app host: the rule is mechanical path-shape, not host allowlisting
+    expect(() => svc.validateDefinition(withPS({ redirect: 'https://app.4lsg.com/p/t', redirectBack: true })))
+      .toThrow(/redirectBack requires redirect to be a same-origin path/);
+  });
+
+  test('urlParam "b" is reserved (X3.3 back-link param)', () => {
+    const def = JSON.parse(JSON.stringify(cleanDef));
+    def.sections[0].rows[0].fields[0].urlParam = 'b';
+    expect(() => svc.validateDefinition(def)).toThrow(/reserved/);
   });
 });
 

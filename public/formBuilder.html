@@ -2702,6 +2702,94 @@ function insSettings(ins) {
   }
   ins.appendChild(group('Save → workflow', wfKids));
 
+  // ── External rendering (X1 badLink + X3/X3.3 postSubmit) ──
+  // Edits MODEL.external — validated server-side whenever present regardless
+  // of visibility, ignored entirely by internal rendering. Canonical-minimal
+  // like the other groups: defaults are DELETED, never serialized (existing
+  // explicit values are preserved — round-trip stays byte-identical until
+  // the author actually changes something).
+  ins.appendChild((() => {
+    const extOf = () => MODEL.external || null;
+    const ensureExt = () => { MODEL.external = MODEL.external || {}; return MODEL.external; };
+    const cleanupExt = () => {
+      if (MODEL.external && !Object.keys(MODEL.external).length) delete MODEL.external;
+    };
+    const isPathShape = (v) =>
+      typeof v === 'string' && v.charAt(0) === '/' && v.charAt(1) !== '/' && v.indexOf('\\') === -1;
+
+    const kids = [
+      pSelect('Bad link handling (external.badLink)',
+        (extOf() && extOf().badLink) || '',
+        [['', '(default — reject)'],
+         ['reject', 'reject — Unauthorized Link page'],
+         ['degrade', 'degrade — anonymous mode (submission lands unlinked)']],
+        v => {
+          if (v) ensureExt().badLink = v;
+          else if (MODEL.external) { delete MODEL.external.badLink; cleanupExt(); }
+          touched();
+        },
+        { help: 'External routes only: what an invalid or missing case link gets. Ignored by internal rendering.' }),
+    ];
+
+    const hasPS = !!(extOf() && extOf().postSubmit);
+    kids.push(pCheck('After submit: thank-you panel / redirect (external.postSubmit)', hasPS, v => {
+      if (v) {
+        const e = ensureExt();
+        e.postSubmit = e.postSubmit || {};
+      } else if (MODEL.external) {
+        delete MODEL.external.postSubmit;
+        cleanupExt();
+      }
+      touched(); renderInspector();
+    }, { help: 'Off: the pre-X3 default — success toast, form stays editable. On with no message: panel with the default thank-you text.' }));
+
+    if (hasPS) {
+      const PS = extOf().postSubmit;
+      kids.push(
+        pText('Thank-you message', typeof PS.message === 'string' ? PS.message : '', v => {
+          setOrDel(PS, 'message', v); touched();
+        }, {
+          textarea: true, placeholder: 'Thank you! Your response has been submitted.',
+          validate: raw => raw.length > 2000 ? 'must be at most 2000 characters' : null,
+          help: 'Shown on the terminal panel. Empty = the default text. Ignored when a redirect is set.'
+        }),
+        pCheck('Show "Edit response" button (edit)', PS.edit === true, v => {
+          if (v) PS.edit = true; else delete PS.edit;
+          touched();
+        }),
+        pCheck('Show "Submit another response" button (new)', PS.new === true, v => {
+          if (v) PS.new = true; else delete PS.new;
+          touched();
+        }),
+        pText('Redirect after submit (redirect)', typeof PS.redirect === 'string' ? PS.redirect : '', v => {
+          if (v === '' && PS.redirectBack === true) delete PS.redirectBack;   // pair rule
+          setOrDel(PS, 'redirect', v); touched();
+        }, {
+          mono: true, placeholder: '/p/thank-you',
+          validate: raw => {
+            if (raw === '') return null;
+            if (raw.length > 2000) return 'must be at most 2000 characters';
+            if (isPathShape(raw)) return null;
+            if (PS.redirectBack === true) return 'back-link is on — the redirect must stay a same-origin path ("/…"), or untick the back-link first';
+            try { if (new URL(raw).protocol === 'https:') return null; } catch (_) {}
+            return 'must be a same-origin path ("/…") or an absolute https:// URL';
+          },
+          help: 'When set, the renderer navigates here instead of showing the panel — Message/Edit/New above are ignored. Landing pages (/p/…) are the intended target.'
+        }),
+        pCheck('Append back-link for an Edit button (redirectBack → ?b=…)', PS.redirectBack === true, v => {
+          if (v && !isPathShape(PS.redirect)) {
+            flash('The back-link carries the case credential — it is only appended to a same-origin path redirect ("/…"). Set one first.');
+            renderInspector();                        // reset the checkbox
+            return;
+          }
+          if (v) PS.redirectBack = true; else delete PS.redirectBack;
+          touched();
+        }, { help: 'Appends the submitted form\'s URL as ?b=… so the landing page can offer "Edit your response". Same-origin path redirects only — the link is the client\'s credential.' })
+      );
+    }
+    return group('External rendering', kids);
+  })());
+
   // ── Tabbed layout (2.6) ──
   ins.appendChild((() => {
     const tabbed = !!TABS_META;

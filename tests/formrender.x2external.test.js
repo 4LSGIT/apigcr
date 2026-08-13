@@ -226,6 +226,64 @@ describe('external submit', () => {
     expect(w.document.getElementById('ycRenderForm').style.display).not.toBe('none');
   });
 
+  test('X3.3 redirect: navigates instead of the panel and SUPERSEDES message/edit/new; no ?b= without redirectBack', async () => {
+    const page = makePage({
+      getBody: { status: 'success', title: 'Intake', link_type: 'case',
+                 schema_version: 3, definition: EXT_DEF, load: LOAD, linked: true,
+                 postSubmit: { message: 'ignored', edit: true, new: true,
+                               redirect: '/p/thanks' } },
+    });
+    const w = await ready(page);
+    const navs = [];
+    w.ycrNavigate = (url) => navs.push(url);   // seam: looked up at call time
+    type(w, 'reason', 'done');
+    w.document.getElementById('saveBtn').click();
+    await sleep(150);
+
+    expect(navs).toEqual(['/p/thanks']);                          // no b param
+    expect(w.document.querySelector('.ycr-post-submit')).toBeNull();  // panel superseded
+  });
+
+  test('X3.3 redirectBack: appends ?b=<current URL> (top when readable) to a path redirect, & when a query exists', async () => {
+    const page = makePage({
+      query: 'form_key=intake_test&case_id=abc12345&ext=1&src=fb',
+      getBody: { status: 'success', title: 'Intake', link_type: 'case',
+                 schema_version: 3, definition: EXT_DEF, load: LOAD, linked: true,
+                 postSubmit: { redirect: '/p/thanks?v=1', redirectBack: true } },
+    });
+    const w = await ready(page);
+    const navs = [];
+    w.ycrNavigate = (url) => navs.push(url);
+    type(w, 'reason', 'done');
+    w.document.getElementById('saveBtn').click();
+    await sleep(150);
+
+    expect(navs.length).toBe(1);
+    // top === window in the harness, so back = the page's own URL, credential
+    // and urlParams intact; existing query on the target → '&' joiner.
+    const expectedBack = encodeURIComponent(
+      'https://app.test/forms/render.html?form_key=intake_test&case_id=abc12345&ext=1&src=fb');
+    expect(navs[0]).toBe('/p/thanks?v=1&b=' + expectedBack);
+  });
+
+  test('X3.3 renderer guard: redirectBack on a NON-path redirect never appends the credential (defense in depth)', async () => {
+    // A payload that should be impossible (validateDefinition + projection
+    // both block it) — the renderer still refuses to append b= off-origin.
+    const page = makePage({
+      getBody: { status: 'success', title: 'Intake', link_type: 'case',
+                 schema_version: 3, definition: EXT_DEF, load: LOAD, linked: true,
+                 postSubmit: { redirect: 'https://evil.test/x', redirectBack: true } },
+    });
+    const w = await ready(page);
+    const navs = [];
+    w.ycrNavigate = (url) => navs.push(url);
+    type(w, 'reason', 'done');
+    w.document.getElementById('saveBtn').click();
+    await sleep(150);
+
+    expect(navs).toEqual(['https://evil.test/x']);   // navigated, but no b=
+  });
+
   test('degrade-anonymous boot: linked:false → submit body has NO case_id', async () => {
     const page = makePage({
       getBody: { status: 'success', title: 'Intake', link_type: 'case',

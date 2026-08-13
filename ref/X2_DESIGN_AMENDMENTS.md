@@ -222,3 +222,45 @@ be amended to say "three fields on the wire". Supermanager action.
   reject submissions the renderer considers complete. Left as-is
   deliberately; flag to the supermanager if repeater-level requirement is
   wanted.
+## §K — X3/X3.3: `external.postSubmit` (ratified amendments, recorded 2026-08-13)
+
+**X3 (Fred-ratified 2026-08-12), recorded here retroactively** — the amendment
+originally landed only in code + manual ch.15; `ref/FORM_TEMPLATE_SCHEMA_V1.md`
+was left stale until 2026-08-13. `external.postSubmit { message ≤2000,
+edit:bool, new:bool }` is the external renderer's terminal thank-you state;
+absent = pre-X3 behavior byte-identical. Hoisted to the GET response top level;
+the `external` block stays off the public definition wire; `badLink` stays
+server-only.
+
+**X3.3 (Fred-ratified 2026-08-13)** — `postSubmit` gains:
+
+- `redirect` (string ≤2000): navigate after submit instead of the panel.
+  **Supersedes** `message`/`edit`/`new` (ignored when set). Target must be a
+  same-origin path (`"/…"`, not `//`-relative, no backslash) or an absolute
+  `https://` URL. The template is SU-published content — the URL is trusted
+  authorship, not an open redirect. Landing pages (`/p/:slug`) are the
+  intended target: chrome stays in the pages system (X3.2 triage), never in
+  form definitions.
+- `redirectBack` (bool): append the submitter's current URL as `?b=…` so the
+  landing page renders its own "Edit your response" link. **Refused unless
+  `redirect` is a same-origin path** — the back URL carries the 40-bit case
+  credential (§E) and must never ride to an off-origin target's
+  logs/analytics/referrer chain. Enforced in `validateDefinition` AND
+  re-guarded in the renderer before appending. `b` joined
+  `URL_PARAM_RESERVED` (`f`/`t` convention; a form can itself be another
+  form's redirect target). Verified before reserving: no live template
+  declares `urlParam:"b"`.
+- Back URL = `window.top.location.href` when readable (a `/p/form`-framed
+  visitor gets the branded URL back), else own URL. Navigation targets the
+  top frame when the chain is same-origin, else stays in-frame —
+  deterministic under Chrome's cross-origin-top-nav intervention, and
+  relative paths resolve against the RENDERER's origin per spec (entry
+  settings object), so `/p/…` always lands on the app host even from a
+  vanity-domain embed.
+- Considered and declined: base64ing the back URL ("surface obfuscation") —
+  atob-transparent, changes nothing about what leaks, adds a decode contract
+  to every consuming landing page. The path-only rule is the actual control.
+- Builder: new **Form settings → External rendering** group (badLink select +
+  full postSubmit editor) — `external.*` was previously JSON-only.
+  `serializeModel()` already round-trips unmanaged keys, so existing
+  definitions stay byte-identical until edited.

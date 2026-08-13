@@ -132,6 +132,12 @@ router.get('/api/ext/forms/:form_key', async (req, res) => {
           ...(typeof ps.message === 'string' ? { message: ps.message } : {}),
           ...(ps.edit === true ? { edit: true } : {}),
           ...(ps.new === true ? { new: true } : {}),
+          // X3.3: navigate instead of panel. redirectBack only ever rides a
+          // same-origin-path redirect (validateDefinition enforces the pair;
+          // the renderer re-guards before appending the credential-bearing
+          // ?b= back-link).
+          ...(typeof ps.redirect === 'string' && ps.redirect ? { redirect: ps.redirect } : {}),
+          ...(ps.redirectBack === true ? { redirectBack: true } : {}),
         }
       : null;
 

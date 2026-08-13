@@ -71,6 +71,8 @@ const URL_PARAM_RESERVED = new Set([
   'form_key', 'ext', 'preview', 'template_id', 'link_id',
   'case_id', 'contact_id', 'appt_id',
   'f', 't',                    // consumed by the /p/form host page
+  'b',                         // X3.3 postSubmit back-link param — a form can
+                               // itself be another form's redirect target
 ]);
 
 
@@ -601,14 +603,27 @@ function validateDefinition(def) {
     // button reloading the page (same URL → same credential/urlParam
     // prefill). Absent = today's behavior, so every existing template is
     // untouched. Internal rendering ignores the whole `external` object.
+    //
+    // redirect / redirectBack (X3.3, Fred-ratified 2026-08-13): navigate
+    // after submit instead of showing the panel — the landing-pages system
+    // (/p/:slug) is the intended target, composition over chrome-in-forms.
+    // When `redirect` is set, message/edit/new are IGNORED by the renderer.
+    // Shape: a same-origin path ("/p/thanks") or an absolute https:// URL.
+    // The template is SU-published content, so the URL itself is trusted
+    // authorship — but `redirectBack` appends the submitter's current form
+    // URL as ?b=… and that URL CARRIES THE CASE CREDENTIAL, so redirectBack
+    // is refused unless the redirect is a same-origin path: the bearer link
+    // must never ride to an off-origin target's logs/analytics. (`b` is
+    // reserved in URL_PARAM_RESERVED for the same reason a form can itself
+    // be a redirect target.) Enforced here AND re-guarded in the renderer.
     if (def.external.postSubmit !== undefined && def.external.postSubmit !== null) {
       const ps = def.external.postSubmit;
       if (typeof ps !== 'object' || Array.isArray(ps)) {
         throw badRequest('external.postSubmit must be an object');
       }
       for (const k of Object.keys(ps)) {
-        if (k !== 'message' && k !== 'edit' && k !== 'new') {
-          throw badRequest(`external.postSubmit has unknown key "${k}" (allowed: message, edit, new)`);
+        if (k !== 'message' && k !== 'edit' && k !== 'new' && k !== 'redirect' && k !== 'redirectBack') {
+          throw badRequest(`external.postSubmit has unknown key "${k}" (allowed: message, edit, new, redirect, redirectBack)`);
         }
       }
       if (ps.message !== undefined && (typeof ps.message !== 'string' || ps.message.length > 2000)) {
@@ -619,6 +634,32 @@ function validateDefinition(def) {
       }
       if (ps.new !== undefined && typeof ps.new !== 'boolean') {
         throw badRequest('external.postSubmit.new must be a boolean');
+      }
+      if (ps.redirect !== undefined) {
+        if (typeof ps.redirect !== 'string' || !ps.redirect || ps.redirect.length > 2000) {
+          throw badRequest('external.postSubmit.redirect must be a non-empty string of at most 2000 characters');
+        }
+        const r = ps.redirect;
+        // Same-origin path: leading "/", not scheme-relative ("//evil"), no
+        // backslash (browsers fold "\" into "/" in special schemes — a
+        // "/\evil.test" path would escape the origin).
+        const isPath = r.charAt(0) === '/' && r.charAt(1) !== '/' && !r.includes('\\');
+        let isHttps = false;
+        if (!isPath) {
+          try { isHttps = new URL(r).protocol === 'https:'; } catch (_) { isHttps = false; }
+        }
+        if (!isPath && !isHttps) {
+          throw badRequest('external.postSubmit.redirect must be a same-origin path ("/…") or an absolute https:// URL');
+        }
+      }
+      if (ps.redirectBack !== undefined && typeof ps.redirectBack !== 'boolean') {
+        throw badRequest('external.postSubmit.redirectBack must be a boolean');
+      }
+      if (ps.redirectBack === true) {
+        const r = ps.redirect;
+        if (typeof r !== 'string' || r.charAt(0) !== '/' || r.charAt(1) === '/' || r.includes('\\')) {
+          throw badRequest('external.postSubmit.redirectBack requires redirect to be a same-origin path — the appended back-link carries the case credential and must never leave this origin');
+        }
       }
     }
   }

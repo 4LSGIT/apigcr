@@ -465,6 +465,21 @@ describe('routes/api.ext.forms.js (live router)', () => {
     expect('postSubmit' in body).toBe(false);
   });
 
+  test('X3.3 redirect/redirectBack: ride the postSubmit projection; falsy/junk shapes dropped', async () => {
+    fixture = { template: tplRow({ definition: { ...publicDef,
+      external: { badLink: 'degrade', postSubmit: { redirect: '/p/thanks', redirectBack: true } } } }) };
+    let body = await (await GET('/api/ext/forms/intake_test')).json();
+    expect(body.postSubmit).toEqual({ redirect: '/p/thanks', redirectBack: true });
+
+    // Non-true redirectBack and empty redirect never reach the wire — the
+    // projection is explicit picks, not a spread (defense in depth against a
+    // definition that bypassed validateDefinition).
+    fixture = { template: tplRow({ definition: { ...publicDef,
+      external: { badLink: 'degrade', postSubmit: { message: 'x', redirect: '', redirectBack: 'yes' } } } }) };
+    body = await (await GET('/api/ext/forms/intake_test')).json();
+    expect(body.postSubmit).toEqual({ message: 'x' });
+  });
+
   test('submit linked: server-resolved linkage, submitted_by NULL, workflow from THE DEFINITION (body ids ignored)', async () => {
     fixture = { template: tplRow(), caseRow: { case_id: 'abc12345' }, primary: null };
     const res = await POST('/api/ext/forms/intake_test/submit',
