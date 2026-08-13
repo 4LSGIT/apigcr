@@ -379,8 +379,9 @@ entity's submitted rows with the same view modal; adopted rows carry an
 gate flagged in §L is ALREADY LIVE — steps are renumbered with
 `evaluate_condition form_key == "intake"` at step 7 and the stamp at step 8,
 and step 6's subject carries `{{log_subject|default:…}}`. The §L warning is
-therefore historical; only the ref/X3_4_WF40_SNIPPETS.md file commit remains
-outstanding for the record.
+therefore historical. (2026-08-13: the planned ref/X3_4_WF40_SNIPPETS.md file
+was dropped — the live DB and this record are authoritative; nothing remains
+outstanding.)
 
 **§M addendum (same day, post-review):** the Inbox is scoped, not
 unlinked-only — `browseSubmissions` gained `linked=1` (inverse of `unlinked`;
