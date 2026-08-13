@@ -8,6 +8,7 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/automation/fnPicker.js"></script>
   <script src="/automation/esignTplPanel.js"></script>
+  <script src="/automation/paramWidgets.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        SEQUENCES SUB-PAGE — self-contained styles.
@@ -1848,7 +1849,14 @@ function seqWireEsignTplPanel() {
 
 function seqRenderParamField(spec, value, visible) {
   const id = `se-pf-${spec.name}`;
-  const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:#ef4444">*</span>' : ''}</label>`;
+  // {{placeholder}} toggle (/automation/paramWidgets.js) — only for params
+  // whose native control can't accept free text (integer/number/enum/
+  // object/array) AND that declare placeholderAllowed. Guarded on the global
+  // so a failed script load degrades to the old type-driven switch below
+  // rather than throwing mid-render.
+  const usePw = typeof window.pwHandles === 'function' && window.pwHandles(spec);
+  const togHtml = usePw ? window.pwToggleHtml(id, value) : '';
+  const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:#ef4444">*</span>' : ''}${togHtml}</label>`;
   const helpHtml = spec.description
     ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
     : '';
@@ -1869,6 +1877,14 @@ function seqRenderParamField(spec, value, visible) {
 
   // Type-driven rendering.
   let inputHtml;
+  if (usePw) {
+    // paramWidgets owns the control for these — it renders the SAME native
+    // control this switch would (number input with step/min/max, enum select
+    // with "(custom)" preservation, JSON textarea) plus the ph-mode text
+    // input, under the same element id, so gather is unchanged.
+    inputHtml = window.pwControlHtml(id, spec, value);
+    return `<div ${wrapperAttrs}>${labelHtml}${inputHtml}${helpHtml}</div>`;
+  }
   switch (spec.type) {
     case 'boolean': {
       const checked = value === true ? 'checked' : '';
@@ -2285,22 +2301,33 @@ function seqGatherActionConfig(actionType) {
       }
       case 'object':
       case 'array': {
+        // JSON ALWAYS WINS: parse first, so `["{{a}}","{{b}}"]` stays a real
+        // array and only genuinely-unparseable text reaches the fallback.
+        let parsed;
         try {
-          const parsed = JSON.parse(raw);
-          const isArr = Array.isArray(parsed);
-          if (spec.type === 'array' && !isArr) {
-            Swal.fire('Error', `${spec.name} must be a JSON array`, 'error');
-            return null;
-          }
-          if (spec.type === 'object' && (isArr || typeof parsed !== 'object' || parsed === null)) {
-            Swal.fire('Error', `${spec.name} must be a JSON object`, 'error');
-            return null;
-          }
-          params[spec.name] = parsed;
+          parsed = JSON.parse(raw);
         } catch {
+          // A BARE {{token}} on a placeholderAllowed structured param is
+          // legal — the server's placeholder bypass runs before the type
+          // check, and the engine resolves the token to a real array/object
+          // at run time. Mirrors workflows.html wfGatherConfig.
+          if (spec.placeholderAllowed && SEQ_PLACEHOLDER_RE.test(raw)) {
+            params[spec.name] = raw;
+            break;
+          }
           Swal.fire('Error', `${spec.name} is not valid JSON`, 'error');
           return null;
         }
+        const isArr = Array.isArray(parsed);
+        if (spec.type === 'array' && !isArr) {
+          Swal.fire('Error', `${spec.name} must be a JSON array`, 'error');
+          return null;
+        }
+        if (spec.type === 'object' && (isArr || typeof parsed !== 'object' || parsed === null)) {
+          Swal.fire('Error', `${spec.name} must be a JSON object`, 'error');
+          return null;
+        }
+        params[spec.name] = parsed;
         break;
       }
       default:

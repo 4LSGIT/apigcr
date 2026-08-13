@@ -72,6 +72,14 @@ function extractFn(src, name) {
 const HTML = fs.readFileSync(HTML_PATH, 'utf8');
 const SCRIPT = HTML.match(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/)[1];
 
+// The {{placeholder}}-toggle module the page loads via <script src>. Read from
+// disk rather than stubbed so the suite exercises the SHIPPED widget: the page
+// guards every call on `typeof window.pwHandles === 'function'`, so omitting it
+// here would silently fall back to the old type-driven switch and the toggle
+// tests below would pass vacuously.
+const PARAM_WIDGETS = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'automation', 'paramWidgets.js'), 'utf8');
+
 // Pulled verbatim from the shipped file. If any of these are renamed or their
 // braces stop balancing, extractFn throws and this suite fails loudly rather
 // than silently testing nothing.
@@ -106,7 +114,12 @@ function makeEditor(fnName, storedParams) {
       // to prove the ROUND-TRIP, not that gather handed our own object back.
       origConfig: JSON.parse(JSON.stringify({ function_name: fnName, params: storedParams })),
     },
+    // pwToggle dispatches synthetic input/change events (to feed the page's
+    // debounced side-panels) and a pw:swap CustomEvent.
+    Event: window.Event,
+    CustomEvent: window.CustomEvent,
   });
+  vm.runInContext(PARAM_WIDGETS, ctx);
   vm.runInContext(SOURCES, ctx);
 
   // Render every param field the way wfRenderInternalFnBody does, inside the
@@ -124,6 +137,8 @@ function makeEditor(fnName, storedParams) {
     window,
     swalCalls,
     field: (name) => window.document.getElementById(`e-pf-${name}`),
+    tog:   (name) => window.document.querySelector(`.pw-tog[data-pw-for="e-pf-${name}"]`),
+    toggle: (name) => ctx.window.pwToggle(`e-pf-${name}`),
     gather: () => ctx.wfGatherConfig('internal_function'),
   };
 }
@@ -268,5 +283,185 @@ describe('workflows.html editor — gather still coerces and still rejects', () 
     ed.ctx.WF.origConfig._comment = 'Phase 2 gate: RC outbound events set needs_fetch=true.';
     const cfg = ed.gather();
     expect(cfg._comment).toBe('Phase 2 gate: RC outbound events set needs_fetch=true.');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// {{placeholder}} toggle (public/automation/paramWidgets.js)
+//
+// The slice above unlocked SAVING a stored placeholder on a numeric param.
+// It did not unlock AUTHORING one: the field only degraded to a text input
+// when the value ALREADY was a token, so a fresh step still got
+// <input type="number"> and the operator could not type "{{" into it at all.
+// Same for enum (<select>) and array/object (JSON textarea) — and the
+// textarea case was worse than an authoring gap, it was a SAVE LOCK.
+// ═══════════════════════════════════════════════════════════════════════
+
+// Verbatim from the readonly SQL sweep.
+const WF39_S4 = { list: '{{docList}}', end_step: 7, item_var: 'doc', index_var: 'i', max_items: 50 };
+const WF30_S15 = {
+  title: 'Signed doc received (Adobe): {{agreementName}}', source: 'adobe_sign',
+  link_id: '{{linkId}}', link_type: '{{linkType}}', contact_id: '{{contactId}}',
+  assigned_by: 0, assigned_to: '{{alertUserId}}', description: '{{taskDesc}}',
+  send_assignment_email: false,
+};
+
+describe('paramWidgets — which params get a toggle', () => {
+  test('placeholderAllowed integer gets one; the numeric control is unchanged', () => {
+    const ed = makeEditor('request_decision', {
+      question: 'Approve?', options: [{ label: 'Yes', value: 'yes' }],
+      result_var: 'd', timeout: '3d', timeout_value: 'no_response',
+      recipient_kind: 'user', recipient_id: 1,
+    });
+    expect(ed.tog('recipient_id')).not.toBeNull();
+    // Still the native number input until the operator asks otherwise.
+    expect(ed.field('recipient_id').getAttribute('type')).toBe('number');
+    expect(ed.field('recipient_id').value).toBe('1');
+  });
+
+  test('an integer param WITHOUT placeholderAllowed gets no toggle', () => {
+    // request_decision.nextStep is integer, unflagged. Per-spec, never global.
+    const ed = makeEditor('request_decision', {
+      question: 'Approve?', options: [{ label: 'Yes', value: 'yes' }],
+      result_var: 'd', timeout: '3d', timeout_value: 'no_response',
+      recipient_kind: 'user', recipient_id: 1, nextStep: 4,
+    });
+    expect(ed.tog('nextStep')).toBeNull();
+    expect(ed.field('nextStep').getAttribute('type')).toBe('number');
+  });
+
+  test('boolean params never get one (the validator hard-rejects a token)', () => {
+    const ed = makeEditor('create_task', WF30_S15);
+    expect(ed.tog('send_assignment_email')).toBeNull();
+    expect(ed.field('send_assignment_email').getAttribute('type')).toBe('checkbox');
+  });
+
+  test('a string param never gets one — it already accepts free text', () => {
+    const ed = makeEditor('create_task', WF30_S15);
+    expect(ed.tog('title')).toBeNull();
+  });
+});
+
+describe('paramWidgets — authoring a placeholder where one could not be typed', () => {
+  test("THE BUG: request_decision.recipient_id — number box → {{token}} → saves", () => {
+    const ed = makeEditor('request_decision', {
+      question: 'Approve?', options: [{ label: 'Yes', value: 'yes' }],
+      result_var: 'd', timeout: '3d', timeout_value: 'no_response',
+      recipient_kind: 'user', recipient_id: 1,
+    });
+    ed.toggle('recipient_id');
+    const el = ed.field('recipient_id');
+    expect(el.getAttribute('type')).not.toBe('number');
+    el.value = '{{approverUserId}}';
+    expect(el.value).toBe('{{approverUserId}}');   // survives read-back
+
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg.params.recipient_id).toBe('{{approverUserId}}');
+    expect(internalFunctions.__validateFunctionParams('request_decision', cfg.params)).toBeNull();
+  });
+
+  test('numeric toggle keeps the SAME node — esignTplPanel binds to #e-pf-template_id', () => {
+    // esignTplPanel.js attaches an `input` listener to the template_id field.
+    // Replacing the node on toggle would silently kill the template-fields
+    // panel, so integer/number retype in place instead.
+    const ed = makeEditor('esign_send_from_template', {
+      template_id: 3, linkable_type: 'case', linkable_id: '{{caseId}}',
+    });
+    const before = ed.field('template_id');
+    let fired = 0;
+    before.addEventListener('input', () => { fired++; });
+    ed.toggle('template_id');
+    expect(ed.field('template_id')).toBe(before);   // identity, not just equality
+    expect(fired).toBe(1);                          // and the listener still runs
+  });
+
+  test('enum param: select → text → {{token}} → saves', () => {
+    const ed = makeEditor('create_task', { ...WF30_S15, link_type: 'case' });
+    expect(ed.field('link_type').tagName).toBe('SELECT');
+    ed.toggle('link_type');
+    const el = ed.field('link_type');
+    expect(el.tagName).toBe('INPUT');
+    el.value = '{{linkType}}';
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg.params.link_type).toBe('{{linkType}}');
+    expect(internalFunctions.__validateFunctionParams('create_task', cfg.params)).toBeNull();
+  });
+
+  test('array param: JSON textarea → text → {{token}} → saves', () => {
+    const ed = makeEditor('foreach', { ...WF39_S4, list: [1, 2] });
+    expect(ed.field('list').tagName).toBe('TEXTAREA');
+    ed.toggle('list');
+    const el = ed.field('list');
+    expect(el.tagName).toBe('INPUT');
+    el.value = '{{docList}}';
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg.params.list).toBe('{{docList}}');
+    expect(internalFunctions.__validateFunctionParams('foreach', cfg.params)).toBeNull();
+  });
+
+  test('a stored placeholder opens in placeholder mode with the toggle lit', () => {
+    const ed = makeEditor('foreach', WF39_S4);
+    expect(ed.field('list').tagName).toBe('INPUT');
+    expect(ed.field('list').value).toBe('{{docList}}');
+    expect(ed.tog('list').style.color).toBe('var(--blue)');
+  });
+
+  test('toggling OUT of placeholder mode stashes the token; toggling back restores it', () => {
+    // Otherwise a mis-click silently destroys the token (a number input blanks
+    // it, a select cannot hold it) with no way back short of retyping.
+    const ed = makeEditor('create_appointment', WF7_S3);
+    expect(ed.field('appt_with').value).toBe('{{attorney_user_id}}');
+    ed.toggle('appt_with');
+    expect(ed.field('appt_with').getAttribute('type')).toBe('number');
+    expect(ed.field('appt_with').value).toBe('');
+    ed.toggle('appt_with');
+    expect(ed.field('appt_with').value).toBe('{{attorney_user_id}}');
+  });
+});
+
+describe('paramWidgets — the foreach save lock', () => {
+  test('wf39 s4 round-trips untouched (it could not be saved from form mode at all)', () => {
+    // Pre-fix: gather JSON.parse("{{docList}}") threw, so the toast fired and
+    // gather returned null NO MATTER which field was actually edited.
+    const ed = makeEditor('foreach', WF39_S4);
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg).not.toBeNull();
+    expect(JSON.stringify(cfg.params)).toBe(JSON.stringify(WF39_S4));
+    expect(internalFunctions.__validateFunctionParams('foreach', cfg.params)).toBeNull();
+  });
+
+  test('JSON still wins: a real array of tokens stays a real array', () => {
+    const ed = makeEditor('foreach', { ...WF39_S4, list: [] });
+    ed.field('list').value = '["{{a}}","{{b}}"]';
+    const cfg = ed.gather();
+    expect(cfg.params.list).toEqual(['{{a}}', '{{b}}']);
+  });
+
+  test('unparseable text that is NOT a placeholder still errors', () => {
+    const ed = makeEditor('foreach', { ...WF39_S4, list: [] });
+    ed.field('list').value = 'not json at all';
+    expect(ed.gather()).toBeNull();
+    expect(ed.swalCalls[0][1]).toContain('is not valid JSON');
+  });
+
+  test('a JSON OBJECT on an array param still errors (type check not bypassed)', () => {
+    const ed = makeEditor('foreach', { ...WF39_S4, list: [] });
+    ed.field('list').value = '{"a":1}';
+    expect(ed.gather()).toBeNull();
+    expect(ed.swalCalls[0][1]).toContain('must be a JSON array');
+  });
+});
+
+describe('paramWidgets — wf30 s15 create_task, the densest live placeholder step', () => {
+  test('round-trips untouched with both integer and enum tokens', () => {
+    const ed = makeEditor('create_task', WF30_S15);
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(JSON.stringify(cfg.params)).toBe(JSON.stringify(WF30_S15));
+    expect(internalFunctions.__validateFunctionParams('create_task', cfg.params)).toBeNull();
   });
 });

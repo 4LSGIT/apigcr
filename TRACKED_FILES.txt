@@ -169,6 +169,7 @@ public/automation/emailIngest.html
 public/automation/esignTplPanel.js
 public/automation/fnPicker.js
 public/automation/hooks.html
+public/automation/paramWidgets.js
 public/automation/paramsMapping.js
 public/automation/phoneIngest.html
 public/automation/scheduledJobs.html
@@ -611,6 +612,7 @@ tests/portalDocsRoutes.test.js
 tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
+tests/sequences.editor.roundtrip.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
