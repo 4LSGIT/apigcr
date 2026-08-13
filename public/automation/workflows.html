@@ -1654,9 +1654,12 @@ function wfRenderParamField(spec, value, visible) {
   const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:#ef4444">*</span>' : ''}${togHtml}</label>`;
   // nullTerminates params accept a blank field as an explicit null ("end the
   // workflow") — gather writes the null rather than deleting the key. Say so,
-  // or a blank required field reads as an unfinished step.
+  // or a blank required field reads as an unfinished step. Typing `end` does
+  // the same thing and is preferred: it survives a glance, it reads as a
+  // deliberate choice next to `cancel`/`fail`, and it is the only form a
+  // {{placeholder}} can resolve to (workflow_engine.normalizeNextStep).
   const nullHint = spec.nullTerminates
-    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4"><b>Leave blank to end the workflow.</b></p>`
+    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4"><b>Type <code>end</code> (or leave blank) to end the workflow.</b></p>`
     : '';
   const helpHtml = (spec.description
     ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
@@ -3402,12 +3405,34 @@ const _wfEsc = (window.esc || function(s) {
 function _wfNextRef(val, hasKey) {
   if (!hasKey)              return `<i>continue to next step</i>`;
   if (val === null)         return `<i>end workflow</i>`;
-  if (val === 'cancel')     return `<i>cancel workflow</i>`;
-  if (val === 'fail')       return `<i>fail workflow</i>`;
+  // Sentinel WORDS. Must match lib/workflow_engine.normalizeNextStep(): 'end'
+  // is the word form of null, 'null' is its deprecated string alias (wf41-era
+  // configs), and blank is what the form editor's nullTerminates path used to
+  // be the only way to author. Without these three the Explain view rendered
+  // an ended branch as a literal `"null"` jump target.
+  if (typeof val === 'string') {
+    const s = val.trim().toLowerCase();
+    if (s === '' || s === 'end' || s === 'null') return `<i>end workflow</i>`;
+    if (s === 'cancel')                          return `<i>cancel workflow</i>`;
+    if (s === 'fail')                            return `<i>fail workflow</i>`;
+    if (/^\d+$/.test(s)) {
+      const n = parseInt(s, 10);
+      return `<a class="ex-step-link" data-explain-step="${n}">step ${n}</a>`;
+    }
+  }
   if (typeof val === 'number') {
     return `<a class="ex-step-link" data-explain-step="${val}">step ${val}</a>`;
   }
   return `<code>${_wfEsc(JSON.stringify(val))}</code>`;
+}
+
+// True when a set_next / foreach end_step value means "end the workflow".
+// Same contract as _wfNextRef above.
+function _wfIsEndSentinel(val) {
+  if (val === null || val === undefined) return true;
+  if (typeof val !== 'string') return false;
+  const s = val.trim().toLowerCase();
+  return s === '' || s === 'end' || s === 'null';
 }
 
 // Per-function explainers. Each returns an HTML body fragment for the
@@ -3466,7 +3491,7 @@ const _wfExplainers = {
 
   set_next(p) {
     const hasVal = Object.prototype.hasOwnProperty.call(p, 'value');
-    if (!hasVal || p.value === null) return `<div class="ex-line"><b>End workflow</b></div>`;
+    if (!hasVal || _wfIsEndSentinel(p.value)) return `<div class="ex-line"><b>End workflow</b></div>`;
     return `<div class="ex-line"><b>Jump to</b> ${_wfNextRef(p.value, true)}</div>`;
   },
 

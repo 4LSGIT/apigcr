@@ -209,6 +209,12 @@ describe('foreach', () => {
     expect(r.next_step).toBe('cancel');
   });
 
+  test("end_step 'end' passes through (engine maps it to end-normally)", async () => {
+    // foreach does not interpret its own end_step — normalizeNextStep does.
+    const r = await fe({ ...base, end_step: 'end', list: [], _variables: {} });
+    expect(r.next_step).toBe('end');
+  });
+
   test('JSON-array string list is parsed', async () => {
     const r = await fe({ ...base, list: '["a","b"]', _variables: {} });
     expect(r.set_vars.match).toBe('a');
@@ -384,5 +390,90 @@ describe('workflow_engine isControlStep', () => {
     const src = require('fs').readFileSync(
       require.resolve('../lib/workflow_engine.js'), 'utf8');
     expect(src).toMatch(/_step_number:\s*context\.env\?\.stepNumber/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// normalizeNextStep — the next_step sentinel contract.
+//
+// Every producer (set_next.value, evaluate_condition then/else/branches[].then,
+// foreach.end_step, request_decision.nextStep, wait_for/schedule_resume skip
+// targets) funnels through this one function. Before it existed, the engine
+// matched only null/undefined/'cancel'/'fail' and let everything else fall
+// through to `currentStepNumber = <garbage>` → an INT column with no
+// STRICT_TRANS_TABLES → silently stored 0 → missing-step branch → the
+// execution completed as though nothing were wrong. A crash in that window
+// left current_step_number = 0, and recoverStuckJobs' `|| 1` restarted the
+// workflow at step 1, re-firing every side effect.
+// ─────────────────────────────────────────────────────────────
+describe('workflow_engine normalizeNextStep', () => {
+  const { normalizeNextStep } = require('../lib/workflow_engine');
+
+  test('historical terminal forms still end the workflow', () => {
+    expect(normalizeNextStep(null)).toEqual({ kind: 'end' });
+    expect(normalizeNextStep(undefined)).toEqual({ kind: 'end' });
+    // Unresolved {{placeholder}} → resolvePlaceholders' `?? ''`. This already
+    // ended the execution; keeping it terminal avoids a behavior change.
+    expect(normalizeNextStep('')).toEqual({ kind: 'end' });
+    expect(normalizeNextStep('   ')).toEqual({ kind: 'end' });
+  });
+
+  test("'end' is the word form of null", () => {
+    expect(normalizeNextStep('end')).toEqual({ kind: 'end' });
+    expect(normalizeNextStep('END')).toEqual({ kind: 'end' });
+    expect(normalizeNextStep(' End ')).toEqual({ kind: 'end' });
+  });
+
+  test("'null' is accepted as a DEPRECATED alias (wf41 s5/s7 shipped with it)", () => {
+    expect(normalizeNextStep('null')).toEqual({ kind: 'end' });
+    expect(normalizeNextStep('NULL')).toEqual({ kind: 'end' });
+  });
+
+  test('cancel / fail keep their own terminal statuses', () => {
+    expect(normalizeNextStep('cancel')).toEqual({ kind: 'cancel' });
+    expect(normalizeNextStep('fail')).toEqual({ kind: 'fail' });
+    expect(normalizeNextStep('Cancel')).toEqual({ kind: 'cancel' });
+  });
+
+  test('step numbers pass as int or digit-string (the live corpus stores both)', () => {
+    expect(normalizeNextStep(5)).toEqual({ kind: 'step', step: 5 });
+    expect(normalizeNextStep('5')).toEqual({ kind: 'step', step: 5 });
+    expect(normalizeNextStep(' 07 ')).toEqual({ kind: 'step', step: 7 });
+  });
+
+  test('unusable targets are INVALID, not silently terminal', () => {
+    // The whole point: these used to complete the execution as though the
+    // author had meant to stop.
+    for (const bad of ['step 5', 'END!', 'stpe 5', '{{jump_to}}', 'done',
+                       0, '0', -1, 1.5, NaN, true, false, {}, []]) {
+      expect(normalizeNextStep(bad).kind).toBe('invalid');
+    }
+  });
+
+  test('an invalid target fails the execution rather than falling through', () => {
+    const src = require('fs').readFileSync(
+      require.resolve('../lib/workflow_engine.js'), 'utf8');
+    // No raw assignment of the un-normalized next_step to the step pointer.
+    expect(src).not.toMatch(/nextStep\s*=\s*stepResult\.next_step\s*;/);
+    // The delay path normalizes too — a sentinel must never reach
+    // scheduled_jobs.payload or the resume idempotency key.
+    expect(src).toMatch(/normalizeNextStep\(rawResume\)/);
+  });
+
+  test('the renumber remap skips the SAME sentinel set (no spurious warnings)', () => {
+    // routes/workflows.js keeps its own copy (it never loads the engine).
+    // Drift here means every insert/delete on a workflow that ends a branch
+    // emits a bogus "not auto-remapped" warning.
+    const src = require('fs').readFileSync(
+      require.resolve('../routes/workflows.js'), 'utf8');
+    const block = src.match(/const TERMINAL_SENTINELS = new Set\(\[([^\]]*)\]\)/);
+    expect(block).not.toBeNull();
+    const listed = [...block[1].matchAll(/'([^']+)'/g)].map(m => m[1]).sort();
+    expect(listed).toEqual(['cancel', 'end', 'fail', 'null']);
+    for (const s of listed) {
+      expect(normalizeNextStep(s).kind).not.toBe('invalid');
+    }
+    expect(src).toMatch(/isTerminalSentinel\(v\)/);
+    expect(src).toMatch(/isTerminalSentinel\(bv\)/);
   });
 });

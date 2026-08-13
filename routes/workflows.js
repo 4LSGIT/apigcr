@@ -59,8 +59,10 @@ function validateTestInput(v) {
 // TARGET for set_next but a COMPARISON OPERAND for evaluate_condition —
 // a blind param-name rewrite would corrupt conditions.
 //
-// Non-integer targets ('cancel', 'fail', templated strings) are left
-// untouched and reported in warnings. custom_code that mentions next_step
+// Non-integer targets are left untouched. Terminal sentinels ('end',
+// 'cancel', 'fail', and the deprecated 'null') are skipped SILENTLY; anything
+// else non-literal (templated strings, typos) is reported in warnings.
+// custom_code that mentions next_step
 // is flagged too (the engine's isControlStep whitelist ignores next_step
 // from custom_code, but flag it so authors eyeball their intent).
 //
@@ -97,6 +99,16 @@ const BRANCH_TARGET_PARAMS = {
   // its scheduled workflow_resume job's nextStep).
   request_decision:   ['nextStep'],
 };
+
+// Terminal sentinels are legitimate non-numeric targets — a renumber must leave
+// them alone SILENTLY, or every insert/delete on a workflow that ends a branch
+// emits a spurious "not auto-remapped" warning. Mirrors the accepted set in
+// lib/workflow_engine.normalizeNextStep(); 'null' is the deprecated alias kept
+// for wf41-era configs. Keep the two lists in step — tests/control.flow.test.js
+// asserts it.
+const TERMINAL_SENTINELS = new Set(['end', 'cancel', 'fail', 'null']);
+const isTerminalSentinel = v =>
+  typeof v === 'string' && TERMINAL_SENTINELS.has(v.trim().toLowerCase());
 
 async function remapBranchTargets(connection, workflowId, mapFn) {
   const [steps] = await connection.query(
@@ -135,7 +147,7 @@ async function remapBranchTargets(connection, workflowId, mapFn) {
       if (Number.isInteger(v)) iv = v;
       else if (typeof v === 'string' && /^\d+$/.test(v)) iv = parseInt(v, 10);
       else {
-        if (v !== 'cancel' && v !== 'fail') {
+        if (!isTerminalSentinel(v)) {
           warnings.push(`step ${row.step_number}: ${cfg.function_name}.${p} is non-literal (${JSON.stringify(v)}) — not auto-remapped`);
         }
         continue;
@@ -171,7 +183,7 @@ async function remapBranchTargets(connection, workflowId, mapFn) {
         if (Number.isInteger(bv)) biv = bv;
         else if (typeof bv === 'string' && /^\d+$/.test(bv)) biv = parseInt(bv, 10);
         else {
-          if (bv !== 'cancel' && bv !== 'fail') {
+          if (!isTerminalSentinel(bv)) {
             warnings.push(`step ${row.step_number}: evaluate_condition.branches[${i}].then is non-literal (${JSON.stringify(bv)}) — not auto-remapped`);
           }
           continue;

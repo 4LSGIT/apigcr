@@ -568,9 +568,9 @@ Step 20: (common cleanup)
 ```
 
 **Rules:**
-- `evaluate_condition` and `set_next` are the only functions whose `next_step` is honored by `isControlStep`
-- `schedule_resume` is also `isControlStep` (was a bug: omitting caused skipped blocks to fire immediately)
-- `null` from `evaluate_condition`'s `else` branch → `markExecutionCompleted`
+- `isControlStep` is derived from `__meta.controlFlow`, not a name list — see §5.5
+- `set_next` and `evaluate_condition` are the usual branching pair; `foreach`, `schedule_resume`, `wait_for` and `request_decision` are also control steps
+- Control steps never fall through sequentially: `null` from `evaluate_condition`'s `else` → `markExecutionCompleted`. So is `"end"` from `set_next` — see §5.5b for the full sentinel table
 
 ### 3.7 Hook Intake → Action
 
@@ -1333,21 +1333,71 @@ enroll_sequence: async (params, db) => {
 
 ### 5.5 `isControlStep` Matters
 
-Only three function names are treated as control steps by the workflow engine:
+A step's `next_step` is only honored if its internal function is flagged
+`controlFlow: true` in its own `__meta`. The engine derives the set — it is no
+longer a hardcoded name list:
 
 ```js
 function isControlStep(step) {
-  return (
-    step.type === 'internal_function' &&
-    ['set_next', 'evaluate_condition', 'schedule_resume'].includes(step.config?.function_name)
-  );
+  if (step.type !== 'internal_function') return false;
+  return internalFunctions.__getMeta(step.config?.function_name)?.controlFlow === true;
 }
 ```
 
+Currently flagged: `set_next`, `evaluate_condition`, `foreach`,
+`schedule_resume`, `wait_for`, `request_decision`. `wait_until_time` is
+deliberately unflagged (it always returns `delayed_until`, and the delay path
+reads `next_step` directly). `custom_code` has no meta, so a `next_step` it
+returns is ignored by design — return a variable and branch on it with
+`evaluate_condition` instead.
+
 **Consequences:**
 - A regular step's `next_step` output is **ignored** — the engine always advances sequentially.
-- Only `set_next` can make a workflow jump to a non-adjacent step.
-- **Omitting `schedule_resume` from the list** (a past bug) caused skipped blocks to fire immediately rather than deferring. If you invent a new control-ish function, **add it to this list.**
+- Control steps have **no sequential fall-through**: a control step that returns null/undefined ENDS the workflow rather than continuing to the next step.
+- **Omitting `schedule_resume`** (a past bug, back when the list was hand-maintained) caused skipped blocks to fire immediately rather than deferring.
+
+If you write a new control-ish function: set `controlFlow: true` in its
+`__meta` **and** add it to `BRANCH_TARGET_PARAMS` in `routes/workflows.js` so a
+renumber rewrites its step targets. `tests/control.flow.test.js` asserts both.
+
+### 5.5b `next_step` Sentinels — One Normalizer
+
+Every producer (`set_next.value`, `evaluate_condition`'s
+`then`/`else`/`branches[].then`, `foreach.end_step`,
+`request_decision.nextStep`, the `wait_for`/`schedule_resume` skip targets)
+funnels through `workflow_engine.normalizeNextStep()`. Trimmed,
+case-insensitive:
+
+| Value | Result |
+|---|---|
+| positive int or digit-string | jump to that step |
+| `"end"` | end with the workflow's final status |
+| `null` / present-but-blank `""` | same as `"end"` |
+| `"null"` | same as `"end"` — **deprecated alias**, don't write new ones |
+| `"cancel"` / `"fail"` | mark `cancelled` / `failed` |
+| anything else | step recorded **failed**, execution marked **failed** |
+
+`"end"` exists because the family was `cancel`/`fail` plus a bare null, so
+"end normally" was the one terminal outcome with no word — unreachable from a
+computed target (`set_next { value: "{{jump_to}}" }`), and authorable in the
+form editor only by leaving a required field blank.
+
+**Why unusable values are fatal.** They used to fall through to
+`currentStepNumber = <garbage>`, which is written to
+`workflow_executions.current_step_number` — an `INT` column, and with no
+`STRICT_TRANS_TABLES` that silently stored `0`. The engine then failed to load
+step 0, hit the missing-step branch, and completed the execution as though
+nothing were wrong: a typo'd jump target was indistinguishable from success.
+Worse, a crash between that write and completion left the row `processing`
+with `current_step_number = 0`, and `recoverStuckJobs` computes
+`resumeStep = ex.current_step_number || 1` — `0` is falsy, so recovery
+restarted the workflow **at step 1** and re-fired every side effect. Its
+`staleFirstStepShape` gate tests `=== 1` and never caught the `0`.
+
+Note `then`/`else` are typed `integer`, so the save-time validator rejects the
+word forms **there** — deliberate, since a non-numeric main branch target is
+far more often a typo than an intent. Terminate from a branch by pointing at a
+`set_next` step.
 
 ### 5.6 SMS / Email Argument Patterns
 

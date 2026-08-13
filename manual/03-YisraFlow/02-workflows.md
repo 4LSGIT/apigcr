@@ -200,11 +200,18 @@ Workflow-only — sequences don't support `evaluate_condition`.
 { "function_name": "set_next", "params": { "value": 8 } }
 ```
 
-`value` accepts:
-- A step number (positive integer) → jump to that step
-- `null` → end the workflow normally (status `completed`)
+`value` accepts (trimmed, case-insensitive):
+- A step number, as an integer or a digit-string → jump to that step
+- `"end"` → end the workflow normally (status `completed` / `completed_with_errors`)
+- `null`, or a present-but-blank `""` → same as `"end"`
 - `"cancel"` → mark the execution `cancelled`
 - `"fail"` → mark the execution `failed`
+- Anything else → the step is recorded **failed** and the execution is marked `failed`
+
+`"end"` is the preferred form: it's the only one a `{{placeholder}}` can
+resolve to, and a blank required field reads as an unfinished step. The string
+`"null"` also works as a deprecated alias — don't write new ones. Full
+rationale in cookbook §5.5b.
 
 Workflow-only.
 
@@ -242,7 +249,7 @@ Every time the engine reaches the foreach step it does exactly one of two things
 | `list` | yes | Usually a single `{{placeholder}}` resolving to an array. A JSON-array *string* is also parsed. Anything else throws. |
 | `item_var` | yes | Variable that receives the current item. |
 | `index_var` | no | Variable that receives the 0-based index. |
-| `end_step` | **yes** | Step number, `"cancel"`, `"fail"`, or `null` to end the workflow. Same value contract as `set_next.value`. Omitting the key throws — explicit `null` is the deliberate form. |
+| `end_step` | **yes** | Step number, `"end"`, `"cancel"`, or `"fail"`. Same value contract as `set_next.value` (blank/`null` also ends the workflow). Omitting the key throws — the value must state an intent. |
 | `state_var` | no | Cursor variable. Default `__foreach_<item_var>`. Only override for two concurrent loops sharing an `item_var` (don't). |
 | `max_items` | no | Default 100, hard ceiling 500. A longer list **fails the step** — it does not truncate. |
 

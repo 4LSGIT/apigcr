@@ -461,6 +461,14 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['set_next omitted still required',   'set_next', {}, 'value is required'],
     ['set_next cancel',                   'set_next', { value: 'cancel' }, null],
     ['set_next placeholder',              'set_next', { value: '{{next_step}}' }, null],
+    // 'end' — the word form of null (2026-08). The param is type:'string' with
+    // no enum, so this always validated; pinned here so a future enum/strict
+    // tightening can't quietly lock it out again. Runtime meaning is asserted
+    // in tests/control.flow.test.js (normalizeNextStep).
+    ['set_next end sentinel',             'set_next', { value: 'end' }, null],
+    ['set_next end sentinel (cased)',     'set_next', { value: 'END' }, null],
+    ['foreach end_step end sentinel',     'foreach',
+      { list: '{{items}}', item_var: 'it', end_step: 'end' }, null],
 
     // ─────────────────────────────────────────────────────────────
     // lookup_user — one-box staff lookup (lib/internal_functions/users.js).

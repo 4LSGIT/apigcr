@@ -24,7 +24,7 @@ When something doesn't fire when you expected:
 Exports an object whose keys are function names. Each function has the signature:
 
 ```js
-async (params, db) => { success: boolean, output?: any, set_vars?: object, next_step?: number|null|'cancel'|'fail', delayed_until?: Date }
+async (params, db) => { success: boolean, output?: any, set_vars?: object, next_step?: number|null|'end'|'cancel'|'fail', delayed_until?: Date }
 ```
 
 Functions can return:
@@ -93,17 +93,29 @@ Jump to a specific step number, or terminate the execution.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
-| `value` | string | yes (placeholderAllowed) | Step number, `"cancel"`, `"fail"`, or null/empty to end normally. |
+| `value` | string | yes (placeholderAllowed) | Step number, `"end"`, `"cancel"`, or `"fail"`. Blank/null also ends normally. |
 
-Sentinels (handled by `workflow_engine.advanceWorkflow`):
-- Positive integer → jump to that step
-- `null` / empty → end with the workflow's final status (`completed` or `completed_with_errors`)
-- `"cancel"` → mark execution `cancelled`
-- `"fail"` → mark execution `failed`
+Sentinels — resolved in ONE place, `workflow_engine.normalizeNextStep()`. Trimmed and case-insensitive:
+
+| Value | Result |
+|---|---|
+| positive integer, or a digit string (`5` / `"5"`) | jump to that step |
+| `"end"` | end with the workflow's final status (`completed` / `completed_with_errors`) |
+| `null`, omitted-but-present, or blank `""` | same as `"end"` |
+| `"cancel"` | mark execution `cancelled` |
+| `"fail"` | mark execution `failed` |
+| **anything else** | **the step is recorded FAILED and the execution is marked `failed`** |
+
+`"end"` is the preferred authoring form. It exists because the sentinel family was `cancel`/`fail` plus a bare null, which left "end normally" as the only terminal outcome with no word — so it could not be produced by a **computed** target (`set_next { value: "{{jump_to}}" }` could resolve to a step number, `"cancel"` or `"fail"`, but never "stop"), and in the form editor it could only be authored by leaving a required field blank, which reads as an unfinished step.
+
+The string `"null"` is also accepted, as a deprecated alias for pre-2026-08 configs. Don't write new ones.
+
+**Unusable values are fatal, deliberately.** A typo (`"stpe 5"`, `"done"`, `0`) used to fall through to the step pointer, which is an `INT` column — with no `STRICT_TRANS_TABLES` that stored `0`, the engine then failed to load step 0, hit the missing-step branch, and completed the execution as though nothing were wrong. Same contract applies to `foreach.end_step`, `evaluate_condition`'s `then`/`else`/`branches[].then`, `request_decision.nextStep`, and the `wait_for`/`schedule_resume` skip targets — they all funnel through the same normalizer.
 
 Example:
 ```json
 { "function_name": "set_next", "params": { "value": 5 } }
+{ "function_name": "set_next", "params": { "value": "end" } }
 ```
 
 #### `evaluate_condition`
@@ -130,7 +142,7 @@ Branch to a different step based on a variable comparison.
 
 `exclusiveOneOf: [['variable', 'conditions']]` — exactly one form per step.
 
-**Sentinel values for `then` / `else`.** The runtime returns whatever you put there as `next_step` and `advanceWorkflow` honors the same sentinels as `set_next`: integer = jump, `null`/omitted = end, `"cancel"` = mark cancelled, `"fail"` = mark failed. The `__meta` declares them as `integer` so the save-time validator may reject `"cancel"` / `"fail"`; if you need that, use `evaluate_condition` to set a step number that points at a `set_next: "cancel"` step.
+**Sentinel values for `then` / `else`.** The runtime returns whatever you put there as `next_step`, and `advanceWorkflow` normalizes it through the same `normalizeNextStep()` as `set_next`: integer = jump, `null`/omitted = end, `"end"` = end, `"cancel"` = mark cancelled, `"fail"` = mark failed. But the `__meta` declares `then`/`else` as `integer`, so the save-time validator **rejects the word forms here** — that's deliberate, since a non-numeric main branch target is far more often a typo than an intent. To terminate from a branch, point `then`/`else` at a step whose `set_next.value` is `"end"` / `"cancel"` / `"fail"`.
 
 ---
 
