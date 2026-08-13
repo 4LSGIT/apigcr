@@ -90,6 +90,12 @@ function propByLabel(doc, labelText) {
   return [...doc.querySelectorAll('#inspector .prop')]
     .find(pr => pr.querySelector('label') && pr.querySelector('label').textContent === labelText);
 }
+// X3.5: form settings live on the Settings tab (#settingsPane), not the
+// inspector. Callers must showTab('settings') first — that is what rebuilds it.
+function settingsPropByLabel(doc, labelText) {
+  return [...doc.querySelectorAll('#settingsPane .prop')]
+    .find(pr => pr.querySelector('label') && pr.querySelector('label').textContent === labelText);
+}
 function propsByLabel(doc, labelText) {
   return [...doc.querySelectorAll('#inspector .prop')]
     .filter(pr => pr.querySelector('label') && pr.querySelector('label').textContent === labelText);
@@ -301,10 +307,16 @@ describe('A8 note textareas + A5 columns knob', () => {
     const { win, doc } = p;
     const noteInput = () => propByLabel(doc, 'Note (documentation only)').querySelector('textarea');
     const set = (v) => { const t = noteInput(); t.value = v; fire(win, t, 'input'); };
+    // form-level note lives on the Settings tab (X3.5)
+    const setFormNote = (v) => {
+      const t = settingsPropByLabel(doc, 'Note (documentation only)').querySelector('textarea');
+      t.value = v; fire(win, t, 'input');
+    };
 
-    win.select(null);                    set('form-level note');
+    win.showTab('settings');             setFormNote('form-level note');
     expect(win.FB.model.note).toBe('form-level note');
 
+    win.showTab('canvas');
     win.select({ t: 'section', si: 0 }); set('section note');
     expect(win.FB.model.sections[0].note).toBe('section note');
 

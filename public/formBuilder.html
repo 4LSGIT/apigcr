@@ -116,6 +116,28 @@
     background: #fff; width: 100%;
   }
   #inspector { width: 320px; flex: none; overflow-y: auto; }
+  /* ── Settings pane (X3.5) ────────────────────────────────────────────────
+     Form settings moved out of the 320px #inspector column into its own tab in
+     the main work area. #inspector is hidden while this tab is up (showTab),
+     so the grid gets the full width. Groups get a CARD treatment here only —
+     .ins-group's border-top separator is right for a narrow column and wrong
+     for a grid cell — scoped by #settingsPane so the inspector is untouched. */
+  #settingsPane { flex: 1; min-width: 0; display: none; flex-direction: column;
+                  padding: 10px; overflow-y: auto; }
+  #settingsPane.show { display: flex; }
+  #settingsGrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px; align-items: start;
+  }
+  #settingsGrid > h3 { grid-column: 1 / -1; margin: 0; }
+  #settingsPane .ins-group,
+  #settingsPane .ins-group:first-of-type {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel2); margin-top: 0; padding: 10px;
+  }
+  /* Groups that need the width: long URLs, code/CSS textareas, rule rows. */
+  #settingsPane .ins-group.wide { grid-column: 1 / -1; }
+  #insHint { color: var(--muted); font-size: 11px; font-style: italic; line-height: 1.5; }
   .pane {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 6px; padding: 10px;
@@ -324,6 +346,8 @@
     <div id="canvasCol">
       <div id="tabStrip">
         <button id="tabCanvas" class="ghost small active" onclick="showTab('canvas')">Canvas</button>
+        <button id="tabSettings" class="ghost small" onclick="showTab('settings')"
+                title="Form-level settings — behavior, load/save, external rendering, share links, layout, code">Settings</button>
         <button id="tabJson" class="ghost small" onclick="showTab('json')">JSON</button>
         <button id="tabPreview" class="ghost small" onclick="showTab('preview')">Preview</button>
         <button id="tabLive" class="ghost small" onclick="showTab('live')" title="The real published form in normal mode — actual writes">Live</button>
@@ -331,6 +355,7 @@
       </div>
       <div id="workArea">
       <div id="canvas" class="pane"></div>
+      <div id="settingsPane" class="pane"></div>
       <div id="jsonPane" class="pane">
         <div class="muted" style="margin-bottom:6px;">
           Raw draft definition. Apply parses and replaces the working model (canvas and JSON edit the same in-memory model).
@@ -499,6 +524,19 @@
  *     the live form only, never in preview. Internal surfaces only.
  *   - clientFieldSignature: accepts both shapes (flat model / stored tabbed
  *     def) and EXCLUDES embeds, mirroring the server.
+ *
+ * X3.5 — FORM SETTINGS IS A TAB, NOT A SIDEBAR PANEL (placement only):
+ *   Form settings outgrew the 320px #inspector column (X3.3 External
+ *   rendering, X3.4 Share links — three full URLs beside a Copy button).
+ *   It now renders into #settingsPane, a sibling pane in #workArea reached
+ *   from the tab strip, as a responsive grid
+ *   (repeat(auto-fill, minmax(320px, 1fr))); groups that need the width carry
+ *   `wide` (grid-column: 1 / -1). #inspector is display:none'd while that tab
+ *   is active — SEL is untouched, so Canvas restores the previous editor.
+ *   renderInspector() is now ONLY the selection editor (hint when !SEL);
+ *   renderSettings() owns insSettings(), whose container has always been a
+ *   parameter. NOTHING about which settings exist, what they write, or their
+ *   help text changed.
  * ==========================================================================*/
 'use strict';
 
@@ -914,6 +952,7 @@ async function backToOpener() {
   E('builderWrap').style.display = 'none';
   E('previewFrame').removeAttribute('src');
   E('liveFrame').removeAttribute('src');
+  E('settingsPane').textContent = '';
   showTab('canvas');
   showOpener();
 }
@@ -933,6 +972,7 @@ async function openTemplate(id) {
     renderTopbar();
     renderCanvas();
     renderInspector();
+    renderSettings();
     markDirty();
   } catch (err) {
     await showOpener();          // bad ?id= — fall back to a loaded, usable list
@@ -1130,7 +1170,7 @@ function renderCanvas() {
 
   const cv = E('canvas');
   cv.textContent = '';
-  cv.onclick = (e) => { if (e.target === cv) select(null); };   // click background → form settings
+  cv.onclick = (e) => { if (e.target === cv) select(null); };   // click background → deselect
 
   // One section card — shared verbatim by sections mode and every 2.6 region.
   // `si` is always the FLAT index into MODEL.sections, so data-sel keys, SEL,
@@ -1346,7 +1386,7 @@ function addTab() {
 
 function deleteTab(ti) {
   if (TABS_META.length <= 1) {
-    flash('A tabbed form needs at least one tab — switch off Tabbed layout in Form settings instead.');
+    flash('A tabbed form needs at least one tab — switch off Tabbed layout on the Settings tab instead.');
     return;
   }
   if (regionMembers('tab', ti).length) {
@@ -2038,21 +2078,32 @@ function setOrDel(obj, key, val) {
   else obj[key] = val;
 }
 
-// ── Tabs (canvas / JSON / preview / live / history) ─────────────────────────
+// ── Tabs (canvas / settings / JSON / preview / live / history) ─────────────
 let TAB = 'canvas';
 function showTab(which) {
   TAB = which;
   const showJson = which === 'json';
+  const showSettings = which === 'settings';
   E('tabCanvas').classList.toggle('active', which === 'canvas');
+  E('tabSettings').classList.toggle('active', showSettings);
   E('tabJson').classList.toggle('active', showJson);
   E('tabPreview').classList.toggle('active', which === 'preview');
   E('tabLive').classList.toggle('active', which === 'live');
   E('tabHistory').classList.toggle('active', which === 'history');
   E('canvas').style.display = which === 'canvas' ? '' : 'none';
+  E('settingsPane').classList.toggle('show', showSettings);
   E('jsonPane').classList.toggle('show', showJson);
   E('previewPane').classList.toggle('show', which === 'preview');
   E('livePane').classList.toggle('show', which === 'live');
   E('historyPane').classList.toggle('show', which === 'history');
+  // X3.5: the inspector edits the SELECTION; Form settings owns the full width
+  // while its tab is up. SEL is deliberately NOT cleared here, so returning to
+  // Canvas restores the previous section/row/field editor exactly.
+  E('inspector').style.display = showSettings ? 'none' : '';
+  // Rebuild on activation (the Preview/Live/History pattern): the settings
+  // panel reads derived state — topLevelNames() for the derive editor, the
+  // tab/sticky counts for the layout group — that canvas edits can invalidate.
+  if (showSettings) renderSettings();
   if (showJson) {
     JSON_DIRTY = false;
     E('jsonTa').value = JSON.stringify(MODEL, null, 2);
@@ -2180,6 +2231,7 @@ async function restoreVersionFlow(versionId, schemaVersion) {
     showTab('canvas');
     syncCanvas();
     renderInspector();
+    renderSettings();        // whole-model swap — rebuild the settings panel too
     okBar.textContent = 'Restored v' + schemaVersion + ' into the draft';
     setTimeout(() => { if (!isDirty()) okBar.textContent = ''; }, 3500);
   } catch (err) {
@@ -2366,6 +2418,7 @@ function applyJson() {
   markDirty();
   syncCanvas();
   renderInspector();
+  renderSettings();          // whole-model swap — rebuild the settings panel too
 }
 
 // ── Preview (production renderer in an iframe) ──────────────────────────────
@@ -2546,21 +2599,28 @@ function pSelect(label, value, choices, onInput, opts) {
   return wrap;
 }
 
-function group(title, kids) {
-  const g = el('div', { class: 'ins-group' });
+// `cls` (X3.5) is an extra class on the group wrapper — currently only 'wide',
+// which spans every column of the Settings-tab grid. It is inert in the
+// inspector (the CSS rule is scoped to #settingsPane).
+function group(title, kids, cls) {
+  const g = el('div', { class: 'ins-group' + (cls ? ' ' + cls : '') });
   if (title) g.appendChild(el('div', { class: 'gtitle', text: title }));
   kids.forEach(k => k && g.appendChild(k));
   return g;
 }
 
-// ── Inspector ────────────────────────────────────────────────────────────────
+// ── Inspector (the SELECTION editor) ────────────────────────────────────────
+// X3.5: form settings no longer live here — they own the Settings tab
+// (renderSettings, below). This pane is now only ever the editor for the
+// current selection, plus a hint when there isn't one.
 function renderInspector() {
   const ins = E('inspector');
   ins.textContent = '';
 
   const head = el('div', { id: 'insHead' });
   if (SEL) {
-    head.appendChild(el('button', { class: 'ghost small', text: '← Form settings', onclick: () => select(null) }));
+    head.appendChild(el('button', { class: 'ghost small', text: '× Deselect',
+      title: 'Clear the selection (clicking empty canvas does the same)', onclick: () => select(null) }));
     head.appendChild(el('div', { class: 'spacer' }));
     head.appendChild(el('button', { class: 'ghost small danger', text: 'Delete', onclick: deleteSelected,
       style: 'background:transparent; color:var(--danger); border-color:var(--danger);' }));
@@ -2570,18 +2630,41 @@ function renderInspector() {
   const node = selNode();
   if (SEL && !node) { SEL = null; }   // stale selection guard
 
-  if (!SEL)                    return insSettings(ins);
+  if (!SEL) {
+    ins.appendChild(el('h3', { text: 'Inspector' }));
+    ins.appendChild(el('div', { id: 'insHint',
+      text: 'Select a section, row, or field to edit it. Form-level settings live on the Settings tab.' }));
+    return;
+  }
   if (SEL.t === 'section')     return isRepeaterSection(node) ? insRepeater(ins, node) : insSection(ins, node);
   if (SEL.t === 'row')         return insRow(ins, node);
   if (SEL.t === 'field')       return insField(ins, node, false);
   if (SEL.t === 'rfield')      return insField(ins, node, true);
 }
 
+// ── Settings tab (X3.5) ─────────────────────────────────────────────────────
+// insSettings() has always taken its container as a parameter, so the move is
+// purely a change of container: it now fills a responsive grid in the main
+// work area instead of the 320px sidebar. Every renderInspector() call INSIDE
+// insSettings became renderSettings() — a missed one leaves a stale panel
+// after a toggle.
+function renderSettings() {
+  const pane = E('settingsPane');
+  pane.textContent = '';
+  if (!MODEL) return;
+  const grid = el('div', { id: 'settingsGrid' });
+  pane.appendChild(grid);
+  insSettings(grid);
+}
+
 function isRepeaterSection(sec) {
   return sec && Object.prototype.hasOwnProperty.call(sec, 'repeater');
 }
 
-// ── Inspector: form settings (nothing selected) ─────────────────────────────
+// ── Form settings (the Settings tab — X3.5) ─────────────────────────────────
+// `ins` is whatever container the caller passes: #settingsGrid in production.
+// Every re-render inside this function must call renderSettings(), NOT
+// renderInspector() — the inspector no longer hosts this panel.
 function insSettings(ins) {
   ins.appendChild(el('h3', { text: 'Form settings' }));
 
@@ -2608,7 +2691,7 @@ function insSettings(ins) {
     }, { placeholder: 'You must press SAVE to keep changes!', help: 'Empty string silences the warning; use the reset button to return to the default.' }),
     (() => {
       const b = el('button', { class: 'ghost small', text: 'Reset warning text to default', onclick: () => {
-        delete MODEL.warningText; touched(); renderInspector();
+        delete MODEL.warningText; touched(); renderSettings();
       }});
       return el('div', { class: 'prop' }, [b]);
     })(),
@@ -2626,7 +2709,7 @@ function insSettings(ins) {
       } else {
         if (MODEL.endpoints) { delete MODEL.endpoints.load; if (!Object.keys(MODEL.endpoints).length) delete MODEL.endpoints; }
       }
-      touched(); renderInspector();
+      touched(); renderSettings();
     }),
   ];
   if (hasLoad) {
@@ -2652,7 +2735,7 @@ function insSettings(ins) {
         delete MODEL.onSubmit.patch;
         if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
       }
-      touched(); renderInspector();
+      touched(); renderSettings();
     }, { help: 'Sends changed fields that declare a database column (readonly fields excluded). Requires at least one field with a database column.' }),
   ];
   if (hasPatch) {
@@ -2683,7 +2766,7 @@ function insSettings(ins) {
         delete MODEL.onSubmit.workflows;
         if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
       }
-      touched(); renderInspector();
+      touched(); renderSettings();
     }, { help: 'Every listed workflow fires on save (fire-and-forget, failures independent). Typical pair: the shared "Form Submission Notify" workflow (its notify_to / labels / title_field ride ITS init data) plus a form-specific one.' }),
   ];
   const wfEditor = (W, label) => [
@@ -2713,7 +2796,7 @@ function insSettings(ins) {
           wfArray.splice(i, 1);
           if (!wfArray.length) { delete MODEL.onSubmit.workflows;
             if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit; }
-          touched(); renderInspector();
+          touched(); renderSettings();
         }}),
       ]));
     });
@@ -2721,7 +2804,7 @@ function insSettings(ins) {
       wfKids.push(el('div', { class: 'prop' }, [
         el('button', { class: 'ghost small', text: '+ Add workflow', onclick: () => {
           wfArray.push({ id: 0 });
-          touched(); renderInspector();
+          touched(); renderSettings();
         }}),
       ]));
     }
@@ -2731,11 +2814,11 @@ function insSettings(ins) {
       el('button', { class: 'ghost small', text: '+ Add another workflow (up to ' + WF_MAX + ')', onclick: () => {
         MODEL.onSubmit.workflows = [wfSingle, { id: 0 }];
         delete MODEL.onSubmit.workflow;
-        touched(); renderInspector();
+        touched(); renderSettings();
       }}),
     ]));
   }
-  ins.appendChild(group('Save → workflow', wfKids));
+  ins.appendChild(group('Save → workflow', wfKids, hasWf ? 'wide' : null));
 
   // ── External rendering (X1 badLink + X3/X3.3 postSubmit) ──
   // Edits MODEL.external — validated server-side whenever present regardless
@@ -2775,7 +2858,7 @@ function insSettings(ins) {
         delete MODEL.external.postSubmit;
         cleanupExt();
       }
-      touched(); renderInspector();
+      touched(); renderSettings();
     }, { help: 'Off: the pre-X3 default — success toast, form stays editable. On with no message: panel with the default thank-you text.' }));
 
     if (hasPS) {
@@ -2814,7 +2897,7 @@ function insSettings(ins) {
         pCheck('Append back-link for an Edit button (redirectBack → ?b=…)', PS.redirectBack === true, v => {
           if (v && !isPathShape(PS.redirect)) {
             flash('The back-link carries the case credential — it is only appended to a same-origin path redirect ("/…"). Set one first.');
-            renderInspector();                        // reset the checkbox
+            renderSettings();                        // reset the checkbox
             return;
           }
           if (v) PS.redirectBack = true; else delete PS.redirectBack;
@@ -2864,7 +2947,7 @@ function insSettings(ins) {
         'These serve the PUBLISHED definition, and only while visibility is portal or public (the header select) — otherwise they return the generic 404. ' +
         'Optional extras: &t=Your%20Title overrides the branded page\'s heading; any field with a "URL prefill param" accepts its value on either link (e.g. &src=facebook). ' +
         'f, t, b, case_id and the other route params are reserved.' }),
-    ]));
+    ]), 'wide');
   })());
 
   // ── Tabbed layout (2.6) ──
@@ -2884,18 +2967,18 @@ function insSettings(ins) {
           (MODEL.sections || []).forEach(s => LAYOUT.set(s, { region: 'tab', tabIndex: 0 }));
           ACTIVE_TAB = 0;
           SEL = null;
-          touched(); renderInspector();
+          touched(); renderSettings(); renderInspector();   // SEL cleared → inspector back to the hint
         } else if (!v && TABS_META) {
           if (!canDisable) {
             flash('Tabbed layout can only be switched off with a single tab and no sticky sections — merge tabs and move sticky sections onto the tab first.');
-            renderInspector();          // reset the checkbox
+            renderSettings();          // reset the checkbox
             return;
           }
           TABS_META = null;
           TAB_KEY_ORDER = null;
           LAYOUT = new WeakMap();       // tags are ignored in sections mode
           SEL = null;
-          touched(); renderInspector();
+          touched(); renderSettings(); renderInspector();   // SEL cleared → inspector back to the hint
         }
       }, { help: 'On: sections live on tabs, with optional sticky regions shown above/below every tab. Off: one flat page.' }),
     ];
@@ -2914,7 +2997,7 @@ function insSettings(ins) {
   const hooksProp = pText('Hooks file', MODEL.hooks != null ? MODEL.hooks : '', v => {
     if (v === '') { MODEL.hooks = null; delete MODEL.hooks; }
     else MODEL.hooks = v;
-    touched(); renderInspector();      // re-evaluate the code editor's disabled state
+    touched(); renderSettings();      // re-evaluate the code editor's disabled state
   }, {
     mono: true, placeholder: '(none)',
     validate: raw => {
@@ -2949,7 +3032,7 @@ function insSettings(ins) {
     codeProp._input.disabled = true;
     codeProp.appendChild(el('div', { class: 'help', text: 'Disabled — this form names a hooks file (a form uses one or the other, never both).' }));
   }
-  ins.appendChild(group('Custom code', [codeProp]));
+  ins.appendChild(group('Custom code', [codeProp], 'wide'));
 
   // Derived dates (2.5B B2) — optRow pattern: the DOM rows are the working
   // state; readBack writes only COMPLETE rules to the model (an incomplete
@@ -3021,7 +3104,7 @@ function insSettings(ins) {
       ]),
       el('div', { class: 'help', text:
         'Suggestions, not stored values: filled only when the target is EMPTY at load, recomputed when the source changes, and not persisted unless the user edits them. addDays: date + N days (N required, may be negative). dateFromDatetime: date part of a datetime ± N days (N optional). One rule per target.' }),
-    ]);
+    ], 'wide');
   })());
 
   // Custom CSS (2.5B B4) — free-form, injected by the renderer as a <style>
@@ -3035,7 +3118,7 @@ function insSettings(ins) {
       placeholder: '.yc-section-title { font-size: 1rem; }',
       help: 'Appended after the shared stylesheet, so it wins ties. Internal forms only — this key is part of the portal security review bucket and must not ship to external rendering.'
     }),
-  ]));
+  ], 'wide'));
 
   // Documentation note (2.5A A8) — form-level.
   ins.appendChild(group('Notes', [

@@ -94,6 +94,12 @@ function propByLabel(doc, labelText) {
   return [...doc.querySelectorAll('#inspector .prop')]
     .find(pr => pr.querySelector('label') && pr.querySelector('label').textContent === labelText);
 }
+// X3.5: form settings live on the Settings tab (#settingsPane), not the
+// inspector. Callers must showTab('settings') first — that is what rebuilds it.
+function settingsPropByLabel(doc, labelText) {
+  return [...doc.querySelectorAll('#settingsPane .prop')]
+    .find(pr => pr.querySelector('label') && pr.querySelector('label').textContent === labelText);
+}
 function checkByLabel(doc, labelText) {
   return [...doc.querySelectorAll('#inspector .prop.inline label')]
     .find(l => l.textContent.trim() === labelText);
@@ -273,8 +279,8 @@ describe('B2 derive editor', () => {
     const p = await ready(bootBuilder());
     const { win, doc } = p;
 
-    win.select(null);   // form settings
-    const rulesProp = propByLabel(doc, 'Rules (target ← source)');
+    win.showTab('settings');   // form settings (X3.5: own tab, not the inspector)
+    const rulesProp = settingsPropByLabel(doc, 'Rules (target ← source)');
     expect(rulesProp).toBeTruthy();
     const list = rulesProp.querySelector('div');
     expect(list.children.length).toBe(1);              // the existing rule
@@ -286,7 +292,7 @@ describe('B2 derive editor', () => {
     expect(row._n.value).toBe('180');
 
     // add an incomplete rule → model unchanged
-    const addBtn = [...doc.querySelectorAll('#inspector button')].find(b => b.textContent === '+ Add rule');
+    const addBtn = [...doc.querySelectorAll('#settingsPane button')].find(b => b.textContent === '+ Add rule');
     addBtn.onclick();
     expect(win.FB.model.derive).toEqual([{ target: 'case_180', from: 'case_file_date', op: 'addDays', n: 180 }]);
 
@@ -345,8 +351,8 @@ describe('B4 css editor', () => {
     const p = await ready(bootBuilder());
     const { win, doc } = p;
 
-    win.select(null);
-    const ta = propByLabel(doc, 'CSS (advanced)').querySelector('textarea');
+    win.showTab('settings');
+    const ta = settingsPropByLabel(doc, 'CSS (advanced)').querySelector('textarea');
     expect(ta.value).toBe('');
 
     ta.value = '.yc-row { gap: 2px; }'; fire(win, ta, 'input');

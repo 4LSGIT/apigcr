@@ -110,6 +110,14 @@ function propByLabel(doc, labelText) {
   return [...doc.querySelectorAll('#inspector .prop')]
     .find(pr => pr.querySelector('label') && pr.querySelector('label').textContent === labelText);
 }
+// X3.5: form settings live on the Settings tab (#settingsPane), not the
+// inspector. A PURE query — activating the tab (showTab('settings')) is what
+// rebuilds the panel, and CD below depends on controlling exactly when that
+// happens.
+function settingsPropByLabel(doc, labelText) {
+  return [...doc.querySelectorAll('#settingsPane .prop')]
+    .find(pr => pr.querySelector('label') && pr.querySelector('label').textContent === labelText);
+}
 function fire(win, el, type) { el.dispatchEvent(new win.Event(type, { bubbles: true })); }
 const ser = (p) => p.win.FB.ops.serializeModel();
 const titles = (p, region, ti) => p.win.FB.ops.regionMembers(region, ti)
@@ -271,8 +279,12 @@ describe('MV Move-to', () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe('TG tabbed-layout toggle (Form settings)', () => {
+  // X3.5: Form settings render into the Settings TAB (#settingsPane), and
+  // showTab('settings') is what rebuilds the panel — the equivalent of the
+  // old "← Form settings" back button.
   function toggleEl(p) {
-    return [...p.doc.querySelectorAll('#inspector .prop.inline label')]
+    p.win.showTab('settings');
+    return [...p.doc.querySelectorAll('#settingsPane .prop.inline label')]
       .find(l => l.textContent.trim() === 'Tabbed layout')
       .querySelector('input');
   }
@@ -312,9 +324,8 @@ describe('TG tabbed-layout toggle (Form settings)', () => {
     F.deleteTab(1);
     expect(p.win.FB.tabsMeta.length).toBe(1);
 
-    p.win.FB.ops.clickAddField; // noop — keep inspector on form settings
-    // re-render inspector to refresh the toggle state, then disable
-    p.doc.getElementById('canvas').click();
+    // toggleEl re-activates the Settings tab, which rebuilds the panel and so
+    // refreshes the toggle's canDisable state; then disable.
     await sleep(10);
     t = toggleEl(p);
     t.checked = false; fire(p.win, t, 'change');
@@ -388,7 +399,8 @@ describe('EB embed inspector', () => {
 describe('CD code editor + hooks exclusivity', () => {
   test('writes MODEL.code; empty deletes; syntax errors never reach the model', async () => {
     const p = await ready(bootBuilder(sectionsDraft()));
-    const prop = propByLabel(p.doc, 'Custom code (advanced)');
+    p.win.showTab('settings');
+    const prop = settingsPropByLabel(p.doc, 'Custom code (advanced)');
     const ta = prop.querySelector('textarea');
     ta.value = 'window.ycHooks = {};'; fire(p.win, ta, 'input');
     expect(p.win.FB.model.code).toBe('window.ycHooks = {};');
@@ -401,27 +413,30 @@ describe('CD code editor + hooks exclusivity', () => {
 
   test('hooks ⇄ code mutual exclusion (input-time rejection + disabled state)', async () => {
     const p = await ready(bootBuilder(Object.assign(sectionsDraft(), { hooks: 'some_hook' })));
-    let codeTa = propByLabel(p.doc, 'Custom code (advanced)').querySelector('textarea');
+    p.win.showTab('settings');
+    let codeTa = settingsPropByLabel(p.doc, 'Custom code (advanced)').querySelector('textarea');
     expect(codeTa.disabled).toBe(true);
-    // clear hooks → code becomes editable on re-render
-    const hooksIn = propByLabel(p.doc, 'Hooks file').querySelector('input');
+    // clear hooks → code becomes editable on re-render (the hooks editor calls
+    // renderSettings(), so the panel is rebuilt in place — no tab switch)
+    const hooksIn = settingsPropByLabel(p.doc, 'Hooks file').querySelector('input');
     hooksIn.value = ''; fire(p.win, hooksIn, 'input');
     await sleep(10);
     expect('hooks' in p.win.FB.model).toBe(false);
-    codeTa = propByLabel(p.doc, 'Custom code (advanced)').querySelector('textarea');
+    codeTa = settingsPropByLabel(p.doc, 'Custom code (advanced)').querySelector('textarea');
     expect(codeTa.disabled).toBe(false);
     codeTa.value = '1 + 1;'; fire(p.win, codeTa, 'input');
     expect(p.win.FB.model.code).toBe('1 + 1;');
     // typing code doesn't re-render (focus preservation) — the CURRENT hooks
     // input rejects at validate time instead:
-    const hooksNow = propByLabel(p.doc, 'Hooks file').querySelector('input');
+    const hooksNow = settingsPropByLabel(p.doc, 'Hooks file').querySelector('input');
     hooksNow.value = 'other_hook'; fire(p.win, hooksNow, 'input');
     expect('hooks' in p.win.FB.model).toBe(false);          // blocked
     expect(hooksNow.classList.contains('bad')).toBe(true);
-    // the disabled state applies on the NEXT inspector render
-    p.doc.getElementById('canvas').click();
+    // the disabled state applies on the NEXT settings render — which is what
+    // re-activating the Settings tab does (X3.5)
+    p.win.showTab('settings');
     await sleep(10);
-    const hooksIn2 = propByLabel(p.doc, 'Hooks file').querySelector('input');
+    const hooksIn2 = settingsPropByLabel(p.doc, 'Hooks file').querySelector('input');
     expect(hooksIn2.disabled).toBe(true);
   });
 });

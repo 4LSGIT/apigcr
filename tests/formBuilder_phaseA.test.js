@@ -2,6 +2,8 @@
 // as formBuilder_slice25A/25B/26.test.js).
 // Focus: model round-trip (definition → canvas → edits → JSON), canvas
 // structure vs the real fixture, inspector edit semantics, save-draft body.
+// X3.5: form settings render into the Settings TAB (#settingsPane), not the
+// inspector — settings assertions query #settingsPane after showTab('settings').
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -128,27 +130,60 @@ test('phase A — canvas structure, model round-trip, inspector edits, save draf
   // ── 5. (superseded) options textarea stub replaced by the structured editor — covered in formBuilder_phaseB.test.js ──
 
   // ── 6. Settings: dataMode flips the apiColumn helper text (mode-aware) ──
-  doc.querySelector('#inspector button.ghost').click();     // ← Form settings
-  const dm = [...doc.querySelectorAll('#inspector .prop')]
+  // X3.5: form settings live on their own tab (#settingsPane), not the
+  // inspector; the inspector is hidden while that tab is up and SEL survives.
+  win.showTab('settings');
+  assert.strictEqual(doc.getElementById('inspector').style.display, 'none',
+    'inspector hidden while the Settings tab is active');
+  assert.ok(doc.getElementById('settingsPane').classList.contains('show'), 'settings pane shown');
+  // The inspector keeps the FIELD editor (SEL survives the tab switch) — what
+  // it must no longer carry is form-level settings.
+  const insLabels = [...doc.querySelectorAll('#inspector .prop label')].map(l => l.textContent);
+  assert.ok(!insLabels.includes('Data mode'), 'form settings no longer render into the inspector');
+  assert.ok(insLabels.includes('Name'), 'inspector still holds the selection editor');
+  const dm = [...doc.querySelectorAll('#settingsPane .prop')]
     .find(p => p.querySelector('label') && p.querySelector('label').textContent === 'Data mode')
     .querySelector('select');
   dm.value = 'snapshot'; fire(win, dm, 'change');
   assert.strictEqual(win.FB.model.dataMode, 'snapshot', 'dataMode written');
+
+  // back to Canvas: the inspector reappears with the SAME selection it had
+  win.showTab('canvas');
+  assert.strictEqual(doc.getElementById('inspector').style.display, '', 'inspector restored');
+  assert.deepStrictEqual({ ...win.FB.sel }, { t: 'field', si: 0, ri: 0, fi: 1 },
+    'selection survives the settings round-trip');
+
   doc.querySelector('#canvas [data-sel="f:0:0:1"]').click();
   const helpTexts = [...doc.querySelectorAll('#inspector .help')].map(h => h.textContent).join(' ');
   assert.ok(helpTexts.includes('Saves to this column'), 'snapshot-mode helper');
   assert.ok(!helpTexts.includes('Loads from and saves'), 'live helper absent in snapshot mode');
 
   // back to live → helper flips
-  doc.querySelector('#inspector button.ghost').click();
-  const dm2 = [...doc.querySelectorAll('#inspector .prop')]
+  win.showTab('settings');
+  const dm2 = [...doc.querySelectorAll('#settingsPane .prop')]
     .find(p => p.querySelector('label') && p.querySelector('label').textContent === 'Data mode')
     .querySelector('select');
   dm2.value = 'live'; fire(win, dm2, 'change');
   assert.strictEqual(win.FB.model.dataMode, undefined, 'live (default) → key removed');
+  win.showTab('canvas');
   doc.querySelector('#canvas [data-sel="f:0:0:1"]').click();
   assert.ok([...doc.querySelectorAll('#inspector .help')].some(h =>
     h.textContent.includes('Loads from and saves to this column')), 'live-mode helper');
+
+  // ── 6b. Inspector empty state: hint, not a blank pane, not settings ──
+  win.select(null);
+  assert.ok(doc.getElementById('insHint'), 'inspector shows a hint when nothing is selected');
+  assert.ok(doc.getElementById('insHint').textContent.includes('Settings tab'),
+    'the hint points at the Settings tab');
+  assert.strictEqual([...doc.querySelectorAll('#inspector .prop')].length, 0,
+    'no settings controls leaked into the inspector empty state');
+  // the deselect control replaces the old "← Form settings" back button
+  doc.querySelector('#canvas [data-sel="f:0:0:1"]').click();
+  const deselect = doc.querySelector('#insHead button.ghost');
+  assert.strictEqual(deselect.textContent, '× Deselect', 'head carries a deselect control');
+  deselect.click();
+  assert.strictEqual(win.FB.sel, null, 'deselect clears the selection');
+  assert.ok(doc.getElementById('insHint'), 'back to the hint');
 
   // ── 7. Save draft: PUT body carries the edited model (+title only if changed) ──
   win.FB.title = 'Quick Notes (Test) EDITED';
