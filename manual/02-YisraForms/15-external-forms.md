@@ -307,6 +307,36 @@ blocks the others or the submission.
 
 ---
 
+## The Form Inbox (X4)
+
+Anonymous submissions (degrade-mode, expired or missing links) land with
+`link_type=''` — the **Form Inbox** (index → More → Form Inbox) is the staff
+workspace for them. The wf 40 task to RG is the *notification*; the Inbox is
+where the work happens:
+
+- **List** — every unlinked submitted row, with a name / phone / email
+  preview pulled from the answers.
+- **View** — the full answers, rendered read-only by the *same renderer* the
+  submitter used (`render.html?view_submission=<id>`), under the definition
+  version the submission was made against. Nothing on the view can write.
+- **Link…** — adopt the submission onto its entity. The picker follows the
+  template's `link_type` (the intake is a case-form, so you pick a case).
+  Case-forms with a usable name + phone/email also offer **Create contact +
+  case…**, which runs the standard find-or-create New Client dialog and links
+  to the case it makes.
+
+Linking an **intake** onto a case also stamps `case_intake_form`
+(`yf:<submission_id>`) when it's still empty — the same stamp wf 40 writes on
+a linked submission — so the strategy-session SMS reminders stop. The adopt
+itself is recorded as a `form` log entry on the target, and the submission
+row keeps `linked_by` / `linked_at` forever.
+
+Adoption is one-way. Linked submissions never reappear in the Inbox; each
+case's **Form Submissions** tab lists everything linked to it (adopted rows
+carry an `adopted` badge).
+
+---
+
 ## Publishing checklist
 
 1. Build and **publish** the template as normal (Part 14).

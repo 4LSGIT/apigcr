@@ -132,7 +132,7 @@ await apiSend("/api/forms/history?form_key=contact_info&link_type=contact&link_i
 
 Admin browse over `form_submissions` — summary columns only, no `data` bodies. Added for the Form Builder's History tab (see [14-form-builder.md](14-form-builder.md)); useful anywhere a cross-entity view of submissions is needed.
 
-**Query params (all optional):** `form_key`, `link_type`, `link_id`, `status` (`draft` | `submitted` — anything else is a 400), `limit` (default 50, max 200), `before_id` (keyset cursor — pass the smallest `id` from the previous page to get the next one).
+**Query params (all optional):** `form_key`, `link_type`, `link_id`, `status` (`draft` | `submitted` — anything else is a 400), `limit` (default 50, max 200), `before_id` (keyset cursor — pass the smallest `id` from the previous page to get the next one), **`unlinked=1`** (X4 — only rows with `link_type=''`, the anonymous-external convention; the plain `link_type` filter can't express it), **`with_data=1`** (X4 — include the `data` bodies; the Form Inbox uses this for its name/email/phone preview). Rows also carry `linked_by` / `linked_at` (X4 — NULL unless the row was adopted from the Form Inbox).
 
 **Response:**
 ```json
@@ -180,7 +180,53 @@ One submission row **including** `data`. 404 when the id is unknown.
 await apiSend("/api/forms/submissions/253", "GET");
 ```
 
-Unlike the older handlers in this file, these two map service errors carrying `.status` to real 400/404 responses.
+---
+
+## GET /api/forms/submissions/:id/render (X4)
+
+The submission **plus the definition to render it under**, in one payload — feeds render.html's `?view_submission` mode. The definition is version-matched server-side: the current published definition when its `schema_version` equals the submission's; otherwise the **newest** `form_template_versions` row carrying that `schema_version`; otherwise the current definition flagged `schema_matched: false` (the renderer warns that answers for removed fields aren't shown). 404 when the submission, the template row, or any definition is missing. `submission.data` comes back parsed.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "submission": { "id": 286, "form_key": "intake", "link_type": "", "link_id": "",
+                  "schema_version": 1, "data": { "name": "…" }, "linked_by": null },
+  "title": "Bankruptcy Intake",
+  "link_type": "case",
+  "definition": { "sections": [] },
+  "definition_schema_version": 1,
+  "schema_matched": true
+}
+```
+
+**Console test:**
+```js
+await apiSend("/api/forms/submissions/286/render", "GET");
+```
+
+---
+
+## PATCH /api/forms/submissions/:id/link (X4)
+
+Adopt an **unlinked** submission (`link_type=''`) onto a case / contact / appt. Body: `{ "link_type": "case"|"contact"|"appt", "link_id": "…" }`.
+
+One-way and guarded: 404 unknown submission or missing target entity; 400 draft, bad type, or empty `link_id`; 409 already linked, template `link_type` mismatch (a case-form can't land on a contact), or a lost concurrent-adopt race. `linked_by` is stamped from the **auth principal** — anything in the body is ignored. The adopted row's `version` is renumbered `MAX+1` within the target series (anonymous rows share one counter, so the old number is meaningless in the new home).
+
+Side-effects: a `log` entry (type `form`) on the target records the adopt (best-effort — never rolls back the linkage), and `intake` + `case` stamps `cases.case_intake_form = 'yf:<id>'` **only when it's currently empty** — closing the sequence-engine reminder gate without re-firing wf 40.
+
+**Response:**
+```json
+{ "status": "success", "id": 286, "link_type": "case", "link_id": "hjSFMabb",
+  "version": 1, "linked_by": 6, "intake_stamped": true, "logged": true }
+```
+
+**Console test:**
+```js
+await apiSend("/api/forms/submissions/286/link", "PATCH", { link_type: "case", link_id: "hjSFMabb" });
+```
+
+Unlike the older handlers in this file, the Slice-4/X4 routes map service errors carrying `.status` to real 400/404/409 responses.
 
 ---
 

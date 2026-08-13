@@ -97,6 +97,9 @@
       <button class="tab" id="341Button" onclick="openTab(this, 'tab341')">
         <i class="fa-solid fa-gavel"></i> 341 Notes
       </button>
+      <button class="tab" id="formsButton" onclick="openTab(this, 'tabForms'); if (!E('formsFrame').src) E('formsFrame').src = `forms/submissionsWidget.html?link_type=case&link_id=${caseID}`;">
+        <i class="fa-solid fa-inbox"></i> Form Submissions
+      </button>
       <button class="tab" onclick="openTab(this, 'tabDet')">
         <i class="fa-brands fa-wpforms"></i> Detailed Questionnaire
       </button>
@@ -604,6 +607,11 @@
     <!-- Automations widget. src set lazily by the tab button. -->
     <div id="tabAuto" class="tab-content">
       <iframe id="autoFrame"></iframe>
+    </div>
+
+    <!-- Form submissions widget (X4). src set lazily by the tab button. -->
+    <div id="tabForms" class="tab-content">
+      <iframe id="formsFrame"></iframe>
     </div>
 
     <div id="tabDB" class="tab-content">

@@ -209,6 +209,7 @@ public/evergreen.html
 public/featureRequests.html
 public/feedback.html
 public/formBuilder.html
+public/formInbox.html
 public/forms/341notes.html
 public/forms/casedetails-bk.html
 public/forms/casedetails.html
@@ -218,6 +219,7 @@ public/forms/hooks/readme.md
 public/forms/issn.html
 public/forms/liveHost.html
 public/forms/render.html
+public/forms/submissionsWidget.html
 public/index.html
 public/js/assetpicker.js
 public/js/reportCharts.js
@@ -281,6 +283,7 @@ ref/2026-08-10_portal_s5_2.sql
 ref/2026-08-10_portal_s5_3.sql
 ref/2026-08-11_form_templates_visibility.sql
 ref/2026-08-13_decision_requests.sql
+ref/2026-08-13_form_submissions_linkage.sql
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/X2_DESIGN_AMENDMENTS.md
@@ -583,6 +586,8 @@ tests/formRender.slice25B.test.js
 tests/formRender.slice26.test.js
 tests/formTemplates_slice4_service.test.js
 tests/formrender.x2external.test.js
+tests/formrender.x4view.test.js
+tests/formsubmissions.x4.test.js
 tests/formtemplates.x1visibility.test.js
 tests/helpers/renderSmoke.js
 tests/hookMapper.test.js

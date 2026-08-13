@@ -2264,7 +2264,7 @@
   <button class="big-button" data-target="viewsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.2s"><i class="fa-solid fa-table-list fa-2xl"></i><br><br>Views</button>
   <br><br>
   <button class="big-button" data-target="checklistsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.8s"><i class="fa-solid fa-list-check fa-2xl"></i><br><br>Checklists</button>
-  <button class="big-button" data-target="" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-puzzle-piece fa-2xl"></i><br><br>Placeholder</button>
+  <button class="big-button" data-target="formInboxDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-inbox fa-2xl"></i><br><br>Form Inbox</button>
   <button class="big-button" data-target="" data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.4; --fa-animation-duration:1.7s"><i class="fa-solid fa-compass-drafting fa-2xl"></i><br><br>Placeholder</button>
 
 
@@ -2325,6 +2325,12 @@
   </div>
   <div id="checklistsDiv" class="more-panel" style="display:none">
     <iframe data-src="/checklistsView.html"></iframe>
+  </div>
+  <!-- X4 Form Inbox: unlinked external submissions — view + adopt onto a
+       case/contact/appt. formInbox.html relays apiSend to its render.html
+       view iframes, so it must stay a DIRECT child of the shell. -->
+  <div id="formInboxDiv" class="more-panel" style="display:none">
+    <iframe data-src="/formInbox.html"></iframe>
   </div>
 </div>
 <script>

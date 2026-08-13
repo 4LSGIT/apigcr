@@ -20,6 +20,17 @@
       color: #9a3412;
       font-size: 13px;
     }
+    /* X4 submission-view banner — informational, not a warning. */
+    .ycr-view-note {
+      margin: 8px 0;
+      padding: 6px 12px;
+      background: #eff6ff;
+      border: 1px solid #93c5fd;
+      border-radius: 4px;
+      color: #1e40af;
+      font-size: 13px;
+    }
+    .ycr-view-warn { color: #9a3412; margin-top: 2px; }
     .ycr-fatal {
       color: #b91c1c;
       padding: 20px;
@@ -163,6 +174,13 @@
  *            NEVER writes: autosave off, Save disabled, draft banner omitted,
  *            endpoints.load skipped when no link_id, prefill + hooks skipped
  *            always.
+ *   View   : ?view_submission=N (X4) — ONE stored submission, read-only, via
+ *            GET /api/forms/submissions/:id/render (definition version-matched
+ *            server-side). Preview-grade discipline (no code/hooks/prefill/
+ *            derive-fill/autosave/save) + forced-locked form + metadata
+ *            banner; the submission's data is the only populate source
+ *            (linkId '' keeps the /api/forms/latest and entity-load paths
+ *            structurally off).
  *
  * SECURITY (contract §8): every template-sourced string reaches the DOM via
  * textContent / setAttribute only. The el() helper below has no innerHTML path.
@@ -178,6 +196,14 @@
   // server-computed `load` object replaces parent entityData. Filled in by
   // startExternal(): { load, linked }.
   var EXT = (!preview && params.get('ext') === '1') ? {} : null;
+  // X4 submission-view mode (EXTERNAL_FORMS_DESIGN §8): ?view_submission=<id>
+  // renders ONE stored submission read-only through the same renderer ("one
+  // renderer, always"). Preview-grade discipline — no code/hooks, no prefill,
+  // no derive fill, no autosave, no save — plus real data and a forced-locked
+  // form. Internal-only: rides the parent apiSend chain like normal mode.
+  // Filled in by startView(): { id, data, note, warn }.
+  var VIEW = (!preview && !EXT && params.get('view_submission'))
+    ? { id: params.get('view_submission') } : null;
 
   // ── DOM builder (no innerHTML; text via textContent, attrs via setAttribute) ──
   function el(tag, attrs, kids) {
@@ -677,6 +703,9 @@
   // ── Build the skeleton chrome (header + optional draft banner + form). ──
   function buildSkeleton(def) {
     var toggle = def.toggle !== false;
+    if (VIEW) toggle = false;   // view mode: no edit toggle, ever — the hidden
+                                // variant below renders and setReadonly(true)
+                                // locks the form with no reachable unlock.
     var warningText = (def.warningText != null) ? def.warningText : 'You must press SAVE to keep changes!';
 
     // Header
@@ -704,9 +733,18 @@
     ]);
     document.body.appendChild(header);
 
+    // View banner (X4): submission metadata above the locked form. The draft
+    // banner is omitted (like preview) — a view must never surface a
+    // Restore/Discard path against someone's live draft.
+    if (VIEW) {
+      var noteKids = [el('div', { text: VIEW.note || ('Submission #' + VIEW.id) })];
+      if (VIEW.warn) noteKids.push(el('div', { class: 'ycr-view-warn', text: VIEW.warn }));
+      document.body.appendChild(el('div', { class: 'ycr-view-note' }, noteKids));
+    }
+
     // Draft banner — OMITTED in preview so the Discard→DELETE path can't exist
     // and _showDraftBanner() no-ops (it returns early when #draftBanner absent).
-    if (!preview) {
+    if (!preview && !VIEW) {
       document.body.appendChild(
         el('div', { class: 'yc-draft-banner', id: 'draftBanner', style: 'display:none;' }, [
           el('span', null, [
@@ -717,7 +755,7 @@
           el('button', { class: 'yc-btn yc-btn-sm yc-btn-secondary', id: 'draftDiscard', text: 'Discard' })
         ])
       );
-    } else {
+    } else if (preview) {
       document.body.appendChild(
         el('div', { class: 'ycr-preview-note', text:
           'Preview' + (params.get('link_id') ? ' (reading live data — nothing is saved)' : ' (layout only — no entity loaded)') })
@@ -938,6 +976,10 @@
       id: 'saveBtn', text: preview ? (saveLabel + ' \u2014 disabled in preview') : saveLabel
     });
     if (preview) saveBtn.setAttribute('disabled', '');
+    // View mode (X4): the button stays in the DOM (yc-forms binds to it by id
+    // and a null there is an untested path) but disabled + hidden — save()
+    // is unreachable.
+    if (VIEW) { saveBtn.setAttribute('disabled', ''); saveBtn.style.display = 'none'; }
     form.appendChild(saveBtn);
 
     return { fields: fields, validation: validation, apiMap: apiMap,
@@ -1219,18 +1261,23 @@
       formKey:       meta.formKey,
       schemaVersion: meta.schemaVersion,
       linkType:      meta.linkType,
-      linkId:        meta.linkId || '',
+      // View mode (X4): linkId stays '' ON PURPOSE even for a linked
+      // submission — an empty linkId makes yc-forms' /api/forms/latest fetch
+      // 400 (caught → null), so the ENTITY's latest submitted data can never
+      // populate under the viewed submission's, and every prefill path below
+      // stays off. The submission's own data is the only source.
+      linkId:        VIEW ? '' : (meta.linkId || ''),
       container:     '#ycRenderForm',
       dataMode:      def.dataMode === 'snapshot' ? 'snapshot' : 'live',
-      autosave:      preview ? false : (def.autosave !== false),
+      autosave:      (preview || VIEW) ? false : (def.autosave !== false),
       autosaveMs:    (typeof def.autosaveMs === 'number' && def.autosaveMs > 0) ? def.autosaveMs : 3000,
-      readonly:      toggle,                 // toggle:true → start read-only; false → always edit
+      readonly:      VIEW ? true : toggle,   // toggle:true → start read-only; false → always edit; VIEW → locked
       fields:        maps.fields,
       repeaters:     maps.repeaters,
       validation:    maps.validation,
       apiMap:        maps.apiMap,
       endpoints:     {},
-      onSubmit:      def.onSubmit || {}
+      onSubmit:      VIEW ? {} : (def.onSubmit || {})
     };
 
     // External mode (X2): direct-fetch transport, the external submit route,
@@ -1246,9 +1293,9 @@
     }
 
     // endpoints.load: pass through the definition's. Skipped entirely in
-    // preview-without-entity (pure layout). Included (read-only GET) when a
-    // link_id is present.
-    var wantLoad = def.endpoints && def.endpoints.load && (!preview || !!meta.linkId);
+    // preview-without-entity (pure layout) and ALWAYS in view mode (the
+    // submission is the data — live entity state must not bleed in).
+    var wantLoad = def.endpoints && def.endpoints.load && !VIEW && (!preview || !!meta.linkId);
     if (wantLoad) config.endpoints.load = def.endpoints.load;
 
     // Prefill is active only in normal mode with a linkId. (Preview never
@@ -1390,6 +1437,20 @@
         catch (e) { console.warn('[render] ycHooks.onLoad failed:', e); }
       }
     };
+
+    // View mode (X4): the generated onLoad above is REPLACED wholesale — no
+    // $load/resolver/urlParam prefill, no derive fill, no hooks. The stored
+    // submission is populated here, at init step 13, i.e. BEFORE step 13c's
+    // resetBaseline (the populated answers ARE the clean state — nothing is
+    // dirty) and before 13b's conditional re-evaluation (showWhen states end
+    // up matching the answers, exactly as they did when the submitter had
+    // them on screen). populate() round-trips collect()'s shapes by
+    // construction — checkgroup CSVs, repeater arrays, masks.
+    if (VIEW) {
+      config.onLoad = async function () {
+        form_.populate(VIEW.data || {});
+      };
+    }
 
     // External postSubmit panel (X3): a one-shot public form should land on
     // a terminal "thank you" state, not the staff default (success toast,
@@ -1590,20 +1651,21 @@
     // under the reformulated §8 invariant (internal surfaces only; external
     // routes must refuse) — the textContent-for-data rule governs data, not
     // this.
-    if (typeof def.code === 'string' && def.code && !preview) {
+    if (typeof def.code === 'string' && def.code && !preview && !VIEW) {
       try { new Function(def.code)(); }
       catch (e) { console.warn('[render] template code failed:', e); }
-    } else if (def.code && preview) {
-      warn('template code is not executed in preview mode');
+    } else if (def.code && (preview || VIEW)) {
+      warn('template code is not executed in ' + (VIEW ? 'view' : 'preview') + ' mode');
     }
 
     // Hooks file (§3): loaded + awaited BEFORE init so window.ycHooks exists
-    // by the time the generated onLoad runs. Not loaded in preview — preview
-    // must never execute side-effecting per-form code.
-    if (def.hooks && !preview) {
+    // by the time the generated onLoad runs. Not loaded in preview OR view —
+    // neither may execute side-effecting per-form code (view's onLoad is the
+    // populate-only replacement anyway).
+    if (def.hooks && !preview && !VIEW) {
       loadHooks(String(def.hooks)).then(startInit);
     } else {
-      if (def.hooks && preview) warn('hooks ("' + def.hooks + '") are not loaded in preview mode');
+      if (def.hooks && (preview || VIEW)) warn('hooks ("' + def.hooks + '") are not loaded in ' + (VIEW ? 'view' : 'preview') + ' mode');
       startInit();
     }
   }
@@ -1677,6 +1739,47 @@
         .catch(function (e) {
           fatal('Sorry, this form is not available.');
         });
+      return;
+    }
+
+    // View mode (X4): one round trip — submission + the definition to render
+    // it under, version-matched server-side (getSubmissionForRender). Runs on
+    // the parent apiSend chain like normal mode.
+    if (VIEW) {
+      api('/api/forms/submissions/' + encodeURIComponent(VIEW.id) + '/render', 'GET')
+        .then(function (res) {
+          if (!res || res.status !== 'success' || !res.definition) {
+            return fatal('Could not load submission ' + VIEW.id + '.');
+          }
+          var sub = res.submission || {};
+          VIEW.data = (typeof sub.data === 'string')
+            ? (function () { try { return JSON.parse(sub.data); } catch (e) { return {}; } })()
+            : (sub.data || {});
+
+          // Banner: id, form, version, received, linkage.
+          var when = String(sub.created_at || '').replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '');
+          var linkage = sub.link_type
+            ? ('linked to ' + sub.link_type + ' ' + sub.link_id)
+            : 'unlinked';
+          VIEW.note = 'Submission #' + sub.id + ' \u2014 ' + (res.title || sub.form_key)
+                    + ' (schema v' + sub.schema_version + ')'
+                    + (when ? ' \u2014 received ' + when : '')
+                    + ' \u2014 ' + linkage;
+          if (res.schema_matched === false) {
+            VIEW.warn = 'No stored definition matches schema v' + sub.schema_version
+                      + ' \u2014 rendering under the current v' + res.definition_schema_version
+                      + '; answers for removed fields are not shown.';
+          }
+
+          boot(res.definition, {
+            formKey:       sub.form_key,
+            schemaVersion: res.definition_schema_version,
+            linkType:      res.link_type,
+            title:         res.title,
+            linkId:        ''            // deliberate — see the config comment
+          });
+        })
+        .catch(function (e) { fatal('Could not load submission: ' + (e && e.message || e)); });
       return;
     }
 

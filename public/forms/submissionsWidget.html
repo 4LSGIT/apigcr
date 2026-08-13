@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Form submissions</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <style>
+    body { margin: 0; padding: 10px; background: #fff; }
+    /* .sw- prefix scopes this page (submissionsWidget). */
+    .sw-head { display: flex; align-items: center; gap: 10px; padding: 0 0 10px; }
+    .sw-title { font-size: 14.5px; font-weight: 700; color: #0f172a; margin: 0; }
+    .sw-spacer { flex: 1; }
+    .sw-refresh {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 5px 10px; font-size: 12.5px; cursor: pointer; color: #334155;
+    }
+    .sw-refresh:hover { background: #f1f5f9; }
+
+    .sw-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px;
+      margin-bottom: 6px; background: #fff;
+    }
+    .sw-row-main { flex: 1; min-width: 0; }
+    .sw-row-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .sw-row-form { font-size: 13.5px; font-weight: 600; color: #0f172a; }
+    .sw-row-ver  { font-size: 11px; color: #94a3b8; }
+    .sw-row-when { font-size: 11.5px; color: #64748b; white-space: nowrap; }
+    .sw-row-by   { font-size: 12px; color: #475569; margin-top: 2px; }
+    .sw-badge {
+      font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+      color: #1e40af; background: #dbeafe; border: 1px solid #bfdbfe;
+      border-radius: 4px; padding: 1px 5px; margin-left: 6px;
+    }
+    .sw-btn {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 5px 11px; font-size: 12.5px; cursor: pointer; color: #334155;
+    }
+    .sw-btn:hover { background: #f1f5f9; }
+    .sw-empty { padding: 22px 10px; text-align: center; color: #64748b; font-size: 13px;
+                border: 1px dashed #cbd5e1; border-radius: 8px; }
+    .sw-error { color: #b91c1c; font-size: 13px; padding: 8px 0; }
+    .sw-view-frame { width: 100%; height: 72vh; border: 0; }
+    .sw-dlg-html { overflow: visible !important; }
+  </style>
+</head>
+<body>
+<!-- ===========================================================================
+   submissionsWidget.html — X4 per-entity form-submission list.
+
+   Query params: ?link_type=case|contact|appt&link_id=<id>
+   Lists SUBMITTED rows for one entity (newest first), each opening the
+   read-only rendered view (render.html ?view_submission — one renderer,
+   always). Drafts are deliberately excluded — the entity's forms surface
+   their own drafts.
+
+   Embedded as a lazy case.html tab iframe (esign caseWidget precedent):
+   parent === case.html, whose window.apiSend relay this page rides via
+   window.top; re-exposed on window for the render.html view iframes.
+============================================================================ -->
+<div class="sw-head">
+  <h1 class="sw-title">Form submissions</h1>
+  <div class="sw-spacer"></div>
+  <button class="sw-refresh" id="swRefresh"><i class="fa-solid fa-rotate"></i>&nbsp;Refresh</button>
+</div>
+<div id="swList"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  function api() {
+    var a = arguments;
+    if (window.top && typeof window.top.apiSend === 'function')
+      return window.top.apiSend.apply(window.top, a);
+    return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+  }
+  window.apiSend = api;   // render.html view iframes read parent.apiSend
+
+  var params   = new URLSearchParams(location.search);
+  var linkType = params.get('link_type') || 'case';
+  var linkId   = params.get('link_id') || '';
+
+  var TPL = {};
+
+  function fmtWhen(iso) {
+    if (!iso) return '';
+    return String(iso).replace('T', ' ').replace(/(\.\d+)?Z?$/, '').slice(0, 16);
+  }
+
+  function viewSubmission(id) {
+    Swal.fire({
+      html: '<iframe class="sw-view-frame" title="Submission" ' +
+            'src="/forms/render.html?view_submission=' + encodeURIComponent(id) + '"></iframe>',
+      width: '880px',
+      showConfirmButton: false,
+      showCloseButton: true,
+      customClass: { htmlContainer: 'sw-dlg-html' },
+    });
+  }
+
+  async function load() {
+    var list = E('swList');
+    if (!linkId) { list.textContent = 'Missing link_id.'; return; }
+    list.textContent = 'Loading\u2026';
+    try {
+      var tplRes = await api('/api/form-templates', 'GET');
+      TPL = {};
+      (tplRes.templates || []).forEach(function (t) {
+        TPL[t.form_key] = { title: t.title };
+      });
+
+      var res = await api('/api/forms/submissions?status=submitted'
+        + '&link_type=' + encodeURIComponent(linkType)
+        + '&link_id=' + encodeURIComponent(linkId)
+        + '&limit=100', 'GET');
+      var subs = res.submissions || [];
+
+      list.textContent = '';
+      if (!subs.length) {
+        var empty = document.createElement('div');
+        empty.className = 'sw-empty';
+        empty.textContent = 'No form submissions for this ' + linkType + ' yet.';
+        list.appendChild(empty);
+        return;
+      }
+
+      subs.forEach(function (s) {
+        var row = document.createElement('div');
+        row.className = 'sw-row';
+
+        var main = document.createElement('div');
+        main.className = 'sw-row-main';
+
+        var top = document.createElement('div');
+        top.className = 'sw-row-top';
+        var formEl = document.createElement('span');
+        formEl.className = 'sw-row-form';
+        formEl.textContent = (TPL[s.form_key] && TPL[s.form_key].title) || s.form_key;
+        var verEl = document.createElement('span');
+        verEl.className = 'sw-row-ver';
+        verEl.textContent = '#' + s.id + ' \u00b7 v' + s.version;
+        var whenEl = document.createElement('span');
+        whenEl.className = 'sw-row-when';
+        whenEl.textContent = fmtWhen(s.created_at);
+        top.appendChild(formEl); top.appendChild(verEl); top.appendChild(whenEl);
+
+        var by = document.createElement('div');
+        by.className = 'sw-row-by';
+        by.textContent = s.submitted_by
+          ? ('Submitted by ' + (s.user_name || ('user ' + s.submitted_by)))
+          : 'Submitted externally';
+        if (s.linked_by) {
+          var badge = document.createElement('span');
+          badge.className = 'sw-badge';
+          badge.textContent = 'adopted';
+          badge.title = 'Arrived unlinked; linked from the Form Inbox'
+            + (s.linked_at ? ' on ' + fmtWhen(s.linked_at) : '');
+          by.appendChild(badge);
+        }
+
+        main.appendChild(top);
+        main.appendChild(by);
+
+        var viewBtn = document.createElement('button');
+        viewBtn.className = 'sw-btn';
+        viewBtn.textContent = 'View';
+        viewBtn.addEventListener('click', function () { viewSubmission(s.id); });
+
+        row.appendChild(main);
+        row.appendChild(viewBtn);
+        list.appendChild(row);
+      });
+    } catch (err) {
+      list.textContent = '';
+      var e = document.createElement('div');
+      e.className = 'sw-error';
+      e.textContent = 'Could not load submissions: ' + (err && err.message || err);
+      list.appendChild(e);
+    }
+  }
+
+  E('swRefresh').addEventListener('click', load);
+
+  (function boot() {
+    var tries = 0;
+    (function wait() {
+      if (window.top && typeof window.top.apiSend === 'function') return load();
+      if (++tries > 100) { E('swList').textContent = 'Open this page inside YisraCase.'; return; }
+      setTimeout(wait, 100);
+    })();
+  })();
+})();
+</script>
+</body>
+</html>

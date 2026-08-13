@@ -304,3 +304,80 @@ become a redirect hop or javascript: sink; everything reaches the DOM via
 textContent/setAttribute. `noindex` + `no-referrer` metas (b carries the
 credential). Headline fallback derives the form key from `f=`/`form_key=`
 inside b and prettifies it.
+## §M — X4: Form Inbox (2026-08-13)
+
+**Design-doc §8 executed with three Fred-ratified extensions** (all
+2026-08-13):
+
+1. **All three link types.** The adopt route accepts `case` / `contact` /
+   `appt`, not case-only. The link target TYPE is not a free choice per
+   submission: the route enforces the TEMPLATE's `link_type` (a case-form
+   cannot land on a contact — 409). Submissions whose form_key has no
+   template row (legacy hand-built keys) skip that guard. No ApptPicker
+   exists, so the appt UI path is a plain id input.
+
+2. **Adopt side-effects (option b).** Pure linkage was the §8 charter; the
+   ratified addition closes the intake-gate trap (an adopted anonymous intake
+   would otherwise leave `case_intake_form` empty and sequences 20/22 keep
+   nagging the client):
+   - a `log` entry (type `form`) on the target records the adopt — written
+     via `logService.createLogEntry` directly (this is a STAFF action, not a
+     submission-time side-effect, so the workflow-only invariant does not
+     apply); best-effort — a log failure warns and never rolls back the
+     linkage;
+   - `form_key='intake'` + target type `case` → stamp
+     `cases.case_intake_form = 'yf:<submission_id>'` **only when currently
+     empty** (the additive guard rides the UPDATE's WHERE; mirrors wf40
+     step 8 exactly). This is the one EXPLICIT per-form hardcode in the
+     route family — kept because re-firing wf40 on adopt would duplicate
+     the notify email. Config-able later if a second gated form appears.
+   - Re-dispatching `onSubmit.workflows` on adopt was CONSIDERED AND
+     REJECTED (duplicate notify; wf40 is not adopt-aware).
+
+3. **Version renumber on adopt.** Anonymous submissions share ONE version
+   counter (the `('','')` series in `submitForm`'s MAX+1), so an adopted
+   row's old version is meaningless in its new home and can shadow the
+   target's real latest in `getLatest`'s `ORDER BY version DESC`. The
+   adopted row takes `MAX(version)+1` within the TARGET series — adoption
+   makes it the newest submission of that form for that entity.
+
+**Adopt is one-way.** Unlinked → linked only; the UPDATE's WHERE re-checks
+`link_type=''` so a concurrent double-adopt loses cleanly (409). No relink /
+unlink route — mistakes are a manual SQL fix. `linked_by` comes from the auth
+principal, never the request body (test-locked). New columns
+`form_submissions.linked_by` / `linked_at`
+(ref/2026-08-13_form_submissions_linkage.sql); NULL `linked_by` + non-empty
+`link_type` reads as "linked at submit time".
+
+**Submission view = a render.html mode, not a second renderer.**
+`?view_submission=<id>` boots from `GET /api/forms/submissions/:id/render`
+(submission + definition version-matched server-side: current published when
+schema matches, else the NEWEST `form_template_versions` row with that
+schema_version, else current flagged `schema_matched:false`). Preview-grade
+discipline — no code/hooks/prefill/derive-fill/autosave/save — plus forced
+`.yc-readonly` with the toggle hidden, a metadata banner, and `linkId:''` so
+the `/api/forms/latest` and entity-load paths stay structurally off (the
+stored answers are the only populate source). jsdom-locked, including the
+code-not-executed assertion.
+
+**browseSubmissions opt-ins.** `unlinked=1` (the plain `link_type` filter
+can't express `''` — it's falsy) and `with_data=1` (the inbox preview needs
+name/email/phone). Both absent → the pre-X4 query byte-identical; the
+slice-4 "no data bodies by default" lock still holds and is re-asserted.
+
+**Surfaces.** `public/formInbox.html` (index.html more-panel iframe — took
+the first placeholder button) lists unlinked submitted rows and hosts the
+adopt dialog (CaseAdoptDialog/OrphanAdoptDialog precedents; case-forms with
+name+phone/email get a create branch through scripts.js `newContact`, whose
+onSuccess payload is discriminated by `case_relate` — present only on the
+/api/intake/case response). `public/forms/submissionsWidget.html`
+(`?link_type&link_id`, case.html "Form Submissions" lazy tab) lists an
+entity's submitted rows with the same view modal; adopted rows carry an
+"adopted" badge from `linked_by`.
+
+**wf40 state correction (verified in prod 2026-08-13):** the intake-stamp
+gate flagged in §L is ALREADY LIVE — steps are renumbered with
+`evaluate_condition form_key == "intake"` at step 7 and the stamp at step 8,
+and step 6's subject carries `{{log_subject|default:…}}`. The §L warning is
+therefore historical; only the ref/X3_4_WF40_SNIPPETS.md file commit remains
+outstanding for the record.

@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Form Inbox</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <style>
+    body { margin: 0; padding: 12px; background: #fff; }
+    /* .fx- prefix scopes this page (formInbox). */
+    .fx-wrap { max-width: 980px; margin: 0 auto; }
+
+    .fx-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 4px 0 14px; flex-wrap: wrap;
+    }
+    .fx-title { font-size: 17px; font-weight: 700; color: #0f172a; margin: 0; }
+    .fx-count {
+      font-size: 12px; font-weight: 700; color: #1e40af; background: #dbeafe;
+      border: 1px solid #bfdbfe; border-radius: 10px; padding: 1px 8px;
+    }
+    .fx-spacer { flex: 1; }
+    .fx-filter {
+      font-size: 13px; padding: 6px 8px; border: 1px solid #cbd5e1;
+      border-radius: 6px; font-family: inherit; color: #334155; background: #fff;
+    }
+    .fx-refresh {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 6px 12px; font-size: 13px; cursor: pointer; color: #334155;
+    }
+    .fx-refresh:hover { background: #f1f5f9; }
+
+    .fx-note {
+      font-size: 12.5px; color: #64748b; margin: 0 0 12px;
+    }
+
+    .fx-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px;
+      margin-bottom: 8px; background: #fff;
+    }
+    .fx-row-main { flex: 1; min-width: 0; }
+    .fx-row-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .fx-row-form { font-size: 14px; font-weight: 600; color: #0f172a; }
+    .fx-row-id   { font-size: 11.5px; color: #94a3b8; }
+    .fx-row-when { font-size: 12px; color: #64748b; white-space: nowrap; }
+    .fx-row-who {
+      font-size: 12.5px; color: #334155; margin-top: 3px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .fx-row-who i { color: #94a3b8; margin-right: 3px; }
+    .fx-row-who span + span { margin-left: 10px; }
+
+    .fx-btn {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 6px 12px; font-size: 13px; cursor: pointer; color: #334155;
+      white-space: nowrap;
+    }
+    .fx-btn:hover { background: #f1f5f9; }
+    .fx-btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+    .fx-btn-primary:hover { background: #1d4ed8; }
+
+    .fx-empty {
+      padding: 34px 12px; text-align: center; color: #64748b; font-size: 14px;
+      border: 1px dashed #cbd5e1; border-radius: 8px;
+    }
+    .fx-error { color: #b91c1c; padding: 14px 0; font-size: 13.5px; }
+
+    /* View modal iframe */
+    .fx-view-frame { width: 100%; height: 72vh; border: 0; }
+
+    /* Adopt dialog internals (mirrors oad-/cad- conventions) */
+    .fx-dlg-header { text-align: left; margin-bottom: 8px; }
+    .fx-dlg-form { font-weight: 700; font-size: 15px; color: #0f172a; }
+    .fx-dlg-meta { font-size: 12.5px; color: #64748b; margin-top: 2px; }
+    .fx-dlg-who  { font-size: 13px; color: #334155; margin-top: 6px; line-height: 1.5; }
+    .fx-dlg-section-label {
+      text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .02em;
+      text-transform: uppercase; color: #64748b; margin: 12px 0 6px;
+    }
+    .fx-dlg-create-row { margin: 10px 0 2px; text-align: left; }
+    .fx-dlg-create-btn {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 6px 12px; font-size: 13px; cursor: pointer; color: #334155;
+    }
+    .fx-dlg-create-btn:hover { background: #f1f5f9; }
+    .fx-appt-input {
+      width: 160px; font-size: 13px; padding: 6px 8px;
+      border: 1px solid #cbd5e1; border-radius: 6px;
+    }
+    /* Let picker dropdowns escape the swal container (oad-html precedent). */
+    .fx-dlg-html { overflow: visible !important; }
+    /* style.css pins inputs to 200px at higher specificity than .cp-input's
+       own width:100% — scope the fix to this mount (acc-picker precedent). */
+    #fxPickerMount .cp-input { width: 100%; }
+  </style>
+</head>
+<body>
+<!-- ===========================================================================
+   formInbox.html — X4 Form Inbox (EXTERNAL_FORMS_DESIGN §8).
+
+   Staff workspace for UNLINKED form submissions (link_type='' — the anonymous
+   external convention). Lists them with a submitter preview, opens a
+   read-only rendered view (render.html ?view_submission mode — one renderer,
+   always), and adopts a submission onto a case / contact / appt via
+   PATCH /api/forms/submissions/:id/link.
+
+   Runs as an index.html more-panel iframe: parent === the shell, so
+   P.apiSend (scripts.js) is the auth transport. This page re-exposes
+   window.apiSend so the render.html view iframe (whose parent is THIS page)
+   finds the chain — the same relay case.html / formBuilder.html do.
+
+   The adopt dialog follows the CaseAdoptDialog / OrphanAdoptDialog
+   precedents: picker matching the TEMPLATE's link_type (case → CasePicker,
+   contact → ContactPicker, appt → id input — no ApptPicker exists yet), and
+   for case-forms a create branch that hands off to scripts.js newContact
+   (find-or-create contact + optional case in one dialog) and links to the
+   case it returns. The RG task from wf40 is the NOTIFICATION; this page is
+   the WORKSPACE (§8).
+============================================================================ -->
+<div class="fx-wrap">
+  <div class="fx-head">
+    <h1 class="fx-title">Form Inbox</h1>
+    <span class="fx-count" id="fxCount" style="display:none;">0</span>
+    <div class="fx-spacer"></div>
+    <select class="fx-filter" id="fxFilter">
+      <option value="">All forms</option>
+    </select>
+    <button class="fx-refresh" id="fxRefresh"><i class="fa-solid fa-rotate"></i>&nbsp;Refresh</button>
+  </div>
+  <p class="fx-note">Submissions that arrived without a link — usually an intake filled
+    anonymously (expired or missing link). View the answers, then link each one to the
+    right case, or create the contact + case first.</p>
+  <div id="fxList"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Transport: the shell owns the JWT (checklistsView pattern). Re-exposed
+  //    on window so the render.html view iframe finds parent.apiSend here. ──
+  function api() {
+    var a = arguments;
+    if (window.top && typeof window.top.apiSend === 'function')
+      return window.top.apiSend.apply(window.top, a);
+    return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+  }
+  window.apiSend = api;
+
+  var TPL = {};        // form_key → { title, link_type }
+  var SUBS = [];       // current unlinked rows
+
+  function fmtWhen(iso) {
+    if (!iso) return '';
+    var s = String(iso).replace('T', ' ');
+    return s.replace(/(\.\d+)?Z?$/, '').slice(0, 16);
+  }
+
+  function parseData(d) {
+    if (d == null) return {};
+    if (typeof d === 'object') return d;
+    try { return JSON.parse(d); } catch (e) { return {}; }
+  }
+
+  // ── List rendering (textContent/createElement only — no innerHTML for
+  //    submitter-controlled strings) ──
+  function render() {
+    var list = E('fxList');
+    list.textContent = '';
+    var filter = E('fxFilter').value;
+    var rows = filter ? SUBS.filter(function (s) { return s.form_key === filter; }) : SUBS;
+
+    var badge = E('fxCount');
+    badge.textContent = String(SUBS.length);
+    badge.style.display = '';
+
+    if (!rows.length) {
+      var empty = document.createElement('div');
+      empty.className = 'fx-empty';
+      empty.textContent = SUBS.length
+        ? 'No unlinked submissions for this form.'
+        : 'Inbox zero — every submission is linked.';
+      list.appendChild(empty);
+      return;
+    }
+
+    rows.forEach(function (s) {
+      var d = s._data;
+      var row = document.createElement('div');
+      row.className = 'fx-row';
+
+      var main = document.createElement('div');
+      main.className = 'fx-row-main';
+
+      var top = document.createElement('div');
+      top.className = 'fx-row-top';
+      var formEl = document.createElement('span');
+      formEl.className = 'fx-row-form';
+      formEl.textContent = (TPL[s.form_key] && TPL[s.form_key].title) || s.form_key;
+      var idEl = document.createElement('span');
+      idEl.className = 'fx-row-id';
+      idEl.textContent = '#' + s.id;
+      var whenEl = document.createElement('span');
+      whenEl.className = 'fx-row-when';
+      whenEl.textContent = fmtWhen(s.created_at);
+      top.appendChild(formEl); top.appendChild(idEl); top.appendChild(whenEl);
+
+      var who = document.createElement('div');
+      who.className = 'fx-row-who';
+      var bits = [];
+      if (d.name)  bits.push(['fa-user', String(d.name)]);
+      if (d.phone) bits.push(['fa-phone', fmtPhone(d.phone)]);
+      if (d.email) bits.push(['fa-envelope', String(d.email)]);
+      if (!bits.length) bits.push(['fa-circle-question', 'no name / phone / email in the answers']);
+      bits.forEach(function (b) {
+        var span = document.createElement('span');
+        var icon = document.createElement('i');
+        icon.className = 'fa-solid ' + b[0];
+        span.appendChild(icon);
+        span.appendChild(document.createTextNode(b[1]));
+        who.appendChild(span);
+      });
+
+      main.appendChild(top);
+      main.appendChild(who);
+
+      var viewBtn = document.createElement('button');
+      viewBtn.className = 'fx-btn';
+      viewBtn.textContent = 'View';
+      viewBtn.addEventListener('click', function () { viewSubmission(s.id); });
+
+      var linkBtn = document.createElement('button');
+      linkBtn.className = 'fx-btn fx-btn-primary';
+      linkBtn.textContent = 'Link…';
+      linkBtn.addEventListener('click', function () { SubmissionAdoptDialog(s); });
+
+      row.appendChild(main);
+      row.appendChild(viewBtn);
+      row.appendChild(linkBtn);
+      list.appendChild(row);
+    });
+  }
+
+  // ── Load: templates (titles + link_type) once per refresh, then the
+  //    unlinked submitted rows with data previews ──
+  async function load() {
+    var list = E('fxList');
+    list.textContent = 'Loading…';
+    try {
+      var tplRes = await api('/api/form-templates', 'GET');
+      TPL = {};
+      (tplRes.templates || []).forEach(function (t) {
+        TPL[t.form_key] = { title: t.title, link_type: t.link_type };
+      });
+
+      var res = await api('/api/forms/submissions?unlinked=1&status=submitted&with_data=1&limit=100', 'GET');
+      SUBS = (res.submissions || []).map(function (s) {
+        s._data = parseData(s.data);
+        return s;
+      });
+
+      // Filter options: only form_keys actually present in the inbox.
+      var filter = E('fxFilter');
+      var current = filter.value;
+      filter.textContent = '';
+      var all = document.createElement('option');
+      all.value = ''; all.textContent = 'All forms';
+      filter.appendChild(all);
+      var seen = {};
+      SUBS.forEach(function (s) {
+        if (seen[s.form_key]) return;
+        seen[s.form_key] = 1;
+        var o = document.createElement('option');
+        o.value = s.form_key;
+        o.textContent = (TPL[s.form_key] && TPL[s.form_key].title) || s.form_key;
+        filter.appendChild(o);
+      });
+      if (seen[current]) filter.value = current;
+
+      render();
+    } catch (err) {
+      list.textContent = '';
+      var e = document.createElement('div');
+      e.className = 'fx-error';
+      e.textContent = 'Could not load the inbox: ' + (err && err.message || err);
+      list.appendChild(e);
+    }
+  }
+
+  // ── Read-only rendered view (render.html view mode — one renderer) ──
+  function viewSubmission(id) {
+    Swal.fire({
+      html: '<iframe class="fx-view-frame" title="Submission" ' +
+            'src="/forms/render.html?view_submission=' + encodeURIComponent(id) + '"></iframe>',
+      width: '880px',
+      showConfirmButton: false,
+      showCloseButton: true,
+      customClass: { htmlContainer: 'fx-dlg-html' },
+    });
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+     SubmissionAdoptDialog(sub)
+
+     Adopt an unlinked submission (CaseAdoptDialog / OrphanAdoptDialog
+     precedents). The link target TYPE comes from the template
+     (TPL[form_key].link_type); a submission whose template row is gone gets
+     an explicit type select. Confirm PATCHes /link — 409/400/404 surface as
+     a validation message and the dialog stays open.
+
+     Case-forms with a name + (phone|email) in the answers also get a
+     "Create contact + case…" branch: scripts.js newContact (find-or-create
+     contact, optional case in the same dialog, suppressOpen). Its onSuccess
+     payload discriminates by `case_relate` (present only on the
+     /api/intake/case response): a case → link it; contact-only → the
+     submission stays unlinked and says so.
+     ──────────────────────────────────────────────────────────────────────── */
+  var PICKER_FOR = { case: 'CasePicker', contact: 'ContactPicker' };
+
+  async function SubmissionAdoptDialog(sub) {
+    var d = sub._data || {};
+    var tpl = TPL[sub.form_key] || null;
+    var fixedType = tpl ? tpl.link_type : null;   // null → user picks the type
+    var title = (tpl && tpl.title) || sub.form_key;
+
+    var selected = null;    // { link_type, link_id, label }
+    var picker = null;
+
+    var canCreate = (fixedType === 'case') && d.name && (d.phone || d.email);
+
+    var whoLines = [];
+    if (d.name)  whoLines.push('Name: ' + d.name);
+    if (d.phone) whoLines.push('Phone: ' + fmtPhone(d.phone));
+    if (d.email) whoLines.push('Email: ' + d.email);
+
+    var typeSelectHtml = fixedType ? '' :
+      '<div class="fx-dlg-section-label">Link type</div>' +
+      '<select id="fxLinkType" class="fx-filter">' +
+        '<option value="case">Case</option>' +
+        '<option value="contact">Contact</option>' +
+        '<option value="appt">Appointment</option>' +
+      '</select>';
+
+    var result = await Swal.fire({
+      title: 'Link submission #' + sub.id,
+      html:
+        '<div class="fx-dlg-header">' +
+          '<div class="fx-dlg-form">' + escAttr(title) + '</div>' +
+          '<div class="fx-dlg-meta">Received ' + escAttr(fmtWhen(sub.created_at)) + ' — unlinked</div>' +
+          (whoLines.length ? '<div class="fx-dlg-who">' + whoLines.map(escAttr).join('<br>') + '</div>' : '') +
+        '</div>' +
+        typeSelectHtml +
+        '<div class="fx-dlg-section-label" id="fxPickLabel"></div>' +
+        '<div id="fxPickerMount"></div>' +
+        (canCreate
+          ? '<div class="fx-dlg-create-row">' +
+              '<button type="button" id="fxCreateNew" class="fx-dlg-create-btn">' +
+              '<i class="fa-solid fa-user-plus"></i>&nbsp;Create contact + case\u2026</button>' +
+            '</div>'
+          : ''),
+      showCancelButton: true,
+      showConfirmButton: true,
+      confirmButtonText: 'Link',
+      cancelButtonText: 'Cancel',
+      showCloseButton: true,
+      customClass: { htmlContainer: 'fx-dlg-html' },
+      allowOutsideClick: true,
+
+      didOpen: function () {
+        var confirmBtn = Swal.getConfirmButton();
+        if (confirmBtn) confirmBtn.disabled = true;
+
+        function setSelected(type, id, label) {
+          selected = { link_type: type, link_id: String(id), label: label };
+          if (confirmBtn) confirmBtn.disabled = false;
+        }
+
+        function mountPicker(type) {
+          if (picker && picker.destroy) picker.destroy();
+          picker = null;
+          selected = null;
+          if (confirmBtn) confirmBtn.disabled = true;
+          var mount = E('fxPickerMount');
+          mount.textContent = '';
+          var label = E('fxPickLabel');
+
+          if (type === 'appt') {
+            // No ApptPicker exists yet — a plain id input keeps the route's
+            // third type reachable without inventing a picker this slice.
+            label.textContent = 'Appointment id';
+            var inp = document.createElement('input');
+            inp.type = 'number'; inp.min = '1';
+            inp.id = 'fxApptId'; inp.className = 'fx-appt-input';
+            inp.placeholder = 'appt_id';
+            inp.addEventListener('input', function () {
+              var v = inp.value.trim();
+              if (v && Number(v) > 0) setSelected('appt', v, 'appt ' + v);
+              else { selected = null; if (confirmBtn) confirmBtn.disabled = true; }
+            });
+            mount.appendChild(inp);
+            return;
+          }
+
+          label.textContent = type === 'contact'
+            ? 'Find the contact to link this submission to'
+            : 'Find the case to link this submission to';
+          var Picker = window[PICKER_FOR[type]] || (window.parent && window.parent[PICKER_FOR[type]]);
+          picker = Picker(mount, {
+            placeholder: type === 'contact' ? 'Search contacts\u2026' : 'Search cases\u2026',
+            onSelect: function (id, row) {
+              setSelected(type, id,
+                (row && (row.contact_name || row.case_number_full || row.case_number)) || String(id));
+            },
+          });
+        }
+
+        mountPicker(fixedType || 'case');
+        var typeSel = E('fxLinkType');
+        if (typeSel) typeSel.addEventListener('change', function () { mountPicker(typeSel.value); });
+
+        var createBtn = E('fxCreateNew');
+        if (createBtn) {
+          createBtn.addEventListener('click', function () {
+            if (picker && picker.destroy) picker.destroy();
+            picker = null;
+            Swal.close();
+            newContact(
+              { name: String(d.name || ''), phone: String(d.phone || ''), email: String(d.email || ''), suppressOpen: true },
+              function (data) {
+                // case_relate is present ONLY on the /api/intake/case response
+                // — the contact-only path must not link a case-form.
+                if (data && data.case_relate != null && data.id) {
+                  patchLink(sub, 'case', String(data.id)).then(load);
+                } else {
+                  Toast.fire({ icon: 'info', title: 'Contact saved',
+                    text: 'No case was created — the submission is still unlinked.' });
+                }
+              }
+            );
+          });
+        }
+      },
+
+      // The PATCH runs inside preConfirm so a 409/404 keeps the dialog open
+      // with the server's message (CaseAdoptDialog pattern).
+      preConfirm: async function () {
+        if (!selected) {
+          Swal.showValidationMessage('Pick a target, or Create contact + case.');
+          return false;
+        }
+        try {
+          var out = await api('/api/forms/submissions/' + sub.id + '/link', 'PATCH',
+            { link_type: selected.link_type, link_id: selected.link_id });
+          return out;
+        } catch (err) {
+          var msg = (err && err.body && err.body.message) || (err && err.message) || 'Link failed';
+          Swal.showValidationMessage(msg);
+          return false;
+        }
+      },
+
+      willClose: function () { if (picker && picker.destroy) picker.destroy(); },
+    });
+
+    if (!result.isConfirmed || !result.value) return;
+    var out = result.value;
+    Toast.fire({
+      icon: 'success',
+      title: 'Linked to ' + out.link_type + ' ' + out.link_id,
+      text: out.intake_stamped ? 'Intake gate stamped — reminders stop.' : undefined,
+    });
+    load();
+  }
+
+  // Shared PATCH for the create-chain (errors toast — no dialog to keep open).
+  async function patchLink(sub, linkType, linkId) {
+    try {
+      var out = await api('/api/forms/submissions/' + sub.id + '/link', 'PATCH',
+        { link_type: linkType, link_id: linkId });
+      Toast.fire({
+        icon: 'success',
+        title: 'Linked to ' + out.link_type + ' ' + out.link_id,
+        text: out.intake_stamped ? 'Intake gate stamped — reminders stop.' : undefined,
+      });
+    } catch (err) {
+      var msg = (err && err.body && err.body.message) || (err && err.message) || 'Link failed';
+      Toast.fire({ icon: 'error', title: 'Link failed', text: msg });
+    }
+  }
+
+  // ── Wiring ──
+  E('fxRefresh').addEventListener('click', load);
+  E('fxFilter').addEventListener('change', render);
+
+  (function boot() {
+    if (window.top && typeof window.top.apiSend === 'function') return load();
+    var tries = 0;
+    (function wait() {
+      if (window.top && typeof window.top.apiSend === 'function') return load();
+      if (++tries > 100) {
+        E('fxList').textContent = 'Open this page inside YisraCase.';
+        return;
+      }
+      setTimeout(wait, 100);
+    })();
+  })();
+})();
+</script>
+</body>
+</html>

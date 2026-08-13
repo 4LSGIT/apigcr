@@ -17,6 +17,8 @@ CREATE TABLE form_submissions (
   schema_version  INT UNSIGNED  NOT NULL DEFAULT 1,
   data            JSON          NOT NULL,
   submitted_by    INT UNSIGNED  NULL,
+  linked_by       INT UNSIGNED  NULL,
+  linked_at       DATETIME      NULL,
   created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   draft_key       VARCHAR(100)  GENERATED ALWAYS AS (
@@ -47,6 +49,8 @@ CREATE TABLE form_submissions (
 | `schema_version` | int | The form's `schemaVersion` when this row was created |
 | `data` | json | Full form payload |
 | `submitted_by` | int / null | User ID. NULL for external submissions |
+| `linked_by` | int / null | X4: who adopted an unlinked submission from the Form Inbox. NULL when the row was linked at submit time (or never) |
+| `linked_at` | datetime / null | X4: when the adopt happened |
 | `created_at` | datetime | Row creation time |
 | `updated_at` | datetime | Auto-updated on every change |
 | `draft_key` | varchar(100) | Generated column for draft uniqueness |
@@ -122,6 +126,7 @@ WHERE form_key = 'contact_info' AND link_type = 'contact' AND link_id = '1001'
 
 - `link_id` is varchar (polymorphic — references contacts, cases, or appts)
 - `submitted_by` references `users.user` conceptually but has no FK (allows NULL for external)
+- `linked_by` follows the same convention. An adopted row also has its `version` renumbered `MAX+1` within its new `(form_key, link_type, link_id)` series — anonymous rows all share the `('','')` version counter, so the original number is meaningless once the row moves
 - Follows the same polymorphic pattern as `log.log_link_type` + `log.log_link_id`
 
 ---

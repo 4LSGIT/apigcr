@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-13T09:23:17.858Z
+-- Generated: 2026-08-13T15:04:38.968Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:6326139bca17e3e79af45d9be96ac096
+-- Fingerprint: sha256:dbccbcbce4c03d16a0bf6b251192dfa3
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1473,6 +1473,8 @@ CREATE TABLE `form_submissions` (
   `schema_version` int unsigned NOT NULL DEFAULT '1',
   `data` json NOT NULL,
   `submitted_by` int unsigned DEFAULT NULL,
+  `linked_by` int unsigned DEFAULT NULL,
+  `linked_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `draft_key` varchar(100) COLLATE utf8mb4_general_ci GENERATED ALWAYS AS ((case when (`status` = _utf8mb4'draft') then concat(`form_key`,_utf8mb4':',`link_type`,_utf8mb4':',`link_id`) else NULL end)) STORED

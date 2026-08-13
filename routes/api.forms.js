@@ -8,11 +8,16 @@
  * POST   /api/forms/submit   — record explicit submission
  * DELETE /api/forms/draft     — discard draft
  * GET    /api/forms/history   — submission history
- * GET    /api/forms/submissions      — admin browse (filters + before_id cursor; no data bodies)
+ * GET    /api/forms/submissions      — admin browse (filters + before_id cursor;
+ *                                      no data bodies unless with_data=1; unlinked=1
+ *                                      filters to the ('','') convention)
  * GET    /api/forms/submissions/:id  — one submission incl. data
+ * GET    /api/forms/submissions/:id/render — submission + version-matched
+ *                                      definition (render.html view mode, X4)
+ * PATCH  /api/forms/submissions/:id/link   — adopt onto a case/contact/appt (X4)
  *
- * All routes require JWT or API key auth. The two Slice-4 submissions routes
- * map service `.status` errors to 400/404 (the api.formTemplates pattern);
+ * All routes require JWT or API key auth. The Slice-4/X4 submissions routes
+ * map service `.status` errors to 400/404/409 (the api.formTemplates pattern);
  * the older handlers keep their original 500-everything mapping untouched.
  */
 
@@ -186,6 +191,41 @@ router.get('/api/forms/submissions/:id', jwtOrApiKey, async (req, res) => {
     res.json({ status: 'success', submission });
   } catch (err) {
     fail(res, 'getSubmission', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/forms/submissions/:id/render — submission + version-matched
+// definition in one payload (X4). Feeds render.html's ?view_submission mode.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/api/forms/submissions/:id/render', jwtOrApiKey, async (req, res) => {
+  try {
+    const payload = await formService.getSubmissionForRender(req.db, req.params.id);
+    res.json({ status: 'success', ...payload });
+  } catch (err) {
+    fail(res, 'getSubmissionForRender', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/forms/submissions/:id/link — adopt an unlinked submission onto a
+// case / contact / appt (X4, EXTERNAL_FORMS_DESIGN §8). Body:
+// { link_type: 'case'|'contact'|'appt', link_id }. One-way (unlinked → linked
+// only); who linked it is stamped from the auth principal, never the body.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.patch('/api/forms/submissions/:id/link', jwtOrApiKey, async (req, res) => {
+  try {
+    const { link_type, link_id } = req.body || {};
+    const result = await formService.linkSubmission(
+      req.db, req.params.id, link_type, link_id, req.auth.userId
+    );
+    res.json({ status: 'success', ...result });
+  } catch (err) {
+    fail(res, 'linkSubmission', err);
   }
 });
 
