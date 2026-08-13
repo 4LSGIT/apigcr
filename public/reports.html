@@ -9,6 +9,7 @@
      unreachable the tables still render; only the charts drop out. -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
 <script src="/js/reportCharts.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <!--
   public/reports.html — Reports engine UI (Slice 1).
 
@@ -16,13 +17,15 @@
   parent's apiSend for auth (same pattern as readonlyKeys.html). Boot waits for
   the parent to expose apiSend before doing anything.
 
-  Deliberately has NO chart library. Slice 1 renders tables and CSV; charts land
-  in Slice 4 once we know which reports people actually keep. The `viz` hint is
-  stored and displayed as a label so the definitions are already chart-ready.
+  AUTHORING (S3): open to every logged-in user — the SU gate is gone. What
+  protects shared work is the LOCK: a locked definition can only be edited,
+  deleted or AI-refined by its author or an SU. Anyone can lock; only the
+  author or an SU can unlock. The server (reportService) is the real check;
+  this page mirrors it — hiding controls that would 403, warning before edits
+  to someone else's unlocked work, and never nagging an author about their own.
 
-  Authoring (the SQL editor) is superuser-only and mirrors the server's
-  requireSU gate — the server is the real check, this just hides a panel that
-  would 403 anyway.
+  COPY RULE: never name a person. Comments say SU; UI strings say
+  "an administrator".
 -->
 <style>
   :root {
@@ -183,6 +186,14 @@
   }
   .hidden { display: none !important; }
   label.fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+
+  /* Lock badge (list cards + run panel) */
+  .pill.lockpill { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  .pill.lockpill i { margin-right: 3px; }
+
+  /* SweetAlert in dark mode — same pattern as index.html */
+  body.dark .swal2-popup { background: var(--panel) !important; color: var(--fg) !important; }
+  body.dark .swal2-title, body.dark .swal2-html-container { color: var(--fg) !important; }
 </style>
 </head>
 <body>
@@ -236,11 +247,13 @@
       <select id="reportSwitcher" onchange="openReport(Number(this.value))" style="max-width:260px"></select>
     </div>
     <div class="row">
-      <button id="askEditBtn" class="ghost hidden" onclick="openAskRefine(currentReport)"><i class="fa-solid fa-wand-magic-sparkles"></i> Ask AI to change this</button>
-      <button id="editBtn" class="ghost hidden" onclick="openEditor(currentReport)"><i class="fa-solid fa-pen"></i> Edit</button>
+      <button id="askEditBtn" class="ghost hidden" onclick="askRefineCurrent()"><i class="fa-solid fa-wand-magic-sparkles"></i> Ask AI to change this</button>
+      <button id="editBtn" class="ghost hidden" onclick="editCurrent()"><i class="fa-solid fa-pen"></i> Edit</button>
+      <button id="lockBtn" class="ghost hidden" onclick="toggleLock()"></button>
     </div>
   </div>
   <h3 id="runTitle" style="margin:10px 0 0"></h3>
+  <p id="lockNote" class="muted small hidden" style="margin:4px 0 0; line-height:1.5"></p>
   <p id="runDesc" class="muted small" style="line-height:1.5"></p>
 
   <div id="paramRow" class="row" style="margin-bottom:10px"></div>
@@ -324,6 +337,7 @@ let currentReport = null;   // full definition of the open report
 let lastRows = null;        // for CSV
 let lastFields = null;
 let isSU = false;
+let myId = null;            // Number(P.user.user), or null when unresolvable
 let editingId = null;
 let lastSaveWarning = null;
 
@@ -360,19 +374,201 @@ function init() {
     });
   } catch (_) {}
 
-  // Mirror the server's SU gate so we don't show authoring UI that would 403.
+  // Authoring is open to every logged-in user (S3). isSU is kept purely as
+  // the lock-BYPASS flag. The per-report Edit / Ask-AI / lock buttons live in
+  // the run panel and are toggled per report by renderLockUi(), which mirrors
+  // the server's rules; the server is the real check either way.
   try {
     const u = P.user || {};
     isSU = String(u.user_auth || "").indexOf("SU") !== -1;
-  } catch (_) { isSU = false; }
-  if (isSU) {
+    const n = Number(u.user);
+    myId = Number.isInteger(n) && n >= 1 ? n : null;
+  } catch (_) { isSU = false; myId = null; }
+  if (myId != null || isSU) {
     document.getElementById("newBtn").classList.remove("hidden");
-    document.getElementById("editBtn").classList.remove("hidden");
     document.getElementById("askToggle").classList.remove("hidden");
-    document.getElementById("askEditBtn").classList.remove("hidden");
   }
 
   loadReports();
+}
+
+// ─── ownership / lock helpers (mirror services/reportService.js) ────────────
+
+/** Numeric ownership test — JWT sub can be a string, created_by is an int. */
+function ownsReport(r) {
+  return myId != null && r && r.created_by != null && Number(r.created_by) === myId;
+}
+
+/** May THIS user edit / delete / AI-refine this definition? */
+function canEditReport(r) {
+  return !!r && (!r.is_locked || ownsReport(r) || isSU);
+}
+
+/** May THIS user remove the lock? */
+function canUnlockReport(r) {
+  return !!r && (ownsReport(r) || isSU);
+}
+
+/**
+ * Display name for a definition's author: the server's created_by_name
+ * (LEFT JOIN users) first, the parent's firmData users list second.
+ */
+function authorName(r) {
+  if (!r) return null;
+  if (r.created_by_name) return r.created_by_name;
+  if (r.created_by == null) return null;
+  try {
+    const u = (P.users || []).find(x => Number(x.user) === Number(r.created_by));
+    if (u) return u.user_name || u.username || null;
+  } catch (_) {}
+  return null;
+}
+
+/** kind word for dialog copy. */
+function kindWord(r) { return r && r.kind === "view" ? "view" : "report"; }
+
+/**
+ * The pre-edit gate. Resolves true when editing may proceed:
+ *   your own / new / SU          → silently
+ *   unlocked, someone else's     → after a Swal confirm that NAMES the author
+ *                                  (ai=true gets the stronger refine copy —
+ *                                  refine rewrites the whole query from one
+ *                                  sentence, the real accident vector)
+ *   locked, not yours            → false with an explainer (belt-and-braces;
+ *                                  the buttons are hidden in that state)
+ */
+async function confirmEditGate(r, { ai = false } = {}) {
+  if (!r) return true;                          // creating something new
+  if (ownsReport(r) || isSU) return true;       // never nag an author
+  const kw = kindWord(r);
+  const who = authorName(r) || "Another user";
+
+  if (r.is_locked) {
+    await Swal.fire({
+      icon: "info",
+      title: "This " + kw + " is locked",
+      html: `<b>${esc(who)}</b>'s ${kw} is protected from accidental changes. ` +
+            `Ask ${esc(who)} to unlock it or make the change — or ask an administrator.`,
+    });
+    return false;
+  }
+
+  const res = ai
+    ? await Swal.fire({
+        icon: "warning",
+        title: `Let the AI rewrite ${esc(who)}'s ${kw}?`,
+        html: `<b>${esc(who)}</b> built this ${kw}, and an AI refine rewrites the whole ` +
+              `query from one sentence — it's easy to change more than you meant to. ` +
+              `The firm shares one copy, so your save affects everyone.<br><br>` +
+              `<span style="font-size:13px">Review the <b>What changed</b> diff carefully before saving. ` +
+              `Every save is archived first, so mistakes can be rolled back.</span>`,
+        showCancelButton: true,
+        confirmButtonText: "I'll review the diff",
+        cancelButtonText: "Leave it alone",
+      })
+    : await Swal.fire({
+        icon: "warning",
+        title: `Edit ${esc(who)}'s ${kw}?`,
+        html: `<b>${esc(who)}</b> created this ${kw} and the whole firm sees the same copy — ` +
+              `your changes affect everyone who uses it.<br><br>` +
+              `<span style="font-size:13px">Every save is archived first, so mistakes can be rolled back.</span>`,
+        showCancelButton: true,
+        confirmButtonText: "Edit it",
+        cancelButtonText: "Leave it alone",
+      });
+  return res.isConfirmed;
+}
+
+/** Edit button (run panel) — gate, then open the editor. */
+async function editCurrent() {
+  if (!currentReport) return;
+  if (await confirmEditGate(currentReport)) openEditor(currentReport);
+}
+
+/** Ask-AI button (run panel) — gate with the stronger copy, then refine. */
+async function askRefineCurrent() {
+  if (!currentReport) return;
+  if (await confirmEditGate(currentReport, { ai: true })) openAskRefine(currentReport);
+}
+
+/**
+ * Sync the run panel's lock UI to currentReport:
+ *   badge next to the title whenever locked;
+ *   Edit / Ask-AI shown only when this user may edit;
+ *   the lock button reads Lock (anyone) or Unlock (owner / SU only);
+ *   a locked definition you can't edit gets one plain line naming who to ask.
+ */
+function renderLockUi() {
+  const r = currentReport;
+  if (!r) return;
+  const locked = !!r.is_locked;
+  const editable = canEditReport(r);
+  const who = authorName(r);
+
+  E("runTitle").innerHTML = esc(r.title) + (locked
+    ? ` <span class="pill lockpill" title="Protected from accidental changes"><i class="fa-solid fa-lock"></i> Locked</span>`
+    : "");
+
+  const note = E("lockNote");
+  if (locked && !editable) {
+    note.textContent = `Locked — only ${who || "its author"} or an administrator can change or delete this ${kindWord(r)}.`;
+    note.classList.remove("hidden");
+  } else {
+    note.classList.add("hidden");
+  }
+
+  E("editBtn").classList.toggle("hidden", !editable);
+  E("askEditBtn").classList.toggle("hidden", !editable);
+
+  const lb = E("lockBtn");
+  if (!locked) {
+    // Anyone logged in can lock — locking only ever adds protection.
+    lb.innerHTML = `<i class="fa-solid fa-lock"></i> Lock`;
+    lb.title = "Protect this definition — once locked, only " + (who || "its author") + " or an administrator can change it.";
+    lb.classList.toggle("hidden", myId == null && !isSU);
+  } else if (canUnlockReport(r)) {
+    lb.innerHTML = `<i class="fa-solid fa-lock-open"></i> Unlock`;
+    lb.title = "Remove the protection so anyone can edit this definition.";
+    lb.classList.remove("hidden");
+  } else {
+    lb.classList.add("hidden");
+  }
+}
+
+/** Lock immediately; unlock only after a confirm — it removes protection. */
+async function toggleLock() {
+  const r = currentReport;
+  if (!r) return;
+  const locking = !r.is_locked;
+
+  if (!locking) {
+    const res = await Swal.fire({
+      icon: "warning",
+      title: "Remove the lock?",
+      html: `The lock is what stops <b>${esc(r.title)}</b> being edited by accident. ` +
+            `Anyone will be able to change or delete it until it's locked again.`,
+      showCancelButton: true,
+      confirmButtonText: "Unlock",
+      cancelButtonText: "Keep it locked",
+    });
+    if (!res.isConfirmed) return;
+  }
+
+  const lb = E("lockBtn");
+  lb.disabled = true;
+  try {
+    const d = await P.apiSend(`/api/reports/${r.id}/lock`, "POST", { locked: locking });
+    currentReport = d.report;
+    // Patch the cached list entry rather than refetching — only the flag moved.
+    const idx = reports.findIndex(x => x.id === r.id);
+    if (idx >= 0) reports[idx].is_locked = d.report.is_locked;
+    renderList();
+    renderLockUi();
+  } catch (e) {
+    Swal.fire("Couldn't do that", e.message, "error");
+  } finally {
+    lb.disabled = false;
+  }
 }
 
 /** Message + optional server detail from an apiSend ApiError. */
@@ -448,7 +644,7 @@ function renderList() {
     <div class="rpt-grid">
       ${byCat[cat].map(r => `
         <div class="rpt-card" data-id="${r.id}" onclick="openReport(${r.id})">
-          <div class="t">${esc(r.title)}</div>
+          <div class="t">${esc(r.title)}${r.is_locked ? ' <span class="pill lockpill" title="Protected from accidental changes"><i class="fa-solid fa-lock"></i></span>' : ""}</div>
           <div class="d">${esc((r.description || "").slice(0, 130))}${(r.description || "").length > 130 ? "…" : ""}</div>
           ${r.params && r.params.length
             ? `<div style="margin-top:6px"><span class="pill">${r.params.length} parameter${r.params.length > 1 ? "s" : ""}</span></div>`
@@ -497,13 +693,13 @@ async function openReport(id) {
     const d = await P.apiSend(`/api/reports/${id}`, "GET");
     currentReport = d.report;
   } catch (e) {
-    alert("Couldn't open report: " + e.message);
+    Swal.fire("Couldn't open report", e.message, "error");
     return;
   }
 
   showView("run");
   renderSwitcher();
-  E("runTitle").textContent = currentReport.title;
+  renderLockUi();   // title + lock badge + per-report Edit / Ask-AI / lock buttons
   E("runDesc").textContent = currentReport.description || "";
   E("runResult").innerHTML = "";
   E("runMeta").textContent = "";
@@ -850,7 +1046,7 @@ function downloadCsv() {
   URL.revokeObjectURL(a.href);
 }
 
-// ─── AI author (SU only) ─────────────────────────────────────────────────────
+// ─── AI author (any logged-in user; rate-limited server-side) ────────────────
 //
 // Three entry points, one loop:
 //   Ask (header)              → new definition        body { question }
@@ -1264,7 +1460,7 @@ function openEditorFromDraft() {
   E("edViz").value      = JSON.stringify(lastDraft.viz || null, null, 2);
 }
 
-// ─── editor (SU only) ────────────────────────────────────────────────────────
+// ─── editor (any logged-in user; the lock is enforced server-side) ───────────
 
 function openEditor(report) {
   editingId = report ? report.id : null;
@@ -1483,7 +1679,14 @@ async function viewVersion(versionNo) {
 }
 
 async function restoreVersionUi(versionNo) {
-  if (!confirm(`Restore version ${versionNo} over the current definition?\nThe current state is archived first, so this can be undone.`)) return;
+  const res = await Swal.fire({
+    icon: "question",
+    title: `Restore version ${versionNo}?`,
+    text: "The current state is archived first, so this can be undone.",
+    showCancelButton: true,
+    confirmButtonText: "Restore",
+  });
+  if (!res.isConfirmed) return;
   try {
     const d = await P.apiSend(`/api/reports/${editingId}/versions/${versionNo}/restore`, "POST", {});
     openEditor(d.report);                          // reload every field from the restored row
@@ -1498,7 +1701,15 @@ async function restoreVersionUi(versionNo) {
 
 async function deleteCurrent() {
   if (!editingId) return;
-  if (!confirm("Delete this report definition? This cannot be undone.")) return;
+  const res = await Swal.fire({
+    icon: "warning",
+    title: "Delete this definition?",
+    text: "It disappears from the list for everyone, and nothing here will bring it back.",
+    showCancelButton: true,
+    confirmButtonText: "Delete",
+    confirmButtonColor: "#dc2626",
+  });
+  if (!res.isConfirmed) return;
   try {
     await P.apiSend(`/api/reports/${editingId}`, "DELETE");
     closeEditor();

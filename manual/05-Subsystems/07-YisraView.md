@@ -77,8 +77,9 @@ sits under those. Same principle as reports: nothing here is a black box.
 | **341 Hearings** | Section 341 meetings, soonest first, with docket, chapter, trustee and the dial-in link. Set **From** to a past date to review recent hearings. |
 | **Filing Fees & Installments** | Cases on an installment filing fee: where the fee stands, when the final installment is due, any live show-cause order. Closed cases hidden unless you ask for them. |
 
-These are starting points, not the limit. Ask IT for a view of anything the
-database actually knows.
+These are starting points, not the limit. Anyone can build a view of anything
+the database actually knows — see [Authoring a view](#authoring-a-view) — or
+ask an administrator to build one for you.
 
 ---
 
@@ -108,7 +109,13 @@ A few notes:
 
 ---
 
-## Authoring a view (super-users)
+## Authoring a view
+
+Any logged-in user can author a view, exactly as with reports. The same
+protection applies too: a **locked** view can only be changed by its author or
+by an administrator, anyone can lock a view to protect it, and editing someone
+else's unlocked view asks you to confirm first — the firm shares one copy.
+The full rules are in [Reports → Locking](06-reports.md#locking).
 
 A view **is a report** — the same `report_definitions` row, with `kind` set to
 `view`. There is deliberately no second table, no second editor and no second

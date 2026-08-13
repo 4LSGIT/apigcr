@@ -23,16 +23,21 @@ instead.
   without changing the report, and save the chart as a PNG.
 - **Export to CSV** — for anything that needs to go into a spreadsheet.
 - **See the SQL** — every report will show you exactly how it got its number.
-- **Ask for a new report in plain English** (super-users) — describe what you
-  want, review what the AI writes, save it if it's right.
+- **Ask for a new report in plain English** — describe what you want, review
+  what the AI writes, save it if it's right.
+- **Build your own** — anyone can create a report or edit one that isn't
+  locked. See [Locking](#locking) for how shared work is protected.
 - **Email a report automatically** — through YisraFlow, on a schedule.
 
 ## Where to find it
 
 **More → Reports** in the main navigation. Any logged-in user can run any saved
-report. **Creating and editing** reports is limited to super-users, because a
-report definition is stored SQL, and writing one is a different act from running
-one somebody has already reviewed.
+report — and any logged-in user can **create** one, by hand or by asking the
+AI. Editing someone else's report is allowed too, unless it's **locked**; a
+locked report can only be changed by the person who made it, or by an
+administrator.
+That lock — not a permission tier — is what protects the reports the firm
+relies on. See [Locking](#locking) below.
 
 ---
 
@@ -91,7 +96,7 @@ If a caveat is printed, quote it when you pass the number on.
 
 ---
 
-## Asking the AI for a report (super-users)
+## Asking the AI for a report
 
 Click **Ask**, describe what you want in plain English, and press **Draft it**.
 
@@ -134,7 +139,7 @@ curated table list the model gets.
 
 ---
 
-## Writing a report by hand (super-users)
+## Writing a report by hand
 
 **New** opens the editor. The fields:
 
@@ -167,6 +172,45 @@ must exactly match the number of `?` in the SQL, and they bind in order.
 > `AND (? IS NULL OR c.case_stage = ?)` — uses two placeholders for one
 > parameter and is rejected. The single-placeholder forms are listed in the
 > [Views page](07-YisraView.md#writing-the-sql), and they apply equally here.
+
+---
+
+## Locking
+
+Anyone can build a report, and anyone can edit or delete a report that isn't
+locked — the firm shares one copy of each, so a save affects everyone. The
+**lock** is how a report the firm depends on is protected from an accidental
+rewrite. It is protection against accidents between colleagues, not secrecy:
+a locked report is still visible to and runnable by everyone.
+
+The rules are deliberately lopsided:
+
+- **Anyone can lock** any report. If you spot something important sitting
+  unprotected, protect it — locking only ever adds safety.
+- **Only the report's author, or an administrator, can unlock it** — or edit,
+  delete, or AI-refine it while it's locked. If a locked report needs a
+  change, ask the person named on it, or ask an administrator.
+
+What you'll see:
+
+- A **padlock badge** on a locked report, in the list and next to its title.
+- A **Lock / Unlock** button when you open a report. Lock is available to
+  everyone; Unlock only appears for the author and administrators.
+- If you start editing an *unlocked* report someone else made, you'll get a
+  confirmation naming its author first — a deliberate speed bump, since your
+  save replaces the copy everyone uses. Your own reports never nag you.
+- The AI-refine confirmation is sterner still, because a refine rewrites the
+  whole query from one sentence. Read the **What changed** diff before
+  saving.
+
+Two safety nets sit underneath all of this: every save archives the outgoing
+version first (see the History panel), so an edit — yours or anyone's — can
+be rolled back; and a deleted report's history survives the delete, though
+bringing one back is a manual job for an administrator.
+
+All the reports that existed before open authoring arrived were locked at
+rollout, with an administrator recorded as their author. If one of those
+should be freely editable, ask an administrator to unlock it.
 
 ---
 

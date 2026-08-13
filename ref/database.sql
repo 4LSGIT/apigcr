@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-11T21:48:24.755Z
+-- Generated: 2026-08-13T08:39:54.859Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:775afc40fb883ae57dfce27b8a1893ed
+-- Fingerprint: sha256:09c2500dd2fa984e7543c36db21553cb
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2231,7 +2231,8 @@ CREATE TABLE `report_definitions` (
   `updated_by` int DEFAULT NULL,
   `source` varchar(16) NOT NULL DEFAULT 'manual',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_locked` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------

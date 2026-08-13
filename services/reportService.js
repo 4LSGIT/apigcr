@@ -29,6 +29,38 @@
 // params / columns_meta / viz / caveats are JSON columns. mysql2 returns them
 // PARSED and requires them JSON.stringify()'d on the way back in. Every write
 // site below does that explicitly.
+//
+// ── ACTORS AND THE LOCK (S3) ────────────────────────────────────────────────
+// Authoring is open to every logged-in user; the risk that replaces the old
+// SU gate is a colleague accidentally rewriting a load-bearing definition,
+// and `is_locked` is the answer to that. ALL enforcement lives HERE, in the
+// service — one enforcement point covers HTTP routes and machine callers
+// both. The rules:
+//
+//   list / get / run       unrestricted (unchanged)
+//   create                 any identified actor; new rows start is_locked=0
+//   edit / delete / restore  allowed if NOT locked, OR owner, OR bypass
+//   lock   (0→1)           any identified actor — locking only adds protection
+//   unlock (1→0)           owner or bypass only
+//
+// "Bypass" = the system actor (internal functions, scheduled jobs, API-key
+// callers reaching the service directly) or an SU. "Owner" = actor.userId
+// numerically equals row.created_by. TRAPS this design guards against:
+//
+//   * JWT `sub` can arrive as a STRING (routes/auth.login.js signs
+//     `sub: user.user`; string subs are observed in the wild — see
+//     resolveCreatedBy in routes/api.contacts.js). A strict === against the
+//     INT created_by column would make NOTHING owned and the whole lock
+//     model would quietly no-op. normalizeActor parses; ownsRow compares
+//     numerically.
+//   * created_by NULL never counts as owned by anyone.
+//   * userId 0 (the Automations pseudo-user) and any value < 1 mean NO owner
+//     identity — such an actor owns nothing and cannot unlock anything.
+//
+// `is_locked` is a current administrative property, NOT definition content:
+// it is never written into version snapshots (report_definition_versions has
+// no such column) and never restored from them — restoring an old version of
+// a locked definition must not silently unlock it.
 
 const roPool = require("../startup/dbReadonly");
 const {
@@ -52,10 +84,94 @@ const REPORT_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;
 // A "view" is a report whose purpose is a work LIST rather than a number:
 // kind='view', viz.type='table', columns_meta may carry renderer actions.
 // Same table, same validator, same pools — deliberately NOT a parallel system.
-// `visibility` is stored now and ENFORCED in a later slice; today every
-// definition is SU-authored and behaves as shared.
+// `visibility` is stored and round-tripped but deliberately UNUSED: the
+// private/shared model was rejected in S3 (a four-person firm that reads
+// every case gains nothing from privacy between colleagues) in favour of the
+// lock. The column stays as-is — do not filter on it, do not remove it.
 const KINDS = new Set(["report", "view"]);
 const VISIBILITIES = new Set(["private", "shared"]);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Actors (S3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The system actor: calls with no actor at all (internal functions, scheduled
+ * jobs) and API-key callers reaching the service directly. Bypasses the lock —
+ * machine callers are configured deliberately, not by a colleague clicking the
+ * wrong button, which is the accident the lock exists for. (HTTP API-key
+ * callers never actually reach a write: routes/api.reports.js requireUser
+ * 403s them first, exactly as requireSU did.)
+ */
+const SYSTEM_ACTOR = Object.freeze({ system: true, userId: null, isSU: false });
+
+/**
+ * Build an actor from a userId that may arrive as a NUMBER or a STRING
+ * (JWT `sub` is a string on some tokens). Anything that doesn't parse to an
+ * integer >= 1 — including the Automations pseudo-user 0 — yields NO owner
+ * identity: userId null, owns nothing, unlocks nothing.
+ *
+ * @param {number|string|null|undefined} userId
+ * @param {boolean} [isSU]
+ * @returns {{system:false, userId:number|null, isSU:boolean}}
+ */
+function normalizeActor(userId, isSU = false) {
+  let uid = null;
+  if (typeof userId === "number" && Number.isInteger(userId) && userId >= 1) {
+    uid = userId;
+  } else if (typeof userId === "string" && /^\d+$/.test(userId.trim())) {
+    const n = parseInt(userId.trim(), 10);
+    if (n >= 1) uid = n;
+  }
+  return { system: false, userId: uid, isSU: !!isSU };
+}
+
+/**
+ * Coerce whatever a caller passed into an actor:
+ *   nothing at all            → the system actor
+ *   an actor object           → normalized copy (system passes through)
+ *   a bare userId (legacy)    → normalizeActor(userId), non-SU
+ */
+function actorFrom(arg) {
+  if (arg == null) return SYSTEM_ACTOR;
+  if (typeof arg === "object") {
+    if (arg.system) return SYSTEM_ACTOR;
+    return normalizeActor(arg.userId, arg.isSU);
+  }
+  return normalizeActor(arg, false);
+}
+
+/** Numeric ownership test. created_by NULL is owned by nobody. */
+function ownsRow(row, actor) {
+  return actor.userId != null && row.created_by != null &&
+         Number(row.created_by) === Number(actor.userId);
+}
+
+/** System and SU actors bypass the lock. */
+function bypasses(actor) {
+  return !!(actor.system || actor.isSU);
+}
+
+/**
+ * Throw 403 unless this actor may edit / delete / restore / AI-refine the
+ * row. Locked rows admit only their owner and bypass actors; unlocked rows
+ * admit everyone (that is the whole S3 access model — the lock, not
+ * identity, is the gate).
+ *
+ * COPY RULE: never name a person. Comments say SU; user-facing messages say
+ * "an administrator".
+ */
+function assertEditable(row, actorArg) {
+  const actor = actorFrom(actorArg);
+  if (!row.is_locked || bypasses(actor) || ownsRow(row, actor)) return;
+  const who = row.created_by_name ? `its author (${row.created_by_name})` : "its author";
+  throw err(
+    403,
+    `"${row.title}" is locked`,
+    `A locked definition can only be changed by ${who} or by an administrator. ` +
+      `Ask one of them to unlock it, or to make the change for you.`
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Errors
@@ -483,8 +599,14 @@ async function getVersion(db, reportId, versionNo) {
  * the old SQL reads, validateSql rejects it. That is correct — the old
  * definition genuinely is no longer runnable, and failing loudly beats
  * restoring something that would break at run time.
+ *
+ * is_locked is NOT carried across either: the archived rows have no such
+ * column, and the body below omits it, so updateReport leaves the CURRENT
+ * lock state untouched. Restoring an old version of a locked definition
+ * never silently unlocks it. (updateReport also enforces the lock itself,
+ * so a restore on a locked row needs the owner or a bypass actor.)
  */
-async function restoreVersion(db, reportId, versionNo, userId = null) {
+async function restoreVersion(db, reportId, versionNo, actorArg = null) {
   const v = await getVersion(db, reportId, versionNo);
   return updateReport(
     db,
@@ -503,7 +625,7 @@ async function restoreVersion(db, reportId, versionNo, userId = null) {
       row_limit: v.row_limit,
       is_active: v.is_active,
     },
-    userId,
+    actorArg,
     { changeNote: `restored from v${versionNo}` }
   );
 }
@@ -535,8 +657,13 @@ function shapeRow(r) {
     caveats: parseJsonCol(r.caveats, []),
     row_limit: r.row_limit,
     is_active: !!r.is_active,
+    is_locked: !!r.is_locked,
     source: r.source,
     created_by: r.created_by,
+    // Resolved display name (LEFT JOIN users in getReport / listReports) —
+    // what the UI's confirms and lock badges name, and what the service's own
+    // 403 messages name. NULL when created_by is NULL or the user row is gone.
+    created_by_name: r.created_by_name ?? null,
     updated_by: r.updated_by,
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -549,14 +676,17 @@ async function listReports(db, { includeInactive = false, kind = null } = {}) {
   }
   const where = [];
   const binds = [];
-  if (!includeInactive) where.push("is_active = 1");
-  if (kind != null) { where.push("kind = ?"); binds.push(kind); }
+  if (!includeInactive) where.push("r.is_active = 1");
+  if (kind != null) { where.push("r.kind = ?"); binds.push(kind); }
   const [rows] = await db.query(
-    `SELECT id, report_key, title, description, category, kind, visibility,
-            params, viz, caveats, is_active, source, created_by, updated_at
-       FROM report_definitions
+    `SELECT r.id, r.report_key, r.title, r.description, r.category, r.kind,
+            r.visibility, r.params, r.viz, r.caveats, r.is_active, r.is_locked,
+            r.source, r.created_by, r.updated_at,
+            u.user_name AS created_by_name
+       FROM report_definitions r
+       LEFT JOIN users u ON u.user = r.created_by
       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-      ORDER BY category, title`,
+      ORDER BY r.category, r.title`,
     binds
   );
   return rows.map((r) => ({
@@ -571,19 +701,28 @@ async function listReports(db, { includeInactive = false, kind = null } = {}) {
     viz: parseJsonCol(r.viz, null),
     caveats: parseJsonCol(r.caveats, []),
     is_active: !!r.is_active,
+    is_locked: !!r.is_locked,
     source: r.source,
     created_by: r.created_by,
+    created_by_name: r.created_by_name ?? null,
     updated_at: r.updated_at,
   }));
 }
 
 async function getReport(db, id) {
-  const [rows] = await db.query(`SELECT * FROM report_definitions WHERE id = ? LIMIT 1`, [id]);
+  const [rows] = await db.query(
+    `SELECT r.*, u.user_name AS created_by_name
+       FROM report_definitions r
+       LEFT JOIN users u ON u.user = r.created_by
+      WHERE r.id = ? LIMIT 1`,
+    [id]
+  );
   if (!rows.length) throw err(404, `Report ${id} not found`);
   return shapeRow(rows[0]);
 }
 
-async function createReport(db, body = {}, userId = null) {
+async function createReport(db, body = {}, actorArg = null) {
+  const actor = actorFrom(actorArg);
   const {
     report_key, title, description = null, category = "General",
     sql_text, params = [], columns_meta = [], viz = null, caveats = [],
@@ -613,13 +752,15 @@ async function createReport(db, body = {}, userId = null) {
   const vz = sanitizeViz(viz);
   const cm = sanitizeColumnsMeta(columns_meta);
 
+  // is_locked is NOT accepted from the body — new rows always start unlocked,
+  // and lock changes go through setLock, which enforces the asymmetric rules.
   try {
     const [res] = await db.query(
       `INSERT INTO report_definitions
          (report_key, title, description, category, kind, visibility, sql_text,
-          params, columns_meta, viz, caveats, row_limit, created_by, updated_by,
-          source)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          params, columns_meta, viz, caveats, row_limit, is_locked, created_by,
+          updated_by, source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)`,
       [
         report_key, title, description, category, kind, visibility, sql_text,
         JSON.stringify(params || []),
@@ -627,7 +768,7 @@ async function createReport(db, body = {}, userId = null) {
         vz.viz ? JSON.stringify(vz.viz) : null,
         JSON.stringify(caveats || []),
         Math.max(1, Math.min(Number(row_limit) || DEFAULT_ROW_LIMIT, HARD_MAX_ROWS)),
-        userId, userId, source === "ai" ? "ai" : "manual",
+        actor.userId, actor.userId, source === "ai" ? "ai" : "manual",
       ]
     );
     const created = await getReport(db, res.insertId);
@@ -642,8 +783,14 @@ async function createReport(db, body = {}, userId = null) {
   }
 }
 
-async function updateReport(db, id, body = {}, userId = null, opts = {}) {
+async function updateReport(db, id, body = {}, actorArg = null, opts = {}) {
+  const actor = actorFrom(actorArg);
   const existing = await getReport(db, id);
+
+  // THE enforcement point for edits (routes and machine callers both land
+  // here — restoreVersion routes through this function too). Throws 403 on a
+  // locked row unless the actor owns it or bypasses.
+  assertEditable(existing, actor);
 
   // report_key is immutable — it is the stable handle a saved link or a future
   // scheduled job refers to. Renaming would silently break those.
@@ -651,6 +798,9 @@ async function updateReport(db, id, body = {}, userId = null, opts = {}) {
     throw err(400, "report_key is immutable once created");
   }
 
+  // NOTE: body.is_locked is deliberately IGNORED here. Lock changes go
+  // through setLock and its asymmetric rules; accepting the flag on the
+  // generic update body would let any editor unlock as a side effect.
   const next = {
     title: body.title ?? existing.title,
     description: body.description !== undefined ? body.description : existing.description,
@@ -683,9 +833,10 @@ async function updateReport(db, id, body = {}, userId = null, opts = {}) {
   // Archive the OUTGOING state — after validation (don't burn a version number
   // on a save that was going to be rejected anyway) and before the write.
   // Throws on failure, which aborts the update: never overwrite what cannot be
-  // recovered.
+  // recovered. is_locked is not part of the snapshot (administrative property,
+  // not content; the versions table has no such column).
   await snapshotVersion(db, existing, {
-    userId,
+    userId: actor.userId,
     note: opts.changeNote || (body.source === "ai" ? "ai refine" : "manual edit"),
   });
 
@@ -703,7 +854,7 @@ async function updateReport(db, id, body = {}, userId = null, opts = {}) {
       vz.viz ? JSON.stringify(vz.viz) : null,
       JSON.stringify(next.caveats || []),
       Math.max(1, Math.min(Number(next.row_limit) || DEFAULT_ROW_LIMIT, HARD_MAX_ROWS)),
-      next.is_active, userId, id,
+      next.is_active, actor.userId, id,
     ]
   );
   const updated = await getReport(db, id);
@@ -721,13 +872,70 @@ async function updateReport(db, id, body = {}, userId = null, opts = {}) {
  * an automated "undelete" would need to handle the case where the key has
  * since been reused. Not worth building until it happens.
  */
-async function deleteReport(db, id, userId = null) {
+async function deleteReport(db, id, actorArg = null) {
+  const actor = actorFrom(actorArg);
   const existing = await getReport(db, id);   // 404s if it isn't there
-  await snapshotVersion(db, existing, { userId, note: "deleted" });
+  assertEditable(existing, actor);            // a delete is the ultimate edit
+  await snapshotVersion(db, existing, { userId: actor.userId, note: "deleted" });
 
   const [res] = await db.query(`DELETE FROM report_definitions WHERE id = ?`, [id]);
   if (!res.affectedRows) throw err(404, `Report ${id} not found`);
   return { deleted: true, id: Number(id) };
+}
+
+/**
+ * Lock or unlock a definition. The asymmetry is the point:
+ *
+ *   0→1 (lock)   — any identified actor. Anyone who spots something critical
+ *                  sitting unprotected can protect it; locking only ever ADDS
+ *                  protection, so it needs no ownership.
+ *   1→0 (unlock) — owner or bypass only. Removing protection takes the
+ *                  author or an SU.
+ *
+ * is_locked is a current administrative property, not definition content:
+ * no version snapshot is written, updated_by is not stamped, and updated_at
+ * is pinned (`updated_at = updated_at`) so it keeps meaning "content last
+ * changed" rather than "someone toggled the lock".
+ *
+ * Idempotent: setting the state it already has returns the row unchanged.
+ *
+ * @param {object} db
+ * @param {number} id
+ * @param {boolean} locked
+ * @param {object|number|string|null} actorArg
+ * @returns {Promise<object>} the (re-shaped) definition
+ */
+async function setLock(db, id, locked, actorArg = null) {
+  const actor = actorFrom(actorArg);
+  const want = !!locked;
+  const existing = await getReport(db, id);   // 404s if it isn't there
+
+  if (want === existing.is_locked) return existing;
+
+  if (want) {
+    // Locking: any identified actor (or bypass). An actor with no identity —
+    // a normalized userId 0, say — is not "a logged-in user" and can't lock.
+    if (!bypasses(actor) && actor.userId == null) {
+      throw err(403, "Locking requires a logged-in user");
+    }
+  } else {
+    // Unlocking: owner or bypass only.
+    if (!bypasses(actor) && !ownsRow(existing, actor)) {
+      const who = existing.created_by_name || "its author";
+      throw err(
+        403,
+        `Only ${who} or an administrator can unlock "${existing.title}"`,
+        "Anyone can lock a definition to protect it; removing the protection " +
+          "takes the author or an administrator. Ask one of them."
+      );
+    }
+  }
+
+  await db.query(
+    `UPDATE report_definitions SET is_locked = ?, updated_at = updated_at WHERE id = ?`,
+    [want ? 1 : 0, id]
+  );
+  return getReport(db, id);
 }
 
 /**
@@ -800,6 +1008,7 @@ module.exports = {
   createReport,
   updateReport,
   deleteReport,
+  setLock,
   runReport,
   listRuns,
   listVersions,
@@ -809,6 +1018,13 @@ module.exports = {
   execute,
   buildBindValues,
   resolveDateToken,
+  // Actor / lock surface (S3)
+  SYSTEM_ACTOR,
+  normalizeActor,
+  actorFrom,
+  ownsRow,
+  bypasses,
+  assertEditable,
   DEFAULT_ROW_LIMIT,
   HARD_MAX_ROWS,
 };

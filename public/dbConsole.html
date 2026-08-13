@@ -650,7 +650,7 @@ async function runBatch() {
   // HTML — what you see is what you copy. That's the whole point.
   results.innerHTML = `<pre class="report">${escapeHtml(md)}</pre>`;
 
-  // Auto-copy. Failures here are non-fatal — Fred can still hit Copy.
+  // Auto-copy. Failures here are non-fatal — the Copy button still works.
   let copied = false;
   try { await navigator.clipboard.writeText(md); copied = true; } catch {}
 
@@ -758,7 +758,7 @@ btnCsv.addEventListener("click", () => {
 // since there's no row structure to transpose.
 btnCopy.addEventListener("click", async () => {
   // Batch-report mode takes precedence — the report is what's on screen and
-  // what Fred is reaching for.
+  // what the user is reaching for.
   if (lastReportMarkdown) {
     try {
       await navigator.clipboard.writeText(lastReportMarkdown);
