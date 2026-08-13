@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-13T08:39:54.859Z
+-- Generated: 2026-08-13T09:23:17.858Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:09c2500dd2fa984e7543c36db21553cb
+-- Fingerprint: sha256:6326139bca17e3e79af45d9be96ac096
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1148,6 +1148,38 @@ CREATE TABLE `credentials` (
   `oauth_last_error_at` datetime DEFAULT NULL,
   `refresh_failure_count` tinyint unsigned NOT NULL DEFAULT '0',
   `verbose` tinyint(1) NOT NULL DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `decision_requests`
+--
+
+DROP TABLE IF EXISTS `decision_requests`;
+CREATE TABLE `decision_requests` (
+  `id` bigint NOT NULL,
+  `token` varchar(32) COLLATE utf8mb4_general_ci NOT NULL,
+  `workflow_execution_id` bigint NOT NULL,
+  `step_number` int NOT NULL,
+  `resume_step` int NOT NULL,
+  `recipient_kind` enum('user','contact','raw') COLLATE utf8mb4_general_ci NOT NULL,
+  `recipient_user_id` int DEFAULT NULL,
+  `recipient_contact_id` int DEFAULT NULL,
+  `recipient_email` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `recipient_phone` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `question` text COLLATE utf8mb4_general_ci NOT NULL,
+  `options` json NOT NULL,
+  `result_var` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `timeout_value` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `status` enum('pending','responded','timed_out','cancelled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
+  `response_value` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `responded_at` datetime DEFAULT NULL,
+  `responded_via` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `paired_task_id` bigint DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3324,6 +3356,14 @@ ALTER TABLE `credentials`
   ADD KEY `idx_oauth_state` (`oauth_state`);
 
 --
+-- Indexes for table `decision_requests`
+--
+ALTER TABLE `decision_requests`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_decision_token` (`token`),
+  ADD KEY `idx_decision_exec` (`workflow_execution_id`,`status`);
+
+--
 -- Indexes for table `default`
 --
 ALTER TABLE `default`
@@ -4129,6 +4169,12 @@ ALTER TABLE `court_item_reminders`
 --
 ALTER TABLE `credentials`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `decision_requests`
+--
+ALTER TABLE `decision_requests`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `default`
