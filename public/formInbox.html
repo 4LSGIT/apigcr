@@ -53,6 +53,13 @@
     }
     .fx-row-who i { color: #94a3b8; margin-right: 3px; }
     .fx-row-who span + span { margin-left: 10px; }
+    .fx-row-target { font-size: 12px; color: #475569; margin-top: 3px; }
+    .fx-row-target i { color: #94a3b8; margin-right: 5px; }
+    .fx-badge {
+      font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+      color: #1e40af; background: #dbeafe; border: 1px solid #bfdbfe;
+      border-radius: 4px; padding: 1px 5px; margin-left: 6px;
+    }
 
     .fx-btn {
       background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
@@ -126,14 +133,17 @@
     <h1 class="fx-title">Form Inbox</h1>
     <span class="fx-count" id="fxCount" style="display:none;">0</span>
     <div class="fx-spacer"></div>
+    <select class="fx-filter" id="fxScope">
+      <option value="unlinked" selected>Needs linking</option>
+      <option value="linked">Linked</option>
+      <option value="all">All submissions</option>
+    </select>
     <select class="fx-filter" id="fxFilter">
       <option value="">All forms</option>
     </select>
     <button class="fx-refresh" id="fxRefresh"><i class="fa-solid fa-rotate"></i>&nbsp;Refresh</button>
   </div>
-  <p class="fx-note">Submissions that arrived without a link — usually an intake filled
-    anonymously (expired or missing link). View the answers, then link each one to the
-    right case, or create the contact + case first.</p>
+  <p class="fx-note" id="fxNote"></p>
   <div id="fxList"></div>
 </div>
 
@@ -142,17 +152,28 @@
   'use strict';
 
   // ── Transport: the shell owns the JWT (checklistsView pattern). Re-exposed
-  //    on window so the render.html view iframe finds parent.apiSend here. ──
+  //    on window BECAUSE render.html resolves window.parent.apiSend — the view
+  //    iframe's parent is THIS page, so without the relay the modal can't talk.
+  //
+  //    The relay is exactly why the lookup must be `window.parent` guarded by
+  //    `!== window`: opened standalone, parent === window and the guard-less
+  //    version would find the relay we just installed and recurse until the
+  //    stack blew. Fail loudly instead. ──
+  function shellApi() {
+    var p = window.parent;
+    return (p && p !== window && typeof p.apiSend === 'function') ? p.apiSend : null;
+  }
   function api() {
-    var a = arguments;
-    if (window.top && typeof window.top.apiSend === 'function')
-      return window.top.apiSend.apply(window.top, a);
-    return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+    var fn = shellApi();
+    if (!fn) return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+    return fn.apply(window.parent, arguments);
   }
   window.apiSend = api;
 
   var TPL = {};        // form_key → { title, link_type }
-  var SUBS = [];       // current unlinked rows
+  var SUBS = [];       // rows for the current scope
+  var UNLINKED_COUNT = null;   // badge value — always the "needs linking" count
+  var PAGE_LIMIT = 100;
 
   function fmtWhen(iso) {
     if (!iso) return '';
@@ -166,24 +187,41 @@
     try { return JSON.parse(d); } catch (e) { return {}; }
   }
 
+  var NOTE = {
+    unlinked: 'Submissions that arrived without a link — usually an intake filled ' +
+              'anonymously (expired or missing link). View the answers, then link each ' +
+              'one to the right case, or create the contact + case first.',
+    linked:   'Submissions already attached to a case, contact or appointment. ' +
+              'Read-only here — linking is one-way, so a wrong link is a fix at the ' +
+              'database, not a re-link in this screen.',
+    all:      'Every submitted form, linked or not. The badge counts the ones still ' +
+              'needing a link.',
+  };
+
   // ── List rendering (textContent/createElement only — no innerHTML for
   //    submitter-controlled strings) ──
   function render() {
     var list = E('fxList');
     list.textContent = '';
+    var scope = E('fxScope').value;
     var filter = E('fxFilter').value;
     var rows = filter ? SUBS.filter(function (s) { return s.form_key === filter; }) : SUBS;
 
+    E('fxNote').textContent = NOTE[scope] || NOTE.unlinked;
+
     var badge = E('fxCount');
-    badge.textContent = String(SUBS.length);
+    badge.textContent = (UNLINKED_COUNT === null) ? '—' : String(UNLINKED_COUNT);
+    badge.title = 'Submissions still needing a link';
     badge.style.display = '';
 
     if (!rows.length) {
       var empty = document.createElement('div');
       empty.className = 'fx-empty';
       empty.textContent = SUBS.length
-        ? 'No unlinked submissions for this form.'
-        : 'Inbox zero — every submission is linked.';
+        ? 'No submissions for this form in this view.'
+        : (scope === 'unlinked'
+            ? 'Inbox zero — every submission is linked.'
+            : 'Nothing to show.');
       list.appendChild(empty);
       return;
     }
@@ -228,28 +266,73 @@
       main.appendChild(top);
       main.appendChild(who);
 
+      if (s.link_type) {
+        var target = document.createElement('div');
+        target.className = 'fx-row-target';
+        var arrow = document.createElement('i');
+        arrow.className = 'fa-solid fa-arrow-right-long';
+        target.appendChild(arrow);
+        target.appendChild(document.createTextNode(s.link_type + ' ' + s.link_id));
+        if (s.linked_by) {
+          var badgeEl = document.createElement('span');
+          badgeEl.className = 'fx-badge';
+          badgeEl.textContent = 'adopted';
+          badgeEl.title = 'Arrived unlinked; linked from this inbox'
+            + (s.linked_at ? ' on ' + fmtWhen(s.linked_at) : '');
+          target.appendChild(badgeEl);
+        }
+        main.appendChild(target);
+      }
+
       var viewBtn = document.createElement('button');
       viewBtn.className = 'fx-btn';
       viewBtn.textContent = 'View';
       viewBtn.addEventListener('click', function () { viewSubmission(s.id); });
 
-      var linkBtn = document.createElement('button');
-      linkBtn.className = 'fx-btn fx-btn-primary';
-      linkBtn.textContent = 'Link…';
-      linkBtn.addEventListener('click', function () { SubmissionAdoptDialog(s); });
-
       row.appendChild(main);
       row.appendChild(viewBtn);
-      row.appendChild(linkBtn);
+
+      if (!s.link_type) {
+        var linkBtn = document.createElement('button');
+        linkBtn.className = 'fx-btn fx-btn-primary';
+        linkBtn.textContent = 'Link…';
+        linkBtn.addEventListener('click', function () { SubmissionAdoptDialog(s); });
+        row.appendChild(linkBtn);
+      } else if (s.link_type === 'case' || s.link_type === 'contact') {
+        // Adopt is one-way, so a linked row gets no Link… button — the useful
+        // action is jumping to the file. appts have no file to open.
+        var openBtn = document.createElement('button');
+        openBtn.className = 'fx-btn';
+        openBtn.textContent = 'Open';
+        openBtn.addEventListener('click', function () {
+          var openFile = (typeof _resolveAddFile === 'function') ? _resolveAddFile() : null;
+          if (!openFile) {
+            Toast.fire({ icon: 'error', title: 'Cannot open the file from here' });
+            return;
+          }
+          if (s.link_type === 'case') openFile(s.link_id, 'case', s.link_id);
+          else openFile(String(d.name || ('Contact ' + s.link_id)), 'client', s.link_id);
+        });
+        row.appendChild(openBtn);
+      }
+
       list.appendChild(row);
     });
+
+    if (SUBS.length >= PAGE_LIMIT) {
+      var more = document.createElement('div');
+      more.className = 'fx-note';
+      more.textContent = 'Showing the newest ' + PAGE_LIMIT + ' — narrow by form to see older ones.';
+      list.appendChild(more);
+    }
   }
 
-  // ── Load: templates (titles + link_type) once per refresh, then the
-  //    unlinked submitted rows with data previews ──
+  // ── Load: templates (titles + link_type) once per refresh, then the rows
+  //    for the current scope, with data previews ──
   async function load() {
     var list = E('fxList');
     list.textContent = 'Loading…';
+    var scope = E('fxScope').value;
     try {
       var tplRes = await api('/api/form-templates', 'GET');
       TPL = {};
@@ -257,11 +340,29 @@
         TPL[t.form_key] = { title: t.title, link_type: t.link_type };
       });
 
-      var res = await api('/api/forms/submissions?unlinked=1&status=submitted&with_data=1&limit=100', 'GET');
+      var scopeParam = scope === 'linked' ? '&linked=1'
+                     : scope === 'all'    ? ''
+                     : '&unlinked=1';
+      var res = await api('/api/forms/submissions?status=submitted&with_data=1&limit='
+                          + PAGE_LIMIT + scopeParam, 'GET');
       SUBS = (res.submissions || []).map(function (s) {
         s._data = parseData(s.data);
         return s;
       });
+
+      // The badge always means "still needs linking". In the unlinked scope
+      // that's the list itself; otherwise it costs one summary-only query
+      // (no data bodies) — there is no count endpoint, so this is the cheap
+      // honest version. Capped, hence the "+".
+      if (scope === 'unlinked') {
+        UNLINKED_COUNT = SUBS.length;
+      } else {
+        try {
+          var cnt = await api('/api/forms/submissions?status=submitted&unlinked=1&limit=200', 'GET');
+          var n = (cnt.submissions || []).length;
+          UNLINKED_COUNT = n >= 200 ? '200+' : n;
+        } catch (e) { UNLINKED_COUNT = null; }
+      }
 
       // Filter options: only form_keys actually present in the inbox.
       var filter = E('fxFilter');
@@ -321,7 +422,8 @@
      ──────────────────────────────────────────────────────────────────────── */
   var PICKER_FOR = { case: 'CasePicker', contact: 'ContactPicker' };
 
-  async function SubmissionAdoptDialog(sub) {
+  async function SubmissionAdoptDialog(sub, opts) {
+    var seed = (opts && opts.initialQuery) || '';
     var d = sub._data || {};
     var tpl = TPL[sub.form_key] || null;
     var fixedType = tpl ? tpl.link_type : null;   // null → user picks the type
@@ -411,6 +513,9 @@
           var Picker = window[PICKER_FOR[type]] || (window.parent && window.parent[PICKER_FOR[type]]);
           picker = Picker(mount, {
             placeholder: type === 'contact' ? 'Search contacts\u2026' : 'Search cases\u2026',
+            // Seeded after the create-branch: /api/cases/search matches the
+            // primary contact's name, so the just-created case comes up first.
+            initialQuery: seed,
             onSelect: function (id, row) {
               setSelected(type, id,
                 (row && (row.contact_name || row.case_number_full || row.case_number)) || String(id));
@@ -431,13 +536,21 @@
             newContact(
               { name: String(d.name || ''), phone: String(d.phone || ''), email: String(d.email || ''), suppressOpen: true },
               function (data) {
-                // case_relate is present ONLY on the /api/intake/case response
-                // — the contact-only path must not link a case-form.
+                // newContact's onSuccess gets the CASE result on the
+                // "Add & Open Case" path and the CONTACT result on the client
+                // path — even when the client path also created a case from a
+                // chosen Case Type. `case_relate` is present only on the
+                // /api/intake/case response, so it identifies the first path
+                // reliably but CANNOT rule out a case on the second. So:
+                // link directly when we're handed a case, and otherwise
+                // reopen this dialog with the picker seeded by name rather
+                // than assert a "no case was created" that may be false.
                 if (data && data.case_relate != null && data.id) {
                   patchLink(sub, 'case', String(data.id)).then(load);
                 } else {
-                  Toast.fire({ icon: 'info', title: 'Contact saved',
-                    text: 'No case was created — the submission is still unlinked.' });
+                  Toast.fire({ icon: 'success', title: 'Contact saved',
+                    text: 'Now pick the case this submission belongs to.' });
+                  SubmissionAdoptDialog(sub, { initialQuery: String(d.name || '') });
                 }
               }
             );
@@ -494,13 +607,13 @@
 
   // ── Wiring ──
   E('fxRefresh').addEventListener('click', load);
-  E('fxFilter').addEventListener('change', render);
+  E('fxScope').addEventListener('change', load);   // scope is a SERVER filter
+  E('fxFilter').addEventListener('change', render); // form is client-side
 
   (function boot() {
-    if (window.top && typeof window.top.apiSend === 'function') return load();
     var tries = 0;
     (function wait() {
-      if (window.top && typeof window.top.apiSend === 'function') return load();
+      if (shellApi()) return load();
       if (++tries > 100) {
         E('fxList').textContent = 'Open this page inside YisraCase.';
         return;

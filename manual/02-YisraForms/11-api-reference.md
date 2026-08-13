@@ -132,7 +132,7 @@ await apiSend("/api/forms/history?form_key=contact_info&link_type=contact&link_i
 
 Admin browse over `form_submissions` — summary columns only, no `data` bodies. Added for the Form Builder's History tab (see [14-form-builder.md](14-form-builder.md)); useful anywhere a cross-entity view of submissions is needed.
 
-**Query params (all optional):** `form_key`, `link_type`, `link_id`, `status` (`draft` | `submitted` — anything else is a 400), `limit` (default 50, max 200), `before_id` (keyset cursor — pass the smallest `id` from the previous page to get the next one), **`unlinked=1`** (X4 — only rows with `link_type=''`, the anonymous-external convention; the plain `link_type` filter can't express it), **`with_data=1`** (X4 — include the `data` bodies; the Form Inbox uses this for its name/email/phone preview). Rows also carry `linked_by` / `linked_at` (X4 — NULL unless the row was adopted from the Form Inbox).
+**Query params (all optional):** `form_key`, `link_type`, `link_id`, `status` (`draft` | `submitted` — anything else is a 400), `limit` (default 50, max 200), `before_id` (keyset cursor — pass the smallest `id` from the previous page to get the next one), **`unlinked=1`** (X4 — only rows with `link_type=''`, the anonymous-external convention; the plain `link_type` filter can't express it), **`linked=1`** (X4 — the inverse, `link_type <> ''`; passing both is a 400, since together they'd select nothing and read as "no results"), **`with_data=1`** (X4 — include the `data` bodies; the Form Inbox uses this for its name/email/phone preview). Rows also carry `linked_by` / `linked_at` (X4 — NULL unless the row was adopted from the Form Inbox).
 
 **Response:**
 ```json

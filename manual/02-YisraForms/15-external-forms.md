@@ -315,7 +315,10 @@ workspace for them. The wf 40 task to RG is the *notification*; the Inbox is
 where the work happens:
 
 - **List** — every unlinked submitted row, with a name / phone / email
-  preview pulled from the answers.
+  preview pulled from the answers. The scope selector switches between
+  **Needs linking** (the default), **Linked**, and **All submissions**;
+  linked rows show their target and an **Open** button instead of
+  **Link…**, and the badge always counts what still needs linking.
 - **View** — the full answers, rendered read-only by the *same renderer* the
   submitter used (`render.html?view_submission=<id>`), under the definition
   version the submission was made against. Nothing on the view can write.

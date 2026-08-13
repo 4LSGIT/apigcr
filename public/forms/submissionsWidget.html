@@ -73,11 +73,17 @@
 (function () {
   'use strict';
 
+  // Parent is case.html, which relays P.apiSend. The `!== window` guard keeps
+  // the re-exposed relay below from finding itself and recursing forever when
+  // the page is opened standalone.
+  function shellApi() {
+    var p = window.parent;
+    return (p && p !== window && typeof p.apiSend === 'function') ? p.apiSend : null;
+  }
   function api() {
-    var a = arguments;
-    if (window.top && typeof window.top.apiSend === 'function')
-      return window.top.apiSend.apply(window.top, a);
-    return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+    var fn = shellApi();
+    if (!fn) return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+    return fn.apply(window.parent, arguments);
   }
   window.apiSend = api;   // render.html view iframes read parent.apiSend
 
@@ -189,7 +195,7 @@
   (function boot() {
     var tries = 0;
     (function wait() {
-      if (window.top && typeof window.top.apiSend === 'function') return load();
+      if (shellApi()) return load();
       if (++tries > 100) { E('swList').textContent = 'Open this page inside YisraCase.'; return; }
       setTimeout(wait, 100);
     })();

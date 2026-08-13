@@ -235,28 +235,38 @@ function httpError(status, message) {
  * All filters optional; newest first; `before_id` is a keyset cursor
  * (pass the smallest id from the previous page to get the next one).
  *
- * X4 additions (both opt-in — absent params keep the pre-X4 query byte-identical):
+ * X4 additions (all opt-in — absent params keep the pre-X4 query byte-identical):
  *   unlinked=1  → WHERE fs.link_type = '' (the unlinked convention; the plain
  *                 link_type filter can't express it because '' is falsy).
+ *   linked=1    → the inverse, WHERE fs.link_type <> ''. Mutually exclusive
+ *                 with unlinked (400) — together they select nothing, which
+ *                 would read as "no results" instead of "bad query".
  *   with_data=1 → include fs.data in the SELECT. The Form Inbox needs a
- *                 preview (name/email/phone) per unlinked row; rows are small
+ *                 preview (name/email/phone) per row; rows are small
  *                 (intake ≈1–2KB) and the limit cap bounds the payload.
  *
  * @param {object} db
- * @param {object} filters  { form_key?, link_type?, link_id?, status?, limit?, before_id?, unlinked?, with_data? }
+ * @param {object} filters  { form_key?, link_type?, link_id?, status?, limit?, before_id?, unlinked?, linked?, with_data? }
  * @returns {{ submissions: Array<object>, limit: number }}
  */
+const _isOn = (v) => (v === '1' || v === 1 || v === true);
+
 async function browseSubmissions(db, filters) {
   const f = filters || {};
   const where = [];
   const params = [];
 
+  const wantUnlinked = _isOn(f.unlinked);
+  const wantLinked   = _isOn(f.linked);
+  if (wantUnlinked && wantLinked) {
+    throw httpError(400, 'unlinked and linked are mutually exclusive');
+  }
+
   if (f.form_key)  { where.push('fs.form_key = ?');  params.push(f.form_key); }
   if (f.link_type) { where.push('fs.link_type = ?'); params.push(f.link_type); }
   if (f.link_id)   { where.push('fs.link_id = ?');   params.push(f.link_id); }
-  if (f.unlinked === '1' || f.unlinked === 1 || f.unlinked === true) {
-    where.push("fs.link_type = ''");
-  }
+  if (wantUnlinked) where.push("fs.link_type = ''");
+  if (wantLinked)   where.push("fs.link_type <> ''");
 
   if (f.status) {
     if (f.status !== 'draft' && f.status !== 'submitted') {
@@ -278,8 +288,7 @@ async function browseSubmissions(db, filters) {
   const limit = Math.min(Math.max(1, parseInt(f.limit, 10) || 50), 200);
   params.push(limit);
 
-  const withData = (f.with_data === '1' || f.with_data === 1 || f.with_data === true);
-  const dataCol = withData ? ', fs.data' : '';
+  const dataCol = _isOn(f.with_data) ? ', fs.data' : '';
 
   const [rows] = await db.query(
     `SELECT fs.id, fs.form_key, fs.link_type, fs.link_id, fs.status, fs.version,

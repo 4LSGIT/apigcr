@@ -381,3 +381,25 @@ gate flagged in §L is ALREADY LIVE — steps are renumbered with
 and step 6's subject carries `{{log_subject|default:…}}`. The §L warning is
 therefore historical; only the ref/X3_4_WF40_SNIPPETS.md file commit remains
 outstanding for the record.
+
+**§M addendum (same day, post-review):** the Inbox is scoped, not
+unlinked-only — `browseSubmissions` gained `linked=1` (inverse of `unlinked`;
+both together is a 400 rather than a silent empty list) and the page has a
+Needs linking / Linked / All selector defaulting to the §8 behavior. Linked
+rows are read-only there (adopt is one-way) and offer Open instead of Link.
+Three defects caught in review and fixed before deploy: (1) the case.html
+Form Submissions tab had been placed inside `#bkButtons`, hiding it on every
+non-BK case — exactly where an adopted anonymous intake tends to land, since
+the type is often unset at submit time; it belongs in the standard
+`#caseButtons` bar, which `applyCaseType` never touches. (2) Both new pages
+resolved the shell through `window.top.apiSend` while ALSO re-exposing
+`window.apiSend` for the render.html view iframe (which reads
+`window.parent.apiSend`) — opened standalone, that relay finds itself and
+recurses until the stack blows; the lookup is now `window.parent` guarded by
+`!== window`. (3) The create-branch discriminated on `case_relate` to decide
+whether `newContact` made a case, but that key is present only on the
+"Add & Open Case" path: the client path with a Case Type chosen also creates
+a case and returns the CONTACT result, so the fallback's "no case was
+created" could be false. It now reopens the adopt dialog with the picker
+seeded by the submitter's name (`/api/cases/search` matches primary-contact
+name) instead of asserting anything.

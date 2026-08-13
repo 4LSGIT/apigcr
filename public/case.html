@@ -71,6 +71,13 @@
       <button class="tab" id="esignButton" onclick="openTab(this, 'tabEsign'); if (!E('esignFrame').src) E('esignFrame').src = `esign/caseWidget.html?case_id=${caseID}`;">
         <i class="fa-solid fa-file-signature"></i> Signatures
       </button>
+      <!-- Form submissions (X4). STANDARD tab, not a bkButtons one: any case
+           type can receive a form, and an adopted intake most often lands on
+           a non-BK case (the anonymous ones arrive before the type is set).
+           Lazy src (esignButton idiom). -->
+      <button class="tab" id="formsButton" onclick="openTab(this, 'tabForms'); if (!E('formsFrame').src) E('formsFrame').src = `forms/submissionsWidget.html?link_type=case&link_id=${caseID}`;">
+        <i class="fa-solid fa-inbox"></i> Form Submissions
+      </button>
       <button
         class="tab"
         onclick="Swal.fire({ title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
@@ -96,9 +103,6 @@
       </button>
       <button class="tab" id="341Button" onclick="openTab(this, 'tab341')">
         <i class="fa-solid fa-gavel"></i> 341 Notes
-      </button>
-      <button class="tab" id="formsButton" onclick="openTab(this, 'tabForms'); if (!E('formsFrame').src) E('formsFrame').src = `forms/submissionsWidget.html?link_type=case&link_id=${caseID}`;">
-        <i class="fa-solid fa-inbox"></i> Form Submissions
       </button>
       <button class="tab" onclick="openTab(this, 'tabDet')">
         <i class="fa-brands fa-wpforms"></i> Detailed Questionnaire

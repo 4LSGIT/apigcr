@@ -227,6 +227,20 @@ describe('X4 — browseSubmissions opt-ins', () => {
     const d = dbDefault.calls[0];
     assert.ok(!d.sql.includes('fs.data'), 'no data bodies by default (slice-4 lock preserved)');
     assert.ok(!d.sql.includes("link_type = ''"), 'no unlinked filter by default');
+    assert.ok(!d.sql.includes('link_type <> '), 'no linked filter by default');
+  });
+
+  test('linked=1 is the inverse filter; asking for both at once is a 400, not an empty list', async () => {
+    const db = stubDb([[]]);
+    await formSvc.browseSubmissions(db, { linked: '1', status: 'submitted' });
+    const c = db.calls[0];
+    assert.ok(c.sql.includes("fs.link_type <> ''"), 'linked scope excludes the unlinked convention');
+    assert.ok(!c.sql.includes("fs.link_type = ''"), 'and does not also carry the unlinked filter');
+
+    // Both together select nothing — a silent empty list would read as
+    // "no submissions" instead of "bad query".
+    await rejects(formSvc.browseSubmissions(stubDb([]), { unlinked: '1', linked: '1' }),
+      400, 'mutually exclusive');
   });
 });
 
