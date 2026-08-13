@@ -71,6 +71,14 @@ function validateTestInput(v) {
 // FLAT SCALAR PARAMS ONLY. evaluate_condition's multi-branch form nests its
 // targets in params.branches[].then — an ARRAY, which this loop can't consume.
 // That form is walked separately below; `branches` must NOT be added here.
+//
+// STILL HAND-MAINTAINED, DELIBERATELY: this map is keyed by PARAM NAME, and
+// those differ per function in ways no flag can express (see the `value`
+// warning above), so unlike isControlStep() it can't be derived from __meta.
+// The invariant that IS enforced: every function carrying __meta.controlFlow
+// must appear here, asserted by tests/control.flow.test.js. Extra keys are
+// fine (wait_until_time has targets but isn't a control step); missing ones
+// break silently — a renumber leaves the target pointing at the old step.
 const BRANCH_TARGET_PARAMS = {
   evaluate_condition: ['then', 'else'],
   set_next:           ['value'],

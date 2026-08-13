@@ -315,17 +315,69 @@ describe('meta validation — live configs still save, branch mode saves', () =>
 });
 
 // ─────────────────────────────────────────────────────────────
-// Engine coupling — the whitelist actually carries foreach
+// Engine coupling — control-flow registration has ONE source of truth
+//
+// isControlStep() used to be a literal whitelist in workflow_engine.js kept in
+// sync BY HAND with the controlFlow:true meta flag. They drifted in both
+// directions (wait_for whitelisted-but-unflagged; request_decision
+// flagged-but-unwhitelisted) and the failure mode is silent: the engine ignores
+// the function's next_step and sequential-advances. These tests pin the
+// derivation and the two invariants that hang off it.
 // ─────────────────────────────────────────────────────────────
 describe('workflow_engine isControlStep', () => {
-  test('foreach is whitelisted (its next_step must be honored)', () => {
+  const { isControlStep } = require('../lib/workflow_engine');
+
+  const flaggedFns = Object.entries(registry.__getAllMeta())
+    .filter(([, meta]) => meta.controlFlow === true)
+    .map(([name]) => name)
+    .sort();
+
+  test('derives from __meta.controlFlow — no hardcoded name list survives', () => {
     const src = require('fs').readFileSync(
       require.resolve('../lib/workflow_engine.js'), 'utf8');
-    const m = src.match(/\[([^\]]*)\]\.includes\(step\.config\?\.function_name\)/);
-    expect(m).not.toBeNull();
-    expect(m[1]).toContain("'foreach'");
-    expect(m[1]).toContain("'evaluate_condition'");
-    expect(m[1]).toContain("'set_next'");
+    expect(src).not.toMatch(/\[[^\]]*\]\.includes\(step\.config\?\.function_name\)/);
+    expect(src).toMatch(/__getMeta\(step\.config\?\.function_name\)\?\.controlFlow/);
+  });
+
+  test('every controlFlow-flagged function IS a control step', () => {
+    // Guards the regression this refactor exists to prevent: a control function
+    // whose next_step the engine silently drops.
+    expect(flaggedFns.length).toBeGreaterThan(0);
+    for (const function_name of flaggedFns) {
+      expect(isControlStep({ type: 'internal_function', config: { function_name } })).toBe(true);
+    }
+  });
+
+  test('the flagged set covers the known control primitives', () => {
+    // Names, not just count — so DELETING a flag is caught, not just adding one.
+    expect(flaggedFns).toEqual(expect.arrayContaining([
+      'evaluate_condition', 'foreach', 'request_decision',
+      'schedule_resume', 'set_next', 'wait_for',
+    ]));
+  });
+
+  test('non-control steps are not control steps', () => {
+    // wait_until_time is deliberately unflagged (always returns delayed_until).
+    expect(isControlStep({ type: 'internal_function', config: { function_name: 'wait_until_time' } })).toBe(false);
+    // custom_code has no meta — its next_step stays ignored by design.
+    expect(isControlStep({ type: 'internal_function', config: { function_name: 'custom_code' } })).toBe(false);
+    expect(isControlStep({ type: 'internal_function', config: { function_name: 'no_such_function' } })).toBe(false);
+    expect(isControlStep({ type: 'internal_function', config: {} })).toBe(false);
+    expect(isControlStep({ type: 'internal_function' })).toBe(false);
+    expect(isControlStep({ type: 'send_email', config: { function_name: 'set_next' } })).toBe(false);
+  });
+
+  test('every control function has BRANCH_TARGET_PARAMS entries (renumber safety)', () => {
+    // A control function whose step targets are not remapped breaks on every
+    // insert/delete/reorder — silently, pointing at the old step number.
+    const src = require('fs').readFileSync(
+      require.resolve('../routes/workflows.js'), 'utf8');
+    const block = src.match(/const BRANCH_TARGET_PARAMS = \{([\s\S]*?)\n\};/);
+    expect(block).not.toBeNull();
+    const remapped = [...block[1].matchAll(/^\s{2}(\w+):\s*\[/gm)].map(m => m[1]);
+    for (const fn of flaggedFns) {
+      expect(remapped).toContain(fn);
+    }
   });
 
   test('_step_number is injected alongside _variables', () => {
