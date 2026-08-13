@@ -461,6 +461,68 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['set_next omitted still required',   'set_next', {}, 'value is required'],
     ['set_next cancel',                   'set_next', { value: 'cancel' }, null],
     ['set_next placeholder',              'set_next', { value: '{{next_step}}' }, null],
+
+    // ─────────────────────────────────────────────────────────────
+    // lookup_user — one-box staff lookup (lib/internal_functions/users.js).
+    //
+    // `user` is a plain string param, so it rides decision-(1)'s global
+    // finite-number widening: {user: 6} must save, because the canonical
+    // config is a bare id and the runtime coerces with Number()/String().
+    // `fields` mirrors get_settings.keys exactly — strictString + csv at save
+    // time, array only ever via placeholder resolution at run time.
+    // ─────────────────────────────────────────────────────────────
+    ['lookup_user id number',             'lookup_user', { user: 6 }, null],
+    ['lookup_user id zero (Automations)', 'lookup_user', { user: 0 }, null],
+    ['lookup_user id string',             'lookup_user', { user: '22' }, null],
+    ['lookup_user free text',             'lookup_user', { user: 'rena@4lsg.com' }, null],
+    ['lookup_user placeholder',           'lookup_user', { user: '{{task_to}}' }, null],
+    ['lookup_user missing user',          'lookup_user', {}, 'user is required'],
+    ['lookup_user user object rejected',  'lookup_user', { user: { id: 6 } }, 'must be a string'],
+    ['lookup_user user boolean rejected', 'lookup_user', { user: true }, 'must be a string'],
+    ['lookup_user match valid',           'lookup_user', { user: 6, match: 'id' }, null],
+    ['lookup_user match bad',             'lookup_user', { user: 6, match: 'nickname' }, 'must be one of'],
+    ['lookup_user fields csv',            'lookup_user', { user: 6, fields: 'user_name, email' }, null],
+    ['lookup_user fields placeholder',    'lookup_user', { user: 6, fields: '{{fieldList}}' }, null],
+    ['lookup_user fields number',         'lookup_user', { user: 6, fields: 42 }, 'must be a string'],
+    ['lookup_user fields array literal',  'lookup_user', { user: 6, fields: ['user_name'] }, 'must be a string'],
+    ['lookup_user missing_ok bool',       'lookup_user', { user: 6, missing_ok: true }, null],
+    ['lookup_user missing_ok string',     'lookup_user', { user: 6, missing_ok: 'true' }, 'must be a boolean'],
+    ['lookup_user output_var',            'lookup_user', { user: 6, output_var: 'assignee' }, null],
+    ['lookup_user full config',           'lookup_user', { user: '{{task_to}}', match: 'id', fields: 'user_name, email, phone_formatted', missing_ok: true, output_var: 'assignee' }, null],
+
+    // ─────────────────────────────────────────────────────────────
+    // list_users — the fan-out companion to lookup_user. Returns an ARRAY for
+    // foreach, so every param is a filter and every filter is optional.
+    //
+    // strictString split is deliberate and asserted below: `role` and `fields`
+    // carry it (a number is meaningless for either), `ids` and `exclude` do NOT
+    // (a bare number is a legitimate single id, and _csvList handles it).
+    // ─────────────────────────────────────────────────────────────
+    ['list_users no filters',             'list_users', {}, null],
+    ['list_users role csv',               'list_users', { role: 'attorney' }, null],
+    ['list_users role multi',             'list_users', { role: 'it, admin', role_match: 'all' }, null],
+    ['list_users role placeholder',       'list_users', { role: '{{roleFilter}}' }, null],
+    ['list_users role number rejected',   'list_users', { role: 5 }, 'must be a string'],
+    ['list_users role array rejected',    'list_users', { role: ['attorney'] }, 'must be a string'],
+    ['list_users role_match bad',         'list_users', { role_match: 'some' }, 'must be one of'],
+    ['list_users does_appts bool',        'list_users', { does_appts: true }, null],
+    ['list_users does_appts string',      'list_users', { does_appts: 'true' }, 'must be a boolean'],
+    ['list_users allow_sms + has_phone',  'list_users', { allow_sms: true, has_phone: true }, null],
+    ['list_users ids csv',                'list_users', { ids: '1, 6, 22' }, null],
+    ['list_users ids bare number',        'list_users', { ids: 6 }, null],
+    ['list_users ids placeholder',        'list_users', { ids: '{{userIds}}' }, null],
+    ['list_users ids array rejected',     'list_users', { ids: [1, 6] }, 'must be a string'],
+    ['list_users exclude bare number',    'list_users', { exclude: 6 }, null],
+    ['list_users exclude placeholder',    'list_users', { exclude: '{{trigger.user_id}}' }, null],
+    ['list_users active_only false',      'list_users', { active_only: false }, null],
+    ['list_users include_automation',     'list_users', { include_automation: true }, null],
+    ['list_users sort valid',             'list_users', { sort: 'user_lname' }, null],
+    ['list_users sort bad',               'list_users', { sort: 'email' }, 'must be one of'],
+    ['list_users fields csv',             'list_users', { fields: 'user, user_name, email' }, null],
+    ['list_users fields number rejected', 'list_users', { fields: 42 }, 'must be a string'],
+    ['list_users require_any',            'list_users', { require_any: true }, null],
+    ['list_users output_var + count_var', 'list_users', { output_var: 'attorneys', count_var: 'n' }, null],
+    ['list_users full config',            'list_users', { role: 'attorney', role_match: 'any', does_appts: true, allow_sms: true, ringcentral: false, has_email: true, has_phone: true, ids: '1, 6', exclude: '6', active_only: true, include_automation: false, sort: 'user_name', fields: 'user, email', require_any: true, output_var: 'a', count_var: 'n' }, null],
   ];
 
   test.each(cases)('%s', (label, fnKey, params, expectedFragment) => {
@@ -507,6 +569,184 @@ describe('query_ai file-source runtime checks', () => {
       { prompt: 'x', file_url: 'https://example.com/download?id=9', file_type: 'document' }, null
     )).rejects.not.toThrow('cannot infer');
   });
+});
+
+// Runtime checks for lookup_user's input rules that the save-time validator
+// cannot express (they depend on the VALUE, not the shape). Every case below
+// throws BEFORE db.query, so db=null is safe — same pattern as the query_ai
+// block above.
+describe('lookup_user runtime input checks', () => {
+  test('blank user throws', async () => {
+    await expect(internalFunctions.lookup_user({ user: '   ' }, null))
+      .rejects.toThrow('requires user');
+  });
+  test('match=id on non-numeric throws before any query', async () => {
+    await expect(internalFunctions.lookup_user({ user: 'fred', match: 'id' }, null))
+      .rejects.toThrow('requires a numeric user id');
+  });
+  test('match=phone on a non-phone throws before any query', async () => {
+    await expect(internalFunctions.lookup_user({ user: 'fred', match: 'phone' }, null))
+      .rejects.toThrow('normalizes to 10 digits');
+  });
+  test('unknown field throws', async () => {
+    await expect(internalFunctions.lookup_user({ user: 6, fields: 'user_name, ssn' }, null))
+      .rejects.toThrow('unknown field(s): ssn');
+  });
+  test('a blocked column is not addressable via fields', async () => {
+    await expect(internalFunctions.lookup_user({ user: 6, fields: 'password_hash' }, null))
+      .rejects.toThrow('unknown field(s): password_hash');
+  });
+  test('always-present meta key in fields throws a targeted message', async () => {
+    await expect(internalFunctions.lookup_user({ user: 6, fields: 'found' }, null))
+      .rejects.toThrow('always returned');
+  });
+  test('no blocked column is reachable through the returned set', () => {
+    const returned = new Set([
+      ...internalFunctions.__USER_RETURNED_COLUMNS,
+      ...internalFunctions.__USER_DERIVED_FIELDS,
+    ]);
+    for (const c of internalFunctions.__USER_BLOCKED_COLUMNS) {
+      expect(returned.has(c)).toBe(false);
+    }
+  });
+});
+
+// list_users runtime behavior. Driven off a stub db so the filter/sort/roll-up
+// logic is exercised without a live connection — the function issues exactly
+// one unfiltered SELECT and does everything else in JS (users.user is a tinyint
+// PK, so the table is hard-capped at 128 rows).
+describe('list_users runtime behavior', () => {
+  const U = (o) => ({
+    user: 0, username: 'u', user_name: 'U', user_real_name: 'U',
+    user_fname: 'U', user_lname: 'U', user_initials: 'UU',
+    user_type: 1, user_auth: 'authorized', roles: 'staff',
+    email: null, default_email: null, phone: null, default_phone: null,
+    allow_sms: 0, does_appts: 0, ringcentral: 0,
+    task_remind_freq: null, user_gcal_id: null, freebusy_calendar_ids: null,
+    ...o,
+  });
+
+  const ROWS = [
+    U({ user: 0,  username: 'automations', user_name: 'Automations', user_lname: 'Mations',
+        user_type: 0, roles: 'automation', email: 'admin@4lsg.com' }),
+    U({ user: 1,  username: 'Ssandweiss', user_name: 'Stuart Sandweiss', user_lname: 'Sandweiss',
+        roles: 'staff,attorney', email: 'stuart@4lsg.com', phone: '2485592400',
+        allow_sms: 1, does_appts: 1 }),
+    U({ user: 3,  username: 'RR', user_name: 'Rivka Rosen', user_lname: 'Rosen',
+        user_auth: 'disabled', email: 'rivka@example.com' }),
+    U({ user: 6,  username: 'IT', user_name: 'Fred Ross', user_lname: 'Ross',
+        user_auth: 'authorized - SU', roles: 'it,admin', email: 'it@4lsg.com',
+        phone: '2486213656', allow_sms: 1, does_appts: 1 }),
+    U({ user: 22, username: 'RENA', user_name: 'Rena Grunberger', user_lname: 'Grunberger',
+        email: 'rena@4lsg.com', phone: '2489655355', does_appts: 1 }),
+  ];
+  const db = { query: async () => [ROWS.map(r => ({ ...r }))] };
+  const ids = (out) => out.ids;
+
+  test('defaults drop the disabled user AND the automations pseudo-user', async () => {
+    const { output } = await fns_list({}, db);
+    expect(ids(output)).toEqual([6, 22, 1]);       // sorted by user_name
+    expect(output.ids).not.toContain(3);            // user_auth = 'disabled'
+    expect(output.ids).not.toContain(0);            // user_type = 0
+  });
+
+  test('active_only:false readmits the disabled user', async () => {
+    const { output } = await fns_list({ active_only: false }, db);
+    expect(output.ids).toContain(3);
+  });
+
+  test('role filter, any vs all', async () => {
+    expect(ids((await fns_list({ role: 'attorney' }, db)).output)).toEqual([1]);
+    expect(ids((await fns_list({ role: 'it, admin', role_match: 'all' }, db)).output)).toEqual([6]);
+    expect(ids((await fns_list({ role: 'attorney, it', role_match: 'all' }, db)).output)).toEqual([]);
+  });
+
+  test('role=automation implies include_automation; explicit false still wins', async () => {
+    expect(ids((await fns_list({ role: 'automation' }, db)).output)).toEqual([0]);
+    expect(ids((await fns_list({ role: 'automation', include_automation: false }, db)).output)).toEqual([]);
+  });
+
+  test('ids does NOT imply include_automation (machine-generated lists carry user 0)', async () => {
+    expect(ids((await fns_list({ ids: '0,1' }, db)).output)).toEqual([1]);
+    expect(ids((await fns_list({ ids: '0,1', include_automation: true }, db)).output)).toEqual([0, 1]);
+  });
+
+  test('unknown role throws with the available list', async () => {
+    await expect(fns_list({ role: 'paralegal' }, db)).rejects.toThrow('unknown role(s): paralegal');
+  });
+
+  test('tri-state booleans: omitted = no filter, string forms coerce', async () => {
+    expect((await fns_list({}, db)).output.count).toBe(3);
+    expect(ids((await fns_list({ does_appts: true }, db)).output)).toEqual([6, 22, 1]);
+    expect(ids((await fns_list({ does_appts: 'false' }, db)).output)).toEqual([]);
+    expect((await fns_list({ does_appts: '' }, db)).output.count).toBe(3);
+    await expect(fns_list({ does_appts: 'maybe' }, db)).rejects.toThrow('must be a boolean');
+  });
+
+  test('has_phone checks the contact column and normalizes', async () => {
+    expect(ids((await fns_list({ has_phone: true }, db)).output)).toEqual([6, 22, 1]);
+  });
+
+  test('exclude drops by id; bad ids throw', async () => {
+    expect(ids((await fns_list({ exclude: 6 }, db)).output)).toEqual([22, 1]);
+    await expect(fns_list({ ids: '1,abc' }, db)).rejects.toThrow('must contain user ids');
+  });
+
+  test('sort modes, with a stable id tiebreak', async () => {
+    expect(ids((await fns_list({ sort: 'user' }, db)).output)).toEqual([1, 6, 22]);
+    expect(ids((await fns_list({ sort: 'user_lname' }, db)).output)).toEqual([22, 6, 1]);
+  });
+
+  test('roll-ups are built from full rows, so `fields` cannot empty them', async () => {
+    const { output } = await fns_list({ role: 'attorney', fields: 'user, user_name' }, db);
+    expect(Object.keys(output.users[0])).toEqual(['user', 'user_name']);
+    expect(output.emails).toEqual(['stuart@4lsg.com']);
+    expect(output.emails_csv).toBe('stuart@4lsg.com');
+    expect(output.phones).toEqual(['2485592400']);
+  });
+
+  test('output_var stores the ARRAY (foreach-ready), count_var the count', async () => {
+    const r = await fns_list({ role: 'attorney', output_var: 'attorneys', count_var: 'n' }, db);
+    expect(Array.isArray(r.set_vars.attorneys)).toBe(true);
+    expect(r.set_vars.attorneys).toHaveLength(1);
+    expect(r.set_vars.n).toBe(1);
+  });
+
+  test('the users array is a legal foreach list', async () => {
+    const { set_vars } = await fns_list({ role: 'staff', output_var: 'staff' }, db);
+    const variables = { staff: set_vars.staff };
+    const walked = [];
+    for (let guard = 0; guard < 20; guard++) {
+      const fr = await internalFunctions.foreach({
+        list: variables.staff, item_var: 'u', end_step: 9,
+        _variables: variables, _step_number: 4,
+      });
+      Object.assign(variables, fr.set_vars);
+      if (fr.output.done) break;
+      walked.push(variables.u.user);
+    }
+    expect(walked).toEqual([22, 1]);
+  });
+
+  test('empty result is not an error unless require_any is set', async () => {
+    const { output } = await fns_list({ role: 'it', does_appts: false }, db);
+    expect(output.count).toBe(0);
+    expect(output.has_users).toBe(false);
+    expect(output.users).toEqual([]);
+    await expect(fns_list({ role: 'it', does_appts: false, require_any: true }, db))
+      .rejects.toThrow('require_any');
+  });
+
+  test('a blocked column never appears in any returned user map', async () => {
+    const { output } = await fns_list({ active_only: false, include_automation: true }, db);
+    for (const u of output.users) {
+      for (const c of internalFunctions.__USER_BLOCKED_COLUMNS) {
+        expect(c in u).toBe(false);
+      }
+    }
+  });
+
+  function fns_list(params, conn) { return internalFunctions.list_users(params, conn); }
 });
 
 describe('__getMeta — single fetch', () => {

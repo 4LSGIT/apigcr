@@ -50,7 +50,7 @@
 // alphabetically within each group.
 // ─────────────────────────────────────────────────────────────
 
-const FN_CATEGORY_ORDER = ['communication','contacts','cases','appointments','events','tasks','log',
+const FN_CATEGORY_ORDER = ['communication','contacts','users','cases','appointments','events','tasks','log',
   'sequences','calendar','dropbox','ai','general','control','timing',
   'variables','connections','system','dev','other'];
 

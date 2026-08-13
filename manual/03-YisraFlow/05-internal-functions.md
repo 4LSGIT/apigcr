@@ -47,6 +47,7 @@ Each function carries a `__meta` block — a JSON description of its params (nam
 | communication | `send_sms`, `send_email`, `send_mms` |
 | tasks | `create_task`, `run_task_digest` |
 | contacts | `lookup_contact`, `find_contact`, `update_contact` |
+| users | `lookup_user`, `list_users` |
 | cases | `update_case` |
 | appointments | `create_appointment`, `lookup_appointment`, `update_appointment`, `get_appointments` |
 | events | `create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, `run_event_digest` |
@@ -402,6 +403,150 @@ DB triggers `contact_name_update` (recomputes derived names) and `after_contact_
 Returns:
 ```json
 { "success": true, "output": { "contact_id": <id>, "updated_fields": ["contact_tags", "contact_type"] } }
+```
+
+---
+
+### Users (both engines)
+
+#### `lookup_user`
+
+Resolve **one** staff user (the `users` table — firm staff, not clients) from a single free-text box and return their record. Fills the gap that previously forced a hand-written `query_db` step whenever a workflow held a `tasks.task_to` / `appts.appt_with` / `log.log_by` id and needed a name, email or phone.
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `user` | string | yes (placeholderAllowed) | The one box: user id, username, initials, display/first/last name, email, or phone. `0` is a valid id (Automations). |
+| `match` | enum | optional, default `auto` | `auto`, `id`, `username`, `initials`, `name`, `email`, `phone`. Pins the interpretation. |
+| `fields` | string | optional (placeholderAllowed, strictString) | Comma-separated subset to return. Default: all. Unknown names throw. |
+| `missing_ok` | boolean | optional, default `false` | `true` → no match returns `found: false` instead of throwing. |
+| `output_var` | string | optional | Also stash the whole map in this variable (`{{assignee.email}}`). |
+
+**Auto-detect order.** `auto` walks tiers and stops at the **first tier that produces a hit** — it does not OR them together, which is what stops `SS` (initials) from colliding with `Sandweiss` (surname):
+
+`id` → `email` → `phone` → `username` → `initials` → exact `name` → fuzzy `name`
+
+- `id` — 1–3 digits only. `users.user` is a `tinyint`, so an id and a 10-digit phone can never be confused.
+- `email` — matches `email` **or** `default_email`, case-insensitive.
+- `phone` — matches `phone` **or** `default_phone`, normalized to 10 digits (`+1`, dashes, parens all fine).
+- `name` (exact) — `user_name`, `user_real_name`, `"First Last"`, `user_fname`, `user_lname`.
+- `name` (fuzzy) — substring over the same set plus `username`. Requires ≥ 2 characters.
+
+**Output** is flat, so `{{this.email}}` works exactly like `lookup_contact`:
+
+| Key | Notes |
+|---|---|
+| `found` | boolean; always present, ignores `fields` |
+| `matched_by` | which tier hit (`id`, `email`, `phone`, `username`, `initials`, `name`, `name_fuzzy`) or `null` |
+| `user`, `username`, `user_name`, `user_real_name`, `user_fname`, `user_lname`, `user_initials` | identity |
+| `user_type`, `user_auth`, `roles` | privilege |
+| `email`, `default_email`, `phone`, `default_phone` | see the pairing note below |
+| `allow_sms`, `does_appts`, `ringcentral`, `task_remind_freq`, `user_gcal_id`, `freebusy_calendar_ids` | capability / config |
+| `phone_formatted`, `default_phone_formatted` | derived — `(248) 555-0100` |
+| `roles_list` | derived — `roles` csv as an array, so `foreach` can walk it |
+
+**`email`/`phone` vs `default_email`/`default_phone` are not duplicates.** `email` and `phone` are the staffer's **contact** addresses — what `job_executor.js`, `portalCallbackService.js` and `run_task_digest` notify. `default_email` and `default_phone` are their preferred **sending** identity (the Settings picker default; see `routes/auth.profile.js`). Automation that notifies a user wants the first pair; automation that sends *as* a user wants the second. They are returned separately rather than collapsed into one "best" field, because collapsing them picks the wrong semantic half the time.
+
+**Blocked columns** — never SELECTed, never addressable via `fields`:
+- `password`, `password_hash`, `reset_token`, `reset_expires` (credential material)
+- `user_custom_tab` (per-user UI state blob, no automation value)
+
+The SELECT is an explicit whitelist rather than `SELECT *` (which `lookup_appointment` uses on `appts`) precisely because `users` carries credential columns — a sensitive column added to the table later cannot auto-leak into workflow output, it has to be opted into `RETURNED_COLUMNS`.
+
+**Ambiguity always throws**, even under `missing_ok`, and names the candidates:
+
+```
+lookup_user: "Sandweiss" matched 2 users by name
+(#1 Stuart Sandweiss (Ssandweiss), #2 Valerie Sandweiss (VS)).
+Use a more specific value, or set match to pin the lookup type.
+```
+
+Same typo-protection philosophy as `get_settings`' all-or-nothing: a silently-wrong user id causes subtler downstream bugs (an SMS to the wrong staffer) than a failed step. `missing_ok` softens **not-found** only.
+
+Example:
+
+```json
+{
+  "function_name": "lookup_user",
+  "params": { "user": "{{task_to}}" },
+  "set_vars": {
+    "assigneeName":  "{{this.user_name}}",
+    "assigneeEmail": "{{this.email}}",
+    "assigneePhone": "{{this.phone}}"
+  }
+}
+```
+
+`lookup_user` deliberately does **not** filter on `user_auth` — it answers "who is id 4?", and the honest answer for a disabled ex-employee is their row plus `user_auth: 'disabled'`, not "not found". Branch on `{{this.user_auth}}` if the caller must not act on a disabled user. (`list_users`, below, filters them out by default — different question, different answer.)
+
+#### `list_users`
+
+The fan-out companion: return **every** user matching a filter, as an array built to feed straight into `foreach`. Covers "notify every attorney", "round-robin across whoever does appointments", "SMS everyone who opted in".
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `role` | string | optional (placeholderAllowed, strictString) | csv of roles: `it`, `admin`, `staff`, `attorney`, `automation`. Unknown names throw. |
+| `role_match` | enum | optional, default `any` | `any` = has at least one listed role. `all` = has every one. |
+| `does_appts` | boolean | optional | Tri-state — omit for no filter. |
+| `allow_sms` | boolean | optional | Tri-state. Who opted in to SMS. |
+| `ringcentral` | boolean | optional | Tri-state. |
+| `has_email` | boolean | optional | Non-empty `email` (the **contact** column, not `default_email`). |
+| `has_phone` | boolean | optional | `phone` normalizes to 10 digits (contact column, not `default_phone`). |
+| `ids` | string | optional (placeholderAllowed) | csv of user ids to restrict to. Bare number works for one id. |
+| `exclude` | string | optional (placeholderAllowed) | csv of user ids to drop. |
+| `active_only` | boolean | optional, **default `true`** | Drops `user_auth = 'disabled'`. |
+| `include_automation` | boolean | optional, **default `false`** | Drops user 0 (`user_type = 0`). |
+| `sort` | enum | optional, default `user_name` | `user_name`, `user_lname`, `user_initials`, `user`. Ties break on id. |
+| `fields` | string | optional (placeholderAllowed, strictString) | csv subset per user. Default: all. |
+| `require_any` | boolean | optional, default `false` | `true` throws when nothing matched. |
+| `output_var` | string | optional | Stores the users **array** — feed straight to `foreach`. |
+| `count_var` | string | optional | Stores the count. |
+
+**The two defaults that matter.** There is no `DELETE` for users — `routes/admin.users.js` is explicit that *"removing" a user means disabling them*, and `routes/auth.login.js` gates login on `user_auth.startsWith('authorized')`. A `list_users` that didn't filter on that by default would have every "email all staff" workflow quietly mailing ex-employees forever. Likewise user 0 is the `automations` pseudo-user (`user_type = 0`, `admin@4lsg.com`), which `public/index.html`'s task-assignee picker already filters out with `.filter(u => u.user_type)`.
+
+**One implication, deliberately asymmetric.** Naming `automation` in `role` turns `include_automation` on — that filter is otherwise guaranteed empty, and a hand-written role filter is unambiguously on purpose. `ids` gets **no** such implication: those lists are usually machine-generated (`SELECT DISTINCT log_by`, etc.) and user 0 appears in them constantly, so auto-including it there would reintroduce the exact "notify everyone who touched this case → emails admin@4lsg.com" bug the default exists to prevent. An explicit `include_automation` always wins over the implication.
+
+**Output:**
+
+| Key | Notes |
+|---|---|
+| `users` | array of per-user maps (same field set as `lookup_user`, honoring `fields`) — the `foreach` target |
+| `count` | number |
+| `has_users` | boolean — branch on this instead of setting `require_any` |
+| `ids` | `number[]` |
+| `emails` | `string[]` — non-empty `email` values, deduped, in sort order |
+| `emails_csv` | the above joined with `", "` |
+| `phones` | `string[]` — `phone` normalized to 10 digits |
+
+`ids` / `emails` / `phones` are built from the **full** rows, so they stay populated even when `fields` narrows the per-user maps to something that excludes those columns.
+
+`emails_csv` is a single multi-recipient `send_email.to` on the smtp and gmail adapters (both hand `to` to nodemailer/MailComposer verbatim). The pabbly adapter posts to an opaque webhook, so its multi-recipient behavior is not guaranteed — and looping is what you want anyway whenever the body is personalized.
+
+Fan out over attorneys:
+
+```json
+// step 3
+{
+  "function_name": "list_users",
+  "params": { "role": "attorney", "has_email": true },
+  "set_vars": { "attorneys": "{{this.users}}" }
+}
+// step 4
+{
+  "function_name": "foreach",
+  "params": { "list": "{{attorneys}}", "item_var": "atty", "end_step": 7 }
+}
+// step 5 — send_email to "{{atty.email}}"
+// step 6 — set_next back to 4
+```
+
+Or in one shot, no loop:
+
+```json
+{
+  "function_name": "list_users",
+  "params": { "role": "staff", "has_email": true },
+  "set_vars": { "staffEmails": "{{this.emails_csv}}" }
+}
 ```
 
 ---

@@ -57,6 +57,7 @@ lib/internal_functions/sequences.js
 lib/internal_functions/system.js
 lib/internal_functions/tasks.js
 lib/internal_functions/timing.js
+lib/internal_functions/users.js
 lib/internal_functions/variables.js
 lib/job_executor.js
 lib/legacyTrap.js
