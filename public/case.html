@@ -25,73 +25,84 @@
   style="text-align: center; display: block"
 >
   <div id="tabButtons" class="tabs" style="text-align: center; display: block">
+    <!-- Standard tabs, split across two .tab-row lines because one row of 12
+         had become unreadable. Row 1 = the case and its people / calendar /
+         work; row 2 = documents, automation and history. .tab-row divides the
+         width between a row's tabs (see style.css), so each row's last button
+         sits flush right: Refresh top-right, Case Log bottom-right — put them
+         last, not first, to keep them out of the path of the tabs staff click
+         all day.
+         Use the format id="?Button" to append case=caseID,tab to url -->
     <div id="caseButtons">
-      <!-- Use the format id="?Button" to append case=caseID,tab to url -->
-      <button class="tab active" onclick="openTab(this, 'tabOverview')">
-        <i class="fa-solid fa-star"></i> Overview
-      </button>
-      <button class="tab" onclick="openTab(this, 'tabClients')">
-        <i class="fa-solid fa-circle-question"></i> People
-      </button>
-      <button class="tab" onclick="openTab(this, 'tabAppts')">
-        <i class="fa-solid fa-calendar-check"></i> Appointments
-      </button>
-      <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();">
-        <i class="fa-solid fa-calendar-day"></i> Events
-      </button>
-      <!-- Checklists widget. Lazy iframe src on first open (esignButton
-           idiom); on re-entry pushes a reload so the lists are fresh. -->
-      <button
-        class="tab"
-        id="checklistsButton"
-        onclick="openTab(this, 'checklists'); if (!E('checklistFrame').src) E('checklistFrame').src = `checklistView.html?link_type=case&link=${caseID}`; else E('checklistFrame').contentWindow?.reloadChecklists?.();"
-      >
-        <i class="fa-solid fa-list-check"></i> Checklists
-      </button>
-      <button class="tab" onclick="openTab(this, 'tabDB')">
-        <i class="fa-brands fa-dropbox"></i> Dropbox
-      </button>
-      <button class="tab" onclick="openTab(this, 'tabTasks')">
-        <i class="fa-solid fa-clipboard"></i> Tasks
-      </button>
-      <button class="tab" onclick="openTab(this, 'tabLog')">
-        <i class="fa-solid fa-receipt"></i> Case Log
-      </button>
-      <!-- Automations widget (sequences + workflows across the case's related
-           contacts). Lazy iframe src on first open (esignButton idiom); on
-           re-entry pushes a reload into the widget so the lists are fresh.
-           id follows the ?Button URL-restore convention (?tab=auto). -->
-      <button class="tab" id="autoButton" onclick="openTab(this, 'tabAuto'); if (!E('autoFrame').src) E('autoFrame').src = `automation/automationsWidget.html?case_id=${caseID}`; else E('autoFrame').contentWindow?.reloadAutomations?.();">
-        <i class="fa-solid fa-robot"></i> Automations
-      </button>
-      <!-- Signatures (e-sign, Phase 2C). Standard tab — every case type can
-           send documents. Lazy src (tabEvents idiom): the widget iframe only
-           loads on first open, so case pages without signing activity pay
-           nothing. -->
-      <button class="tab" id="esignButton" onclick="openTab(this, 'tabEsign'); if (!E('esignFrame').src) E('esignFrame').src = `esign/caseWidget.html?case_id=${caseID}`;">
-        <i class="fa-solid fa-file-signature"></i> Signatures
-      </button>
-      <!-- Form submissions (X4). STANDARD tab, not a bkButtons one: any case
-           type can receive a form, and an adopted intake most often lands on
-           a non-BK case (the anonymous ones arrive before the type is set).
-           Lazy src (esignButton idiom). -->
-      <button class="tab" id="formsButton" onclick="openTab(this, 'tabForms'); if (!E('formsFrame').src) E('formsFrame').src = `forms/submissionsWidget.html?link_type=case&link_id=${caseID}`;">
-        <i class="fa-solid fa-inbox"></i> Form Submissions
-      </button>
-      <button
-        class="tab"
-        onclick="Swal.fire({ title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
-                                       icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
-                                       preConfirm: () => { location.reload();}});"
-      >
-        <i class="fa-solid fa-circle-down"></i> Refresh
-      </button>
+      <div class="tab-row">
+        <button class="tab active" onclick="openTab(this, 'tabOverview')">
+          <i class="fa-solid fa-star"></i> Overview
+        </button>
+        <button class="tab" onclick="openTab(this, 'tabClients')">
+          <i class="fa-solid fa-circle-question"></i> People
+        </button>
+        <button class="tab" onclick="openTab(this, 'tabAppts')">
+          <i class="fa-solid fa-calendar-check"></i> Appointments
+        </button>
+        <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();">
+          <i class="fa-solid fa-calendar-day"></i> Events
+        </button>
+        <!-- Checklists widget. Lazy iframe src on first open (esignButton
+             idiom); on re-entry pushes a reload so the lists are fresh. -->
+        <button
+          class="tab"
+          id="checklistsButton"
+          onclick="openTab(this, 'checklists'); if (!E('checklistFrame').src) E('checklistFrame').src = `checklistView.html?link_type=case&link=${caseID}`; else E('checklistFrame').contentWindow?.reloadChecklists?.();"
+        >
+          <i class="fa-solid fa-list-check"></i> Checklists
+        </button>
+        <button class="tab" onclick="openTab(this, 'tabTasks')">
+          <i class="fa-solid fa-clipboard"></i> Tasks
+        </button>
+        <button
+          class="tab"
+          onclick="Swal.fire({ title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
+                                         icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
+                                         preConfirm: () => { location.reload();}});"
+        >
+          <i class="fa-solid fa-circle-down"></i> Refresh
+        </button>
+      </div>
+      <div class="tab-row">
+        <button class="tab" onclick="openTab(this, 'tabDB')">
+          <i class="fa-brands fa-dropbox"></i> Dropbox
+        </button>
+        <!-- Form submissions (X4). STANDARD tab, not a bkButtons one: any case
+             type can receive a form, and an adopted intake most often lands on
+             a non-BK case (the anonymous ones arrive before the type is set).
+             Lazy src (esignButton idiom). -->
+        <button class="tab" id="formsButton" onclick="openTab(this, 'tabForms'); if (!E('formsFrame').src) E('formsFrame').src = `forms/submissionsWidget.html?link_type=case&link_id=${caseID}`;">
+          <i class="fa-solid fa-inbox"></i> Form Submissions
+        </button>
+        <!-- Signatures (e-sign, Phase 2C). Standard tab — every case type can
+             send documents. Lazy src (tabEvents idiom): the widget iframe only
+             loads on first open, so case pages without signing activity pay
+             nothing. -->
+        <button class="tab" id="esignButton" onclick="openTab(this, 'tabEsign'); if (!E('esignFrame').src) E('esignFrame').src = `esign/caseWidget.html?case_id=${caseID}`;">
+          <i class="fa-solid fa-file-signature"></i> Signatures
+        </button>
+        <!-- Automations widget (sequences + workflows across the case's related
+             contacts). Lazy iframe src on first open (esignButton idiom); on
+             re-entry pushes a reload into the widget so the lists are fresh.
+             id follows the ?Button URL-restore convention (?tab=auto). -->
+        <button class="tab" id="autoButton" onclick="openTab(this, 'tabAuto'); if (!E('autoFrame').src) E('autoFrame').src = `automation/automationsWidget.html?case_id=${caseID}`; else E('autoFrame').contentWindow?.reloadAutomations?.();">
+          <i class="fa-solid fa-robot"></i> Automations
+        </button>
+        <button class="tab" onclick="openTab(this, 'tabLog')">
+          <i class="fa-solid fa-receipt"></i> Case Log
+        </button>
+      </div>
     </div>
     <!-- Type-specific button groups. Each is hidden by default and revealed by
          applyCaseType() (search "applyCaseType" in the script) based on
          case_type. #otherButtons is the generic fallback. To add a new type,
          add a group here AND a branch in applyCaseType — see the recipe there. -->
-    <div id="bkButtons" style="display: none">
+    <div id="bkButtons" class="tab-row" style="display: none">
       <button class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')">
         <i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes
       </button>
@@ -108,7 +119,7 @@
         <i class="fa-brands fa-wpforms"></i> Detailed Questionnaire
       </button>
     </div>
-    <div id="otherButtons" style="display: none">
+    <div id="otherButtons" class="tab-row" style="display: none">
       <button class="tab" onclick="openTab(this, 'tabSend')">
         <i class="fa-solid fa-comments"></i> Sending Form
       </button>

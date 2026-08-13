@@ -11,6 +11,28 @@ body{font-family: Arial, Helvetica, sans-serif}
 .tab:hover {
   background-color: #dddddd;
 }
+/* One line of a multi-row tab strip (case.html). The tabs divide the full
+   width of the row between them, so the strip reads as one filled toolbar
+   and the row's last tab lands flush right by construction — no auto margin
+   and no dead gap in the middle. Grow but never shrink: a row too wide for
+   the window wraps to another line (each line then fills on its own) rather
+   than crushing the labels. Capped and auto-centered so the strip stays a
+   readable width on a wide monitor and shares a centre line with the panels
+   below it (#pipelinePanel and the tab-content boxes are centred too). */
+.tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-width: 850px;
+  margin: 0 auto;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+.tab-row .tab {
+  flex: 1 0 auto;
+  white-space: nowrap;
+  text-align: center;
+}
 .active {
   background-color: #aaaaaa;
 }
