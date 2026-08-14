@@ -54,6 +54,9 @@ const KNOWN_TYPES = new Set([
   'text', 'textarea', 'number', 'date', 'datetime',
   'select', 'radio', 'checkbox', 'checkgroup', 'tags', 'hidden',
   'embed',   // 2.6 — display-only https iframe, INTERNAL-ONLY (contract §4.3/§9)
+  'content', // X-content — display-only image and/or text; EXTERNAL-SAFE by
+             // construction (textContent/setAttribute only), NOT in
+             // scanExternalRefusals (§Q)
 ]);
 
 const OPTIONS_TYPES = new Set(['select', 'radio', 'checkgroup']); // options iff these
@@ -232,6 +235,84 @@ function validateDefinition(def) {
         const v = field[bad];
         if (v !== undefined && v !== null && v !== false && v !== '') {
           throw badRequest(`${path}.${bad} is not allowed on type "embed" (display-only field)`);
+        }
+      }
+    }
+
+    // content (X-content, charter 2026-08-13, Fred-ratified 2026-08-14): a
+    // display-only image and/or text block — a logo or illustration placed in
+    // a row, with an optional caption. EXTERNAL-SAFE by construction: every
+    // value reaches the DOM via textContent/setAttribute (render.html has no
+    // innerHTML path), so unlike embed it is deliberately NOT added to
+    // scanExternalRefusals. At least one of src (https image URL) / text
+    // (caption or display copy) is required. Everything input-shaped is
+    // rejected exactly as on embed, plus the embed-only `height`. Repeaters
+    // reject it server-side (a cloned image per row is never right — the
+    // embed rule's rationale applies unchanged).
+    if (field.type === 'content') {
+      if (!topLevelField) {
+        throw badRequest(`${path}: type "content" is not allowed inside repeaters`);
+      }
+      const cHasSrc  = typeof field.src === 'string' && field.src !== '';
+      const cHasText = typeof field.text === 'string' && field.text !== '';
+      if (!cHasSrc && !cHasText) {
+        throw badRequest(`${path}: type "content" requires at least one of src (image URL), text`);
+      }
+      if (field.src !== undefined && field.src !== null && field.src !== '') {
+        if (typeof field.src !== 'string') {
+          throw badRequest(`${path}.src must be a string`);
+        }
+        if (field.src.length > 2000) {
+          throw badRequest(`${path}.src must be at most 2000 characters`);
+        }
+        let cSrcUrl = null;
+        try { cSrcUrl = new URL(field.src); }
+        catch (e) { throw badRequest(`${path}.src is not a valid URL`); }
+        if (cSrcUrl.protocol !== 'https:') {
+          throw badRequest(`${path}.src must be an https URL`);
+        }
+      }
+      if (field.text !== undefined && field.text !== null && field.text !== '') {
+        if (typeof field.text !== 'string') {
+          throw badRequest(`${path}.text must be a string`);
+        }
+        if (field.text.length > 2000) {
+          throw badRequest(`${path}.text must be at most 2000 characters`);
+        }
+      }
+      if (field.alt !== undefined && field.alt !== null && typeof field.alt !== 'string') {
+        throw badRequest(`${path}.alt must be a string`);
+      }
+      if (field.href !== undefined && field.href !== null && field.href !== '') {
+        if (typeof field.href !== 'string') {
+          throw badRequest(`${path}.href must be a string`);
+        }
+        if (field.href.length > 2000) {
+          throw badRequest(`${path}.href must be at most 2000 characters`);
+        }
+        let cHrefUrl = null;
+        try { cHrefUrl = new URL(field.href); }
+        catch (e) { throw badRequest(`${path}.href is not a valid URL`); }
+        if (cHrefUrl.protocol !== 'https:') {
+          throw badRequest(`${path}.href must be an https URL`);
+        }
+      }
+      if (field.maxWidth !== undefined && field.maxWidth !== null) {
+        if (!Number.isInteger(field.maxWidth) || field.maxWidth <= 0) {
+          throw badRequest(`${path}.maxWidth must be a positive integer (pixels)`);
+        }
+      }
+      if (field.align !== undefined && field.align !== null && field.align !== '') {
+        if (field.align !== 'left' && field.align !== 'center' && field.align !== 'right') {
+          throw badRequest(`${path}.align must be one of left, center, right`);
+        }
+      }
+      for (const bad of ['required', 'apiColumn', 'prefill', 'mask', 'options',
+                         'optionsFrom', 'readonly', 'requiredWhen', 'urlParam',
+                         'height']) {
+        const v = field[bad];
+        if (v !== undefined && v !== null && v !== false && v !== '') {
+          throw badRequest(`${path}.${bad} is not allowed on type "content" (display-only field)`);
         }
       }
     }
@@ -487,6 +568,9 @@ function validateDefinition(def) {
     if (topLevelTypes[ref.field] === 'embed') {
       throw badRequest(`${ref.path}.${ref.key}.field "${ref.field}" targets an embed — embeds have no value and cannot be condition targets`);
     }
+    if (topLevelTypes[ref.field] === 'content') {
+      throw badRequest(`${ref.path}.${ref.key}.field "${ref.field}" targets a content field — content fields have no value and cannot be condition targets`);
+    }
     if (ref.op === 'includes' && topLevelTypes[ref.field] !== 'checkgroup') {
       throw badRequest(`${ref.path}.${ref.key}: op "includes" requires the target field "${ref.field}" to be a checkgroup`);
     }
@@ -584,6 +668,9 @@ function validateDefinition(def) {
       }
       if (topLevelTypes[r.target] === 'embed' || topLevelTypes[r.from] === 'embed') {
         throw badRequest(`${dPath}: derive cannot reference an embed field (embeds have no value)`);
+      }
+      if (topLevelTypes[r.target] === 'content' || topLevelTypes[r.from] === 'content') {
+        throw badRequest(`${dPath}: derive cannot reference a content field (content fields have no value)`);
       }
       if (deriveTargets.has(r.target)) {
         throw badRequest(`${dPath}: duplicate derive target "${r.target}"`);
@@ -752,7 +839,8 @@ function allSectionLists(def) {
  *
  * embed fields are EXCLUDED (2.6): they carry no data, so adding or removing
  * one is a layout change like a label edit — bumping schema_version for it
- * would raise spurious draft-recovery version warnings.
+ * would raise spurious draft-recovery version warnings. content fields are
+ * excluded for the same reason (§Q — same display-only class).
  */
 function fieldSignature(def) {
   const parts = [];
@@ -763,7 +851,7 @@ function fieldSignature(def) {
       } else if (section) {
         for (const row of section.rows || []) {
           for (const f of (row && row.fields) || []) {
-            if (f && f.type === 'embed') continue;   // display-only (2.6)
+            if (f && (f.type === 'embed' || f.type === 'content')) continue;   // display-only (2.6 / §Q)
             parts.push(`${f.name}\u0000${f.type}`);
           }
         }

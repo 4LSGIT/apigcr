@@ -2238,49 +2238,118 @@
   <h2>More Features</h2>
   <!-- data-hover-anim: Font Awesome animation class(es) played on the icon while
        the pointer is over the button (see the hover-animation script below).
-       Tune speed/axis per button with inline --fa-* custom properties. -->
+       Tune speed/axis per button with inline --fa-* custom properties.
+
+       Layout rule: 3 buttons per row, one theme per row, and every row full —
+       only the last row may be short. 20 buttons = six full rows plus a pair at
+       the bottom. Keep new buttons inside the row they belong to rather than
+       appending to the end; a 21st button completes the bottom row. -->
+
+  <!-- Reference & help: how it works, what you want next, one-off lookups. -->
   <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-book fa-2xl"></i><br><br>Manuals</button>
-  <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-robot fa-2xl"></i><br><br>Automations</button>
+  <button class="big-button" onclick="showClioCode()" data-hover-anim="fa-spin-pulse" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
   <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-scale:1.15; --fa-animation-duration:1.1s"><i class="fa-solid fa-lightbulb fa-2xl"></i><br><br>Feature Requests</button>
   <br><br>
-  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
+  <!-- Forms & documents: build the form, read what comes back, get it signed. -->
+  <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-pen-to-square fa-2xl"></i><br><br>Form Builder</button>
+  <button class="big-button" data-target="formInboxDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-inbox fa-2xl"></i><br><br>Form Inbox</button>
+  <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s; --fa-animation-direction:reverse"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
+  <br><br>
+  <!-- Case setup & workflow: how a case is shaped, the steps on it, what runs
+       on it by itself. -->
+  <button class="big-button" data-target="caseConfigDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sliders fa-2xl"></i><br><br>Case Config</button>
+  <button class="big-button" data-target="checklistsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.8s"><i class="fa-solid fa-list-check fa-2xl"></i><br><br>Checklists</button>
+  <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-robot fa-2xl"></i><br><br>Automations</button>
+  <br><br>
+  <!-- Scheduling & client access: what can be booked, when, and where the client
+       goes to do it. -->
+  <button class="big-button" data-target="portalManagerDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-door-open fa-2xl"></i><br><br>Portal Manager</button>
+  <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
+  <button class="big-button" data-target="bookingDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:2s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
+  <br><br>
+  <!-- Look at it: the records, the numbers, the court email as it will go out. -->
+  <button class="big-button" data-target="viewsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.2s"><i class="fa-solid fa-table-list fa-2xl"></i><br><br>Views</button>
+  <button class="big-button" data-target="reportsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.3s"><i class="fa-solid fa-chart-column fa-2xl"></i><br><br>Reports</button>
+  <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
+  <br><br>
+  <!-- Outreach & web: the message, the page it lands on, the links that get
+       there. -->
+  <button class="big-button" data-target="campaignsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br><br>Campaigns</button>
   <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more" data-hover-anim="fa-spin" style="--fa-animation-duration:2.5s"><i class="fa-solid fa-signs-post fa-2xl"></i><br><br>Redirects Manager</button>
   <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sitemap fa-2xl"></i><br><br>Landing Pages</button>
   <br><br>
-  <button class="big-button" data-target="bookingDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:2s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
-  <button class="big-button" onclick="showClioCode()" data-hover-anim="fa-spin-pulse" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
-  <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
-  <br><br>
-  <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
+  <!-- Media library: the files everything above pulls from. Short bottom row —
+       a third media button would fill it. -->
   <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.5; --fa-animation-duration:2s"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
-  <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s; --fa-animation-direction:reverse"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
-  <br><br>
-  <!-- Placeholder buttons: no wiring, just fun. Hover animates the icon like
-       every other button here (successor to the old jumping-cat button). -->
-  <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-pen-to-square fa-2xl"></i><br><br>Form Builder</button>
-  <button class="big-button" data-target="reportsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.3s"><i class="fa-solid fa-chart-column fa-2xl"></i><br><br>Reports</button>
-  <button class="big-button" data-target="campaignsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br><br>Campaigns</button>
-  <br><br>
-  <button class="big-button" data-target="caseConfigDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sliders fa-2xl"></i><br><br>Case Config</button>
-  <button class="big-button" data-target="portalManagerDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-door-open fa-2xl"></i><br><br>Portal Manager</button>
-  <button class="big-button" data-target="viewsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.2s"><i class="fa-solid fa-table-list fa-2xl"></i><br><br>Views</button>
-  <br><br>
-  <button class="big-button" data-target="checklistsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.8s"><i class="fa-solid fa-list-check fa-2xl"></i><br><br>Checklists</button>
-  <button class="big-button" data-target="formInboxDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-inbox fa-2xl"></i><br><br>Form Inbox</button>
-  <button class="big-button" data-target="" data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.4; --fa-animation-duration:1.7s"><i class="fa-solid fa-compass-drafting fa-2xl"></i><br><br>Placeholder</button>
+  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
 
 
+  <!-- Panels are kept in the same order as the buttons above. Order has no
+       effect on rendering (they are all display:none until opened) — it just
+       keeps the two lists readable side by side. -->
+
+  <!-- Reference & help (Get Clio Code is a Swal, so it has no panel) -->
   <div id="manualsDiv"         class="more-panel" style="display:none">
     <iframe data-src="/manuals.html"></iframe>
-  </div>
-  <div id="automationsDiv"     class="more-panel" style="display:none">
-    <iframe data-src="/automationManager.html"></iframe>
   </div>
   <div id="featureRequestsDiv" class="more-panel" style="display:none">
     <iframe data-src="/featureRequests.html"></iframe>
   </div>
-  <div id="videoManagerDiv"    class="more-panel" style="display:none">
-    <iframe data-src="/videoManager.html"></iframe>
+
+  <!-- Forms & documents -->
+  <div id="formBuilderDiv" class="more-panel" style="display:none">
+    <iframe data-src="/formBuilder.html"></iframe>
+  </div>
+  <!-- X4 Form Inbox: unlinked external submissions — view + adopt onto a
+       case/contact/appt. formInbox.html relays apiSend to its render.html
+       view iframes, so it must stay a DIRECT child of the shell. -->
+  <div id="formInboxDiv" class="more-panel" style="display:none">
+    <iframe data-src="/formInbox.html"></iframe>
+  </div>
+  <div id="esignDashboardDiv" class="more-panel" style="display:none">
+    <iframe data-src="/esign/dashboard.html"></iframe>
+  </div>
+
+  <!-- Case setup & workflow -->
+  <div id="caseConfigDiv" class="more-panel" style="display:none">
+    <iframe data-src="/caseConfigManager.html"></iframe>
+  </div>
+  <div id="checklistsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/checklistsView.html"></iframe>
+  </div>
+  <div id="automationsDiv"     class="more-panel" style="display:none">
+    <iframe data-src="/automationManager.html"></iframe>
+  </div>
+
+  <!-- Scheduling & client access -->
+  <div id="portalManagerDiv" class="more-panel" style="display:none">
+    <iframe data-src="/portalManager.html"></iframe>
+  </div>
+  <div id="availabilityDiv" class="more-panel" style="display:none">
+    <iframe data-src="/availabilitymanager.html"></iframe>
+  </div>
+  <div id="bookingDiv" class="more-panel" style="display:none">
+    <iframe data-src="/bookingviewsmanager.html"></iframe>
+  </div>
+
+  <!-- Look at it -->
+  <!-- YisraView: no ?key= means browse mode — lists every view the user can
+       see. A pinned single view lives on the custom tab instead. -->
+  <div id="viewsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/customView.html"></iframe>
+  </div>
+  <div id="reportsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/reports.html"></iframe>
+  </div>
+  <div id="courtPreviewDiv" class="more-panel" style="display:none">
+    <iframe data-src="/courtpreview.html"></iframe>
+  </div>
+
+  <!-- Outreach & web -->
+  <!-- Demoted from its own tab (tabCampaigns) — campaign.html reaches the shell
+       via window.parent, which is still index.html from here. -->
+  <div id="campaignsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/campaign.html"></iframe>
   </div>
   <div id="redirectsDiv"    class="more-panel" style="display:none">
     <iframe data-src="/redirects.html"></iframe>
@@ -2288,51 +2357,13 @@
   <div id="landingPagesDiv" class="more-panel" style="display:none">
     <iframe data-src="/pageManager.html"></iframe>
   </div>
-  <div id="bookingDiv" class="more-panel" style="display:none">
-    <iframe data-src="/bookingviewsmanager.html"></iframe>
-  </div>
-  <div id="courtPreviewDiv" class="more-panel" style="display:none">
-    <iframe data-src="/courtpreview.html"></iframe>
-  </div>
-  <div id="availabilityDiv" class="more-panel" style="display:none">
-    <iframe data-src="/availabilitymanager.html"></iframe>
-  </div>
+
+  <!-- Media library -->
   <div id="assetManagerDiv" class="more-panel" style="display:none">
     <iframe data-src="/assetManager.html"></iframe>
   </div>
-  <div id="esignDashboardDiv" class="more-panel" style="display:none">
-    <iframe data-src="/esign/dashboard.html"></iframe>
-  </div>
-  <div id="formBuilderDiv" class="more-panel" style="display:none">
-    <iframe data-src="/formBuilder.html"></iframe>
-  </div>
-  <div id="reportsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/reports.html"></iframe>
-  </div>
-  <div id="caseConfigDiv" class="more-panel" style="display:none">
-    <iframe data-src="/caseConfigManager.html"></iframe>
-  </div>
-  <!-- Demoted from its own tab (tabCampaigns) — campaign.html reaches the shell
-       via window.parent, which is still index.html from here. -->
-  <div id="campaignsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/campaign.html"></iframe>
-  </div>
-  <div id="portalManagerDiv" class="more-panel" style="display:none">
-    <iframe data-src="/portalManager.html"></iframe>
-  </div>
-  <!-- YisraView: no ?key= means browse mode — lists every view the user can
-       see. A pinned single view lives on the custom tab instead. -->
-  <div id="viewsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/customView.html"></iframe>
-  </div>
-  <div id="checklistsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/checklistsView.html"></iframe>
-  </div>
-  <!-- X4 Form Inbox: unlinked external submissions — view + adopt onto a
-       case/contact/appt. formInbox.html relays apiSend to its render.html
-       view iframes, so it must stay a DIRECT child of the shell. -->
-  <div id="formInboxDiv" class="more-panel" style="display:none">
-    <iframe data-src="/formInbox.html"></iframe>
+  <div id="videoManagerDiv"    class="more-panel" style="display:none">
+    <iframe data-src="/videoManager.html"></iframe>
   </div>
 </div>
 <script>

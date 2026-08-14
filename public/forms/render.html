@@ -430,6 +430,72 @@
       return wrapShowWhen(eWrap, f.showWhen, 'field "' + f.name + '"', warn);
     }
 
+    if (f.type === 'content') {
+      // §Q: display-only image and/or text — a logo/illustration in a row,
+      // with an optional caption. EXTERNAL-SAFE by construction: every value
+      // reaches the DOM via textContent/setAttribute (no markup path), so it
+      // renders on external forms and is NOT in scanExternalRefusals. Like
+      // embed: no .yc-error (charter carve-out) and no registration (the
+      // caller skips registerField; collect()/validate()/PATCH never see it).
+      // Belt-and-braces https re-checks on src and href: published defs
+      // passed validation, but degrade safely on anything else.
+      var cWrapClass = 'yc-field';
+      if (WIDTH_CLASS[f.width]) cWrapClass += ' ' + WIDTH_CLASS[f.width];
+      var cWrap = el('div', { class: cWrapClass });
+      if (f.label != null && f.label !== '') {
+        cWrap.appendChild(el('label', { class: 'yc-label', text: f.label }));
+      }
+      if (f.sublabel) {
+        cWrap.appendChild(el('div', { class: 'yc-sublabel', text: f.sublabel }));
+      }
+      var cAlign = (f.align === 'center' || f.align === 'right') ? f.align : 'left';
+      var cBox = el('div', { class: 'yc-content' });
+      cBox.setAttribute('data-yc-content', f.name);   // stable selector for per-form code
+      cBox.setAttribute('style', 'text-align:' + cAlign + ';');
+      var cSrc = String(f.src || '');
+      if (cSrc) {
+        var cOk = false;
+        try { cOk = new URL(cSrc).protocol === 'https:'; } catch (e) { cOk = false; }
+        if (cOk) {
+          var img = document.createElement('img');
+          img.setAttribute('src', cSrc);
+          img.setAttribute('alt', typeof f.alt === 'string' ? f.alt : '');
+          img.setAttribute('loading', 'lazy');
+          // The external form URL carries the case_id credential in its query
+          // string; no app-wide referrer policy is set. Browser defaults
+          // already strip the query cross-origin — this is defense-in-depth,
+          // legislated for redirectBack (X3.3) and applied here too.
+          img.setAttribute('referrerpolicy', 'no-referrer');
+          var cMw = parseInt(f.maxWidth, 10);          // never string-interpolate raw
+          img.setAttribute('style', 'max-width:' +
+            ((cMw > 0) ? 'min(' + cMw + 'px,100%)' : '100%') + ';height:auto;');
+          var cHref = String(f.href || '');
+          var cHrefOk = false;
+          if (cHref) {
+            try { cHrefOk = new URL(cHref).protocol === 'https:'; } catch (e2) { cHrefOk = false; }
+            if (!cHrefOk) warn('content "' + f.name + '": href is not a valid https URL — link skipped');
+          }
+          if (cHrefOk) {
+            var cA = document.createElement('a');
+            cA.setAttribute('href', cHref);
+            cA.setAttribute('target', '_blank');
+            cA.setAttribute('rel', 'noopener noreferrer');
+            cA.appendChild(img);
+            cBox.appendChild(cA);
+          } else {
+            cBox.appendChild(img);
+          }
+        } else {
+          warn('content "' + f.name + '": src is not a valid https URL — image skipped');
+        }
+      }
+      if (f.text != null && f.text !== '') {
+        cBox.appendChild(el('div', { class: 'yc-content-text', text: String(f.text) }));
+      }
+      cWrap.appendChild(cBox);
+      return wrapShowWhen(cWrap, f.showWhen, 'field "' + f.name + '"', warn);
+    }
+
     var wrapClass = 'yc-field';
     if (WIDTH_CLASS[f.width]) wrapClass += ' ' + WIDTH_CLASS[f.width];
     if (f.readonly) wrapClass += ' yc-field-locked';
@@ -903,10 +969,10 @@
           (row.fields || []).forEach(function (f) {
             var node = buildField(f, warn);
             if (node) rowEl.appendChild(node);
-            // embed (2.6) is display-only: never registered, so collect()/
-            // validate()/apiMap/PATCH never see it. Everything else registers
-            // exactly as before.
-            if (f.type !== 'embed') registerField(f);
+            // embed (2.6) and content (§Q) are display-only: never
+            // registered, so collect()/validate()/apiMap/PATCH never see
+            // them. Everything else registers exactly as before.
+            if (f.type !== 'embed' && f.type !== 'content') registerField(f);
           });
           sec.appendChild(row && row.showWhen
             ? wrapShowWhen(rowEl, row.showWhen, prefix + '[' + i + '].rows[' + j + ']', warn)

@@ -46,6 +46,10 @@ Conditions, renames, deletes, and field drags work across tabs exactly as before
 
 The palette's **embed** type renders an https iframe (Calendly, KBB, dashboards) — display-only: never collected, validated, or saved, and it never affects schema versioning. The inspector takes the URL (https-only, validated as you type), an optional pixel height (default 600), a width, and a visibility condition. **Internal forms only.**
 
+### Content fields (§Q)
+
+The palette's **content** type places an image and/or a text block in a row — a logo or illustration with an optional caption, or standalone display copy. Display-only like embed (never collected, validated, or saved; never affects schema versioning), but **allowed on external/public forms** — everything renders as plain text and attributes, never markup. The inspector takes the image URL (https-only, with a **Choose image…** button that opens the shared asset picker), alt text, an optional max width in pixels, alignment, an optional https link, the display text, a width, and a visibility condition. At least one of image URL / display text is required — the inspector flags a save that would empty both.
+
 ### Tabs
 
 | Tab | What it is |

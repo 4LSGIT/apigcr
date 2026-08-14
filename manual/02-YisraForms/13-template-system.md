@@ -100,6 +100,14 @@ Instead of top-level `sections`, a definition may carry `tabs` — **exactly one
 
 `{ "name": "ash_auto", "type": "embed", "src": "https://calendly.com/…", "height": 600 }` renders an `<iframe>` (https-only, ≤ 2000 chars, positive-int height, default 600). Display-only: never collected, validated, or saved; excluded from the schema signature; not allowed inside repeaters; can't be a condition or derive target; `showWhen` works. The iframe carries `data-yc-embed="{name}"` for code to target. **Internal forms only** — embeds are in the portal security-review bucket.
 
+### `content` fields (external-safe, §Q)
+
+`{ "name": "firm_logo", "type": "content", "src": "https://…/logo.png", "alt": "…", "maxWidth": 400, "align": "center", "href": "https://…", "text": "Optional caption" }` renders an image and/or a text block inside a row — a logo, an illustration, or standalone display copy. At least one of `src` / `text` is required; `src` and `href` must be https (≤ 2000 chars each); `maxWidth` is a positive-int pixel cap (the image is always additionally capped at 100% of its column); `align` is `left` (default) / `center` / `right`; `text` (≤ 2000 chars) prints as a caption under the image, or as the block's only content when there is no image.
+
+Same display-only class as `embed`: never collected, validated, or saved; excluded from the schema signature; not allowed inside repeaters; can't be a condition or derive target; `showWhen` works; no `.yc-error` element. The wrapper carries `data-yc-content="{name}"`. The image renders with `loading="lazy"` and `referrerpolicy="no-referrer"`, and an `href` wraps it in a new-tab link with `rel="noopener noreferrer"` — the external form URL carries the case credential in its query string, and none of it may ride a referrer.
+
+**Unlike embed, `content` is allowed on external/public forms.** Every value reaches the DOM via `textContent`/`setAttribute` — there is no markup path — so it is external-safe by construction and is deliberately *not* in the external refusal scan. The submission PDF **omits** content fields entirely (image *and* caption): chromium renders with the network blocked, so an external image URL in the print HTML would fail the whole render.
+
 ---
 
 ## apiColumn — the dual role

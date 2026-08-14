@@ -50,6 +50,13 @@ surfaces — never stripped, never partially served:
 
 `hooks: null` and empty strings scan clean — only a real value trips it.
 
+`type: "content"` fields (§Q — display-only image/text) are **not** refused:
+every value reaches the DOM via `textContent`/`setAttribute` with no markup
+path, so they are external-safe by construction and render on public forms.
+The image carries `referrerpolicy="no-referrer"` and any link
+`rel="noopener noreferrer"`, so the case credential in the form URL never
+rides a referrer.
+
 The scan runs **on every external request**, not just at the moment you flip
 visibility, because publishing can change the definition after the flip. It
 also runs at publish time: publishing a definition with a refused key onto a

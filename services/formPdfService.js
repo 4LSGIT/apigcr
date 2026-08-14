@@ -21,8 +21,11 @@
  *     hidden fields too, and printing a value the submitter never saw would
  *     misrepresent the form.
  *   - `type:"hidden"` fields are omitted (never visible), `embed` is omitted
- *     (display-only iframe; also refused externally). Visible-but-blank
- *     fields print as "—".
+ *     (display-only iframe; also refused externally), `content` is omitted
+ *     (§Q — display-only image/text; chromium renders with the network
+ *     BLOCKED, so an external img src reaching the print HTML would fail the
+ *     whole render; the caption is omitted with it, not substituted).
+ *     Visible-but-blank fields print as "—".
  *   - select/radio/checkgroup print option LABELS (value→label via the
  *     definition's static options; dynamic optionsFrom values print raw).
  *     Masked fields print the display format (_formatMask semantics).
@@ -350,7 +353,7 @@ function _sectionRowsHtml(section, data) {
     if (!row || !isVisible(row.showWhen, data)) continue;
     for (const f of row.fields || []) {
       if (!f || !f.name) continue;
-      if (f.type === 'hidden' || f.type === 'embed') continue;
+      if (f.type === 'hidden' || f.type === 'embed' || f.type === 'content') continue;
       if (!isVisible(f.showWhen, data)) continue;
       const label = (f.label != null && f.label !== '') ? f.label : f.name;
       rows += `<tr><td class="k">${htmlEscape(label)}</td>` +

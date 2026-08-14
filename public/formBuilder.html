@@ -5,6 +5,7 @@
 <title>Form Builder</title>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="/js/assetpicker.js"></script>
 <style>
   /* Admin-page conventions (users.html palette). Page-local only — no shared CSS touched. */
   :root {
@@ -546,7 +547,7 @@ const P = window.top;
 const FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;
 const FORM_KEY_RE   = /^[a-z0-9_]{1,50}$/;
 const HOOKS_RE      = /^[a-zA-Z0-9_-]{1,50}$/;
-const FIELD_TYPES   = ['text','textarea','number','date','datetime','select','radio','checkbox','checkgroup','tags','hidden','embed'];
+const FIELD_TYPES   = ['text','textarea','number','date','datetime','select','radio','checkbox','checkgroup','tags','hidden','embed','content'];
 const OPTIONS_TYPES = ['select','radio','checkgroup'];
 const REPEATER_TYPES= ['text','number','date','select','checkbox'];   // contract §4.2
 const WIDTHS        = ['default','2x','3x','fixed-sm','fixed-md'];
@@ -555,10 +556,12 @@ const SHOWWHEN_OPS  = ['eq','neq','in','notEmpty','includes'];   // includes: 2.
 const TYPE_LABEL = { text:'New text', textarea:'New textarea', number:'New number',
   date:'New date', datetime:'New date & time', select:'New select', radio:'New radio',
   checkbox:'New checkbox', checkgroup:'New check group', tags:'New tags', hidden:'new_hidden',
-  embed:'New embed' };
+  embed:'New embed', content:'New content' };
 // A new embed must carry a VALID https src from birth — the model never holds
 // invalid shapes (SPLIT_AC lesson: an empty src would 400 every draft save
-// until fixed). The inspector shows this placeholder for editing.
+// until fixed). The inspector shows this placeholder for editing. A new
+// content field (§Q) reuses it: content requires at least one of src/text,
+// so a seeded src keeps the model valid from birth the same way.
 const EMBED_PLACEHOLDER_SRC = 'https://example.com/';
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -1809,7 +1812,7 @@ function newField(type, loc) {
   const f = { name: genName(type === 'hidden' ? 'hidden' : label, null, taken), type };
   if (type !== 'hidden') f.label = label;
   if (OPTIONS_TYPES.includes(type)) f.options = ['Option 1'];
-  if (type === 'embed') f.src = EMBED_PLACEHOLDER_SRC;   // model never starts invalid (2.6)
+  if (type === 'embed' || type === 'content') f.src = EMBED_PLACEHOLDER_SRC;   // model never starts invalid (2.6 / §Q)
   AUTO_NAMES.add(f);
   return f;
 }
@@ -2474,7 +2477,7 @@ function clientFieldSignature(def) {
       } else if (section) {
         for (const row of (section && section.rows) || []) {
           for (const f of (row && row.fields) || []) {
-            if (f && f.type === 'embed') continue;   // display-only (2.6)
+            if (f && (f.type === 'embed' || f.type === 'content')) continue;   // display-only (2.6 / §Q)
             parts.push(`${f.name}\u0000${f.type}`);
           }
         }
@@ -3485,18 +3488,21 @@ function insField(ins, f, inRepeater) {
     labelProp,
     nameProp,
     pSelect('Type', f.type, inRepeater ? REPEATER_TYPES : FIELD_TYPES, async v => {
-      // → embed (2.6): the field stops being a condition target (embeds have
-      // no value — server rejects conditions targeting them), so referencing
-      // conditions cascade-remove after a confirm, the move-into-repeater
-      // pattern. Cancel = re-render resets the select.
-      if (v === 'embed' && f.type !== 'embed') {
+      // → embed (2.6) / content (§Q): the field stops being a condition
+      // target (display-only fields have no value — server rejects conditions
+      // targeting them), so referencing conditions cascade-remove after a
+      // confirm, the move-into-repeater pattern. Cancel = re-render resets
+      // the select. embed↔content conversions skip the prompt — neither can
+      // carry references.
+      if ((v === 'embed' || v === 'content') &&
+          f.type !== 'embed' && f.type !== 'content') {
         const refs  = refsTo(f.name);
         const dRefs = deriveRefsTo(f.name);
         const mentions = refs.map(r => r.desc).concat(dRefs.map(r => r.desc));
         if (mentions.length) {
           const ok = await ycConfirm(
             `"${f.name}" is referenced by:\n • ` + mentions.join('\n • ') +
-            `\n\nAn embed has no value — convert it and remove those references?`,
+            `\n\nA display-only ${v} field has no value — convert it and remove those references?`,
             { confirmText: 'Convert & remove' });
           if (!ok) { renderInspector(); return; }
           refs.forEach(removeCondRef);
@@ -3546,6 +3552,99 @@ function insField(ins, f, inRepeater) {
       })(),
       el('div', { class: 'help', text:
         'Display-only: never collected, validated, or saved; excluded from schema versioning. Internal forms only — embeds are in the portal security-review bucket and must not ship to external rendering. Default height 600px.' }),
+    ]));
+    ins.appendChild(swGroup(f));
+    ins.appendChild(group('Notes', [
+      pText('Note (documentation only)', f.note || '', v => { setOrDel(f, 'note', v); touched(); },
+        { textarea: true, help: 'Free-form documentation stored in the definition. Ignored by the renderer; never affects schema versioning.' }),
+    ]));
+    return;
+  }
+
+  // ── content (§Q): display-only image and/or text — Identity, Layout, the
+  //    Content group, visibility, and Notes. No Data / Validation / Options /
+  //    requiredWhen (the validator rejects them all on content). Unlike
+  //    embed, content IS allowed on external forms (textContent/setAttribute
+  //    only — not in scanExternalRefusals). ──
+  if (f.type === 'content') {
+    ins.appendChild(group('Layout', [
+      pSelect('Width', WIDTHS.includes(f.width) ? f.width : 'default', WIDTHS, v => {
+        if (v === 'default') delete f.width; else f.width = v;
+        touched();
+      }),
+      pText('Sublabel', f.sublabel || '', v => { setOrDel(f, 'sublabel', v); touched(); },
+        { help: 'Hint text under the label.' }),
+    ]));
+    const httpsValidate = raw => {
+      if (raw === '') return null;
+      if (raw.length > 2000) return 'must be at most 2000 characters';
+      try { if (new URL(raw).protocol !== 'https:') return 'must be an https URL'; }
+      catch (e) { return 'not a valid URL'; }
+      return null;
+    };
+    ins.appendChild(group('Content', [
+      pText('Image URL (https)', typeof f.src === 'string' ? f.src : '',
+        v => { setOrDel(f, 'src', v); touched(); }, {
+          mono: true, placeholder: EMBED_PLACEHOLDER_SRC,
+          validate: raw => {
+            if (raw === '' && !(typeof f.text === 'string' && f.text))
+              return 'an image URL or display text is required (one of the two)';
+            return httpsValidate(raw);
+          },
+          help: 'Rendered as an <img> (https only). Leave empty for a text-only block.'
+        }),
+      (() => {
+        const btn = el('button', { class: 'ghost small', text: 'Choose image…',
+          onclick: async () => {
+            if (!window.AssetPicker) { flash('Asset picker failed to load.'); return; }
+            const url = await AssetPicker.pick({
+              collection: 'form-images',
+              mimeFilter: 'image/',
+              title: 'Choose Image',
+              apiSend: (...a) => P.apiSend(...a),
+            });
+            if (url) { f.src = url; touched(); renderInspector(); }
+          } });
+        return el('div', { class: 'prop' }, [ el('label', { text: '' }), btn ]);
+      })(),
+      pText('Alt text', typeof f.alt === 'string' ? f.alt : '',
+        v => { setOrDel(f, 'alt', v); touched(); },
+        { help: 'Accessibility description of the image.' }),
+      (() => {
+        // positive-integer-only writer (embed height pattern — invalid input
+        // never reaches the model)
+        const input = el('input', { type: 'number', min: '1', step: '1' });
+        input.value = Number.isInteger(f.maxWidth) ? f.maxWidth : '';
+        input.oninput = () => {
+          const raw = input.value.trim();
+          if (raw === '') { delete f.maxWidth; input.classList.remove('bad'); touched(); return; }
+          const n = Number(raw);
+          if (Number.isInteger(n) && n > 0) { f.maxWidth = n; input.classList.remove('bad'); touched(); }
+          else input.classList.add('bad');
+        };
+        return el('div', { class: 'prop' }, [ el('label', { text: 'Max width (px)' }), input ]);
+      })(),
+      pSelect('Align', ['left', 'center', 'right'].includes(f.align) ? f.align : 'left',
+        ['left', 'center', 'right'], v => {
+          if (v === 'left') delete f.align; else f.align = v;
+          touched();
+        }),
+      pText('Link URL (https)', typeof f.href === 'string' ? f.href : '',
+        v => { setOrDel(f, 'href', v); touched(); },
+        { mono: true, validate: httpsValidate,
+          help: 'Optional: wraps the image in a link (opens in a new tab, no referrer).' }),
+      pText('Display text', typeof f.text === 'string' ? f.text : '',
+        v => { setOrDel(f, 'text', v); touched(); },
+        { textarea: true,
+          validate: raw => {
+            if (raw.length > 2000) return 'must be at most 2000 characters';
+            if (raw === '' && !(typeof f.src === 'string' && f.src))
+              return 'an image URL or display text is required (one of the two)';
+            return null;
+          },
+          help: 'Caption under the image, or the block\'s only content when there is no image.' }),
+      el('div', { class: 'help', text:
+        'Display-only: never collected, validated, or saved; excluded from schema versioning. Allowed on external/public forms — everything renders as plain text and attributes, never markup.' }),
     ]));
     ins.appendChild(swGroup(f));
     ins.appendChild(group('Notes', [
@@ -3777,22 +3876,41 @@ function changeType(f, newType) {
   if (newType !== 'number') { delete f.min; delete f.max; delete f.step; }
   if (newType === 'embed') {
     // Display-only (2.6): strip every input-shaped key the validator rejects
-    // on embeds, seed a valid src, and remove the derive rules touching the
-    // field (an embed can't be a derive target/source).
+    // on embeds, plus the content-only keys (§Q — embed↔content conversions
+    // must not leave the other type's keys behind), seed a valid src, and
+    // remove the derive rules touching the field (an embed can't be a derive
+    // target/source).
     ['apiColumn', 'prefill', 'prefillMode', 'mask', 'required', 'minLength',
      'maxLength', 'pattern', 'patternMessage', 'email', 'readonly', 'lockedMsg',
      'requiredWhen', 'requiredMessage', 'options', 'allowOther', 'optionsFrom',
-     'columns', 'rows', 'min', 'max', 'step', 'placeholder'].forEach(k => delete f[k]);
+     'columns', 'rows', 'min', 'max', 'step', 'placeholder',
+     'text', 'alt', 'maxWidth', 'align', 'href'].forEach(k => delete f[k]);
     if (typeof f.src !== 'string' || !f.src) f.src = EMBED_PLACEHOLDER_SRC;
     removeDeriveRulesTouching([f.name]);
-  } else if (wasEmbed(f, newType)) {
-    delete f.src; delete f.height;
+  } else if (newType === 'content') {
+    // Display-only (§Q): same input-shaped strip as embed, plus the
+    // embed-only `height`. content requires ≥1 of src/text — seed src only
+    // when neither survives (an ex-embed's src carries over as the image).
+    ['apiColumn', 'prefill', 'prefillMode', 'mask', 'required', 'minLength',
+     'maxLength', 'pattern', 'patternMessage', 'email', 'readonly', 'lockedMsg',
+     'requiredWhen', 'requiredMessage', 'options', 'allowOther', 'optionsFrom',
+     'columns', 'rows', 'min', 'max', 'step', 'placeholder',
+     'height'].forEach(k => delete f[k]);
+    if ((typeof f.src !== 'string' || !f.src) && (typeof f.text !== 'string' || !f.text)) {
+      f.src = EMBED_PLACEHOLDER_SRC;
+    }
+    removeDeriveRulesTouching([f.name]);
+  } else if (wasDisplayOnly(f, newType)) {
+    ['src', 'height', 'text', 'alt', 'maxWidth', 'align', 'href'].forEach(k => delete f[k]);
   }
 }
-// changeType runs AFTER f.type is reassigned, so "was it an embed?" is judged
-// by the leftover embed-only keys.
-function wasEmbed(f, newType) {
-  return newType !== 'embed' && (f.src !== undefined || f.height !== undefined);
+// changeType runs AFTER f.type is reassigned, so "was it display-only?"
+// (embed 2.6 / content §Q) is judged by the leftover type-specific keys.
+function wasDisplayOnly(f, newType) {
+  return newType !== 'embed' && newType !== 'content' &&
+    (f.src !== undefined || f.height !== undefined || f.text !== undefined ||
+     f.alt !== undefined || f.maxWidth !== undefined || f.align !== undefined ||
+     f.href !== undefined);
 }
 
 // ── Debug / test surface ─────────────────────────────────────────────────────

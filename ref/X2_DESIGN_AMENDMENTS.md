@@ -646,3 +646,80 @@ button. Diagnosis and fix, recorded because the finding is system-wide.
    all false positives (its step 1 is `get_settings` with
    `output_var: "settings"`, so the root is a real variable that merely
    collides with a table name).
+
+## §Q — `content` field type (display-only image/text, external-safe) (2026-08-14)
+
+**Supermanager charter (APPROVED): `type:'content'`, textContent,
+signature-excluded, `showWhen` honored; the `.yc-error` exemption GRANTED as a
+recorded carve-out — content joins `embed` in the display-only class. Spec
+ironed out with Fred 2026-08-14; built same day, manager-self mode.**
+
+1. **The use case is images** — a logo or illustration placed inside the form
+   body (the header-logo case was already solved by the `/p/form` branded host
+   page). It **works on external/public forms**, which is the decision that
+   shaped everything: there is NO `html` field type (considered and dropped —
+   internal forms already execute author-supplied per-form `code`, so an HTML
+   field adds nothing internally, while externally it would reopen the exact
+   hole `scanExternalRefusals` closes). `el()` in render.html has no innerHTML
+   path and that remains a structural guarantee.
+
+2. **Shape:** `{ type:'content', name, label?, sublabel?, width?, src?,
+   text?, alt?, maxWidth?, align?, href?, showWhen? }`. At least one of
+   `src` (https image URL) / `text` (≤2000-char caption or standalone display
+   copy) is required — the name stays `content` rather than `image`
+   precisely because text-only display copy is legal (Fred-confirmed). `src`
+   and `href` are https-only ≤2000 chars (embed's URL rules); `maxWidth` is a
+   positive int with the image always additionally capped at 100% of its
+   column (`max-width:min(Npx,100%)`); `align` is a `left|center|right` enum
+   applied as wrapper text-align; `href` wraps the image in a new-tab link.
+
+3. **External-safe by construction, so NOT in `scanExternalRefusals`.**
+   Every value reaches the DOM via textContent/setAttribute — enum/integer
+   values are validated before touching any `style` attribute, URLs are
+   re-checked https in the renderer (degrade + warn, the embed pattern). The
+   image carries `referrerpolicy="no-referrer"` + `loading="lazy"` and the
+   link `rel="noopener noreferrer"`: the external form URL carries the 40-bit
+   case credential in its query string and no app-wide referrer policy
+   exists. Browser defaults already strip the query cross-origin — this is
+   defense-in-depth, the same concern the arc legislated for `redirectBack`
+   (§K), at the cost of one attribute. A test locks the refusal scan CLEAN on
+   content while re-asserting it still refuses embed.
+
+4. **Everything else is the embed precedent, copied:** display-only key
+   rejection in `validateDefinition` (embed's list + the embed-only
+   `height`); repeater refusal; condition-target and derive rejects;
+   signature exclusion server- and client-side; renderer registration skip
+   (`collect()`/validate/PATCH never see it — zero yc-forms.js changes, as
+   with embed in 2.6); no `.yc-error` (the charter carve-out); a
+   `data-yc-content="{name}"` selector for per-form code. The submission PDF
+   **omits content entirely** — image AND caption: chromium renders with the
+   network blocked, so an external `src` reaching the print HTML would fail
+   the whole render with `ESIGN_RENDER_EXTERNAL_REF`, and printing the
+   caption without its image would misrepresent what the block was.
+
+5. **Builder:** `content` in the palette; a new field seeds
+   `src = EMBED_PLACEHOLDER_SRC` (the SPLIT_AC valid-from-birth rule —
+   content requires ≥1 of src/text, so a seeded src keeps every draft save
+   green); the inspector's Content group takes the URL with a
+   **Choose image…** button through the shared `AssetPicker`
+   (`/js/assetpicker.js`, now loaded by formBuilder.html; `apiSend` passed
+   explicitly per the communicate.html precedent), alt, max width
+   (positive-int-only writer, the embed height pattern), align, link URL and
+   display text — with cross-field validate flags when a save would empty
+   both src and text. `changeType` gained a content branch; the old
+   `wasEmbed` cleanup became `wasDisplayOnly` covering both types' keys, and
+   the embed branch now also strips content-only keys so embed↔content
+   conversions leave nothing behind (those conversions skip the
+   reference-removal confirm — neither type can carry references).
+
+6. **Files:** `services/formTemplateService.js` (KNOWN_TYPES, validation
+   block, condition/derive guards, signature), `public/forms/render.html`
+   (content branch + registration skip), `public/formBuilder.html` (palette,
+   seed, changeType, inspector, signature, assetpicker script),
+   `services/formPdfService.js` (omission + header note),
+   `tests/formRender.content.test.js` (19 — markup contract, degrade paths,
+   showWhen, exclusion + byte-identity proxy, full validator matrix,
+   refusal-scan clean, PDF omission), manual 02/13, 02/14, 02/15, and this
+   section. **No SQL, no routes, no new dependencies.** Suite 3109→3128
+   pass / 1 pre-existing skip; every stored definition round-trips
+   byte-identically (no content field = zero new artifacts, asserted).
