@@ -576,3 +576,73 @@ Fred's four rulings 2026-08-14.
    `tests/formpdf.x51.test.js` (15) + `tests/formpdf.x5.test.js` (retargeted),
    manual 02/11, 02/15, 03/05, 03/06, and
    `ref/2026-08-14_x51_pdf_wiring.sql`.
+
+---
+
+## §P — X5.1c: the render moved out of the background (2026-08-14)
+
+X5.1 shipped correct and worked in every respect except one: the render
+itself failed on real form submissions while succeeding from the staff
+button. Diagnosis and fix, recorded because the finding is system-wide.
+
+1. **Cause: Cloud Run CPU throttling, not a broken container.** Workflow
+   steps run detached after the response; under request-based billing an
+   idle instance gets a sliver of CPU. Evidence: identical code succeeded
+   in-request (Form Inbox button, manual re-run, a submission made while
+   Fred was actively using the app) and failed on an idle instance — first
+   at a 30s chromium launch timeout, then at a 15s navigation timeout. A
+   defect does not relocate between stages; starvation does. Corroborating:
+   wf40's pure-JS formatter step measured 137ms–3800ms (27x) across runs.
+
+2. **Fix (X5.1c): wf40 step 3 became a `webhook` step calling the app's own
+   `POST /api/forms/submissions/:id/pdf/file`** with credential 1 (YisraCase
+   Internal). Cloud Run serves that as a real request with a full vCPU, and
+   because CPU is allocated per INSTANCE the awaiting background step speeds
+   up with it. Zero new code — the route (X5.1), the internal credential,
+   the webhook step type and `app_url` all already existed. Verified live:
+   execution 9137.
+
+3. **Rejected: instance-based billing** (`--no-cpu-throttling`), which would
+   have fixed every background step. Priced against confirmed config (1 vCPU
+   / 1 GiB, us-east1, official rates 2026-08-14): CPU $0.000018/vCPU-s +
+   memory $0.000002/GiB-s over a 2,628,000-second month = $52.56 gross, less
+   the ~$5.22 instance-based free tier (240k vCPU-s / 450k GiB-s) =
+   **~$47/month, ~$570/year**, because the 5-minute scheduler ping keeps an
+   instance alive 24/7. Current request-based spend on this line is ~$0 (well
+   inside the 180k vCPU-s free tier). Declined: only chromium was BROKEN;
+   everything else was merely slower. Revisit if background CPU work becomes
+   common.
+
+4. **Rejected: retry-then-abort on the step.** Retries run in the same
+   throttled context (same starved instance), so they are lottery tickets;
+   and `abort` sets terminalFailure, which would kill the execution and lose
+   the notification email — the precise outcome `ignore` exists to prevent.
+
+5. **`{{this}}`, not `{{this.output}}`.** For a webhook step the raw result
+   is the parsed response body (`job_executor` returns `result.data`) and
+   `context.this` is set to it before set_vars resolve. The comment in
+   `lib/job_executor.js` claimed `{{this.output.X}}` access was preserved —
+   wrong, and corrected in this slice. Production had the answer all along
+   (wf16 step 2 `{{this.records.0.result}}`, wf15 step 2
+   `{{this.to.0.phoneNumber}}`). Because the route returns the same verdict
+   object the internal function does, storing `{"pdf": "{{this}}"}` left step
+   4 untouched. This is the SAME failure mode as §O's `|default:` bug — a
+   wrong comment, and a resolver that blanks what it cannot resolve.
+
+6. **Also shipped: `pdfRenderService` timeouts.** Launch timeout was never
+   set, so it was puppeteer's laptop-tuned 30s default — the exact number in
+   the first production failure. Now explicit and env-tunable
+   (`PDF_RENDER_LAUNCH_TIMEOUT_MS` 120s, `PDF_RENDER_NAV_TIMEOUT_MS` 60s
+   raised from a hardcoded 15s, `PDF_RENDER_PROTOCOL_TIMEOUT_MS` 240s).
+   Insurance for cold starts; not a substitute for execution context.
+
+7. **`render_submission_pdf` remains supported and registered.** X5.1c
+   changed how wf40 calls it, not whether it exists — an in-process call is
+   still correct anywhere the work runs inside a request.
+
+8. **Sweep completed (§O follow-up):** all 222 workflow steps scanned for
+   modifier-style `{{x|y}}` placeholders — zero remaining. A second sweep for
+   table-style `{{table.column}}` in workflow steps found 7, all in wf37 and
+   all false positives (its step 1 is `get_settings` with
+   `output_var: "settings"`, so the root is a real variable that merely
+   collides with a table name).

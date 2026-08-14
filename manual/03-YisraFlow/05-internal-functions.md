@@ -738,10 +738,17 @@ Chromium renders are serialized on the container — treat this as a heavyweight
 
 ```
 2  PDF wanted?            evaluate_condition  make_pdf == true  → 3, else 4
-3  Render submission PDF  render_submission_pdf  output_var "pdf"   [error_policy: ignore]
+3  Render submission PDF  webhook → POST {app_url}/api/forms/submissions/
+                            {{submission_id}}/pdf/file, credential 1
+                            (YisraCase Internal), set_vars {"pdf": "{{this}}"}
+                                                              [error_policy: ignore]
 4  Notify office          send_email  attachment_urls:
                             [{ "url": "{{pdf.temp_link}}", "name": "{{pdf.file_name}}" }]
 ```
+
+**Why step 3 is a webhook to our own URL rather than this function in-process** (2026-08-14): workflow steps run **detached, after the HTTP response is sent**, and under Cloud Run's default billing setting an instance only gets CPU while it is processing a request. Chromium cannot start on the sliver left over. Measured on identical code: the Form Inbox PDF button (in-request) always worked, while a form submission on an idle instance failed — first on a 30 s browser-launch timeout, then on a 15 s navigation timeout, the moving failure point being the signature of starvation rather than a broken browser. Calling the app's own route turns the render back into a real request, which Cloud Run serves with a full vCPU; because CPU is allocated per *instance*, the background step awaiting the response speeds up alongside it. The alternative — instance-based billing (`--no-cpu-throttling`), which would fix every background step — priced out at ~$47/month for this service's 1 vCPU / 1 GiB, since the 5-minute scheduler ping keeps an instance alive 24/7. Rejected: the only thing actually *broken* was chromium; everything else is merely slower.
+
+Note the placeholder is `{{this}}`, **not** `{{this.output}}` — for a webhook step, `this` is the parsed response body (see 06 — Variables & Templating). Because the route returns the same verdict object the function does, step 4 needs no change.
 
 The `ignore` policy is deliberate: a PDF failure must never cost the office its notification. When no PDF was rendered, `{{pdf.temp_link}}` resolves to `''` and the mail adapters drop a url-less attachment silently, so the email sends unchanged — **that is the empty fallback, and it needs no filter syntax** (there is none in the workflow resolver; see 06 — Variables & Templating). The gmail adapter fetches the URL into the MIME body server-side, so recipients get real bytes and the ~4-hour link expiry never reaches a mailbox.
 

@@ -84,6 +84,20 @@ For `one_time` and `recurring` jobs, the actual *execution flavor* is stored in 
 
 **`calendarService`** answers "is this datetime a workday?" with Jewish business calendar awareness (Shabbos Friday 6pm – Saturday 10pm, plus the eleven strict Yom Tov holidays). `nextBusinessDay()` and `prevBusinessDay()` walk to find a valid slot, optionally with random jitter. `nextFriendlyTime()` is a lighter helper: offset N ms from now, roll to Monday 9am if the result lands Friday-evening or weekend.
 
+### Background steps run on throttled CPU (Cloud Run)
+
+**Workflow and sequence steps execute AFTER the HTTP response is sent.** Both `POST /workflows/:id/start` and the `start_workflow` internal function advance the execution fire-and-forget — nothing holds a request open while steps run.
+
+That matters because this service uses Cloud Run's **default (request-based) billing**, where an instance is allocated CPU only while it is processing a request. Between requests it is throttled hard. Consequences to design around:
+
+- **Everything background is slow, variably.** The same pure-JS step (wf40's formatter) has been measured at 137 ms on a busy instance and 3 800 ms on an idle one — a 27× spread with no code change.
+- **CPU-heavy work fails outright.** Chromium cannot complete its startup handshake on the CPU left over; PDF renders timed out in a workflow step while the identical render through an in-request route succeeded every time (2026-08-14).
+- **I/O-bound work still completes.** DB queries, HTTP calls, and email sends limp along, which is why this went unnoticed for months.
+
+If a step needs real CPU, do not do the work in-process. Have the step call the app's own HTTP route (a `webhook` step with the `YisraCase Internal` credential, id 1) so Cloud Run serves it as a genuine request with a full vCPU — CPU is allocated per *instance*, so the waiting background step speeds up too. wf40 step 3 is the worked example.
+
+The blunt alternative is instance-based billing (`--no-cpu-throttling`), which allocates CPU for the instance's whole lifetime and fixes every background step at once. Priced 2026-08-14 for this service (1 vCPU / 1 GiB, us-east1): **~$47/month**, because the 5-minute scheduler ping keeps an instance alive around the clock. Declined at that price while only one workload was actually broken — but it is the right lever if background CPU work becomes common.
+
 ### How a job flows through the system
 
 ```
