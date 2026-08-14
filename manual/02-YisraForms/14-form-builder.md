@@ -46,7 +46,16 @@ Conditions, renames, deletes, and field drags work across tabs exactly as before
 
 Turn on **Form settings → Layout → Card layout** to render each section as a card shown one at a time — Back/Next, a dot progress bar, per-card validation, auto-advance on single-choice cards, and a Review-and-Submit page (see chapter 13 for the full behavior). **Mutually exclusive with Tabbed layout** in both directions — the builder flashes a message and resets the checkbox rather than letting the server 400.
 
-The **canvas is unaffected**: it keeps editing all sections flat, because card is render-time presentation. Use **Preview** to page through the cards (preview navigation is free — Next never blocks on required fields, so you can inspect every card). For the one-question-per-card feel, author one section per question; a section with no title and a single field styles that field's label as the card heading. Presentation only — turning the checkbox on or off never bumps the schema version.
+The **canvas is unaffected**: it keeps editing all sections flat, because card is render-time presentation. Use **Preview** to page through the cards (preview navigation is free — Next never blocks on required fields, so you can inspect every card). Presentation only — turning the checkbox on or off never bumps the schema version.
+
+Authoring notes for card mode:
+
+- **One section per question** gives the one-question-per-card feel; a section with no title and a single field styles that field's label as the card heading, and its dot tooltip shows that label.
+- **A "please specify" follow-up belongs on the SAME card as its list.** Give the follow-up field a `showWhen` and leave it in the list's section: picking a normal option auto-advances, picking *Other* reveals the box and cancels the advance so the submitter can type. The card keeps its single-question heading, and the progress count never moves. (Checkgroups with **Allow other** already do this inline — the Other box is part of the field.)
+- **A whole conditional card** — a question that is only sometimes asked at all — gets its own section with the condition on the **section** (Section settings → visibility), so the card collapses out of the sequence and the dot disappears. Leaving the condition only on the field also works, since a card whose questions are all hidden is skipped, but the section-level condition is what reads correctly on the canvas.
+- **A welcome / intro card** is a section holding one **content** field and no questions: it renders display-only, Next never gates it, and it contributes nothing to the review page or the submitted data. Newlines in the content text become paragraph breaks.
+- **Auto-advance is automatic** for a card whose one visible question is a radio, select, or checkbox. To *prevent* it, put a second (unconditional) question on the same card. Free-text, date, and multi-select cards never auto-advance.
+- A `hidden` field (URL attribution like `src`) can ride on any card without turning it into a two-question card.
 
 ### Embed fields (Slice 2.6)
 

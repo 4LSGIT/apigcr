@@ -1,0 +1,319 @@
+{
+ "toggle": false,
+ "autosave": true,
+ "external": {
+  "badLink": "degrade",
+  "postSubmit": {
+   "edit": true,
+   "message": "Thank you! Your intake form has been submitted. We look forward to speaking with you."
+  }
+ },
+ "onSubmit": {
+  "pdf": true,
+  "workflow": {
+   "id": 40,
+   "initData": {
+    "labels": [
+     [
+      "Name",
+      "name"
+     ],
+     [
+      "Email",
+      "email"
+     ],
+     [
+      "Phone",
+      "phone"
+     ],
+     [
+      "Why filing",
+      "primary_reason"
+     ],
+     [
+      "Other reason",
+      "primary_reason_other"
+     ],
+     [
+      "Other reasons",
+      "other_reasons"
+     ],
+     [
+      "Housing",
+      "housing"
+     ],
+     [
+      "Major assets",
+      "major_assets"
+     ],
+     [
+      "Filed before",
+      "prev_bankruptcy"
+     ],
+     [
+      "Prior filing year(s)",
+      "prev_bankruptcy_years"
+     ],
+     [
+      "Anything else",
+      "anything_else"
+     ],
+     [
+      "Source",
+      "src"
+     ]
+    ],
+    "notify_to": "stuart@4lsg.com",
+    "log_subject": "Intake questionnaire received",
+    "title_field": "name"
+   }
+  }
+ },
+ "sections": [
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "welcome",
+       "type": "content",
+       "label": "Initial Bankruptcy Questionnaire",
+       "src": "https://www.metrodetroitbankruptcylaw.com/assets/logo-email.png",
+       "alt": "Metro Detroit Bankruptcy Law Group",
+       "maxWidth": 320,
+       "align": "center",
+       "text": "Hi! Thanks for booking a strategy session. We look forward to working with you.\n\nPlease answer a few short questions so that we will be better prepared to assist you. We want to make sure that you are eligible and that, if you file bankruptcy, you won't lose any property.\n\nAll of the information submitted is secure and will remain confidential. Thank you!"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "name",
+       "type": "text",
+       "label": "Name",
+       "width": "2x",
+       "prefill": "$load.contact_name",
+       "required": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "email",
+       "type": "text",
+       "email": true,
+       "label": "Email",
+       "prefill": "$load.contact_email",
+       "required": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "mask": "phone",
+       "name": "phone",
+       "type": "text",
+       "label": "Phone Number",
+       "prefill": "$load.contact_phone",
+       "required": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "primary_reason",
+       "type": "radio",
+       "label": "Why are you thinking about filing bankruptcy?",
+       "options": [
+        "Wage or tax refund garnishment",
+        "Car was already repossessed",
+        "Mortgage or tax foreclosure",
+        "Worried car might get repo'ed",
+        "Credit card bills",
+        "Can't afford car payments",
+        "Medical bills",
+        "Worried about credit score",
+        "Student Loans",
+        "Eviction threatened",
+        "I just got sued",
+        "Other"
+       ],
+       "required": true
+      }
+     ]
+    },
+    {
+     "fields": [
+      {
+       "name": "primary_reason_other",
+       "type": "text",
+       "label": "Other reason for filing bankruptcy?",
+       "showWhen": {
+        "op": "eq",
+        "field": "primary_reason",
+        "value": "Other"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "other_reasons",
+       "type": "checkgroup",
+       "label": "Other reasons you are thinking about filing bankruptcy?",
+       "options": [
+        "Wage or tax refund garnishment",
+        "Car was already repossessed",
+        "Mortgage or tax foreclosure",
+        "Worried car might get repo'ed",
+        "Credit card bills",
+        "Can't afford car payments",
+        "Medical bills",
+        "Worried about credit score",
+        "Student Loans",
+        "Eviction threatened",
+        "I just got sued"
+       ],
+       "sublabel": "Check all that apply.",
+       "allowOther": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "housing",
+       "type": "radio",
+       "label": "Do you own your home, are you renting, or do you live with family members?",
+       "options": [
+        "Own",
+        "Live with Family",
+        "Renting",
+        "Other"
+       ],
+       "required": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "major_assets",
+       "type": "checkgroup",
+       "label": "Do you own any of the following \"major\" assets?",
+       "options": [
+        "Car",
+        "Truck",
+        "Motorcycle",
+        "Trailer",
+        "RV",
+        "Camper",
+        "Boat",
+        "Jet Ski",
+        "\"Real\" Jewelry",
+        "Antique(s)",
+        "Artwork",
+        "Coin Collection",
+        "Stamp Collection",
+        "Baseball (or Sports) Card Collection",
+        "NO \"MAJOR\" ASSETS"
+       ],
+       "required": true,
+       "sublabel": "Anything worth more than $500. Please check all that apply.",
+       "allowOther": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "prev_bankruptcy",
+       "type": "radio",
+       "label": "Have you ever filed bankruptcy before?",
+       "options": [
+        "YES",
+        "NO"
+       ],
+       "required": true
+      }
+     ]
+    },
+    {
+     "fields": [
+      {
+       "name": "prev_bankruptcy_years",
+       "type": "text",
+       "label": "What year(s) did you previously file bankruptcy?",
+       "showWhen": {
+        "op": "eq",
+        "field": "prev_bankruptcy",
+        "value": "YES"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "rows": [
+    {
+     "fields": [
+      {
+       "name": "anything_else",
+       "rows": 3,
+       "type": "textarea",
+       "label": "Is there anything else that you feel we need to know?",
+       "placeholder": "Optional"
+      },
+      {
+       "name": "src",
+       "note": "Source attribution \u2014 ?src=facebook etc. Replaces per-channel form_keys (X2 \u00a7A).",
+       "type": "hidden",
+       "urlParam": "src"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "saveLabel": "Submit",
+ "warningText": " ",
+ "layout": "card"
+}

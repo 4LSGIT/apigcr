@@ -287,6 +287,128 @@ describe('A auto-advance', () => {
     expect(countTx(p)).toBe('3 of 3');
     expect(nextBtn(p).textContent).toBe('Review and Submit');
   });
+
+  // ── terminal-gesture set: select and checkbox advance, text/date never ──
+  function typesDef() {
+    return {
+      layout: 'card', dataMode: 'live', autosave: false, toggle: false,
+      sections: [
+        { rows: [{ fields: [{ name: 'sel', type: 'select', label: 'Choose',
+                    options: [{ value: '', label: '—' }, { value: 'x', label: 'Ex' }] }] }] },
+        { rows: [{ fields: [{ name: 'agree', type: 'checkbox', label: 'I agree' }] }] },
+        { rows: [{ fields: [{ name: 'dob', type: 'date', label: 'Date of birth' }] }] },
+        { rows: [{ fields: [{ name: 'note', type: 'text', label: 'Note' }] }] },
+      ],
+    };
+  }
+
+  test('select advances on a real choice, never on clearing back to placeholder', async () => {
+    const p = await ready(bootPage({ definition: typesDef() }));
+    const cards = qa(p, '.yc-card');
+    const sel = q(p, 'select[name="sel"]');
+
+    sel.value = 'x'; fire(p, sel, 'change');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[1]);
+
+    // back, clear to placeholder → no advance
+    prevBtn(p).click(); await sleep(20);
+    const sel2 = q(p, 'select[name="sel"]');
+    sel2.value = ''; fire(p, sel2, 'change');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[0]);
+  });
+
+  test('checkbox advances on check only — unchecking is un-answering', async () => {
+    const p = await ready(bootPage({ definition: typesDef() }));
+    const cards = qa(p, '.yc-card');
+    const sel = q(p, 'select[name="sel"]');
+    sel.value = 'x'; fire(p, sel, 'change'); await sleep(450);
+    expect(activeCard(p)).toBe(cards[1]);
+
+    const cb = q(p, 'input[name="agree"]');
+    cb.checked = true; fire(p, cb, 'change');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[2]);
+
+    prevBtn(p).click(); await sleep(20);
+    const cb2 = q(p, 'input[name="agree"]');
+    cb2.checked = false; fire(p, cb2, 'change');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[1]);       // stayed put
+  });
+
+  test('date and free text never auto-advance (change fires on blur / on a typo)', async () => {
+    const p = await ready(bootPage({ definition: typesDef() }));
+    const cards = qa(p, '.yc-card');
+    dots(p);                                     // (dots exist; nav via buttons)
+    nextBtn(p).click(); await sleep(20);         // card 1 (optional checkbox)
+    nextBtn(p).click(); await sleep(20);         // card 2 (date)
+    expect(activeCard(p)).toBe(cards[2]);
+
+    const d = q(p, 'input[name="dob"]');
+    d.value = '1982-04-17'; fire(p, d, 'input'); fire(p, d, 'change');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[2]);        // date stays put
+
+    nextBtn(p).click(); await sleep(20);
+    setText(p, 'note', 'typed then blurred');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[3]);        // text stays put
+  });
+
+  test('a follow-up revealed on the SAME card cancels the advance', async () => {
+    // "Other → please specify" on one card: picking a normal option advances,
+    // picking Other reveals the text field and must NOT skip past it.
+    const def = {
+      layout: 'card', dataMode: 'live', autosave: false, toggle: false,
+      sections: [
+        { rows: [
+          { fields: [{ name: 'reason', type: 'radio', label: 'Why?',
+              options: [{ value: 'medical', label: 'Medical bills' },
+                        { value: 'other', label: 'Other' }] }] },
+          { fields: [{ name: 'reason_other', type: 'text', label: 'Please specify',
+              showWhen: { field: 'reason', op: 'eq', value: 'other' } }] },
+        ] },
+        { rows: [{ fields: [{ name: 'tail', type: 'text', label: 'Tail' }] }] },
+      ],
+    };
+    const p = await ready(bootPage({ definition: def }));
+    const cards = qa(p, '.yc-card');
+    // the follow-up starts hidden → exactly one visible field → advances
+    pickRadio(p, 'reason', 'medical');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[1]);
+
+    prevBtn(p).click(); await sleep(20);
+    pickRadio(p, 'reason', 'other');             // reveals reason_other
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[0]);        // cancelled — did not skip it
+    expect(q(p, 'input[name="reason_other"]').closest('.yc-field').style.display)
+      .not.toBe('none');
+  });
+
+  test('a hidden field on the card is not a question — auto-advance still fires', async () => {
+    // intake carries a hidden `src` (urlParam attribution) alongside real
+    // questions; counting it as a question would silently kill auto-advance.
+    const def = {
+      layout: 'card', dataMode: 'live', autosave: false, toggle: false,
+      sections: [
+        { rows: [{ fields: [
+          { name: 'yn', type: 'radio', label: 'Yes or no?',
+            options: [{ value: 'y', label: 'Yes' }, { value: 'n', label: 'No' }] },
+          { name: 'src', type: 'hidden', urlParam: 'src' },
+        ] }] },
+        { rows: [{ fields: [{ name: 'tail', type: 'text', label: 'Tail' }] }] },
+      ],
+    };
+    const p = await ready(bootPage({ definition: def }));
+    const cards = qa(p, '.yc-card');
+    expect(cards[0].classList.contains('yc-card-single')).toBe(true);   // still "single"
+    pickRadio(p, 'yn', 'y');
+    await sleep(450);
+    expect(activeCard(p)).toBe(cards[1]);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -384,6 +506,31 @@ describe('R review page', () => {
     expect(activeCard(p)).toBe(cards[3]);
     expect(q(p, '#saveBtn').style.display).toBe('none');
     expect(nextBtn(p).style.display).toBe('');
+  });
+
+  test('answers are numbered 1..N across the review, each with its own Edit', async () => {
+    const p = await ready(bootPage({ definition: cardDef() }));
+    await fillToLast(p);
+    nextBtn(p).click(); await sleep(20);
+    const nums = qa(p, '.yc-card-review-num').map(n => n.textContent);
+    // 4 cards visible (pick='b') → name, nick, pick, beta_note, email, ok
+    expect(nums).toEqual(['1.', '2.', '3.', '4.', '5.', '6.']);
+    expect(qa(p, '.yc-card-review-edit').length).toBe(6);
+    // a titled card still shows its heading
+    expect(qa(p, '.yc-card-review-head').length).toBe(3);   // About you, Beta extras, Contact
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T — dot tooltips
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('T dot tooltips', () => {
+  test('untitled card uses the question LABEL, not the raw field name', async () => {
+    const p = await ready(bootPage({ definition: cardDef() }));
+    const ds = dots(p);
+    expect(ds[0].getAttribute('title')).toBe('About you');   // section title
+    expect(ds[1].getAttribute('title')).toBe('Pick one');    // label, not "pick"
   });
 });
 
@@ -497,5 +644,134 @@ describe('V validator + projection', () => {
     expect(out.layout).toBe('card');
     const flat = ext.projectDefinition((() => { const d = base(); delete d.layout; return d; })());
     expect('layout' in flat).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// I — the re-authored intake fixture (ref/2026-08-14_intake_cards_definition
+//     .json): the actual X6 deliverable, pinned end to end
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('I intake card fixture', () => {
+  const INTAKE = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'ref/2026-08-14_intake_cards_definition.json'), 'utf8'));
+
+  test('validates, refuses nothing externally, keeps every input field', () => {
+    expect(() => svc.validateDefinition(INTAKE)).not.toThrow();
+    expect(svc.scanExternalRefusals(INTAKE)).toEqual([]);   // intake is public
+    const inputs = [];
+    INTAKE.sections.forEach(s => (s.rows || []).forEach(r =>
+      (r.fields || []).forEach(f => { if (f.type !== 'content') inputs.push(f.name); })));
+    expect(inputs).toEqual(['name', 'email', 'phone', 'primary_reason',
+      'primary_reason_other', 'other_reasons', 'housing', 'major_assets',
+      'prev_bankruptcy', 'prev_bankruptcy_years', 'anything_else', 'src']);
+    expect(INTAKE.layout).toBe('card');
+    // the workflow the intake fires on submit must be untouched
+    expect(INTAKE.onSubmit.workflow.id).toBe(40);
+    // the welcome card is display-only — no questions, so Next can't gate it
+    const w = INTAKE.sections[0].rows[0].fields[0];
+    expect(w.type).toBe('content');
+    expect(w.src.startsWith('https://')).toBe(true);
+    expect(w.text).toContain('\n\n');                      // real paragraph breaks
+  });
+
+  test('welcome card renders display-only and never blocks Next', async () => {
+    const p = await ready(bootPage({ definition: INTAKE }));
+    expect(qa(p, '.yc-card').length).toBe(10);
+    expect(countTx(p)).toBe('1 of 10');
+    const first = qa(p, '.yc-card')[0];
+    expect(first.querySelector('[data-yc-content="welcome"]')).toBeTruthy();
+    expect(first.querySelector('img').getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(first.classList.contains('yc-card-single')).toBe(false);   // no questions
+    expect(dots(p)[0].getAttribute('title')).toBe('Initial Bankruptcy Questionnaire');
+    // no registered field on the card → Next passes with nothing filled in
+    nextBtn(p).click(); await sleep(20);
+    expect(countTx(p)).toBe('2 of 10');
+    // and the welcome copy never reaches collect()
+    expect('welcome' in p.win.ycForm.collect()).toBe(false);
+  });
+
+  test('flow: stable 10 cards, list keeps its own Other box, radios auto-advance', async () => {
+    const p = await ready(bootPage({ definition: INTAKE }));
+    nextBtn(p).click(); await sleep(20);                    // past welcome
+    setText(p, 'name', 'Test Tester');      nextBtn(p).click(); await sleep(20);
+    setText(p, 'email', 'stuart@4lsg.com'); nextBtn(p).click(); await sleep(20);
+    setText(p, 'phone', '2485592400');      nextBtn(p).click(); await sleep(20);
+    expect(countTx(p)).toBe('5 of 10');
+
+    // the list card keeps its heading styling despite carrying a follow-up
+    const reasonCard = qa(p, '.yc-card')[4];
+    expect(reasonCard.classList.contains('yc-card-single')).toBe(true);
+    expect(q(p, 'input[name="primary_reason_other"]').closest('.yc-field').style.display)
+      .toBe('none');
+
+    // "Other" reveals the box ON THIS CARD and cancels the auto-advance
+    pickRadio(p, 'primary_reason', 'Other');
+    await sleep(450);
+    expect(countTx(p)).toBe('5 of 10');                     // stayed put
+    expect(q(p, 'input[name="primary_reason_other"]').closest('.yc-field').style.display)
+      .not.toBe('none');
+    setText(p, 'primary_reason_other', 'e3d12');
+    nextBtn(p).click(); await sleep(20);
+
+    // checkgroup never auto-advances
+    const box = qa(p, '[data-yc-checkgroup="other_reasons"] input[type=checkbox]')
+      .find(i => i.value === 'Eviction threatened');
+    box.checked = true; fire(p, box, 'change');
+    await sleep(450);
+    expect(countTx(p)).toBe('6 of 10');
+    nextBtn(p).click(); await sleep(20);
+
+    pickRadio(p, 'housing', 'Own'); await sleep(450);
+    expect(countTx(p)).toBe('8 of 10');                     // radio auto-advanced
+
+    const noAssets = qa(p, '[data-yc-checkgroup="major_assets"] input[type=checkbox]')
+      .find(i => i.value.indexOf('NO') === 0);
+    noAssets.checked = true; fire(p, noAssets, 'change'); await sleep(30);
+    nextBtn(p).click(); await sleep(20);
+
+    // NO → no follow-up revealed → auto-advance straight on
+    pickRadio(p, 'prev_bankruptcy', 'NO'); await sleep(450);
+    expect(countTx(p)).toBe('10 of 10');
+    expect(dots(p).length).toBe(10);                        // count never moved
+    expect(nextBtn(p).textContent).toBe('Review and Submit');
+
+    nextBtn(p).click(); await sleep(30);
+    expect(q(p, '.yc-card-review').style.display).toBe('');
+    // 10 answers; the welcome card contributes none
+    expect(qa(p, '.yc-card-review-num').map(n => n.textContent))
+      .toEqual(['1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.']);
+    const txt = q(p, '.yc-card-review').textContent;
+    expect(txt).toContain('Test Tester');
+    expect(txt).toContain('e3d12');
+    expect(txt).toContain('\u2014');                        // anything_else blank
+    expect(txt).not.toContain('What year(s)');              // hidden follow-up skipped
+    expect(txt).not.toContain('Thanks for booking');        // welcome copy not an answer
+    expect(q(p, '#saveBtn').style.display).toBe('');
+  });
+
+  test('YES on prior bankruptcy reveals the year box on the same card', async () => {
+    const p = await ready(bootPage({ definition: INTAKE }));
+    const cards = qa(p, '.yc-card');
+    expect(q(p, 'input[name="prev_bankruptcy_years"]').closest('.yc-field').style.display)
+      .toBe('none');
+    // jump straight there in preview-free fashion: fill forward
+    nextBtn(p).click(); await sleep(20);
+    setText(p, 'name', 'T');   nextBtn(p).click(); await sleep(20);
+    setText(p, 'email', 't@x.test'); nextBtn(p).click(); await sleep(20);
+    setText(p, 'phone', '2485592400'); nextBtn(p).click(); await sleep(20);
+    pickRadio(p, 'primary_reason', 'Medical bills'); await sleep(450);
+    expect(countTx(p)).toBe('6 of 10');                     // normal pick DID advance
+    nextBtn(p).click(); await sleep(20);
+    pickRadio(p, 'housing', 'Own'); await sleep(450);
+    const noAssets = qa(p, '[data-yc-checkgroup="major_assets"] input[type=checkbox]')
+      .find(i => i.value.indexOf('NO') === 0);
+    noAssets.checked = true; fire(p, noAssets, 'change'); await sleep(30);
+    nextBtn(p).click(); await sleep(20);
+    expect(activeCard(p)).toBe(cards[8]);
+    pickRadio(p, 'prev_bankruptcy', 'YES'); await sleep(450);
+    expect(activeCard(p)).toBe(cards[8]);                   // cancelled — box revealed
+    expect(q(p, 'input[name="prev_bankruptcy_years"]').closest('.yc-field').style.display)
+      .not.toBe('none');
   });
 });

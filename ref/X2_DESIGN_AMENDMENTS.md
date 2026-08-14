@@ -742,14 +742,37 @@ BINDING: card + tabs mutually exclusive at `validateDefinition`.**
 
 2. **Granularity (Fred D1): card = top-level section, zero new schema.** The
    one-question-per-card Jotform feel is AUTHORING — one section per
-   question; a section with no title and exactly one registered field gets
-   `.yc-card-single` (the field label styles as the card heading). Multi-
-   field sections give grouped cards. **Auto-advance** (Fred, from the
-   Jotform screenshots): a card whose only registered field is a radio or
-   select advances ~300 ms after a selection that passes the card's
-   validation — never checkbox/checkgroup (toggle ambiguity), never
-   multi-field cards. `change` fires only from user interaction, so
-   populate()/draft-restore/prefill can never trigger it.
+   question; a section with no title and exactly one *question* gets
+   `.yc-card-single` (the field label styles as the card heading, and is the
+   dot tooltip). Multi-field sections give grouped cards. Two per-card name
+   lists, deliberately different: `fieldNames` (everything carrying
+   validation rules, including `hidden` — narrows `config.validation`) and
+   `questionNames` (what a human answers, `hidden` excluded — drives the
+   single-question class and auto-advance). `hidden` renders as a bare input
+   with no `.yc-field` wrapper, so counting it as a question would have
+   silently disabled auto-advance on any card carrying one — which is every
+   intake tail card (`src`).
+
+2a. **Auto-advance, widened on Fred's "any field that makes sense"
+   (2026-08-14).** The rule is a TERMINAL GESTURE: one interaction that
+   completes the answer, where `change` means "done" rather than "still
+   typing". IN: `radio`, `select`, `checkbox` — the latter only on the
+   transition to checked, since clearing a select back to its placeholder or
+   unchecking a box is un-answering and an optional field's validation would
+   not catch it. OUT, with reasons that are not stylistic:
+   `text`/`textarea`/`number`/`tags` fire `change` on **blur**, and blur is
+   what clicking Next causes — advancing on it would move the form out from
+   under the submitter; `date`/`datetime` LOOK terminal but are not, because
+   a mistyped year commits a valid `change` and the person is a card away
+   before noticing (this is where Typeform draws the line too, and the cost
+   of being wrong is a wrong DOB on a bankruptcy filing); `checkgroup` is
+   multi-select by definition. Additional guard: the "one question" test is
+   evaluated against *currently visible* questions at fire time, so a
+   selection that reveals a follow-up on the SAME card ("Other → please
+   specify") cancels the advance instead of skipping the field it just
+   revealed. On the last card an auto-advance enters review. `change` fires
+   only from user interaction — populate()/draft-restore/prefill write
+   programmatically — so restores never trigger it.
 
 3. **Per-card validation = the REAL `validate()` under a temporarily
    narrowed `config.validation`** (swap → validate → restore in `finally`).
@@ -774,15 +797,28 @@ BINDING: card + tabs mutually exclusive at `validateDefinition`.**
    navigation time by walking the card's single-child `.ycr-and-wrap`/
    section chain for inline `display:none` — the engine's own signal).
 
+4a. **All-questions-hidden cards are skipped (found by smoke-running the real
+   intake, 2026-08-14).** Intake's conditionals live on the FIELD, not the
+   section, so splitting it one-question-per-card produced two cards that
+   stayed in the sequence while their only question hid — blank cards with a
+   Next button. Since the builder makes exactly this mistake one drag away,
+   `cardHidden()` now also treats "has questions, none visible" as hidden.
+   A card with NO questions (a `content`-only intro card) is deliberately
+   not swept up. The intake fixture additionally carries the condition on
+   the section, which is the form an author should read.
+
 5. **Review page (Fred D4, the screenshots' flow).** The last card's Next
    reads "Review and Submit" and runs the FULL unscoped `validate()` — a
    required field on any card, visited or not, blocks entry with the
    offending card revealed and scrolled (the tab-reveal pattern; the same
    second-#saveBtn-listener ordering guarantee). The review is generated
-   fresh at every entry from the definition + live DOM: option LABELS not
-   values, checkbox Yes/No, visible-but-blank = em-dash, condition-hidden
-   fields and display-only types skipped, repeater items enumerated, Edit
-   link per card. Submit IS `#saveBtn` — present in the DOM from birth (the
+   fresh at every entry from the definition + live DOM: answers numbered
+   1..N across the whole form (screenshot 5), option LABELS not values,
+   checkbox Yes/No, visible-but-blank = em-dash, condition-hidden fields,
+   `hidden` and display-only types skipped, repeater items enumerated, and
+   an Edit link on every answer row (a titled card keeps its heading; an
+   untitled one-question card IS its question, so a heading there would just
+   repeat the label). Submit IS `#saveBtn` — present in the DOM from birth (the
    YCForm CONSTRUCTOR grabs it by id at line ~73, an even earlier bind than
    the init-step-1 listener the boot prompt warned about), hidden until
    review. A failed Submit exits review to the offending card.
@@ -832,3 +868,97 @@ Phase D (SMS cutover — staged at `ref/2026-08-13_phase_d_sms_cutover.sql`,
 deferred, no timeline) and two DECLINED futures (file/image upload — needs
 its own chartered security review; externally-addressed receipt emails — an
 open-relay channel on an unauthed endpoint).
+
+
+### §R addendum — X6 follow-on, same session (2026-08-14)
+
+Delivered with the slice, after Fred's answers ("draft the intake re-author"
++ "auto-advance on any field that makes sense"):
+
+- **Auto-advance widened** to the terminal-gesture set with the
+  visible-question recheck and the non-empty guard — see §R.2a above.
+- **`questionNames` vs `fieldNames`** split (§R.2), **all-questions-hidden
+  card skip** (§R.4a), **numbered review rows with per-row Edit** (§R.5),
+  and **label-derived dot tooltips** for untitled cards.
+- **`ref/2026-08-14_intake_cards_definition.json`** — the live intake (id 8,
+  published, public) re-authored into 11 one-question sections, `layout:
+  "card"`, conditionals promoted to section level. Verified against the live
+  definition: **`fieldSignature` IDENTICAL** (so publishing it does NOT bump
+  `schema_version` and existing submissions keep matching), every field
+  object byte-identical, all non-`sections` top-level keys untouched
+  (`external`, `onSubmit` wf40 + `initData.labels`, `saveLabel`,
+  `warningText`, `autosave`), `scanExternalRefusals` clean. Pinned by the
+  suite's `I` block, which smoke-runs the whole flow: 9 cards at rest,
+  "Other" reveals card 5, `prev_bankruptcy=NO` skips the years card, three
+  radios auto-advance, checkgroups do not, review numbers 1..10.
+- **Known edge, unchanged from the flat form:** a `required` field that is
+  condition-hidden with no `requiredWhen` blocks submission with an
+  invisible error. In card mode the reveal lands on a blank card rather than
+  a blank spot in a long page. Same authoring bug, same cure
+  (`requiredWhen`); fixing it properly means touching yc-forms, which this
+  arc does not.
+
+
+### §R addendum 2 — welcome card, follow-ups on the list card, content newlines (2026-08-14)
+
+Fred's answers: welcome/START card YES, intake stays fully untitled, plus the
+question "put the others on the page of the lists? should we modify `content`
+or make another type that allows formatted text?"
+
+1. **"Other → please specify" now lives on the SAME card as its list** (intake
+   `primary_reason` + `primary_reason_other`, `prev_bankruptcy` +
+   `prev_bankruptcy_years`). This is strictly better than the separate-card
+   split and needed no new code — §R.2a's visible-question recheck already
+   produces the ideal behavior: a normal pick auto-advances, *Other* reveals
+   the box and cancels the advance. Bonus: the card count no longer grows
+   mid-form (a progress bar that gets longer as you answer is unsettling), so
+   intake is a stable 10 cards throughout. Checkgroup `allowOther` was already
+   inline (the Other box is part of the field), so `other_reasons` and
+   `major_assets` needed nothing.
+
+2. **`.yc-card-single` now counts BASE questions** — questions without
+   `showWhen`. A conditional follow-up is a sub-question of the card's real
+   question, not a second question, so the list keeps its heading styling
+   while carrying its own specify-box. Without this, merging the follow-up
+   onto the list card would have silently demoted intake's biggest question
+   (12 options) out of heading styling.
+
+3. **Welcome / START card** (Fred's screenshot 1): a section holding one
+   `content` field and no questions. Falls out of the existing design —
+   `fieldNames` is empty so `scopedValidate` returns true and Next never
+   gates; `cardHidden`'s all-questions-hidden sweep explicitly exempts
+   question-less cards; it contributes nothing to the review page or to
+   `collect()`. Dot tooltip falls back to the content field's label. Logo is
+   the real mdblg asset already used by `scripts/gen_signatures.js`
+   (`metrodetroitbankruptcylaw.com/assets/logo-email.png`, 400x200, verified
+   200/image-png), which is the brand on the Jotform screenshots.
+
+4. **`content` modified, no new type — the answer to Fred's question.**
+   `.yc-content-text` gains `white-space: pre-wrap` (+ line-height,
+   overflow-wrap). CSS ONLY: no validator change, no schema change, no new
+   key, and existing single-line captions render identically. Real newlines
+   in `text` become paragraph breaks, which is what a welcome screen actually
+   needs. **A rich-text type was considered and rejected.** §Q's entire
+   safety argument is that content reaches the DOM via
+   `textContent`/`setAttribute` with NO markup path — that is why it is the
+   one display type not in `scanExternalRefusals`. A formatted-text type has
+   only two shapes: refused externally (useless, since public phone intake is
+   exactly what motivates it) or a sanitizer running on an unauthenticated
+   endpoint whose URL carries a 40-bit case credential. The second is a
+   chartered security review, not a field option. If bold/links inside body
+   copy are ever wanted, that is a new charter with a `createElement`-built
+   constrained subset and `innerHTML` banned outright.
+
+5. **Fixture re-verified after all of the above:** `fieldSignature` STILL
+   identical to the live definition — the added `content` field does not move
+   it (§Q excludes content from the signature), so publishing still does not
+   bump `schema_version`. Every input field byte-identical, all non-`sections`
+   top-level keys untouched, refusal scan clean. Suite `I` block now covers
+   the welcome card, the stable-10 flow, both same-card follow-ups, and
+   review numbering.
+
+6. **Left alone deliberately:** `housing` offers an "Other" option with no
+   free-text field to explain it — a pre-existing gap in the Jotform-era
+   content, not something card mode introduced. Adding a `housing_other`
+   field WOULD change `fieldSignature` and bump `schema_version` on publish,
+   so it is Fred's call as a content change, not a layout one.

@@ -1003,29 +1003,63 @@
     var wantCards = def.layout === 'card' && !Array.isArray(def.tabs) && !VIEW;
     var cardsMeta = null;
     if (wantCards) {
-      cardsMeta = { fieldNames: [], single: [], titles: [], sections: def.sections || [] };
+      cardsMeta = { fieldNames: [], questionNames: [], single: [], titles: [],
+                    sections: def.sections || [] };
       (def.sections || []).forEach(function (section, i) {
-        // Registered (value-carrying) field names of this card, from the
-        // DEFINITION: standard rows only — repeater fields are not in
-        // config.validation (no validation inside repeaters, contract §4.2),
-        // so a repeater card's scope is empty and Next never blocks on it.
-        var names = [];
+        // Two lists per card, deliberately different:
+        //   fieldNames    — everything that can carry validation rules, used
+        //                   to narrow config.validation (a `hidden` field CAN
+        //                   be required, and must gate Next exactly where the
+        //                   flat form's Save would)
+        //   questionNames — the fields a human actually answers (hidden
+        //                   excluded), used for the single-question class and
+        //                   the auto-advance test. `hidden` renders as a bare
+        //                   input with no .yc-field wrapper, so counting it as
+        //                   a question would silently disable auto-advance on
+        //                   any card that carries one (intake's `src`).
+        // Repeater sections contribute neither: repeater fields are not in
+        // config.validation (contract §4.2), so their scope is empty and Next
+        // never blocks on them.
+        var names = [], questions = [], base = [], firstLabel = '', anyLabel = '', contentLabel = '';
         if (!(section && Object.prototype.hasOwnProperty.call(section, 'repeater'))) {
           (section.rows || []).forEach(function (row) {
             (row.fields || []).forEach(function (f) {
-              if (f && f.name && f.type !== 'embed' && f.type !== 'content') names.push(f.name);
+              if (!f || !f.name) return;
+              if (f.type === 'content') {
+                if (!contentLabel && f.label) contentLabel = String(f.label);
+                return;
+              }
+              if (f.type === 'embed') return;
+              names.push(f.name);
+              if (f.type !== 'hidden') {
+                questions.push(f.name);
+                if (!anyLabel) anyLabel = String(f.label || f.name);
+                // "Base" questions are the ones always present. A question
+                // carrying showWhen is a FOLLOW-UP to something else on the
+                // card ("Other → please specify"), not a second question.
+                if (!f.showWhen) {
+                  base.push(f.name);
+                  if (!firstLabel) firstLabel = String(f.label || f.name);
+                }
+              }
             });
           });
         }
+        if (!firstLabel) firstLabel = anyLabel || contentLabel;
         cardsMeta.fieldNames.push(names);
-        // Single-question card (the Jotform look): exactly one registered
-        // field and no section title → the field's label styles as the card
-        // heading via .yc-card-single.
-        var single = names.length === 1 && !(section && section.title);
+        cardsMeta.questionNames.push(questions);
+        // Single-question card (the Jotform look): one BASE question and no
+        // section title → its label styles as the card heading. Counting base
+        // rather than every question is what lets a list keep its heading
+        // while carrying its own conditional "please specify" follow-up.
+        var single = base.length === 1 && !(section && section.title);
         cardsMeta.single.push(single);
+        // Dot tooltip / review heading source: the section title when there
+        // is one, otherwise the first question's LABEL (an untitled
+        // one-question card IS its question — a raw field name would read
+        // "primary reason" to a submitter).
         cardsMeta.titles.push(
-          (section && section.title) ? String(section.title)
-          : (names.length ? names[0].replace(/_/g, ' ') : ''));
+          (section && section.title) ? String(section.title) : firstLabel);
 
         var card = el('div', {
           class: 'yc-card' + (single ? ' yc-card-single' : ''),
@@ -1778,18 +1812,29 @@
       // engine sets inline display:none on the node carrying the condition —
       // the section itself, or an outer .ycr-and-wrap (AND arrays nest
       // single-child wrappers). Walk that single-child chain.
-      function cardHidden(cardEl) {
+      function cardHidden(cardEl, i) {
         var n = cardEl.firstElementChild;
         while (n) {
           if (n.style.display === 'none') return true;
           if (n.classList.contains('ycr-and-wrap')) { n = n.firstElementChild; continue; }
-          return false;
+          break;
         }
-        return true;   // empty card = nothing to show
+        if (!n) return true;                    // empty card = nothing to show
+        // A card whose questions are ALL condition-hidden is a blank card
+        // with a Next button — skip it. This is the field-level-showWhen
+        // case: promoting a conditional field onto its own card (exactly
+        // what the builder makes easy) leaves the SECTION visible while its
+        // only question hides. Authoring the condition on the section is
+        // still the clearer form; this makes the other form behave the same
+        // instead of showing an empty card. A card with no questions at all
+        // (a `content`-only intro card) is NOT swept up by this.
+        var qs = maps.cards.questionNames[i] || [];
+        if (qs.length && !visibleFieldsOn(i).length) return true;
+        return false;
       }
       function visibleIdx() {
         var out = [];
-        cardEls.forEach(function (c, i) { if (!cardHidden(c)) out.push(i); });
+        cardEls.forEach(function (c, i) { if (!cardHidden(c, i)) out.push(i); });
         return out;
       }
 
@@ -1923,22 +1968,35 @@
                                          text: meta.title || document.title || 'Review' }));
         var all = form_.collect();
         var vis = visibleIdx();
+        var qn = 0;                      // running question number across the whole review
         vis.forEach(function (i) {
           var section = maps.cards.sections[i] || {};
           var cardEl = cardEls[i];
           var block = el('div', { class: 'yc-card-review-block' });
-          var head = el('div', { class: 'yc-card-review-head' });
-          if (section.title) head.appendChild(el('span', { text: String(section.title) }));
-          var editBtn = el('button', { type: 'button', class: 'yc-card-review-edit', text: 'Edit' });
-          editBtn.addEventListener('click', function () { exitReview(i); });
-          head.appendChild(editBtn);
-          block.appendChild(head);
+          // A titled card gets a heading; an untitled one-question card IS
+          // its question, so the numbered item below carries it instead of a
+          // heading that would just repeat the label.
+          if (section.title) {
+            block.appendChild(el('div', { class: 'yc-card-review-head' }, [
+              el('span', { text: String(section.title) })]));
+          }
+          // One Edit affordance per answer row, next to the label (the
+          // screenshot's shape) — every row is one click from its card.
+          function itemRow(label, value) {
+            qn += 1;
+            var edit = el('button', { type: 'button', class: 'yc-card-review-edit', text: 'Edit' });
+            edit.addEventListener('click', function () { exitReview(i); });
+            return el('div', { class: 'yc-card-review-item' }, [
+              el('span', { class: 'yc-card-review-label' }, [
+                el('span', { class: 'yc-card-review-num', text: qn + '.' }),
+                ' ' + label, edit]),
+              el('span', { class: 'yc-card-review-value', text: value })]);
+          }
 
           if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
             var items = all[section.repeater];
             if (!Array.isArray(items) || !items.length) {
-              block.appendChild(el('div', { class: 'yc-card-review-item' }, [
-                el('span', { class: 'yc-card-review-value', text: '\u2014' })]));
+              block.appendChild(itemRow(String(section.title || section.repeater), '\u2014'));
             } else {
               items.forEach(function (item, n) {
                 var line = (section.fields || []).map(function (rf) {
@@ -1958,9 +2016,7 @@
                 var ctl = fc ? form_.el.querySelector(fc.el) : null;
                 var wrap = ctl ? ctl.closest('.yc-field') : null;
                 if (wrap && fieldHiddenInDom(wrap, cardEl)) return;   // showWhen-hidden → skipped
-                block.appendChild(el('div', { class: 'yc-card-review-item' }, [
-                  el('span', { class: 'yc-card-review-label', text: String(f.label || f.name) }),
-                  el('span', { class: 'yc-card-review-value', text: displayValue(f, all[f.name]) })]));
+                block.appendChild(itemRow(String(f.label || f.name), displayValue(f, all[f.name])));
               });
             });
           }
@@ -2018,12 +2074,49 @@
       });
       nextBtn.addEventListener('click', function () { goRelative(1, true); });
 
-      // Auto-advance (Fred D1, the Jotform feel): a card whose ONLY
-      // registered field is a radio or select advances ~300ms after a
-      // selection that passes the card's validation. Never on checkbox or
-      // checkgroup (toggling ambiguity), never on multi-field cards, never
-      // in review. change events fire only from user interaction — populate()
-      // writes programmatically — so draft restore / prefill never trigger it.
+      // Auto-advance (Fred D1, the Jotform feel). Fires only for a
+      // TERMINAL GESTURE: one interaction that completes the answer, where
+      // the change event means "done" rather than "still typing".
+      //   radio    — a click IS the whole answer, and can't be undone to empty
+      //   select   — native change fires on commit, not per-keystroke
+      //   checkbox — only on the transition to CHECKED (see the guard below)
+      // Deliberately NOT included:
+      //   text/textarea/number/tags — `change` fires on BLUR, and blur happens
+      //     when the user clicks Next or anywhere else on the page; advancing
+      //     on blur would move the form out from under them
+      //   date/datetime — the gesture looks terminal but isn't: a mistyped
+      //     year commits a valid `change`, and the submitter is one card away
+      //     before noticing. This is where Typeform draws the line too, and
+      //     the cost of being wrong here is a wrong DOB in a bankruptcy
+      //     filing. Next stays a click.
+      //   checkgroup — multi-select by definition; the second choice would
+      //     arrive on the wrong card
+      var ADVANCE_TYPES = { radio: 1, select: 1, checkbox: 1 };
+
+      // Registered fields on card i that are VISIBLE right now. Re-evaluated
+      // at fire time, which is what makes the "one question per card" test
+      // honest: if the selection just revealed a follow-up on the same card
+      // ("Other → please specify"), the count becomes 2 and the advance is
+      // cancelled rather than skipping past the field it just revealed.
+      function visibleFieldsOn(i) {
+        return (maps.cards.questionNames[i] || []).filter(function (n) {
+          var fc = maps.fields[n];
+          if (!fc) return false;
+          var ctl = form_.el.querySelector(fc.el);
+          var wrap = ctl ? ctl.closest('.yc-field') : null;
+          return wrap ? !fieldHiddenInDom(wrap, cardEls[i]) : true;
+        });
+      }
+      // Advance only when the gesture SET a value. Clearing a select back to
+      // its placeholder, or unchecking a checkbox, is un-answering — moving
+      // forward on it would be nonsense (and for an optional field, card
+      // validation wouldn't catch it).
+      function advanceValueOk(fc, target) {
+        if (!target) return false;
+        if (fc.type === 'select') return String(target.value || '') !== '';
+        return !!target.checked;                       // radio, checkbox
+      }
+
       form_.el.addEventListener('change', function (e) {
         if (review || cur < 0) return;
         // A change may have toggled a conditional card (the engine's own
@@ -2037,18 +2130,23 @@
           nextBtn.textContent = pos === vis.length - 1 ? 'Review and Submit' : 'Next \u2192';
         }
         renderDots();
-        var names = maps.cards.fieldNames[cur] || [];
-        if (names.length !== 1) return;
-        var fc = maps.fields[names[0]];
-        if (!fc || (fc.type !== 'radio' && fc.type !== 'select')) return;
+
         var cardEl = cardEls[cur];
-        if (!cardEl.contains(e.target)) return;
+        if (!cardEl || !cardEl.contains(e.target)) return;
+        var visNames = visibleFieldsOn(cur);
+        if (visNames.length !== 1) return;
+        var fc = maps.fields[visNames[0]];
+        if (!fc || !ADVANCE_TYPES[fc.type]) return;
+        if (!advanceValueOk(fc, e.target)) return;
         if (advTimer) clearTimeout(advTimer);
         var fromCard = cur;
         advTimer = setTimeout(function () {
           advTimer = null;
           if (review || cur !== fromCard) return;
-          goRelative(1, true);
+          // Re-check at fire time: the conditional engine may have revealed a
+          // follow-up field on this card in the interim.
+          if (visibleFieldsOn(cur).length !== 1) return;
+          goRelative(1, true);   // on the last card this enters review
         }, 300);
       });
 

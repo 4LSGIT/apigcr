@@ -700,6 +700,23 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   CONTENT FIELDS (§Q — display-only image and/or text)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Display copy is authored as plain text and reaches the DOM via textContent
+   ONLY — that no-markup-path property is the whole reason `content` is
+   external-safe and stays out of scanExternalRefusals. So paragraph breaks
+   can't come from markup; they come from real newlines in the string, which
+   this makes visible. Purely presentational: existing single-line captions
+   render exactly as before. */
+.yc-content-text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
    CARD LAYOUT (X6 — layout:"card": one section per card, Back/Next,
    dot progress, review page)
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -797,10 +814,16 @@ body {
   background: none;
   border: none;
   padding: 0;
+  margin-left: 8px;
   color: #0d6efd;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   cursor: pointer;
   text-decoration: underline;
+}
+
+.yc-card-review-num {
+  color: #adb5bd;
+  margin-right: 2px;
 }
 
 .yc-card-review-item {
