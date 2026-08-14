@@ -142,6 +142,12 @@ function badLinkMode(def) {
 const TOP_KEYS = [
   'dataMode', 'autosave', 'autosaveMs', 'toggle', 'warningText', 'saveLabel',
   'derive',
+  // X6 (§R): card layout is presentation and must survive the projection or
+  // the mode silently does not exist externally — which is where it matters
+  // most (phone intake conversion is the whole point). Validator-bounded to
+  // the single value 'card'. This exact omission shipped as a defect in §Q
+  // (content fields rendered empty externally); test-locked this time too.
+  'layout',
 ];
 const SECTION_KEYS  = ['title', 'subtitle', 'showWhen'];
 const REPEATER_KEYS = ['repeater', 'title', 'subtitle', 'addLabel', 'showWhen'];

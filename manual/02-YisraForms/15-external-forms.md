@@ -57,6 +57,11 @@ The image carries `referrerpolicy="no-referrer"` and any link
 `rel="noopener noreferrer"`, so the case credential in the form URL never
 rides a referrer.
 
+`layout: "card"` (X6, §R) is likewise **not** a refusal concern — it is pure
+presentation (chapter 13), rides the projection like any display key, and is
+exactly where card mode matters most: a phone submitter pages through short
+cards instead of scrolling a wall.
+
 The scan runs **on every external request**, not just at the moment you flip
 visibility, because publishing can change the definition after the flip. It
 also runs at publish time: publishing a definition with a refused key onto a

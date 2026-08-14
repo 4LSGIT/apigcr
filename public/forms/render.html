@@ -948,8 +948,13 @@
     //    the pre-2.6 loop verbatim (container/prefix parameterized), so
     //    sections-mode output stays byte-identical. Tabs mode calls it per
     //    sticky region and per tab panel. ──
-    function renderSectionsInto(container, sections, prefix) {
-      (sections || []).forEach(function (section, i) {
+    // baseIndex (X6): card mode renders one section per call, so warn paths
+    // need an offset to read "sections[3]" instead of "sections[0]". Every
+    // pre-X6 call site omits it (→ 0) — output and warn strings byte-identical.
+    function renderSectionsInto(container, sections, prefix, baseIndex) {
+      var idxBase = baseIndex || 0;
+      (sections || []).forEach(function (section, i0) {
+        var i = idxBase + i0;
         if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
           var rep = buildRepeaterSection(section, warn);
           // Repeater field names are validated unique form-wide (server §7), so
@@ -985,6 +990,66 @@
       });
     }
 
+    // ── Card mode (X6, amendments §R): one card per top-level section, shown
+    //    one at a time with Back/Next, a dot progress bar, per-card validation
+    //    and a generated review page before submit. PRESENTATION ONLY — the
+    //    registered fields, validation map, collect() shapes and submit wiring
+    //    are byte-identical to sections mode (renderSectionsInto is the same
+    //    single path). Gated so that absent layout, or in view mode (a stepper
+    //    on a read-only submission is N clicks to read answers — the PDF
+    //    precedent flattens too), NOTHING here runs and zero new artifacts
+    //    exist. Belt-and-braces !def.tabs: the server refuses layout+tabs, but
+    //    a hand-crafted draft must degrade to tabs, not render both.
+    var wantCards = def.layout === 'card' && !Array.isArray(def.tabs) && !VIEW;
+    var cardsMeta = null;
+    if (wantCards) {
+      cardsMeta = { fieldNames: [], single: [], titles: [], sections: def.sections || [] };
+      (def.sections || []).forEach(function (section, i) {
+        // Registered (value-carrying) field names of this card, from the
+        // DEFINITION: standard rows only — repeater fields are not in
+        // config.validation (no validation inside repeaters, contract §4.2),
+        // so a repeater card's scope is empty and Next never blocks on it.
+        var names = [];
+        if (!(section && Object.prototype.hasOwnProperty.call(section, 'repeater'))) {
+          (section.rows || []).forEach(function (row) {
+            (row.fields || []).forEach(function (f) {
+              if (f && f.name && f.type !== 'embed' && f.type !== 'content') names.push(f.name);
+            });
+          });
+        }
+        cardsMeta.fieldNames.push(names);
+        // Single-question card (the Jotform look): exactly one registered
+        // field and no section title → the field's label styles as the card
+        // heading via .yc-card-single.
+        var single = names.length === 1 && !(section && section.title);
+        cardsMeta.single.push(single);
+        cardsMeta.titles.push(
+          (section && section.title) ? String(section.title)
+          : (names.length ? names[0].replace(/_/g, ' ') : ''));
+
+        var card = el('div', {
+          class: 'yc-card' + (single ? ' yc-card-single' : ''),
+          'data-yc-card': String(i)
+        });
+        renderSectionsInto(card, [section], 'sections', i);
+        form.appendChild(card);
+      });
+
+      // Review page (generated at entry time — see buildReview in afterInit),
+      // nav bar and dot bar. All inside the form element: the conditional
+      // engine and validate() scope to this.el, and the postSubmit panel's
+      // hide-everything sweep covers them for free.
+      form.appendChild(el('div', { class: 'yc-card-review', style: 'display:none;' }));
+      form.appendChild(el('div', { class: 'yc-card-nav' }, [
+        el('button', { type: 'button', class: 'yc-btn yc-btn-sm yc-btn-secondary yc-card-prev',
+                       text: '\u2190 Previous' }),
+        el('span',   { class: 'yc-card-count' }),
+        el('button', { type: 'button', class: 'yc-btn yc-btn-sm yc-btn-primary yc-card-next',
+                       text: 'Next \u2192' })
+      ]));
+      form.appendChild(el('div', { class: 'yc-card-dots' }));
+    }
+
     if (Array.isArray(def.tabs)) {
       // ── Tabs mode (2.6, contract §4.5). issn.html structure exactly: one
       //    .yc-tab-sticky per non-empty sticky region, then .yc-tabs holding
@@ -1017,7 +1082,7 @@
         renderSectionsInto(stBot, def.stickyBottom, 'stickyBottom');
         form.appendChild(stBot);
       }
-    } else {
+    } else if (!wantCards) {
       renderSectionsInto(form, def.sections || [], 'sections');
     }
 
@@ -1046,13 +1111,19 @@
     // and a null there is an untested path) but disabled + hidden — save()
     // is unreachable.
     if (VIEW) { saveBtn.setAttribute('disabled', ''); saveBtn.style.display = 'none'; }
+    // Card mode (X6): same trap, same cure — the button exists from birth
+    // (the YCForm CONSTRUCTOR grabs it by id) but stays hidden until the
+    // review page, where it IS the Submit button. In preview it additionally
+    // stays disabled per the preview rule above.
+    if (wantCards) saveBtn.style.display = 'none';
     form.appendChild(saveBtn);
 
     return { fields: fields, validation: validation, apiMap: apiMap,
              repeaters: repeaters, prefills: prefills, loadPrefills: loadPrefills,
              urlParams: urlParams,
              optionsFroms: optionsFroms,
-             forwardMap: forwardMap, readonlySet: readonlySet };
+             forwardMap: forwardMap, readonlySet: readonlySet,
+             cards: cardsMeta };
   }
 
   // ── Hooks (§3): load /forms/hooks/{name}.js and wait for it. Missing or
@@ -1677,7 +1748,330 @@
     //    KNOWN NON-FIX: an error inside a showWhen-hidden wrapper on the
     //    ACTIVE tab stays invisible (A7-lint territory, unchanged by tabs).
     var wantTabs = Array.isArray(def.tabs);
+    var wantCards = !!maps.cards;   // renderBody computed the gate (layout card, no tabs, not VIEW)
+
+    // ── Card wiring (X6, amendments §R). Registered after init() for the
+    //    same #saveBtn-ordering guarantee tab-reveal relies on (see below),
+    //    and because the first paint needs conditionals already evaluated
+    //    (init step 13b) to skip showWhen-hidden cards. ──
+    function setupCards() {
+      var cardEls = Array.prototype.slice.call(form_.el.querySelectorAll('.yc-card'));
+      var reviewEl = form_.el.querySelector('.yc-card-review');
+      var navEl    = form_.el.querySelector('.yc-card-nav');
+      var prevBtn  = form_.el.querySelector('.yc-card-prev');
+      var nextBtn  = form_.el.querySelector('.yc-card-next');
+      var countEl  = form_.el.querySelector('.yc-card-count');
+      var dotsEl   = form_.el.querySelector('.yc-card-dots');
+      var saveBtnEl = document.getElementById('saveBtn');
+      if (!cardEls.length || !navEl) return;
+
+      var cur = -1;                 // active card index (into cardEls)
+      var review = false;           // review page showing
+      var visited = {};             // index -> true
+      var result = {};              // index -> last known scoped-validation result
+      var advTimer = null;          // auto-advance debounce
+      // Preview: free navigation — an author paging through layout must not
+      // be forced to satisfy required fields. Live mode gates Next per card.
+      var gate = !preview;
+
+      // A card is collapsed when its section subtree is condition-hidden. The
+      // engine sets inline display:none on the node carrying the condition —
+      // the section itself, or an outer .ycr-and-wrap (AND arrays nest
+      // single-child wrappers). Walk that single-child chain.
+      function cardHidden(cardEl) {
+        var n = cardEl.firstElementChild;
+        while (n) {
+          if (n.style.display === 'none') return true;
+          if (n.classList.contains('ycr-and-wrap')) { n = n.firstElementChild; continue; }
+          return false;
+        }
+        return true;   // empty card = nothing to show
+      }
+      function visibleIdx() {
+        var out = [];
+        cardEls.forEach(function (c, i) { if (!cardHidden(c)) out.push(i); });
+        return out;
+      }
+
+      // Per-card validation (charter: "per-step validation scoped to the
+      // visible section"): temporarily narrow config.validation to this
+      // card's field names and run the REAL validate() — same value
+      // extraction, masks, custom rules, error rendering; zero yc-forms
+      // changes. Safe because validate() is fully synchronous (no awaits →
+      // no interleaving inside the swap window) and rules.custom receives
+      // collect(), which is NOT narrowed, so requiredWhen conditions
+      // referencing other cards' fields still evaluate correctly.
+      function scopedValidate(i) {
+        var names = (maps.cards.fieldNames[i] || []);
+        var full = form_.config.validation, sub = {}, any = false;
+        names.forEach(function (n) { if (full[n]) { sub[n] = full[n]; any = true; } });
+        if (!any) return true;      // nothing validatable on this card
+        form_.config.validation = sub;
+        var ok;
+        try { ok = form_.validate(); }
+        finally { form_.config.validation = full; }
+        return ok;
+      }
+
+      function renderDots() {
+        while (dotsEl.firstChild) dotsEl.removeChild(dotsEl.firstChild);
+        var vis = visibleIdx();
+        vis.forEach(function (i) {
+          var cls = 'yc-card-dot';
+          if (i === cur && !review) cls += ' current';
+          else if (result[i] === false) cls += ' error';
+          else if (visited[i]) cls += ' done';
+          var clickable = (gate ? !!visited[i] : true) && !(i === cur && !review);
+          if (clickable) cls += ' clickable';
+          var d = el('button', { type: 'button', class: cls,
+                                 title: maps.cards.titles[i] || ('Step ' + (vis.indexOf(i) + 1)),
+                                 'aria-label': maps.cards.titles[i] || ('Step ' + (vis.indexOf(i) + 1)) });
+          if (clickable) {
+            d.addEventListener('click', function () {
+              if (review) { exitReview(i); return; }
+              if (i === cur) return;
+              if (gate) result[cur] = scopedValidate(cur);   // record the card being left
+              show(i);
+            });
+          }
+          dotsEl.appendChild(d);
+        });
+      }
+
+      function show(i) {
+        if (advTimer) { clearTimeout(advTimer); advTimer = null; }
+        review = false;
+        reviewEl.style.display = 'none';
+        if (saveBtnEl) saveBtnEl.style.display = 'none';
+        navEl.style.display = '';
+        dotsEl.style.display = '';
+        cur = i;
+        visited[i] = true;
+        cardEls.forEach(function (c, j) { c.classList.toggle('active', j === i); });
+        // Re-entering a known-bad card repaints its messages (a later scoped
+        // run on another card cleared every .yc-error — validate() clears
+        // globally by design).
+        if (result[i] === false) scopedValidate(i);
+        var vis = visibleIdx();
+        var pos = vis.indexOf(i);
+        var last = pos === vis.length - 1;
+        prevBtn.style.visibility = pos <= 0 ? 'hidden' : '';
+        nextBtn.textContent = last ? 'Review and Submit' : 'Next \u2192';
+        countEl.textContent = (pos + 1) + ' of ' + vis.length;
+        renderDots();
+        try { form_.el.scrollIntoView({ block: 'start' }); } catch (e) { /* older engines */ }
+      }
+
+      function goRelative(dir, gated) {
+        var vis = visibleIdx();
+        var pos = vis.indexOf(cur);
+        if (pos === -1) { if (vis.length) show(vis[0]); return; }
+        if (gate) {
+          if (dir > 0 && gated) {
+            var ok = scopedValidate(cur);
+            result[cur] = ok;
+            if (!ok) { renderDots(); return; }
+          } else {
+            // Leaving by any other route records the card's state silently
+            // (errors paint on the card being left — hidden until return).
+            result[cur] = scopedValidate(cur);
+          }
+        }
+        var nextPos = pos + dir;
+        if (dir > 0 && nextPos >= vis.length) { enterReview(); return; }
+        if (nextPos < 0) return;
+        show(vis[nextPos]);
+      }
+
+      // Review page (the screenshots' "Review and Submit" → summary →
+      // Submit). Generated fresh at every entry from the definition + the
+      // live DOM: option LABELS not values, checkbox Yes/No, blank = em-dash,
+      // condition-hidden fields and display-only types skipped, repeater
+      // items listed. Everything reaches the DOM via el() — textContent /
+      // setAttribute only (contract §8; submitter-typed values render here).
+      function fieldHiddenInDom(fieldWrap, cardEl) {
+        var n = fieldWrap;
+        while (n && n !== cardEl) {
+          if (n.style && n.style.display === 'none') return true;
+          n = n.parentElement;
+        }
+        return false;
+      }
+      function optionLabel(f, v) {
+        var opts = f.options || [];
+        for (var k = 0; k < opts.length; k++) {
+          var o = optOf(opts[k]);
+          if (o.value === String(v)) return o.label;
+        }
+        return String(v);
+      }
+      function displayValue(f, raw) {
+        if (raw === undefined || raw === null || String(raw) === '') return '\u2014';
+        if (f.type === 'checkbox') return (raw === true || raw === 'true') ? 'Yes' : 'No';
+        if (f.type === 'select' || f.type === 'radio') return optionLabel(f, raw);
+        if (f.type === 'checkgroup') {
+          return String(raw).split(',').map(function (s) {
+            var t = s.trim();
+            return t ? optionLabel(f, t) : '';
+          }).filter(Boolean).join(', ') || '\u2014';
+        }
+        return String(raw);
+      }
+      function buildReview() {
+        while (reviewEl.firstChild) reviewEl.removeChild(reviewEl.firstChild);
+        reviewEl.appendChild(el('div', { class: 'yc-card-review-title',
+                                         text: meta.title || document.title || 'Review' }));
+        var all = form_.collect();
+        var vis = visibleIdx();
+        vis.forEach(function (i) {
+          var section = maps.cards.sections[i] || {};
+          var cardEl = cardEls[i];
+          var block = el('div', { class: 'yc-card-review-block' });
+          var head = el('div', { class: 'yc-card-review-head' });
+          if (section.title) head.appendChild(el('span', { text: String(section.title) }));
+          var editBtn = el('button', { type: 'button', class: 'yc-card-review-edit', text: 'Edit' });
+          editBtn.addEventListener('click', function () { exitReview(i); });
+          head.appendChild(editBtn);
+          block.appendChild(head);
+
+          if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+            var items = all[section.repeater];
+            if (!Array.isArray(items) || !items.length) {
+              block.appendChild(el('div', { class: 'yc-card-review-item' }, [
+                el('span', { class: 'yc-card-review-value', text: '\u2014' })]));
+            } else {
+              items.forEach(function (item, n) {
+                var line = (section.fields || []).map(function (rf) {
+                  return (rf.label || rf.name) + ': ' + displayValue(rf, item[rf.name]);
+                }).join(' \u00b7 ');
+                block.appendChild(el('div', { class: 'yc-card-review-item' }, [
+                  el('span', { class: 'yc-card-review-label', text: (n + 1) + '.' }),
+                  el('span', { class: 'yc-card-review-value', text: line })]));
+              });
+            }
+          } else {
+            (section.rows || []).forEach(function (row) {
+              (row.fields || []).forEach(function (f) {
+                if (!f || !f.name) return;
+                if (f.type === 'embed' || f.type === 'content' || f.type === 'hidden') return;
+                var fc = maps.fields[f.name];
+                var ctl = fc ? form_.el.querySelector(fc.el) : null;
+                var wrap = ctl ? ctl.closest('.yc-field') : null;
+                if (wrap && fieldHiddenInDom(wrap, cardEl)) return;   // showWhen-hidden → skipped
+                block.appendChild(el('div', { class: 'yc-card-review-item' }, [
+                  el('span', { class: 'yc-card-review-label', text: String(f.label || f.name) }),
+                  el('span', { class: 'yc-card-review-value', text: displayValue(f, all[f.name]) })]));
+              });
+            });
+          }
+          reviewEl.appendChild(block);
+        });
+      }
+      function enterReview() {
+        // Full, UNSCOPED validation gates the review — a required field on
+        // any card (visited or not) blocks here with the offending card
+        // revealed, mirroring tab-reveal. In preview the gate is off but the
+        // Submit button stays disabled (the preview rule).
+        if (gate && !form_.validate()) { revealFirstError(); return; }
+        result[cur] = true;
+        buildReview();
+        review = true;
+        cardEls.forEach(function (c) { c.classList.remove('active'); });
+        reviewEl.style.display = '';
+        dotsEl.style.display = 'none';
+        countEl.textContent = '';
+        nextBtn.style.display = 'none';
+        prevBtn.style.visibility = '';
+        prevBtn.textContent = '\u2190 Back to form';
+        if (saveBtnEl) saveBtnEl.style.display = '';
+        try { form_.el.scrollIntoView({ block: 'start' }); } catch (e) { /* older engines */ }
+      }
+      function exitReview(target) {
+        nextBtn.style.display = '';
+        prevBtn.textContent = '\u2190 Previous';
+        var vis = visibleIdx();
+        show(typeof target === 'number' ? target : (vis.length ? vis[vis.length - 1] : 0));
+      }
+      function revealFirstError() {
+        var err = form_.el.querySelector('.yc-error.visible');
+        // Refresh dot colors from the painted DOM (a full validate marked
+        // every bad card at once).
+        cardEls.forEach(function (c, i) {
+          if (visited[i]) result[i] = !c.querySelector('.yc-error.visible');
+        });
+        if (!err) { renderDots(); return; }
+        var cardEl = err.closest('.yc-card');
+        var idx = cardEls.indexOf(cardEl);
+        if (idx === -1) { renderDots(); return; }
+        visited[idx] = true;
+        result[idx] = false;
+        if (review) exitReview(idx); else show(idx);
+        var fieldEl = err.closest('.yc-field') || err;
+        if (fieldEl.scrollIntoView) {
+          try { fieldEl.scrollIntoView({ block: 'center' }); } catch (e) { /* older engines */ }
+        }
+      }
+
+      prevBtn.addEventListener('click', function () {
+        if (review) { exitReview(); return; }
+        goRelative(-1, false);
+      });
+      nextBtn.addEventListener('click', function () { goRelative(1, true); });
+
+      // Auto-advance (Fred D1, the Jotform feel): a card whose ONLY
+      // registered field is a radio or select advances ~300ms after a
+      // selection that passes the card's validation. Never on checkbox or
+      // checkgroup (toggling ambiguity), never on multi-field cards, never
+      // in review. change events fire only from user interaction — populate()
+      // writes programmatically — so draft restore / prefill never trigger it.
+      form_.el.addEventListener('change', function (e) {
+        if (review || cur < 0) return;
+        // A change may have toggled a conditional card (the engine's own
+        // change listener ran first — init step 5 binds before this one):
+        // refresh the dot bar + counter so a card appearing/disappearing is
+        // visible immediately, not on the next navigation.
+        var vis = visibleIdx();
+        var pos = vis.indexOf(cur);
+        if (pos !== -1) {
+          countEl.textContent = (pos + 1) + ' of ' + vis.length;
+          nextBtn.textContent = pos === vis.length - 1 ? 'Review and Submit' : 'Next \u2192';
+        }
+        renderDots();
+        var names = maps.cards.fieldNames[cur] || [];
+        if (names.length !== 1) return;
+        var fc = maps.fields[names[0]];
+        if (!fc || (fc.type !== 'radio' && fc.type !== 'select')) return;
+        var cardEl = cardEls[cur];
+        if (!cardEl.contains(e.target)) return;
+        if (advTimer) clearTimeout(advTimer);
+        var fromCard = cur;
+        advTimer = setTimeout(function () {
+          advTimer = null;
+          if (review || cur !== fromCard) return;
+          goRelative(1, true);
+        }, 300);
+      });
+
+      // Card-reveal on failed save (the tab-reveal pattern): yc-forms binds
+      // its own #saveBtn listener in init step 1, so this one — registered
+      // after init() — runs SECOND on the same click; validate() runs
+      // synchronously before save()'s first await, so .yc-error.visible is
+      // already painted when this fires. Failure on the review page's Submit
+      // exits review to the offending card.
+      if (saveBtnEl) {
+        saveBtnEl.addEventListener('click', function () {
+          if (form_.el.querySelector('.yc-error.visible')) revealFirstError();
+        });
+      }
+
+      // First paint: the first condition-visible card (init step 13b has
+      // already evaluated conditionals against loaded/draft data).
+      var vis0 = visibleIdx();
+      show(vis0.length ? vis0[0] : 0);
+    }
+
     function afterInit() {
+      if (wantCards) setupCards();
       if (!wantTabs) return;
       form_.setupTabs('.yc-tab-bar', '.yc-tab-panel');
       var saveBtnEl = document.getElementById('saveBtn');

@@ -2989,6 +2989,13 @@ function insSettings(ins) {
     const kids = [
       pCheck('Tabbed layout', tabbed, v => {
         if (v && !TABS_META) {
+          // Card and tabs are mutually exclusive (X6 charter, server-enforced)
+          // — surface a legible message here rather than a 400 at save.
+          if (MODEL.layout === 'card') {
+            flash('Card layout and Tabbed layout are mutually exclusive — switch off Card layout first.');
+            renderSettings();          // reset the checkbox
+            return;
+          }
           // sections → tabs: everything onto one tab (contract §4.5)
           TABS_META = [{ label: 'Tab 1' }];
           TAB_KEY_ORDER = null;
@@ -3017,6 +3024,25 @@ function insSettings(ins) {
         (stickies ? ' · ' + stickies + ' sticky section(s)' : '') +
         ' — switching off requires a single tab and no sticky sections.' }));
     }
+    // ── Card layout (X6): one section per card with Back/Next, dot progress,
+    //    per-card validation, auto-advance on single-choice cards, and a
+    //    review page before submit. Presentation only — same fields, same
+    //    validation at submit, no schema_version bump. The canvas keeps
+    //    editing sections flat; Preview / the live form show the cards.
+    //    Mutually exclusive with Tabbed layout (server-enforced too). ──
+    kids.push(pCheck('Card layout', MODEL.layout === 'card', v => {
+      if (v) {
+        if (TABS_META) {
+          flash('Card layout and Tabbed layout are mutually exclusive — switch off Tabbed layout first.');
+          renderSettings();            // reset the checkbox
+          return;
+        }
+        MODEL.layout = 'card';
+      } else {
+        delete MODEL.layout;           // absent = the default flat form, byte-identical
+      }
+      touched(); renderSettings();
+    }, { help: 'On: each section becomes a card shown one at a time — Back/Next, dot progress, per-card validation, auto-advance on single-choice cards, and a Review-and-Submit page. For the one-question-per-card feel, make one section per question. Presentation only; the canvas still shows all sections. Mutually exclusive with Tabbed layout.' }));
     return group('Layout', kids);
   })());
 

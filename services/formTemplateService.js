@@ -141,6 +141,24 @@ function validateDefinition(def) {
     }
   }
 
+  // layout (X6, amendments §R): root-level presentation mode. The ONLY legal
+  // value is 'card' — anything else is REJECTED rather than ignored, because
+  // an ignored typo'd layout is a silent no-op the author can't see (the tabs
+  // unknown-key precedent). Card and tabs are mutually exclusive (charter's
+  // binding addition): a form is carded or tabbed, never both. Card therefore
+  // implies sections mode, which is why the sticky-keys-without-tabs rule
+  // above already makes card+sticky unrepresentable — no extra rule needed.
+  // Presentation only: layout never enters fieldSignature (it walks section
+  // lists), so toggling it can never bump schema_version.
+  if (def.layout !== undefined && def.layout !== null) {
+    if (def.layout !== 'card') {
+      throw badRequest(`layout "${def.layout}" is not supported — the only layout mode is "card" (omit the key for the default flat form)`);
+    }
+    if (hasTabs) {
+      throw badRequest('layout "card" and tabs are mutually exclusive — a form is carded or tabbed, not both');
+    }
+  }
+
   const topLevel      = new Set();  // standard-section field names + repeater keys (shared data namespace)
   const topLevelTypes = {};         // top-level field name -> type (for includes-op target checks)
   const repFieldRefs  = [];         // { name, path } — cross-checked vs topLevel in a second pass

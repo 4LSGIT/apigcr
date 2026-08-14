@@ -723,3 +723,112 @@ ironed out with Fred 2026-08-14; built same day, manager-self mode.**
    section. **No SQL, no routes, no new dependencies.** Suite 3109→3128
    pass / 1 pre-existing skip; every stored definition round-trips
    byte-identically (no content field = zero new artifacts, asserted).
+
+## §R — X6: `layout:"card"` (card-form renderer mode) (2026-08-14)
+
+**Supermanager charter (GRANTED) executed with Fred's design rulings
+2026-08-14, manager-self mode. Charter verbatim: root opt-in, absent =
+byte-identical (jsdom harness = gate); one-renderer invariant; per-step
+validation scoped to the visible section; both surfaces, no policy meaning;
+BINDING: card + tabs mutually exclusive at `validateDefinition`.**
+
+1. **Shape:** root `"layout": "card"` — the only legal value; anything else
+   is REJECTED at save rather than ignored (the tabs unknown-key rule: a
+   typo'd layout must fail loudly). Card + tabs refused per the binding
+   addition; card therefore implies sections mode, so the pre-existing
+   "sticky only with tabs" rule already makes card + sticky unrepresentable —
+   no new rule, test-locked. `fieldSignature` walks section lists only, so
+   `layout` structurally cannot bump `schema_version` (asserted).
+
+2. **Granularity (Fred D1): card = top-level section, zero new schema.** The
+   one-question-per-card Jotform feel is AUTHORING — one section per
+   question; a section with no title and exactly one registered field gets
+   `.yc-card-single` (the field label styles as the card heading). Multi-
+   field sections give grouped cards. **Auto-advance** (Fred, from the
+   Jotform screenshots): a card whose only registered field is a radio or
+   select advances ~300 ms after a selection that passes the card's
+   validation — never checkbox/checkgroup (toggle ambiguity), never
+   multi-field cards. `change` fires only from user interaction, so
+   populate()/draft-restore/prefill can never trigger it.
+
+3. **Per-card validation = the REAL `validate()` under a temporarily
+   narrowed `config.validation`** (swap → validate → restore in `finally`).
+   Defensible because validate() is fully synchronous (no awaits → the swap
+   window cannot interleave) and `rules.custom` receives `collect()`, which
+   is NOT narrowed — `requiredWhen` conditions referencing other cards'
+   fields evaluate correctly. **Zero yc-forms.js changes**, like 2.6. The
+   showWhen-hidden-field-on-the-active-card non-fix carries over unchanged
+   (Next blocks exactly where Save blocks today; `requiredWhen` remains the
+   authored cure). Known cosmetic consequence: validate() clears every
+   `.yc-error` globally by design, so a scoped run on card B clears card A's
+   painted messages — the dot stays red (recorded state) and re-entering a
+   known-bad card repaints via a scoped re-run.
+
+4. **Navigation.** Next gates on the current card; Back and visited-dot
+   jumps are free but silently record the departed card's state (the
+   red-dot-while-elsewhere behavior in Fred's screenshot 3). Dots: current
+   ring / visited-green / error-red / unvisited small + inert; title
+   tooltip; rebuilt on nav AND on any form `change` so a conditional card
+   appearing/disappearing updates the bar live. A section-level `showWhen`
+   collapses the whole card out of the sequence (indices computed at
+   navigation time by walking the card's single-child `.ycr-and-wrap`/
+   section chain for inline `display:none` — the engine's own signal).
+
+5. **Review page (Fred D4, the screenshots' flow).** The last card's Next
+   reads "Review and Submit" and runs the FULL unscoped `validate()` — a
+   required field on any card, visited or not, blocks entry with the
+   offending card revealed and scrolled (the tab-reveal pattern; the same
+   second-#saveBtn-listener ordering guarantee). The review is generated
+   fresh at every entry from the definition + live DOM: option LABELS not
+   values, checkbox Yes/No, visible-but-blank = em-dash, condition-hidden
+   fields and display-only types skipped, repeater items enumerated, Edit
+   link per card. Submit IS `#saveBtn` — present in the DOM from birth (the
+   YCForm CONSTRUCTOR grabs it by id at line ~73, an even earlier bind than
+   the init-step-1 listener the boot prompt warned about), hidden until
+   review. A failed Submit exits review to the offending card.
+
+6. **Modes (Fred D6).** Both surfaces: `layout` joined `extFormService.
+   TOP_KEYS` — the §Q outbound-allowlist trap, test-locked this time
+   (`projectDefinition` preserves it). PREVIEW shows cards with free
+   navigation: Next never blocks, all dots clickable, NO validation runs (an
+   author paging through layout must not be forced to satisfy required
+   fields, and free-paging must not paint errors); Submit stays disabled per
+   the preview rule. VIEW (`?view_submission`) renders FLAT, ignoring
+   layout — a stepper on a read-only submission is N clicks to read answers,
+   the same reasoning that flattens the PDF (§N). The postSubmit panel/
+   redirect (X3/X3.3) compose unchanged: nav/dots/review live inside the
+   form element, so the hide-everything sweep covers them.
+
+7. **Renderer mechanics:** `renderSectionsInto` gained an optional
+   `baseIndex` (default 0 — every pre-X6 call site unchanged) so per-card
+   warn paths read `sections[3]`, not `sections[0]`. Cards render through
+   the SAME single path as sections mode — `collect()` parity is asserted
+   deep-equal against a flat render of the same definition.
+
+8. **Builder:** Form settings → Layout gains a **Card layout** checkbox
+   beside Tabbed — mutual exclusion enforced in BOTH handlers with a flash +
+   checkbox reset (legible message, never a server 400). The canvas stays
+   flat (card is render-time presentation); Preview is where you see it.
+   `MODEL.layout` is a plain top-level key, so load/serialize round-trips it
+   with zero serializer changes.
+
+9. **Files:** `services/formTemplateService.js` (layout validation),
+   `services/extFormService.js` (`TOP_KEYS`), `public/forms/render.html`
+   (card branch, nav/dots/review/auto-advance wiring),
+   `public/css/yc-forms.css` (card + review styles, mobile block),
+   `public/formBuilder.html` (Layout checkbox + exclusion),
+   `tests/formRender.x6card.test.js` (14: gate, markup, navigation,
+   auto-advance, conditional cards, review gate + rendering, submit parity,
+   preview, view-flat, validator/signature/projection),
+   `tests/formBuilder_slice26.test.js` (+2 CL), manual 02/13, 02/14, 02/15,
+   and this section. **No SQL, no routes, no new dependencies, zero
+   yc-forms.js / yc-forms.css tab-block changes.** Suite 3131 → 3147 pass /
+   1 pre-existing skip; the gate holds: a definition without `layout` emits
+   zero card artifacts (asserted), and every stored definition round-trips
+   byte-identically (no live definition carries the key).
+
+**X6 closes the arc's chartered slices.** Remaining on the external arc:
+Phase D (SMS cutover — staged at `ref/2026-08-13_phase_d_sms_cutover.sql`,
+deferred, no timeline) and two DECLINED futures (file/image upload — needs
+its own chartered security review; externally-addressed receipt emails — an
+open-relay channel on an unauthed endpoint).

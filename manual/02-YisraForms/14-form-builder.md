@@ -42,6 +42,12 @@ Turn on **Form settings → Layout → Tabbed layout** to convert a flat form in
 
 Conditions, renames, deletes, and field drags work across tabs exactly as before — names are form-wide.
 
+### Card layout (X6)
+
+Turn on **Form settings → Layout → Card layout** to render each section as a card shown one at a time — Back/Next, a dot progress bar, per-card validation, auto-advance on single-choice cards, and a Review-and-Submit page (see chapter 13 for the full behavior). **Mutually exclusive with Tabbed layout** in both directions — the builder flashes a message and resets the checkbox rather than letting the server 400.
+
+The **canvas is unaffected**: it keeps editing all sections flat, because card is render-time presentation. Use **Preview** to page through the cards (preview navigation is free — Next never blocks on required fields, so you can inspect every card). For the one-question-per-card feel, author one section per question; a section with no title and a single field styles that field's label as the card heading. Presentation only — turning the checkbox on or off never bumps the schema version.
+
 ### Embed fields (Slice 2.6)
 
 The palette's **embed** type renders an https iframe (Calendly, KBB, dashboards) — display-only: never collected, validated, or saved, and it never affects schema versioning. The inspector takes the URL (https-only, validated as you type), an optional pixel height (default 600), a width, and a visibility condition. **Internal forms only.**

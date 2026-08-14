@@ -588,6 +588,7 @@ tests/formRender.slice2.test.js
 tests/formRender.slice25A.test.js
 tests/formRender.slice25B.test.js
 tests/formRender.slice26.test.js
+tests/formRender.x6card.test.js
 tests/formTemplates_slice4_service.test.js
 tests/formpdf.x5.test.js
 tests/formpdf.x51.test.js

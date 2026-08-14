@@ -96,6 +96,22 @@ Instead of top-level `sections`, a definition may carry `tabs` — **exactly one
 - The renderer emits the same `.yc-tab-bar` / `.yc-tab-panel` / `.yc-tab-sticky` markup hand-built tabbed forms use and wires `setupTabs` after init — zero yc-forms.js changes. On a failed save with the first error on an inactive tab, that tab is activated and the field scrolled into view (sticky errors are always visible, so no switch).
 - Versioning ignores layout: the field signature is order-independent across containers, so moving sections between tabs never bumps the schema version.
 
+### Card layout (X6, §R)
+
+A **root-level** `"layout": "card"` renders each top-level section as a card shown one at a time — Back/Next buttons, a dot progress bar with an "N of M" counter, per-card validation, and a generated **Review and Submit** page before the real submit. It is built for external/public phone intake: a submitter sees a short form N times instead of a wall once.
+
+```json
+{ "layout": "card", "sections": [ ... ] }
+```
+
+- `card` is the **only** legal value — anything else is rejected at save, not ignored (a typo'd layout must fail loudly, the tabs unknown-key rule). **Mutually exclusive with `tabs`.** Card therefore implies sections mode, so sticky regions are unrepresentable with it.
+- **Presentation only.** The registered fields, validation map, `collect()` shapes, submit body, workflow dispatch, storage and PDF are byte-identical to the flat form. `layout` never enters the field signature, so toggling it never bumps `schema_version`. Absent the key, the renderer emits zero card artifacts.
+- **Granularity is authoring.** One card = one section. For the one-question-per-card feel, make one section per question (the field's label styles as the card heading when the section has no title and exactly one field). Multi-field sections give grouped cards.
+- **Navigation.** Next validates the current card only (the real `validate()` run under a narrowed rule set — same messages, same masks, same `requiredWhen` semantics, and conditions may reference fields on other cards). Back never validates. Dots: current = ring, visited-valid = green, visited-with-errors = red (hover shows the card title); visited dots are clickable, unvisited are not. Leaving a card by any route silently records its state for the dot color. A card whose only registered field is a **radio or select auto-advances** ~300 ms after a selection that passes its validation (never checkbox/checkgroup, never multi-field cards).
+- **Conditional cards.** A section-level `showWhen` collapses the whole card out of the sequence — the dot disappears and Next skips it; row/field `showWhen` works inside a card as everywhere.
+- **Review page.** The last card's Next reads "Review and Submit" and runs the **full, unscoped** validation — a required field on any card (visited or not) blocks entry with that card revealed and scrolled, mirroring tab-reveal. The review lists every visible answer per card (option **labels**, checkbox Yes/No, blank = —, hidden fields skipped, repeater items enumerated) with an Edit link per card; Submit is the standard `#saveBtn`, revealed only here, and a failed Submit likewise reveals the offending card.
+- **Modes.** Preview shows the cards with **free navigation** (Next never blocks, dots all clickable, no errors painted) so an author can page through layout; the submission **view** (`?view_submission`) ignores `layout` and renders flat — a stepper on a read-only submission is N clicks to read answers, the same reasoning that flattens the PDF.
+
 ### `embed` fields (internal-only)
 
 `{ "name": "ash_auto", "type": "embed", "src": "https://calendly.com/…", "height": 600 }` renders an `<iframe>` (https-only, ≤ 2000 chars, positive-int height, default 600). Display-only: never collected, validated, or saved; excluded from the schema signature; not allowed inside repeaters; can't be a condition or derive target; `showWhen` works. The iframe carries `data-yc-embed="{name}"` for code to target. **Internal forms only** — embeds are in the portal security-review bucket.

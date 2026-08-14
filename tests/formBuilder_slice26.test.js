@@ -340,6 +340,64 @@ describe('TG tabbed-layout toggle (Form settings)', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// CL — card layout (X6): checkbox writes/deletes MODEL.layout; mutual
+//      exclusion with Tabbed layout, both directions, legible-flash not 400
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('CL card-layout toggle (Form settings, X6)', () => {
+  function checkboxByLabel(p, labelText) {
+    p.win.showTab('settings');
+    return [...p.doc.querySelectorAll('#settingsPane .prop.inline label')]
+      .find(l => l.textContent.trim() === labelText)
+      .querySelector('input');
+  }
+
+  test('card on/off writes and deletes MODEL.layout; round-trips + validates', async () => {
+    const p = await ready(bootBuilder(sectionsDraft()));
+    const c = checkboxByLabel(p, 'Card layout');
+    expect(c.checked).toBe(false);
+    c.checked = true; fire(p.win, c, 'change');
+    await sleep(10);
+    expect(p.win.FB.model.layout).toBe('card');
+    let out = ser(p);
+    expect(out.layout).toBe('card');
+    svc.validateDefinition(out);
+
+    const c2 = checkboxByLabel(p, 'Card layout');
+    expect(c2.checked).toBe(true);
+    c2.checked = false; fire(p.win, c2, 'change');
+    await sleep(10);
+    expect('layout' in p.win.FB.model).toBe(false);   // absent = flat, byte-identical
+    out = ser(p);
+    expect('layout' in out).toBe(false);
+    svc.validateDefinition(out);
+  });
+
+  test('mutual exclusion both ways — flash + reset, never a server 400', async () => {
+    // card on → tabbed blocked
+    const p = await ready(bootBuilder(sectionsDraft()));
+    let c = checkboxByLabel(p, 'Card layout');
+    c.checked = true; fire(p.win, c, 'change');
+    await sleep(10);
+    let t = checkboxByLabel(p, 'Tabbed layout');
+    t.checked = true; fire(p.win, t, 'change');
+    await sleep(10);
+    expect(p.win.FB.tabsMeta).toBeNull();             // blocked
+    expect(p.win.FB.model.layout).toBe('card');
+    expect(checkboxByLabel(p, 'Tabbed layout').checked).toBe(false);   // reset
+
+    // tabbed on → card blocked
+    const p2 = await ready(bootBuilder(tabbedDraft()));
+    const c2 = checkboxByLabel(p2, 'Card layout');
+    c2.checked = true; fire(p2.win, c2, 'change');
+    await sleep(10);
+    expect('layout' in p2.win.FB.model).toBe(false);  // blocked
+    expect(p2.win.FB.tabsMeta).not.toBeNull();
+    expect(checkboxByLabel(p2, 'Card layout').checked).toBe(false);    // reset
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // EB — embed in the builder
 // ═════════════════════════════════════════════════════════════════════════════
 
