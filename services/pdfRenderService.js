@@ -84,8 +84,54 @@ function _loadPuppeteer() {
 /** ms of idle (no render) after which the browser is closed. */
 const IDLE_CLOSE_MS = 60 * 1000;
 
+/**
+ * ── TIMEOUTS ────────────────────────────────────────────────────────────────
+ * These are sized for the SLOWEST context this code runs in, not the fastest.
+ *
+ * Renders happen in two very different places:
+ *   - inside an HTTP request (the esign preview, the form-PDF download button)
+ *     — Cloud Run gives the instance a full vCPU, and everything here takes
+ *     a second or two;
+ *   - inside a WORKFLOW STEP, which runs detached AFTER the response was sent
+ *     (workflow_engine advances fire-and-forget). Under Cloud Run's default
+ *     CPU allocation an instance is throttled hard between requests, so the
+ *     same work can take 10-30x longer — or never finish.
+ *
+ * Measured 2026-08-14 on a form submission (wf40 step 3): puppeteer's DEFAULT
+ * 30s launch timeout expired waiting for chromium's WS endpoint; on the next
+ * attempt chromium launched but setContent blew the old 15s navigation
+ * timeout. The failure MOVING between stages is the signature of "everything
+ * is slow", not of a broken browser — the same render through the in-request
+ * download button succeeded throughout.
+ *
+ * Generous timeouts are the cheap half of the fix (they cost nothing when the
+ * work is fast, and turn a hard failure into a slow success when it isn't).
+ * The real fix for background work is CPU allocation on the service —
+ * `--no-cpu-throttling`. If that is enabled, these simply never bind.
+ *
+ * All three are env-overridable so the container can be tuned without a
+ * deploy of this file.
+ */
+function _msFromEnv(name, fallback) {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
+}
+
 /** setContent navigation timeout. */
-const NAV_TIMEOUT_MS = 15 * 1000;
+const NAV_TIMEOUT_MS = _msFromEnv('PDF_RENDER_NAV_TIMEOUT_MS', 60 * 1000);
+
+/**
+ * Browser launch timeout. Puppeteer's own default is 30s — chosen for
+ * developer laptops, and the exact number that failed in production.
+ */
+const LAUNCH_TIMEOUT_MS = _msFromEnv('PDF_RENDER_LAUNCH_TIMEOUT_MS', 120 * 1000);
+
+/**
+ * Per-CDP-command ceiling. page.pdf() on a throttled instance can outlive
+ * puppeteer's 180s default, and when it does the error is an opaque
+ * ProtocolError rather than anything actionable.
+ */
+const PROTOCOL_TIMEOUT_MS = _msFromEnv('PDF_RENDER_PROTOCOL_TIMEOUT_MS', 240 * 1000);
 
 /**
  * Launch args. --no-sandbox is required: Cloud Run containers run as a single
@@ -199,7 +245,12 @@ async function _getBrowser() {
   if (!_launching) {
     const executablePath = resolveExecutablePath();
     _launching = _loadPuppeteer()
-      .launch({ executablePath, args: [...LAUNCH_ARGS] })
+      .launch({
+        executablePath,
+        args: [...LAUNCH_ARGS],
+        timeout: LAUNCH_TIMEOUT_MS,
+        protocolTimeout: PROTOCOL_TIMEOUT_MS,
+      })
       .then((b) => {
         _browser = b;
         _launching = null;
@@ -345,6 +396,8 @@ module.exports = {
   LAUNCH_ARGS,
   IDLE_CLOSE_MS,
   NAV_TIMEOUT_MS,
+  LAUNCH_TIMEOUT_MS,
+  PROTOCOL_TIMEOUT_MS,
   DEFAULT_MARGINS,
   // test hooks
   _resetForTest,

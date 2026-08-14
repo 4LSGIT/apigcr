@@ -124,7 +124,10 @@ describe('browser lifecycle', () => {
     puppeteer.launch.mockResolvedValue(makeBrowser(page));
     await svc.renderHtmlToPdf('<p>x</p>');
 
-    expect(puppeteer.launch).toHaveBeenCalledWith({
+    // objectContaining, but the ARGS ARRAY is still matched exactly — the
+    // args are a security posture (--no-sandbox et al) and must not drift.
+    // The surrounding options object gained timeouts on 2026-08-14.
+    expect(puppeteer.launch).toHaveBeenCalledWith(expect.objectContaining({
       executablePath: '/usr/bin/chromium',
       args: [
         '--no-sandbox',
@@ -133,7 +136,7 @@ describe('browser lifecycle', () => {
         '--disable-gpu',
         '--no-zygote',
       ],
-    });
+    }));
   });
 
   test('the browser is reused across renders while alive', async () => {
@@ -342,14 +345,43 @@ describe('pdf options', () => {
     }));
   });
 
-  test('setContent runs with networkidle0 and the 15s timeout', async () => {
+  test('setContent runs with networkidle0 and the configured nav timeout', async () => {
     const page = makePage();
     puppeteer.launch.mockResolvedValue(makeBrowser(page));
     await svc.renderHtmlToPdf('<p>x</p>');
 
     expect(page.setContent).toHaveBeenCalledWith('<p>x</p>', {
       waitUntil: 'networkidle0',
-      timeout: 15000,
+      timeout: svc.NAV_TIMEOUT_MS,
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeouts (2026-08-14). These are not arbitrary: puppeteer's DEFAULT 30s
+// launch timeout is what failed in production when a render ran in a workflow
+// step (detached, post-response, throttled CPU), and the old hardcoded 15s
+// navigation timeout is what failed on the retry. The point of these tests is
+// that the values are (a) explicitly passed rather than left to puppeteer's
+// laptop-tuned defaults, and (b) sized for the throttled case.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('timeouts', () => {
+  test('launch is given an explicit timeout and protocolTimeout', async () => {
+    const page = makePage();
+    puppeteer.launch.mockResolvedValue(makeBrowser(page));
+    await svc.renderHtmlToPdf('<p>x</p>');
+
+    expect(puppeteer.launch).toHaveBeenCalledWith(expect.objectContaining({
+      timeout: svc.LAUNCH_TIMEOUT_MS,
+      protocolTimeout: svc.PROTOCOL_TIMEOUT_MS,
+    }));
+  });
+
+  test('defaults comfortably exceed puppeteer\'s 30s launch default', () => {
+    // A throttled Cloud Run instance took >30s just to print the WS endpoint.
+    expect(svc.LAUNCH_TIMEOUT_MS).toBeGreaterThan(30000);
+    expect(svc.NAV_TIMEOUT_MS).toBeGreaterThan(15000);
+    expect(svc.PROTOCOL_TIMEOUT_MS).toBeGreaterThanOrEqual(svc.NAV_TIMEOUT_MS);
   });
 });
