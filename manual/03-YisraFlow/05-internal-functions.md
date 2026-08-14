@@ -706,6 +706,54 @@ Prompt-injection boundary: the engine resolves `{{placeholders}}` in **all** par
 
 ---
 
+### PDF
+
+#### `parse_pdf` (both engines)
+
+Extract text from a PDF (by URL, Dropbox path, or Dropbox file shared link) for use in later steps — e.g. feed `{{this.output.text}}` or an `output_var` into `query_ai`'s `input`. **Text-layer extraction only, no OCR** — scanned/image-only PDFs return empty text; for scans use `query_ai` with a file attachment instead. 25MB cap; page selection (`"2-4,6"`), `from_text`/`to_text` anchors, `max_length` truncation. Provide exactly one of `url` / `dropbox_path` / `dropbox_link`. Full param detail in `lib/internal_functions/pdf.js` `__meta`.
+
+#### `render_submission_pdf` (workflow only) — X5
+
+Render one **submitted** form submission (`form_submissions.id`) to an archival PDF — the layout the submitter saw (version-matched definition, `showWhen` honored against the submitted answers, option labels, masks, Yes/No checkboxes, "—" blanks; `hidden`/`embed` fields omitted) — and file it to Dropbox. Wraps `services/formPdfService.js`.
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `submission_id` | integer | yes | `form_submissions.id` of a **submitted** submission. onSubmit workflows receive it in `init_data` as `{{submission_id}}`. Drafts are refused. |
+| `filename` | string | optional | Replaces the `{date} {form title} (#id)` filename core. Sanitized; `.pdf` enforced; unsorted identity prefixes still apply. |
+| `output_var` | string | optional | Also copy the output object into a named workflow variable (`query_db`/`query_ai` convention). |
+
+**Placement ladder** (Fred's 2026-08-14 ruling — non-case submissions file, they don't error):
+
+- **case-linked** → `<case folder>/Forms/`. No linked folder → `ensureCaseDropboxFolder` auto-creates + links one and raises a staff task (source `form_pdf`). Dead link / failure → the unsorted client-uploads bin, in the same per-case subfolder the client-upload ladder uses, plus a move-task raised **after** the upload lands.
+- **contact / appt / unlinked** → the unsorted bin as a loose file with an identity prefix (`contact 12 - Jane Doe - …`, `appt 45 - …`, `submission 288 - Bob - …`). **No task** — the Form Inbox already surfaces unlinked submissions.
+- Everything failed → throws; the step's `error_policy` applies. A retry after a mid-flight failure may file a second copy (Dropbox autorename) — never lose one.
+
+**Output** (same step: `{{this.output.…}}`; later steps: `output_var`): `path` (the path **Dropbox returned** — autorename-authoritative), `file_name`, `placement` (`case`|`unsorted`), `placement_note`, `temp_link`, `temp_link_expires_note`, `warnings`, `submission_id`, `form_key`, `link_type`, `link_id`.
+
+`temp_link` is a Dropbox **temporary download link (~4h expiry, no permanent ACL)** for `send_email`'s `attachment_urls` — and it is **best-effort**: the filing never fails over the link, so it may be `null` with a warning explaining why. Guard email steps accordingly.
+
+Chromium renders are serialized on the container — treat this as a heavyweight step, not a loop body. Workflow-only (`__meta.workflowOnly`); the filename date is the submission's **created_at** in firm time (adopt bumps `updated_at`, so it stops meaning "submitted").
+
+```json
+{
+  "function_name": "render_submission_pdf",
+  "params": { "submission_id": "{{submission_id}}", "output_var": "intake_pdf" }
+}
+```
+…then:
+```json
+{
+  "function_name": "send_email",
+  "params": {
+    "to": "…", "subject": "New intake form",
+    "body": "Attached. Filed to {{intake_pdf.path}}",
+    "attachment_urls": [{ "url": "{{intake_pdf.temp_link}}", "name": "{{intake_pdf.file_name}}" }]
+  }
+}
+```
+
+---
+
 ### Dev / testing
 
 #### `set_test_var`

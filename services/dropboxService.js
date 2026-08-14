@@ -598,6 +598,27 @@ async function getTemporaryUploadLink(db, opts = {}) {
 }
 
 /**
+ * Short-lived direct-DOWNLOAD link for an existing file
+ * (files/get_temporary_link, ~4-hour expiry). Unlike getOrCreateSharedLink
+ * this creates NO permanent ACL — the URL dies on its own, which is the
+ * right leak posture for feeding send_email's attachment_urls (X5: a link
+ * sitting in a mailbox forever is a link that eventually leaks).
+ *
+ * @param {object} opts — { path? | sharedLink?, credentialId? }
+ * @returns {Promise<{link:string, metadata:object|null}>}
+ */
+async function getTemporaryLink(db, opts = {}) {
+  const credentialId = await _resolveCredential(db, opts);
+  const path = await resolveLocation(db, credentialId, {
+    path: opts.path, sharedLink: opts.sharedLink,
+  });
+  if (!path) throw new Error('dropbox getTemporaryLink requires a non-root path');
+
+  const result = await _rpc(db, credentialId, 'files/get_temporary_link', { path });
+  return { link: result.link, metadata: result.metadata || null };
+}
+
+/**
  * Pull a file FROM A URL into Dropbox via files/save_url. The transfer
  * runs on Dropbox's infrastructure — bytes never touch this instance,
  * which is the right shape for Cloud Run. The job is async; by default we
@@ -723,6 +744,7 @@ module.exports = {
   deletePath,
   // uploads & download
   getTemporaryUploadLink,
+  getTemporaryLink,
   saveUrl,
   checkSaveUrlJob,
   uploadFile,

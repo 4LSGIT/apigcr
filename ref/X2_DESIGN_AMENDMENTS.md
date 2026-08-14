@@ -422,3 +422,69 @@ grouping, matching how extFormService gates on a scopes ARRAY, not a fourth
 value. Both selectors default to unfiltered and any hidden rows are counted
 above the list: the Inbox is a work queue, so a filter that silently drops a
 submission is the one failure mode worth engineering against.
+
+---
+
+## §N — X5: submission → PDF (`render_submission_pdf`) (2026-08-14)
+
+**Supermanager charter (2026-08-13) executed with one Fred override and two
+context corrections.**
+
+1. **OVERRIDE — non-case submissions FILE, they don't ERROR.** The charter's
+   "the function requires a linked submission — unlinked submissions have no
+   case home; return a clear error" was rejected by Fred (2026-08-14): the
+   requirement existed only for save-location, and the e-sign filing ladder
+   already solved save-location for entities without a case folder. Ruling:
+   case-linked → `<case folder>/Forms/` (rung 2 `ensureCaseDropboxFolder` +
+   staff task; rung 3 the unsorted client-uploads bin in the per-case
+   subfolder + a post-upload move-task); contact/appt/unlinked → the unsorted
+   bin as a loose file with an e-sign-style identity prefix (`contact 12 -
+   Jane Doe - `, `appt 45 - `, `submission 288 - <guessed submitter name> - `)
+   and **no task** — the Form Inbox already surfaces unlinked submissions, so
+   a task per anonymous PDF would duplicate that signal. This also keeps a
+   shared onSubmit workflow with a PDF step from failing on every anonymous /
+   degrade-mode submission.
+
+2. **Context corrections to the charter (recorded, not merely applied):**
+   the ruling's "portal arc's shared fallback ladder" pointed at
+   `uploadTargetService` (client temp-UPLOAD links); the operative precedent
+   for filing a server-side buffer is `esignFilingService`'s ladder, which is
+   what X5 mirrors. And the "signature-excluded like `note`" comparison named
+   a doc-only property; the operative display-only-type precedent is `embed`.
+
+3. **What the PDF shows (Fred Q5):** exactly what the submitter saw —
+   version-matched definition via `getSubmissionForRender`, `showWhen`
+   evaluated server-side with the renderer's exact semantics (checkbox →
+   `'true'/'false'`, checkgroup CSV, ops `eq/neq/in/notEmpty/includes`,
+   array = AND), option labels, mask display formats, Yes/No checkboxes,
+   visible-but-blank = "—", `hidden`/`embed` omitted,
+   `schema_matched:false` → a visible layout note. Two deliberate deviations:
+   row columns flatten to a label/value list (print reliability), and a
+   visible section whose every field is hidden is skipped rather than
+   printing a stray heading.
+
+4. **Mechanics:** filename `{prefix}{YYYY-MM-DD} {form title} (#{id}).pdf`,
+   date = **created_at** in firm TZ (adopt bumps `updated_at`); drafts
+   refused; the returned path is the path **Dropbox returned** (autorename
+   authoritative); logo = `fe-firm_logo_url` fetched by the app process,
+   inlined as a memoized data URI (chromium is network-blocked), text-only
+   header on failure; temp link = `files/get_temporary_link` (~4h, no
+   permanent ACL — the charter's leak posture), **best-effort** after upload
+   (null + warning rather than a retry that re-files). Rung-2 merge-task
+   raised at folder-create time (the folder exists and is linked regardless
+   of the upload's fate); rung-3 move-task only after the upload lands
+   (`uploadTargetService` semantics). Workflow-only (`__meta.workflowOnly`)
+   per charter — also load-bearing: renders serialize on the 1GiB container.
+
+5. **Files:** `services/formPdfService.js` (new), `dropboxService.js`
+   (+`getTemporaryLink`), `lib/internal_functions/pdf.js`
+   (+`render_submission_pdf`), `tests/formpdf.x5.test.js` (27),
+   manual `03-YisraFlow/05-internal-functions.md` (new PDF section — also
+   closes the pre-existing `parse_pdf` doc gap). No SQL, no routes.
+
+6. **Arc-level notes recorded with this slice:** Phase D (SMS cutover) is
+   **deferred with no timeline** (staged SQL stays at
+   `ref/2026-08-13_phase_d_sms_cutover.sql`; whoever fires it re-verifies the
+   9 sequence_steps rows first), and the supermanager's mid-September
+   Jotform-chain retirement condition is **suspended** until Phase D actually
+   fires — the chain still carries live traffic.
