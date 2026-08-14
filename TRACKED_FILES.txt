@@ -285,6 +285,7 @@ ref/2026-08-11_form_templates_visibility.sql
 ref/2026-08-13_decision_requests.sql
 ref/2026-08-13_form_submissions_linkage.sql
 ref/2026-08-13_phase_d_sms_cutover.sql
+ref/2026-08-14_x51_pdf_wiring.sql
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/X2_DESIGN_AMENDMENTS.md
@@ -588,6 +589,7 @@ tests/formRender.slice25B.test.js
 tests/formRender.slice26.test.js
 tests/formTemplates_slice4_service.test.js
 tests/formpdf.x5.test.js
+tests/formpdf.x51.test.js
 tests/formrender.x2external.test.js
 tests/formrender.x4view.test.js
 tests/formsubmissions.x4.test.js

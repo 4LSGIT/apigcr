@@ -335,6 +335,14 @@ where the work happens:
   case…**, which runs the standard find-or-create New Client dialog and links
   to the case it makes.
 
+- **PDF** — download an archival PDF of the submission (shift-click opens it
+  in a tab for printing). Renders fresh and saves nothing, so it is safe to
+  press repeatedly. Also on each case's **Form Submissions** tab.
+- **File** — render *and* save the PDF to Dropbox on the ladder below, and
+  report where it landed. Unlike **PDF**, this writes: each press files
+  another copy (Dropbox autorenames), so it is a deliberate action, not a
+  refresh.
+
 Linking an **intake** onto a case also stamps `case_intake_form`
 (`yf:<submission_id>`) when it's still empty — the same stamp wf 40 writes on
 a linked submission — so the strategy-session SMS reminders stop. The adopt
@@ -344,6 +352,62 @@ row keeps `linked_by` / `linked_at` forever.
 Adoption is one-way. Linked submissions never reappear in the Inbox; each
 case's **Form Submissions** tab lists everything linked to it (adopted rows
 carry an `adopted` badge).
+
+---
+
+## Archiving submissions as PDFs (X5 / X5.1)
+
+Set **`onSubmit.pdf: true`** (builder → *Save → PDF*) and every submission of
+that form gets archived as a PDF: filed to Dropbox and attached to the
+notification email.
+
+**The flag does not render anything by itself.** It travels to the form's
+`onSubmit` workflow(s) as the variable **`make_pdf`**, and the *workflow* does
+the work — wf 40 gates a `render_submission_pdf` step on it. A form with the
+flag but no workflow gets no PDF. That split is deliberate:
+
+- the render is heavyweight (chromium, serialized), and workflow dispatch is
+  already fire-and-forget, so the submitter never waits on it;
+- a PDF failure can't cost the office its notification — the render step runs
+  with `error_policy: ignore`, and the email simply sends without the
+  attachment (an unresolved `{{pdf.temp_link}}` becomes `''`, and the mail
+  adapters drop a url-less attachment silently);
+- everything *about* the PDF stays in one place — the workflow step config —
+  rather than being split across the form builder and the workflow editor.
+
+`make_pdf` is injected by **both** dispatchers (the external submit route and
+`yc-forms` `save()`), always defined, always from the **published definition**
+— never from the request body, so a submitter can't drive server-side
+rendering by sending a field called `make_pdf`.
+
+**What the PDF contains:** what the submitter saw. The definition is
+version-matched to the submission, `showWhen` is evaluated server-side with
+the renderer's exact semantics, `select`/`radio`/`checkgroup` print option
+labels, masked fields print their display format, checkboxes print Yes/No,
+visible-but-blank prints `—`, and `hidden` / `embed` fields are omitted.
+
+**Where it files (the ladder):**
+
+| Submission | Destination |
+|---|---|
+| case-linked, folder linked | `<case folder>/Forms/` |
+| case-linked, no folder | folder auto-created and linked, **plus a staff task**, then as above |
+| case-linked, folder unreachable | unsorted form-submissions bin, in a per-case subfolder, **plus a move-task** |
+| contact / appt / unlinked | unsorted form-submissions bin, loose, identity-prefixed filename, **no task** (the Inbox already surfaces these) |
+
+The unsorted bin is its own setting — `app_settings.dropbox_unsorted_forms_path`,
+default `/  Law Office/   Cases/  Unsorted Form Submissions`. Separate from the
+client-uploads bin on purpose: a client upload is a document the firm asked for
+and must chase, a form PDF is a machine-generated archive of something already
+recorded in the app, and mixing them makes the uploads bin a work queue nobody
+can trust to be empty.
+
+Filenames are `{YYYY-MM-DD} {form title} (#{id}).pdf`, dated by the
+submission's **`created_at`** in firm time (`updated_at` moves when staff adopt
+a row, so it stops meaning "submitted").
+
+Staff can always produce a PDF on demand from the Inbox or a case's Form
+Submissions tab, whether or not the form carries the flag.
 
 ---
 

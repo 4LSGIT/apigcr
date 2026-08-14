@@ -488,3 +488,91 @@ context corrections.**
    9 sequence_steps rows first), and the supermanager's mid-September
    Jotform-chain retirement condition is **suspended** until Phase D actually
    fires — the chain still carries live traffic.
+
+---
+
+## §O — X5.1: PDF wiring (2026-08-14)
+
+X5 shipped the engine (`render_submission_pdf`) and nothing called it — no
+per-form setting, no workflow step, no UI. This slice is the wiring, per
+Fred's four rulings 2026-08-14.
+
+1. **The render runs in the WORKFLOW, not the submit route** (Fred ruling 1,
+   accepting the pushback). The original sketch was "the form makes the PDF
+   and hands it to the wf", which means chromium inside the submitter's
+   request — serialized, multi-second, and a Dropbox write in the external
+   route, breaking the arc's "workflow is the only side-effect channel"
+   invariant. Instead the FLAG travels and the workflow renders: dispatch is
+   already fire-and-forget, and `error_policy: ignore` on the render step
+   means a PDF failure cannot cost the office its notification email.
+
+2. **`onSubmit.pdf` is a BOOLEAN**, not a config object. Every decision about
+   the PDF (filename, placement overrides) belongs to the
+   `render_submission_pdf` step config, where a workflow author can see it —
+   splitting it across the form builder and the workflow editor would be two
+   places to look for one behavior. Both dispatchers (external route,
+   `yc-forms` `save()`) inject it as `make_pdf`, **always defined** (true OR
+   false) so a gate reads a real variable rather than distinguishing "off"
+   from "started some other way", and always from the PUBLISHED definition —
+   a submitter sending a `make_pdf` field cannot drive server-side rendering
+   (asserted by test: it must sit in the system block of the assign chain).
+
+3. **Form PDFs get their OWN unsorted bin** (Fred ruling 2, his naming):
+   `app_settings.dropbox_unsorted_forms_path`, default
+   `/  Law Office/   Cases/  Unsorted Form Submissions`. Not the client-uploads
+   bin: a client upload is a document the firm asked for and must chase; a
+   form PDF is a machine-generated archive of something already recorded.
+   Mixing them makes the uploads bin a work queue nobody can trust to be
+   empty. `formPdfService` consequently drops its `uploadTargetService`
+   dependency entirely — the only thing shared was the per-case subfolder
+   NAMING convention, which is three lines over the `_casePrimaryName` helper
+   already present.
+
+4. **Download and File are two buttons, not one** (Fred ruling 3). `GET
+   …/pdf` renders and hands over bytes with NO Dropbox write and NO task, so
+   pressing it repeatedly costs nothing; `POST …/pdf/file` files on the
+   ladder and is deliberately non-idempotent (Dropbox autorenames — a
+   duplicate is cheap to delete, silently skipping a re-file staff asked for
+   is not). Both are on the Form Inbox AND each case's Form Submissions tab
+   (`submissionsWidget`). One render path (`renderSubmissionPdf`) backs the
+   button, the workflow step and the email attachment, so what staff print is
+   byte-identical to what is filed — asserted by test.
+
+5. **`apiSend` gained `opts.responseType`** (`'json'` default, byte-for-byte
+   unchanged; plus `'blob'`, `'text'`, `'response'`). Fred's call, and the
+   right one: this was the THIRD hand-rolled binary transport
+   (`esignActions.esignFetchBinary` / `esignFetchPdf`, and the
+   assetManager/videoManager XHR uploads), each a private copy of the auth,
+   401-retry and error handling that lives in one place. Blast radius is
+   small — `automationManager` and `caseConfigManager` define
+   `apiSend(...args)` pass-throughs and the form pages forward `arguments`,
+   so index.html holds the only real implementation. The esign helpers still
+   work and can migrate opportunistically.
+
+6. **Two live bugs found while verifying, both fixed here:**
+   - **wf40 step 6 subject.** `"{{log_subject|default:Form submission
+     received}}"`, set 2026-08-13 10:19:43, resolved to `''` on every run —
+     every form log in that window has an empty subject (log 64784 =
+     submission 288). There is no modifier syntax in the workflow resolver:
+     the whole string including the `|` is looked up as one variable name.
+     Reverted to `{{log_subject}}` (intake's `initData` always supplied it).
+   - **The manual caused it.** `03-YisraFlow/06-variables-templating.md`
+     claimed "a workflow step's config is run through *both*" resolvers and
+     documented `|default:` without qualification. `lib/workflow_engine.js`
+     never requires `resolverService`; the variable pass consumes EVERY
+     `{{…}}` token and blanks what it can't resolve, so a `{{table.column
+     |modifier}}` in a workflow step is destroyed, not deferred. Chapter 6
+     now carries the corrected two-resolver table and the wf40 incident as a
+     worked example. Fred's proposed `{{url||default:""}}` would have hit
+     exactly this — and is unnecessary: an unresolved placeholder already
+     yields `''`, and both mail adapters drop a url-less attachment.
+
+7. **Files:** `services/formPdfService.js` (new bin, `renderSubmissionPdf`
+   extraction), `routes/api.forms.js` (+2 routes),
+   `services/formTemplateService.js` (`onSubmit.pdf`),
+   `routes/api.ext.forms.js` + `public/js/yc-forms.js` (`make_pdf`),
+   `public/index.html` (`apiSend`), `public/formBuilder.html` (toggle),
+   `public/formInbox.html` + `public/forms/submissionsWidget.html` (buttons),
+   `tests/formpdf.x51.test.js` (15) + `tests/formpdf.x5.test.js` (retargeted),
+   manual 02/11, 02/15, 03/05, 03/06, and
+   `ref/2026-08-14_x51_pdf_wiring.sql`.

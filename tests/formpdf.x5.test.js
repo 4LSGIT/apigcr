@@ -65,13 +65,6 @@ jest.mock('../services/esignAlertService', () => ({
   resolveAlertAssignee: jest.fn(async () => 22),
 }));
 
-jest.mock('../services/uploadTargetService', () => ({
-  unsortedCaseFolderPath: jest.fn(async (db, caseId) =>
-    `/  Law Office/   Cases/  Unsorted Client Uploads/${caseId} - Smith, John`),
-  UNSORTED_PATH_KEY: 'dropbox_unsorted_uploads_path',
-  DEFAULT_UNSORTED_PATH: '/  Law Office/   Cases/  Unsorted Client Uploads',
-}));
-
 jest.mock('../services/formService', () => ({
   getSubmissionForRender: jest.fn(),
 }));
@@ -81,7 +74,6 @@ const pdfRenderService = require('../services/pdfRenderService');
 const { getSetting } = require('../services/settingsService');
 const caseService = require('../services/caseService');
 const taskService = require('../services/taskService');
-const uploadTargetService = require('../services/uploadTargetService');
 const formService = require('../services/formService');
 const formPdfService = require('../services/formPdfService');
 
@@ -131,8 +123,6 @@ beforeEach(() => {
   }));
   getSetting.mockImplementation(async () => null);
   taskService.createTask.mockImplementation(async () => ({ task_id: 77 }));
-  uploadTargetService.unsortedCaseFolderPath.mockImplementation(async (d, caseId) =>
-    `/  Law Office/   Cases/  Unsorted Client Uploads/${caseId} - Smith, John`);
   db.query.mockReset();
   // Default: case row with a live folder link; name lookups find John Smith.
   db.query.mockImplementation(async (sql) => {
@@ -462,9 +452,8 @@ describe('fileSubmissionPdf — placement ladder', () => {
 
     const v = await formPdfService.fileSubmissionPdf(db, { submissionId: 286 });
 
-    expect(uploadTargetService.unsortedCaseFolderPath).toHaveBeenCalledWith(db, 'hjSFMabb');
     expect(dropboxService.uploadFile).toHaveBeenCalledWith(db, expect.objectContaining({
-      path: '/  Law Office/   Cases/  Unsorted Client Uploads/hjSFMabb - Smith, John/2026-08-10 Intake Form (#286).pdf',
+      path: '/  Law Office/   Cases/  Unsorted Form Submissions/hjSFMabb - Smith, John/2026-08-10 Intake Form (#286).pdf',
     }));
     expect(v.placement).toBe('unsorted');
     expect(v.placement_note).toContain('unsorted');
@@ -497,13 +486,12 @@ describe('fileSubmissionPdf — placement ladder', () => {
     const v = await formPdfService.fileSubmissionPdf(db, { submissionId: 286 });
 
     expect(dropboxService.uploadFile).toHaveBeenCalledWith(db, expect.objectContaining({
-      path: '/  Law Office/   Cases/  Unsorted Client Uploads/contact 1001 - Doe, Jane - 2026-08-10 Intake Form (#286).pdf',
+      path: '/  Law Office/   Cases/  Unsorted Form Submissions/contact 1001 - Doe, Jane - 2026-08-10 Intake Form (#286).pdf',
     }));
     expect(v.placement).toBe('unsorted');
     expect(taskService.createTask).not.toHaveBeenCalled();
     // never touched the case machinery
     expect(caseService.ensureCaseDropboxFolder).not.toHaveBeenCalled();
-    expect(uploadTargetService.unsortedCaseFolderPath).not.toHaveBeenCalled();
   });
 
   test('unlinked → "submission {id} - {guessed submitter name}" prefix', async () => {

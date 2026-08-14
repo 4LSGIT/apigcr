@@ -109,6 +109,58 @@
     });
   }
 
+  // ── PDF (X5.1) — the Form Inbox pair, on the case/contact page. Bytes ride
+  //    apiSend (responseType 'blob') because the JWT lives in the shell, so a
+  //    plain window.open of the authed URL would 401. ──
+
+  async function downloadPdf(s, btn, forPrint) {
+    var original = btn.textContent;
+    btn.textContent = '\u2026'; btn.disabled = true;
+    try {
+      var blob = await api('/api/forms/submissions/' + encodeURIComponent(s.id) + '/pdf',
+                           'GET', null, {}, { responseType: 'blob' });
+      var url = URL.createObjectURL(blob);
+      if (forPrint) {
+        window.open(url, '_blank');
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      } else {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = ((TPL[s.form_key] && TPL[s.form_key].title) || s.form_key)
+                   + ' (#' + s.id + ').pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      }
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'PDF failed',
+                  text: (err && err.message) || String(err) });
+    } finally {
+      btn.textContent = original; btn.disabled = false;
+    }
+  }
+
+  async function filePdf(s, btn) {
+    var original = btn.textContent;
+    btn.textContent = '\u2026'; btn.disabled = true;
+    try {
+      var res = await api('/api/forms/submissions/' + encodeURIComponent(s.id) + '/pdf/file', 'POST');
+      Swal.fire({
+        icon: res.placement === 'case' ? 'success' : 'info',
+        title: res.placement === 'case'
+          ? 'Filed to the case folder'
+          : 'Filed to the unsorted form-submissions folder',
+        text: res.path,
+      });
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Filing failed',
+                  text: (err && err.message) || String(err) });
+    } finally {
+      btn.textContent = original; btn.disabled = false;
+    }
+  }
+
   async function load() {
     var list = E('swList');
     if (!linkId) { list.textContent = 'Missing link_id.'; return; }
@@ -177,8 +229,27 @@
         viewBtn.textContent = 'View';
         viewBtn.addEventListener('click', function () { viewSubmission(s.id); });
 
+        // X5.1 — same pair as the Form Inbox: PDF hands over bytes (no
+        // Dropbox write), File saves a copy to the case folder.
+        var pdfBtn = document.createElement('button');
+        pdfBtn.className = 'sw-btn';
+        pdfBtn.textContent = 'PDF';
+        pdfBtn.title = 'Download a PDF of this submission (shift-click to open it for '
+                     + 'printing). Nothing is saved to Dropbox.';
+        pdfBtn.addEventListener('click', function (ev) {
+          downloadPdf(s, pdfBtn, ev.shiftKey);
+        });
+
+        var fileBtn = document.createElement('button');
+        fileBtn.className = 'sw-btn';
+        fileBtn.textContent = 'File';
+        fileBtn.title = 'Render and save this PDF to the case Dropbox folder.';
+        fileBtn.addEventListener('click', function () { filePdf(s, fileBtn); });
+
         row.appendChild(main);
         row.appendChild(viewBtn);
+        row.appendChild(pdfBtn);
+        row.appendChild(fileBtn);
         list.appendChild(row);
       });
     } catch (err) {

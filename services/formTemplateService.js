@@ -499,6 +499,20 @@ function validateDefinition(def) {
     throw badRequest('onSubmit.patch is set but no field declares a save-direction apiColumn');
   }
 
+  // onSubmit.pdf (X5.1) — "archive this submission as a PDF". A BOOLEAN, not
+  // a config object: the flag only travels to the dispatched workflows as
+  // `make_pdf`, and every decision about the PDF (what it contains, where it
+  // files, what it is called) belongs to render_submission_pdf's step config,
+  // where a workflow author can see and change it. Putting placement or
+  // filename options here would split that config across two editors.
+  // Dispatchers inject `make_pdf` unconditionally (true OR false) so a gate
+  // step reads a defined variable rather than distinguishing "off" from
+  // "workflow started some other way".
+  if (def.onSubmit && def.onSubmit.pdf !== undefined && def.onSubmit.pdf !== null
+      && typeof def.onSubmit.pdf !== 'boolean') {
+    throw badRequest('onSubmit.pdf must be true or false');
+  }
+
   // onSubmit.workflow / onSubmit.workflows (X3.4, Fred-ratified 2026-08-13):
   // multiple workflows per submission — the shared notify workflow (wf 40)
   // stays a per-form ENTRY (its notify_to/labels/title_field config rides

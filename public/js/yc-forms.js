@@ -846,6 +846,10 @@ if (this.config.endpoints.load && !this.config.external) {
             link_type:     this.config.linkType,
             link_id:       this.config.linkId,
             submission_id: submitResult.id,
+            // X5.1: per-form "archive as PDF" flag. Always present (true or
+            // false) so a workflow gate reads a defined variable. Mirrors the
+            // external route exactly.
+            make_pdf:      !!this.config.onSubmit.pdf,
           }
         );
         this._api(`/workflows/${wfConfig.id}/start`, 'POST', initData).catch(err => {

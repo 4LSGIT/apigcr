@@ -2820,6 +2820,32 @@ function insSettings(ins) {
   }
   ins.appendChild(group('Save → workflow', wfKids, hasWf ? 'wide' : null));
 
+  // onSubmit.pdf (X5.1) — canonical-minimal like the rest: `false` is the
+  // default and is DELETED rather than serialized, so an untouched form
+  // round-trips byte-identically. The flag reaches the workflow as `make_pdf`;
+  // wf40 gates its render_submission_pdf step on it, which is why the help
+  // text names the workflow requirement out loud — a toggle that silently
+  // does nothing because no workflow is configured is the trap here.
+  ins.appendChild(group('Save → PDF', [
+    pCheck('Archive each submission as a PDF (onSubmit.pdf)',
+      !!(MODEL.onSubmit && MODEL.onSubmit.pdf), v => {
+        if (v) {
+          MODEL.onSubmit = MODEL.onSubmit || {};
+          MODEL.onSubmit.pdf = true;
+        } else if (MODEL.onSubmit) {
+          delete MODEL.onSubmit.pdf;
+          if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
+        }
+        touched();
+      }, {
+        help: 'Sends make_pdf to the workflow(s) above, which do the rendering — '
+            + 'the shared notify workflow files the PDF to the case Dropbox folder '
+            + '(or the unsorted form-submissions folder) and attaches it to the '
+            + 'notification email. Does nothing on its own: a form with no workflow '
+            + 'gets no PDF. Staff can always download one from the Form Inbox.',
+      }),
+  ]));
+
   // ── External rendering (X1 badLink + X3/X3.3 postSubmit) ──
   // Edits MODEL.external — validated server-side whenever present regardless
   // of visibility, ignored entirely by internal rendering. Canonical-minimal

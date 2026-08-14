@@ -351,8 +351,24 @@
       viewBtn.textContent = 'View';
       viewBtn.addEventListener('click', function () { viewSubmission(s.id); });
 
+      var pdfBtn = document.createElement('button');
+      pdfBtn.className = 'fx-btn';
+      pdfBtn.textContent = 'PDF';
+      pdfBtn.title = 'Download a PDF of this submission (shift-click to open it for printing). '
+                   + 'Nothing is saved to Dropbox.';
+      pdfBtn.addEventListener('click', function (ev) { downloadPdf(s, pdfBtn, ev.shiftKey); });
+
       row.appendChild(main);
       row.appendChild(viewBtn);
+      row.appendChild(pdfBtn);
+
+      var fileBtn = document.createElement('button');
+      fileBtn.className = 'fx-btn';
+      fileBtn.textContent = 'File';
+      fileBtn.title = 'Render and save this PDF to Dropbox — the case folder, or the '
+                    + 'unsorted form-submissions folder when there is no case.';
+      fileBtn.addEventListener('click', function () { filePdf(s, fileBtn); });
+      row.appendChild(fileBtn);
 
       if (!s.link_type) {
         var linkBtn = document.createElement('button');
@@ -464,6 +480,91 @@
       showCloseButton: true,
       customClass: { htmlContainer: 'fx-dlg-html' },
     });
+  }
+
+  // ── PDF (X5.1) ─────────────────────────────────────────────────────────────
+  //
+  //    Two distinct actions, deliberately not merged:
+  //      PDF  → render + hand the bytes over. No Dropbox write, so pressing it
+  //             repeatedly costs nothing. Shift-click opens a print view.
+  //      File → render + save to Dropbox on the ladder. Files a copy EVERY
+  //             time (Dropbox autorenames), so the button reports where it
+  //             landed and is not something to lean on.
+  //
+  //    apiSend carries a JWT the iframe cannot see, so the bytes must come
+  //    through it — hence responseType 'blob' rather than a bare fetch or a
+  //    window.open of the authed URL (which would 401).
+
+  function pdfLabel(btn, text, disabled) {
+    btn.textContent = text;
+    btn.disabled = !!disabled;
+  }
+
+  async function downloadPdf(s, btn, forPrint) {
+    var original = btn.textContent;
+    pdfLabel(btn, '…', true);
+    try {
+      var blob = await api('/api/forms/submissions/' + encodeURIComponent(s.id) + '/pdf',
+                           'GET', null, {}, { responseType: 'blob' });
+      var name = ((TPL[s.form_key] && TPL[s.form_key].title) || s.form_key)
+                 + ' (#' + s.id + ').pdf';
+      var url = URL.createObjectURL(blob);
+      if (forPrint) {
+        // A new tab rather than a hidden iframe: the browser's own viewer
+        // gives print + save + zoom, and a blob URL in a tab needs no auth.
+        window.open(url, '_blank');
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      } else {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      }
+    } catch (err) {
+      Toast.fire({ icon: 'error', title: 'PDF failed: ' + (err && err.message || err) });
+    } finally {
+      pdfLabel(btn, original, false);
+    }
+  }
+
+  async function filePdf(s, btn) {
+    var original = btn.textContent;
+    pdfLabel(btn, '…', true);
+    try {
+      var res = await api('/api/forms/submissions/' + encodeURIComponent(s.id) + '/pdf/file', 'POST');
+      var where = res.placement === 'case'
+        ? 'Filed to the case folder'
+        : 'Filed to the unsorted form-submissions folder';
+      Toast.fire({ icon: 'success', title: where });
+      if (res.placement_note || (res.warnings && res.warnings.length)) {
+        // The ladder's reasons are the point of the feature, not noise —
+        // "it saved somewhere" without saying where is how files get lost.
+        Swal.fire({
+          icon: 'info',
+          title: 'Saved to Dropbox',
+          html: '<div style="text-align:left;font-size:13px">'
+              + '<div style="font-family:monospace;word-break:break-all;margin-bottom:8px">'
+              + esc(res.path) + '</div>'
+              + (res.warnings || []).map(function (w) {
+                  return '<div style="margin-bottom:6px">' + esc(w) + '</div>';
+                }).join('')
+              + '</div>',
+        });
+      }
+    } catch (err) {
+      Toast.fire({ icon: 'error', title: 'Filing failed: ' + (err && err.message || err) });
+    } finally {
+      pdfLabel(btn, original, false);
+    }
+  }
+
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   /* ────────────────────────────────────────────────────────────────────────

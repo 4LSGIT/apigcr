@@ -44,11 +44,12 @@
  *        duplicate next to a hand-made never-linked folder is worse than the
  *        task. Task raised at create time: the folder exists and is linked
  *        even if the upload then fails.
- *     3. dead link / create failure / case row gone → the UNSORTED CLIENT
- *        UPLOADS bin, in the same per-case subfolder the client-upload
- *        ladder uses ("{case_id} - {lfm name}", uploadTargetService) so a
- *        case's strays stay together — plus a move-task raised only AFTER
- *        the upload actually lands.
+ *     3. dead link / create failure / case row gone → the UNSORTED FORM
+ *        SUBMISSIONS bin (X5.1: its own bin, app_settings
+ *        'dropbox_unsorted_forms_path'), in a per-case subfolder named by the
+ *        client-upload convention ("{case_id} - {lfm name}") so a case's
+ *        strays stay together — plus a move-task raised only AFTER the upload
+ *        actually lands.
  *   contact / appt / unlinked submission:
  *     straight to the unsorted bin as a loose file with an identity prefix
  *     ("contact 12 - Jane Doe - ", "appt 45 - ", "submission 288 - Bob - "),
@@ -84,7 +85,10 @@ const { DateTime } = require('luxon');
 const dropboxService = require('./dropboxService');
 const pdfRenderService = require('./pdfRenderService');
 const taskService = require('./taskService');
-const uploadTargetService = require('./uploadTargetService');
+// NOTE: deliberately NOT requiring uploadTargetService. X5.1 gave form PDFs
+// their own unsorted bin (below), so the only thing left to share with the
+// client-upload ladder was the per-case subfolder NAMING convention, which is
+// 3 lines and already needs _casePrimaryName here.
 const { getSetting } = require('./settingsService');
 const { resolveAlertAssignee } = require('./esignAlertService');
 
@@ -92,6 +96,18 @@ const FIRM_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
 
 /** Subfolder under the case folder. Created if absent (idempotent). */
 const SUBFOLDER = 'Forms';
+
+/**
+ * The unsorted bin for form PDFs — X5.1, Fred 2026-08-14. Its OWN bin rather
+ * than the client-uploads one: a client upload is a document the firm asked
+ * for and must chase; a form PDF is a machine-generated archive of something
+ * already recorded in the app. Mixing them makes the uploads bin a work queue
+ * nobody can trust to be empty. Same shape as the esign/uploads bins (setting
+ * if present, hardcoded default otherwise), so no migration is REQUIRED —
+ * the app_settings row just makes it visible and editable in admin.
+ */
+const UNSORTED_PATH_KEY = 'dropbox_unsorted_forms_path';
+const DEFAULT_UNSORTED_PATH = '/  Law Office/   Cases/  Unsorted Form Submissions';
 
 /** app_settings key for the firm logo URL (the case-page header logo). */
 const LOGO_URL_KEY = 'fe-firm_logo_url';
@@ -622,20 +638,35 @@ async function _raiseTask(db, { title, desc, caseId }) {
 // Placement — THE LADDER
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The unsorted bin's base path (uploadTargetService's setting + default). */
+/** The form-PDF unsorted bin's base path (setting, else the default). */
 async function _unsortedBasePath(db) {
   let path = null;
   try {
-    const raw = await getSetting(db, uploadTargetService.UNSORTED_PATH_KEY);
+    const raw = await getSetting(db, UNSORTED_PATH_KEY);
     // Trailing CR/LF only — leading/embedded spaces are the firm's sort
     // convention and must survive a settings round-trip untouched.
     if (raw != null && String(raw).replace(/[\r\n]+$/, '') !== '') {
       path = String(raw).replace(/[\r\n]+$/, '');
     }
   } catch (err) {
-    console.warn(`[FORM PDF] ${uploadTargetService.UNSORTED_PATH_KEY} lookup failed, using default: ${err.message}`);
+    console.warn(`[FORM PDF] ${UNSORTED_PATH_KEY} lookup failed, using default: ${err.message}`);
   }
-  return path || uploadTargetService.DEFAULT_UNSORTED_PATH;
+  return path || DEFAULT_UNSORTED_PATH;
+}
+
+/**
+ * "{bin}/{case_id} - {lfm name}" — the per-case subfolder inside the form-PDF
+ * bin, so one case's strays stay together instead of scattering through a flat
+ * list. Naming mirrors uploadTargetService's client-upload convention (same
+ * Primary-contact rule) on purpose: staff sorting either bin sees one format.
+ * A failed name lookup degrades to the bare case id, never throws.
+ */
+async function _unsortedCaseFolderPath(db, caseId) {
+  const base = await _unsortedBasePath(db);
+  const name = await _casePrimaryName(db, caseId);
+  const parts = [sanitizeNameFragment(String(caseId), 40)];
+  if (name) parts.push(sanitizeNameFragment(name, 60));
+  return dropboxService.joinPath(base, parts.join(' - '));
 }
 
 /**
@@ -716,14 +747,14 @@ async function _preparePlacement(db, sub) {
       }
     }
 
-    // ── rung 3: unsorted, per-case subfolder (client-upload convention) ───
-    const folderPath = await uploadTargetService.unsortedCaseFolderPath(db, caseId);
+    // ── rung 3: the form bin, per-case subfolder ─────────────────────────
+    const folderPath = await _unsortedCaseFolderPath(db, caseId);
     return {
       credentialId, folderPath, filenamePrefix: '',
       placement: 'unsorted', warnings,
       placementNote:
         `The PDF could not be filed to the case folder \u2014 ${fallbackNote} ` +
-        `It was filed to the unsorted client-uploads folder instead (${folderPath}); ` +
+        `It was filed to the unsorted form-submissions folder instead (${folderPath}); ` +
         'move it into the correct case folder.',
       moveTaskAfterUpload: true,
     };
@@ -740,7 +771,7 @@ async function _preparePlacement(db, sub) {
     placement: 'unsorted', warnings,
     placementNote:
       `This submission is linked to ${what}, so there is no case folder to file into. ` +
-      `The PDF went to the unsorted client-uploads folder (${base}).`,
+      `The PDF went to the unsorted form-submissions folder (${base}).`,
     moveTaskAfterUpload: false,   // the Form Inbox already surfaces these
   };
 }
@@ -765,7 +796,19 @@ async function _preparePlacement(db, sub) {
  *                    temp_link, temp_link_expires_note, warnings,
  *                    submission_id, form_key, link_type, link_id}>}
  */
-async function fileSubmissionPdf(db, { submissionId, filename: filenameOverride } = {}) {
+/**
+ * Bundle → bytes. THE ONLY RENDER PATH — the workflow filing and the staff
+ * Download/Print button share it verbatim, so what a person prints from the
+ * inbox is byte-for-byte the document that gets filed and emailed. Anything
+ * that diverges here becomes "the PDF I got isn't the PDF in the folder".
+ *
+ * X5.1. Does no Dropbox work and raises no tasks: a staff member pressing
+ * Download five times must not litter the bin with five files.
+ *
+ * @returns {Promise<{buffer:Buffer, fileName:string, bundle:object,
+ *                    submission:object}>}
+ */
+async function renderSubmissionPdf(db, { submissionId, filename: filenameOverride } = {}) {
   const formService = require('./formService');   // deferred require (convention)
 
   const id = Number(submissionId);
@@ -779,17 +822,15 @@ async function fileSubmissionPdf(db, { submissionId, filename: filenameOverride 
     throw new Error(`submission ${id} is a draft \u2014 only submitted forms can be rendered`);
   }
 
-  // ── build + render ────────────────────────────────────────────────────────
   const [logoDataUri, linkLabel] = await Promise.all([
     _logoDataUri(db),
     _linkLabel(db, sub),
   ]);
   const html = buildSubmissionHtml(bundle, { logoDataUri, linkLabel });
-  const pdf = await pdfRenderService.renderHtmlToPdf(html);
+  const buffer = await pdfRenderService.renderHtmlToPdf(html);
 
-  // ── place + name ──────────────────────────────────────────────────────────
-  const prep = await _preparePlacement(db, sub);
-
+  // The filename CORE (no unsorted identity prefix — that is a bin-hygiene
+  // concern owned by the filing path, and a downloaded file needs no prefix).
   const date = _firmDate(sub.created_at).toFormat('yyyy-MM-dd');
   let core;
   if (filenameOverride != null && String(filenameOverride).trim() !== '') {
@@ -798,6 +839,17 @@ async function fileSubmissionPdf(db, { submissionId, filename: filenameOverride 
     const frag = sanitizeNameFragment(bundle.title || sub.form_key, MAX_NAME_FRAGMENT);
     core = `${date} ${frag} (#${sub.id})`;
   }
+
+  return { buffer, fileName: `${core}.pdf`, bundle, submission: sub };
+}
+
+async function fileSubmissionPdf(db, { submissionId, filename: filenameOverride } = {}) {
+  const rendered = await renderSubmissionPdf(db, { submissionId, filename: filenameOverride });
+  const { buffer: pdf, submission: sub } = rendered;
+  const core = rendered.fileName.replace(/\.pdf$/i, '');
+
+  // ── place + name ──────────────────────────────────────────────────────────
+  const prep = await _preparePlacement(db, sub);
   const fileName = `${prep.filenamePrefix}${core}.pdf`;
 
   // ── upload — the path Dropbox RETURNS is authoritative (autorename) ──────
@@ -869,7 +921,10 @@ async function fileSubmissionPdf(db, { submissionId, filename: filenameOverride 
 
 module.exports = {
   fileSubmissionPdf,
+  renderSubmissionPdf,
   buildSubmissionHtml,
+  UNSORTED_PATH_KEY,
+  DEFAULT_UNSORTED_PATH,
   // exposed for tests (repo pattern)
   formatValue,
   isVisible,

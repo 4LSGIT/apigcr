@@ -261,6 +261,14 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
           link_type: linkType,
           link_id: linkId,
           submission_id: submitResult.id,
+          // X5.1: the per-form "archive as PDF" flag, from the PUBLISHED
+          // definition (never the request body). Always present, true or
+          // false, so wf40's gate reads a defined variable. The render runs
+          // INSIDE the workflow, not here: dispatch is fire-and-forget, so a
+          // multi-second chromium render never sits in the submitter's
+          // request, and a PDF failure can't cost the office its notification
+          // (error_policy 'ignore' on that step).
+          make_pdf: !!(def.onSubmit && def.onSubmit.pdf),
           // X3.2: the validated values as ONE object, so a SHARED notify
           // workflow can format any form without a per-form input map —
           // custom_code sees only its explicit `input`, and the engine's

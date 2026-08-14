@@ -14,6 +14,10 @@
  * GET    /api/forms/submissions/:id  — one submission incl. data
  * GET    /api/forms/submissions/:id/render — submission + version-matched
  *                                      definition (render.html view mode, X4)
+ * GET    /api/forms/submissions/:id/pdf    — render to PDF, send the bytes
+ *                                      (X5.1; no Dropbox write, no task)
+ * POST   /api/forms/submissions/:id/pdf/file — render AND file to Dropbox on
+ *                                      the X5 ladder; returns the verdict
  * PATCH  /api/forms/submissions/:id/link   — adopt onto a case/contact/appt (X4)
  *
  * All routes require JWT or API key auth. The Slice-4/X4 submissions routes
@@ -206,6 +210,67 @@ router.get('/api/forms/submissions/:id/render', jwtOrApiKey, async (req, res) =>
     res.json({ status: 'success', ...payload });
   } catch (err) {
     fail(res, 'getSubmissionForRender', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/forms/submissions/:id/pdf — render this submission to a PDF and
+// send the BYTES (X5.1). Fresh render every call, NO Dropbox write and NO
+// task: this is the inbox Download/Print button, and pressing it five times
+// must not leave five files in a folder. Filing is the separate POST below.
+//
+// Same renderer as the filed/emailed copy (formPdfService.renderSubmissionPdf
+// is the single render path), so what staff print matches what is on file.
+//
+// Binary, not JSON — the shell's apiSend gained `opts.responseType` in X5.1
+// exactly so a route like this doesn't need a base64 envelope.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/api/forms/submissions/:id/pdf', jwtOrApiKey, async (req, res) => {
+  try {
+    const formPdfService = require('../services/formPdfService');
+    const { buffer, fileName } = await formPdfService.renderSubmissionPdf(req.db, {
+      submissionId: req.params.id,
+    });
+    // `inline` so a new-tab open shows the viewer (print); the inbox fetches
+    // it as a blob and names the download itself, so this only affects the
+    // direct-URL case. Quotes escaped — the name carries the form title.
+    const safe = String(fileName).replace(/"/g, '');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${safe}"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('X-Form-Pdf-Filename', encodeURIComponent(fileName));
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(buffer);
+  } catch (err) {
+    fail(res, 'renderSubmissionPdf', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/forms/submissions/:id/pdf/file — render AND file to Dropbox on the
+// X5 ladder, returning the verdict (X5.1). The manual twin of the workflow's
+// render_submission_pdf step: for submissions that arrived before the form
+// had `onSubmit.pdf`, or when staff want a copy in the folder on demand.
+//
+// Body (optional): { filename }
+// Deliberately NOT idempotent — Dropbox autorename means a second call files a
+// second copy. Cheap to delete, and the alternative (silently skipping when a
+// similar name exists) hides a re-file that staff explicitly asked for.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/api/forms/submissions/:id/pdf/file', jwtOrApiKey, async (req, res) => {
+  try {
+    const formPdfService = require('../services/formPdfService');
+    const verdict = await formPdfService.fileSubmissionPdf(req.db, {
+      submissionId: req.params.id,
+      ...(req.body && req.body.filename ? { filename: req.body.filename } : {}),
+    });
+    res.json({ status: 'success', ...verdict });
+  } catch (err) {
+    fail(res, 'fileSubmissionPdf', err);
   }
 });
 

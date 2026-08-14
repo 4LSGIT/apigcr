@@ -734,6 +734,19 @@ Render one **submitted** form submission (`form_submissions.id`) to an archival 
 
 Chromium renders are serialized on the container — treat this as a heavyweight step, not a loop body. Workflow-only (`__meta.workflowOnly`); the filename date is the submission's **created_at** in firm time (adopt bumps `updated_at`, so it stops meaning "submitted").
 
+**How it's wired in practice (X5.1).** Forms opt in with `onSubmit.pdf: true`, which both form dispatchers inject into the workflow's `init_data` as **`make_pdf`** (always defined, always from the published definition). wf 40 — the shared form-notify workflow — gates on it:
+
+```
+2  PDF wanted?            evaluate_condition  make_pdf == true  → 3, else 4
+3  Render submission PDF  render_submission_pdf  output_var "pdf"   [error_policy: ignore]
+4  Notify office          send_email  attachment_urls:
+                            [{ "url": "{{pdf.temp_link}}", "name": "{{pdf.file_name}}" }]
+```
+
+The `ignore` policy is deliberate: a PDF failure must never cost the office its notification. When no PDF was rendered, `{{pdf.temp_link}}` resolves to `''` and the mail adapters drop a url-less attachment silently, so the email sends unchanged — **that is the empty fallback, and it needs no filter syntax** (there is none in the workflow resolver; see 06 — Variables & Templating). The gmail adapter fetches the URL into the MIME body server-side, so recipients get real bytes and the ~4-hour link expiry never reaches a mailbox.
+
+Staff can also render on demand, outside any workflow: `GET /api/forms/submissions/:id/pdf` (bytes, no filing) and `POST /api/forms/submissions/:id/pdf/file` (files on the same ladder), wired to the **PDF** and **File** buttons in the Form Inbox and on each case's Form Submissions tab.
+
 ```json
 {
   "function_name": "render_submission_pdf",

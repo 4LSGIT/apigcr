@@ -2796,7 +2796,30 @@
     }
 
 
-    async function apiSend(endpoint, method = "GET", payload = null, extraHeaders = {}) {
+    /**
+     * The app's ONE auth transport. Every other apiSend in the codebase
+     * (automationManager, caseConfigManager, formInbox, case.html…) is a
+     * variadic pass-through to this.
+     *
+     * opts.responseType — added X5.1, default 'json' = the historical
+     * behavior byte-for-byte:
+     *   'json'     parsed JSON (falls back to raw text on parse failure)
+     *   'text'     the raw body string
+     *   'blob'     a Blob — PDFs, images, exports
+     *   'response' the untouched Response, for callers that need headers
+     *              (Content-Disposition, X-… metadata) or want to stream
+     * Non-json types keep the 401-relogin retry, the VersionGuard note and
+     * the ApiError shape on failure: an error body is JSON no matter what
+     * the success body is, so it is always parsed as such.
+     *
+     * This exists because binary responses previously forced callers to
+     * hand-roll fetch with a lifted JWT (esignActions.esignFetchBinary /
+     * esignFetchPdf, assetManager/videoManager uploads) — each one a private
+     * copy of the auth, retry and error handling that lives here. New code
+     * should pass responseType instead; the existing copies still work and
+     * can be migrated opportunistically.
+     */
+    async function apiSend(endpoint, method = "GET", payload = null, extraHeaders = {}, opts = {}) {
       // Ensure JWT — prompt the user if missing or expired
       if (
         !window.AUTH_STATE.jwt ||
@@ -2835,6 +2858,17 @@
       try { window.VersionGuard && window.VersionGuard.noteResponse(res); } catch (_) { }
       // Handle empty responses (204, etc.)
       if (res.status === 204) return null;
+
+      // Non-json success shapes (X5.1). Failures fall through to the shared
+      // error path below — an error body is JSON whatever the success body is.
+      const responseType = opts.responseType || "json";
+      if (responseType !== "json" && res.ok) {
+        if (responseType === "response") return res;
+        if (responseType === "blob") return await res.blob();
+        if (responseType === "text") return await res.text();
+        throw new Error(`apiSend: unknown responseType "${responseType}"`);
+      }
+
       const text = await res.text();
       let data;
       try {

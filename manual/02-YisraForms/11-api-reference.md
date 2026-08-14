@@ -207,6 +207,41 @@ await apiSend("/api/forms/submissions/286/render", "GET");
 
 ---
 
+## GET /api/forms/submissions/:id/pdf (X5.1)
+
+Render a **submitted** submission to a PDF and return the **bytes** (`application/pdf`, `Content-Disposition: inline`, `X-Form-Pdf-Filename` carrying the URL-encoded suggested name). Drafts are refused (400).
+
+Fresh render on every call. **No Dropbox write, no task, no side effect of any kind** — this is the inbox Download/Print button, and pressing it repeatedly must not litter a folder. Filing is the separate `POST` below.
+
+Same renderer as the filed and emailed copy (`formPdfService.renderSubmissionPdf` is the single render path), so what staff print matches what is on file.
+
+Chromium renders are **serialized** across the container, so this is a one-to-three-second request under load, not a millisecond one.
+
+**Console test** — note `responseType`, added to `apiSend` in X5.1 (the default `'json'` would corrupt binary):
+```js
+const blob = await apiSend("/api/forms/submissions/286/pdf", "GET", null, {}, { responseType: "blob" });
+window.open(URL.createObjectURL(blob), "_blank");
+```
+
+---
+
+## POST /api/forms/submissions/:id/pdf/file (X5.1)
+
+Render **and file** to Dropbox on the X5 ladder, returning the verdict. The manual twin of the workflow's `render_submission_pdf` step — for submissions that predate the form's `onSubmit.pdf`, or when staff want a copy in the folder on demand.
+
+Body (optional): `{ "filename": "…" }` — replaces the `{date} {form title} (#id)` core; sanitized, `.pdf` enforced, unsorted identity prefixes still applied.
+
+**Not idempotent by design.** Dropbox autorenames, so a second call files a second copy. That is the deliberate trade: a duplicate is cheap to delete, whereas silently skipping when a similar name exists would swallow a re-file that staff explicitly asked for.
+
+**Response:** the `fileSubmissionPdf` verdict — `path` (the path **Dropbox returned**, autorename-authoritative), `file_name`, `placement` (`case` | `unsorted`), `placement_note`, `temp_link` (~4h, best-effort, may be `null`), `temp_link_expires_note`, `warnings[]`, plus `submission_id` / `form_key` / `link_type` / `link_id`.
+
+**Console test:**
+```js
+await apiSend("/api/forms/submissions/286/pdf/file", "POST");
+```
+
+---
+
 ## PATCH /api/forms/submissions/:id/link (X4)
 
 Adopt an **unlinked** submission (`link_type=''`) onto a case / contact / appt. Body: `{ "link_type": "case"|"contact"|"appt", "link_id": "…" }`.
