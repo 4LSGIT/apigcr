@@ -339,6 +339,48 @@ describe('V validator', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// E — external surface: projection + submit registry
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('E external surface', () => {
+  const ext = require(path.join(ROOT, 'services/extFormService.js'));
+
+  test('projectDefinition keeps every content display key (the block IS the payload)', () => {
+    const def = contentDef({
+      name: 'firm_logo', type: 'content', label: 'L', sublabel: 'S', width: '2x',
+      src: IMG, text: 'cap', alt: 'a', maxWidth: 400, align: 'center', href: LINK,
+      showWhen: { field: 'x1', op: 'notEmpty' },
+    });
+    const out = ext.projectDefinition(def);
+    const f = out.sections[0].rows[1].fields[0];
+    expect(f).toEqual({
+      name: 'firm_logo', type: 'content', label: 'L', sublabel: 'S', width: '2x',
+      src: IMG, text: 'cap', alt: 'a', maxWidth: 400, align: 'center', href: LINK,
+      showWhen: { field: 'x1', op: 'notEmpty' },
+    });
+  });
+
+  test('projection still drops private keys from ordinary fields', () => {
+    const def = {
+      sections: [{ rows: [{ fields: [
+        { name: 'x1', type: 'text', label: 'X1', apiColumn: 'case_notes',
+          prefill: '{{cases.case_trustee}}' },
+      ] }] }],
+    };
+    const f = ext.projectDefinition(def).sections[0].rows[0].fields[0];
+    expect(f.apiColumn).toBeUndefined();
+    expect(f.prefill).toBeUndefined();
+  });
+
+  test('a submitted value NAMED after a content field is rejected', () => {
+    const def = contentDef({ name: 'firm_logo', type: 'content', src: IMG });
+    expect(() => ext.validateValues(def, { x1: 'ok' })).not.toThrow();
+    expect(() => ext.validateValues(def, { x1: 'ok', firm_logo: 'junk' }))
+      .toThrow(/firm_logo is not a field of this form/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // P — PDF omission
 // ═══════════════════════════════════════════════════════════════════════════
 
