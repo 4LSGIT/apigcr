@@ -151,7 +151,20 @@ const FIELD_KEYS = [
   'requiredMessage', 'minLength', 'maxLength', 'pattern', 'patternMessage',
   'email', 'options', 'allowOther', 'columns', 'showWhen', 'prefillMode',
   'urlParam', 'min', 'max', 'step',
+  // §Q content (display-only, EXTERNAL-SAFE): the block's whole payload IS
+  // display content, so it must survive the projection or an external form
+  // renders an empty box. All six are SU-authored and validator-bounded
+  // (https ≤2000 src/href, ≤2000 text, string alt, positive-int maxWidth,
+  // left|center|right align) and reach the DOM via textContent/setAttribute.
+  // embed offered no precedent here — embed is refused externally outright.
+  'src', 'text', 'alt', 'maxWidth', 'align', 'href',
 ];
+
+// Types that carry no value: excluded from the submit registry below, so a
+// crafted POST naming one is rejected as "not a field of this form" rather
+// than stashing junk in form_submissions.data. (The renderer never registers
+// them, so a legitimate client never sends one.)
+const DISPLAY_ONLY_TYPES = new Set(['content', 'embed']);
 
 function pick(src, keys) {
   const out = {};
@@ -435,7 +448,10 @@ function validateValues(def, values) {
         repeaters[section.repeater] = reg;
       } else if (section) {
         for (const row of section.rows || []) {
-          for (const f of (row && row.fields) || []) fields[f.name] = f;
+          for (const f of (row && row.fields) || []) {
+            if (f && DISPLAY_ONLY_TYPES.has(f.type)) continue;   // §Q: no value
+            fields[f.name] = f;
+          }
         }
       }
     }
