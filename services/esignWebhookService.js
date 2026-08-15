@@ -65,13 +65,30 @@ const WEBHOOK_SECRET_KEY = 'esign_webhook_secret';
  *   anything else    — LOG-ONLY: verification runs and its verdict is logged,
  *   (incl. unset)      but no delivery is ever rejected for it.
  *
- * Log-only is the deliberate default because the signature header has never
- * been OBSERVED on a live delivery — the header name and encoding come from
- * Zoho's documentation, not from a captured request. Arming 'enforce' on an
- * untested assumption would silently stop ALL inbound signing status (the
- * endpoint fails closed) until nightly reconciliation caught up. The rollout
- * is therefore: set the secret → watch the logs report 'match' on a real
- * delivery → flip this to 'enforce'.
+ * Log-only WAS the deliberate default while the signature header was still
+ * unverified — the header name and encoding came from Zoho's documentation
+ * rather than a captured request, and arming 'enforce' on an untested
+ * assumption would have silently stopped ALL inbound signing status (the
+ * endpoint fails closed) until nightly reconciliation caught up.
+ *
+ * THAT ROLLOUT IS COMPLETE. 'enforce' has been live since 2026-08-02T11:23Z
+ * and is confirmed against real deliveries:
+ *
+ *   2026-08-02T21:30:24Z  hmac mode=enforce ok=true reason=match
+ *   2026-08-15T21:19:35Z  hmac mode=enforce ok=true reason=match
+ *
+ * So SIGNATURE_HEADER's spelling and its base64 encoding are observed fact
+ * now, not documentation.
+ *
+ * Do NOT drop this back to log-only to "fix" a suspected webhook outage. That
+ * discards working protection, and it has been the first thing reached for
+ * twice — tasks 1077 (2026-07-27) and 1114 (2026-08-15), both false alarms
+ * where the channel was healthy and the detector was wrong. Diagnose from the
+ * [ESIGN WEBHOOK] log lines instead: no lines AT ALL means Zoho stopped
+ * calling, which nothing in this file can cause.
+ *
+ * If the secret is ever rotated the rollout runs again: set the new secret →
+ * watch the logs report 'match' on a real delivery → flip back to 'enforce'.
  */
 const WEBHOOK_HMAC_MODE_KEY = 'esign_webhook_hmac_mode';
 
@@ -80,19 +97,41 @@ const WEBHOOK_HMAC_MODE_KEY = 'esign_webhook_hmac_mode';
  * that made it past the token and hmac gates. Stamped by the route (see
  * routes/api.esign.js) for EVERY authenticated delivery, including ones the
  * pipeline later fails to parse or match — the signal is "Zoho reached us and
- * was let in", not "we understood it". The nightly reconcile job's
- * dead-channel alert (lib/internal_functions/esign.js) keys off this: rows
- * moving in reconcile while this timestamp is stale means deliveries are
- * being rejected upstream — exactly the 2026-07-22 outage, where a crossed
- * token + armed 'enforce' 401'd every delivery for four days and only the
- * console said so.
+ * was let in", not "we understood it".
+ *
+ * The nightly reconcile job's dead-channel alert (lib/internal_functions/
+ * esign.js) keys off this: rows moving in reconcile while this timestamp is
+ * stale means deliveries are being rejected upstream — exactly the 2026-07-22
+ * outage, where a crossed token + armed 'enforce' 401'd every delivery for
+ * four days and only the console said so.
+ *
+ * TWO CAVEATS, each of which cost a false alarm before it was understood:
+ *
+ *  1. NOT EVERY RECONCILE MOVE IMPLIES A LOST WEBHOOK. Zoho's expiry
+ *     notification is batched hours behind the clock (observed ~22h on
+ *     request 30, arriving 10h AFTER reconcile had already applied it) while
+ *     reconcile polls nightly — so reconcile wins that race structurally, on
+ *     a perfectly healthy channel. The job therefore filters to actor-driven
+ *     transitions before it consults this key; see
+ *     WEBHOOK_CARRIED_TRANSITIONS there. Task 1114.
+ *
+ *  2. A MISSING VALUE MEANS "NO HEARTBEAT RECORDED", NOT "NO DELIVERY EVER".
+ *     This key postdates the webhook route, so an absent row once read as a
+ *     dead channel on a system that had been receiving deliveries all along.
+ *     The job now falls back to the newest webhook-sourced
+ *     signing_request_events row before concluding silence. Task 1077.
+ *
+ * And silence alone is never evidence of anything: with nothing outstanding,
+ * a healthy channel is silent by definition.
  */
 const WEBHOOK_LAST_SEEN_KEY = 'esign_webhook_last_seen_at';
 
 /**
  * The header Zoho signs deliveries with: base64(HMAC-SHA256(secret, rawBody)).
- * Express lower-cases incoming header names; req.get() is case-insensitive
- * anyway. Kept here so the route and the tests share one spelling.
+ * OBSERVED on live deliveries, not merely documented — see
+ * WEBHOOK_HMAC_MODE_KEY for the confirming log lines. Express lower-cases
+ * incoming header names; req.get() is case-insensitive anyway. Kept here so
+ * the route and the tests share one spelling.
  */
 const SIGNATURE_HEADER = 'x-zs-webhook-signature';
 

@@ -58,9 +58,14 @@ function row(over = {}) {
   };
 }
 
-function makeDb({ unfiled = [], settings = {} } = {}) {
+function makeDb({ unfiled = [], settings = {}, lastWebhookEvent = null } = {}) {
   return {
     query: jest.fn(async (sql, params = []) => {
+      // Must be tested BEFORE signing_requests — the dead-channel check's
+      // audit fallback reads signing_request_events.
+      if (/FROM signing_request_events/i.test(sql)) {
+        return [[{ at: lastWebhookEvent }]];
+      }
       if (/FROM signing_requests/i.test(sql)) return [unfiled];
       // settingsService.getSetting — serve the heartbeat (and anything else).
       if (/FROM app_settings/i.test(sql)) {
@@ -264,9 +269,13 @@ describe('dead-channel check — moved rows + webhook silence', () => {
     expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
   });
 
-  test('a settings-read failure is contained — the run still succeeds', async () => {
+  test('a settings-read failure falls back to the audit log rather than aborting', async () => {
+    // Previously this pushed a 'dead-channel-check' error and gave up. The
+    // heartbeat is now only the PREFERRED source: an unreadable one degrades
+    // to the newest webhook-sourced event, which still answers the question.
     armOneMove();
-    const db = makeDb();
+    const fresh = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const db = makeDb({ lastWebhookEvent: fresh });
     const inner = db.query.getMockImplementation();
     db.query.mockImplementation(async (sql, params) => {
       if (/FROM app_settings/i.test(sql)) throw new Error('pool exhausted');
@@ -276,9 +285,100 @@ describe('dead-channel check — moved rows + webhook silence', () => {
     const out = await reconcile({}, db);
     expect(out.success).toBe(true);
     expect(out.output.moved).toBe(1);
-    expect(out.output.errors).toContainEqual(
-      expect.objectContaining({ pass: 'dead-channel-check' })
+    expect(esignAlertService.raiseTask).not.toHaveBeenCalled();   // audit says fresh
+    expect(out.output.errors).toHaveLength(0);
+  });
+
+  test('no heartbeat but a FRESH webhook-sourced audit row → no task', async () => {
+    // The 2026-07-27 false positive (task 1077): the heartbeat setting did not
+    // exist yet, an absent row read as "no delivery EVER", and the alert fired
+    // while three webhook events landed within nine minutes.
+    armOneMove();
+    const fresh = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const out = await reconcile({}, makeDb({ lastWebhookEvent: fresh }));
+
+    expect(esignAlertService.raiseTask).not.toHaveBeenCalled();
+    expect(out.output.webhook_silence_alerted).toBe(false);
+  });
+
+  test('no heartbeat and a STALE audit row → task, and it says where the time came from', async () => {
+    armOneMove();
+    const stale = new Date(Date.now() - 40 * 60 * 60 * 1000);
+    await reconcile({}, makeDb({ lastWebhookEvent: stale }));
+
+    expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+    const desc = esignAlertService.raiseTask.mock.calls[0][1].desc;
+    expect(desc).toContain(stale.toISOString());
+    expect(desc).toMatch(/no heartbeat on record/);
+  });
+
+  test('the heartbeat WINS over the audit row when both are present', async () => {
+    armOneMove();
+    const heartbeat = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const staleAudit = new Date(Date.now() - 40 * 60 * 60 * 1000);
+    await reconcile({}, makeDb({
+      settings: { [HEARTBEAT_KEY]: heartbeat },
+      lastWebhookEvent: staleAudit,
+    }));
+
+    expect(esignAlertService.raiseTask).not.toHaveBeenCalled();
+  });
+
+  // ── expiry is not a missed webhook ──────────────────────────────────────
+  // Zoho DOES webhook expiries, but batched ~22h after the clock runs out —
+  // verified on request 30, where reconcile applied the move at 11:00 and the
+  // webhook arrived at 21:30 the same day and noop'd. This job polls nightly,
+  // so it wins that race structurally. Counting the win as a loss is what
+  // produced task 1114 on 2026-08-15.
+
+  function armMoves(...targets) {
+    esignService.listOutstanding.mockResolvedValue(
+      targets.map((_, i) => row({ id: i + 1, provider_id: `ZS-${i + 1}`, tracking_id: `YC-ESIGN-000${i + 1}` }))
     );
+    const statuses = {};
+    targets.forEach((status, i) => {
+      statuses[`ZS-${i + 1}`] = { status, providerStatus: status, recipients: [], raw: {} };
+    });
+    getProvider.mockResolvedValue(makeProvider(statuses));
+  }
+
+  test('expired-only moves never raise the task, however silent the channel', async () => {
+    armMoves('expired', 'expired', 'expired');
+    const out = await reconcile({}, makeDb());   // no heartbeat, no audit row
+
+    expect(esignAlertService.raiseTask).not.toHaveBeenCalled();
+    expect(out.output).toMatchObject({ moved: 3, actor_moved: 0, webhook_silence_alerted: false });
+  });
+
+  test('a mixed run counts only the actor-driven moves', async () => {
+    armMoves('expired', 'signed', 'expired');
+    const out = await reconcile({}, makeDb());
+
+    expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+    const desc = esignAlertService.raiseTask.mock.calls[0][1].desc;
+    expect(desc).toMatch(/applied 1 status change\(s\)/);
+    expect(desc).toMatch(/YC-ESIGN-0002: sent → signed/);
+    expect(desc).not.toMatch(/→ expired/);
+    expect(out.output).toMatchObject({ moved: 3, actor_moved: 1 });
+  });
+
+  test('declined and viewed still count as actor-driven', async () => {
+    armMoves('declined', 'viewed');
+    const out = await reconcile({}, makeDb());
+
+    expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+    expect(out.output.actor_moved).toBe(2);
+  });
+
+  test('the alert still names every setting an operator needs to check', async () => {
+    armOneMove();
+    await reconcile({}, makeDb());
+    const desc = esignAlertService.raiseTask.mock.calls[0][1].desc;
+    expect(desc).toMatch(/ESIGN WEBHOOK/);            // the log filter
+    expect(desc).toMatch(/Zoho Sign console/);        // "Zoho stopped calling"
+    expect(desc).toMatch(/esign_webhook_token/);
+    expect(desc).toMatch(/esign_webhook_hmac_mode/);
+    expect(desc).toMatch(/esign_webhook_secret/);
   });
 });
 
