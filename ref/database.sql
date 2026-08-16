@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-16T05:35:24.618Z
+-- Generated: 2026-08-16T19:26:58.820Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:80c369437c7b7feeccb75e2d3cc302be
+-- Fingerprint: sha256:d71833b513f6da6ce4646837044f0acc
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2701,6 +2701,7 @@ CREATE TABLE `tasks` (
   `task_dedupe_key` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `task_due_job_id` bigint DEFAULT NULL,
+  `task_start_job_id` bigint DEFAULT NULL,
   `task_action_token` char(22) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 

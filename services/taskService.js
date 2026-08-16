@@ -363,6 +363,9 @@ function buildAssignmentEmail(task, verb = 'assigned') {
 
     <table cellpadding="0" cellspacing="0" style="margin:8px 0 20px">
       ${metaRow('Assigned by', htmlEscape(task.from.name || '—'))}
+      ${task.start && String(task.start).slice(0, 10) > DateTime.now().setZone(FIRM_TZ).toISODate()
+        ? metaRow('Starts', `${fmtDate(task.start)} — you'll be reminded then`)
+        : ''}
       ${metaRow('Due date', task.due ? fmtDate(task.due) : 'No due date')}
       ${task.notify ? metaRow('Notification', 'Assigner will be notified on completion') : ''}
     </table>
@@ -430,6 +433,52 @@ function buildCompletionEmail(task, completedByName, note) {
  * Due-date reminder email (to task_to, fires morning of due date).
  * @param {object} task
  */
+/**
+ * Start-date reminder — the "this is live now" nudge for a deferred task.
+ *
+ * A task with a future task_start is suppressed from the daily digest until
+ * that date (see run_task_digest), so this email is the moment it re-enters
+ * the assignee's world. Deliberately worded as an activation, not a deadline:
+ * the due date may be days or months later, or absent entirely.
+ */
+function buildStartReminderEmail(task) {
+  const linkLine = task.link
+    ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280">
+         Linked to: <strong style="color:#4f46e5">${htmlEscape(task.link.title)}</strong>
+       </p>`
+    : '';
+
+  const descBlock = task.desc
+    ? `<div style="margin:14px 0;padding:14px 16px;background:#eef2ff;border-left:3px solid #4f46e5;
+                  border-radius:4px;font-size:14px;color:#374151;line-height:1.6">
+         ${renderDescHtml(task.desc)}
+       </div>`
+    : '';
+
+  const body = `
+    <h2 style="margin:0 0 4px;font-size:22px;color:#111827">\u{1F514} Task Starts Today</h2>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151">
+      A task that was scheduled for later is now active.
+    </p>
+
+    <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#4338ca">${htmlEscape(task.title)}</p>
+
+    ${descBlock}
+    ${linkLine}
+
+    <table cellpadding="0" cellspacing="0" style="margin:8px 0 20px">
+      ${metaRow('Due date',    task.due ? fmtDate(task.due) : 'No due date')}
+      ${metaRow('Assigned by', htmlEscape(task.from.name || '\u2014'))}
+      ${task.created ? metaRow('Assigned on', fmtStampDate(task.created)) : ''}
+    </table>
+
+    ${buildActionBlock(task)}
+  `;
+
+  return emailWrap('Task Starts Today', `\u{1F514} Task Starts Today: ${task.title}`, body);
+}
+
+
 function buildDueReminderEmail(task) {
   const linkLine = task.link
     ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280">
@@ -626,6 +675,57 @@ async function scheduleDueReminder(db, taskId, dueDate) {
 }
 
 /**
+ * Schedule the start-date notification: 8 AM firm time on task_start.
+ *
+ * Mirrors scheduleDueReminder exactly, including the "already past" no-op —
+ * back-dating a start date must not fire a reminder for a day that's gone.
+ * Returns null when there's nothing to schedule.
+ */
+async function scheduleStartReminder(db, taskId, startDate) {
+  if (!startDate) return null;
+
+  const startDateStr = String(startDate).slice(0, 10);
+  const reminderDt   = DateTime.fromISO(`${startDateStr}T08:00:00`, { zone: FIRM_TZ });
+  const reminderUTC  = reminderDt.toUTC().toJSDate();
+
+  if (reminderUTC <= new Date()) return null; // already past
+
+  const [result] = await db.query(
+    `INSERT INTO scheduled_jobs
+       (type, scheduled_time, status, name, data, max_attempts, backoff_seconds)
+     VALUES ('one_time', ?, 'pending', ?, ?, 2, 120)`,
+    [
+      reminderUTC,
+      `Task start reminder \u2014 task #${taskId}`,
+      JSON.stringify({ type: 'task_start_reminder', task_id: taskId })
+    ]
+  );
+
+  const jobId = result.insertId;
+  await db.query('UPDATE tasks SET task_start_job_id = ? WHERE task_id = ?', [jobId, taskId]);
+  return jobId;
+}
+
+/**
+ * Cancel the pending start-reminder job for a task (audit-safe: marks cancelled).
+ */
+async function cancelStartReminder(db, taskId) {
+  const [[task]] = await db.query(
+    'SELECT task_start_job_id FROM tasks WHERE task_id = ?',
+    [taskId]
+  );
+  if (!task?.task_start_job_id) return;
+
+  await db.query(
+    `UPDATE scheduled_jobs
+     SET status = 'cancelled', updated_at = NOW()
+     WHERE id = ? AND status = 'pending'`,
+    [task.task_start_job_id]
+  );
+  await db.query('UPDATE tasks SET task_start_job_id = NULL WHERE task_id = ?', [taskId]);
+}
+
+/**
  * Cancel the pending due-reminder job for a task (audit-safe: marks cancelled, not deleted).
  */
 async function cancelDueReminder(db, taskId) {
@@ -741,6 +841,12 @@ async function notifyCompletion(db, task, completedByName, note) {
  *   'human'        → task_source IS NULL      (human-created work)
  *   'machine'      → task_source IS NOT NULL  (machine-pushed notices)
  *   anything else  → exact match on task_source (e.g. 'esign')
+ *
+ * defer filter (additive, optional) — task_start is a "not actionable before"
+ * date; NULL means active now:
+ *   absent / 'all' → no filter
+ *   'active'       → task_start IS NULL OR task_start <= today (firm tz)
+ *   'scheduled'    → task_start > today  (deferred, not yet in play)
  */
 async function listTasks(db, {
   query       = '',
@@ -750,11 +856,17 @@ async function listTasks(db, {
   link_type   = null,
   link_id     = null,
   source      = null,
+  defer       = null,
   limit       = 100,
   offset      = 0
 } = {}) {
   const where  = [];
   const params = [];
+
+  // Firm-tz calendar date — the boundary for "has this task started yet".
+  // Used by the defer filter AND the ordering clause below, so it is computed
+  // once whether or not the caller passed a defer filter.
+  const todayFirm = DateTime.now().setZone(FIRM_TZ).toISODate();
 
   if (status === 'Incomplete') {
     where.push(`t.task_status IN ('Pending', 'Due Today', 'Overdue')`);
@@ -767,6 +879,14 @@ async function listTasks(db, {
     if      (source === 'human')   where.push('t.task_source IS NULL');
     else if (source === 'machine') where.push('t.task_source IS NOT NULL');
     else { where.push('t.task_source = ?'); params.push(source); }
+  }
+
+  if (defer === 'active') {
+    where.push('(t.task_start IS NULL OR t.task_start <= ?)');
+    params.push(todayFirm);
+  } else if (defer === 'scheduled') {
+    where.push('t.task_start > ?');
+    params.push(todayFirm);
   }
 
   if (query) {
@@ -816,11 +936,14 @@ async function listTasks(db, {
      ${whereSQL}
      ORDER BY
        FIELD(t.task_status, 'Overdue','Due Today','Pending','Completed','Deleted'),
+       -- Deferred work (task_start in the future) isn't in play yet, so it
+       -- sinks below everything actionable within its status group.
+       (t.task_start IS NOT NULL AND t.task_start > ?),
        t.task_due IS NULL,      -- MySQL sorts NULL first in ASC; push undated
        t.task_due ASC,          -- (mostly machine notices) BELOW dated work
        t.task_date DESC
      LIMIT ? OFFSET ?`,
-    [...params, Number(limit), Number(offset)]
+    [...params, todayFirm, Number(limit), Number(offset)]
   );
 
   const data = rows.map(r => shapeRow(r));
@@ -1034,9 +1157,14 @@ async function createTask(db, {
       const task = await getTask(db, taskId);
       if (!task) return;
       if (send_assignment_email) await notifyAssignment(db, task);
-      // Intentionally NOT gated on send_assignment_email — the due reminder is a
-      // separate channel. A caller that wants neither email omits `due`.
+      // Intentionally NOT gated on send_assignment_email — the reminders are a
+      // separate channel. A caller that wants neither email omits `due`/`start`.
       if (due) await scheduleDueReminder(db, taskId, due);
+      // Start reminder: the "now it's live" nudge for a deferred task. Skipped
+      // when start === due, so a same-day task doesn't fire twice.
+      if (start && String(start).slice(0, 10) !== String(due || '').slice(0, 10)) {
+        await scheduleStartReminder(db, taskId, start);
+      }
     } catch (err) {
       console.error(`[TASK] Post-create side effects failed for task #${taskId}:`, err.message);
     }
@@ -1110,6 +1238,20 @@ async function updateTask(db, taskId, fields, actingUserId = 0) {
     }
   }
 
+  // Same for the start date. Reads the effective due date (the patch's, or
+  // the stored one) so the start===due suppression stays correct when only
+  // one of the two moves.
+  if ('task_start' in safeFields) {
+    await cancelStartReminder(db, taskId);
+    if (safeFields.task_start) {
+      const [[row]] = await db.query('SELECT task_due FROM tasks WHERE task_id = ?', [taskId]);
+      const effDue = String(row?.task_due ? new Date(row.task_due).toISOString() : '').slice(0, 10);
+      if (String(safeFields.task_start).slice(0, 10) !== effDue) {
+        await scheduleStartReminder(db, taskId, safeFields.task_start).catch(() => {});
+      }
+    }
+  }
+
   await logTaskEvent(db, taskId, actingUserId, 'updated', { changed: keys });
 
   return getTask(db, taskId);
@@ -1146,6 +1288,7 @@ async function completeTask(db, taskId, actingUserId = 0, logExtra = {}) {
 
   await logTaskEvent(db, taskId, actingUserId, 'completed', extra);
   await cancelDueReminder(db, taskId);
+  await cancelStartReminder(db, taskId);
 
   // Notify assigner if task_notification = 1 and assigner ≠ completor
   if (task.notify) {
@@ -1187,6 +1330,7 @@ async function deleteTask(db, taskId, actingUserId = 0, logExtra = {}) {
 
   await logTaskEvent(db, taskId, actingUserId, 'deleted', { previous_status: task.status, ...extra });
   await cancelDueReminder(db, taskId);
+  await cancelStartReminder(db, taskId);
 
   return getTask(db, taskId);
 }
@@ -1213,6 +1357,9 @@ async function reopenTask(db, taskId, actingUserId = 0) {
   // this replaced compared UTC calendar days (wrong from a Detroit evening).
   if (task.due) {
     await scheduleDueReminder(db, taskId, task.due).catch(() => {});
+  }
+  if (task.start && String(task.start).slice(0, 10) !== String(task.due || '').slice(0, 10)) {
+    await scheduleStartReminder(db, taskId, task.start).catch(() => {});
   }
 
   return getTask(db, taskId);
@@ -1283,9 +1430,12 @@ module.exports = {
   transferTask,
   scheduleDueReminder,
   cancelDueReminder,
+  scheduleStartReminder,
+  cancelStartReminder,
   logTaskEvent,
   // Email builders — exported so job_executor can use them
   buildDueReminderEmail,
+  buildStartReminderEmail,
   buildDigestEmail,
   renderDescHtml,
   getFromEmail,

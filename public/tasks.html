@@ -80,6 +80,13 @@
     .tk-pill.Completed    { color: var(--tk-completed); }
     .tk-pill.Deleted      { color: var(--tk-deleted); }
     .tk-pill.NoDueDate    { color: var(--tk-nodue); font-weight: 400; font-style: italic; }
+    .tk-pill.Scheduled    { color: var(--tk-robot-fg); }
+    .tk-starts {
+      display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px;
+      background: var(--tk-chip-bg); color: var(--tk-chip-fg); margin-left: 6px;
+      white-space: nowrap;
+    }
+    tr.deferred td { opacity: .72; }
     .tk-src {
       display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px;
       background: var(--tk-robot-bg); color: var(--tk-robot-fg); white-space: nowrap;
@@ -215,6 +222,7 @@
     <span class="tk-preset" data-preset="overdue" onclick="applyPreset('overdue')">Overdue</span>
     <span class="tk-preset" data-preset="notices" onclick="applyPreset('notices')">Notices</span>
     <span class="tk-preset" data-preset="allopen" onclick="applyPreset('allopen')">All open</span>
+    <span class="tk-preset" data-preset="scheduled" onclick="applyPreset('scheduled')">Scheduled</span>
   </div>
 
   <div class="tk-filters">
@@ -236,6 +244,14 @@
         <option value="all">All</option>
         <option value="human">Work only</option>
         <option value="machine">Notices only</option>
+      </select>
+    </span>
+    <span class="shell-only">
+      <label>Timing:</label>
+      <select id="fDefer" style="width:auto">
+        <option value="all">All</option>
+        <option value="active">In play now</option>
+        <option value="scheduled">Scheduled (later)</option>
       </select>
     </span>
     <span class="shell-only">
@@ -358,6 +374,7 @@ function init() {
   if (qp.get('assigned_to')) E('fTo').value     = qp.get('assigned_to');
   if (qp.get('status'))      E('fStatus').value = qp.get('status');
   if (qp.get('source'))      E('fSource').value = qp.get('source');
+  if (qp.get('defer'))       E('fDefer').value  = qp.get('defer');
   if (qp.get('q'))           E('fQ').value      = qp.get('q');
 
   // Auto-apply: selects on change, query debounced ~350ms (B-8). The Search
@@ -367,7 +384,7 @@ function init() {
     clearTimeout(deb); deb = setTimeout(() => fetchTasks(0), 350);
   });
   E('fQ').addEventListener('keypress', (e) => { if (e.key === 'Enter') fetchTasks(0); });
-  ['fStatus', 'fSource', 'fBy', 'fTo'].forEach(id =>
+  ['fStatus', 'fSource', 'fDefer', 'fBy', 'fTo'].forEach(id =>
     E(id).addEventListener('change', () => fetchTasks(0)));
 
   // Quiet refresh when the browser tab becomes visible again (caseWidget
@@ -387,6 +404,7 @@ window.tasksSetFilter = (f = {}) => {
   if ('assigned_by' in f) E('fBy').value     = f.assigned_by ?? '';
   if ('status'      in f) E('fStatus').value = f.status || 'Incomplete';
   if ('source'      in f) E('fSource').value = f.source || 'all';
+  if ('defer'       in f) E('fDefer').value  = f.defer  || 'all';
   if ('q'           in f) E('fQ').value      = f.q || '';
   fetchTasks(0);
 };
@@ -399,10 +417,11 @@ window.tasksSetFilter = (f = {}) => {
  * text search is an orthogonal refinement, not part of the slice.
  */
 const PRESETS = {
-  mine:    { status: 'Incomplete', source: 'all',     assigned_by: '', assigned_to: 'me' },
-  overdue: { status: 'Overdue',    source: 'all',     assigned_by: '', assigned_to: ''   },
-  notices: { status: 'Incomplete', source: 'machine', assigned_by: '', assigned_to: ''   },
-  allopen: { status: 'Incomplete', source: 'all',     assigned_by: '', assigned_to: ''   }
+  mine:      { status: 'Incomplete', source: 'all',     defer: 'active',    assigned_by: '', assigned_to: 'me' },
+  overdue:   { status: 'Overdue',    source: 'all',     defer: 'all',       assigned_by: '', assigned_to: ''   },
+  notices:   { status: 'Incomplete', source: 'machine', defer: 'all',       assigned_by: '', assigned_to: ''   },
+  allopen:   { status: 'Incomplete', source: 'all',     defer: 'all',       assigned_by: '', assigned_to: ''   },
+  scheduled: { status: 'Incomplete', source: 'all',     defer: 'scheduled', assigned_by: '', assigned_to: ''   }
 };
 
 const resolvePreset = (p) =>
@@ -426,6 +445,7 @@ function syncPresetHighlight() {
   const cur = {
     status:      E('fStatus').value,
     source:      E('fSource').value,
+    defer:       E('fDefer').value,
     assigned_by: E('fBy').value,
     assigned_to: E('fTo').value
   };
@@ -454,6 +474,11 @@ function firmTodayISO() {
 // from due in firm time; undated open → its own state, never "Pending".
 function displayStatus(task) {
   if (task.status === 'Completed' || task.status === 'Deleted') return task.status;
+  // Deferred: task_start is a "not actionable before" date. Such a task is
+  // suppressed from the digest until then, so the list must SAY so — it is
+  // the only place its silence is explained. Outranks the due-date pills:
+  // whatever the deadline, the work isn't in play yet.
+  if (isDeferred(task)) return 'Scheduled';
   if (!task.due) return 'No due date';
   const due = String(task.due).slice(0, 10);
   const today = firmTodayISO();
@@ -462,6 +487,13 @@ function displayStatus(task) {
   return 'Pending';
 }
 const pillClass = (s) => s.replace(/ /g, '');
+
+/** True when the task has a start date that hasn't arrived yet (firm time). */
+function isDeferred(task) {
+  if (!task.start) return false;
+  if (task.status === 'Completed' || task.status === 'Deleted') return false;
+  return String(task.start).slice(0, 10) > firmTodayISO();
+}
 
 // Days overdue for the aging badge (B-4).
 function daysOverdue(task) {
@@ -522,6 +554,7 @@ async function fetchTasks(off, quiet) {
   const q = E('fQ').value.trim();
   const status = E('fStatus').value;
   const source = E('fSource').value;
+  const defer  = E('fDefer').value;
   syncPresetHighlight();
   if (q) params.q = q;
   // ALWAYS sent, including 'All' (the service handles it): the route defaults
@@ -529,6 +562,7 @@ async function fetchTasks(off, quiet) {
   // "All" silently equal "Incomplete" — Completed/Deleted never showed.
   params.status = status;
   if (!isEntity && source && source !== 'all') params.source = source;
+  if (!isEntity && defer  && defer  !== 'all')  params.defer  = defer;
   if (!isEntity && E('fBy').value) params.assigned_by = E('fBy').value;
   if (!isEntity && E('fTo').value) params.assigned_to = E('fTo').value;
 
@@ -593,9 +627,14 @@ function renderRows(total) {
       btns = `<button class="tk-btn" title="Mark Incomplete" onclick="rowAction(${task.id},'reopen')"><i class="fa-solid fa-rotate-left"></i></button>`;
     }
 
-    const age = daysOverdue(task);
+    const deferred = isDeferred(task);
+    if (deferred) row.classList.add('deferred');
+    // An overdue-looking due date on a not-yet-started task would be noise,
+    // and daysOverdue() is meaningless there.
+    const age = deferred ? 0 : daysOverdue(task);
     const dueHtml = (task.due ? fmtDue(task.due) : '<span style="color:var(--tk-muted)">—</span>') +
-      (open && age > 0 ? ` <span class="tk-age" title="${age} days overdue">${age}d</span>` : '');
+      (open && age > 0 ? ` <span class="tk-age" title="${age} days overdue">${age}d</span>` : '') +
+      (deferred ? ` <span class="tk-starts" title="Not in play until ${esc(fmtDue(task.start))} — hidden from the daily digest until then">starts ${esc(fmtDue(task.start))}</span>` : '');
 
     const linkHTML = task.link?.id
       ? `<a href="#" onclick="openLinked('${(task.link.title || '').replace(/'/g, "\\'").replace(/"/g, '&quot;')}','${task.link.type}','${task.link.id}');return false">${esc(task.link.title || task.link.id)}</a>`
@@ -806,6 +845,7 @@ async function viewTask(taskId) {
           ${meta('Assigned by', esc(task.from?.name || ''))}
           ${meta('Assigned to', esc(task.to?.name || ''))}
           ${meta('Linked to', task.link?.id ? esc(task.link.title || task.link.id) : '')}
+          ${meta('Starts', task.start ? fmtDue(task.start) + (isDeferred(task) ? ' — not in play yet, and held back from the daily digest until then' : '') : '')}
           ${meta('Due date', task.due ? fmtDue(task.due) : '')}
           ${meta('Created', created)}
           ${meta('Source', task.source ? `${esc(sourceLabel(task.source))} <span class="tk-id">(${esc(task.source)})</span>` : '')}
@@ -899,7 +939,8 @@ function newTaskDialog(task) {
   const isEdit  = !!(task && task.id);
   const t       = task || {};
   const toVal   = t.to?.id || '';
-  const dueVal  = t.due ? String(t.due).slice(0, 10) : '';
+  const dueVal   = t.due   ? String(t.due).slice(0, 10)   : '';
+  const startVal = t.start ? String(t.start).slice(0, 10) : '';
   // Link context: edit keeps the task's own link; create pre-links to the
   // entity when in entity mode.
   const lType = isEdit ? (t.link?.type || '') : (isEntity ? linkType : '');
@@ -912,8 +953,8 @@ function newTaskDialog(task) {
     (firm().users || []).filter(u => u.user_type)
       .map(u => `<option value="${u.user}">${esc(u.user_name)}</option>`).join('');
 
-  const qd = (label, days, months) =>
-    `<span class="tk-qd" data-d="${days || 0}" data-m="${months || 0}">${label}</span>`;
+  const qd = (label, days, months, target = 'tkDue') =>
+    `<span class="tk-qd" data-d="${days == null ? '' : days}" data-m="${months || 0}" data-t="${target}">${label}</span>`;
 
   Swal.fire({
     title: `${isEdit ? 'Update' : 'New'} Task`,
@@ -922,13 +963,20 @@ function newTaskDialog(task) {
         <label>Assign to</label><select id="tkAssignTo">${userOpts}</select>
         <label>Title</label><input type="text" id="tkTitle" maxlength="100" value="${esc(t.title || '').replace(/"/g, '&quot;')}">
         <label>Description</label><textarea id="tkDesc" rows="4" maxlength="1000">${esc(t.desc || '')}</textarea>
+        <label>Start date</label>
+        <span>
+          <input type="date" id="tkStart" value="${startVal}" style="width:150px">
+          ${qd('Clear', null, null, 'tkStart')}${qd('+1 mo', 0, 1, 'tkStart')}${qd('+3 mo', 0, 3, 'tkStart')}${qd('+1 yr', 0, 12, 'tkStart')}
+        </span>
+        <label></label>
+        <span class="sub-label" style="font-size:11px;color:var(--tk-muted)">optional — until this date the task stays out of the daily digest</span>
         <label>Due date</label>
         <span>
           <input type="date" id="tkDue" value="${dueVal}" style="width:150px">
-          ${qd('Today', 0)}${qd('Tomorrow', 1)}${qd('+1 wk', 7)}${qd('+1 mo', 0, 1)}
+          ${qd('Clear', null, null, 'tkDue')}${qd('Today', 0)}${qd('Tomorrow', 1)}${qd('+1 wk', 7)}${qd('+1 mo', 0, 1)}
         </span>
         <label></label>
-        <span class="sub-label" style="font-size:11px;color:var(--tk-muted)">a message is sent now and on the due date</span>
+        <span class="sub-label" style="font-size:11px;color:var(--tk-muted)">optional — a message is sent on assignment, on the start date, and on the due date</span>
         <label></label>
         <span style="font-size:13px"><input type="checkbox" id="tkNotify" ${t.notify ? 'checked' : ''} style="width:auto;transform:scale(1.3)"> Notify assigner upon completion</span>
         ${showLink ? `
@@ -944,10 +992,12 @@ function newTaskDialog(task) {
       // Quick-date chips
       document.querySelectorAll('.tk-qd').forEach(chip => {
         chip.addEventListener('click', () => {
+          const field = document.getElementById(chip.dataset.t);
+          if (chip.dataset.d === '') { field.value = ''; return; }   // Clear
           const d = new Date();
           d.setDate(d.getDate() + (+chip.dataset.d || 0));
           d.setMonth(d.getMonth() + (+chip.dataset.m || 0));
-          document.getElementById('tkDue').value =
+          field.value =
             `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         });
       });
@@ -956,6 +1006,7 @@ function newTaskDialog(task) {
       const title    = document.getElementById('tkTitle').value.trim();
       const desc     = document.getElementById('tkDesc').value;
       const due      = document.getElementById('tkDue').value;
+      const start    = document.getElementById('tkStart').value;
       const assignTo = document.getElementById('tkAssignTo').value;
       const notify   = document.getElementById('tkNotify').checked;
       const linked   = showLink && document.getElementById('tkLinkCheck')?.checked;
@@ -963,13 +1014,17 @@ function newTaskDialog(task) {
       if (!assignTo) { Swal.showValidationMessage('Please choose an assignee'); return false; }
       if (!title)    { Swal.showValidationMessage('Please add a brief title'); return false; }
       if (!isEdit && !desc) { Swal.showValidationMessage('Please add a clear description'); return false; }
-      // Due REQUIRED on create (human tasks stay dated); on edit an empty due
-      // is allowed — machine notices are legitimately undated and forcing a
-      // date to fix a typo in one would be wrong.
-      if (!isEdit && !due) { Swal.showValidationMessage('Without a due date it will never be done!'); return false; }
+      // Due date is OPTIONAL. It used to be mandatory ("without a due date it
+      // will never be done") — but the daily digest lists every open task
+      // regardless of due date, so an undated task is surfaced daily, not
+      // lost. Requiring one only produced fake deadlines.
+      if (start && due && start > due) {
+        Swal.showValidationMessage('Start date is after the due date');
+        return false;
+      }
 
       if (!isEdit) {
-        const payload = { to: parseInt(assignTo, 10), title, desc, due, notify };
+        const payload = { to: parseInt(assignTo, 10), title, desc, due, start, notify };
         if (linked) { payload.link_type = lType; payload.link_id = lId; }
         try {
           const data = await api('/api/tasks', 'POST', payload);
@@ -989,6 +1044,7 @@ function newTaskDialog(task) {
       if (title !== (t.title || ''))  patch.task_title = title;
       if (desc  !== (t.desc  || ''))  patch.task_desc  = desc;
       if (due   !== dueVal)           patch.task_due   = due;   // '' → NULL server-side
+      if (start !== startVal)         patch.task_start = start; // '' → NULL server-side
       if (notify !== !!t.notify)      patch.task_notification = notify;
       if (showLink && !linked && t.link?.type)  { patch.task_link_type = null;  patch.task_link_id = null; }
       if (showLink && linked  && !t.link?.type) { patch.task_link_type = lType; patch.task_link_id = String(lId); }

@@ -30,6 +30,16 @@ A task is an action item assigned to a staff member, linked to a contact, case, 
 | **Completed** | Done |
 | **Deleted** | Soft-deleted — no longer on anyone's queue, but still visible in history |
 
+## Start dates — deferring work
+
+A task can carry a **start date**: "this isn't actionable until then." Until that date arrives the task is **held back from the daily digest entirely**, so filing "call this client when they're eligible next March" no longer means emailing yourself about it every morning for a year. It stays fully visible in the task list the whole time, marked **Scheduled** with a *starts Mar 1* chip and sorted below work that's actually in play.
+
+Three messages go out over a deferred task's life: on assignment, on the start date ("this is now live"), and on the due date. If the start and due dates are the same day, only the due-date message is sent.
+
+The **Timing** filter (All / In play now / Scheduled) and the **Scheduled** preset chip show or hide deferred work. The sidebar and header task badges deliberately ignore it — a scheduled task is neither overdue nor due today. The **My Tasks** button shows in-play work only.
+
+Due dates are **optional**. They used to be required on creation, on the theory that an undated task never gets done — but the daily digest lists every open task regardless of due date, so undated work is surfaced daily rather than lost. A start date with no due date is a perfectly good shape for "get to this after March, no deadline."
+
 Open statuses are computed from the due date **at every write** — creating a task with a past due date lands it Overdue immediately, and editing a due date on an open task recomputes its status on the spot. The morning digest run remains as the day-rollover pass, flipping untouched tasks Pending → Due Today → Overdue as calendar days pass. All day math uses the firm's timezone, not the server's.
 
 The task list additionally **derives the displayed status live** from the due date, so a task due today reads "Due Today" from midnight onward without waiting for the morning run, and open tasks with no due date display as **"No due date"** rather than Pending.
@@ -106,6 +116,6 @@ Inline on any task row, and from the detail view:
 - **Cancel** — soft-deletes the task with an optional note explaining why (it still exists in history and can be reinstated).
 - **Reopen** — restores a Completed or Deleted task. The status is recomputed from the due date.
 - **Transfer** — reassigns the task to a different staff member. The new assignee is notified. Changing the assignee in the Edit dialog routes through Transfer too, so a reassignment always notifies.
-- **Edit** — change title, description, due date, link, or notification setting. Quick-date buttons (Today / Tomorrow / +1 wk / +1 mo) set the due date in one tap.
+- **Edit** — change title, description, start date, due date, link, or notification setting. Quick-date buttons set either date in one tap (start: +1 mo / +3 mo / +1 yr; due: Today / Tomorrow / +1 wk / +1 mo), and Clear removes it.
 
 Every action is written to the activity log with details of what changed.

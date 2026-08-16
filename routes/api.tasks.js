@@ -4,7 +4,7 @@
  * Tasks API
  * routes/api.tasks.js
  *
- * GET    /api/tasks                  list with filters (incl. ?source=)
+ * GET    /api/tasks                  list with filters (incl. ?source=, ?defer=)
  * GET    /api/tasks/:id              single task
  * GET    /api/tasks/:id/history      audit trail (log rows for this task)
  * POST   /api/tasks                  create
@@ -51,6 +51,7 @@ router.get('/api/tasks', jwtOrApiKey, async (req, res) => {
       link_type:   req.query.link_type   || null,
       link_id:     req.query.link_id     || null,
       source:      req.query.source      || null,
+      defer:       req.query.defer       || null,
       limit:       req.query.limit  || 100,
       offset:      req.query.offset || 0
     });

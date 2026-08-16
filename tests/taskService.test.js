@@ -103,6 +103,7 @@ function makeDb(overrides = {}) {
       task_date:         '2026-07-01',
       task_notification: 1,
       task_due_job_id:   null,
+      task_start_job_id: null,
       task_link:         '',
       task_link_type:    null,
       task_link_id:      null,
@@ -120,6 +121,13 @@ function makeDb(overrides = {}) {
 
   const query = jest.fn(async (sql, params) => {
     // cancelDueReminder's read — must be tested BEFORE the generic tasks match
+    if (/SELECT\s+task_start_job_id/i.test(sql)) {
+      return [[{ task_start_job_id: state.task.task_start_job_id }]];
+    }
+    if (/UPDATE tasks SET task_start_job_id/i.test(sql)) {
+      state.task.task_start_job_id = null;
+      return [{ affectedRows: 1 }];
+    }
     if (/SELECT\s+task_due_job_id/i.test(sql)) {
       return [[{ task_due_job_id: state.task.task_due_job_id }]];
     }

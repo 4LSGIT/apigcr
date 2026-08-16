@@ -576,7 +576,7 @@
     <div class="hdr-spacer"></div>
     <div class="hdr-right" id="hdrUserArea" style="display:none">
       <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
-      <button class="hdr-btn" onclick="openTasksTab({assigned_to:user.user,status:'Incomplete'})" title="My Tasks">
+      <button class="hdr-btn" onclick="openTasksTab({assigned_to:user.user,status:'Incomplete',defer:'active'})" title="My Tasks">
         <i class="fa-solid fa-list-check"></i><span>My Tasks</span><span class="hdr-badge" id="hdrTasksBadge" style="display:none">0</span>
       </button>
       <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">

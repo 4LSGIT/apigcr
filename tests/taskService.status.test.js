@@ -18,6 +18,12 @@
  * db.query dispatches on SQL text; logService.createLogEntry is patched on
  * the require cache.
  *
+ * Also pins the start-date ("defer until") behaviour:
+ *   S1 — createTask schedules a start reminder only when task_start is set,
+ *        is in the future, and differs from the due date (start === due would
+ *        double-notify on the same morning).
+ *   S2 — listTasks' defer filter and its deferred-sorts-last ordering.
+ *
  * Run:  npx jest tests/taskService.status.test.js
  */
 
@@ -202,5 +208,139 @@ describe('computeStatus uses the FIRM calendar day (C3)', () => {
     const db = makeCreateDb();
     await taskService.createTask(db, { to: 2, title: 'x', due: '2026-06-09' });
     expect(insertedStatus(db.captured)).toBe('Due Today');
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// Start dates — scheduling rules (S1)
+// ─────────────────────────────────────────────────────────────
+
+/** createTask stub that also records scheduled_jobs inserts. */
+function makeStartDb() {
+  const jobs = [];
+  return {
+    jobs,
+    query: async (sql, params) => {
+      if (/INSERT INTO scheduled_jobs/i.test(sql)) {
+        jobs.push(JSON.parse(params[2]));
+        return [{ insertId: 900 + jobs.length }];
+      }
+      if (/INSERT INTO tasks/i.test(sql)) return [{ insertId: 77 }];
+      if (/UPDATE tasks SET task_(start|due)_job_id/i.test(sql)) return [{ affectedRows: 1 }];
+      if (/FROM tasks t/i.test(sql)) {
+        return [[{
+          task_id: 77, task_status: 'Pending', task_title: 't', task_desc: '',
+          task_due: null, task_start: null, task_date: new Date(),
+          task_notification: 0, task_action_token: 'tok', task_source: null,
+          task_link_type: null, task_link_id: null, task_link: '',
+          from_id: 1, from_name: 'A', to_id: 2, to_name: 'B',
+          contact_id: null, contact_name: null,
+          case_id: null, case_number: null, case_number_full: null
+        }]];
+      }
+      if (/SELECT user_name FROM users/i.test(sql)) return [[{ user_name: 'X' }]];
+      return [[]];
+    }
+  };
+}
+
+// createTask fires its reminders from setImmediate; let the queue drain.
+const drain = () => new Promise(r => setImmediate(() => setImmediate(r)));
+
+describe('start-date reminders (S1)', () => {
+  test('future start + later due → BOTH a start and a due reminder', async () => {
+    const db = makeStartDb();
+    await taskService.createTask(db, {
+      to: 2, title: 'x', start: firmToday(200), due: firmToday(207),
+      send_assignment_email: false
+    });
+    await drain();
+    const types = db.jobs.map(j => j.type).sort();
+    expect(types).toEqual(['task_due_reminder', 'task_start_reminder']);
+  });
+
+  test('start === due → due reminder ONLY (no double-notify the same morning)', async () => {
+    const db = makeStartDb();
+    await taskService.createTask(db, {
+      to: 2, title: 'x', start: firmToday(30), due: firmToday(30),
+      send_assignment_email: false
+    });
+    await drain();
+    expect(db.jobs.map(j => j.type)).toEqual(['task_due_reminder']);
+  });
+
+  test('start in the PAST schedules nothing (no reminder for a day already gone)', async () => {
+    const db = makeStartDb();
+    await taskService.createTask(db, {
+      to: 2, title: 'x', start: firmToday(-10), due: firmToday(10),
+      send_assignment_email: false
+    });
+    await drain();
+    expect(db.jobs.map(j => j.type)).toEqual(['task_due_reminder']);
+  });
+
+  test('start with NO due date → start reminder only (deferred, open-ended work)', async () => {
+    const db = makeStartDb();
+    await taskService.createTask(db, {
+      to: 2, title: 'x', start: firmToday(365), send_assignment_email: false
+    });
+    await drain();
+    expect(db.jobs.map(j => j.type)).toEqual(['task_start_reminder']);
+  });
+
+  test('no dates at all → no reminders, still a valid task', async () => {
+    const db = makeStartDb();
+    await taskService.createTask(db, { to: 2, title: 'x', send_assignment_email: false });
+    await drain();
+    expect(db.jobs).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// listTasks defer filter + ordering (S2)
+// ─────────────────────────────────────────────────────────────
+
+function makeListDb() {
+  const seen = [];
+  return {
+    seen,
+    query: async (sql, params) => {
+      seen.push({ sql, params });
+      if (/COUNT\(\*\)/i.test(sql)) return [[{ total: 0 }]];
+      return [[]];
+    }
+  };
+}
+
+describe('listTasks defer filter (S2)', () => {
+  test("defer:'active' keeps NULL starts and anything already started", async () => {
+    const db = makeListDb();
+    await taskService.listTasks(db, { defer: 'active' });
+    expect(db.seen[0].sql).toMatch(/task_start IS NULL OR t\.task_start <= \?/);
+  });
+
+  test("defer:'scheduled' selects only future starts", async () => {
+    const db = makeListDb();
+    await taskService.listTasks(db, { defer: 'scheduled' });
+    expect(db.seen[0].sql).toMatch(/t\.task_start > \?/);
+    expect(db.seen[0].sql).not.toMatch(/task_start IS NULL OR/);
+  });
+
+  test("absent / 'all' applies no start filter", async () => {
+    for (const defer of [null, 'all']) {
+      const db = makeListDb();
+      await taskService.listTasks(db, { defer });
+      expect(db.seen[0].sql).not.toMatch(/task_start/);
+    }
+  });
+
+  test('deferred work always sorts below in-play work, even unfiltered', async () => {
+    const db = makeListDb();
+    await taskService.listTasks(db, {});
+    const rowsQuery = db.seen[1];
+    expect(rowsQuery.sql).toMatch(/\(t\.task_start IS NOT NULL AND t\.task_start > \?\)/);
+    // ORDER BY's date param binds AFTER the WHERE params and BEFORE limit/offset.
+    expect(rowsQuery.params.slice(-3)[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

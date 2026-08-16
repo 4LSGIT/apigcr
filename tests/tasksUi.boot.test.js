@@ -47,7 +47,7 @@ const USERS = [
 function mkTask(over = {}) {
   return {
     id: 1, status: 'Pending', title: 'Call the trustee', desc: '',
-    due: '2099-01-01', created: '2026-08-01T12:00:00.000Z', notify: false,
+    due: '2099-01-01', start: null, created: '2026-08-01T12:00:00.000Z', notify: false,
     from: { id: 6, name: 'Fred Ross' }, to: { id: 22, name: 'Rena Grunberger' },
     link: null, action_token: 'tok', source: null, ...over,
   };
@@ -166,7 +166,7 @@ describe('preset chips', () => {
   test('every chip onclick resolves to a real function', async () => {
     const { window } = await boot();
     const chips = [...window.document.querySelectorAll('.tk-preset')];
-    expect(chips.length).toBe(4);
+    expect(chips.length).toBe(5);
     for (const chip of chips) {
       const fnName = /(\w+)\s*\(/.exec(chip.getAttribute('onclick'))[1];
       expect(typeof window[fnName]).toBe('function');
@@ -210,8 +210,9 @@ describe('preset chips', () => {
     expect([...window.document.querySelectorAll('.tk-preset')].some(c => c.classList.contains('on'))).toBe(false);
   });
 
-  test('cold-boot ?assigned_to=<me>&status=Incomplete (the shell\'s "My Tasks" button) lights "My open"', async () => {
-    const { window } = await boot({ search: '?assigned_to=6&status=Incomplete' });
+  test('cold-boot from the shell\'s "My Tasks" button lights "My open"', async () => {
+    // Must stay in step with index.html's openTasksTab({...}) call.
+    const { window } = await boot({ search: '?assigned_to=6&status=Incomplete&defer=active' });
     expect(window.document.querySelector('[data-preset="mine"]').classList.contains('on')).toBe(true);
   });
 });
@@ -274,6 +275,70 @@ describe('status is derived from the due date, not read from task_status', () =>
   test('a machine-sourced row carries a humanized source chip', async () => {
     const { window } = await boot({ tasks: [mkTask({ source: 'esign_followup' })] });
     expect(window.document.querySelector('#tasksTable .tk-src').textContent).toContain('E-sign follow-up');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Start dates ("defer until")
+// ─────────────────────────────────────────────────────────────
+
+describe('start dates', () => {
+  const plusDays = (n) => {
+    const d = new Date(Date.now() + n * 86400000);
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Detroit' }).format(d);
+  };
+
+  test('a future start date renders "Scheduled", outranking the due-date pill', async () => {
+    const { window } = await boot({
+      tasks: [mkTask({ status: 'Pending', start: plusDays(200), due: plusDays(207) })],
+    });
+    expect(window.document.querySelector('#tasksTable .tk-pill').textContent).toBe('Scheduled');
+    expect(window.document.querySelector('#tasksTable .tk-starts')).not.toBeNull();
+    expect(window.document.querySelector('#tasksTable tr.deferred')).not.toBeNull();
+  });
+
+  test('a PAST start date is not deferred — normal pill, no chip', async () => {
+    const { window } = await boot({
+      tasks: [mkTask({ status: 'Pending', start: plusDays(-30), due: plusDays(10) })],
+    });
+    expect(window.document.querySelector('#tasksTable .tk-pill').textContent).toBe('Pending');
+    expect(window.document.querySelector('#tasksTable .tk-starts')).toBeNull();
+  });
+
+  test('a deferred task shows no aging badge even with a past due date', async () => {
+    const { window } = await boot({
+      tasks: [mkTask({ status: 'Pending', start: plusDays(200), due: plusDays(-5) })],
+    });
+    expect(window.document.querySelector('#tasksTable .tk-age')).toBeNull();
+  });
+
+  test('terminal tasks are never "Scheduled" regardless of start date', async () => {
+    const { window } = await boot({
+      tasks: [mkTask({ status: 'Completed', start: plusDays(200) })],
+    });
+    expect(window.document.querySelector('#tasksTable .tk-pill').textContent).toBe('Completed');
+  });
+
+  test('the Scheduled preset sends defer=scheduled', async () => {
+    const { window, calls } = await boot();
+    window.document.querySelector('[data-preset="scheduled"]').click();
+    await new Promise(r => window.setTimeout(r, 20));
+    const last = calls.filter(c => c.url === '/api/tasks' && c.params && 'limit' in c.params).pop();
+    expect(last.params.defer).toBe('scheduled');
+  });
+
+  test('the My-open preset asks for in-play work only', async () => {
+    const { window, calls } = await boot();
+    window.document.querySelector('[data-preset="mine"]').click();
+    await new Promise(r => window.setTimeout(r, 20));
+    const last = calls.filter(c => c.url === '/api/tasks' && c.params && 'limit' in c.params).pop();
+    expect(last.params.defer).toBe('active');
+  });
+
+  test('defer=all is omitted from the query (no filter)', async () => {
+    const { calls } = await boot();
+    const first = calls.filter(c => c.url === '/api/tasks' && c.params && 'limit' in c.params)[0];
+    expect(first.params.defer).toBeUndefined();
   });
 });
 
