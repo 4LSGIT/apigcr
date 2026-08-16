@@ -4,8 +4,9 @@
  * Tasks API
  * routes/api.tasks.js
  *
- * GET    /api/tasks                  list with filters
+ * GET    /api/tasks                  list with filters (incl. ?source=)
  * GET    /api/tasks/:id              single task
+ * GET    /api/tasks/:id/history      audit trail (log rows for this task)
  * POST   /api/tasks                  create
  * PATCH  /api/tasks/:id              update fields
  * PATCH  /api/tasks/:id/complete     mark Completed
@@ -45,6 +46,7 @@ router.get('/api/tasks', jwtOrApiKey, async (req, res) => {
       assigned_by: req.query.assigned_by || null,
       link_type:   req.query.link_type   || null,
       link_id:     req.query.link_id     || null,
+      source:      req.query.source      || null,
       limit:       req.query.limit  || 100,
       offset:      req.query.offset || 0
     });
@@ -64,6 +66,22 @@ router.get('/api/tasks/:id(\\d+)', jwtOrApiKey, async (req, res) => {
   } catch (err) {
     console.error('GET /api/tasks/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch task' });
+  }
+});
+
+// ─── HISTORY ──────────────────────────────────────────────────────────────────
+// Audit trail (created / updated / completed / deleted / reopened /
+// transferred log rows, incl. complete/cancel notes). Works for unlinked
+// tasks too — the contact/case log views can't reach those.
+router.get('/api/tasks/:id(\\d+)/history', jwtOrApiKey, async (req, res) => {
+  try {
+    const task = await taskService.getTask(req.db, req.params.id);
+    if (!task) return res.status(404).json({ status: 'error', message: 'Task not found' });
+    const history = await taskService.getTaskHistory(req.db, req.params.id);
+    res.json({ data: history });
+  } catch (err) {
+    console.error('GET /api/tasks/:id/history error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch task history' });
   }
 });
 

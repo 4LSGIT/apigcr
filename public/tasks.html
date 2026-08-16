@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tasks</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <style>
+    /* ── Theme vars (pipelineBoard pattern: light defaults + body.dark) ─── */
+    :root {
+      --tk-bg: #fff;            --tk-fg: #111827;      --tk-muted: #6b7280;
+      --tk-border: #d1d5db;     --tk-surface: #f8f9fb;
+      --tk-chip-bg: #eef1f4;    --tk-chip-fg: #555;
+      --tk-robot-bg: #eef2ff;   --tk-robot-fg: #4f46e5;
+      --tk-age-bg: #fbe3e3;     --tk-age-fg: #b32222;
+      --tk-link: #1a73b7;
+      --tk-pending: #4f46e5;    --tk-duetoday: #d97706; --tk-overdue: #dc2626;
+      --tk-completed: #065f46;  --tk-deleted: #6b7280;  --tk-nodue: #6b7280;
+      --tk-bulk-bg: #eef2ff;
+    }
+    body.dark {
+      --tk-bg: #151a23;         --tk-fg: #e6e8ee;      --tk-muted: #9aa3b2;
+      --tk-border: #2a313d;     --tk-surface: #1d2230;
+      --tk-chip-bg: #2a313d;    --tk-chip-fg: #b8c0cc;
+      --tk-robot-bg: #232a4a;   --tk-robot-fg: #8ea2ff;
+      --tk-age-bg: #3a1d1d;     --tk-age-fg: #f08c8c;
+      --tk-link: #60a5fa;
+      --tk-pending: #8ea2ff;    --tk-duetoday: #e0b341; --tk-overdue: #f08c8c;
+      --tk-completed: #6fd08c;  --tk-deleted: #9aa3b2;  --tk-nodue: #9aa3b2;
+      --tk-bulk-bg: #232a4a;
+    }
+    body { margin: 0; padding: 12px; background: var(--tk-bg); color: var(--tk-fg); }
+    a { color: var(--tk-link); }
+
+    /* Dark-mode overrides for style.css's light-only logTable + form controls
+       (mirrors index.html's body.dark .tab-main rules — those don't reach
+       inside an iframe). */
+    body.dark input, body.dark select, body.dark textarea {
+      background: var(--tk-surface); color: var(--tk-fg);
+      border: 1px solid var(--tk-border) !important;
+    }
+    body.dark button {
+      background: var(--tk-surface); color: var(--tk-fg);
+      border: 1px solid var(--tk-border); border-radius: 4px;
+    }
+    body.dark .logTable, body.dark .logTable td { background: var(--tk-surface); border-color: var(--tk-border); color: var(--tk-fg); }
+    body.dark .logTable th { background: #1a3d52; color: #fff; border-color: var(--tk-border); }
+    body.dark .logTable tr:nth-child(even), body.dark .logTable tr:nth-child(even) td { background: #1a1f2b; }
+    body.dark .logTable tr:hover, body.dark .logTable tr:hover td { background: #2a313d !important; }
+
+    /* ── Toolbar ─────────────────────────────────────────────────────────── */
+    .tk-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+    .tk-top h2 { margin: 0 6px 0 0; font-size: 20px; }
+    .tk-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+    .tk-filters label { color: var(--tk-muted); white-space: nowrap; }
+    .tk-filters select, .tk-filters input { padding: 4px 6px; }
+    body.entity .shell-only { display: none !important; }
+
+    /* Preset chips (shell mode) */
+    .tk-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .tk-preset {
+      font-size: 12px; padding: 3px 12px; border-radius: 14px; cursor: pointer;
+      background: var(--tk-chip-bg); color: var(--tk-chip-fg);
+      border: 1px solid var(--tk-border); user-select: none;
+    }
+    .tk-preset:hover { border-color: var(--tk-link); color: var(--tk-link); }
+
+    /* ── Status pills / chips / badges ───────────────────────────────────── */
+    .tk-pill { font-weight: 600; white-space: nowrap; font-size: 13px; }
+    .tk-pill.Pending      { color: var(--tk-pending); }
+    .tk-pill.DueToday     { color: var(--tk-duetoday); }
+    .tk-pill.Overdue      { color: var(--tk-overdue); }
+    .tk-pill.Completed    { color: var(--tk-completed); }
+    .tk-pill.Deleted      { color: var(--tk-deleted); }
+    .tk-pill.NoDueDate    { color: var(--tk-nodue); font-weight: 400; font-style: italic; }
+    .tk-src {
+      display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px;
+      background: var(--tk-robot-bg); color: var(--tk-robot-fg); white-space: nowrap;
+      margin-left: 6px; vertical-align: 1px;
+    }
+    .tk-age {
+      display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 8px;
+      background: var(--tk-age-bg); color: var(--tk-age-fg); margin-left: 6px;
+      white-space: nowrap; font-weight: 600;
+    }
+    .tk-id { color: var(--tk-muted); font-size: 11px; margin-left: 6px; }
+
+    /* ── Row action buttons ──────────────────────────────────────────────── */
+    td.tk-actions { white-space: nowrap; }
+    .tk-btn {
+      border: 1px solid var(--tk-border); background: var(--tk-surface); color: var(--tk-fg);
+      border-radius: 4px; padding: 3px 8px; margin-right: 4px; cursor: pointer; font-size: 13px;
+    }
+    .tk-btn:hover { border-color: var(--tk-link); }
+    .tk-btn.done   { color: #059669; }
+    .tk-btn.cancel { color: #b91c1c; }
+    .tk-btn:disabled { opacity: .45; cursor: default; }
+
+    /* ── Bulk bar ────────────────────────────────────────────────────────── */
+    #tkBulkBar {
+      display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+      background: var(--tk-bulk-bg); border: 1px solid var(--tk-border);
+      border-radius: 6px; padding: 6px 12px; margin-bottom: 8px; font-size: 13px;
+    }
+    #tkBulkBar.on { display: flex; }
+    .col-sel { width: 26px; text-align: center; }
+    .col-sel input { transform: scale(1.2); cursor: pointer; }
+
+    /* ── Table / empty state ─────────────────────────────────────────────── */
+    #tasksTable td { vertical-align: middle; }
+    .tk-empty { text-align: center; color: var(--tk-muted); padding: 18px 6px !important; }
+    #tkLoad { padding: 14px; }
+
+    /* ── Footer: pagination CSS rescoped from scripts.js's #logTableFoot ──
+       (the injected styles there are scoped to that id — see B-11/F14). */
+    #tasksTableFoot {
+      display: flex; flex-wrap: wrap; align-items: center;
+      gap: 0.6em; padding: 0.6em 0; font-size: 0.95em;
+    }
+    #tasksTableFoot .sep { color: var(--tk-border); margin: 0 0.15em; user-select: none; }
+    #tasksTableFoot .log-pagination { display: inline-flex; align-items: center; gap: 0.35em; }
+    #tasksTableFoot .log-pagination a { text-decoration: none; padding: 0.15em 0.5em; border-radius: 3px; }
+    #tasksTableFoot .log-pagination a:hover { background: var(--tk-chip-bg); text-decoration: underline; }
+    #tasksTableFoot .log-pagination strong { padding: 0.15em 0.5em; background: var(--tk-chip-bg); border-radius: 3px; font-weight: bold; }
+    #tasksTableFoot .log-pagination-ellipsis { color: var(--tk-muted); padding: 0 0.1em; }
+    #tasksTableFoot .logPageInput {
+      width: 4.5em; text-align: center; font-weight: bold; padding: 0.15em 0.3em;
+      border: 1px solid var(--tk-border); border-radius: 3px; -moz-appearance: textfield;
+    }
+    #tasksTableFoot .logPageInput::-webkit-outer-spin-button,
+    #tasksTableFoot .logPageInput::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+    /* ── Responsive: progressive column hiding (B-7) ─────────────────────── */
+    @media (max-width: 900px) { .col-by, .col-created { display: none; } }
+    @media (max-width: 640px) { .col-to, .col-link { display: none; } body { padding: 8px 4px; } }
+
+    /* Entity mode: narrower column set (B-6/B-14) */
+    body.entity .col-by, body.entity .col-link, body.entity .col-created { display: none; }
+
+    /* Detail-modal history timeline */
+    .tk-hist { text-align: left; font-size: 12.5px; margin-top: 12px; border-top: 1px solid var(--tk-border); padding-top: 8px; }
+    .tk-hist-row { padding: 3px 0; }
+    .tk-hist-date { color: var(--tk-muted); white-space: nowrap; margin-right: 8px; }
+    .tk-hist-note {
+      margin: 3px 0 3px 14px; padding: 5px 9px; background: var(--tk-chip-bg);
+      border-left: 3px solid var(--tk-link); border-radius: 3px; white-space: pre-wrap;
+    }
+    /* Quick-date chips inside the create/edit dialog */
+    .tk-qd { font-size: 11px; padding: 2px 9px; border-radius: 10px; cursor: pointer;
+             background: var(--tk-chip-bg); border: 1px solid var(--tk-border); margin: 0 3px; }
+    .tk-dlg-grid { display: grid; grid-template-columns: 92px 1fr; gap: 8px 10px; align-items: center; text-align: left; font-size: 14px; }
+    .tk-dlg-grid label { color: var(--tk-muted); font-size: 13px; }
+    .tk-dlg-grid input[type="text"], .tk-dlg-grid input[type="date"], .tk-dlg-grid select, .tk-dlg-grid textarea { width: 100%; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════════════════
+  CONSOLIDATED TASK UI — one file, two modes (replaces the three near-
+  identical implementations that lived inline in index.html / case.html /
+  contact.html).
+
+    shell mode   /tasks.html                                → all tasks, full
+                 filters, preset chips, bulk actions. Iframed lazily into the
+                 shell's #tabTasks (data-src, openMainTab swaps on first open).
+    entity mode  /tasks.html?link_type=case&link_id=<id>    → scoped to one
+                 (or contact)                                 case/contact,
+                 reduced filters + columns. Iframed lazily by the entity tab
+                 button (esignButton idiom).
+
+  An invalid/missing link_type+link_id pair when either param is present is a
+  HARD ERROR — never a silent fall-through to shell mode, which inside a case
+  page would list every task in the firm.
+
+  Cold-boot filter params (used by the shell's "My Tasks" header button when
+  the iframe hasn't loaded yet): ?assigned_to= &status= &source= &q=
+
+  Transport: window.top.apiSend + waitForShell boot loop (caseWidget/
+  pipelineBoard precedent — this page sits at TWO different nesting depths:
+  shell→tasks.html and shell→case.html→tasks.html; window.top is the one
+  expression correct at both). Theme follows the shell live via a
+  MutationObserver on top's body.dark (pipelineBoard pattern).
+
+  Parent contract (A3):
+    window.reloadTasks(offset?)   — refetch (entity tab re-entry, shell pushes)
+    window.tasksSetFilter(obj)    — {assigned_to,status,source,q} then refetch
+  Plus a quiet refresh on visibilitychange→visible (caseWidget precedent),
+  and window.top.tasksBadgeRefresh?.() is poked after every mutation so the
+  shell's sidebar badge stays honest.
+
+  Status display is DERIVED client-side from task_due in FIRM time (B-2/B-3):
+  the stored status is only rolled over by the 13:00-UTC digest sweep, so
+  between midnight Detroit and the sweep a stored status can be a day stale.
+  Terminal statuses (Completed/Deleted) always render as stored. Undated open
+  tasks render as "No due date", never "Pending" — 48% of live rows are
+  undated and calling them Pending is what lets them disappear.
+═══════════════════════════════════════════════════════════════════════════ -->
+
+<div id="tkError" style="display:none;padding:24px;color:#b91c1c;font-size:15px"></div>
+
+<div id="tkMain" style="display:none">
+  <div class="tk-top">
+    <h2 id="tkHeading">Tasks</h2>
+    <button onclick="newTaskDialog()"><i class="fa-solid fa-plus"></i> Create Task</button>
+  </div>
+
+  <div class="tk-presets shell-only">
+    <span class="tk-preset" onclick="applyPreset('mine')">My open</span>
+    <span class="tk-preset" onclick="applyPreset('overdue')">Overdue</span>
+    <span class="tk-preset" onclick="applyPreset('notices')">Notices</span>
+    <span class="tk-preset" onclick="applyPreset('allopen')">All open</span>
+  </div>
+
+  <div class="tk-filters">
+    <label>Query:</label>
+    <input id="fQ" style="width:170px" placeholder="title, description, name…">
+    <label>Status:</label>
+    <select id="fStatus" style="width:auto">
+      <option>Incomplete</option>
+      <option>Pending</option>
+      <option>Due Today</option>
+      <option>Overdue</option>
+      <option>Completed</option>
+      <option>Deleted</option>
+      <option value="All">All</option>
+    </select>
+    <span class="shell-only">
+      <label>Source:</label>
+      <select id="fSource" style="width:auto">
+        <option value="all">All</option>
+        <option value="human">Work only</option>
+        <option value="machine">Notices only</option>
+      </select>
+    </span>
+    <span class="shell-only">
+      <label>Assigned By:</label>
+      <select id="fBy" style="width:auto"><option value="">All</option></select>
+    </span>
+    <span class="shell-only">
+      <label>Assigned To:</label>
+      <select id="fTo" style="width:auto"><option value="">All</option></select>
+    </span>
+    <button id="tkSearchBtn" onclick="fetchTasks(0)">Search</button>
+  </div>
+
+  <div id="tkBulkBar">
+    <span id="tkBulkCount"></span>
+    <button class="tk-btn done" onclick="bulkAction('complete')"><i class="fa-solid fa-check"></i> Complete selected</button>
+    <button class="tk-btn cancel" onclick="bulkAction('cancel')"><i class="fa-solid fa-ban"></i> Cancel selected</button>
+    <a href="#" onclick="clearSelection();return false" style="font-size:12px">clear</a>
+  </div>
+
+  <table id="tasksTable" class="logTable">
+    <tr>
+      <th class="col-sel"><input type="checkbox" id="tkSelAll" title="Select all open tasks on this page" onchange="toggleSelectAll(this.checked)"></th>
+      <th>Actions</th>
+      <th>Status</th>
+      <th>Title</th>
+      <th>Due</th>
+      <th class="col-to">Assigned To</th>
+      <th class="col-by">Assigned By</th>
+      <th class="col-link">Linked To</th>
+      <th class="col-created">Created</th>
+    </tr>
+  </table>
+  <div id="tasksTableFoot"></div>
+  <div id="tkLoad" style="display:none"><i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i></div>
+</div>
+
+<script>
+// ─── Mode / boot params ─────────────────────────────────────────────────────
+const qp = new URLSearchParams(location.search);
+const LINK_TYPES = ['contact', 'case', 'appt', 'bill', 'event'];
+const linkType = qp.get('link_type') || '';
+const linkId   = qp.get('link_id')   || '';
+const isEntity = !!(linkType || linkId);
+const entityOk = LINK_TYPES.includes(linkType) && !!linkId;
+
+let limit  = parseInt(getTabPref('tasks', 'limit', 100), 10) || 100;
+let offset = 0;
+let taskRows = [];               // last-loaded list, for modals/bulk
+const selected = new Set();      // bulk-selected task ids
+
+// ─── Transport (window.top — correct at both nesting depths) ───────────────
+function api()      { return window.top.apiSend.apply(window.top, arguments); }
+function firm()     { try { return window.top.firmData || {}; } catch (_) { return {}; } }
+function meId()     { try { return window.top.user?.user || ''; } catch (_) { return ''; } }
+function pokeBadge(){ try { window.top.tasksBadgeRefresh?.(); } catch (_) { } }
+
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return init();
+  } catch (_) { }
+  setTimeout(waitForShell, 100);
+})();
+
+function init() {
+  // Theme: inherit + follow the shell's body.dark (pipelineBoard pattern).
+  try {
+    const T = window.top;
+    const syncTheme = () =>
+      document.body.classList.toggle('dark', T.document.body.classList.contains('dark'));
+    syncTheme();
+    new MutationObserver(syncTheme).observe(T.document.body, {
+      attributes: true, attributeFilter: ['class'],
+    });
+  } catch (_) { }
+
+  // Mode gate. A malformed entity request must NEVER degrade to shell mode.
+  if (isEntity && !entityOk) {
+    E('tkError').textContent =
+      `Tasks widget: invalid link (link_type=${JSON.stringify(linkType)}, ` +
+      `link_id=${JSON.stringify(linkId)}). Refusing to list unscoped tasks.`;
+    E('tkError').style.display = 'block';
+    return;
+  }
+  if (isEntity) {
+    document.body.classList.add('entity');
+    E('tkHeading').textContent =
+      linkType === 'case' ? 'Tasks linked to this case'
+      : linkType === 'contact' ? 'Tasks linked to this contact'
+      : `Tasks linked to this ${linkType}`;
+  }
+
+  // Populate the two user filter selects (shell mode) from firmData —
+  // BOTH filtered on user_type now (F21: the old Assigned-By select listed
+  // users who could never be assignees; assigners are the same staff set).
+  const users = (firm().users || []).filter(u => u.user_type);
+  for (const selId of ['fBy', 'fTo']) {
+    const sel = E(selId);
+    users.forEach(u => {
+      const o = document.createElement('option');
+      o.value = u.user; o.textContent = u.user_name;
+      sel.appendChild(o);
+    });
+  }
+
+  // Cold-boot filters from the URL (shell "My Tasks" cold path).
+  if (qp.get('assigned_to')) E('fTo').value     = qp.get('assigned_to');
+  if (qp.get('status'))      E('fStatus').value = qp.get('status');
+  if (qp.get('source'))      E('fSource').value = qp.get('source');
+  if (qp.get('q'))           E('fQ').value      = qp.get('q');
+
+  // Auto-apply: selects on change, query debounced ~350ms (B-8). The Search
+  // button stays as the loading-state anchor and manual re-run.
+  let deb = null;
+  E('fQ').addEventListener('input', () => {
+    clearTimeout(deb); deb = setTimeout(() => fetchTasks(0), 350);
+  });
+  E('fQ').addEventListener('keypress', (e) => { if (e.key === 'Enter') fetchTasks(0); });
+  ['fStatus', 'fSource', 'fBy', 'fTo'].forEach(id =>
+    E(id).addEventListener('change', () => fetchTasks(0)));
+
+  // Quiet refresh when the browser tab becomes visible again (caseWidget
+  // precedent — catches "acted elsewhere, came back").
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') fetchTasks(offset, true);
+  });
+
+  E('tkMain').style.display = 'block';
+  fetchTasks(0);
+}
+
+// Parent contract (A3).
+window.reloadTasks    = (off) => fetchTasks(off == null ? offset : off);
+window.tasksSetFilter = (f = {}) => {
+  if ('assigned_to' in f) E('fTo').value     = f.assigned_to ?? '';
+  if ('assigned_by' in f) E('fBy').value     = f.assigned_by ?? '';
+  if ('status'      in f) E('fStatus').value = f.status || 'Incomplete';
+  if ('source'      in f) E('fSource').value = f.source || 'all';
+  if ('q'           in f) E('fQ').value      = f.q || '';
+  fetchTasks(0);
+};
+
+// ─── Display helpers ────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Firm-tz "today" as YYYY-MM-DD. en-CA gives ISO ordering for free.
+function firmTodayISO() {
+  const tz = firm().firmTimezone || 'America/Detroit';
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); }
+  catch (_) { return new Intl.DateTimeFormat('en-CA').format(new Date()); }
+}
+
+// Derived display status (B-2/B-3). Terminal reads stored; open recomputes
+// from due in firm time; undated open → its own state, never "Pending".
+function displayStatus(task) {
+  if (task.status === 'Completed' || task.status === 'Deleted') return task.status;
+  if (!task.due) return 'No due date';
+  const due = String(task.due).slice(0, 10);
+  const today = firmTodayISO();
+  if (due < today)   return 'Overdue';
+  if (due === today) return 'Due Today';
+  return 'Pending';
+}
+const pillClass = (s) => s.replace(/ /g, '');
+
+// Days overdue for the aging badge (B-4).
+function daysOverdue(task) {
+  if (!task.due) return 0;
+  const due = String(task.due).slice(0, 10);
+  const today = firmTodayISO();
+  if (due >= today) return 0;
+  return Math.round((new Date(today + 'T00:00Z') - new Date(due + 'T00:00Z')) / 86400000);
+}
+
+// Format a DATE value (arrives as UTC-midnight ISO). Slice the calendar date,
+// build a LOCAL date so the day never shifts west of UTC.
+function fmtDue(d) {
+  if (!d) return '';
+  const [y, m, day] = String(d).slice(0, 10).split('-');
+  return new Date(+y, +m - 1, +day)
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Humanized machine-source labels (B-5/E4), with a generic fallback so new
+// sources need zero code here.
+const SOURCE_LABELS = {
+  esign: 'E-sign', esign_followup: 'E-sign follow-up', esign_stall: 'E-sign stall',
+  adobe_sign: 'Adobe Sign', client_upload: 'Client upload', ext_form: 'External form',
+  form_pdf: 'Form PDF', court_review: 'Court review', claude_charter: 'Claude'
+};
+function sourceLabel(slug) {
+  if (!slug) return '';
+  return SOURCE_LABELS[slug] ||
+    String(slug).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+function sourceChip(task) {
+  return task.source
+    ? `<span class="tk-src" title="Machine-pushed notice (source: ${esc(task.source)})">` +
+      `<i class="fa-solid fa-robot"></i> ${esc(sourceLabel(task.source))}</span>`
+    : '';
+}
+
+// Escape, bold leading "Label:" line prefixes, newline→<br>. Escape runs
+// FIRST per line. (Server-side twins live in taskService.js / taskActions.js
+// — the deliberate self-contained convention; the three FRONTEND copies this
+// file replaced are gone.)
+function renderTaskDescHtml(desc) {
+  return String(desc == null ? '' : desc)
+    .split('\n')
+    .map(line => esc(line).replace(/^([A-Za-z][A-Za-z ]{0,30}:)/, '<strong>$1</strong>'))
+    .join('<br>');
+}
+
+// ─── Fetch + render ─────────────────────────────────────────────────────────
+async function fetchTasks(off, quiet) {
+  offset = off || 0;
+  E('tkSearchBtn').disabled = true;
+  if (!quiet) E('tkLoad').style.display = 'block';
+
+  const params = { limit, offset };
+  if (isEntity) { params.link_type = linkType; params.link_id = linkId; }
+  const q = E('fQ').value.trim();
+  const status = E('fStatus').value;
+  const source = E('fSource').value;
+  if (q) params.q = q;
+  if (status !== 'All') params.status = status;
+  if (!isEntity && source && source !== 'all') params.source = source;
+  if (!isEntity && E('fBy').value) params.assigned_by = E('fBy').value;
+  if (!isEntity && E('fTo').value) params.assigned_to = E('fTo').value;
+
+  try {
+    const data = await api('/api/tasks', 'GET', params);
+    taskRows = data.data || [];
+    renderRows(data.total || 0);
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error loading tasks', text: err.message });
+  }
+  E('tkSearchBtn').disabled = false;
+  E('tkLoad').style.display = 'none';
+}
+
+function renderRows(total) {
+  const table = E('tasksTable');
+  const foot  = E('tasksTableFoot');
+  foot.innerHTML = '';
+  const trs = table.getElementsByTagName('tr');
+  for (let i = trs.length - 1; i > 0; i--) table.deleteRow(i);
+  clearSelection(true);
+
+  if (!total) {
+    const row = table.insertRow();
+    const cell = row.insertCell();
+    cell.colSpan = 9;
+    cell.className = 'tk-empty';
+    cell.innerHTML = isEntity
+      ? `No open tasks linked to this ${linkType}.`
+      : 'No tasks match these filters.';
+    // Entity mode + Incomplete filter: probe whether completed/cancelled
+    // tasks exist and offer the switch (Q2 answer — don't silently hide
+    // history on a case with 3 tasks, don't show it by default either).
+    if (isEntity && E('fStatus').value === 'Incomplete') {
+      api('/api/tasks', 'GET', { link_type: linkType, link_id: linkId, status: 'All', limit: 1 })
+        .then(d => {
+          if (d.total > 0) {
+            cell.innerHTML += ` <a href="#" onclick="E('fStatus').value='All';fetchTasks(0);return false">Show all (${d.total})</a>`;
+          }
+        }).catch(() => { });
+    }
+    return;
+  }
+
+  taskRows.forEach(task => {
+    const row = table.insertRow();
+    const ds = displayStatus(task);
+    const open = ['Pending', 'Due Today', 'Overdue', 'No due date'].includes(ds);
+
+    // Inline action buttons (B-1). Complete is ONE CLICK, no dialog — the
+    // common path; friction there is what leaves tasks sitting. Cancel keeps
+    // its optional-note dialog (backing out issues no PATCH).
+    let btns = '';
+    if (open) {
+      btns =
+        `<button class="tk-btn done"   title="Mark Complete" onclick="rowAction(${task.id},'complete')"><i class="fa-solid fa-check"></i></button>` +
+        `<button class="tk-btn"        title="Edit"          onclick="editTask(${task.id})"><i class="fa-solid fa-pen"></i></button>` +
+        `<button class="tk-btn cancel" title="Cancel task"   onclick="rowAction(${task.id},'cancel')"><i class="fa-solid fa-ban"></i></button>`;
+    } else if (task.status === 'Deleted') {
+      btns = `<button class="tk-btn" title="Reinstate" onclick="rowAction(${task.id},'reopen')"><i class="fa-solid fa-rotate-left"></i> Reinstate</button>`;
+    } else if (task.status === 'Completed') {
+      btns = `<button class="tk-btn" title="Mark Incomplete" onclick="rowAction(${task.id},'reopen')"><i class="fa-solid fa-rotate-left"></i></button>`;
+    }
+
+    const age = daysOverdue(task);
+    const dueHtml = (task.due ? fmtDue(task.due) : '<span style="color:var(--tk-muted)">—</span>') +
+      (open && age > 0 ? ` <span class="tk-age" title="${age} days overdue">${age}d</span>` : '');
+
+    const linkHTML = task.link?.id
+      ? `<a href="#" onclick="openLinked('${(task.link.title || '').replace(/'/g, "\\'").replace(/"/g, '&quot;')}','${task.link.type}','${task.link.id}');return false">${esc(task.link.title || task.link.id)}</a>`
+      : '';
+    const created = task.created
+      ? new Date(task.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : '';
+    const selBox = open
+      ? `<input type="checkbox" data-tid="${task.id}" ${selected.has(task.id) ? 'checked' : ''} onchange="toggleSelect(${task.id},this.checked)">`
+      : '';
+
+    row.innerHTML = `
+      <td class="col-sel">${selBox}</td>
+      <td class="tk-actions">${btns}</td>
+      <td><span class="tk-pill ${pillClass(ds)}">${esc(ds)}</span></td>
+      <td><a href="#" onclick="viewTask(${task.id});return false">${esc(task.title)}</a><span class="tk-id">#${task.id}</span>${sourceChip(task)}</td>
+      <td>${dueHtml}</td>
+      <td class="col-to">${esc(task.to?.name || '')}</td>
+      <td class="col-by">${esc(task.from?.name || '')}</td>
+      <td class="col-link">${linkHTML}</td>
+      <td class="col-created">${created}</td>`;
+  });
+
+  // Footer — shared ellipsis pager (fixes the exact-multiple off-by-one for
+  // free) + limit select persisted per-tab, no longer the shared global (B-12).
+  renderEventsFooter(foot, total, limit, offset, taskRows.length,
+    (p) => fetchTasks((p - 1) * limit),
+    (newLimit) => {
+      limit = parseInt(newLimit, 10) || 100;
+      setTabPref('tasks', 'limit', limit);
+      fetchTasks(0);
+    });
+}
+
+// Linked-to navigation — the shell's addFile opens the case/contact file.
+function openLinked(title, type, id) {
+  try {
+    window.top.addFile(title, type === 'contact' ? 'client' : 'case', id);
+  } catch (_) { }
+}
+
+// ─── Row / modal actions ────────────────────────────────────────────────────
+async function getTaskById(taskId) {
+  let task = taskRows.find(t => +t.id === +taskId) || null;
+  if (!task) task = (await api(`/api/tasks/${taskId}`, 'GET')).data;
+  return task;
+}
+
+async function rowAction(taskId, action, onDone) {
+  const endpoints = {
+    complete: `/api/tasks/${taskId}/complete`,
+    cancel:   `/api/tasks/${taskId}/delete`,
+    reopen:   `/api/tasks/${taskId}/reopen`
+  };
+  let payload = null;
+
+  if (action === 'cancel') {
+    const { value, isConfirmed } = await Swal.fire({
+      title: 'Cancel this task?',
+      input: 'textarea',
+      inputLabel: 'Note (optional)',
+      inputPlaceholder: 'Why is this task not needed?',
+      inputAttributes: { maxlength: 500 },
+      showCancelButton: true,
+      confirmButtonText: 'Cancel Task',
+      cancelButtonText: 'Keep Task'
+    });
+    if (!isConfirmed) return;                  // backed out — no PATCH at all
+    const note = (value || '').trim();
+    if (note) payload = { note };              // omit entirely when empty
+  }
+
+  try {
+    const data = await api(endpoints[action], 'PATCH', payload);
+    Toast.fire({ icon: data.status, title: data.title, text: data.message });
+    pokeBadge();
+    fetchTasks(offset, true);
+    if (onDone) onDone();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
+
+// ─── Bulk actions (D1) ──────────────────────────────────────────────────────
+function toggleSelect(id, on) {
+  if (on) selected.add(+id); else selected.delete(+id);
+  updateBulkBar();
+}
+function toggleSelectAll(on) {
+  document.querySelectorAll('#tasksTable input[data-tid]').forEach(cb => {
+    cb.checked = on;
+    toggleSelect(+cb.dataset.tid, on);
+  });
+}
+function clearSelection(silent) {
+  selected.clear();
+  const all = E('tkSelAll'); if (all) all.checked = false;
+  if (!silent) document.querySelectorAll('#tasksTable input[data-tid]').forEach(cb => cb.checked = false);
+  updateBulkBar();
+}
+function updateBulkBar() {
+  E('tkBulkBar').classList.toggle('on', selected.size > 0);
+  E('tkBulkCount').textContent = `${selected.size} selected`;
+}
+
+async function bulkAction(kind) {
+  const ids = [...selected];
+  if (!ids.length) return;
+  const verb = kind === 'complete' ? 'Complete' : 'Cancel';
+
+  let note = null;
+  if (kind === 'cancel') {
+    const r = await Swal.fire({
+      title: `Cancel ${ids.length} task${ids.length === 1 ? '' : 's'}?`,
+      input: 'textarea',
+      inputLabel: 'Note (optional — applied to every cancelled task)',
+      inputAttributes: { maxlength: 500 },
+      showCancelButton: true,
+      confirmButtonText: `Cancel ${ids.length} tasks`,
+      cancelButtonText: 'Keep them'
+    });
+    if (!r.isConfirmed) return;
+    note = (r.value || '').trim() || null;
+  } else {
+    const r = await Swal.fire({
+      title: `Complete ${ids.length} task${ids.length === 1 ? '' : 's'}?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: `Complete ${ids.length}`
+    });
+    if (!r.isConfirmed) return;
+  }
+
+  // Sequential client-side loop — honest at ≤500 rows, keeps the per-task
+  // log/notification semantics intact (each PATCH writes its own audit row).
+  // Partial failure reports EXACTLY which ids failed and why.
+  Swal.fire({ title: `${verb} 0/${ids.length}…`, allowOutsideClick: false, showConfirmButton: false, didOpen: () => Swal.showLoading() });
+  const failed = [];
+  let done = 0;
+  for (const id of ids) {
+    try {
+      const path = kind === 'complete' ? `/api/tasks/${id}/complete` : `/api/tasks/${id}/delete`;
+      await api(path, 'PATCH', note ? { note } : null);
+    } catch (err) {
+      failed.push({ id, msg: err.message });
+    }
+    done++;
+    try { Swal.update({ title: `${verb} ${done}/${ids.length}…` }); Swal.showLoading(); } catch (_) { }
+  }
+  Swal.close();
+  pokeBadge();
+  clearSelection();
+  await fetchTasks(offset, true);
+
+  if (failed.length) {
+    Swal.fire({
+      icon: 'warning',
+      title: `${ids.length - failed.length} succeeded, ${failed.length} failed`,
+      html: `<div style="text-align:left;font-size:13px;max-height:40vh;overflow:auto">` +
+        failed.map(f => `#${f.id}: ${esc(f.msg)}`).join('<br>') + `</div>`
+    });
+  } else {
+    Toast.fire({ icon: 'success', title: `${ids.length} task${ids.length === 1 ? '' : 's'} ${kind === 'complete' ? 'completed' : 'cancelled'}` });
+  }
+}
+
+// ─── Detail modal (with history — E1/E2/E4, and Transfer — E3) ──────────────
+const STATUS_COLORS = {
+  'Pending': 'var(--tk-pending)', 'Due Today': 'var(--tk-duetoday)',
+  'Overdue': 'var(--tk-overdue)', 'Completed': 'var(--tk-completed)',
+  'Deleted': 'var(--tk-deleted)', 'No due date': 'var(--tk-nodue)'
+};
+const HIST_LABELS = {
+  created: 'Created', updated: 'Updated', completed: 'Completed',
+  deleted: 'Cancelled', reopened: 'Reopened', transferred: 'Transferred'
+};
+
+async function viewTask(taskId) {
+  let task;
+  try { task = await getTaskById(taskId); }
+  catch (err) { Toast.fire({ icon: 'error', title: 'Error loading task', text: err.message }); return; }
+
+  const ds = displayStatus(task);
+  const open = !['Completed', 'Deleted'].includes(task.status);
+  const meta = (label, val) => val
+    ? `<tr><td style="padding:3px 10px 3px 0;color:var(--tk-muted);white-space:nowrap;vertical-align:top">${label}</td><td style="padding:3px 0">${val}</td></tr>`
+    : '';
+  const created = task.created
+    ? new Date(task.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '';
+
+  let actions = [];
+  if (open) actions = ['Complete', 'Edit', 'Transfer', 'Cancel'];
+  else if (task.status === 'Deleted') actions = ['Reinstate'];
+  else actions = ['Mark Incomplete'];
+  const btnColor = a => a === 'Complete' ? '#059669' : a === 'Cancel' ? '#b91c1c' : '#4f46e5';
+  const actionBtns = actions.map(a =>
+    `<button class="swal2-styled" style="background:${btnColor(a)}" onclick="taskModalAction(${task.id},'${a}')">${a === 'Cancel' ? 'Cancel Task' : a === 'Edit' ? 'Edit Task' : a}</button>`
+  ).join('');
+
+  Swal.fire({
+    title: `<span style="font-size:19px">${esc(task.title)} <span class="tk-id">#${task.id}</span></span>`,
+    html: `
+      <div style="text-align:left;font-size:14px">
+        <div style="margin:0 0 10px;font-weight:600;color:${STATUS_COLORS[ds] || 'var(--tk-muted)'}">${esc(ds)}${sourceChip(task)}</div>
+        ${task.desc ? `<div style="margin:0 0 12px;padding:12px 14px;background:var(--tk-chip-bg);border-left:3px solid #4f46e5;border-radius:4px;line-height:1.6;max-height:38vh;overflow:auto">${renderTaskDescHtml(task.desc)}</div>` : ''}
+        <table style="font-size:13px;border-collapse:collapse">
+          ${meta('Assigned by', esc(task.from?.name || ''))}
+          ${meta('Assigned to', esc(task.to?.name || ''))}
+          ${meta('Linked to', task.link?.id ? esc(task.link.title || task.link.id) : '')}
+          ${meta('Due date', task.due ? fmtDue(task.due) : '')}
+          ${meta('Created', created)}
+          ${meta('Source', task.source ? `${esc(sourceLabel(task.source))} <span class="tk-id">(${esc(task.source)})</span>` : '')}
+          ${meta('Notify', task.notify ? 'Assigner notified on completion' : '')}
+        </table>
+        ${actionBtns ? `<div style="margin-top:14px;text-align:center">${actionBtns}</div>` : ''}
+        <div class="tk-hist" id="tkHist"><span style="color:var(--tk-muted)"><i class="fa-solid fa-spinner fa-spin"></i> Loading history…</span></div>
+      </div>`,
+    width: 640,
+    showConfirmButton: false,
+    showCloseButton: true
+  });
+
+  // History loads after the modal paints; failures degrade to a note, never
+  // block the modal.
+  api(`/api/tasks/${taskId}/history`, 'GET').then(d => {
+    const el = document.getElementById('tkHist');
+    if (!el) return;
+    const rows = d.data || [];
+    if (!rows.length) { el.innerHTML = '<span style="color:var(--tk-muted)">No history recorded.</span>'; return; }
+    el.innerHTML = '<div style="font-weight:600;margin-bottom:4px">History</div>' + rows.map(h => {
+      const when = h.date ? new Date(h.date).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+      const who = h.by?.name || (h.by?.id === 0 ? 'Automation' : `user #${h.by?.id ?? '?'}`);
+      let label = HIST_LABELS[h.action] || esc(h.action || 'event');
+      const x = h.data || {};
+      if (h.action === 'transferred' && x.from_user_name) label += ` (${esc(x.from_user_name)} → ${esc(x.to_user_name || '')})`;
+      if (h.action === 'updated' && Array.isArray(x.changed)) label += ` <span class="tk-id">(${x.changed.map(esc).join(', ')})</span>`;
+      if (h.action === 'deleted' && x.previous_status) label += ` <span class="tk-id">(was ${esc(x.previous_status)})</span>`;
+      if (x.via === 'email_link') label += ' <span class="tk-id">via email link</span>';
+      return `<div class="tk-hist-row"><span class="tk-hist-date">${when}</span><strong>${label}</strong> — ${esc(who)}</div>` +
+        (h.note ? `<div class="tk-hist-note">${esc(h.note)}</div>` : '');
+    }).join('');
+  }).catch(() => {
+    const el = document.getElementById('tkHist');
+    if (el) el.innerHTML = '<span style="color:var(--tk-muted)">History unavailable.</span>';
+  });
+}
+
+function taskModalAction(taskId, action) {
+  Swal.close();
+  if (action === 'Complete')        return rowAction(taskId, 'complete');
+  if (action === 'Cancel')          return rowAction(taskId, 'cancel');
+  if (action === 'Reinstate')       return rowAction(taskId, 'reopen');
+  if (action === 'Mark Incomplete') return rowAction(taskId, 'reopen');
+  if (action === 'Edit')            return editTask(taskId);
+  if (action === 'Transfer')        return transferDialog(taskId);
+}
+
+// Transfer (E3): the REAL endpoint — logs a 'transferred' event and notifies
+// the new assignee. (The old Edit-modal path wrote task_to via generic PATCH
+// and notified nobody; UI reassigns now always route here.)
+async function transferDialog(taskId) {
+  let task;
+  try { task = await getTaskById(taskId); }
+  catch (err) { Toast.fire({ icon: 'error', title: 'Error', text: err.message }); return; }
+
+  const users = (firm().users || []).filter(u => u.user_type && +u.user !== +(task.to?.id || 0));
+  const opts = users.map(u => `<option value="${u.user}">${esc(u.user_name)}</option>`).join('');
+  const { value, isConfirmed } = await Swal.fire({
+    title: 'Transfer task',
+    html: `<p style="font-size:14px;margin:0 0 10px">Reassign <strong>${esc(task.title)}</strong> from ${esc(task.to?.name || '—')} to:</p>
+           <select id="tkXferTo" style="width:250px"><option value="" disabled selected hidden>— select assignee —</option>${opts}</select>
+           <p style="font-size:12px;color:var(--tk-muted);margin:10px 0 0">The new assignee will be notified.</p>`,
+    showCancelButton: true,
+    confirmButtonText: 'Transfer',
+    preConfirm: () => {
+      const v = document.getElementById('tkXferTo').value;
+      if (!v) { Swal.showValidationMessage('Choose an assignee'); return false; }
+      return v;
+    }
+  });
+  if (!isConfirmed || !value) return;
+  try {
+    const data = await api(`/api/tasks/${taskId}/transfer`, 'PATCH', { to: parseInt(value, 10) });
+    Toast.fire({ icon: data.status, title: data.title, text: data.message });
+    fetchTasks(offset, true);
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Transfer failed', text: err.message });
+  }
+}
+
+// ─── Create / edit dialog (E5) ──────────────────────────────────────────────
+async function editTask(taskId) {
+  let task;
+  try { task = await getTaskById(taskId); }
+  catch (err) { Toast.fire({ icon: 'error', title: 'Error', text: err.message }); return; }
+  newTaskDialog(task);
+}
+
+function newTaskDialog(task) {
+  const isEdit  = !!(task && task.id);
+  const t       = task || {};
+  const toVal   = t.to?.id || '';
+  const dueVal  = t.due ? String(t.due).slice(0, 10) : '';
+  // Link context: edit keeps the task's own link; create pre-links to the
+  // entity when in entity mode.
+  const lType = isEdit ? (t.link?.type || '') : (isEntity ? linkType : '');
+  const lId   = isEdit ? (t.link?.id   || '') : (isEntity ? linkId   : '');
+  const showLink  = !!(lType && lId);
+  const linkLabel = lType === 'case' ? 'Case' : 'Client';
+
+  const userOpts =
+    '<option value="" disabled selected hidden>— select assignee —</option>' +
+    (firm().users || []).filter(u => u.user_type)
+      .map(u => `<option value="${u.user}">${esc(u.user_name)}</option>`).join('');
+
+  const qd = (label, days, months) =>
+    `<span class="tk-qd" data-d="${days || 0}" data-m="${months || 0}">${label}</span>`;
+
+  Swal.fire({
+    title: `${isEdit ? 'Update' : 'New'} Task`,
+    html: `
+      <div class="tk-dlg-grid">
+        <label>Assign to</label><select id="tkAssignTo">${userOpts}</select>
+        <label>Title</label><input type="text" id="tkTitle" maxlength="100" value="${esc(t.title || '').replace(/"/g, '&quot;')}">
+        <label>Description</label><textarea id="tkDesc" rows="4" maxlength="1000">${esc(t.desc || '')}</textarea>
+        <label>Due date</label>
+        <span>
+          <input type="date" id="tkDue" value="${dueVal}" style="width:150px">
+          ${qd('Today', 0)}${qd('Tomorrow', 1)}${qd('+1 wk', 7)}${qd('+1 mo', 0, 1)}
+        </span>
+        <label></label>
+        <span class="sub-label" style="font-size:11px;color:var(--tk-muted)">a message is sent now and on the due date</span>
+        <label></label>
+        <span style="font-size:13px"><input type="checkbox" id="tkNotify" ${t.notify ? 'checked' : ''} style="width:auto;transform:scale(1.3)"> Notify assigner upon completion</span>
+        ${showLink ? `
+        <label></label>
+        <span style="font-size:13px"><input type="checkbox" id="tkLinkCheck" checked style="width:auto;transform:scale(1.3)"> Link to ${linkLabel}</span>` : ''}
+      </div>`,
+    width: 520,
+    showCancelButton: true,
+    confirmButtonText: isEdit ? 'Update' : 'Assign',
+    showCloseButton: true,
+    didOpen: () => {
+      if (toVal) document.getElementById('tkAssignTo').value = toVal;
+      // Quick-date chips
+      document.querySelectorAll('.tk-qd').forEach(chip => {
+        chip.addEventListener('click', () => {
+          const d = new Date();
+          d.setDate(d.getDate() + (+chip.dataset.d || 0));
+          d.setMonth(d.getMonth() + (+chip.dataset.m || 0));
+          document.getElementById('tkDue').value =
+            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        });
+      });
+    },
+    preConfirm: async () => {
+      const title    = document.getElementById('tkTitle').value.trim();
+      const desc     = document.getElementById('tkDesc').value;
+      const due      = document.getElementById('tkDue').value;
+      const assignTo = document.getElementById('tkAssignTo').value;
+      const notify   = document.getElementById('tkNotify').checked;
+      const linked   = showLink && document.getElementById('tkLinkCheck')?.checked;
+
+      if (!assignTo) { Swal.showValidationMessage('Please choose an assignee'); return false; }
+      if (!title)    { Swal.showValidationMessage('Please add a brief title'); return false; }
+      if (!isEdit && !desc) { Swal.showValidationMessage('Please add a clear description'); return false; }
+      // Due REQUIRED on create (human tasks stay dated); on edit an empty due
+      // is allowed — machine notices are legitimately undated and forcing a
+      // date to fix a typo in one would be wrong.
+      if (!isEdit && !due) { Swal.showValidationMessage('Without a due date it will never be done!'); return false; }
+
+      if (!isEdit) {
+        const payload = { to: parseInt(assignTo, 10), title, desc, due, notify };
+        if (linked) { payload.link_type = lType; payload.link_id = lId; }
+        try {
+          const data = await api('/api/tasks', 'POST', payload);
+          Toast.fire({ icon: data.status, title: data.title, text: data.message });
+          pokeBadge();
+          fetchTasks(0, true);
+        } catch (err) {
+          Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+        }
+        return;
+      }
+
+      // EDIT: field patch, with the assignee change routed through the REAL
+      // transfer endpoint (E3) so the new assignee is notified and the event
+      // is logged as 'transferred' — the old path was a silent reassign.
+      const patch = {};
+      if (title !== (t.title || ''))  patch.task_title = title;
+      if (desc  !== (t.desc  || ''))  patch.task_desc  = desc;
+      if (due   !== dueVal)           patch.task_due   = due;   // '' → NULL server-side
+      if (notify !== !!t.notify)      patch.task_notification = notify;
+      if (showLink && !linked && t.link?.type)  { patch.task_link_type = null;  patch.task_link_id = null; }
+      if (showLink && linked  && !t.link?.type) { patch.task_link_type = lType; patch.task_link_id = String(lId); }
+      const newTo = parseInt(assignTo, 10);
+      const reassign = newTo !== +(toVal || 0);
+
+      if (!Object.keys(patch).length && !reassign) { Toast.fire({ title: 'No changes made' }); return; }
+      try {
+        if (Object.keys(patch).length) {
+          const data = await api(`/api/tasks/${t.id}`, 'PATCH', patch);
+          if (!reassign) Toast.fire({ icon: data.status, title: data.title, text: data.message });
+        }
+        if (reassign) {
+          const data = await api(`/api/tasks/${t.id}/transfer`, 'PATCH', { to: newTo });
+          Toast.fire({ icon: data.status, title: data.title, text: data.message });
+        }
+        pokeBadge();
+        fetchTasks(offset, true);
+      } catch (err) {
+        Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>

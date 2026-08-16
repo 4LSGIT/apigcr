@@ -9,10 +9,17 @@
  *
  * Statuses:
  *   Pending   — active, no due date or due in the future
- *   Due Today — active, due today (set by morning routine job)
- *   Overdue   — active, past due (set by morning routine job)
+ *   Due Today — active, due today
+ *   Overdue   — active, past due
  *   Completed — done
  *   Deleted   — soft-deleted (was Canceled in older schema)
+ *
+ *   Open statuses are computed from task_due in FIRM TIME (computeStatus) at
+ *   every write that can change them: createTask, updateTask (when task_due
+ *   changes on an open task), reopenTask. The daily digest's 13:00-UTC sweep
+ *   (lib/internal_functions/tasks.js) remains as the day-rollover pass — a
+ *   task nobody touches still flips Pending → Due Today → Overdue each
+ *   morning. Terminal statuses (Completed/Deleted) are never recomputed.
  *
  * Link strategy:
  *   Writes: always set task_link + task_link_type + task_link_id (all three)
@@ -130,17 +137,29 @@ function taskActionUrl(task) {
 }
 
 /**
- * Given a DATE string, return the status it should have right now.
- * Used when reopening a task that has a due date.
+ * Given a DATE value, return the status it should have right now, in FIRM
+ * TIME. Callers: createTask (initial status), updateTask (recompute when
+ * task_due changes on an open task), reopenTask.
+ *
+ * "Today" is the firm's calendar day, not the server's — Cloud Run runs UTC,
+ * so `new Date().setHours(0,0,0,0)` here would flip a Detroit-evening due
+ * date a day early. ISO date strings compare correctly lexicographically.
+ *
+ * Accepts a JS Date (mysql2 DATE under the pool's timezone:"Z" config comes
+ * back as UTC midnight, so toISOString().slice(0,10) is the stored calendar
+ * date) or a 'YYYY-MM-DD[...]' string. Anything unparseable → 'Pending'
+ * (fail-safe, matches the old NaN behaviour).
  */
 function computeStatus(dueDate) {
   if (!dueDate) return 'Pending';
-  const due   = new Date(dueDate);
-  const today = new Date();
-  due.setHours(0, 0, 0, 0);
-  today.setHours(0, 0, 0, 0);
-  if (due < today)  return 'Overdue';
-  if (due.getTime() === today.getTime()) return 'Due Today';
+  const due = (dueDate instanceof Date
+    ? dueDate.toISOString()
+    : String(dueDate).trim()
+  ).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return 'Pending';
+  const today = DateTime.now().setZone(FIRM_TZ).toISODate();
+  if (due < today)   return 'Overdue';
+  if (due === today) return 'Due Today';
   return 'Pending';
 }
 
@@ -693,6 +712,12 @@ async function notifyCompletion(db, task, completedByName, note) {
 /**
  * List tasks with filters.
  * status='Incomplete' means Pending + Due Today + Overdue.
+ *
+ * source filter (additive, optional):
+ *   absent / 'all' → no filter
+ *   'human'        → task_source IS NULL      (human-created work)
+ *   'machine'      → task_source IS NOT NULL  (machine-pushed notices)
+ *   anything else  → exact match on task_source (e.g. 'esign')
  */
 async function listTasks(db, {
   query       = '',
@@ -701,6 +726,7 @@ async function listTasks(db, {
   assigned_by = null,
   link_type   = null,
   link_id     = null,
+  source      = null,
   limit       = 100,
   offset      = 0
 } = {}) {
@@ -712,6 +738,12 @@ async function listTasks(db, {
   } else if (status && status !== 'All') {
     where.push('t.task_status = ?');
     params.push(status);
+  }
+
+  if (source && source !== 'all') {
+    if      (source === 'human')   where.push('t.task_source IS NULL');
+    else if (source === 'machine') where.push('t.task_source IS NOT NULL');
+    else { where.push('t.task_source = ?'); params.push(source); }
   }
 
   if (query) {
@@ -761,7 +793,9 @@ async function listTasks(db, {
      ${whereSQL}
      ORDER BY
        FIELD(t.task_status, 'Overdue','Due Today','Pending','Completed','Deleted'),
-       t.task_due ASC, t.task_date DESC
+       t.task_due IS NULL,      -- MySQL sorts NULL first in ASC; push undated
+       t.task_due ASC,          -- (mostly machine notices) BELOW dated work
+       t.task_date DESC
      LIMIT ? OFFSET ?`,
     [...params, Number(limit), Number(offset)]
   );
@@ -834,6 +868,49 @@ async function getTask(db, taskId) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HISTORY (E1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Audit trail for one task, oldest first.
+ *
+ * Every logTaskEvent write carries log_data.task_id, so this is the only way
+ * to see history for tasks with no contact/case link (44 of 116 rows live).
+ * Query plan: idx_log_type narrows log_type='task' to ~100 rows (of ~64k),
+ * then the JSON filter runs on that slice — verified via EXPLAIN (ref/const).
+ * log_data is a TEXT column holding JSON; rows that fail to parse are
+ * surfaced raw rather than dropped (audit trail must not silently thin out).
+ *
+ * @returns {Promise<Array<{id, date, by:{id,name}, action, note, data}>>}
+ */
+async function getTaskHistory(db, taskId) {
+  const [rows] = await db.query(
+    `SELECT l.log_id, l.log_date, l.log_by, u.user_name AS by_name, l.log_data
+     FROM log l
+     LEFT JOIN users u ON l.log_by = u.user
+     WHERE l.log_type = 'task'
+       AND JSON_UNQUOTE(JSON_EXTRACT(l.log_data, '$.task_id')) = ?
+     ORDER BY l.log_date ASC, l.log_id ASC`,
+    [String(taskId)]
+  );
+
+  return rows.map(r => {
+    let data = {};
+    try { data = JSON.parse(r.log_data) || {}; } catch { data = { raw: r.log_data }; }
+    const { action = null, note = null, task_id, task_title, ...rest } = data;
+    return {
+      id:     r.log_id,
+      date:   r.log_date,
+      by:     { id: r.log_by, name: r.by_name || (r.log_by === 0 ? 'Automation' : null) },
+      action,
+      note,
+      data:   rest   // via, previous_status, changed[], transfer names, …
+    };
+  });
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CREATE
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -897,17 +974,25 @@ async function createTask(db, {
   // can be handed the token / URL back.
   const actionToken = newActionToken();
 
+  // C2: status computed at write. A task created with a past due date lands
+  // Overdue immediately instead of masquerading as Pending until the next
+  // 13:00-UTC digest sweep. Undated tasks (all machine notices) still land
+  // 'Pending' — computeStatus(null) === 'Pending' — so notice dedupe
+  // (esignAlertService et al., all IN-set consumers) is unaffected.
+  const initialStatus = computeStatus(due);
+
   const [result] = await db.query(
     `INSERT INTO tasks
        (task_from, task_to, task_title, task_desc, task_start, task_due,
         task_notification, task_source, task_status, task_date, task_last_update,
         task_link, task_link_type, task_link_id, task_action_token)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NOW(), NOW(), ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?, ?, ?, ?)`,
     [
       taskFrom, to, title, desc,
       start || null, due || null,
       notify ? 1 : 0,
       source || null,
+      initialStatus,
       link_id != null ? String(link_id) : '',  // task_link — legacy
       link_type,
       link_id != null ? String(link_id) : null,
@@ -967,6 +1052,22 @@ async function updateTask(db, taskId, fields, actingUserId = 0) {
   // and non-strict sql_mode would turn '' into '0000-00-00'. task_id 1039
   // already had both. See lib/blankDateToNull.js.
   const safeFields = blankDatesToNull('tasks', fields);
+
+  // C2: when the due date changes on an OPEN task, recompute the status so
+  // the row doesn't sit mislabelled until the next 13:00-UTC digest sweep.
+  // Guards, in order of importance:
+  //   · terminal statuses are untouchable — editing a due date must NEVER
+  //     resurrect a Completed/Deleted task (read current status first);
+  //   · an explicitly-passed task_status always wins (no silent override).
+  if ('task_due' in safeFields && !('task_status' in safeFields)) {
+    const [[cur]] = await db.query(
+      'SELECT task_status FROM tasks WHERE task_id = ?', [taskId]
+    );
+    if (!cur) throw new Error(`Task ${taskId} not found`);
+    if (['Pending', 'Due Today', 'Overdue'].includes(cur.task_status)) {
+      safeFields.task_status = computeStatus(safeFields.task_due);
+    }
+  }
 
   const keys      = Object.keys(safeFields);
   const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
@@ -1084,14 +1185,11 @@ async function reopenTask(db, taskId, actingUserId = 0) {
 
   await logTaskEvent(db, taskId, actingUserId, 'reopened', { previous_status: task.status, new_status: newStatus });
 
-  // Re-schedule due reminder if due date is today or in the future
+  // Re-schedule the due reminder. No date guard here: scheduleDueReminder
+  // already no-ops when the 8 AM firm-time instant is past, and the guard
+  // this replaced compared UTC calendar days (wrong from a Detroit evening).
   if (task.due) {
-    const due   = new Date(String(task.due).slice(0, 10));
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (due >= today) {
-      await scheduleDueReminder(db, taskId, task.due).catch(() => {});
-    }
+    await scheduleDueReminder(db, taskId, task.due).catch(() => {});
   }
 
   return getTask(db, taskId);
@@ -1153,6 +1251,7 @@ async function transferTask(db, taskId, newUserId, actingUserId = 0) {
 module.exports = {
   listTasks,
   getTask,
+  getTaskHistory,
   createTask,
   updateTask,
   completeTask,

@@ -343,7 +343,7 @@
       <button class="tab active" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Client Information</button>
       <button class="tab" onclick="openTab(this, 'tabRels')"><i class="fa-solid fa-people-arrows"></i> Relationships</button>
       <button class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Communication</button>
-      <button class="tab" onclick="openTab(this, 'tabTasks')"><i class="fa-solid fa-clipboard"></i> Tasks</button>
+      <button class="tab" id="tasksButton" onclick="openTab(this, 'tabTasks'); if (!E('tasksFrame').src) E('tasksFrame').src = `tasks.html?link_type=contact&link_id=${clientID}`; else E('tasksFrame').contentWindow?.reloadTasks?.();"><i class="fa-solid fa-clipboard"></i> Tasks</button>
       <button class="tab" onclick="Swal.fire({ title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
                                    icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
                                    preConfirm: () => { location.reload();}});"><i class="fa-solid fa-circle-down"></i> Refresh</button>
@@ -649,219 +649,11 @@ async function addLog() {
   
   
 
+<!-- Tasks widget — consolidated /tasks.html in entity mode. src set lazily
+     by the tab button (esignButton idiom). -->
 <div id="tabTasks" class="tab-content">
-<h1>Tasks</h1>
-    <span>
-      <button onclick="P.newTask(null,'contact',clientID,refreshTasks)">Create Task</button>
-      Query:
-      <input id="tabTasksQuery">
-      Status: 
-      <select id="tabTasksStatus" style="width:150px">
-        <option>Incomplete</option>
-        <option>Pending</option>
-        <option>Completed</option>
-        <option>Due Today</option>
-        <option>Overdue</option>
-        <option>Deleted</option>
-        <option value="All">All</option>
-      </select>
-      Assigned By: 
-      <select id="tabTasksBy" class="userslist" style="width:150px">
-        <option value="">All</option>
-      </select>
-      Assigned to: 
-      <select id="tabTasksTo" class="userslist" data-userlist-filter="user_type" style="width:150px">
-        <option value="">All</option>
-      </select>
-      <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
-    </span>
-    <table id="tasksTable" class="logTable">
-      <tr>
-        <th>Action</th>
-        <th>Task ID</th>
-        <th>Status</th>
-        <th>Title</th>
-        <th>Assigned By</th>
-        <th>Assigned To</th>
-        <th>Linked To</th>
-        <th>Due Date</th>
-        <th>Date Created</th>
-      </tr>
-    </table>
-    <div id="tasksTableFoot"></div>
-    <div id="tabTasksLoad" style="display:none;">
-      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
-    </div>
-  </div>
-  
-  <script>
-    let temptask = "";
-
-    async function refreshTasks() {
-      await tabTasksGet(0);
-    }
-
-    // Cache of the last-loaded task list, for the detail modal.
-    let tasksCache = [];
-
-    // Format a date-only value (DB DATE, arrives as UTC-midnight ISO e.g.
-    // "2026-07-18T00:00:00.000Z"). Slice the calendar date, then build a LOCAL
-    // date so the day never shifts. Do NOT feed the raw value to new Date() —
-    // west of UTC that renders the previous day.
-    function fmtDue(d) {
-      if (!d) return "";
-      const [y, m, day] = String(d).slice(0, 10).split("-");
-      return new Date(+y, +m - 1, +day)
-        .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-    }
-
-    // Escape, bold leading "Label:" line prefixes, newline→<br>.
-    // Escape runs FIRST per line; the regex only matches [A-Za-z ]+: on
-    // escaped text, so the inserted <strong> tags are the only HTML.
-    // Duplicated in index.html / case.html and (server-side) in
-    // taskService.js / taskActions.js — keep in sync.
-    function renderTaskDescHtml(desc) {
-      return String(desc == null ? "" : desc)
-        .split("\n")
-        .map(line => escHtml(line).replace(/^([A-Za-z][A-Za-z ]{0,30}:)/, "<strong>$1</strong>"))
-        .join("<br>");
-    }
-
-    // Task detail modal — same layout as index.html's viewTask; actions
-    // delegate to the parent shell (P.updateTask) with refreshTasks.
-    async function viewTask(taskId) {
-      let task = tasksCache.find(t => +t.id === +taskId) || null;
-      if (!task) {
-        try {
-          task = (await P.apiSend(`/api/tasks/${taskId}`, "GET")).data;
-        } catch (err) {
-          Toast.fire({ icon: "error", title: "Error loading task", text: err.message });
-          return;
-        }
-      }
-      const statusColors = { "Pending": "#4f46e5", "Due Today": "#d97706", "Overdue": "#dc2626", "Completed": "#065f46", "Deleted": "#6b7280" };
-      const meta = (label, val) => val
-        ? `<tr><td style="padding:3px 10px 3px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${label}</td><td style="padding:3px 0">${val}</td></tr>`
-        : "";
-      const created = task.created
-        ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-        : "";
-      let actions = [];
-      if (["Pending", "Due Today", "Overdue"].includes(task.status)) actions = ["Mark Complete", "Edit", "Cancel"];
-      else if (task.status === "Deleted") actions = ["Uncancel"];
-      else if (task.status === "Completed") actions = ["Mark Incomplete"];
-      const btnColor = a => a === "Mark Complete" ? "#059669" : a === "Cancel" ? "#b91c1c" : "#4f46e5";
-      const btnLabel = a => a === "Cancel" ? "Cancel Task" : a === "Edit" ? "Edit Task" : a;
-      const actionBtns = actions.map(a =>
-        `<button class="swal2-styled" style="background:${btnColor(a)}" onclick="taskModalAction(${task.id},'${a}')">${btnLabel(a)}</button>`
-      ).join("");
-
-      Swal.fire({
-        title: `<span style="font-size:19px">${escHtml(task.title)}</span>`,
-        html: `
-          <div style="text-align:left;font-size:14px">
-            <div style="margin:0 0 10px;font-weight:600;color:${statusColors[task.status] || "#6b7280"}">${escHtml(task.status)}</div>
-            ${task.desc ? `<div style="margin:0 0 12px;padding:12px 14px;background:#f5f3ff;border-left:3px solid #4f46e5;border-radius:4px;line-height:1.6;max-height:45vh;overflow:auto">${renderTaskDescHtml(task.desc)}</div>` : ""}
-            <table style="font-size:13px;border-collapse:collapse">
-              ${meta("Task ID", task.id)}
-              ${meta("Assigned by", escHtml(task.from?.name || ""))}
-              ${meta("Assigned to", escHtml(task.to?.name || ""))}
-              ${meta("Linked to", task.link?.id ? escHtml(task.link.title || task.link.id) : "")}
-              ${meta("Due date", fmtDue(task.due))}
-              ${meta("Created", created)}
-              ${meta("Source", task.source ? escHtml(task.source) : "")}
-              ${meta("Notify", task.notify ? "Assigner notified on completion" : "")}
-            </table>
-            ${actionBtns ? `<div style="margin-top:14px;text-align:center">${actionBtns}</div>` : ""}
-          </div>`,
-        width: 640,
-        showConfirmButton: false,
-        showCloseButton: true
-      });
-    }
-
-    function taskModalAction(taskId, action) {
-      Swal.close();
-      P.updateTask(taskId, action, refreshTasks);
-    }
-
-    // Small HTML-escape helper local to the tasks table. Task title/desc can
-    // now carry machine-pushed text (court email subjects), so raw
-    // interpolation into innerHTML is stored XSS. Text-node context only —
-    // &, <, > is sufficient. (Copied from index.html's shell helper.)
-    function escHtml(s) {
-      return String(s == null ? "" : s)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
-    async function tabTasksGet(offset) {
-      E('tabTasksButton').disabled = true;
-      E('tabTasksLoad').style.display = 'block';
-
-      const q = E("tabTasksQuery").value;
-      const status = E("tabTasksStatus").value;
-      const by = E("tabTasksBy").value;
-      const to = E("tabTasksTo").value;
-
-      const table = E('tasksTable');
-      const foot = E('tasksTableFoot');
-      foot.innerHTML = "";
-      const rows = table.getElementsByTagName("tr");
-      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
-
-      const params = { link_type: "contact", link_id: clientID, limit, offset };
-      if (q) params.q = q;
-      if (status !== "All") params.status = status;
-      if (by) params.assigned_by = by;
-      if (to) params.assigned_to = to;
-
-      try {
-        const data = await P.apiSend("/api/tasks", "GET", params);
-        const taskList = data.data || [];
-        tasksCache = taskList;
-
-        if (data.total > 0) {
-          taskList.forEach(task => {
-            const row = table.insertRow();
-            let opts = "";
-            if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
-              opts = `<option value="Mark Complete">Mark Complete</option>
-                    <option value="Edit">Edit</option>
-                    <option value="Cancel">Cancel</option>`;
-            } else if (task.status === "Deleted") {
-              opts = `<option value="Uncancel">Reinstate</option>`;
-            } else if (task.status === "Completed") {
-              opts = `<option value="Mark Incomplete">Mark Incomplete</option>`;
-            }
-            const created = task.created
-              ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-              : "";
-            row.innerHTML = `
-            <td><select onchange="P.updateTask(${task.id},this.value,refreshTasks);this.selectedIndex=0;" style="width:150px">
-              <option value="" disabled selected>Actions</option>${opts}
-            </select></td>
-            <td>${task.id}</td>
-            <td>${task.status}</td>
-            <td><a href="#" onclick="viewTask(${task.id});return false">${escHtml(task.title)}</a></td>
-            <td>${escHtml(task.from?.name || "")}</td>
-            <td>${escHtml(task.to?.name || "")}</td>
-            <td></td>
-            <td>${fmtDue(task.due)}</td>
-            <td>${created}</td>`;
-          });
-          foot.innerHTML = ` | ${data.total} task${data.total === 1 ? '' : 's'}`;
-        } else {
-          foot.innerHTML = "No tasks linked to this contact";
-        }
-      } catch (err) {
-        foot.innerHTML = "Error loading tasks";
-        console.error(err);
-      }
-
-      E('tabTasksButton').disabled = false;
-      E('tabTasksLoad').style.display = 'none';
-    }
-  </script>
+  <iframe id="tasksFrame"></iframe>
+</div>
 
 </div>
 
@@ -910,7 +702,7 @@ async function loadEntityData() {
   // custom save flow) for a single source of truth.
   const data = await P.apiSend(
     `/api/contacts/${clientID}`, 'GET',
-    { include: 'cases,appts,tasks,log,phones,emails,addresses' }
+    { include: 'cases,appts,log,phones,emails,addresses' }
   );
   const ed       = window.entityData;
   ed.contact     = data.contact;
@@ -919,7 +711,6 @@ async function loadEntityData() {
   ed.contact.addresses = data.addresses || [];
   ed.cases       = data.cases     || [];
   ed.appts       = data.appts     || [];
-  ed.tasks       = data.tasks     || [];
   ed.log         = data.log       || [];
 }
 
@@ -1041,8 +832,6 @@ async function refreshAppts() {
   window.entityData.appts = data.appts || [];
   putAppt();
 }
-
-function refreshTasks() { tabTasksGet(0); }
 
 // ── Refresh after form save ─────────────────────────────────
 async function refreshEntityData(sourceFormKey) {

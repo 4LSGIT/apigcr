@@ -259,6 +259,7 @@ public/survey.html
 public/sw.js
 public/systemAlerts.html
 public/tabLeads.html
+public/tasks.html
 public/users.html
 public/videoManager.html
 ref/2026-07-19_esign_phase1c.sql
@@ -644,6 +645,7 @@ tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
 tests/sequences.editor.roundtrip.test.js
 tests/su.stepup.test.js
+tests/taskService.status.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js

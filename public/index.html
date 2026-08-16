@@ -570,7 +570,7 @@
     <div class="hdr-spacer"></div>
     <div class="hdr-right" id="hdrUserArea" style="display:none">
       <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
-      <button class="hdr-btn" onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')" title="My Tasks">
+      <button class="hdr-btn" onclick="openTasksTab({assigned_to:user.user,status:'Incomplete'})" title="My Tasks">
         <i class="fa-solid fa-list-check"></i><span>My Tasks</span>
       </button>
       <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">
@@ -616,8 +616,9 @@
     <div class="sb-item" data-tab="tabEvents" onclick="events?'':tabEventsGet(0);openMainTab('tabEvents')" title="Events">
       <i class="fa-solid fa-flag"></i><span>Events</span>
     </div>
-    <div class="sb-item" data-tab="tabTasks" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')" title="Tasks">
+    <div class="sb-item" data-tab="tabTasks" onclick="openMainTab('tabTasks')" title="Tasks">
       <i class="fa-solid fa-list"></i><span>Tasks</span>
+      <span class="sb-badge" id="sbTasksBadge" style="display:none" title="Your overdue + due-today tasks">0</span>
     </div>
     <div class="sb-item" data-tab="tabLogs" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')" title="Log">
       <i class="fa-solid fa-box-archive"></i><span>Log</span>
@@ -684,7 +685,7 @@
       <i class="fa-solid fa-flag fa-2xl"></i><br /><br />Events
     </button>
     <div style="height: 5px"></div>
-    <button class="home-btn" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')">
+    <button class="home-btn" onclick="openMainTab('tabTasks')">
       <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
     </button>
     <button class="home-btn" onclick="newContact()">
@@ -1659,373 +1660,54 @@
     }
   </script>
 
+  <!-- Tasks tab — consolidated into /tasks.html (shell mode: no URL params).
+       Lazy iframe: openMainTab() swaps data-src → src on first open, so the
+       task list's fetch doesn't run until someone actually looks at it
+       (tabPipeline idiom). The old inline implementation (~370 lines,
+       duplicated again in case.html and contact.html) lives there now. -->
   <div id="tabTasks" class="tab-main">
-    <h1>Tasks</h1>
-    <span>
-      <button onclick="newTask()">Create Task</button>
-      Query:
-      <input id="tabTasksQuery" onkeypress="if (event.keyCode == 13) {tabTasksGet(0)}" />
-      Status:
-      <select id="tabTasksStatus" style="width: 150px">
-        <option>Incomplete</option>
-        <option>Pending</option>
-        <option>Completed</option>
-        <option>Due Today</option>
-        <option>Overdue</option>
-        <option>Deleted</option>
-        <option value="All">All</option>
-      </select>
-      Assigned By:
-      <select id="tabTasksBy" class="userslist" style="width: 150px">
-        <option value="">All</option>
-      </select>
-      Assigned to:
-      <select id="tabTasksTo" class="userslist" data-userlist-filter="user_type" style="width: 150px">
-        <option value="">All</option>
-      </select>
-      <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
-    </span>
-    <table id="tasksTable" class="logTable">
-      <tr>
-        <th>Action</th>
-        <th>Task ID</th>
-        <th>Status</th>
-        <th>Title</th>
-        <th>Assigned By</th>
-        <th>Assigned To</th>
-        <th>Linked To</th>
-        <th>Due Date</th>
-        <th>Date Created</th>
-      </tr>
-    </table>
-    <div id="tasksTableFoot"></div>
-    <div id="tabTasksLoad" style="display: none">
-      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
-    </div>
+    <iframe id="tasksFrame" data-src="/tasks.html" title="Tasks"></iframe>
   </div>
   <script>
-    async function newTask(task, linkType, linkId, onSuccess) {
-      const isEdit = !!(task && task.id);
-      const t = task || {};
-      const toVal = t.to?.id || '';
-      const titleVal = t.title || '';
-      const descVal = t.desc || '';
-      const dueVal = t.due ? String(t.due).slice(0, 10) : '';
-      const notifyVal = t.notify ? 'checked' : '';
-      const lType = isEdit ? (t.link?.type || '') : (linkType || '');
-      const lId = isEdit ? (t.link?.id || '') : (linkId || '');
-      const showLink = !!(lType && lId);
-      const linkLabel = lType === 'case' ? 'Case' : 'Client';
-      // Build assignee dropdown from firmData. Placeholder is disabled+hidden
-      // so it shows as a hint but cannot be re-selected once the user picks someone.
-      const userOpts =
-      '<option value="" disabled selected hidden>— select assignee —</option>' +
-      (window.firmData?.users || [])
-      .filter(u => u.user_type)
-      .map(u => `<option value="${u.user}">${u.user_name}</option>`)
-      .join('');
-
-      Swal.fire({
-        title: `${isEdit ? "Update" : "New"} Task:`,
-        html: `
-        <label class="input-label">Assign To: </label>
-        <select id="taskAssignTo" style="width:250px">${userOpts}</select><br>
-        <label class="input-label">Title: </label>
-        <input style="width:250px" id="taskTitle" value="${titleVal}"><br>
-        <label class="input-label">Description: </label>
-        <textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${descVal}</textarea><br>
-        <label class="input-label">Due Date: </label>
-        <input type="date" style="width:250px" id="taskDate" value="${dueVal}"><br>
-        <label class="sub-label" style="width:90%">a message will be sent now and on the due date</label><br>
-        <input type="checkbox" id="taskNotify" ${notifyVal} style="width:10px;transform:scale(1.5);">
-        <span> Notify Assigner upon completion?</span>
-        <div id="taskLinkDiv" style="display:${showLink ? '' : 'none'}">
-          <input type="checkbox" id="taskLinkCheck" ${showLink ? 'checked' : ''} style="width:10px;transform:scale(1.5);">
-          <span> Link to ${linkLabel}?</span>
-        </div>`,
-        showCancelButton: true,
-        confirmButtonText: isEdit ? "Update" : "Assign",
-        showCloseButton: true,
-        didOpen: () => { if (toVal) E("taskAssignTo").value = toVal; },
-        preConfirm: async () => {
-          const title = E("taskTitle").value;
-          const desc = E("taskDesc").value;
-          const due = E("taskDate").value;
-          const assignTo = E("taskAssignTo").value;
-          if (!assignTo) { Swal.showValidationMessage("Please choose an assignee"); return false; }
-          if (!title) { Swal.showValidationMessage("Please add a brief title"); return false; }
-          if (!desc) { Swal.showValidationMessage("Please add a clear description"); return false; }
-          if (!due) { Swal.showValidationMessage("Without a due date it will never be done!"); return false; }
-
-          const linked = showLink && E("taskLinkCheck").checked;
-
-          if (!isEdit) {
-            const payload = {
-              to: parseInt(E("taskAssignTo").value),
-              title, desc, due,
-              notify: E("taskNotify").checked,
-            };
-            if (linked) { payload.link_type = lType; payload.link_id = lId; }
-            try {
-              const data = await apiSend("/api/tasks", "POST", payload);
-              Toast.fire({ icon: data.status, title: data.title, text: data.message });
-              tabTasksGet(offsets.tasks);
-              if (onSuccess) onSuccess();
-            } catch (err) {
-              Toast.fire({ icon: "error", title: "Error", text: err.message });
-            }
-          } else {
-            const patch = {};
-            if (title !== (t.title || '')) patch.task_title = title;
-            if (desc !== (t.desc || '')) patch.task_desc = desc;
-            if (due !== dueVal) patch.task_due = due;
-            if (parseInt(E("taskAssignTo").value) !== +toVal) patch.task_to = parseInt(E("taskAssignTo").value);
-            if (E("taskNotify").checked !== !!t.notify) patch.task_notification = E("taskNotify").checked;
-            if (showLink && linked && !t.link?.type) { patch.task_link_type = lType; patch.task_link_id = String(lId); }
-            if (showLink && !linked && t.link?.type) { patch.task_link_type = null; patch.task_link_id = null; }
-
-            if (!Object.keys(patch).length) { Toast.fire({ title: "No changes made" }); return; }
-            try {
-              const data = await apiSend(`/api/tasks/${task.id}`, "PATCH", patch);
-              Toast.fire({ icon: data.status, title: data.title, text: data.message });
-              tabTasksGet(offsets.tasks);
-              if (onSuccess) onSuccess();
-            } catch (err) {
-              Toast.fire({ icon: "error", title: "Error", text: err.message });
-            }
-          }
-        }
-      });
+    /**
+     * Open the Tasks tab, optionally with a filter (header "My Tasks").
+     * Cold iframe → bake the filter into the src querystring (tasks.html
+     * reads assigned_to/status/source/q at boot). Warm iframe → push it
+     * through the widget's tasksSetFilter contract.
+     */
+    function openTasksTab(filter) {
+      const frame = E('tasksFrame');
+      if (frame.dataset.src) {
+        const qs = filter ? '?' + new URLSearchParams(filter).toString() : '';
+        frame.src = '/tasks.html' + qs;
+        delete frame.dataset.src;          // openMainTab must not re-swap
+      } else if (filter) {
+        try { frame.contentWindow?.tasksSetFilter?.(filter); } catch (_) { }
+      }
+      openMainTab('tabTasks');
     }
 
-    async function updateTask(taskId, action, onSuccess) {
-      let task = Array.isArray(tasks) ? tasks.find(t => +t.id === +taskId) : null;
-      if (!task) {
-        try {
-          const data = await apiSend(`/api/tasks/${taskId}`, "GET");
-          task = data.data;
-        } catch (err) {
-          Toast.fire({ icon: "error", title: "Error loading task", text: err.message });
-          return;
-        }
-      }
-
-      if (action === "Edit") {
-        newTask(task, null, null, onSuccess);
-        return;
-      }
-
-      const actionMap = {
-        "Mark Complete": `/api/tasks/${taskId}/complete`,
-        "Cancel": `/api/tasks/${taskId}/delete`,
-        "Uncancel": `/api/tasks/${taskId}/reopen`,
-        "Mark Incomplete": `/api/tasks/${taskId}/reopen`,
-      };
-
-      const endpoint = actionMap[action];
-      if (!endpoint) { Toast.fire({ icon: "error", title: `Unknown action: ${action}` }); return; }
-
-      // Cancel (= soft delete) asks for an optional reason. Mark Complete stays
-      // ONE CLICK — no dialog, no body — it's the common path and friction there
-      // is what pushes people to just leave tasks sitting.
-      // Server clamps the note to 500 chars; maxlength is a courtesy.
-      let payload = null;
-      if (action === "Cancel") {
-        const { value, isConfirmed } = await Swal.fire({
-          title: 'Cancel this task?',
-          input: 'textarea',
-          inputLabel: 'Note (optional)',
-          inputPlaceholder: 'Why is this task not needed?',
-          inputAttributes: { maxlength: 500 },
-          showCancelButton: true,
-          confirmButtonText: 'Cancel Task',
-          cancelButtonText: 'Keep Task'
-        });
-        if (!isConfirmed) return;                 // backed out — no PATCH at all
-        const note = (value || '').trim();
-        if (note) payload = { note };             // omit entirely when empty
-      }
-
+    /**
+     * Sidebar badge: the current user's overdue + due-today count. Refreshed
+     * at boot (loadUserContext) and poked by tasks.html after every task
+     * mutation via window.top.tasksBadgeRefresh — no polling loop.
+     */
+    async function tasksBadgeRefresh() {
       try {
-        const data = await apiSend(endpoint, "PATCH", payload);
-        Toast.fire({ icon: data.status, title: data.title, text: data.message });
-        tabTasksGet(offsets.tasks);
-        if (onSuccess) onSuccess();
-      } catch (err) {
-        Toast.fire({ icon: "error", title: "Error", text: err.message });
-      }
+        if (!user?.user) return;
+        const [od, dt] = await Promise.all([
+          apiSend('/api/tasks', 'GET', { assigned_to: user.user, status: 'Overdue',   limit: 1 }),
+          apiSend('/api/tasks', 'GET', { assigned_to: user.user, status: 'Due Today', limit: 1 })
+        ]);
+        const n = (od.total || 0) + (dt.total || 0);
+        const b = E('sbTasksBadge');
+        b.textContent = n;
+        b.style.display = n ? '' : 'none';
+      } catch (_) { /* badge is decoration — never let it break the shell */ }
     }
-
-    // Format a date-only value (DB DATE, arrives as UTC-midnight ISO e.g.
-    // "2026-07-18T00:00:00.000Z"). Slice the calendar date, then build a LOCAL
-    // date so the day never shifts. Do NOT feed the raw value to new Date() —
-    // west of UTC that renders the previous day.
-    function fmtDue(d) {
-      if (!d) return "";
-      const [y, m, day] = String(d).slice(0, 10).split("-");
-      return new Date(+y, +m - 1, +day)
-        .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-    }
-
-    // Escape, bold leading "Label:" line prefixes, newline→<br>.
-    // Escape runs FIRST per line; the regex only matches [A-Za-z ]+: on
-    // escaped text, so the inserted <strong> tags are the only HTML.
-    // Duplicated in case.html / contact.html and (server-side) in
-    // taskService.js / taskActions.js — keep in sync.
-    function renderTaskDescHtml(desc) {
-      return String(desc == null ? "" : desc)
-        .split("\n")
-        .map(line => escHtml(line).replace(/^([A-Za-z][A-Za-z ]{0,30}:)/, "<strong>$1</strong>"))
-        .join("<br>");
-    }
-
-    // Task detail modal: full description (bolded labels), meta the table
-    // doesn't show (source, notify), and the same status-dependent actions
-    // as the row dropdown.
-    async function viewTask(taskId) {
-      let task = Array.isArray(tasks) ? tasks.find(t => +t.id === +taskId) : null;
-      if (!task) {
-        try {
-          task = (await apiSend(`/api/tasks/${taskId}`, "GET")).data;
-        } catch (err) {
-          Toast.fire({ icon: "error", title: "Error loading task", text: err.message });
-          return;
-        }
-      }
-      const statusColors = { "Pending": "#4f46e5", "Due Today": "#d97706", "Overdue": "#dc2626", "Completed": "#065f46", "Deleted": "#6b7280" };
-      const meta = (label, val) => val
-        ? `<tr><td style="padding:3px 10px 3px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${label}</td><td style="padding:3px 0">${val}</td></tr>`
-        : "";
-      const created = task.created
-        ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-        : "";
-      let actions = [];
-      if (["Pending", "Due Today", "Overdue"].includes(task.status)) actions = ["Mark Complete", "Edit", "Cancel"];
-      else if (task.status === "Deleted") actions = ["Uncancel"];
-      else if (task.status === "Completed") actions = ["Mark Incomplete"];
-      const btnColor = a => a === "Mark Complete" ? "#059669" : a === "Cancel" ? "#b91c1c" : "#4f46e5";
-      const btnLabel = a => a === "Cancel" ? "Cancel Task" : a === "Edit" ? "Edit Task" : a;
-      const actionBtns = actions.map(a =>
-        `<button class="swal2-styled" style="background:${btnColor(a)}" onclick="taskModalAction(${task.id},'${a}')">${btnLabel(a)}</button>`
-      ).join("");
-
-      Swal.fire({
-        title: `<span style="font-size:19px">${escHtml(task.title)}</span>`,
-        html: `
-          <div style="text-align:left;font-size:14px">
-            <div style="margin:0 0 10px;font-weight:600;color:${statusColors[task.status] || "#6b7280"}">${escHtml(task.status)}</div>
-            ${task.desc ? `<div style="margin:0 0 12px;padding:12px 14px;background:#f5f3ff;border-left:3px solid #4f46e5;border-radius:4px;line-height:1.6;max-height:45vh;overflow:auto">${renderTaskDescHtml(task.desc)}</div>` : ""}
-            <table style="font-size:13px;border-collapse:collapse">
-              ${meta("Task ID", task.id)}
-              ${meta("Assigned by", escHtml(task.from?.name || ""))}
-              ${meta("Assigned to", escHtml(task.to?.name || ""))}
-              ${meta("Linked to", task.link?.id ? escHtml(task.link.title || task.link.id) : "")}
-              ${meta("Due date", fmtDue(task.due))}
-              ${meta("Created", created)}
-              ${meta("Source", task.source ? escHtml(task.source) : "")}
-              ${meta("Notify", task.notify ? "Assigner notified on completion" : "")}
-            </table>
-            ${actionBtns ? `<div style="margin-top:14px;text-align:center">${actionBtns}</div>` : ""}
-          </div>`,
-        width: 640,
-        showConfirmButton: false,
-        showCloseButton: true
-      });
-    }
-
-    function taskModalAction(taskId, action) {
-      Swal.close();
-      updateTask(taskId, action);
-    }
-
-    async function tabTasksGet(offset) {
-      offsets.tasks = offset;
-      E("tabTasksButton").disabled = true;
-      E("tabTasksLoad").style.display = "block";
-
-      const q = E("tabTasksQuery").value;
-      const status = E("tabTasksStatus").value;
-      const by = E("tabTasksBy").value;
-      const to = E("tabTasksTo").value;
-
-      const table = E("tasksTable");
-      const foot = E("tasksTableFoot");
-      foot.innerHTML = "";
-      const rows = table.getElementsByTagName("tr");
-      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
-
-      const params = { limit, offset };
-      if (q) params.q = q;
-      if (status !== "All") params.status = status;
-      if (by) params.assigned_by = by;
-      if (to) params.assigned_to = to;
-
-      try {
-        const data = await apiSend("/api/tasks", "GET", params);
-        tasks = data.data;
-
-        if (data.total > 0) {
-          tasks.forEach(task => {
-            const row = table.insertRow();
-
-            let opts = "";
-            if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
-              opts = `<option value="Mark Complete">Mark Complete</option>
-                    <option value="Edit">Edit</option>
-                    <option value="Cancel">Cancel</option>`;
-            } else if (task.status === "Deleted") {
-              opts = `<option value="Uncancel">Reinstate</option>`;
-            } else if (task.status === "Completed") {
-              opts = `<option value="Mark Incomplete">Mark Incomplete</option>`;
-            }
-
-            const linkHTML = task.link?.id
-              ? `<a href="#" onclick="addFile('${(task.link.title || '').replace(/'/g, "\\'")}','${task.link.type === 'contact' ? 'client' : 'case'}','${task.link.id}');return false">${task.link.title || task.link.id}</a>`
-              : "";
-            const created = task.created
-              ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-              : "";
-
-            row.innerHTML = `
-            <td><select onchange="updateTask(${task.id},this.value);this.selectedIndex=0;" style="width:150px">
-              <option value="" disabled selected>Actions</option>${opts}
-            </select></td>
-            <td>${task.id}</td>
-            <td>${task.status}</td>
-            <td><a href="#" onclick="viewTask(${task.id});return false">${escHtml(task.title)}</a></td>
-            <td>${escHtml(task.from?.name || "")}</td>
-            <td>${escHtml(task.to?.name || "")}</td>
-            <td>${linkHTML}</td>
-            <td>${fmtDue(task.due)}</td>
-            <td>${created}</td>`;
-          });
-
-          foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabTasksGet(${offset - limit})">&lt;</a> ` : "";
-          for (let i = 1; data.total >= (i - 1) * limit; i++) {
-            foot.innerHTML += offset / limit + 1 == i
-              ? `<a href="#" onclick="tabTasksGet(${(i - 1) * limit})">[${i}]</a> `
-              : `<a href="#" onclick="tabTasksGet(${(i - 1) * limit})">${i}</a> `;
-          }
-          foot.innerHTML += offset + limit < data.total ? `<a href="#" onclick="tabTasksGet(${offset + limit})">&gt;</a> ` : "";
-          foot.innerHTML += ` | Results ${offset + 1}–${offset + tasks.length} of ${data.total}
-          <select style="width:auto" onchange="limit=this.value;tabTasksGet(0)">
-            <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
-            <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
-            <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
-            <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
-          </select> | <button onclick="window.print()">Print</button>`;
-        } else {
-          Toast.fire({ icon: "error", title: "No tasks found!" });
-        }
-      } catch (err) {
-        Toast.fire({ icon: "error", title: "Error loading tasks", text: err.message });
-      }
-
-      E("tabTasksButton").disabled = false;
-      E("tabTasksLoad").style.display = "none";
-    }
+    window.tasksBadgeRefresh = tasksBadgeRefresh;
   </script>
-  
+
   <div id="tabLogs" class="tab-main">
     <span>Query:
       <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}" />
@@ -2687,9 +2369,8 @@
     contacts = "";
     appts = "";
     events = "";
-    tasks = "";
     logs = "";
-    offsets = { cases: 0, contacts: 0, appts: 0, events: 0, tasks: 0, logs: 0, custom: 0,  };
+    offsets = { cases: 0, contacts: 0, appts: 0, events: 0, logs: 0, custom: 0,  };
     customTabVar = ""
 
     /**
@@ -3239,6 +2920,8 @@ async function initAuth() {
 
       applyCustomTab(user.user_custom_tab || null);
 
+      tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)
+
       // ?open= is either a main tab id, or `file:<n>` pointing into ?files=.
       // Everything else is rejected: E('file:0') is null, E('whatever-a-user-typed')
       // is null, and openMainTab() throws on both. A raw `file-div<n>` is rejected
@@ -3290,7 +2973,9 @@ async function initAuth() {
         enableWorkspaceUrlSync();
       })();
       if (params.tasks) {
-        tabTasksGet(0);
+        // Preload the tasks iframe (old behaviour preloaded the table data).
+        const tf = E('tasksFrame');
+        if (tf.dataset.src) { tf.src = tf.dataset.src; delete tf.dataset.src; }
       }
       if (params.clients) {
         tabContactsGet(0);
@@ -3382,10 +3067,9 @@ async function initAuth() {
       contacts = "";
       appts = "";
       events = "";
-      tasks = "";
       logs = "";
 
-      offsets = { cases: 0, contacts: 0, appts: 0, events: 0, tasks: 0, logs: 0, custom: 0,  };
+      offsets = { cases: 0, contacts: 0, appts: 0, events: 0, logs: 0, custom: 0,  };
 
       // --- UI reset (minimal, non-destructive) ---
       try {
@@ -3465,8 +3149,8 @@ async function initAuth() {
               // Mirror the entity pages' ?tab= boot convention (`${tab}Button`,
               // see case.html initial load). Guard on .tab class — contact.html
               // has non-tab buttons whose ids match the convention by accident
-              // (tabLogButton / tabTasksButton are SEARCH buttons; clicking
-              // them would fire a search, not switch tabs).
+              // (tabLogButton is a SEARCH button; clicking it would fire a
+              // search, not switch tabs).
               const _btn = _w.document.getElementById(_sub[1] + "Button");
               if (_btn && _btn.classList.contains("tab")) _btn.click();
             }
