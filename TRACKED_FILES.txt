@@ -647,6 +647,7 @@ tests/sequences.editor.roundtrip.test.js
 tests/su.stepup.test.js
 tests/taskService.status.test.js
 tests/taskService.test.js
+tests/tasksUi.boot.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
 tests/test-oauthService.js

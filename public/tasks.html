@@ -295,7 +295,20 @@ function pokeBadge(){ try { window.top.tasksBadgeRefresh?.(); } catch (_) { } }
 
 (function waitForShell() {
   try {
-    if (window.top && typeof window.top.apiSend === 'function') return init();
+    // setTimeout, NOT a direct init() call. When the shell is already warm
+    // (the normal case — it is a long-lived page) a direct call would run the
+    // whole boot chain DURING this script's evaluation, while every const/let
+    // declared below is still in its temporal dead zone. That is a live
+    // footgun: init → fetchTasks → syncPresetHighlight reaches PRESETS, which
+    // is declared further down, and the page dies with
+    // "Cannot access 'PRESETS' before initialization".
+    // Deferring by one tick lets the body finish evaluating first, so the
+    // parent contract (window.reloadTasks / tasksSetFilter, also assigned
+    // below) is likewise in place before anything can call it.
+    if (window.top && typeof window.top.apiSend === 'function') {
+      setTimeout(init, 0);
+      return;
+    }
   } catch (_) { }
   setTimeout(waitForShell, 100);
 })();
