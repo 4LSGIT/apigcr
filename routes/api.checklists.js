@@ -62,6 +62,11 @@ const logService   = require('../services/logService');
 const uploadTarget = require('../services/uploadTargetService');
 const { getSetting } = require('../services/settingsService');
 const { cfg } = require('../lib/firmConfig');
+// Pipeline Slice E1 (Task 2): retained→docs hook below. pipelineService pulls
+// only lib/withTransaction (no cycle); alerting's heavier deps (phoneService)
+// are lazy-required inside it.
+const pipelineService = require('../services/pipelineService');
+const { alert } = require('../lib/alerting');
 const {
   NOTIFY_TO_KEY,
   // ONE rule set, shared with the authenticated portal upload path
@@ -731,6 +736,37 @@ router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
     await computeAndSaveStatus(req.db, checklistId);
     const result = await getChecklistWithItems(req.db, checklistId);
     res.json({ status: 'success', checklist: result });
+
+    // ── Pipeline Slice E1 (Task 2): retained → docs on doc request ─────────
+    // Post-response fire-and-forget (respond-first house rule): the FIRST doc
+    // request on a freshly retained case marks the ball moving to the
+    // client's court. Guarded STRICTLY to ['retained'] — this route fires
+    // repeatedly across a case's whole life (263 live docs checklists, ~7
+    // items each), and an unguarded advance would drag cases backwards from
+    // meeting_341 to docs on every re-request. Every non-retained state
+    // (intake stages during the ISS, mid-pipeline, no pipeline history)
+    // skips silently inside advanceStage; a skipped/noop outcome is the
+    // common case and needs no handling here. The catch is for REAL
+    // failures only (lock timeout, unknown case, DB error) — alert() never
+    // throws, but the trailing catch keeps this chain unable to produce an
+    // unhandled rejection no matter what.
+    pipelineService.advanceStage(req.db, String(case_id), 'docs', {
+      onlyFrom: ['retained'],
+      source: 'system',
+      note: 'Doc request sent',
+    }).catch((err) => {
+      alert(req.db, {
+        source: 'pipeline',
+        kind: 'doc_request_advance_failed',
+        group_key: 'pipeline:doc_request_advance',
+        severity: 'warning',
+        title: `retained→docs advance failed for case ${case_id}`,
+        message: err.message,
+        // cases.case_id is an alphanumeric varchar — it does NOT fit
+        // system_alerts.ref_id (bigint), so it rides in context instead.
+        context: { case_id: String(case_id), stage: 'docs', status: err.status || null },
+      }).catch(() => {});
+    });
   } catch (err) {
     console.error('POST /checklists/upsert-items error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to upsert items' });

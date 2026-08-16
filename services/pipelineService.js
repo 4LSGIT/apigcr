@@ -254,10 +254,16 @@ async function getPipeline(db, caseId) {
  * NUMERIC id still throw in soft mode — those are caller config errors that a
  * guard should never mask.
  *
+ * Soft misses console.warn (with latestKey, passed by advanceStage, for
+ * context): unlike a guard miss — the expected, high-volume, silent path —
+ * an unresolved key under a passing guard is either the template-moved edge
+ * or a TYPO in the caller's stage_key, and a typo that skips forever with no
+ * signal would be an observability regression vs the old loud 400.
+ *
  * @throws 400 on missing/unknown target or (when !soft) when no template
  *         resolves / the key is not in the template.
  */
-async function _resolveTarget(conn, caseRow, target, { soft = false } = {}) {
+async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey = null } = {}) {
   if (target === undefined || target === null || String(target).trim() === '') {
     throw badRequest('stage is required (stage_key or numeric stage_id)');
   }
@@ -273,7 +279,14 @@ async function _resolveTarget(conn, caseRow, target, { soft = false } = {}) {
 
   const template = await resolveTemplate(conn, caseRow);
   if (!template) {
-    if (soft) return null;
+    if (soft) {
+      console.warn(
+        `[pipeline] guarded advance unresolved: case=${caseRow.case_id} ` +
+        `target="${s}" from=${latestKey == null ? 'null' : `"${latestKey}"`} ` +
+        `template=none — skipped`
+      );
+      return null;
+    }
     throw badRequest(
       `No pipeline template resolves for case ${caseRow.case_id} — ` +
       `cannot advance by stage_key "${s}" (numeric stage_id still works)`
@@ -285,7 +298,14 @@ async function _resolveTarget(conn, caseRow, target, { soft = false } = {}) {
     [template.id, s]
   );
   if (!stage) {
-    if (soft) return null;
+    if (soft) {
+      console.warn(
+        `[pipeline] guarded advance unresolved: case=${caseRow.case_id} ` +
+        `target="${s}" from=${latestKey == null ? 'null' : `"${latestKey}"`} ` +
+        `template="${template.name}" — skipped`
+      );
+      return null;
+    }
     throw badRequest(`Unknown stage_key "${s}" in template "${template.name}"`);
   }
   return stage;
@@ -330,6 +350,23 @@ async function _resolveTarget(conn, caseRow, target, { soft = false } = {}) {
  * at all) is a skip, not a 400 — see _resolveTarget's soft mode. Unguarded
  * calls keep today's throwing behavior exactly.
  *
+ * ── RETURN IS POLYMORPHIC ────────────────────────────────────────────────
+ * Two shapes, keyed by `skipped`:
+ *   skipped:false → the full getPipeline payload (template/current/history/
+ *                   upcoming/stages) + { noop, skipped:false } — today's
+ *                   shape, plus the skipped key.
+ *   skipped:true  → BARE { skipped:true, noop:false, from, reason } and
+ *                   NOTHING else — no template, no history. Nothing was
+ *                   written, so no getPipeline re-read is spent (the docs
+ *                   hook fires on every upsert-items call and skips on most).
+ *                   reason: 'guard'      — a guard didn't match (expected,
+ *                                          high-volume, silent)
+ *                           'unresolved' — guards passed but the stage_key
+ *                                          doesn't exist in the case's
+ *                                          current template (template moved,
+ *                                          or a TYPO — console.warn fires)
+ * Callers MUST branch on `skipped` before touching pipeline fields.
+ *
  * @param {object} db       mysql2 pool
  * @param {string} caseId   cases.case_id
  * @param {string|number} target stage_key or numeric pipeline_stages.id
@@ -339,10 +376,7 @@ async function _resolveTarget(conn, caseRow, target, { soft = false } = {}) {
  * @param {string} [opts.source='manual']  'manual' | 'system' | 'import'
  * @param {?Array<string|null>} [opts.onlyFrom]     see Guards above
  * @param {?Array<string|null>} [opts.onlyFromRole] see Guards above
- * @returns fresh getPipeline payload with `noop` + `skipped:false` added; OR
- *          { skipped: true, noop: false, from } when a guard didn't match /
- *          a guarded target didn't resolve (no getPipeline re-read — nothing
- *          was written).
+ * @returns see RETURN IS POLYMORPHIC above
  * @throws 400 unknown target / bad source / malformed guard; 404 unknown
  *         case; 409 lock timeout (retryable).
  */
@@ -428,14 +462,19 @@ async function advanceStage(db, caseId, target, {
           }
         }
 
-        if (!ok) return { noop: false, skipped: true, from: fromKey };
+        if (!ok) return { noop: false, skipped: true, reason: 'guard', from: fromKey };
       }
 
-      const stage = await _resolveTarget(conn, caseRow, target, { soft: guarded });
+      const stage = await _resolveTarget(conn, caseRow, target, {
+        soft: guarded,
+        latestKey: latest ? latest.stage_key : null,
+      });
       if (!stage) {
         // soft mode only (guarded): key didn't resolve in the case's current
-        // template — the case moved templates since its latest log row.
-        return { noop: false, skipped: true, from: latest ? latest.stage_key : null };
+        // template — the case moved templates since its latest log row, or
+        // the caller typo'd the key (_resolveTarget already warned).
+        return { noop: false, skipped: true, reason: 'unresolved',
+                 from: latest ? latest.stage_key : null };
       }
 
       // Idempotency guard: same stage in the same template → no-op.
@@ -487,11 +526,11 @@ async function advanceStage(db, caseId, target, {
 
   if (outcome.skipped) {
     // Nothing was written — no getPipeline re-read, no Slice E dispatch.
-    // Deliberately minimal shape: { skipped, noop, from }. The HTTP route
-    // never passes guards, so this shape never reaches the frontends; the
-    // guarded callers (doc-request advance, retainer send/sign) branch on
-    // .skipped and want exactly this.
-    return { skipped: true, noop: false, from: outcome.from };
+    // Deliberately minimal shape: { skipped, noop, from, reason }. The HTTP
+    // route never passes guards, so this shape never reaches the frontends;
+    // the guarded callers (doc-request advance, retainer send/sign) branch
+    // on .skipped and want exactly this.
+    return { skipped: true, noop: false, from: outcome.from, reason: outcome.reason };
   }
 
   if (!outcome.noop) {

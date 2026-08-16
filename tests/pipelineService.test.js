@@ -374,7 +374,7 @@ describe('advanceStage guards (Slice E1)', () => {
       [] // NO pool queries — skipped path must not re-read getPipeline
     );
     const p = await svc.advanceStage(db, 'C1', 'docs', { onlyFrom: ['retained'], source: 'system' });
-    expect(p).toEqual({ skipped: true, noop: false, from: 'meeting_341' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'meeting_341', reason: 'guard' });
     const sqls = db.connCalls.map(c => c.sql);
     expect(sqls.some(s => s.startsWith('INSERT INTO case_stage_log'))).toBe(false);
     expect(sqls.some(s => s.startsWith('UPDATE cases'))).toBe(false);
@@ -419,7 +419,7 @@ describe('advanceStage guards (Slice E1)', () => {
     );
     await expect(
       svc.advanceStage(db, 'C1', 'docs', { onlyFrom: ['retained'], source: 'system', note: 'Doc request sent' })
-    ).resolves.toMatchObject({ skipped: true, from: 'meeting_341' });
+    ).resolves.toMatchObject({ skipped: true, from: 'meeting_341', reason: 'guard' });
     expect(db.connCalls.some(c => c.sql.includes('FROM pipeline_templates'))).toBe(false);
   });
 
@@ -437,7 +437,7 @@ describe('advanceStage guards (Slice E1)', () => {
       []
     );
     const p = await svc.advanceStage(db, 'C1', 'docs', { onlyFrom: ['retained'], source: 'system' });
-    expect(p).toEqual({ skipped: true, noop: false, from: 'consult_booked' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'consult_booked', reason: 'guard' });
   });
 
   test('onlyFromRole intake: latest row on intake template, subtype already written → advances into t2', async () => {
@@ -477,7 +477,7 @@ describe('advanceStage guards (Slice E1)', () => {
       []
     );
     const p = await svc.advanceStage(db, 'C1', 'contract_sent', { onlyFromRole: ['intake', null], source: 'system' });
-    expect(p).toEqual({ skipped: true, noop: false, from: 'filed' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'filed', reason: 'guard' });
   });
 
   test('onlyFromRole [.., null] with zero log rows → advances', async () => {
@@ -513,7 +513,7 @@ describe('advanceStage guards (Slice E1)', () => {
       []
     );
     const p = await svc.advanceStage(db, 'C1', 'docs', { onlyFrom: ['retained'], source: 'system' });
-    expect(p).toEqual({ skipped: true, noop: false, from: 'retained' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'retained', reason: 'unresolved' });
   });
 
   test('malformed guards → 400 up front, no connection touched', async () => {

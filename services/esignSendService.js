@@ -1718,7 +1718,7 @@ async function sendFromTemplate(db, {
     };
   }
 
-  return sendPipeline(db, {
+  const sent = await sendPipeline(db, {
     linkableType,
     linkableId,
     kind:           template.kind,
@@ -1736,6 +1736,55 @@ async function sendFromTemplate(db, {
     completionTargets: effectiveCompletionTargets,
     dropUnmatchedSigners,
   });
+
+  // ── Pipeline Slice E1 (Task 3): contract sent while still in intake ───────
+  // Fire-and-forget AFTER a successful send — never blocks or fails the send.
+  // Lives HERE (service level, not the route) deliberately: sendFromTemplate
+  // has THREE callers — POST /api/esign/send-from-template (sendForm.html AND
+  // sendingform-bk.html) and lib/internal_functions/esign.js
+  // esign_send_from_template (workflow/sequence sends, which never touch the
+  // route) — and all three must advance identically.
+  //
+  // Gates: linkable is a case + the template is a contract. The intake gate
+  // is advanceStage's onlyFromRole ['intake', null] — judged by the latest
+  // LOG ROW's template role (null = no pipeline history yet), which covers
+  // every intake lane at once (no_show, dead_lead resurrections, future t1
+  // stages) with zero maintenance, and structurally excludes the Ch7
+  // Post-Filing agreement: a mid-pipeline case's latest row is on a
+  // role='case' template → skip. A history-less case whose subtype is
+  // already set resolves to t2/t3 where contract_sent doesn't exist →
+  // advanceStage's soft resolution skips that too (no 400). Deliberately NOT
+  // gated on sent.testing — the completion-trigger side (esignService
+  // applyStatus) fires regardless of test mode, and the two ends of the
+  // retainer arc should agree.
+  if (linkableType === 'case' && template.kind === 'contract') {
+    const pipelineService = require('./pipelineService'); // lazy require (convention)
+    pipelineService.advanceStage(db, String(linkableId), 'contract_sent', {
+      onlyFromRole: ['intake', null],
+      source: 'system',
+      note: 'Contract sent for signature',
+    }).catch((err) => {
+      const { alert } = require('../lib/alerting'); // lazy — keeps esign load graph lean
+      alert(db, {
+        source: 'pipeline',
+        kind: 'contract_sent_advance_failed',
+        group_key: 'pipeline:contract_sent_advance',
+        severity: 'warning',
+        title: `contract_sent advance failed for case ${linkableId}`,
+        message: err.message,
+        // cases.case_id is an alphanumeric varchar — doesn't fit ref_id
+        // (bigint); it rides in context instead.
+        context: {
+          case_id: String(linkableId),
+          template_id: template.id,
+          signing_request_id: sent && sent.row ? sent.row.id : null,
+          status: err.status || null,
+        },
+      }).catch(() => {});
+    });
+  }
+
+  return sent;
 }
 
 /**
