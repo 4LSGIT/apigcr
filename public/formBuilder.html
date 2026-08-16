@@ -2783,6 +2783,137 @@ function isRepeaterSection(sec) {
   return sec && Object.prototype.hasOwnProperty.call(sec, 'repeater');
 }
 
+// ── S8: NOTIFICATION-FIELD AUDIT (initData.labels) ──────────────────────────
+//
+// The shared notify workflow (wf 40 "Form Submission Notify") formats its
+// summary email in step 1 like this — verbatim from the stored custom_code:
+//
+//     if (Array.isArray(input.labels) && input.labels.length) {
+//       for (…) pairs.push([String(L[0]), s(values[L[1]])]);      // ONLY these
+//     } else {
+//       for (…) pairs.push([pretty(ks[j]), s(values[ks[j]])]);    // every key
+//     }
+//
+// So `labels` is not cosmetic ordering — it is an ALLOWLIST. The moment one
+// exists, every field added to the form afterwards is SILENTLY ABSENT from the
+// email the office receives, and nothing anywhere says so: the form saves, the
+// submission records, the notification arrives, and a question is just missing
+// from it. Symmetrically, a label naming a deleted field renders as a blank
+// row forever.
+//
+// This block is the "says so". It is advisory only — it never rewrites
+// anything without the author pressing the button, and a form with no `labels`
+// (the auto-prettify path, which needs no maintenance) is left entirely alone.
+//
+// TABBED MODE: MODEL.sections is the FLAT array in canonical order in both
+// modes (see the 2.6 state comment), so walking it here is correct for tabbed
+// definitions too — no serializeModel() round trip needed.
+
+function labelsPrettyName(n) {
+  return String(n).replace(/_/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase());
+}
+
+// Every name that appears in the submitted values object, in form order:
+// top-level value-carrying fields plus repeater KEYS (collect() writes
+// data[repeater] beside data[fieldName]). Display-only types carry no value
+// and never reach `values`, so they are excluded — mirroring fieldSignature.
+function labelsDataFields() {
+  const out = [];
+  (MODEL && MODEL.sections ? MODEL.sections : []).forEach(sec => {
+    if (!sec) return;
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) {
+      if (sec.repeater) out.push({ name: sec.repeater, label: sec.title || labelsPrettyName(sec.repeater) });
+      return;
+    }
+    (sec.rows || []).forEach(r => (r.fields || []).forEach(f => {
+      if (!f || !f.name) return;
+      if (f.type === 'embed' || f.type === 'content') return;
+      out.push({ name: f.name, label: f.label || labelsPrettyName(f.name) });
+    }));
+  });
+  return out;
+}
+
+// { missing, dead } against the current field set. missing = fields the email
+// will not mention; dead = labels naming fields that no longer exist.
+function labelsAudit(labels) {
+  const fields = labelsDataFields();
+  const known  = new Set(fields.map(f => f.name));
+  const listed = new Set();
+  const dead   = [];
+  (labels || []).forEach(L => {
+    if (!Array.isArray(L) || L.length < 2) return;
+    const n = String(L[1]);
+    listed.add(n);
+    if (!known.has(n)) dead.push(n);
+  });
+  return { missing: fields.filter(f => !listed.has(f.name)), dead };
+}
+
+// Reconciled list: the author's wording and ORDER are preserved for every row
+// that still resolves (the whole point of maintaining `labels` by hand is the
+// curated order), dead and duplicate rows are dropped, and anything new is
+// appended at the end using the field's label.
+function labelsSynced(labels) {
+  const fields = labelsDataFields();
+  const known  = new Map(fields.map(f => [f.name, f]));
+  const out = [], seen = new Set();
+  (labels || []).forEach(L => {
+    if (!Array.isArray(L) || L.length < 2) return;
+    const n = String(L[1]);
+    if (!known.has(n) || seen.has(n)) return;
+    seen.add(n);
+    out.push([String(L[0]), n]);
+  });
+  fields.forEach(f => { if (!seen.has(f.name)) { seen.add(f.name); out.push([f.label, f.name]); } });
+  return out;
+}
+
+// The audit block for ONE workflow entry, or null when the entry carries no
+// labels array (auto-prettify — nothing to drift). Shape-gated rather than
+// id-gated so a second notify-style workflow gets the same check, while a
+// workflow using `labels` for something else (not [label, field] pairs) is
+// left alone.
+function wfLabelsAuditNode(W) {
+  const labels = W && W.initData && W.initData.labels;
+  if (!Array.isArray(labels) || !labels.length) return null;
+  if (!labels.every(L => Array.isArray(L) && L.length >= 2)) return null;
+
+  const { missing, dead } = labelsAudit(labels);
+
+  if (!missing.length && !dead.length) {
+    return el('div', { class: 'help', style: 'color:var(--ok);', text:
+      '✓ initData.labels covers all ' + labels.length + ' value-carrying fields — the notification email lists every one, in this order.' });
+  }
+
+  const lines = [];
+  if (missing.length) {
+    lines.push('NOT in the notification email (' + missing.length + '): ' +
+      missing.map(f => f.name).join(', ') + '.');
+  }
+  if (dead.length) {
+    lines.push('Labels naming fields that no longer exist (' + dead.length + '): ' +
+      dead.join(', ') + '.');
+  }
+
+  const box = el('div', { class: 'prop' }, [
+    el('div', { class: 'help', style: 'color:var(--warn); line-height:1.5;', text:
+      '⚠ ' + lines.join(' ') +
+      ' wf40 uses labels as an ALLOWLIST — when it is present, anything not listed is silently omitted from the email.' }),
+    el('div', { style: 'margin-top:6px;' }, [
+      el('button', { class: 'ghost small', text: 'Sync labels to current fields', onclick: () => {
+        W.initData.labels = labelsSynced(labels);
+        touched();
+        renderSettings();
+      }}),
+    ]),
+    el('div', { class: 'help', text:
+      'Sync keeps your wording and order for fields that still exist, drops dead rows, and appends new fields at the end. ' +
+      'To go back to automatic (all fields, prettified names, form order) delete the whole labels key from the init data above.' }),
+  ]);
+  return box;
+}
+
 // ── Form settings (the Settings tab — X3.5) ─────────────────────────────────
 // `ins` is whatever container the caller passes: #settingsGrid in production.
 // Every re-render inside this function must call renderSettings(), NOT
@@ -2909,6 +3040,9 @@ function insSettings(ins) {
       },
       help: 'Form data is spread as workflow init vars; THIS entry\'s init data overrides; system fields win.'
     }),
+    // S8: initData.labels drift check for THIS entry (null when it carries no
+    // labels array — the auto-prettify path needs no maintenance).
+    wfLabelsAuditNode(W),
   ];
   if (hasWf && wfArray) {
     wfArray.forEach((W, i) => {
@@ -4135,6 +4269,8 @@ window.FB = {
     serializeModel, addTab, deleteTab, moveTab,
     addSectionAtRegion, moveSectionInRegion, moveSectionToRegion,
     regionMembers, changeType,
+    // S8 notification-field audit
+    labelsDataFields, labelsAudit, labelsSynced, wfLabelsAuditNode,
   },
 };
 </script>

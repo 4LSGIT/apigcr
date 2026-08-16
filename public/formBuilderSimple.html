@@ -1,0 +1,2876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Forms</title>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="/js/assetpicker.js"></script>
+<style>
+  /* ── Light palette, deliberately matching the RENDERED form rather than the
+        dark admin pages: this surface is for staff who will spend their time
+        looking at the form itself, and a dark chrome around a white form reads
+        as "developer tool". ─────────────────────────────────────────────── */
+  :root {
+    --bg:      #eef1f5;
+    --panel:   #ffffff;
+    --panel2:  #f7f9fc;
+    --border:  #dce1ea;
+    --border2: #eef1f6;
+    --fg:      #1f2937;
+    --fg2:     #374151;
+    --muted:   #6b7280;
+    --accent:  #07ADEF;
+    --accentbg:#e6f6fe;
+    --danger:  #dc2626;
+    --ok:      #16a34a;
+    --warn:    #b45309;
+    --warnbg:  #fef7e7;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin:0; padding:0; height:100%;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+  }
+  body { display:flex; flex-direction:column; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .muted { color: var(--muted); }
+
+  button {
+    background: var(--accent); color:#fff; border:none;
+    padding: 7px 14px; border-radius:6px; cursor:pointer;
+    font-size:13px; font-family:inherit; font-weight:500;
+  }
+  button:hover { filter: brightness(1.06); }
+  button:active { filter: brightness(0.95); }
+  button.ghost { background:#fff; color:var(--fg2); border:1px solid var(--border); }
+  button.ghost:hover { background: var(--panel2); border-color:#c3cbd8; filter:none; }
+  button.quiet { background:transparent; color:var(--muted); border:none; padding:4px 7px; }
+  button.quiet:hover { background: var(--border2); color: var(--fg); filter:none; }
+  button.danger { background: var(--danger); }
+  button.small { font-size:12px; padding:4px 9px; }
+  button[disabled] { opacity:.45; cursor:not-allowed; filter:none !important; }
+
+  input, select, textarea {
+    background:#fff; color:var(--fg); border:1px solid var(--border);
+    padding:7px 9px; border-radius:6px; font-size:13px;
+    font-family:inherit; width:100%;
+  }
+  textarea { resize:vertical; min-height:60px; }
+  input[type="checkbox"], input[type="radio"] { width:auto; }
+  input[type="color"] { padding:2px; height:32px; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(7,173,239,.14); }
+  input.bad, textarea.bad { border-color:var(--danger); }
+  label { font-size:12px; color:var(--muted); }
+
+  .chip {
+    display:inline-block; padding:2px 8px; border-radius:999px;
+    font-size:11px; font-weight:600; letter-spacing:.01em; white-space:nowrap;
+  }
+  .chip.live   { background:#dcfce7; color:#15803d; }
+  .chip.draft  { background:#eef1f6; color:#5b6474; }
+  .chip.pub    { background:#e0efff; color:#1d4ed8; }
+  .chip.warn   { background:var(--warnbg); color:var(--warn); }
+
+  /* ══ Views ══════════════════════════════════════════════════════════════ */
+  .view { display:none; flex:1; min-height:0; flex-direction:column; }
+  .view.show { display:flex; }
+
+  /* ══ Form list ══════════════════════════════════════════════════════════ */
+  #listView { overflow-y:auto; padding:22px 26px 40px; }
+  #listInner { max-width:1000px; margin:0 auto; }
+  #listHead { display:flex; align-items:center; gap:14px; margin-bottom:6px; }
+  #listHead h1 { font-size:21px; margin:0; font-weight:650; }
+  #listBar { display:flex; gap:10px; align-items:center; margin:14px 0 12px; }
+  #listSearch { flex:1; max-width:340px; }
+  .card-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:12px; }
+  .fcard {
+    background:var(--panel); border:1px solid var(--border); border-radius:10px;
+    padding:14px 15px; cursor:pointer; transition:border-color .12s, box-shadow .12s;
+    display:flex; flex-direction:column; gap:7px;
+  }
+  .fcard:hover { border-color:var(--accent); box-shadow:0 2px 10px rgba(15,30,60,.07); }
+  .fcard .ft { font-weight:600; font-size:15px; line-height:1.25; }
+  .fcard .fk { font-size:11px; color:var(--muted); }
+  .fcard .fchips { display:flex; gap:5px; flex-wrap:wrap; }
+  .fcard .facts { display:flex; gap:6px; margin-top:2px; }
+  .empty { padding:44px 10px; text-align:center; color:var(--muted); }
+
+  /* ══ Editor ═════════════════════════════════════════════════════════════ */
+  #topbar {
+    display:flex; align-items:center; gap:9px; padding:9px 14px;
+    background:var(--panel); border-bottom:1px solid var(--border); flex:none; flex-wrap:wrap;
+  }
+  #titleIn {
+    font-size:16px; font-weight:600; border:1px solid transparent; background:transparent;
+    width:min(340px, 34vw); padding:5px 8px;
+  }
+  #titleIn:hover { border-color:var(--border); }
+  #titleIn:focus { border-color:var(--accent); background:#fff; }
+  #topSpacer { flex:1; }
+  #statusBar { font-size:12px; min-width:0; }
+  #statusBar.err { color:var(--danger); }
+  #statusBar.ok  { color:var(--ok); }
+  #dirtyDot { width:8px; height:8px; border-radius:50%; background:var(--warn); display:none; flex:none; }
+  #dirtyDot.on { display:block; }
+
+  #main { display:flex; flex:1; min-height:0; }
+  #stage { flex:1; min-width:0; overflow-y:auto; padding:22px 20px 120px; }
+  #stageInner { max-width:760px; margin:0 auto; }
+  #panel {
+    width:365px; flex:none; overflow-y:auto; background:var(--panel);
+    border-left:1px solid var(--border); padding:16px 16px 60px;
+  }
+
+  /* section / page */
+  .sec { background:var(--panel); border:1px solid var(--border); border-radius:12px; margin-bottom:16px; }
+  .sec.sel { border-color:var(--accent); box-shadow:0 0 0 3px rgba(7,173,239,.13); }
+  .sec-head {
+    display:flex; align-items:center; gap:7px; padding:9px 12px;
+    border-bottom:1px solid var(--border2); background:var(--panel2);
+    border-radius:12px 12px 0 0;
+  }
+  .sec-grip { cursor:grab; color:#aeb6c2; font-size:14px; user-select:none; padding:0 2px; flex:none; }
+  .sec-num { font-size:11px; font-weight:700; color:var(--muted); letter-spacing:.05em; text-transform:uppercase; flex:none; }
+  .sec-title-in { border:1px solid transparent; background:transparent; font-weight:600; font-size:13px; padding:4px 6px; }
+  .sec-title-in:hover { border-color:var(--border); }
+  .sec-title-in:focus { border-color:var(--accent); background:#fff; }
+  .sec-body { padding:12px 12px 4px; min-height:14px; }
+  .sec-body:empty::after {
+    content:'No questions on this page yet.'; color:var(--muted); font-size:12px;
+    font-style:italic; display:block; padding:6px 4px 12px;
+  }
+  .sec-foot { padding:0 12px 12px; display:flex; gap:7px; flex-wrap:wrap; }
+
+  /* question block */
+  .q {
+    position:relative; border:1px solid var(--border2); border-radius:9px;
+    padding:11px 12px 11px 26px; margin-bottom:9px; background:#fff;
+  }
+  .q:hover { border-color:#c8d1de; }
+  .q.sel { border-color:var(--accent); box-shadow:0 0 0 3px rgba(7,173,239,.13); }
+  .q-grip {
+    position:absolute; left:5px; top:11px; cursor:grab; color:#c3cbd8;
+    font-size:13px; line-height:1; user-select:none; letter-spacing:-1px;
+  }
+  .q-grip:hover { color:var(--accent); }
+  .q-tools { position:absolute; right:7px; top:7px; display:none; gap:2px; }
+  .q:hover .q-tools, .q.sel .q-tools { display:flex; }
+  .q-fields { display:flex; gap:12px; align-items:flex-start; }
+  .q-f { min-width:0; }
+  .q-f.w1 { flex:1; } .q-f.w2 { flex:2; } .q-f.w3 { flex:3; }
+  .q-f.wsm { flex:0 0 110px; } .q-f.wmd { flex:0 0 180px; }
+  .q-lbl-row { display:flex; align-items:center; gap:4px; }
+  .q-lbl {
+    border:1px solid transparent; background:transparent; font-weight:600;
+    font-size:13.5px; padding:2px 5px; color:var(--fg);
+  }
+  .q-lbl:hover { border-color:var(--border); }
+  .q-lbl:focus { border-color:var(--accent); background:#fff; }
+  .req { color:var(--danger); font-weight:700; flex:none; }
+  .q-sub { font-size:11.5px; color:var(--muted); padding:1px 6px 3px; }
+  .q-badges { display:flex; gap:4px; flex-wrap:wrap; padding:3px 5px 0; }
+
+  /* faux inputs — a static picture of the control, never interactive */
+  .fk { pointer-events:none; user-select:none; }
+  .fk-in {
+    border:1px solid var(--border); border-radius:6px; background:var(--panel2);
+    padding:7px 9px; font-size:13px; color:#9aa3b1; min-height:33px;
+  }
+  .fk-ta { min-height:56px; }
+  .fk-sel { display:flex; justify-content:space-between; align-items:center; }
+  .fk-opt { display:flex; align-items:center; gap:7px; padding:2.5px 5px; font-size:13px; color:var(--fg2); }
+  .fk-mark { width:13px; height:13px; border:1.5px solid #b6c0cd; flex:none; background:#fff; }
+  .fk-mark.rd { border-radius:50%; }
+  .fk-cols { display:flex; flex-wrap:wrap; }
+  .fk-cols.c2 > * { width:50%; } .fk-cols.c3 > * { width:33.33%; }
+  .fk-more { font-size:11.5px; color:var(--muted); padding:2px 5px; font-style:italic; }
+  .fk-note {
+    border:1px dashed var(--border); border-radius:6px; background:var(--panel2);
+    padding:8px 10px; font-size:12px; color:var(--muted);
+  }
+  .fk-content { display:flex; gap:11px; align-items:flex-start; }
+  .fk-content img { max-width:120px; max-height:80px; border-radius:5px; border:1px solid var(--border); }
+  .fk-content .txt { font-size:12.5px; color:var(--fg2); white-space:pre-wrap; line-height:1.45; }
+
+  #addBar { display:flex; gap:9px; margin-top:4px; flex-wrap:wrap; }
+
+  /* panel */
+  #panel h3 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 10px; }
+  .pgroup { border-top:1px solid var(--border2); margin-top:14px; padding-top:12px; }
+  .pgroup:first-of-type { border-top:none; margin-top:0; padding-top:0; }
+  .pgroup > .gt { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:8px; }
+  .prop { margin-bottom:10px; }
+  .prop > label { display:block; margin-bottom:4px; }
+  .prop.inline { display:flex; align-items:center; gap:7px; }
+  .prop.inline > label { margin:0; font-size:13px; color:var(--fg2); cursor:pointer; display:flex; align-items:center; gap:7px; }
+  .help { font-size:11px; color:var(--muted); margin-top:4px; line-height:1.45; }
+  .perr { font-size:11.5px; color:var(--danger); margin-top:4px; display:none; }
+  .perr.show { display:block; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  #panelEmpty { color:var(--muted); font-size:13px; line-height:1.6; font-style:italic; }
+
+  /* choices editor */
+  .opt-row { display:flex; gap:5px; align-items:center; margin-bottom:5px; }
+  .opt-row .oh { cursor:grab; color:#c3cbd8; user-select:none; flex:none; letter-spacing:-1px; }
+  .opt-row input { flex:1; }
+
+  details.adv { border-top:1px solid var(--border2); margin-top:14px; padding-top:10px; }
+  details.adv > summary { cursor:pointer; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  details.adv[open] > summary { margin-bottom:10px; }
+
+  .notice { border-radius:8px; padding:10px 12px; font-size:12.5px; line-height:1.5; margin-bottom:12px; }
+  .notice.warn { background:var(--warnbg); color:var(--warn); border:1px solid #f0dcae; }
+  .notice.info { background:var(--accentbg); color:#0a5f83; border:1px solid #bce6f8; }
+
+  /* settings sheet */
+  #sheetWrap {
+    position:fixed; inset:0; background:rgba(17,24,39,.42); display:none; z-index:40;
+  }
+  #sheetWrap.show { display:block; }
+  #sheet {
+    position:absolute; top:0; right:0; bottom:0; width:min(520px, 96vw);
+    background:var(--panel); border-left:1px solid var(--border);
+    overflow-y:auto; padding:18px 20px 60px; box-shadow:-8px 0 30px rgba(15,30,60,.16);
+  }
+  #sheetHead { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+  #sheetHead h2 { font-size:17px; margin:0; flex:1; }
+
+  /* preview overlay */
+  #prevWrap { position:fixed; inset:0; background:rgba(17,24,39,.55); display:none; z-index:50; }
+  #prevWrap.show { display:flex; flex-direction:column; }
+  #prevBar { display:flex; align-items:center; gap:9px; padding:9px 14px; background:var(--panel); flex:none; }
+  #prevBody { flex:1; min-height:0; display:flex; justify-content:center; padding:14px; }
+  #prevFrameWrap { background:#fff; border-radius:10px; overflow:hidden; width:100%; max-width:900px; box-shadow:0 8px 40px rgba(0,0,0,.3); }
+  #prevFrameWrap.phone { max-width:400px; }
+  #prevFrame { width:100%; height:100%; border:none; display:block; }
+
+  .linkrow { display:flex; gap:6px; align-items:center; }
+  .linkrow input { flex:1; font-size:11.5px; }
+
+  /* picker (add question) */
+  .pick-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+  .pick {
+    border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer;
+    padding:11px 8px; text-align:center; font-size:12px; color:var(--fg2); line-height:1.3;
+  }
+  .pick:hover { border-color:var(--accent); background:var(--accentbg); }
+  .pick .pi { font-size:19px; display:block; margin-bottom:5px; }
+  .pick-sep { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+              color:var(--muted); margin:16px 0 8px; text-align:left; }
+
+  @media (max-width: 900px) {
+    #panel { width:300px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══ FORM LIST ══════════════════════════════════════════════════════════ -->
+<div id="listView" class="view">
+  <div id="listInner">
+    <div id="listHead">
+      <h1>Forms</h1>
+      <span id="listCount" class="muted" style="font-size:12px"></span>
+      <div style="flex:1"></div>
+      <button class="ghost small" onclick="openFullBuilderList()" title="The full Form Builder with every option">Advanced builder</button>
+    </div>
+    <div class="muted" style="font-size:12.5px">Build a questionnaire to send to clients, or a form your staff fill in on a case.</div>
+    <div id="listBar">
+      <input id="listSearch" placeholder="Search forms…">
+      <div style="flex:1"></div>
+      <button onclick="newFormWizard()">+ New form</button>
+    </div>
+    <div id="listErr" class="notice warn" style="display:none"></div>
+    <div id="cardGrid" class="card-grid"></div>
+  </div>
+</div>
+
+<!-- ══ GUARD: advanced features present ═══════════════════════════════════ -->
+<div id="blockedView" class="view">
+  <div style="max-width:600px; margin:70px auto; padding:0 20px;">
+    <h2 style="margin:0 0 12px; font-size:19px;">This form uses advanced features</h2>
+    <div id="blockedWhy" class="notice warn"></div>
+    <p class="muted" style="line-height:1.6">
+      The simple editor covers plain forms — pages, questions, choices and show/hide rules.
+      Open this one in the full Form Builder, where every option is available.
+    </p>
+    <div style="display:flex; gap:9px; margin-top:16px;">
+      <button onclick="openFullBuilder(BLOCKED_ID)">Open in Form Builder</button>
+      <button class="ghost" onclick="backToList()">← Back to forms</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ EDITOR ═════════════════════════════════════════════════════════════ -->
+<div id="editView" class="view">
+  <div id="topbar">
+    <button class="ghost small" onclick="backToList()" title="Back to the list of forms">←</button>
+    <input id="titleIn" maxlength="150" title="The form's name">
+    <span id="verChip" class="chip draft"></span>
+    <span id="visChip" class="chip pub"></span>
+    <span id="dirtyDot" title="Unsaved changes"></span>
+    <div id="topSpacer"></div>
+    <span id="statusBar"></span>
+    <button id="undoBtn" class="quiet" onclick="undo()" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+    <button class="ghost small" onclick="openSheet()">Settings</button>
+    <button class="ghost small" onclick="openPreview()">Preview</button>
+    <button id="saveBtn" class="ghost small" onclick="saveNow(true)">Save</button>
+    <button id="liveBtn" class="small" onclick="makeLive()">Make live</button>
+  </div>
+
+  <div id="main">
+    <div id="stage">
+      <div id="stageInner">
+        <div id="stageNotices"></div>
+        <div id="sectionsWrap"></div>
+        <div id="addBar"></div>
+      </div>
+    </div>
+    <div id="panel"></div>
+  </div>
+</div>
+
+<!-- ══ SETTINGS SHEET ═════════════════════════════════════════════════════ -->
+<div id="sheetWrap" onclick="if(event.target===this) closeSheet()">
+  <div id="sheet">
+    <div id="sheetHead">
+      <h2>Form settings</h2>
+      <button class="quiet" onclick="closeSheet()" title="Close">✕</button>
+    </div>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+
+<!-- ══ PREVIEW ════════════════════════════════════════════════════════════ -->
+<div id="prevWrap">
+  <div id="prevBar">
+    <strong style="font-size:14px">Preview</strong>
+    <span class="muted" style="font-size:12px">This is what people will see. Nothing you type here is saved.</span>
+    <div style="flex:1"></div>
+    <span class="muted" style="font-size:12px">Test case id:</span>
+    <input id="prevLinkId" class="mono" style="width:120px" placeholder="optional">
+    <button class="ghost small" onclick="showPreviewFrame()">Reload</button>
+    <button id="prevPhoneBtn" class="ghost small" onclick="togglePrevWidth()">Phone size</button>
+    <button class="ghost small" onclick="closePreview()">Close</button>
+  </div>
+  <div id="prevBody"><div id="prevFrameWrap"><iframe id="prevFrame"></iframe></div></div>
+</div>
+
+<script>
+/* ============================================================================
+ * formBuilderSimple.html — the FRIENDLY form builder.
+ *
+ * A second, deliberately smaller surface over the SAME form_templates records
+ * that public/formBuilder.html edits. Nothing here is a new data model, a new
+ * endpoint, or a new contract: this page reads and writes
+ * draft_definition exactly as the full builder does (governing contract
+ * ref/FORM_TEMPLATE_SCHEMA_V1.md), and the two can be used on the same
+ * template interchangeably.
+ *
+ * WHY IT EXISTS. The full builder is a power tool: a plain text field exposes
+ * ~21 controls, the canvas is structural (section → row → field chips), the
+ * palette shows JSON type names, conditions reference field `name`s, and form
+ * settings run to fifteen groups. That is right for a developer and wrong for
+ * a staff member who wants "a questionnaire I can text to a client". This page
+ * shows the form as the form, names things in English, and hides everything a
+ * non-technical author does not need.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO (the guard, checkGuard()): tabbed layouts,
+ * repeater sections, per-form code / hooks / custom CSS, derive rules and
+ * optionsFrom. A template carrying any of those opens the "use the full
+ * builder" screen instead — reimplementing TABS_META / LAYOUT / the code
+ * editors here would just be the full builder with different paint.
+ *
+ * PRESERVATION RULE. The working model is the PARSED definition object,
+ * mutated in place. Keys this page has no editor for (prefill, urlParam,
+ * pattern, minLength, apiColumn split shapes, notes, …) are never touched and
+ * round-trip byte-identically — so a form authored in the full builder can be
+ * label-edited here without losing anything.
+ *
+ * SECURITY / CONVENTIONS (identical to formBuilder.html):
+ *   - Runs as an iframe inside the index.html shell; P = window.top,
+ *     waitForParent loop on P.apiSend.
+ *   - EVERY template-sourced string reaches the DOM via textContent / value /
+ *     setAttribute. There is no innerHTML path for model data anywhere in this
+ *     file (contract §8 discipline).
+ *   - P.apiSend throws an Error whose .message is the server's message
+ *     verbatim — surfaced as-is in the status bar.
+ *   - The server is the authority on every rule. Client-side checks here are
+ *     for legibility (a clear message instead of a raw 400), never for control.
+ *
+ * NOTABLE BEHAVIOUR NOT IN THE FULL BUILDER:
+ *   - UNDO (Ctrl+Z). A snapshot stack fed from touched(); keystroke runs are
+ *     coalesced. Restoring replaces MODEL wholesale, so object identity is
+ *     lost — which only costs auto-name tracking, and is worth it.
+ *   - AUTOSAVE. Debounced 2.5s. On a server rejection autosave switches off
+ *     until the next successful manual Save, so the page never sits in a loop
+ *     re-POSTing an invalid definition.
+ *   - DUPLICATE. Copies a template's draft into a new key.
+ *   - S8 LABELS AUDIT. Shared with the full builder: wf40's summary step
+ *     iterates initData.labels VERBATIM when present, so a stale array
+ *     silently drops newly added questions from the notification email.
+ * ==========================================================================*/
+'use strict';
+
+const P = window.top;
+
+// ── Vocabulary ──────────────────────────────────────────────────────────────
+// Friendly names are DISPLAY ONLY — the stored `type` values are the contract's
+// (formTemplateService KNOWN_TYPES). The map is one-way on purpose: nothing
+// reads a label back into a type.
+const TYPE_META = {
+  text:      { label: 'Short answer',   icon: '▭',  common: true },
+  textarea:  { label: 'Long answer',    icon: '▤',  common: true },
+  radio:     { label: 'Pick one',       icon: '◉',  common: true },
+  checkgroup:{ label: 'Pick several',   icon: '☑',  common: true },
+  select:    { label: 'Dropdown',       icon: '▾',  common: true },
+  date:      { label: 'Date',           icon: '📅', common: true },
+  number:    { label: 'Number',         icon: '#',  common: true },
+  checkbox:  { label: 'Yes / no box',   icon: '☐',  common: true },
+  content:   { label: 'Text or image',  icon: '¶',  common: true },
+  datetime:  { label: 'Date & time',    icon: '🕐', common: false },
+  tags:      { label: 'Tag list',       icon: '🏷', common: false },
+  hidden:    { label: 'Hidden value',   icon: '🙈', common: false },
+  embed:     { label: 'Embedded page',  icon: '⧉',  common: false },
+};
+const typeLabel = t => (TYPE_META[t] && TYPE_META[t].label) || t;
+const typeIcon  = t => (TYPE_META[t] && TYPE_META[t].icon)  || '▭';
+
+const OPTIONS_TYPES = ['select', 'radio', 'checkgroup'];
+const DISPLAY_ONLY  = ['content', 'embed'];          // carry no value
+const FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;
+const FORM_KEY_RE   = /^[a-z0-9_]{1,50}$/;
+const HEX_RE        = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+// "Answer format" folds the contract's `mask` and the boolean `email` into one
+// dropdown, because to an author they are one question: what shape is this
+// answer? '' = free text.
+const FORMATS = [
+  ['',         'Anything'],
+  ['email',    'Email address'],
+  ['phone',    'Phone number'],
+  ['ssn',      'Social Security number'],
+  ['zip',      'ZIP code'],
+  ['currency', 'Money'],
+  ['ein',      'Employer ID (EIN)'],
+];
+
+// Widths only matter INSIDE a row shared by several fields (yc-forms.css:
+// .yc-field is flex:1, .yc-2x flex:2, …). A one-field row always fills the
+// width whatever this says — which is exactly why the control only appears
+// on side-by-side questions.
+const WIDTHS = [
+  ['default',   'Equal share'],
+  ['2x',        'Double width'],
+  ['3x',        'Triple width'],
+  ['fixed-md',  'Narrow (180px)'],
+  ['fixed-sm',  'Very narrow (110px)'],
+];
+
+// Ready-made questions: one picker click inserts correctly-configured fields.
+// `rows` is an array of rows, each an array of field seeds (no `name` — it is
+// generated at insert time against the live namespace).
+const READY = {
+  fullname: { label: 'Full name', icon: '👤', rows: [[{ type:'text', label:'Full Name', required:true }]] },
+  email:    { label: 'Email',     icon: '✉',  rows: [[{ type:'text', label:'Email Address', email:true, required:true }]] },
+  phone:    { label: 'Phone',     icon: '📞', rows: [[{ type:'text', label:'Phone Number', mask:'phone', required:true }]] },
+  address:  { label: 'Address',   icon: '🏠', rows: [
+                [{ type:'text', label:'Street Address' }],
+                [{ type:'text', label:'City' },
+                 { type:'text', label:'State', width:'fixed-sm' },
+                 { type:'text', label:'ZIP', mask:'zip', width:'fixed-sm' }] ] },
+  yesno:    { label: 'Yes / No',  icon: '⚖',  rows: [[{ type:'radio', label:'Yes or no?', options:['YES','NO'], required:true }]] },
+  money:    { label: 'Amount',    icon: '$',  rows: [[{ type:'text', label:'Amount', mask:'currency' }]] },
+  ssn:      { label: 'SSN',       icon: '🆔', rows: [[{ type:'text', label:'Social Security Number', mask:'ssn' }]] },
+  heading:  { label: 'Text block',icon: '¶',  rows: [[{ type:'content', label:'', text:'Add your text here.' }]] },
+};
+
+// wf40 — the shared "Form Submission Notify" workflow. Named here because the
+// friendly Settings sheet writes exactly one thing into onSubmit: an entry
+// pointing at it with a notify_to address.
+const NOTIFY_WF_ID = 40;
+
+// ── State ───────────────────────────────────────────────────────────────────
+let ROW    = null;    // server row
+let MODEL  = null;    // working draft_definition (mutated in place)
+let TITLE  = '';
+let SEL    = null;    // null | {t:'section',si} | {t:'field',si,ri,fi}
+let SAVED  = { def:'', title:'' };
+let FORM_DEV = false;
+let AUTO_NAMES = new WeakSet();
+let SORTABLES  = [];
+let BLOCKED_ID = null;
+let OP_LIST = [];
+
+// Undo: snapshots of MODEL taken BEFORE each change. LAST holds the current
+// serialized state so touched() can push the pre-change value without every
+// mutation site having to remember to.
+let UNDO = [];
+let LAST = '';
+let LAST_PUSH_AT = 0, LAST_PUSH_KEY = '';
+
+// Autosave
+let AUTOSAVE_TIMER = null;
+let AUTOSAVE_OFF   = false;   // set by a failed save; cleared by a successful one
+let SAVING = false;
+
+const E = id => document.getElementById(id);
+
+// ── DOM helper — text via textContent, never innerHTML ──────────────────────
+function el(tag, attrs, kids) {
+  const n = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    const v = attrs[k];
+    if (v == null) continue;
+    if (k === 'text') n.textContent = v;
+    else if (k === 'class') n.className = v;
+    else if (k === 'style') n.setAttribute('style', v);
+    else if (k.slice(0, 2) === 'on' && typeof v === 'function') n[k] = v;
+    else n.setAttribute(k, v);
+  }
+  if (kids != null) {
+    (Array.isArray(kids) ? kids : [kids]).forEach(c => {
+      if (c == null) return;
+      n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    });
+  }
+  return n;
+}
+const clone = o => JSON.parse(JSON.stringify(o));
+
+function toast(msg, icon) {
+  if (window.Swal) {
+    Swal.fire({ toast:true, position:'top', icon: icon || 'warning', text: msg,
+      timer:2800, showConfirmButton:false });
+  } else { console.warn(msg); }
+}
+
+// Confirm messages embed model strings (question labels), so the message is
+// built as a DOM node — Swal's `title`/`html` STRING options are innerHTML.
+function ask(message, opts) {
+  opts = opts || {};
+  if (!window.Swal) return Promise.resolve(window.confirm(message));
+  const node = el('div', { style:'text-align:left; font-size:13.5px; white-space:pre-wrap; line-height:1.5;', text: message });
+  return Swal.fire({
+    html: node, showCancelButton: true,
+    confirmButtonText: opts.confirmText || 'OK', cancelButtonText: opts.cancelText || 'Cancel',
+    confirmButtonColor: opts.danger ? '#dc2626' : '#07ADEF',
+    width: 500, reverseButtons: true, focusCancel: !!opts.danger,
+  }).then(r => !!r.isConfirmed);
+}
+
+function status(msg, kind) {
+  const b = E('statusBar');
+  b.textContent = msg || '';
+  b.className = kind || '';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════════════════════════════════════════
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+
+function init() {
+  // Relays for the preview iframe (case.html pattern) — render.html reaches
+  // for window.parent.apiSend / .firmData from inside the frame.
+  window.apiSend  = P.apiSend;
+  window.firmData = P.firmData;
+
+  // Mirror of lib/auth.formDev.js. The SERVER enforces; this only keeps the UI
+  // honest so a gated control is disabled with a reason instead of 403-ing.
+  FORM_DEV = (() => {
+    const u = (P.firmData && P.firmData.currentUser) || {};
+    if (u.user_auth === 'authorized - SU') return true;
+    const roles = String(u.roles || '').split(',');
+    return roles.includes('it') || roles.includes('form_dev');
+  })();
+
+  E('listSearch').oninput = renderList;
+  E('titleIn').oninput = () => { TITLE = E('titleIn').value; markDirty(); scheduleAutosave(); };
+
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+      const t = e.target;
+      // Let the browser handle undo inside a text field the user is typing in.
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      e.preventDefault(); undo();
+    }
+    if (e.key === 'Escape') { closeSheet(); closePreview(); }
+  });
+
+  const id = new URLSearchParams(location.search).get('id');
+  if (id) openForm(id); else backToList();
+
+  window.addEventListener('beforeunload', e => {
+    if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+  });
+}
+
+function showView(which) {
+  ['listView', 'editView', 'blockedView'].forEach(v => E(v).classList.toggle('show', v === which));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FORM LIST
+// ════════════════════════════════════════════════════════════════════════════
+async function backToList() {
+  if (MODEL && isDirty()) {
+    if (!await ask('You have unsaved changes. Leave without saving?', { confirmText:'Leave without saving', danger:true })) return;
+  }
+  clearTimeout(AUTOSAVE_TIMER);
+  ROW = null; MODEL = null; SEL = null; UNDO = []; LAST = '';
+  history.replaceState(null, '', location.pathname);
+  showView('listView');
+  loadList();
+}
+
+async function loadList() {
+  const grid = E('cardGrid');
+  grid.textContent = '';
+  grid.appendChild(el('div', { class:'empty', text:'Loading…' }));
+  E('listErr').style.display = 'none';
+  try {
+    const data = await P.apiSend('/api/form-templates', 'GET');
+    OP_LIST = data.templates || [];
+    renderList();
+  } catch (err) {
+    grid.textContent = '';
+    E('listErr').textContent = 'Could not load your forms: ' + err.message;
+    E('listErr').style.display = '';
+  }
+}
+
+const VIS_LABEL = { internal:'Staff only', portal:'Client portal', public:'Anyone with the link' };
+
+function renderList() {
+  const q = E('listSearch').value.trim().toLowerCase();
+  const grid = E('cardGrid');
+  grid.textContent = '';
+  const rows = OP_LIST.filter(t => !q ||
+    (t.title || '').toLowerCase().includes(q) ||
+    (t.form_key || '').toLowerCase().includes(q));
+  E('listCount').textContent = rows.length === OP_LIST.length
+    ? OP_LIST.length + (OP_LIST.length === 1 ? ' form' : ' forms')
+    : rows.length + ' of ' + OP_LIST.length;
+
+  if (!rows.length) {
+    grid.appendChild(el('div', { class:'empty',
+      text: OP_LIST.length ? 'Nothing matches that search.' : 'No forms yet — press “+ New form” to make one.' }));
+    return;
+  }
+
+  rows.forEach(t => {
+    const chips = el('div', { class:'fchips' }, [
+      t.published_at
+        ? el('span', { class:'chip live', text:'Live · v' + t.schema_version })
+        : el('span', { class:'chip draft', text:'Not live yet' }),
+      el('span', { class:'chip pub', text: VIS_LABEL[t.visibility] || t.visibility || 'Staff only' }),
+    ]);
+    const acts = el('div', { class:'facts' }, [
+      el('button', { class:'small', text:'Open', onclick: e => { e.stopPropagation(); gotoForm(t.id); } }),
+      el('button', { class:'ghost small', text:'Duplicate', onclick: e => { e.stopPropagation(); duplicateForm(t); } }),
+      (!t.published_at
+        ? el('button', { class:'ghost small', text:'Delete', style:'color:#dc2626; border-color:#f2c2c2;',
+            onclick: e => { e.stopPropagation(); deleteForm(t); } })
+        : null),
+    ]);
+    grid.appendChild(el('div', { class:'fcard', onclick: () => gotoForm(t.id) }, [
+      el('div', { class:'ft', text: t.title }),
+      el('div', { class:'fk mono', text: t.form_key }),
+      chips,
+      acts,
+    ]));
+  });
+}
+
+function gotoForm(id) {
+  history.replaceState(null, '', location.pathname + '?id=' + encodeURIComponent(id));
+  openForm(id);
+}
+
+async function deleteForm(t) {
+  if (!await ask('Delete the form “' + t.title + '”?\n\nIt has never been made live, so nothing is using it. This cannot be undone.',
+      { confirmText:'Delete', danger:true })) return;
+  try {
+    await P.apiSend('/api/form-templates/' + t.id, 'DELETE');
+    loadList();
+  } catch (err) {
+    E('listErr').textContent = err.message;    // e.g. "submissions exist" — verbatim
+    E('listErr').style.display = '';
+  }
+}
+
+// Duplicate = create a new template carrying a copy of the source DRAFT.
+// The server gates code/hooks/css on create (they count as authored content),
+// so a non-form_dev copying a code-carrying form is offered a clean copy.
+async function duplicateForm(t) {
+  let src;
+  try {
+    const d = await P.apiSend('/api/form-templates/' + t.id, 'GET');
+    src = d.template;
+  } catch (err) { toast('Could not read that form: ' + err.message); return; }
+
+  const def = clone(src.draft_definition || { sections: [{ title:'', rows: [] }] });
+  const carries = ['code', 'hooks', 'css'].filter(k => def[k] != null && def[k] !== '');
+  if (carries.length && !FORM_DEV) {
+    const ok = await ask('“' + t.title + '” contains custom code (' + carries.join(', ') + ').\n\n' +
+      'You can copy everything else — the questions, pages and settings — but not the code. Continue?',
+      { confirmText:'Copy without the code' });
+    if (!ok) return;
+    carries.forEach(k => { delete def[k]; });
+  }
+
+  const baseTitle = t.title + ' (copy)';
+  const key = uniqueKey(slugify(baseTitle));
+  const titleIn = el('input', { value: baseTitle, maxlength:'150' });
+  const keyIn   = el('input', { class:'mono', value: key, maxlength:'50' });
+  const body = el('div', { style:'text-align:left' }, [
+    el('div', { class:'prop' }, [el('label', { text:'Name of the copy' }), titleIn]),
+    el('div', { class:'prop' }, [el('label', { text:'Short id (letters, numbers, underscore — permanent once live)' }), keyIn]),
+  ]);
+  const r = await Swal.fire({
+    title:'Duplicate form', html: body, width: 520, reverseButtons:true,
+    showCancelButton:true, confirmButtonText:'Create copy', confirmButtonColor:'#07ADEF',
+    showLoaderOnConfirm:true, allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      const k = keyIn.value.trim(), ti = titleIn.value.trim();
+      if (!FORM_KEY_RE.test(k)) { Swal.showValidationMessage('Short id: lowercase letters, numbers and _ only'); return false; }
+      if (!ti) { Swal.showValidationMessage('Give the copy a name'); return false; }
+      try {
+        const d = await P.apiSend('/api/form-templates', 'POST',
+          { form_key:k, title:ti, link_type: src.link_type, draft_definition: def });
+        return d.template.id;
+      } catch (err) { Swal.showValidationMessage(err.message); return false; }
+    },
+  });
+  if (r.isConfirmed && r.value) gotoForm(r.value);
+}
+
+function slugify(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '').slice(0, 50) || 'form';
+}
+function uniqueKey(base) {
+  const taken = new Set(OP_LIST.map(t => t.form_key));
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i++) {
+    const c = base.slice(0, 50 - String(i).length - 1) + '_' + i;
+    if (!taken.has(c)) return c;
+  }
+}
+
+// ── The full builder, for anything this page will not do ────────────────────
+// The shell mounts every feature as a lazily-src'd iframe toggled by a
+// [data-target] button (index.html panel-toggle handler). Setting the src
+// first and clicking second lands the full builder straight on this template.
+//
+// TOGGLE HAZARD: that shell handler is a TOGGLE — clicking the button while
+// its panel is already visible HIDES it. Both panels sit in the "more"
+// exclusive group so in normal use the builder is hidden whenever this page
+// is on screen, but relying on that invariant would make a repeat hand-off
+// close the builder instead of opening it. So: click only to open, and fall
+// back to showing the panel directly (hiding the group's siblings the way the
+// handler would) when it is already up or the button is missing.
+function openFullBuilder(id) {
+  try {
+    const pd = P.document;
+    const panel = pd.getElementById('formBuilderDiv');
+    const ifr = panel && panel.querySelector('iframe');
+    if (ifr) {
+      ifr.removeAttribute('data-src');          // stop the shell overwriting our src
+      ifr.src = '/formBuilder.html' + (id ? '?id=' + encodeURIComponent(id) : '');
+    }
+    const btn = pd.querySelector('.big-button[data-target="formBuilderDiv"]');
+    const alreadyOpen = panel && P.getComputedStyle(panel).display !== 'none';
+    if (btn && !alreadyOpen) { btn.click(); return; }   // normal path: shell drives it
+    if (!panel) throw new Error('no panel');
+    pd.querySelectorAll('[data-target][data-exclusive-group="more"]').forEach(b => {
+      const other = pd.getElementById(b.dataset.target);
+      if (other && other !== panel) other.style.display = 'none';
+    });
+    panel.style.display = '';
+  } catch (e) {
+    toast('Open “More Features → Form Builder”' + (id ? ' and choose this form (id ' + id + ').' : '.'), 'info');
+  }
+}
+function openFullBuilderList() { openFullBuilder(null); }
+
+// ════════════════════════════════════════════════════════════════════════════
+// NEW FORM — presets, not fields
+// ════════════════════════════════════════════════════════════════════════════
+//
+// A staff member should not have to discover that "public + card layout +
+// no load endpoint + workflow 40" is the combination that makes a client
+// questionnaire. Each preset is that combination, already assembled.
+
+function presetDefs() {
+  const me = (P.firmData && P.firmData.currentUser) || {};
+  const myEmail = me.default_email || me.email || '';
+  return {
+    questionnaire: {
+      title: 'Questionnaire for clients',
+      blurb: 'A link you text or email. One question per screen, answers emailed to the office.',
+      icon: '📨',
+      link_type: 'case',
+      visibility: 'public',
+      wantsNotify: true,
+      defaultNotify: myEmail,
+      build: (notifyTo) => ({
+        layout: 'card',
+        toggle: false,
+        external: {
+          badLink: 'degrade',
+          postSubmit: { message: 'Thank you! We have received your answers.' },
+        },
+        onSubmit: {
+          workflow: { id: NOTIFY_WF_ID, initData: { notify_to: notifyTo || '', title_field: 'name' } },
+        },
+        sections: [
+          { rows: [{ fields: [{ name:'welcome', type:'content', label:'Welcome',
+              text:'Thanks for taking a moment to answer a few questions. It helps us prepare before we speak.' }] }] },
+          { rows: [{ fields: [{ name:'name',  type:'text', label:'Full Name',     required:true, prefill:'$load.contact_name'  }] }] },
+          { rows: [{ fields: [{ name:'email', type:'text', label:'Email Address', required:true, email:true, prefill:'$load.contact_email' }] }] },
+          { rows: [{ fields: [{ name:'phone', type:'text', label:'Phone Number',  required:true, mask:'phone', prefill:'$load.contact_phone' }] }] },
+        ],
+      }),
+    },
+    staff: {
+      title: 'Staff form on a case',
+      blurb: 'Fill it in from inside a case. Can read and write case fields.',
+      icon: '🗂',
+      link_type: 'case',
+      visibility: 'internal',
+      wantsNotify: false,
+      build: () => ({
+        endpoints: { load: { url:'/api/cases/{linkId}', method:'GET', path:'case' } },
+        sections: [ { title:'Notes', rows: [] } ],
+      }),
+    },
+    blank: {
+      title: 'Start from scratch',
+      blurb: 'An empty form. Pick where it lives and add your own questions.',
+      icon: '⬜',
+      link_type: 'case',
+      visibility: 'internal',
+      wantsNotify: false,
+      build: () => ({ sections: [ { title:'', rows: [] } ] }),
+    },
+  };
+}
+
+async function newFormWizard() {
+  const PRESETS = presetDefs();
+  // Step 1 — what kind of form.
+  const grid = el('div', { style:'display:flex; flex-direction:column; gap:9px; text-align:left;' });
+  let chosen = null;
+  Object.keys(PRESETS).forEach(k => {
+    const p = PRESETS[k];
+    const card = el('div', { class:'pick', style:'text-align:left; display:flex; gap:12px; align-items:flex-start; padding:13px 14px;' }, [
+      el('span', { class:'pi', style:'font-size:22px; margin:0;', text: p.icon }),
+      el('div', null, [
+        el('div', { style:'font-weight:650; font-size:14px; color:#1f2937;', text: p.title }),
+        el('div', { style:'font-size:12px; color:#6b7280; margin-top:3px; line-height:1.45;', text: p.blurb }),
+      ]),
+    ]);
+    card.onclick = () => { chosen = k; Swal.clickConfirm(); };
+    grid.appendChild(card);
+  });
+  const r1 = await Swal.fire({
+    title:'What kind of form?', html: grid, width: 560,
+    showConfirmButton:false, showCancelButton:true, cancelButtonText:'Cancel',
+  });
+  if (!chosen) return;
+  const preset = PRESETS[chosen];
+
+  // Step 2 — the name, and (for the questionnaire) where answers go.
+  const titleIn  = el('input', { maxlength:'150', placeholder:'e.g. New Client Questionnaire' });
+  const notifyIn = el('input', { type:'email', value: preset.defaultNotify || '', placeholder:'someone@4lsg.com' });
+  const linkSel  = el('select', null, [
+    el('option', { value:'case',    text:'A case' }),
+    el('option', { value:'contact', text:'A contact' }),
+    el('option', { value:'appt',    text:'An appointment' }),
+  ]);
+  linkSel.value = preset.link_type;
+
+  const body = el('div', { style:'text-align:left' }, [
+    el('div', { class:'prop' }, [ el('label', { text:'What is this form called?' }), titleIn ]),
+    (preset.wantsNotify
+      ? el('div', { class:'prop' }, [ el('label', { text:'Email the answers to' }), notifyIn,
+          el('div', { class:'help', text:'Every submission is emailed here. You can change it later in Settings.' }) ])
+      : null),
+    (chosen === 'blank'
+      ? el('div', { class:'prop' }, [ el('label', { text:'This form belongs to' }), linkSel,
+          el('div', { class:'help', text:'Cannot be changed later.' }) ])
+      : null),
+    (preset.visibility !== 'internal' && !FORM_DEV
+      ? el('div', { class:'notice warn', style:'margin:8px 0 0',
+          text:'Note: making a form public needs the form-developer role. Your form will be created as staff-only — ask IT to publish it publicly.' })
+      : null),
+  ]);
+
+  const r2 = await Swal.fire({
+    title:'Name your form', html: body, width: 540, reverseButtons:true,
+    showCancelButton:true, confirmButtonText:'Create', confirmButtonColor:'#07ADEF',
+    didOpen: () => titleIn.focus(),
+    showLoaderOnConfirm:true, allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      const title = titleIn.value.trim();
+      if (!title) { Swal.showValidationMessage('Give the form a name'); return false; }
+      const key = uniqueKey(slugify(title));
+      const def = preset.build(preset.wantsNotify ? notifyIn.value.trim() : null);
+      const linkType = chosen === 'blank' ? linkSel.value : preset.link_type;
+      try {
+        const d = await P.apiSend('/api/form-templates', 'POST',
+          { form_key:key, title, link_type: linkType, draft_definition: def });
+        const newId = d.template.id;
+        // Visibility is a separate, form_dev-gated act — never part of create.
+        if (preset.visibility !== 'internal' && FORM_DEV) {
+          try {
+            await P.apiSend('/api/form-templates/' + newId + '/visibility', 'POST', { visibility: preset.visibility });
+          } catch (e) { /* created fine; the sheet will show it as staff-only */ }
+        }
+        return newId;
+      } catch (err) { Swal.showValidationMessage(err.message); return false; }
+    },
+  });
+  if (r2.isConfirmed && r2.value) gotoForm(r2.value);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// OPEN / GUARD
+// ════════════════════════════════════════════════════════════════════════════
+async function openForm(id) {
+  try {
+    const data = await P.apiSend('/api/form-templates/' + encodeURIComponent(id), 'GET');
+    ROW = data.template;
+  } catch (err) {
+    showView('listView'); await loadList();
+    E('listErr').textContent = 'Could not open that form: ' + err.message;
+    E('listErr').style.display = '';
+    return;
+  }
+  const def = clone(ROW.draft_definition || { sections: [{ title:'', rows: [] }] });
+  const why = checkGuard(def);
+  if (why.length) {
+    BLOCKED_ID = ROW.id;
+    E('blockedWhy').textContent = 'This form uses: ' + why.join('; ') + '.';
+    showView('blockedView');
+    return;
+  }
+  MODEL = def;
+  TITLE = ROW.title;
+  AUTO_NAMES = new WeakSet();
+  SEL = null;
+  UNDO = [];
+  AUTOSAVE_OFF = false;
+  snapshot();
+  LAST = SAVED.def;
+  showView('editView');
+  renderTop();
+  renderStage();
+  renderPanel();
+}
+
+// The honest boundary. Anything listed here has an editor in the full builder
+// and none here; opening such a form in a surface that cannot represent it
+// would risk silently flattening it on save.
+function checkGuard(def) {
+  const why = [];
+  if (Array.isArray(def.tabs)) why.push('a tabbed layout');
+  if ((def.sections || []).some(s => s && Object.prototype.hasOwnProperty.call(s, 'repeater')))
+    why.push('repeating sections');
+  if (def.code   != null && def.code   !== '') why.push('custom code');
+  if (def.hooks  != null && def.hooks  !== '') why.push('a hooks file');
+  if (def.css    != null && def.css    !== '') why.push('custom CSS');
+  if (Array.isArray(def.derive) && def.derive.length) why.push('calculated fields');
+  const optFrom = (def.sections || []).some(s =>
+    (s.rows || []).some(r => (r.fields || []).some(f => f && f.optionsFrom)));
+  if (optFrom) why.push('choices pulled from the database');
+  return why;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TOP BAR / DIRTY / SAVE
+// ════════════════════════════════════════════════════════════════════════════
+function renderTop() {
+  E('titleIn').value = TITLE;
+  const vc = E('verChip');
+  if (ROW.published_at) { vc.className = 'chip live'; vc.textContent = 'Live · v' + ROW.schema_version; }
+  else { vc.className = 'chip draft'; vc.textContent = 'Not live yet'; }
+  const vis = ROW.visibility || 'internal';
+  E('visChip').textContent = VIS_LABEL[vis] || vis;
+  E('visChip').className = 'chip ' + (vis === 'internal' ? 'draft' : 'pub');
+  E('liveBtn').textContent = ROW.published_at ? 'Update live form' : 'Make live';
+  markDirty();
+}
+
+function snapshot() { SAVED = { def: JSON.stringify(MODEL), title: TITLE }; }
+function isDirty()  { return !!MODEL && (JSON.stringify(MODEL) !== SAVED.def || TITLE !== SAVED.title); }
+function markDirty() {
+  E('dirtyDot').classList.toggle('on', isDirty());
+  E('saveBtn').textContent = AUTOSAVE_OFF ? 'Save (retry)' : 'Save';
+  E('undoBtn').disabled = !UNDO.length;
+}
+
+// The single mutation choke point. Everything that changes MODEL calls one of
+// these two, and undo/dirty/autosave hang off them alone.
+//
+// WHICH ONE. touched() re-renders the STAGE only (#sectionsWrap + #addBar) —
+// the right-hand panel's DOM is never rebuilt by it. So a panel-hosted input
+// keeps focus and caret across touched(), and panel editors should use it
+// freely: the change shows up in the form picture immediately.
+// touchedQuiet() exists for the two inputs that live IN the stage — the
+// inline question label (.q-lbl) and the section heading (.sec-title-in) —
+// where a re-render mid-keystroke would destroy the element being typed into.
+function touched() {
+  pushUndo();
+  renderStage();
+  markDirty();
+  scheduleAutosave();
+}
+function touchedQuiet() {
+  pushUndo();
+  markDirty();
+  scheduleAutosave();
+}
+
+function pushUndo() {
+  const before = LAST;
+  const now = JSON.stringify(MODEL);
+  if (before === now) return;
+  const t = Date.now();
+  const key = selKey();
+  // Coalesce a run of keystrokes on the same selection into one undo step.
+  if (UNDO.length && t - LAST_PUSH_AT < 700 && key === LAST_PUSH_KEY) {
+    // top of stack already holds a state older than `before` — leave it.
+  } else {
+    UNDO.push(before);
+    if (UNDO.length > 60) UNDO.shift();
+  }
+  LAST_PUSH_AT = t; LAST_PUSH_KEY = key;
+  LAST = now;
+}
+function selKey() {
+  if (!SEL) return '-';
+  return SEL.t === 'section' ? 's' + SEL.si : 'f' + SEL.si + '.' + SEL.ri + '.' + SEL.fi;
+}
+function undo() {
+  if (!UNDO.length) return;
+  const prev = UNDO.pop();
+  MODEL = JSON.parse(prev);
+  LAST = prev;
+  LAST_PUSH_AT = 0; LAST_PUSH_KEY = '';
+  AUTO_NAMES = new WeakSet();     // identity is gone; names stop auto-following
+  if (!selStillValid()) SEL = null;
+  renderStage(); renderPanel(); markDirty(); scheduleAutosave();
+  status('Undone', 'ok');
+  setTimeout(() => { if (E('statusBar').textContent === 'Undone') status(''); }, 1400);
+}
+function selStillValid() {
+  if (!SEL) return true;
+  const s = MODEL.sections[SEL.si];
+  if (!s) return false;
+  if (SEL.t === 'section') return true;
+  const r = (s.rows || [])[SEL.ri];
+  return !!(r && (r.fields || [])[SEL.fi]);
+}
+
+function scheduleAutosave() {
+  if (AUTOSAVE_OFF) return;
+  clearTimeout(AUTOSAVE_TIMER);
+  AUTOSAVE_TIMER = setTimeout(() => saveNow(false), 2500);
+}
+
+async function saveNow(manual) {
+  if (!ROW || !MODEL || SAVING) return false;
+  if (!isDirty()) { if (manual) { status('Everything is saved', 'ok'); setTimeout(() => status(''), 1500); } return true; }
+  SAVING = true;
+  clearTimeout(AUTOSAVE_TIMER);
+  status('Saving…');
+  const sent = { def: JSON.stringify(MODEL), title: TITLE };
+  const body = { draft_definition: MODEL };
+  if (TITLE !== SAVED.title) body.title = TITLE;
+  try {
+    const data = await P.apiSend('/api/form-templates/' + ROW.id, 'PUT', body);
+    ROW = data.template;
+    ROW.draft_definition = MODEL;      // keep local object identity
+    SAVED = sent;                      // exactly what reached the server
+    AUTOSAVE_OFF = false;
+    markDirty();
+    status('Saved', 'ok');
+    setTimeout(() => { if (!isDirty() && E('statusBar').textContent === 'Saved') status(''); }, 1800);
+    SAVING = false;
+    return true;
+  } catch (err) {
+    // The server rejects with a path-named message. Autosave stops so the page
+    // never loops on an invalid definition; the Save button becomes the retry.
+    AUTOSAVE_OFF = true;
+    markDirty();
+    status(friendlyServerError(err.message), 'err');
+    SAVING = false;
+    return false;
+  }
+}
+
+// Server messages name JSON paths ("sections[2].rows[0].fields[1].name …").
+// Keep the message verbatim — it is the truth — but lead with something a
+// non-technical author can act on.
+function friendlyServerError(msg) {
+  const m = String(msg || '');
+  if (/duplicate field name/i.test(m)) return 'Two questions have the same internal name. ' + m;
+  if (/options must be a non-empty array/i.test(m)) return 'A choice question has no choices yet. ' + m;
+  if (/does not reference an existing/i.test(m)) return 'A show/hide rule points at a question that no longer exists. ' + m;
+  if (/requires at least one of src/i.test(m)) return 'A text/image block is empty — add text or an image. ' + m;
+  return m;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MODEL HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+const isCard = () => MODEL && MODEL.layout === 'card';
+const secWord      = () => isCard() ? 'page'  : 'section';
+const secWordTitle = () => isCard() ? 'Page'  : 'Section';
+
+function eachField(cb) {
+  (MODEL.sections || []).forEach((sec, si) =>
+    (sec.rows || []).forEach((row, ri) =>
+      (row.fields || []).forEach((f, fi) => cb(f, si, ri, fi, row, sec))));
+}
+function allNames(except) {
+  const out = [];
+  eachField(f => { if (f !== except && f.name) out.push(f.name); });
+  (MODEL.sections || []).forEach(s => { if (s.repeater && s !== except) out.push(s.repeater); });
+  return out;
+}
+function genName(base, except) {
+  const taken = new Set(allNames(except));
+  let n = slugify(base).replace(/[^a-z0-9_]/g, '_') || 'field';
+  if (!taken.has(n)) return n;
+  for (let i = 2; ; i++) {
+    const c = n.slice(0, 50 - String(i).length - 1) + '_' + i;
+    if (!taken.has(c)) return c;
+  }
+}
+function setOrDel(obj, key, v) {
+  if (v === '' || v == null || v === false) delete obj[key]; else obj[key] = v;
+}
+function prettyName(n) {
+  return String(n).replace(/_/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase());
+}
+
+// Every question that can be a show/hide target: top-level, value-carrying.
+function targetFields(except) {
+  const out = [];
+  eachField(f => {
+    if (f === except || !f.name) return;
+    if (DISPLAY_ONLY.includes(f.type)) return;
+    out.push(f);
+  });
+  return out;
+}
+function fieldByName(n) {
+  let found = null;
+  eachField(f => { if (f.name === n) found = f; });
+  return found;
+}
+
+// ── Condition references (showWhen on sections/rows/fields, requiredWhen on
+//    fields) + derive rules. Renames and deletes MUST cascade or the server
+//    400s on a dangling target at the next save. ──────────────────────────────
+function eachCond(cb) {
+  const visit = (node, key, desc) => {
+    const slot = node[key];
+    if (slot == null) return;
+    const arr = Array.isArray(slot) ? slot : [slot];
+    arr.forEach(c => { if (c && typeof c === 'object') cb(c, node, key, desc); });
+  };
+  (MODEL.sections || []).forEach((sec, si) => {
+    visit(sec, 'showWhen', 'the ' + secWord() + ' “' + (sec.title || (secWordTitle() + ' ' + (si + 1))) + '”');
+    (sec.rows || []).forEach(row => {
+      visit(row, 'showWhen', 'a side-by-side group');
+      (row.fields || []).forEach(f => {
+        visit(f, 'showWhen',     'the question “' + (f.label || f.name) + '”');
+        visit(f, 'requiredWhen', 'the “required when” rule on “' + (f.label || f.name) + '”');
+      });
+    });
+  });
+}
+function refsTo(name) {
+  const out = [];
+  eachCond((c, node, key, desc) => { if (c.field === name) out.push({ cond:c, node, key, desc }); });
+  return out;
+}
+function removeCondRef(r) {
+  const slot = r.node[r.key];
+  if (Array.isArray(slot)) {
+    const i = slot.indexOf(r.cond);
+    if (i >= 0) slot.splice(i, 1);
+    if (slot.length === 1) r.node[r.key] = slot[0];
+    else if (!slot.length) delete r.node[r.key];
+  } else if (slot === r.cond) {
+    delete r.node[r.key];
+  }
+  if (r.key === 'requiredWhen' && r.node.requiredWhen === undefined) delete r.node.requiredMessage;
+}
+function deriveRefsTo(name) {
+  const out = [];
+  (MODEL.derive || []).forEach((r, i) => {
+    if (!r) return;
+    if (r.target === name) out.push({ rule:r, role:'target', desc:'a calculated field' });
+    if (r.from   === name) out.push({ rule:r, role:'from',   desc:'a calculated field' });
+  });
+  return out;
+}
+function removeDeriveTouching(names) {
+  if (!Array.isArray(MODEL.derive)) return;
+  const set = new Set(names);
+  MODEL.derive = MODEL.derive.filter(r => !(r && (set.has(r.target) || set.has(r.from))));
+  if (!MODEL.derive.length) delete MODEL.derive;
+}
+function renameField(f, newName) {
+  const old = f.name;
+  f.name = newName;
+  if (old && old !== newName) {
+    refsTo(old).forEach(r => { r.cond.field = newName; });
+    deriveRefsTo(old).forEach(r => { r.rule[r.role] = newName; });
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// STAGE (the form, as the form)
+// ════════════════════════════════════════════════════════════════════════════
+// Selection NEVER rebuilds the stage. It only moves the highlight and swaps
+// the panel — because the two editable inputs that live in the stage (the
+// inline question label and the section heading) also SELECT on focus, and a
+// rebuild there would destroy the element under the caret the instant you
+// clicked into it.
+function select(sel) {
+  SEL = sel;
+  paintSelection();
+  renderPanel();
+}
+function paintSelection() {
+  const wrap = E('sectionsWrap');
+  if (!wrap) return;
+  Array.from(wrap.children).forEach((secNode, si) => {
+    secNode.classList.toggle('sel', !!(SEL && SEL.t === 'section' && SEL.si === si));
+    const body = secNode.querySelector('.sec-body');
+    Array.from(body ? body.children : []).forEach((q, ri) => {
+      q.classList.toggle('sel', !!(SEL && SEL.t === 'field' && SEL.si === si && SEL.ri === ri));
+    });
+  });
+}
+function isSel(t, si, ri, fi) {
+  if (!SEL || SEL.t !== t || SEL.si !== si) return false;
+  if (t === 'section') return true;
+  return SEL.ri === ri && SEL.fi === fi;
+}
+
+function renderStage() {
+  SORTABLES.forEach(s => { try { s.destroy(); } catch (e) {} });
+  SORTABLES = [];
+
+  renderStageNotices();
+
+  const wrap = E('sectionsWrap');
+  wrap.textContent = '';
+
+  (MODEL.sections || []).forEach((sec, si) => wrap.appendChild(sectionCard(sec, si)));
+
+  // Bottom actions
+  const bar = E('addBar');
+  bar.textContent = '';
+  bar.appendChild(el('button', { text:'+ Add question', onclick: () => addQuestionFlow(null) }));
+  bar.appendChild(el('button', { class:'ghost', text:'+ Add ' + secWord(), onclick: () => addSection() }));
+
+  if (window.Sortable) {
+    SORTABLES.push(new Sortable(wrap, {
+      group:'sections', handle:'.sec-grip', animation:150,
+      onEnd: e => { if (e.oldIndex !== e.newIndex) moveSection(e.oldIndex, e.newIndex); },
+    }));
+  }
+}
+
+function renderStageNotices() {
+  const box = E('stageNotices');
+  box.textContent = '';
+  if (!(MODEL.sections || []).length) return;
+  const empties = (MODEL.sections || []).filter(s => !(s.rows || []).some(r => (r.fields || []).length)).length;
+  if (isCard() && empties) {
+    box.appendChild(el('div', { class:'notice warn',
+      text: empties === 1
+        ? 'One page has no questions on it. Empty pages show as a blank screen — add a question or delete the page.'
+        : empties + ' pages have no questions on them. Empty pages show as blank screens.' }));
+  }
+}
+
+function sectionCard(sec, si) {
+  const card = el('div', { class:'sec' + (isSel('section', si) ? ' sel' : '') });
+
+  // ── header ──
+  const head = el('div', { class:'sec-head', onclick: e => {
+    if (e.target.closest('input, button')) return;
+    select({ t:'section', si });
+  }});
+  head.appendChild(el('span', { class:'sec-grip', title:'Drag to reorder', text:'⣿' }));
+  head.appendChild(el('span', { class:'sec-num', text: secWordTitle() + ' ' + (si + 1) }));
+
+  const ti = el('input', { class:'sec-title-in', placeholder:'Untitled ' + secWord() + ' (optional)' });
+  ti.value = sec.title || '';
+  ti.onfocus = () => { if (!isSel('section', si)) select({ t:'section', si }); };
+  ti.oninput = () => {
+    setOrDel(sec, 'title', ti.value);
+    touchedQuiet();                      // this input lives in the stage
+    const mirror = E('panel').querySelector('[data-mirror="sectitle"]');
+    if (mirror && mirror.value !== ti.value) mirror.value = ti.value;
+  };
+  head.appendChild(ti);
+
+  if (sec.showWhen) head.appendChild(condChip(sec.showWhen));
+  head.appendChild(el('button', { class:'quiet', title:'Delete this ' + secWord(), text:'🗑',
+    onclick: () => deleteSection(si) }));
+  card.appendChild(head);
+
+  // ── body: one block per row ──
+  const body = el('div', { class:'sec-body' });
+  body.dataset.si = String(si);
+  (sec.rows || []).forEach((row, ri) => body.appendChild(rowBlock(sec, si, row, ri)));
+  card.appendChild(body);
+
+  if (window.Sortable) {
+    SORTABLES.push(new Sortable(body, {
+      group:'rows', handle:'.q-grip', animation:150,
+      onEnd: e => {
+        const fromSi = +e.from.dataset.si, toSi = +e.to.dataset.si;
+        if (fromSi === toSi && e.oldIndex === e.newIndex) return;
+        moveRow(fromSi, e.oldIndex, toSi, e.newIndex);
+      },
+    }));
+  }
+
+  const foot = el('div', { class:'sec-foot' }, [
+    el('button', { class:'ghost small', text:'+ question here', onclick: () => addQuestionFlow(si) }),
+  ]);
+  card.appendChild(foot);
+  return card;
+}
+
+function rowBlock(sec, si, row, ri) {
+  const selectedHere = SEL && SEL.t === 'field' && SEL.si === si && SEL.ri === ri;
+  const block = el('div', { class:'q' + (selectedHere ? ' sel' : '') });
+  block.appendChild(el('span', { class:'q-grip', title:'Drag to reorder', text:'⣿' }));
+
+  const tools = el('div', { class:'q-tools' }, [
+    el('button', { class:'quiet', title:'Duplicate', text:'⧉',  onclick: () => duplicateRow(si, ri) }),
+    el('button', { class:'quiet', title:'Delete',    text:'🗑', onclick: () => deleteRow(si, ri) }),
+  ]);
+  block.appendChild(tools);
+
+  const wrap = el('div', { class:'q-fields' });
+  if (!(row.fields || []).length) {
+    wrap.appendChild(el('div', { class:'fk-note', style:'flex:1',
+      text:'Empty group — nothing here. Use the bin to remove it.' }));
+  }
+  (row.fields || []).forEach((f, fi) => wrap.appendChild(fieldView(f, si, ri, fi, (row.fields || []).length)));
+  block.appendChild(wrap);
+
+  if (row.showWhen) block.appendChild(el('div', { class:'q-badges' }, [condChip(row.showWhen)]));
+  return block;
+}
+
+const WCLASS = { 'default':'w1', '2x':'w2', '3x':'w3', 'fixed-sm':'wsm', 'fixed-md':'wmd' };
+
+function fieldView(f, si, ri, fi, siblings) {
+  const box = el('div', { class:'q-f ' + (WCLASS[f.width] || 'w1'),
+    onclick: e => { if (e.target.closest('input.q-lbl')) return; select({ t:'field', si, ri, fi }); } });
+
+  if (f.type !== 'hidden' && f.type !== 'content') {
+    const labRow = el('div', { class:'q-lbl-row' });
+    const lab = el('input', { class:'q-lbl', placeholder:'Click to write your question' });
+    lab.value = f.label || '';
+    lab.onfocus = () => { if (!isSel('field', si, ri, fi)) select({ t:'field', si, ri, fi }); };
+    lab.oninput = () => {
+      setOrDel(f, 'label', lab.value);
+      if (AUTO_NAMES.has(f)) renameField(f, genName(lab.value || f.type, f));
+      touchedQuiet();                      // this input lives in the stage
+      const mirror = E('panel').querySelector('[data-mirror="label"]');
+      if (mirror && mirror.value !== lab.value) mirror.value = lab.value;
+    };
+    labRow.appendChild(lab);
+    if (f.required) labRow.appendChild(el('span', { class:'req', title:'Required', text:'*' }));
+    box.appendChild(labRow);
+  }
+
+  box.appendChild(fauxControl(f));
+
+  if (f.sublabel) box.appendChild(el('div', { class:'q-sub', text: f.sublabel }));
+
+  const badges = [];
+  if (f.showWhen)     badges.push(condChip(f.showWhen));
+  if (f.requiredWhen) badges.push(el('span', { class:'chip warn', text:'sometimes required' }));
+  if (f.apiColumn)    badges.push(el('span', { class:'chip pub',
+    text:'saves to ' + (typeof f.apiColumn === 'string' ? f.apiColumn : (f.apiColumn.save || f.apiColumn.load)) }));
+  if (f.prefill)      badges.push(el('span', { class:'chip pub', text:'pre-filled' }));
+  if (f.readonly)     badges.push(el('span', { class:'chip draft', text:'read-only' }));
+  if (siblings > 1)   badges.push(el('span', { class:'chip draft', text:'side by side' }));
+  if (badges.length) box.appendChild(el('div', { class:'q-badges' }, badges));
+
+  return box;
+}
+
+// A static picture of the control. Never interactive (pointer-events:none on
+// .fk) so a click anywhere in the block selects the question.
+function fauxControl(f) {
+  const t = f.type;
+  const wrap = el('div', { class:'fk' });
+
+  if (t === 'text' || t === 'number' || t === 'date' || t === 'datetime' || t === 'tags') {
+    const hint = f.placeholder ? f.placeholder
+      : t === 'date' ? 'mm/dd/yyyy'
+      : t === 'datetime' ? 'mm/dd/yyyy, --:-- --'
+      : t === 'number' ? '0'
+      : t === 'tags' ? 'tag, tag, tag'
+      : f.mask ? maskHint(f.mask)
+      : f.email ? 'name@example.com' : '';
+    wrap.appendChild(el('div', { class:'fk-in', text: hint }));
+    return wrap;
+  }
+  if (t === 'textarea') {
+    wrap.appendChild(el('div', { class:'fk-in fk-ta', text: f.placeholder || '' }));
+    return wrap;
+  }
+  if (t === 'select') {
+    wrap.appendChild(el('div', { class:'fk-in fk-sel' }, [
+      el('span', { text: f.placeholder || (f.options && f.options[0]) || 'Choose…' }),
+      el('span', { text:'▾' }),
+    ]));
+    return wrap;
+  }
+  if (t === 'checkbox') {
+    // The label is already drawn above the control, so the box stands alone
+    // rather than repeating it.
+    wrap.appendChild(el('div', { class:'fk-opt' }, [
+      el('span', { class:'fk-mark' }),
+      el('span', { style:'color:#9aa3b1', text:'tick box' }),
+    ]));
+    return wrap;
+  }
+  if (t === 'radio' || t === 'checkgroup') {
+    const cols = (t === 'checkgroup' && f.columns) ? ' c' + f.columns : '';
+    const list = el('div', { class:'fk-cols' + cols });
+    const opts = Array.isArray(f.options) ? f.options : [];
+    opts.slice(0, 8).forEach(o => {
+      const label = (o && typeof o === 'object') ? (o.label != null ? o.label : o.value) : o;
+      list.appendChild(el('div', { class:'fk-opt' }, [
+        el('span', { class:'fk-mark' + (t === 'radio' ? ' rd' : '') }),
+        el('span', { text: String(label == null ? '' : label) }),
+      ]));
+    });
+    wrap.appendChild(list);
+    if (opts.length > 8) wrap.appendChild(el('div', { class:'fk-more', text:'+ ' + (opts.length - 8) + ' more choices' }));
+    if (f.allowOther)    wrap.appendChild(el('div', { class:'fk-more', text:'…plus an “Other” box' }));
+    if (!opts.length)    wrap.appendChild(el('div', { class:'fk-more', text:'No choices yet — add some in the panel.' }));
+    return wrap;
+  }
+  if (t === 'hidden') {
+    wrap.appendChild(el('div', { class:'fk-note', text:'Hidden value — “' + (f.name || '') + '”. Not shown to the person filling the form.' }));
+    return wrap;
+  }
+  if (t === 'embed') {
+    wrap.appendChild(el('div', { class:'fk-note', text:'Embedded page: ' + (f.src || '') }));
+    return wrap;
+  }
+  if (t === 'content') {
+    const c = el('div', { class:'fk-content' });
+    if (f.src) {
+      const img = el('img', { alt: f.alt || '' });
+      img.src = f.src;                                    // setAttribute path
+      img.onerror = () => { img.style.display = 'none'; };
+      c.appendChild(img);
+    }
+    const txt = el('div', null, [
+      (f.label ? el('div', { style:'font-weight:650; font-size:13.5px; margin-bottom:3px;', text: f.label }) : null),
+      (f.text  ? el('div', { class:'txt', text: f.text }) : null),
+      (!f.src && !f.text && !f.label ? el('div', { class:'fk-more', text:'Empty block — add text or an image.' }) : null),
+    ]);
+    c.appendChild(txt);
+    wrap.appendChild(c);
+    return wrap;
+  }
+  wrap.appendChild(el('div', { class:'fk-in', text:'' }));
+  return wrap;
+}
+function maskHint(m) {
+  return ({ phone:'(555) 555-5555', ssn:'123-45-6789', zip:'48034',
+            currency:'$1,234.56', ein:'12-3456789' })[m] || '';
+}
+
+// A one-line plain-English summary of a condition, as a chip.
+function condChip(slot) {
+  const arr = Array.isArray(slot) ? slot : [slot];
+  const txt = arr.map(condSentence).join(' and ');
+  return el('span', { class:'chip warn', title:'Show/hide rule', text:'shown when ' + txt });
+}
+const OP_WORDS = { eq:'is', neq:'is not', in:'is any of', includes:'includes', notEmpty:'has an answer' };
+function condSentence(c) {
+  if (!c) return '';
+  const f = fieldByName(c.field);
+  const who = f ? ('“' + (f.label || f.name) + '”') : ('“' + c.field + '” (missing!)');
+  const op = OP_WORDS[c.op] || c.op;
+  if (c.op === 'notEmpty') return who + ' ' + op;
+  const v = Array.isArray(c.value) ? c.value.join(' / ') : (c.value == null ? '' : String(c.value));
+  return who + ' ' + op + ' “' + v + '”';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// STRUCTURAL OPERATIONS
+// ════════════════════════════════════════════════════════════════════════════
+function newFieldFromSeed(seed) {
+  const f = Object.assign({}, seed);
+  f.name = genName(seed.name || seed.label || seed.type);
+  if (!seed.name) AUTO_NAMES.add(f);
+  if (OPTIONS_TYPES.includes(f.type) && !Array.isArray(f.options)) f.options = ['Option 1'];
+  if (f.type === 'content' && !f.src && !f.text) f.text = 'Add your text here.';
+  if (f.label === '') delete f.label;
+  return f;
+}
+
+// Where a new question goes:
+//   card layout, no target section  → its own new page (the one-question-per-
+//     card idiom the renderer is built around)
+//   otherwise                       → the end of the target (or last) section
+function addRows(seedRows, si) {
+  if (!MODEL.sections || !MODEL.sections.length) MODEL.sections = [{ title:'', rows: [] }];
+  let target = si;
+  if (target == null) {
+    if (isCard()) {
+      MODEL.sections.push({ rows: [] });
+      target = MODEL.sections.length - 1;
+    } else {
+      target = MODEL.sections.length - 1;
+    }
+  }
+  const sec = MODEL.sections[target];
+  if (!Array.isArray(sec.rows)) sec.rows = [];
+  let firstRi = sec.rows.length;
+  seedRows.forEach(rowSeeds => {
+    sec.rows.push({ fields: rowSeeds.map(newFieldFromSeed) });
+  });
+  SEL = { t:'field', si: target, ri: firstRi, fi: 0 };
+  touched();
+  renderPanel();
+  // Bring the new question into view.
+  setTimeout(() => {
+    const n = document.querySelector('.q.sel');
+    if (n && n.scrollIntoView) n.scrollIntoView({ block:'center', behavior:'smooth' });
+  }, 30);
+}
+
+function addSection() {
+  if (!MODEL.sections) MODEL.sections = [];
+  MODEL.sections.push({ rows: [] });
+  SEL = { t:'section', si: MODEL.sections.length - 1 };
+  touched(); renderPanel();
+}
+
+async function deleteSection(si) {
+  const sec = MODEL.sections[si];
+  if (!sec) return;
+  if (MODEL.sections.length === 1) { toast('A form needs at least one ' + secWord() + '.'); return; }
+  const names = [];
+  (sec.rows || []).forEach(r => (r.fields || []).forEach(f => { if (f.name) names.push(f.name); }));
+  // A rule that lives INSIDE this section disappears with it — only rules
+  // elsewhere in the form need listing (and cascade-removing).
+  const inside = node =>
+    node === sec || (sec.rows || []).some(row => row === node || (row.fields || []).includes(node));
+  const refs = [];
+  names.forEach(n => refsTo(n).forEach(r => { if (!inside(r.node)) refs.push(r); }));
+  let msg = 'Delete this ' + secWord() + ' and its ' + names.length + ' question' + (names.length === 1 ? '' : 's') + '?';
+  if (refs.length) msg += '\n\nThese show/hide rules use those questions and will be removed too:\n • ' +
+    refs.map(r => r.desc).join('\n • ');
+  if (!await ask(msg, { confirmText:'Delete', danger:true })) return;
+  refs.forEach(removeCondRef);
+  removeDeriveTouching(names);
+  MODEL.sections.splice(si, 1);
+  SEL = null;
+  touched(); renderPanel();
+}
+
+function moveSection(oldIdx, newIdx) {
+  const s = MODEL.sections.splice(oldIdx, 1)[0];
+  if (!s) { setTimeout(renderStage, 0); return; }
+  MODEL.sections.splice(newIdx, 0, s);
+  SEL = { t:'section', si: newIdx };
+  touched(); renderPanel();
+}
+
+function moveRow(fromSi, oldIdx, toSi, newIdx) {
+  const from = MODEL.sections[fromSi], to = MODEL.sections[toSi];
+  if (!from || !to) { setTimeout(renderStage, 0); return; }
+  const row = (from.rows || []).splice(oldIdx, 1)[0];
+  if (!row) { setTimeout(renderStage, 0); return; }
+  if (!Array.isArray(to.rows)) to.rows = [];
+  to.rows.splice(newIdx, 0, row);
+  SEL = { t:'field', si: toSi, ri: newIdx, fi: 0 };
+  touched(); renderPanel();
+}
+
+function duplicateRow(si, ri) {
+  const sec = MODEL.sections[si];
+  const row = sec && (sec.rows || [])[ri];
+  if (!row) return;
+  const copy = clone(row);
+  delete copy.showWhen;                                  // a copied rule is rarely what you meant
+  (copy.fields || []).forEach(f => {
+    renameField(f, genName(f.label || f.type));          // fresh unique name
+    delete f.apiColumn; delete f.urlParam;               // never duplicate a write target
+    if (f.showWhen) delete f.showWhen;
+    if (f.requiredWhen) { delete f.requiredWhen; delete f.requiredMessage; }
+  });
+  sec.rows.splice(ri + 1, 0, copy);
+  SEL = { t:'field', si, ri: ri + 1, fi: 0 };
+  touched(); renderPanel();
+}
+
+async function deleteRow(si, ri) {
+  const sec = MODEL.sections[si];
+  const row = sec && (sec.rows || [])[ri];
+  if (!row) return;
+  const fields = row.fields || [];
+  const names = fields.map(f => f.name).filter(Boolean);
+  const inside = node => node === row || fields.includes(node);
+  const refs = [];
+  names.forEach(n => refsTo(n).forEach(r => { if (!inside(r.node)) refs.push(r); }));
+  const what = fields.length === 1
+    ? '“' + (fields[0].label || fields[0].name) + '”'
+    : fields.length + ' side-by-side questions';
+  let msg = 'Delete ' + what + '?';
+  if (refs.length) msg += '\n\nThese show/hide rules use it and will be removed too:\n • ' + refs.map(r => r.desc).join('\n • ');
+  if (!await ask(msg, { confirmText:'Delete', danger:true })) return;
+  refs.forEach(removeCondRef);
+  removeDeriveTouching(names);
+  sec.rows.splice(ri, 1);
+  SEL = null;
+  touched(); renderPanel();
+}
+
+async function deleteField(si, ri, fi) {
+  const sec = MODEL.sections[si];
+  const row = sec && (sec.rows || [])[ri];
+  const f = row && (row.fields || [])[fi];
+  if (!f) return;
+  if ((row.fields || []).length === 1) return deleteRow(si, ri);
+  const refs = refsTo(f.name);
+  let msg = 'Delete the question “' + (f.label || f.name) + '”?';
+  if (refs.length) msg += '\n\nThese show/hide rules use it and will be removed too:\n • ' + refs.map(r => r.desc).join('\n • ');
+  if (!await ask(msg, { confirmText:'Delete', danger:true })) return;
+  refs.forEach(removeCondRef);
+  removeDeriveTouching([f.name]);
+  row.fields.splice(fi, 1);
+  SEL = null;
+  touched(); renderPanel();
+}
+
+// Side-by-side: merge this question into the row above, or split it back out.
+// A row-level show/hide rule makes the merge ambiguous (whose rule wins?), so
+// it is refused with a legible reason rather than guessed at.
+function setSideBySide(si, ri, fi, on) {
+  const sec = MODEL.sections[si];
+  const row = sec.rows[ri];
+  if (on) {
+    if (ri === 0) { toast('There is no question above this one to sit beside.'); return; }
+    const prev = sec.rows[ri - 1];
+    if (row.showWhen || prev.showWhen) {
+      toast('One of these has its own show/hide rule on the group — put the rule on the question instead, or use the full Form Builder.');
+      renderPanel(); return;
+    }
+    const f = row.fields.splice(fi, 1)[0];
+    prev.fields.push(f);
+    if (!row.fields.length) sec.rows.splice(ri, 1);
+    SEL = { t:'field', si, ri: ri - 1, fi: prev.fields.length - 1 };
+  } else {
+    if ((row.fields || []).length < 2) return;
+    const f = row.fields.splice(fi, 1)[0];
+    const nr = { fields: [f] };
+    if (row.showWhen) nr.showWhen = clone(row.showWhen);
+    sec.rows.splice(ri + 1, 0, nr);
+    SEL = { t:'field', si, ri: ri + 1, fi: 0 };
+  }
+  touched(); renderPanel();
+}
+
+// Type change with cleanup, so the definition stays server-valid.
+// Mirrors formBuilder.html changeType() — keep the two in step.
+async function changeType(f, next) {
+  const prev = f.type;
+  if (prev === next) return;
+  if (DISPLAY_ONLY.includes(next) && !DISPLAY_ONLY.includes(prev)) {
+    const refs = refsTo(f.name);
+    if (refs.length) {
+      const ok = await ask('“' + (f.label || f.name) + '” is used by these show/hide rules:\n • ' +
+        refs.map(r => r.desc).join('\n • ') +
+        '\n\nA ' + typeLabel(next).toLowerCase() + ' has no answer, so those rules would break. Remove them?',
+        { confirmText:'Change it & remove the rules' });
+      if (!ok) { renderPanel(); return; }
+      refs.forEach(removeCondRef);
+    }
+  }
+  const wasOpt = OPTIONS_TYPES.includes(prev), isOpt = OPTIONS_TYPES.includes(next);
+  f.type = next;
+  if (isOpt && !Array.isArray(f.options)) f.options = ['Option 1'];
+  if (!isOpt && wasOpt) { delete f.options; delete f.allowOther; delete f.optionsFrom; }
+  if (next !== 'checkgroup') { delete f.allowOther; delete f.columns; }
+  if (next !== 'textarea')   delete f.rows;
+  if (next !== 'number')     { delete f.min; delete f.max; delete f.step; }
+  if (DISPLAY_ONLY.includes(next)) {
+    ['apiColumn','prefill','prefillMode','mask','required','minLength','maxLength',
+     'pattern','patternMessage','email','readonly','lockedMsg','requiredWhen',
+     'requiredMessage','options','allowOther','optionsFrom','columns','rows',
+     'min','max','step','placeholder','urlParam'].forEach(k => delete f[k]);
+    if (next === 'embed') {
+      ['text','alt','maxWidth','align','href'].forEach(k => delete f[k]);
+      if (typeof f.src !== 'string' || !f.src) f.src = 'https://example.com/';
+    } else {
+      delete f.height;
+      if ((typeof f.src !== 'string' || !f.src) && (typeof f.text !== 'string' || !f.text)) {
+        f.text = 'Add your text here.';
+      }
+    }
+    removeDeriveTouching([f.name]);
+  } else if (DISPLAY_ONLY.includes(prev)) {
+    ['src','height','text','alt','maxWidth','align','href'].forEach(k => delete f[k]);
+  }
+  touched(); renderPanel();
+}
+
+// ── Add-question picker ─────────────────────────────────────────────────────
+async function addQuestionFlow(si) {
+  const wrap = el('div', { style:'text-align:left' });
+
+  wrap.appendChild(el('div', { class:'pick-sep', style:'margin-top:0', text:'Ready-made' }));
+  const g1 = el('div', { class:'pick-grid' });
+  Object.keys(READY).forEach(k => {
+    const r = READY[k];
+    const b = el('div', { class:'pick' }, [ el('span', { class:'pi', text:r.icon }), el('span', { text:r.label }) ]);
+    b.onclick = () => { Swal.close(); addRows(clone(r.rows), si); };
+    g1.appendChild(b);
+  });
+  wrap.appendChild(g1);
+
+  wrap.appendChild(el('div', { class:'pick-sep', text:'Question types' }));
+  const g2 = el('div', { class:'pick-grid' });
+  Object.keys(TYPE_META).filter(t => TYPE_META[t].common).forEach(t => {
+    const b = el('div', { class:'pick' }, [ el('span', { class:'pi', text:typeIcon(t) }), el('span', { text:typeLabel(t) }) ]);
+    b.onclick = () => { Swal.close(); addRows([[{ type:t, label: t === 'content' ? '' : 'Untitled question' }]], si); };
+    g2.appendChild(b);
+  });
+  wrap.appendChild(g2);
+
+  const more = el('details', { style:'margin-top:14px' });
+  more.appendChild(el('summary', { style:'cursor:pointer; font-size:12px; color:#6b7280;', text:'Less common types' }));
+  const g3 = el('div', { class:'pick-grid', style:'margin-top:9px' });
+  Object.keys(TYPE_META).filter(t => !TYPE_META[t].common).forEach(t => {
+    const b = el('div', { class:'pick' }, [ el('span', { class:'pi', text:typeIcon(t) }), el('span', { text:typeLabel(t) }) ]);
+    b.onclick = () => { Swal.close(); addRows([[{ type:t, label: t === 'hidden' ? '' : 'Untitled question' }]], si); };
+    g3.appendChild(b);
+  });
+  more.appendChild(g3);
+  wrap.appendChild(more);
+
+  await Swal.fire({
+    title: si == null && isCard() ? 'Add a question (on a new page)' : 'Add a question',
+    html: wrap, width: 600, showConfirmButton:false, showCancelButton:true, cancelButtonText:'Cancel',
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PANEL — the settings for whatever is selected
+// ════════════════════════════════════════════════════════════════════════════
+function pText(label, value, onInput, opts) {
+  opts = opts || {};
+  const input = el(opts.textarea ? 'textarea' : 'input', {});
+  if (!opts.textarea) input.type = opts.inputType || 'text';
+  input.value = value != null ? value : '';
+  if (opts.placeholder) input.placeholder = opts.placeholder;
+  if (opts.mono) input.classList.add('mono');
+  if (opts.disabled) input.disabled = true;
+  const perr = el('div', { class:'perr' });
+  input.oninput = () => {
+    if (opts.validate) {
+      const msg = opts.validate(input.value);
+      if (msg) { input.classList.add('bad'); perr.textContent = msg; perr.classList.add('show'); return; }
+    }
+    input.classList.remove('bad'); perr.classList.remove('show');
+    onInput(input.value);
+  };
+  const wrap = el('div', { class:'prop' }, [ el('label', { text: label }), input, perr ]);
+  if (opts.help) wrap.appendChild(el('div', { class:'help', text: opts.help }));
+  wrap._input = input;
+  return wrap;
+}
+function pCheck(label, checked, onInput, opts) {
+  opts = opts || {};
+  const input = el('input', { type:'checkbox' });
+  input.checked = !!checked;
+  if (opts.disabled) input.disabled = true;
+  input.onchange = () => onInput(input.checked);
+  const wrap = el('div', { class:'prop inline' }, [ el('label', null, [input, el('span', { text: label })]) ]);
+  const outer = el('div', { class:'prop' }, [wrap]);
+  if (opts.help) outer.appendChild(el('div', { class:'help', text: opts.help }));
+  return outer;
+}
+function pSelect(label, value, choices, onInput, opts) {
+  opts = opts || {};
+  const input = el('select', {});
+  choices.forEach(c => {
+    const v = Array.isArray(c) ? c[0] : c;
+    const t = Array.isArray(c) ? c[1] : c;
+    input.appendChild(el('option', { value: v, text: t }));
+  });
+  input.value = value != null ? value : '';
+  if (opts.disabled) input.disabled = true;
+  input.onchange = () => onInput(input.value);
+  const wrap = el('div', { class:'prop' }, [ el('label', { text: label }), input ]);
+  if (opts.help) wrap.appendChild(el('div', { class:'help', text: opts.help }));
+  return wrap;
+}
+function pNum(label, value, onInput, opts) {
+  opts = opts || {};
+  const input = el('input', { type:'number' });
+  if (opts.min != null) input.min = String(opts.min);
+  input.value = value != null ? value : '';
+  input.oninput = () => {
+    const raw = input.value.trim();
+    if (raw === '') return onInput(null);
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    onInput(n);
+  };
+  const wrap = el('div', { class:'prop' }, [ el('label', { text: label }), input ]);
+  if (opts.help) wrap.appendChild(el('div', { class:'help', text: opts.help }));
+  return wrap;
+}
+function pgroup(title, kids) {
+  const g = el('div', { class:'pgroup' });
+  if (title) g.appendChild(el('div', { class:'gt', text: title }));
+  (kids || []).forEach(k => k && g.appendChild(k));
+  return g;
+}
+
+function renderPanel() {
+  const p = E('panel');
+  p.textContent = '';
+  if (!MODEL) return;
+
+  if (!SEL || !selStillValid()) {
+    SEL = null;
+    p.appendChild(el('h3', { text:'Nothing selected' }));
+    p.appendChild(el('div', { id:'panelEmpty', text:
+      'Click a question to change it, or a ' + secWord() + ' heading to set rules for the whole ' + secWord() + '.\n\n' +
+      'Use “+ Add question” at the bottom to add one.' }));
+    return;
+  }
+
+  if (SEL.t === 'section') return panelSection(p, MODEL.sections[SEL.si], SEL.si);
+  const sec = MODEL.sections[SEL.si];
+  const row = sec.rows[SEL.ri];
+  return panelField(p, row.fields[SEL.fi], sec, row);
+}
+
+function panelSection(p, sec, si) {
+  p.appendChild(el('div', { style:'display:flex; align-items:center; gap:8px; margin-bottom:12px;' }, [
+    el('h3', { style:'margin:0; flex:1', text: secWordTitle() + ' ' + (si + 1) }),
+    el('button', { class:'quiet', title:'Deselect', text:'✕', onclick: () => select(null) }),
+  ]));
+
+  const headProp = pText('Heading (optional)', sec.title || '', v => { setOrDel(sec, 'title', v); touched(); },
+    { help: isCard()
+        ? 'Shown at the top of this page. Leave it empty when the page holds a single question — the question itself becomes the heading.'
+        : 'A heading above this group of questions.' });
+  headProp._input.setAttribute('data-mirror', 'sectitle');   // the stage heading writes back here
+  p.appendChild(pgroup(null, [
+    headProp,
+    pText('Sub-heading (optional)', sec.subtitle || '', v => { setOrDel(sec, 'subtitle', v); touched(); }),
+  ]));
+
+  p.appendChild(condEditor(sec, 'showWhen', 'Show this ' + secWord() + ' when',
+    'Leave off to always show it. Turn it on to skip the whole ' + secWord() + ' unless an earlier answer matches.'));
+
+  p.appendChild(pgroup(null, [
+    el('button', { class:'ghost small', style:'color:#dc2626; border-color:#f2c2c2;',
+      text:'Delete this ' + secWord(), onclick: () => deleteSection(si) }),
+  ]));
+}
+
+function panelField(p, f, sec, row) {
+  const siblings = (row.fields || []).length;
+
+  p.appendChild(el('div', { style:'display:flex; align-items:center; gap:8px; margin-bottom:12px;' }, [
+    el('h3', { style:'margin:0; flex:1', text: typeLabel(f.type) }),
+    el('button', { class:'quiet', title:'Delete this question', text:'🗑',
+      onclick: () => deleteField(SEL.si, SEL.ri, SEL.fi) }),
+    el('button', { class:'quiet', title:'Deselect', text:'✕', onclick: () => select(null) }),
+  ]));
+
+  // ── The question itself ──
+  const isDisplay = DISPLAY_ONLY.includes(f.type);
+  const typeChoices = Object.keys(TYPE_META).map(t => [t, typeLabel(t)]);
+
+  const idKids = [];
+  if (!isDisplay && f.type !== 'hidden') {
+    const qp = pText('Question', f.label || '', v => {
+      setOrDel(f, 'label', v);
+      if (AUTO_NAMES.has(f)) renameField(f, genName(v || f.type, f));
+      touched();
+    });
+    qp._input.setAttribute('data-mirror', 'label');   // the stage label writes back here
+    idKids.push(qp);
+  }
+  idKids.push(pSelect('Type of answer', f.type, typeChoices, v => changeType(f, v)));
+  if (!isDisplay && f.type !== 'hidden') {
+    idKids.push(pText('Help text under the question', f.sublabel || '',
+      v => { setOrDel(f, 'sublabel', v); touched(); },
+      { help:'Small grey text, e.g. “Check all that apply.”' }));
+  }
+  p.appendChild(pgroup('The question', idKids));
+
+  // ── Type-specific ──
+  if (f.type === 'content') p.appendChild(contentGroup(f));
+  if (f.type === 'embed')   p.appendChild(embedGroup(f));
+
+  if (OPTIONS_TYPES.includes(f.type)) {
+    p.appendChild(choicesEditor(f));
+  }
+
+  if (!isDisplay) {
+    const answerKids = [];
+    if (f.type !== 'hidden') {
+      answerKids.push(pCheck('People must answer this', !!f.required, v => {
+        if (v) f.required = true; else delete f.required;
+        touched(); renderPanel();
+      }));
+      // A required question that can be hidden blocks Save invisibly when it
+      // is hidden — the renderer's validate() does not skip hidden fields.
+      if (f.required && (f.showWhen || row.showWhen || sec.showWhen)) {
+        answerKids.push(el('div', { class:'notice warn', text:
+          'This question is sometimes hidden but always required. When it is hidden, people will not be able to submit and will not see why. ' +
+          'Use “Only require an answer when…” below instead.' }));
+      }
+    }
+    if (f.type === 'text') {
+      answerKids.push(pSelect('Answer format', f.email ? 'email' : (f.mask || ''), FORMATS, v => {
+        delete f.email; delete f.mask;
+        if (v === 'email') f.email = true;
+        else if (v) f.mask = v;
+        touched(); renderPanel();
+      }, { help:'Checks and formats what people type. “Money” shows $1,234.56, “Phone” shows (555) 555-5555.' }));
+    }
+    if (['text','textarea','number','select'].includes(f.type)) {
+      answerKids.push(pText('Placeholder (grey example text)', f.placeholder || '',
+        v => { setOrDel(f, 'placeholder', v); touched(); }));
+    }
+    if (f.type === 'textarea') {
+      answerKids.push(pNum('Box height (lines)', f.rows != null ? f.rows : null,
+        v => { setOrDel(f, 'rows', v); touched(); }, { min:1 }));
+    }
+    if (f.type === 'number') {
+      answerKids.push(el('div', { class:'two' }, [
+        pNum('Smallest allowed', f.min != null ? f.min : null, v => { setOrDel(f, 'min', v); touched(); }),
+        pNum('Largest allowed',  f.max != null ? f.max : null, v => { setOrDel(f, 'max', v); touched(); }),
+      ]));
+    }
+    if (answerKids.length) p.appendChild(pgroup('The answer', answerKids));
+  }
+
+  // ── Show / hide ──
+  p.appendChild(condEditor(f, 'showWhen', 'Only show this question when',
+    'Hide it unless an earlier answer matches.'));
+  if (!isDisplay && f.type !== 'hidden' && !f.required) {
+    p.appendChild(condEditor(f, 'requiredWhen', 'Only require an answer when',
+      'The question is optional unless this matches. Use this instead of “must answer” on questions that are sometimes hidden.'));
+    if (f.requiredWhen) {
+      p.appendChild(pgroup(null, [
+        pText('Message when they skip it', f.requiredMessage || '',
+          v => { setOrDel(f, 'requiredMessage', v); touched(); },
+          { placeholder:'This field is required' }),
+      ]));
+    }
+  }
+
+  // ── Layout ──
+  const layoutKids = [
+    pCheck('Sit beside the question above', siblings > 1 || false, v => setSideBySide(SEL.si, SEL.ri, SEL.fi, v), {
+      help: siblings > 1
+        ? 'Turn off to give this question its own line.'
+        : 'Put this question on the same line as the one above it.',
+    }),
+  ];
+  if (siblings > 1) {
+    layoutKids.push(pSelect('Width on that line', f.width || 'default', WIDTHS, v => {
+      if (v === 'default') delete f.width; else f.width = v;
+      touched();
+    }));
+  }
+  if (f.type === 'checkgroup') {
+    layoutKids.push(pSelect('Show choices in', f.columns ? String(f.columns) : '1',
+      [['1','One column'], ['2','Two columns'], ['3','Three columns']], v => {
+        if (v === '1') delete f.columns; else f.columns = Number(v);
+        touched();
+      }));
+  }
+  p.appendChild(pgroup('Layout', layoutKids));
+
+  // ── Advanced (collapsed) ──
+  const adv = el('details', { class:'adv' });
+  adv.appendChild(el('summary', { text:'Advanced' }));
+  adv.appendChild(pText('Internal name', f.name || '', v => {
+    renameField(f, v); AUTO_NAMES.delete(f); touched();
+  }, {
+    mono: true,
+    validate: raw => {
+      if (!FIELD_NAME_RE.test(raw)) return 'Letters, numbers and _ only (max 50).';
+      if (allNames(f).includes(raw)) return '“' + raw + '” is already used by another question.';
+      return null;
+    },
+    help:'How this answer is labelled in the data and in show/hide rules. It follows the question wording until you change it here. Changing it counts as a new question for version history.',
+  }));
+  if (!isDisplay) {
+    const acStr = typeof f.apiColumn === 'string' ? f.apiColumn : '';
+    const acObj = (f.apiColumn && typeof f.apiColumn === 'object') ? f.apiColumn : null;
+    if (acObj) {
+      adv.appendChild(el('div', { class:'notice info', text:
+        'This question reads from “' + (acObj.load || '—') + '” and writes to “' + (acObj.save || '—') +
+        '”. Split read/write columns can only be changed in the full Form Builder.' }));
+    } else {
+      adv.appendChild(pText('Save the answer to the ' + ROW.link_type + ' field', acStr,
+        v => { setOrDel(f, 'apiColumn', v); touched(); },
+        { mono:true, help:'The database column on the ' + ROW.link_type + ' record. Leave empty to just record the answer with the submission.' }));
+    }
+    adv.appendChild(pCheck('Read-only (people can see it but not change it)', !!f.readonly, v => {
+      if (v) f.readonly = true; else { delete f.readonly; delete f.lockedMsg; }
+      touched(); renderPanel();
+    }));
+    if (f.prefill) {
+      adv.appendChild(el('div', { class:'notice info', text:
+        'Pre-filled from: ' + f.prefill + (f.prefillMode === 'always' ? ' (always overwrites)' : ' (only when empty)') +
+        '. Edit pre-fill rules in the full Form Builder.' }));
+    }
+    if (f.urlParam) {
+      adv.appendChild(el('div', { class:'notice info', text:
+        'Can be filled from the link, using ?' + f.urlParam + '=… — e.g. for tracking where a client came from.' }));
+    }
+  }
+  adv.appendChild(pText('Note to yourself', f.note || '', v => { setOrDel(f, 'note', v); touched(); },
+    { textarea:true, help:'Never shown to anyone filling the form.' }));
+  adv.appendChild(el('div', { class:'prop' }, [
+    el('button', { class:'ghost small', text:'Open in the full Form Builder', onclick: () => openFullBuilder(ROW.id) }),
+  ]));
+  p.appendChild(adv);
+}
+
+// ── Choices editor ──────────────────────────────────────────────────────────
+// The contract allows an option to be a bare string or { value, label }. This
+// editor edits strings; an object option is shown read-only so its shape is
+// never silently flattened.
+function choicesEditor(f) {
+  const kids = [];
+  const list = el('div', {});
+  const opts = Array.isArray(f.options) ? f.options : [];
+  const hasObjects = opts.some(o => o && typeof o === 'object');
+
+  if (hasObjects) {
+    kids.push(el('div', { class:'notice info',
+      text:'Some choices store a separate value and label. Edit them in the full Form Builder so nothing is lost.' }));
+    opts.forEach(o => {
+      const label = (o && typeof o === 'object') ? (o.label != null ? o.label : o.value) : o;
+      kids.push(el('div', { class:'prop', style:'font-size:13px', text:'• ' + String(label) }));
+    });
+    return pgroup('Choices', kids);
+  }
+
+  // Edits are POSITIONAL: typing writes f.options[i] in place. Clearing a box
+  // must not delete the choice (you cannot retype a choice you deleted by
+  // backspacing it), so a transient empty string is allowed to sit in the
+  // array — the server accepts it (only an EMPTY options array is rejected)
+  // and the ✕ button is the one way to remove a choice.
+  opts.forEach((o, i) => {
+    const inp = el('input', { value: String(o), placeholder:'(empty choice)' });
+    inp.oninput = () => { f.options[i] = inp.value; touched(); };
+    list.appendChild(el('div', { class:'opt-row' }, [
+      el('span', { class:'oh', title:'Drag to reorder', text:'⣿' }),
+      inp,
+      el('button', { class:'quiet', title:'Remove this choice', text:'✕', onclick: () => {
+        if ((f.options || []).length <= 1) { toast('A choice question needs at least one choice.'); return; }
+        const removed = String(f.options[i]);
+        f.options.splice(i, 1);
+        // A rule pointing at the removed choice would silently never fire —
+        // say so rather than leaving it looking fine.
+        const orphans = [];
+        eachCond(c => {
+          if (c.field !== f.name) return;
+          if ((c.op === 'eq' || c.op === 'neq') && String(c.value) === removed) orphans.push(c);
+          if (Array.isArray(c.value) && c.value.map(String).includes(removed)) orphans.push(c);
+        });
+        touched(); renderPanel();
+        if (orphans.length) toast('A show/hide rule still points at “' + removed + '”, which is no longer a choice.');
+      }}),
+    ]));
+  });
+
+  if (window.Sortable) {
+    new Sortable(list, { handle:'.oh', animation:120, onEnd: e => {
+      if (e.oldIndex === e.newIndex) return;
+      const moved = f.options.splice(e.oldIndex, 1)[0];
+      f.options.splice(e.newIndex, 0, moved);
+      touched(); renderPanel();
+    }});
+  }
+
+  kids.push(list);
+  kids.push(el('div', { class:'prop', style:'display:flex; gap:6px; flex-wrap:wrap;' }, [
+    el('button', { class:'ghost small', text:'+ Add choice', onclick: () => {
+      f.options = (Array.isArray(f.options) ? f.options : []).concat(['Option ' + ((f.options || []).length + 1)]);
+      touched(); renderPanel();
+    }}),
+    el('button', { class:'ghost small', text:'Paste a list…', onclick: () => pasteChoices(f) }),
+  ]));
+
+  if (f.type === 'checkgroup') {
+    kids.push(pCheck('Give them an “Other” box to type in', !!f.allowOther, v => {
+      if (v) f.allowOther = true; else delete f.allowOther;
+      touched();
+    }, { help:'A free-text box appears when they tick “Other”.' }));
+  } else {
+    kids.push(el('div', { class:'help', text:
+      'To let people write their own answer, add a choice called “Other” and add a short-answer question under it with “Only show this question when … is Other”.' }));
+  }
+  return pgroup('Choices', kids);
+}
+
+async function pasteChoices(f) {
+  const ta = el('textarea', { style:'min-height:170px', placeholder:'One choice per line' });
+  ta.value = (Array.isArray(f.options) ? f.options : []).filter(o => typeof o === 'string').join('\n');
+  const r = await Swal.fire({
+    title:'Paste your choices', html: el('div', { style:'text-align:left' }, [ta]),
+    width: 520, showCancelButton:true, reverseButtons:true,
+    confirmButtonText:'Use these choices', confirmButtonColor:'#07ADEF',
+  });
+  if (!r.isConfirmed) return;
+  const vals = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!vals.length) { toast('That was empty — nothing changed.'); return; }
+  f.options = vals;
+  touched(); renderPanel();
+}
+
+// ── Content / embed groups ──────────────────────────────────────────────────
+function contentGroup(f) {
+  const httpsCheck = raw => {
+    if (raw === '') return null;
+    if (raw.length > 2000) return 'That link is too long.';
+    try { if (new URL(raw).protocol !== 'https:') return 'Must start with https://'; }
+    catch (e) { return 'That is not a valid web address.'; }
+    return null;
+  };
+  return pgroup('Text or image', [
+    pText('Heading (optional)', f.label || '', v => { setOrDel(f, 'label', v); touched(); }),
+    pText('Text', typeof f.text === 'string' ? f.text : '', v => { setOrDel(f, 'text', v); touched(); }, {
+      textarea: true,
+      validate: raw => {
+        if (raw.length > 2000) return 'Keep it under 2000 characters.';
+        if (raw === '' && !(typeof f.src === 'string' && f.src)) return 'Add some text, or choose an image.';
+        return null;
+      },
+      help:'Blank lines become new paragraphs.',
+    }),
+    el('div', { class:'prop' }, [
+      el('label', { text:'Image (optional)' }),
+      el('div', { style:'display:flex; gap:6px;' }, [
+        el('button', { class:'ghost small', text: f.src ? 'Change image…' : 'Choose image…', onclick: async () => {
+          if (!window.AssetPicker) { toast('The image picker did not load — reload the page.'); return; }
+          const url = await AssetPicker.pick({
+            collection:'form-images', mimeFilter:'image/', title:'Choose Image',
+            apiSend: (...a) => P.apiSend(...a),
+          });
+          if (url) { f.src = url; touched(); renderPanel(); }
+        }}),
+        (f.src ? el('button', { class:'quiet', title:'Remove the image', text:'✕', onclick: () => {
+          if (!(typeof f.text === 'string' && f.text)) { toast('Add some text first — a block needs text or an image.'); return; }
+          delete f.src; delete f.alt; delete f.maxWidth; delete f.href;
+          touched(); renderPanel();
+        }}) : null),
+      ]),
+    ]),
+    (f.src ? pText('Image web address', f.src, v => { f.src = v; touched(); },
+      { mono:true, validate: raw => raw === '' ? 'Use ✕ to remove the image.' : httpsCheck(raw) }) : null),
+    (f.src ? pText('Describe the image (for screen readers)', f.alt || '',
+      v => { setOrDel(f, 'alt', v); touched(); }) : null),
+    (f.src ? pNum('Biggest width (pixels)', Number.isInteger(f.maxWidth) ? f.maxWidth : null, v => {
+      if (v == null) delete f.maxWidth;
+      else if (Number.isInteger(v) && v > 0) f.maxWidth = v;
+      touched();
+    }, { min:1 }) : null),
+    pSelect('Align', ['left','center','right'].includes(f.align) ? f.align : 'left',
+      [['left','Left'], ['center','Centred'], ['right','Right']], v => {
+        if (v === 'left') delete f.align; else f.align = v;
+        touched();
+      }),
+  ]);
+}
+
+function embedGroup(f) {
+  return pgroup('Embedded page', [
+    el('div', { class:'notice warn', text:
+      'Embedded pages only work on staff-only forms. They are not shown on public links.' }),
+    pText('Web address (https)', typeof f.src === 'string' ? f.src : '', v => { f.src = v; touched(); }, {
+      mono:true,
+      validate: raw => {
+        if (raw.length > 2000) return 'That link is too long.';
+        try { if (new URL(raw).protocol !== 'https:') return 'Must start with https://'; }
+        catch (e) { return 'That is not a valid web address.'; }
+        return null;
+      },
+    }),
+    pNum('Height (pixels)', Number.isInteger(f.height) ? f.height : null, v => {
+      if (v == null) delete f.height;
+      else if (Number.isInteger(v) && v > 0) f.height = v;
+      touched();
+    }, { min:1, help:'Default 600.' }),
+  ]);
+}
+
+// ── Condition editor, in plain English ──────────────────────────────────────
+// Same underlying shape as the full builder (single object, or an array = AND),
+// but the target dropdown shows the QUESTION WORDING, and when the target has
+// choices the value control becomes those choices instead of a free-text box —
+// which is where typo'd rules that silently never fire came from.
+function condEditor(node, key, title, help) {
+  const kids = [];
+  const lead = key === 'requiredWhen' ? 'required when ' : 'shown when ';
+  const targets = targetFields(node);
+  const slot = node[key];
+  const conds = slot == null ? [] : (Array.isArray(slot) ? slot : [slot]);
+
+  if (!conds.length) {
+    if (!targets.length) {
+      kids.push(el('div', { class:'help', text:'Add another question first — rules point at an earlier answer.' }));
+      return pgroup(title, kids);
+    }
+    kids.push(el('div', { class:'prop' }, [
+      el('button', { class:'ghost small', text:'+ Add a rule', onclick: () => {
+        node[key] = { field: targets[0].name, op:'eq', value:'' };
+        touched(); renderPanel();
+      }}),
+    ]));
+    if (help) kids.push(el('div', { class:'help', text: help }));
+    return pgroup(title, kids);
+  }
+
+  conds.forEach((c, ci) => {
+    if (ci > 0) kids.push(el('div', { class:'help', style:'text-align:center; font-weight:700; color:#374151;', text:'AND' }));
+
+    const choices = targets.map(t => [t.name, (t.label || t.name)]);
+    if (!targets.some(t => t.name === c.field)) choices.unshift([c.field, c.field + '  (missing!)']);
+    kids.push(pSelect('Question', c.field, choices, v => {
+      c.field = v;
+      const tf = fieldByName(v);
+      if (tf && OPTIONS_TYPES.includes(tf.type)) {
+        const first = plainOptions(tf)[0];
+        if (c.op === 'eq' || c.op === 'neq') c.value = first != null ? first : '';
+      }
+      if (c.op === 'includes' && !(tf && tf.type === 'checkgroup')) c.op = 'eq';
+      touched(); renderPanel();
+    }));
+
+    const tf = fieldByName(c.field);
+    const ops = [['eq','is'], ['neq','is not'], ['in','is any of'], ['notEmpty','has any answer']];
+    if ((tf && tf.type === 'checkgroup') || c.op === 'includes') ops.push(['includes','includes']);
+    kids.push(pSelect('Condition', c.op, ops, v => {
+      c.op = v;
+      if (v === 'notEmpty') delete c.value;
+      else if ((v === 'in' || v === 'includes') && !Array.isArray(c.value)) c.value = c.value ? [String(c.value)] : [];
+      else if ((v === 'eq' || v === 'neq') && Array.isArray(c.value)) c.value = c.value[0] || '';
+      touched(); renderPanel();
+    }));
+
+    if (c.op !== 'notEmpty') kids.push(condValue(c, tf));
+
+    kids.push(el('div', { class:'prop', style:'font-size:12.5px; color:#374151; background:#f7f9fc; border-radius:6px; padding:8px 10px;',
+      text: 'In plain words: ' + lead + condSentence(c) + '.' }));
+
+    kids.push(el('div', { class:'prop' }, [
+      el('button', { class:'ghost small', text:'Remove this rule', onclick: () => {
+        removeCondRef({ node, key, cond:c });
+        touched(); renderPanel();
+      }}),
+    ]));
+  });
+
+  if (targets.length) {
+    kids.push(el('div', { class:'prop' }, [
+      el('button', { class:'ghost small', text:'+ Add another rule (both must be true)', onclick: () => {
+        const cur = node[key];
+        node[key] = (Array.isArray(cur) ? cur : [cur]).concat([{ field: targets[0].name, op:'eq', value:'' }]);
+        touched(); renderPanel();
+      }}),
+    ]));
+  }
+  return pgroup(title, kids);
+}
+
+function plainOptions(f) {
+  return (Array.isArray(f && f.options) ? f.options : [])
+    .map(o => (o && typeof o === 'object') ? o.value : o)
+    .filter(v => v != null)
+    .map(String);
+}
+
+function condValue(c, tf) {
+  const opts = tf ? plainOptions(tf) : [];
+  const isCheckboxTarget = tf && tf.type === 'checkbox';
+
+  if (c.op === 'in' || c.op === 'includes') {
+    if (opts.length) {
+      const box = el('div', { style:'border:1px solid #dce1ea; border-radius:6px; padding:8px; max-height:190px; overflow-y:auto;' });
+      const cur = new Set(Array.isArray(c.value) ? c.value.map(String) : []);
+      opts.forEach(o => {
+        const cb = el('input', { type:'checkbox' });
+        cb.checked = cur.has(o);
+        cb.onchange = () => {
+          if (cb.checked) cur.add(o); else cur.delete(o);
+          c.value = opts.filter(x => cur.has(x));
+          touched();
+        };
+        box.appendChild(el('div', { class:'prop inline', style:'margin-bottom:3px' },
+          [el('label', null, [cb, el('span', { text:o })])]));
+      });
+      return el('div', { class:'prop' }, [ el('label', { text:'Any of these answers' }), box ]);
+    }
+    return pText('Answers (comma separated)', Array.isArray(c.value) ? c.value.join(', ') : '', v => {
+      c.value = v.split(',').map(s => s.trim()).filter(Boolean);
+      touched();
+    });
+  }
+
+  if (isCheckboxTarget) {
+    return pSelect('Answer', String(c.value) === 'true' ? 'true' : 'false',
+      [['true','Ticked'], ['false','Not ticked']], v => { c.value = v; touched(); renderPanel(); });
+  }
+
+  if (opts.length) {
+    const cur = c.value == null ? '' : String(c.value);
+    const choices = opts.map(o => [o, o]);
+    if (!opts.includes(cur)) choices.unshift([cur, cur === '' ? '(choose an answer)' : cur + '  (not a choice any more)']);
+    return pSelect('Answer', cur, choices, v => { c.value = v; touched(); renderPanel(); });
+  }
+
+  return pText('Answer', c.value != null && !Array.isArray(c.value) ? String(c.value) : '',
+    v => { c.value = v; touched(); },
+    { help:'Must match exactly what the person types or picks.' });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// S8 — NOTIFICATION FIELD AUDIT
+// ════════════════════════════════════════════════════════════════════════════
+//
+// wf40 ("Form Submission Notify") step 1 formats the summary email like this:
+//
+//     if (Array.isArray(input.labels) && input.labels.length) { …use ONLY those pairs… }
+//     else { …prettify every key of the submitted values… }
+//
+// So a `labels` array is not a nicety — it is an ALLOWLIST. The moment one
+// exists, every question added afterwards is silently missing from the email
+// the office receives, with nothing anywhere to say so. This audit is the
+// something.
+
+// Every name that appears in the submitted values object, in form order.
+function dataFields() {
+  const out = [];
+  (MODEL.sections || []).forEach(sec => {
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) {
+      if (sec.repeater) out.push({ name: sec.repeater, label: sec.title || prettyName(sec.repeater) });
+      return;
+    }
+    (sec.rows || []).forEach(r => (r.fields || []).forEach(f => {
+      if (!f || !f.name || DISPLAY_ONLY.includes(f.type)) return;
+      out.push({ name: f.name, label: f.label || prettyName(f.name) });
+    }));
+  });
+  return out;
+}
+function labelsAudit(labels) {
+  const fields = dataFields();
+  const known = new Set(fields.map(f => f.name));
+  const listed = new Set();
+  const dead = [];
+  (labels || []).forEach(L => {
+    if (!Array.isArray(L) || L.length < 2) return;
+    const n = String(L[1]);
+    listed.add(n);
+    if (!known.has(n)) dead.push(n);
+  });
+  return { missing: fields.filter(f => !listed.has(f.name)), dead };
+}
+// Keep the author's wording and order for rows that still resolve; drop dead
+// and duplicate rows; append every new question at the end.
+function syncedLabels(labels) {
+  const fields = dataFields();
+  const known = new Map(fields.map(f => [f.name, f]));
+  const out = [], seen = new Set();
+  (labels || []).forEach(L => {
+    if (!Array.isArray(L) || L.length < 2) return;
+    const n = String(L[1]);
+    if (!known.has(n) || seen.has(n)) return;
+    seen.add(n); out.push([String(L[0]), n]);
+  });
+  fields.forEach(f => { if (!seen.has(f.name)) { seen.add(f.name); out.push([f.label, f.name]); } });
+  return out;
+}
+
+// ── Where the notify workflow entry lives, and whether we may edit it ───────
+// Editable only when there is nothing, or exactly one entry and it is wf40.
+// Anything richer is left alone and pointed at the full builder.
+function notifyState() {
+  const os = MODEL.onSubmit;
+  if (!os) return { mode:'none', entry:null };
+  if (Array.isArray(os.workflows)) {
+    if (os.workflows.length === 1 && Number(os.workflows[0].id) === NOTIFY_WF_ID)
+      return { mode:'single', entry: os.workflows[0], inList:true };
+    return { mode:'complex', entry: os.workflows.find(w => Number(w.id) === NOTIFY_WF_ID) || null };
+  }
+  if (os.workflow) {
+    if (Number(os.workflow.id) === NOTIFY_WF_ID) return { mode:'single', entry: os.workflow, inList:false };
+    return { mode:'complex', entry:null };
+  }
+  return { mode:'none', entry:null };
+}
+function setNotifyEmail(addr) {
+  const st = notifyState();
+  if (st.mode === 'complex') return;
+  if (!addr) {
+    if (st.entry) {
+      const idata = st.entry.initData || {};
+      delete idata.notify_to;
+      // Nothing left to do → drop the whole entry rather than dispatching a
+      // workflow that will email nobody.
+      if (!Object.keys(idata).length || (Object.keys(idata).length === 1 && idata.title_field)) {
+        if (st.inList) delete MODEL.onSubmit.workflows; else delete MODEL.onSubmit.workflow;
+        if (MODEL.onSubmit && !Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
+      }
+    }
+    touchedQuiet();
+    return;
+  }
+  if (!st.entry) {
+    MODEL.onSubmit = MODEL.onSubmit || {};
+    const guess = dataFields().find(f => /^name$|full.?name/i.test(f.name));
+    MODEL.onSubmit.workflow = { id: NOTIFY_WF_ID, initData: Object.assign(
+      { notify_to: addr }, guess ? { title_field: guess.name } : {}) };
+  } else {
+    st.entry.initData = st.entry.initData || {};
+    st.entry.initData.notify_to = addr;
+  }
+  touchedQuiet();
+}
+
+function notifyAuditNode(entry, rerender) {
+  const labels = entry && entry.initData && entry.initData.labels;
+  if (!Array.isArray(labels) || !labels.length) return null;
+  const { missing, dead } = labelsAudit(labels);
+  if (!missing.length && !dead.length) {
+    return el('div', { class:'help', text:
+      'The notification email lists all ' + labels.length + ' questions, in the order you set.' });
+  }
+  const lines = [];
+  if (missing.length) {
+    lines.push('These questions will NOT appear in the notification email: ' +
+      missing.map(f => '“' + f.label + '”').join(', ') + '.');
+  }
+  if (dead.length) {
+    lines.push('The email still lists ' + dead.map(n => '“' + n + '”').join(', ') +
+      ', which no longer exist on this form.');
+  }
+  const box = el('div', { class:'notice warn' }, [
+    el('div', { text: lines.join(' ') }),
+    el('div', { style:'margin-top:8px' }, [
+      el('button', { class:'ghost small', text:'Include every question', onclick: () => {
+        entry.initData.labels = syncedLabels(labels);
+        touchedQuiet();
+        (rerender || renderSheet)();
+      }}),
+    ]),
+  ]);
+  return box;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SETTINGS SHEET
+// ════════════════════════════════════════════════════════════════════════════
+function openSheet()  { E('sheetWrap').classList.add('show'); renderSheet(); }
+function closeSheet() { E('sheetWrap').classList.remove('show'); }
+
+function renderSheet() {
+  const b = E('sheetBody');
+  b.textContent = '';
+  if (!MODEL) return;
+
+  const vis = ROW.visibility || 'internal';
+  const isExternal = vis !== 'internal';
+
+  // ── Basics ──
+  b.appendChild(pgroup('Basics', [
+    pText('Form name', TITLE, v => { TITLE = v; E('titleIn').value = v; markDirty(); scheduleAutosave(); }),
+    el('div', { class:'prop' }, [
+      el('label', { text:'Short id' }),
+      el('div', { class:'mono', style:'font-size:12px; padding:6px 0; color:#6b7280;', text: ROW.form_key }),
+      el('div', { class:'help', text:'Used in the link. Fixed once the form is live.' }),
+    ]),
+    el('div', { class:'prop' }, [
+      el('label', { text:'This form belongs to' }),
+      el('div', { style:'font-size:13px; padding:4px 0;', text: ({ case:'A case', contact:'A contact', appt:'An appointment' })[ROW.link_type] || ROW.link_type }),
+    ]),
+  ]));
+
+  // ── Who can fill it in ──
+  const visKids = [
+    pSelect('Who can fill this in', vis, [
+      ['internal', 'Staff only (inside YisraCase)'],
+      ['public',   'Anyone with the link'],
+      ['portal',   'Clients signed in to the portal'],
+    ], v => flipVisibility(v), { disabled: !FORM_DEV }),
+  ];
+  if (!FORM_DEV) {
+    visKids.push(el('div', { class:'help', text:
+      'Only a form developer can put a form on a public link. Ask IT for the “form_dev” role, or ask them to publish it for you.' }));
+  } else if (isExternal) {
+    visKids.push(el('div', { class:'notice warn', text:
+      'Anyone holding the link can open this form. Never put a third-party script, font or tracking pixel on a public form — a request to an outside server tells that server the visitor is talking to a bankruptcy firm.' }));
+  }
+  b.appendChild(pgroup('Who can fill it in', visKids));
+
+  // ── How it looks ──
+  const ap = (MODEL.external && MODEL.external.appearance) || {};
+  const setAp = (k, v) => {
+    if (v) {
+      MODEL.external = MODEL.external || {};
+      MODEL.external.appearance = MODEL.external.appearance || {};
+      MODEL.external.appearance[k] = v;
+    } else if (MODEL.external && MODEL.external.appearance) {
+      delete MODEL.external.appearance[k];
+      if (!Object.keys(MODEL.external.appearance).length) delete MODEL.external.appearance;
+      if (!Object.keys(MODEL.external).length) delete MODEL.external;
+    }
+    touchedQuiet();
+  };
+  const lookKids = [
+    pCheck('Show one question per screen', isCard(), v => {
+      if (v) MODEL.layout = 'card'; else delete MODEL.layout;
+      touched(); renderSheet(); renderPanel();
+    }, { help:'Best for questionnaires you text or email. Each ' + 'page' + ' becomes one screen, with Back / Next and a review page at the end.' }),
+  ];
+  if (isExternal) {
+    lookKids.push(el('div', { class:'two' }, [
+      colorProp('Background top', ap.bgFrom || '', v => setAp('bgFrom', v)),
+      colorProp('Background bottom', ap.bgTo || '', v => setAp('bgTo', v)),
+    ]));
+    lookKids.push(el('div', { class:'help', text:'Colours behind the form on the public page. Leave both empty for the default.' }));
+  }
+  b.appendChild(pgroup('How it looks', lookKids));
+
+  // ── After they submit (external only) ──
+  if (isExternal) {
+    const ps = (MODEL.external && MODEL.external.postSubmit) || null;
+    const ensurePS = () => {
+      MODEL.external = MODEL.external || {};
+      MODEL.external.postSubmit = MODEL.external.postSubmit || {};
+      return MODEL.external.postSubmit;
+    };
+    const psKids = [
+      pText('Thank-you message', ps && ps.message != null ? ps.message : '', v => {
+        if (v) ensurePS().message = v;
+        else if (ps) {
+          delete MODEL.external.postSubmit.message;
+          if (!Object.keys(MODEL.external.postSubmit).length) delete MODEL.external.postSubmit;
+          if (!Object.keys(MODEL.external).length) delete MODEL.external;
+        }
+        touchedQuiet();
+      }, { textarea:true, placeholder:'Thank you! We have received your answers.',
+           help:'Shown instead of the form once they press submit. Leave empty to leave the form on screen.' }),
+      pCheck('Let them go back and change their answers', !!(ps && ps.edit), v => {
+        if (v) ensurePS().edit = true;
+        else if (ps) { delete ps.edit; if (!Object.keys(ps).length) { delete MODEL.external.postSubmit; if (!Object.keys(MODEL.external).length) delete MODEL.external; } }
+        touchedQuiet();
+      }),
+      pSelect('If the link has no case attached', (MODEL.external && MODEL.external.badLink) || 'reject', [
+        ['reject',  'Show “this link is not valid”'],
+        ['degrade', 'Let them fill it in anyway (it arrives unattached)'],
+      ], v => {
+        MODEL.external = MODEL.external || {};
+        if (v === 'reject') {
+          delete MODEL.external.badLink;
+          if (!Object.keys(MODEL.external).length) delete MODEL.external;
+        } else MODEL.external.badLink = v;
+        touchedQuiet();
+      }, { help:'“Let them fill it in anyway” is right for a general intake form you post publicly.' }),
+    ];
+    b.appendChild(pgroup('After they press submit', psKids));
+  }
+
+  // ── Where the answers go ──
+  const st = notifyState();
+  const goKids = [];
+  if (st.mode === 'complex') {
+    goKids.push(el('div', { class:'notice info', text:
+      'This form runs more than one automation when it is submitted. Manage them in the full Form Builder.' }));
+    if (st.entry) {
+      const a = notifyAuditNode(st.entry, renderSheet);
+      if (a) goKids.push(a);
+    }
+  } else {
+    const cur = (st.entry && st.entry.initData && st.entry.initData.notify_to) || '';
+    goKids.push(pText('Email every submission to', cur, v => setNotifyEmail(v.trim()), {
+      inputType:'email', placeholder:'someone@4lsg.com',
+      help:'Leave empty to send no email. Answers are always recorded on the form regardless, and appear in the Form Inbox.',
+    }));
+    if (st.entry) {
+      const a = notifyAuditNode(st.entry, renderSheet);
+      if (a) goKids.push(a);
+      goKids.push(pCheck('Also attach a PDF of their answers', !!(MODEL.onSubmit && MODEL.onSubmit.pdf), v => {
+        MODEL.onSubmit = MODEL.onSubmit || {};
+        if (v) MODEL.onSubmit.pdf = true; else delete MODEL.onSubmit.pdf;
+        if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
+        touchedQuiet();
+      }, { help:'The PDF is also filed to the case folder in Dropbox.' }));
+    }
+  }
+  const patch = MODEL.onSubmit && MODEL.onSubmit.patch;
+  if (patch) {
+    goKids.push(el('div', { class:'notice info', text:
+      'Answers marked “save to a ' + ROW.link_type + ' field” are written back to the ' + ROW.link_type + ' record when someone presses Save.' }));
+  }
+  b.appendChild(pgroup('Where the answers go', goKids));
+
+  // ── Share ──
+  if (isExternal) b.appendChild(pgroup('Share', shareRows().concat([
+    el('div', { class:'help', text: ROW.published_at
+      ? 'These links serve the LIVE version. Press “Update live form” after you make changes, or people will keep seeing the old one.'
+      : 'These links will not work until you press “Make live”.' }),
+  ])));
+
+  // ── Advanced ──
+  const adv = el('details', { class:'adv' });
+  adv.appendChild(el('summary', { text:'Advanced' }));
+  adv.appendChild(pCheck('Start in read-only mode with an Edit button', MODEL.toggle !== false, v => {
+    if (v) delete MODEL.toggle; else MODEL.toggle = false;
+    touchedQuiet();
+  }, { help:'Staff forms usually want this on. Client questionnaires want it off.' }));
+  adv.appendChild(pCheck('Save a draft automatically as they type', MODEL.autosave !== false, v => {
+    if (v) delete MODEL.autosave; else MODEL.autosave = false;
+    touchedQuiet();
+  }));
+  adv.appendChild(pText('Wording on the save button', MODEL.saveLabel || '',
+    v => { setOrDel(MODEL, 'saveLabel', v); touchedQuiet(); }, { placeholder:'Save' }));
+  adv.appendChild(el('div', { class:'prop' }, [
+    el('button', { class:'ghost small', text:'Open in the full Form Builder', onclick: () => openFullBuilder(ROW.id) }),
+  ]));
+  b.appendChild(adv);
+}
+
+function colorProp(label, value, onInput) {
+  const txt = el('input', { class:'mono', placeholder:'#f8f9fa' });
+  txt.value = value || '';
+  const col = el('input', { type:'color' });
+  col.value = HEX_RE.test(value) && value.length === 7 ? value : '#ffffff';
+  const perr = el('div', { class:'perr' });
+  txt.oninput = () => {
+    const raw = txt.value.trim();
+    if (raw !== '' && !HEX_RE.test(raw)) {
+      txt.classList.add('bad'); perr.textContent = 'Use a colour code like #f8f9fa'; perr.classList.add('show'); return;
+    }
+    txt.classList.remove('bad'); perr.classList.remove('show');
+    if (raw.length === 7) col.value = raw;
+    onInput(raw);
+  };
+  col.oninput = () => { txt.value = col.value; txt.classList.remove('bad'); perr.classList.remove('show'); onInput(col.value); };
+  return el('div', { class:'prop' }, [
+    el('label', { text: label }),
+    el('div', { style:'display:flex; gap:6px;' }, [col, txt]),
+    perr,
+  ]);
+}
+
+function shareRows() {
+  const origin = location.origin;
+  const links = [
+    { label:'Send this to a client',
+      url: origin + '/p/form?f=' + ROW.form_key,
+      help:'The branded page with the firm logo. Add &case_id=… to tie it to a case.' },
+    { label:'For a text or email template',
+      url: origin + '/p/form?f=' + ROW.form_key + '&case_id={{cases.case_id}}',
+      help:'Paste into an SMS or email template — the case id fills itself in, so the form arrives already linked and pre-filled.' },
+    { label:'Plain form (to embed on a website)',
+      url: origin + '/f/' + ROW.form_key,
+      help:'No branding, for putting inside an iframe on your own page.' },
+  ];
+  return links.map(l => {
+    const inp = el('input', { class:'mono', value: l.url });
+    inp.readOnly = true;
+    inp.onclick = () => inp.select();
+    const btn = el('button', { class:'ghost small', text:'Copy', onclick: () => {
+      const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(l.url).then(done, () => { inp.select(); document.execCommand('copy'); done(); });
+      } else { inp.select(); document.execCommand('copy'); done(); }
+    }});
+    return el('div', { class:'prop' }, [
+      el('label', { text: l.label }),
+      el('div', { class:'linkrow' }, [inp, btn]),
+      el('div', { class:'help', text: l.help }),
+    ]);
+  });
+}
+
+async function flipVisibility(v) {
+  const cur = ROW.visibility || 'internal';
+  if (v === cur) return;
+  if (v !== 'internal') {
+    const ok = await ask(
+      'Put this form on a link anyone can open?\n\n' +
+      'Anybody holding the link will be able to see the questions and send answers. ' +
+      'Only do this for forms meant for clients.',
+      { confirmText:'Yes, make it public' });
+    if (!ok) { renderSheet(); return; }
+  }
+  try {
+    await P.apiSend('/api/form-templates/' + ROW.id + '/visibility', 'POST', { visibility: v });
+    const d = await P.apiSend('/api/form-templates/' + ROW.id, 'GET');
+    ROW = d.template;
+    renderTop(); renderSheet();
+    status('Changed to: ' + (VIS_LABEL[v] || v), 'ok');
+    setTimeout(() => status(''), 2200);
+  } catch (err) {
+    status(err.message, 'err');
+    renderSheet();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PREVIEW
+// ════════════════════════════════════════════════════════════════════════════
+async function openPreview() {
+  if (!await saveNow(true)) { toast('Fix the problem shown at the top, then try the preview again.'); return; }
+  E('prevWrap').classList.add('show');
+  showPreviewFrame();
+}
+function closePreview() {
+  E('prevWrap').classList.remove('show');
+  E('prevFrame').removeAttribute('src');
+}
+function togglePrevWidth() {
+  const w = E('prevFrameWrap');
+  const phone = w.classList.toggle('phone');
+  E('prevPhoneBtn').textContent = phone ? 'Full size' : 'Phone size';
+}
+async function showPreviewFrame() {
+  if (!await saveNow(true)) return;
+  const lid = E('prevLinkId').value.trim();
+  let url = '/forms/render.html?template_id=' + encodeURIComponent(ROW.id) + '&preview=1&_=' + Date.now();
+  if (lid) url += '&link_id=' + encodeURIComponent(lid);
+  E('prevFrame').src = url;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MAKE LIVE
+// ════════════════════════════════════════════════════════════════════════════
+// Same publish endpoint and the same version rules as the full builder; only
+// the words change. The client-side signature is a PREDICTION for the confirm
+// message — the server recomputes and is the authority.
+function fieldSignature(def) {
+  const parts = [];
+  (def.sections || []).forEach(sec => {
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) {
+      (sec.fields || []).forEach(f => parts.push(f.name + '\u0000' + f.type));
+    } else {
+      (sec.rows || []).forEach(r => (r.fields || []).forEach(f => {
+        if (DISPLAY_ONLY.includes(f.type)) return;      // display-only never bumps the version
+        parts.push(f.name + '\u0000' + f.type);
+      }));
+    }
+  });
+  return parts.sort().join('|');
+}
+
+async function makeLive() {
+  if (!ROW) return;
+  if (!await saveNow(true)) { toast('Fix the problem shown at the top before making the form live.'); return; }
+
+  // Legibility checks: things the server allows but a person almost never means.
+  const warnings = [];
+  const emptySecs = (MODEL.sections || []).filter(s => !(s.rows || []).some(r => (r.fields || []).length)).length;
+  if (emptySecs) warnings.push(emptySecs + ' ' + secWord() + (emptySecs === 1 ? '' : 's') + ' with no questions on ' + (emptySecs === 1 ? 'it' : 'them'));
+  const noQuestions = !dataFields().length;
+  if (noQuestions) warnings.push('no questions that collect an answer');
+  const st = notifyState();
+  if (st.entry && st.entry.initData && Array.isArray(st.entry.initData.labels)) {
+    const a = labelsAudit(st.entry.initData.labels);
+    if (a.missing.length) warnings.push(a.missing.length + ' question' + (a.missing.length === 1 ? '' : 's') + ' missing from the notification email (see Settings)');
+  }
+  if ((ROW.visibility || 'internal') !== 'internal') {
+    const executes = ['code', 'css', 'hooks'].filter(k => MODEL[k] != null && MODEL[k] !== '');
+    const hasEmbed = (MODEL.sections || []).some(s => (s.rows || []).some(r => (r.fields || []).some(f => f && f.type === 'embed')));
+    if (executes.length || hasEmbed) {
+      warnings.push('content that runs in the visitor’s browser on a public link — no third-party scripts, fonts or pixels');
+    }
+  }
+
+  let msg;
+  if (!ROW.published_at) {
+    msg = 'Make “' + TITLE + '” live?\n\nOnce it is live, the share links start working and people can fill it in.';
+  } else if (fieldSignature(MODEL) === fieldSignature(ROW.definition || {})) {
+    msg = 'Publish your changes to “' + TITLE + '”?\n\nYou changed wording or layout, not the questions themselves — anyone part-way through will not be affected.';
+  } else {
+    msg = 'Publish your changes to “' + TITLE + '”?\n\nYou added, removed or renamed questions. Anyone who part-filled the old version will be warned that it changed.';
+  }
+  if (warnings.length) msg += '\n\nBefore you do — this form has:\n • ' + warnings.join('\n • ');
+
+  if (!await ask(msg, { confirmText: ROW.published_at ? 'Publish changes' : 'Make it live' })) return;
+
+  try {
+    const result = await P.apiSend('/api/form-templates/' + ROW.id + '/publish', 'POST');
+    const d = await P.apiSend('/api/form-templates/' + ROW.id, 'GET');
+    ROW = d.template;
+    renderTop();
+    status('Your form is live (version ' + result.schema_version + ')', 'ok');
+    setTimeout(() => status(''), 3000);
+    if ((ROW.visibility || 'internal') !== 'internal') {
+      Swal.fire({
+        icon:'success', title:'It’s live',
+        html: el('div', { style:'text-align:left; font-size:13.5px; line-height:1.6;' }, [
+          el('div', { text:'Share this link with clients:' }),
+          el('div', { class:'mono', style:'margin-top:8px; word-break:break-all; background:#f7f9fc; padding:9px; border-radius:6px;',
+            text: location.origin + '/p/form?f=' + ROW.form_key }),
+        ]),
+        confirmButtonText:'Done', confirmButtonColor:'#07ADEF', width: 520,
+      });
+    }
+  } catch (err) {
+    status(friendlyServerError(err.message), 'err');
+  }
+}
+
+// ── Test surface (parity with formBuilder.html's debug hooks) ───────────────
+window.__fbs = {
+  get MODEL() { return MODEL; },
+  get ROW()   { return ROW; },
+  get UNDO()  { return UNDO; },
+  labelsAudit, syncedLabels, dataFields, checkGuard, fieldSignature,
+  condSentence, slugify, genName, notifyState,
+};
+</script>
+</body>
+</html>

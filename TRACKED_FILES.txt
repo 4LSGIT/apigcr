@@ -210,6 +210,7 @@ public/evergreen.html
 public/featureRequests.html
 public/feedback.html
 public/formBuilder.html
+public/formBuilderSimple.html
 public/formInbox.html
 public/forms/341notes.html
 public/forms/casedetails-bk.html
