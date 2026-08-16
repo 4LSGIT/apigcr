@@ -95,8 +95,10 @@ describe('slice 4 services — template versions + submission browse', () => {
       definition: JSON.stringify(defB), draft_definition: JSON.stringify(defA),
       published_at: 't', updated_by: 6, created_at: 'c', updated_at: 'u' };
     const db = stubDb([
-      [{ id: 1 }],                                     // template exists
-      [{ id: 10, schema_version: 1 }],                 // version belongs to template
+      [tplRow],                                        // fetchRow (form-dev gate diffs vs current draft)
+      // version row now carries its definition — read for the authored-key
+      // DIFF only; the write below is still the SQL column-to-column copy.
+      [{ id: 10, schema_version: 1, definition: JSON.stringify(defA) }],
       { affectedRows: 1 },                             // UPDATE ... JOIN result (non-array OkPacket shape)
       [tplRow],                                        // fetchRow after
     ]);

@@ -141,6 +141,23 @@ router.get('/api/ext/forms/:form_key', async (req, res) => {
         }
       : null;
 
+    // appearance (2026-08-16 §Q1): the external-safe styling channel —
+    // strict hex-color CSS custom property values, hoisted like postSubmit
+    // (`external` stays off the public definition wire, §D allowlist).
+    // Re-filtered here per key against the SAME hex regex validateDefinition
+    // enforces (belt and suspenders, the content-src precedent): an
+    // out-of-shape value is dropped, never forwarded.
+    const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+    const apSrc = tpl.definition.external && tpl.definition.external.appearance;
+    let appearance = null;
+    if (apSrc && typeof apSrc === 'object') {
+      const ap = {};
+      for (const k of ['bgFrom', 'bgTo']) {
+        if (typeof apSrc[k] === 'string' && HEX_RE.test(apSrc[k])) ap[k] = apSrc[k];
+      }
+      if (Object.keys(ap).length) appearance = ap;
+    }
+
     return res.json({
       status: 'success',
       title: tpl.title,
@@ -150,6 +167,7 @@ router.get('/api/ext/forms/:form_key', async (req, res) => {
       load,
       linked,
       ...(postSubmit ? { postSubmit } : {}),
+      ...(appearance ? { appearance } : {}),
     });
   } catch (err) {
     console.error('[api.ext.forms] GET error:', err);

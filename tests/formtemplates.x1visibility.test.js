@@ -43,6 +43,10 @@ async function rejects(promise, status, msgPart) {
   if (msgPart) expect(err.message).toContain(msgPart);
 }
 
+// Form-dev authz (2026-08-16 gate): off-internal flips and authored-key
+// changes require { formDev: true } — absent authz fails CLOSED.
+const DEV = { formDev: true };
+
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 const cleanDef = {
@@ -301,17 +305,22 @@ describe('setVisibility (X1 §3; §9.9 test-lock)', () => {
     await rejects(svc.setVisibility(db, 99, 'public', 9), 404, 'Template 99 not found');
   });
 
-  test('REFUSES public/portal while the published definition carries code (message names it)', async () => {
+  // 2026-08-16 reversal: the §4 content refusal is RETIRED — exposing a
+  // template that carries code/css/hooks/embed now succeeds (the builder's
+  // expose-confirm warns instead). form_dev is still required to flip.
+  test('exposure with code in the published definition now SUCCEEDS (reversal)', async () => {
     for (const vis of ['public', 'portal']) {
-      const db = stubDb([[row({ definition: codeDef, published_at: 'p' })]]);
-      await rejects(svc.setVisibility(db, 5, vis, 9), 400, 'code');
-      expect(db.calls.length).toBe(1);                         // fetchRow only — no UPDATE
+      const db = stubDb([[row({ definition: codeDef, published_at: 'p' })], []]);
+      const out = await svc.setVisibility(db, 5, vis, 9, DEV);
+      expect(out).toEqual({ visibility: vis });
+      expect(db.calls[1].sql).toContain('UPDATE form_templates SET visibility');
     }
   });
 
-  test('REFUSES exposure while the published definition carries an embed field', async () => {
-    const db = stubDb([[row({ definition: embedSectionsDef, published_at: 'p' })]]);
-    await rejects(svc.setVisibility(db, 5, 'public', 9), 400, 'embed field "vid"');
+  test('exposure with an embed field now SUCCEEDS (reversal)', async () => {
+    const db = stubDb([[row({ definition: embedSectionsDef, published_at: 'p' })], []]);
+    const out = await svc.setVisibility(db, 5, 'public', 9, DEV);
+    expect(out).toEqual({ visibility: 'public' });
   });
 
   test('back to internal is ALWAYS allowed — even with refused keys published', async () => {
@@ -330,7 +339,7 @@ describe('setVisibility (X1 §3; §9.9 test-lock)', () => {
       [row({ definition: cleanDef, published_at: 'p' })],
       [],                                                      // UPDATE
     ]);
-    const out = await svc.setVisibility(db, 5, 'public', 22);
+    const out = await svc.setVisibility(db, 5, 'public', 22, DEV);
     expect(out).toEqual({ visibility: 'public' });
     expect(db.calls[1].params).toEqual(['public', 22, 5]);
   });
@@ -342,43 +351,43 @@ describe('setVisibility (X1 §3; §9.9 test-lock)', () => {
       [row({ definition: null, draft_definition: codeDef })],
       [],                                                      // UPDATE
     ]);
-    const out = await svc.setVisibility(db, 5, 'public', 9);
+    const out = await svc.setVisibility(db, 5, 'public', 9, DEV);
     expect(out).toEqual({ visibility: 'public' });
   });
 });
 
 // ── publishTemplate — external_refusals advisory (non-blocking) ─────────────
 
-describe('publishTemplate — X1 external_refusals advisory', () => {
+describe('publishTemplate — external_executes notice (informational)', () => {
   // publishTemplate script: fetchRow → UPDATE → INSERT version row.
   const publishScript = (r) => [[r], [], []];
 
-  test('externally visible + refused keys in the draft → advisory present, publish NOT blocked', async () => {
+  test('externally visible + executing keys in the draft → notice present, publish NOT blocked', async () => {
     const db = stubDb(publishScript(row({
       visibility: 'public', definition: cleanDef, published_at: 'p',
       draft_definition: codeDef,
     })));
     const out = await svc.publishTemplate(db, 5, 9);
-    expect(out.external_refusals).toEqual(['code']);
+    expect(out.external_executes).toEqual(['code']);
     expect(out.schema_version).toBe(1);                        // same signature — no bump
     expect(db.calls.length).toBe(3);                           // publish ran in full
   });
 
-  test('internal visibility → no advisory key, even with code in the draft', async () => {
+  test('internal visibility → no notice key, even with code in the draft', async () => {
     const db = stubDb(publishScript(row({
       visibility: 'internal', definition: cleanDef, published_at: 'p',
       draft_definition: codeDef,
     })));
     const out = await svc.publishTemplate(db, 5, 9);
-    expect('external_refusals' in out).toBe(false);
+    expect('external_executes' in out).toBe(false);
   });
 
-  test('externally visible + clean draft → no advisory key', async () => {
+  test('externally visible + clean draft → no notice key', async () => {
     const db = stubDb(publishScript(row({
       visibility: 'portal', definition: cleanDef, published_at: 'p',
       draft_definition: cleanDef,
     })));
     const out = await svc.publishTemplate(db, 5, 9);
-    expect('external_refusals' in out).toBe(false);
+    expect('external_executes' in out).toBe(false);
   });
 });

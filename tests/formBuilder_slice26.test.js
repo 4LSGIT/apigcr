@@ -78,7 +78,10 @@ function bootBuilder(draft) {
     url: 'https://app.4lsg.com/formBuilder.html?id=1',
     runScripts: 'dangerously',
     beforeParse(window) {
-      window.firmData = {};
+      // Form-dev session (2026-08-16 gate): these tests exercise the Custom
+      // code / Hooks editors, which are locked for non-form-dev users —
+      // see tests/formbuilder.formdev.ui.test.js for the locked state.
+      window.firmData = { currentUser: { user_auth: 'authorized - SU' } };
       window.apiSend = async (url, method, body) => {
         if (method === 'GET' && url === '/api/form-templates/1') {
           return { status: 'success', template: JSON.parse(JSON.stringify(ROW)) };

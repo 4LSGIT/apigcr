@@ -11,6 +11,18 @@
   <style>
     /* Local-only. yc-forms.css is untouched (per contract §8). A single note
        banner for preview mode + a hook for the disabled preview save button. */
+    /* X-appearance (2026-08-16, ref/EXTERNAL_CODE_CSS_DECISION.md §Q1):
+       external-safe per-form backdrop. body.yc-ext is added in ext=1 boots;
+       the two custom properties are set from the /api/ext payload's
+       server-validated hex colors (re-guarded below before setProperty —
+       custom-property VALUES only, never CSS text). Both default to the
+       yc-forms.css body background (#f8f9fa), so a template without
+       appearance renders byte-identically to today. */
+    body.yc-ext {
+      background: linear-gradient(180deg,
+        var(--yc-ext-bg-from, #f8f9fa),
+        var(--yc-ext-bg-to, #f8f9fa)) fixed;
+    }
     .ycr-preview-note {
       margin: 8px 0;
       padding: 6px 12px;
@@ -124,7 +136,8 @@
  *     populate; load-only columns are excluded from the PATCH whitelist.
  *   - per-form css (§3): injected as a <style> via textContent (never
  *     innerHTML) appended to <head> after the shared stylesheet so it wins the
- *     cascade. INTERNAL-ONLY pending the portal security review.
+ *     cascade. Ships externally too since the 2026-08-16 reversal
+ *     (ref/EXTERNAL_CODE_CSS_DECISION.md) — authoring is form_dev-gated.
  *
  * SLICE 2.6 ADDITIONS (SLICE_2_6_SPEC.md + addendum v2):
  *   - Tabs (§4.5): top-level `tabs: [{label, sections}]` (exactly one of
@@ -144,7 +157,8 @@
  *     .yc-field into view; sticky-region errors scroll only. KNOWN NON-FIX:
  *     an error inside a showWhen-hidden wrapper on the ACTIVE tab stays
  *     invisible — pre-existing A7-lint territory, unchanged by tabs.
- *   - type:"embed" (§4.3, INTERNAL-ONLY): display-only https iframe.
+ *   - type:"embed" (§4.3): display-only https iframe (ships externally
+ *     since the 2026-08-16 reversal; the https-only src re-check stands).
  *     .yc-field wrapper WITHOUT .yc-error (not an input); label/sublabel via
  *     textContent; iframe attrs via setAttribute (src, loading=lazy, title,
  *     data-yc-embed={name} as a stable per-form-code selector hook, and a
@@ -397,7 +411,8 @@
     }
 
     if (f.type === 'embed') {
-      // 2.6 (contract §4.3, INTERNAL-ONLY): display-only https iframe — not
+      // 2.6 (contract §4.3): display-only https iframe (external too since
+      // the 2026-08-16 reversal) — not
       // an input, so NO .yc-error and no registration (the caller skips
       // registerField for embeds; collect()/validate()/PATCH never see it).
       // Belt-and-braces https re-check: published defs passed §7, but degrade
@@ -1413,9 +1428,10 @@
     // Per-form CSS (2.5B B4). textContent-injected <style> appended to <head>
     // AFTER the shared stylesheet + the local block, so it wins the cascade at
     // equal specificity. textContent means the string is CSS text only — no
-    // element/script injection path (contract §8). INTERNAL-ONLY pending the
-    // portal security review: CSS on an untrusted rendering surface is a
-    // lower-grade but real injection channel (same review bucket as "embed").
+    // element/script injection path (contract §8). Ships externally since the
+    // 2026-08-16 reversal (ref/EXTERNAL_CODE_CSS_DECISION.md) — authoring is
+    // form_dev-gated and the exposure moments warn against third-party
+    // resources (fonts/@import), which are the real external risk of CSS.
     if (typeof def.css === 'string' && def.css) {
       var cssEl = document.createElement('style');
       cssEl.setAttribute('data-yc-form-css', '');
@@ -2206,9 +2222,10 @@
     // hooks with the same per-call isolation. NEVER executed in preview — any
     // preview mode. `code` and `hooks` are mutually exclusive (server-
     // enforced), so the branches below never both fire. This is AUTHORED code
-    // under the reformulated §8 invariant (internal surfaces only; external
-    // routes must refuse) — the textContent-for-data rule governs data, not
-    // this.
+    // under the reformulated §8 invariant — form_dev-gated at the write and
+    // shipped externally too since the 2026-08-16 reversal (exposure moments
+    // warn against third-party resources). The textContent-for-data rule
+    // governs data, not this.
     if (typeof def.code === 'string' && def.code && !preview && !VIEW) {
       try { new Function(def.code)(); }
       catch (e) { console.warn('[render] template code failed:', e); }
@@ -2282,6 +2299,23 @@
             // navigates instead of the panel.
             EXT.postSubmit = (body.postSubmit && typeof body.postSubmit === 'object')
               ? body.postSubmit : null;
+            // appearance (X-appearance, 2026-08-16): external-safe backdrop.
+            // The class scopes the gradient rule; each value is re-guarded
+            // against the SAME strict hex regex the server validated with
+            // (belt and suspenders — content-src precedent) and applied as a
+            // custom-property VALUE via setProperty, never as CSS text.
+            document.body.classList.add('yc-ext');
+            var ap = (body.appearance && typeof body.appearance === 'object')
+              ? body.appearance : null;
+            if (ap) {
+              var HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+              if (typeof ap.bgFrom === 'string' && HEX_RE.test(ap.bgFrom)) {
+                document.body.style.setProperty('--yc-ext-bg-from', ap.bgFrom);
+              }
+              if (typeof ap.bgTo === 'string' && HEX_RE.test(ap.bgTo)) {
+                document.body.style.setProperty('--yc-ext-bg-to', ap.bgTo);
+              }
+            }
             boot(body.definition, {
               formKey:       extKey,
               schemaVersion: body.schema_version,

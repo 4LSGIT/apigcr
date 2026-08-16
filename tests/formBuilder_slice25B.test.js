@@ -28,7 +28,12 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const DOMS = [];
 afterAll(() => DOMS.forEach(d => { try { d.window.close(); } catch (_) {} }));
 
-const FIRM_DATA = { settings: { trustees: [{ name: 'K. Jin Lim', case_type: 7 }] } };
+const FIRM_DATA = {
+  // Form-dev session (2026-08-16 gate): the CSS editor test below types
+  // into a control that is locked for non-form-dev users.
+  currentUser: { user_auth: 'authorized - SU' },
+  settings: { trustees: [{ name: 'K. Jin Lim', case_type: 7 }] },
+};
 
 function makeDraft() {
   return {

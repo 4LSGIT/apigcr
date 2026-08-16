@@ -15,12 +15,13 @@
  * written under that rule; any change that lets a client-supplied string
  * reach a query outside resolveCase() is a defect (§9.3).
  *
- * THE REFUSAL INVARIANT (§4, non-negotiable): templates whose PUBLISHED
- * definition carries `code`, `css`, `hooks`, or any `type:"embed"` field are
- * REFUSED — never stripped — per request (scanExternalRefusals, shared with
- * the X1 flip gate; belt and suspenders because publish can change the
- * definition after the flip). Refusal is indistinguishable from a missing
- * template (getServableTemplate → null → the route's one generic 404).
+ * THE REFUSAL INVARIANT IS RETIRED (2026-08-16 reversal, Fred-ratified —
+ * ref/EXTERNAL_CODE_CSS_DECISION.md): templates carrying `code` / `css` /
+ * `hooks` / embed fields now SERVE externally. The controls moved upstream:
+ * authoring code/css/hooks is form_dev-gated at the write, exposure moments
+ * carry the no-third-party-resources warning in the builder, and origin
+ * separation is chartered as the structural fix. The one generic 404 (§5.4
+ * no-oracle) still covers missing/unpublished/wrong-visibility templates.
  *
  * Conventions: functions take the mysql2 pool first; failures throw Errors
  * carrying `.status`; mysql2 JSON columns arrive parsed (guarded anyway).
@@ -106,8 +107,13 @@ async function getServableTemplate(db, formKey, opts) {
     ? JSON.parse(row.definition)
     : row.definition;
 
-  // §4 per-request refusal scan — refuse, never strip.
-  if (scanExternalRefusals(def).length) return null;
+  // 2026-08-16 reversal (ref/EXTERNAL_CODE_CSS_DECISION.md): the §4
+  // per-request refusal scan is GONE. Templates carrying code/css/hooks/embed
+  // now serve externally — authoring of code/css/hooks is form_dev-gated at
+  // the write (formTemplateService), and the exposure moments (visibility
+  // flip, publish) carry the no-third-party-resources warning in the builder.
+  // scanExternalRefusals lives on as the ADVISORY scanner behind those
+  // notices; nothing on the serving path calls it.
 
   return {
     form_key: row.form_key,
@@ -148,6 +154,11 @@ const TOP_KEYS = [
   // the single value 'card'. This exact omission shipped as a defect in §Q
   // (content fields rendered empty externally); test-locked this time too.
   'layout',
+  // 2026-08-16 reversal (ref/EXTERNAL_CODE_CSS_DECISION.md): authored
+  // executable content ships externally. Authoring these is form_dev-gated
+  // at the write; the builder warns at the exposure moments. The renderer
+  // already executes all three in ext boots — projection was the last gate.
+  'code', 'css', 'hooks',
 ];
 const SECTION_KEYS  = ['title', 'subtitle', 'showWhen'];
 const REPEATER_KEYS = ['repeater', 'title', 'subtitle', 'addLabel', 'showWhen'];
@@ -163,7 +174,10 @@ const FIELD_KEYS = [
   // (https ≤2000 src/href, ≤2000 text, string alt, positive-int maxWidth,
   // left|center|right align) and reach the DOM via textContent/setAttribute.
   // embed offered no precedent here — embed is refused externally outright.
-  'src', 'text', 'alt', 'maxWidth', 'align', 'href',
+  // embed ships externally too since the 2026-08-16 reversal — its `height`
+  // rides here; `src` was already admitted for content. The renderer's
+  // https-only re-check on embed src still applies.
+  'src', 'text', 'alt', 'maxWidth', 'align', 'href', 'height',
 ];
 
 // Types that carry no value: excluded from the submit registry below, so a

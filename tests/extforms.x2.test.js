@@ -87,7 +87,9 @@ describe('extFormService.getServableTemplate', () => {
     expect(out).not.toBeNull();
   });
 
-  test('§4 per-request refusal: code / css / hooks / embed each → null', async () => {
+  // 2026-08-16 reversal (ref/EXTERNAL_CODE_CSS_DECISION.md): the §4
+  // per-request refusal is RETIRED — code/css/hooks/embed all SERVE.
+  test('code / css / hooks / embed each SERVE (§4 refusal retired)', async () => {
     const embedDef = { sections: [{ title: 'S', rows: [{ fields: [
       { name: 'e', type: 'embed', src: 'https://x.test' }] }] }] };
     for (const definition of [
@@ -97,7 +99,9 @@ describe('extFormService.getServableTemplate', () => {
       embedDef,
     ]) {
       const db = routedDb({ template: tplRow({ definition }) });
-      expect(await svc.getServableTemplate(db, 'intake_test')).toBeNull();
+      const out = await svc.getServableTemplate(db, 'intake_test');
+      expect(out).not.toBeNull();
+      expect(out.definition).toEqual(definition);
     }
   });
 
@@ -334,8 +338,9 @@ describe('routes/api.ext.forms.js (live router)', () => {
     fixture = { template: tplRow({ visibility: 'internal' }) };
     r = await GET('/api/ext/forms/intake_test');
     statuses.push(r.status); bodies.push(await r.json());
-    // refused keys
-    fixture = { template: tplRow({ definition: { ...publicDef, code: 'x=1' } }) };
+    // unpublished (definition NULL — the SQL gate; the old refused-keys
+    // branch is retired: code/css/hooks/embed serve since 2026-08-16)
+    fixture = { template: null };
     r = await GET('/api/ext/forms/intake_test');
     statuses.push(r.status); bodies.push(await r.json());
     // bad form_key shape (N8 — gated before the DB is touched)

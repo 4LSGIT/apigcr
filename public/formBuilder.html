@@ -85,6 +85,10 @@
   /* X1 visibility select (EXTERNAL_FORMS_DESIGN §3) — badge-sized control */
   #visSelect { width: auto; font-size: 11px; padding: 2px 4px; }
   #visSelect.exposed { border-color: var(--danger); color: var(--danger); font-weight: 600; }
+  /* Standing "runs in clients' browsers" notice (published def carries
+     code/css/hooks/embed while visibility is portal/public). Persistent,
+     unlike the transient publish-time notice in errBar. */
+  #extDarkBadge { background: var(--danger); color: #fff; cursor: help; }
   #dirtyDot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); display: none; }
   #topSpacer { flex: 1; }
   #errBar { max-width: 420px; }
@@ -322,11 +326,12 @@
     <span id="linkBadge" class="badge link"></span>
     <span id="verBadge" class="badge draft"></span>
     <select id="visSelect"
-            title="External visibility (X1) — who the external form routes may serve the PUBLISHED definition to. 'internal' serves nothing externally. The server refuses exposing a template whose published definition carries code, css, hooks, or an embed field.">
+            title="External visibility (X1) — who the external form routes may serve the PUBLISHED definition to. 'internal' serves nothing externally. Code/CSS/hooks/embeds on the template run in clients' browsers when exposed — no third-party resources.">
       <option value="internal">internal</option>
       <option value="portal">portal</option>
       <option value="public">public</option>
     </select>
+    <span id="extDarkBadge" class="badge" style="display:none"></span>
     <span id="dirtyDot" title="Unsaved changes"></span>
     <div id="topSpacer"></div>
     <span id="errBar" class="err"></span>
@@ -542,6 +547,13 @@
 'use strict';
 
 const P = window.top;
+
+// Form-dev authorization (set in init() from P.firmData.currentUser —
+// mirror of lib/auth.formDev.js). Gates the UI for: Custom code / Hooks /
+// Custom CSS editors and visibility flips off-internal. The server gate in
+// formTemplateService.js is the real control; this only keeps the UI from
+// offering actions that will 403.
+let FORM_DEV = false;
 
 // ── Constants (mirrors of formTemplateService.js) ────────────────────────────
 const FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;
@@ -777,6 +789,17 @@ function init() {
   // preview/live iframes; without this relay they'd fall back to the static
   // options in the builder (case.html:~1060 / contact.html:~865 pattern).
   window.firmData = P.firmData;
+  // Form-dev authorization (mirror of lib/auth.formDev.js — the SERVER
+  // enforces; this only makes the UI honest: gated controls are disabled
+  // with a "requires form-developer authorization" note instead of
+  // offering an action that will 403). currentUser.roles is the users.roles
+  // SET as a comma-joined string (mysql2).
+  FORM_DEV = (() => {
+    const u = (P.firmData && P.firmData.currentUser) || {};
+    if (u.user_auth === 'authorized - SU') return true;
+    const roles = String(u.roles || '').split(',');
+    return roles.includes('it') || roles.includes('form_dev');
+  })();
   buildPalette();
   const params = new URLSearchParams(location.search);
   const lid = params.get('link_id');
@@ -1020,14 +1043,18 @@ function renderTopbar() {
   E('linkBadge').textContent = ROW.link_type;
 
   // X1 visibility (EXTERNAL_FORMS_DESIGN §3): an explicit act, separate from
-  // publish — its own control and its own POST, never part of saveDraft. The
-  // server refuses off-internal while the PUBLISHED definition carries
-  // code/css/hooks/embed; that 400 is surfaced verbatim and the select
-  // reverted. Older rows predating the migration default to 'internal'.
+  // publish — its own control and its own POST, never part of saveDraft.
+  // Off-internal flips are form_dev-gated server-side (the §4 content refusal
+  // is retired, 2026-08-16); server errors surface verbatim and the select
+  // reverts. Older rows predating the migration default to 'internal'.
   const vs = E('visSelect');
   vs.value = ROW.visibility || 'internal';
   vs.classList.toggle('exposed', vs.value !== 'internal');
   vs.onchange = () => visFlow(vs);
+  if (!FORM_DEV) {
+    vs.title = 'Exposing a form externally (portal/public) requires form-developer ' +
+      'authorization (the form_dev role) — ask IT. Flipping back to internal is always allowed.';
+  }
 
   const vb = E('verBadge');
   if (ROW.published_at) {
@@ -1039,12 +1066,70 @@ function renderTopbar() {
     vb.textContent = 'never published';
     vb.title = '';
   }
+
+  updateExtDarkBadge();
+}
+
+// Client mirror of formTemplateService.scanExternalRefusals (§4): top-level
+// code/css/hooks as non-empty values, plus any type:"embed" field in any
+// container (sections | tabs + sticky regions, rows and repeaters alike).
+// Advisory display only — the server scan is the control.
+function scanRefusalsClient(def) {
+  const refused = [];
+  if (!def || typeof def !== 'object') return refused;
+  for (const k of ['code', 'css', 'hooks']) {
+    const v = def[k];
+    if (v != null && v !== '') refused.push(k);
+  }
+  const sectionLists = Array.isArray(def.tabs)
+    ? [def.stickyTop || [], ...def.tabs.map(t => (t && t.sections) || []), def.stickyBottom || []]
+    : [def.sections || []];
+  for (const sections of sectionLists) {
+    for (const section of sections || []) {
+      if (!section || typeof section !== 'object') continue;
+      const fieldLists = Object.prototype.hasOwnProperty.call(section, 'repeater')
+        ? [section.fields || []]
+        : (section.rows || []).map(r => (r && r.fields) || []);
+      for (const fields of fieldLists) {
+        for (const f of fields) {
+          if (f && f.type === 'embed') refused.push('embed field "' + f.name + '"');
+        }
+      }
+    }
+  }
+  return refused;
+}
+
+// Standing notice (2026-08-16 reversal — was the "dark externally" badge):
+// this template is externally visible AND its PUBLISHED definition carries
+// code/css/hooks/embed, which RUN in every visitor's browser. Persistent so
+// staff who did not do the publish still see it. Recomputed by renderTopbar
+// (open / publish / restore) and after visibility flips.
+function updateExtDarkBadge() {
+  const badge = E('extDarkBadge');
+  if (!badge) return;
+  const vis = ROW && (ROW.visibility || 'internal');
+  const executing = vis !== 'internal' && ROW && ROW.definition
+    ? scanRefusalsClient(ROW.definition) : [];
+  if (executing.length) {
+    badge.style.display = '';
+    badge.textContent = '⚠ runs in clients\u2019 browsers';
+    badge.title = 'Visibility is "' + vis + '" and the PUBLISHED definition carries ' +
+      executing.join(', ') + ' — these execute in every visitor\u2019s browser on the ' +
+      'external form. No third-party scripts, fonts, pixels, or tracker iframes: any ' +
+      'external resource discloses that the visitor is consulting a bankruptcy firm.';
+  } else {
+    badge.style.display = 'none';
+    badge.textContent = '';
+    badge.title = '';
+  }
 }
 
 // ── Visibility flip (X1, EXTERNAL_FORMS_DESIGN §3) ──────────────────────────
-// Confirm before exposing; POST the flip; on server refusal (published
-// definition carries code/css/hooks/embed — §4 refuse-never-strip) revert the
-// select and show the path-named 400 verbatim. Back-to-internal never asks.
+// Warn + confirm before exposing (the no-third-party-resources warning — the
+// old §4 content refusal is retired); POST the flip; on a server error
+// (form_dev gate) revert the select and show the message verbatim.
+// Back-to-internal never asks.
 async function visFlow(sel) {
   const errBar = E('errBar'), okBar = E('okBar');
   errBar.textContent = ''; okBar.textContent = '';
@@ -1052,13 +1137,35 @@ async function visFlow(sel) {
   const to = sel.value;
   if (to === from) return;
 
+  // Form-dev gate (UI half — the server enforces the same rule with the same
+  // message shape): exposing a form externally requires authorization.
+  // Flipping BACK to internal never does.
+  if (to !== 'internal' && !FORM_DEV) {
+    sel.value = from;
+    sel.classList.toggle('exposed', from !== 'internal');
+    errBar.textContent = 'Setting visibility "' + to + '" requires form-developer ' +
+      'authorization (the form_dev role) — ask IT to grant it, or to make the flip.';
+    return;
+  }
+
   if (to !== 'internal') {
+    // 2026-08-16 reversal: code/css/hooks/embed SERVE externally now — the
+    // exposure moment carries the warning instead of a refusal. The generic
+    // paragraph applies always (code can be published later); when the
+    // PUBLISHED definition already carries executing keys, they are named.
+    const executing = scanRefusalsClient(ROW.definition);
     const ok = await ycConfirm(
       `Expose "${FKEY}" externally as ${to.toUpperCase()}?\n\n` +
       (to === 'public'
         ? 'The external form routes will serve the PUBLISHED definition to anyone holding a link (and to portal clients).'
         : 'The external form routes will serve the PUBLISHED definition to logged-in portal clients only.') +
-      '\n\nNothing is served until a definition is published, and templates carrying code/css/hooks/embed are refused.',
+      (executing.length
+        ? `\n\nThis template carries ${executing.join(', ')} — it will RUN IN CLIENTS' BROWSERS.`
+        : '') +
+      '\n\nAny code/CSS/embeds on this form run in clients\u2019 browsers. Do NOT load ' +
+      'third-party scripts, fonts, pixels, or iframes of tracker domains \u2014 any ' +
+      'external resource discloses that the visitor is consulting a bankruptcy ' +
+      'firm. Same-origin (or firm-controlled) resources only.',
       { confirmText: 'Expose' }
     );
     if (!ok) {
@@ -1078,6 +1185,7 @@ async function visFlow(sel) {
     errBar.textContent = err.message;       // names the offending keys, verbatim
   }
   sel.classList.toggle('exposed', (ROW.visibility || 'internal') !== 'internal');
+  updateExtDarkBadge();
 }
 
 function markDirty() {
@@ -2505,6 +2613,18 @@ async function publishFlow() {
     msg = `Field set changed — "${FKEY}" will publish as v${vNow + 1}; ` +
           `older drafts against v${vNow} will show a version warning.\n\nContinue?`;
   }
+  // 2026-08-16 reversal: publishing code/css/hooks/embed onto an externally
+  // visible template makes it RUN in clients' browsers (no refusal any more)
+  // — the exposure moment warns so the choice is always witting.
+  if ((ROW.visibility || 'internal') !== 'internal') {
+    const executing = scanRefusalsClient(serializeModel());
+    if (executing.length) {
+      msg += `\n\n⚠ This template is externally visible and the draft carries ${executing.join(', ')} — ` +
+        'these will RUN IN CLIENTS\u2019 BROWSERS on the public form. Do NOT load third-party ' +
+        'scripts, fonts, pixels, or tracker iframes — any external resource discloses that ' +
+        'the visitor is consulting a bankruptcy firm. Same-origin resources only.';
+    }
+  }
   if (!await ycConfirm(msg, { confirmText: 'Publish' })) return;
 
   try {
@@ -2516,14 +2636,13 @@ async function publishFlow() {
     renderTopbar();
     okBar.textContent = `Published v${result.schema_version}` +
       (result.bumped ? ' (schema version bumped)' : ' (no schema change)');
-    // X1 advisory: the publish succeeded, but this externally-visible
-    // template now carries refused keys — external requests get the generic
-    // 404 until a clean definition is published or visibility goes back to
-    // internal. Non-blocking by design (publish and visibility independent).
-    if (result.external_refusals && result.external_refusals.length) {
-      errBar.textContent = 'Warning: this template is externally visible but the published definition carries ' +
-        result.external_refusals.join(', ') +
-        ' — external requests are refused until a clean definition is published or visibility is set to internal.';
+    // Informational notice (was the X1 refusal advisory): this externally
+    // visible template carries executing keys — restate the no-third-party
+    // rule where the standing badge will also show it.
+    if (result.external_executes && result.external_executes.length) {
+      errBar.textContent = 'Note: this template is externally visible and carries ' +
+        result.external_executes.join(', ') +
+        ' — these run in clients\u2019 browsers. No third-party scripts, fonts, or pixels.';
     }
   } catch (err) {
     errBar.textContent = err.message;   // server message verbatim
@@ -2934,6 +3053,43 @@ function insSettings(ins) {
         }, { help: 'Appends the submitted form\'s URL as ?b=… so the landing page can offer "Edit your response". Same-origin path redirects only — the link is the client\'s credential.' })
       );
     }
+
+    // ── appearance (X-appearance, 2026-08-16): the EXTERNAL-SAFE styling
+    //    channel — strict hex-color values applied as CSS custom properties
+    //    on the external backdrop gradient. This is the sanctioned
+    //    alternative to free-form CSS (which external surfaces refuse, §4).
+    //    Deliberately NOT form_dev-gated: inert validated values are safe
+    //    for all staff to author — that safety is the point of the design.
+    const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+    const apOf = () => (extOf() && extOf().appearance) || null;
+    const setApKey = (key, v) => {
+      if (v) {
+        const e = ensureExt();
+        e.appearance = e.appearance || {};
+        e.appearance[key] = v;
+      } else if (apOf()) {
+        delete MODEL.external.appearance[key];
+        if (!Object.keys(MODEL.external.appearance).length) {
+          delete MODEL.external.appearance;
+          cleanupExt();
+        }
+      }
+      touched();
+    };
+    const apField = (label, key, help) =>
+      pText(label, (apOf() && apOf()[key]) || '', v => setApKey(key, v), {
+        mono: true, placeholder: '#f8f9fa',
+        validate: raw => (raw === '' || HEX_RE.test(raw))
+          ? null : 'must be a hex color (#rgb, #rgba, #rrggbb, or #rrggbbaa)',
+        help,
+      });
+    kids.push(
+      apField('Backdrop gradient — top (appearance.bgFrom)', 'bgFrom',
+        'External renders only: top color of the page backdrop gradient behind the form. Empty = the default page background. Hex colors only — the zero-risk styling channel (no form_dev needed, unlike custom CSS).'),
+      apField('Backdrop gradient — bottom (appearance.bgTo)', 'bgTo',
+        'External renders only: bottom color of the backdrop gradient. Set both for a gradient, one for a flat tint.')
+    );
+
     return group('External rendering', kids);
   })());
 
@@ -3062,7 +3218,14 @@ function insSettings(ins) {
     },
     help: 'Names a repo file /forms/hooks/{name}.js (onLoad / onSave) — for SHARED code used by multiple forms. Per-form logic belongs in Custom code below. Not loaded in preview.'
   });
-  if (typeof MODEL.code === 'string' && MODEL.code) {
+  if (!FORM_DEV) {
+    // Form-dev gate (server-enforced in formTemplateService — this keeps the
+    // UI honest). The saved value still round-trips untouched, so field-only
+    // edits on a hooks-carrying form save fine for everyone.
+    hooksProp._input.disabled = true;
+    hooksProp.appendChild(el('div', { class: 'help', text:
+      'Locked — changing the hooks file requires form-developer authorization (the form_dev role). Ask IT. The current value is kept as-is when you save.' }));
+  } else if (typeof MODEL.code === 'string' && MODEL.code) {
     hooksProp._input.disabled = true;
     hooksProp.appendChild(el('div', { class: 'help', text: 'Disabled — this form has Custom code (a form uses one or the other, never both).' }));
   }
@@ -3081,9 +3244,13 @@ function insSettings(ins) {
       try { new Function(raw); return null; }           // parses only — never runs here
       catch (e) { return 'syntax error: ' + e.message; }
     },
-    help: 'Per-form JavaScript stored in the definition. Runs on the live form only — never in preview. May define window.ycHooks = { onLoad, onSave }. Internal forms only (portal security-review bucket). Publishing is superuser-gated.'
+    help: 'Per-form JavaScript stored in the definition. Runs on the live form only — never in preview. May define window.ycHooks = { onLoad, onSave }. Internal forms only — external surfaces refuse templates carrying code. Changing it requires form-developer authorization (the form_dev role).'
   });
-  if (MODEL.hooks) {
+  if (!FORM_DEV) {
+    codeProp._input.disabled = true;
+    codeProp.appendChild(el('div', { class: 'help', text:
+      'Locked — changing custom code requires form-developer authorization (the form_dev role). Ask IT. The current value is kept as-is when you save.' }));
+  } else if (MODEL.hooks) {
     codeProp._input.disabled = true;
     codeProp.appendChild(el('div', { class: 'help', text: 'Disabled — this form names a hooks file (a form uses one or the other, never both).' }));
   }
@@ -3163,17 +3330,23 @@ function insSettings(ins) {
   })());
 
   // Custom CSS (2.5B B4) — free-form, injected by the renderer as a <style>
-  // via textContent after the shared stylesheet. INTERNAL-ONLY pending the
-  // portal security review (contract §9).
-  ins.appendChild(group('Custom CSS', [
-    pText('CSS (advanced)', typeof MODEL.css === 'string' ? MODEL.css : '', v => {
-      setOrDel(MODEL, 'css', v); touched();
-    }, {
-      textarea: true, mono: true,
-      placeholder: '.yc-section-title { font-size: 1rem; }',
-      help: 'Appended after the shared stylesheet, so it wins ties. Internal forms only — this key is part of the portal security review bucket and must not ship to external rendering.'
-    }),
-  ], 'wide'));
+  // via textContent after the shared stylesheet. Ships externally since the
+  // 2026-08-16 reversal (ref/EXTERNAL_CODE_CSS_DECISION.md) — authoring is
+  // form_dev-gated and the exposure moments warn against third-party
+  // resources. external.appearance below stays the zero-privilege channel.
+  const cssProp = pText('CSS (advanced)', typeof MODEL.css === 'string' ? MODEL.css : '', v => {
+    setOrDel(MODEL, 'css', v); touched();
+  }, {
+    textarea: true, mono: true,
+    placeholder: '.yc-section-title { font-size: 1rem; }',
+    help: 'Appended after the shared stylesheet, so it wins ties. Internal forms only — external surfaces refuse templates carrying css. Changing it requires form-developer authorization (the form_dev role).'
+  });
+  if (!FORM_DEV) {
+    cssProp._input.disabled = true;
+    cssProp.appendChild(el('div', { class: 'help', text:
+      'Locked — changing custom CSS requires form-developer authorization (the form_dev role). Ask IT. The current value is kept as-is when you save.' }));
+  }
+  ins.appendChild(group('Custom CSS', [cssProp], 'wide'));
 
   // Documentation note (2.5A A8) — form-level.
   ins.appendChild(group('Notes', [

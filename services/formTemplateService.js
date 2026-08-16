@@ -65,6 +65,14 @@ const OPTIONS_TYPES = new Set(['select', 'radio', 'checkgroup']); // options iff
 const VISIBILITIES  = new Set(['internal', 'portal', 'public']);
 const BADLINK_MODES = new Set(['reject', 'degrade']);
 
+// external.appearance (2026-08-16 — ref/EXTERNAL_CODE_CSS_DECISION.md §Q1):
+// the EXTERNAL-SAFE styling channel. Values are strict hex colors ONLY —
+// inert by construction (no url(), no selectors, no @import — none of the
+// exfil/third-party-fetch channels free-form css opens). The renderer applies
+// them as CSS custom property VALUES on the ext backdrop, never as CSS text.
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const APPEARANCE_KEYS = ['bgFrom', 'bgTo'];
+
 // urlParam (X2, Fred-ratified 2026-08-11): staff-declared per-field URL
 // prefill param. Reserved names are the params the route/renderer themselves
 // consume — the credential and mode switches must never be shadowable by a
@@ -90,6 +98,14 @@ function httpError(status, message) {
 }
 const badRequest = (msg) => httpError(400, msg);
 const notFound   = (msg) => httpError(404, msg);
+
+// 403 with a machine-readable marker so routes can audit form_dev rejections
+// distinctly (routes/api.formTemplates.js fail()).
+function formDevRequired(msg) {
+  const err = httpError(403, msg);
+  err.code = 'form_dev_required';
+  return err;
+}
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -750,8 +766,8 @@ function validateDefinition(def) {
       throw badRequest('external must be an object');
     }
     for (const k of Object.keys(def.external)) {
-      if (k !== 'badLink' && k !== 'postSubmit') {
-        throw badRequest(`external has unknown key "${k}" (allowed: badLink, postSubmit)`);
+      if (k !== 'badLink' && k !== 'postSubmit' && k !== 'appearance') {
+        throw badRequest(`external has unknown key "${k}" (allowed: badLink, postSubmit, appearance)`);
       }
     }
     if (def.external.badLink !== undefined && !BADLINK_MODES.has(def.external.badLink)) {
@@ -825,6 +841,34 @@ function validateDefinition(def) {
         }
       }
     }
+
+    // appearance (2026-08-16 — ref/EXTERNAL_CODE_CSS_DECISION.md §Q1): the
+    // EXTERNAL-SAFE per-form styling channel — scoped CSS custom property
+    // VALUES, never CSS text. Free-form `css` stays refused externally (§4);
+    // this is the sanctioned alternative. Exact-key enforced like badLink /
+    // postSubmit; every value must be a strict hex color (HEX_COLOR_RE) —
+    // hex is inert: no url() beacons, no selectors, no @import, nothing that
+    // can make a visitor's browser talk to a third party. The renderer
+    // re-guards with the same regex before setProperty (belt and
+    // suspenders, the content-src precedent). NOT in scanExternalRefusals —
+    // being servable externally is its entire point. Ignored by internal
+    // rendering; never part of fieldSignature (publishing a color change
+    // never bumps schema_version). Authoring is NOT form_dev-gated — safe
+    // styling for all staff is the payoff of the design.
+    if (def.external.appearance !== undefined && def.external.appearance !== null) {
+      const ap = def.external.appearance;
+      if (typeof ap !== 'object' || Array.isArray(ap)) {
+        throw badRequest('external.appearance must be an object');
+      }
+      for (const k of Object.keys(ap)) {
+        if (!APPEARANCE_KEYS.includes(k)) {
+          throw badRequest(`external.appearance has unknown key "${k}" (allowed: ${APPEARANCE_KEYS.join(', ')})`);
+        }
+        if (typeof ap[k] !== 'string' || !HEX_COLOR_RE.test(ap[k])) {
+          throw badRequest(`external.appearance.${k} must be a hex color (#rgb, #rgba, #rrggbb, or #rrggbbaa)`);
+        }
+      }
+    }
   }
 }
 
@@ -880,19 +924,18 @@ function fieldSignature(def) {
 }
 
 /**
- * X1 (EXTERNAL_FORMS_DESIGN §4): scan a definition for the keys the external
- * surface refuses — `code`, `css`, `hooks` (present as non-empty strings) and
- * any `type:"embed"` field in any container (sections | tabs + sticky
- * regions, standard rows and repeaters alike). Returns the list of refusal
- * reasons (empty array = clean). null/undefined definitions (never published)
- * scan clean — there is nothing to serve, let alone refuse.
+ * ADVISORY scanner (2026-08-16 reversal — ref/EXTERNAL_CODE_CSS_DECISION.md;
+ * historically the §4 refusal scan, name kept to limit churn): lists the
+ * keys that EXECUTE OR EMBED in clients' browsers when this definition is
+ * served externally — `code`, `css`, `hooks` (present as non-empty strings)
+ * and any `type:"embed"` field in any container (sections | tabs + sticky
+ * regions, standard rows and repeaters alike). Returns the list of reasons
+ * (empty array = nothing executes). null/undefined definitions scan clean.
  *
- * Consumers: setVisibility (flip-time gate, this file), publishTemplate
- * (non-blocking advisory), and the X2 external routes (per-request
- * belt-and-suspenders — publish can change the definition after the flip).
- * REFUSE, never strip: a template carrying any of these is not served
- * externally at all. The walk is defensive against shape surprises, but
- * every published definition has already passed validateDefinition.
+ * NOTHING REFUSES ON THIS SCAN ANY MORE. Consumers are informational only:
+ * publishTemplate's external_executes notice and the builder's standing
+ * badge / expose-confirm warning (client-side mirror). The authoring gate
+ * (form_dev, this file) and the exposure warnings are the controls now.
  */
 function scanExternalRefusals(def) {
   const refused = [];
@@ -915,6 +958,53 @@ function scanExternalRefusals(def) {
     }
   }
   return refused;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FORM-DEV AUTHORING GATE (2026-08-16 — ref/EXTERNAL_CODE_CSS_DECISION.md §Q5)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Top-level `code` / `hooks` / `css` are AUTHORED EXECUTABLE CONTENT: the
+// internal renderer runs `code` via new Function, loads `hooks` files, and
+// injects `css` into every staff browser that opens the form. Introducing,
+// changing, OR removing any of them requires form-developer authorization
+// (routes compute { formDev } via lib/auth.formDev.js and pass it here;
+// absent authz fails CLOSED). The gate is a DIFF, not a presence check —
+// field-only edits on a template that already carries code (e.g. templates
+// case_details / 341_notes) stay open to all staff because the builder
+// round-trips the existing code byte-identically.
+//
+// This gate does NOT relax the external refusal invariant (§4): even
+// form_dev-authored code/css/hooks are refused on external surfaces —
+// authorship trust and surface policy are independent controls.
+
+const AUTHORED_KEYS = ['code', 'hooks', 'css'];
+
+// Normalize an authored key for comparison: absent / null / '' are all "not
+// set" (scanExternalRefusals uses the same presence semantics).
+function authoredKeyValue(def, key) {
+  const v = def && typeof def === 'object' ? def[key] : undefined;
+  return v == null ? '' : String(v);
+}
+
+// Which authored keys differ between the incoming and existing definitions?
+// (existing = null for create.) Empty array = nothing gated about this write.
+function authoredKeyChanges(nextDef, prevDef) {
+  return AUTHORED_KEYS.filter(
+    (k) => authoredKeyValue(nextDef, k) !== authoredKeyValue(prevDef, k)
+  );
+}
+
+// Throw the legible 403 unless the caller is a form developer. `action` is a
+// short phrase naming what was attempted ("changing", "restoring a version
+// that changes", …); `keys` names exactly which authored keys tripped.
+function assertFormDev(authz, action, keys) {
+  if (authz && authz.formDev === true) return;
+  throw formDevRequired(
+    `${action} ${keys.join(', ')} requires form-developer authorization ` +
+    '(the form_dev role, or IT/superuser). Ask IT to grant it, or have a ' +
+    'form developer make this change.'
+  );
 }
 
 
@@ -1001,7 +1091,7 @@ async function getTemplate(db, id) {
  * @param {number|null} userId
  * @returns {object} the created full row
  */
-async function createTemplate(db, body, userId) {
+async function createTemplate(db, body, userId, authz) {
   const { form_key, title, link_type, draft_definition } = body || {};
 
   if (typeof form_key !== 'string' || !FORM_KEY_RE.test(form_key)) {
@@ -1014,6 +1104,11 @@ async function createTemplate(db, body, userId) {
     throw badRequest(`link_type must be one of: ${[...LINK_TYPES].join(', ')}`);
   }
   validateDefinition(draft_definition);
+
+  // Form-dev gate: creating a template whose definition already carries
+  // authored executable content (fail-closed when authz is absent).
+  const authored = authoredKeyChanges(draft_definition, null);
+  if (authored.length) assertFormDev(authz, 'creating a template with', authored);
 
   // Unique form_key (also guarded by the DB unique index; check first for a clean 400).
   const [[existing]] = await db.query(
@@ -1047,7 +1142,7 @@ async function createTemplate(db, body, userId) {
  * @param {object} body  { title?, draft_definition?, form_key? }
  * @returns {object} the updated full row
  */
-async function updateTemplate(db, id, body, userId) {
+async function updateTemplate(db, id, body, userId, authz) {
   const row = await fetchRow(db, id);
   if (!row) throw notFound(`Template ${id} not found`);
 
@@ -1063,6 +1158,14 @@ async function updateTemplate(db, id, body, userId) {
 
   if (b.draft_definition !== undefined) {
     validateDefinition(b.draft_definition);
+
+    // Form-dev gate: any DIFFERENCE in top-level code/hooks/css vs the
+    // current draft (introduce, change, or remove) is a gated act. A save
+    // that round-trips them byte-identically — the builder's field-only
+    // edit on a code-carrying template — passes for all staff.
+    const authored = authoredKeyChanges(b.draft_definition, row.draft_definition);
+    if (authored.length) assertFormDev(authz, 'changing', authored);
+
     sets.push('draft_definition = ?');
     vals.push(JSON.stringify(b.draft_definition));
   }
@@ -1145,18 +1248,19 @@ async function publishTemplate(db, id, userId) {
     [newVersion, userId, id]
   );
 
-  // X1 advisory (non-blocking): publishing refused keys onto an externally
-  // visible template makes it go dark externally — the X2 per-request scan
-  // refuses with a generic 404 (§4 belt-and-suspenders). Publish semantics
-  // are unchanged (publish and visibility stay independent, §3); the builder
-  // surfaces this so staff aren't left debugging a silent external 404.
-  const externalRefusals =
+  // Informational notice (2026-08-16 reversal — was the X1 "refusals"
+  // advisory): publishing code/css/hooks/embed onto an externally visible
+  // template no longer darkens it — it EXECUTES in clients' browsers. The
+  // builder surfaces this with the no-third-party-resources warning so the
+  // exposure is always witting. Publish semantics unchanged (publish and
+  // visibility stay independent, §3).
+  const externalExecutes =
     row.visibility && row.visibility !== 'internal' ? scanExternalRefusals(draft) : [];
 
   return {
     schema_version: newVersion,
     bumped,
-    ...(externalRefusals.length ? { external_refusals: externalRefusals } : {}),
+    ...(externalExecutes.length ? { external_executes: externalExecutes } : {}),
   };
 }
 
@@ -1168,9 +1272,10 @@ async function publishTemplate(db, id, userId) {
 /**
  * Set a template's visibility ('internal' | 'portal' | 'public'). An explicit
  * builder act, separate from publish — policy lives in the COLUMN, the
- * definition is content. Flipping OFF 'internal' is REFUSED while the
- * PUBLISHED definition carries any externally-refused key (§4 — refuse,
- * never strip); flipping back to 'internal' is always allowed.
+ * definition is content. Flipping OFF 'internal' is form_dev-gated (who may
+ * expose); flipping back to 'internal' is always allowed. The old §4 content
+ * refusal is retired (2026-08-16 reversal) — the builder's expose-confirm
+ * carries the no-third-party-resources warning instead.
  *
  * A never-published template (definition NULL) may hold any visibility: the
  * external routes serve the published definition only, so it serves nothing
@@ -1183,7 +1288,7 @@ async function publishTemplate(db, id, userId) {
  *
  * @returns {{ visibility: string }}
  */
-async function setVisibility(db, id, visibility, userId) {
+async function setVisibility(db, id, visibility, userId, authz) {
   if (!VISIBILITIES.has(visibility)) {
     throw badRequest('visibility must be one of internal, portal, public');
   }
@@ -1191,12 +1296,19 @@ async function setVisibility(db, id, visibility, userId) {
   if (!row) throw notFound(`Template ${id} not found`);
 
   if (visibility !== 'internal') {
-    const refused = scanExternalRefusals(row.definition);
-    if (refused.length) {
-      throw badRequest(
-        `cannot set visibility "${visibility}": the published definition carries ` +
-        `${refused.join(', ')} — refused on external surfaces ` +
-        '(EXTERNAL_FORMS_DESIGN §4). Publish a definition without them first.'
+    // Form-dev gate: who may expose. Flipping BACK to internal is always
+    // allowed for all staff: it is the safe direction.
+    //
+    // 2026-08-16 reversal (ref/EXTERNAL_CODE_CSS_DECISION.md): the §4
+    // content refusal that used to follow this gate is GONE — templates
+    // carrying code/css/hooks/embed now serve externally. The builder's
+    // expose-confirm carries the no-third-party-resources warning instead.
+    if (!(authz && authz.formDev === true)) {
+      throw formDevRequired(
+        `setting visibility "${visibility}" (exposing this form externally) ` +
+        'requires form-developer authorization (the form_dev role, or ' +
+        'IT/superuser). Ask IT to grant it. Flipping back to "internal" ' +
+        'never requires it.'
       );
     }
   }
@@ -1344,14 +1456,26 @@ async function getVersion(db, id, versionId) {
  *
  * @returns {{ template: object, restored: { version_id, schema_version } }}
  */
-async function restoreVersion(db, id, versionId, userId) {
-  await assertTemplateExists(db, id);
+async function restoreVersion(db, id, versionId, userId, authz) {
+  // Full row (not just existence): the form-dev gate below diffs the
+  // version's authored keys against the CURRENT draft.
+  const row = await fetchRow(db, id);
+  if (!row) throw notFound(`Template ${id} not found`);
   const [[v]] = await db.query(
-    `SELECT id, schema_version FROM form_template_versions
+    `SELECT id, schema_version, definition FROM form_template_versions
      WHERE id = ? AND template_id = ? LIMIT 1`,
     [versionId, id]
   );
   if (!v) throw notFound(`Version ${versionId} not found for template ${id}`);
+
+  // Form-dev gate: restoring is an update of draft_definition — if the
+  // restored version's top-level code/hooks/css differ from the current
+  // draft's, the restore changes authored executable content and is gated
+  // exactly like updateTemplate. (The definition read here is for the DIFF
+  // only — the write below stays a SQL column-to-column copy.)
+  const vDef = parseJsonCol(v.definition);
+  const authored = authoredKeyChanges(vDef, row.draft_definition);
+  if (authored.length) assertFormDev(authz, 'restoring a version that changes', authored);
 
   await db.query(
     `UPDATE form_templates ft
@@ -1387,4 +1511,5 @@ module.exports = {
   validateDefinition,
   fieldSignature,
   scanExternalRefusals,   // X1 — shared with the X2 external routes (per-request scan)
+  authoredKeyChanges,     // form-dev gate diff (2026-08-16) — exported for tests
 };
