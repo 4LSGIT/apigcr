@@ -247,15 +247,47 @@ router.post('/p/:slug', async (req, res) => {
 //   /forms/render.html (GET)     — the external renderer (static)
 //   /forms/hooks/<name>.js (GET) — renderer hook files (static)
 //   /api/ext/* (GET/POST)        — the external form API
+//   /r/:slug (GET)               — redirect short-links
+//   /book/:slug, /b/:slug (GET)  — booking widget shell (routes/booking.js)
+//   /api/book/:slug/{config,contact,slots} (GET)
+//   /api/book/:slug (POST)       — the booking pipeline
+//   /m, /m/, /m/:token (GET)     — appointment self-manage shell (manage.js)
+//   /api/manage-config (GET)
+//   /api/m/:token, /api/m/:token/slots (GET)
+//   /api/m/:token/{cancel,reschedule} (POST)
 //   /css/yc-forms.css, /js/yc-forms.js, /favicon.ico (GET)
 // EVERYTHING ELSE — /login, the shell, every staff/API route, every other
 // static file — gets the deadPage treatment (firm-site redirect / 404). If a
 // JWT could be minted or used on the landing host the boundary would be
 // decorative; the allowlist contains no auth surface by construction.
 //
-// /f/*, ext render and /api/ext/* additionally carry X-Robots-Tag noindex:
-// those URLs bear the case_id credential and must never enter an index.
-// Pages do NOT — they are marketing surface and stay indexable.
+// /f/*, ext render, /api/ext/* and the whole booking/manage set additionally
+// carry X-Robots-Tag noindex: those URLs bear a bearer credential in the path
+// (appt_manage_token) or the query (?case_id=, ?c=<booking_token>) and must
+// never enter an index. Landing PAGES do NOT — they are marketing surface and
+// stay indexable, and the booking widget is designed to be EMBEDDED in one of
+// them (pages row 2 iframes /book/mich-tax-prep), so it loses nothing by
+// being unindexed — the page that embeds it is the thing that should rank.
+//
+// ── Booking + manage on the landing host (2026-08-16, follow-up slice) ──
+// Driver, stated honestly: booking.js/manage.js are REPO code, not
+// staff-authored, so they never carried the JWT-snatch exposure that
+// motivated origin separation. Moving them is (a) COHERENCE — every public
+// link the firm sends lives on one public host, so staff never have to
+// remember which surface lives where and app.4lsg.com converges on
+// "staff only" — and (b) it shrinks the set of paths that must stay
+// reachable on the app origin, which makes a future app-origin lockdown
+// cheaper. That is the whole case; it is not a security fix.
+//
+// PRECEDENCE (deliberate, test-locked): the ALLOWLIST beats root-slug pages.
+// The allowlist is a fixed repo-defined set; root slugs are an unbounded
+// staff-authored set. If a staff-created page named "m" could shadow
+// /m/:token, every appointment-management SMS the firm has ever sent would
+// break SILENTLY. The reverse failure — a repo route shadowing a page — is
+// loud and recoverable (the page still serves at /p/m, and it can be
+// renamed). Bare /book and /b are deliberately NOT allowlisted (only the
+// two-segment /book/:slug and /b/:slug are), so a marketing page whose slug
+// is "book" still serves at 4lsg.com/book and collides with nothing.
 // ─────────────────────────────────────────────────────────────
 
 function normalizeHostValue(raw) {
@@ -308,9 +340,57 @@ function isLandingRequest(req, lHosts) {
 const HOOK_FILE_RE = /^\/forms\/hooks\/[a-zA-Z0-9_-]{1,80}\.js$/;
 const F_ROUTE_RE   = /^\/f\/[^/]+$/;
 
-/** Paths that carry the case_id bearer credential — keep them out of indexes. */
+// ── Booking (routes/booking.js) + manage (routes/manage.js) ─────────────
+// ENUMERATED, not prefixed. A `p.startsWith('/api/book/')` rule would be
+// shorter but would auto-admit any future route added under that prefix, and
+// booking.js ALREADY contains a jwtOrApiKey route
+// (POST /api/contacts/:id/booking-link — a different prefix today, but the
+// "this file's namespace is public" mental model is the hazard). The public
+// set here has been stable since scheduler slices 6a/9/10; adding to it
+// should be a deliberate edit of this list.
+const BOOK_ROUTE_RE     = /^\/(?:book|b)\/[^/]+$/;                     // shell (+ /b alias)
+const API_BOOK_GET_RE   = /^\/api\/book\/[^/]+\/(?:config|contact|slots)$/;
+const API_BOOK_POST_RE  = /^\/api\/book\/[^/]+$/;                     // the booking pipeline
+const M_ROUTE_RE        = /^\/m(?:\/[^/]*)?$/;                        // /m, /m/, /m/:token
+const API_M_GET_RE      = /^\/api\/m\/[^/]+(?:\/slots)?$/;
+const API_M_POST_RE     = /^\/api\/m\/[^/]+\/(?:cancel|reschedule)$/;
+
+/**
+ * Paths that carry a bearer credential — keep them out of indexes.
+ *
+ * Path-only by design (query never widens OR narrows this): making the header
+ * query-dependent would invert the discipline the allowlist runs on. That
+ * forces a call on the two booking/manage shapes, decided separately:
+ *
+ *   /m, /m/:token, /api/m/*  — appt_manage_token is a 32-hex bearer token IN
+ *     THE PATH. Unambiguously credentialed, same class as /f/:key. Bare /m is
+ *     tokenless but is only ever the branded invalid-link fallback — indexing
+ *     an error page is pure noise, so it rides along.
+ *   /book/:slug, /b/:slug, /api/book/*  — credentialed only in the `?c=`
+ *     (contacts.booking_token) variant, which goes out in SMS and is exactly
+ *     the kind of URL that leaks into an index via a share or a referrer. The
+ *     bare form is arguably marketing — but the booking widget is a slot
+ *     picker with no marketing copy, designed to be iframed into a `pages`
+ *     landing page (row 2 does this). Indexing the widget instead of the page
+ *     that embeds it is a net negative even ignoring the token.
+ *
+ * /api/manage-config is deliberately NOT here: it returns firm-public config
+ * only (booking CTA + office phone, both already on the firm website) and
+ * carries no token in any variant. Uniformity is not a reason to widen a rule
+ * whose stated basis is "carries a credential".
+ */
 function isCredentialedPath(p) {
-  return F_ROUTE_RE.test(p) || p === '/forms/render.html' || p.startsWith('/api/ext/');
+  return (
+    F_ROUTE_RE.test(p) ||
+    p === '/forms/render.html' ||
+    p.startsWith('/api/ext/') ||
+    BOOK_ROUTE_RE.test(p) ||
+    API_BOOK_GET_RE.test(p) ||
+    API_BOOK_POST_RE.test(p) ||
+    M_ROUTE_RE.test(p) ||
+    API_M_GET_RE.test(p) ||
+    API_M_POST_RE.test(p)
+  );
 }
 
 /**
@@ -334,6 +414,20 @@ function landingAllowed(req) {
   // origin-separation concern. Requested by Fred 2026-08-16 so short public
   // links can ride the landing host too.
   if (/^\/r\/[^/]+$/.test(p))          return isRead;
+  // Booking + appointment self-management (2026-08-16 follow-up slice).
+  // Repo code, no JWT-snatch driver — coherence + app-origin surface
+  // reduction. See the block comment above for the full framing and for the
+  // allowlist-beats-root-slug precedence rule these two entries rely on.
+  // The shells make RELATIVE fetches (verified: book.html / manage.html build
+  // every URL as '/api/...'), so they talk to whichever host served them —
+  // nothing is host-pinned and no CORS preflight is introduced.
+  if (BOOK_ROUTE_RE.test(p))           return isRead;
+  if (API_BOOK_GET_RE.test(p))         return isRead;
+  if (API_BOOK_POST_RE.test(p))        return m === 'POST';
+  if (M_ROUTE_RE.test(p))              return isRead;
+  if (p === '/api/manage-config')      return isRead;
+  if (API_M_POST_RE.test(p))           return m === 'POST';
+  if (API_M_GET_RE.test(p))            return isRead;
   if (p === '/css/yc-forms.css')       return isRead;
   if (p === '/js/yc-forms.js')         return isRead;
   if (p === '/favicon.ico')            return isRead;
@@ -354,6 +448,17 @@ function isMigratedPath(req) {
   // ext-mode render only — the internal renderer (iframed by the shell /
   // formInbox, no ext=1) must keep serving on the app host.
   if (p === '/forms/render.html' && req.query && req.query.ext === '1') return true;
+  // Booking + manage: the HTML ENTRY POINTS move; their XHR endpoints do NOT.
+  // Same split as /f/:key (migrated) vs /api/ext/* (not). The shells fetch
+  // relative URLs, so a shell served from the landing host already talks to
+  // the landing host and one served from the app host already talks to the
+  // app host — redirecting /api/book/* or /api/m/* would buy nothing but an
+  // extra round trip per call, and POST /api/book/:slug must never meet a 302
+  // (it would become a GET and drop the body). Global CORS here is
+  // `origin:'*'` (server.js), so the hop would not actually BREAK a GET —
+  // it is simply pointless. Keep the API on whichever host served the shell.
+  if (BOOK_ROUTE_RE.test(p)) return true;
+  if (M_ROUTE_RE.test(p)) return true;
   return false;
 }
 

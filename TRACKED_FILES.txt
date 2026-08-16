@@ -288,6 +288,7 @@ ref/2026-08-13_form_submissions_linkage.sql
 ref/2026-08-13_phase_d_sms_cutover.sql
 ref/2026-08-14_intake_cards_definition.json
 ref/2026-08-14_x51_pdf_wiring.sql
+ref/2026-08-16_booking_landing.sql
 ref/2026-08-16_form_dev_role.sql
 ref/2026-08-16_origin_separation.sql
 ref/2026-08-16_phase_d_sms_cutover_v2.sql

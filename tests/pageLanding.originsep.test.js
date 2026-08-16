@@ -17,6 +17,17 @@
 //   - landing_redirect='0' and empty landing_hosts restore pre-slice
 //     behavior exactly.
 //   - Credentialed landing paths carry X-Robots-Tag noindex; pages don't.
+//
+// 2026-08-16 follow-up slice (booking + manage on the landing host):
+//   - The booking + manage public surface serves on the landing host;
+//     POST /api/contacts/:id/booking-link (jwtOrApiKey) still does NOT.
+//   - App host 302s GET /book/*, /b/*, /m, /m/* — but NOT their XHR
+//     endpoints, and never a POST.
+//   - Allowlist BEATS root-slug pages: a live page slugged "m" cannot shadow
+//     /m/:token. Bare /book is NOT allowlisted, so a page slugged "book"
+//     still serves at 4lsg.com/book.
+//   - The whole booking/manage set carries noindex; /api/manage-config
+//     deliberately does not.
 //   - No response cookie anywhere in the codebase (a Domain=.4lsg.com cookie
 //     would bridge the origins this slice separates).
 'use strict';
@@ -40,6 +51,15 @@ const PAGES = {
   draftpage: {
     id: 2, slug: 'draftpage', host: null, path: null, status: 'draft',
     hook_slug: null, thankyou_url: null, html: '<h1>DRAFT</h1>',
+  },
+  // Collision fixtures for the allowlist-vs-root-slug precedence lock.
+  m: {
+    id: 3, slug: 'm', host: null, path: null, status: 'live',
+    hook_slug: null, thankyou_url: null, html: '<h1>PAGE_SLUG_M</h1>',
+  },
+  book: {
+    id: 4, slug: 'book', host: null, path: null, status: 'live',
+    hook_slug: null, thankyou_url: null, html: '<h1>PAGE_SLUG_BOOK</h1>',
   },
 };
 
@@ -86,6 +106,23 @@ beforeAll((done) => {
   app.get('/api/ext/forms/:key', (req, res) => res.json({ probe: 'EXTGET' }));
   app.post('/api/ext/forms/:key/submit', (req, res) => res.json({ probe: 'EXTPOST' }));
   app.get('/r/:slug', (req, res) => res.redirect(302, 'https://target.example/x'));
+  // routes/booking.js + routes/manage.js stand-ins. Shapes copied from the
+  // real routers (booking.js: '/book/:slug' + the '/b/:slug' alias added
+  // 2026-08-16; manage.js: '/m/:token' and the tokenless '/m'). The real
+  // handlers pull DB rows and luxon; the host router never reaches them, so
+  // probes are enough — what is under test is WHICH host lets them answer.
+  app.get(['/book/:slug', '/b/:slug'], (req, res) => res.json({ probe: 'BOOKSHELL', slug: req.params.slug }));
+  app.get('/api/book/:slug/config',  (req, res) => res.json({ probe: 'BOOKCONFIG' }));
+  app.get('/api/book/:slug/contact', (req, res) => res.json({ probe: 'BOOKCONTACT' }));
+  app.get('/api/book/:slug/slots',   (req, res) => res.json({ probe: 'BOOKSLOTS' }));
+  app.post('/api/book/:slug',        (req, res) => res.json({ probe: 'BOOKPOST' }));
+  app.post('/api/contacts/:id/booking-link', (req, res) => res.json({ probe: 'BOOKINGLINK' }));
+  app.get(['/m', '/m/:token'],       (req, res) => res.json({ probe: 'MANAGESHELL' }));
+  app.get('/api/manage-config',      (req, res) => res.json({ probe: 'MANAGECONFIG' }));
+  app.get('/api/m/:token',           (req, res) => res.json({ probe: 'MGET' }));
+  app.get('/api/m/:token/slots',     (req, res) => res.json({ probe: 'MSLOTS' }));
+  app.post('/api/m/:token/cancel',       (req, res) => res.json({ probe: 'MCANCEL' }));
+  app.post('/api/m/:token/reschedule',   (req, res) => res.json({ probe: 'MRESCHED' }));
   app.get('/login', (req, res) => res.send('LOGIN'));
   app.get('/api/firm-data', (req, res) => res.json({ probe: 'FIRMDATA' }));
   app.get('/api/form-templates', (req, res) => res.json({ probe: 'TEMPLATES' }));
@@ -260,11 +297,213 @@ describe('app host — migrated GET surface redirects, query intact', () => {
     expect(res.headers.get('location')).toBe('/p/mypage?submitted=1');
   });
 
+  test('/book/*, /b/* and /m* 302 to the landing host, query intact', async () => {
+    const tok = 'e'.repeat(32);
+    const cases = [
+      ['/book/consult?c=' + tok, 'https://4lsg.com/book/consult?c=' + tok],
+      ['/b/consult',             'https://4lsg.com/b/consult'],
+      ['/m/' + tok,              'https://4lsg.com/m/' + tok],
+      ['/m',                     'https://4lsg.com/m'],
+    ];
+    for (const [from, to] of cases) {
+      const res = await appHost(from);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe(to);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+    }
+  });
+
+  test('the XHR endpoints do NOT move — they stay on whichever host served the shell', async () => {
+    const tok = 'e'.repeat(32);
+    for (const [p, probe] of [
+      ['/api/book/consult/config', 'BOOKCONFIG'],
+      ['/api/book/consult/slots?date=2026-09-01', 'BOOKSLOTS'],
+      ['/api/manage-config', 'MANAGECONFIG'],
+      ['/api/m/' + tok, 'MGET'],
+    ]) {
+      const res = await appHost(p);
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+
+  test('LOCK: POSTs to the booking/manage paths never redirect (302 drops the body)', async () => {
+    const tok = 'e'.repeat(32);
+    for (const [p, probe] of [
+      ['/api/book/consult', 'BOOKPOST'],
+      ['/api/m/' + tok + '/cancel', 'MCANCEL'],
+      ['/api/m/' + tok + '/reschedule', 'MRESCHED'],
+    ]) {
+      const res = await appHost(p, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+
   test('app host is otherwise untouched — shell, login, root-slug NOT hijacked', async () => {
     expect(await (await appHost('/')).text()).toBe('SHELL');
     expect(await (await appHost('/login')).text()).toBe('LOGIN');
     // root slugs are a LANDING-host feature only
     expect(await (await appHost('/settings')).text()).toBe('SETTINGS_HTML');
+  });
+});
+
+// ── booking + manage on the landing host (2026-08-16 follow-up slice) ──────
+describe('landing host — booking surface', () => {
+  test('GET /book/:slug and the /b alias both serve the widget shell', async () => {
+    for (const p of ['/book/consult', '/b/consult']) {
+      const res = await landing(p);
+      expect(res.status).toBe(200);
+      const j = await res.json();
+      expect(j.probe).toBe('BOOKSHELL');
+      expect(j.slug).toBe('consult');
+    }
+  });
+
+  test('the three GET /api/book/* endpoints serve', async () => {
+    const tok = 'a'.repeat(32);
+    const probes = [
+      ['/api/book/consult/config', 'BOOKCONFIG'],
+      ['/api/book/consult/contact?c=' + tok, 'BOOKCONTACT'],
+      ['/api/book/consult/slots?date=2026-09-01', 'BOOKSLOTS'],
+    ];
+    for (const [p, probe] of probes) {
+      const res = await landing(p);
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+
+  test('POST /api/book/:slug books — the one POST the booking set allows', async () => {
+    const res = await landing('/api/book/consult', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ first: 'A' }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).probe).toBe('BOOKPOST');
+  });
+
+  test('GET on the booking POST path is NOT allowlisted (method-aware)', async () => {
+    const res = await landing('/api/book/consult');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe(FIRM);
+  });
+});
+
+describe('landing host — manage surface', () => {
+  const tok = 'b'.repeat(32);
+
+  test('/m/:token, bare /m, /api/manage-config and the /api/m/* GETs serve', async () => {
+    const cases = [
+      ['/m/' + tok, 'MANAGESHELL'],
+      ['/m', 'MANAGESHELL'],
+      ['/api/manage-config', 'MANAGECONFIG'],
+      ['/api/m/' + tok, 'MGET'],
+      ['/api/m/' + tok + '/slots?date=2026-09-01', 'MSLOTS'],
+    ];
+    for (const [p, probe] of cases) {
+      const res = await landing(p);
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+
+  test('cancel + reschedule POSTs serve', async () => {
+    for (const [action, probe] of [['cancel', 'MCANCEL'], ['reschedule', 'MRESCHED']]) {
+      const res = await landing('/api/m/' + tok + '/' + action, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+});
+
+describe('landing host — the internal booking route stays out', () => {
+  test('LOCK: POST /api/contacts/:id/booking-link (jwtOrApiKey) is NOT allowlisted', async () => {
+    // Lives in routes/booking.js next to the public set but on a different
+    // path prefix. A startsWith('/api/book/') allowlist would also exclude it
+    // — this test exists so a future "simplify to a prefix" refactor that
+    // reaches for '/api/' or '/api/contacts' can't quietly widen the boundary.
+    const res = await landing('/api/contacts/42/booking-link', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(303);            // POST dead-page → firm site
+    expect(res.headers.get('location')).toBe(FIRM);
+    expect(await res.text()).not.toContain('BOOKINGLINK');
+  });
+
+  test('the shells are not reachable by their raw static filenames', async () => {
+    // public/book.html and public/manage.html exist; neither is allowlisted,
+    // so express.static can never hand them out on the landing host.
+    for (const p of ['/book.html', '/manage.html']) {
+      const res = await landing(p);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe(FIRM);
+    }
+  });
+});
+
+// ── the precedence lock ────────────────────────────────────────────────────
+describe('allowlist beats root-slug pages (staff pages cannot shadow repo routes)', () => {
+  test('a LIVE page slugged "m" does NOT shadow bare /m or /m/:token', async () => {
+    const bare = await landing('/m');
+    expect(bare.status).toBe(200);
+    expect((await bare.json()).probe).toBe('MANAGESHELL');
+
+    const tokened = await landing('/m/' + 'c'.repeat(32));
+    expect((await tokened.json()).probe).toBe('MANAGESHELL');
+  });
+
+  test('…and that page is still reachable at its prefix form /p/m', async () => {
+    const res = await landing('/p/m');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('PAGE_SLUG_M');
+  });
+
+  test('a LIVE page slugged "book" DOES serve at bare /book (not over-allowlisted)', async () => {
+    // Only the two-segment /book/:slug is allowlisted, so a marketing page
+    // named "book" keeps the pretty root URL and collides with nothing.
+    const res = await landing('/book');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('PAGE_SLUG_BOOK');
+  });
+
+  test('…while /book/:slug underneath it still reaches the booking router', async () => {
+    const res = await landing('/book/consult');
+    expect((await res.json()).probe).toBe('BOOKSHELL');
+  });
+});
+
+// ── robots ─────────────────────────────────────────────────────────────────
+describe('noindex covers the whole booking/manage set', () => {
+  test('shells and APIs carry X-Robots-Tag', async () => {
+    const tok = 'd'.repeat(32);
+    const paths = [
+      '/book/consult', '/b/consult',
+      '/api/book/consult/config', '/api/book/consult/contact?c=' + tok,
+      '/api/book/consult/slots?date=2026-09-01',
+      '/m', '/m/' + tok, '/api/m/' + tok, '/api/m/' + tok + '/slots',
+    ];
+    for (const p of paths) {
+      const res = await landing(p);
+      expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+    }
+  });
+
+  test('/api/manage-config deliberately does NOT (firm-public, no token)', async () => {
+    const res = await landing('/api/manage-config');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-robots-tag')).toBeNull();
   });
 });
 
@@ -356,6 +595,39 @@ describe('secondary landing hosts canonicalize to landing_hosts[0]', () => {
       expect(await (await appHost('/login')).text()).toBe('LOGIN');
     });
   });
+
+  test('booking/manage GETs on www canonicalize; their POSTs are served in place', async () => {
+    // Interaction lock between this and the 2026-08-16 booking/manage slice:
+    // canonicalization (step 0) runs BEFORE the allowlist, so a booking link
+    // always ends on one origin. POSTs skip step 0 by design and must still
+    // be ALLOWED here, not dead-ended — an in-flight booking or cancel from
+    // a page loaded on www has to complete.
+    await withWww(async () => {
+      const tok = 'a'.repeat(32);
+      for (const [from, to] of [
+        ['/book/consult', 'https://4lsg.com/book/consult'],
+        ['/b/consult',    'https://4lsg.com/b/consult'],
+        ['/m/' + tok,     'https://4lsg.com/m/' + tok],
+      ]) {
+        const res = await onHost('www.4lsg.com', from);
+        expect(res.status).toBe(302);
+        expect(res.headers.get('location')).toBe(to);
+      }
+
+      for (const [p, probe] of [
+        ['/api/book/consult', 'BOOKPOST'],
+        ['/api/m/' + tok + '/cancel', 'MCANCEL'],
+      ]) {
+        const res = await onHost('www.4lsg.com', p, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+        expect(res.status).toBe(200);
+        expect((await res.json()).probe).toBe(probe);
+      }
+    });
+  });
 });
 
 // ── kill switches ──────────────────────────────────────────────────────────
@@ -371,6 +643,36 @@ describe('rollout switches restore pre-slice behavior', () => {
       expect(f.headers.get('location')).toMatch(/^\/forms\/render\.html\?/);
     } finally {
       process.env.LANDING_REDIRECT = '1';
+    }
+  });
+
+  test("landing_redirect='0': app host serves /book and /m locally again", async () => {
+    process.env.LANDING_REDIRECT = '0';
+    try {
+      const b = await appHost('/book/consult');
+      expect(b.status).toBe(200);
+      expect((await b.json()).probe).toBe('BOOKSHELL');
+      const m = await appHost('/m/' + 'f'.repeat(32));
+      expect(m.status).toBe(200);
+      expect((await m.json()).probe).toBe('MANAGESHELL');
+    } finally {
+      process.env.LANDING_REDIRECT = '1';
+    }
+  });
+
+  test('empty landing_hosts: booking/manage behave exactly as pre-slice on both hosts', async () => {
+    process.env.LANDING_HOSTS = '';
+    try {
+      // 4lsg.com is now just an unknown host — no gate, no redirect, no header.
+      const b = await landing('/book/consult');
+      expect(b.status).toBe(200);
+      expect((await b.json()).probe).toBe('BOOKSHELL');
+      expect(b.headers.get('x-robots-tag')).toBeNull();
+      const app = await appHost('/m/' + 'f'.repeat(32));
+      expect(app.status).toBe(200);
+      expect((await app.json()).probe).toBe('MANAGESHELL');
+    } finally {
+      process.env.LANDING_HOSTS = '4lsg.com';
     }
   });
 

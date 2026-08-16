@@ -70,6 +70,24 @@
  * never intercepts them (same reasoning as /p/:slug, /book/:slug). The
  * tokenless GET /m IS single-segment, but /:page calls next() for it
  * (no public/m.html), so it still reaches this router → branded fallback.
+ *
+ * ── Landing host (2026-08-16 follow-up slice) ───────────────────────
+ * These routes are allowlisted on the landing origin (routes/pageLanding.js)
+ * and the app host 302s GET /m and /m/* there when landing_redirect='1'.
+ * Nothing here is host-aware: public/manage.html builds every API URL
+ * relative, so the shell always talks to the host that served it.
+ *
+ * The single-segment /m matters on the landing host in a way it does not
+ * here: that host ALSO resolves root paths as page slugs, so /m could in
+ * principle be shadowed by a staff-created page named "m". It is not — the
+ * allowlist is checked before the root-slug branch, deliberately, because a
+ * page rename silently breaking every manage link the firm has ever sent is
+ * a far worse failure than a page being reachable only at /p/m. That ordering
+ * is test-locked in tests/pageLanding.originsep.test.js; do not "tidy" it.
+ *
+ * ALL of /m, /m/*, /api/m/* carry X-Robots-Tag noindex on the landing host —
+ * appt_manage_token is a bearer credential in the path. /api/manage-config
+ * does not (firm-public config, no token in any variant).
  */
 
 const express = require('express');

@@ -7,6 +7,17 @@
  * PUBLIC (no auth):
  *   GET  /book/:slug              — serve the booking widget shell
  *                                   (public/book.html lands in slice 6b)
+ *   GET  /b/:slug                 — permanent short alias for the same shell
+ *                                   (2026-08-16). Same handler, not a
+ *                                   redirect: the visitor's address bar keeps
+ *                                   the short URL they were sent, and a
+ *                                   cold-start Cloud Run instance doesn't pay
+ *                                   an extra round trip on an SMS tap.
+ *                                   /book/:slug keeps working forever —
+ *                                   neither is deprecated. Duplicate-content
+ *                                   is a non-issue because both carry
+ *                                   X-Robots-Tag noindex on the landing host
+ *                                   (see routes/pageLanding.js).
  *   GET  /api/book/:slug/config   — public-safe view config + ts/sig pair
  *   GET  /api/book/:slug/slots    — open slot starts for one civil day
  *   POST /api/book/:slug          — book a slot (identity → provider →
@@ -66,9 +77,25 @@
  * and was an enumeration/impersonation surface — sequential ids, books on
  * behalf of arbitrary contacts, fires their confirmation SMS.)
  *
- * Auto-mounts via the routes/ scan in server.js. /book/:slug and
+ * Auto-mounts via the routes/ scan in server.js. /book/:slug, /b/:slug and
  * /api/book/:slug are ≥2 segments so the single-segment GET /:page static
  * catch-all never intercepts them (same reasoning as /p/:slug, /r/:slug).
+ * NOTE the corollary: BARE /book IS single-segment and public/book.html
+ * exists, so /book on the app host is served the raw shell by that catch-all
+ * (it then boots with slug='book' and shows its own not-found state). On a
+ * landing host bare /book is deliberately NOT allowlisted, so it falls to the
+ * root-slug branch — a marketing page with slug "book" serves there cleanly.
+ *
+ * ── Landing host (2026-08-16 follow-up slice) ───────────────────────
+ * These routes are allowlisted on the landing origin (routes/pageLanding.js)
+ * and the app host 302s GET /book/* and /b/* there when landing_redirect='1'.
+ * A secondary landing host (www) canonicalizes GETs to landing_hosts[0]
+ * first, so a booking link always ends on one origin.
+ * Nothing in this file is host-aware and nothing needs to be: public/book.html
+ * builds every API URL relative, so the shell always talks to the host that
+ * served it. The rate limiters are unaffected — every landing host is a
+ * direct Cloud Run domain mapping (no CDN in front), so getClientIp's
+ * last-XFF-element rule holds identically on each.
  */
 
 const express = require('express');
@@ -320,7 +347,8 @@ function dateWithinHorizon(dateStr, horizonDays) {
 // GET /book/:slug — widget shell (file lands in slice 6b)
 // ─────────────────────────────────────────────────────────────
 
-router.get('/book/:slug', (req, res) => {
+// '/b/:slug' is an ALIAS, not a redirect — see the header block.
+router.get(['/book/:slug', '/b/:slug'], (req, res) => {
   if (!SLUG_RE.test(String(req.params.slug || ''))) {
     return res.status(404).type('text').send('Not found');
   }
