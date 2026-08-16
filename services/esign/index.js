@@ -312,6 +312,21 @@ async function recordCreditSpend(db, { credits = CREDITS_PER_ENVELOPE } = {}) {
     } else if (balance >= threshold && latched) {
       // Re-arm. Reached after Fred tops up and sends again.
       await db.query('UPDATE app_settings SET `value` = ? WHERE `key` = ?', ['0', CREDIT_ALERT_SENT_KEY]);
+      // This branch is the ONLY point in the system where a healthy balance is
+      // observed — the latch is cleared nowhere else — so it is also the only
+      // honest place to close the task the crossing raised. The latch already
+      // stops re-ALERTING; it never closed the open task, which is why a
+      // topped-up account could still show "Zoho Sign credits low" for weeks.
+      //
+      // Caught HERE rather than by the outer handler on purpose. By this line
+      // the balance write and the latch clear have both committed, so letting a
+      // failed task close fall through would report ok:false / balance:null for
+      // a spend that was recorded perfectly — the exact inversion this
+      // function's header forbids. Closing a notification is the least
+      // important thing that happens in this branch and must fail alone.
+      await _resolveLowCreditTask(db).catch((err) => {
+        console.error('[ESIGN CREDITS] low-credit task auto-resolve failed:', err && err.message);
+      });
     }
 
     console.log(`[ESIGN CREDITS] ${previous} → ${balance} (spent ${credits}, threshold ${threshold}${alerted ? ', ALERTED' : ''})`);
@@ -330,9 +345,21 @@ async function recordCreditSpend(db, { credits = CREDITS_PER_ENVELOPE } = {}) {
  * Deferring keeps that off the boot path of anything that only wants
  * getProvider().
  */
+/**
+ * Dedupe key for the low-credit alert. Literal rather than
+ * esignAlertService.DEDUPE_KEYS.CREDITS_LOW because this module is exercised
+ * against a jest mock of that service (tests/esignCredits.test.js), which would
+ * read `undefined` off it. Keep the two in sync.
+ */
+const CREDITS_LOW_KEY = 'credits-low';
+
 async function _raiseLowCreditTask(db, balance, threshold) {
   const esignAlertService = require('../esignAlertService');
   await esignAlertService.raiseTask(db, {
+    // The latch below already limits this to once per crossing; the key is the
+    // backstop for the case the latch cannot cover — a stuck or hand-reset
+    // esign_credit_alert_sent — and is what lets the top-up close the task.
+    dedupeKey: CREDITS_LOW_KEY,
     // Well under the 100-char clip for any plausible balance.
     title: `Zoho Sign credits low: ${balance} remaining`,
     desc:
@@ -347,6 +374,17 @@ async function _raiseLowCreditTask(db, balance, threshold) {
       `needed, then set 'esign_credit_balance' to the true figure in ` +
       `Settings → E-Sign. Saving a value at or above ${threshold} re-arms this alert.`,
   });
+}
+
+/**
+ * Close the open low-credit task once the balance is healthy again. Lazily
+ * required for the same boot-path reason as _raiseLowCreditTask. Best-effort
+ * by contract — resolveTask never throws — and a failure here must not fail a
+ * send whose credits Zoho has already taken.
+ */
+async function _resolveLowCreditTask(db) {
+  const esignAlertService = require('../esignAlertService');
+  await esignAlertService.resolveTask(db, { dedupeKey: CREDITS_LOW_KEY });
 }
 
 module.exports = {

@@ -12,6 +12,7 @@
 
 jest.mock('../services/esignAlertService', () => ({
   raiseTask: jest.fn(async () => ({ ok: true, taskId: 900 })),
+  resolveTask: jest.fn(async () => ({ ok: true, resolved: [], count: 0 })),
   resolveAlertAssignee: jest.fn(async () => 22),
 }));
 
@@ -155,13 +156,62 @@ describe('the once-per-crossing latch', () => {
     expect(db.store[CREDIT_ALERT_SENT_KEY]).toBe('1');
 
     db.store[CREDIT_BALANCE_KEY] = '500';              // Fred buys credits
-    await recordCreditSpend(db);                       // 495 — clears the latch
+    const rearm = await recordCreditSpend(db);         // 495 — clears the latch
     expect(db.store[CREDIT_ALERT_SENT_KEY]).toBe('0');
+    // Asserted because it previously was not: the suite stayed green while the
+    // re-arm branch threw and returned ok:false / balance:null, because nothing
+    // read the return value. See 'a failed auto-resolve does not corrupt the
+    // count' below for why that mattered.
+    expect(rearm).toMatchObject({ ok: true, balance: 495 });
 
     esignAlertService.raiseTask.mockClear();
     db.store[CREDIT_BALANCE_KEY] = '52';
     await recordCreditSpend(db);                       // 47 — alerts again
     expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+  });
+
+  // The latch stopped re-ALERTING but never closed the task, so a topped-up
+  // account could show "Zoho Sign credits low" for weeks. This branch is the
+  // only place in the system where a healthy balance is observed.
+  test('the top-up also closes the open low-credit task', async () => {
+    const db = makeDb({
+      [CREDIT_BALANCE_KEY]: '52', [CREDIT_THRESHOLD_KEY]: '50', [CREDIT_ALERT_SENT_KEY]: '0',
+    });
+
+    await recordCreditSpend(db);                       // alerts, latches
+    expect(esignAlertService.resolveTask).not.toHaveBeenCalled();
+
+    db.store[CREDIT_BALANCE_KEY] = '500';
+    await recordCreditSpend(db);
+
+    expect(esignAlertService.resolveTask).toHaveBeenCalledTimes(1);
+    expect(esignAlertService.resolveTask).toHaveBeenCalledWith(db, { dedupeKey: 'credits-low' });
+  });
+
+  test('the raise carries the same key the resolve clears', async () => {
+    const db = makeDb({
+      [CREDIT_BALANCE_KEY]: '52', [CREDIT_THRESHOLD_KEY]: '50', [CREDIT_ALERT_SENT_KEY]: '0',
+    });
+    await recordCreditSpend(db);
+    expect(esignAlertService.raiseTask.mock.calls[0][1].dedupeKey).toBe('credits-low');
+  });
+
+  // Closing a notification is the least important thing in that branch. By the
+  // time it runs the balance write and the latch clear have both committed, so
+  // a failure here must NOT report ok:false / balance:null for a spend that was
+  // recorded perfectly — the inversion this module's header forbids.
+  test('a failed auto-resolve does not corrupt the count', async () => {
+    esignAlertService.resolveTask.mockRejectedValueOnce(new Error('pool exhausted'));
+    const db = makeDb({
+      [CREDIT_BALANCE_KEY]: '52', [CREDIT_THRESHOLD_KEY]: '50', [CREDIT_ALERT_SENT_KEY]: '0',
+    });
+
+    await recordCreditSpend(db);
+    db.store[CREDIT_BALANCE_KEY] = '500';
+    const out = await recordCreditSpend(db);
+
+    expect(out).toMatchObject({ ok: true, balance: 495 });
+    expect(db.store[CREDIT_ALERT_SENT_KEY]).toBe('0');
   });
 
   test('a balance already latched below threshold does not re-alert', async () => {

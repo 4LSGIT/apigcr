@@ -35,6 +35,7 @@ jest.mock('../services/esignFilingService', () => ({
 
 jest.mock('../services/esignAlertService', () => ({
   raiseTask: jest.fn(async () => ({ ok: true, taskId: 500 })),
+  resolveTask: jest.fn(async () => ({ ok: true, resolved: [], count: 0 })),
 }));
 
 jest.mock('../services/esign', () => ({ getProvider: jest.fn() }));
@@ -183,8 +184,27 @@ describe('pass A — outstanding rows', () => {
     expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
     const task = esignAlertService.raiseTask.mock.calls[0][1];
     expect(task.title).toMatch(/6 problem/);
+    // The COUNT in the title moves between runs while the condition stays the
+    // same, which is exactly why title equality could never have deduped this.
+    // Tasks 1082/1083/1084 were three identical Pending copies from three
+    // consecutive nights.
+    expect(task.dedupeKey).toBe('reconcile-failures');
     expect(task.desc).toMatch(/and 1 more/);
     expect(task.desc).toMatch(/Connections/);
+  });
+
+  // Deliberate asymmetry with reconcile-provider. A per-row failure that does
+  // not recur tonight is not necessarily HANDLED — the envelope may just have
+  // expired out of the outstanding set — so a clean run must not claim someone
+  // dealt with it. This task waits for a human; it simply stops multiplying.
+  test('a clean run does NOT auto-close a previous failure summary', async () => {
+    esignService.listOutstanding.mockResolvedValue([]);
+    getProvider.mockResolvedValue({ getStatus: jest.fn() });
+
+    await reconcile({}, makeDb());
+
+    const keys = esignAlertService.resolveTask.mock.calls.map((c) => c[1].dedupeKey);
+    expect(keys).not.toContain('reconcile-failures');
   });
 });
 
@@ -207,6 +227,11 @@ describe('dead-channel check — moved rows + webhook silence', () => {
     expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
     const task = esignAlertService.raiseTask.mock.calls[0][1];
     expect(task.title).toMatch(/webhooks appear to be DOWN/);
+    // Keyed, so night two touches this task instead of raising a second. A
+    // week-long outage used to mean seven identical open tasks; task 1077 was
+    // deleted by the assignee and 1114 arrived 19 days later with no memory of
+    // it. routes/api.esign.js clears the same key when a delivery gets in.
+    expect(task.dedupeKey).toBe('webhook-down');
     expect(task.desc).toMatch(/YC-ESIGN-0001: sent → signed/);
     expect(task.desc).toMatch(/EVER/);
     expect(task.desc).toMatch(/esign_webhook_hmac_mode/);
@@ -492,6 +517,33 @@ describe('when nothing can run', () => {
     expect(esignService.listOutstanding).not.toHaveBeenCalled();
     expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
     expect(esignAlertService.raiseTask.mock.calls[0][1].desc).toMatch(/esign_credential_id/);
+    // A broken credential is a standing condition and this job runs nightly:
+    // un-keyed it produced one identical task per night until someone noticed.
+    expect(esignAlertService.raiseTask.mock.calls[0][1].dedupeKey).toBe('reconcile-provider');
+    // Nothing to clear — the provider never built on this run.
+    expect(esignAlertService.resolveTask).not.toHaveBeenCalled();
+  });
+
+  // The other half of the pair: a provider that resolves is a provider that
+  // works, so the task claiming it does not must close itself.
+  test('a provider that builds closes the task that said it could not', async () => {
+    esignService.listOutstanding.mockResolvedValue([]);
+    getProvider.mockResolvedValue({ getStatus: jest.fn() });
+
+    const out = await reconcile({}, makeDb());
+
+    expect(out.success).toBe(true);
+    expect(esignAlertService.resolveTask)
+      .toHaveBeenCalledWith(expect.anything(), { dedupeKey: 'reconcile-provider' });
+  });
+
+  test('a failed auto-resolve does not abort the run', async () => {
+    esignService.listOutstanding.mockResolvedValue([]);
+    getProvider.mockResolvedValue({ getStatus: jest.fn() });
+    esignAlertService.resolveTask.mockRejectedValueOnce(new Error('pool exhausted'));
+
+    const out = await reconcile({}, makeDb());
+    expect(out.success).toBe(true);
   });
 
   test('a listOutstanding failure aborts rather than reporting a clean run', async () => {

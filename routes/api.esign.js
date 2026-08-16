@@ -57,9 +57,20 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 
 const esignWebhookService = require('../services/esignWebhookService');
+// Already on this file's boot path via esignWebhookService, which requires it
+// at module scope — naming it here costs a module-cache hit, not a new load.
+const esignAlertService = require('../services/esignAlertService');
 
 /** Where Zoho is told to POST. Kept here so the checkpoint script can print it. */
 const WEBHOOK_PATH = '/webhooks/esign/zoho';
+
+/**
+ * Dedupe key of the nightly dead-channel alert raised by esign_reconcile.
+ * Literal rather than esignAlertService.DEDUPE_KEYS.WEBHOOK_DOWN so the two
+ * halves stay symmetrical with the raise site in lib/internal_functions/esign.js,
+ * which is exercised against a mock of that service. Keep them in sync.
+ */
+const WEBHOOK_DOWN_KEY = 'webhook-down';
 
 /**
  * Rate limit by IP. Looser than the hook receiver's 120/min because a single
@@ -179,6 +190,22 @@ router.post(WEBHOOK_PATH, esignWebhookLimiter, rawTextFallback, async (req, res)
      ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`)`,
     [esignWebhookService.WEBHOOK_LAST_SEEN_KEY, new Date().toISOString()]
   ).catch((err) => console.error('[ESIGN WEBHOOK] heartbeat stamp failed:', err.message));
+
+  // ── clear the dead-channel alert ──────────────────────────────────────────
+  // A delivery that cleared BOTH gates above IS the channel coming back, so it
+  // is also the moment esign_reconcile's "E-sign webhooks appear to be DOWN"
+  // task stops being true. Closing it here means the alert's lifetime matches
+  // the outage's instead of sitting open until someone notices (task 1077 was
+  // deleted rather than acted on; 1114 arrived 19 days later with no memory of
+  // it). No-ops in the overwhelmingly common case where nothing is open.
+  //
+  // Same fire-and-forget shape as the heartbeat, for the same reason: a
+  // settings/tasks write must never delay or break webhook processing, and the
+  // 200 below must not depend on it. resolveTask is best-effort internally too
+  // — the .catch is belt-and-braces.
+  esignAlertService
+    .resolveTask(db, { dedupeKey: WEBHOOK_DOWN_KEY })
+    .catch((err) => console.error('[ESIGN WEBHOOK] dead-channel auto-resolve failed:', err.message));
 
   // ── respond, then work ────────────────────────────────────────────────────
   res.status(200).json({ status: 'received' });

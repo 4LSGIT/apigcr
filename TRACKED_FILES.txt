@@ -289,6 +289,7 @@ ref/2026-08-13_phase_d_sms_cutover.sql
 ref/2026-08-14_intake_cards_definition.json
 ref/2026-08-14_x51_pdf_wiring.sql
 ref/2026-08-16_form_dev_role.sql
+ref/2026-08-16_task_dedupe_key.sql
 ref/EXTERNAL_CODE_CSS_DECISION.md
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md
@@ -555,6 +556,7 @@ tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
 tests/esignActionsUi.test.js
 tests/esignAlert.test.js
+tests/esignAlertDedupe.test.js
 tests/esignCompletionTriggers.test.js
 tests/esignCredits.test.js
 tests/esignExpressions.test.js
