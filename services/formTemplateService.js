@@ -382,10 +382,12 @@ function validateDefinition(def) {
       throw badRequest(`${path}.options is not allowed for type "${field.type}"`);
     }
 
-    // checkgroup columns (2.5A A5): integer 1–3, checkgroup only.
+    // choice-grid columns (2.5A A5; radio added later): integer 1–3, on
+    // checkgroup and radio only. Both render a choice list; radio opts into
+    // the same grid via the .yc-radio-grid modifier.
     if (field.columns !== undefined && field.columns !== null) {
-      if (field.type !== 'checkgroup') {
-        throw badRequest(`${path}.columns is only allowed on type "checkgroup"`);
+      if (field.type !== 'checkgroup' && field.type !== 'radio') {
+        throw badRequest(`${path}.columns is only allowed on type "checkgroup" or "radio"`);
       }
       if (!Number.isInteger(field.columns) || field.columns < 1 || field.columns > 3) {
         throw badRequest(`${path}.columns must be an integer between 1 and 3`);

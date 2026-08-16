@@ -192,7 +192,7 @@ Only `name` and `type` are required; everything else optional. `name` matches `^
 |---|---|---|
 | `requiredWhen` | condition or condition[] | Conditionally required (A2). Same normalized condition shape as `showWhen` (§4.4); **an array means AND**. Compiled by the renderer into `validation.custom` — `validate()` already passes `collect()` as the second argument, so no runtime change. Use this instead of `required: true` on any field that can be hidden: `validate()` does **not** skip `display:none` fields, so a plain required field inside a hidden section blocks Save with an invisible error. Ignored (with a warn) inside repeaters. |
 | `requiredMessage` | string | Error text for a failed `requiredWhen` (default "This field is required"). |
-| `columns` | 1 \| 2 \| 3 | Checkgroup only (A5). Emits an inline `grid-template-columns` override (`1fr` for 1, `repeat(N,1fr)` for 2/3), matching casedetails-bk's hand-built pattern. Absent → the stylesheet default (3 columns, collapsing to 1 on mobile). NOTE: an explicit value — including an explicit 3 — is an inline style and therefore also overrides the mobile media query. |
+| `columns` | 1 \| 2 \| 3 | Checkgroup **or radio** (A5; radio added post-2.5A). Emits an inline `grid-template-columns` override (`1fr` for 1, `repeat(N,1fr)` for 2/3), matching casedetails-bk's hand-built pattern. On radio the renderer additionally adds the `yc-radio-grid` class, which flips `.yc-radio-group` from flex to grid — the inline style alone would be inert. Absent → the stylesheet default: 3 columns for checkgroup, a single wrapping row for radio (both collapsing to 1 on mobile). NOTE: an explicit value — including an explicit 3 — is an inline style and therefore also overrides the mobile media query. |
 | `note` | string | Documentation only — see §3. |
 
 **Additional field keys (X2, 2026-08-11):**
@@ -344,7 +344,7 @@ Reject with a message naming the offending path:
 - **Name scoping (2.5A A4):** top-level field names AND repeater keys unique form-wide (shared data namespace); repeater field names unique within their repeater and distinct from every top-level name — two repeaters MAY share a field name. (This tightens the repeater-key rule — previously unchecked — and relaxes cross-repeater field names; every pre-2.5A published definition satisfies both.)
 - `options` present iff type is select/radio/checkgroup.
 - Conditions (`showWhen` anywhere, `requiredWhen` on fields): single object or non-empty array (= AND); each `field` references an existing top-level FIELD (repeater keys are not valid targets); `op` in `eq|neq|in|notEmpty|includes`; `includes` requires the target field to be a `checkgroup`.
-- `columns`, if present: integer 1–3, checkgroup fields only.
+- `columns`, if present: integer 1–3, checkgroup or radio fields only.
 - `prefill` starting with `$load` matches the §5.1 grammar regex. Other prefill strings stay free-form resolver expressions.
 - `apiColumn` (2.5B): non-empty string, or `{ load?, save? }` with at least one key, each a non-empty string.
 - `optionsFrom` (2.5B): select fields only; object with `source` (a `firmData.<dot-path>` — `^firmData(\.[A-Za-z0-9_]+)+$` — or a §5.1 `$load` expression), required non-empty `value`; optional non-empty `label`/`groupBy` strings; optional `groupLabels` object of string values. Static `options` remain required (the fallback).

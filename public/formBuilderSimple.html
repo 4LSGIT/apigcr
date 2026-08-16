@@ -185,6 +185,7 @@
   .fk-mark { width:13px; height:13px; border:1.5px solid #b6c0cd; flex:none; background:#fff; }
   .fk-mark.rd { border-radius:50%; }
   .fk-cols { display:flex; flex-wrap:wrap; }
+  .fk-cols.c1 > * { width:100%; }
   .fk-cols.c2 > * { width:50%; } .fk-cols.c3 > * { width:33.33%; }
   .fk-more { font-size:11.5px; color:var(--muted); padding:2px 5px; font-style:italic; }
   .fk-note {
@@ -1462,7 +1463,7 @@ function fauxControl(f) {
     return wrap;
   }
   if (t === 'radio' || t === 'checkgroup') {
-    const cols = (t === 'checkgroup' && f.columns) ? ' c' + f.columns : '';
+    const cols = f.columns ? ' c' + f.columns : '';
     const list = el('div', { class:'fk-cols' + cols });
     const opts = Array.isArray(f.options) ? f.options : [];
     opts.slice(0, 8).forEach(o => {
@@ -1725,7 +1726,9 @@ async function changeType(f, next) {
   f.type = next;
   if (isOpt && !Array.isArray(f.options)) f.options = ['Option 1'];
   if (!isOpt && wasOpt) { delete f.options; delete f.allowOther; delete f.optionsFrom; }
-  if (next !== 'checkgroup') { delete f.allowOther; delete f.columns; }
+  if (next !== 'checkgroup') delete f.allowOther;
+  // columns is valid on checkgroup + radio; strip it only when leaving both.
+  if (next !== 'checkgroup' && next !== 'radio') delete f.columns;
   if (next !== 'textarea')   delete f.rows;
   if (next !== 'number')     { delete f.min; delete f.max; delete f.step; }
   if (DISPLAY_ONLY.includes(next)) {
@@ -2017,10 +2020,14 @@ function panelField(p, f, sec, row) {
       touched();
     }));
   }
-  if (f.type === 'checkgroup') {
-    layoutKids.push(pSelect('Show choices in', f.columns ? String(f.columns) : '1',
-      [['1','One column'], ['2','Two columns'], ['3','Three columns']], v => {
-        if (v === '1') delete f.columns; else f.columns = Number(v);
+  if (f.type === 'checkgroup' || f.type === 'radio') {
+    // No value = the stylesheet default, which is NOT one column: checkgroups
+    // fall back to a 3-across grid and radios to a single wrapping row. An
+    // explicit 1–3 is an inline style, so it holds on phones too.
+    layoutKids.push(pSelect('Show choices in', f.columns ? String(f.columns) : '',
+      [['', f.type === 'radio' ? 'Default — one row, wrapping' : 'Default — three columns'],
+       ['1','One column'], ['2','Two columns'], ['3','Three columns']], v => {
+        if (v === '') delete f.columns; else f.columns = Number(v);
         touched();
       }));
   }

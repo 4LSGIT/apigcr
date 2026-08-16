@@ -3713,14 +3713,23 @@ function optionsEditor(f) {
       if (v) f.allowOther = true; else delete f.allowOther;
       touched();
     }));
-    // columns 1–3 (2.5A A5): inline grid override; default (absent) keeps the
-    // stylesheet's 3 columns and its mobile collapse-to-1 media query. An
-    // explicit value (even 3) is an inline style and also applies on mobile.
+  }
+  // columns 1–3 (2.5A A5; radio added later): inline grid override. Checkgroup
+  // default (absent) keeps the stylesheet's 3 columns and its mobile
+  // collapse-to-1 media query; radio default (absent) keeps the flex row. An
+  // explicit value (even 3) is an inline style and also applies on mobile.
+  if (f.type === 'checkgroup' || f.type === 'radio') {
+    const colDefault = f.type === 'radio'
+      ? 'default (single row, wraps)'
+      : 'default (3)';
+    const colHelp = f.type === 'radio'
+      ? 'Lays the radio choices out in a grid. Default is a single wrapping row that stacks on mobile; an explicit value applies everywhere.'
+      : 'Checkbox grid columns. Default follows the stylesheet (3, collapsing to 1 on mobile); an explicit value applies everywhere.';
     kids.push(pSelect('Columns', f.columns != null ? String(f.columns) : '',
-      [['', 'default (3)'], ['1', '1'], ['2', '2'], ['3', '3']], v => {
+      [['', colDefault], ['1', '1'], ['2', '2'], ['3', '3']], v => {
         if (v === '') delete f.columns; else f.columns = +v;
         touched();
-      }, { help: 'Checkbox grid columns. Default follows the stylesheet (3, collapsing to 1 on mobile); an explicit value applies everywhere.' }));
+      }, { help: colHelp }));
   }
 
   // optionsFrom (2.5B B1) — dynamic select options from firmData.* or $load.*.
@@ -4204,6 +4213,9 @@ function changeType(f, newType) {
   if (isOpt && !Array.isArray(f.options)) f.options = ['Option 1'];
   if (!isOpt && wasOpt) { delete f.options; delete f.allowOther; }
   if (newType !== 'checkgroup') delete f.allowOther;
+  // columns is valid on checkgroup + radio only — leaving both must strip it
+  // or the next draft save 400s on a leftover key.
+  if (newType !== 'checkgroup' && newType !== 'radio') delete f.columns;
   if (newType !== 'select') delete f.optionsFrom;   // 2.5B: select-only key
   if (newType !== 'textarea') delete f.rows;
   if (newType !== 'number') { delete f.min; delete f.max; delete f.step; }

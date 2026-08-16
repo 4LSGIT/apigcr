@@ -115,7 +115,8 @@
  *     condition on a display:contents .ycr-and-wrap wrapper (nested
  *     display:none composes; flex layout untouched). Zero runtime change.
  *   - checkgroup "columns" 1–3 (§4.3): inline grid-template-columns override
- *     matching casedetails-bk's hand-built pattern.
+ *     matching casedetails-bk's hand-built pattern. Radio accepts the same
+ *     key (added post-2.5A) and opts into the grid via .yc-radio-grid.
  *
  * SLICE 2.5B ADDITIONS (SLICE_2_5_SPEC.md + addendum):
  *   - optionsFrom (§4.3): select options rebuilt at load from firmData.* (frame
@@ -563,7 +564,20 @@
       }
 
       case 'radio': {
+        // columns 1–3: same contract as checkgroup. The .yc-radio-grid
+        // modifier flips .yc-radio-group from flex to grid (and carries the
+        // mobile collapse); the inline style only picks the column count, so
+        // an explicit value wins everywhere — including on mobile — exactly
+        // as it does for checkgroup. Absent → the flex row (wraps naturally,
+        // stacks on mobile via the existing media query).
         input = el('div', { class: 'yc-radio-group' });
+        if (f.columns === 1) {
+          input.className = 'yc-radio-group yc-radio-grid';
+          input.setAttribute('style', 'grid-template-columns:1fr;');
+        } else if (f.columns === 2 || f.columns === 3) {
+          input.className = 'yc-radio-group yc-radio-grid';
+          input.setAttribute('style', 'grid-template-columns:repeat(' + f.columns + ',1fr);');
+        }
         (f.options || []).forEach(function (o) {
           var op = optOf(o);
           input.appendChild(el('label', null, [

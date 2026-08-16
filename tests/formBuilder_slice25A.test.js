@@ -12,7 +12,8 @@
  *      requiredWhen + AND-array members, delete cascade removes only the
  *      referencing condition
  *   A7 required-under-showWhen lint hint
- *   A5 checkgroup columns knob
+ *   A5 checkgroup columns knob (+ the post-2.5A radio extension and the
+ *      changeType strip that goes with it)
  *
  *   npx jest tests/formBuilder_slice25A.test.js
  */
@@ -339,7 +340,7 @@ describe('A8 note textareas + A5 columns knob', () => {
     expect(() => svc.validateDefinition(win.FB.model)).not.toThrow();
   });
 
-  test('columns knob on checkgroups only; writes 1–3, default deletes', async () => {
+  test('columns knob on choice grids (checkgroup + radio); writes 1–3, default deletes', async () => {
     const p = await ready(bootBuilder());
     const { win, doc } = p;
 
@@ -358,6 +359,57 @@ describe('A8 note textareas + A5 columns knob', () => {
     win.select({ t: 'field', si: 0, ri: 0, fi: 2 });
     expect(propByLabel(doc, 'Columns')).toBeUndefined();
 
+    expect(() => svc.validateDefinition(win.FB.model)).not.toThrow();
+  });
+
+  // radio was added to the columns knob after 2.5A (same 1–3 contract; the
+  // renderer additionally emits .yc-radio-grid because .yc-radio-group is
+  // flex, so the inline grid-template-columns alone would be inert). A local
+  // draft keeps the shared makeDraft fixture — and every test indexing into
+  // it — untouched.
+  test('columns knob on radio: writes 1–3, default deletes, validates', async () => {
+    const draft = makeDraft();
+    draft.sections[0].rows.push({ fields: [
+      { name: 'contact_method', type: 'radio', options: ['Phone', 'Email', 'Text'] },
+    ] });
+    const p = await ready(bootBuilder(draft));
+    const { win, doc } = p;
+
+    win.select({ t: 'field', si: 0, ri: 1, fi: 0 });   // contact_method (radio)
+    const colProp = propByLabel(doc, 'Columns');
+    expect(colProp).toBeTruthy();
+    // the default entry is labelled for radio, not borrowed from checkgroup
+    expect([...colProp.querySelectorAll('option')].map(o => o.value)).toEqual(['', '1', '2', '3']);
+    expect(colProp.querySelector('option').textContent).toMatch(/single row/i);
+
+    const sel = colProp.querySelector('select');
+    sel.value = '3'; fire(win, sel, 'change');
+    expect(win.FB.model.sections[0].rows[1].fields[0].columns).toBe(3);
+    expect(() => svc.validateDefinition(win.FB.model)).not.toThrow();
+
+    win.select({ t: 'field', si: 0, ri: 1, fi: 0 });
+    const sel2 = propByLabel(doc, 'Columns').querySelector('select');
+    sel2.value = ''; fire(win, sel2, 'change');
+    expect(win.FB.model.sections[0].rows[1].fields[0].columns).toBeUndefined();
+  });
+
+  // changeType() previously never stripped `columns` — a checkgroup with the
+  // knob set, retyped to text, kept the key and 400'd on the next draft save.
+  test('changeType keeps columns across checkgroup↔radio and strips it elsewhere', async () => {
+    const p = await ready(bootBuilder());
+    const { win } = p;
+    const f = win.FB.model.sections[0].rows[0].fields[1];   // issues (checkgroup)
+    f.columns = 2;
+
+    win.changeType(f, 'radio');
+    expect(f.columns).toBe(2);
+    expect(() => svc.validateDefinition(win.FB.model)).not.toThrow();
+
+    win.changeType(f, 'checkgroup');
+    expect(f.columns).toBe(2);
+
+    win.changeType(f, 'text');
+    expect(f.columns).toBeUndefined();
     expect(() => svc.validateDefinition(win.FB.model)).not.toThrow();
   });
 });
