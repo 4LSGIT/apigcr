@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-13T15:04:38.968Z
+-- Generated: 2026-08-16T00:35:27.005Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:dbccbcbce4c03d16a0bf6b251192dfa3
+-- Fingerprint: sha256:7ca9867c6d928a1827df869be696ab65
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2927,7 +2927,7 @@ CREATE TABLE `users` (
   `does_appts` tinyint(1) NOT NULL DEFAULT '0',
   `freebusy_calendar_ids` json DEFAULT NULL,
   `user_gcal_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider secondary calendar id (firm Google account)',
-  `roles` set('it','admin','staff','attorney','automation') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `roles` set('it','admin','staff','attorney','automation','form_dev') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   CONSTRAINT `chk_does_appts_requires_phone` CHECK (((`does_appts` = 0) or (`default_phone` is not null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
