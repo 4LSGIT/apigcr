@@ -243,10 +243,21 @@ async function getPipeline(db, caseId) {
  *   - String target → stage_key resolved WITHIN resolveTemplate's template
  *     for this case; must be an active stage of that template.
  *
- * @throws 400 on missing/unknown target or when no template resolves for a
- *         key-based advance.
+ * soft mode (Slice E1 — set only for GUARDED advances, i.e. onlyFrom /
+ * onlyFromRole present): the two key-resolution failures — no template
+ * resolves, or the stage_key is not in the resolved template — return NULL
+ * instead of throwing 400. Rationale: a guarded advance is opportunistic by
+ * definition, and "the target stage doesn't exist where this case now lives"
+ * is the same condition as "the case isn't where the guard expected" — the
+ * case changed templates between its latest log row and now (e.g. subtype set
+ * or cleared by hand). Skip, don't alert. A blank target and an unknown
+ * NUMERIC id still throw in soft mode — those are caller config errors that a
+ * guard should never mask.
+ *
+ * @throws 400 on missing/unknown target or (when !soft) when no template
+ *         resolves / the key is not in the template.
  */
-async function _resolveTarget(conn, caseRow, target) {
+async function _resolveTarget(conn, caseRow, target, { soft = false } = {}) {
   if (target === undefined || target === null || String(target).trim() === '') {
     throw badRequest('stage is required (stage_key or numeric stage_id)');
   }
@@ -262,6 +273,7 @@ async function _resolveTarget(conn, caseRow, target) {
 
   const template = await resolveTemplate(conn, caseRow);
   if (!template) {
+    if (soft) return null;
     throw badRequest(
       `No pipeline template resolves for case ${caseRow.case_id} — ` +
       `cannot advance by stage_key "${s}" (numeric stage_id still works)`
@@ -273,6 +285,7 @@ async function _resolveTarget(conn, caseRow, target) {
     [template.id, s]
   );
   if (!stage) {
+    if (soft) return null;
     throw badRequest(`Unknown stage_key "${s}" in template "${template.name}"`);
   }
   return stage;
@@ -294,6 +307,29 @@ async function _resolveTarget(conn, caseRow, target) {
  * stage_key AND template_id as the resolved target, nothing is written and
  * the returned payload carries noop:true.
  *
+ * Guards (Slice E1) — both optional, both consulted BEFORE target resolution
+ * (inside the same lock + transaction, so the read-then-write window is
+ * race-free). When any guard fails to match, the advance is SKIPPED: no
+ * INSERT, no UPDATE, no throw — the return is
+ * { skipped: true, noop: false, from: <current stage_key or null> } and the
+ * lock still releases (finally). When BOTH guards are given, both must match.
+ *
+ *   onlyFrom     array of stage_key strings the case's latest log row must
+ *                carry for the advance to proceed. A `null` MEMBER means
+ *                "case has no log rows yet".
+ *   onlyFromRole array of pipeline_templates.role values ('intake'|'case')
+ *                matched against the LATEST LOG ROW's template_id → role —
+ *                deliberately NOT the currently-resolved template, so a case
+ *                whose subtype was just written (re-resolving it to a case
+ *                template) still counts as "coming from intake" until a
+ *                case-template stage is actually logged. A `null` member
+ *                means "case has no log rows yet", same as onlyFrom.
+ *
+ * Guarded advances also resolve the target SOFTLY: a stage_key that doesn't
+ * exist in the case's currently-resolved template (or a case with no template
+ * at all) is a skip, not a 400 — see _resolveTarget's soft mode. Unguarded
+ * calls keep today's throwing behavior exactly.
+ *
  * @param {object} db       mysql2 pool
  * @param {string} caseId   cases.case_id
  * @param {string|number} target stage_key or numeric pipeline_stages.id
@@ -301,14 +337,37 @@ async function _resolveTarget(conn, caseRow, target) {
  * @param {number|null} [opts.userId=null] users.user for entered_by (null for system)
  * @param {string|null} [opts.note=null]   log note (clipped to 255)
  * @param {string} [opts.source='manual']  'manual' | 'system' | 'import'
- * @returns fresh getPipeline payload with `noop` boolean added
- * @throws 400 unknown target / bad source; 404 unknown case; 409 lock timeout
- *         (retryable).
+ * @param {?Array<string|null>} [opts.onlyFrom]     see Guards above
+ * @param {?Array<string|null>} [opts.onlyFromRole] see Guards above
+ * @returns fresh getPipeline payload with `noop` + `skipped:false` added; OR
+ *          { skipped: true, noop: false, from } when a guard didn't match /
+ *          a guarded target didn't resolve (no getPipeline re-read — nothing
+ *          was written).
+ * @throws 400 unknown target / bad source / malformed guard; 404 unknown
+ *         case; 409 lock timeout (retryable).
  */
-async function advanceStage(db, caseId, target, { userId = null, note = null, source = 'manual' } = {}) {
+async function advanceStage(db, caseId, target, {
+  userId = null, note = null, source = 'manual',
+  onlyFrom = undefined, onlyFromRole = undefined,
+} = {}) {
   if (!SOURCES.has(source)) {
     throw badRequest(`Invalid source "${source}" (manual | system | import)`);
   }
+
+  // Guard shape validation — up front, before any connection work (matches
+  // the source check above). null/undefined = absent (defensive: a caller
+  // computing `cond ? arr : null` should get today's behavior, not a 400);
+  // anything else must be a non-empty array.
+  for (const [name, v] of [['onlyFrom', onlyFrom], ['onlyFromRole', onlyFromRole]]) {
+    if (v == null) continue;
+    if (!Array.isArray(v) || v.length === 0) {
+      throw badRequest(
+        `${name} must be a non-empty array when provided ` +
+        `(a null MEMBER means "case has no log rows yet")`
+      );
+    }
+  }
+  const guarded = onlyFrom != null || onlyFromRole != null;
 
   const outcome = await withTransaction(db, async (conn) => {
     // Per-case cross-instance mutex. MUST be on the transaction's connection
@@ -330,9 +389,12 @@ async function advanceStage(db, caseId, target, { userId = null, note = null, so
       );
       if (!caseRow) throw notFound(`Case ${caseId} not found`);
 
-      const stage = await _resolveTarget(conn, caseRow, target);
-
       // Latest entry — plain SELECT; the named lock above is the mutex.
+      // Slice E1: this read MOVED ABOVE _resolveTarget so the guards are
+      // consulted before target resolution — otherwise a guarded advance
+      // whose target key doesn't exist on the case's current template (the
+      // ISS doc-request path: 'docs' on an Intake-template case) would 400
+      // before the guard could skip it.
       const [[latest]] = await conn.query(
         `SELECT id, template_id, stage_key
            FROM case_stage_log
@@ -341,6 +403,40 @@ async function advanceStage(db, caseId, target, { userId = null, note = null, so
           LIMIT 1`,
         [caseId]
       );
+
+      if (guarded) {
+        const fromKey = latest ? latest.stage_key : null;
+        let ok = true;
+
+        if (onlyFrom != null) {
+          ok = onlyFrom.some((m) =>
+            m === null ? !latest : (latest && String(m) === latest.stage_key)
+          );
+        }
+
+        if (ok && onlyFromRole != null) {
+          if (!latest) {
+            ok = onlyFromRole.includes(null);
+          } else {
+            const [[tpl]] = await conn.query(
+              `SELECT role FROM pipeline_templates WHERE id = ?`,
+              [latest.template_id]
+            );
+            const role = tpl ? tpl.role : null;   // missing template → no role → skip
+            ok = role != null &&
+                 onlyFromRole.some((m) => m !== null && String(m) === role);
+          }
+        }
+
+        if (!ok) return { noop: false, skipped: true, from: fromKey };
+      }
+
+      const stage = await _resolveTarget(conn, caseRow, target, { soft: guarded });
+      if (!stage) {
+        // soft mode only (guarded): key didn't resolve in the case's current
+        // template — the case moved templates since its latest log row.
+        return { noop: false, skipped: true, from: latest ? latest.stage_key : null };
+      }
 
       // Idempotency guard: same stage in the same template → no-op.
       if (latest &&
@@ -389,6 +485,15 @@ async function advanceStage(db, caseId, target, { userId = null, note = null, so
     }
   });
 
+  if (outcome.skipped) {
+    // Nothing was written — no getPipeline re-read, no Slice E dispatch.
+    // Deliberately minimal shape: { skipped, noop, from }. The HTTP route
+    // never passes guards, so this shape never reaches the frontends; the
+    // guarded callers (doc-request advance, retainer send/sign) branch on
+    // .skipped and want exactly this.
+    return { skipped: true, noop: false, from: outcome.from };
+  }
+
   if (!outcome.noop) {
     // ── Slice E insertion point ──────────────────────────────────────────
     // Fire-and-forget, strictly AFTER commit: pipeline-stage-entered trigger
@@ -400,6 +505,7 @@ async function advanceStage(db, caseId, target, { userId = null, note = null, so
 
   const payload = await getPipeline(db, caseId);
   payload.noop = outcome.noop;
+  payload.skipped = false;
   return payload;
 }
 
