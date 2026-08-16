@@ -2241,19 +2241,28 @@
        Tune speed/axis per button with inline --fa-* custom properties.
 
        Layout rule: 3 buttons per row, one theme per row, and every row full —
-       only the last row may be short. 20 buttons = six full rows plus a pair at
-       the bottom. Keep new buttons inside the row they belong to rather than
-       appending to the end; a 21st button completes the bottom row. -->
+       only the last row may be short. 21 buttons = seven full rows. Keep new
+       buttons inside the row they belong to rather than appending to the end;
+       a 22nd button opens a new short bottom row that the next two fill. -->
 
   <!-- Reference & help: how it works, what you want next, one-off lookups. -->
   <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-book fa-2xl"></i><br><br>Manuals</button>
   <button class="big-button" onclick="showClioCode()" data-hover-anim="fa-spin-pulse" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
   <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-scale:1.15; --fa-animation-duration:1.1s"><i class="fa-solid fa-lightbulb fa-2xl"></i><br><br>Feature Requests</button>
   <br><br>
-  <!-- Forms & documents: build the form, read what comes back, get it signed. -->
+  <!-- Forms: make the form, read what comes back. Simple Forms and Form Builder
+       are two surfaces over the SAME form_templates records — the simple one
+       hands off to the full one for tabs / repeaters / code. -->
+  <button class="big-button" data-target="formSimpleDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.3s"><i class="fa-solid fa-wand-magic-sparkles fa-2xl"></i><br><br>Simple Forms</button>
   <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-pen-to-square fa-2xl"></i><br><br>Form Builder</button>
   <button class="big-button" data-target="formInboxDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-inbox fa-2xl"></i><br><br>Form Inbox</button>
+  <br><br>
+  <!-- Documents & media: get it signed, then the files everything above pulls
+       from. Signatures sits here rather than with Forms because the row it
+       shares is "the file you keep", not "the thing the client fills in". -->
   <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s; --fa-animation-direction:reverse"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
+  <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.5; --fa-animation-duration:2s"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
+  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
   <br><br>
   <!-- Case setup & workflow: how a case is shaped, the steps on it, what runs
        on it by itself. -->
@@ -2277,11 +2286,6 @@
   <button class="big-button" data-target="campaignsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br><br>Campaigns</button>
   <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more" data-hover-anim="fa-spin" style="--fa-animation-duration:2.5s"><i class="fa-solid fa-signs-post fa-2xl"></i><br><br>Redirects Manager</button>
   <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sitemap fa-2xl"></i><br><br>Landing Pages</button>
-  <br><br>
-  <!-- Media library: the files everything above pulls from. Short bottom row —
-       a third media button would fill it. -->
-  <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.5; --fa-animation-duration:2s"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
-  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
 
 
   <!-- Panels are kept in the same order as the buttons above. Order has no
@@ -2296,7 +2300,18 @@
     <iframe data-src="/featureRequests.html"></iframe>
   </div>
 
-  <!-- Forms & documents -->
+  <!-- Forms -->
+  <!-- Simple Forms: the friendly builder. Same form_templates records and the
+       same /api/form-templates endpoints as formBuilder.html — it just refuses
+       to open definitions it cannot faithfully represent (tabs, repeaters,
+       code/hooks/css) and hands those to the full builder instead. Its
+       "Open in Form Builder" button sets the formBuilderDiv iframe's src and
+       clicks that panel's button, so BOTH must stay in the "more" exclusive
+       group and this iframe must stay a DIRECT child of the shell (it relays
+       apiSend to its own preview render.html frame). -->
+  <div id="formSimpleDiv" class="more-panel" style="display:none">
+    <iframe data-src="/formBuilderSimple.html"></iframe>
+  </div>
   <div id="formBuilderDiv" class="more-panel" style="display:none">
     <iframe data-src="/formBuilder.html"></iframe>
   </div>
@@ -2306,8 +2321,16 @@
   <div id="formInboxDiv" class="more-panel" style="display:none">
     <iframe data-src="/formInbox.html"></iframe>
   </div>
+
+  <!-- Documents & media -->
   <div id="esignDashboardDiv" class="more-panel" style="display:none">
     <iframe data-src="/esign/dashboard.html"></iframe>
+  </div>
+  <div id="assetManagerDiv" class="more-panel" style="display:none">
+    <iframe data-src="/assetManager.html"></iframe>
+  </div>
+  <div id="videoManagerDiv"    class="more-panel" style="display:none">
+    <iframe data-src="/videoManager.html"></iframe>
   </div>
 
   <!-- Case setup & workflow -->
@@ -2356,14 +2379,6 @@
   </div>
   <div id="landingPagesDiv" class="more-panel" style="display:none">
     <iframe data-src="/pageManager.html"></iframe>
-  </div>
-
-  <!-- Media library -->
-  <div id="assetManagerDiv" class="more-panel" style="display:none">
-    <iframe data-src="/assetManager.html"></iframe>
-  </div>
-  <div id="videoManagerDiv"    class="more-panel" style="display:none">
-    <iframe data-src="/videoManager.html"></iframe>
   </div>
 </div>
 <script>
