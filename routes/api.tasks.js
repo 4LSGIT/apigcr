@@ -37,6 +37,10 @@ function cleanNote(raw) {
 }
 
 // ─── LIST ─────────────────────────────────────────────────────────────────────
+// Known limitation: assigned_by=0 (the Automation pseudo-user) cannot be
+// filtered — `req.query.assigned_by || null` and the service's truthiness
+// check both drop 0. Deliberate non-fix: ?source=machine is the better handle
+// on the same intent, and task_from=0 ≠ task_source IS NOT NULL anyway.
 router.get('/api/tasks', jwtOrApiKey, async (req, res) => {
   try {
     const result = await taskService.listTasks(req.db, {

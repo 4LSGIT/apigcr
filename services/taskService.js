@@ -215,6 +215,23 @@ function fmtStampDate(d) {
 const TASK_COLOR = '#312e81';   // indigo-900
 
 /**
+ * Humanized labels for tasks.task_source (machine-notice marker), with a
+ * generic title-case fallback so new sources need zero code here. Duplicated
+ * in public/tasks.html (SOURCE_LABELS) — same self-contained convention as
+ * htmlEscape/renderDescHtml. Keep them in sync.
+ */
+const SOURCE_LABELS = {
+  esign: 'E-sign', esign_followup: 'E-sign follow-up', esign_stall: 'E-sign stall',
+  adobe_sign: 'Adobe Sign', client_upload: 'Client upload', ext_form: 'External form',
+  form_pdf: 'Form PDF', court_review: 'Court review', claude_charter: 'Claude'
+};
+function sourceLabel(slug) {
+  if (!slug) return '';
+  return SOURCE_LABELS[slug] ||
+    String(slug).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
  * Shared outer wrapper.
  *
  * `subject` here is the HTML <title> ONLY — it is escaped. The MIME subject
@@ -478,9 +495,15 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
       ? `<a href="${APP_URL()}/t/${t.task_action_token}" title="Mark complete"
             style="color:#059669;text-decoration:underline;font-weight:600;font-size:12px;white-space:nowrap">mark&nbsp;done</a>`
       : '';
+    // Machine-pushed notices get the same de-emphasis the task list gives
+    // them (robot marker + humanized source) so a block of e-sign receipts
+    // reads as notices, not as work. Emoji, not an icon font — email clients.
+    const srcChip = t.task_source
+      ? ` <span style="font-size:11px;color:#6b7280;white-space:nowrap">\u{1F916} ${htmlEscape(sourceLabel(t.task_source))}</span>`
+      : '';
     return `<tr style="border-bottom:1px solid #f3f4f6">
       <td style="padding:8px 4px 8px 0;font-size:13px;color:#111827;font-weight:500;
-                 max-width:280px">${htmlEscape(t.task_title)}</td>
+                 max-width:280px">${htmlEscape(t.task_title)}${srcChip}</td>
       <td style="padding:8px 6px;font-size:12px;color:#6b7280;white-space:nowrap">
         ${fmtDateShort(t.task_due)}
       </td>

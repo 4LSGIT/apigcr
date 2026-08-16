@@ -460,7 +460,10 @@ async function fetchTasks(off, quiet) {
   const status = E('fStatus').value;
   const source = E('fSource').value;
   if (q) params.q = q;
-  if (status !== 'All') params.status = status;
+  // ALWAYS sent, including 'All' (the service handles it): the route defaults
+  // a MISSING status to 'Incomplete', so the old omit-when-All pattern made
+  // "All" silently equal "Incomplete" — Completed/Deleted never showed.
+  params.status = status;
   if (!isEntity && source && source !== 'all') params.source = source;
   if (!isEntity && E('fBy').value) params.assigned_by = E('fBy').value;
   if (!isEntity && E('fTo').value) params.assigned_to = E('fTo').value;
@@ -929,20 +932,31 @@ function newTaskDialog(task) {
       const reassign = newTo !== +(toVal || 0);
 
       if (!Object.keys(patch).length && !reassign) { Toast.fire({ title: 'No changes made' }); return; }
+
+      // Two sequential requests (field PATCH, then /transfer). Fields go
+      // FIRST: if the transfer half fails, the user's typed edits are already
+      // saved rather than discarded. Every exit path below refetches, so the
+      // table reconciles to server truth even after a partial apply (O3).
+      let fieldsSaved = false;
       try {
         if (Object.keys(patch).length) {
           const data = await api(`/api/tasks/${t.id}`, 'PATCH', patch);
+          fieldsSaved = true;
           if (!reassign) Toast.fire({ icon: data.status, title: data.title, text: data.message });
         }
         if (reassign) {
           const data = await api(`/api/tasks/${t.id}/transfer`, 'PATCH', { to: newTo });
           Toast.fire({ icon: data.status, title: data.title, text: data.message });
         }
-        pokeBadge();
-        fetchTasks(offset, true);
       } catch (err) {
-        Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+        Toast.fire({
+          icon: 'error',
+          title: fieldsSaved ? 'Changes saved — transfer failed' : 'Error saving changes',
+          text: err.message
+        });
       }
+      pokeBadge();
+      fetchTasks(offset, true);
     }
   });
 }

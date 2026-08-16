@@ -190,6 +190,11 @@
     }
     #appHeader .hdr-btn:hover, #appHeader .hdr-logout:hover { background: var(--sidebar-hover); }
     #appHeader .hdr-btn-icon { padding: 0 10px; }
+    #appHeader .hdr-btn .hdr-badge {
+      background: #dc2626; color: #fff; font-size: 11px; font-weight: 600;
+      padding: 1px 7px; border-radius: 10px; min-width: 14px; text-align: center;
+      margin-left: 6px;
+    }
     #appHeader .hdr-btn-icon i { font-size: 15px; }
     #appHeader .hdr-logout { color: var(--logout-color); }
     #appHeader .hdr-logout:hover { background: var(--logout-hover-bg); }
@@ -388,6 +393,7 @@
       #appHeader .hdr-clock .hdr-clock-date { display: none; }
       #appHeader .hdr-btn span,
       #appHeader .hdr-logout span { display: none; }
+      #appHeader .hdr-btn .hdr-badge { display: inline-block; }
       #appHeader .hdr-btn,
       #appHeader .hdr-logout { padding: 0 10px; }
       #appHeader .hdr-logo { height: 32px; }
@@ -571,7 +577,7 @@
     <div class="hdr-right" id="hdrUserArea" style="display:none">
       <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
       <button class="hdr-btn" onclick="openTasksTab({assigned_to:user.user,status:'Incomplete'})" title="My Tasks">
-        <i class="fa-solid fa-list-check"></i><span>My Tasks</span>
+        <i class="fa-solid fa-list-check"></i><span>My Tasks</span><span class="hdr-badge" id="hdrTasksBadge" style="display:none">0</span>
       </button>
       <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">
         <i class="fa-solid fa-moon" id="themeIcon"></i>
@@ -1688,21 +1694,35 @@
     }
 
     /**
-     * Sidebar badge: the current user's overdue + due-today count. Refreshed
-     * at boot (loadUserContext) and poked by tasks.html after every task
-     * mutation via window.top.tasksBadgeRefresh — no polling loop.
+     * Task badges (sidebar Tasks item + header "My Tasks" button): the
+     * current user's overdue + due-today count. Refreshed at boot
+     * (loadUserContext) and poked by tasks.html after every task mutation
+     * via window.top.tasksBadgeRefresh — no polling loop.
+     *
+     * O2: DERIVED from task_due in firm time, the same way the task list
+     * derives its status pill — NOT counted from stored task_status, which
+     * only rolls over at the 13:00-UTC digest sweep. Counting stored status
+     * left an every-morning window (midnight Detroit → sweep) where the list
+     * said "Due Today" and the badge said 0. One Incomplete fetch replaces
+     * the two stored-status COUNT calls; at this firm's volume (≤~50 open
+     * per person) limit:500 is exhaustive — if it ever isn't, the badge
+     * undercounts rather than errors.
      */
     async function tasksBadgeRefresh() {
       try {
         if (!user?.user) return;
-        const [od, dt] = await Promise.all([
-          apiSend('/api/tasks', 'GET', { assigned_to: user.user, status: 'Overdue',   limit: 1 }),
-          apiSend('/api/tasks', 'GET', { assigned_to: user.user, status: 'Due Today', limit: 1 })
-        ]);
-        const n = (od.total || 0) + (dt.total || 0);
-        const b = E('sbTasksBadge');
-        b.textContent = n;
-        b.style.display = n ? '' : 'none';
+        const r = await apiSend('/api/tasks', 'GET',
+          { assigned_to: user.user, status: 'Incomplete', limit: 500 });
+        const tz = window.firmData?.firmTimezone || 'America/Detroit';
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+        const n = (r.data || [])
+          .filter(t => t.due && String(t.due).slice(0, 10) <= today).length;
+        for (const id of ['sbTasksBadge', 'hdrTasksBadge']) {
+          const b = E(id);
+          if (!b) continue;
+          b.textContent = n;
+          b.style.display = n ? '' : 'none';
+        }
       } catch (_) { /* badge is decoration — never let it break the shell */ }
     }
     window.tasksBadgeRefresh = tasksBadgeRefresh;
