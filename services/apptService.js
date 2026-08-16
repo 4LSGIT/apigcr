@@ -1196,6 +1196,48 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   cancelApptAutomation(db, appt_id, 'appointment_no_show')
     .catch(err => console.error('[APPT SERVICE] cancelApptAutomation failed:', err.message));
 
+  // ── Pipeline Slice E1 follow-on: intake no-show → no_show stage ───────────
+  // Fire-and-forget, never blocks or fails the no-show itself. Service-level
+  // (not the route) so every present and future caller advances identically —
+  // the same placement rationale as the esign contract_sent hook.
+  //
+  // appt_type is FREE TEXT ("341 Meeting", "Pre-Filing Meeting", "Pizza
+  // Party"…) so the gate is the pipeline STATE, not the appointment type:
+  // onlyFrom pins this to the pre-consult intake stages — lead,
+  // consult_booked, intake_complete, or no pipeline history at all (null;
+  // legacy mid-pipeline cases with no log rows are still safe because a
+  // subtyped case resolves to t2/t3, where 'no_show' doesn't exist → soft
+  // skip). A 341 or schedules-meeting no-show on a mid-pipeline case skips
+  // silently; deliberately NOT consult_held (they already attended once) or
+  // contract_sent (the contract is out — no_show would misrepresent where
+  // the deal stands). Case-less appointments have no pipeline: skip up front.
+  if (appt.appt_case_id) {
+    const pipelineService = require('./pipelineService'); // lazy (convention)
+    pipelineService.advanceStage(db, String(appt.appt_case_id), 'no_show', {
+      onlyFrom: ['lead', 'consult_booked', 'intake_complete', null],
+      source: 'system',
+      note: `Appointment no-show${appt.appt_type ? ` - ${appt.appt_type}` : ''}`,
+    }).catch((err) => {
+      const { alert } = require('../lib/alerting'); // lazy — see esignSendService precedent
+      alert(db, {
+        source: 'pipeline',
+        kind: 'no_show_advance_failed',
+        group_key: 'pipeline:no_show_advance',
+        severity: 'warning',
+        title: `no_show advance failed for case ${appt.appt_case_id}`,
+        message: err.message,
+        // cases.case_id is an alphanumeric varchar — doesn't fit ref_id
+        // (bigint); it rides in context instead.
+        context: {
+          case_id: String(appt.appt_case_id),
+          appt_id,
+          appt_type: appt.appt_type || null,
+          status: err.status || null,
+        },
+      }).catch(() => {});
+    });
+  }
+
   // Sequence enrollment
   let enrolled = false;
   let skipReason = null;
