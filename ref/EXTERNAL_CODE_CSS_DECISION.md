@@ -79,11 +79,20 @@ browser-enforced policy if ever wanted.
 ## Residual exposures accepted / deferred
 
 1. **Staff-initiated JWT snatch via /p pages or external form code** on
-   app.4lsg.com: accepted pending ORIGIN SEPARATION (chartered) — serve
-   /p, /f, ext render, /api/ext from a separate origin; localStorage is
-   origin-scoped, so the staff JWT becomes unreachable from anything
-   staff-authorable-and-public. SU STEP-UP (password re-prompt on SU
-   tools) chartered alongside as the cheap independent win.
+   app.4lsg.com: ~~accepted pending ORIGIN SEPARATION (chartered)~~ —
+   **RESOLVED 2026-08-16** by the origin-separation slice
+   (`ref/ORIGIN_SEPARATION_ROLLOUT.md`): /p, root-slug pages, /f, ext
+   render, /api/ext (and /r) serve from the landing origin `4lsg.com`;
+   localStorage is origin-scoped, so the staff JWT is unreachable from
+   anything staff-authorable-and-public, and the landing host structurally
+   cannot mint or consume a JWT (allowlist contains no auth surface;
+   membership check is spoof-proof by host-candidate union). The app-host
+   copies of those paths 302 to the landing host. SU STEP-UP shipped
+   alongside (elevation token on every superuserOnlyFor chain,
+   `SU_STEPUP=0` kill switch) — a leaked staff JWT alone no longer runs the
+   SU tools, before OR after the DNS cutover. History: between the reversal
+   and that slice's DNS cutover the exposure was accepted-with-warnings as
+   written below.
 2. **`content.src` pixel-lite** (any https image on a public form leaks
    visitor IP/timing to the image host) — now strictly dominated by the
    reversal (code is allowed anyway); moot as a separate control.

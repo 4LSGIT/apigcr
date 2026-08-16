@@ -2867,6 +2867,11 @@
           ...extraHeaders
         }
       };
+      // SU step-up (2026-08-16): attach the tab-scoped elevation token when
+      // one is held. Harmless on routes that don't check it; required by the
+      // superuser tools. See getSuElevToken/elevateBlocking below.
+      const suElev = getSuElevToken();
+      if (suElev) options.headers["X-SU-Elevation"] = suElev;
       // Attach payload appropriately
       if (payload != null) {
         if (options.method === "GET" || options.method === "HEAD") {
@@ -2878,11 +2883,29 @@
         }
       }
       let res = await fetch(url, options);
-      // Prompt re-login on 401, then retry once
+      // 401 handling. Two distinct causes share the status code:
+      //   - code 'elevation_required' (SU step-up): the SESSION is fine — the
+      //     server wants a fresh password confirmation. Prompt, mint the
+      //     elevation token, retry once. Re-login would be the wrong prompt
+      //     AND wouldn't satisfy the check.
+      //   - anything else: the historical expired-session path — re-login,
+      //     retry once.
       if (res.status === 401) {
-        await loginBlocking();
-        options.headers.Authorization = `Bearer ${window.AUTH_STATE.jwt}`;
-        res = await fetch(url, options);
+        let body401 = null;
+        try { body401 = await res.clone().json(); } catch (_) { }
+        if (body401 && body401.code === "elevation_required") {
+          const elevTok = await elevateBlocking();
+          if (elevTok) {
+            options.headers["X-SU-Elevation"] = elevTok;
+            res = await fetch(url, options);
+          }
+          // Cancelled prompt → fall through; the 401 surfaces as a normal
+          // ApiError to the calling tool.
+        } else {
+          await loginBlocking();
+          options.headers.Authorization = `Bearer ${window.AUTH_STATE.jwt}`;
+          res = await fetch(url, options);
+        }
       }
       // Stale-tab guard: every response carries X-App-Build. Free detection —
       // an actively-used tab running old JS is caught on its very next request.
@@ -3041,6 +3064,101 @@ async function login(username, password) {
   })();
 
   return window.AUTH_STATE.loginInProgress;
+}
+
+// ── SU step-up (2026-08-16) ───────────────────────────────────────────────
+// Superuser tools additionally require a short-lived ELEVATION token (see
+// lib/auth.superuser.js). It lives in sessionStorage — tab-scoped, dies with
+// the tab, deliberately NOT localStorage — and rides as X-SU-Elevation on
+// every apiSend while unexpired.
+
+function getSuElevToken() {
+  try {
+    const t = sessionStorage.getItem("su_elev");
+    if (!t) return null;
+    const p = getJwtPayload(t);
+    // 5s skew margin: never send a token the server is about to reject.
+    if (!p || !p.exp || p.exp < Math.floor(Date.now() / 1000) + 5) {
+      sessionStorage.removeItem("su_elev");
+      return null;
+    }
+    return t;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Password re-prompt → POST /admin/elevate → elevation token, or null on
+ * cancel. A REAL <form> with autocomplete="current-password" (plus a visible
+ * readonly username field) so password managers offer to fill it — a bare
+ * SweetAlert input often doesn't trigger them. Enter / manager fill-and-
+ * submit fires the form's submit, which is wired to Swal's confirm.
+ */
+async function elevateBlocking() {
+  const uname =
+    (window.AUTH_STATE && AUTH_STATE.username) ||
+    (getJwtPayload(AUTH_STATE.jwt) || {}).username || "";
+  const result = await Swal.fire({
+    title: "Confirm your password",
+    html: `
+      <form id="suElevForm" autocomplete="on">
+        <p style="font-size:0.9em;color:#666;margin:0 0 12px">
+          Superuser tools require re-entering your password.</p>
+        <input class="swal2-input" type="text" name="username" id="suElevUser"
+               autocomplete="username" value="${uname.replace(/"/g, "&quot;")}"
+               readonly style="width:80%;margin:0 auto 8px;background:#f5f5f5">
+        <input class="swal2-input" type="password" name="password" id="suElevPassword"
+               autocomplete="current-password" placeholder="Password"
+               style="width:80%;margin:0 auto">
+      </form>`,
+    confirmButtonText: "Confirm",
+    confirmButtonColor: "#07ADEF",
+    showCancelButton: true,
+    focusConfirm: false,
+    allowOutsideClick: false,
+    showLoaderOnConfirm: true,
+    didOpen: () => {
+      const form = document.getElementById("suElevForm");
+      const pw = document.getElementById("suElevPassword");
+      if (pw) pw.focus();
+      if (form) form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        Swal.clickConfirm();
+      });
+    },
+    preConfirm: async () => {
+      const pw = (document.getElementById("suElevPassword") || {}).value || "";
+      if (!pw) {
+        Swal.showValidationMessage("Please enter your password");
+        return false;
+      }
+      try {
+        const res = await fetch("/admin/elevate", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${window.AUTH_STATE.jwt}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ password: pw })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.token) {
+          Swal.showValidationMessage(data.error || "Elevation failed");
+          return false;
+        }
+        return data.token;
+      } catch (err) {
+        Swal.showValidationMessage("Network error — please try again");
+        return false;
+      }
+    }
+  });
+  if (result.isConfirmed && result.value) {
+    try { sessionStorage.setItem("su_elev", result.value); } catch (_) { }
+    return result.value;
+  }
+  return null;
 }
 
 
@@ -3230,6 +3348,10 @@ async function initAuth() {
       // --- Auth state ---
       try {
         localStorage.removeItem("jwt");
+      } catch (_) { }
+      // SU step-up: elevation dies with the session.
+      try {
+        sessionStorage.removeItem("su_elev");
       } catch (_) { }
 
       if (window.AUTH_STATE) {

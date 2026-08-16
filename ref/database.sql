@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-16T00:35:27.005Z
+-- Generated: 2026-08-16T05:35:24.618Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7ca9867c6d928a1827df869be696ab65
+-- Fingerprint: sha256:80c369437c7b7feeccb75e2d3cc302be
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2698,6 +2698,7 @@ CREATE TABLE `tasks` (
   `task_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_notification` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'notify task assigner upon completion?',
   `task_source` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_dedupe_key` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `task_due_job_id` bigint DEFAULT NULL,
   `task_action_token` char(22) COLLATE utf8mb4_general_ci DEFAULT NULL
@@ -3894,7 +3895,8 @@ ALTER TABLE `tasks`
   ADD PRIMARY KEY (`task_id`),
   ADD UNIQUE KEY `uq_tasks_action_token` (`task_action_token`),
   ADD KEY `task_to` (`task_to`),
-  ADD KEY `idx_task_link_type_id` (`task_link_type`,`task_link_id`);
+  ADD KEY `idx_task_link_type_id` (`task_link_type`,`task_link_id`),
+  ADD KEY `idx_task_source_dedupe` (`task_source`,`task_dedupe_key`,`task_status`);
 
 --
 -- Indexes for table `temp_contacts`

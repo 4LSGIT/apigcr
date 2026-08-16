@@ -289,10 +289,13 @@ ref/2026-08-13_phase_d_sms_cutover.sql
 ref/2026-08-14_intake_cards_definition.json
 ref/2026-08-14_x51_pdf_wiring.sql
 ref/2026-08-16_form_dev_role.sql
+ref/2026-08-16_origin_separation.sql
+ref/2026-08-16_phase_d_sms_cutover_v2.sql
 ref/2026-08-16_task_dedupe_key.sql
 ref/EXTERNAL_CODE_CSS_DECISION.md
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md
+ref/ORIGIN_SEPARATION_ROLLOUT.md
 ref/ORIGIN_SEPARATION_WORKER_PROMPT.md
 ref/X2_DESIGN_AMENDMENTS.md
 ref/database.sql
@@ -310,6 +313,7 @@ routes/_errtest.js
 routes/admin.apiKeys.js
 routes/admin.apiTester.js
 routes/admin.dbConsole.js
+routes/admin.elevate.js
 routes/admin.systemAlerts.js
 routes/admin.users.js
 routes/alert-test.js
@@ -617,6 +621,7 @@ tests/jest.setup.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/moduleLoad.smoke.test.js
+tests/pageLanding.originsep.test.js
 tests/pdfRender.test.js
 tests/pdfRenderIntegration.test.js
 tests/phoneingestservice.dedup.test.js
@@ -636,6 +641,7 @@ tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
 tests/sequences.editor.roundtrip.test.js
+tests/su.stepup.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
