@@ -292,6 +292,72 @@ describe('landing membership is spoof-proof (union rule)', () => {
   });
 });
 
+// ── canonical landing host ─────────────────────────────────────────────────
+describe('secondary landing hosts canonicalize to landing_hosts[0]', () => {
+  const withWww = async (fn) => {
+    process.env.LANDING_HOSTS = '4lsg.com,www.4lsg.com';
+    try { await fn(); } finally { process.env.LANDING_HOSTS = '4lsg.com'; }
+  };
+
+  test('GET on www 302s to the canonical host, path + query intact', async () => {
+    await withWww(async () => {
+      const root = await onHost('www.4lsg.com', '/');
+      expect(root.status).toBe(302);
+      expect(root.headers.get('location')).toBe('https://4lsg.com/');
+
+      const f = await onHost('www.4lsg.com', '/f/intake?case_id=AB12CD34&src=fb');
+      expect(f.status).toBe(302);
+      expect(f.headers.get('location'))
+        .toBe('https://4lsg.com/f/intake?case_id=AB12CD34&src=fb');
+
+      const p = await onHost('www.4lsg.com', '/p/mypage?x=1');
+      expect(p.status).toBe(302);
+      expect(p.headers.get('location')).toBe('https://4lsg.com/p/mypage?x=1');
+    });
+  });
+
+  test('the canonical host itself never self-redirects', async () => {
+    await withWww(async () => {
+      const res = await landing('/p/mypage');
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('MYPAGE');
+    });
+  });
+
+  test('www is still GATED — canonicalization is not a bypass', async () => {
+    await withWww(async () => {
+      // /login is not allowlisted; on a secondary landing host a GET is
+      // canonicalized (and gated again on arrival), never served.
+      const res = await onHost('www.4lsg.com', '/login');
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('https://4lsg.com/login');
+      expect(await res.text()).not.toContain('LOGIN');
+      // POST is served in place — and still dead-ended, not passed through.
+      const post = await onHost('www.4lsg.com', '/login', { method: 'POST' });
+      expect(post.status).toBe(303);
+      expect(post.headers.get('location')).toBe(FIRM);
+    });
+  });
+
+  test('POST to an allowlisted path on www is served in place (body preserved)', async () => {
+    await withWww(async () => {
+      const res = await onHost('www.4lsg.com', '/p/mypage', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'name=x',
+      });
+      expect(res.status).toBe(303);
+      expect(res.headers.get('location')).toBe('/p/mypage?submitted=1');
+    });
+  });
+
+  test('a host NOT in landing_hosts is unaffected by canonicalization', async () => {
+    await withWww(async () => {
+      expect(await (await appHost('/login')).text()).toBe('LOGIN');
+    });
+  });
+});
+
 // ── kill switches ──────────────────────────────────────────────────────────
 describe('rollout switches restore pre-slice behavior', () => {
   test("landing_redirect='0': app host serves /p and /f locally again", async () => {

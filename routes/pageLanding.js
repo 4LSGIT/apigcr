@@ -408,6 +408,27 @@ function pageHostMiddleware(db) {
       }
 
       // ── Landing host ──────────────────────────────────────────────────
+      // 0. Canonicalize. Secondary landing hosts (www today; a reclaimed
+      //    `go` later) exist so the browser gets a real certificate on the
+      //    name people actually type — NOT so links fragment across two
+      //    origins. GET/HEAD move to the canonical host (landing_hosts[0]),
+      //    query string intact. POST is served in place: a 302 would turn it
+      //    into a GET and drop the body (same reasoning as the app-host
+      //    redirect above), and canonicalized navigation means a POST can
+      //    only arrive here from a page loaded before the switch.
+      //
+      //    effectiveHost() — not the spoof-proof union — is correct here:
+      //    this is a cosmetic/link-hygiene decision, not an access decision.
+      //    A forged header can at worst cause one extra redirect hop; the
+      //    gate above already ran on the union.
+      if (
+        host !== lHosts[0] && lHosts.includes(host) &&
+        (req.method === 'GET' || req.method === 'HEAD')
+      ) {
+        res.set('Cache-Control', 'no-store');
+        return res.redirect(302, 'https://' + lHosts[0] + req.originalUrl);
+      }
+
       // 1. Allowlist → normal routing (f.js, pageLanding router, api.ext,
       //    express.static). Credentialed paths get the noindex header here so
       //    it covers the static renderer too.

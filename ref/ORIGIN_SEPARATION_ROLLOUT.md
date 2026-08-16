@@ -128,6 +128,47 @@ rides as `X-SU-Elevation`. The modal is a real `<form>` with
 `autocomplete="current-password"` + a readonly username field — password
 managers fill it.
 
+## Adding `www.4lsg.com` (2026-08-16, after step 6)
+
+Symptom that triggered this: `https://www.4lsg.com` fails in a browser while
+the apex works. Cause: `www` resolves via the Namecheap `*` wildcard URL
+Redirect record to their forwarder (192.64.119.254), which serves HTTP only
+and has no certificate for that name. `www` was ALWAYS broken over HTTPS —
+the apex used to fail identically and only appeared to work because browsers
+silently fell back to HTTP. Once the apex got a real Google-managed cert the
+asymmetry became visible. No HSTS is involved.
+
+**ORDER IS CRITICAL — `landing_hosts` BEFORE the mapping.** A host that
+resolves to Cloud Run but is NOT in `landing_hosts` serves the FULL APP
+(same hazard as the revert note below). Arm the gate first.
+
+1. **Deploy** the canonical-redirect patch (`pageHostMiddleware` step 0).
+   Inert until a second landing host exists.
+2. **DB console:**
+   `UPDATE app_settings SET \`value\` = '4lsg.com,www.4lsg.com' WHERE \`key\` = 'landing_hosts';`
+   The apex MUST stay FIRST — entry [0] is the canonical redirect target.
+   Effective within 60s (firmConfig cache). Still inert: nothing resolves
+   `www` to Cloud Run yet.
+3. **Cloud Run** → Manage custom domains → Add mapping → same service →
+   `www.4lsg.com`. Being a subdomain it takes a plain CNAME, not the apex
+   A/AAAA set.
+4. **Namecheap** → Advanced DNS → ADD `CNAME Record`, Host `www`, Value
+   `ghs.googlehosted.com.`, TTL Automatic. Change nothing else — in
+   particular KEEP the `*` URL Redirect record; an explicit `www` record
+   takes DNS precedence over a wildcard, so the forwarder simply stops
+   answering for `www` while still covering other subdomains.
+5. **Wait for the managed cert** (mapping page shows status).
+6. **Verify:**
+   - `https://www.4lsg.com/` → 302 `https://4lsg.com/` → 302 firm site
+   - `https://www.4lsg.com/f/intake?case_id=X` → 302
+     `https://4lsg.com/f/intake?case_id=X` (query intact)
+   - `https://www.4lsg.com/login` → 302 to the apex, and gated on arrival —
+     never serves the shell. **If it serves anything app-like, STOP** and
+     revert step 2 last (see below).
+
+Revert: remove the Namecheap CNAME and the Cloud Run mapping FIRST, then
+drop `www.4lsg.com` from `landing_hosts`. Never the other order.
+
 ## Reverts (each piece independently)
 
 - **Redirects off:** `landing_redirect='0'` (DB console; ≤60 s). Old links
