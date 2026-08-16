@@ -67,6 +67,10 @@
       border: 1px solid var(--tk-border); user-select: none;
     }
     .tk-preset:hover { border-color: var(--tk-link); color: var(--tk-link); }
+    .tk-preset.on {
+      background: var(--tk-robot-bg); color: var(--tk-robot-fg);
+      border-color: var(--tk-robot-fg); font-weight: 600;
+    }
 
     /* ── Status pills / chips / badges ───────────────────────────────────── */
     .tk-pill { font-weight: 600; white-space: nowrap; font-size: 13px; }
@@ -207,10 +211,10 @@
   </div>
 
   <div class="tk-presets shell-only">
-    <span class="tk-preset" onclick="applyPreset('mine')">My open</span>
-    <span class="tk-preset" onclick="applyPreset('overdue')">Overdue</span>
-    <span class="tk-preset" onclick="applyPreset('notices')">Notices</span>
-    <span class="tk-preset" onclick="applyPreset('allopen')">All open</span>
+    <span class="tk-preset" data-preset="mine"    onclick="applyPreset('mine')">My open</span>
+    <span class="tk-preset" data-preset="overdue" onclick="applyPreset('overdue')">Overdue</span>
+    <span class="tk-preset" data-preset="notices" onclick="applyPreset('notices')">Notices</span>
+    <span class="tk-preset" data-preset="allopen" onclick="applyPreset('allopen')">All open</span>
   </div>
 
   <div class="tk-filters">
@@ -374,6 +378,52 @@ window.tasksSetFilter = (f = {}) => {
   fetchTasks(0);
 };
 
+// ─── Preset chips (B-10) ────────────────────────────────────────────────────
+/**
+ * Each preset is a COMPLETE slice definition: status, source and both user
+ * filters are set explicitly, so a chip always lands on the same view no
+ * matter what was set before it. The query box is deliberately NOT touched —
+ * text search is an orthogonal refinement, not part of the slice.
+ */
+const PRESETS = {
+  mine:    { status: 'Incomplete', source: 'all',     assigned_by: '', assigned_to: 'me' },
+  overdue: { status: 'Overdue',    source: 'all',     assigned_by: '', assigned_to: ''   },
+  notices: { status: 'Incomplete', source: 'machine', assigned_by: '', assigned_to: ''   },
+  allopen: { status: 'Incomplete', source: 'all',     assigned_by: '', assigned_to: ''   }
+};
+
+const resolvePreset = (p) =>
+  ({ ...p, assigned_to: p.assigned_to === 'me' ? String(meId() || '') : p.assigned_to });
+
+function applyPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return;
+  tasksSetFilter(resolvePreset(p));   // sets the controls, then refetches
+}
+
+/**
+ * Light up whichever chip (if any) describes the CURRENT filter state.
+ *
+ * Recomputed on every fetch rather than set on click, which means it also
+ * lights up for cold-boot URL params — the shell's "My Tasks" button lands
+ * on ?assigned_to=<me>&status=Incomplete and correctly shows "My open" —
+ * and goes dark the moment someone hand-edits a select away from a preset.
+ */
+function syncPresetHighlight() {
+  const cur = {
+    status:      E('fStatus').value,
+    source:      E('fSource').value,
+    assigned_by: E('fBy').value,
+    assigned_to: E('fTo').value
+  };
+  document.querySelectorAll('.tk-preset').forEach(chip => {
+    const p = PRESETS[chip.dataset.preset];
+    const on = !!p && Object.entries(resolvePreset(p))
+      .every(([k, v]) => String(cur[k] ?? '') === String(v ?? ''));
+    chip.classList.toggle('on', on);
+  });
+}
+
 // ─── Display helpers ────────────────────────────────────────────────────────
 function esc(s) {
   return String(s == null ? '' : s)
@@ -459,6 +509,7 @@ async function fetchTasks(off, quiet) {
   const q = E('fQ').value.trim();
   const status = E('fStatus').value;
   const source = E('fSource').value;
+  syncPresetHighlight();
   if (q) params.q = q;
   // ALWAYS sent, including 'All' (the service handles it): the route defaults
   // a MISSING status to 'Incomplete', so the old omit-when-All pattern made
