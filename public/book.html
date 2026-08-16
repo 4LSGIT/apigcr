@@ -484,12 +484,22 @@
       .catch(showUnavailable);
   }
 
-  // Parse the booking-view slug out of a /book/<slug> URL (any origin).
-  // Returns null when the URL isn't a /book/ link.
+  // Parse the booking-view slug out of a /book/<slug> OR /b/<slug> URL (any
+  // origin). Returns null when the URL isn't a booking link.
+  //
+  // BOTH shapes must be recognized. /b/<slug> is a permanent route alias for
+  // the same handler (routes/booking.js, 2026-08-16) and is the shape the
+  // house convention puts in SMS copy — campaign.html offers it in the
+  // merge-field dropdown. manage_fallback_url is is_editable=1, so a staff
+  // member can paste either shape in. If this parser only knew /book/, a
+  // /b/ fallback pointing at the very view that just failed would slip past
+  // the self-loop guard below and hand the visitor a CTA back to this same
+  // dead page. Keep the alternation in sync with BOOK_ROUTE_RE in
+  // routes/pageLanding.js.
   function bookingUrlSlug(url) {
     try {
       var u = new URL(url, location.origin);
-      var m = u.pathname.match(/^\/book\/([^\/?#]+)/);
+      var m = u.pathname.match(/^\/(?:book|b)\/([^\/?#]+)/);
       return m ? decodeURIComponent(m[1]) : null;
     } catch (e) { return null; }
   }
