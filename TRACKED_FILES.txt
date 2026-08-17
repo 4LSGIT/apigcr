@@ -316,6 +316,7 @@ ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
 ref/migration_trigger_R4.sql
+ref/migration_trigger_stage_aged.sql
 ref/migration_trigger_system_T1.sql
 ref/migration_trigger_system_T3T4.sql
 ref/pages/form.html
@@ -660,6 +661,7 @@ tests/portalDocsRoutes.test.js
 tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
+tests/schemaConventions.test.js
 tests/sequences.editor.roundtrip.test.js
 tests/su.stepup.test.js
 tests/taskService.status.test.js
