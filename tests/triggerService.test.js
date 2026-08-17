@@ -18,7 +18,7 @@
 //   - vm code sandbox: while(true) is killed by the timeout (M7).
 //   - Per-action failure isolation + M3 status derivation
 //     (partial / error) + S12 early-insert-then-finalize ordering.
-//   - buildEnvelope redaction (M2): contact_ssn / booking_token / *_token
+//   - buildEnvelope redaction (M2): contact_ssn / contact_token / *_token
 //     pattern keys absent; '' case_id → null; Date → ISO.
 //   - buildChanges date normalization.
 //
@@ -325,22 +325,22 @@ test('buildEnvelope redacts secrets, normalizes case_id, serializes Dates', () =
     case_id: '',
     data: {
       contact_ssn: '123-45-6789',
-      booking_token: 'deadbeef',
+      contact_token: 'deadbeef',
       portal_session_version: 3,
       zoho_api_key: 'k',                     // pattern-caught
       contact_name: "O'Brien",               // the M1 payload precondition survives as DATA
       contact_dob: new Date('1980-05-02T00:00:00.000Z'),
     },
-    changes: { booking_token: { from: 'a', to: 'b' }, contact_tags: { from: 'x', to: 'y' } },
+    changes: { contact_token: { from: 'a', to: 'b' }, contact_tags: { from: 'x', to: 'y' } },
   });
   expect(env.case_id).toBeNull();
   expect(env.data.contact_ssn).toBeUndefined();
-  expect(env.data.booking_token).toBeUndefined();
+  expect(env.data.contact_token).toBeUndefined();
   expect(env.data.portal_session_version).toBeUndefined();
   expect(env.data.zoho_api_key).toBeUndefined();
   expect(env.data.contact_name).toBe("O'Brien");
   expect(env.data.contact_dob).toBe('1980-05-02T00:00:00.000Z');
-  expect(env.changes.booking_token).toBeUndefined();
+  expect(env.changes.contact_token).toBeUndefined();
   expect(env.changes.contact_tags).toEqual({ from: 'x', to: 'y' });
 });
 

@@ -78,7 +78,7 @@ Notes that matter when authoring:
 - **Any column works in `changes`,** not just the ones in the field picker. The picker is a discovery aid; use **Custom path…** for anything else.
 - **`case_id` is a string** (opaque 8 chars), and `''` normalizes to `null` so `exists` behaves.
 - **Dates are ISO strings.** The pool hands back `Date` objects; the envelope serializes them so that what you match against and what you see in a sample are the same text.
-- **Secrets are stripped.** `contact_ssn`, `booking_token`, `portal_session_version`, plus any key ending `_token` / `_secret` / `_password` / `_pin` / `pin_hash` / `api_key`. Envelopes persist for 30–90 days and are readable by any staff token — they must not replicate credentials.
+- **Secrets are stripped.** `contact_ssn`, `contact_token`, `portal_session_version`, plus any key ending `_token` / `_secret` / `_password` / `_pin` / `pin_hash` / `api_key`. Envelopes persist for 30–90 days and are readable by any staff token — they must not replicate credentials.
 - **`actor` is `null`, not `{user_id: 0}`, when the writer didn't pass one.** "The system did it" (user 0, the automation pseudo-user) and "we don't know who did it" are deliberately distinguishable. Filter defensively.
 
 ### Event catalog

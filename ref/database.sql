@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-17T19:50:38.954Z
+-- Generated: 2026-08-17T22:10:45.635Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d252b941154c2880be815f3404b8ecdb
+-- Fingerprint: sha256:cccd6500215e426384129f20f0879263
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -834,7 +834,7 @@ CREATE TABLE `contacts` (
   `contact_updated` timestamp NULL DEFAULT NULL,
   `contact_sms_optout` tinyint(1) NOT NULL DEFAULT '0',
   `contact_email_optout` tinyint(1) NOT NULL DEFAULT '0',
-  `booking_token` char(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'opaque link-prefill id',
+  `contact_token` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'opaque per-contact bearer: booking prefill + video attribution',
   `portal_enabled` tinyint(1) NOT NULL DEFAULT '1',
   `portal_session_version` int NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -3407,7 +3407,7 @@ ALTER TABLE `contact_relations`
 --
 ALTER TABLE `contacts`
   ADD PRIMARY KEY (`contact_id`),
-  ADD UNIQUE KEY `uq_contacts_booking_token` (`booking_token`),
+  ADD UNIQUE KEY `uq_contacts_contact_token` (`contact_token`),
   ADD KEY `idx_contact_email` (`contact_email`),
   ADD FULLTEXT KEY `contact_name` (`contact_name`);
 

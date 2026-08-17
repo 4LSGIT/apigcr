@@ -26,7 +26,10 @@
  *                                   view hook fires inside createAppt)
  *
  * INTERNAL (jwtOrApiKey):
- *   POST /api/contacts/:id/booking-link — mint-or-return contacts.booking_token
+ *   POST /api/contacts/:id/booking-link — mint-or-return contacts.contact_token
+ *     (column renamed from booking_token 2026-08-17: the same per-contact
+ *      bearer now also identifies the contact on video landing pages, so the
+ *      booking-specific name was a lie. Route path is unchanged.)
  *
  * ── Server-authoritative config ──────────────────────────────
  * Everything that matters (length, buffer, granularity, min_notice, horizon,
@@ -63,7 +66,7 @@
  * createAppt run. Slot gone → 409 slot_taken.
  *
  * ── Identity (POST, priority order) ──────────────────────────
- *   1. c (booking_token, 32 hex)  → contact lookup; invalid → fall through
+ *   1. c (contact_token, 32 hex)  → contact lookup; invalid → fall through
  *      to the public path when public-identity fields were also sent, else
  *      400 invalid_token. No contact PII is EVER echoed on the token path
  *      (masked display via GET /contact is the only, deliberate exception).
@@ -72,7 +75,7 @@
  *      Find-or-create via resolveContactsByValue → createContact. Existing
  *      match (strongest source, phone over email) is reused — no dupes.
  *
- * (The raw-contact-id `client` fallback was removed: with booking_token
+ * (The raw-contact-id `client` fallback was removed: with contact_token
  * minted at contact creation + backfilled, it had no legitimate use left
  * and was an enumeration/impersonation surface — sequential ids, books on
  * behalf of arbitrary contacts, fires their confirmation SMS.)
@@ -506,7 +509,7 @@ router.get('/api/book/:slug/contact', async (req, res) => {
     }
     const [[row]] = await req.db.query(
       `SELECT contact_fname, contact_lname, contact_phone, contact_email
-         FROM contacts WHERE booking_token = ? LIMIT 1`,
+         FROM contacts WHERE contact_token = ? LIMIT 1`,
       [token]
     );
     if (!row) return res.status(404).json({ status: 'error', code: 'not_found' });
@@ -623,12 +626,12 @@ async function resolveBookingContact(db, body) {
     (typeof body.first === 'string' && body.first.trim() !== '') &&
     (body.phone != null && String(body.phone).trim() !== '');
 
-  // ── 1. booking_token ──
+  // ── 1. contact_token ──
   if (body.c != null && body.c !== '') {
     const token = String(body.c);
     if (TOKEN_RE.test(token)) {
       const [[row]] = await db.query(
-        'SELECT contact_id FROM contacts WHERE booking_token = ? LIMIT 1',
+        'SELECT contact_id FROM contacts WHERE contact_token = ? LIMIT 1',
         [token]
       );
       if (row) return { contactId: row.contact_id };
@@ -974,26 +977,26 @@ router.post('/api/contacts/:id/booking-link', jwtOrApiKey, async (req, res) => {
     }
 
     const [[row]] = await req.db.query(
-      'SELECT booking_token FROM contacts WHERE contact_id = ? LIMIT 1',
+      'SELECT contact_token FROM contacts WHERE contact_id = ? LIMIT 1',
       [id]
     );
     if (!row) return res.status(404).json({ status: 'error', message: 'Contact not found' });
-    if (row.booking_token) return res.json({ success: true, token: row.booking_token });
+    if (row.contact_token) return res.json({ success: true, token: row.contact_token });
 
     // Mint. Guarded UPDATE so two concurrent mints can't overwrite each
     // other; loser re-reads the winner's token.
     const token = crypto.randomBytes(16).toString('hex');
     const [upd] = await req.db.query(
-      'UPDATE contacts SET booking_token = ? WHERE contact_id = ? AND booking_token IS NULL',
+      'UPDATE contacts SET contact_token = ? WHERE contact_id = ? AND contact_token IS NULL',
       [token, id]
     );
     if (upd.affectedRows === 1) return res.json({ success: true, token });
 
     const [[again]] = await req.db.query(
-      'SELECT booking_token FROM contacts WHERE contact_id = ? LIMIT 1',
+      'SELECT contact_token FROM contacts WHERE contact_id = ? LIMIT 1',
       [id]
     );
-    return res.json({ success: true, token: again.booking_token });
+    return res.json({ success: true, token: again.contact_token });
   } catch (err) {
     console.error('POST /api/contacts/:id/booking-link error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to mint booking link' });

@@ -302,6 +302,7 @@ ref/2026-08-16_phase_d_sms_cutover_v2.sql
 ref/2026-08-16_task_dedupe_key.sql
 ref/2026-08-16_task_start_date.sql
 ref/2026-08-17_collation_normalize.sql
+ref/2026-08-17_contact_token_rename.sql
 ref/2026-08-17_trigger_stage_aged.sql
 ref/2026-08-17_video_landing.sql
 ref/EXTERNAL_CODE_CSS_DECISION.md

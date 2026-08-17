@@ -265,7 +265,7 @@ router.post('/p/:slug', async (req, res) => {
 //
 // /f/*, ext render, /api/ext/* and the whole booking/manage set additionally
 // carry X-Robots-Tag noindex: those URLs bear a bearer credential in the path
-// (appt_manage_token) or the query (?case_id=, ?c=<booking_token>) and must
+// (appt_manage_token) or the query (?case_id=, ?c=<contact_token>) and must
 // never enter an index. Landing PAGES do NOT — they are marketing surface and
 // stay indexable, and the booking widget is designed to be EMBEDDED in one of
 // them (pages row 2 iframes /book/mich-tax-prep), so it loses nothing by
@@ -399,7 +399,7 @@ const D_POST_RE       = /^\/d\/[A-Za-z0-9_-]{10,40}\/respond$/;
  *     tokenless but is only ever the branded invalid-link fallback — indexing
  *     an error page is pure noise, so it rides along.
  *   /book/:slug, /b/:slug, /api/book/*  — credentialed only in the `?c=`
- *     (contacts.booking_token) variant, which goes out in SMS and is exactly
+ *     (contacts.contact_token) variant, which goes out in SMS and is exactly
  *     the kind of URL that leaks into an index via a share or a referrer. The
  *     bare form is arguably marketing — but the booking widget is a slot
  *     picker with no marketing copy, designed to be iframed into a `pages`
