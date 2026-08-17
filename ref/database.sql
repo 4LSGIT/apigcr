@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-17T15:29:48.889Z
+-- Generated: 2026-08-17T16:16:38.989Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:33df488213cd8c8a42f086412f9f2b28
+-- Fingerprint: sha256:d32cdcc0573b47164b1446820fc7fa47
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2857,6 +2857,23 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `trigger_execution_rules`
+--
+
+DROP TABLE IF EXISTS `trigger_execution_rules`;
+CREATE TABLE `trigger_execution_rules` (
+  `id` bigint unsigned NOT NULL,
+  `execution_id` bigint unsigned NOT NULL,
+  `rule_id` int unsigned NOT NULL,
+  `rule_name` varchar(255) NOT NULL,
+  `action_count` int NOT NULL DEFAULT '0',
+  `failed_count` int NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `trigger_executions`
 --
 
@@ -2906,6 +2923,7 @@ CREATE TABLE `trigger_rules` (
   `description` text,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `position` int NOT NULL DEFAULT '0',
+  `min_interval_s` int NOT NULL DEFAULT '0',
   `match_mode` enum('conditions','code') NOT NULL DEFAULT 'conditions',
   `match_config` json DEFAULT NULL,
   `transform_mode` enum('passthrough','mapper','code') NOT NULL DEFAULT 'passthrough',
@@ -3989,6 +4007,14 @@ ALTER TABLE `test`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `trigger_execution_rules`
+--
+ALTER TABLE `trigger_execution_rules`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_rule_time` (`rule_id`,`id`),
+  ADD KEY `idx_execution` (`execution_id`);
+
+--
 -- Indexes for table `trigger_executions`
 --
 ALTER TABLE `trigger_executions`
@@ -4699,6 +4725,12 @@ ALTER TABLE `test`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `trigger_execution_rules`
+--
+ALTER TABLE `trigger_execution_rules`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `trigger_executions`
 --
 ALTER TABLE `trigger_executions`
@@ -4911,6 +4943,12 @@ ALTER TABLE `sequence_step_log`
 --
 ALTER TABLE `sequence_steps`
   ADD CONSTRAINT `fk_seq_steps_template` FOREIGN KEY (`template_id`) REFERENCES `sequence_templates` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `trigger_execution_rules`
+--
+ALTER TABLE `trigger_execution_rules`
+  ADD CONSTRAINT `fk_trigger_execution_rules_exec` FOREIGN KEY (`execution_id`) REFERENCES `trigger_executions` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `trigger_rule_actions`
