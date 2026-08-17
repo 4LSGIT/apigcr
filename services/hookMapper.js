@@ -58,8 +58,15 @@ function resolvePath(obj, path) {
  * @param {string} path  - dot-notation path
  * @param {*}      value - value to set
  */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function setNestedValue(obj, path, value) {
   const keys = path.split('.');
+  // Prototype-pollution guard (Trigger R3 / review S15): a mapping rule
+  // targeting __proto__.x would pollute Object.prototype process-wide.
+  if (keys.some(k => FORBIDDEN_KEYS.has(k))) {
+    throw new Error(`setNestedValue: forbidden key in path "${path}"`);
+  }
   let current = obj;
   for (let i = 0; i < keys.length - 1; i++) {
     const key = keys[i];

@@ -643,7 +643,9 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     res.json(updated);
 
     // Triggers (fire-and-forget, post-response). Transition-gated: idempotent
-    // re-saves of an already-complete item fire nothing.
+    // re-saves of an already-complete item fire nothing. Own try: the route's
+    // catch would double-respond on an already-sent response (R3/S8).
+    try {
     const linkContactId = parent.link_type === 'contact' ? (parseInt(parent.link, 10) || null) : null;
     const linkCaseId    = parent.link_type === 'case'    ? String(parent.link) : null;
     if (status === 'complete' && parent.item_status !== 'complete') {
@@ -675,6 +677,7 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
         },
       });
     }
+    } catch (emitErr) { console.error('PATCH /checkitems/:id trigger emit error:', emitErr.message); }
   } catch (err) {
     console.error('PATCH /checkitems/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to update item' });
@@ -692,7 +695,8 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     res.json({ status: 'success', message: 'Item deleted' });
 
     // Trigger: checklist.completed (fire-and-forget, post-response) — deleting
-    // the last incomplete item completes the list.
+    // the last incomplete item completes the list. Own try (R3/S8).
+    try {
     if (parent.checklist_status !== 'complete' && newChecklistStatus === 'complete') {
       domainEvents.emit(req.db, 'checklist.completed', {
         contact_id: parent.link_type === 'contact' ? (parseInt(parent.link, 10) || null) : null,
@@ -706,6 +710,7 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
         },
       });
     }
+    } catch (emitErr) { console.error('DELETE /checkitems/:id trigger emit error:', emitErr.message); }
   } catch (err) {
     console.error('DELETE /checkitems/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to delete item' });

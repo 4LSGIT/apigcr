@@ -47,6 +47,7 @@
 
 'use strict';
 
+const vm = require('node:vm');
 const { evaluateConditions } = require('./hookFilter');
 const hookMapper             = require('./hookMapper');
 const actionDispatchers      = require('../lib/actionDispatchers');
@@ -55,6 +56,18 @@ const domainEvents           = require('../lib/domainEvents');
 // ─────────────────────────────────────────────────────────────
 // EVENT REGISTRY
 // ─────────────────────────────────────────────────────────────
+
+// Events whose emit sites genuinely have no actor/source use CORE_FIELDS so
+// the picker never advertises a path that is always null (Review S5).
+// Threading actingUserId/source through the case-service callers is queued
+// as follow-up work; until then, honesty over aspiration.
+const CORE_FIELDS = [
+  { path: 'event',      label: 'Event type' },
+  { path: 'ts',         label: 'Timestamp (ISO)' },
+  { path: 'depth',      label: 'Trigger chain depth' },
+  { path: 'contact_id', label: 'Contact id' },
+  { path: 'case_id',    label: 'Case id (null when caseless)' },
+];
 
 const COMMON_FIELDS = [
   { path: 'event',      label: 'Event type' },
@@ -160,9 +173,13 @@ const EVENT_TYPES = {
       { path: 'data.contact_name',  label: 'Full name' },
       { path: 'data.contact_phone', label: 'Primary phone (post-update)' },
       { path: 'data.contact_email', label: 'Primary email (post-update)' },
-      { path: 'changes.contact_phone', label: 'Phone changed (exists = yes)' },
-      { path: 'changes.contact_email', label: 'Email changed (exists = yes)' },
-      { path: 'changes.contact_tags',  label: 'Tags changed (exists = yes)' },
+      { path: 'changes.contact_phone',      label: 'Phone changed (exists = yes)' },
+      { path: 'changes.contact_phone.to',   label: 'Phone — new value' },
+      { path: 'changes.contact_email',      label: 'Email changed (exists = yes)' },
+      { path: 'changes.contact_email.to',   label: 'Email — new value' },
+      { path: 'changes.contact_tags',       label: 'Tags changed (exists = yes)' },
+      { path: 'changes.contact_tags.to',    label: 'Tags — new value' },
+      { path: 'changes.contact_tags.from',  label: 'Tags — old value' },
       { path: 'extra.updated_fields',    label: 'Updated field list' },
       { path: 'extra.phones_changed',    label: 'Aggregate phones changed' },
       { path: 'extra.emails_changed',    label: 'Aggregate emails changed' },
@@ -171,9 +188,10 @@ const EVENT_TYPES = {
   },
   'case.created': {
     label: 'Case created',
-    description: 'Fires from the intake case-create route and the petition-filing case-create branch (the two case INSERT sites). source distinguishes: intake | petition.',
+    description: 'Fires from the intake case-create route and the petition-filing case-create branch (the two case INSERT sites). source distinguishes: intake | petition. No actor on this event.',
     fields: [
-      ...COMMON_FIELDS,
+      ...CORE_FIELDS,
+      { path: 'source', label: "'intake' | 'petition'" },
       { path: 'data.case_type',    label: 'Case type' },
       { path: 'data.case_subtype', label: 'Case subtype' },
       { path: 'data.case_number',  label: 'Case number (opaque text)' },
@@ -182,15 +200,19 @@ const EVENT_TYPES = {
   },
   'case.updated': {
     label: 'Case updated',
-    description: 'Fires from caseService.updateCase (detail form + the update_case internal function, which now delegates) when something actually changed. Direct SQL writers (court executor field writes, 341 pointer, dropbox path) bypass this deliberately. Stage moves are case.stage_advanced, not case.updated.',
+    description: 'Fires from caseService.updateCase (detail form + the update_case internal function, which now delegates) when something actually changed. Direct SQL writers (court executor field writes, 341 pointer, dropbox path) bypass this deliberately. Stage moves are case.stage_advanced, not case.updated. No actor/source on this event (the write path does not carry them). For ANY column: changes.<column> (exists = changed), changes.<column>.from / .to (values) via Custom path.',
     fields: [
-      ...COMMON_FIELDS,
+      ...CORE_FIELDS,
       { path: 'data.case_type',    label: 'Case type' },
       { path: 'data.case_subtype', label: 'Case subtype' },
       { path: 'data.case_stage',   label: 'case_stage (legacy enum)' },
-      { path: 'changes.case_number',   label: 'Docket changed (exists = yes)' },
-      { path: 'changes.case_subtype',  label: 'Subtype changed (exists = yes)' },
-      { path: 'changes.case_file_date', label: 'File date changed (exists = yes)' },
+      { path: 'changes.case_number',        label: 'Docket changed (exists = yes)' },
+      { path: 'changes.case_number.to',     label: 'Docket — new value' },
+      { path: 'changes.case_subtype',       label: 'Subtype changed (exists = yes)' },
+      { path: 'changes.case_subtype.to',    label: 'Subtype — new value' },
+      { path: 'changes.case_subtype.from',  label: 'Subtype — old value' },
+      { path: 'changes.case_file_date',     label: 'File date changed (exists = yes)' },
+      { path: 'changes.case_file_date.to',  label: 'File date — new value' },
       { path: 'extra.updated_fields',  label: 'Updated field list' },
     ],
   },
@@ -211,16 +233,16 @@ const EVENT_TYPES = {
   },
   'case.contact_linked': {
     label: 'Contact linked to case',
-    description: 'Fires from caseService.addCaseContact. NOT fired by the intake/petition routes\' direct case_relate INSERTs at creation (case.created covers those).',
+    description: 'Fires from caseService.addCaseContact. NOT fired by the intake/petition routes\' direct case_relate INSERTs at creation (case.created covers those). No actor/source on this event.',
     fields: [
-      ...COMMON_FIELDS,
+      ...CORE_FIELDS,
       { path: 'data.relate_type', label: 'Relation type (Primary/Secondary/Other/Bystander)' },
     ],
   },
   'case.contact_unlinked': {
     label: 'Contact unlinked from case',
-    description: 'Fires from caseService.removeCaseContact when a row was actually removed.',
-    fields: [ ...COMMON_FIELDS ],
+    description: 'Fires from caseService.removeCaseContact when a row was actually removed. No actor/source on this event.',
+    fields: [ ...CORE_FIELDS ],
   },
   // ── T4 events ────────────────────────────────────────────
   'form.submitted': {
@@ -280,6 +302,26 @@ const EVENT_TYPES = {
 // changes.<field> exists).
 
 const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http', 'hook']);
+
+// Review M7: code mode runs in node:vm with a hard timeout. The bare context
+// (no process, require, fetch, console, timers) is defence-in-depth against
+// the env-reach problem, and the timeout stops a while(true) from parking the
+// event loop until Cloud Run kills the container. NOT a security boundary
+// against a determined attacker — the code-mode AUTH question is a
+// codebase-wide decision (this pattern exists in 9 other automation
+// surfaces) tracked separately.
+const CODE_TIMEOUT_MS = 200;
+function _runCode(code, envelope) {
+  const ctx = vm.createContext(Object.create(null));
+  ctx.input = envelope;
+  const script = new vm.Script(`(function(input){ ${code} \n})(input)`);
+  return script.runInContext(ctx, { timeout: CODE_TIMEOUT_MS });
+}
+
+// Review S6: total-dispatch budget per ROOT event (MAX_DEPTH bounds chain
+// length; this bounds total work — 2 rules × 3 re-emitting actions can fan
+// to ~3^4 dispatches from one mutation without it).
+const MAX_DISPATCHES_PER_ROOT = 50;
 
 // ─────────────────────────────────────────────────────────────
 // RULE LOADING
@@ -369,9 +411,7 @@ function _evaluateMatch(rule, envelope) {
       return false;
     }
     try {
-      // eslint-disable-next-line no-new-func
-      const fn = new Function('input', code);
-      return !!fn(envelope);
+      return !!_runCode(code, envelope);
     } catch (err) {
       console.warn(
         `[triggerService] rule ${rule.id} (${rule.name}) code error: ${err.message}`
@@ -420,6 +460,15 @@ function _runTransform(rule, envelope) {
         console.warn(
           `[triggerService] rule ${rule.id} (${rule.name}) mapper warnings: ` + errors.join('; ')
         );
+        // Review M4: DIVERGENCE from the ingest copy (which only warns).
+        // Every rule errored and nothing mapped → this is a broken transform,
+        // not a partial one; feeding {} to actions violates the "never feed
+        // garbage" contract. Partial success still passes, with the errors
+        // surfaced into the execution row's warnings.
+        if (!output || !Object.keys(output).length) {
+          return { ok: false, error: `mapper produced no output: ${errors.join('; ')}` };
+        }
+        return { ok: true, output, warnings: errors };
       }
       return { ok: true, output };
     } catch (err) {
@@ -431,9 +480,7 @@ function _runTransform(rule, envelope) {
     const code = typeof config === 'string' ? config : config?.code;
     if (!code) return { ok: false, error: `empty code on code transform mode` };
     try {
-      // eslint-disable-next-line no-new-func
-      const fn = new Function('input', code);
-      const output = fn(envelope);
+      const output = _runCode(code, envelope);
       if (output == null || typeof output !== 'object') {
         return { ok: false, error: `code transform must return an object (got ${typeof output})` };
       }
@@ -523,7 +570,14 @@ function _extractActionResult(actionType, logData) {
       return out;
     }
     case 'http':
-      return { response_status: logData.response_status ?? null };
+      // Review M3.4: keep a truncated response body — it's already in logData
+      // (10k-capped by the dispatcher) and was being thrown away, leaving
+      // failed HTTP actions undiagnosable from the execution row.
+      return {
+        response_status: logData.response_status ?? null,
+        response_body:   typeof logData.response_body === 'string'
+                           ? logData.response_body.slice(0, 2000) : null,
+      };
     default:
       return { response_status: logData.response_status ?? null };
   }
@@ -532,6 +586,17 @@ function _extractActionResult(actionType, logData) {
 // ─────────────────────────────────────────────────────────────
 // METRICS BUMP (fire-and-forget)
 // ─────────────────────────────────────────────────────────────
+
+async function _bumpErrorMetrics(db, ruleIds) {
+  if (!Array.isArray(ruleIds) || !ruleIds.length) return;
+  const placeholders = ruleIds.map(() => '?').join(',');
+  await db.query(
+    `UPDATE trigger_rules
+        SET error_count = error_count + 1, last_error_at = NOW()
+      WHERE id IN (${placeholders})`,
+    ruleIds
+  );
+}
 
 async function _bumpMetrics(db, ruleIds) {
   if (!Array.isArray(ruleIds) || !ruleIds.length) return;
@@ -551,9 +616,29 @@ async function _bumpMetrics(db, ruleIds) {
 async function _dispatchAction(db, rule, action, transformedInput) {
   const base = {
     rule_id:        rule.id,
+    rule_name:      rule.name,          // denormalized: survives rule deletion (S17e)
     rule_action_id: action.id,
     action_type:    action.action_type,
   };
+
+  // Review S6: total-dispatch budget for this root event's whole chain.
+  const counters = domainEvents.currentCounters();
+  if (counters && counters.dispatches >= MAX_DISPATCHES_PER_ROOT) {
+    if (!counters.budgetAlerted) {
+      counters.budgetAlerted = true;
+      try {
+        const { alert } = require('../lib/alerting');
+        alert(db, {
+          source: 'app', kind: 'trigger_budget_exhausted', severity: 'warning',
+          group_key: 'trigger_budget',
+          title: `Trigger dispatch budget (${MAX_DISPATCHES_PER_ROOT}) exhausted`,
+          message: `Rule ${rule.id} (${rule.name}) and later actions skipped for this root event — likely rule fan-out.`,
+        }).catch(() => {});
+      } catch (_) {}
+    }
+    return { ...base, status: 'skipped', error: `dispatch budget (${MAX_DISPATCHES_PER_ROOT}/root event) exhausted` };
+  }
+  if (counters) counters.dispatches++;
 
   let config = action.config;
   if (typeof config === 'string') {
@@ -609,7 +694,7 @@ async function _dispatchAction(db, rule, action, transformedInput) {
 
 async function _insertExecution(db, envelope, { status, rulesMatched = 0, outcomes = null, error = null }) {
   try {
-    await db.query(
+    const [res] = await db.query(
       `INSERT INTO trigger_executions
          (event_type, contact_id, case_id, depth, status, rules_matched, outcomes, envelope, error)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -625,9 +710,44 @@ async function _insertExecution(db, envelope, { status, rulesMatched = 0, outcom
         error,
       ]
     );
+    return res.insertId;
   } catch (err) {
     // Never let audit failure disturb anything upstream.
     console.error(`[triggerService] execution log insert failed (${envelope.event}):`, err.message);
+    return null;
+  }
+}
+
+/**
+ * no_rules rows exist ONLY as sample-envelope stock for the authoring UI —
+ * cap them (Review S7): keep inserting until the event type has 20 recent
+ * ones, then stop paying a JSON INSERT per mutation for events nobody
+ * consumes. The derived-table wrapper dodges MySQL error 1093
+ * (INSERT…SELECT from the target table).
+ */
+async function _insertNoRulesCapped(db, envelope) {
+  try {
+    await db.query(
+      `INSERT INTO trigger_executions
+         (event_type, contact_id, case_id, depth, status, rules_matched, envelope)
+       SELECT ?, ?, ?, ?, 'no_rules', 0, ?
+         FROM DUAL
+        WHERE (SELECT cnt FROM (
+                 SELECT COUNT(*) AS cnt FROM trigger_executions
+                  WHERE event_type = ? AND status = 'no_rules'
+                    AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
+               ) x) < 20`,
+      [
+        envelope.event,
+        envelope.contact_id ?? null,
+        envelope.case_id ?? null,
+        envelope.depth ?? 0,
+        JSON.stringify(envelope),
+        envelope.event,
+      ]
+    );
+  } catch (err) {
+    console.error(`[triggerService] no_rules insert failed (${envelope.event}):`, err.message);
   }
 }
 
@@ -675,13 +795,15 @@ async function processEvent(db, envelope) {
   }
 
   if (!rules.length) {
-    await _insertExecution(db, envelope, { status: 'no_rules' });
+    await _insertNoRulesCapped(db, envelope);
     return { status: 'no_rules' };
   }
 
+  // ── Phase 1: match + transform every rule (no side effects yet) ──────────
   const matchedRuleIds = [];
-  const actionOutcomes = [];
   const warnings       = [];
+  const planned        = [];   // [{ rule, transformed }] — rules whose actions will dispatch
+  const failedTransformRules = [];
 
   for (const rule of rules) {
     if (!_evaluateMatch(rule, envelope)) continue;
@@ -691,41 +813,114 @@ async function processEvent(db, envelope) {
     matchedRuleIds.push(rule.id);
 
     const tr = _runTransform(rule, envelope);
+    if (tr.warnings && tr.warnings.length) {
+      warnings.push(...tr.warnings.map(w => `rule ${rule.id} (${rule.name}) mapper: ${w}`));
+    }
     if (!tr.ok) {
       const w = `rule ${rule.id} (${rule.name}) transform failed: ${tr.error} — actions skipped`;
       console.warn(`[triggerService] ${w}`);
       warnings.push(w);
+      failedTransformRules.push(rule);
       continue;
     }
+    planned.push({ rule, transformed: tr.output });
+  }
 
+  // ── Phase 2: write the execution row BEFORE dispatching (Review S12) —
+  // if the process dies or Cloud Run throttles mid-dispatch, the event was
+  // still SEEN. Status here is provisional; Phase 4 finalizes it.
+  const execId = await _insertExecution(db, envelope, {
+    status: matchedRuleIds.length ? 'matched' : 'no_match',
+    rulesMatched: matchedRuleIds.length,
+    outcomes: {
+      matched_rule_ids: matchedRuleIds,
+      action_outcomes:  [],
+      ...(warnings.length ? { warnings } : {}),
+      ...(planned.length ? { dispatch_pending: true } : {}),
+    },
+  });
+
+  // ── Phase 3: dispatch ────────────────────────────────────────────────────
+  const actionOutcomes = [];
+  for (const { rule, transformed } of planned) {
     for (const action of rule.actions) {
       // ALS child scope: any emit() reached through this action's side
       // effects carries depth+1 and this rule on the chain.
       const outcome = await domainEvents.runAsAction(rule.id, () =>
-        _dispatchAction(db, rule, action, tr.output)
+        _dispatchAction(db, rule, action, transformed)
       );
       actionOutcomes.push(outcome);
     }
   }
 
-  const status = matchedRuleIds.length ? 'matched' : 'no_match';
+  // ── Phase 4: derive the FINAL status from what actually happened
+  // (Review M3 — a rule whose every action failed must not read as a green
+  // `matched` row). Failed transforms count as failures too: the rule was
+  // supposed to do something and did nothing.
+  const failures  = actionOutcomes.filter(o => o.status !== 'success').length
+                  + failedTransformRules.length;
+  const successes = actionOutcomes.filter(o => o.status === 'success').length;
+  let status = 'no_match';
+  if (matchedRuleIds.length) {
+    if (failures > 0 && successes === 0) status = 'error';
+    else if (failures > 0)               status = 'partial';
+    else                                 status = 'matched';
+  }
 
-  await _insertExecution(db, envelope, {
-    status,
-    rulesMatched: matchedRuleIds.length,
-    outcomes: {
-      matched_rule_ids: matchedRuleIds,
-      action_outcomes:  actionOutcomes,
-      ...(warnings.length ? { warnings } : {}),
-    },
-  });
+  let errorSummary = null;
+  if (status === 'error' || status === 'partial') {
+    const parts = [];
+    for (const o of actionOutcomes) {
+      if (o.status !== 'success') parts.push(`rule ${o.rule_id} ${o.action_type}: ${o.error || o.status}`);
+    }
+    for (const r of failedTransformRules) parts.push(`rule ${r.id} transform failed`);
+    errorSummary = parts.join(' | ').slice(0, 500) || null;
+  }
 
+  const finalOutcomes = {
+    matched_rule_ids: matchedRuleIds,
+    action_outcomes:  actionOutcomes,
+    ...(warnings.length ? { warnings } : {}),
+  };
+
+  if (execId != null) {
+    await db.query(
+      `UPDATE trigger_executions SET status = ?, outcomes = ?, error = ? WHERE id = ?`,
+      [status, JSON.stringify(finalOutcomes), errorSummary, execId]
+    ).catch(err => console.error('[triggerService] execution finalize failed:', err.message));
+  }
+
+  // ── Phase 5: metrics + alerting ──────────────────────────────────────────
   if (matchedRuleIds.length) {
     _bumpMetrics(db, matchedRuleIds)
       .catch(err => console.error('[triggerService] metrics bump failed:', err.message));
   }
 
-  return { status, matchedRuleIds, actionOutcomes, warnings };
+  const failedRuleIds = [...new Set([
+    ...actionOutcomes.filter(o => o.status !== 'success').map(o => o.rule_id),
+    ...failedTransformRules.map(r => r.id),
+  ])];
+  if (failedRuleIds.length) {
+    _bumpErrorMetrics(db, failedRuleIds)
+      .catch(err => console.error('[triggerService] error metrics bump failed:', err.message));
+    // One alert per failing rule, grouped so the hourly sweep and shell
+    // banner see a persistent failure as ONE ongoing condition (Review M3.2).
+    try {
+      const { alert } = require('../lib/alerting');
+      for (const rid of failedRuleIds) {
+        const rule = rules.find(r => r.id === rid);
+        alert(db, {
+          source: 'app', kind: 'trigger_action_failed', severity: 'warning',
+          group_key: `trigger_rule_${rid}`,
+          title: `Trigger rule ${rid} (${rule ? rule.name : '?'}) action failure on ${envelope.event}`,
+          message: errorSummary || 'see execution row outcomes',
+          context: { execution_id: execId, event: envelope.event, case_id: envelope.case_id, contact_id: envelope.contact_id },
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  return { status, matchedRuleIds, actionOutcomes, warnings, execution_id: execId };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -828,6 +1023,31 @@ function _validateActions(actions) {
     }
     if (a.config == null || typeof a.config !== 'object') {
       throw _badRequest(`actions[${i}].config must be an object`);
+    }
+    // Review S4: required-config checks at WRITE time — a rule that can only
+    // fail at dispatch (after a live event fired) is a booby trap. The empty
+    // UI select produces Number('') = 0 — reject non-positive ids too.
+    const c = a.config;
+    switch (a.action_type) {
+      case 'workflow':
+        if (!(Number(c.workflow_id) > 0)) throw _badRequest(`actions[${i}]: workflow_id required`);
+        break;
+      case 'sequence':
+        if (!(Number(c.template_id) > 0) && !c.template_type) {
+          throw _badRequest(`actions[${i}]: template_id (or template_type) required`);
+        }
+        break;
+      case 'hook':
+        if (!c.slug || !String(c.slug).trim()) throw _badRequest(`actions[${i}]: slug required`);
+        break;
+      case 'internal_function':
+        if (!c.function_name || !String(c.function_name).trim()) {
+          throw _badRequest(`actions[${i}]: function_name required`);
+        }
+        break;
+      case 'http':
+        if (!c.url || !String(c.url).trim()) throw _badRequest(`actions[${i}]: url required`);
+        break;
     }
   });
 }

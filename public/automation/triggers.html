@@ -141,7 +141,9 @@ body {
   display:inline-flex; gap:6px; max-width:100%; margin:2px 4px 2px 0; padding:3px 8px;
   background:#eef4ff; border:1px solid #d5e3fe; border-radius:12px;
   font-size:11px; cursor:pointer; align-items:center;
+  font-family:inherit; color:inherit; text-align:left;   /* button reset (M1) */
 }
+.tg-chip:focus { outline:2px solid var(--blue); outline-offset:1px; }
 .tg-chip:hover { background:#dcebff; }
 .tg-chip .v { color:var(--muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
@@ -184,6 +186,7 @@ pre.tg-json { background:#0f172a; color:#e2e8f0; border-radius:8px; padding:12px
     <select id="tg-exec-status" onchange="tgLoadExecutions(true)">
       <option value="">All statuses</option>
       <option value="matched">matched</option>
+      <option value="partial">partial</option>
       <option value="no_match">no_match</option>
       <option value="no_rules">no_rules</option>
       <option value="depth_capped">depth_capped</option>
@@ -237,6 +240,7 @@ function fmtTs(v) {
 
   const STATUS_META = {
     matched:      { bg:'#dcfce7', fg:'#166534' },
+    partial:      { bg:'#fef3c7', fg:'#92400e' },
     no_match:     { bg:'#f1f5f9', fg:'#475569' },
     no_rules:     { bg:'#f1f5f9', fg:'#94a3b8' },
     depth_capped: { bg:'#fef3c7', fg:'#92400e' },
@@ -420,8 +424,8 @@ function fmtTs(v) {
           </div>
           <div id="tg-t-passthrough" class="tg-hint">Actions receive the envelope unchanged.</div>
           <div id="tg-t-mapper" style="display:none">
-            <textarea class="tg-textarea tg-code" id="tg-f-tmapper" placeholder='[{"target":"case_id","source":"case_id"}]'></textarea>
-            <div class="tg-hint">Array of hookMapper mapping rules (same format as hook transforms).</div>
+            <textarea class="tg-textarea tg-code" id="tg-f-tmapper" placeholder='[{"to":"case_id","from":"case_id"}]'></textarea>
+            <div class="tg-hint">Array of mapping rules. Each: <code>{"to":"output.key", "from":"envelope.dot.path"}</code> — or <code>"template":"Stage: {{data.stage_key}}"</code>, or <code>"value":"literal"</code>. Optional <code>"transforms":["lowercase",…]</code>.</div>
           </div>
           <div id="tg-t-code" style="display:none">
             <textarea class="tg-textarea tg-code" id="tg-f-tcode" placeholder="// input = the envelope. Return the object the actions receive, e.g.: return { case_id: input.case_id };"></textarea>
@@ -504,12 +508,33 @@ function fmtTs(v) {
     }
     function onEventTypeChanged() {
       editor.dirty = true; updateEvtDesc();
+      const newEv = E('tg-f-event').value;
+      const catalog = fieldCatalogFor(newEv);
       // re-render builder with the new event's field catalog (state preserved)
       mbRender(E('tg-mb-root'), editor.mbState, {
-        availableFields: fieldCatalogFor(E('tg-f-event').value),
+        availableFields: catalog,
         operators: meta.match_operators,
         onChange: () => { editor.dirty = true; },
       });
+      // Review S9: paths from the old event silently become never-resolving
+      // custom paths. Say so.
+      const known = new Set(catalog.map(f => f.value));
+      const orphanOf = (g) => (g.conditions || []).flatMap(c =>
+        c && c.operator ? orphanOf(c) : (c && c.path && !known.has(c.path) ? [c.path] : []));
+      const orphans = [...new Set(orphanOf(editor.mbState))];
+      let warnEl = E('tg-evt-orphan-warn');
+      if (!warnEl) {
+        warnEl = document.createElement('div');
+        warnEl.id = 'tg-evt-orphan-warn';
+        warnEl.style.cssText = 'margin-top:8px;padding:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#991b1b';
+        E('tg-mb-root').after(warnEl);
+      }
+      if (orphans.length) {
+        warnEl.style.display = '';
+        warnEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> These condition paths are not in <b>${esc(newEv)}</b>'s envelope and will likely never match: <code>${orphans.map(esc).join('</code>, <code>')}</code>. The transform and actions may also reference old paths.`;
+      } else {
+        warnEl.style.display = 'none';
+      }
       E('tg-samples').innerHTML = ''; E('tg-samples').style.display = 'none';
     }
     fillEventSelectors(r.event_type);
@@ -553,6 +578,9 @@ function fmtTs(v) {
       <div class="tg-action-head">
         <select class="tg-select tg-a-type">${types}</select>
         <input class="tg-input tg-a-name" placeholder="name (optional)" value="${esc(action.name || '')}">
+        <label class="tg-check" title="Inactive actions are kept but skipped at dispatch" style="flex-shrink:0">
+          <input type="checkbox" class="tg-a-active" ${action.active === 0 ? '' : 'checked'}> <span>Active</span>
+        </label>
         <button class="tg-btn danger tg-a-del" title="Remove"><i class="fa-solid fa-trash"></i></button>
       </div>
       <div class="tg-action-cfg"></div>`;
@@ -630,13 +658,74 @@ function fmtTs(v) {
 
     typeSel.addEventListener('change', () => { action.action_type = typeSel.value; action.config = {}; editor.dirty = true; renderCfg(); });
     div.querySelector('.tg-a-del').addEventListener('click', () => {
+      syncActionsFromDom();
       editor.rule.actions.splice(Number(div.dataset.idx), 1); editor.dirty = true; renderActions();
     });
     renderCfg();
     return div;
   }
 
+  // Review S11: action config lives in the DOM while editing; renderActions
+  // rebuilds rows FROM THE MODEL. Without syncing first, Add/Delete reverted
+  // every unsaved edit on the other rows (worst on internal_function params
+  // grids). readActionRow is the single row-reader shared by harvest()
+  // (strict — throws on missing required config) and the lenient pre-render
+  // sync (best-effort — a half-edited row must not block adding another).
+  function readActionRow(div, { strict = false } = {}) {
+    const t = div.querySelector('.tg-a-type').value;
+    const name = div.querySelector('.tg-a-name').value.trim() || null;
+    const activeEl = div.querySelector('.tg-a-active');
+    const active = activeEl ? (activeEl.checked ? 1 : 0) : 1;
+    let config = {};
+    const i = Number(div.dataset.idx);
+    if (t === 'workflow') {
+      config.workflow_id = Number(div.querySelector('.tg-a-workflow')?.value);
+      if (strict && !(config.workflow_id > 0)) throw new Error(`Action ${i + 1}: pick a workflow`);
+    } else if (t === 'sequence') {
+      config.template_id = Number(div.querySelector('.tg-a-seq')?.value);
+      const cidf = div.querySelector('.tg-a-cidf')?.value.trim();
+      if (cidf) config.contact_id_field = cidf;
+      if (strict && !(config.template_id > 0)) throw new Error(`Action ${i + 1}: pick a sequence template`);
+    } else if (t === 'hook') {
+      config.slug = div.querySelector('.tg-a-hook')?.value || '';
+      if (strict && !config.slug) throw new Error(`Action ${i + 1}: pick a hook`);
+    } else if (t === 'internal_function') {
+      config.function_name = div.querySelector('.tg-a-fn')?.value || '';
+      const pmEl = div.querySelector('.tg-a-pm');
+      config.params_mapping = pmEl ? window.pmCollect(pmEl) : {};
+      if (strict && !config.function_name) throw new Error(`Action ${i + 1}: pick a function`);
+    } else if (t === 'http') {
+      config.url = div.querySelector('.tg-a-url')?.value.trim() || '';
+      config.method = div.querySelector('.tg-a-method')?.value || 'POST';
+      const h = div.querySelector('.tg-a-headers')?.value.trim();
+      if (h) {
+        const parsed = parseJson(h);
+        if (strict && !parsed) throw new Error(`Action ${i + 1}: headers is not valid JSON`);
+        if (parsed) config.headers = parsed;
+      }
+      config.body_mode = div.querySelector('.tg-a-bodymode')?.value || 'transform_output';
+      const tpl = div.querySelector('.tg-a-bodytpl')?.value;
+      if (tpl && tpl.trim()) config.body_template = tpl;
+      const cred = div.querySelector('.tg-a-cred')?.value;
+      if (cred) config.credential_id = Number(cred);
+      if (strict && !config.url) throw new Error(`Action ${i + 1}: URL required`);
+    }
+    return { action_type: t, name, active, config };
+  }
+
+  function syncActionsFromDom() {
+    document.querySelectorAll('#tg-actions .tg-action').forEach(div => {
+      const i = Number(div.dataset.idx);
+      if (!editor.rule.actions[i]) return;
+      try {
+        const read = readActionRow(div, { strict: false });
+        editor.rule.actions[i] = { ...editor.rule.actions[i], ...read };
+      } catch (_) { /* lenient — keep the model's version of a broken row */ }
+    });
+  }
+
   window.tgAddAction = () => {
+    syncActionsFromDom();
     editor.rule.actions.push({ action_type: 'internal_function', name: '', config: {}, active: 1 });
     editor.dirty = true;
     renderActions();
@@ -663,39 +752,23 @@ function fmtTs(v) {
       if (!tConfig.code.trim()) throw new Error('Transform code is empty');
     }
 
+    // Review S1: incomplete condition rows used to VANISH silently at save —
+    // and dropping the last one converts the rule into an active match-all.
+    // Count DOM rows vs collected leaves and refuse instead.
+    if (matchMode === 'conditions') {
+      const domRows = E('tg-mb-root').querySelectorAll('.cond-row').length;
+      const countLeaves = (g) => (g.conditions || []).reduce(
+        (n, c) => n + (c && c.operator ? countLeaves(c) : 1), 0);
+      const collected = countLeaves(matchConfig);
+      if (collected < domRows) {
+        throw new Error(`${domRows - collected} condition(s) incomplete (Custom path with no path typed) — fill or remove them`);
+      }
+    }
+
     const actions = [];
     document.querySelectorAll('#tg-actions .tg-action').forEach((div, i) => {
-      const t = div.querySelector('.tg-a-type').value;
-      const name = div.querySelector('.tg-a-name').value.trim() || null;
-      let config = {};
-      if (t === 'workflow') {
-        config.workflow_id = Number(div.querySelector('.tg-a-workflow').value);
-      } else if (t === 'sequence') {
-        config.template_id = Number(div.querySelector('.tg-a-seq').value);
-        const cidf = div.querySelector('.tg-a-cidf').value.trim();
-        if (cidf) config.contact_id_field = cidf;
-      } else if (t === 'hook') {
-        config.slug = div.querySelector('.tg-a-hook').value;
-      } else if (t === 'internal_function') {
-        config.function_name = div.querySelector('.tg-a-fn').value;
-        config.params_mapping = window.pmCollect(div.querySelector('.tg-a-pm'));
-      } else if (t === 'http') {
-        config.url = div.querySelector('.tg-a-url').value.trim();
-        config.method = div.querySelector('.tg-a-method').value;
-        const h = div.querySelector('.tg-a-headers').value.trim();
-        if (h) {
-          const parsed = parseJson(h);
-          if (!parsed) throw new Error(`Action ${i + 1}: headers is not valid JSON`);
-          config.headers = parsed;
-        }
-        config.body_mode = div.querySelector('.tg-a-bodymode').value;
-        const tpl = div.querySelector('.tg-a-bodytpl').value;
-        if (tpl.trim()) config.body_template = tpl;
-        const cred = div.querySelector('.tg-a-cred').value;
-        if (cred) config.credential_id = Number(cred);
-        if (!config.url) throw new Error(`Action ${i + 1}: URL required`);
-      }
-      actions.push({ action_type: t, name, position: i, active: 1, config });
+      const read = readActionRow(div, { strict: true });
+      actions.push({ ...read, position: i });
     });
 
     const name = E('tg-f-name').value.trim();
@@ -738,9 +811,7 @@ function fmtTs(v) {
               <button class="tg-btn" onclick="event.stopPropagation();tgUnpin()"><i class="fa-solid fa-times"></i></button>
             </span>
           </div>
-          <div class="tg-sample-fields" style="display:block">${flatP.map(f =>
-            `<span class="tg-chip" title="click to add condition" onclick='tgInsertCond(${JSON.stringify(f.path)}, ${JSON.stringify(String(f.value).slice(0, 200))})'>
-               <b>${esc(f.path)}</b><span class="v">${esc(String(f.value))}</span></span>`).join('')}</div>
+          <div class="tg-sample-fields" style="display:block">${flatP.map(f => tgChipHtml(f)).join('')}</div>
         </div>`;
       }
       if (!samples.length && !pinnedHtml) {
@@ -755,9 +826,7 @@ function fmtTs(v) {
             <span>#${s.id} · ${esc(s.status)} · ${esc(fmtTs(s.created_at))}</span>
             <span><button class="tg-btn" onclick="event.stopPropagation();tgTestEnvelope(${s.id})"><i class="fa-solid fa-flask"></i> Test</button></span>
           </div>
-          <div class="tg-sample-fields">${flat.map(f =>
-            `<span class="tg-chip" title="click to add condition" onclick='tgInsertCond(${JSON.stringify(f.path)}, ${JSON.stringify(String(f.value).slice(0, 200))})'>
-               <b>${esc(f.path)}</b><span class="v">${esc(String(f.value))}</span></span>`).join('')}</div>
+          <div class="tg-sample-fields">${flat.map(f => tgChipHtml(f)).join('')}</div>
         </div>`;
       }).join('');
       box._samples = samples;
@@ -777,10 +846,29 @@ function fmtTs(v) {
     return out;
   }
 
-  window.tgInsertCond = (path, value) => {
-    mbAddCondition(E('tg-mb-root'), { path, op: 'equals', value: value === 'null' ? '' : value });
+  // Review M1: chips are <button>s carrying data attributes, inserted via ONE
+  // delegated listener — no JSON inside an inline handler attribute (the old
+  // single-quoted onclick was injectable: JSON.stringify does not escape ').
+  // A real null flag replaces the old 'null' string sentinel, which turned a
+  // genuine string value of "null" into an empty condition. Buttons also give
+  // keyboard/AT access for free (Review P8, chips portion).
+  function tgChipHtml(f) {
+    const isNull = f.value === 'null';
+    return `<button type="button" class="tg-chip" title="click to add condition"
+      data-chip-path="${esc(f.path)}" data-chip-val="${esc(String(f.value).slice(0, 200))}"${isNull ? ' data-chip-null="1"' : ''}>
+      <b>${esc(f.path)}</b><span class="v">${esc(String(f.value))}</span></button>`;
+  }
+  document.addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.tg-chip');
+    if (!chip || !chip.dataset.chipPath) return;
+    if (!editor) return;
+    mbAddCondition(E('tg-mb-root'), {
+      path: chip.dataset.chipPath,
+      op: 'equals',
+      value: chip.dataset.chipNull ? '' : chip.dataset.chipVal,
+    });
     editor.dirty = true;
-  };
+  });
 
   // Harvest ONLY the editor's match+transform (no name requirement) for the
   // draft test. Throws on invalid mapper JSON / empty code.
@@ -851,6 +939,7 @@ function fmtTs(v) {
         cancelButtonText: 'Close',
         confirmButtonText: 'Run live',
         confirmButtonColor: '#ef4444',
+        focusCancel: true,   // Review S3: Enter must NOT dispatch real actions
       });
       if (res.isConfirmed) await tgReplay(executionId);
     } catch (e) {
@@ -869,6 +958,7 @@ function fmtTs(v) {
         html: `<div style="text-align:left;font-size:13px"><div style="margin-bottom:6px">Matched rules: ${(out.matchedRuleIds || []).join(', ') || 'none'}</div>${outcomes}<div class="tg-hint" style="margin-top:10px">A new execution row was recorded (see the Executions tab).</div></div>`,
         width: 620,
       });
+      if (activeTab === 'executions') tgLoadExecutions(true);   // Review S3
     } catch (e) {
       Toast.fire({ icon: 'error', title: e.message });
     }
@@ -889,9 +979,11 @@ function fmtTs(v) {
   // ════════════════════════════════════════════════════════════
   // EXECUTIONS TAB
   // ════════════════════════════════════════════════════════════
-  window.tgLoadExecutions = async (force = true) => {
+  let execRows = [];   // accumulated across Load more (S17d)
+
+  window.tgLoadExecutions = async (reset = true, beforeId = null) => {
     const body = E('tg-exec-body');
-    body.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading…</div>';
+    if (reset) { execRows = []; body.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading…</div>'; }
     try {
       const ev = E('tg-exec-event').value;
       const st = E('tg-exec-status').value;
@@ -900,8 +992,12 @@ function fmtTs(v) {
       if (ev) qs.set('event_type', ev);
       if (st) qs.set('status', st);
       qs.set('limit', lim);
+      if (beforeId) qs.set('before_id', beforeId);
       const data = await api(`/api/triggers/executions?${qs}`);
-      const rows = (data && data.executions) || [];
+      const batch = (data && data.executions) || [];
+      execRows = execRows.concat(batch);
+      const rows = execRows;
+      const more = batch.length === Number(lim);
       E('tg-exec-count').textContent = `${rows.length} shown`;
       if (!rows.length) { body.innerHTML = '<div style="padding:20px;color:var(--muted)">No executions.</div>'; return; }
       body.innerHTML = `<table class="tg-table"><thead><tr>
@@ -916,6 +1012,7 @@ function fmtTs(v) {
             <td>${esc(fmtTs(r.created_at))}</td>
           </tr>${r.error ? `<tr><td></td><td colspan="7" style="color:var(--red);font-size:11px">${esc(r.error)}</td></tr>` : ''}`;
         }).join('')}</tbody></table>
+        ${more ? `<div style="text-align:center;padding:10px"><button class="tg-btn" onclick="tgLoadExecutions(false, ${rows[rows.length - 1].id})"><i class="fa-solid fa-angles-down"></i> Load more</button></div>` : ''}
         <div id="tg-exec-detail" style="margin-top:14px"></div>`;
     } catch (e) {
       body.innerHTML = `<div style="padding:20px;color:var(--red)">${esc(e.message)}</div>`;
@@ -990,6 +1087,18 @@ function fmtTs(v) {
     let payload;
     try { payload = harvest(); }
     catch (e) { Toast.fire({ icon: 'error', title: e.message }); return; }
+    // Review S2: an active conditions-mode rule with zero conditions is the
+    // documented explicit match-all — make the author say so out loud.
+    if (payload.active && payload.match_mode === 'conditions' &&
+        (!payload.match_config.conditions || payload.match_config.conditions.length === 0)) {
+      const c = await Swal.fire({
+        title: 'Match everything?',
+        text: `This rule has no conditions and will run on EVERY ${payload.event_type} event the moment it saves. Continue?`,
+        icon: 'warning', showCancelButton: true, confirmButtonText: 'Save as match-all',
+        focusCancel: true,
+      });
+      if (!c.isConfirmed) return;
+    }
     try {
       let data;
       if (editor.isNew) data = await api('/api/triggers/rules', 'POST', payload);

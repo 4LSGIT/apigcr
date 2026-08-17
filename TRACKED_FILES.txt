@@ -667,6 +667,7 @@ tests/test-oauthService.js
 tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
+tests/triggerService.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
 tests/workflows.editor.roundtrip.test.js

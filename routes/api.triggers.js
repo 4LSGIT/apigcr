@@ -14,7 +14,7 @@
  * GET    /api/triggers/samples/:event_type   — recent envelopes for the field-discovery panel (?limit)
  * POST   /api/triggers/test                  — dry run { event_type, envelope? | payload? } → match/transform report; NOTHING dispatches
  * POST   /api/triggers/test-draft            — evaluate an UNSAVED match/transform config vs one envelope ({ envelope | execution_id, match_mode, match_config, transform_mode, transform_config }); NOTHING dispatches
- * POST   /api/triggers/replay                — LIVE re-processing of an envelope through the engine ({ execution_id } | { event_type?, envelope }); actions DO dispatch, a new execution row is written
+ * POST   /api/triggers/replay                — LIVE re-processing of a RECORDED envelope ({ execution_id } only); actions DO dispatch, a new execution row is written
  *
  * Auto-mounted from routes/ (server.js readdir loop). Auth + envelope match
  * routes/api.pipelineAdmin.js: jwtOrApiKey on every route;
@@ -143,6 +143,11 @@ router.get('/api/triggers/executions/:id', jwtOrApiKey, async (req, res) => {
 
 router.get('/api/triggers/samples/:event_type', jwtOrApiKey, async (req, res) => {
   try {
+    // Review S17c: validate like /test does — arbitrary strings just probe.
+    if (!triggerService.EVENT_TYPES[req.params.event_type]) {
+      const e = new Error(`unknown event_type '${req.params.event_type}'`);
+      e.status = 400; throw e;
+    }
     const rows = await triggerService.listRecentEnvelopes(req.db, req.params.event_type, {
       limit: req.query.limit,
     });
@@ -200,34 +205,37 @@ router.post('/api/triggers/test-draft', jwtOrApiKey, async (req, res) => {
   } catch (err) { fail(res, err); }
 });
 
-// ── Live replay (T2 round 2) ─────────────────────────────────
+// ── Live replay (T2 round 2; locked down round 3 per Review S10) ────
 //
-// Runs an envelope through the FULL engine — saved active rules, real action
-// dispatch, a new trigger_executions row. The UI confirms before calling.
-// Chain scope resets (depth 0, empty chain): a replay is a fresh manual
-// invocation, not a continuation of whatever produced the original.
-// Provenance is tagged into extra.replayed_from / replayed_at.
+// Runs a RECORDED envelope through the full engine — saved active rules,
+// real action dispatch, a new trigger_executions row. The UI confirms
+// before calling.
+//
+// execution_id ONLY. The raw-envelope form was removed: it let any staff
+// JWT/API key synthesise e.g. a case.stage_advanced for an arbitrary
+// case_id and drive its rules while bypassing the real mutation route's
+// authorisation. Replaying a recorded envelope is the actual use case, and
+// a recorded envelope cannot be forged. Chain scope resets (depth 0, empty
+// chain): a replay is a fresh manual invocation. Provenance is tagged into
+// extra.replayed_from / replayed_at, and the loaded event is validated
+// against the registry defensively.
 
 router.post('/api/triggers/replay', jwtOrApiKey, async (req, res) => {
   try {
-    const { execution_id, event_type, envelope } = req.body || {};
-    let env = null;
-    let replayedFrom = 'manual';
-    if (execution_id) {
-      const row = await triggerService.getExecution(req.db, execution_id);
-      env = typeof row.envelope === 'string' ? JSON.parse(row.envelope) : row.envelope;
-      replayedFrom = row.id;
-    } else if (envelope && typeof envelope === 'object') {
-      env = { ...envelope };
-      if (event_type) env.event = event_type;
+    const { execution_id } = req.body || {};
+    if (!execution_id) {
+      const e = new Error('replay requires execution_id (raw envelopes are not accepted)');
+      e.status = 400; throw e;
     }
-    if (!env || !env.event) {
-      const e = new Error('replay requires execution_id, or an envelope with an event');
+    const row = await triggerService.getExecution(req.db, execution_id);
+    const env = typeof row.envelope === 'string' ? JSON.parse(row.envelope) : row.envelope;
+    if (!env || !env.event || !triggerService.EVENT_TYPES[env.event]) {
+      const e = new Error('recorded envelope is missing or carries an unknown event');
       e.status = 400; throw e;
     }
     env.depth = 0;
     env.chain = [];
-    env.extra = { ...(env.extra || {}), replayed_from: replayedFrom, replayed_at: new Date().toISOString() };
+    env.extra = { ...(env.extra || {}), replayed_from: row.id, replayed_at: new Date().toISOString() };
     const out = await triggerService.processEvent(req.db, env);
     res.json({ status: 'success', ...out });
   } catch (err) { fail(res, err); }

@@ -1,0 +1,280 @@
+// tests/triggerService.test.js
+//
+// Trigger System engine assertions (Review M6): the semantics the module
+// headers claim, exercised against STUB mysql2 pools (pattern from
+// tests/pipelineService.test.js) — no database needed.
+//
+// Covers:
+//   - ALS loop-guard mechanics: runAsAction depth/chain nesting, counter
+//     sharing, scope reset outside — and an END-TO-END two-rule loop
+//     (hook actions re-emitting through a mocked hookService) that runs
+//     until the depth cap and records a depth_capped row. This is the
+//     guard's first executable evidence.
+//   - _evaluateMatch fail-safe rulings via evaluateDraft (pure):
+//     NULL match_config on conditions mode → NON-match (the regression that
+//     would silently fire every rule on every event); throwing code → false.
+//   - Transform failure → matched but actions skipped (status derivation
+//     folds it in as a failure).
+//   - vm code sandbox: while(true) is killed by the timeout (M7).
+//   - Per-action failure isolation + M3 status derivation
+//     (partial / error) + S12 early-insert-then-finalize ordering.
+//   - buildEnvelope redaction (M2): contact_ssn / booking_token / *_token
+//     pattern keys absent; '' case_id → null; Date → ISO.
+//   - buildChanges date normalization.
+//
+// Run:
+//   npx jest tests/triggerService.test.js
+
+'use strict';
+
+process.env.CREDENTIALS_ENCRYPTION_KEY =
+  process.env.CREDENTIALS_ENCRYPTION_KEY || 'x'.repeat(64);
+
+// Mocked hook engine: lets 'hook' actions succeed/fail/RE-EMIT without
+// loading the real delivery machinery. Re-emission through here is how the
+// end-to-end loop test drives the depth guard.
+jest.mock('../services/hookService', () => ({
+  executeHook: jest.fn(async () => ({ status: 'delivered', executionId: 1 })),
+}));
+
+const hookService    = require('../services/hookService');
+const domainEvents   = require('../lib/domainEvents');
+const triggerService = require('../services/triggerService');
+
+// ─────────────────────────────────────────────────────────────
+// Stub pool
+// ─────────────────────────────────────────────────────────────
+//
+// Serves trigger_rules / trigger_rule_actions from a per-test fixture and
+// records every trigger_executions INSERT/UPDATE (with a monotonically
+// increasing insertId). Unknown SQL throws — the engine's alerting and
+// metrics paths swallow their own failures, which this deliberately proves.
+
+function makeDb(rulesByEvent) {
+  const calls = [];
+  let nextId = 100;
+  return {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/FROM trigger_rules/.test(sql)) {
+        return [(rulesByEvent[params[0]] || []).map(r => ({ ...r }))];
+      }
+      if (/FROM trigger_rule_actions/.test(sql)) {
+        const rows = [];
+        for (const ev of Object.keys(rulesByEvent)) {
+          for (const r of rulesByEvent[ev]) {
+            if (params.includes(r.id)) rows.push(...(r._actions || []));
+          }
+        }
+        return [rows];
+      }
+      if (/INSERT INTO trigger_executions/.test(sql)) {
+        return [{ insertId: nextId++, affectedRows: 1 }];
+      }
+      if (/UPDATE trigger_executions/.test(sql)) {
+        return [{ affectedRows: 1 }];
+      }
+      if (/UPDATE trigger_rules/.test(sql)) {
+        return [{ affectedRows: params.length }];
+      }
+      throw new Error('stub: unscripted SQL: ' + sql.slice(0, 60));
+    },
+  };
+}
+
+const execInserts = (db) => db.calls.filter(c => /INSERT INTO trigger_executions/.test(c.sql));
+const execUpdates = (db) => db.calls.filter(c => /UPDATE trigger_executions SET status/.test(c.sql));
+
+const rule = (id, event, actions, over = {}) => ({
+  id, event_type: event, name: `rule ${id}`,
+  match_mode: 'conditions',
+  match_config: { operator: 'and', conditions: [] },   // explicit always-match
+  transform_mode: 'passthrough', transform_config: null,
+  _actions: actions,
+  ...over,
+});
+const hookAction = (id, ruleId) => ({
+  id, rule_id: ruleId, name: null, action_type: 'hook',
+  config: { slug: 'test-hook' }, position: 0,
+});
+const brokenAction = (id, ruleId) => ({
+  id, rule_id: ruleId, name: null, action_type: 'internal_function',
+  config: '{not json', position: 0,   // fails in _dispatchAction before any dispatcher loads
+});
+
+beforeEach(() => { hookService.executeHook.mockClear(); });
+
+// ─────────────────────────────────────────────────────────────
+// ALS scope mechanics
+// ─────────────────────────────────────────────────────────────
+
+test('runAsAction nests depth/chain and shares counters; scope resets outside', async () => {
+  expect(domainEvents.buildEnvelope('x', {}).depth).toBe(0);
+  await domainEvents.runAsAction(7, async () => {
+    const env = domainEvents.buildEnvelope('appt.created', {});
+    expect(env.depth).toBe(1);
+    expect(env.chain).toEqual([7]);
+    const outerCounters = domainEvents.currentCounters();
+    await domainEvents.runAsAction(9, async () => {
+      const env2 = domainEvents.buildEnvelope('appt.created', {});
+      expect(env2.depth).toBe(2);
+      expect(env2.chain).toEqual([7, 9]);
+      // budget counters are the SAME object down the chain
+      expect(domainEvents.currentCounters()).toBe(outerCounters);
+    });
+  });
+  expect(domainEvents.buildEnvelope('x', {}).depth).toBe(0);
+});
+
+test('END-TO-END loop: two mutually-triggering rules stop at the depth cap', async () => {
+  const db = makeDb({
+    'appt.created':  [rule(1, 'appt.created',  [hookAction(11, 1)])],
+    'appt.attended': [rule(2, 'appt.attended', [hookAction(12, 2)])],
+  });
+  // The mocked hook RE-EMITS the sibling event — a deliberate A→B→A loop.
+  hookService.executeHook.mockImplementation(async (dbArg, slug, wrapped) => {
+    const ev = wrapped.body.event === 'appt.created' ? 'appt.attended' : 'appt.created';
+    await domainEvents.emit(dbArg, ev, { contact_id: 1 });
+    return { status: 'delivered', executionId: 1 };
+  });
+
+  await domainEvents.emit(db, 'appt.created', { contact_id: 1 });
+
+  const depths = execInserts(db).map(c => c.params[3]);
+  // depth 0..3 processed; the depth-4 emission is dropped as depth_capped
+  expect(depths).toEqual([0, 1, 2, 3, 4]);
+  const statuses = execInserts(db).map(c => c.params[4]);
+  expect(statuses.slice(0, 4)).toEqual(['matched', 'matched', 'matched', 'matched']);
+  expect(statuses[4]).toBe('depth_capped');
+  // exactly MAX_DEPTH dispatches happened (one per processed level)
+  expect(hookService.executeHook).toHaveBeenCalledTimes(4);
+});
+
+// ─────────────────────────────────────────────────────────────
+// Match / transform fail-safe rulings (pure, via evaluateDraft)
+// ─────────────────────────────────────────────────────────────
+
+test('NULL match_config on conditions mode is NON-match, not match-all', () => {
+  const out = triggerService.evaluateDraft(
+    { match_mode: 'conditions', match_config: null }, { event: 'x' });
+  expect(out.matched).toBe(false);
+});
+
+test('explicit empty conditions IS match-all; throwing code is non-match', () => {
+  expect(triggerService.evaluateDraft(
+    { match_mode: 'conditions', match_config: { operator: 'and', conditions: [] } },
+    { event: 'x' }).matched).toBe(true);
+  expect(triggerService.evaluateDraft(
+    { match_mode: 'code', match_config: { code: 'return input.' } },   // SyntaxError
+    { event: 'x' }).matched).toBe(false);
+});
+
+test('code sandbox: infinite loop is killed by the vm timeout (M7)', () => {
+  const out = triggerService.evaluateDraft(
+    { match_mode: 'conditions', match_config: { operator: 'and', conditions: [] },
+      transform_mode: 'code', transform_config: { code: 'while(true){}' } },
+    { event: 'x' });
+  expect(out.matched).toBe(true);
+  expect(out.transform_ok).toBe(false);
+  expect(out.transform_error).toMatch(/timed out/i);
+});
+
+test('code sandbox has no process/require reach', () => {
+  const out = triggerService.evaluateDraft(
+    { match_mode: 'code', match_config: { code: 'return typeof process === "undefined" && typeof require === "undefined";' } },
+    { event: 'x' });
+  expect(out.matched).toBe(true);
+});
+
+// ─────────────────────────────────────────────────────────────
+// M3 status derivation + isolation + S12 ordering
+// ─────────────────────────────────────────────────────────────
+
+test('all actions failing → error status; failure does not abort later rules', async () => {
+  const db = makeDb({
+    'appt.created': [
+      rule(1, 'appt.created', [brokenAction(11, 1)]),
+      rule(2, 'appt.created', [hookAction(12, 2)], { name: 'healthy sibling' }),
+    ],
+  });
+  const out = await triggerService.processEvent(
+    db, domainEvents.buildEnvelope('appt.created', { contact_id: 1 }));
+  // broken rule 1 did not stop rule 2's action
+  expect(hookService.executeHook).toHaveBeenCalledTimes(1);
+  expect(out.status).toBe('partial');   // one failed + one succeeded
+  const upd = execUpdates(db);
+  expect(upd.length).toBe(1);
+  expect(upd[0].params[0]).toBe('partial');
+  expect(String(upd[0].params[2])).toMatch(/rule 1 internal_function/);
+});
+
+test('every action failing → error; transform failure counts as a failure', async () => {
+  const db = makeDb({
+    'appt.created': [
+      rule(1, 'appt.created', [brokenAction(11, 1)]),
+      rule(2, 'appt.created', [], {
+        transform_mode: 'code', transform_config: { code: 'return 5;' },  // non-object → fail
+      }),
+    ],
+  });
+  const out = await triggerService.processEvent(
+    db, domainEvents.buildEnvelope('appt.created', {}));
+  expect(out.status).toBe('error');
+  expect(out.warnings.some(w => /transform failed/.test(w))).toBe(true);
+});
+
+test('S12: the execution row is inserted BEFORE actions dispatch', async () => {
+  const db = makeDb({ 'appt.created': [rule(1, 'appt.created', [hookAction(11, 1)])] });
+  let insertSeenBeforeDispatch = false;
+  hookService.executeHook.mockImplementation(async () => {
+    insertSeenBeforeDispatch = execInserts(db).length === 1;
+    return { status: 'delivered', executionId: 1 };
+  });
+  await triggerService.processEvent(db, domainEvents.buildEnvelope('appt.created', {}));
+  expect(insertSeenBeforeDispatch).toBe(true);
+  expect(execUpdates(db).length).toBe(1);   // finalized after
+});
+
+// ─────────────────────────────────────────────────────────────
+// buildEnvelope redaction (M2) + shaping
+// ─────────────────────────────────────────────────────────────
+
+test('buildEnvelope redacts secrets, normalizes case_id, serializes Dates', () => {
+  const env = domainEvents.buildEnvelope('contact.updated', {
+    case_id: '',
+    data: {
+      contact_ssn: '123-45-6789',
+      booking_token: 'deadbeef',
+      portal_session_version: 3,
+      zoho_api_key: 'k',                     // pattern-caught
+      contact_name: "O'Brien",               // the M1 payload precondition survives as DATA
+      contact_dob: new Date('1980-05-02T00:00:00.000Z'),
+    },
+    changes: { booking_token: { from: 'a', to: 'b' }, contact_tags: { from: 'x', to: 'y' } },
+  });
+  expect(env.case_id).toBeNull();
+  expect(env.data.contact_ssn).toBeUndefined();
+  expect(env.data.booking_token).toBeUndefined();
+  expect(env.data.portal_session_version).toBeUndefined();
+  expect(env.data.zoho_api_key).toBeUndefined();
+  expect(env.data.contact_name).toBe("O'Brien");
+  expect(env.data.contact_dob).toBe('1980-05-02T00:00:00.000Z');
+  expect(env.changes.booking_token).toBeUndefined();
+  expect(env.changes.contact_tags).toEqual({ from: 'x', to: 'y' });
+});
+
+test('buildChanges: unchanged dates are not flagged; text with T survives', () => {
+  const prior = {
+    docs_due:   new Date('2026-08-01T00:00:00.000Z'),
+    show_cause: new Date('2026-08-05T14:30:00.000Z'),
+    case_notes: 'Tuesday call',
+  };
+  const next = {
+    docs_due:   '2026-08-01',
+    show_cause: '2026-08-05 14:30:00',
+    case_notes: 'Tuesday call updated',
+  };
+  const ch = domainEvents.buildChanges(prior, next, Object.keys(next));
+  expect(Object.keys(ch)).toEqual(['case_notes']);
+});

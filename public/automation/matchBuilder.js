@@ -20,6 +20,15 @@
 // `window`. The consuming page must include the .cond-* / .mb-add-btn CSS
 // block (triggers.html carries it; copied from emailIngest.html).
 //
+// M5 fix (round 3): removal handlers splice group.conditions as well as
+// removing the DOM node — previously delete-then-add resurrected the deleted
+// condition because add re-renders from _state. mbCollect stays
+// DOM-authoritative at save time; with state and DOM unable to drift, that
+// is now harmless redundancy rather than load-bearing. NOTE: this module is
+// consumed ONLY by triggers.html — the ingest pages carry their own inline
+// copies (see DELIBERATE NON-MIGRATION above), which still have the latent
+// bug and should get this fix when they migrate.
+//
 // PUBLIC API (all on window):
 //   mbRender(rootEl, state, opts)  — render a condition tree; mutates `state` live.
 //     opts.availableFields : [{ value, label }]  (curated dropdown; custom escape hatch auto-added)
@@ -84,7 +93,7 @@
     if (root && root._state) mbRender(root, root._state, { availableFields: root._mbcfg.fields, operators: root._mbcfg.operators, onChange: root._mbcfg.onChange });
   }
 
-  function mbBuildGroup(group, isRoot, cfg) {
+  function mbBuildGroup(group, isRoot, cfg, parentGroup = null) {
     const div = document.createElement('div');
     div.className = 'cond-group';
     div._group = group;
@@ -107,7 +116,15 @@
       const rm = document.createElement('button');
       rm.className = 'cond-remove'; rm.title = 'Remove group';
       rm.innerHTML = '<i class="fa-solid fa-times"></i>';
-      rm.addEventListener('click', () => { div.remove(); cfg.onChange(); });
+      // Review M5: removal must mutate the MODEL, not just the DOM — three
+      // handlers re-render from _state, which resurrected DOM-only deletions.
+      rm.addEventListener('click', () => {
+        if (parentGroup && Array.isArray(parentGroup.conditions)) {
+          const i = parentGroup.conditions.indexOf(group);
+          if (i >= 0) parentGroup.conditions.splice(i, 1);
+        }
+        div.remove(); cfg.onChange();
+      });
       head.appendChild(rm);
     }
     div.appendChild(head);
@@ -116,8 +133,8 @@
     const body = document.createElement('div');
     body.className = 'cond-group-body';
     (group.conditions || []).forEach(cond => {
-      if (cond && cond.operator) body.appendChild(mbBuildGroup(cond, false, cfg));
-      else body.appendChild(mbBuildLeaf(cond, cfg));
+      if (cond && cond.operator) body.appendChild(mbBuildGroup(cond, false, cfg, group));
+      else body.appendChild(mbBuildLeaf(cond, cfg, group));
     });
     div.appendChild(body);
 
@@ -141,7 +158,7 @@
 
   // A single condition row: curated field dropdown (+ custom escape hatch),
   // operator dropdown (injected list), value input (hidden for valueless ops).
-  function mbBuildLeaf(cond, cfg) {
+  function mbBuildLeaf(cond, cfg, owningGroup = null) {
     const row = document.createElement('div');
     row.className = 'cond-row';
     row._cond = cond;
@@ -207,7 +224,14 @@
     customInput.addEventListener('input', () => { cond.path = customInput.value.trim(); cfg.onChange(); });
     opSel.addEventListener('change', () => { cond.op = opSel.value; syncValueDisabled(); cfg.onChange(); });
     valInput.addEventListener('input', () => { cond.value = valInput.value; cfg.onChange(); });
-    rm.addEventListener('click', () => { row.remove(); cfg.onChange(); });
+    // Review M5: splice the model too — see the group-remove comment.
+    rm.addEventListener('click', () => {
+      if (owningGroup && Array.isArray(owningGroup.conditions)) {
+        const i = owningGroup.conditions.indexOf(cond);
+        if (i >= 0) owningGroup.conditions.splice(i, 1);
+      }
+      row.remove(); cfg.onChange();
+    });
 
     syncValueDisabled();
     return row;

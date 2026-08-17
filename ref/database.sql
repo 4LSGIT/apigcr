@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-17T10:58:39.381Z
+-- Generated: 2026-08-17T15:29:48.889Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:aa46da7a02b2dfc0ae7244065c974d5d
+-- Fingerprint: sha256:33df488213cd8c8a42f086412f9f2b28
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2867,7 +2867,7 @@ CREATE TABLE `trigger_executions` (
   `contact_id` int DEFAULT NULL,
   `case_id` varchar(50) DEFAULT NULL,
   `depth` tinyint NOT NULL DEFAULT '0',
-  `status` enum('matched','no_match','no_rules','depth_capped','error') NOT NULL,
+  `status` enum('matched','partial','no_match','no_rules','depth_capped','error') NOT NULL,
   `rules_matched` int NOT NULL DEFAULT '0',
   `outcomes` json DEFAULT NULL,
   `envelope` json DEFAULT NULL,
@@ -2914,7 +2914,9 @@ CREATE TABLE `trigger_rules` (
   `last_matched_at` datetime DEFAULT NULL,
   `last_modified_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `error_count` int NOT NULL DEFAULT '0',
+  `last_error_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -3994,7 +3996,9 @@ ALTER TABLE `trigger_executions`
   ADD KEY `idx_type_time` (`event_type`,`created_at`),
   ADD KEY `idx_case` (`case_id`),
   ADD KEY `idx_contact` (`contact_id`),
-  ADD KEY `idx_created` (`created_at`);
+  ADD KEY `idx_created` (`created_at`),
+  ADD KEY `idx_status_id` (`status`,`id`),
+  ADD KEY `idx_event_id` (`event_type`,`id`);
 
 --
 -- Indexes for table `trigger_rule_actions`
@@ -4907,6 +4911,12 @@ ALTER TABLE `sequence_step_log`
 --
 ALTER TABLE `sequence_steps`
   ADD CONSTRAINT `fk_seq_steps_template` FOREIGN KEY (`template_id`) REFERENCES `sequence_templates` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `trigger_rule_actions`
+--
+ALTER TABLE `trigger_rule_actions`
+  ADD CONSTRAINT `fk_trigger_rule_actions_rule` FOREIGN KEY (`rule_id`) REFERENCES `trigger_rules` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `video_slug_aliases`
