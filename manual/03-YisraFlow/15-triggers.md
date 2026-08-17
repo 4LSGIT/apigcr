@@ -182,6 +182,22 @@ The "not matched" ruling matters for more than bookkeeping: if suppression re-ar
 
 Suppression is a **skip, not a queue** — the event is gone; the rule does not fire late.
 
+### `case.stage_aged` — the synthetic aging event
+
+Every other event is a *mutation*. Absence — "docs still incomplete 7 days after intake" — is inexpressible by mutations, so a nightly job (**Stage Aged Emitter**, 08:00 UTC, `emit_stage_aged` internal function) turns stage *age* into an event. No new engine concepts: rules on `case.stage_aged` match, transform, and dispatch like any other.
+
+How to author against it:
+
+- **Filter `data.threshold_days` `equals` N — never `>=`.** The ladder (default `3,7,14,30,60`, editable in the job's params) fires each rung **exactly once per stage entry**. A case that leaves a stage and comes back re-arms that stage's rungs (each entry is its own `case_stage_log` row, and the dedup keys on the row id).
+- **It is forward-looking only.** A crossing fires only within a **grace window** (default 7 days) of happening. A case backfilled with a historical `entered_at` at 240 days in stage fires *nothing* — by design, or gradual backfill would deliver an indefinite trickle of nudge stampedes. Already-stale-at-import is a one-time triage report's job, not this event's.
+- **Coverage = cases with pipeline history.** Today that's a handful; it grows on its own as intake-pipeline advances accrue. Terminal stages (`closed`, `dead_lead`) and `Closed`/`Concluded` cases never fire.
+- **Days are whole 24-hour periods** (`TIMESTAMPDIFF(DAY, …)` in SQL), so "3 days" means ≥ 72 hours at the 08:00 run, not "3 calendar days."
+- `source` is `system`, `actor.user_id` is `0`. `extra.stage_log_id` carries the dedup key. `data` carries `stage_key`, `days_in_stage`, `threshold_days`, `template_id`, `case_type`/`subtype`, `status_label`, `entered_at`.
+
+Operational notes: the claim table is `case_stage_aged_emitted` (`INSERT IGNORE` on `(stage_log_id, threshold_days)` — atomic, safe under overlap or manual re-runs). Emissions are awaited inside the job and each is its own **root** event with its own 50-dispatch budget; the job's own `max_emissions` cap (default 200) bounds the run, alerts when hit, and leaves the remainder unclaimed to retry the next night while still in-window. `emit_stage_aged` also takes `dry_run: true` (via apiTester) to list would-emit crossings without claiming or emitting. After a rung passes its grace window unfired (job dead > 7 days), that nudge is permanently skipped — the job-failure alerting is the backstop.
+
+A sibling event keyed on *activity* rather than stage age — `case.idle`, full coverage across all open cases today — is designed but not built; it needs a rolling-watermark dedup rather than a one-shot claim.
+
 ### Execution statuses
 
 | Status | Meaning |

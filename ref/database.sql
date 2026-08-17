@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-17T16:16:38.989Z
+-- Generated: 2026-08-17T18:03:57.930Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d32cdcc0573b47164b1446820fc7fa47
+-- Fingerprint: sha256:83f33b179b0a3f2dde45849428270ff9
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -411,6 +411,21 @@ CREATE TRIGGER `trg_prevent_duplicate_update` BEFORE UPDATE ON `case_relate` FOR
 END
 $$
 DELIMITER ;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `case_stage_aged_emitted`
+--
+
+DROP TABLE IF EXISTS `case_stage_aged_emitted`;
+CREATE TABLE `case_stage_aged_emitted` (
+  `id` bigint unsigned NOT NULL,
+  `stage_log_id` bigint unsigned NOT NULL,
+  `threshold_days` int NOT NULL,
+  `case_id` varchar(20) NOT NULL,
+  `emitted_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -3291,6 +3306,14 @@ ALTER TABLE `case_relate`
   ADD KEY `idx_case_relate_client` (`case_relate_client_id`,`case_relate_case_id`);
 
 --
+-- Indexes for table `case_stage_aged_emitted`
+--
+ALTER TABLE `case_stage_aged_emitted`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_stage_threshold` (`stage_log_id`,`threshold_days`),
+  ADD KEY `idx_case` (`case_id`);
+
+--
 -- Indexes for table `case_stage_log`
 --
 ALTER TABLE `case_stage_log`
@@ -4207,6 +4230,12 @@ ALTER TABLE `campaigns`
 --
 ALTER TABLE `case_relate`
   MODIFY `case_relate_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `case_stage_aged_emitted`
+--
+ALTER TABLE `case_stage_aged_emitted`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `case_stage_log`
