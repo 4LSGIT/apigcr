@@ -34,6 +34,89 @@ const crypto = require('crypto');
 // Whitelisted fields that PATCH /api/videos/:id is allowed to write.
 // `slug` is handled separately (see updateVideo) because it requires
 // alias-archival logic and a transaction.
+// ─────────────────────────────────────────────────────────────
+// Action-URL scheme allowlist (2026-08-17 XSS fix)
+//
+// videos.actions[].config.url is staff-authored (jwtOrApiKey — ANY staff
+// member) and rendered into an <a href> on the public landing page by
+// routes/videoLanding.js. htmlEscape prevents attribute breakout but does
+// NOT constrain the URL scheme — javascript: in an href executes on click
+// regardless of escaping, and the page serves on the app origin today, where
+// the staff JWT lives in localStorage. Hence a hard scheme allowlist,
+// enforced in BOTH places:
+//   - on write (createVideo / updateVideo → validateActions) so authors get
+//     a clear 400 instead of silent breakage — mandatory because the API is
+//     reachable without the manager UI;
+//   - at render (videoLanding renderActions → isSafeActionUrl) as the
+//     authoritative gate over whatever is already stored.
+//
+// Allowed: https:, http:, mailto:, tel:, and ROOT-RELATIVE paths ("/book/…"
+// is a real use case — booking lives on the same public host). Rejected:
+// every other scheme, protocol-relative "//host", and bare relative forms
+// ("foo", "?x", "#x" — nothing legitimate mints those here, and rejecting
+// them keeps the rule binary).
+//
+// Scheme detection strips C0 controls and spaces first because browsers do
+// the same before parsing a scheme ("java\tscript:" and "\x00javascript:"
+// are both live javascript: URLs). Percent-encoded schemes need no special
+// case: browsers do NOT percent-decode before scheme parsing, so
+// "%6Aavascript:…" is a (rejected) schemeless relative URL, not a scheme.
+//
+// Future action types that carry a URL must run their URL through
+// isSafeActionUrl too — that keeps the "additive on both sides" contract in
+// videoLanding.renderActions intact: one shared rule, no second list.
+// ─────────────────────────────────────────────────────────────
+
+const SAFE_ACTION_SCHEMES = new Set(['https:', 'http:', 'mailto:', 'tel:']);
+
+/**
+ * @param {string} raw  candidate href (AFTER any {{c}} substitution when
+ *                      called at render time; template form is fine on write
+ *                      because callers substitute a digit first)
+ * @returns {boolean}
+ */
+function isSafeActionUrl(raw) {
+  if (typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  // Browsers ignore C0 control chars and spaces when parsing a scheme.
+  const probe = trimmed.replace(/[\u0000-\u0020]/g, '');
+  if (!probe) return false;
+  if (probe.startsWith('//')) return false; // protocol-relative → other hosts
+  const m = probe.match(/^([a-zA-Z][a-zA-Z0-9+.\-]*):/);
+  if (m) return SAFE_ACTION_SCHEMES.has(m[1].toLowerCase() + ':');
+  return probe.startsWith('/'); // schemeless → root-relative only
+}
+
+/**
+ * Validate an actions array on the write path. Throws statusCode=400 with
+ * the offending index so the manager UI's "Save failed" toast is actionable.
+ * Shape mistakes other than the URL are NOT this function's job — unknown
+ * types remain render-time-skipped by contract.
+ */
+function validateActions(actions) {
+  if (actions == null) return;
+  if (!Array.isArray(actions)) {
+    const e = new Error('actions must be an array');
+    e.statusCode = 400;
+    throw e;
+  }
+  actions.forEach((a, i) => {
+    if (a?.type !== 'url') return; // future types validate their own URLs
+    const raw = String(a.config?.url || '');
+    // Validate the representative substituted form — {{c}} only ever becomes
+    // digits, which cannot introduce a scheme.
+    if (!isSafeActionUrl(raw.replace(/\{\{c\}\}/g, '1'))) {
+      const e = new Error(
+        `actions[${i}].config.url has a disallowed URL scheme — ` +
+        'use https:, http:, mailto:, tel:, or a root-relative path ("/…")'
+      );
+      e.statusCode = 400;
+      throw e;
+    }
+  });
+}
+
 const UPDATABLE_FIELDS = [
   'title',
   'description',
@@ -310,6 +393,8 @@ async function createVideo(db, data) {
     throw e;
   }
 
+  validateActions(data.actions);
+
   const userSuppliedSlug =
     typeof data.slug === 'string' && data.slug.trim() ? data.slug.trim() : null;
 
@@ -428,6 +513,8 @@ async function updateVideo(db, id, partial) {
   if (partial == null || typeof partial !== 'object') {
     throw new Error('Update body must be an object');
   }
+
+  if ('actions' in partial) validateActions(partial.actions);
 
   if ('slug' in partial && typeof partial.slug === 'string' && partial.slug.trim()) {
     await setSlugCanonical(db, id, partial.slug.trim());
@@ -903,4 +990,7 @@ module.exports = {
   hashIp,
   resolveCaseIdForContact,
   getJsonOverlapsCachedStatus,
+  // 2026-08-17 action-URL XSS fix
+  isSafeActionUrl,
+  validateActions,
 };

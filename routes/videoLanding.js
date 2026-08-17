@@ -81,6 +81,17 @@ function renderActions(actions, contactId) {
     switch (a?.type) {
       case 'url': {
         const rawUrl = String(a.config?.url || '').replace(/\{\{c\}\}/g, cVal);
+        // Scheme allowlist — the authoritative gate (2026-08-17 XSS fix).
+        // htmlEscape below prevents attribute breakout but not a javascript:
+        // scheme; validateActions rejects these on write, so anything caught
+        // here predates the gate or was written DB-direct. Skip the button
+        // silently — same contract as unknown types — an inert button would
+        // just look broken.
+        if (!videoService.isSafeActionUrl(rawUrl)) {
+          console.warn('[videoLanding] skipped action with disallowed URL scheme:',
+            JSON.stringify(String(a.config?.url || '').slice(0, 120)));
+          break;
+        }
         const styleRaw = a.config?.style;
         const style = (styleRaw === 'primary' || styleRaw === 'secondary' || styleRaw === 'ghost')
           ? styleRaw
