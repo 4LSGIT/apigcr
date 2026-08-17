@@ -1307,7 +1307,7 @@ function renderEditor() {
         </button>
       </div>
       <div class="copy-hint">
-        HTML snippets contain <code>{{contacts.contact_id}}</code> as a literal placeholder
+        HTML snippets contain <code>{{contacts.contact_token}}</code> as a literal placeholder
         for the campaign resolver to substitute later.
       </div>
     </div>
@@ -1398,7 +1398,7 @@ function renderActionsList() {
       <input type="text" placeholder="Label (e.g. Book My 341 Prep Call)"
         value="${esc(a.label || '')}"
         oninput="state.form.actions[${i}].label = this.value">
-      <input type="text" placeholder="https://… (use {{c}} for contact ID)"
+      <input type="text" placeholder="https://… (use {{c}} for the contact token)"
         value="${esc(a.config?.url || '')}"
         oninput="state.form.actions[${i}].config.url = this.value">
       <select onchange="state.form.actions[${i}].config.style = this.value">
@@ -1984,6 +1984,10 @@ function copyLandingUrl() {
 }
 
 async function copyLandingUrlForContact() {
+  // 2026-08-17: emits ?ct=<contact_token>, not ?c=<contact_id>. Staff still
+  // type the contact_id they can see; we resolve it to the token server-side
+  // via the existing mint-or-return endpoint (the same token booking uses),
+  // so no one has to look a token up by hand.
   const r = await Swal.fire({
     title: 'Copy URL for contact',
     html: '<input id="cid-input" class="swal2-input" type="number" min="1" '
@@ -2001,7 +2005,19 @@ async function copyLandingUrlForContact() {
     },
   });
   if (!r.isConfirmed) return;
-  const url = PUBLIC_VIDEO_ORIGIN + '/v/' + state.form._originalSlug + '?c=' + r.value;
+  let token;
+  try {
+    const resp = await P.apiSend('/api/contacts/' + r.value + '/booking-link', 'POST', {});
+    token = resp && resp.token;
+  } catch (err) {
+    Swal.fire('Lookup failed', err.message, 'error');
+    return;
+  }
+  if (!token) {
+    Swal.fire('No token', 'Contact ' + r.value + ' has no contact_token and one could not be minted.', 'error');
+    return;
+  }
+  const url = PUBLIC_VIDEO_ORIGIN + '/v/' + state.form._originalSlug + '?ct=' + token;
   copyText(url, 'Landing URL for contact ' + r.value);
 }
 
@@ -2014,9 +2030,11 @@ function copyEmbed(variant) {
     return;
   }
   const origin = PUBLIC_VIDEO_ORIGIN;
-  // {{contacts.contact_id}} stays literal — campaign resolverService substitutes
-  // it per-recipient at send time.
-  const snippet = '<a href="' + origin + '/v/' + slug + '?c={{contacts.contact_id}}">'
+  // {{contacts.contact_token}} stays literal — campaign resolverService
+  // substitutes it per-recipient at send time. Switched from contact_id to
+  // the token 2026-08-17: ?c=<id> is deprecated and attribution-only, and
+  // only ?ct=<token> can satisfy a contact_only video.
+  const snippet = '<a href="' + origin + '/v/' + slug + '?ct={{contacts.contact_token}}">'
     + '<img src="' + imgUrl + '" alt="' + esc(title) + '" width="600" '
     + 'style="display:block; max-width:100%; height:auto;"></a>';
   copyText(snippet, 'Embed snippet (' + variant + ')');

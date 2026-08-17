@@ -74,6 +74,7 @@ describe('isSafeActionUrl', () => {
 // conn whose INSERT returns a viewId.
 let ACTIONS = [];
 function setActions(a) { ACTIONS = a; }
+const TOKEN = 'a'.repeat(32);   // 32-hex contacts.contact_token
 
 const videoRow = () => ({
   id: 7, slug: 'demo', title: 'Demo & Title', description: 'line1\nline2',
@@ -81,8 +82,9 @@ const videoRow = () => ({
   gcs_gif_url: null, duration_seconds: 10,
   tags: null, related_video_ids: null,
   actions: JSON.stringify(ACTIONS),
-  access_level: 'public', is_published: 1, view_count: 0,
+  access_level: ACCESS_LEVEL, is_published: 1, view_count: 0,
 });
+let ACCESS_LEVEL = 'public';
 
 const fakeConn = {
   query: jest.fn(async (sql) => {
@@ -101,6 +103,11 @@ const fakeDb = {
     if (/FROM video_slug_aliases a/i.test(sql)) return [[]];
     if (/FROM contacts WHERE contact_id = \?/i.test(sql)) {
       return [[{ contact_id: params[0] }]];
+    }
+    if (/FROM contacts WHERE contact_token = \?/i.test(sql)) {
+      return params[0] === TOKEN
+        ? [[{ contact_id: 42, contact_token: TOKEN }]]
+        : [[]];
     }
     // related-videos lookups (hand-picked + tag autofill) → none
     return [[]];
@@ -154,14 +161,16 @@ describe('GET /v/:slug — rendered action buttons', () => {
     }
   });
 
-  test('root-relative, mailto and tel actions render; {{c}} substitutes', async () => {
+  test('root-relative, mailto and tel actions render; {{c}} substitutes the TOKEN', async () => {
     setActions([
       { type: 'url', label: 'Book', config: { url: '/book/consult?c={{c}}' } },
       { type: 'url', label: 'Call', config: { url: 'tel:+12484179800' } },
       { type: 'url', label: 'Email', config: { url: 'mailto:office@4lsg.com' } },
     ]);
-    const html = await (await fetch(`${base}/v/demo?c=42`)).text();
-    expect(html).toContain('href="/book/consult?c=42"');
+    const html = await (await fetch(`${base}/v/demo?ct=${TOKEN}`)).text();
+    // routes/booking.js resolves ITS ?c= against contact_token with a 32-hex
+    // regex, so substituting the token is what makes this link actually work.
+    expect(html).toContain(`href="/book/consult?c=${TOKEN}"`);
     expect(html).toContain('href="tel:+12484179800"');
     expect(html).toContain('href="mailto:office@4lsg.com"');
   });
@@ -170,7 +179,7 @@ describe('GET /v/:slug — rendered action buttons', () => {
     setActions([
       { type: 'url', label: 'X', config: { url: 'javascript:void({{c}})' } },
     ]);
-    const html = await (await fetch(`${base}/v/demo?c=42`)).text();
+    const html = await (await fetch(`${base}/v/demo?ct=${TOKEN}`)).text();
     expect(html).not.toContain('javascript:');
     expect(html).not.toContain('<a class="vid-btn');
   });
@@ -222,5 +231,77 @@ describe('write-path validation', () => {
   test('validateActions rejects a non-array with 400', () => {
     expect(() => videoService.validateActions({ type: 'url' }))
       .toThrow(expect.objectContaining({ statusCode: 400 }));
+  });
+});
+
+
+// ── ?ct= token vs deprecated ?c= integer (2026-08-17) ──────────────────────
+describe('contact resolution: ?ct= token vs legacy ?c= integer', () => {
+  beforeEach(() => setActions([
+    { type: 'url', label: 'Book', config: { url: '/book/consult?c={{c}}' } },
+  ]));
+
+  test('?ct= resolves and substitutes the token into actions', async () => {
+    const html = await (await fetch(`${base}/v/demo?ct=${TOKEN}`)).text();
+    expect(html).toContain(`href="/book/consult?c=${TOKEN}"`);
+  });
+
+  test('{{ct}} is accepted as an explicit alias for {{c}}', async () => {
+    setActions([{ type: 'url', label: 'B', config: { url: '/book/x?c={{ct}}' } }]);
+    const html = await (await fetch(`${base}/v/demo?ct=${TOKEN}`)).text();
+    expect(html).toContain(`href="/book/x?c=${TOKEN}"`);
+  });
+
+  test('an unknown token resolves to nobody — action carries an empty credential', async () => {
+    const html = await (await fetch(`${base}/v/demo?ct=${'b'.repeat(32)}`)).text();
+    expect(html).toContain('href="/book/consult?c="');
+  });
+
+  test('a malformed ?ct= is not even looked up', async () => {
+    const html = await (await fetch(`${base}/v/demo?ct=notahextoken`)).text();
+    expect(html).toContain('href="/book/consult?c="');
+  });
+
+  test('LOCK: legacy ?c= still renders the page (links already in inboxes)', async () => {
+    const res = await fetch(`${base}/v/demo?c=42`);
+    expect(res.status).toBe(200);
+  });
+
+  test('LOCK: legacy ?c= is attribution-only — it never reaches an action URL', async () => {
+    const html = await (await fetch(`${base}/v/demo?c=42`)).text();
+    // The raw id must NOT be substituted as a credential.
+    expect(html).toContain('href="/book/consult?c="');
+    expect(html).not.toContain('/book/consult?c=42');
+  });
+
+  test('LOCK: ?ct= wins when both are present — no downgrade path to the integer', async () => {
+    const html = await (await fetch(`${base}/v/demo?ct=${TOKEN}&c=99`)).text();
+    expect(html).toContain(`href="/book/consult?c=${TOKEN}"`);
+    expect(html).not.toContain('c=99');
+  });
+});
+
+
+// ── contact_only gate (the defect Rider D existed to close) ────────────────
+describe('access_level = contact_only', () => {
+  beforeEach(() => { ACCESS_LEVEL = 'contact_only'; setActions([]); });
+  afterEach(()  => { ACCESS_LEVEL = 'public'; });
+
+  test('a valid ?ct= token opens it', async () => {
+    expect((await fetch(`${base}/v/demo?ct=${TOKEN}`)).status).toBe(200);
+  });
+
+  test('LOCK: a VALID ?c= contact_id does NOT — enumeration no longer defeats the gate', async () => {
+    // This is the whole point. Before 2026-08-17 a resolvable integer passed
+    // this gate, so walking ?c=1,2,3… opened every contact_only video.
+    expect((await fetch(`${base}/v/demo?c=42`)).status).toBe(404);
+  });
+
+  test('no credential at all is 404', async () => {
+    expect((await fetch(`${base}/v/demo`)).status).toBe(404);
+  });
+
+  test('an unknown token is 404', async () => {
+    expect((await fetch(`${base}/v/demo?ct=${'c'.repeat(32)}`)).status).toBe(404);
   });
 });

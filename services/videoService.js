@@ -70,7 +70,7 @@ const crypto = require('crypto');
 const SAFE_ACTION_SCHEMES = new Set(['https:', 'http:', 'mailto:', 'tel:']);
 
 /**
- * @param {string} raw  candidate href (AFTER any {{c}} substitution when
+ * @param {string} raw  candidate href (AFTER any {{c}}/{{ct}} substitution when
  *                      called at render time; template form is fine on write
  *                      because callers substitute a digit first)
  * @returns {boolean}
@@ -104,9 +104,10 @@ function validateActions(actions) {
   actions.forEach((a, i) => {
     if (a?.type !== 'url') return; // future types validate their own URLs
     const raw = String(a.config?.url || '');
-    // Validate the representative substituted form — {{c}} only ever becomes
-    // digits, which cannot introduce a scheme.
-    if (!isSafeActionUrl(raw.replace(/\{\{c\}\}/g, '1'))) {
+    // Validate the representative substituted form. {{c}}/{{ct}} only ever
+    // become a contacts.contact_token (32 hex) or empty — neither can
+    // introduce a URL scheme — so a fixed stand-in is a faithful probe.
+    if (!isSafeActionUrl(raw.replace(/\{\{ct\}\}/g, '1').replace(/\{\{c\}\}/g, '1'))) {
       const e = new Error(
         `actions[${i}].config.url has a disallowed URL scheme — ` +
         'use https:, http:, mailto:, tel:, or a root-relative path ("/…")'

@@ -108,14 +108,28 @@ function htmlEscape(str) {
  *
  * Unknown types are skipped silently.
  */
-function renderActions(actions, contactId) {
+function renderActions(actions, contactToken) {
   if (!Array.isArray(actions) || !actions.length) return '';
-  const cVal = contactId != null ? String(contactId) : '';
+  // {{c}} / {{ct}} substitute the contact's TOKEN (contacts.contact_token) as
+  // of 2026-08-17, not the raw contact_id it used to emit.
+  //
+  // This fixes a latent bug as much as it tightens security: the canonical
+  // use case for an action URL is a booking link, and routes/booking.js
+  // resolves its own ?c= against contact_token with a 32-hex TOKEN_RE — so
+  // the old raw-integer substitution produced booking links that could never
+  // resolve. Zero videos have actions configured (verified live 2026-08-17),
+  // so there is nothing to migrate and no back-compat to keep.
+  //
+  // Empty when the visitor arrived without a token: an action URL then simply
+  // carries an empty ?c=, which downstream treats as anonymous — the same
+  // thing it did for an unknown contact before.
+  const cVal = contactToken != null ? String(contactToken) : '';
   const out = [];
   for (const a of actions) {
     switch (a?.type) {
       case 'url': {
-        const rawUrl = String(a.config?.url || '').replace(/\{\{c\}\}/g, cVal);
+        const rawUrl = String(a.config?.url || '').replace(/\{\{ct\}\}/g, cVal)
+                                                  .replace(/\{\{c\}\}/g, cVal);
         // Scheme allowlist — the authoritative gate (2026-08-17 XSS fix).
         // htmlEscape below prevents attribute breakout but not a javascript:
         // scheme; validateActions rejects these on write, so anything caught
@@ -152,7 +166,7 @@ function renderActions(actions, contactId) {
  *
  * Each card preserves ?c= so the contact context follows across navigations.
  */
-function renderRelated(relatedVideos, contactId) {
+function renderRelated(relatedVideos, contactId, contactToken) {
   if (!Array.isArray(relatedVideos) || !relatedVideos.length) return '';
   const cParam = contactId != null
     ? '?c=' + encodeURIComponent(String(contactId))
@@ -191,21 +205,62 @@ router.get('/v/:slug', async (req, res) => {
     });
     if (!video) return res.status(404).type('text/plain').send('Not found');
 
-    // Resolve ?c= → real contact_id, or null.
-    let contactId = null;
-    if (req.query.c != null && req.query.c !== '') {
+    // ── Resolve the contact (2026-08-17: ?ct= token replaces ?c= integer) ──
+    //
+    // ?ct=<contacts.contact_token> is a 32-hex bearer — the same per-contact
+    // token booking uses (column renamed from booking_token in the companion
+    // commit). It is unguessable, so it is the ONLY thing that may satisfy the
+    // contact_only gate.
+    //
+    // ?c=<contact_id> is the deprecated legacy form. It is a raw sequential
+    // integer that anyone can mint, so it was never a credential — it let
+    // anyone attribute views to arbitrary contacts by walking 1,2,3… and
+    // (latently) defeat contact_only entirely. It is now ACCEPTED FOR
+    // ATTRIBUTION ONLY and never satisfies the gate.
+    //
+    // Why accept it at all: ~17 links carrying ?c= were sent to ~12 contacts
+    // between 2026-05 and 2026-08 and are still in inboxes. Rejecting the
+    // param would 404 a client on a video the firm sent them. Ignoring it
+    // silently would work too, but keeping the attribution costs one lookup
+    // and loses nothing — the integer never granted access before this change
+    // either, since all 17 videos are access_level='public'.
+    //
+    // Precedence: ?ct= wins outright. A request carrying both uses the token
+    // and ignores ?c= — no "fall back to the integer if the token misses",
+    // which would hand an attacker a downgrade path.
+    let contactId    = null;
+    let contactToken = null;          // non-null ⇒ credentialed, gate may pass
+    const rawCt = req.query.ct;
+    if (typeof rawCt === 'string' && /^[a-f0-9]{32}$/i.test(rawCt)) {
+      const [c] = await req.db.query(
+        'SELECT contact_id, contact_token FROM contacts WHERE contact_token = ? LIMIT 1',
+        [rawCt],
+      );
+      if (c.length) {
+        contactId    = c[0].contact_id;
+        contactToken = c[0].contact_token;
+      }
+    } else if (req.query.c != null && req.query.c !== '') {
+      // Legacy, attribution-only. Logged so the tail can be watched and the
+      // branch eventually deleted.
       const id = parseInt(req.query.c, 10);
       if (Number.isFinite(id) && id > 0 && String(id) === String(req.query.c)) {
         const [c] = await req.db.query(
           'SELECT contact_id FROM contacts WHERE contact_id = ? LIMIT 1',
           [id],
         );
-        if (c.length) contactId = c[0].contact_id;
+        if (c.length) {
+          contactId = c[0].contact_id;
+          console.warn('[videoLanding] deprecated ?c= integer used', {
+            slug: req.params.slug, contactId,
+          });
+        }
       }
     }
 
-    // Gate: contact_only requires a resolved contact.
-    if (video.access_level === 'contact_only' && contactId == null) {
+    // Gate: contact_only requires a TOKEN-resolved contact. An attribution-only
+    // ?c= hit is deliberately not enough — that was the whole defect.
+    if (video.access_level === 'contact_only' && contactToken == null) {
       return res.status(404).type('text/plain').send('Not found');
     }
 
@@ -235,7 +290,7 @@ router.get('/v/:slug', async (req, res) => {
         autoFill: true,
         limit:    3,
       });
-      relatedHtml = renderRelated(related, contactId);
+      relatedHtml = renderRelated(related, contactId, contactToken);
     } catch (err) {
       console.error('[GET /v/:slug] getRelatedVideos failed:', err);
     }
@@ -266,7 +321,7 @@ router.get('/v/:slug', async (req, res) => {
       '{{POSTER_URL}}':       htmlEscape(video.gcs_poster_url || ''),
       '{{VIDEO_URL}}':        htmlEscape(video.gcs_video_url),
       '{{LANDING_URL}}':      htmlEscape(landingUrl),
-      '{{ACTIONS_HTML}}':     renderActions(actions, contactId),
+      '{{ACTIONS_HTML}}':     renderActions(actions, contactToken),
       '{{OG_TYPE}}':          'video.other',
       '{{TWITTER_CARD}}':     'summary_large_image',
       '{{VIEW_ID}}':          htmlEscape(viewId),

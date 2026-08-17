@@ -9,6 +9,7 @@
 //
 //   const result = await YisraVideoInsert.openVideoPicker({
 //     contactId: 42 | null,    // null = campaign template mode (leaves placeholder literal)
+//                              // resolved to contacts.contact_token internally
 //     context:   'email' | 'sms',
 //     mmsCapable: true | false  // SMS only; consulted to offer MMS variants
 //   });
@@ -19,7 +20,7 @@
 //   { kind: 'mms',      text: 'https://...', attachmentUrl: '...', mediaKind: 'poster' | 'gif' }
 //
 // Notes:
-// - Placeholder syntax: when contactId is null, URLs contain {{contacts.contact_id}}
+// - Placeholder syntax: when contactId is null, URLs contain {{contacts.contact_token}}
 //   (matches resolverService schema). Caller is responsible for resolving at send time.
 // - Snippet shape (email): wrapped `<a><img></a>` form. The EmailImage blot is
 //   registered on each host page so the <img> attributes survive Quill's clipboard.
@@ -100,17 +101,50 @@
 
   /**
    * Build the full landing-page URL for a video.
+   *
+   * 2026-08-17: emits ?ct=<contact_token>, replacing ?c=<contact_id>. The raw
+   * id was forgeable (anyone could walk 1,2,3…) so it never was a credential;
+   * only the token can satisfy a contact_only video. The landing route still
+   * ACCEPTS ?c= for attribution so links already in inboxes keep working, but
+   * nothing mints it any more.
+   *
    * @param {string} slug
-   * @param {number|string|null} contactId
-   *   When falsy/null: produces ...?c={{contacts.contact_id}} (campaign template).
-   *   Otherwise: produces ...?c=<id> (already substituted).
+   * @param {string|null} contactToken
+   *   When falsy/null: produces ...?ct={{contacts.contact_token}} — the
+   *     campaign-template form, substituted per recipient by resolverService.
+   *   Otherwise: produces ...?ct=<token> (already substituted).
    */
-  function buildUrl(slug, contactId) {
+  function buildUrl(slug, contactToken) {
     const base = PUBLIC_VIDEO_ORIGIN + '/v/' + encodeURIComponent(slug);
-    const c = (contactId === null || contactId === undefined || contactId === '')
-      ? '{{contacts.contact_id}}'
-      : String(contactId);
-    return base + '?c=' + c;
+    const c = (contactToken === null || contactToken === undefined || contactToken === '')
+      ? '{{contacts.contact_token}}'
+      : String(contactToken);
+    return base + '?ct=' + c;
+  }
+
+  /**
+   * contact_id → contact_token, via the mint-or-return endpoint booking
+   * already uses. Cached per contact for the life of the page.
+   *
+   * Returns null on failure, which degrades to the anonymous form of the link
+   * rather than blocking the insert — losing attribution on one send is a far
+   * better outcome than refusing to send.
+   */
+  const tokenCache = new Map();
+  async function resolveContactToken(contactId) {
+    if (contactId === null || contactId === undefined || contactId === '') return null;
+    const key = String(contactId);
+    if (tokenCache.has(key)) return tokenCache.get(key);
+    let token = null;
+    try {
+      const P = window.parent && window.parent.apiSend ? window.parent : window;
+      const resp = await P.apiSend('/api/contacts/' + encodeURIComponent(key) + '/booking-link', 'POST', {});
+      token = (resp && resp.token) || null;
+    } catch (err) {
+      console.warn('[videoInsert] contact_token lookup failed; sending anonymous link', err);
+    }
+    tokenCache.set(key, token);
+    return token;
   }
 
   // ── Snippet builders ───────────────────────────────────────────────────────
@@ -307,8 +341,8 @@
 
   // ── Result builders ────────────────────────────────────────────────────────
 
-  function buildResult(variantKey, video, contactId) {
-    const url = buildUrl(video.slug, contactId);
+  function buildResult(variantKey, video, contactToken) {
+    const url = buildUrl(video.slug, contactToken);
     const title = video.title || 'Watch the video';
 
     switch (variantKey) {
@@ -367,7 +401,11 @@
     const variantKey = await pickVariant(Swal, video, variants);
     if (!variantKey) return null;
 
-    return buildResult(variantKey, video, contactId);
+    // Stage 3 — resolve the contact's token (no-op in campaign-template mode,
+    // where contactId is null and the placeholder stays literal).
+    const contactToken = await resolveContactToken(contactId);
+
+    return buildResult(variantKey, video, contactToken);
   }
 
   // ── Export ─────────────────────────────────────────────────────────────────

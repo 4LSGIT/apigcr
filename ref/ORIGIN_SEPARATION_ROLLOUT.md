@@ -591,3 +591,91 @@ links work directly, and both hosts serve every route.
 - **`status.svg` redirect** — see above.
 - **Retiring `APP_URL` in `taskService`** — the staff-shell deep links need it;
   the two names coexisting is the point.
+
+---
+
+# Video contact param: ?c= integer → ?ct= token (2026-08-17, Rider D)
+
+Ships as TWO commits, in this order:
+
+**1. `contacts.booking_token` → `contacts.contact_token`** (pure rename, zero
+behavior change). SQL: `ref/2026-08-17_contact_token_rename.sql`. Code:
+`routes/booking.js`, `services/contactService.js`, `lib/domainEvents.js`,
+`lib/reportSchema/manifest.js`, `public/campaign.html`, `ref/database.sql`,
+plus comments in `routes/pageLanding.js` and a fixture in
+`tests/triggerService.test.js`. The column is a per-contact bearer that now
+serves booking AND video, so the booking-specific name had become a lie.
+
+**2. Video uses the token.** Code: `routes/videoLanding.js`,
+`services/videoService.js`, `public/videoManager.html`,
+`public/js/videoInsert.js`, `tests/videoLanding.actionUrl.test.js`. No SQL.
+
+## Semantics (as agreed: token-only, ignore-unknown-`?c=`)
+
+- **`?ct=<contact_token>`** — 32-hex bearer, the only thing that satisfies
+  `access_level='contact_only'`.
+- **`?c=<contact_id>`** — deprecated, **accepted for ATTRIBUTION ONLY** and
+  logged with a deprecation warning. It never satisfies the gate. Kept
+  because ~17 links carrying it went to ~12 contacts between 2026-05 and
+  2026-08 and are still in inboxes; rejecting it would 404 a client on a
+  video the firm sent them. It costs one lookup and grants nothing — all 17
+  videos are `access_level='public'`, so it never granted anything before
+  this change either.
+- **Precedence:** `?ct=` wins outright. A request with both uses the token and
+  ignores `?c=` — deliberately NOT "fall back to the integer if the token
+  misses", which would be a downgrade path. Test-locked.
+
+## The gate defect this closes
+
+`contact_only` previously passed on "the id resolves in `contacts`" — a
+sequential integer anyone can mint. Walking `?c=1,2,3…` would have opened
+every `contact_only` video. Unused today (all 17 are public), so this was
+latent; it is now closed before first use. Test-locked with an explicit
+"a VALID `?c=` does NOT open it" case.
+
+## `{{c}}` now substitutes the TOKEN — a latent bug fixed alongside
+
+Action URLs substituted the raw contact_id. But `routes/booking.js` resolves
+its own `?c=` against `contact_token` with a 32-hex regex — so the canonical
+action ("book a consult") produced links that could **never** resolve. `{{c}}`
+(and the new explicit alias `{{ct}}`) now emit the token. **Zero videos have
+actions configured**, so there is nothing to migrate and no back-compat owed.
+
+## Minters
+
+- `public/js/videoInsert.js` — resolves contact_id → token via the existing
+  mint-or-return endpoint (`POST /api/contacts/:id/booking-link`), cached per
+  page. On lookup failure it degrades to the anonymous link rather than
+  blocking the insert: losing attribution on one send beats refusing to send.
+  Campaign-template mode now emits `{{contacts.contact_token}}`.
+- `public/videoManager.html` — "Copy URL for contact" still asks for the
+  contact_id staff can see, then resolves it to a token behind the scenes.
+  Embed snippets emit `?ct={{contacts.contact_token}}`.
+
+## Deploy order — READ THIS ONE
+
+Unlike every other slice here, the rename's SQL and code are **coupled**: old
+code queries `booking_token` by name, so between the ALTER and the backend
+deploy, booking-link minting throws. Run the ALTER immediately before the
+backend deploy (seconds-long window, affects link minting only — not booking
+itself). `ref/2026-08-17_contact_token_rename.sql` § 2 documents a
+generated-column shim if even that is unacceptable. Then `npm run db:ref`.
+
+Order: ALTER → backend → `npm run db:ref` → frontend.
+
+## Verify
+
+- `4lsg.com/v/welcome?ct=<real token>` renders; `video_views.contact_id` fills
+- `4lsg.com/v/welcome?c=42` still renders (attribution kept, deprecation
+  warning in logs)
+- Set one video to `contact_only`: `?ct=` opens it, `?c=<valid id>` 404s
+- videoManager "Copy URL for contact" yields `?ct=<32 hex>`
+- Booking still works end to end (the rename's real blast radius)
+
+## Deliberately not done
+
+- **Deleting the `?c=` branch.** It is logged; delete it once the logs go
+  quiet. No calendar pressure — it grants nothing.
+- **Backfilling tokens.** 1036 of 1041 contacts already have one, and
+  `contactService` mints at creation. The 5 without are pre-mint rows that
+  the mint-or-return endpoint fills on first use.
