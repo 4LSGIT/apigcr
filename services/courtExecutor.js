@@ -70,6 +70,7 @@ const CASE_DATE_FIELDS = new Set(['case_file_date', 'case_close_date', 'case_obj
 // CASE_DATE_FIELDS' toDatePart would silently drop the hearing time.
 const CASE_DATETIME_FIELDS = new Set(['show_cause']);
 
+const domainEvents = require('../lib/domainEvents'); // safe top-level (async_hooks only)
 const { resolveCase } = require('../lib/courtResolve');
 const { checkCitations } = require('../lib/courtCitation');
 
@@ -270,11 +271,18 @@ async function flushChangeRows(db, rows, courtLogId) {
  *        /approve — /approve itself is unchanged.
  * @param {(string|number|null)} [opts.overrideBy]  who vouched (user id or
  *        'api:<label>'); recorded in the citation_override stamp only.
+ * @param {string} [opts.source='court_ingest']  provenance carried on the
+ *        case.court_processed domain event ONLY — never written to any table
+ *        and never read by the executor itself. 'court_ingest' (fresh email),
+ *        'court_review' (a human resolved it from the Court Review Queue),
+ *        'court_sweep' (nightly retry). Additive + defaulted: callers that
+ *        pass nothing behave exactly as before.
  * @returns {Promise<{ outcome:string, court_ai_log_id:(number|null),
  *   applied:Array, skipped:Array, review_reason:(string|null), already_processed?:boolean }>}
  */
 async function executeCourtActions(db, { payload, subject, body, dryRun, preview = false,
-                                         skipCitationGate = false, overrideBy = null } = {}) {
+                                         skipCitationGate = false, overrideBy = null,
+                                         source = 'court_ingest' } = {}) {
   payload = payload || {};
   const messageId = payload.message_id || null;
   const aiCallId = payload.ai_call_id ?? null;
@@ -1065,6 +1073,49 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   });
 
   await doFlush(changeRows, courtLogId);
+
+  // ── Trigger: case.court_processed (fire-and-forget, strictly post-write) ──
+  // GATE: dry_run = 0 AND outcome IN ('executed','none'). That is deliberately
+  // the SAME predicate STEP 1's processed marker and courtReview's
+  // OPEN_QUEUE_WHERE already use to call a message SETTLED — so the review
+  // queue gates this event for free, with no new hook to maintain:
+  //   * a run that lands 'queued' is by definition still waiting on a human
+  //     and emits NOTHING;
+  //   * when that human re-runs it live from the queue and it settles, the
+  //     emit fires then, carrying source 'court_review'.
+  // preview forces effectiveDryRun = true, so !effectiveDryRun covers it too.
+  //
+  // NOT gated on applied.length: a classification can be actionable to the
+  // pipeline while writing no case column at all (plan_confirmed has no column
+  // to write), and those runs land outcome='none'. Gating on writes would make
+  // exactly the interesting cases invisible.
+  //
+  // This does NOT un-bypass case.updated — the raw `UPDATE cases` writes above
+  // still emit nothing, on purpose (high-volume machine writes; see the manual's
+  // bypass column). This is one narrow event per settled RUN, not per column.
+  if (!effectiveDryRun && (outcome === 'executed' || outcome === 'none')) {
+    domainEvents.emit(db, 'case.court_processed', {
+      case_id:    String(resolved.case_id),
+      contact_id: resolved.primary_contact_id ?? null,
+      source,
+      data: {
+        classification,
+        outcome,
+        case_chapter:     resolved.case_chapter || null,
+        case_number:      resolved.case_number || null,
+        case_number_full: resolved.case_number_full || null,
+        message_id:       messageId,
+        court_ai_log_id:  courtLogId,
+      },
+      extra: {
+        applied_fields:    [...new Set(applied.filter(a => a.field).map(a => a.field))],
+        applied_types:     [...new Set(applied.map(a => a.type))],
+        applied_count:     applied.length,
+        skipped_count:     skipped.length,
+        citation_override: !!citationOverrideNote,
+      },
+    });
+  }
 
   return finish({ outcome, court_ai_log_id: courtLogId, applied, skipped, review_reason: reviewReason }, citation);
 }

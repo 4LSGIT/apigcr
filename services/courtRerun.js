@@ -112,7 +112,8 @@ function parsePayload(raw) {
  *   result?:object            // executor return (or a normalized extract result)
  * }>}
  */
-async function rerunCalRow(db, calRow, { allowExtract = true, force = false, forceExtract = false,
+async function rerunCalRow(db, calRow, { source = 'court_review',
+                                        allowExtract = true, force = false, forceExtract = false,
                                          forceCitations = false, overrideBy = null } = {}) {
   const dryRun  = !(await isLive(db));
   const payload = parsePayload(calRow.raw_response);
@@ -138,6 +139,11 @@ async function rerunCalRow(db, calRow, { allowExtract = true, force = false, for
       payload, subject, body, dryRun,
       skipCitationGate: !!forceCitations,
       overrideBy: forceCitations ? overrideBy : null,
+      // Default 'court_review': every routes/courtReview.js caller is a human
+      // resolving a queued row. The nightly sweep in lib/internal_functions/
+      // court.js passes 'court_sweep' explicitly. Rides only on the
+      // case.court_processed event; nothing here reads it.
+      source,
     });
     return {
       status: 'reran',
