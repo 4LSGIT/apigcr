@@ -101,6 +101,19 @@
     </div>
   </div>
 
+  <!-- These two dates DRIVE THE PIPELINE (trigger rules on case.updated ->
+       advance_stage). Discharged moves the case to Discharge; Closed moves it
+       to Closed, which the client portal renders as "Case closed". They are
+       different events weeks apart on a Chapter 7 — putting a discharge date
+       in Closed tells the client their case is over when it is not. Hence the
+       hint below; do not remove it without removing the rules. -->
+  <div class="yc-hint" style="margin: 4px 2px 0;">
+    <strong>Discharged</strong> = the debtor's discharge order was entered.
+    <strong>Closed</strong> = the case is over (final decree, or dismissed).
+    On a Chapter 7 these are usually weeks apart — fill each when it happens.
+    Both move the case's pipeline stage automatically.
+  </div>
+
   <div class="yc-hint" style="margin: 4px 2px 0;">
     Hearings, depositions, and deadlines are tracked on the <strong>Events</strong> tab.
   </div>

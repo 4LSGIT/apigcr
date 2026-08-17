@@ -42,6 +42,27 @@
 //              Show Cause events ALSO get a reminder task (billing_tasks_to →
 //              Shoshana) and write cases.show_cause — see doCreateEvent.
 //
+// ── case_close_date vs case_discharge_date — THE TWO-COLUMN CONTRACT ──────
+// These are DIFFERENT EVENTS and each has its own column. Until court_extract
+// v9 there was only case_close_date and the model wrote all three of
+// discharge / dismissal / final-decree dates into it, first-write-wins under
+// fill_only — so on a Chapter 7 it usually ended up holding the DISCHARGE
+// date and the real final decree was rejected as fill_only_occupied.
+//
+//   case_discharge_date — the DEBTOR's discharge order was entered.
+//                         Written only on classification discharge_granted
+//                         (or case_closed, when that email also states it).
+//   case_close_date     — the case is OVER: dismissed, or final decree.
+//                         Written only on case_dismissed / case_closed.
+//                         NEVER a discharge date.
+//
+// This is load-bearing for more than tidiness: BOTH columns now drive
+// trigger rules on case.updated that advance the pipeline, and `closed` is
+// client-visible in the portal as "Case closed". Writing a discharge date
+// into case_close_date tells a client their case is finished while it is
+// still open. If you add a terminal-ish date column, give it its own
+// classification and its own policy entry — do not overload one of these.
+//
 // ── update_case_fields COLUMN POLICY ──────────────────────────────────────
 //   fill_only  (write only if current NULL/''): case_file_date, case_judge, case_close_date,
 //                                               case_discharge_date
