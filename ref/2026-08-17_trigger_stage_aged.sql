@@ -8,10 +8,12 @@
 -- made it into ref/ — this dated file is the repo record of what ran,
 -- plus two CORRECTIVE statements (C, D) found by that review.
 --
--- RUN INSTRUCTIONS:
---   A — safe to re-run (IF NOT EXISTS); no-op in prod.
---   B — DO NOT RUN. Recorded commented-out; the live row is job id 3555.
---   C, D — NOT yet applied. Run each ONCE.
+-- STATUS: ALL FOUR SECTIONS ARE APPLIED IN PRODUCTION as of 2026-08-17.
+-- This file is the record of what ran, not a to-do list.
+--   A — APPLIED. Safe to re-run (IF NOT EXISTS); no-op in prod.
+--   B — APPLIED as job id 3555. DO NOT RUN — recorded commented-out.
+--   C — APPLIED. case_id is live as general_ci; re-run is a no-op.
+--   D — APPLIED. The job is live on '0 13 * * *'; re-run is a no-op.
 -- NO session variables anywhere (runner uses separate connections).
 -- ============================================================
 
@@ -45,28 +47,29 @@ CREATE TABLE IF NOT EXISTS case_stage_aged_emitted (
 --    '{"type": "internal_function", "params": {}, "function_name": "emit_stage_aged"}',
 --    '0 8 * * *', 3);
 
--- ── C. Collation fix (Review F3 — RUN ONCE) ──────────────────
+-- ── C. Collation fix (Review F3 — APPLIED 2026-08-17) ────────
 --
 -- The table default collated case_id as utf8mb4_0900_ai_ci while cases and
 -- case_stage_log are utf8mb4_general_ci — so the audit join this column's
 -- idx_case exists to serve ("what have we emitted for case X") threw
 -- "Illegal mix of collations". Free at 0 rows; expensive never.
 --
--- NOTE (same latent class, out of scope here): trigger_executions.case_id /
--- trigger_execution_rules also carry 0900_ai_ci. Nothing joins them to
--- cases today (all lookups are literal-param equality), but the identical
--- MODIFY applies if such a join is ever written.
+-- SUPERSEDED: ref/2026-08-17_collation_normalize.sql has since run and
+-- CONVERTed all 26 off-default tables to general_ci — this table (whole-table,
+-- not just case_id) plus trigger_executions and trigger_execution_rules, which
+-- carried the same 0900_ai_ci default. That closes the wider class; nothing
+-- here is left to do. Kept for the record of what fixed F3 on the day.
 ALTER TABLE case_stage_aged_emitted
   MODIFY case_id VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL;
 
--- ── D. Reschedule to the outbound band (Review F4 — RUN ONCE) ─
+-- ── D. Reschedule to the outbound band (Review F4 — APPLIED) ──
 --
 -- 0 8 * * * = 04:00 Detroit — the overnight system band. This is the one
 -- job whose designed output is client-facing send_sms/send_email; the first
 -- rule anyone writes would text a bankruptcy client at 4 AM. 13:00 UTC =
 -- 9am ET, alongside the task digest.
 --
--- Harmless either way if the 08:00 run fired before this lands: it emits
+-- Harmless either way if the 08:00 run fired before this landed: it emits
 -- into no_rules (replayable after rules exist) and claims at most a rung
 -- the case will out-age anyway.
 UPDATE scheduled_jobs

@@ -319,7 +319,6 @@ ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
 ref/migration_trigger_R4.sql
-ref/migration_trigger_stage_aged.sql
 ref/migration_trigger_system_T1.sql
 ref/migration_trigger_system_T3T4.sql
 ref/pages/form.html
