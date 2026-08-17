@@ -9,6 +9,8 @@
 //   2. phoneIngest.html — byte-identical mirror of the above
 //   3. hooks.html       — renderParamsMapping / buildParamMappingRow /
 //                         collectParamsMapping        (classes swal-pm-*)
+// and (since the trigger system) also backs:
+//   4. triggers.html    — rule action editor
 //
 // Loaded the same way as fnPicker.js: a plain <script src> on the (non-module)
 // automation sub-pages, exposing its API on `window`.
@@ -23,6 +25,27 @@
 // must match the `list=` attribute AND the shell-generated <datalist id>:
 //   emailIngest / phoneIngest → 'a-pm-source-datalist'
 //   hooks                     → 'pm-source-datalist'
+//   triggers                  → 'pm-source-datalist'
+//
+// ─────────────────────────────────────────────────────────────
+// ROW PROVENANCE (fixes the "switching functions grows the list" bug)
+//
+// Every row carries a `data-pm-seeded` marker when — and only when — THIS
+// MODULE created it from a function's declared-param schema. The marker is
+// deleted the first time the operator types into either input of that row.
+// So at any moment a row is exactly one of:
+//
+//   unmarked — operator-owned. Came from a saved mapping (pmRender), from the
+//              "Add param" button (pmAddRow), or was seeded and then EDITED.
+//   marked   — untouched scaffolding this module put there.
+//
+// pmSeedFromMeta drops marked rows before merging. That is the whole fix:
+// picking function A seeds A's params, picking B afterwards discards A's
+// untouched seeds and seeds B's, instead of accumulating A ∪ B ∪ C…
+//
+// Anything the operator actually typed still survives a function switch — the
+// original "never clobber the operator" intent is preserved, it is just no
+// longer extended to rows the operator never touched.
 //
 // ─────────────────────────────────────────────────────────────
 // API
@@ -31,48 +54,53 @@
 //     Paint a saved mapping. Undecorated — no meta is consulted, so opening an
 //     existing action/target shows exactly the rows that are stored, nothing
 //     more. Empty mapping → one blank scaffold row (unchanged behavior).
+//     Painted rows are operator-owned (never marked).
 //
 //   pmAddRow(containerEl, opts) → the appended row element
-//     Append one blank row. Backs each page's "Add param" button.
+//     Append one blank row. Backs each page's "Add param" button. Operator-
+//     owned (never marked), so an explicitly added row is never auto-removed.
 //
 //   pmCollect(containerEl) → { param: source, ... }
-//     Harvest the rows. Rows with a blank KEY are skipped (unchanged), and —
-//     NEW — rows with a blank/whitespace VALUE are dropped too. Seeded rows the
-//     operator never filled in are scaffolding, not mapping entries; persisting
-//     them as `{ subject: "" }` would resolve to `getByPath(output, '')` →
-//     undefined at dispatch (lib/actionDispatchers.resolveParamsMapping), i.e.
-//     a param silently forced to undefined. Verified safe against live data:
-//     all 9 internal_function mapping configs in production (7 email + 2 phone
-//     + 0 hook) have a non-empty value on every key, so nothing is lost.
+//     Harvest the rows. Rows with a blank KEY are skipped, and rows with a
+//     blank/whitespace VALUE are dropped too. Seeded rows the operator never
+//     filled in are scaffolding, not mapping entries; persisting them as
+//     `{ subject: "" }` would resolve to `getByPath(output, '')` → undefined
+//     at dispatch (lib/actionDispatchers.resolveParamsMapping), i.e. a param
+//     silently forced to undefined.
 //     NOTE the emptiness TEST trims but the STORED value does not — a quoted
 //     literal space ("' '") survives, exactly as before.
+//     Provenance is IGNORED here: a seeded row prefilled with a real default
+//     ("'1024'") is a meaningful value and is collected as before.
 //
 //   pmSeedFromMeta(containerEl, fnMeta, existingMapping, opts)
 //     Meta-driven seeding, fired from the function <select>'s `change` event.
-//     MERGE, NEVER CLOBBER:
-//       - every existing row is kept, in order, INCLUDING keys absent from the
-//         schema (undeclared forensic keys are tolerated by design — the param
-//         validator only checks DECLARED params, so out-of-schema keys are a
-//         supported pattern, e.g. court_extract's raw envelope dot-paths);
+//     MERGE, BUT ONLY OVER OPERATOR-OWNED ROWS:
+//       - every UNMARKED existing row is kept, in order, INCLUDING keys absent
+//         from the schema (undeclared forensic keys are tolerated by design —
+//         the param validator only checks DECLARED params, so out-of-schema
+//         keys are a supported pattern, e.g. court_extract's raw envelope
+//         dot-paths);
+//       - MARKED rows (untouched seeds from the previously-selected function)
+//         are DROPPED;
 //       - one row is appended per declared param not already present, in
-//         declaration order;
+//         declaration order, and marked;
 //       - value prefill = quoted literal of the param's `default` when it has
 //         one ("'0'", "'Fwd:'"), else blank. Quoted because
 //         resolveParamsMapping strips exactly one outer single-quote pair to
 //         yield a literal; an unquoted "0" would be read as a dot-path.
 //     `existingMapping` is optional: pass null (the normal case) and the merge
-//     base is read straight off the CURRENT DOM, so switching functions
-//     preserves whatever the operator has already typed.
+//     base is read straight off the CURRENT DOM. Passing an explicit mapping
+//     treats every entry as operator-owned.
 //
 //     Rows whose key matches a declared param are decorated from the meta:
 //     a red * marker for required params, the param `description` as the key
 //     input's tooltip, and — for enum params — the value list in the value
 //     input's placeholder (boundary-truncated) and tooltip (in full).
 //
-// The `fnMeta` shape is the same on all three pages after the meta-projection
+// The `fnMeta` shape is the same on all pages after the meta-projection
 // widening (emailIngestMetaService / phoneIngestMetaService now carry `type`,
-// `enum`, `description` and `multiline` through). hooks.html has always
-// received the raw, unprojected __meta from /workflows/functions.
+// `enum`, `description` and `multiline` through). hooks.html / triggers.html
+// receive the raw, unprojected __meta from /workflows/functions.
 // ─────────────────────────────────────────────────────────────
 
 (function () {
@@ -82,6 +110,9 @@
   const VAL_CLASS = 'pm-val';
   const DEL_CLASS = 'pm-del';
   const REQ_CLASS = 'pm-req';
+
+  // dataset key `pmSeeded` ⇒ attribute `data-pm-seeded`.
+  const SEED_KEY = 'pmSeeded';
 
   const DEFAULT_DATALIST_ID = 'pm-source-datalist';
   const VALUE_PLACEHOLDER   = "field  or  a.b.c  or  'literal'";
@@ -103,7 +134,7 @@
 
   // Shell helper (automationManager.html: fdParamSourceDatalistHtml). GUARDED:
   // emailIngest/phoneIngest already guarded it, hooks.html called it bare and
-  // would have thrown if the shell ever lagged. One guard now covers all three.
+  // would have thrown if the shell ever lagged. One guard now covers all.
   function _datalistHtml(datalistId) {
     try {
       const P = window.parent;
@@ -121,9 +152,9 @@
     return containerEl ? Array.from(containerEl.querySelectorAll(':scope > div')) : [];
   }
 
-  // Read the live DOM as [key, value] pairs. Keys are trimmed; values are NOT
-  // (an intentional leading space inside a quoted literal is the operator's).
-  // Blank rows come back as ['', ''] — callers filter.
+  // Read the live DOM as [key, value, seeded] triples. Keys are trimmed;
+  // values are NOT (an intentional leading space inside a quoted literal is
+  // the operator's). Blank rows come back as ['', '', …] — callers filter.
   function _readRows(containerEl) {
     return _rowEls(containerEl).map((row) => {
       const k = row.querySelector('.' + KEY_CLASS);
@@ -131,6 +162,7 @@
       return [
         k && typeof k.value === 'string' ? k.value.trim() : '',
         v && typeof v.value === 'string' ? v.value : '',
+        row.dataset[SEED_KEY] === '1',
       ];
     });
   }
@@ -160,8 +192,9 @@
   }
 
   // Build one row. `spec` is the matching __meta param (or null on the plain
-  // render path, where no meta is consulted).
-  function _buildRow(key, value, opts, spec) {
+  // render path, where no meta is consulted). `seeded` marks the row as
+  // module-authored scaffolding — see ROW PROVENANCE above.
+  function _buildRow(key, value, opts, spec, seeded) {
     const datalistId = _datalistId(opts);
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
@@ -187,20 +220,31 @@
       <button type="button" class="${DEL_CLASS}" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:#ef4444" title="Remove"><i class="fa-solid fa-times"></i></button>`;
 
     row.querySelector('.' + DEL_CLASS).addEventListener('click', () => row.remove());
+
+    if (seeded) {
+      row.dataset[SEED_KEY] = '1';
+      // First keystroke in EITHER cell promotes the row to operator-owned, so
+      // the next function switch keeps it. `once` per input is enough — both
+      // handlers clear the same flag and re-marking never happens in place.
+      const claim = () => { delete row.dataset[SEED_KEY]; };
+      row.querySelector('.' + KEY_CLASS).addEventListener('input', claim, { once: true });
+      row.querySelector('.' + VAL_CLASS).addEventListener('input', claim, { once: true });
+    }
+
     return row;
   }
 
-  // Repaint the container from an ordered [key, value] list. `specByName` may be
-  // null (plain render) — then no row is decorated.
+  // Repaint the container from an ordered [key, value, seeded?] list.
+  // `specByName` may be null (plain render) — then no row is decorated.
   function _paint(containerEl, entries, opts, specByName) {
     containerEl.innerHTML = _datalistHtml(_datalistId(opts));
     if (!entries.length) {
-      containerEl.appendChild(_buildRow('', '', opts, null));
+      containerEl.appendChild(_buildRow('', '', opts, null, false));
       return;
     }
-    for (const [k, v] of entries) {
+    for (const [k, v, seeded] of entries) {
       const spec = specByName ? (specByName.get(k) || null) : null;
-      containerEl.appendChild(_buildRow(k, v, opts, spec));
+      containerEl.appendChild(_buildRow(k, v, opts, spec, !!seeded));
     }
   }
 
@@ -208,6 +252,9 @@
 
   window.pmRender = function pmRender(containerEl, mapping, opts) {
     if (!containerEl) return;
+    // Object.entries yields [k, v] — the absent 3rd slot reads as undefined,
+    // so every stored row is painted operator-owned. That is deliberate: a
+    // saved mapping is the operator's, whoever originally typed it.
     const entries = (mapping && typeof mapping === 'object' && !Array.isArray(mapping))
       ? Object.entries(mapping)
       : [];
@@ -216,7 +263,7 @@
 
   window.pmAddRow = function pmAddRow(containerEl, opts) {
     if (!containerEl) return null;
-    const row = _buildRow('', '', opts, null);
+    const row = _buildRow('', '', opts, null, false);
     containerEl.appendChild(row);
     return row;
   };
@@ -238,13 +285,14 @@
     const specs = (fnMeta && Array.isArray(fnMeta.params)) ? fnMeta.params : [];
 
     // Merge base: an explicit mapping if given, else whatever is on screen now
-    // (minus blank-key scaffold rows). A key-but-no-value row is KEPT here —
-    // the operator started it; only pmCollect drops it, and only at save time.
+    // MINUS blank-key scaffold rows AND minus untouched seeds from the
+    // previously-selected function. A key-but-no-value row the operator TYPED
+    // is kept here — only pmCollect drops it, and only at save time.
     const base = (existingMapping && typeof existingMapping === 'object' && !Array.isArray(existingMapping))
       ? Object.entries(existingMapping)
-      : _readRows(containerEl).filter(([k]) => k !== '');
+      : _readRows(containerEl).filter(([k, , seeded]) => k !== '' && !seeded);
 
-    const merged = base.slice();
+    const merged = base.map(([k, v]) => [k, v, false]);
     const seen   = new Set(merged.map(([k]) => k));
 
     for (const spec of specs) {
@@ -253,7 +301,7 @@
       // Quoted literal so resolveParamsMapping yields the default VALUE rather
       // than treating it as a dot-path: 0 → "'0'", 'Fwd:' → "'Fwd:'".
       const prefill = spec.default !== undefined ? "'" + String(spec.default) + "'" : '';
-      merged.push([spec.name, prefill]);
+      merged.push([spec.name, prefill, true]);
     }
 
     const specByName = new Map(specs.filter(s => s && s.name).map(s => [s.name, s]));

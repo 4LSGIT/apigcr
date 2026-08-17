@@ -349,12 +349,25 @@ function sjUpdateCredWarning(warnElId, credElId, urlElId) {
 //     description truncated inline, full text in the tooltip).
 //
 //   sjSeedParams(textareaId, fnName)
-//     MERGE, NEVER CLOBBER (same contract as pmSeedFromMeta): keeps
-//     every existing key including undeclared ones, appends one key
-//     per missing declared param — value = the param's `default` when
-//     it has one (typed, NOT quoted — these are literal JSON params,
-//     not mapping sources), else ''. No-op when the textarea holds
-//     invalid JSON (never clobber an in-progress edit) or a non-object.
+//     MERGE OVER OPERATOR-OWNED KEYS (same contract as pmSeedFromMeta):
+//     keeps every existing key including undeclared ones, appends one
+//     key per missing declared param — value = the param's `default`
+//     when it has one (typed, NOT quoted — these are literal JSON
+//     params, not mapping sources), else ''. No-op when the textarea
+//     holds invalid JSON (never clobber an in-progress edit) or a
+//     non-object.
+//
+//     PROVENANCE: the keys this function seeds, and the exact values
+//     it seeded them with, are stashed on the textarea as
+//     data-sj-seed. On the NEXT seed (i.e. the operator picked a
+//     different function) every stashed key whose value is still
+//     byte-identical to what was seeded is deleted first — untouched
+//     scaffolding from the previous function, which otherwise piled up
+//     switch after switch. A key the operator edited no longer matches
+//     the stash and is left alone, as is anything that was already in
+//     the textarea before the first seed (stored job params, hand-typed
+//     keys). This is the JSON-textarea twin of paramsMapping.js's
+//     data-pm-seeded row marker.
 //
 //   sjStripBlankParams(obj)
 //     Save-time hygiene, the pmCollect analogue: deletes every key
@@ -417,12 +430,33 @@ function sjSeedParams(textareaId, fnName) {
   let obj;
   try { obj = JSON.parse(ta.value.trim() || '{}'); } catch { return; }
   if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return;
+
+  // What a PREVIOUS seed put here, and with what value.
+  let prevSeed = {};
+  try { prevSeed = JSON.parse(ta.dataset.sjSeed || '{}') || {}; } catch { prevSeed = {}; }
+
   let changed = false;
+
+  // Drop untouched scaffolding from the previously-selected function. A key
+  // whose value still equals exactly what was seeded was never edited; one
+  // that differs (or was deleted outright) belongs to the operator.
+  for (const k of Object.keys(prevSeed)) {
+    if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+    if (JSON.stringify(obj[k]) !== JSON.stringify(prevSeed[k])) continue;
+    delete obj[k];
+    changed = true;
+  }
+
+  // Seed the newly-selected function's declared params.
+  const seeded = {};
   for (const p of m.params) {
     if (!p || !p.name || Object.prototype.hasOwnProperty.call(obj, p.name)) continue;
     obj[p.name] = p.default !== undefined ? p.default : '';
+    seeded[p.name] = obj[p.name];
     changed = true;
   }
+
+  ta.dataset.sjSeed = JSON.stringify(seeded);
   if (!changed) return;
   ta.value = JSON.stringify(obj, null, 2);
   // Grow to fit the seeded skeleton (capped) so params aren't hidden
