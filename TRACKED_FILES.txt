@@ -27,6 +27,7 @@ lib/courtCitation.js
 lib/courtResolve.js
 lib/credentialCrypto.js
 lib/credentialInjection.js
+lib/domainEvents.js
 lib/errorMiddleware.js
 lib/firmConfig.js
 lib/ingestSampleProjection.js
@@ -310,6 +311,7 @@ ref/database.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
+ref/migration_trigger_system_T1.sql
 ref/pages/form.html
 ref/pages/submitted.html
 ref/plans.md
@@ -383,6 +385,7 @@ routes/api.systemStatus.js
 routes/api.tasks.js
 routes/api.temp.clio.js
 routes/api.temp.zohosign.js
+routes/api.triggers.js
 routes/api.users.js
 routes/api.version.js
 routes/api.videos.js
@@ -551,6 +554,7 @@ services/smsService.js
 services/storageService.js
 services/taskService.js
 services/timezoneService.js
+services/triggerService.js
 services/uploadTargetService.js
 services/videoService.js
 startup/db.js

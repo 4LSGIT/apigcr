@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-16T19:26:58.820Z
+-- Generated: 2026-08-17T10:58:39.381Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d71833b513f6da6ce4646837044f0acc
+-- Fingerprint: sha256:aa46da7a02b2dfc0ae7244065c974d5d
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2857,6 +2857,69 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `trigger_executions`
+--
+
+DROP TABLE IF EXISTS `trigger_executions`;
+CREATE TABLE `trigger_executions` (
+  `id` bigint unsigned NOT NULL,
+  `event_type` varchar(64) NOT NULL,
+  `contact_id` int DEFAULT NULL,
+  `case_id` varchar(50) DEFAULT NULL,
+  `depth` tinyint NOT NULL DEFAULT '0',
+  `status` enum('matched','no_match','no_rules','depth_capped','error') NOT NULL,
+  `rules_matched` int NOT NULL DEFAULT '0',
+  `outcomes` json DEFAULT NULL,
+  `envelope` json DEFAULT NULL,
+  `error` text,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `trigger_rule_actions`
+--
+
+DROP TABLE IF EXISTS `trigger_rule_actions`;
+CREATE TABLE `trigger_rule_actions` (
+  `id` int unsigned NOT NULL,
+  `rule_id` int unsigned NOT NULL,
+  `name` varchar(100) DEFAULT NULL,
+  `position` int NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `action_type` enum('workflow','sequence','internal_function','http','hook') NOT NULL,
+  `config` json NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `trigger_rules`
+--
+
+DROP TABLE IF EXISTS `trigger_rules`;
+CREATE TABLE `trigger_rules` (
+  `id` int unsigned NOT NULL,
+  `event_type` varchar(64) NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `description` text,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `position` int NOT NULL DEFAULT '0',
+  `match_mode` enum('conditions','code') NOT NULL DEFAULT 'conditions',
+  `match_config` json DEFAULT NULL,
+  `transform_mode` enum('passthrough','mapper','code') NOT NULL DEFAULT 'passthrough',
+  `transform_config` json DEFAULT NULL,
+  `match_count` int NOT NULL DEFAULT '0',
+  `last_matched_at` datetime DEFAULT NULL,
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `trustees`
 --
 
@@ -3924,6 +3987,30 @@ ALTER TABLE `test`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `trigger_executions`
+--
+ALTER TABLE `trigger_executions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_type_time` (`event_type`,`created_at`),
+  ADD KEY `idx_case` (`case_id`),
+  ADD KEY `idx_contact` (`contact_id`),
+  ADD KEY `idx_created` (`created_at`);
+
+--
+-- Indexes for table `trigger_rule_actions`
+--
+ALTER TABLE `trigger_rule_actions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_rule` (`rule_id`,`active`,`position`);
+
+--
+-- Indexes for table `trigger_rules`
+--
+ALTER TABLE `trigger_rules`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_event_active` (`event_type`,`active`,`position`);
+
+--
 -- Indexes for table `trustees`
 --
 ALTER TABLE `trustees`
@@ -4606,6 +4693,24 @@ ALTER TABLE `tempusers`
 --
 ALTER TABLE `test`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `trigger_executions`
+--
+ALTER TABLE `trigger_executions`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `trigger_rule_actions`
+--
+ALTER TABLE `trigger_rule_actions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `trigger_rules`
+--
+ALTER TABLE `trigger_rules`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `trustees`
