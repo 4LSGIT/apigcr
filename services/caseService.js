@@ -39,6 +39,7 @@ const crypto = require('crypto');
 const { stripSsn } = require('./contactService');
 const logService = require('./logService');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
+const domainEvents = require('../lib/domainEvents'); // Trigger T3
 // Merge consolidation recomputes the survivor's docs-checklist status. Shared
 // with routes/api.checklists.js — one copy of the rule, see the lib.
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
@@ -395,6 +396,15 @@ async function updateCase(db, caseId, fields) {
   // indistinguishable from a real date. See lib/blankDateToNull.js.
   const safeFields = blankDatesToNull('cases', fields);
 
+  // (Trigger T3) Pre-read the full row for the change diff + envelope
+  // snapshot. One PK read — cheap; also upgrades the not-found detection.
+  const [[priorRow]] = await db.query(
+    `SELECT * FROM cases WHERE case_id = ?`, [caseId]
+  );
+  if (!priorRow) {
+    throw new Error(`Case ${caseId} not found`);
+  }
+
   const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
   const values = [...keys.map(k => safeFields[k]), caseId];
 
@@ -407,7 +417,20 @@ async function updateCase(db, caseId, fields) {
     throw new Error(`Case ${caseId} not found`);
   }
 
-  return { case_id: caseId, updated_fields: keys };
+  // Trigger: case.updated (fire-and-forget) — only when something actually
+  // changed after normalization. data = post-state approximation
+  // (pre-row overlaid with the written values).
+  const changes = domainEvents.buildChanges(priorRow, safeFields, keys);
+  if (Object.keys(changes).length) {
+    domainEvents.emit(db, 'case.updated', {
+      case_id: String(caseId),
+      data: { ...priorRow, ...safeFields },
+      changes,
+      extra: { updated_fields: keys },
+    });
+  }
+
+  return { case_id: caseId, updated_fields: keys, changes };
 }
 
 
@@ -439,6 +462,16 @@ async function addCaseContact(db, caseId, contactId, relateType = 'Primary') {
        VALUES (?, ?, ?)`,
       [caseId, contactId, relateType]
     );
+
+    // Trigger: case.contact_linked (fire-and-forget). The intake/petition
+    // routes' direct case_relate INSERTs at creation do NOT fire this —
+    // case.created covers those.
+    domainEvents.emit(db, 'case.contact_linked', {
+      case_id: String(caseId),
+      contact_id: parseInt(contactId, 10) || null,
+      data: { relate_type: relateType, case_relate_id: result.insertId },
+    });
+
     return { case_relate_id: result.insertId };
   } catch (err) {
     // The uniqueness trigger throws SQLSTATE 45000
@@ -463,6 +496,17 @@ async function removeCaseContact(db, caseId, contactId) {
      WHERE case_relate_case_id = ? AND case_relate_client_id = ?`,
     [caseId, contactId]
   );
+
+  // Trigger: case.contact_unlinked (fire-and-forget) — only when a row
+  // was actually removed.
+  if (result.affectedRows > 0) {
+    domainEvents.emit(db, 'case.contact_unlinked', {
+      case_id: String(caseId),
+      contact_id: parseInt(contactId, 10) || null,
+      data: { removed_rows: result.affectedRows },
+    });
+  }
+
   return { removed: result.affectedRows > 0 };
 }
 

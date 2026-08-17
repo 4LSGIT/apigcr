@@ -70,6 +70,7 @@ const { parseName } = require("../lib/parseName");
 const { generateCaseId } = require("../lib/caseId");
 const contactService = require("../services/contactService");
 const pipelineService = require("../services/pipelineService");
+const domainEvents = require("../lib/domainEvents"); // Trigger T3
 
 // ─────────────────────────────────────────
 // HELPERS
@@ -442,6 +443,21 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
       }
       if (!inserted) throw new Error("Failed to generate unique case ID after 10 attempts");
       await ensureRelate(req.db, caseId, contactId, "Primary");
+
+      // Trigger: case.created (fire-and-forget). The 'filed' stage advance
+      // below separately emits case.stage_advanced.
+      domainEvents.emit(req.db, 'case.created', {
+        case_id: caseId,
+        contact_id: parseInt(contactId, 10) || null,
+        source: 'petition',
+        data: {
+          case_id:      caseId,
+          case_type:    caseType,
+          case_subtype: caseSubtype ?? null,
+          case_chapter: chapter ?? null,
+          case_number:  caseNumber ?? null,
+        },
+      });
     }
 
     // ─────────────────────────────────────

@@ -249,7 +249,8 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
     //    no caseService write of any kind — submission JSON only, regardless
     //    of what the definition declares.
     const submitResult = await formService.submitForm(
-      req.db, tpl.form_key, linkType, linkId, tpl.schema_version, body.values, null
+      req.db, tpl.form_key, linkType, linkId, tpl.schema_version, body.values, null,
+      { surface: 'external' }
     );
 
     // 6. onSubmit workflow(s) — SERVER-SIDE, the sanctioned side-effect

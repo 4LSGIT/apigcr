@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Triggers</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="/automation/fnPicker.js"></script>
+<script src="/automation/paramsMapping.js"></script>
+<script src="/automation/matchBuilder.js"></script>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   TRIGGERS SUB-PAGE (Trigger System T2)
+   Structure + idioms follow emailIngest.html; prefix tg-.
+   ══════════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --navy:#1a1a2e; --blue:#4f8ef7; --blue2:#3a7de8; --green:#22c55e;
+  --red:#ef4444; --amber:#f59e0b; --purple:#8b5cf6;
+  --bg:#f1f5f9; --surface:#ffffff; --border:#e2e8f0;
+  --muted:#94a3b8; --text:#1e293b; --text2:#475569;
+}
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px; color: var(--text); background: var(--bg);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.mono { font-family: 'SF Mono','Cascadia Code','Consolas',monospace; }
+
+/* ── In-page tab strip ── */
+#tg-tabs {
+  display: flex; gap: 2px; background: var(--surface);
+  border-bottom: 1px solid var(--border); padding: 0 12px; flex-shrink: 0;
+}
+.tg-tab {
+  padding: 10px 14px; border: none; background: none; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.tg-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+/* ── Layout ── */
+#tg-main { flex: 1; display: flex; overflow: hidden; }
+#tg-sidebar {
+  width: 300px; flex-shrink: 0; background: var(--surface);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+}
+#tg-sidebar .tg-side-head { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+#tg-sidebar input.tg-search {
+  width: 100%; padding: 7px 10px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+#tg-rule-list { flex: 1; overflow-y: auto; }
+.tg-evt-head {
+  padding: 8px 12px 4px; font-size: 10px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+  position: sticky; top: 0; background: var(--surface);
+}
+.tg-rule-item {
+  padding: 8px 12px; cursor: pointer; border-left: 3px solid transparent;
+}
+.tg-rule-item:hover { background: var(--bg); }
+.tg-rule-item.selected { background: #eef4ff; border-left-color: var(--blue); }
+.tg-rule-item .nm { font-size: 13px; font-weight: 600; display:flex; align-items:center; gap:6px; }
+.tg-rule-item .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.tg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.tg-dot.on { background: var(--green); } .tg-dot.off { background: var(--muted); }
+
+#tg-detail { flex: 1; overflow-y: auto; padding: 18px 22px; }
+#tg-detail .tg-empty { color: var(--muted); padding: 40px; text-align: center; }
+
+/* ── Form ── */
+.tg-form { max-width: 860px; }
+.tg-row { margin-bottom: 14px; }
+.tg-label {
+  display: block; font-size: 11px; font-weight: 700; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px;
+}
+.tg-input, .tg-textarea, .tg-select {
+  width: 100%; padding: 8px 10px; font-size: 13px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: #fff; color: var(--text); font-family: inherit;
+}
+.tg-input:focus, .tg-textarea:focus, .tg-select:focus { outline: none; border-color: var(--blue); }
+.tg-textarea { resize: vertical; min-height: 64px; }
+.tg-code { min-height: 150px; font-family: 'SF Mono','Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.5; }
+.tg-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.tg-inline { display: flex; gap: 14px; }
+.tg-inline > div { flex: 1; }
+.tg-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.tg-check input { width: 16px; height: 16px; cursor: pointer; }
+.tg-card {
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px; margin-bottom: 14px;
+}
+.tg-card-title { font-size: 12px; font-weight: 800; color: var(--text2); text-transform: uppercase; letter-spacing:.04em; margin-bottom: 10px; display:flex; align-items:center; justify-content:space-between; }
+.tg-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--bg);
+  font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text2);
+}
+.tg-btn:hover { background: var(--border); color: var(--text); }
+.tg-btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.tg-btn.danger  { color: var(--red); }
+
+/* ── Match-builder CSS (required by matchBuilder.js; copied from emailIngest.html) ── */
+.cond-group { border:1px solid var(--border); border-radius:6px; padding:10px; margin-bottom:8px; background:#fafbfc; }
+.cond-group-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.cond-group-head select { padding:4px 8px; font-size:11px; border:1px solid var(--border); border-radius:4px; font-weight:600; background:#fff; color:var(--text); }
+.cond-group-head .cond-group-hint { font-size:12px; color:var(--muted); }
+.cond-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap; }
+.cond-row input, .cond-row select { padding:5px 8px; font-size:12px; border:1px solid var(--border); border-radius:4px; background:#fff; color:var(--text); }
+.cond-row input:focus, .cond-row select:focus { outline:none; border-color:var(--blue); }
+.cond-field { flex:2; min-width:150px; }
+.cond-path-custom { flex:2; min-width:130px; }
+.cond-op { width:130px; }
+.cond-value { flex:2; min-width:110px; }
+.cond-value[disabled] { background:var(--bg); color:var(--muted); }
+.mb-add-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; flex:1; margin:0; padding:5px; background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text2); font-size:12px; font-weight:500; cursor:pointer; }
+.mb-add-btn:hover { background:var(--border); color:var(--text); }
+.cond-remove { background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; font-size:13px; line-height:1; }
+.cond-remove:hover { color:var(--red); }
+
+/* ── Action rows ── */
+.tg-action {
+  border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+  margin-bottom: 10px; background: #fafbfc;
+}
+.tg-action-head { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.tg-action-head .tg-select { flex: 0 0 220px; width: auto; }
+.tg-action-head input.tg-input { flex: 1; }
+.tg-action-cfg .tg-row { margin-bottom: 10px; }
+
+/* ── Sample panel ── */
+.tg-sample-item { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.tg-sample-head { display:flex; justify-content:space-between; align-items:center; cursor:pointer; font-size:12px; color:var(--text2); }
+.tg-sample-fields { display:none; margin-top:6px; }
+.tg-sample-item.open .tg-sample-fields { display:block; }
+.tg-chip {
+  display:inline-flex; gap:6px; max-width:100%; margin:2px 4px 2px 0; padding:3px 8px;
+  background:#eef4ff; border:1px solid #d5e3fe; border-radius:12px;
+  font-size:11px; cursor:pointer; align-items:center;
+}
+.tg-chip:hover { background:#dcebff; }
+.tg-chip .v { color:var(--muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ── Executions ── */
+#tg-exec-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#tg-exec-toolbar { display:flex; gap:10px; padding:10px 14px; background:var(--surface); border-bottom:1px solid var(--border); align-items:center; flex-wrap:wrap; }
+#tg-exec-toolbar select { padding:6px 8px; font-size:12px; border:1px solid var(--border); border-radius:6px; }
+#tg-exec-body { flex:1; overflow-y:auto; padding: 0 14px 14px; }
+table.tg-table { width:100%; border-collapse:collapse; font-size:12px; background:#fff; }
+.tg-table th { text-align:left; padding:8px 10px; background:var(--bg); border-bottom:1px solid var(--border); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--text2); position:sticky; top:0; }
+.tg-table td { padding:7px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+.tg-table tr.clickable { cursor:pointer; }
+.tg-table tr.clickable:hover td { background:#f8fafc; }
+.tg-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+pre.tg-json { background:#0f172a; color:#e2e8f0; border-radius:8px; padding:12px; font-size:11px; overflow:auto; max-height:420px; white-space:pre-wrap; word-break:break-word; }
+::-webkit-scrollbar { width:4px; height:4px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="tg-tabs">
+  <button class="tg-tab active" id="tg-tab-rules" onclick="tgSwitchTab('rules')"><i class="fa-solid fa-bolt"></i> Rules</button>
+  <button class="tg-tab" id="tg-tab-executions" onclick="tgSwitchTab('executions')"><i class="fa-solid fa-list-check"></i> Executions</button>
+</div>
+
+<div id="tg-main">
+  <div id="tg-sidebar">
+    <div class="tg-side-head">
+      <input class="tg-search" id="tg-search" placeholder="Search rules…" oninput="tgFilterChanged(this.value)">
+    </div>
+    <div id="tg-rule-list"></div>
+  </div>
+  <div id="tg-detail"><div class="tg-empty">Select a rule, or press <b>New Trigger Rule</b>.</div></div>
+</div>
+
+<div id="tg-exec-wrap" style="display:none">
+  <div id="tg-exec-toolbar">
+    <select id="tg-exec-event" onchange="tgLoadExecutions(true)"><option value="">All events</option></select>
+    <select id="tg-exec-status" onchange="tgLoadExecutions(true)">
+      <option value="">All statuses</option>
+      <option value="matched">matched</option>
+      <option value="no_match">no_match</option>
+      <option value="no_rules">no_rules</option>
+      <option value="depth_capped">depth_capped</option>
+      <option value="error">error</option>
+    </select>
+    <select id="tg-exec-limit" onchange="tgLoadExecutions(true)">
+      <option>50</option><option>100</option><option>200</option>
+    </select>
+    <button class="tg-btn" onclick="tgLoadExecutions(true)"><i class="fa-solid fa-rotate-right"></i> Reload</button>
+    <span id="tg-exec-count" style="font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div id="tg-exec-body"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// TRIGGERS SUB-PAGE (Trigger System T2)
+//
+// Iframed by automationManager.html. Parent bridge: P.apiSend,
+// P.setTopbarButtons, P.fdParamSourceDatalistHtml. Lifecycle hooks
+// (onShow/onHide/onSave/onDelete/onRefresh/onNew) on window.
+//
+// Data: GET /api/triggers/meta (events registry + operators + action
+// types + live target lists), rules CRUD under /api/triggers/rules,
+// executions + samples read-only, POST /api/triggers/test dry run.
+// ═══════════════════════════════════════════════════════════════
+const P = window.parent;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function parseJson(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return null; }
+}
+
+(function triggersModule() {
+  const api = (...args) => P.apiSend(...args);
+  const E = id => document.getElementById(id);
+  const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+  const STATUS_META = {
+    matched:      { bg:'#dcfce7', fg:'#166534' },
+    no_match:     { bg:'#f1f5f9', fg:'#475569' },
+    no_rules:     { bg:'#f1f5f9', fg:'#94a3b8' },
+    depth_capped: { bg:'#fef3c7', fg:'#92400e' },
+    error:        { bg:'#fef2f2', fg:'#991b1b' },
+  };
+
+  // ── State ──
+  let meta = null;                 // /api/triggers/meta payload
+  let rules = [];                  // full rule list (actions nested)
+  let rulesLoaded = false;
+  let selectedId = null;           // selected rule id (null + editorOpen → new)
+  let editor = null;               // live editor state (see openEditor)
+  let activeTab = 'rules';
+  let ruleFilter = '';
+  let subPageActive = false;
+
+  const PM_DATALIST_ID = 'tg-pm-source-datalist';
+
+  // ════════════════════════════════════════════════════════════
+  // META + RULE LOADING
+  // ════════════════════════════════════════════════════════════
+  async function loadMeta(force = false) {
+    if (meta && !force) return meta;
+    meta = await api('/api/triggers/meta');
+    // Executions event filter options
+    const sel = E('tg-exec-event');
+    sel.innerHTML = '<option value="">All events</option>' +
+      Object.keys(meta.events).map(ev => `<option value="${esc(ev)}">${esc(ev)}</option>`).join('');
+    // Inject the params-mapping source datalist from the shell (once).
+    if (!document.getElementById(PM_DATALIST_ID)) {
+      const html = (P && typeof P.fdParamSourceDatalistHtml === 'function')
+        ? P.fdParamSourceDatalistHtml(PM_DATALIST_ID)
+        : `<datalist id="${PM_DATALIST_ID}"></datalist>`;
+      document.body.insertAdjacentHTML('beforeend', html);
+    }
+    return meta;
+  }
+
+  async function loadRules(force = false) {
+    if (rulesLoaded && !force) { renderRuleList(); return; }
+    const data = await api('/api/triggers/rules');
+    rules = (data && data.rules) || [];
+    rulesLoaded = true;
+    renderRuleList();
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // SIDEBAR (grouped by event type)
+  // ════════════════════════════════════════════════════════════
+  function renderRuleList() {
+    const list = E('tg-rule-list');
+    const q = ruleFilter.toLowerCase();
+    const shown = rules.filter(r =>
+      !q || (r.name || '').toLowerCase().includes(q) || (r.event_type || '').toLowerCase().includes(q));
+    if (!shown.length) {
+      list.innerHTML = `<div style="padding:20px;color:var(--muted);font-size:12px">No rules${q ? ' match' : ' yet — press New Trigger Rule'}</div>`;
+      return;
+    }
+    // group by event_type, ordered by registry order then unknown
+    const evOrder = meta ? Object.keys(meta.events) : [];
+    const groups = new Map();
+    for (const r of shown) {
+      if (!groups.has(r.event_type)) groups.set(r.event_type, []);
+      groups.get(r.event_type).push(r);
+    }
+    const orderedEvents = [...groups.keys()].sort((a, b) => {
+      const ia = evOrder.indexOf(a), ib = evOrder.indexOf(b);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    });
+    list.innerHTML = orderedEvents.map(ev => `
+      <div class="tg-evt-head">${esc(ev)}</div>
+      ${groups.get(ev).map(r => `
+        <div class="tg-rule-item ${r.id === selectedId ? 'selected' : ''}" onclick="tgSelectRule(${r.id})">
+          <div class="nm"><span class="tg-dot ${r.active ? 'on' : 'off'}"></span>${esc(r.name)}</div>
+          <div class="sub">${(r.actions || []).length} action${(r.actions || []).length === 1 ? '' : 's'} · matched ${r.match_count ?? 0}×</div>
+        </div>`).join('')}
+    `).join('');
+  }
+
+  window.tgFilterChanged = (v) => { ruleFilter = v || ''; renderRuleList(); };
+
+  window.tgSelectRule = async (id) => {
+    if (editor && editor.dirty) {
+      const c = await Swal.fire({ title: 'Discard unsaved changes?', showCancelButton: true, confirmButtonText: 'Discard' });
+      if (!c.isConfirmed) return;
+    }
+    selectedId = id;
+    const rule = rules.find(r => r.id === id);
+    renderRuleList();
+    openEditor(rule);
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // EDITOR
+  // ════════════════════════════════════════════════════════════
+  function blankRule() {
+    const firstEv = meta ? Object.keys(meta.events)[0] : 'appt.created';
+    return {
+      id: null, event_type: firstEv, name: '', description: '', active: 1, position: 0,
+      match_mode: 'conditions',
+      match_config: { operator: 'and', conditions: [] },
+      transform_mode: 'passthrough', transform_config: null,
+      actions: [],
+    };
+  }
+
+  function fieldCatalogFor(eventType) {
+    const ev = meta && meta.events[eventType];
+    return ((ev && ev.fields) || []).map(f => ({ value: f.path, label: `${f.path}` , title: f.label }));
+  }
+
+  function openEditor(rule) {
+    const r = rule ? JSON.parse(JSON.stringify(rule)) : blankRule();
+    // Defensive JSON-column parses
+    r.match_config     = parseJson(r.match_config)     ?? (r.match_mode === 'conditions' ? { operator: 'and', conditions: [] } : r.match_config);
+    r.transform_config = parseJson(r.transform_config) ?? r.transform_config;
+    r.actions = (r.actions || []).map(a => ({ ...a, config: parseJson(a.config) || {} }));
+
+    editor = { rule: r, isNew: !rule, dirty: false, mbState: null };
+    const d = E('tg-detail');
+
+    d.innerHTML = `
+      <div class="tg-form">
+        <div class="tg-inline tg-row">
+          <div style="flex:2">
+            <label class="tg-label">Name</label>
+            <input class="tg-input" id="tg-f-name" value="${esc(r.name)}">
+          </div>
+          <div>
+            <label class="tg-label">Event</label>
+            <select class="tg-select" id="tg-f-event">${Object.keys(meta.events).map(ev =>
+              `<option value="${esc(ev)}" ${ev === r.event_type ? 'selected' : ''}>${esc(ev)}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="tg-row">
+          <label class="tg-label">Description</label>
+          <textarea class="tg-textarea" id="tg-f-desc">${esc(r.description || '')}</textarea>
+        </div>
+        <div class="tg-inline tg-row">
+          <div><label class="tg-check"><input type="checkbox" id="tg-f-active" ${r.active ? 'checked' : ''}> <span>Active</span></label></div>
+          <div>
+            <label class="tg-label">Position (order within event)</label>
+            <input class="tg-input" id="tg-f-position" type="number" value="${r.position ?? 0}" style="max-width:120px">
+          </div>
+        </div>
+        <div class="tg-hint" id="tg-evt-desc" style="margin-bottom:14px"></div>
+
+        <div class="tg-card">
+          <div class="tg-card-title"><span>Match</span>
+            <select class="tg-select" id="tg-f-matchmode" style="width:auto">
+              <option value="conditions" ${r.match_mode === 'conditions' ? 'selected' : ''}>Conditions</option>
+              <option value="code" ${r.match_mode === 'code' ? 'selected' : ''}>Code</option>
+            </select>
+          </div>
+          <div id="tg-match-conditions">
+            <div id="tg-mb-root"></div>
+            <div class="tg-hint">Empty condition list = always match. Paths resolve against the event envelope.</div>
+          </div>
+          <div id="tg-match-code" style="display:none">
+            <textarea class="tg-textarea tg-code" id="tg-f-matchcode" placeholder="// input = the envelope. Return truthy to match, e.g.: return input.data.appt_type === 'Consultation';"></textarea>
+          </div>
+          <div style="margin-top:10px">
+            <button class="tg-btn" onclick="tgToggleSamples()"><i class="fa-solid fa-vial"></i> Recent envelopes / test</button>
+            <div id="tg-samples" style="display:none;margin-top:8px"></div>
+          </div>
+        </div>
+
+        <div class="tg-card">
+          <div class="tg-card-title"><span>Transform</span>
+            <select class="tg-select" id="tg-f-tmode" style="width:auto">
+              <option value="passthrough" ${r.transform_mode === 'passthrough' ? 'selected' : ''}>Passthrough</option>
+              <option value="mapper" ${r.transform_mode === 'mapper' ? 'selected' : ''}>Mapper (JSON)</option>
+              <option value="code" ${r.transform_mode === 'code' ? 'selected' : ''}>Code</option>
+            </select>
+          </div>
+          <div id="tg-t-passthrough" class="tg-hint">Actions receive the envelope unchanged.</div>
+          <div id="tg-t-mapper" style="display:none">
+            <textarea class="tg-textarea tg-code" id="tg-f-tmapper" placeholder='[{"target":"case_id","source":"case_id"}]'></textarea>
+            <div class="tg-hint">Array of hookMapper mapping rules (same format as hook transforms).</div>
+          </div>
+          <div id="tg-t-code" style="display:none">
+            <textarea class="tg-textarea tg-code" id="tg-f-tcode" placeholder="// input = the envelope. Return the object the actions receive, e.g.: return { case_id: input.case_id };"></textarea>
+          </div>
+        </div>
+
+        <div class="tg-card">
+          <div class="tg-card-title"><span>Actions</span>
+            <button class="tg-btn" onclick="tgAddAction()"><i class="fa-solid fa-plus"></i> Add action</button>
+          </div>
+          <div id="tg-actions"></div>
+          <div class="tg-hint">Actions run in order. Params-mapping values: plain text = dot-path into the (transformed) envelope; 'quoted' = literal; $ = the whole object.</div>
+        </div>
+      </div>`;
+
+    // event description + wiring
+    const updateEvtDesc = () => {
+      const ev = meta.events[E('tg-f-event').value];
+      E('tg-evt-desc').textContent = ev ? (ev.description || '') : '';
+    };
+    updateEvtDesc();
+
+    // match builder
+    const mbState = (r.match_mode === 'conditions' && r.match_config && r.match_config.operator)
+      ? r.match_config : { operator: 'and', conditions: [] };
+    editor.mbState = mbState;
+    mbRender(E('tg-mb-root'), mbState, {
+      availableFields: fieldCatalogFor(r.event_type),
+      operators: meta.match_operators,
+      onChange: () => { editor.dirty = true; },
+    });
+    if (r.match_mode === 'code') {
+      const code = (typeof r.match_config === 'string') ? r.match_config : (r.match_config && r.match_config.code) || '';
+      E('tg-f-matchcode').value = code;
+    }
+    if (r.transform_mode === 'mapper') E('tg-f-tmapper').value = JSON.stringify(r.transform_config || [], null, 2);
+    if (r.transform_mode === 'code') {
+      const code = (typeof r.transform_config === 'string') ? r.transform_config : (r.transform_config && r.transform_config.code) || '';
+      E('tg-f-tcode').value = code;
+    }
+
+    const syncMatchMode = () => {
+      const m = E('tg-f-matchmode').value;
+      E('tg-match-conditions').style.display = m === 'conditions' ? '' : 'none';
+      E('tg-match-code').style.display = m === 'code' ? '' : 'none';
+    };
+    const syncTMode = () => {
+      const m = E('tg-f-tmode').value;
+      E('tg-t-passthrough').style.display = m === 'passthrough' ? '' : 'none';
+      E('tg-t-mapper').style.display = m === 'mapper' ? '' : 'none';
+      E('tg-t-code').style.display = m === 'code' ? '' : 'none';
+    };
+    syncMatchMode(); syncTMode();
+
+    E('tg-f-matchmode').addEventListener('change', () => { syncMatchMode(); editor.dirty = true; });
+    E('tg-f-tmode').addEventListener('change', () => { syncTMode(); editor.dirty = true; });
+    E('tg-f-event').addEventListener('change', () => {
+      editor.dirty = true; updateEvtDesc();
+      // re-render builder with the new event's field catalog (state preserved)
+      mbRender(E('tg-mb-root'), editor.mbState, {
+        availableFields: fieldCatalogFor(E('tg-f-event').value),
+        operators: meta.match_operators,
+        onChange: () => { editor.dirty = true; },
+      });
+      E('tg-samples').innerHTML = ''; E('tg-samples').style.display = 'none';
+    });
+    for (const id of ['tg-f-name','tg-f-desc','tg-f-active','tg-f-position','tg-f-matchcode','tg-f-tmapper','tg-f-tcode']) {
+      const el = E(id); if (el) el.addEventListener('input', () => { editor.dirty = true; });
+    }
+
+    renderActions();
+    P.setTopbarButtons({ save: true, delete: !editor.isNew, refresh: true, new: true });
+  }
+
+  // ── Actions editor ──
+  function renderActions() {
+    const wrap = E('tg-actions');
+    const acts = editor.rule.actions;
+    wrap.innerHTML = '';
+    if (!acts.length) {
+      wrap.innerHTML = '<div class="tg-hint">No actions — the rule will match and log, but do nothing.</div>';
+      return;
+    }
+    acts.forEach((a, i) => wrap.appendChild(buildActionRow(a, i)));
+  }
+
+  function buildActionRow(action, idx) {
+    const div = document.createElement('div');
+    div.className = 'tg-action';
+    div.dataset.idx = idx;
+    const types = meta.action_types.map(t =>
+      `<option value="${esc(t.value)}" ${t.value === action.action_type ? 'selected' : ''}>${esc(t.label)}</option>`).join('');
+    div.innerHTML = `
+      <div class="tg-action-head">
+        <select class="tg-select tg-a-type">${types}</select>
+        <input class="tg-input tg-a-name" placeholder="name (optional)" value="${esc(action.name || '')}">
+        <button class="tg-btn danger tg-a-del" title="Remove"><i class="fa-solid fa-trash"></i></button>
+      </div>
+      <div class="tg-action-cfg"></div>`;
+    const cfgEl = div.querySelector('.tg-action-cfg');
+    const typeSel = div.querySelector('.tg-a-type');
+
+    const renderCfg = () => {
+      const t = typeSel.value;
+      const cfg = action.config || {};
+      if (t === 'workflow') {
+        cfgEl.innerHTML = `<div class="tg-row"><label class="tg-label">Workflow</label>
+          <select class="tg-select tg-a-workflow">${meta.targets.workflows.map(w =>
+            `<option value="${w.id}" ${String(w.id) === String(cfg.workflow_id) ? 'selected' : ''}>${esc(w.name)} (#${w.id})</option>`).join('')}</select></div>`;
+      } else if (t === 'sequence') {
+        cfgEl.innerHTML = `
+          <div class="tg-row"><label class="tg-label">Sequence template</label>
+            <select class="tg-select tg-a-seq">${meta.targets.sequences.map(s =>
+              `<option value="${s.id}" ${String(s.id) === String(cfg.template_id) ? 'selected' : ''}>${esc(s.name)} [${esc(s.type)}]</option>`).join('')}</select></div>
+          <div class="tg-row"><label class="tg-label">Contact-id field path</label>
+            <input class="tg-input mono tg-a-cidf" value="${esc(cfg.contact_id_field || 'contact_id')}"></div>`;
+      } else if (t === 'hook') {
+        cfgEl.innerHTML = `<div class="tg-row"><label class="tg-label">Hook</label>
+          <select class="tg-select tg-a-hook">${meta.targets.hooks.map(h =>
+            `<option value="${esc(h.slug)}" ${h.slug === cfg.slug ? 'selected' : ''}>${esc(h.name)} (${esc(h.slug)})</option>`).join('')}</select></div>`;
+      } else if (t === 'internal_function') {
+        cfgEl.innerHTML = `
+          <div class="tg-row"><label class="tg-label">Function</label>
+            <select class="tg-select tg-a-fn"></select></div>
+          <div class="tg-row"><label class="tg-label">Params mapping</label>
+            <div class="tg-a-pm"></div>
+            <button class="tg-btn tg-a-pm-add" style="margin-top:6px"><i class="fa-solid fa-plus"></i> Param</button></div>`;
+        const fnSel = cfgEl.querySelector('.tg-a-fn');
+        const fnMetaMap = meta.targets.internal_function_meta || {};
+        fnSel.innerHTML = window.buildFnOptions(meta.targets.internal_functions, fnMetaMap, cfg.function_name || null, { applyHidden: false });
+        if (cfg.function_name) fnSel.value = cfg.function_name;
+        const pmEl = cfgEl.querySelector('.tg-a-pm');
+        window.pmRender(pmEl, cfg.params_mapping || {}, { datalistId: PM_DATALIST_ID });
+        fnSel.addEventListener('change', () => {
+          window.pmSeedFromMeta(pmEl, fnMetaMap[fnSel.value], null, { datalistId: PM_DATALIST_ID });
+          editor.dirty = true;
+        });
+        cfgEl.querySelector('.tg-a-pm-add').addEventListener('click', () => {
+          window.pmAddRow(pmEl, { datalistId: PM_DATALIST_ID }); editor.dirty = true;
+        });
+        // Seed declared params on first open of a new internal_function action
+        if (!cfg.function_name && fnSel.value) {
+          window.pmSeedFromMeta(pmEl, fnMetaMap[fnSel.value], null, { datalistId: PM_DATALIST_ID });
+        }
+      } else if (t === 'http') {
+        cfgEl.innerHTML = `
+          <div class="tg-inline tg-row">
+            <div style="flex:3"><label class="tg-label">URL</label><input class="tg-input mono tg-a-url" value="${esc(cfg.url || '')}"></div>
+            <div><label class="tg-label">Method</label>
+              <select class="tg-select tg-a-method">${['POST','GET','PUT','PATCH','DELETE'].map(m =>
+                `<option ${m === (cfg.method || 'POST') ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+          </div>
+          <div class="tg-row"><label class="tg-label">Headers (JSON, optional)</label>
+            <textarea class="tg-textarea tg-code tg-a-headers" style="min-height:60px">${esc(cfg.headers ? JSON.stringify(cfg.headers, null, 2) : '')}</textarea></div>
+          <div class="tg-inline tg-row">
+            <div><label class="tg-label">Body mode</label>
+              <select class="tg-select tg-a-bodymode">
+                <option value="transform_output" ${(cfg.body_mode || 'transform_output') === 'transform_output' ? 'selected' : ''}>Transform output</option>
+                <option value="template" ${cfg.body_mode === 'template' ? 'selected' : ''}>Template</option>
+              </select></div>
+            <div><label class="tg-label">Credential (optional)</label>
+              <select class="tg-select tg-a-cred"><option value="">— none —</option>${meta.targets.credentials.map(c =>
+                `<option value="${c.id}" ${String(c.id) === String(cfg.credential_id) ? 'selected' : ''}>${esc(c.name)} [${esc(c.type)}]</option>`).join('')}</select></div>
+          </div>
+          <div class="tg-row"><label class="tg-label">Body template (if template mode)</label>
+            <textarea class="tg-textarea tg-code tg-a-bodytpl" style="min-height:60px">${esc(cfg.body_template || '')}</textarea></div>`;
+      }
+      cfgEl.querySelectorAll('input,select,textarea').forEach(el =>
+        el.addEventListener('input', () => { editor.dirty = true; }));
+    };
+
+    typeSel.addEventListener('change', () => { action.action_type = typeSel.value; action.config = {}; editor.dirty = true; renderCfg(); });
+    div.querySelector('.tg-a-del').addEventListener('click', () => {
+      editor.rule.actions.splice(Number(div.dataset.idx), 1); editor.dirty = true; renderActions();
+    });
+    renderCfg();
+    return div;
+  }
+
+  window.tgAddAction = () => {
+    editor.rule.actions.push({ action_type: 'internal_function', name: '', config: {}, active: 1 });
+    editor.dirty = true;
+    renderActions();
+  };
+
+  // ── Harvest DOM → payload ──
+  function harvest() {
+    const r = editor.rule;
+    const matchMode = E('tg-f-matchmode').value;
+    let matchConfig;
+    if (matchMode === 'conditions') {
+      matchConfig = mbCollect(E('tg-mb-root'));
+    } else {
+      matchConfig = { code: E('tg-f-matchcode').value };
+      if (!matchConfig.code.trim()) throw new Error('Match code is empty');
+    }
+    const tMode = E('tg-f-tmode').value;
+    let tConfig = null;
+    if (tMode === 'mapper') {
+      tConfig = parseJson(E('tg-f-tmapper').value);
+      if (!Array.isArray(tConfig)) throw new Error('Mapper transform must be a JSON array of mapping rules');
+    } else if (tMode === 'code') {
+      tConfig = { code: E('tg-f-tcode').value };
+      if (!tConfig.code.trim()) throw new Error('Transform code is empty');
+    }
+
+    const actions = [];
+    document.querySelectorAll('#tg-actions .tg-action').forEach((div, i) => {
+      const t = div.querySelector('.tg-a-type').value;
+      const name = div.querySelector('.tg-a-name').value.trim() || null;
+      let config = {};
+      if (t === 'workflow') {
+        config.workflow_id = Number(div.querySelector('.tg-a-workflow').value);
+      } else if (t === 'sequence') {
+        config.template_id = Number(div.querySelector('.tg-a-seq').value);
+        const cidf = div.querySelector('.tg-a-cidf').value.trim();
+        if (cidf) config.contact_id_field = cidf;
+      } else if (t === 'hook') {
+        config.slug = div.querySelector('.tg-a-hook').value;
+      } else if (t === 'internal_function') {
+        config.function_name = div.querySelector('.tg-a-fn').value;
+        config.params_mapping = window.pmCollect(div.querySelector('.tg-a-pm'));
+      } else if (t === 'http') {
+        config.url = div.querySelector('.tg-a-url').value.trim();
+        config.method = div.querySelector('.tg-a-method').value;
+        const h = div.querySelector('.tg-a-headers').value.trim();
+        if (h) {
+          const parsed = parseJson(h);
+          if (!parsed) throw new Error(`Action ${i + 1}: headers is not valid JSON`);
+          config.headers = parsed;
+        }
+        config.body_mode = div.querySelector('.tg-a-bodymode').value;
+        const tpl = div.querySelector('.tg-a-bodytpl').value;
+        if (tpl.trim()) config.body_template = tpl;
+        const cred = div.querySelector('.tg-a-cred').value;
+        if (cred) config.credential_id = Number(cred);
+        if (!config.url) throw new Error(`Action ${i + 1}: URL required`);
+      }
+      actions.push({ action_type: t, name, position: i, active: 1, config });
+    });
+
+    const name = E('tg-f-name').value.trim();
+    if (!name) throw new Error('Name is required');
+
+    return {
+      event_type: E('tg-f-event').value,
+      name,
+      description: E('tg-f-desc').value.trim() || null,
+      active: E('tg-f-active').checked ? 1 : 0,
+      position: parseInt(E('tg-f-position').value, 10) || 0,
+      match_mode: matchMode,
+      match_config: matchConfig,
+      transform_mode: tMode,
+      transform_config: tConfig,
+      actions,
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // SAMPLES + DRY RUN
+  // ════════════════════════════════════════════════════════════
+  window.tgToggleSamples = async () => {
+    const box = E('tg-samples');
+    if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+    box.style.display = '';
+    box.innerHTML = '<div class="tg-hint">Loading…</div>';
+    try {
+      const ev = E('tg-f-event').value;
+      const data = await api(`/api/triggers/samples/${encodeURIComponent(ev)}?limit=10`);
+      const samples = (data && data.samples) || [];
+      if (!samples.length) {
+        box.innerHTML = '<div class="tg-hint">No recorded envelopes for this event yet — fire one (or use the Executions tab later) and reopen.</div>';
+        return;
+      }
+      box.innerHTML = samples.map((s, i) => {
+        const env = parseJson(s.envelope) || {};
+        const flat = flattenPaths(env);
+        return `<div class="tg-sample-item" id="tg-sample-${i}">
+          <div class="tg-sample-head" onclick="document.getElementById('tg-sample-${i}').classList.toggle('open')">
+            <span>#${s.id} · ${esc(s.status)} · ${esc(String(s.created_at).replace('T',' ').slice(0,19))}</span>
+            <span><button class="tg-btn" onclick="event.stopPropagation();tgDryRun(${s.id})"><i class="fa-solid fa-flask"></i> Dry run</button></span>
+          </div>
+          <div class="tg-sample-fields">${flat.map(f =>
+            `<span class="tg-chip" title="click to add condition" onclick='tgInsertCond(${JSON.stringify(f.path)}, ${JSON.stringify(String(f.value).slice(0, 200))})'>
+               <b>${esc(f.path)}</b><span class="v">${esc(String(f.value))}</span></span>`).join('')}</div>
+        </div>`;
+      }).join('');
+      box._samples = samples;
+    } catch (e) {
+      box.innerHTML = `<div class="tg-hint" style="color:var(--red)">${esc(e.message)}</div>`;
+    }
+  };
+
+  function flattenPaths(obj, prefix = '', out = [], depth = 0) {
+    if (depth > 4 || out.length > 120) return out;
+    for (const [k, v] of Object.entries(obj || {})) {
+      const p = prefix ? `${prefix}.${k}` : k;
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) flattenPaths(v, p, out, depth + 1);
+      else if (Array.isArray(v)) out.push({ path: p, value: JSON.stringify(v) });
+      else out.push({ path: p, value: v === null ? 'null' : v });
+    }
+    return out;
+  }
+
+  window.tgInsertCond = (path, value) => {
+    mbAddCondition(E('tg-mb-root'), { path, op: 'equals', value: value === 'null' ? '' : value });
+    editor.dirty = true;
+  };
+
+  window.tgDryRun = async (executionId) => {
+    try {
+      const exec = await api(`/api/triggers/executions/${executionId}`);
+      const envelope = parseJson(exec.execution.envelope);
+      const ev = E('tg-f-event').value;
+      const data = await api('/api/triggers/test', 'POST', { event_type: ev, envelope });
+      const lines = (data.report || []).map(r => {
+        let s = `<b>${esc(r.name)}</b> (#${r.rule_id}): ${r.matched ? '<span style="color:var(--green)">MATCH</span>' : '<span style="color:var(--muted)">no match</span>'}`;
+        if (r.matched && r.transform_ok === false) s += ` — <span style="color:var(--red)">transform failed: ${esc(r.transform_error)}</span>`;
+        if (r.matched && r.would_fire) s += ` → would fire: ${r.would_fire.map(a => esc(a.action_type + (a.name ? ` (${a.name})` : ''))).join(', ') || '(no actions)'}`;
+        return `<div style="margin-bottom:6px">${s}</div>`;
+      }).join('') || '<div>No active rules for this event.</div>';
+      Swal.fire({ title: `Dry run vs execution #${executionId}`, html: `<div style="text-align:left;font-size:13px">${lines}<div class="tg-hint" style="margin-top:10px">Evaluates all SAVED active rules for ${esc(ev)} — unsaved editor changes are not included. Nothing was dispatched.</div></div>`, width: 640 });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // EXECUTIONS TAB
+  // ════════════════════════════════════════════════════════════
+  window.tgLoadExecutions = async (force = true) => {
+    const body = E('tg-exec-body');
+    body.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading…</div>';
+    try {
+      const ev = E('tg-exec-event').value;
+      const st = E('tg-exec-status').value;
+      const lim = E('tg-exec-limit').value;
+      const qs = new URLSearchParams();
+      if (ev) qs.set('event_type', ev);
+      if (st) qs.set('status', st);
+      qs.set('limit', lim);
+      const data = await api(`/api/triggers/executions?${qs}`);
+      const rows = (data && data.executions) || [];
+      E('tg-exec-count').textContent = `${rows.length} shown`;
+      if (!rows.length) { body.innerHTML = '<div style="padding:20px;color:var(--muted)">No executions.</div>'; return; }
+      body.innerHTML = `<table class="tg-table"><thead><tr>
+          <th>#</th><th>Event</th><th>Status</th><th>Rules</th><th>Depth</th><th>Contact</th><th>Case</th><th>When</th>
+        </tr></thead><tbody>${rows.map(r => {
+          const m = STATUS_META[r.status] || { bg: '#f1f5f9', fg: '#475569' };
+          return `<tr class="clickable" onclick="tgOpenExecution(${r.id})">
+            <td>${r.id}</td><td class="mono">${esc(r.event_type)}</td>
+            <td><span class="tg-badge" style="background:${m.bg};color:${m.fg}">${esc(r.status)}</span></td>
+            <td>${r.rules_matched}</td><td>${r.depth}</td>
+            <td>${r.contact_id ?? ''}</td><td class="mono">${esc(r.case_id ?? '')}</td>
+            <td>${esc(String(r.created_at).replace('T', ' ').slice(0, 19))}</td>
+          </tr>${r.error ? `<tr><td></td><td colspan="7" style="color:var(--red);font-size:11px">${esc(r.error)}</td></tr>` : ''}`;
+        }).join('')}</tbody></table>
+        <div id="tg-exec-detail" style="margin-top:14px"></div>`;
+    } catch (e) {
+      body.innerHTML = `<div style="padding:20px;color:var(--red)">${esc(e.message)}</div>`;
+    }
+  };
+
+  window.tgOpenExecution = async (id) => {
+    const box = E('tg-exec-detail');
+    box.innerHTML = '<div class="tg-hint">Loading…</div>';
+    try {
+      const data = await api(`/api/triggers/executions/${id}`);
+      const ex = data.execution;
+      box.innerHTML = `
+        <div class="tg-card">
+          <div class="tg-card-title"><span>Execution #${ex.id} — ${esc(ex.event_type)}</span></div>
+          <label class="tg-label">Envelope</label>
+          <pre class="tg-json">${esc(JSON.stringify(parseJson(ex.envelope), null, 2))}</pre>
+          <label class="tg-label" style="margin-top:10px">Outcomes</label>
+          <pre class="tg-json">${esc(JSON.stringify(parseJson(ex.outcomes), null, 2) ?? '(none)')}</pre>
+        </div>`;
+      box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      box.innerHTML = `<div class="tg-hint" style="color:var(--red)">${esc(e.message)}</div>`;
+    }
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // TABS + LIFECYCLE
+  // ════════════════════════════════════════════════════════════
+  window.tgSwitchTab = (tab) => {
+    activeTab = tab;
+    E('tg-tab-rules').classList.toggle('active', tab === 'rules');
+    E('tg-tab-executions').classList.toggle('active', tab === 'executions');
+    E('tg-main').style.display = tab === 'rules' ? 'flex' : 'none';
+    E('tg-exec-wrap').style.display = tab === 'executions' ? 'flex' : 'none';
+    updateTopbar();
+    if (tab === 'executions') tgLoadExecutions(true);
+  };
+
+  function updateTopbar() {
+    if (activeTab === 'rules') {
+      P.setTopbarButtons({ new: true, refresh: true, save: !!editor, delete: !!(editor && !editor.isNew) });
+    } else {
+      P.setTopbarButtons({ new: false, refresh: true, save: false, delete: false });
+    }
+  }
+
+  // ── Topbar hooks ──
+  window.onShow = () => { subPageActive = true; updateTopbar(); };
+  window.onHide = () => { subPageActive = false; };
+  window.onRefresh = async () => {
+    if (activeTab === 'executions') return tgLoadExecutions(true);
+    await loadMeta(true); await loadRules(true);
+    Toast.fire({ icon: 'success', title: 'Reloaded' });
+  };
+  window.onNew = async () => {
+    if (editor && editor.dirty) {
+      const c = await Swal.fire({ title: 'Discard unsaved changes?', showCancelButton: true, confirmButtonText: 'Discard' });
+      if (!c.isConfirmed) return;
+    }
+    selectedId = null;
+    renderRuleList();
+    openEditor(null);
+  };
+  window.onSave = async () => {
+    if (!editor) return;
+    let payload;
+    try { payload = harvest(); }
+    catch (e) { Toast.fire({ icon: 'error', title: e.message }); return; }
+    try {
+      let data;
+      if (editor.isNew) data = await api('/api/triggers/rules', 'POST', payload);
+      else data = await api(`/api/triggers/rules/${editor.rule.id}`, 'PUT', payload);
+      if (data.status !== 'success') throw new Error(data.message || 'Save failed');
+      Toast.fire({ icon: 'success', title: 'Saved' });
+      selectedId = data.rule.id;
+      await loadRules(true);
+      openEditor(rules.find(r => r.id === selectedId));
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  };
+  window.onDelete = async () => {
+    if (!editor || editor.isNew) return;
+    const c = await Swal.fire({ title: `Delete rule "${editor.rule.name}"?`, text: 'Actions are deleted with it. Executions history is kept.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444' });
+    if (!c.isConfirmed) return;
+    try {
+      await api(`/api/triggers/rules/${editor.rule.id}`, 'DELETE');
+      Toast.fire({ icon: 'success', title: 'Deleted' });
+      editor = null; selectedId = null;
+      E('tg-detail').innerHTML = '<div class="tg-empty">Select a rule, or press <b>New Trigger Rule</b>.</div>';
+      await loadRules(true);
+      updateTopbar();
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  };
+
+  // ── Boot ──
+  async function init() {
+    try {
+      await loadMeta();
+      await loadRules();
+    } catch (e) {
+      E('tg-rule-list').innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">${esc(e.message)}</div>`;
+    }
+    updateTopbar();
+    if (typeof window.onShow === 'function') window.onShow();
+  }
+
+  (function waitForShell() {
+    if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') return init();
+    setTimeout(waitForShell, 50);
+  })();
+})();
+</script>
+</body>
+</html>

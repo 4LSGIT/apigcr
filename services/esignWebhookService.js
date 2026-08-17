@@ -44,6 +44,7 @@ const esignAlertService = require('./esignAlertService');
 const logService = require('./logService');
 const { getProvider } = require('./esign');
 const { mapRequestStatus, mapActionStatus } = require('./esign/zohoSignProvider');
+const domainEvents = require('../lib/domainEvents'); // Trigger T4
 
 /** app_settings key holding the shared secret in the webhook URL. */
 const WEBHOOK_TOKEN_KEY = 'esign_webhook_token';
@@ -759,6 +760,28 @@ async function processStatusChange(db, request, {
   }
 
   const updated = applied.request;
+
+  // Trigger: esign.status_changed (fire-and-forget) — real transitions only
+  // (no-change redeliveries returned above). data.status is the INTERNAL
+  // vocabulary; extra.prior_status is the pre-transition status off the
+  // request row this call was handed.
+  domainEvents.emit(db, 'esign.status_changed', {
+    case_id:    updated.linkable_type === 'case'    ? String(updated.linkable_id) : null,
+    contact_id: updated.linkable_type === 'contact' ? (parseInt(updated.linkable_id, 10) || null) : null,
+    source,
+    data: {
+      request_id:      updated.id,
+      provider:        updated.provider,
+      status,
+      provider_status: providerStatus,
+      kind:            updated.kind,
+      document_name:   updated.document_name,
+      linkable_type:   updated.linkable_type,
+      linkable_id:     updated.linkable_id,
+      template_id:     updated.template_id,
+    },
+    extra: { prior_status: request.status ?? null, recipient_email: recipientEmail || null },
+  });
 
   // ── signed → file the paperwork ───────────────────────────────────────────
   if (status === 'signed') {

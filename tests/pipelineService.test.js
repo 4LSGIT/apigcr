@@ -22,7 +22,23 @@
 
 'use strict';
 
+// (Trigger System T3) advanceStage emits case.stage_advanced post-commit.
+// The emission runs the trigger engine, which issues its OWN pool queries
+// (rule load + execution log) — against these scripted stubs those would
+// consume the rows getPipeline expects. The engine has its own coverage;
+// mocking it here keeps this file a pipeline unit test AND lets the
+// emission itself be asserted.
+jest.mock('../lib/domainEvents', () => ({
+  emit: jest.fn(() => Promise.resolve()),
+  buildChanges: jest.fn(() => ({})),
+  runAsAction: (_ruleId, fn) => fn(),
+  MAX_DEPTH: 4,
+}));
+
+const domainEvents = require('../lib/domainEvents');
 const svc = require('../services/pipelineService');
+
+beforeEach(() => { domainEvents.emit.mockClear(); });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs
@@ -247,6 +263,8 @@ describe('advanceStage', () => {
     expect(sqls.some(s => s.startsWith('UPDATE cases'))).toBe(false);
     expect(sqls.some(s => s.includes('RELEASE_LOCK'))).toBe(true);
     expect(sqls.some(s => s.includes('FOR UPDATE'))).toBe(false); // design guard
+    // (Trigger T3) a no-op advance is not a stage change — nothing emitted.
+    expect(domainEvents.emit).not.toHaveBeenCalled();
   });
 
   test('real advance by numeric stage_id: log snapshot ≤100, case_status clipped to 50', async () => {
@@ -287,6 +305,21 @@ describe('advanceStage', () => {
     expect(update.params[1]).toHaveLength(50);
     expect(update.params[2]).toBe('Do the thing');
     expect(update.params[3]).toBe('C1');
+
+    // (Trigger T3) exactly one post-commit case.stage_advanced emission,
+    // carrying the from/to details lifted out of the transaction.
+    expect(domainEvents.emit).toHaveBeenCalledTimes(1);
+    const [, evt, payload] = domainEvents.emit.mock.calls[0];
+    expect(evt).toBe('case.stage_advanced');
+    expect(payload.case_id).toBe('C1');
+    expect(payload.source).toBe('manual');
+    expect(payload.actor.user_id).toBe(6);
+    expect(payload.data.stage_key).toBe('long');
+    expect(payload.data.stage_id).toBe(77);
+    expect(payload.data.template_id).toBe(9);
+    expect(payload.data.status_label).toBe(longLabel);   // full label, not clipped
+    expect(payload.extra.from_stage).toBeNull();          // no prior log row
+    expect(payload.extra.note).toBe('hi');
   });
 
   test('lock timeout → 409, no further conn work', async () => {
@@ -383,6 +416,8 @@ describe('advanceStage guards (Slice E1)', () => {
     // resolution, no stage lookup ran on the connection.
     expect(sqls.some(s => s.includes('FROM pipeline_templates'))).toBe(false);
     expect(sqls.some(s => s.includes('FROM pipeline_stages'))).toBe(false);
+    // (Trigger T3) a guard-skipped advance changed nothing — nothing emitted.
+    expect(domainEvents.emit).not.toHaveBeenCalled();
     expect(db.poolCalls).toHaveLength(0);
   });
 

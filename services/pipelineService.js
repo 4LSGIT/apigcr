@@ -81,6 +81,8 @@ function clip(s, max) {
   return s.length <= max ? s : s.slice(0, max);
 }
 
+const domainEvents = require('../lib/domainEvents'); // Trigger T3 — safe top-level (async_hooks only)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // resolveTemplate
 // ─────────────────────────────────────────────────────────────────────────────
@@ -515,7 +517,23 @@ async function advanceStage(db, caseId, target, {
         ]
       );
 
-      return { noop: false };
+      // Success shape widened (Trigger T3): carry from/to details out of the
+      // transaction for the case.stage_advanced emission. Existing consumers
+      // branch on .skipped / .noop only — additive keys are safe.
+      return {
+        noop: false,
+        from_stage:       latest ? latest.stage_key   : null,
+        from_template_id: latest ? latest.template_id : null,
+        to: {
+          stage_id:       stage.id,
+          template_id:    stage.template_id,
+          stage_key:      stage.stage_key,
+          case_stage:     stage.case_stage,
+          internal_label: stage.internal_label,
+        },
+        case_type:    caseRow.case_type,
+        case_subtype: caseRow.case_subtype,
+      };
     } finally {
       // Guarded: a dead connection releases its named locks on close, and an
       // unguarded throw here would mask the real error from the try block.
@@ -534,12 +552,31 @@ async function advanceStage(db, caseId, target, {
   }
 
   if (!outcome.noop) {
-    // ── Slice E insertion point ──────────────────────────────────────────
-    // Fire-and-forget, strictly AFTER commit: pipeline-stage-entered trigger
-    // dispatch (hooks / workflow triggers) plugs in here. Must stay
-    // post-commit (never inside the transaction — withTransaction may retry
-    // the callback) and must never fail the advance.
-    (async () => { /* no-op until Slice E */ })().catch(() => {});
+    // ── Slice E insertion point — LIVE (Trigger System T3) ───────────────
+    // Fire-and-forget, strictly AFTER commit: the case.stage_advanced domain
+    // event feeds trigger_rules (stage-change log, hooks, workflows, …).
+    // Must stay post-commit (never inside the transaction — withTransaction
+    // may retry the callback) and must never fail the advance —
+    // domainEvents.emit never throws.
+    domainEvents.emit(db, 'case.stage_advanced', {
+      case_id: String(caseId),
+      source,
+      actor: { user_id: userId ?? 0 },
+      data: {
+        stage_key:    outcome.to.stage_key,
+        stage_id:     outcome.to.stage_id,
+        template_id:  outcome.to.template_id,
+        case_stage:   outcome.to.case_stage,
+        status_label: outcome.to.internal_label,
+        case_type:    outcome.case_type,
+        case_subtype: outcome.case_subtype,
+      },
+      extra: {
+        from_stage:       outcome.from_stage,
+        from_template_id: outcome.from_template_id,
+        note: note || null,
+      },
+    });
   }
 
   const payload = await getPipeline(db, caseId);

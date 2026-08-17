@@ -172,11 +172,13 @@ public/automation/emailIngest.html
 public/automation/esignTplPanel.js
 public/automation/fnPicker.js
 public/automation/hooks.html
+public/automation/matchBuilder.js
 public/automation/paramWidgets.js
 public/automation/paramsMapping.js
 public/automation/phoneIngest.html
 public/automation/scheduledJobs.html
 public/automation/sequences.html
+public/automation/triggers.html
 public/automation/workflows.html
 public/automationManager.html
 public/availabilitymanager.html
@@ -312,6 +314,7 @@ ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
 ref/migration_trigger_system_T1.sql
+ref/migration_trigger_system_T3T4.sql
 ref/pages/form.html
 ref/pages/submitted.html
 ref/plans.md

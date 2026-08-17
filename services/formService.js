@@ -11,6 +11,8 @@
  *   - Submission history
  */
 
+const domainEvents = require('../lib/domainEvents'); // Trigger T4
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET LATEST
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,8 +130,9 @@ async function upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, u
  * @param {number|null} userId
  * @returns {{ id: number, version: number, updated_at: string }}
  */
-async function submitForm(db, formKey, linkType, linkId, schemaVersion, data, userId) {
+async function submitForm(db, formKey, linkType, linkId, schemaVersion, data, userId, opts = {}) {
   const dataJson = typeof data === 'string' ? data : JSON.stringify(data);
+  const surface = opts.surface || 'internal';
 
   // Get next version number
   const [[maxRow]] = await db.query(
@@ -152,6 +155,25 @@ async function submitForm(db, formKey, linkType, linkId, schemaVersion, data, us
     `SELECT updated_at FROM form_submissions WHERE id = ?`,
     [result.insertId]
   );
+
+  // Trigger: form.submitted (fire-and-forget). The submission DATA payload is
+  // deliberately NOT in the envelope (large + potentially sensitive; rules
+  // needing values route to a workflow that fetches the submission).
+  domainEvents.emit(db, 'form.submitted', {
+    contact_id: linkType === 'contact' ? (parseInt(linkId, 10) || null) : null,
+    case_id:    linkType === 'case'    ? String(linkId) : null,
+    actor: { user_id: userId ?? 0 },
+    source: surface,
+    data: {
+      submission_id:  result.insertId,
+      form_key:       formKey,
+      link_type:      linkType,
+      link_id:        linkId,
+      version:        nextVersion,
+      schema_version: schemaVersion,
+    },
+    extra: { surface },
+  });
 
   return {
     id: result.insertId,

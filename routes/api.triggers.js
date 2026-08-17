@@ -49,6 +49,30 @@ router.get('/api/triggers/events', jwtOrApiKey, (req, res) => {
   res.json({ status: 'success', events: triggerService.EVENT_TYPES });
 });
 
+// ── Meta (T2 UI) ─────────────────────────────────────────────
+//
+// One payload for the triggers tab: event registry + operators + action-type
+// schema hints + live target lists (workflows / sequences / hooks /
+// internal_functions + meta / credentials). Operators, action_types and
+// targets are REUSED from emailIngestMetaService.getMeta — one source of
+// truth for the shared automation vocabulary; the email-specific parts of
+// that payload (match_fields, execution_statuses) are simply not forwarded.
+
+router.get('/api/triggers/meta', jwtOrApiKey, async (req, res) => {
+  try {
+    const ingestMeta = await require('../services/emailIngestMetaService').getMeta(req.db);
+    res.json({
+      status:          'success',
+      events:          triggerService.EVENT_TYPES,
+      match_operators: ingestMeta.match_operators,
+      action_types:    ingestMeta.action_types,
+      targets:         ingestMeta.targets,
+      transform_modes: ['passthrough', 'mapper', 'code'],
+      execution_statuses: ['matched', 'no_match', 'no_rules', 'depth_capped', 'error'],
+    });
+  } catch (err) { fail(res, err); }
+});
+
 // ── Rules CRUD ───────────────────────────────────────────────
 
 router.get('/api/triggers/rules', jwtOrApiKey, async (req, res) => {

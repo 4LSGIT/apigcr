@@ -1121,10 +1121,12 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0, source =
   const [[appt]] = await db.query(
     `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
             a.appt_type, a.appt_with, a.appt_status,
+            c.contact_phone,
             cs.case_type,
             cs.case_subtype
      FROM appts a
-     LEFT JOIN cases cs ON cs.case_id = a.appt_case_id
+     LEFT JOIN contacts c ON c.contact_id = a.appt_client_id
+     LEFT JOIN cases    cs ON cs.case_id  = a.appt_case_id
      WHERE a.appt_id = ?`,
     [appt_id]
   );

@@ -68,6 +68,7 @@ const addrSvc  = require('./contactAddressService');
 const logService = require('./logService');
 const crypto = require('crypto');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
+const domainEvents = require('../lib/domainEvents'); // Trigger T3
 
 const DEFAULT_LOG_LIMIT = 200;
 const SSN_COLUMN = 'contact_ssn';
@@ -2090,6 +2091,20 @@ async function createContact(db, {
   // so the withTransaction auto-retry can never re-fire it.
   try { require('./gContactsService').pushContact(db, out.contact_id).catch(e => console.warn('[GCONTACTS] push on create:', e.message)); } catch (_) {}
 
+  // Trigger: contact.created (fire-and-forget, post-commit). Re-fetch for the
+  // full-row envelope (the transaction only returns id + name). SSN is
+  // stripped by the envelope builder.
+  (async () => {
+    const [[row]] = await db.query('SELECT * FROM contacts WHERE contact_id = ?', [out.contact_id]);
+    if (row) {
+      domainEvents.emit(db, 'contact.created', {
+        contact_id: out.contact_id,
+        actor: { user_id: userId },
+        data: row,
+      });
+    }
+  })().catch(err => console.error('[CONTACT SERVICE] contact.created emit failed:', err.message));
+
   return out;
 }
 
@@ -2203,6 +2218,16 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
 
   const out = await db.withTransaction(async (conn) => {
 
+    // (Trigger T3) Pre-read the columns being written for the change diff.
+    let priorRow = null;
+    if (finalKeys.length > 0) {
+      const [[p]] = await conn.query(
+        `SELECT ${finalKeys.map(k => `\`${k}\``).join(', ')} FROM contacts WHERE contact_id = ?`,
+        [contactId]
+      );
+      priorRow = p || null;
+    }
+
     // 1. Scalar UPDATE on contacts (if any scalar fields remain)
     if (finalKeys.length > 0) {
       const setClauses = finalKeys.map(k => `\`${k}\` = ?`).join(', ');
@@ -2282,6 +2307,8 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
     const resp = {
       contact_id: parseInt(contactId, 10),
       updated_fields: finalKeys,
+      // (Trigger T3) per-scalar-field {from,to} diff — additive key.
+      changes: domainEvents.buildChanges(priorRow, normalized, finalKeys),
     };
     if (hasPhones)    resp.phones_changed    = phoneResult.phones_changed;
     if (hasEmails)    resp.emails_changed    = emailResult.emails_changed;
@@ -2294,6 +2321,32 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   // Post-commit (it already ran after commit); kept outside the transaction body
   // so the withTransaction auto-retry can never re-fire it.
   try { require('./gContactsService').pushContact(db, contactId).catch(e => console.warn('[GCONTACTS] push on update:', e.message)); } catch (_) {}
+
+  // Trigger: contact.updated (fire-and-forget, post-commit) — only when
+  // something actually changed (scalar diff non-empty, or any aggregate
+  // reconcile reported changes). Full-row re-fetch for the envelope snapshot;
+  // SSN stripped by the envelope builder.
+  const _scalarChanged = Object.keys(out.changes || {}).length > 0;
+  const _aggChanged = (out.phones_changed || 0) || (out.emails_changed || 0) || (out.addresses_changed || 0);
+  if (_scalarChanged || _aggChanged) {
+    (async () => {
+      const [[row]] = await db.query('SELECT * FROM contacts WHERE contact_id = ?', [contactId]);
+      if (row) {
+        domainEvents.emit(db, 'contact.updated', {
+          contact_id: parseInt(contactId, 10),
+          actor: { user_id: userId },
+          data: row,
+          changes: out.changes || {},
+          extra: {
+            updated_fields:    out.updated_fields,
+            phones_changed:    out.phones_changed    ?? null,
+            emails_changed:    out.emails_changed    ?? null,
+            addresses_changed: out.addresses_changed ?? null,
+          },
+        });
+      }
+    })().catch(err => console.error('[CONTACT SERVICE] contact.updated emit failed:', err.message));
+  }
 
   return out;
 }

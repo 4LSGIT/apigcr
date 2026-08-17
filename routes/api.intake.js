@@ -60,6 +60,7 @@ const { parseName } = require("../lib/parseName");
 const { generateCaseId } = require("../lib/caseId");
 const caseService = require("../services/caseService");
 const contactService = require('../services/contactService');
+const domainEvents = require('../lib/domainEvents'); // Trigger T3
 
 // ─────────────────────────────────────────
 // HELPERS
@@ -679,6 +680,21 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
       action: "created",
       id: case_id,
       case_relate: relateResult.insertId
+    });
+
+    // Trigger: case.created (fire-and-forget, post-response)
+    domainEvents.emit(req.db, 'case.created', {
+      case_id,
+      contact_id: parseInt(contact_id, 10) || null,
+      source: 'intake',
+      data: {
+        case_id,
+        case_type,
+        case_subtype:     caseSubtype ?? null,
+        case_number:      caseNumber ?? null,
+        case_number_full: caseNumberFull ?? null,
+      },
+      extra: { case_relate_id: relateResult.insertId },
     });
 
     // ── Post-response: ensure Dropbox case folder (native, stage-aware) ──

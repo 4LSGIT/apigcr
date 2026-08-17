@@ -57,6 +57,7 @@ const { isSuperuser } = require('../lib/auth.superuser');
 // Shared with services/caseService.js (merge consolidation) — see the lib for
 // the rule. Do not re-implement it here.
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
+const domainEvents = require('../lib/domainEvents'); // Trigger T4
 const emailService = require('../services/emailService');
 const logService   = require('../services/logService');
 const uploadTarget = require('../services/uploadTargetService');
@@ -233,7 +234,9 @@ function isDupTag(err) {
 /** Minimal parent row for a checkitem — id + the two gate columns. */
 async function getItemParent(db, itemId) {
   const [[row]] = await db.query(
-    `SELECT ci.id AS item_id, cl.id AS checklist_id, cl.link_type, cl.link
+    `SELECT ci.id AS item_id, ci.status AS item_status,
+            cl.id AS checklist_id, cl.status AS checklist_status,
+            cl.link_type, cl.link, cl.tag, cl.title
        FROM checkitems ci
        JOIN checklists cl ON cl.id = ci.checklist_id
       WHERE ci.id = ?`,
@@ -634,10 +637,44 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     params.push(req.params.id);
     await req.db.query(`UPDATE checkitems SET ${fields.join(', ')} WHERE id = ?`, params);
 
-    await computeAndSaveStatus(req.db, parent.checklist_id);
+    const newChecklistStatus = await computeAndSaveStatus(req.db, parent.checklist_id);
 
     const [[updated]] = await req.db.query('SELECT * FROM checkitems WHERE id = ?', [req.params.id]);
     res.json(updated);
+
+    // Triggers (fire-and-forget, post-response). Transition-gated: idempotent
+    // re-saves of an already-complete item fire nothing.
+    const linkContactId = parent.link_type === 'contact' ? (parseInt(parent.link, 10) || null) : null;
+    const linkCaseId    = parent.link_type === 'case'    ? String(parent.link) : null;
+    if (status === 'complete' && parent.item_status !== 'complete') {
+      domainEvents.emit(req.db, 'checkitem.completed', {
+        contact_id: linkContactId,
+        case_id:    linkCaseId,
+        actor: { user_id: (req.auth && req.auth.type === 'jwt' && parseInt(req.auth.userId, 10)) || 0 },
+        data: {
+          item_id:          updated.id,
+          name:             updated.name,
+          checklist_id:     parent.checklist_id,
+          tag:              parent.tag ?? null,
+          title:            parent.title ?? null,
+          link_type:        parent.link_type,
+          checklist_status: newChecklistStatus,
+        },
+      });
+    }
+    if (parent.checklist_status !== 'complete' && newChecklistStatus === 'complete') {
+      domainEvents.emit(req.db, 'checklist.completed', {
+        contact_id: linkContactId,
+        case_id:    linkCaseId,
+        actor: { user_id: (req.auth && req.auth.type === 'jwt' && parseInt(req.auth.userId, 10)) || 0 },
+        data: {
+          checklist_id: parent.checklist_id,
+          title:        parent.title ?? null,
+          tag:          parent.tag ?? null,
+          link_type:    parent.link_type,
+        },
+      });
+    }
   } catch (err) {
     console.error('PATCH /checkitems/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to update item' });
@@ -651,8 +688,24 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     if (!parent) return res.status(404).json({ status: 'error', message: 'Item not found' });
 
     await req.db.query('DELETE FROM checkitems WHERE id = ?', [req.params.id]);
-    await computeAndSaveStatus(req.db, parent.checklist_id);
+    const newChecklistStatus = await computeAndSaveStatus(req.db, parent.checklist_id);
     res.json({ status: 'success', message: 'Item deleted' });
+
+    // Trigger: checklist.completed (fire-and-forget, post-response) — deleting
+    // the last incomplete item completes the list.
+    if (parent.checklist_status !== 'complete' && newChecklistStatus === 'complete') {
+      domainEvents.emit(req.db, 'checklist.completed', {
+        contact_id: parent.link_type === 'contact' ? (parseInt(parent.link, 10) || null) : null,
+        case_id:    parent.link_type === 'case'    ? String(parent.link) : null,
+        actor: { user_id: (req.auth && req.auth.type === 'jwt' && parseInt(req.auth.userId, 10)) || 0 },
+        data: {
+          checklist_id: parent.checklist_id,
+          title:        parent.title ?? null,
+          tag:          parent.tag ?? null,
+          link_type:    parent.link_type,
+        },
+      });
+    }
   } catch (err) {
     console.error('DELETE /checkitems/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to delete item' });
