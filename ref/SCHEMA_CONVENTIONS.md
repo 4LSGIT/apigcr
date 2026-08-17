@@ -37,7 +37,7 @@ SELECT ... FROM trigger_executions t JOIN cases c ON c.case_id = t.case_id;
 literal is coercible and adopts the column's collation. Only column-to-column
 joins fail. So the table works perfectly until the day someone writes the
 first report across it, which is typically long after whoever wrote the
-migration has moved on. 26 of 119 tables were created this way before anyone
+migration has moved on. 26 of 129 tables were created this way before anyone
 noticed.
 
 `utf8mb4_0900_ai_ci` is genuinely the better collation. It loses anyway: the

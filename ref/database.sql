@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-17T18:46:31.023Z
+-- Generated: 2026-08-17T19:50:38.954Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:fc29ae3cb32d21cf82263f12c6aa1440
+-- Fingerprint: sha256:d252b941154c2880be815f3404b8ecdb
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -423,7 +423,7 @@ CREATE TABLE `case_stage_aged_emitted` (
   `id` bigint unsigned NOT NULL,
   `stage_log_id` bigint unsigned NOT NULL,
   `threshold_days` int NOT NULL,
-  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `emitted_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -469,6 +469,7 @@ CREATE TABLE `cases` (
   `case_open_date` date DEFAULT NULL,
   `case_file_date` date DEFAULT NULL,
   `case_close_date` date DEFAULT NULL,
+  `case_discharge_date` date DEFAULT NULL,
   `case_garnish` set('Pre-Petition','Post-Petition') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'BK',
   `case_issues_bk_vehicle` set('Reaffirmation','Redemption','Replacement') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_issues_bk_other` set('Automatic Stay Violation','Student Loans','Confirmation Objections','Other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,

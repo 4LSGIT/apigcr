@@ -92,6 +92,10 @@
       <input type="date" name="case_file_date">
     </div>
     <div class="yc-field">
+      <label class="yc-label">Discharged</label>
+      <input type="date" name="case_discharge_date">
+    </div>
+    <div class="yc-field">
       <label class="yc-label">Closed</label>
       <input type="date" name="case_close_date">
     </div>
@@ -158,6 +162,7 @@
         case_judge:       { el: '[name="case_judge"]',       type: 'text' },
         case_open_date:   { el: '[name="case_open_date"]',   type: 'date' },
         case_file_date:   { el: '[name="case_file_date"]',   type: 'date' },
+        case_discharge_date: { el: '[name="case_discharge_date"]', type: 'date' },
         case_close_date:  { el: '[name="case_close_date"]',  type: 'date' },
 
         // Notes
