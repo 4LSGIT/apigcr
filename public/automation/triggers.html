@@ -220,6 +220,15 @@ function parseJson(val) {
   if (typeof val === 'object') return val;
   try { return JSON.parse(val); } catch { return null; }
 }
+// Timestamps arrive as UTC ISO strings; render in the BROWSER's timezone
+// (zero-config per-user correctness; FIRM_TZ rendering would need a server
+// bridge — revisit if a mismatch ever confuses anyone).
+function fmtTs(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d)) return String(v);
+  return d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
 
 (function triggersModule() {
   const api = (...args) => P.apiSend(...args);
@@ -243,6 +252,9 @@ function parseJson(val) {
   let activeTab = 'rules';
   let ruleFilter = '';
   let subPageActive = false;
+  // Envelope pinned from the Executions tab for testing in the rule editor:
+  // { execution_id, envelope }
+  let pinnedEnvelope = null;
 
   const PM_DATALIST_ID = 'tg-pm-source-datalist';
 
@@ -358,8 +370,11 @@ function parseJson(val) {
           </div>
           <div>
             <label class="tg-label">Event</label>
-            <select class="tg-select" id="tg-f-event">${Object.keys(meta.events).map(ev =>
-              `<option value="${esc(ev)}" ${ev === r.event_type ? 'selected' : ''}>${esc(ev)}</option>`).join('')}</select>
+            <div style="display:flex;gap:6px">
+              <select class="tg-select" id="tg-f-event-entity" style="flex:1"></select>
+              <select class="tg-select" id="tg-f-event-action" style="flex:1"></select>
+            </div>
+            <input type="hidden" id="tg-f-event" value="${esc(r.event_type)}">
           </div>
         </div>
         <div class="tg-row">
@@ -463,7 +478,31 @@ function parseJson(val) {
 
     E('tg-f-matchmode').addEventListener('change', () => { syncMatchMode(); editor.dirty = true; });
     E('tg-f-tmode').addEventListener('change', () => { syncTMode(); editor.dirty = true; });
-    E('tg-f-event').addEventListener('change', () => {
+
+    // Split event selector (entity . action) writing into the hidden combined
+    // input the rest of the page reads (harvest / samples / dry run).
+    const evKeys = Object.keys(meta.events);
+    const entityMap = new Map();
+    for (const k of evKeys) {
+      const dot = k.indexOf('.');
+      const ent = dot > 0 ? k.slice(0, dot) : k;
+      const act = dot > 0 ? k.slice(dot + 1) : '';
+      if (!entityMap.has(ent)) entityMap.set(ent, []);
+      entityMap.get(ent).push(act);
+    }
+    const entSel = E('tg-f-event-entity');
+    const actSel = E('tg-f-event-action');
+    function fillEventSelectors(current) {
+      const dot = current.indexOf('.');
+      const curEnt = dot > 0 ? current.slice(0, dot) : current;
+      const curAct = dot > 0 ? current.slice(dot + 1) : '';
+      entSel.innerHTML = [...entityMap.keys()].map(en =>
+        `<option value="${esc(en)}" ${en === curEnt ? 'selected' : ''}>${esc(en)}</option>`).join('');
+      const acts = entityMap.get(curEnt) || [];
+      actSel.innerHTML = acts.map(a =>
+        `<option value="${esc(a)}" ${a === curAct ? 'selected' : ''}>${esc(a.replace(/_/g, ' '))}</option>`).join('');
+    }
+    function onEventTypeChanged() {
       editor.dirty = true; updateEvtDesc();
       // re-render builder with the new event's field catalog (state preserved)
       mbRender(E('tg-mb-root'), editor.mbState, {
@@ -472,6 +511,17 @@ function parseJson(val) {
         onChange: () => { editor.dirty = true; },
       });
       E('tg-samples').innerHTML = ''; E('tg-samples').style.display = 'none';
+    }
+    fillEventSelectors(r.event_type);
+    entSel.addEventListener('change', () => {
+      const acts = entityMap.get(entSel.value) || [];
+      actSel.innerHTML = acts.map(a => `<option value="${esc(a)}">${esc(a.replace(/_/g, ' '))}</option>`).join('');
+      E('tg-f-event').value = `${entSel.value}.${actSel.value}`;
+      onEventTypeChanged();
+    });
+    actSel.addEventListener('change', () => {
+      E('tg-f-event').value = `${entSel.value}.${actSel.value}`;
+      onEventTypeChanged();
     });
     for (const id of ['tg-f-name','tg-f-desc','tg-f-active','tg-f-position','tg-f-matchcode','tg-f-tmapper','tg-f-tcode']) {
       const el = E(id); if (el) el.addEventListener('input', () => { editor.dirty = true; });
@@ -677,17 +727,33 @@ function parseJson(val) {
       const ev = E('tg-f-event').value;
       const data = await api(`/api/triggers/samples/${encodeURIComponent(ev)}?limit=10`);
       const samples = (data && data.samples) || [];
-      if (!samples.length) {
+      let pinnedHtml = '';
+      if (pinnedEnvelope) {
+        const flatP = flattenPaths(pinnedEnvelope.envelope);
+        pinnedHtml = `<div class="tg-sample-item open" style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px">
+          <div class="tg-sample-head">
+            <span><i class="fa-solid fa-thumbtack"></i> Pinned from execution #${pinnedEnvelope.execution_id} (${esc(pinnedEnvelope.envelope.event)})</span>
+            <span>
+              <button class="tg-btn" onclick="event.stopPropagation();tgTestEnvelope(${pinnedEnvelope.execution_id})"><i class="fa-solid fa-flask"></i> Test</button>
+              <button class="tg-btn" onclick="event.stopPropagation();tgUnpin()"><i class="fa-solid fa-times"></i></button>
+            </span>
+          </div>
+          <div class="tg-sample-fields" style="display:block">${flatP.map(f =>
+            `<span class="tg-chip" title="click to add condition" onclick='tgInsertCond(${JSON.stringify(f.path)}, ${JSON.stringify(String(f.value).slice(0, 200))})'>
+               <b>${esc(f.path)}</b><span class="v">${esc(String(f.value))}</span></span>`).join('')}</div>
+        </div>`;
+      }
+      if (!samples.length && !pinnedHtml) {
         box.innerHTML = '<div class="tg-hint">No recorded envelopes for this event yet — fire one (or use the Executions tab later) and reopen.</div>';
         return;
       }
-      box.innerHTML = samples.map((s, i) => {
+      box.innerHTML = pinnedHtml + samples.map((s, i) => {
         const env = parseJson(s.envelope) || {};
         const flat = flattenPaths(env);
         return `<div class="tg-sample-item" id="tg-sample-${i}">
           <div class="tg-sample-head" onclick="document.getElementById('tg-sample-${i}').classList.toggle('open')">
-            <span>#${s.id} · ${esc(s.status)} · ${esc(String(s.created_at).replace('T',' ').slice(0,19))}</span>
-            <span><button class="tg-btn" onclick="event.stopPropagation();tgDryRun(${s.id})"><i class="fa-solid fa-flask"></i> Dry run</button></span>
+            <span>#${s.id} · ${esc(s.status)} · ${esc(fmtTs(s.created_at))}</span>
+            <span><button class="tg-btn" onclick="event.stopPropagation();tgTestEnvelope(${s.id})"><i class="fa-solid fa-flask"></i> Test</button></span>
           </div>
           <div class="tg-sample-fields">${flat.map(f =>
             `<span class="tg-chip" title="click to add condition" onclick='tgInsertCond(${JSON.stringify(f.path)}, ${JSON.stringify(String(f.value).slice(0, 200))})'>
@@ -716,23 +782,109 @@ function parseJson(val) {
     editor.dirty = true;
   };
 
-  window.tgDryRun = async (executionId) => {
+  // Harvest ONLY the editor's match+transform (no name requirement) for the
+  // draft test. Throws on invalid mapper JSON / empty code.
+  function harvestDraft() {
+    const matchMode = E('tg-f-matchmode').value;
+    let matchConfig;
+    if (matchMode === 'conditions') matchConfig = mbCollect(E('tg-mb-root'));
+    else {
+      matchConfig = { code: E('tg-f-matchcode').value };
+      if (!matchConfig.code.trim()) throw new Error('Match code is empty');
+    }
+    const tMode = E('tg-f-tmode').value;
+    let tConfig = null;
+    if (tMode === 'mapper') {
+      tConfig = parseJson(E('tg-f-tmapper').value);
+      if (!Array.isArray(tConfig)) throw new Error('Mapper transform must be a JSON array');
+    } else if (tMode === 'code') {
+      tConfig = { code: E('tg-f-tcode').value };
+      if (!tConfig.code.trim()) throw new Error('Transform code is empty');
+    }
+    return { match_mode: matchMode, match_config: matchConfig, transform_mode: tMode, transform_config: tConfig };
+  }
+
+  // Combined test modal for one execution's envelope:
+  //   1. DRAFT — the editor's CURRENT (unsaved) match+transform, when a rule
+  //      editor is open (rules tab).
+  //   2. SAVED — dry run of all saved active rules for the envelope's event,
+  //      with each matched rule's transformed output expandable.
+  //   3. RUN LIVE — full engine replay (real dispatch, new execution row),
+  //      behind a confirm.
+  window.tgTestEnvelope = async (executionId) => {
     try {
       const exec = await api(`/api/triggers/executions/${executionId}`);
       const envelope = parseJson(exec.execution.envelope);
-      const ev = E('tg-f-event').value;
+      const ev = envelope && envelope.event;
+
+      // 1. draft (only when the editor is open)
+      let draftHtml = '';
+      if (editor && activeTab === 'rules') {
+        try {
+          const draft = harvestDraft();
+          const dr = await api('/api/triggers/test-draft', 'POST', { execution_id: executionId, ...draft });
+          const r = dr.result || {};
+          let s = r.matched ? '<span style="color:var(--green)">MATCH</span>' : '<span style="color:var(--muted)">no match</span>';
+          if (r.matched && r.transform_ok === false) s += ` — <span style="color:var(--red)">transform failed: ${esc(r.transform_error)}</span>`;
+          if (r.matched && r.transform_ok) s += `<details style="margin-top:4px"><summary style="cursor:pointer">transformed output</summary><pre class="tg-json" style="max-height:180px">${esc(JSON.stringify(r.transformed, null, 2))}</pre></details>`;
+          draftHtml = `<div style="margin-bottom:12px;padding:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px"><b>This editor (unsaved):</b> ${s}</div>`;
+        } catch (e) {
+          draftHtml = `<div style="margin-bottom:12px;color:var(--red)">Draft not testable: ${esc(e.message)}</div>`;
+        }
+      }
+
+      // 2. saved rules
       const data = await api('/api/triggers/test', 'POST', { event_type: ev, envelope });
       const lines = (data.report || []).map(r => {
         let s = `<b>${esc(r.name)}</b> (#${r.rule_id}): ${r.matched ? '<span style="color:var(--green)">MATCH</span>' : '<span style="color:var(--muted)">no match</span>'}`;
         if (r.matched && r.transform_ok === false) s += ` — <span style="color:var(--red)">transform failed: ${esc(r.transform_error)}</span>`;
         if (r.matched && r.would_fire) s += ` → would fire: ${r.would_fire.map(a => esc(a.action_type + (a.name ? ` (${a.name})` : ''))).join(', ') || '(no actions)'}`;
-        return `<div style="margin-bottom:6px">${s}</div>`;
+        if (r.matched && r.transformed) s += `<details style="margin-top:2px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">transformed output</summary><pre class="tg-json" style="max-height:180px">${esc(JSON.stringify(r.transformed, null, 2))}</pre></details>`;
+        return `<div style="margin-bottom:8px">${s}</div>`;
       }).join('') || '<div>No active rules for this event.</div>';
-      Swal.fire({ title: `Dry run vs execution #${executionId}`, html: `<div style="text-align:left;font-size:13px">${lines}<div class="tg-hint" style="margin-top:10px">Evaluates all SAVED active rules for ${esc(ev)} — unsaved editor changes are not included. Nothing was dispatched.</div></div>`, width: 640 });
+
+      const res = await Swal.fire({
+        title: `Test vs execution #${executionId}`,
+        html: `<div style="text-align:left;font-size:13px">${draftHtml}<div style="margin-bottom:6px"><b>Saved active rules for ${esc(ev)}:</b></div>${lines}<div class="tg-hint" style="margin-top:10px">Nothing was dispatched. "Run live" replays this envelope through the full engine — saved rules fire their REAL actions and a new execution row is recorded.</div></div>`,
+        width: 680,
+        showCancelButton: true,
+        cancelButtonText: 'Close',
+        confirmButtonText: 'Run live',
+        confirmButtonColor: '#ef4444',
+      });
+      if (res.isConfirmed) await tgReplay(executionId);
     } catch (e) {
       Toast.fire({ icon: 'error', title: e.message });
     }
   };
+
+  async function tgReplay(executionId) {
+    try {
+      const out = await api('/api/triggers/replay', 'POST', { execution_id: executionId });
+      const outcomes = (out.actionOutcomes || []).map(o =>
+        `<div>#${o.rule_id}/${o.rule_action_id} ${esc(o.action_type)} — ${o.status === 'success' ? '<span style="color:var(--green)">success</span>' : `<span style="color:var(--red)">${esc(o.status)}${o.error ? ': ' + esc(o.error) : ''}</span>`}</div>`
+      ).join('') || '<div>(no actions fired)</div>';
+      Swal.fire({
+        title: `Replayed #${executionId} — ${esc(out.status)}`,
+        html: `<div style="text-align:left;font-size:13px"><div style="margin-bottom:6px">Matched rules: ${(out.matchedRuleIds || []).join(', ') || 'none'}</div>${outcomes}<div class="tg-hint" style="margin-top:10px">A new execution row was recorded (see the Executions tab).</div></div>`,
+        width: 620,
+      });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  window.tgPinEnvelope = async (executionId) => {
+    try {
+      const exec = await api(`/api/triggers/executions/${executionId}`);
+      pinnedEnvelope = { execution_id: executionId, envelope: parseJson(exec.execution.envelope) };
+      tgSwitchTab('rules');
+      Toast.fire({ icon: 'success', title: `Envelope #${executionId} pinned — open "Recent envelopes / test" in the editor` });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  };
+  window.tgUnpin = () => { pinnedEnvelope = null; window.tgToggleSamples(); window.tgToggleSamples(); };
 
   // ════════════════════════════════════════════════════════════
   // EXECUTIONS TAB
@@ -761,7 +913,7 @@ function parseJson(val) {
             <td><span class="tg-badge" style="background:${m.bg};color:${m.fg}">${esc(r.status)}</span></td>
             <td>${r.rules_matched}</td><td>${r.depth}</td>
             <td>${r.contact_id ?? ''}</td><td class="mono">${esc(r.case_id ?? '')}</td>
-            <td>${esc(String(r.created_at).replace('T', ' ').slice(0, 19))}</td>
+            <td>${esc(fmtTs(r.created_at))}</td>
           </tr>${r.error ? `<tr><td></td><td colspan="7" style="color:var(--red);font-size:11px">${esc(r.error)}</td></tr>` : ''}`;
         }).join('')}</tbody></table>
         <div id="tg-exec-detail" style="margin-top:14px"></div>`;
@@ -778,7 +930,12 @@ function parseJson(val) {
       const ex = data.execution;
       box.innerHTML = `
         <div class="tg-card">
-          <div class="tg-card-title"><span>Execution #${ex.id} — ${esc(ex.event_type)}</span></div>
+          <div class="tg-card-title"><span>Execution #${ex.id} — ${esc(ex.event_type)}</span>
+            <span>
+              <button class="tg-btn" onclick="tgTestEnvelope(${ex.id})"><i class="fa-solid fa-flask"></i> Test / dry run</button>
+              <button class="tg-btn" onclick="tgPinEnvelope(${ex.id})"><i class="fa-solid fa-thumbtack"></i> Use in rule editor</button>
+            </span>
+          </div>
           <label class="tg-label">Envelope</label>
           <pre class="tg-json">${esc(JSON.stringify(parseJson(ex.envelope), null, 2))}</pre>
           <label class="tg-label" style="margin-top:10px">Outcomes</label>

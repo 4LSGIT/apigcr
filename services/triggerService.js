@@ -273,6 +273,12 @@ const EVENT_TYPES = {
   },
 };
 
+// V2 event candidates (noted, deliberately not emitted yet): checklist.created,
+// checkitem.created, checkitem.uncompleted, checklist.uncompleted (reopen
+// transitions), event.* (eventService lifecycle — court v2 will define needs),
+// contact.opted_out as a discrete event (covered today by contact.updated +
+// changes.<field> exists).
+
 const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http', 'hook']);
 
 // ─────────────────────────────────────────────────────────────
@@ -756,6 +762,35 @@ async function evaluateDryRun(db, envelope) {
   return { rules_evaluated: rules.length, report };
 }
 
+/**
+ * Evaluate a DRAFT (unsaved) match+transform config against one envelope —
+ * the ingest test-match precedent (Slice 10A) applied to triggers: the T2
+ * editor tests its CURRENT state without saving. Pure function, no DB, no
+ * dispatch, no rows.
+ *
+ * @param {{match_mode, match_config, transform_mode, transform_config}} draft
+ * @param {object} envelope
+ * @returns {{matched:boolean, transform_ok?:boolean, transformed?:object, transform_error?:string}}
+ */
+function evaluateDraft(draft, envelope) {
+  const rule = {
+    id: 0,
+    name: '(draft)',
+    match_mode:       draft.match_mode || 'conditions',
+    match_config:     draft.match_config ?? null,
+    transform_mode:   draft.transform_mode || 'passthrough',
+    transform_config: draft.transform_config ?? null,
+  };
+  const out = { matched: _evaluateMatch(rule, envelope) };
+  if (out.matched) {
+    const tr = _runTransform(rule, envelope);
+    out.transform_ok = tr.ok;
+    if (tr.ok) out.transformed = tr.output;
+    else out.transform_error = tr.error;
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────
 // CRUD — backs routes/api.triggers.js
 // ─────────────────────────────────────────────────────────────
@@ -991,6 +1026,7 @@ module.exports = {
   EVENT_TYPES,
   processEvent,
   evaluateDryRun,
+  evaluateDraft,
   listActiveRulesForEvent,
   listRules,
   getRule,

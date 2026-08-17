@@ -13,6 +13,8 @@
  * GET    /api/triggers/executions/:id        — full row (envelope + outcomes)
  * GET    /api/triggers/samples/:event_type   — recent envelopes for the field-discovery panel (?limit)
  * POST   /api/triggers/test                  — dry run { event_type, envelope? | payload? } → match/transform report; NOTHING dispatches
+ * POST   /api/triggers/test-draft            — evaluate an UNSAVED match/transform config vs one envelope ({ envelope | execution_id, match_mode, match_config, transform_mode, transform_config }); NOTHING dispatches
+ * POST   /api/triggers/replay                — LIVE re-processing of an envelope through the engine ({ execution_id } | { event_type?, envelope }); actions DO dispatch, a new execution row is written
  *
  * Auto-mounted from routes/ (server.js readdir loop). Auth + envelope match
  * routes/api.pipelineAdmin.js: jwtOrApiKey on every route;
@@ -170,6 +172,64 @@ router.post('/api/triggers/test', jwtOrApiKey, async (req, res) => {
       : domainEvents.buildEnvelope(event_type, payload || {});
     const out = await triggerService.evaluateDryRun(req.db, env);
     res.json({ status: 'success', envelope: env, ...out });
+  } catch (err) { fail(res, err); }
+});
+
+// ── Draft test (T2 round 2) ──────────────────────────────────
+//
+// Evaluates an UNSAVED editor state (match + transform only) against one
+// envelope — pasted or loaded from an execution row. Ingest test-match
+// precedent. Nothing dispatches, nothing is written.
+
+router.post('/api/triggers/test-draft', jwtOrApiKey, async (req, res) => {
+  try {
+    const { envelope, execution_id, match_mode, match_config, transform_mode, transform_config } = req.body || {};
+    let env = (envelope && typeof envelope === 'object') ? envelope : null;
+    if (!env && execution_id) {
+      const row = await triggerService.getExecution(req.db, execution_id);
+      env = typeof row.envelope === 'string' ? JSON.parse(row.envelope) : row.envelope;
+    }
+    if (!env || typeof env !== 'object') {
+      const e = new Error('test-draft requires envelope or execution_id');
+      e.status = 400; throw e;
+    }
+    const result = triggerService.evaluateDraft(
+      { match_mode, match_config, transform_mode, transform_config }, env
+    );
+    res.json({ status: 'success', result, envelope: env });
+  } catch (err) { fail(res, err); }
+});
+
+// ── Live replay (T2 round 2) ─────────────────────────────────
+//
+// Runs an envelope through the FULL engine — saved active rules, real action
+// dispatch, a new trigger_executions row. The UI confirms before calling.
+// Chain scope resets (depth 0, empty chain): a replay is a fresh manual
+// invocation, not a continuation of whatever produced the original.
+// Provenance is tagged into extra.replayed_from / replayed_at.
+
+router.post('/api/triggers/replay', jwtOrApiKey, async (req, res) => {
+  try {
+    const { execution_id, event_type, envelope } = req.body || {};
+    let env = null;
+    let replayedFrom = 'manual';
+    if (execution_id) {
+      const row = await triggerService.getExecution(req.db, execution_id);
+      env = typeof row.envelope === 'string' ? JSON.parse(row.envelope) : row.envelope;
+      replayedFrom = row.id;
+    } else if (envelope && typeof envelope === 'object') {
+      env = { ...envelope };
+      if (event_type) env.event = event_type;
+    }
+    if (!env || !env.event) {
+      const e = new Error('replay requires execution_id, or an envelope with an event');
+      e.status = 400; throw e;
+    }
+    env.depth = 0;
+    env.chain = [];
+    env.extra = { ...(env.extra || {}), replayed_from: replayedFrom, replayed_at: new Date().toISOString() };
+    const out = await triggerService.processEvent(req.db, env);
+    res.json({ status: 'success', ...out });
   } catch (err) { fail(res, err); }
 });
 
