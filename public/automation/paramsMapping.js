@@ -48,17 +48,58 @@
 // longer extended to rows the operator never touched.
 //
 // ─────────────────────────────────────────────────────────────
+// UNDECLARED-KEY WARNING (visual only — nothing is ever removed)
+//
+// Provenance only reclaims rows the operator never touched. A row they DID
+// type into survives a function switch by design, so a mapping can still end
+// up holding keys the currently-selected function does not declare. That is a
+// SUPPORTED pattern — validateParamsAgainstMeta only checks declared params,
+// so out-of-schema keys pass through on purpose — but it is also exactly what
+// a leftover from a previously-selected function looks like, and the two are
+// indistinguishable from the row alone.
+//
+// So the module says so rather than guessing: whenever a schema is in play, a
+// row whose key is non-blank and absent from that schema gets an amber key
+// input, an amber `!` in the fixed-width marker slot (where a declared
+// required param shows its red `*` — mutually exclusive, since an undeclared
+// key has no spec and therefore cannot be required), and a tooltip spelling
+// out both readings. The row is untouched otherwise: it renders, it collects,
+// it saves. The operator decides.
+//
+// Verified against live data 2026-08-18: all 23 stored internal_function
+// mappings (11 trigger actions + 8 email-ingest + 2 phone-ingest + 2 hook
+// targets) use only declared keys, so the badge starts silent everywhere.
+//
+// Re-evaluated on the key input's `change` event, NOT `input`: keystroke-level
+// re-checking makes the badge strobe on every prefix of a valid param name
+// ("s", "su", "sub", …). `change` fires on blur, which is the moment the
+// operator has actually finished naming the row.
+//
+// ─────────────────────────────────────────────────────────────
 // API
 //
+//   opts (all methods)
+//     datalistId  string   value-input <datalist> id; per-page, see above.
+//     fnMeta      __meta   OPTIONAL. When present, pmRender decorates the rows
+//                          it paints (required markers, descriptions, enum
+//                          hints, undeclared-key warnings) instead of painting
+//                          them bare. Omit for the historical undecorated open.
+//     fnName      string   OPTIONAL. Names the function in the undeclared-key
+//                          tooltip. Falls back to "the selected function".
+//
 //   pmRender(containerEl, mapping, opts)
-//     Paint a saved mapping. Undecorated — no meta is consulted, so opening an
-//     existing action/target shows exactly the rows that are stored, nothing
-//     more. Empty mapping → one blank scaffold row (unchanged behavior).
-//     Painted rows are operator-owned (never marked).
+//     Paint a saved mapping. Undecorated unless opts.fnMeta is supplied, so by
+//     default opening an existing action/target shows exactly the rows that are
+//     stored, nothing more. Empty mapping → one blank scaffold row (unchanged).
+//     Painted rows are operator-owned (never marked as seeded).
+//     ALSO (re)sets the container's decoration context — see pmAddRow.
 //
 //   pmAddRow(containerEl, opts) → the appended row element
 //     Append one blank row. Backs each page's "Add param" button. Operator-
 //     owned (never marked), so an explicitly added row is never auto-removed.
+//     Inherits the container's CURRENT decoration context (whatever schema the
+//     last pmRender/pmSeedFromMeta established), so a row added after picking a
+//     function warns as you name it without the call site passing fnMeta in.
 //
 //   pmCollect(containerEl) → { param: source, ... }
 //     Harvest the rows. Rows with a blank KEY are skipped, and rows with a
@@ -69,8 +110,9 @@
 //     silently forced to undefined.
 //     NOTE the emptiness TEST trims but the STORED value does not — a quoted
 //     literal space ("' '") survives, exactly as before.
-//     Provenance is IGNORED here: a seeded row prefilled with a real default
-//     ("'1024'") is a meaningful value and is collected as before.
+//     Provenance and the undeclared warning are both IGNORED here: a seeded row
+//     prefilled with a real default ("'1024'") is a meaningful value, and an
+//     undeclared key is a supported pattern. Neither is a save gate.
 //
 //   pmSeedFromMeta(containerEl, fnMeta, existingMapping, opts)
 //     Meta-driven seeding, fired from the function <select>'s `change` event.
@@ -79,7 +121,7 @@
 //         from the schema (undeclared forensic keys are tolerated by design —
 //         the param validator only checks DECLARED params, so out-of-schema
 //         keys are a supported pattern, e.g. court_extract's raw envelope
-//         dot-paths);
+//         dot-paths). Those rows now carry the amber warning above.
 //       - MARKED rows (untouched seeds from the previously-selected function)
 //         are DROPPED;
 //       - one row is appended per declared param not already present, in
@@ -117,6 +159,29 @@
   const DEFAULT_DATALIST_ID = 'pm-source-datalist';
   const VALUE_PLACEHOLDER   = "field  or  a.b.c  or  'literal'";
 
+  // Literals, not var(--red)/var(--amber): the required marker was already a
+  // literal #ef4444 because the host pages do not all define the same custom
+  // properties (triggers.html has --amber, the ingest pages do not).
+  const REQ_COLOR   = '#ef4444';
+  const WARN_COLOR  = '#f59e0b';
+  const WARN_BG     = '#fffbeb';
+
+  // Written as the FULL `border` shorthand, never the borderColor longhand.
+  // The key input's inline style carries `border:1px solid var(--border)`, and
+  // a shorthand containing a var() is stored by CSSOM as a single pending-
+  // substitution value — poking one longhand on top of it, then trying to
+  // remove that longhand again, is not reliably reversible across engines.
+  // Rewriting the whole shorthand each way sidesteps that entirely.
+  // (`border` does not include border-radius, so the 4px corner survives.)
+  const NORMAL_BORDER = '1px solid var(--border)';
+  const WARN_BORDER   = '1px solid ' + WARN_COLOR;
+
+  const WARN_TIP_TAIL =
+    '\n\nIt is still passed through — the param validator only checks DECLARED '
+  + 'params, so deliberate out-of-schema keys are supported. If you did not '
+  + 'mean this one it is most likely left over from a function that was '
+  + 'selected earlier: remove the row.';
+
   // Local — the module can't borrow each page's `esc()` (it loads before the
   // page script and must not depend on it). Byte-identical to the pages'.
   function esc(s) {
@@ -130,6 +195,18 @@
 
   function _datalistId(opts) {
     return (opts && opts.datalistId) || DEFAULT_DATALIST_ID;
+  }
+
+  function _fnLabel(opts) {
+    const n = opts && opts.fnName;
+    return (typeof n === 'string' && n.trim()) ? n.trim() : 'the selected function';
+  }
+
+  // name → spec lookup, or null when there is no schema to check against.
+  function _specMap(fnMeta) {
+    const specs = (fnMeta && Array.isArray(fnMeta.params)) ? fnMeta.params : null;
+    if (!specs) return null;
+    return new Map(specs.filter(s => s && s.name).map(s => [s.name, s]));
   }
 
   // Shell helper (automationManager.html: fdParamSourceDatalistHtml). GUARDED:
@@ -191,33 +268,78 @@
     return 'one of: ' + acc + ' | … (' + list.length + ')';
   }
 
-  // Build one row. `spec` is the matching __meta param (or null on the plain
-  // render path, where no meta is consulted). `seeded` marks the row as
-  // module-authored scaffolding — see ROW PROVENANCE above.
-  function _buildRow(key, value, opts, spec, seeded) {
+  // Paint one row's meta-driven decoration. Single source of truth for BOTH
+  // the initial build and the live re-check on key `change`, so a renamed row
+  // can never keep another param's required marker / description / enum hint.
+  //
+  //   spec        matching __meta param, or null
+  //   undeclared  key is non-blank and absent from the active schema
+  //   fnLabel     function name for the warning tooltip
+  function _decorate(row, spec, undeclared, fnLabel) {
+    const keyEl = row.querySelector('.' + KEY_CLASS);
+    const reqEl = row.querySelector('.' + REQ_CLASS);
+    const valEl = row.querySelector('.' + VAL_CLASS);
+    if (!keyEl || !reqEl || !valEl) return;
+
+    const required = !!(spec && spec.required);
+
+    // Fixed-width marker slot. Red * (declared + required) and amber !
+    // (undeclared) can never collide: undeclared implies spec === null.
+    reqEl.textContent = required ? '*' : (undeclared ? '!' : '');
+    reqEl.style.color = undeclared ? WARN_COLOR : REQ_COLOR;
+    if (required)        reqEl.title = 'required';
+    else if (undeclared) reqEl.title = 'not a parameter of ' + fnLabel;
+    else                 reqEl.removeAttribute('title');
+
+    if (undeclared) {
+      keyEl.style.border     = WARN_BORDER;
+      keyEl.style.background = WARN_BG;
+      keyEl.title = 'Not a declared parameter of ' + fnLabel + '.' + WARN_TIP_TAIL;
+    } else {
+      keyEl.style.border = NORMAL_BORDER;
+      // '' REMOVES the inline background rather than forcing a color, so the
+      // field falls back to exactly what it looked like before this module
+      // started decorating — no assumption about the host page's palette.
+      keyEl.style.background = '';
+      if (spec && spec.description) keyEl.title = spec.description;
+      else keyEl.removeAttribute('title');
+    }
+
+    if (spec && Array.isArray(spec.enum) && spec.enum.length) {
+      valEl.placeholder = _enumPlaceholder(spec.enum);
+      valEl.title = 'one of: ' + spec.enum.join(' | ') + '\n\n' + VALUE_PLACEHOLDER;
+    } else {
+      valEl.placeholder = VALUE_PLACEHOLDER;
+      valEl.removeAttribute('title');
+    }
+  }
+
+  // Build one row.
+  //   spec        matching __meta param for `key` (null on the plain render
+  //               path, where no meta is consulted)
+  //   seeded      module-authored scaffolding — see ROW PROVENANCE above
+  //   specByName  the ACTIVE schema, or null when there is none. Drives the
+  //               undeclared warning and the live re-check.
+  function _buildRow(key, value, opts, spec, seeded, specByName, fnLabel) {
     const datalistId = _datalistId(opts);
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
 
-    const required = !!(spec && spec.required);
-    const keyTitle = (spec && spec.description) ? spec.description : '';
-
-    let valPlaceholder = VALUE_PLACEHOLDER;
-    let valTitle       = '';
-    if (spec && Array.isArray(spec.enum) && spec.enum.length) {
-      valPlaceholder = _enumPlaceholder(spec.enum);
-      valTitle       = 'one of: ' + spec.enum.join(' | ') + '\n\n' + VALUE_PLACEHOLDER;
-    }
-
-    // The required marker is a fixed-width span rather than a placeholder: a
-    // seeded key input HAS a value, so its placeholder would never be visible.
-    // Always emitted (blank when not required) to keep the columns aligned.
+    // Markup is emitted NEUTRAL — every meta-driven attribute (required
+    // marker, tooltips, enum placeholder, warning colors) is applied by
+    // _decorate below, so the build path and the live re-check cannot drift.
+    // The marker span is always emitted, blank when there is nothing to say,
+    // to keep the columns aligned across rows.
     row.innerHTML = `
-      <input class="${KEY_CLASS}" placeholder="param name" value="${esc(key)}"${keyTitle ? ` title="${esc(keyTitle)}"` : ''} style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
-      <span class="${REQ_CLASS}"${required ? ' title="required"' : ''} style="flex:0 0 7px;text-align:center;color:#ef4444;font-size:13px;font-weight:700;line-height:1">${required ? '*' : ''}</span>
+      <input class="${KEY_CLASS}" placeholder="param name" value="${esc(key)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <span class="${REQ_CLASS}" style="flex:0 0 7px;text-align:center;font-size:13px;font-weight:700;line-height:1"></span>
       <span style="color:var(--muted);font-size:14px">=</span>
-      <input class="${VAL_CLASS} mono" list="${esc(datalistId)}" placeholder="${esc(valPlaceholder)}"${valTitle ? ` title="${esc(valTitle)}"` : ''} value="${esc(_display(value))}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
-      <button type="button" class="${DEL_CLASS}" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:#ef4444" title="Remove"><i class="fa-solid fa-times"></i></button>`;
+      <input class="${VAL_CLASS} mono" list="${esc(datalistId)}" value="${esc(_display(value))}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <button type="button" class="${DEL_CLASS}" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:${REQ_COLOR}" title="Remove"><i class="fa-solid fa-times"></i></button>`;
+
+    const keyEl = row.querySelector('.' + KEY_CLASS);
+
+    _decorate(row, spec, !!(specByName && key !== '' && !specByName.has(key)), fnLabel);
 
     row.querySelector('.' + DEL_CLASS).addEventListener('click', () => row.remove());
 
@@ -227,8 +349,17 @@
       // the next function switch keeps it. `once` per input is enough — both
       // handlers clear the same flag and re-marking never happens in place.
       const claim = () => { delete row.dataset[SEED_KEY]; };
-      row.querySelector('.' + KEY_CLASS).addEventListener('input', claim, { once: true });
+      keyEl.addEventListener('input', claim, { once: true });
       row.querySelector('.' + VAL_CLASS).addEventListener('input', claim, { once: true });
+    }
+
+    if (specByName) {
+      // `change` (fires on blur), not `input` — see UNDECLARED-KEY WARNING.
+      keyEl.addEventListener('change', () => {
+        const k = keyEl.value.trim();
+        _decorate(row, k ? (specByName.get(k) || null) : null,
+                  !!(k && !specByName.has(k)), fnLabel);
+      });
     }
 
     return row;
@@ -236,15 +367,23 @@
 
   // Repaint the container from an ordered [key, value, seeded?] list.
   // `specByName` may be null (plain render) — then no row is decorated.
+  //
+  // The active schema + label are stashed on the container so pmAddRow can
+  // inherit them without the call site threading fnMeta through. They are
+  // rewritten (or cleared) on every repaint, so a reopened dialog or a
+  // function switch can never leave a stale schema behind.
   function _paint(containerEl, entries, opts, specByName) {
+    const fnLabel = _fnLabel(opts);
+    containerEl.__pmSpecs   = specByName || null;
+    containerEl.__pmFnLabel = fnLabel;
     containerEl.innerHTML = _datalistHtml(_datalistId(opts));
     if (!entries.length) {
-      containerEl.appendChild(_buildRow('', '', opts, null, false));
+      containerEl.appendChild(_buildRow('', '', opts, null, false, specByName, fnLabel));
       return;
     }
     for (const [k, v, seeded] of entries) {
       const spec = specByName ? (specByName.get(k) || null) : null;
-      containerEl.appendChild(_buildRow(k, v, opts, spec, !!seeded));
+      containerEl.appendChild(_buildRow(k, v, opts, spec, !!seeded, specByName, fnLabel));
     }
   }
 
@@ -258,12 +397,19 @@
     const entries = (mapping && typeof mapping === 'object' && !Array.isArray(mapping))
       ? Object.entries(mapping)
       : [];
-    _paint(containerEl, entries, opts, null);
+    // No opts.fnMeta → null schema → undecorated, exactly as before.
+    _paint(containerEl, entries, opts, _specMap(opts && opts.fnMeta));
   };
 
   window.pmAddRow = function pmAddRow(containerEl, opts) {
     if (!containerEl) return null;
-    const row = _buildRow('', '', opts, null, false);
+    // Prefer an explicitly-passed schema, else the one the last paint left on
+    // the container, so an added row warns as it is named.
+    const specByName = _specMap(opts && opts.fnMeta) || containerEl.__pmSpecs || null;
+    const fnLabel = (opts && opts.fnName)
+      ? _fnLabel(opts)
+      : (containerEl.__pmFnLabel || _fnLabel(opts));
+    const row = _buildRow('', '', opts, null, false, specByName, fnLabel);
     containerEl.appendChild(row);
     return row;
   };
@@ -304,7 +450,6 @@
       merged.push([spec.name, prefill, true]);
     }
 
-    const specByName = new Map(specs.filter(s => s && s.name).map(s => [s.name, s]));
-    _paint(containerEl, merged, opts, specByName);
+    _paint(containerEl, merged, opts, _specMap(fnMeta));
   };
 })();

@@ -2555,11 +2555,13 @@ window.eiToggleSidebar = eiToggleSidebar;
     }
 
     // internal_function params mapping — shared widget (paramsMapping.js).
-    // Open-for-edit paints EXACTLY the stored rows, undecorated. Seeding is
-    // driven only by the function <select>'s change event below, so reopening
-    // an existing action never grows rows under the operator.
+    // Open-for-edit paints EXACTLY the stored rows — it never adds one — but it
+    // now DECORATES them against the saved function's schema (required markers,
+    // param descriptions, enum hints, and an amber warning on any key the
+    // function does not declare). Seeding is still driven only by the function
+    // <select>'s change event below, so reopening never grows rows.
     const cfg = parseJson(a.config) || {};
-    pmRender(aPmEl(), cfg.params_mapping || {}, A_PM_OPTS);
+    pmRender(aPmEl(), cfg.params_mapping || {}, aPmOpts(cfg.function_name));
 
     const addBtn = document.getElementById('swal-a-fn-add');
     if (addBtn) addBtn.addEventListener('click', () => pmAddRow(aPmEl(), A_PM_OPTS));
@@ -2578,7 +2580,7 @@ window.eiToggleSidebar = eiToggleSidebar;
     if (fnSel) fnSel.addEventListener('change', () => {
       if (!fnSel.value) return;   // "— select a function —" → leave the rows alone
       const fnMeta = (meta.targets?.internal_function_meta || {})[fnSel.value] || null;
-      pmSeedFromMeta(aPmEl(), fnMeta, null, A_PM_OPTS);
+      pmSeedFromMeta(aPmEl(), fnMeta, null, aPmOpts(fnSel.value));
     });
   }
 
@@ -2599,6 +2601,18 @@ window.eiToggleSidebar = eiToggleSidebar;
   //     against live data — no production mapping row has an empty value.
   const A_PM_OPTS = { datalistId: 'a-pm-source-datalist' };
   const aPmEl = () => document.getElementById('swal-a-fn-params');
+
+  // Per-call opts carrying the CURRENTLY-selected function. paramsMapping.js
+  // uses fnMeta to decide which keys the function declares (anything else gets
+  // the amber undeclared-key warning — visual only, nothing is dropped) and
+  // fnName to name the function in that warning's tooltip. pmAddRow is left on
+  // the bare A_PM_OPTS on purpose: it inherits whatever schema the last
+  // render/seed left on the container.
+  const aPmOpts = (fn) => ({
+    ...A_PM_OPTS,
+    fnName: fn || '',
+    fnMeta: (meta.targets?.internal_function_meta || {})[fn] || null,
+  });
 
   // Harvest the action form → {action_type, config, position, active}.
   // Action-name slice — attach the (optional) name field to a harvested

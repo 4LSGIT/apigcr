@@ -2231,11 +2231,13 @@ window.togglePanelLeft = togglePanelLeft;
     }
 
     // internal_function params mapping — shared widget (paramsMapping.js).
-    // Open-for-edit paints EXACTLY the stored rows, undecorated. Seeding is
-    // driven only by the function <select>'s change event below, so reopening
-    // an existing target never grows rows under the operator.
+    // Open-for-edit paints EXACTLY the stored rows — it never adds one — but it
+    // now DECORATES them against the saved function's schema (required markers,
+    // param descriptions, enum hints, and an amber warning on any key the
+    // function does not declare). Seeding is still driven only by the function
+    // <select>'s change event below, so reopening never grows rows.
     const cfg = parseJson(t.config) || {};
-    pmRender(tPmEl(), cfg.params_mapping || {}, T_PM_OPTS);
+    pmRender(tPmEl(), cfg.params_mapping || {}, tPmOpts(cfg.function_name));
 
     const addBtn = document.getElementById('swal-t-fn-add');
     if (addBtn) addBtn.addEventListener('click', () => pmAddRow(tPmEl(), T_PM_OPTS));
@@ -2296,7 +2298,7 @@ window.togglePanelLeft = togglePanelLeft;
     const fnSel = document.getElementById('swal-t-fn');
     if (fnSel) fnSel.addEventListener('change', () => {
       if (!fnSel.value) return;   // "— select a function —" → leave the rows alone
-      pmSeedFromMeta(tPmEl(), internalFunctionsMeta[fnSel.value] || null, null, T_PM_OPTS);
+      pmSeedFromMeta(tPmEl(), internalFunctionsMeta[fnSel.value] || null, null, tPmOpts(fnSel.value));
     });
 
     // ── Per-target conditions ──
@@ -2383,6 +2385,18 @@ window.togglePanelLeft = togglePanelLeft;
   //     against live data — no production mapping row has an empty value.
   const T_PM_OPTS = { datalistId: 'pm-source-datalist' };
   const tPmEl = () => document.getElementById('swal-t-fn-params');
+
+  // Per-call opts carrying the CURRENTLY-selected function. paramsMapping.js
+  // uses fnMeta to decide which keys the function declares (anything else gets
+  // the amber undeclared-key warning — visual only, nothing is dropped) and
+  // fnName to name the function in that warning's tooltip. pmAddRow is left on
+  // the bare T_PM_OPTS on purpose: it inherits whatever schema the last
+  // render/seed left on the container.
+  const tPmOpts = (fn) => ({
+    ...T_PM_OPTS,
+    fnName: fn || '',
+    fnMeta: internalFunctionsMeta[fn] || null,
+  });
 
   // ── Per-target conditions helpers ──
 

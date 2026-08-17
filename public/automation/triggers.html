@@ -638,9 +638,20 @@ function fmtTs(v) {
         fnSel.innerHTML = window.buildFnOptions(meta.targets.internal_functions, fnMetaMap, cfg.function_name || null, { applyHidden: false });
         if (cfg.function_name) fnSel.value = cfg.function_name;
         const pmEl = cfgEl.querySelector('.tg-a-pm');
-        window.pmRender(pmEl, cfg.params_mapping || {}, { datalistId: PM_DATALIST_ID });
+        // Per-call opts carrying the CURRENTLY-selected function. fnMeta tells
+        // paramsMapping.js which keys the function declares — anything else
+        // gets the amber undeclared-key warning (visual only, nothing is
+        // dropped) — and fnName names it in that warning's tooltip. pmAddRow
+        // keeps the bare opts: it inherits the schema the last render/seed
+        // left on the container.
+        const pmOpts = (fn) => ({
+          datalistId: PM_DATALIST_ID,
+          fnName: fn || '',
+          fnMeta: fnMetaMap[fn] || null,
+        });
+        window.pmRender(pmEl, cfg.params_mapping || {}, pmOpts(cfg.function_name));
         fnSel.addEventListener('change', () => {
-          window.pmSeedFromMeta(pmEl, fnMetaMap[fnSel.value], null, { datalistId: PM_DATALIST_ID });
+          window.pmSeedFromMeta(pmEl, fnMetaMap[fnSel.value], null, pmOpts(fnSel.value));
           editor.dirty = true;
         });
         cfgEl.querySelector('.tg-a-pm-add').addEventListener('click', () => {
@@ -648,7 +659,7 @@ function fmtTs(v) {
         });
         // Seed declared params on first open of a new internal_function action
         if (!cfg.function_name && fnSel.value) {
-          window.pmSeedFromMeta(pmEl, fnMetaMap[fnSel.value], null, { datalistId: PM_DATALIST_ID });
+          window.pmSeedFromMeta(pmEl, fnMetaMap[fnSel.value], null, pmOpts(fnSel.value));
         }
       } else if (t === 'http') {
         cfgEl.innerHTML = `
