@@ -24,6 +24,7 @@ const { parseUserDateTime, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
 const { alert } = require('../lib/alerting');
 const crypto = require('crypto');
+const domainEvents = require('../lib/domainEvents');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
 function getSequenceEngine() {
@@ -1081,6 +1082,16 @@ async function createAppt(db, {
   // 8) Re-fetch the created appointment
   const [[appt]] = await db.query('SELECT * FROM appts WHERE appt_id = ?', [apptId]);
 
+  // 9) Trigger: appt.created (fire-and-forget; never blocks or throws)
+  domainEvents.emit(db, 'appt.created', {
+    contact_id,
+    case_id: case_id || null,
+    source,
+    actor: { user_id: actingUserId },
+    data:  appt,
+    extra: { hook_event, rescheduled_from: hook_rescheduled_from || null },
+  });
+
   return {
     appt_id: apptId,
     appt,
@@ -1104,8 +1115,17 @@ async function createAppt(db, {
 async function markAttended(db, { appt_id, note = '', actingUserId = 0, source = 'system' }) {
   if (!appt_id) throw new Error('markAttended requires appt_id');
 
+  // SELECT widened (Trigger T1): the appt.attended envelope carries the row
+  // + joined case_type/case_subtype (same rationale as markNoShow's widened
+  // SELECT — type-filtered consumers disqualify on undefined fields).
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_status FROM appts WHERE appt_id = ?',
+    `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
+            a.appt_type, a.appt_with, a.appt_status,
+            cs.case_type,
+            cs.case_subtype
+     FROM appts a
+     LEFT JOIN cases cs ON cs.case_id = a.appt_case_id
+     WHERE a.appt_id = ?`,
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -1140,6 +1160,16 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0, source =
   } catch (err) {
     console.error('[APPT SERVICE] Sequence engine error:', err.message);
   }
+
+  // Trigger: appt.attended (fire-and-forget)
+  domainEvents.emit(db, 'appt.attended', {
+    contact_id: appt.appt_client_id,
+    case_id:    appt.appt_case_id || null,
+    source,
+    actor: { user_id: actingUserId },
+    data:  { ...appt, appt_status: 'Attended' },
+    extra: { prior_status: appt.appt_status },
+  });
 
   return { appt_id };
 }
@@ -1292,6 +1322,18 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   if (skipReason) logExtras.SkipReason = skipReason;
   await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
+  // Trigger: appt.no_show (fire-and-forget). NOTE: the no_show pipeline
+  // advance stays hardcoded above (Pipeline Slice E1, pre-dates the trigger
+  // system) — do not also add it as a rule.
+  domainEvents.emit(db, 'appt.no_show', {
+    contact_id: appt.appt_client_id,
+    case_id:    appt.appt_case_id || null,
+    source,
+    actor: { user_id: actingUserId },
+    data:  { ...appt, appt_status: 'No Show' },
+    extra: { prior_status: priorStatus, enrolled },
+  });
+
   return { appt_id, enrolled, skipReason };
 }
 
@@ -1429,6 +1471,18 @@ async function cancelAppt(db, {
   // When a 'cancel' sequence template exists, wire it here:
   //   if (enroll_sequence) { seq.enrollContact(db, appt.appt_client_id, 'cancel', { ... }) }
 
+  // Trigger: appt.cancelled (fire-and-forget). `appt` came from
+  // fetchApptWithContact (appts.* + contact_phone/client_email/contact_name);
+  // domainEvents strips nothing here — no SSN in this row shape.
+  domainEvents.emit(db, 'appt.cancelled', {
+    contact_id: appt.appt_client_id,
+    case_id:    appt.appt_case_id || null,
+    source,
+    actor: { user_id: actingUserId },
+    data:  { ...appt, appt_status: 'Canceled' },
+    extra: { prior_status: priorStatus },
+  });
+
   return result;
 }
 
@@ -1521,6 +1575,17 @@ async function rescheduleAppt(db, {
   if (note) logExtras.Note = note;
   await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
+  // Trigger: appt.rescheduled for the OLD appt (fire-and-forget). The
+  // successor already fired appt.created (extra.hook_event='rescheduled').
+  domainEvents.emit(db, 'appt.rescheduled', {
+    contact_id: oldAppt.appt_client_id,
+    case_id:    oldAppt.appt_case_id || null,
+    source,
+    actor: { user_id: actingUserId },
+    data:  { ...oldAppt, appt_status: 'Rescheduled' },
+    extra: { new_appt_id: newAppt.appt_id, new_appt_date: newDate },
+  });
+
   return { old_appt_id: appt_id, new_appt_id: newAppt.appt_id };
 }
 
@@ -1551,7 +1616,7 @@ async function rescheduleLater(db, {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_case_id, appt_type, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -1610,6 +1675,16 @@ async function rescheduleLater(db, {
   if (taskId) logExtras.Task = taskId;
   if (note)   logExtras.Note = note;
   await insertApptLog(db, appt_id, actingUserId, logExtras, source);
+
+  // Trigger: appt.reschedule_later (fire-and-forget; slot freed, no successor)
+  domainEvents.emit(db, 'appt.reschedule_later', {
+    contact_id: appt.appt_client_id,
+    case_id:    appt.appt_case_id || null,
+    source,
+    actor: { user_id: actingUserId },
+    data:  { ...appt, appt_status: 'Rescheduled' },
+    extra: {},
+  });
 
   return { appt_id, taskId };
 }
