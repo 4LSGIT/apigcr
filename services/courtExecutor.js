@@ -43,7 +43,8 @@
 //              Shoshana) and write cases.show_cause — see doCreateEvent.
 //
 // ── update_case_fields COLUMN POLICY ──────────────────────────────────────
-//   fill_only  (write only if current NULL/''): case_file_date, case_judge, case_close_date
+//   fill_only  (write only if current NULL/''): case_file_date, case_judge, case_close_date,
+//                                               case_discharge_date
 //   overwrite  (write if new !== current)     : case_chapter, case_trustee, case_objection,
 //                                               show_cause (datetime — normally
 //                                               written executor-side on an OSC,
@@ -57,15 +58,34 @@
  * column not present is FORBIDDEN and silently ignored.
  */
 const CASE_FIELD_POLICY = {
-  case_file_date:  'fill_only',
-  case_judge:      'fill_only',
-  case_close_date: 'fill_only',
-  case_chapter:    'overwrite',
-  case_trustee:    'overwrite',
-  case_objection:  'overwrite',
-  show_cause:      'overwrite',
+  case_file_date:      'fill_only',
+  case_judge:          'fill_only',
+  case_close_date:     'fill_only',
+  case_discharge_date: 'fill_only',
+  case_chapter:        'overwrite',
+  case_trustee:        'overwrite',
+  case_objection:      'overwrite',
+  show_cause:          'overwrite',
 };
-const CASE_DATE_FIELDS = new Set(['case_file_date', 'case_close_date', 'case_objection']);
+const CASE_DATE_FIELDS = new Set(['case_file_date', 'case_close_date',
+                                  'case_discharge_date', 'case_objection']);
+
+// SINGLE SOURCE OF TRUTH for the curCaseRow lazy-load SELECT list.
+//
+// Three loaders share ONE curCaseRow cache (the update_case_fields dispatch
+// branch, writeShowCauseColumn, clearShowCauseColumn). They used to carry three
+// hand-copied identical column lists guarded only by a "MUST stay identical"
+// comment. That is a live footgun, not a style nit: whichever loader fires
+// FIRST populates the cache for the whole run, so a column missing from just
+// one of them reads back as `undefined` on some runs and not others. In the
+// policy check `occupied` would then be false, and fill_only would silently
+// behave as overwrite — clobbering a real date, non-deterministically, with no
+// error. Deriving the list from CASE_FIELD_POLICY makes the drift impossible:
+// the allowlist and the loader are now the same list by construction.
+//
+// Identifiers come from a module-scope literal, never from input; backticked
+// anyway because they are interpolated.
+const CASE_ROW_SELECT = Object.keys(CASE_FIELD_POLICY).map(c => `\`${c}\``).join(', ');
 // DATETIME columns get their own normalize/compare ('YYYY-MM-DD HH:MM') —
 // CASE_DATE_FIELDS' toDatePart would silently drop the hearing time.
 const CASE_DATETIME_FIELDS = new Set(['show_cause']);
@@ -476,9 +496,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     if (!dateStr) return;
     if (!curCaseRow) {
       const [rows] = await db.query(
-        `SELECT case_file_date, case_judge, case_close_date,
-                case_chapter, case_trustee, case_objection, show_cause
-           FROM cases WHERE case_id=? LIMIT 1`,
+        `SELECT ${CASE_ROW_SELECT} FROM cases WHERE case_id=? LIMIT 1`,
         [resolved.case_id]
       );
       curCaseRow = rows[0] || {};
@@ -505,9 +523,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   async function clearShowCauseColumn(idx) {
     if (!curCaseRow) {
       const [rows] = await db.query(
-        `SELECT case_file_date, case_judge, case_close_date,
-                case_chapter, case_trustee, case_objection, show_cause
-           FROM cases WHERE case_id=? LIMIT 1`,
+        `SELECT ${CASE_ROW_SELECT} FROM cases WHERE case_id=? LIMIT 1`,
         [resolved.case_id]
       );
       curCaseRow = rows[0] || {};
@@ -939,12 +955,11 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
 
     if (type === 'update_case_fields') {
       if (!curCaseRow) {
-        // Column list MUST stay identical to writeShowCauseColumn's lazy
-        // loader — they share the curCaseRow cache.
+        // Shares the curCaseRow cache with writeShowCauseColumn /
+        // clearShowCauseColumn; all three now read CASE_ROW_SELECT, so the
+        // lists cannot drift apart.
         const [rows] = await db.query(
-          `SELECT case_file_date, case_judge, case_close_date,
-                  case_chapter, case_trustee, case_objection, show_cause
-             FROM cases WHERE case_id=? LIMIT 1`,
+          `SELECT ${CASE_ROW_SELECT} FROM cases WHERE case_id=? LIMIT 1`,
           [resolved.case_id]
         );
         curCaseRow = rows[0] || {};

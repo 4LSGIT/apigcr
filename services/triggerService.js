@@ -308,7 +308,7 @@ const EVENT_TYPES = {
     fields: [
       ...CORE_FIELDS,
       { path: 'source',                  label: "'court_ingest' | 'court_review' | 'court_sweep'" },
-      { path: 'data.classification',     label: 'court_extract classification (plan_confirmed, discharge_or_close, meeting_ch13, …)' },
+      { path: 'data.classification',     label: 'court_extract classification (discharge_granted, case_dismissed, case_closed, case_reopened, plan_confirmed, meeting_ch13, …). Rows logged before court_extract v9 carry the retired fused value discharge_or_close.' },
       { path: 'data.outcome',            label: "'executed' | 'none'" },
       { path: 'data.case_chapter',       label: "Chapter from the CASE row ('7'/'13') — BLANK on ~19% of the live book; a narrowing hint, never the safety (put that in the action's only_from guard)" },
       { path: 'data.case_number',        label: 'Short docket (case row)' },
