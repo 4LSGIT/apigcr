@@ -2,6 +2,7 @@
 .githooks/pre-commit
 .github/workflows/node.js.yml
 .gitignore
+CHARTER_pageLanding_limiter.md
 Dockerfile
 TRACKED_FILES.txt
 jest.config.js
@@ -658,5 +659,6 @@ tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
 tests/videoLanding.actionUrl.test.js
+tests/videoLanding.rateLimit.test.js
 tests/workflows.editor.roundtrip.test.js
 views/v.html

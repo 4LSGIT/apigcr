@@ -38,8 +38,37 @@ const express      = require('express');
 const fs           = require('fs');
 const path         = require('path');
 const videoService = require('../services/videoService');
+const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 
 const router = express.Router();
+
+// ─────────────────────────────────────────────────────────────
+// Rate limits (2026-08-17). This route had NONE — and GET /v/:slug is an
+// unauthenticated WRITE (slug lookup + optional contact lookup + an INSERT
+// into video_views + a related-videos query per hit), so it needs a ceiling
+// more than a read-only shell does. POSTs additionally feed recordCtaClick's
+// unbounded JSON_ARRAY_APPEND on video_views.cta_clicks — the limiter is
+// what bounds that column's growth per IP.
+//
+// Sizing, against 30 days of real traffic (video_views, 2026-08-17): 16
+// views total, 13 unique IPs, max 2 views per IP per HOUR. The GET limit
+// below matches the booking/manage read limit (30/min/IP) — >800× the
+// observed per-IP peak, so carrier-grade-NAT false positives are a
+// non-issue at this firm's scale. The POST limit must clear a legitimate
+// playback session: v.html beacons progress every ~10 s → 6/min per playing
+// video, plus play/complete/CTA events; 30/min covers several concurrent
+// tabs behind one IP with headroom.
+//
+// getClientIp comes from lib/rateLimiter (LAST XFF element — the
+// GFE-appended peer). The removed private copy here took the FIRST element,
+// which is client-supplied on this chain (see lib/rateLimiter's doc block):
+// fine for logging honest traffic, a bypass as a limiter key, and it also
+// made hashIp-based view dedup/analytics spoofable. Behavior note: ip_hash
+// values for the same client CHANGE at this deploy (different input string)
+// — per-IP analytics continuity resets, accepted.
+// ─────────────────────────────────────────────────────────────
+const readLimited = makeLimiter(60 * 1000, 30); // GET  /v/:slug
+const postLimited = makeLimiter(60 * 1000, 30); // POST track + cta-click (shared)
 
 const TEMPLATE_PATH = path.join(__dirname, '..', 'views', 'v.html');
 let TEMPLATE_CACHE = null;
@@ -64,14 +93,10 @@ function htmlEscape(str) {
     .replace(/'/g, '&#39;');
 }
 
-function getClientIp(req) {
-  const xff = req.headers['x-forwarded-for'];
-  if (xff) {
-    const first = String(xff).split(',').shift().trim();
-    if (first) return first;
-  }
-  return req.socket?.remoteAddress || 'unknown';
-}
+// getClientIp: imported from lib/rateLimiter (last-XFF). The private
+// first-XFF copy that lived here until 2026-08-17 is gone — see the limiter
+// block above for why first-element resolution was wrong for both keying
+// and hashIp.
 
 /**
  * Render the action button row.
@@ -157,6 +182,9 @@ function renderRelated(relatedVideos, contactId) {
 
 router.get('/v/:slug', async (req, res) => {
   try {
+    if (readLimited(getClientIp(req))) {
+      return res.status(429).type('text/plain').send('Too many requests');
+    }
     // canonical first, then alias — both gated to published.
     const video = await videoService.getVideoBySlug(req.db, req.params.slug, {
       mustBePublished: true,
@@ -282,6 +310,9 @@ const TRACK_EVENTS = new Set(['play', 'progress', 'complete']);
 
 router.post('/api/v/:slug/track', async (req, res) => {
   try {
+    if (postLimited(getClientIp(req))) {
+      return res.status(429).json({ error: 'Too many requests' });
+    }
     const body = req.body || {};
     const { viewId, event, watchSeconds, completionPct } = body;
 
@@ -358,6 +389,9 @@ router.post('/api/v/:slug/track', async (req, res) => {
 
 router.post('/api/v/:slug/cta-click', async (req, res) => {
   try {
+    if (postLimited(getClientIp(req))) {
+      return res.status(429).json({ error: 'Too many requests' });
+    }
     const body = req.body || {};
     const { viewId, label } = body;
 
