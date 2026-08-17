@@ -318,7 +318,9 @@ function fmtTs(v) {
       ${groups.get(ev).map(r => `
         <div class="tg-rule-item ${r.id === selectedId ? 'selected' : ''}" onclick="tgSelectRule(${r.id})">
           <div class="nm"><span class="tg-dot ${r.active ? 'on' : 'off'}"></span>${esc(r.name)}</div>
-          <div class="sub">${(r.actions || []).length} action${(r.actions || []).length === 1 ? '' : 's'} · matched ${r.match_count ?? 0}×</div>
+          <div class="sub">${(r.actions || []).length} action${(r.actions || []).length === 1 ? '' : 's'} · matched ${r.match_count ?? 0}×${
+            (r.error_count > 0) ? ` · <span style="color:var(--red)">error ${r.error_count}×</span>` : ''
+          }${(r.min_interval_s > 0) ? ` · <span title="Cooldown: suppressed if it matched within ${r.min_interval_s}s">⏱ ${r.min_interval_s}s</span>` : ''}</div>
         </div>`).join('')}
     `).join('');
   }
@@ -343,6 +345,7 @@ function fmtTs(v) {
     const firstEv = meta ? Object.keys(meta.events)[0] : 'appt.created';
     return {
       id: null, event_type: firstEv, name: '', description: '', active: 1, position: 0,
+      min_interval_s: 0,
       match_mode: 'conditions',
       match_config: { operator: 'and', conditions: [] },
       transform_mode: 'passthrough', transform_config: null,
@@ -391,7 +394,12 @@ function fmtTs(v) {
             <label class="tg-label">Position (order within event)</label>
             <input class="tg-input" id="tg-f-position" type="number" value="${r.position ?? 0}" style="max-width:120px">
           </div>
+          <div>
+            <label class="tg-label" title="Cooldown. If this rule matched within N seconds, it is skipped for this event: no actions, no match count, a warning on the execution row. 0 = no throttle.">Min interval (seconds)</label>
+            <input class="tg-input" id="tg-f-mininterval" type="number" min="0" step="1" value="${r.min_interval_s ?? 0}" style="max-width:140px">
+          </div>
         </div>
+        <div class="tg-hint" style="margin-top:-6px">Min interval throttles a chatty rule: 0 = fire every time it matches. Above 0, a match inside the window is skipped entirely (it does not queue and fire later).</div>
         <div class="tg-hint" id="tg-evt-desc" style="margin-bottom:14px"></div>
 
         <div class="tg-card">
@@ -438,6 +446,14 @@ function fmtTs(v) {
           </div>
           <div id="tg-actions"></div>
           <div class="tg-hint">Actions run in order. Params-mapping values: plain text = dot-path into the (transformed) envelope; 'quoted' = literal; $ = the whole object.</div>
+        </div>
+
+        <div class="tg-card" id="tg-history-card" style="display:none">
+          <div class="tg-card-title"><span>Recent runs</span>
+            <button class="tg-btn" onclick="tgLoadHistory()"><i class="fa-solid fa-rotate-right"></i> Reload</button>
+          </div>
+          <div id="tg-history"></div>
+          <div class="tg-hint">One row per event this rule MATCHED. Non-matching and cooldown-skipped events are not runs — look in the Executions tab for those. Click a row to open its execution.</div>
         </div>
       </div>`;
 
@@ -548,11 +564,16 @@ function fmtTs(v) {
       E('tg-f-event').value = `${entSel.value}.${actSel.value}`;
       onEventTypeChanged();
     });
-    for (const id of ['tg-f-name','tg-f-desc','tg-f-active','tg-f-position','tg-f-matchcode','tg-f-tmapper','tg-f-tcode']) {
+    for (const id of ['tg-f-name','tg-f-desc','tg-f-active','tg-f-position','tg-f-mininterval','tg-f-matchcode','tg-f-tmapper','tg-f-tcode']) {
       const el = E(id); if (el) el.addEventListener('input', () => { editor.dirty = true; });
     }
 
     renderActions();
+    // Recent runs exist only for a SAVED rule (history is keyed by rule id).
+    if (!editor.isNew) {
+      E('tg-history-card').style.display = '';
+      tgLoadHistory();
+    }
     P.setTopbarButtons({ save: true, delete: !editor.isNew, refresh: true, new: true });
   }
 
@@ -780,6 +801,7 @@ function fmtTs(v) {
       description: E('tg-f-desc').value.trim() || null,
       active: E('tg-f-active').checked ? 1 : 0,
       position: parseInt(E('tg-f-position').value, 10) || 0,
+      min_interval_s: Math.max(0, parseInt(E('tg-f-mininterval').value, 10) || 0),
       match_mode: matchMode,
       match_config: matchConfig,
       transform_mode: tMode,
@@ -977,6 +999,51 @@ function fmtTs(v) {
   window.tgUnpin = () => { pinnedEnvelope = null; window.tgToggleSamples(); window.tgToggleSamples(); };
 
   // ════════════════════════════════════════════════════════════
+  // RECENT RUNS (R4/P1) — per-rule execution history
+  // ════════════════════════════════════════════════════════════
+  window.tgLoadHistory = async () => {
+    if (!editor || editor.isNew) return;
+    const box = E('tg-history');
+    if (!box) return;
+    box.innerHTML = '<div class="tg-hint">Loading…</div>';
+    try {
+      const data = await api(`/api/triggers/rules/${editor.rule.id}/history?limit=20`);
+      const rows = (data && data.history) || [];
+      if (!rows.length) {
+        box.innerHTML = '<div class="tg-hint">No runs recorded yet.</div>';
+        return;
+      }
+      box.innerHTML = `<table class="tg-table"><thead><tr>
+          <th>When</th><th>Event</th><th>Status</th><th>Result</th><th>Case</th>
+        </tr></thead><tbody>${rows.map(r => {
+          const m = STATUS_META[r.status] || { bg: '#f1f5f9', fg: '#475569' };
+          const failed = r.failed_count > 0
+            ? ` / <span style="color:var(--red)">${r.failed_count} failed</span>` : '';
+          return `<tr class="clickable" onclick="tgOpenExecutionFromRule(${r.execution_id})"
+                      title="Open execution #${r.execution_id} in the Executions tab">
+            <td>${esc(fmtTs(r.created_at))}</td>
+            <td class="mono">${esc(r.event_type)}</td>
+            <td><span class="tg-badge" style="background:${m.bg};color:${m.fg}">${esc(r.status)}</span></td>
+            <td>${r.action_count} action${r.action_count === 1 ? '' : 's'}${failed}</td>
+            <td class="mono">${esc(r.case_id ?? '')}</td>
+          </tr>`;
+        }).join('')}</tbody></table>`;
+    } catch (e) {
+      box.innerHTML = `<div class="tg-hint" style="color:var(--red)">${esc(e.message)}</div>`;
+    }
+  };
+
+  // Jump from a Recent-runs row to its execution. No discard prompt: switching
+  // tabs only toggles display, so the editor's DOM and dirty state survive and
+  // the user can switch straight back. skipLoad avoids the redundant fetch
+  // tgSwitchTab would otherwise fire before we load with our own await.
+  window.tgOpenExecutionFromRule = async (executionId) => {
+    tgSwitchTab('executions', { skipLoad: true });
+    await tgLoadExecutions(true);
+    await tgOpenExecution(executionId);
+  };
+
+  // ════════════════════════════════════════════════════════════
   // EXECUTIONS TAB
   // ════════════════════════════════════════════════════════════
   let execRows = [];   // accumulated across Load more (S17d)
@@ -1047,14 +1114,14 @@ function fmtTs(v) {
   // ════════════════════════════════════════════════════════════
   // TABS + LIFECYCLE
   // ════════════════════════════════════════════════════════════
-  window.tgSwitchTab = (tab) => {
+  window.tgSwitchTab = (tab, opts = {}) => {
     activeTab = tab;
     E('tg-tab-rules').classList.toggle('active', tab === 'rules');
     E('tg-tab-executions').classList.toggle('active', tab === 'executions');
     E('tg-main').style.display = tab === 'rules' ? 'flex' : 'none';
     E('tg-exec-wrap').style.display = tab === 'executions' ? 'flex' : 'none';
     updateTopbar();
-    if (tab === 'executions') tgLoadExecutions(true);
+    if (tab === 'executions' && !opts.skipLoad) tgLoadExecutions(true);
   };
 
   function updateTopbar() {

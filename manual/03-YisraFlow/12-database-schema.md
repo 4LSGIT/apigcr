@@ -35,6 +35,10 @@ All tables use `utf8mb4` collation, mostly `utf8mb4_general_ci` (a few in `_unic
 | `email_router_config` | Email Router (singleton) | 10 |
 | `email_routes` | Email Router | 10 |
 | `email_router_executions` | Email Router | 10 |
+| `trigger_rules` | Trigger System | 15 |
+| `trigger_rule_actions` | Trigger System | 15 |
+| `trigger_executions` | Trigger System | 15 |
+| `trigger_execution_rules` | Trigger System | 15 |
 | `phone_lines` | shared (SMS routing) | 4, 9 |
 | `email_credentials` | shared (email routing) | 4, 9 |
 | `app_settings` | shared | — |
@@ -396,6 +400,86 @@ Indexes: `idx_created_at`, `idx_status`, `idx_route (matched_route_id)`, `idx_ho
 
 ---
 
+### Trigger System tables
+
+#### `trigger_rules`
+
+```sql
+id               int unsigned   PK
+event_type       varchar(64)    NOT NULL   -- must exist in triggerService.EVENT_TYPES
+name             varchar(255)   NOT NULL
+description      text
+active           tinyint(1)     default 1
+position         int            default 0  -- order within one event type
+min_interval_s   int            NOT NULL default 0  -- cooldown seconds; 0 = no throttle
+match_mode       enum('conditions','code')            default 'conditions'
+match_config     json                      -- NULL on conditions mode = NON-match, not match-all
+transform_mode   enum('passthrough','mapper','code')  default 'passthrough'
+transform_config json
+match_count      int            default 0  -- bumped once per matching event
+last_matched_at  datetime                  -- also the cooldown reference point
+error_count      int            default 0  -- bumped per event where this rule's actions/transform failed
+last_error_at    datetime
+last_modified_by int
+created_at, updated_at
+```
+
+Index: `idx_event_active (event_type, active, position)` — the engine's only rule lookup.
+
+#### `trigger_rule_actions`
+
+```sql
+id          int unsigned  PK
+rule_id     int unsigned  NOT NULL   -- FK trigger_rules ON DELETE CASCADE
+name        varchar(100)
+position    int           default 0  -- dispatch order within the rule
+active      tinyint(1)    default 1  -- inactive actions are kept but skipped
+action_type enum('workflow','sequence','internal_function','http','hook')
+config      json          NOT NULL   -- shape depends on action_type; validated at WRITE time
+```
+
+Index: `idx_rule (rule_id, active, position)`.
+
+#### `trigger_executions` — one row per processed event
+
+```sql
+id            bigint unsigned  PK
+event_type    varchar(64)  NOT NULL
+contact_id    int                       -- promoted from the envelope for filtering
+case_id       varchar(50)               -- ditto
+depth         tinyint      default 0    -- trigger-chain depth
+status        enum('matched','partial','no_match','no_rules','depth_capped','error')
+rules_matched int          default 0
+outcomes      json                      -- { matched_rule_ids, action_outcomes[], warnings[] }
+envelope      json                      -- the full event; doubles as the UI's sample stock
+error         text                      -- summary, capped at 500 chars
+created_at    datetime
+```
+
+Indexes: `idx_type_time (event_type, created_at)`, `idx_case`, `idx_contact`, `idx_created`, `idx_status_id (status, id)`, `idx_event_id (event_type, id)`.
+
+The row is inserted **before** actions dispatch and finalized after (so a mid-dispatch crash still leaves evidence the event was seen). `envelope` is written on every status including `no_match` — that's what the authoring UI's sample panel reads. `no_rules` rows are capped at 20 per event type per 7 days so unconsumed events don't cost a JSON insert per mutation forever.
+
+#### `trigger_execution_rules` — one row per matched rule per execution
+
+```sql
+id           bigint unsigned  PK
+execution_id bigint unsigned  NOT NULL   -- FK trigger_executions ON DELETE CASCADE
+rule_id      int unsigned     NOT NULL   -- NO FK, deliberately (see below)
+rule_name    varchar(255)     NOT NULL   -- denormalized survivor
+action_count int              default 0  -- outcomes dispatched for this rule
+failed_count int              default 0  -- non-success outcomes; a failed transform = 0/1
+created_at   datetime
+```
+
+Indexes: `idx_rule_time (rule_id, id)`, `idx_execution (execution_id)`.
+
+**No FK to `trigger_rules`** — these rows must outlive the rule they describe, which is also why `rule_name` is denormalized at write time and sized to match `trigger_rules.name` exactly (sql_mode has no `STRICT_TRANS_TABLES`, so a narrower column would truncate a long name silently). The FK to `trigger_executions` **is** present with `ON DELETE CASCADE`, so the retention sweep stays a single batched DELETE and orphans are structurally impossible.
+
+Only *matched* rules get a row. Non-matching and cooldown-suppressed rules produce none — they weren't runs.
+
+---
+
 ### Shared tables (relevant to YisraFlow)
 
 #### `phone_lines` — SMS routing
@@ -464,6 +548,11 @@ email_router_executions ──► email_routes (soft-linked by id)
 scheduled_jobs ──► workflow_executions (back-pointer column, no FK)
                 ──► sequence_enrollments (back-pointer column, no FK)
 job_results ──► scheduled_jobs (no FK; preserves audit)
+
+trigger_rules ────────► trigger_rule_actions      (CASCADE)
+trigger_executions ───► trigger_execution_rules   (CASCADE — retention rides this)
+trigger_execution_rules.rule_id  -- soft-linked, NO FK
+                                 -- (audit must outlive the rule; rule_name denormalized)
 ```
 
 The hook + email-router log tables and `job_results` are intentionally **soft-linked** so deleting a parent row doesn't cascade through the audit tables. This keeps a permanent record of what happened even if you delete the underlying hook / route / job.

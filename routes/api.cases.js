@@ -20,6 +20,16 @@ const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const caseService = require('../services/caseService');
 
+// Acting user for trigger-event actors (R4/S5). Same shape as
+// routes/api.triggers.js: jwtOrApiKey sets req.auth = { type, userId, … } for
+// JWT callers; API-key callers carry no user identity, so they get null and
+// the emit omits `actor` entirely rather than asserting user 0.
+function actingUserId(req) {
+  const uid = req.auth && req.auth.type === 'jwt' ? req.auth.userId : null;
+  const n = parseInt(uid, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 // ─── LIST ───
 router.get('/api/cases', jwtOrApiKey, async (req, res) => {
   try {
@@ -75,7 +85,10 @@ router.get('/api/cases/:id', jwtOrApiKey, async (req, res) => {
 // ─── UPDATE ───
 router.patch('/api/cases/:id', jwtOrApiKey, async (req, res) => {
   try {
-    const updated = await caseService.updateCase(req.db, req.params.id, req.body);
+    const updated = await caseService.updateCase(req.db, req.params.id, req.body, {
+      userId: actingUserId(req),
+      source: 'manual',
+    });
     res.json({ status: 'success', data: updated });
   } catch (err) {
     console.error('PATCH /api/cases/:id error:', err);
@@ -239,7 +252,10 @@ router.patch('/api/cases/:id/docket', jwtOrApiKey, async (req, res) => {
     if (caseNumber     != null) fields.case_number      = caseNumber;
     if (caseNumberFull != null) fields.case_number_full = caseNumberFull;
 
-    await caseService.updateCase(req.db, caseId, fields);
+    await caseService.updateCase(req.db, caseId, fields, {
+      userId: actingUserId(req),
+      source: 'docket_adopt',
+    });
 
     const updated = await caseService.getCase(req.db, caseId);
     res.json({ status: 'success', data: updated });
@@ -268,7 +284,8 @@ router.post('/api/cases/:id/contacts', jwtOrApiKey, async (req, res) => {
 
   try {
     const result = await caseService.addCaseContact(
-      req.db, req.params.id, contact_id, relate_type || 'Primary'
+      req.db, req.params.id, contact_id, relate_type || 'Primary',
+      { userId: actingUserId(req) }
     );
     res.json({ status: 'success', ...result });
   } catch (err) {
@@ -280,7 +297,10 @@ router.post('/api/cases/:id/contacts', jwtOrApiKey, async (req, res) => {
 
 router.delete('/api/cases/:id/contacts/:contactId', jwtOrApiKey, async (req, res) => {
   try {
-    const result = await caseService.removeCaseContact(req.db, req.params.id, req.params.contactId);
+    const result = await caseService.removeCaseContact(
+      req.db, req.params.id, req.params.contactId,
+      { userId: actingUserId(req) }
+    );
     if (!result.removed) return res.status(404).json({ status: 'error', message: 'Relationship not found' });
     res.json({ status: 'success', message: 'Contact removed from case' });
   } catch (err) {

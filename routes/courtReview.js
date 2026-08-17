@@ -439,7 +439,14 @@ router.post('/api/court-review/adopt-rerun', jwtOrApiKey, async (req, res) => {
       fields.case_caption = rowCaption.slice(0, 150);
     }
     if (Object.keys(fields).length) {
-      await caseService.updateCase(req.db, caseId, fields);
+      // R4/S5: attribute the write. Court-review adopts are staff actions on a
+      // machine-extracted suggestion — source distinguishes them from a plain
+      // detail-form edit for rule authors.
+      const uid = req.auth && req.auth.type === 'jwt' ? parseInt(req.auth.userId, 10) : NaN;
+      await caseService.updateCase(req.db, caseId, fields, {
+        userId: Number.isFinite(uid) ? uid : null,
+        source: 'court_review',
+      });
     }
 
     // Re-run (stored payload; case now resolves). Honors court_ingest_live.

@@ -6,6 +6,7 @@
  * GET    /api/triggers/events                — event-type registry (+ field catalogs)
  * GET    /api/triggers/rules?event_type=     — list rules (actions nested)
  * GET    /api/triggers/rules/:id             — one rule (actions nested)
+ * GET    /api/triggers/rules/:id/history     — recent runs of this rule (?limit, default 20, max 100)
  * POST   /api/triggers/rules                 — create { event_type, name, …, actions?: [] }
  * PUT    /api/triggers/rules/:id             — partial update; `actions` array (if present) REPLACES the set
  * DELETE /api/triggers/rules/:id             — hard delete rule + actions
@@ -70,7 +71,10 @@ router.get('/api/triggers/meta', jwtOrApiKey, async (req, res) => {
       action_types:    ingestMeta.action_types,
       targets:         ingestMeta.targets,
       transform_modes: ['passthrough', 'mapper', 'code'],
-      execution_statuses: ['matched', 'no_match', 'no_rules', 'depth_capped', 'error'],
+      // 'partial' was missing here while the column enum and the Phase-4
+      // status derivation both produce it (R4 fix). triggers.html hardcodes
+      // its own filter list, which is why nothing looked broken.
+      execution_statuses: ['matched', 'partial', 'no_match', 'no_rules', 'depth_capped', 'error'],
     });
   } catch (err) { fail(res, err); }
 });
@@ -90,6 +94,20 @@ router.get('/api/triggers/rules/:id', jwtOrApiKey, async (req, res) => {
   try {
     const rule = await triggerService.getRule(req.db, req.params.id);
     res.json({ status: 'success', rule });
+  } catch (err) { fail(res, err); }
+});
+
+// R4/P1: recent runs of ONE rule (the editor's "Recent runs" card).
+// Distinct path depth from /rules/:id, so registration order is irrelevant.
+// No 404 guard on the rule: audit rows outlive the rule they describe (the
+// table has no FK to trigger_rules for exactly that reason), so an unknown or
+// deleted rule id legitimately returns whatever history exists — usually [].
+router.get('/api/triggers/rules/:id/history', jwtOrApiKey, async (req, res) => {
+  try {
+    const rows = await triggerService.listRuleHistory(req.db, req.params.id, {
+      limit: req.query.limit,
+    });
+    res.json({ status: 'success', history: rows });
   } catch (err) { fail(res, err); }
 });
 

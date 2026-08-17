@@ -637,7 +637,8 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     params.push(req.params.id);
     await req.db.query(`UPDATE checkitems SET ${fields.join(', ')} WHERE id = ?`, params);
 
-    const newChecklistStatus = await computeAndSaveStatus(req.db, parent.checklist_id);
+    const { status: newChecklistStatus, transitioned: checklistTransitioned } =
+      await computeAndSaveStatus(req.db, parent.checklist_id);
 
     const [[updated]] = await req.db.query('SELECT * FROM checkitems WHERE id = ?', [req.params.id]);
     res.json(updated);
@@ -664,7 +665,11 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
         },
       });
     }
-    if (parent.checklist_status !== 'complete' && newChecklistStatus === 'complete') {
+    // R4/S8: gated on the ATOMIC transition signal, not on the pre-read
+    // comparison. Two requests completing the last two items both used to
+    // observe incomplete -> complete and emit; now exactly one write wins the
+    // conditional UPDATE and only that request emits.
+    if (checklistTransitioned && newChecklistStatus === 'complete') {
       domainEvents.emit(req.db, 'checklist.completed', {
         contact_id: linkContactId,
         case_id:    linkCaseId,
@@ -691,13 +696,15 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     if (!parent) return res.status(404).json({ status: 'error', message: 'Item not found' });
 
     await req.db.query('DELETE FROM checkitems WHERE id = ?', [req.params.id]);
-    const newChecklistStatus = await computeAndSaveStatus(req.db, parent.checklist_id);
+    const { status: newChecklistStatus, transitioned: checklistTransitioned } =
+      await computeAndSaveStatus(req.db, parent.checklist_id);
     res.json({ status: 'success', message: 'Item deleted' });
 
     // Trigger: checklist.completed (fire-and-forget, post-response) — deleting
-    // the last incomplete item completes the list. Own try (R3/S8).
+    // the last incomplete item completes the list. Own try (R3/S8). Gated on
+    // the atomic transition signal (R4/S8), same as the PATCH route.
     try {
-    if (parent.checklist_status !== 'complete' && newChecklistStatus === 'complete') {
+    if (checklistTransitioned && newChecklistStatus === 'complete') {
       domainEvents.emit(req.db, 'checklist.completed', {
         contact_id: parent.link_type === 'contact' ? (parseInt(parent.link, 10) || null) : null,
         case_id:    parent.link_type === 'case'    ? String(parent.link) : null,

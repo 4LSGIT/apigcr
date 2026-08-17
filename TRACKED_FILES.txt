@@ -121,6 +121,7 @@ manual/03-YisraFlow/11-api-reference.md
 manual/03-YisraFlow/12-database-schema.md
 manual/03-YisraFlow/13-cookbook.md
 manual/03-YisraFlow/14-human-in-the-loop.md
+manual/03-YisraFlow/15-triggers.md
 manual/03-YisraFlow/README.md
 manual/04-Integrations/01-connections.md
 manual/04-Integrations/02-connections-live-test.md
@@ -313,6 +314,7 @@ ref/database.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
+ref/migration_trigger_R4.sql
 ref/migration_trigger_system_T1.sql
 ref/migration_trigger_system_T3T4.sql
 ref/pages/form.html

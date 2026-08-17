@@ -2,7 +2,7 @@
 
 ## For operators
 
-YisraFlow has **five subsystems** that handle different shapes of automation. They all share one underlying job queue, so anything one engine schedules is processed by the same heartbeat as everything else.
+YisraFlow has **six subsystems** that handle different shapes of automation. Five of them share one underlying job queue, so anything they schedule is processed by the same heartbeat as everything else; the sixth, the Trigger System, runs inline off database mutations rather than off the queue.
 
 Use this chart to pick one:
 
@@ -14,8 +14,9 @@ Use this chart to pick one:
 | Run a multi-step intake flow with branching ("if 341, do this; else, do that") | **Workflow** |
 | Have Calendly / JotForm / a payment processor trigger something in YisraCase | **YisraHook** |
 | Have inbound email trigger something based on sender or subject | **Email Router** (which then routes to a Hook) |
+| React to something that happened *inside* YisraCase — an appointment attended, a docket filled in, a checklist finished | **Trigger System** |
 
-Everything is configured through `automationManager.html`. Five tabs across the top — one per subsystem.
+Everything is configured through `automationManager.html`. Tabs across the top — one per subsystem, plus the email/phone ingest, court review, and activity surfaces.
 
 When something doesn't fire when you expected, the order of places to look is:
 1. **Logs / Executions tab** of the relevant subsystem (did it fire? why did it skip?)
@@ -26,7 +27,7 @@ When something doesn't fire when you expected, the order of places to look is:
 
 ## Technical reference
 
-### The five subsystems and where they live
+### The six subsystems and where they live
 
 ```
 lib/workflow_engine.js          Workflow Engine
@@ -44,6 +45,10 @@ routes/api.hooks.js             POST /hooks/:slug + management CRUD
 
 services/emailRouter.js         Email Router — match incoming emails to hooks
 routes/api.email_router.js      POST /email-router + management CRUD
+
+lib/domainEvents.js             Trigger System — emit(), envelope builder, ALS loop guard
+services/triggerService.js      Trigger engine — registry, match, transform, dispatch
+routes/api.triggers.js          Trigger rules CRUD + executions + dry run / replay
 
 services/resolverService.js     Universal {{table.column|modifier}} resolver
 services/calendarService.js     Jewish business calendar (Shabbos + Yom Tov)
@@ -63,9 +68,17 @@ services/timezoneService.js     localToUTC / utcToLocal / parseUserDateTime
 | Single action at a future time? | Overkill | Overkill | ✓ |
 | Triggered by external system? | Via YisraHook | Via YisraHook | Via YisraHook |
 
+### Trigger System (chapter 15)
+
+The other five subsystems all wait to be told to run. The Trigger System watches YisraCase itself: services announce domain events at their post-commit choke points (`domainEvents.emit`), and `trigger_rules` for that event type are matched, transformed, and dispatched through the same `hookFilter` / `hookMapper` / `actionDispatchers` primitives YisraHook and the ingest rules use — it is the third consumer of those shared parts, not a parallel implementation. Emission is fire-and-forget and never throws, so a broken rule can never fail the mutation that announced it. Two loop guards bound recursion (chain depth 4, and a 50-dispatch budget per root event) because a rule's actions can cause mutations that announce further events.
+
+See **[15-triggers.md](15-triggers.md)** for the event catalog, the match/transform fail-safe rulings, the action types, and the testing and replay tools.
+
+---
+
 ### Shared infrastructure
 
-**`scheduled_jobs` table** is the unified queue. All five subsystems insert rows here; `POST /process-jobs` claims them in batches of 10.
+**`scheduled_jobs` table** is the unified queue. The five queue-driven subsystems insert rows here; `POST /process-jobs` claims them in batches of 10. The Trigger System is the exception — it evaluates rules inline at the emitting service's post-commit point, so a trigger fires within the same request rather than on the next heartbeat. Its *actions* can of course queue jobs (a workflow start, a sequence enrollment).
 
 The `scheduled_jobs.type` enum has five values:
 - `one_time` — fires once at `scheduled_time`, then `completed` or `failed`

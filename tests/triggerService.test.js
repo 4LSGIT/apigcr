@@ -72,6 +72,9 @@ function makeDb(rulesByEvent) {
       if (/INSERT INTO trigger_executions/.test(sql)) {
         return [{ insertId: nextId++, affectedRows: 1 }];
       }
+      if (/INSERT INTO trigger_execution_rules/.test(sql)) {
+        return [{ insertId: nextId++, affectedRows: 1 }];
+      }
       if (/UPDATE trigger_executions/.test(sql)) {
         return [{ affectedRows: 1 }];
       }
@@ -234,6 +237,83 @@ test('S12: the execution row is inserted BEFORE actions dispatch', async () => {
   await triggerService.processEvent(db, domainEvents.buildEnvelope('appt.created', {}));
   expect(insertSeenBeforeDispatch).toBe(true);
   expect(execUpdates(db).length).toBe(1);   // finalized after
+});
+
+// ─────────────────────────────────────────────────────────────
+// R4/S6 cooldown + R4/P1 per-rule audit rows
+// ─────────────────────────────────────────────────────────────
+
+const auditInserts = (db) => db.calls.filter(c => /INSERT INTO trigger_execution_rules/.test(c.sql));
+const metricBumps  = (db) => db.calls.filter(c => /UPDATE trigger_rules\s+SET match_count/.test(c.sql));
+
+test('S6: a cooling-down rule does NOT match — no actions, no metrics bump, warning recorded', async () => {
+  // cooling_down / secs_since_match are computed by SQL in the real loader;
+  // the stub returns whatever the fixture carries.
+  const db = makeDb({
+    'appt.created': [rule(1, 'appt.created', [hookAction(11, 1)], {
+      min_interval_s: 300, cooling_down: 1, secs_since_match: 42,
+    })],
+  });
+  const out = await triggerService.processEvent(db, domainEvents.buildEnvelope('appt.created', {}));
+
+  expect(out.status).toBe('no_match');
+  expect(out.matchedRuleIds).toEqual([]);
+  expect(hookService.executeHook).not.toHaveBeenCalled();
+  // Suppression must not re-arm the window, or a rule under load never fires.
+  expect(metricBumps(db).length).toBe(0);
+  expect(out.warnings.join(' ')).toMatch(/skipped_cooldown/);
+  expect(out.warnings.join(' ')).toMatch(/rule 1 \(rule 1\)/);   // names the rule
+  // Nothing matched → nothing to audit.
+  expect(auditInserts(db).length).toBe(0);
+});
+
+test('S6: cooldown 0 / not cooling is the untouched default path', async () => {
+  const db = makeDb({
+    'appt.created': [rule(1, 'appt.created', [hookAction(11, 1)], {
+      min_interval_s: 0, cooling_down: 0, secs_since_match: null,
+    })],
+  });
+  const out = await triggerService.processEvent(db, domainEvents.buildEnvelope('appt.created', {}));
+  expect(out.status).toBe('matched');
+  expect(hookService.executeHook).toHaveBeenCalledTimes(1);
+});
+
+test('P1: one audit row per matched rule, with action/failed tallies', async () => {
+  // rule 1: two actions, one of which fails → 2 actions / 1 failed
+  // rule 2: transform blows up → 0 actions / 1 failed (it was meant to act)
+  const db = makeDb({
+    'appt.created': [
+      rule(1, 'appt.created', [hookAction(11, 1), brokenAction(12, 1)]),
+      rule(2, 'appt.created', [hookAction(21, 2)], {
+        transform_mode: 'code',
+        transform_config: { code: 'throw new Error("nope");' },
+      }),
+    ],
+  });
+  await triggerService.processEvent(db, domainEvents.buildEnvelope('appt.created', {}));
+
+  const ins = auditInserts(db);
+  expect(ins.length).toBe(1);              // ONE batched INSERT, not one per rule
+  const p = ins[0].params;
+  // (execution_id, rule_id, rule_name, action_count, failed_count) × 2
+  expect(p.length).toBe(10);
+  expect(p.slice(1, 5)).toEqual([1, 'rule 1', 2, 1]);
+  expect(p.slice(6, 10)).toEqual([2, 'rule 2', 0, 1]);
+  expect(p[0]).toBe(p[5]);                 // same parent execution
+});
+
+test('P1: audit insert failure never disturbs the engine', async () => {
+  const db = makeDb({ 'appt.created': [rule(1, 'appt.created', [hookAction(11, 1)])] });
+  const inner = db.query.bind(db);
+  db.query = async (sql, params) => {
+    if (/INSERT INTO trigger_execution_rules/.test(sql)) throw new Error('table missing');
+    return inner(sql, params);
+  };
+  const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const out = await triggerService.processEvent(db, domainEvents.buildEnvelope('appt.created', {}));
+  spy.mockRestore();
+  expect(out.status).toBe('matched');       // the real work still reports success
+  expect(hookService.executeHook).toHaveBeenCalledTimes(1);
 });
 
 // ─────────────────────────────────────────────────────────────

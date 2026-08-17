@@ -367,9 +367,15 @@ async function getCase(db, caseId, include = '', {
  * @param {object} db
  * @param {string} caseId
  * @param {object} fields
+ * @param {object} [opts]
+ * @param {number|null} [opts.userId]  acting user for the case.updated event's
+ *   actor (R4/S5). ADDITIVE + defaulted: callers that don't pass it behave
+ *   exactly as before, with actor null rather than a fabricated user 0.
+ * @param {string|null} [opts.source]  'automation' | 'court_review' | … —
+ *   free-text provenance for the same event.
  * @returns {{ case_id: string, updated_fields: string[] }}
  */
-async function updateCase(db, caseId, fields) {
+async function updateCase(db, caseId, fields, { userId = null, source = null } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateCase requires at least one field');
   }
@@ -420,10 +426,18 @@ async function updateCase(db, caseId, fields) {
   // Trigger: case.updated (fire-and-forget) — only when something actually
   // changed after normalization. data = post-state approximation
   // (pre-row overlaid with the written values).
+  //
+  // actor/source are OMITTED (not nulled) when the caller passed nothing, so
+  // an un-threaded caller leaves actor absent rather than claiming user 0 —
+  // "system did it" and "we don't know who did it" must stay distinguishable
+  // to a rule author. userId 0 IS meaningful when passed explicitly (the
+  // automation convention).
   const changes = domainEvents.buildChanges(priorRow, safeFields, keys);
   if (Object.keys(changes).length) {
     domainEvents.emit(db, 'case.updated', {
       case_id: String(caseId),
+      ...(userId != null ? { actor: { user_id: userId } } : {}),
+      ...(source != null ? { source } : {}),
       data: { ...priorRow, ...safeFields },
       changes,
       extra: { updated_fields: keys },
@@ -448,9 +462,12 @@ async function updateCase(db, caseId, fields) {
  * @param {string} caseId
  * @param {number} contactId
  * @param {string} relateType - 'Primary','Secondary','Other','Bystander'
+ * @param {object} [opts]
+ * @param {number|null} [opts.userId] acting user for the case.contact_linked
+ *   actor (R4/S5). Additive + defaulted — existing callers are unaffected.
  * @returns {{ case_relate_id: number }}
  */
-async function addCaseContact(db, caseId, contactId, relateType = 'Primary') {
+async function addCaseContact(db, caseId, contactId, relateType = 'Primary', { userId = null } = {}) {
   const validTypes = ['Primary', 'Secondary', 'Other', 'Bystander'];
   if (!validTypes.includes(relateType)) {
     throw new Error(`addCaseContact: invalid type "${relateType}". Must be one of: ${validTypes.join(', ')}`);
@@ -469,6 +486,7 @@ async function addCaseContact(db, caseId, contactId, relateType = 'Primary') {
     domainEvents.emit(db, 'case.contact_linked', {
       case_id: String(caseId),
       contact_id: parseInt(contactId, 10) || null,
+      ...(userId != null ? { actor: { user_id: userId } } : {}),
       data: { relate_type: relateType, case_relate_id: result.insertId },
     });
 
@@ -488,9 +506,12 @@ async function addCaseContact(db, caseId, contactId, relateType = 'Primary') {
  * @param {object} db
  * @param {string} caseId
  * @param {number} contactId
+ * @param {object} [opts]
+ * @param {number|null} [opts.userId] acting user for the
+ *   case.contact_unlinked actor (R4/S5). Additive + defaulted.
  * @returns {{ removed: boolean }}
  */
-async function removeCaseContact(db, caseId, contactId) {
+async function removeCaseContact(db, caseId, contactId, { userId = null } = {}) {
   const [result] = await db.query(
     `DELETE FROM case_relate
      WHERE case_relate_case_id = ? AND case_relate_client_id = ?`,
@@ -503,6 +524,7 @@ async function removeCaseContact(db, caseId, contactId) {
     domainEvents.emit(db, 'case.contact_unlinked', {
       case_id: String(caseId),
       contact_id: parseInt(contactId, 10) || null,
+      ...(userId != null ? { actor: { user_id: userId } } : {}),
       data: { removed_rows: result.affectedRows },
     });
   }

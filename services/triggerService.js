@@ -35,8 +35,22 @@
  *     so any events re-emitted by the action's side effects carry depth+1 /
  *     the rule id on the chain. processEvent drops events arriving at
  *     depth >= domainEvents.MAX_DEPTH ('depth_capped' row + alert).
- *   - No test-envelope gate (no replay path exists for domain events; the
- *     ingest gate is a deliberate divergence documented there).
+ *   - Replay (POST /api/triggers/replay) re-runs a RECORDED envelope through
+ *     this same function — real dispatch, new execution row, chain scope
+ *     reset. It is execution_id-only (Review S10): a recorded envelope cannot
+ *     be forged, whereas a raw one let any staff token synthesise an event for
+ *     an arbitrary case. There is no test-envelope GATE (the ingest pipeline's
+ *     gate is a deliberate divergence documented there) — the lockdown is the
+ *     execution_id requirement instead.
+ *
+ * R4 ADDITIONS
+ *   - trigger_execution_rules: one audit row per MATCHED rule per execution
+ *     (rule_name denormalized so it survives rule deletion). Powers the
+ *     per-rule "Recent runs" card. Written after the finalize UPDATE, in its
+ *     own catch — audit must never disturb the engine.
+ *   - trigger_rules.min_interval_s: per-rule cooldown. A rule inside its
+ *     cooldown window is NOT matched (no metrics bump, no actions) and logs a
+ *     skipped_cooldown warning naming the rule.
  *
  * EVENT REGISTRY
  *   EVENT_TYPES is the authoritative catalog of emittable events + their
@@ -59,8 +73,14 @@ const domainEvents           = require('../lib/domainEvents');
 
 // Events whose emit sites genuinely have no actor/source use CORE_FIELDS so
 // the picker never advertises a path that is always null (Review S5).
-// Threading actingUserId/source through the case-service callers is queued
-// as follow-up work; until then, honesty over aspiration.
+//
+// R4/S5: caseService.updateCase / addCaseContact / removeCaseContact now
+// accept { userId, source } and thread them into their emits, so case.updated
+// / case.contact_linked / case.contact_unlinked moved back to COMMON_FIELDS.
+// case.created stays on CORE_FIELDS: it fires from the intake and petition
+// INSERT sites, which carry a meaningful `source` (declared explicitly below)
+// but no acting user. Honesty over aspiration — only publish a path once a
+// real writer fills it.
 const CORE_FIELDS = [
   { path: 'event',      label: 'Event type' },
   { path: 'ts',         label: 'Timestamp (ISO)' },
@@ -200,9 +220,9 @@ const EVENT_TYPES = {
   },
   'case.updated': {
     label: 'Case updated',
-    description: 'Fires from caseService.updateCase (detail form + the update_case internal function, which now delegates) when something actually changed. Direct SQL writers (court executor field writes, 341 pointer, dropbox path) bypass this deliberately. Stage moves are case.stage_advanced, not case.updated. No actor/source on this event (the write path does not carry them). For ANY column: changes.<column> (exists = changed), changes.<column>.from / .to (values) via Custom path.',
+    description: "Fires from caseService.updateCase (detail form + the update_case internal function, which delegates) when something actually changed. Direct SQL writers (court executor field writes, 341 pointer, dropbox path) bypass this deliberately. Stage moves are case.stage_advanced, not case.updated. actor.user_id / source are threaded from the caller (R4/S5): the case-detail PATCH and docket-adopt routes pass the JWT user, update_case passes user 0 + source 'automation', court-review adopt passes source 'court_review'. Callers that pass neither leave actor null — filter defensively. For ANY column: changes.<column> (exists = changed), changes.<column>.from / .to (values) via Custom path.",
     fields: [
-      ...CORE_FIELDS,
+      ...COMMON_FIELDS,
       { path: 'data.case_type',    label: 'Case type' },
       { path: 'data.case_subtype', label: 'Case subtype' },
       { path: 'data.case_stage',   label: 'case_stage (legacy enum)' },
@@ -233,16 +253,16 @@ const EVENT_TYPES = {
   },
   'case.contact_linked': {
     label: 'Contact linked to case',
-    description: 'Fires from caseService.addCaseContact. NOT fired by the intake/petition routes\' direct case_relate INSERTs at creation (case.created covers those). No actor/source on this event.',
+    description: 'Fires from caseService.addCaseContact. NOT fired by the intake/petition routes\' direct case_relate INSERTs at creation (case.created covers those). actor.user_id carries the acting JWT user from POST /api/cases/:id/contacts (R4/S5); API-key callers and any future caller that passes no userId leave actor null.',
     fields: [
-      ...CORE_FIELDS,
+      ...COMMON_FIELDS,
       { path: 'data.relate_type', label: 'Relation type (Primary/Secondary/Other/Bystander)' },
     ],
   },
   'case.contact_unlinked': {
     label: 'Contact unlinked from case',
-    description: 'Fires from caseService.removeCaseContact when a row was actually removed. No actor/source on this event.',
-    fields: [ ...CORE_FIELDS ],
+    description: 'Fires from caseService.removeCaseContact when a row was actually removed. actor.user_id carries the acting JWT user from DELETE /api/cases/:id/contacts/:contactId (R4/S5); API-key callers leave actor null.',
+    fields: [ ...COMMON_FIELDS ],
   },
   // ── T4 events ────────────────────────────────────────────
   'form.submitted': {
@@ -333,9 +353,22 @@ const MAX_DISPATCHES_PER_ROOT = 50;
  * Rules ordered position ASC, id ASC; actions position ASC, id ASC per rule.
  */
 async function listActiveRulesForEvent(db, eventType) {
+  // R4/S6: `cooling_down` and `secs_since_match` are computed BY THE DATABASE,
+  // deliberately — not in JS from last_matched_at. The pool runs timezone:'Z',
+  // so DATETIME columns arrive as Dates whose ISO string is the stored WALL
+  // CLOCK (see domainEvents._diffNorm); subtracting that from Date.now() is
+  // only correct while the server happens to run UTC. Letting MySQL compare
+  // its own NOW() to its own column is exact, free (same query), and survives
+  // a server timezone change. Evaluated at load time — a few ms before the
+  // match, which is ample precision for a throttle measured in seconds.
   const [rules] = await db.query(
     `SELECT id, event_type, name, match_mode, match_config,
-            transform_mode, transform_config
+            transform_mode, transform_config, min_interval_s,
+            TIMESTAMPDIFF(SECOND, last_matched_at, NOW()) AS secs_since_match,
+            CASE WHEN min_interval_s > 0
+                  AND last_matched_at IS NOT NULL
+                  AND last_matched_at > DATE_SUB(NOW(), INTERVAL min_interval_s SECOND)
+                 THEN 1 ELSE 0 END AS cooling_down
        FROM trigger_rules
       WHERE active = 1 AND event_type = ?
       ORDER BY position ASC, id ASC`,
@@ -751,6 +784,45 @@ async function _insertNoRulesCapped(db, envelope) {
   }
 }
 
+/**
+ * R4/P1: one trigger_execution_rules row per MATCHED rule of one execution.
+ *
+ * Why a table and not a query over trigger_executions.outcomes: "what did
+ * THIS rule do lately" against a JSON column means a full scan of a 30–90 day
+ * retention window. idx_rule_time answers it with a range read.
+ *
+ * rule_name is denormalized on purpose — the row must still be readable after
+ * the rule is deleted (same contract as the rule_name carried in each action
+ * outcome). Rows are cleaned up by the FK's ON DELETE CASCADE when the
+ * retention sweep deletes their parent execution.
+ *
+ * Single batched INSERT, own try: audit failure must never disturb the engine.
+ *
+ * @param {number|null} execId  parent trigger_executions.id (skip when null —
+ *                              the FK has nothing to point at)
+ * @param {Array<{rule_id:number, rule_name:string, action_count:number, failed_count:number}>} perRule
+ */
+async function _insertExecutionRules(db, execId, perRule) {
+  if (execId == null || !Array.isArray(perRule) || !perRule.length) return;
+  try {
+    const values = [];
+    const params = [];
+    for (const r of perRule) {
+      values.push('(?, ?, ?, ?, ?)');
+      params.push(execId, r.rule_id, String(r.rule_name ?? '').slice(0, 255),
+                  r.action_count | 0, r.failed_count | 0);
+    }
+    await db.query(
+      `INSERT INTO trigger_execution_rules
+         (execution_id, rule_id, rule_name, action_count, failed_count)
+       VALUES ${values.join(', ')}`,
+      params
+    );
+  } catch (err) {
+    console.error(`[triggerService] execution-rules audit insert failed (exec ${execId}):`, err.message);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // ORCHESTRATOR — called by domainEvents.emit (fire-and-forget path)
 // ─────────────────────────────────────────────────────────────
@@ -807,6 +879,20 @@ async function processEvent(db, envelope) {
 
   for (const rule of rules) {
     if (!_evaluateMatch(rule, envelope)) continue;
+
+    // R4/S6 cooldown. RULING: a cooldown-suppressed rule is NOT matched — no
+    // match_count bump, no last_matched_at refresh, no actions. Counting it as
+    // matched would both inflate the metric and (worse) re-arm the window on
+    // every suppressed event, so a rule under sustained load could never fire
+    // again. Suppression is a warning, not a failure: error_count is untouched
+    // and the alerting path is not involved. Throttling is the intent.
+    if (rule.cooling_down) {
+      const w = `rule ${rule.id} (${rule.name}) skipped_cooldown: matched ` +
+                `${rule.secs_since_match}s ago, min_interval_s=${rule.min_interval_s}`;
+      console.log(`[triggerService] ${w}`);
+      warnings.push(w);
+      continue;
+    }
 
     // Matched (regardless of transform/action outcomes) — same contract as
     // the ingest service: matched reflects MATCH.
@@ -888,6 +974,35 @@ async function processEvent(db, envelope) {
       `UPDATE trigger_executions SET status = ?, outcomes = ?, error = ? WHERE id = ?`,
       [status, JSON.stringify(finalOutcomes), errorSummary, execId]
     ).catch(err => console.error('[triggerService] execution finalize failed:', err.message));
+
+    // ── R4/P1: per-rule audit rows (after finalize; own catch inside) ──────
+    // One row per MATCHED rule. action_count = outcomes dispatched for that
+    // rule; failed_count = its non-success outcomes ('failed' and 'skipped' —
+    // a budget-skipped action did not do its job either). A rule whose
+    // transform failed dispatched nothing: 0 actions / 1 failure, which is
+    // what "the rule was supposed to do something and did nothing" means in
+    // the Phase-4 status derivation above.
+    const perRule = new Map();
+    for (const rid of matchedRuleIds) {
+      const rule = rules.find(r => r.id === rid);
+      perRule.set(rid, {
+        rule_id: rid,
+        rule_name: rule ? rule.name : `(rule ${rid})`,
+        action_count: 0,
+        failed_count: 0,
+      });
+    }
+    for (const o of actionOutcomes) {
+      const e = perRule.get(o.rule_id);
+      if (!e) continue;                       // defensive; every outcome has a matched rule
+      e.action_count++;
+      if (o.status !== 'success') e.failed_count++;
+    }
+    for (const r of failedTransformRules) {
+      const e = perRule.get(r.id);
+      if (e) e.failed_count++;
+    }
+    await _insertExecutionRules(db, execId, [...perRule.values()]);
   }
 
   // ── Phase 5: metrics + alerting ──────────────────────────────────────────
@@ -1011,6 +1126,15 @@ function _validateRuleFields(fields, { partial = false } = {}) {
       !['passthrough', 'mapper', 'code'].includes(fields.transform_mode)) {
     throw _badRequest(`transform_mode must be 'passthrough', 'mapper', or 'code'`);
   }
+  // R4/S6. The column is NOT NULL DEFAULT 0 and sql_mode lacks
+  // STRICT_TRANS_TABLES, so a negative or non-numeric value would be coerced
+  // silently rather than rejected — validate at the door instead.
+  if (fields.min_interval_s !== undefined && fields.min_interval_s !== null) {
+    const n = Number(fields.min_interval_s);
+    if (!Number.isFinite(n) || n < 0) {
+      throw _badRequest('min_interval_s must be a number >= 0 (0 = no cooldown)');
+    }
+  }
 }
 
 function _validateActions(actions) {
@@ -1099,6 +1223,7 @@ async function createRule(db, fields, { userId = null } = {}) {
 
   const {
     event_type, name, description = null, active = 1, position = 0,
+    min_interval_s = 0,
     match_mode = 'conditions', match_config = null,
     transform_mode = 'passthrough', transform_config = null,
     actions = [],
@@ -1107,11 +1232,12 @@ async function createRule(db, fields, { userId = null } = {}) {
   return db.withTransaction(async (conn) => {
     const [res] = await conn.query(
       `INSERT INTO trigger_rules
-         (event_type, name, description, active, position, match_mode, match_config,
-          transform_mode, transform_config, last_modified_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (event_type, name, description, active, position, min_interval_s,
+          match_mode, match_config, transform_mode, transform_config, last_modified_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         event_type, String(name).trim(), description, active ? 1 : 0, position,
+        Math.max(0, parseInt(min_interval_s, 10) || 0),
         match_mode, match_config == null ? null : JSON.stringify(match_config),
         transform_mode, transform_config == null ? null : JSON.stringify(transform_config),
         userId,
@@ -1141,7 +1267,11 @@ async function updateRule(db, id, fields, { userId = null } = {}) {
   _validateRuleFields(fields, { partial: true });
   if (fields.actions !== undefined) _validateActions(fields.actions);
 
+  // The rule-column whitelist for partial updates. Anything not listed here is
+  // ignored by PUT — adding a rule column means adding it here too (R4/S6
+  // added min_interval_s).
   const COLS = ['event_type', 'name', 'description', 'active', 'position',
+                'min_interval_s',
                 'match_mode', 'match_config', 'transform_mode', 'transform_config'];
   const JSON_COLS = new Set(['match_config', 'transform_config']);
 
@@ -1154,6 +1284,8 @@ async function updateRule(db, id, fields, { userId = null } = {}) {
       vals.push(fields[c] == null ? null : JSON.stringify(fields[c]));
     } else if (c === 'active') {
       vals.push(fields[c] ? 1 : 0);
+    } else if (c === 'min_interval_s') {
+      vals.push(Math.max(0, parseInt(fields[c], 10) || 0));
     } else {
       vals.push(fields[c]);
     }
@@ -1226,6 +1358,33 @@ async function getExecution(db, id) {
 }
 
 /**
+ * R4/P1: recent runs OF ONE RULE — backs the editor's "Recent runs" card.
+ *
+ * Joined to the parent execution for the event/status/time context the card
+ * shows. INNER JOIN is safe: the FK cascade means an audit row cannot outlive
+ * its execution. Ordered by ter.id DESC (idx_rule_time) rather than by
+ * created_at — same ordering, but it reads straight off the index.
+ *
+ * Note this returns rows for rules that have since been DELETED too, if the
+ * caller knows the id; rule_name is the denormalized survivor.
+ */
+async function listRuleHistory(db, ruleId, { limit = 20 } = {}) {
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+  const [rows] = await db.query(
+    `SELECT ter.id, ter.execution_id, ter.rule_id, ter.rule_name,
+            ter.action_count, ter.failed_count,
+            ex.event_type, ex.status, ex.case_id, ex.contact_id, ex.created_at
+       FROM trigger_execution_rules ter
+       JOIN trigger_executions ex ON ex.id = ter.execution_id
+      WHERE ter.rule_id = ?
+      ORDER BY ter.id DESC
+      LIMIT ${lim}`,
+    [ruleId]
+  );
+  return rows;
+}
+
+/**
  * Recent envelopes for one event type — the T2 field-discovery/sample panel
  * source (mirrors the ingest UIs' sample blocks).
  */
@@ -1255,5 +1414,6 @@ module.exports = {
   deleteRule,
   listExecutions,
   getExecution,
+  listRuleHistory,
   listRecentEnvelopes,
 };

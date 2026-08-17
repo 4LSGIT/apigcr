@@ -2,7 +2,7 @@
 
 YisraFlow is the umbrella name for everything in YisraCase that *runs by itself*: it sends the SMS without you, fires the workflow when the appointment is booked, drips the follow-up over five days, retries the failed webhook, routes the inbound email to the right hook. This manual covers all of it.
 
-There are five subsystems, all sharing one job queue and one heartbeat:
+There are six subsystems. Five share one job queue and one heartbeat; the Trigger System runs inline off database mutations instead.
 
 | Subsystem | What it does | When you reach for it |
 |---|---|---|
@@ -11,6 +11,7 @@ There are five subsystems, all sharing one job queue and one heartbeat:
 | **Scheduled Jobs** | Single actions at a future time, or recurring on a cron | Daily digests, one-off future actions, recurring reports |
 | **YisraHook** | Configurable inbound webhook receiver | Replacing per-integration custom routes — Calendly, JotForm, Stripe, etc. |
 | **Email Router** | Routing layer in front of YisraHook for inbound email | Sending all firm email through one adapter and dispatching to different hooks based on subject/sender/etc. |
+| **Trigger System** | Rules that fire on internal domain events | Reacting to something that happened *inside* YisraCase — appointment attended, docket filled in, checklist finished |
 
 ---
 
@@ -33,6 +34,7 @@ If you've never used the system before, read these in order:
 | 11 | [11-api-reference.md](11-api-reference.md) | Every endpoint across all five subsystems |
 | 12 | [12-database-schema.md](12-database-schema.md) | Every table, every column, every index |
 | 13 | [13-cookbook.md](13-cookbook.md) | Patterns and pitfalls catalog. Practical answers to "I need X — which engine, what shape, what gotchas." |
+| 15 | [15-triggers.md](15-triggers.md) | Trigger System — domain events, the event catalog, match/transform rulings, actions, testing and replay |
 
 Integration docs (Connections, RingCentral bootstrap, Google Calendar, Dropbox) moved to [04-Integrations](../04-Integrations/).
 
