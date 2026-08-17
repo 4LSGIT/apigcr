@@ -497,3 +497,97 @@ not re-tell booking as security. They are different slices for a reason.
   the 302 keeps them alive.
 - **Rate limiting** — shipped as its own patch (see the videoLanding limiter
   commit), not folded into the routing change, so each reverts alone.
+
+---
+
+# Task + decision action links — /t/* and /d/* on the landing host (2026-08-17)
+
+Code: `routes/pageLanding.js` (allowlist + noindex + isMigratedPath),
+`routes/taskActions.js` and `routes/decisionActions.js` (rate limits +
+relative self-links), `services/taskService.js` and
+`lib/internal_functions/decisions.js` (link minters),
+`lib/firmConfig.js` (new `publicUrl()` helper).
+Tests: `tests/pageLanding.originsep.test.js` (extended).
+**No SQL.** Swept `app_settings`, `sequence_steps`, `workflow_steps` and
+`pages` for authored `/t/` or `/d/` links: **zero rows**. Both link types are
+minted at send time by code and never typed into templates, so there is no
+authored content to migrate — unlike `/v/`, which had three sequence steps.
+
+## Why
+
+Same class as `/m/:token`, closing the enumeration the Rider-E sweep produced:
+a no-auth handler rendering staff-authored content (task titles, descriptions
+and completion notes; decision questions and option labels) into HTML on the
+JWT origin, with a bearer token in the path. Severity is a notch below `/v/` —
+both files render everything through `htmlEscape` and neither builds an
+`href` from authored input, so no injection sink was found on a full read.
+This is defense-in-depth plus token hygiene, not a live-hole fix. **The live
+gap it does close is the missing rate limiter**: both surfaces had none, and
+`POST /d/:token/respond` both mutates a decision and resumes a workflow.
+
+## Decisions
+
+- **All seven routes allowlisted**, enumerated: `/t/:token`,
+  `/t/:token/{complete,cancel}`, `/t/:token/status.svg`, `/d/:token`,
+  `/d/:token/:value`, `/d/:token/respond`.
+- **ORDERING TRAP, now test-locked:** `/d/:token/respond` also matches the
+  `:value` pattern (`:value` accepts the literal word "respond"). The POST
+  rule must be tested BEFORE the value rule in `landingAllowed`, or the value
+  rule returns `isRead` — false for POST — and the only mutating decision
+  route dies on the landing host. There is a dedicated LOCK test for this.
+- **noindex (`isCredentialedPath`)** for all of them — a bearer token in the
+  path means an indexed URL is a live one-click mutation. Contrast `/v/`,
+  deliberately indexable because `?c=` is attribution, not a credential.
+- **`isMigratedPath`: HTML entry points only** (`/t/:token`, `/d/:token`,
+  `/d/:token/:value`). **`status.svg` is deliberately NOT redirected** — it is
+  an `<img>` already embedded in every sent task email, and redirecting would
+  cost a 302 on every inbox open, forever, for a badge that serves identically
+  on both hosts. POSTs are excluded by construction (GET/HEAD gate).
+- **Self-links became relative** — form actions, the confirm-step redirect and
+  the "choose again" link now follow whichever host served the page.
+  `routes/decisionActions.js` lost its `APP_URL` entirely (all four uses were
+  self-references). `routes/taskActions.js` KEEPS `APP_URL` for its two
+  "Log in to YisraCase" links, which only resolve on the app origin.
+- **New shared helper `firmConfig.publicUrl()`** — canonical public origin,
+  falling back to `app_url` when `landing_hosts` is empty. Replaces three
+  hand-rolled lookups (`taskService`, `decisions.js`, and `videoLanding`'s
+  og:url, refactored onto it). `services/taskService.js` deliberately keeps
+  BOTH `APP_URL()` and `PUBLIC_URL()`: its digest email mints staff-shell
+  deep links (`?contact=`, `?case=`) that must stay on the app origin, and
+  action links that must not.
+- **Rate limits** (all via `makeLimiter` + `getClientIp`, last-XFF):
+  `/t/` GET 30/min, POSTs 20/min shared, `status.svg` **120/min** (an `<img>`
+  in every task email — one inbox refresh fires many, and its handler is a
+  single indexed SELECT). Over-limit on the badge returns the same neutral
+  badge an unknown token gets, never a 429 body, which would render as a
+  broken image. `/d/` GET 30/min, `respond` POST 10/min — tighter because it
+  resumes a workflow.
+
+## Order of operations
+
+Backend deploy only. No SQL, no frontend. Takes effect immediately
+(`landing_redirect='1'` is already live).
+
+## Verify
+
+- Open a real task email → the "mark done" link now reads `https://4lsg.com/t/…`
+- `https://4lsg.com/t/<token>` renders; Complete posts and lands on the result
+  page; the note is stored
+- `https://app.4lsg.com/t/<token>` → 302 to `4lsg.com`, token intact
+- `https://app.4lsg.com/t/<token>/status.svg` → **200, NOT a redirect**
+- A decision email link renders; choosing an option → confirm → respond works
+  end to end on `4lsg.com` (this is the ordering trap in production)
+- Both surfaces carry `X-Robots-Tag: noindex, nofollow`
+
+## Reverts
+
+`landing_redirect='0'` stops the 302s (landing host keeps serving in
+parallel). The code patch reverts independently. **Already-sent emails are
+unaffected either way** — old app-host links ride the 302, new landing-host
+links work directly, and both hosts serve every route.
+
+## Deliberately not done
+
+- **`status.svg` redirect** — see above.
+- **Retiring `APP_URL` in `taskService`** — the staff-shell deep links need it;
+  the two names coexisting is the point.

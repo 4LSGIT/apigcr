@@ -371,6 +371,22 @@ const API_M_POST_RE     = /^\/api\/m\/[^/]+\/(?:cancel|reschedule)$/;
 const V_ROUTE_RE     = /^\/v\/[^/]+$/;                                // landing page
 const API_V_POST_RE  = /^\/api\/v\/[^/]+\/(?:track|cta-click)$/;      // beacon POSTs
 
+// ── Task + decision action links — 2026-08-17 slice ────────────────────────
+// routes/taskActions.js (/t/) and routes/decisionActions.js (/d/): one-click
+// action pages reached from email/SMS, authorized by a bearer token in the
+// PATH. Same class as /m/:token, and migrated for the same two reasons —
+// staff-authored content (task titles/notes, decision questions/option
+// labels) rendered into HTML, and a bearer token that should never be on the
+// JWT origin. Token charset mirrors each route's own pattern
+// ([A-Za-z0-9_-]{10,40}); the option value on /d/:token/:value is
+// [A-Za-z0-9_-]{1,64}. Enumerated, not prefixed.
+const T_ROUTE_RE      = /^\/t\/[A-Za-z0-9_-]{10,40}$/;
+const T_POST_RE       = /^\/t\/[A-Za-z0-9_-]{10,40}\/(?:complete|cancel)$/;
+const T_BADGE_RE      = /^\/t\/[A-Za-z0-9_-]{10,40}\/status\.svg$/;
+const D_ROUTE_RE      = /^\/d\/[A-Za-z0-9_-]{10,40}$/;
+const D_VALUE_RE      = /^\/d\/[A-Za-z0-9_-]{10,40}\/[A-Za-z0-9_-]{1,64}$/;
+const D_POST_RE       = /^\/d\/[A-Za-z0-9_-]{10,40}\/respond$/;
+
 /**
  * Paths that carry a bearer credential — keep them out of indexes.
  *
@@ -405,7 +421,18 @@ function isCredentialedPath(p) {
     API_BOOK_POST_RE.test(p) ||
     M_ROUTE_RE.test(p) ||
     API_M_GET_RE.test(p) ||
-    API_M_POST_RE.test(p)
+    API_M_POST_RE.test(p) ||
+    // Task + decision action links (2026-08-17): bearer token in the PATH,
+    // so noindex for the same reason /m/:token is — an indexed action URL is
+    // a live one-click mutation handed to anyone who finds it. Contrast /v/,
+    // which is deliberately indexable because ?c= is attribution, not a
+    // credential.
+    T_ROUTE_RE.test(p) ||
+    T_POST_RE.test(p) ||
+    T_BADGE_RE.test(p) ||
+    D_ROUTE_RE.test(p) ||
+    D_VALUE_RE.test(p) ||
+    D_POST_RE.test(p)
   );
 }
 
@@ -453,6 +480,17 @@ function landingAllowed(req) {
   // credentialed set in the same slice.
   if (V_ROUTE_RE.test(p))              return isRead;
   if (API_V_POST_RE.test(p))           return m === 'POST';
+  // Task + decision action links (2026-08-17). ORDER MATTERS in this block:
+  // '/d/:token/respond' ALSO matches D_VALUE_RE (":value" accepts the literal
+  // word "respond"), so the POST rule must be tested BEFORE the value rule —
+  // otherwise D_VALUE_RE returns isRead, which is false for POST, and the
+  // only mutating route on /d/ gets denied on the landing host. Test-locked.
+  if (T_ROUTE_RE.test(p))              return isRead;
+  if (T_BADGE_RE.test(p))              return isRead;
+  if (T_POST_RE.test(p))               return m === 'POST';
+  if (D_POST_RE.test(p))               return m === 'POST';   // BEFORE D_VALUE_RE
+  if (D_ROUTE_RE.test(p))              return isRead;
+  if (D_VALUE_RE.test(p))              return isRead;
   if (p === '/css/yc-forms.css')       return isRead;
   if (p === '/js/yc-forms.js')         return isRead;
   if (p === '/favicon.ico')            return isRead;
@@ -491,6 +529,15 @@ function isMigratedPath(req) {
   // consulted under the GET/HEAD gate above, so this entry is read-only by
   // construction; test-locked anyway.
   if (V_ROUTE_RE.test(p)) return true;
+  // Task + decision HTML entry points (2026-08-17). Deliberately NOT
+  // T_BADGE_RE: /t/:token/status.svg is an <img> already embedded in sent
+  // emails, and every open would pay a 302 forever for a 200-byte badge that
+  // serves identically on both hosts. The POSTs are excluded by construction
+  // (this function is only consulted under the GET/HEAD gate) — a 302 would
+  // turn them into GETs and drop the note/value body.
+  if (T_ROUTE_RE.test(p)) return true;
+  if (D_ROUTE_RE.test(p)) return true;
+  if (D_VALUE_RE.test(p)) return true;
   return false;
 }
 

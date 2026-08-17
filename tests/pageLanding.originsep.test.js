@@ -134,6 +134,14 @@ beforeAll((done) => {
   app.post('/api/v/:slug/track',        (req, res) => res.json({ probe: 'VTRACK' }));
   app.post('/api/v/:slug/cta-click',    (req, res) => res.json({ probe: 'VCTA' }));
   app.get('/api/videos',                (req, res) => res.json({ probe: 'VIDEOSAPI' }));
+  // routes/taskActions.js + routes/decisionActions.js stand-ins (2026-08-17).
+  app.get('/t/:token',                  (req, res) => res.type('html').send('TASKPAGE'));
+  app.post('/t/:token/complete',        (req, res) => res.json({ probe: 'TCOMPLETE' }));
+  app.post('/t/:token/cancel',          (req, res) => res.json({ probe: 'TCANCEL' }));
+  app.get('/t/:token/status.svg',       (req, res) => res.type('image/svg+xml').send('<svg/>'));
+  app.get('/d/:token',                  (req, res) => res.type('html').send('DECISIONPAGE'));
+  app.get('/d/:token/:value',           (req, res) => res.type('html').send('DECISIONCONFIRM'));
+  app.post('/d/:token/respond',         (req, res) => res.json({ probe: 'DRESPOND' }));
   app.post('/api/videos/upload-asset',  (req, res) => res.json({ probe: 'VIDEOUPLOAD' }));
   app.get('/login', (req, res) => res.send('LOGIN'));
   app.get('/api/firm-data', (req, res) => res.json({ probe: 'FIRMDATA' }));
@@ -797,5 +805,86 @@ describe('no response cookies anywhere (origin-bridge guard)', () => {
     }
     scan(path.join(__dirname, '..', 'server.js'));
     expect(offenders).toEqual([]);
+  });
+});
+
+
+// ── task + decision action links (2026-08-17 slice) ────────────────────────
+describe('task + decision action links on the landing host', () => {
+  const TOK = 'abcdefghij1234567890';   // 20 chars, matches {10,40}
+
+  test('GET /t/:token and /d/:token serve', async () => {
+    expect(await (await landing(`/t/${TOK}`)).text()).toBe('TASKPAGE');
+    expect(await (await landing(`/d/${TOK}`)).text()).toBe('DECISIONPAGE');
+  });
+
+  test('GET /d/:token/:value (confirm step) serves', async () => {
+    expect(await (await landing(`/d/${TOK}/approve`)).text()).toBe('DECISIONCONFIRM');
+  });
+
+  test('GET /t/:token/status.svg serves (email badge)', async () => {
+    const res = await landing(`/t/${TOK}/status.svg`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/svg/);
+  });
+
+  test('the mutating POSTs serve on the landing host', async () => {
+    for (const [p, probe] of [
+      [`/t/${TOK}/complete`, 'TCOMPLETE'],
+      [`/t/${TOK}/cancel`,   'TCANCEL'],
+    ]) {
+      const res = await landing(p, { method: 'POST' });
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+
+  test('LOCK: POST /d/:token/respond is allowed — the :value pattern must not shadow it', async () => {
+    // '/d/<tok>/respond' also matches D_VALUE_RE, which returns isRead
+    // (false for POST). If the POST rule is ever reordered after it, the only
+    // mutating decision route dies on the landing host. This is that guard.
+    const res = await landing(`/d/${TOK}/respond`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect((await res.json()).probe).toBe('DRESPOND');
+  });
+
+  test('LOCK: all /t/ and /d/ paths are noindex (bearer token in the path)', async () => {
+    const paths = [
+      `/t/${TOK}`, `/t/${TOK}/status.svg`,
+      `/d/${TOK}`, `/d/${TOK}/approve`,
+    ];
+    for (const p of paths) {
+      expect((await landing(p)).headers.get('x-robots-tag')).toBe('noindex, nofollow');
+    }
+  });
+
+  test('app host 302s the HTML entry points to the landing host', async () => {
+    for (const p of [`/t/${TOK}`, `/d/${TOK}`, `/d/${TOK}/approve`]) {
+      const res = await appHost(p);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('https://4lsg.com' + p);
+    }
+  });
+
+  test('LOCK: status.svg is NOT redirected — already embedded in sent emails', async () => {
+    const res = await appHost(`/t/${TOK}/status.svg`);
+    expect(res.status).toBe(200);
+  });
+
+  test('LOCK: the mutating POSTs never meet a 302 on the app host', async () => {
+    for (const [p, probe] of [
+      [`/t/${TOK}/complete`, 'TCOMPLETE'],
+      [`/d/${TOK}/respond`,  'DRESPOND'],
+    ]) {
+      const res = await appHost(p, { method: 'POST' });
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+
+  test('a too-short token is not allowlisted (pattern is not a prefix match)', async () => {
+    const res = await landing('/t/short');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe(FIRM);
   });
 });

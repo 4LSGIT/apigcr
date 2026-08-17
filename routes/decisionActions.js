@@ -39,9 +39,24 @@
 const express = require('express');
 const router  = express.Router();
 const { mergeVariables, advanceWorkflow } = require('../lib/workflow_engine');
+const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 
-// Read per call so live edits of the app_url setting apply without redeploy.
-const APP_URL = () => require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com';
+// Rate limits (2026-08-17). This route had none. POST /d/:token/respond
+// mutates a decision AND resumes a workflow, which is the most expensive
+// unauthenticated side effect on any public surface here — hence a tighter
+// POST bucket than /t/'s. The GETs are unauthenticated DB reads; the
+// two-step choose-then-confirm flow means a legitimate responder issues
+// several GETs before one POST, so the read bucket stays generous.
+const readLimited = makeLimiter(60 * 1000, 30);   // GET /d/:token and /:value
+const postLimited = makeLimiter(60 * 1000, 10);   // POST /d/:token/respond
+
+// NOTE: APP_URL was removed 2026-08-17. Every link this file rendered was a
+// SELF-reference (form action, confirm-step redirect, "choose again" link),
+// so all four became relative and now follow whichever host served the page.
+// Unlike routes/taskActions.js this file renders no "Log in to YisraCase"
+// link, so nothing here needs the app origin. The absolute /d/ links that go
+// out in email are minted by lib/internal_functions/decisions.js, which uses
+// firmConfig.publicUrl().
 
 const INDIGO = '#312e81';
 const GREEN  = '#065f46';
@@ -240,6 +255,9 @@ async function logDecisionOutcome(db, row, { outcome, value = null, label = null
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.get(`/d/${TOKEN_PATTERN}`, async (req, res) => {
+  if (readLimited(getClientIp(req))) {
+    return res.status(429).type('text/plain').send('Too many requests');
+  }
   try {
     const row = await getDecisionByToken(req.db, req.params.token);
     if (!row) return res.status(200).send(notFoundPage());
@@ -252,7 +270,7 @@ router.get(`/d/${TOKEN_PATTERN}`, async (req, res) => {
 
     // ONE form, one submit button per option (name="value" routes the choice).
     // No JS required; the POST is the only mutation.
-    const base = `${APP_URL()}/d/${row.token}`;
+    const base = `/d/${row.token}`;  // relative: follows the serving host
     const buttons = row.options.map(o => `
       <button type="submit" name="value" value="${htmlEscape(o.value)}"
               style="background:${INDIGO};color:#ffffff;border:none;border-radius:6px;
@@ -291,6 +309,9 @@ router.get(`/d/${TOKEN_PATTERN}`, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.get(`/d/${TOKEN_PATTERN}/${VALUE_PATTERN}`, async (req, res) => {
+  if (readLimited(getClientIp(req))) {
+    return res.status(429).type('text/plain').send('Too many requests');
+  }
   try {
     const row = await getDecisionByToken(req.db, req.params.token);
     if (!row) return res.status(200).send(notFoundPage());
@@ -305,10 +326,10 @@ router.get(`/d/${TOKEN_PATTERN}/${VALUE_PATTERN}`, async (req, res) => {
     const opt = row.options.find(o => o && o.value === value);
     if (!opt) {
       // Unknown value — fall back to the full landing page choices.
-      return res.redirect(302, `${APP_URL()}/d/${row.token}`);
+      return res.redirect(302, `/d/${row.token}`);
     }
 
-    const base = `${APP_URL()}/d/${row.token}`;
+    const base = `/d/${row.token}`;  // relative: follows the serving host
     const body = `
       <h2 style="margin:0 0 8px;font-size:22px;color:#111827">Confirm your response</h2>
       ${questionBlock(row)}
@@ -356,7 +377,7 @@ router.post(`/d/${TOKEN_PATTERN}/respond`, async (req, res) => {
         <h2 style="margin:0 0 8px;font-size:22px;color:#111827">Invalid option</h2>
         <p style="margin:0 0 18px;font-size:14px;color:#374151">
           That option isn't part of this decision.
-          <a href="${APP_URL()}/d/${row.token}" style="color:#4f46e5">Choose from the available options.</a>
+          <a href="/d/${row.token}" style="color:#4f46e5">Choose from the available options.</a>
         </p>`));
     }
 

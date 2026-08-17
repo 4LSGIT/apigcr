@@ -85,6 +85,11 @@ function settings() { return require('./settingsService'); }
 
 // Read per call so live edits of the app_url setting apply without redeploy.
 const APP_URL = () => require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com';
+// Client/recipient-facing action links (/t/:token) live on the PUBLIC landing
+// host as of 2026-08-17 — see ref/ORIGIN_SEPARATION_ROLLOUT.md. APP_URL stays
+// for STAFF-shell deep links (?contact= / ?case=), which only resolve on the
+// app origin. Keeping both named makes the choice explicit at each call site.
+const PUBLIC_URL = () => require('../lib/firmConfig').publicUrl();
 
 /**
  * HTML-escape a value for interpolation into the email builders below.
@@ -133,7 +138,7 @@ function newActionToken() {
 
 /** Public one-click action URL for a shaped task, or null if no token. */
 function taskActionUrl(task) {
-  return task?.action_token ? `${APP_URL()}/t/${task.action_token}` : null;
+  return task?.action_token ? `${PUBLIC_URL()}/t/${task.action_token}` : null;
 }
 
 /**
@@ -541,7 +546,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     }
     // One-click complete link (requires the digest query to SELECT t.task_action_token)
     const doneHtml = t.task_action_token
-      ? `<a href="${APP_URL()}/t/${t.task_action_token}" title="Mark complete"
+      ? `<a href="${PUBLIC_URL()}/t/${t.task_action_token}" title="Mark complete"
             style="color:#059669;text-decoration:underline;font-weight:600;font-size:12px;white-space:nowrap">mark&nbsp;done</a>`
       : '';
     // Machine-pushed notices get the same de-emphasis the task list gives

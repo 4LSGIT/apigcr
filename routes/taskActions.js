@@ -41,6 +41,25 @@
 const express     = require('express');
 const router      = express.Router();
 const taskService = require('../services/taskService');
+const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rate limits (2026-08-17). This route had none. The POSTs mutate tasks; the
+// GETs are unauthenticated DB reads reachable by anyone holding (or guessing
+// at) a token. Limits are generous because the legitimate pattern is bursty:
+// a staff member opens the email, the client prefetches, they read, submit,
+// and the result page re-renders — and several people behind one office IP
+// may act on their tasks within the same minute.
+//
+// status.svg gets its own, much higher bucket: it is an <img> in every task
+// email, so one inbox refresh can fire many. Its handler is a single indexed
+// SELECT and it returns a neutral badge for unknown tokens by design, so it
+// is the cheapest and least abusable route here — the limiter exists to cap
+// pathological scraping, not to shape normal email traffic.
+// ─────────────────────────────────────────────────────────────────────────────
+const readLimited  = makeLimiter(60 * 1000, 30);   // GET /t/:token
+const postLimited  = makeLimiter(60 * 1000, 20);   // complete + cancel (shared)
+const badgeLimited = makeLimiter(60 * 1000, 120);  // status.svg
 
 // Read per call so live edits of the app_url setting apply without redeploy.
 const APP_URL    = () => require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com';
@@ -243,6 +262,9 @@ function errorPage(what) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.get('/t/:token([A-Za-z0-9_\\-]{10,40})', async (req, res) => {
+  if (readLimited(getClientIp(req))) {
+    return res.status(429).type('text/plain').send('Too many requests');
+  }
   try {
     const task = await getTaskByToken(req.db, req.params.token);
     if (!task) return res.status(200).send(notFoundPage());
@@ -267,7 +289,7 @@ router.get('/t/:token([A-Za-z0-9_\\-]{10,40})', async (req, res) => {
       //
       // The Cancel button's onclick=confirm() is progressive enhancement only:
       // with JS off it simply submits, which is still the correct verb.
-      const base = `${APP_URL()}/t/${task.action_token}`;
+      const base = `/t/${task.action_token}`;  // relative: form posts back to whichever host served the page
       body = `
         <h2 style="margin:0 0 8px;font-size:22px;color:#111827">Complete this task?</h2>
         <p style="margin:0 0 18px;font-size:14px;color:#374151">
@@ -315,6 +337,9 @@ router.get('/t/:token([A-Za-z0-9_\\-]{10,40})', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post('/t/:token([A-Za-z0-9_\\-]{10,40})/complete', async (req, res) => {
+  if (postLimited(getClientIp(req))) {
+    return res.status(429).type('text/plain').send('Too many requests');
+  }
   const note = cleanNote(req.body?.note);
   try {
     const task = await getTaskByToken(req.db, req.params.token);
@@ -359,6 +384,9 @@ router.post('/t/:token([A-Za-z0-9_\\-]{10,40})/complete', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post('/t/:token([A-Za-z0-9_\\-]{10,40})/cancel', async (req, res) => {
+  if (postLimited(getClientIp(req))) {
+    return res.status(429).type('text/plain').send('Too many requests');
+  }
   const note = cleanNote(req.body?.note);
   try {
     const task = await getTaskByToken(req.db, req.params.token);
@@ -426,6 +454,9 @@ function badgeSvg(label, bg, withCheck = false) {
 router.get('/t/:token([A-Za-z0-9_\\-]{10,40})/status.svg', async (req, res) => {
   res.set('Cache-Control', 'no-store, max-age=0');
   res.type('image/svg+xml');
+  // Over-limit returns the same neutral badge an unknown token gets — never a
+  // 429 body, which would render as a broken image in the email client.
+  if (badgeLimited(getClientIp(req))) return res.send(badgeSvg('—', '#9ca3af'));
   try {
     const [[row]] = await req.db.query(
       'SELECT task_status FROM tasks WHERE task_action_token = ? LIMIT 1',

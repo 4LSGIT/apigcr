@@ -252,11 +252,7 @@ router.get('/v/:slug', async (req, res) => {
     // router 302s secondary landing hosts to the apex before routing).
     // {{LANDING_URL}} feeds ONLY the og:url meta; the tracker URLs in
     // views/v.html are relative and follow whichever host served the page.
-    const { cfgList } = require('../lib/firmConfig');
-    const canonicalLandingHost = (cfgList('landing_hosts')[0] || '').trim();
-    const landingUrl = canonicalLandingHost
-      ? 'https://' + canonicalLandingHost + '/v/' + video.slug
-      : req.protocol + '://' + req.get('host') + '/v/' + video.slug;
+    const landingUrl = require('../lib/firmConfig').publicUrl() + '/v/' + video.slug;
 
     // Single-line, escaped — for meta-tag content="" attributes.
     const descMeta = htmlEscape(description.replace(/\s*\n+\s*/g, ' '));
