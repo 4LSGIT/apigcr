@@ -255,6 +255,8 @@ router.post('/p/:slug', async (req, res) => {
 //   /api/manage-config (GET)
 //   /api/m/:token, /api/m/:token/slots (GET)
 //   /api/m/:token/{cancel,reschedule} (POST)
+//   /v/:slug (GET)               — video landing pages (routes/videoLanding.js)
+//   /api/v/:slug/{track,cta-click} (POST) — the page's own beacons
 //   /css/yc-forms.css, /js/yc-forms.js, /favicon.ico (GET)
 // EVERYTHING ELSE — /login, the shell, every staff/API route, every other
 // static file — gets the deadPage treatment (firm-site redirect / 404). If a
@@ -355,6 +357,20 @@ const M_ROUTE_RE        = /^\/m(?:\/[^/]*)?$/;                        // /m, /m/
 const API_M_GET_RE      = /^\/api\/m\/[^/]+(?:\/slots)?$/;
 const API_M_POST_RE     = /^\/api\/m\/[^/]+\/(?:cancel|reschedule)$/;
 
+// ── Video landing (routes/videoLanding.js) — 2026-08-17 slice ───────────────
+// Unlike booking/manage this one IS a security migration: videos.title,
+// description and actions are STAFF-AUTHORED (jwtOrApiKey — any staff member)
+// and rendered into HTML, which is exactly the content class origin
+// separation exists for. The scheme-allowlist patch closed the known
+// javascript: hole; moving the render off the JWT origin removes the class.
+// Two-segment only — bare /v is NOT allowlisted, so a marketing page slugged
+// "v" keeps 4lsg.com/v (same corollary as bare /book). The whole authoring
+// API (routes/api.videos.js, jwtOrApiKey) stays dead on the landing host;
+// only these three public endpoints move. Enumerated, not prefixed, same as
+// every entry above.
+const V_ROUTE_RE     = /^\/v\/[^/]+$/;                                // landing page
+const API_V_POST_RE  = /^\/api\/v\/[^/]+\/(?:track|cta-click)$/;      // beacon POSTs
+
 /**
  * Paths that carry a bearer credential — keep them out of indexes.
  *
@@ -428,6 +444,15 @@ function landingAllowed(req) {
   if (p === '/api/manage-config')      return isRead;
   if (API_M_POST_RE.test(p))           return m === 'POST';
   if (API_M_GET_RE.test(p))            return isRead;
+  // Video landing (2026-08-17). GET renders the page; the two beacon POSTs
+  // are the page's own tracking calls (built relative in views/v.html, so
+  // they land on whichever host served the page). NOT in isCredentialedPath:
+  // ?c= is a raw contact_id — attribution, not a bearer credential — and the
+  // page is a marketing surface with OG tags built for sharing. If ?c= ever
+  // becomes a token (see the Rider-D options note), move /v into the
+  // credentialed set in the same slice.
+  if (V_ROUTE_RE.test(p))              return isRead;
+  if (API_V_POST_RE.test(p))           return m === 'POST';
   if (p === '/css/yc-forms.css')       return isRead;
   if (p === '/js/yc-forms.js')         return isRead;
   if (p === '/favicon.ico')            return isRead;
@@ -459,6 +484,13 @@ function isMigratedPath(req) {
   // it is simply pointless. Keep the API on whichever host served the shell.
   if (BOOK_ROUTE_RE.test(p)) return true;
   if (M_ROUTE_RE.test(p)) return true;
+  // Video landing (2026-08-17): the HTML entry point moves; the beacon POSTs
+  // do NOT (same split as booking/manage — v.html builds its tracking URLs
+  // relative, so a page served from the landing host already beacons to the
+  // landing host, and a POST must never meet a 302). isMigratedPath is only
+  // consulted under the GET/HEAD gate above, so this entry is read-only by
+  // construction; test-locked anyway.
+  if (V_ROUTE_RE.test(p)) return true;
   return false;
 }
 

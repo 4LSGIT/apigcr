@@ -364,3 +364,136 @@ complete rather than be dead-ended. Test-locked.
   and `manage.js` (`lib/providerLock.js`) — still the safe follow-up
   `manage.js`'s header calls it, still not worth touching the live booking
   pipeline for in a routing slice.
+
+---
+
+# Video landing slice — /v/* on the landing host (2026-08-17)
+
+Code: `routes/pageLanding.js` (allowlist: `V_ROUTE_RE`, `API_V_POST_RE`;
+`isMigratedPath`), `routes/videoLanding.js` (og:url pin, docs),
+`public/{videoManager.html,js/videoInsert.js,sendingform-bk.html}`
+(link-minting defaults).
+SQL: `ref/2026-08-17_video_landing.sql`.
+Tests: `tests/pageLanding.originsep.test.js` (extended, not forked).
+Prereq patch (ships FIRST, alone): the action-URL scheme allowlist —
+`services/videoService.js` + `routes/videoLanding.js` +
+`tests/videoLanding.actionUrl.test.js`.
+
+## Why — and why the framing differs from booking
+
+**This one IS a security migration.** `videos.title`, `description`, and
+`actions` are staff-authored (`jwtOrApiKey` — any staff member, not SU) and
+rendered into HTML that until this slice served on `app.4lsg.com`, where the
+staff JWT lives in localStorage. That is exactly the content class origin
+separation exists for. The surface was missed by the original slice because
+that enumeration covered the *page and form* files; `videoLanding.js` has the
+same shape under a different filename. Two concrete holes existed:
+
+1. **`javascript:` in action hrefs** — `renderActions` escaped the URL but
+   never constrained the scheme, so a lower-privilege staff author could plant
+   a one-click JWT-stealer for any higher-privilege staff member who opened
+   the page logged in. Closed by the scheme-allowlist patch (server-side gate
+   at render + 400 on write), which ships independently and first — it
+   protects the app host even while `landing_redirect` is '0'.
+2. **The class itself** — any future sink in staff-authored video content.
+   Removed by this migration: on the landing origin there is no JWT to steal.
+
+Booking/manage was coherence; do not re-tell THIS one as cosmetic — and do
+not re-tell booking as security. They are different slices for a reason.
+
+## Decisions
+
+- **Surface moved: exactly three endpoints** — `GET /v/:slug`,
+  `POST /api/v/:slug/track`, `POST /api/v/:slug/cta-click`. The whole
+  authoring API (`routes/api.videos.js`, all `jwtOrApiKey`) stays dead on the
+  landing host; `GET /api/videos` and `POST /api/videos/upload-asset` are
+  test-locked dead there. Enumerated, not prefixed, per the standing rule.
+- **`/v/` pages are INDEXABLE — no `X-Robots-Tag`.** Decided separately from
+  booking's noindex, on its own facts: `?c=` is a raw `contacts.contact_id` —
+  *attribution, not a bearer credential* (`booking_token` /
+  `appt_manage_token` are secrets; an integer everyone can mint is not) — and
+  unlike the booking widget (a bare slot picker built to be iframed), video
+  pages are complete marketing surfaces with OG tags built for sharing.
+  Accepted residual: an indexed `?c=42` variant would reveal that contact 42
+  received the link — but `?c=` URLs travel in private SMS/email and indexers
+  only find published links. **Coupling:** if the Rider-D decision ever turns
+  `?c=` into a token, `/v/` joins `isCredentialedPath` in that same slice.
+- **og:url pins to `landing_hosts[0]`** (fallback: request host when landing
+  is unconfigured). The ordering check came back clean — `www` can never bake
+  into og:url because host canonicalization is step 0 of the middleware,
+  before any route renders — but pinning is still right for the
+  `landing_redirect='0'` revert state, where the app host renders and a
+  shared app-host URL should still declare the canonical public og:url.
+  Verified: `{{LANDING_URL}}` feeds ONLY the og:url meta; every tracker URL
+  in `views/v.html` is relative and follows the serving host.
+- **`views/v.html` audited** the way book/manage were: no third-party JS, no
+  localStorage, no cross-origin fetch; tracking is relative-URL `fetch` with
+  `keepalive`. Only absolute references are legalsolutions.group favicon/logo
+  images and one header anchor — assets and links, not scripts. Related-video
+  hrefs are relative. Clean.
+- **The beacon POSTs never meet a 302** — `isMigratedPath` stays GET-only
+  (a 302 turns POST into GET and drops the body); test-locked in both
+  directions. Same split as every prior migration: HTML entry point moves,
+  XHR stays wherever the page was served.
+- **Bare `/v` is NOT allowlisted** — only two-segment `/v/:slug`. A marketing
+  page slugged `v` keeps `4lsg.com/v`; test-locked (same corollary as bare
+  `/book`).
+- **`Cache-Control: private, no-cache, no-store, must-revalidate`** on
+  `GET /v/:slug` is untouched — action URLs vary by `?c=`, so nothing may
+  cache the body regardless of host.
+- **Frontend link minting** now targets `https://4lsg.com` (hard-coded, same
+  pattern as the booking defaults): `videoManager.html` (4 spots — copy-URL,
+  copy-URL-for-contact, both embed builders), `js/videoInsert.js` (`buildUrl`,
+  replacing the parent-origin helper that would mint app-host links forever
+  from the staff shell), and `sendingform-bk.html`'s `irsVideoBase`. Note
+  `sendingform-bk.html` IS the live iframe (`case.html` loads it despite the
+  `-bk` name); `sendingform.html` carries no video-host string. This closes
+  the class the booking slice's DB-only sweep initially missed.
+
+## Order of operations
+
+1. **Ship the scheme-allowlist patch first, alone.** It has no dependency on
+   this slice and protects the app host immediately.
+2. **SQL is optional and can run any time** (`ref/2026-08-17_video_landing.sql`
+   — three sequence-step rows; read its verify-BEFORE block first). Missed
+   rows degrade to one extra 302 hop, never a break. Sent history
+   (log rows, campaigns 104/105) is deliberately untouched — see the file
+   header.
+3. **Backend deploy.** `landing_hosts='4lsg.com'` + `landing_redirect='1'`
+   are already live, so this takes effect immediately:
+   `app.4lsg.com/v/*` starts 302ing to `4lsg.com`.
+4. **Frontend deploy.** Changes only the *default* links staff copy from now
+   on; nothing already sent or saved changes.
+
+## Verify
+
+- `https://4lsg.com/v/welcome` renders; video plays; a play/progress beacon
+  lands (check `video_views.played_at` fills for the new row)
+- `https://4lsg.com/v/welcome?c=<real contact_id>` renders; response carries
+  NO `X-Robots-Tag`
+- `view-source:` og:url reads `https://4lsg.com/v/welcome` (not app, not www)
+- `https://app.4lsg.com/v/welcome?c=X` → 302 `https://4lsg.com/v/welcome?c=X`
+- `https://www.4lsg.com/v/welcome` → 302 to the apex, query intact
+- `https://4lsg.com/api/videos` → firm-site redirect. **This is the boundary —
+  if it answers, STOP.**
+- videoManager "Copy landing URL" now yields a `https://4lsg.com/v/…` link
+
+## Reverts
+
+- **Code:** `landing_redirect='0'` (≤60 s) — the app host stops 302ing `/v/*`;
+  the landing host keeps serving it in parallel. The scheme-allowlist patch is
+  independent and stays.
+- **Content:** inverse `REPLACE`s in `ref/2026-08-17_video_landing.sql` § 3,
+  plus reverting the three `public/` files. On a full teardown revert content
+  BEFORE unmapping DNS (standing rule).
+
+## Deliberately not done in this slice
+
+- **`?c=` credential shape** — quantified and optioned separately (Rider D
+  note); any change breaks links already in flight, so Fred decides.
+- **A `/vid` short alias** for SMS — `/v/` is already minimal; nothing to
+  save.
+- **Rewriting sent history** (log rows, campaigns) — records, not templates;
+  the 302 keeps them alive.
+- **Rate limiting** — shipped as its own patch (see the videoLanding limiter
+  commit), not folded into the routing change, so each reverts alone.

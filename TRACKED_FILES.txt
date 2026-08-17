@@ -296,6 +296,7 @@ ref/2026-08-16_origin_separation.sql
 ref/2026-08-16_phase_d_sms_cutover_v2.sql
 ref/2026-08-16_task_dedupe_key.sql
 ref/2026-08-16_task_start_date.sql
+ref/2026-08-17_video_landing.sql
 ref/EXTERNAL_CODE_CSS_DECISION.md
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md

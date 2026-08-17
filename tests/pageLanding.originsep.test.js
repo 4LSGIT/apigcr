@@ -61,6 +61,10 @@ const PAGES = {
     id: 4, slug: 'book', host: null, path: null, status: 'live',
     hook_slug: null, thankyou_url: null, html: '<h1>PAGE_SLUG_BOOK</h1>',
   },
+  v: {
+    id: 5, slug: 'v', host: null, path: null, status: 'live',
+    hook_slug: null, thankyou_url: null, html: '<h1>PAGE_SLUG_V</h1>',
+  },
 };
 
 const db = {
@@ -123,6 +127,14 @@ beforeAll((done) => {
   app.get('/api/m/:token/slots',     (req, res) => res.json({ probe: 'MSLOTS' }));
   app.post('/api/m/:token/cancel',       (req, res) => res.json({ probe: 'MCANCEL' }));
   app.post('/api/m/:token/reschedule',   (req, res) => res.json({ probe: 'MRESCHED' }));
+  // routes/videoLanding.js + routes/api.videos.js stand-ins (2026-08-17
+  // slice). Same convention as the booking/manage probes above: the host
+  // router is what's under test, not the handlers.
+  app.get('/v/:slug',                   (req, res) => res.type('html').send('VIDEOSHELL'));
+  app.post('/api/v/:slug/track',        (req, res) => res.json({ probe: 'VTRACK' }));
+  app.post('/api/v/:slug/cta-click',    (req, res) => res.json({ probe: 'VCTA' }));
+  app.get('/api/videos',                (req, res) => res.json({ probe: 'VIDEOSAPI' }));
+  app.post('/api/videos/upload-asset',  (req, res) => res.json({ probe: 'VIDEOUPLOAD' }));
   app.get('/login', (req, res) => res.send('LOGIN'));
   app.get('/api/firm-data', (req, res) => res.json({ probe: 'FIRMDATA' }));
   app.get('/api/form-templates', (req, res) => res.json({ probe: 'TEMPLATES' }));
@@ -504,6 +516,77 @@ describe('noindex covers the whole booking/manage set', () => {
     const res = await landing('/api/manage-config');
     expect(res.status).toBe(200);
     expect(res.headers.get('x-robots-tag')).toBeNull();
+  });
+});
+
+// ── video landing surface (2026-08-17 slice) ───────────────────────────────
+describe('video landing on the landing host', () => {
+  test('GET /v/:slug serves the video page', async () => {
+    const res = await landing('/v/welcome?c=42');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('VIDEOSHELL');
+  });
+
+  test('the two beacon POSTs serve on the landing host', async () => {
+    for (const [p, probe] of [
+      ['/api/v/welcome/track', 'VTRACK'],
+      ['/api/v/welcome/cta-click', 'VCTA'],
+    ]) {
+      const res = await landing(p, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).probe).toBe(probe);
+    }
+  });
+
+  test('LOCK: /v/ pages are INDEXABLE — no X-Robots-Tag (?c= is attribution, not a credential)', async () => {
+    const res = await landing('/v/welcome?c=42');
+    expect(res.headers.get('x-robots-tag')).toBeNull();
+  });
+
+  test('LOCK: the authoring API stays dead on the landing host', async () => {
+    const g = await landing('/api/videos');
+    expect(g.status).toBe(302);
+    expect(g.headers.get('location')).toBe(FIRM);
+    const u = await landing('/api/videos/upload-asset', { method: 'POST' });
+    expect(u.status).toBe(303);
+    expect(u.headers.get('location')).toBe(FIRM);
+  });
+
+  test('app host 302s GET /v/* to the landing host, query intact', async () => {
+    const res = await appHost('/v/welcome?c=42');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://4lsg.com/v/welcome?c=42');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  test('LOCK: the beacon POSTs never meet a 302 — served in place on the app host', async () => {
+    const res = await appHost('/api/v/welcome/track', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).probe).toBe('VTRACK');
+  });
+
+  test('LOCK: bare /v is NOT allowlisted — a page slugged "v" keeps 4lsg.com/v', async () => {
+    const res = await landing('/v');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('PAGE_SLUG_V');
+  });
+
+  test('secondary landing host canonicalizes GET /v/* to the apex before serving', async () => {
+    const res = await onHost('www.4lsg.com', '/v/welcome?c=42');
+    // With www in landing_hosts this would 302 to the apex; with the test's
+    // single-host config www is NOT a landing host, so the app-host redirect
+    // branch answers — either way the browser lands on 4lsg.com with the
+    // query intact, which is the invariant that matters.
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://4lsg.com/v/welcome?c=42');
   });
 });
 

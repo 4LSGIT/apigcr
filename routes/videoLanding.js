@@ -22,6 +22,16 @@
  * The HTML template lives in views/ (not public/) so the static middleware
  * and the /:page catch-all in server.js don't accidentally serve the
  * unsubstituted template at /v.html or /v.
+ *
+ * Origin (2026-08-17 slice): this surface serves on the LANDING host
+ * (routes/pageLanding.js allowlist — V_ROUTE_RE / API_V_POST_RE) and the app
+ * host 302s GET /v/* there when landing_redirect='1'. This one is a SECURITY
+ * migration, not the booking-style coherence move: title/description/actions
+ * are staff-authored and rendered into HTML, which is the content class
+ * origin separation exists for. og:url pins to landing_hosts[0] (see below).
+ * Deliberately NOT in isCredentialedPath — ?c= is a raw contact_id
+ * (attribution, not a bearer credential) and these pages are marketing
+ * surface built to be shared; revisit if ?c= ever becomes a token.
  */
 
 const express      = require('express');
@@ -206,8 +216,19 @@ router.get('/v/:slug', async (req, res) => {
     const description = video.description || '';
 
     // Use the canonical slug for og:url and the in-page tracker — even if the
-    // request hit an alias.
-    const landingUrl = req.protocol + '://' + req.get('host') + '/v/' + video.slug;
+    // request hit an alias. Host: pin to the canonical LANDING host when one
+    // is configured (2026-08-17 slice) rather than echoing req.get('host') —
+    // og:url is the URL social scrapers canonicalize to, and it must be the
+    // public host even when this render happens on the app host (the
+    // landing_redirect='0' revert state; www never renders here — the host
+    // router 302s secondary landing hosts to the apex before routing).
+    // {{LANDING_URL}} feeds ONLY the og:url meta; the tracker URLs in
+    // views/v.html are relative and follow whichever host served the page.
+    const { cfgList } = require('../lib/firmConfig');
+    const canonicalLandingHost = (cfgList('landing_hosts')[0] || '').trim();
+    const landingUrl = canonicalLandingHost
+      ? 'https://' + canonicalLandingHost + '/v/' + video.slug
+      : req.protocol + '://' + req.get('host') + '/v/' + video.slug;
 
     // Single-line, escaped — for meta-tag content="" attributes.
     const descMeta = htmlEscape(description.replace(/\s*\n+\s*/g, ' '));

@@ -646,6 +646,13 @@
 </div>
 
 <script>
+// Public host for the /v/ landing links this UI mints (2026-08-17
+// origin-separation slice). Staff run this page on app.4lsg.com, but every
+// copied landing URL / embed snippet is destined for a CLIENT, and the
+// public video surface lives on the landing host. Hard-coded — same pattern
+// as the booking/manage link defaults in scripts.js and campaign.html.
+const PUBLIC_VIDEO_ORIGIN = 'https://4lsg.com';
+
 // ════════════════════════════════════════════════════════════════════════════
 // Parent bridge — uploadAsset uses XHR directly for multipart upload progress
 // events; ensureFreshJwt prompts re-login when the JWT is missing/expired.
@@ -1972,7 +1979,7 @@ async function copyText(text, label) {
 function copyLandingUrl() {
   // Always use the canonical (saved) slug, not whatever's typed in the form.
   const slug = state.form._originalSlug;
-  const url  = window.location.origin + '/v/' + slug;
+  const url  = PUBLIC_VIDEO_ORIGIN + '/v/' + slug;
   copyText(url, 'Landing URL');
 }
 
@@ -1994,7 +2001,7 @@ async function copyLandingUrlForContact() {
     },
   });
   if (!r.isConfirmed) return;
-  const url = window.location.origin + '/v/' + state.form._originalSlug + '?c=' + r.value;
+  const url = PUBLIC_VIDEO_ORIGIN + '/v/' + state.form._originalSlug + '?c=' + r.value;
   copyText(url, 'Landing URL for contact ' + r.value);
 }
 
@@ -2006,7 +2013,7 @@ function copyEmbed(variant) {
     Swal.fire('Not available', 'Add a ' + variant + ' first.', 'info');
     return;
   }
-  const origin = window.location.origin;
+  const origin = PUBLIC_VIDEO_ORIGIN;
   // {{contacts.contact_id}} stays literal — campaign resolverService substitutes
   // it per-recipient at send time.
   const snippet = '<a href="' + origin + '/v/' + slug + '?c={{contacts.contact_id}}">'
@@ -2035,7 +2042,7 @@ async function copyAsImageLink(variant) {
     Swal.fire('Not available', 'Add a ' + variant + ' first.', 'info');
     return;
   }
-  const linkUrl = window.location.origin + '/v/' + slug;
+  const linkUrl = PUBLIC_VIDEO_ORIGIN + '/v/' + slug;
   const altText = title || 'Watch the video';
 
   // HTML version — anchor wrapping the image.

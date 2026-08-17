@@ -55,15 +55,13 @@
     return window.parent && window.parent.apiSend;
   }
 
-  function getOrigin() {
-    // The user-facing URL is the parent's origin (the iframe might technically
-    // share it, but parent.location.origin is the canonical source).
-    try {
-      return window.parent.location.origin;
-    } catch (e) {
-      return window.location.origin;
-    }
-  }
+  // Public host for /v/ landing links (2026-08-17 origin-separation slice).
+  // Staff run this UI on app.4lsg.com, but the links it mints go to CLIENTS,
+  // and the public video surface now lives on the landing host. Hard-coded —
+  // same pattern as the booking/manage link defaults in scripts.js and
+  // campaign.html. (Replaced the old getOrigin() parent-origin helper, which
+  // would mint app-host links forever from the staff shell.)
+  var PUBLIC_VIDEO_ORIGIN = 'https://4lsg.com';
 
   /**
    * Fetch + cache the published-videos list. Returns array of video objects
@@ -108,7 +106,7 @@
    *   Otherwise: produces ...?c=<id> (already substituted).
    */
   function buildUrl(slug, contactId) {
-    const base = getOrigin() + '/v/' + encodeURIComponent(slug);
+    const base = PUBLIC_VIDEO_ORIGIN + '/v/' + encodeURIComponent(slug);
     const c = (contactId === null || contactId === undefined || contactId === '')
       ? '{{contacts.contact_id}}'
       : String(contactId);
