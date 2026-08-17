@@ -10,7 +10,7 @@ If you just want to use the system, you don't need this chapter — the UI and A
 
 ## Technical reference
 
-All tables use `utf8mb4` collation, mostly `utf8mb4_general_ci` (a few in `_unicode_ci` — historical drift, not meaningful).
+All tables use `utf8mb4` / `utf8mb4_general_ci`, at both table and column level. That uniformity is load-bearing, not cosmetic — see pitfall 7 below and [`ref/SCHEMA_CONVENTIONS.md`](../../ref/SCHEMA_CONVENTIONS.md) before you write a `CREATE TABLE`.
 
 ### Tables in scope
 
@@ -567,3 +567,5 @@ The hook + email-router log tables and `job_results` are intentionally **soft-li
 4. **`cases.case_id` is varchar** (8 opaque chars — new ids uppercase Base32 like `"7XK4MQ2R"`, legacy ids mixed-case base64url like `"uT7EU36v"`) — not an int. Workflow `init_data.case_id` and sequence `trigger_data.case_id` should be string.
 5. **`users.user` is the PK** of the users table — not `users.user_id` or `users.id`. `req.auth.userId` is the property name on the auth context.
 6. **Two `condition` columns are reserved-word in MySQL** — `sequence_templates.condition` and `sequence_steps.condition`. Always backtick-quote them in raw SQL: `\`condition\``.
+7. **Never write `DEFAULT CHARSET=utf8mb4` without `COLLATE=utf8mb4_general_ci`.** It does *not* inherit the schema default — it falls back to the charset default, `utf8mb4_0900_ai_ci` on MySQL 8. Omitting the whole clause is correct; writing half of it breaks the table. The damage is that MySQL refuses `column = column` across collations, so the new table can never be joined to `cases`, `contacts`, or anything else keyed on a varchar — `JOIN cases c ON c.case_id = t.case_id` fails with ER_CANT_AGGREGATE_2COLLATIONS. It hides for months because `WHERE case_id = ?` never errors (a bound literal adopts the column's collation); only column-to-column joins fail, so it surfaces on the day someone writes the first report across the table. 26 of 119 tables were created this way before it was caught. `tests/schemaConventions.test.js` now lints `ref/database.sql` for it in CI — run `npm run db:ref` after adding a table.
+8. **`sql_mode` has no `STRICT_TRANS_TABLES`.** Over-length writes truncate silently and implicit NOT-NULL defaults are accepted rather than rejected — the database will not catch bad data for you. Size columns to match what actually writes into them and validate in application code. Don't enable strict mode without first giving affected columns real defaults; as-is it would break case creation and `listCases`.

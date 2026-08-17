@@ -301,6 +301,7 @@ ref/2026-08-16_origin_separation.sql
 ref/2026-08-16_phase_d_sms_cutover_v2.sql
 ref/2026-08-16_task_dedupe_key.sql
 ref/2026-08-16_task_start_date.sql
+ref/2026-08-17_collation_normalize.sql
 ref/2026-08-17_video_landing.sql
 ref/EXTERNAL_CODE_CSS_DECISION.md
 ref/EXTERNAL_FORMS_DESIGN.md
@@ -310,6 +311,7 @@ ref/ORIGIN_SEPARATION_ROLLOUT.md
 ref/ORIGIN_SEPARATION_WORKER_PROMPT.md
 ref/RIDER_D_VIDEO_CONTACT_PARAM_OPTIONS.md
 ref/RIDER_E_PUBLIC_SURFACE_SWEEP.md
+ref/SCHEMA_CONVENTIONS.md
 ref/X2_DESIGN_AMENDMENTS.md
 ref/database.sql
 ref/files.md
@@ -598,6 +600,7 @@ tests/esignService.test.js
 tests/esignTemplates.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
+tests/eventRegistryCoverage.test.js
 tests/eventservice.remindertitle.test.js
 tests/extforms.x2.test.js
 tests/f_route.x21.test.js

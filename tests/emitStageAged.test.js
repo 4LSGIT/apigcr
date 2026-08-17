@@ -61,15 +61,17 @@ function makeDb(candidates, { claimResult = () => 1 } = {}) {
 
 const cand = (logId, caseId, days, over = {}) => ({
   stage_log_id: logId, case_id: caseId, template_id: 1, stage_id: 3,
-  stage_key: 'docs', status_label: 'Documents & Prep',
+  stage_key: 'docs', case_stage: 'Pending', status_label: 'Documents & Prep',
   entered_at: new Date('2026-08-01T12:00:00.000Z'),
   days_in_stage: days, case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
   ...over,
 });
 
 beforeEach(() => {
-  domainEvents.emit.mockClear();
-  alert.mockClear();
+  domainEvents.emit.mockReset();
+  domainEvents.emit.mockImplementation(async () => {});
+  alert.mockReset();
+  alert.mockImplementation(async () => {});
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -134,6 +136,25 @@ test('cap stops BEFORE claiming the next crossing and alerts once', async () => 
   expect(alert.mock.calls[0][1].kind).toBe('trigger_stage_aged_cap');
 });
 
+test('wall-clock bound stops BEFORE claiming and alerts once (F5)', async () => {
+  const db = makeDb([cand(311, 'CASEAAAA', 5), cand(312, 'CASEBBBB', 5)]);
+  let now = 1_000_000_000;
+  const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+  // the first dispatch "takes" 9 minutes — past the 8-minute default bound
+  domainEvents.emit.mockImplementation(async () => { now += 9 * 60 * 1000; });
+  try {
+    const out = await fns.emit_stage_aged({}, db);
+    expect(out.output.emitted).toBe(1);
+    expect(out.output.timed_out).toBe(true);
+    expect(out.output.capped).toBe(false);
+    expect(db.claims().length).toBe(1);   // the second crossing was NOT claimed
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0][1].kind).toBe('trigger_stage_aged_cap');
+  } finally {
+    clock.mockRestore();
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // dry_run
 // ─────────────────────────────────────────────────────────────
@@ -171,7 +192,7 @@ test('envelope: source system, actor user 0, string case_id, data + extra fields
     stage_key: 'docs', stage_id: 3, template_id: 1,
     days_in_stage: 15, threshold_days: 14,
     case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
-    status_label: 'Documents & Prep',
+    case_stage: 'Pending', status_label: 'Documents & Prep',
   });
   expect(payload.extra).toEqual({ stage_log_id: 501 });
 });

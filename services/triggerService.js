@@ -313,6 +313,24 @@ const EVENT_TYPES = {
       { path: 'data.link_type',    label: 'Link type' },
     ],
   },
+  // ── Synthetic events (job-driven, not mutation-driven) ─────
+  'case.stage_aged': {
+    label: 'Case stage aged (nightly)',
+    description: 'SYNTHETIC event from the nightly emit_stage_aged job (13:00 UTC / 9am Detroit — the human/outbound band, since rules on this event send client-facing nudges), not from a mutation: fires when a case\'s CURRENT pipeline stage crosses a day threshold (default ladder 3/7/14/30/60). Filter data.threshold_days EQUALS N — never >=; each rung fires exactly once per stage entry, and re-entering a stage re-arms its rungs. FORWARD-LOOKING ONLY: only crossings within the last grace_days (default 7) fire, so cases imported or backfilled already-stale never fire — already-stale-at-import is a one-time triage report\'s job. The ladder is SPARSE, not continuous: with defaults there is no rung in-window on days 21–29, 37–59, or 67+. Terminal stages and Closed/Concluded cases are excluded. Coverage = cases with case_stage_log history (a handful today; grows with pipeline adoption). source=system, actor user 0, days are whole 24-hour periods.',
+    fields: [
+      ...COMMON_FIELDS,
+      { path: 'data.stage_key',      label: 'Current stage key' },
+      { path: 'data.threshold_days', label: 'Threshold rung that fired (filter equals N)' },
+      { path: 'data.days_in_stage',  label: 'Whole days in stage at emission' },
+      { path: 'data.template_id',    label: 'Pipeline template id' },
+      { path: 'data.case_type',      label: 'Case type' },
+      { path: 'data.case_subtype',   label: 'Case subtype' },
+      { path: 'data.case_stage',     label: 'case_stage enum (log-row snapshot)' },
+      { path: 'data.status_label',   label: 'Stage label (log-row snapshot; can lag template edits)' },
+      { path: 'data.entered_at',     label: 'Stage entered at (ISO)' },
+      { path: 'extra.stage_log_id',  label: 'case_stage_log row id (the dedup key)' },
+    ],
+  },
 };
 
 // V2 event candidates (noted, deliberately not emitted yet): checklist.created,

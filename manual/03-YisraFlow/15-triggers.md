@@ -47,7 +47,7 @@ services/triggerService.js          Engine: registry, match, transform, dispatch
 routes/api.triggers.js              REST surface
 public/automation/triggers.html     UI (iframed tab in automationManager.html)
 public/automation/matchBuilder.js   Shared condition-tree builder (also used by the ingest pages)
-lib/internal_functions/system.js    sweep_trigger_executions — retention
+lib/internal_functions/system.js    sweep_trigger_executions — retention; emit_stage_aged — nightly case.stage_aged emitter
 ```
 
 Emission sites live in the services that own each mutation — `apptService`, `contactService`, `caseService`, `pipelineService`, `formService`, `esignWebhookService`, and `routes/api.checklists.js`.
@@ -104,6 +104,7 @@ The authoritative list is `EVENT_TYPES` in `services/triggerService.js` — it c
 | `esign.status_changed` | `esignWebhookService.processStatusChange`, on real transitions (webhook or reconciliation — `source` distinguishes) | — |
 | `checkitem.completed` | `PATCH /checkitems/:id` on a transition to complete | idempotent re-saves don't fire |
 | `checklist.completed` | item status change or item deletion that completes the list | — |
+| `case.stage_aged` | **synthetic** — the nightly `emit_stage_aged` job (13:00 UTC / 9am Detroit), not a mutation | already-stale-at-import cases (grace window); terminal stages; `Closed`/`Concluded` cases |
 
 **The bypass column is the important one.** `case.updated` not firing for court-executor writes is a design decision, not a gap: those writes are high-volume and machine-driven, and routing them through the event system would have made every docket sync a potential trigger storm. If you need to react to one of them, react to the thing that caused it instead.
 
@@ -184,17 +185,18 @@ Suppression is a **skip, not a queue** — the event is gone; the rule does not 
 
 ### `case.stage_aged` — the synthetic aging event
 
-Every other event is a *mutation*. Absence — "docs still incomplete 7 days after intake" — is inexpressible by mutations, so a nightly job (**Stage Aged Emitter**, 08:00 UTC, `emit_stage_aged` internal function) turns stage *age* into an event. No new engine concepts: rules on `case.stage_aged` match, transform, and dispatch like any other.
+Every other event is a *mutation*. Absence — "docs still incomplete 7 days after intake" — is inexpressible by mutations, so a nightly job (**Stage Aged Emitter**, 13:00 UTC / 9am Detroit — deliberately in the human/outbound job band, not the overnight system band, because rules on this event send client-facing nudges; `emit_stage_aged` internal function) turns stage *age* into an event. No new engine concepts: rules on `case.stage_aged` match, transform, and dispatch like any other.
 
 How to author against it:
 
 - **Filter `data.threshold_days` `equals` N — never `>=`.** The ladder (default `3,7,14,30,60`, editable in the job's params) fires each rung **exactly once per stage entry**. A case that leaves a stage and comes back re-arms that stage's rungs (each entry is its own `case_stage_log` row, and the dedup keys on the row id).
 - **It is forward-looking only.** A crossing fires only within a **grace window** (default 7 days) of happening. A case backfilled with a historical `entered_at` at 240 days in stage fires *nothing* — by design, or gradual backfill would deliver an indefinite trickle of nudge stampedes. Already-stale-at-import is a one-time triage report's job, not this event's.
 - **Coverage = cases with pipeline history.** Today that's a handful; it grows on its own as intake-pipeline advances accrue. Terminal stages (`closed`, `dead_lead`) and `Closed`/`Concluded` cases never fire.
-- **Days are whole 24-hour periods** (`TIMESTAMPDIFF(DAY, …)` in SQL), so "3 days" means ≥ 72 hours at the 08:00 run, not "3 calendar days."
+- **Days are whole 24-hour periods** (`TIMESTAMPDIFF(DAY, …)` in SQL), so "3 days" means ≥ 72 hours at the 13:00 run, not "3 calendar days." A daily job also means a crossing is caught up to ~24 hours late — in practice a "3-day" nudge lands 3–4 days after stage entry.
+- **The ladder is sparse, not continuous.** With defaults (`3,7,14,30,60` + 7-day window) there is no rung in-window on days 21–29, 37–59, or 67+ — a case sitting in `docs` at day 45 is generating no signal, by design. Widen the ladder in the job's params if a gap matters.
 - `source` is `system`, `actor.user_id` is `0`. `extra.stage_log_id` carries the dedup key. `data` carries `stage_key`, `days_in_stage`, `threshold_days`, `template_id`, `case_type`/`subtype`, `status_label`, `entered_at`.
 
-Operational notes: the claim table is `case_stage_aged_emitted` (`INSERT IGNORE` on `(stage_log_id, threshold_days)` — atomic, safe under overlap or manual re-runs). Emissions are awaited inside the job and each is its own **root** event with its own 50-dispatch budget; the job's own `max_emissions` cap (default 200) bounds the run, alerts when hit, and leaves the remainder unclaimed to retry the next night while still in-window. `emit_stage_aged` also takes `dry_run: true` (via apiTester) to list would-emit crossings without claiming or emitting. After a rung passes its grace window unfired (job dead > 7 days), that nudge is permanently skipped — the job-failure alerting is the backstop.
+Operational notes: the claim table is `case_stage_aged_emitted` (`INSERT IGNORE` on `(stage_log_id, threshold_days)` — atomic, safe under overlap or manual re-runs). Emissions are awaited inside the job and each is its own **root** event with its own 50-dispatch budget; the job's own bounds — `max_emissions` (default 200) and `max_runtime_ms` (default 8 min, kept inside the job runner's 15-minute stuck-job recovery) — stop the run before claiming, alert when hit, and leave the remainder unclaimed to retry the next night while still in-window. `emit_stage_aged` also takes `dry_run: true` (via apiTester) to list would-emit crossings without claiming or emitting. After a rung passes its grace window unfired (job dead > 7 days), that nudge is permanently skipped — the job-failure alerting is the backstop.
 
 A sibling event keyed on *activity* rather than stage age — `case.idle`, full coverage across all open cases today — is designed but not built; it needs a rolling-watermark dedup rather than a one-shot claim.
 
