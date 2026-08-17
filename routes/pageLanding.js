@@ -424,9 +424,12 @@ function isCredentialedPath(p) {
     API_M_POST_RE.test(p) ||
     // Task + decision action links (2026-08-17): bearer token in the PATH,
     // so noindex for the same reason /m/:token is — an indexed action URL is
-    // a live one-click mutation handed to anyone who finds it. Contrast /v/,
-    // which is deliberately indexable because ?c= is attribution, not a
-    // credential.
+    // a live one-click mutation handed to anyone who finds it.
+    //
+    // Contrast /v/, whose credential lives in the QUERY (?ct=). Path-only
+    // matching cannot express "noindex only when the query carries a
+    // credential", so /v/ handles its own robots header in
+    // routes/videoLanding.js rather than being listed here.
     T_ROUTE_RE.test(p) ||
     T_POST_RE.test(p) ||
     T_BADGE_RE.test(p) ||
@@ -473,11 +476,19 @@ function landingAllowed(req) {
   if (API_M_GET_RE.test(p))            return isRead;
   // Video landing (2026-08-17). GET renders the page; the two beacon POSTs
   // are the page's own tracking calls (built relative in views/v.html, so
-  // they land on whichever host served the page). NOT in isCredentialedPath:
-  // ?c= is a raw contact_id — attribution, not a bearer credential — and the
-  // page is a marketing surface with OG tags built for sharing. If ?c= ever
-  // becomes a token (see the Rider-D options note), move /v into the
-  // credentialed set in the same slice.
+  // they land on whichever host served the page).
+  //
+  // NOT in isCredentialedPath, and it must STAY out — that function is
+  // path-only by design, so listing /v/ here would noindex the bare
+  // marketing URL, which is deliberately indexable.
+  //
+  // RESOLVED 2026-08-17 (Rider D): ?c= DID become a token (?ct=). The
+  // earlier note here said to "move /v into the credentialed set" in that
+  // slice — that instruction was wrong for the reason above. The correct fix
+  // shipped instead: routes/videoLanding.js sets X-Robots-Tag itself when
+  // ANY contact parameter is present, so the bare page stays indexable and
+  // every contact-identified URL is noindex. Locked in
+  // tests/videoLanding.actionUrl.test.js.
   if (V_ROUTE_RE.test(p))              return isRead;
   if (API_V_POST_RE.test(p))           return m === 'POST';
   // Task + decision action links (2026-08-17). ORDER MATTERS in this block:

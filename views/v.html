@@ -14,6 +14,16 @@
   <meta property="og:image" content="{{POSTER_URL}}">
   <meta property="og:type" content="{{OG_TYPE}}">
   <meta property="og:url" content="{{LANDING_URL}}">
+  <!-- Canonical = the paramless, canonical-SLUG URL on the landing host.
+       Two things depend on it (added 2026-08-17):
+         1. Alias slugs serve IN PLACE with no redirect, so /v/<alias> and
+            /v/<canonical> both return 200 with identical content. Without a
+            canonical they compete as duplicates.
+         2. A contact-identified URL (?ct= / ?c=) already carries noindex from
+            routes/videoLanding.js; this consolidates any that a crawler
+            reaches anyway onto the bare page instead. og:url is a social
+            signal, not a canonical one — it does not do this job. -->
+  <link rel="canonical" href="{{LANDING_URL}}">
   <meta property="og:video" content="{{VIDEO_URL}}">
   <meta property="og:video:type" content="video/mp4">
   <meta name="twitter:card" content="{{TWITTER_CARD}}">

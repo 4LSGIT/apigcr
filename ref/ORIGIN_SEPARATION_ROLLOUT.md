@@ -417,7 +417,13 @@ not re-tell booking as security. They are different slices for a reason.
   Accepted residual: an indexed `?c=42` variant would reveal that contact 42
   received the link — but `?c=` URLs travel in private SMS/email and indexers
   only find published links. **Coupling:** if the Rider-D decision ever turns
-  `?c=` into a token, `/v/` joins `isCredentialedPath` in that same slice.
+  `?c=` into a token, contact-identified URLs must become noindex in that
+  same slice.
+  **RESOLVED 2026-08-17** — see "Robots" under the Rider-D section below.
+  Note the original wording of this coupling said `/v/` should "join
+  `isCredentialedPath`"; that was wrong. `isCredentialedPath` is path-only by
+  design, so it would have noindexed the bare marketing URL too.
+  `routes/videoLanding.js` sets the header itself, keyed on the query.
 - **og:url pins to `landing_hosts[0]`** (fallback: request host when landing
   is unconfigured). The ordering check came back clean — `www` can never bake
   into og:url because host canonicalization is step 0 of the middleware,
@@ -671,6 +677,44 @@ Order: ALTER → backend → `npm run db:ref` → frontend.
 - Set one video to `contact_only`: `?ct=` opens it, `?c=<valid id>` 404s
 - videoManager "Copy URL for contact" yields `?ct=<32 hex>`
 - Booking still works end to end (the rename's real blast radius)
+
+## Robots (the coupling, honored)
+
+The first cut of this slice shipped `?ct=` without touching robots headers,
+leaving a 32-hex bearer indexable — worse on the leak axis than the integer it
+replaced, because `contact_token` also grants booking prefill. Caught in
+review, fixed here.
+
+The fix is NOT what the earlier notes prescribed. They said `/v/` should join
+`isCredentialedPath`; that function takes `req.path` and never sees the query,
+so listing `/v/` would noindex the bare marketing page — the opposite of the
+deliberate decision — and the "?c= indexable / ?ct= noindex split" those notes
+described is unachievable through it. All the stale notes are corrected in
+place.
+
+What shipped instead:
+
+- **`routes/videoLanding.js` sets `X-Robots-Tag: noindex, nofollow` whenever
+  ANY contact parameter is present** (`?ct=` or `?c=`), keyed on presence, not
+  validity — a malformed token must not become indexable, and the header must
+  not leak whether a token resolved. The bare `/v/:slug` is untouched and
+  stays indexable.
+- **`?c=` is noindexed too.** It grants nothing, but a `?c=` URL is a
+  duplicate of the canonical page that reveals which contact was sent the
+  link. One rule beats a hairline distinction, and nothing needs revisiting
+  when the `?c=` branch is deleted.
+- **`views/v.html` gained `<link rel="canonical">`** pointing at the paramless
+  canonical-slug URL. Belt-and-braces for any contact URL a crawler reaches
+  anyway — and it fixes a PRE-EXISTING bug the review surfaced: alias slugs
+  serve in place with no redirect, so `/v/<alias>` and `/v/<canonical>` both
+  returned 200 with identical content and no canonical signal. `og:url` is a
+  social signal and does not do that job.
+- **The old lock test was the failure mode, not the guard.** It asserted
+  `?c=42` had no robots header against a STUB route in
+  `pageLanding.originsep.test.js`, so it stayed green while the real bearer
+  went uncovered. It is rescoped to state only what it can prove (the
+  path-level decision); the query-level locks now run against the real
+  handler in `tests/videoLanding.actionUrl.test.js`.
 
 ## Deliberately not done
 

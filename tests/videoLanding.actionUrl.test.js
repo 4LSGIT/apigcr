@@ -305,3 +305,42 @@ describe('access_level = contact_only', () => {
     expect((await fetch(`${base}/v/demo?ct=${'c'.repeat(32)}`)).status).toBe(404);
   });
 });
+
+
+// ── robots headers on the REAL route (2026-08-17, Rider D coupling) ────────
+//
+// This lives here, not in pageLanding.originsep.test.js, on purpose: that
+// suite mounts a STUB /v/:slug, so it can only ever assert the PATH-level
+// decision (pageLanding adds no noindex for /v/). The query-level decision is
+// made by this route, so only a test against the real handler can see it.
+// The previous lock test probed ?c=42 against the stub and stayed green while
+// ?ct= — the actual bearer — was completely uncovered.
+describe('X-Robots-Tag on /v/:slug', () => {
+  test('bare URL stays INDEXABLE — marketing surface, unchanged decision', async () => {
+    const res = await fetch(`${base}/v/demo`);
+    expect(res.headers.get('x-robots-tag')).toBeNull();
+  });
+
+  test('LOCK: ?ct= (32-hex bearer) is noindex', async () => {
+    const res = await fetch(`${base}/v/demo?ct=${TOKEN}`);
+    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  test('LOCK: a MALFORMED ?ct= is still noindex — presence, not validity', async () => {
+    // Never leak token validity through a response header, and never let a
+    // typo'd bearer become indexable.
+    const res = await fetch(`${base}/v/demo?ct=nothex`);
+    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  test('LOCK: legacy ?c= is noindex too (duplicate + reveals the recipient)', async () => {
+    const res = await fetch(`${base}/v/demo?c=42`);
+    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  test('canonical points at the paramless URL even on a ?ct= hit', async () => {
+    const html = await (await fetch(`${base}/v/demo?ct=${TOKEN}`)).text();
+    expect(html).toMatch(/<link rel="canonical" href="[^"]*\/v\/demo">/);
+    expect(html).not.toContain(`canonical" href="${TOKEN}`);
+  });
+});

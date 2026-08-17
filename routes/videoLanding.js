@@ -199,6 +199,35 @@ router.get('/v/:slug', async (req, res) => {
     if (readLimited(getClientIp(req))) {
       return res.status(429).type('text/plain').send('Too many requests');
     }
+
+    // ── Robots: noindex ANY contact-identified URL (2026-08-17, Rider D) ────
+    //
+    // The bare /v/:slug stays indexable — it is marketing surface with OG
+    // tags built for sharing, and that decision is unchanged. But a URL
+    // carrying a contact parameter must never enter an index:
+    //
+    //   ?ct= is a 32-hex BEARER. Since it is contacts.contact_token, the same
+    //        token routes/booking.js resolves, an indexed ?ct= URL would hand
+    //        a stranger both this contact's contact_only videos AND their
+    //        booking prefill identity.
+    //   ?c=  is attribution-only and grants nothing, but a ?c= URL is still a
+    //        duplicate of the canonical page that reveals which contact was
+    //        sent the link. Nobody wants it ranking, so it gets the same
+    //        treatment. One rule, no hairline distinction to maintain, and
+    //        nothing to revisit when the ?c= branch is finally deleted.
+    //
+    // Keyed on PRESENCE, not validity: a malformed token must not become
+    // indexable, and the header must never leak whether a token resolved.
+    //
+    // Deliberately NOT done via pageLanding's isCredentialedPath: that
+    // function is path-only BY DESIGN (query never widens access), so putting
+    // /v/ in it would noindex the bare marketing URL too. The query-aware
+    // decision belongs in the route that owns the query semantics. Narrowing
+    // on a query is safe in a way that widening on one is not.
+    if (req.query.ct != null || req.query.c != null) {
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+    }
+
     // canonical first, then alias — both gated to published.
     const video = await videoService.getVideoBySlug(req.db, req.params.slug, {
       mustBePublished: true,

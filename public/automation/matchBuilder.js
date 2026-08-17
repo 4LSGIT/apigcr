@@ -9,11 +9,16 @@
 // contract, same as lib/actionDispatchers.js) into a standalone script so
 // triggers.html can consume it without a third inline copy.
 //
-// DELIBERATE NON-MIGRATION: emailIngest.html and phoneIngest.html still carry
-// their own inline copies. They are live, tested surfaces; pointing them at
-// this module is a follow-up slice, not this one. Until then, behavioral
-// changes here do NOT propagate to the ingest pages — keep the three copies
-// aligned if any of them changes.
+// CONSUMERS (R4/T6 — the non-migration this header used to describe is DONE):
+// triggers.html, emailIngest.html, and phoneIngest.html ALL load this module.
+// The ingest pages' inline copies were deleted (219 lines removed from each).
+// ⚠ Behavioral changes here propagate to THREE live surfaces, two of them
+// heavily-used ingest pages — test all three, not just triggers.html.
+//
+// Each ingest page additionally keeps a LOCAL insertConditionPath() that
+// reaches into this module's `_state` / `_mbcfg` container internals. That
+// is a real coupling contract: renaming or removing either property breaks
+// both ingest pages silently (no console error — the insert just no-ops).
 //
 // Loaded the same way as fnPicker.js / paramsMapping.js: a plain
 // <script src> on a (non-module) automation sub-page, exposing its API on
@@ -24,10 +29,8 @@
 // removing the DOM node — previously delete-then-add resurrected the deleted
 // condition because add re-renders from _state. mbCollect stays
 // DOM-authoritative at save time; with state and DOM unable to drift, that
-// is now harmless redundancy rather than load-bearing. NOTE: this module is
-// consumed ONLY by triggers.html — the ingest pages carry their own inline
-// copies (see DELIBERATE NON-MIGRATION above), which still have the latent
-// bug and should get this fix when they migrate.
+// is now harmless redundancy rather than load-bearing. Since R4/T6 all three
+// consumer pages get this fix automatically (see CONSUMERS above).
 //
 // PUBLIC API (all on window):
 //   mbRender(rootEl, state, opts)  — render a condition tree; mutates `state` live.

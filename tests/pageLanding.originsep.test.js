@@ -550,8 +550,19 @@ describe('video landing on the landing host', () => {
     }
   });
 
-  test('LOCK: /v/ pages are INDEXABLE — no X-Robots-Tag (?c= is attribution, not a credential)', async () => {
-    const res = await landing('/v/welcome?c=42');
+  test('LOCK: pageLanding adds no path-level noindex for /v/ — the bare page must stay indexable', async () => {
+    // SCOPE, because the previous version of this test was misleading: this
+    // suite mounts a STUB /v/:slug, so it can only prove the PATH-level
+    // decision — that /v/ is absent from isCredentialedPath, which is
+    // path-only by design. Putting /v/ there would noindex the bare marketing
+    // URL, which is exactly what we do not want.
+    //
+    // The QUERY-level decision (?ct= and ?c= are both noindex) is made by the
+    // real handler in routes/videoLanding.js and is locked in
+    // tests/videoLanding.actionUrl.test.js → 'X-Robots-Tag on /v/:slug'.
+    // Asserting it here against a stub would only prove the stub sets no
+    // headers — which is how a ?ct= bearer went uncovered in the first place.
+    const res = await landing('/v/welcome');
     expect(res.headers.get('x-robots-tag')).toBeNull();
   });
 
