@@ -887,7 +887,15 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
       `
       SELECT 
         id, name, description, active, test_input, capture_mode, captured_at, created_at, updated_at,
-        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
+        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count,
+        -- Renumber-safety slice — the editor warns before a reorder/delete on a
+        -- workflow that has executions mid-flight. Those carry RAW STEP NUMBERS
+        -- (workflow_executions.current_step_number, and scheduled_jobs.data.nextStep
+        -- on a pending workflow_resume), and remapBranchTargets does not touch
+        -- either — it only rewrites workflow_steps.config. Uses idx_workflow_status.
+        (SELECT COUNT(*) FROM workflow_executions
+          WHERE workflow_id = w.id
+            AND status IN ('active','processing','delayed','held','pending')) as in_flight_executions
       FROM workflows w
       WHERE id = ?
       `,

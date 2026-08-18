@@ -2576,6 +2576,8 @@ async function seqStepDelete(idx) {
   const i = stepId != null ? seqStepIdxById(stepId) : idx;
   const step = SEQ.steps[i];
   if (!step) return;
+  // Delete renumbers every step above it — same live-pointer exposure as a move.
+  if (!(await seqConfirmRenumberWithEnrollments('delete'))) return;
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
@@ -2615,11 +2617,13 @@ function seqStepIdxById(id) { return SEQ.steps.findIndex(s => s.id === id); }
 // (sequenceEngine.executeStep takes stepId), so it still fires the step it was
 // scheduled for; but advanceToNextStep walks by step_number + 1, so what runs
 // AFTER that fire follows the new order.
-async function seqConfirmReorderWithEnrollments() {
+async function seqConfirmRenumberWithEnrollments(verb) {
   const tplId = SEQ.activeTemplateId;
   if (!tplId || SEQ.reorderWarned[tplId]) return true;
   const n = Number(SEQ.activeTemplate?.active_enrollments || 0);
-  if (n <= 0) { SEQ.reorderWarned[tplId] = true; return true; }
+  // Don't latch the flag on a zero count — an enrollment may start later in the
+  // session, and the next renumber should still warn.
+  if (n <= 0) return true;
   const r = await Swal.fire({
     icon: 'warning',
     title: `${n} active enrollment${n > 1 ? 's' : ''}`,
@@ -2629,10 +2633,12 @@ async function seqConfirmReorderWithEnrollments() {
       <p style="margin-top:8px">But the sequence advances <b>by position</b>. Once one of
       those queued steps fires, those enrollments follow the <b>new</b> order from there on
       — which may repeat a step they already got, or skip one they haven't.</p>
+      ${verb === 'delete' ? `<p style="margin-top:8px">Deleting a step renumbers everything
+      above it, so this applies to those steps too.</p>` : ''}
     </div>`,
     width: 560,
     showCancelButton: true,
-    confirmButtonText: 'Reorder anyway',
+    confirmButtonText: verb === 'delete' ? 'Delete anyway' : 'Reorder anyway',
     confirmButtonColor: '#f59e0b',
   });
   if (!r.isConfirmed) return false;
@@ -2676,7 +2682,7 @@ async function seqMoveStep(fromIdx, toIdx, focusKey) {
   if (!SEQ.activeTemplateId) return;
   const step = SEQ.steps[fromIdx];
   if (!step) return;
-  if (!(await seqConfirmReorderWithEnrollments())) return;
+  if (!(await seqConfirmRenumberWithEnrollments('move'))) return;
 
   // A commit in flight, or a batch open on a DIFFERENT step, means the local
   // numbers are ahead of the server — settle that first, then re-resolve this

@@ -612,6 +612,9 @@ const WF = {
   // In-flight commit promise. Non-null means the server has not yet caught up
   // with the local order; anything reading or writing step_number awaits it.
   moveCommit: null,
+  // Workflow ids already warned about in-flight executions this session, so the
+  // warning fires once per workflow rather than on every nudge.
+  renumberWarned: {},
   // Original config captured (deep-cloned) at editor-open. The metadata-
   // driven internal_function form can only render/gather keys declared in
   // meta.params, so keys outside the schema — `extra` forensic blocks on
@@ -2454,6 +2457,9 @@ async function wfStepDelete(idx) {
   const i = stepId != null ? wfStepIdxById(stepId) : idx;
   const step = WF.steps[i];
   if (!step) return;
+  // Delete renumbers every step above it — same live-pointer exposure as a move,
+  // plus the parked-on-the-deleted-step case.
+  if (!(await wfConfirmRenumberWithExecutions('delete'))) return;
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
@@ -2487,6 +2493,55 @@ async function wfStepDelete(idx) {
 const WF_MOVE_DEBOUNCE_MS = 450;
 
 function wfStepIdxById(id) { return WF.steps.findIndex(s => s.id === id); }
+
+// Renumbering a workflow that has executions mid-flight is consequential —
+// warn once per workflow per session. Precise about what does and does not
+// follow the renumber:
+//
+//   Branch targets DO follow — remapBranchTargets rewrites set_next / then /
+//   else / skipToStep / nextStep inside workflow_steps.config, in the same
+//   transaction as the renumber.
+//
+//   Live execution pointers DO NOT. workflow_executions.current_step_number is
+//   a raw number, and a pending workflow_resume job carries data.nextStep — a
+//   raw number too (workflow_engine.scheduleResume). Neither is remapped, so a
+//   delayed execution resumes at whatever step now occupies that POSITION.
+//   Delays routinely run hours: across ~3k historical resume jobs the average
+//   gap is ~36 min and the longest ~33 h.
+//
+// This is a stopgap. The durable fix is versioned definitions with executions
+// pinned to the version they started on — see docs.
+async function wfConfirmRenumberWithExecutions(verb) {
+  const wfId = WF.activeWfId;
+  if (!wfId) return true;
+  if (WF.renumberWarned[wfId]) return true;
+  const n = Number(WF.activeWf?.in_flight_executions || 0);
+  // Don't latch the flag on a zero count — an execution may start later in the
+  // session, and the next renumber should still warn.
+  if (n <= 0) return true;
+  const r = await Swal.fire({
+    icon: 'warning',
+    title: `${n} execution${n > 1 ? 's' : ''} in flight`,
+    html: `<div style="text-align:left;font-size:13px;line-height:1.55">
+      <p>Branch targets inside this workflow (<code>set_next</code>, <code>then</code>,
+      <code>else</code>, <code>skipToStep</code>) <b>are updated automatically</b>.</p>
+      <p style="margin-top:8px">Executions already running are <b>not</b>. They resume by
+      <b>step number</b>, so ${verb === 'delete' ? 'deleting a step' : 'this move'} can land them
+      on a different step than intended — including hours later, when a delayed step wakes up.</p>
+      ${verb === 'delete' ? `<p style="margin-top:8px">If an execution is parked <i>on</i> the
+      step you are deleting, it will resume at whatever slides into that number.</p>` : ''}
+      <p style="margin-top:8px;color:var(--muted)">Check the Executions tab if you need to know
+      which runs are affected.</p>
+    </div>`,
+    width: 580,
+    showCancelButton: true,
+    confirmButtonText: verb === 'delete' ? 'Delete anyway' : 'Move anyway',
+    confirmButtonColor: '#f59e0b',
+  });
+  if (!r.isConfirmed) return false;
+  WF.renumberWarned[wfId] = true;
+  return true;
+}
 
 // Repaint the canvas without stealing focus from a step control the user is
 // still working. The canvas is re-rendered wholesale, so the arrow button
@@ -2524,6 +2579,7 @@ async function wfMoveStep(fromIdx, toIdx, focusKey) {
   if (!WF.activeWfId) return;
   const step = WF.steps[fromIdx];
   if (!step) return;
+  if (!(await wfConfirmRenumberWithExecutions('move'))) return;
 
   // A commit in flight, or a batch open on a DIFFERENT step, means the local
   // numbers are ahead of the server — settle that first, then re-resolve this
