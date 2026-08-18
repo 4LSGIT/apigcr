@@ -166,6 +166,46 @@ describe('diffWorkflowSteps — classification', () => {
     expect(r.structural_reasons.join(' ')).toMatch(/custom_code/);
   });
 
+  test('set_vars change is STRUCTURAL when the workflow carries a runtime-resolved branch target (review III.F1)', () => {
+    // set_vars populates the variables a "{{jump_to}}"-style target reads at
+    // dispatch — with a dynamic target in play, a set_vars edit IS a control
+    // flow edit. The live archetype: wf41 step 8 sets jump_to, step 9 is
+    // set_next {value: "{{jump_to}}"}.
+    const b = [
+      step(1, { type: 'webhook', config: JSON.stringify({ url: 'https://x', set_vars: { jump_to: 2 } }) }),
+      step(2, { config: JSON.stringify({ function_name: 'set_next', params: { value: '{{jump_to}}' } }) }),
+      step(3),
+    ];
+    const d = clone(b);
+    d[0] = { ...d[0], config: JSON.stringify({ url: 'https://x', set_vars: { jump_to: 3 } }) };
+    const r = diffWorkflowSteps(b, d, OPTS);
+    expect(r.classification).toBe('structural');
+    expect(r.structural_reasons.join(' ')).toMatch(/set_vars changed while this workflow uses a runtime-resolved branch target/);
+  });
+
+  test('set_vars change stays CONTENT when no dynamic target exists (wf15/16 logging-style edits remain migratable)', () => {
+    const b = [
+      step(1, { config: JSON.stringify({ function_name: 'set_next', params: { value: 2 }, set_vars: { note: 'a' } }) }),
+      step(2),
+    ];
+    const d = clone(b);
+    d[0] = { ...d[0], config: JSON.stringify({ function_name: 'set_next', params: { value: 2 }, set_vars: { note: 'b' } }) };
+    expect(diffWorkflowSteps(b, d, OPTS).classification).toBe('content_only');
+  });
+
+  test('a draft that INTRODUCES a dynamic target while editing set_vars is structural (both-sides scan)', () => {
+    const b = [
+      step(1, { type: 'webhook', config: JSON.stringify({ url: 'https://x', set_vars: { jump_to: 2 } }) }),
+      step(2, { config: JSON.stringify({ function_name: 'set_next', params: { value: 2 } }) }),
+      step(3),
+    ];
+    const d = clone(b);
+    d[0] = { ...d[0], config: JSON.stringify({ url: 'https://x', set_vars: { jump_to: 3 } }) };
+    d[1] = { ...d[1], config: JSON.stringify({ function_name: 'set_next', params: { value: '{{jump_to}}' } }) };
+    const r = diffWorkflowSteps(b, d, OPTS);
+    expect(r.classification).toBe('structural');
+  });
+
   test('internal_function with a missing function_name is structural — fail-closed, not fail-harmless (review II.5)', () => {
     // Without function_name the branch-target extraction has nothing to key
     // on, so both sides extract [] and config diffs used to fall through to

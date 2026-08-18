@@ -24,11 +24,18 @@
  * SQL-text scan while matching zero rows at runtime).
  *
  * The version check requires the bare word `version` in a PREDICATE-ish
- * position (followed by = , ) < > ! IN IS DESC ASC) — a comment merely
- * containing the word does not satisfy it (review II.8). Deliberately
- * unversioned SQL declares its audit class in an in-literal comment
- * ("Audit class: SWEEP."), which is also its exemption key — the
- * declaration IS the exemption.
+ * position (followed by = , ) < > ! IN IS DESC ASC) — review II.8. This is a
+ * HEURISTIC, not a proof: a crafted in-literal comment like "-- version, x"
+ * would still satisfy it (review III.F6). It reliably rejects the natural
+ * comment shapes and accepts every legitimate SQL shape in the codebase;
+ * anything sneakier is an author lying to the linter, which no regex fixes.
+ * Deliberately unversioned SQL declares its audit class in an in-literal
+ * comment ("Audit class: SWEEP."), which is also its exemption key — the
+ * declaration IS the exemption. CONSCIOUS TRADE (fixpack-verification C):
+ * self-declaration means a future script can exempt itself without touching
+ * this file, where the old list forced a reviewable test-file edit. Accepted
+ * for read-only sweeps; REVISIT if scripts/ ever grows step-table WRITE
+ * paths — those should go back to explicit entries in EXEMPT below.
  *
  *   npx jest tests/versionPredicateCoverage.test.js
  */

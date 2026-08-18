@@ -475,8 +475,12 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // Versioning endpoints (S4) — sequence draft lifecycle.
-// Mirrors routes/workflows.js exactly; see the comments there for the load-
-// bearing reasoning (lock ordering, fail-closed migration, retire-in-place).
+// Mirrors routes/workflows.js (see the comments there for the load-bearing
+// reasoning: lock ordering, fail-closed migration, retire-in-place) with one
+// deliberate asymmetry: the stranded query here excludes only
+// current_version, NOT the draft — no enrollment can ever pin a draft
+// (_enrollWithTemplate reads current_version only and throws below 1),
+// whereas workflow draft test-runs can and do (?use_draft=1).
 // Sequence-specific deltas: the migrate path is a pure enrollment REPOINT —
 // queued jobs are never rewritten, because executeStep resolves the step by
 // identity (template_id, pinned version, step_number) at fire time (S4.1) —

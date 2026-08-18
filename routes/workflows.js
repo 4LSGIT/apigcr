@@ -1133,7 +1133,7 @@ router.get("/workflows/:id/draft-diff", jwtOrApiKey, async (req, res) => {
       [workflowId, wf.draft_version]
     );
 
-    const diff = diffWorkflowSteps(currentSteps, draftSteps, { branchTargetParams: BRANCH_TARGET_PARAMS });
+    const diff = diffWorkflowSteps(currentSteps, draftSteps, { branchTargetParams: BRANCH_TARGET_PARAMS, isTerminalSentinel });
     const validation = validateWorkflowDraft(draftSteps, {
       branchTargetParams: BRANCH_TARGET_PARAMS,
       isTerminalSentinel,
@@ -1157,6 +1157,12 @@ router.get("/workflows/:id/draft-diff", jwtOrApiKey, async (req, res) => {
     // already treats it as such, and calling it "stranded, not migratable"
     // in the same modal contradicted that (worst on a first publish, where
     // current_version = 0 matched every run).
+    //
+    // NOT IN (?, ?) DEPENDS on the has_draft early-return above: if
+    // draft_version were NULL here, three-valued logic would make NOT IN
+    // return ZERO rows silently (fixpack-verification B). The guard ~40
+    // lines up guarantees it's non-null; if that guard ever moves, bind
+    // COALESCE the second param or split the predicate.
     const [stranded] = await db.query(
       `SELECT workflow_version, COUNT(*) AS n
          FROM workflow_executions
@@ -1246,7 +1252,7 @@ router.post("/workflows/:id/publish", jwtOrApiKey, async (req, res) => {
           `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
           [workflowId, oldV]
         );
-        const diff = diffWorkflowSteps(currentSteps, draftSteps, { branchTargetParams: BRANCH_TARGET_PARAMS });
+        const diff = diffWorkflowSteps(currentSteps, draftSteps, { branchTargetParams: BRANCH_TARGET_PARAMS, isTerminalSentinel });
         classification = diff.classification;
         if (diff.classification === 'structural') {
           return { respond: { status: 409, body: {

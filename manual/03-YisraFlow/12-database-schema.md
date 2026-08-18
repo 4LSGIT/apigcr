@@ -195,7 +195,7 @@ created_at          datetime
 ```sql
 id             int unsigned   PK
 template_id    int unsigned   FK → sequence_templates(id)  ON DELETE CASCADE
-version        int unsigned                                 -- ch. 16; UNIQUE (template_id, version, step_number)
+version        int                                          -- ch. 16; UNIQUE (template_id, version, step_number)
 step_number    int
 action_type    enum('sms','email','task','internal_function','webhook','start_workflow')
 action_config  json     NOT NULL

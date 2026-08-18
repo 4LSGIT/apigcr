@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-18T12:38:12.811Z
+-- Generated: 2026-08-18T21:39:36.139Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:8cf2a9df1b00b910808bd73e687f25ff
+-- Fingerprint: sha256:2f860082a48d76eacf0dddf370728417
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2451,7 +2451,7 @@ CREATE TABLE `sequence_enrollments` (
   `enrolled_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `template_version` int NOT NULL DEFAULT '1'
+  `template_version` int NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2556,7 +2556,7 @@ CREATE TABLE `sequence_templates` (
   `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
   `captured_input` json DEFAULT NULL,
   `captured_at` datetime DEFAULT NULL,
-  `current_version` int NOT NULL DEFAULT '1',
+  `current_version` int NOT NULL DEFAULT '0',
   `draft_version` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3159,7 +3159,7 @@ CREATE TABLE `workflow_executions` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
   `cancel_reason` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `workflow_version` int NOT NULL DEFAULT '1'
+  `workflow_version` int NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3221,7 +3221,7 @@ CREATE TABLE `workflows` (
   `capture_mode` enum('off','capturing','intercept') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
   `captured_input` json DEFAULT NULL,
   `captured_at` datetime DEFAULT NULL,
-  `current_version` int NOT NULL DEFAULT '1',
+  `current_version` int NOT NULL DEFAULT '0',
   `draft_version` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
