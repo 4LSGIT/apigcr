@@ -95,11 +95,13 @@ describe('S4 lifecycle endpoints — wiring', () => {
 
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'sequences.js'), 'utf8');
 
-  test('publish refuses structural migration server-side and remaps pending jobs by (template, version, step_number)', () => {
+  test('publish refuses structural migration server-side; migration is an enrollment repoint with NO job rewrite', () => {
     expect(src).toMatch(/Structural changes cannot migrate in-flight enrollments/);
-    expect(src).toMatch(/JSON_SET\(sj\.data, '\$\.stepId', ns\.id\)/);
-    expect(src).toMatch(/sj\.type = 'sequence_step' AND sj\.status = 'pending'/);
-    expect(src).toMatch(/sj\.sequence_enrollment_id IN \(\?\)/);
+    expect(src).toMatch(/UPDATE sequence_enrollments SET template_version = \?/);
+    // The JSON_SET stepId remap is deliberately GONE (S4.1) — it only covered
+    // status='pending' and left claimed-'running' jobs holding dead stepIds
+    // (silent wedge). Queued jobs now resolve by step_number at fire time.
+    expect(src).not.toMatch(/JSON_SET\(sj\.data/);
   });
 
   test('discard retires in place — no DELETE of draft step rows in the discard route', () => {
@@ -154,8 +156,16 @@ describe('engine-side S4 guards (lib/sequenceEngine.js)', () => {
     expect(src).not.toMatch(/t\.`condition` AS template_condition/);
   });
 
-  test('executeStep constrains the job stepId to the pinned (template, version)', () => {
+  test('executeStep resolves the step by IDENTITY — (template, pinned version, step_number) — with the id lookup as legacy fallback', () => {
+    expect(src).toMatch(/SELECT \* FROM sequence_steps WHERE template_id = \? AND version = \? AND step_number = \?/);
     expect(src).toMatch(/SELECT \* FROM sequence_steps WHERE id = \? AND template_id = \? AND version = \?/);
+    // and a resolution miss is LOGGED, not a silent console-only failure
+    expect(src).toMatch(/step_not_found \(template \$\{enrollment\.template_id\}/);
+  });
+
+  test('process_jobs passes stepNumber through to executeStep', () => {
+    const pj = fs.readFileSync(path.join(__dirname, '..', 'routes', 'process_jobs.js'), 'utf8');
+    expect(pj).toMatch(/executeStep\(db, enrollmentId, stepId, stepNumber\)/);
   });
 
   test('preview template mode is draft-else-current and reads the condition from the SAME version row', () => {

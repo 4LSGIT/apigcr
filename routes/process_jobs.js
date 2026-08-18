@@ -352,14 +352,17 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       // the previous empty begin/commit was a no-op and has been removed.
       if (job.type === 'sequence_step') {
         const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
-        const { enrollmentId, stepId } = data || {};
+        const { enrollmentId, stepId, stepNumber } = data || {};
 
-        console.log(`[SEQ STEP] enrollment=${enrollmentId} step=${stepId}`);
+        console.log(`[SEQ STEP] enrollment=${enrollmentId} step=${stepId} n=${stepNumber ?? '-'}`);
 
         // Execute in background (non-blocking)
         (async () => {
           try {
-            const result = await executeStep(db, enrollmentId, stepId);
+            // stepNumber is the step's identity across content-only publishes
+            // (executeStep resolves by it against the enrollment's pinned
+            // version); stepId is the legacy fallback.
+            const result = await executeStep(db, enrollmentId, stepId, stepNumber);
             console.log(`[SEQ STEP] enrollment=${enrollmentId} step=${stepId} → ${result.status}${result.reason ? ' ('+result.reason+')' : ''}`);
             await db.query(
               `UPDATE scheduled_jobs SET status = 'completed', updated_at = NOW() WHERE id = ?`,

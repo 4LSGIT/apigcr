@@ -123,6 +123,7 @@ manual/03-YisraFlow/12-database-schema.md
 manual/03-YisraFlow/13-cookbook.md
 manual/03-YisraFlow/14-human-in-the-loop.md
 manual/03-YisraFlow/15-triggers.md
+manual/03-YisraFlow/16-versioning.md
 manual/03-YisraFlow/README.md
 manual/04-Integrations/01-connections.md
 manual/04-Integrations/02-connections-live-test.md

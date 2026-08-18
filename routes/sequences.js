@@ -380,8 +380,13 @@ router.get('/sequences/templates', jwtOrApiKey, async (req, res) => {
 
   try {
     let query  = `SELECT t.*,
-                    (SELECT COUNT(*) FROM sequence_steps WHERE template_id = t.id AND version = COALESCE(t.draft_version, t.current_version)) AS step_count
-                  FROM sequence_templates t WHERE 1=1`;
+                    (SELECT COUNT(*) FROM sequence_steps WHERE template_id = t.id AND version = COALESCE(t.draft_version, t.current_version)) AS step_count,
+                    vv.template_condition AS _vcond, vv.version AS _vv
+                  FROM sequence_templates t
+                  LEFT JOIN sequence_template_versions vv
+                         ON vv.template_id = t.id
+                        AND vv.version = COALESCE(t.draft_version, t.current_version)
+                  WHERE 1=1`;
     const params = [];
 
     if (type)   { query += ` AND t.type = ?`;   params.push(type); }
@@ -390,6 +395,18 @@ router.get('/sequences/templates', jwtOrApiKey, async (req, res) => {
     query += ` ORDER BY t.type, t.name`;
 
     const [rows] = await db.query(query, params);
+
+    // Versioned-condition overlay (S4.1): post-S4 nothing writes the legacy
+    // t.`condition` column, so the list must serve the editing version's
+    // template_condition or every loadSequences() clobbers the UI with the
+    // frozen pre-versioning value (stale edit modal, hidden drafts). Explicit
+    // post-processing — the overlay only applies when a version row exists
+    // (_vv), so v0 templates keep their create-time live-column condition.
+    for (const r of rows) {
+      if (r._vv != null) r.condition = r._vcond;
+      delete r._vcond;
+      delete r._vv;
+    }
     res.json({ success: true, templates: rows });
   } catch (err) {
     res.status(500).json({ error: 'Failed to list templates', message: err.message });
@@ -423,17 +440,10 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
     );
     if (condRow) template.condition = condRow.template_condition;
 
-    // Reorder-safety slice — the editor warns before reordering a template
-    // that has live enrollments. An already-scheduled job is pinned to a step
-    // ID (executeStep takes stepId), so it still fires the step it was queued
-    // for; but advanceToNextStep walks by step_number + 1, so everything
-    // AFTER that fire follows the new order. One indexed COUNT — cheap enough
-    // to always include.
-    const [[enr]] = await db.query(
-      `SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND status = 'active'`,
-      [id]
-    );
-    template.active_enrollments = Number(enr?.n || 0);
+    // (The pre-versioning reorder-safety warning and its active_enrollments
+    // count were retired in S4/S6 — reorders land on the DRAFT and every
+    // enrollment is pinned, so the premise inverted. The publish modal's
+    // in-flight panel, fed by /draft-diff, is the live-enrollment surface.)
 
     // Parse JSON columns for readability
     steps.forEach(s => {
@@ -621,7 +631,6 @@ router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) =>
       }
 
       let migratedEnrollments = null;
-      let remappedJobs = null;
       if (migrateInFlight) {
         const [currentSteps] = await connection.query(
           `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
@@ -661,12 +670,14 @@ router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) =>
       );
 
       if (migrateInFlight) {
-        // Enrollment ids first (locked), then the two-part migration:
-        // repoint enrollments, then rewrite each pending job's stepId to the
-        // NEW version's row for the same step_number. A job between steps
-        // (none pending) simply isn't rewritten — the next schedule reads the
-        // migrated template_version. affectedRows < enrollment count is the
-        // benign one-step-lag case, not an error.
+        // Repointing enrollments is the WHOLE migration. Queued jobs are NOT
+        // rewritten — executeStep resolves the step by (template, pinned
+        // version, step_number) at fire time, and a content-only publish
+        // preserves numbering by construction, so every queued step (pending
+        // OR already claimed 'running') lands on the new version's row
+        // automatically. The previous JSON_SET stepId remap only covered
+        // status='pending' and left claimed jobs holding dead stepIds — the
+        // silent-wedge race that identity-based resolution closes.
         const [enrRows] = await connection.query(
           `SELECT id FROM sequence_enrollments
             WHERE template_id = ? AND template_version = ? AND status = 'active' FOR UPDATE`,
@@ -674,33 +685,20 @@ router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) =>
         );
         const ids = enrRows.map(r => r.id);
         migratedEnrollments = ids.length;
-        remappedJobs = 0;
         if (ids.length) {
           await connection.query(
             `UPDATE sequence_enrollments SET template_version = ?, updated_at = NOW() WHERE id IN (?)`,
             [draftV, ids]
           );
-          const [jr] = await connection.query(
-            `UPDATE scheduled_jobs sj
-               JOIN sequence_steps ns
-                 ON ns.template_id = ?
-                AND ns.version = ?
-                AND ns.step_number = CAST(JSON_UNQUOTE(JSON_EXTRACT(sj.data, '$.stepNumber')) AS UNSIGNED)
-                SET sj.data = JSON_SET(sj.data, '$.stepId', ns.id)
-              WHERE sj.type = 'sequence_step' AND sj.status = 'pending'
-                AND sj.sequence_enrollment_id IN (?)`,
-            [templateId, draftV, ids]
-          );
-          remappedJobs = jr.affectedRows;
         }
       }
 
-      return { published_version: draftV, previous_version: oldV, migrated_count: migratedEnrollments, remapped_jobs: remappedJobs, validation };
+      return { published_version: draftV, previous_version: oldV, migrated_count: migratedEnrollments, validation };
     });
 
     if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
     console.log(`[SEQ PUBLISH] Template ${templateId}: v${outcome.previous_version} → v${outcome.published_version}` +
-      (outcome.migrated_count != null ? ` (migrated ${outcome.migrated_count} enrollments, remapped ${outcome.remapped_jobs} jobs)` : ''));
+      (outcome.migrated_count != null ? ` (migrated ${outcome.migrated_count} enrollments)` : ''));
     res.json({ success: true, ...outcome });
   } catch (err) {
     console.error('[SEQ PUBLISH] Failed:', err);

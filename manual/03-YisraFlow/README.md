@@ -35,6 +35,7 @@ If you've never used the system before, read these in order:
 | 12 | [12-database-schema.md](12-database-schema.md) | Every table, every column, every index |
 | 13 | [13-cookbook.md](13-cookbook.md) | Patterns and pitfalls catalog. Practical answers to "I need X — which engine, what shape, what gotchas." |
 | 15 | [15-triggers.md](15-triggers.md) | Trigger System — domain events, the event catalog, match/transform rulings, actions, testing and replay |
+| 16 | [16-versioning.md](16-versioning.md) | Definition versioning — draft/publish lifecycle, the content-vs-structural classifier, in-flight migration, pinned execution |
 
 Integration docs (Connections, RingCentral bootstrap, Google Calendar, Dropbox) moved to [04-Integrations](../04-Integrations/).
 

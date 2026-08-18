@@ -3754,6 +3754,12 @@ async function seqEdit() {
     if (SEQ.activeTemplate) {
       document.getElementById('seq-canvas-title').textContent = seqTitleText(SEQ.activeTemplate);
     }
+    // Versioning (S6.1): a condition edit forks a DRAFT server-side — reload
+    // through the single GET so the version strip, Publish/Discard buttons,
+    // and the versioned condition in SEQ.activeTemplate all reflect it
+    // (matches what publish/discard already do). Without this the draft was
+    // invisible and reopening Edit showed the stale pre-fork condition.
+    if (SEQ.activeTemplateId) await loadSeqSteps(SEQ.activeTemplateId);
   } catch (e) {
     Swal.fire('Error', e.message, 'error');
   }

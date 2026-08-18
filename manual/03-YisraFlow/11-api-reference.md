@@ -35,7 +35,11 @@ Standard auth headers: `Authorization: Bearer <jwt>` or `x-api-key: <key>`. The 
 | `/workflows/:id/steps/:stepNumber` | PATCH | Partial update |
 | `/workflows/:id/steps/:stepNumber` | DELETE | Delete a step |
 | `/workflows/:id/steps/reorder` | PATCH | Reorder steps in one shot |
-| `/workflows/:id/start` | POST | Start an execution. **Returns 202**. |
+| `/workflows/:id/start` | POST | Start an execution. **Returns 202**. `?use_draft=1` runs the draft (editor test-runs); a never-published workflow (current_version 0) is 409 without it. |
+| `/workflows/:id/versions` | GET | Version history with `is_current` / `is_draft` / `retired_at` flags (ch. 16) |
+| `/workflows/:id/draft-diff` | GET | Draft vs published: classification, changes, validation, in-flight + stranded runs |
+| `/workflows/:id/publish` | POST | Publish the draft. Body `{ migrate_in_flight?: bool }` — content-only diffs may migrate live runs; structural migration is 409 server-side |
+| `/workflows/:id/discard-draft` | POST | Retire the draft in place (rows kept) |
 | `/workflows/:id/executions` | GET | Executions of one workflow |
 | `/workflows/test-step` | POST | Test a single step config against arbitrary input |
 | `/workflows/functions` | GET | List of internal functions, metadata, and which work in workflows vs sequences |
@@ -75,7 +79,11 @@ Returns **202** with `{ success, executionId, workflowId, contactId, status: "pr
 | `/sequences/templates/:id/steps/:stepNumber` | PATCH | Partial update |
 | `/sequences/templates/:id/steps/:stepNumber` | DELETE | Delete step |
 | `/sequences/templates/:id/steps/reorder` | PATCH | Reorder steps |
-| `/sequences/enroll` | POST | Enroll a contact (cascade by type or direct by id) |
+| `/sequences/templates/:id/versions` | GET | Version history (ch. 16) |
+| `/sequences/templates/:id/draft-diff` | GET | Draft vs published: classification, changes, validation, in-flight + stranded enrollments |
+| `/sequences/templates/:id/publish` | POST | Publish the draft. Body `{ migrate_in_flight?: bool }` — content-only only; migration repoints active enrollments (queued jobs resolve by step_number at fire time) |
+| `/sequences/templates/:id/discard-draft` | POST | Retire the draft in place |
+| `/sequences/enroll` | POST | Enroll a contact (cascade by type or direct by id). Never-published templates: filtered out of cascade, 409-equivalent throw on direct id |
 | `/sequences/cancel` | POST | Cancel by `(contact_id, template_type)`; omit type for all |
 | `/sequences/templates/:id/enrollments` | GET | Enrollments of one template |
 | `/sequences/enrollments` | GET | All enrollments (filterable by status, contact_id, template_id) |

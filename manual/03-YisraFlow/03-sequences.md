@@ -1,5 +1,7 @@
 # 3 — Sequence Engine
 
+> **Versioning (2026-08):** template edits (steps *and* the template-level condition) land on a *draft*; enrollment uses the last *published* version, and every enrollment is pinned to it. Never-published templates can't enroll. See chapter [16-versioning.md](16-versioning.md).
+
 ## For operators
 
 A **sequence** is a follow-up series tied to a single contact. It has steps that fire over time — usually messages, sometimes tasks — and each step **checks first** whether it still makes sense to fire.

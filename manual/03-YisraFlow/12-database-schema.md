@@ -18,11 +18,13 @@ All tables use `utf8mb4` / `utf8mb4_general_ci`, at both table and column level.
 |---|---|---|
 | `workflows` | Workflow Engine | 2 |
 | `workflow_steps` | Workflow Engine | 2 |
+| `workflow_versions` | Workflow Engine | 16 |
 | `workflow_executions` | Workflow Engine | 2 |
 | `workflow_execution_steps` | Workflow Engine | 2 |
 | `sequence_template_types` | Sequence Engine | 3 |
 | `sequence_templates` | Sequence Engine | 3 |
 | `sequence_steps` | Sequence Engine | 3 |
+| `sequence_template_versions` | Sequence Engine | 16 |
 | `sequence_enrollments` | Sequence Engine | 3 |
 | `sequence_step_log` | Sequence Engine | 3 |
 | `scheduled_jobs` | Scheduled Jobs | 4 |
@@ -60,14 +62,34 @@ created_at               datetime
 updated_at               datetime
 default_contact_id_from  varchar(100)    -- name of init_data key for contact-tying
 test_input               json            -- saved test payload for the Test tab
+current_version          int             -- published version; 0 = never published (ch. 16)
+draft_version            int NULL        -- unpublished draft, NULL = no pending changes
 ```
+
+#### `workflow_versions` — version metadata (ch. 16)
+
+```sql
+id            int          PK
+workflow_id   int          FK → workflows
+version       int          -- unique per workflow
+name          text         -- snapshot at publish (audit)
+description   text
+test_input    json
+published_at  datetime NULL  -- NULL = draft
+published_by  varchar(100)
+retired_at    datetime NULL  -- set by discard (retire-in-place; step rows kept)
+created_at    datetime
+```
+
+Every published version has a row (v1 backfilled 2026-08-18); drafts get a stub row with `published_at NULL` from `ensureDraft`. `workflow_steps.version` scopes step rows per version — **every query against `workflow_steps` needs a `version` predicate** (Cookbook §5.34).
 
 #### `workflow_steps` — ordered steps
 
 ```sql
 id            int        PK
 workflow_id   int        FK → workflows(id)        ON DELETE CASCADE
-step_number   int                                  UNIQUE (workflow_id, step_number)
+version       int                                  -- ch. 16; UNIQUE (workflow_id, version, step_number)
+step_number   int
 type          enum('webhook','internal_function','custom_code')
 config        json       NOT NULL
 error_policy  json
@@ -138,23 +160,42 @@ type         varchar(50)                 -- e.g. "no_show", "lead_drip"; nullabl
                                           -- soft reference to sequence_template_types.type (no FK)
 filters      json                        -- cascade filter values; keys must be subset of the type's
                                           -- priority_fields. NULL = generic fallback (every slot wildcard).
-condition    json                        -- template-level condition (cancel-level)
+condition    json                        -- LEGACY (ch. 16): write-once at create; versioned truth is
+                                          -- sequence_template_versions.template_condition
 description  text
 active       tinyint(1)     default 1
 created_at, updated_at
 test_input   json                        -- saved test payload
+current_version  int                     -- published version; 0 = never published (ch. 16)
+draft_version    int NULL                -- unpublished draft, NULL = no pending changes
 ```
 
 Indexes: `idx_type (type)`, `idx_active (active)`. No FK from `type` to `sequence_template_types.type` — the reference is app-enforced (validated at template save and at enrollment time). The `type` column is nullable to support ID-only templates, which don't fit a hard FK.
 
 `filters` JSON shape: `{ "<priority_field>": <value>, ... }` — for example `{"appt_type": "341 Meeting", "appt_with": 2}`. Keys absent or set to `null` are wildcards. Validation at template save (`validateTemplateFilters`) rejects keys not in the type's `priority_fields`.
 
+#### `sequence_template_versions` — version metadata (ch. 16)
+
+```sql
+id                  int        PK
+template_id         int        FK → sequence_templates
+version             int        -- unique per template
+name, type          --         snapshot at publish (audit)
+template_condition  json       -- THE versioned template condition (executeStep reads
+                               -- the enrollment-pinned version's row)
+description, test_input
+published_at        datetime NULL  -- NULL = draft
+published_by        varchar(100)
+retired_at          datetime NULL  -- discard = retire-in-place
+created_at          datetime
+```
+
 #### `sequence_steps` — ordered steps
 
 ```sql
 id             int unsigned   PK
 template_id    int unsigned   FK → sequence_templates(id)  ON DELETE CASCADE
-step_number    int                                          UNIQUE (template_id, step_number)
+step_number    int                                          UNIQUE (template_id, version, step_number)
 action_type    enum('sms','email','task','internal_function','webhook','start_workflow')
 action_config  json     NOT NULL
 timing         json     NOT NULL

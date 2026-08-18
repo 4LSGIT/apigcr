@@ -1,5 +1,7 @@
 # 2 — Workflow Engine
 
+> **Versioning (2026-08):** edits land on a *draft*; live runs keep using the last *published* version until you Publish, and every execution is pinned to the version it started on. This changes the lifecycle described below in ways chapter [16-versioning.md](16-versioning.md) covers fully — read it alongside this chapter.
+
 ## For operators
 
 A **workflow** is a multi-step recipe. Step 1 happens, then step 2, then maybe step 5 if step 3 says so, then a 24-hour wait, then step 6. Each step can read from the previous one. Each step can be a webhook call, a built-in action (send SMS, create task, look up contact), or a snippet of custom code.

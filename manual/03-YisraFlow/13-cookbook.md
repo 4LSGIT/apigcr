@@ -1721,6 +1721,32 @@ A single sequence type can't always express both "fire reminders anchored to app
 
 **Cancellation symmetry.** Both types use `cancelByApptId` for teardown — `apptService.cancelApptAutomation(db, apptId, reason)` cancels every active enrollment with that `appt_id` in one call, regardless of how many types are involved. Adding a third cooperating type later requires no changes to the cancellation path.
 
+### 5.34 Manual SQL Against Step Tables Needs a `version` Predicate
+
+Since versioning (2026-08-18), `workflow_steps` and `sequence_steps` hold **published, draft, and retired** rows for the same `(workflow_id, step_number)` / `(template_id, step_number)`. Console SQL like
+
+```sql
+UPDATE workflow_steps SET config = '…' WHERE workflow_id = 12 AND step_number = 3;
+```
+
+hits every version at once — including immutable published history and retired drafts. Migration files in `ref/` that predate versioning do exactly this; **do not copy them as templates.** Either scope it:
+
+```sql
+… AND version = (SELECT current_version FROM workflows WHERE id = 12)
+```
+
+or, better, make the change through the editor/API on the draft and publish it — that's what the audit trail is for. `tests/versionPredicateCoverage.test.js` enforces the predicate for application code; console SQL has no net.
+
+Related: `sequence_templates.condition` is a **write-once legacy column** (create-time value, `ensureDraft` v0 fallback, never updated after the first fork). The truth is `sequence_template_versions.template_condition` for the relevant version. See chapter 16.
+
+### 5.35 Queued Sequence Steps Resolve by `step_number`, Not `stepId`
+
+`executeStep` resolves the step to fire as `(template_id, enrollment's pinned version, step_number)` from the job payload; `stepId` is only a legacy fallback (still version-scoped). This is what makes content-only publish migration a pure enrollment repoint — queued jobs, **including ones already claimed `running`**, land on the new version's row at fire time without any rewrite. Consequences:
+
+- Never "fix" a queued step by editing `scheduled_jobs.data.stepId` — the number wins.
+- `step_number` within a *published* version is immutable, so the identity is stable for the enrollment's whole life.
+- A resolution miss logs `step_not_found` to `sequence_step_log` (enrollment stays `active`, no pending job) — that row is your signal to use the recover route.
+
 ---
 
 ## 6. Template Examples
