@@ -139,3 +139,22 @@ describe('csvList also guards the DIRECT-value surface (workflow steps, schedule
     })).toBeNull();
   });
 });
+
+describe('the validator return shape serves both caller conventions', () => {
+  // triggerService throws a 400; the ingest validators accumulate
+  // {field, message} pairs and need the param NAME to build a field path.
+  test('a failure carries status, error, and param', () => {
+    const r = validate('advance_stage', { only_from: SHIPPED_BUG });
+    expect(r.status).toBe(400);
+    expect(typeof r.error).toBe('string');
+    expect(r.param).toBe('only_from');
+  });
+
+  test('param identifies which guard failed when both are present', () => {
+    const r = validate('advance_stage', {
+      only_from: "'lead,none'",          // fine
+      only_from_role: "'intake','none'", // broken
+    });
+    expect(r.param).toBe('only_from_role');
+  });
+});

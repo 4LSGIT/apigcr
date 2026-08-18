@@ -302,6 +302,24 @@ function _checkActionConfigShape(actionType, config, errors) {
     case 'internal_function': {
       if (typeof config.function_name !== 'string' || config.function_name.trim() === '') {
         errors.push({ field: 'config.function_name', message: 'non-empty string required' });
+        break;
+      }
+      // params_mapping literal-form checks — currently csvList params
+      // (advance_stage guards). See the CSV LIST PARAMS block in
+      // lib/internal_functions/index.js for why the multi-literal form
+      // "'a','b'" is a silent-forever bug rather than a syntax error.
+      //
+      // Safe in the SHAPE phase despite needing the registry: an unregistered
+      // function_name returns null here (meta-less passthrough) and is reported
+      // by validateActionReferences, so the two checks don't double-report.
+      const pmErr = internalFunctions.__validateParamsMapping(
+        config.function_name.trim(), config.params_mapping
+      );
+      if (pmErr) {
+        errors.push({
+          field: pmErr.param ? `config.params_mapping.${pmErr.param}` : 'config.params_mapping',
+          message: pmErr.error,
+        });
       }
       break;
     }

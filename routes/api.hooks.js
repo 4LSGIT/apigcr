@@ -21,6 +21,7 @@ const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const credentialCrypto = require('../lib/credentialCrypto');
 const hookService = require('../services/hookService');
 const actionDispatchers = require('../lib/actionDispatchers');
+const internalFunctions = require('../lib/internal_functions'); // __validateParamsMapping
 const { listTransforms } = require('../services/hookTransforms');
 const { listOperators } = require('../services/hookFilter');
 
@@ -504,6 +505,17 @@ if (type === 'sequence') {
     if (cfg && cfg.params_mapping !== undefined
         && (typeof cfg.params_mapping !== 'object' || Array.isArray(cfg.params_mapping))) {
       return 'config.params_mapping must be an object of { paramName: "source" }';
+    }
+    // params_mapping literal-form checks — currently csvList params
+    // (advance_stage guards). See the CSV LIST PARAMS block in
+    // lib/internal_functions/index.js. Returns null when function_name is
+    // absent or unregistered, so this adds no new failure mode to updates that
+    // legitimately omit it.
+    if (cfg && typeof cfg.function_name === 'string' && cfg.function_name.trim() !== '') {
+      const pmErr = internalFunctions.__validateParamsMapping(
+        cfg.function_name.trim(), cfg.params_mapping
+      );
+      if (pmErr) return pmErr.error;
     }
     return null;
   }
