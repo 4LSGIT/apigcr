@@ -77,6 +77,7 @@ lib/signatureValidation.js
 lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/unplacehold.js
+lib/versionDiff.js
 lib/webhookExecutor.js
 lib/withTransaction.js
 lib/workflow_engine.js
@@ -685,9 +686,11 @@ tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
 tests/triggerService.test.js
+tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
 tests/workflows.editor.roundtrip.test.js
+tests/workflows.ensureDraft.test.js
 tests/workflows.reorder.state.test.js
 views/v.html

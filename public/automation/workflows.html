@@ -449,7 +449,9 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="wf-canvas-title">← Select a workflow</div>
       <div id="wf-canvas-actions" style="display:none;gap:8px">
-        <button class="btn btn-primary btn-sm" onclick="wfRunWorkflow()"><i class="fa-solid fa-play"></i> Run</button>
+        <button class="btn btn-primary btn-sm" id="wf-run-btn" onclick="wfRunWorkflow()"><i class="fa-solid fa-play"></i> Run</button>
+        <button class="btn btn-sm" id="wf-publish-btn" style="display:none;background:#d97706;border:1px solid #d97706;color:#fff" onclick="wfPublishModal()"><i class="fa-solid fa-upload"></i> Publish</button>
+        <button class="btn btn-outline btn-sm" id="wf-discard-btn" style="display:none" onclick="wfDiscardDraft()" title="Discard the draft — the published version stays live"><i class="fa-solid fa-rotate-left"></i></button>
         <button class="btn btn-outline btn-sm" id="wf-capture-btn" onclick="wfCaptureModal()"><i class="fa-solid fa-satellite-dish"></i> Capture</button>
         <button class="btn btn-outline btn-sm" onclick="wfShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
         <button class="btn btn-outline btn-sm" onclick="wfEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
@@ -457,6 +459,7 @@
         <button class="btn btn-danger btn-sm" onclick="wfDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
     </div>
+    <div id="wf-version-strip" style="display:none;padding:6px 20px 0;font-size:12px;line-height:1.5"></div>
     <div id="wf-canvas-desc" style="display:none;padding:6px 20px 0;font-size:12px;color:var(--muted);line-height:1.5;white-space:pre-wrap"></div>
     <div class="canvas-body" id="wf-canvas-body">
       <div class="empty-state">
@@ -1311,7 +1314,7 @@ function renderWfList() {
   el.innerHTML = WF.filtered.map(wf => `
     <div class="left-item${wf.id === WF.activeWfId ? ' active' : ''}" onclick="selectWorkflow(${wf.id})">
       <div class="left-item-name">${esc(wf.name)}</div>
-      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}${wf.active ? '' : ' · <span style="color:#f87171">inactive</span>'}</div>
+      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}${wf.active ? '' : ' · <span style="color:#f87171">inactive</span>'}${wf.draft_version != null ? ' · <span style="color:#fbbf24">draft</span>' : (!wf.current_version ? ' · <span style="color:#94a3b8">unpublished</span>' : '')}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();wfEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();wfDuplicate()"><i class="fa-regular fa-copy"></i></button>
@@ -2265,6 +2268,39 @@ function wfRenderWfMeta() {
         ? '<i class="fa-solid fa-hand fa-beat"></i> Intercepting…'
         : '<i class="fa-solid fa-satellite-dish"></i> Capture';
   }
+
+  // ── Versioning strip (S5) ─────────────────────────────────────
+  // Drafts are invisible in the DB unless the UI says so — this strip is the
+  // single source of "what am I looking at vs what is running".
+  const vs = document.getElementById('wf-version-strip');
+  const pubBtn = document.getElementById('wf-publish-btn');
+  const discBtn = document.getElementById('wf-discard-btn');
+  const runBtn = document.getElementById('wf-run-btn');
+  if (vs && pubBtn && discBtn) {
+    const hasDraft = wf && wf.draft_version != null;
+    const neverPublished = wf && !wf.current_version;
+    if (hasDraft) {
+      vs.innerHTML = neverPublished
+        ? `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Draft v${wf.draft_version} — never published.</span> <span style="color:#64748b">Triggers and other automations cannot run this workflow until you publish.</span>`
+        : `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Unpublished draft (v${wf.draft_version}).</span> <span style="color:#64748b">Live runs still use v${wf.current_version} — publish to make these changes take effect.</span>`;
+      vs.style.display = 'block';
+      pubBtn.style.display = '';
+      discBtn.style.display = '';
+      if (runBtn) runBtn.innerHTML = '<i class="fa-solid fa-play"></i> Run draft';
+    } else if (neverPublished) {
+      vs.innerHTML = `<span style="color:#64748b"><i class="fa-regular fa-circle"></i> Never published — add steps, then Publish to make it runnable.</span>`;
+      vs.style.display = 'block';
+      pubBtn.style.display = 'none';
+      discBtn.style.display = 'none';
+      if (runBtn) runBtn.innerHTML = '<i class="fa-solid fa-play"></i> Run';
+    } else {
+      vs.style.display = 'none';
+      vs.innerHTML = '';
+      pubBtn.style.display = 'none';
+      discBtn.style.display = 'none';
+      if (runBtn) runBtn.innerHTML = '<i class="fa-solid fa-play"></i> Run';
+    }
+  }
 }
 
 // Capture slice — arm/disarm one-shot capture of the next real execution's
@@ -2860,12 +2896,144 @@ async function wfEdit() {
   }
 }
 
+
+// ── Versioning (S5): publish + discard ─────────────────────────
+// The publish modal is the review boundary: it shows exactly what changed
+// (classified content-only vs structural), the validation verdict, and — for
+// content-only diffs with live runs — the opt-in "also apply to in-flight"
+// checkbox. The checkbox is UI convenience only; the server re-runs the
+// classifier inside the publish transaction and refuses structural
+// migrations regardless of what the client sends.
+async function wfPublishModal() {
+  if (!WF.activeWfId) return;
+  await wfFlushMoves();
+
+  let diff;
+  try { diff = await api(`/workflows/${WF.activeWfId}/draft-diff`); }
+  catch (e) { Swal.fire('Error', e.message, 'error'); return; }
+
+  if (!diff.has_draft) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No unpublished changes', timer: 2200, showConfirmButton: false });
+    return;
+  }
+
+  const v = diff.validation || { errors: [], warnings: [], info: [] };
+  const blocked = v.errors.length > 0;
+  const contentOnly = diff.classification === 'content_only';
+  const identical = diff.classification === 'identical';
+  const inFlightN = diff.in_flight?.count || 0;
+
+  const li = (arr, color, icon) => arr.map(m =>
+    `<li style="color:${color};margin:2px 0"><i class="fa-solid ${icon}" style="width:16px"></i> ${esc(m)}</li>`).join('');
+
+  const changeLines = (diff.changes || []).map(c => {
+    const what = c.kind === 'modified' ? `changed (${(c.fields || []).join(', ')})` : c.kind;
+    return `<li style="margin:2px 0">Step ${c.step_number}: ${esc(what)}</li>`;
+  }).join('');
+
+  const clsBadge = identical
+    ? '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">no changes</span>'
+    : contentOnly
+      ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">content-only</span>'
+      : '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">structural</span>';
+
+  let migrateHtml = '';
+  if (inFlightN > 0 && !identical) {
+    const runsList = (diff.in_flight.executions || []).slice(0, 8).map(x =>
+      `<li style="margin:1px 0;color:#64748b">#${x.id} — ${esc(x.status)}, step ${x.current_step_number}</li>`).join('');
+    if (contentOnly) {
+      migrateHtml = `
+        <div style="margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;text-align:left">
+          <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+            <input type="checkbox" id="wf-pub-migrate" style="margin-top:2px">
+            <span><b>Also apply to the ${inFlightN} in-flight run${inFlightN === 1 ? '' : 's'}</b><br>
+            <span style="font-size:12px;color:#64748b">Content-only change — step numbering is unchanged, so live runs can move to the new wording safely.</span></span>
+          </label>
+          <ul style="list-style:none;margin:6px 0 0;padding:0;font-size:12px">${runsList}</ul>
+        </div>`;
+    } else {
+      migrateHtml = `
+        <div style="margin-top:12px;padding:10px;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;text-align:left;font-size:12px">
+          <label style="display:flex;gap:8px;align-items:flex-start;opacity:0.55;cursor:not-allowed">
+            <input type="checkbox" disabled style="margin-top:2px">
+            <span><b>Also apply to the ${inFlightN} in-flight run${inFlightN === 1 ? '' : 's'}</b></span>
+          </label>
+          <div style="color:#92400e;margin-top:4px">Structural changes can't migrate live runs — their step pointers only survive content-only publishes. They finish on v${diff.current_version}.</div>
+          <ul style="list-style:none;margin:6px 0 0;padding:0;color:#92400e">${li(diff.structural_reasons || [], '#92400e', 'fa-triangle-exclamation')}</ul>
+        </div>`;
+    }
+  } else if (!identical && (diff.structural_reasons || []).length) {
+    migrateHtml = `<ul style="list-style:none;margin:10px 0 0;padding:0;text-align:left;font-size:12px">${li(diff.structural_reasons, '#92400e', 'fa-triangle-exclamation')}</ul>`;
+  }
+
+  const html = `
+    <div style="text-align:left;font-size:13px">
+      <div style="margin-bottom:8px">v${diff.current_version || '—'} → <b>v${diff.draft_version}</b> &nbsp;${clsBadge}</div>
+      ${changeLines ? `<ul style="list-style:none;margin:0;padding:0">${changeLines}</ul>` : '<div style="color:#64748b">No step changes (metadata-only publish).</div>'}
+      ${v.errors.length ? `<div style="margin-top:10px;font-weight:600;color:#b91c1c">Publish blocked:</div><ul style="list-style:none;margin:4px 0 0;padding:0">${li(v.errors, '#b91c1c', 'fa-circle-xmark')}</ul>` : ''}
+      ${v.warnings.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.warnings, '#b45309', 'fa-triangle-exclamation')}</ul>` : ''}
+      ${v.info.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.info, '#64748b', 'fa-circle-info')}</ul>` : ''}
+      ${migrateHtml}
+    </div>`;
+
+  const res = await Swal.fire({
+    title: 'Publish changes?',
+    html,
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: blocked ? 'Fix the errors first' : 'Publish',
+    confirmButtonColor: '#d97706',
+    showConfirmButton: true,
+    preConfirm: async () => {
+      if (blocked) { Swal.showValidationMessage('Resolve the blocking errors above, then publish.'); return false; }
+      const migrate = !!document.getElementById('wf-pub-migrate')?.checked;
+      try {
+        return await api(`/workflows/${WF.activeWfId}/publish`, 'POST', { migrate_in_flight: migrate });
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (res.isConfirmed && res.value && res.value.success) {
+    const m = res.value.migrated_count;
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success',
+      title: `Published v${res.value.published_version}` + (m != null ? ` · migrated ${m} run${m === 1 ? '' : 's'}` : ''),
+      timer: 2600, showConfirmButton: false });
+    await loadWorkflows();
+    await loadWfSteps(WF.activeWfId);
+  }
+}
+
+async function wfDiscardDraft() {
+  if (!WF.activeWf || WF.activeWf.draft_version == null) return;
+  const cur = WF.activeWf.current_version;
+  const r = await Swal.fire({
+    title: `Discard draft v${WF.activeWf.draft_version}?`,
+    html: cur
+      ? `The published version <b>v${cur}</b> stays live and unchanged.<br><span style="font-size:12px;color:#64748b">The draft is retired, not deleted — any draft test-run history stays viewable.</span>`
+      : `<span style="font-size:12px;color:#64748b">This workflow has never been published; discarding leaves it with no editable steps until you add new ones.</span>`,
+    icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Discard draft',
+  });
+  if (!r.isConfirmed) return;
+  try {
+    await api(`/workflows/${WF.activeWfId}/discard-draft`, 'POST', {});
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Draft discarded', timer: 2200, showConfirmButton: false });
+    await loadWorkflows();
+    await loadWfSteps(WF.activeWfId);
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
+}
+
 async function wfDuplicate() {
   if (!WF.activeWf) return;
   const { value: name } = await Swal.fire({ title: 'Duplicate', input: 'text', inputValue: `Copy of ${WF.activeWf.name}`, showCancelButton: true, confirmButtonText: 'Duplicate' });
   if (!name) return;
   try {
     const r = await api(`/workflows/${WF.activeWfId}/duplicate`, 'POST', { name });
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success',
+      title: 'Duplicated as an unpublished draft — publish it to make it runnable',
+      timer: 3200, showConfirmButton: false });
     await loadWorkflows();
     selectWorkflow(r.newWorkflowId);
   } catch (e) {
@@ -2891,6 +3059,7 @@ async function wfDelete() {
     t.classList.add('placeholder');
     document.getElementById('wf-canvas-actions').style.display = 'none';
     document.getElementById('wf-canvas-desc').style.display = 'none';
+    document.getElementById('wf-version-strip').style.display = 'none';
     document.getElementById('wf-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-diagram-project"></i><p>Select a workflow.</p></div>';
     wfClearEditor();
     await loadWorkflows();
@@ -3132,6 +3301,15 @@ async function wfRunWorkflow(prefill) {
     return;
   }
 
+  // Versioning (S5, decision 6): the editor's Run targets the DRAFT when one
+  // exists — you run what the canvas is showing, not the published version.
+  // Never-published with no draft has nothing to run at all.
+  const runDraft = WF.activeWf.draft_version != null;
+  if (!runDraft && !WF.activeWf.current_version) {
+    Swal.fire({ icon: 'info', title: 'Never published', text: 'Add steps and publish (or keep editing — Run executes the draft once one exists).' });
+    return;
+  }
+
   // Seed init_data: re-run prefill > test_input > {}
   let seedObj = null;
   let seedHint = '';
@@ -3150,7 +3328,9 @@ async function wfRunWorkflow(prefill) {
   const seedContact = (prefill && prefill.contactId != null) ? String(prefill.contactId) : '';
 
   const res = await Swal.fire({
-    title: `Run "${esc(WF.activeWf.name || '')}"`,
+    title: runDraft
+      ? `Run "${esc(WF.activeWf.name || '')}" — draft v${WF.activeWf.draft_version}`
+      : `Run "${esc(WF.activeWf.name || '')}"`,
     width: 560,
     html: `
       <div style="text-align:left;font-size:13px">
@@ -3199,7 +3379,7 @@ async function wfRunWorkflow(prefill) {
       }
 
       try {
-        return await api(`/workflows/${WF.activeWfId}/start`, 'POST', body);
+        return await api(`/workflows/${WF.activeWfId}/start${runDraft ? '?use_draft=1' : ''}`, 'POST', body);
       } catch (err) {
         // ApiError carries server message — covers 409 inactive & 400 contact.
         Swal.showValidationMessage(err.message || String(err));

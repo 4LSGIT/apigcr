@@ -12,6 +12,7 @@ const {
   captureWorkflowInput,
 } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
+const { diffWorkflowSteps, validateWorkflowDraft } = require("../lib/versionDiff");
 // JSON columns may come back from mysql2 as either a string (unparsed)
 // or a parsed object depending on driver version/config. Normalize to a
 // string for INSERT so mysql2 doesn't SET-expand objects.
@@ -358,22 +359,65 @@ async function validateStartWorkflowConfig(db, type, config) {
 
 
 // ─────────────────────────────────────────────────────────────
-// resolveEditTargetVersion — which version do the step-editing routes write?
+// ensureDraft — which version do the step-editing routes write? (S3)
 //
-// S2 (version plumbing): the published current_version. Only version 1 exists
-// until draft/publish ships, so this is behavior-neutral. Doubles as the
-// workflow-existence check (returns null when the workflow does not exist).
+// Lazy copy-on-first-write: the first edit after a publish copies the
+// published version's step rows into a NEW draft version and points
+// workflows.draft_version at it; every subsequent edit (this editor's
+// save-per-step model is unchanged) lands on that draft. Published versions
+// are therefore immutable BY CONSTRUCTION — nothing ever writes to a version
+// number once current_version has pointed at it.
 //
-// S3 (draft/publish) replaces THIS FUNCTION'S BODY with ensureDraft — lazy
-// copy-on-first-write of the current version's step rows into a new draft
-// version. Every call site below stays unchanged when that lands.
+// MUST run inside the route's db.withTransaction (every workflow step-mutating
+// route is wrapped — verified in the 2026-08-18 plan review, D1 table). The
+// parent-row FOR UPDATE below is both the concurrency arbiter (two concurrent
+// first-edits serialize; the second sees draft_version set and reuses it) and
+// the LOCK-ORDERING INVARIANT: every transaction touching the version tables
+// locks the parent workflows row FIRST, so publish/discard/ensureDraft cannot
+// deadlock each other (withTransaction has no deadlock retry — deliberate).
+//
+// Draft numbering: MAX(workflow_versions.version) + 1, NOT current_version + 1
+// — discarded drafts are RETIRED in place (rows kept, retired_at set), so
+// retired versions occupy numbers. Returns null when the workflow does not
+// exist (doubles as the existence check, as before).
 // ─────────────────────────────────────────────────────────────
-async function resolveEditTargetVersion(connection, workflowId) {
-  const [[row]] = await connection.query(
-    `SELECT current_version FROM workflows WHERE id = ?`,
+async function ensureDraft(connection, workflowId) {
+  const [[wf]] = await connection.query(
+    `SELECT current_version, draft_version FROM workflows WHERE id = ? FOR UPDATE`,
     [workflowId]
   );
-  return row ? row.current_version : null;
+  if (!wf) return null;
+  if (wf.draft_version != null) return wf.draft_version;
+
+  const [[mx]] = await connection.query(
+    `SELECT COALESCE(MAX(version), 0) AS mx FROM workflow_versions WHERE workflow_id = ?`,
+    [workflowId]
+  );
+  const draftVersion = Math.max(Number(mx.mx), Number(wf.current_version)) + 1;
+
+  // Copy the published version's rows. For a never-published workflow
+  // (current_version = 0) this copies nothing → an empty draft, correct.
+  await connection.query(
+    `INSERT INTO workflow_steps (workflow_id, version, step_number, label, note, type, config, error_policy)
+     SELECT workflow_id, ?, step_number, label, note, type, config, error_policy
+       FROM workflow_steps
+      WHERE workflow_id = ? AND version = ?`,
+    [draftVersion, workflowId, wf.current_version]
+  );
+
+  // Draft metadata stub — published_at stays NULL until publish.
+  await connection.query(
+    `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input)
+     SELECT id, ?, name, description, test_input FROM workflows WHERE id = ?`,
+    [draftVersion, workflowId]
+  );
+
+  await connection.query(
+    `UPDATE workflows SET draft_version = ?, updated_at = NOW() WHERE id = ?`,
+    [draftVersion, workflowId]
+  );
+
+  return draftVersion;
 }
 
 router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
@@ -433,6 +477,14 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
   // template default.
   const explicitContactId = isWrapped ? body.contact_id : undefined;
 
+  // Versioning (S3): the editor's Run button targets the DRAFT (decision 6 —
+  // authors iterate on the draft and test-run it before publishing). Honored
+  // via ?use_draft=1 (query param — orthogonal to the flat-body convention,
+  // where every top-level body key is init_data content) or, on wrapped
+  // bodies only, use_draft: true.
+  const useDraft = req.query.use_draft === '1' || req.query.use_draft === 'true' ||
+                   (isWrapped && body.use_draft === true);
+
   console.log(`[START] Received payload (wrapped=${isWrapped}):`, JSON.stringify(initData, null, 2));
 
   const workflowId = parseInt(id, 10);
@@ -446,7 +498,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     // Load id + default_contact_id_from in one shot. Adding the column to the
     // SELECT is cheap; skipping it would force a separate round-trip.
     const [wfRows] = await connection.query(
-      `SELECT id, active, default_contact_id_from, capture_mode, current_version FROM workflows WHERE id = ?`,
+      `SELECT id, active, default_contact_id_from, capture_mode, current_version, draft_version FROM workflows WHERE id = ?`,
       [workflowId]
     );
     if (wfRows.length === 0) {
@@ -458,6 +510,24 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     // workflow active in the editor first.
     if (!workflow.active) {
       return { respond: { status: 409, body: { error: "Workflow is inactive", message: "Activate the workflow before starting it." } } };
+    }
+
+    // Versioning (S3): resolve which version this run pins to.
+    //   use_draft → the draft (editor test-runs); 409 if none exists.
+    //   otherwise → the published current_version; 0 (never published) is
+    //   refused loudly — the pre-versioning behavior was a silent zero-step
+    //   execution marked 'completed' (review D4).
+    let runVersion;
+    if (useDraft) {
+      if (workflow.draft_version == null) {
+        return { respond: { status: 409, body: { error: "No draft to run", message: "This workflow has no unpublished draft. Run the published version, or edit a step to start a draft." } } };
+      }
+      runVersion = workflow.draft_version;
+    } else {
+      if (!workflow.current_version) {
+        return { respond: { status: 409, body: { error: "Workflow has never been published", message: "Publish the workflow before starting it (or use use_draft to test the draft)." } } };
+      }
+      runVersion = workflow.current_version;
     }
 
     // Capture slice — one-shot capture of init_data when armed. Guarded
@@ -489,7 +559,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       (workflow_id, contact_id, status, init_data, variables, current_step_number, workflow_version)
       VALUES (?, ?, 'active', ?, ?, 1, ?)
       `,
-      [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData), workflow.current_version]
+      [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData), runVersion]
     );
 
       return { executionId: result.insertId, contactId };
@@ -829,7 +899,7 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
       SELECT 
         id, name, description, active, test_input, capture_mode, captured_at, created_at, updated_at,
         current_version, draft_version,
-        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id AND version = w.current_version) as step_count
+        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id AND version = COALESCE(w.draft_version, w.current_version)) as step_count
       FROM workflows w
       WHERE 1=1
     `;
@@ -909,7 +979,7 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
       SELECT 
         id, name, description, active, test_input, capture_mode, captured_at, created_at, updated_at,
         current_version, draft_version,
-        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id AND version = w.current_version) as step_count,
+        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id AND version = COALESCE(w.draft_version, w.current_version)) as step_count,
         -- Renumber-safety slice — the editor warns before a reorder/delete on a
         -- workflow that has executions mid-flight. Those carry RAW STEP NUMBERS
         -- (workflow_executions.current_step_number, and scheduled_jobs.data.nextStep
@@ -941,7 +1011,8 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
         WHERE workflow_id = ? AND version = ?
         ORDER BY step_number ASC
         `,
-        [workflowId, workflow.current_version]
+        // Editor view: the draft when one exists, else the published version.
+        [workflowId, workflow.draft_version ?? workflow.current_version]
       );
 
       steps = stepRows;
@@ -950,7 +1021,12 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
     res.json({
       success: true,
       workflow,
-      steps: includeSteps ? steps : undefined
+      steps: includeSteps ? steps : undefined,
+      // Versioning (S3): which version the steps above came from, and whether
+      // it is an unpublished draft. current_version/draft_version ride on the
+      // workflow row itself (S2).
+      editing_version: workflow.draft_version ?? workflow.current_version,
+      has_draft: workflow.draft_version != null
     });
   } catch (err) {
     console.error("[GET WORKFLOW] Failed:", err);
@@ -960,6 +1036,265 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
 
 
 
+
+// ─────────────────────────────────────────────────────────────
+// Versioning endpoints (S3, 2026-08) — draft lifecycle.
+//
+// The step-editing routes above create drafts implicitly (ensureDraft on
+// first edit after a publish). These four routes are the rest of the
+// lifecycle: inspect history, diff the draft, publish it, or retire it.
+// ─────────────────────────────────────────────────────────────
+
+// GET /workflows/:id/versions — version history.
+// step_count is per-version; is_current / is_draft / retired flags let the
+// editor render the timeline without re-deriving state.
+router.get("/workflows/:id/versions", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const workflowId = parseInt(req.params.id, 10);
+  if (isNaN(workflowId) || workflowId <= 0) {
+    return res.status(400).json({ error: "Invalid workflow ID" });
+  }
+  try {
+    const [[wf]] = await db.query(
+      `SELECT current_version, draft_version FROM workflows WHERE id = ?`, [workflowId]
+    );
+    if (!wf) return res.status(404).json({ error: "Workflow not found" });
+
+    const [versions] = await db.query(
+      `SELECT v.version, v.name, v.description, v.published_at, v.published_by,
+              v.retired_at, v.created_at,
+              (SELECT COUNT(*) FROM workflow_steps s WHERE s.workflow_id = v.workflow_id AND s.version = v.version) AS step_count
+         FROM workflow_versions v
+        WHERE v.workflow_id = ?
+        ORDER BY v.version DESC`,
+      [workflowId]
+    );
+    res.json({
+      success: true,
+      current_version: wf.current_version,
+      draft_version: wf.draft_version,
+      versions: versions.map((v) => ({
+        ...v,
+        is_current: v.version === wf.current_version,
+        is_draft: v.version === wf.draft_version,
+      })),
+    });
+  } catch (err) {
+    console.error("[GET VERSIONS] Failed:", err);
+    res.status(500).json({ error: "Failed to fetch versions", message: err.message });
+  }
+});
+
+// GET /workflows/:id/draft-diff — draft vs published, classified.
+//
+// classification drives the publish modal (plan-v2 ruling O1):
+//   content_only → the "also apply to N in-flight run(s)" checkbox is offered
+//   structural   → the checkbox is DISABLED, structural_reasons rendered inline
+//   identical    → publish is a no-op re-stamp (allowed; rarely useful)
+// validation (ruling O5) rides along so the modal can show blockers before
+// the author clicks Publish. in_flight lists the executions a migration
+// would touch: pinned to the version being superseded, non-terminal.
+router.get("/workflows/:id/draft-diff", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const workflowId = parseInt(req.params.id, 10);
+  if (isNaN(workflowId) || workflowId <= 0) {
+    return res.status(400).json({ error: "Invalid workflow ID" });
+  }
+  try {
+    const [[wf]] = await db.query(
+      `SELECT current_version, draft_version FROM workflows WHERE id = ?`, [workflowId]
+    );
+    if (!wf) return res.status(404).json({ error: "Workflow not found" });
+    if (wf.draft_version == null) {
+      return res.json({ success: true, has_draft: false, current_version: wf.current_version });
+    }
+
+    const [currentSteps] = await db.query(
+      `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
+      [workflowId, wf.current_version]
+    );
+    const [draftSteps] = await db.query(
+      `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
+      [workflowId, wf.draft_version]
+    );
+
+    const diff = diffWorkflowSteps(currentSteps, draftSteps, { branchTargetParams: BRANCH_TARGET_PARAMS });
+    const validation = validateWorkflowDraft(draftSteps, {
+      branchTargetParams: BRANCH_TARGET_PARAMS,
+      isTerminalSentinel,
+    });
+
+    const [inFlight] = await db.query(
+      `SELECT id, status, current_step_number, contact_id, created_at
+         FROM workflow_executions
+        WHERE workflow_id = ? AND workflow_version = ? AND status IN ('active','delayed','held')
+        ORDER BY id DESC`,
+      [workflowId, wf.current_version]
+    );
+
+    res.json({
+      success: true,
+      has_draft: true,
+      current_version: wf.current_version,
+      draft_version: wf.draft_version,
+      classification: diff.classification,
+      changes: diff.changes,
+      structural_reasons: diff.structural_reasons,
+      validation,
+      in_flight: { count: inFlight.length, executions: inFlight },
+    });
+  } catch (err) {
+    console.error("[DRAFT DIFF] Failed:", err);
+    res.status(500).json({ error: "Failed to diff draft", message: err.message });
+  }
+});
+
+// POST /workflows/:id/publish — make the draft the published version.
+// Body: { migrate_in_flight?: boolean }
+//
+// Single transaction, parent row locked FIRST (lock-ordering invariant —
+// same order as ensureDraft/discard, so the three can never deadlock):
+//   1. validate the draft (O5) — errors 400 with the full validation object
+//   2. if migrate_in_flight: re-run the classifier INSIDE the tx and refuse
+//      anything but content_only (fail-closed server-side — the UI checkbox
+//      is convenience, not the gate)
+//   3. stamp the version row published (+ refresh its metadata snapshot from
+//      the live workflows row — name/description/test_input may have moved
+//      since ensureDraft froze the stub)
+//   4. flip current_version, clear draft_version
+//   5. optional migration: one UPDATE over non-terminal executions pinned to
+//      the superseded version ('processing' rows finish on the old version —
+//      deterministic and fine; numbering is unchanged by construction)
+router.post("/workflows/:id/publish", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const workflowId = parseInt(req.params.id, 10);
+  if (isNaN(workflowId) || workflowId <= 0) {
+    return res.status(400).json({ error: "Invalid workflow ID" });
+  }
+  const migrateInFlight = req.body?.migrate_in_flight === true;
+  const publishedBy = (req.auth?.username || req.auth?.key_label || 'api').slice(0, 100);
+
+  try {
+    const outcome = await db.withTransaction(async (connection) => {
+      const [[wf]] = await connection.query(
+        `SELECT current_version, draft_version FROM workflows WHERE id = ? FOR UPDATE`,
+        [workflowId]
+      );
+      if (!wf) return { respond: { status: 404, body: { error: "Workflow not found" } } };
+      if (wf.draft_version == null) {
+        return { respond: { status: 409, body: { error: "No draft to publish", message: "There are no unpublished changes." } } };
+      }
+      const draftV = wf.draft_version;
+      const oldV = wf.current_version;
+
+      const [draftSteps] = await connection.query(
+        `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
+        [workflowId, draftV]
+      );
+      const validation = validateWorkflowDraft(draftSteps, {
+        branchTargetParams: BRANCH_TARGET_PARAMS,
+        isTerminalSentinel,
+      });
+      if (validation.errors.length) {
+        return { respond: { status: 400, body: { error: "Draft failed publish validation", validation } } };
+      }
+
+      let migratedCount = null;
+      let classification = null;
+      if (migrateInFlight) {
+        const [currentSteps] = await connection.query(
+          `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
+          [workflowId, oldV]
+        );
+        const diff = diffWorkflowSteps(currentSteps, draftSteps, { branchTargetParams: BRANCH_TARGET_PARAMS });
+        classification = diff.classification;
+        if (diff.classification === 'structural') {
+          return { respond: { status: 409, body: {
+            error: "Structural changes cannot migrate in-flight runs",
+            message: "In-flight step pointers are step numbers; they survive only content-only publishes.",
+            structural_reasons: diff.structural_reasons,
+          } } };
+        }
+      }
+
+      await connection.query(
+        `UPDATE workflow_versions v
+           JOIN workflows w ON w.id = v.workflow_id
+            SET v.published_at = NOW(), v.published_by = ?,
+                v.name = w.name, v.description = w.description, v.test_input = w.test_input
+          WHERE v.workflow_id = ? AND v.version = ?`,
+        [publishedBy, workflowId, draftV]
+      );
+      await connection.query(
+        `UPDATE workflows SET current_version = ?, draft_version = NULL, updated_at = NOW() WHERE id = ?`,
+        [draftV, workflowId]
+      );
+
+      if (migrateInFlight) {
+        const [r] = await connection.query(
+          `UPDATE workflow_executions
+              SET workflow_version = ?
+            WHERE workflow_id = ? AND workflow_version = ? AND status IN ('active','delayed','held')`,
+          [draftV, workflowId, oldV]
+        );
+        migratedCount = r.affectedRows;
+      }
+
+      return { published_version: draftV, previous_version: oldV, migrated_count: migratedCount, classification, validation };
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+
+    console.log(`[PUBLISH] Workflow ${workflowId}: v${outcome.previous_version} → v${outcome.published_version}` +
+      (outcome.migrated_count != null ? ` (migrated ${outcome.migrated_count} in-flight)` : ''));
+    res.json({ success: true, ...outcome });
+  } catch (err) {
+    console.error("[PUBLISH] Failed:", err);
+    res.status(500).json({ error: "Failed to publish", message: err.message });
+  }
+});
+
+// POST /workflows/:id/discard-draft — retire the draft IN PLACE.
+//
+// Retire, not delete (plan-v2 ruling O2): the draft's step rows are kept so
+// any draft test-run's execution history stays fully resolvable (step ids in
+// workflow_execution_steps keep pointing at real rows). retired_at marks the
+// version dead; ensureDraft numbers the next draft past it (MAX+1).
+router.post("/workflows/:id/discard-draft", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const workflowId = parseInt(req.params.id, 10);
+  if (isNaN(workflowId) || workflowId <= 0) {
+    return res.status(400).json({ error: "Invalid workflow ID" });
+  }
+  try {
+    const outcome = await db.withTransaction(async (connection) => {
+      const [[wf]] = await connection.query(
+        `SELECT current_version, draft_version FROM workflows WHERE id = ? FOR UPDATE`,
+        [workflowId]
+      );
+      if (!wf) return { respond: { status: 404, body: { error: "Workflow not found" } } };
+      if (wf.draft_version == null) {
+        return { respond: { status: 409, body: { error: "No draft to discard" } } };
+      }
+      await connection.query(
+        `UPDATE workflow_versions SET retired_at = NOW() WHERE workflow_id = ? AND version = ?`,
+        [workflowId, wf.draft_version]
+      );
+      await connection.query(
+        `UPDATE workflows SET draft_version = NULL, updated_at = NOW() WHERE id = ?`,
+        [workflowId]
+      );
+      return { retired_version: wf.draft_version, current_version: wf.current_version };
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+    console.log(`[DISCARD DRAFT] Workflow ${workflowId}: retired v${outcome.retired_version}`);
+    res.json({ success: true, ...outcome });
+  } catch (err) {
+    console.error("[DISCARD DRAFT] Failed:", err);
+    res.status(500).json({ error: "Failed to discard draft", message: err.message });
+  }
+});
 
 /**
  * POST /workflows
@@ -986,26 +1321,20 @@ router.post("/workflows", jwtOrApiKey, async (req, res) => {
   }
 
   try {
+    // Versioning (S3, review D4a): new workflows are born UNPUBLISHED —
+    // current_version = 0 is the first-class "never published" state. Every
+    // dispatch site refuses it with a clear error (instead of silently
+    // creating a zero-step execution and marking it completed). The first
+    // step edit lazily creates draft v1 (ensureDraft); publish makes it live.
     const [result] = await db.query(
       `
-      INSERT INTO workflows (name, description, test_input)
-      VALUES (?, ?, ?)
+      INSERT INTO workflows (name, description, test_input, current_version)
+      VALUES (?, ?, ?, 0)
       `,
       [name.trim(), description.trim(), toJson(test_input)]
     );
 
     const workflowId = result.insertId;
-
-    // Versioning invariant: every published version has a workflow_versions
-    // metadata row (migration backfilled v1 for pre-existing workflows; this
-    // keeps the invariant for workflows created after it). current_version
-    // defaults to 1 via schema. S3 reworks creation to current_version = 0
-    // (unpublished) — this seed moves to the publish endpoint then.
-    await db.query(
-      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input, published_at, published_by)
-       VALUES (?, 1, ?, ?, ?, NOW(), 'create')`,
-      [workflowId, name.trim(), description.trim(), toJson(test_input)]
-    );
 
     console.log(`[CREATE WORKFLOW] Created workflow ${workflowId}: ${name}`);
 
@@ -1076,8 +1405,9 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Existence check + edit-target version in one (S3: becomes ensureDraft).
-    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    // Existence check + draft resolution in one — first edit after a publish
+    // lazily forks the draft (see ensureDraft above).
+    const editVersion = await ensureDraft(connection, workflowId);
     if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
@@ -1244,8 +1574,12 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
   try {
     const workflowId = await db.withTransaction(async (connection) => {
 
+    // Versioning (S3, review D4a): imports land UNPUBLISHED — the workflow is
+    // created at current_version = 0 with the imported steps as DRAFT v1.
+    // Publishing (with its validation gate) is what makes an import runnable;
+    // an import bypassing the publish boundary would defeat it.
     const [workflowResult] = await connection.query(
-      `INSERT INTO workflows (name, description, test_input) VALUES (?, ?, ?)`,
+      `INSERT INTO workflows (name, description, test_input, current_version, draft_version) VALUES (?, ?, ?, 0, 1)`,
       [name.trim(), description.trim(), toJson(test_input)]
     );
 
@@ -1263,10 +1597,10 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
       [rows]
     );
 
-    // Versioning invariant: seed the v1 metadata row (see POST /workflows).
+    // Draft metadata stub — published_at NULL until the author publishes.
     await connection.query(
-      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input, published_at, published_by)
-       VALUES (?, 1, ?, ?, ?, NOW(), 'bulk-import')`,
+      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input)
+       VALUES (?, 1, ?, ?, ?)`,
       [workflowId, name.trim(), description.trim(), toJson(test_input)]
     );
 
@@ -1371,8 +1705,9 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Existence check + edit-target version in one (S3: becomes ensureDraft).
-    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    // Existence check + draft resolution in one — first edit after a publish
+    // lazily forks the draft (see ensureDraft above).
+    const editVersion = await ensureDraft(connection, workflowId);
     if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
@@ -1452,8 +1787,9 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Existence check + edit-target version in one (S3: becomes ensureDraft).
-    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    // Existence check + draft resolution in one — first edit after a publish
+    // lazily forks the draft (see ensureDraft above).
+    const editVersion = await ensureDraft(connection, workflowId);
     if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
@@ -1738,9 +2074,9 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Edit-target version (S3: becomes ensureDraft). Also serves as the
-    // workflow existence check this route historically lacked.
-    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    // Draft resolution (see ensureDraft above). Also serves as the workflow
+    // existence check this route historically lacked.
+    const editVersion = await ensureDraft(connection, workflowId);
     if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
@@ -1835,9 +2171,9 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Edit-target version (S3: becomes ensureDraft). Also serves as the
-    // workflow existence check this route historically lacked.
-    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    // Draft resolution (see ensureDraft above). Also serves as the workflow
+    // existence check this route historically lacked.
+    const editVersion = await ensureDraft(connection, workflowId);
     if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
@@ -1958,7 +2294,7 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     // Slice 2.1: also SELECT test_input so the duplicate carries over the
     // authorial init_data shape doc. Symmetric with description carry-over.
     const [wfRows] = await connection.query(
-      `SELECT name, description, test_input, captured_input, captured_at, current_version FROM workflows WHERE id = ?`,
+      `SELECT name, description, test_input, captured_input, captured_at, current_version, draft_version FROM workflows WHERE id = ?`,
       [originalId]
     );
     if (wfRows.length === 0) {
@@ -1971,8 +2307,15 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     const newName = customName?.trim() || `Copy of ${original.name}`;
     // Capture slice: sample + timestamp copy (hooks-clone parity) but
     // capture_mode never copies — the duplicate starts disarmed (default).
+    // Versioning (S3): content comes from the source's PUBLISHED version
+    // (plan-v2 decision 7); a never-published source falls back to its draft.
+    // The duplicate itself lands UNPUBLISHED (current_version = 0, content as
+    // draft v1) — publishing implicitly on duplicate would bypass the review
+    // boundary.
+    const sourceVersion = original.current_version || original.draft_version || 0;
+
     const [newWfResult] = await connection.query(
-      `INSERT INTO workflows (name, description, test_input, captured_input, captured_at) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO workflows (name, description, test_input, captured_input, captured_at, current_version, draft_version) VALUES (?, ?, ?, ?, ?, 0, 1)`,
       [newName, original.description || "", toJson(original.test_input), toJson(original.captured_input), original.captured_at ?? null]
     );
     const newWorkflowId = newWfResult.insertId;
@@ -1985,7 +2328,7 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       WHERE workflow_id = ? AND version = ?
       ORDER BY step_number ASC
       `,
-      [originalId, original.current_version]
+      [originalId, sourceVersion]
     );
 
     if (steps.length > 0) {
@@ -2010,13 +2353,11 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       );
     }
 
-    // Versioning invariant: seed the duplicate's v1 metadata row. Source
-    // content is the SOURCE's published current_version (plan-v2 decision 7;
-    // S3 amends: never-published sources fall back to their draft, and the
-    // duplicate itself lands unpublished at current_version = 0).
+    // Draft metadata stub for the duplicate's v1 — published_at NULL until
+    // the author publishes.
     await connection.query(
-      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input, published_at, published_by)
-       VALUES (?, 1, ?, ?, ?, NOW(), 'duplicate')`,
+      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input)
+       VALUES (?, 1, ?, ?, ?)`,
       [newWorkflowId, newName, original.description || "", toJson(original.test_input)]
     );
 
@@ -2615,3 +2956,7 @@ router.get("/workflows/:id/captured", jwtOrApiKey, async (req, res) => {
 });
 
 module.exports = router;
+
+// Test-only handle (tests/workflows.ensureDraft.test.js) — exercises the
+// draft fork against a scripted mock connection without standing up auth.
+router._test = { ensureDraft };
