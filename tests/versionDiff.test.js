@@ -106,6 +106,22 @@ describe('diffWorkflowSteps — classification', () => {
     expect(r.structural_reasons.join(' ')).toMatch(/branch target/);
   });
 
+  test('branches[].value (a predicate INPUT) is content — deliberate seam, final-review F10 ruling', () => {
+    // Predicate inputs at any nesting depth are content; only branch TARGETS
+    // are structural. branches[i].value is the same comparison operand the
+    // flat evaluate_condition.value case already pins as content — tightening
+    // one and not the other would make classification depend on authoring
+    // mode. Migrating it means in-flight runs evaluate the new condition at
+    // that step, which is what "apply to in-flight" is asking for; it cannot
+    // move a step pointer, and publish validation independently range-checks
+    // every literal target.
+    const withBranches = clone(base);
+    withBranches[1] = { ...withBranches[1], config: JSON.stringify({ function_name: 'evaluate_condition', params: { branches: [{ variable: 'x', operator: 'equals', value: 'a', then: 3 }], else: 4 } }) };
+    const d = clone(withBranches);
+    d[1] = { ...d[1], config: JSON.stringify({ function_name: 'evaluate_condition', params: { branches: [{ variable: 'x', operator: 'equals', value: 'CHANGED', then: 3 }], else: 4 } }) };
+    expect(diffWorkflowSteps(withBranches, d, OPTS).classification).toBe('content_only');
+  });
+
   test('branches[].then change is structural (the array form the flat map cannot see)', () => {
     const withBranches = clone(base);
     withBranches[1] = { ...withBranches[1], config: JSON.stringify({ function_name: 'evaluate_condition', params: { branches: [{ variable: 'x', operator: 'equals', value: 'a', then: 3 }], else: 4 } }) };

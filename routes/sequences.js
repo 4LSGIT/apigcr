@@ -27,7 +27,7 @@ const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleStepJob } = require('../lib/sequenceEngine');
-const { diffSequenceSteps, validateSequenceDraftShape } = require('../lib/versionDiff');
+const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson } = require('../lib/versionDiff');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // Normalize the optional `type` column. As of Slice B, sequence_templates.type
@@ -477,10 +477,11 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
 // Versioning endpoints (S4) — sequence draft lifecycle.
 // Mirrors routes/workflows.js exactly; see the comments there for the load-
 // bearing reasoning (lock ordering, fail-closed migration, retire-in-place).
-// Sequence-specific deltas: the migrate path also rewrites pending
-// scheduled_jobs' stepId (jobs are pinned to step ROW ids, and the new
-// version has new rows), and publish validation re-runs the editor's own
-// validateTiming / validateStepConfig across the whole draft.
+// Sequence-specific deltas: the migrate path is a pure enrollment REPOINT —
+// queued jobs are never rewritten, because executeStep resolves the step by
+// identity (template_id, pinned version, step_number) at fire time (S4.1) —
+// and publish validation re-runs the editor's own validateTiming /
+// validateStepConfig across the whole draft.
 // ─────────────────────────────────────────────────────────────
 
 // GET /sequences/templates/:id/versions
@@ -875,14 +876,36 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   try {
     const outcome = await db.withTransaction(async (connection) => {
       if (condition !== undefined) {
-        // Draft fork first (parent FOR UPDATE inside — lock ordering), then
-        // write the versioned condition onto the draft row.
-        const draftV = await ensureDraft(connection, id);
-        if (draftV == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
-        await connection.query(
-          `UPDATE sequence_template_versions SET template_condition = ? WHERE template_id = ? AND version = ?`,
-          [condition ? JSON.stringify(condition) : null, id, draftV]
+        // No-op guard (final review F4): the Edit modal sends `condition` on
+        // EVERY save, so without this, renaming a template (or toggling
+        // active, or fixing a description typo) forked a draft of
+        // byte-identical steps — and the version strip then told the user to
+        // publish a change that was already live. Fork only when the
+        // condition actually changed... OR when a draft already exists: an
+        // existing draft must still receive the write even when the value is
+        // unchanged, or a later publish would ship the draft's OLD condition
+        // instead of what the user last saved.
+        const [[cur]] = await connection.query(
+          `SELECT t.draft_version, COALESCE(v.template_condition, t.\`condition\`) AS eff
+             FROM sequence_templates t
+             LEFT JOIN sequence_template_versions v
+                    ON v.template_id = t.id AND v.version = t.current_version
+            WHERE t.id = ?`,
+          [id]
         );
+        if (!cur) return { respond: { status: 404, body: { error: 'Template not found' } } };
+        const incoming = condition ? JSON.stringify(condition) : null;
+        const unchanged = canonical(parseMaybeJson(cur.eff)) === canonical(parseMaybeJson(incoming));
+        if (!unchanged || cur.draft_version != null) {
+          // Draft fork (parent FOR UPDATE inside — lock ordering), then write
+          // the versioned condition onto the draft row.
+          const draftV = await ensureDraft(connection, id);
+          if (draftV == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
+          await connection.query(
+            `UPDATE sequence_template_versions SET template_condition = ? WHERE template_id = ? AND version = ?`,
+            [incoming, id, draftV]
+          );
+        }
       }
       if (updates.length) {
         const [r] = await connection.query(

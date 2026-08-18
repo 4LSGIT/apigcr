@@ -40,11 +40,6 @@ const EXEMPT = [
     klass: 'ALL-VERSIONS',
     reason: 'deleting the workflow removes every version\'s rows',
   },
-  { // lib/sequenceEngine.js executeStep — load by scheduled job's stepId
-    match: 'SELECT * FROM sequence_steps WHERE id = ?',
-    klass: 'ID-JOIN',
-    reason: 'row id is version-specific by construction',
-  },
   { // routes/workflows.js remapBranchTargets config rewrite — by row id
     match: 'UPDATE workflow_steps SET config = ?, updated_at = NOW() WHERE id = ?',
     klass: 'ID-JOIN',

@@ -596,7 +596,8 @@ const WF = {
   workflows: [], filtered: [],
   showInactive: false,
   activeWfId: null, activeWf: null, steps: [],
-  activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
+  activeStepIdx: null,
+  draftRenumberWarned: {},   // once-per-workflow-per-session for the draft test-run guard tab: 'edit', editingNew: false, jsonMode: false,
   // Reorder slice — the selected step is anchored by its DB id, NOT by its
   // array index. Any reorder/insert/delete renumbers step_number and shuffles
   // indices, so an index-only selection silently ends up pointing at a
@@ -2503,6 +2504,7 @@ async function wfStepDelete(idx) {
   const i = stepId != null ? wfStepIdxById(stepId) : idx;
   const step = WF.steps[i];
   if (!step) return;
+  if (!(await wfConfirmDraftRenumber('delete'))) return;
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
@@ -2538,10 +2540,46 @@ const WF_MOVE_DEBOUNCE_MS = 450;
 function wfStepIdxById(id) { return WF.steps.findIndex(s => s.id === id); }
 
 // Versioning (S3/S5): the old wfConfirmRenumberWithExecutions dialog was
-// retired here (plan decision 8). Its premise inverted when drafts shipped —
-// renumbers now land on the DRAFT, published versions are immutable, and
-// every in-flight execution is pinned to the version it started on. The
-// publish modal's in-flight panel is where that conversation happens now.
+// retired (plan decision 8) — renumbers land on the DRAFT, published versions
+// are immutable, and every execution is pinned, so the general danger it
+// warned about no longer exists. The publish modal's in-flight panel is where
+// that conversation happens now.
+//
+// ONE case survives (final review F3): a DRAFT test-run parked at a
+// wait/decision step. Drafts are edited in place — ensureDraft reuses the
+// existing draft version — so renumbering it can move that run's resume
+// target (current_step_number / workflow_resume data.nextStep /
+// decision_requests.resume_step are raw numbers, never remapped). The guard
+// below fires for exactly that case and no other: non-terminal executions
+// pinned to the draft (workflow.draft_in_flight from the single GET), warned
+// once per workflow per session. In practice it fires approximately never —
+// and exactly when it matters (a HITL workflow under draft iteration).
+async function wfConfirmDraftRenumber(verb) {
+  const wf = WF.activeWf;
+  if (!wf || wf.draft_version == null) return true;
+  const n = Number(wf.draft_in_flight || 0);
+  if (n <= 0) return true;
+  if (WF.draftRenumberWarned[wf.id]) return true;
+  const r = await Swal.fire({
+    icon: 'warning',
+    title: `${n} draft test-run${n > 1 ? 's' : ''} in flight`,
+    html: `<div style="text-align:left;font-size:13px;line-height:1.55">
+      <p>Published runs are safe — they're pinned to immutable versions. But
+      <b>${n === 1 ? 'a test-run is' : 'test-runs are'} parked on this draft</b> (v${wf.draft_version}),
+      and drafts are edited in place.</p>
+      <p style="margin-top:8px">${verb === 'delete' ? 'Deleting a step' : 'This move'} renumbers the draft,
+      and a parked run resumes by <b>step number</b> — it can wake up on a different step than intended.</p>
+      <p style="margin-top:8px;color:var(--muted)">Let the test-run finish (or cancel it in the Executions tab) if you want to be safe.</p>
+    </div>`,
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: verb === 'delete' ? 'Delete anyway' : 'Move anyway',
+    confirmButtonColor: '#f59e0b',
+  });
+  if (!r.isConfirmed) return false;
+  WF.draftRenumberWarned[wf.id] = true;
+  return true;
+}
 
 // Repaint the canvas without stealing focus from a step control the user is
 // still working. The canvas is re-rendered wholesale, so the arrow button
@@ -2579,6 +2617,7 @@ async function wfMoveStep(fromIdx, toIdx, focusKey) {
   if (!WF.activeWfId) return;
   const step = WF.steps[fromIdx];
   if (!step) return;
+  if (!(await wfConfirmDraftRenumber('move'))) return;
   // A commit in flight, or a batch open on a DIFFERENT step, means the local
   // numbers are ahead of the server — settle that first, then re-resolve this
   // step's position. The intent is carried as a delta so the move still means

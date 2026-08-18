@@ -1737,6 +1737,8 @@ hits every version at once — including immutable published history and retired
 
 or, better, make the change through the editor/API on the draft and publish it — that's what the audit trail is for. `tests/versionPredicateCoverage.test.js` enforces the predicate for application code; console SQL has no net.
 
+The same applies to **`query_db` steps inside workflows**: `sequence_steps` is in its allowed-tables list, and an author-written SELECT without a `version` predicate returns published, draft, *and retired* rows at once. Read-only, so the blast radius is wrong answers — but scope your query.
+
 Related: `sequence_templates.condition` is a **write-once legacy column** (create-time value, `ensureDraft` v0 fallback, never updated after the first fork). The truth is `sequence_template_versions.template_condition` for the relevant version. See chapter 16.
 
 ### 5.35 Queued Sequence Steps Resolve by `step_number`, Not `stepId`
@@ -1751,92 +1753,52 @@ Related: `sequence_templates.condition` is a **write-once legacy column** (creat
 
 ## 6. Template Examples
 
-### 6.1 Sequence — Full SQL for a New Template
+### 6.1 Sequence — Column Shapes by Example (NOT runnable SQL)
 
-```sql
--- ─────────────────────────────────────────────────────────────
--- missing_statements — follow-up when 341 attended but docs missing
--- ─────────────────────────────────────────────────────────────
+**Create sequences in the editor (or via the API) and publish them — never with console INSERTs.** Post-versioning (ch. 16), a hand-inserted template is broken by construction unless you get three things right at once: `current_version` must be `0` (unpublished — the column default is also 0, see §5.34), every `sequence_steps` row must carry a `version`, and the matching `sequence_template_versions` row must exist. Miss the last one and you build a template that passes every guard — cascade match, enroll funnel, step load — and then wedges **every enrollment silently at fire time** (`template_version_row_missing`). The editor + publish flow maintains all three invariants for you and gives you validation for free.
 
-INSERT INTO sequence_templates
-  (name, type, filters, active, condition, description)
-VALUES
-  (
-    'Missing Bank Statements Follow-Up',
-    'missing_statements',
-    NULL,
-    1,
-    JSON_OBJECT(
-      'query',  'SELECT status FROM checklists WHERE link_type=''case'' AND link=:case_id AND title=''Docs Needed''',
-      'params', JSON_OBJECT('case_id', 'trigger_data.case_id'),
-      'assert', JSON_OBJECT('status', JSON_OBJECT('in', JSON_ARRAY('incomplete')))
-    ),
-    'Enrolled after 341 Meeting attended. Cancels when Docs Needed checklist goes complete.'
-  );
+What follows is therefore *illustration of the JSON column shapes only*, using a worked example: `missing_statements` — a follow-up enrolled after a 341 Meeting is attended, which cancels itself when the "Docs Needed" checklist goes complete.
 
-SET @tid = LAST_INSERT_ID();
+**Template-level `condition`** (cancel-level — evaluated before every step; on failure the whole enrollment cancels). Versioned: lives on `sequence_template_versions.template_condition` for the enrollment's pinned version:
 
--- Step 1: SMS 3 days later at 10 AM
-INSERT INTO sequence_steps
-  (template_id, step_number, timing, action_type, action_config, condition, fire_guard, error_policy)
-VALUES (
-  @tid, 1,
-  JSON_OBJECT('type', 'business_days', 'value', 3, 'timeOfDay', '10:00'),
-  'internal_function',
-  JSON_OBJECT(
-    'function_name', 'send_sms',
-    'params', JSON_OBJECT(
-      'from',    (SELECT value FROM app_settings WHERE `key` = 'sms_default_from'),
-      'to',      '{{contacts.contact_phone}}',
-      'message', 'Hi {{contacts.contact_fname}}, we still need your bank statements to proceed with your case. Please upload them at your earliest convenience.'
-    )
-  ),
-  NULL, NULL,
-  JSON_OBJECT('strategy', 'retry_then_ignore', 'max_retries', 2, 'backoff_seconds', 60)
-);
-
--- Step 2: Email 2 business days later
-INSERT INTO sequence_steps
-  (template_id, step_number, timing, action_type, action_config, condition, fire_guard, error_policy)
-VALUES (
-  @tid, 2,
-  JSON_OBJECT('type', 'business_days', 'value', 2, 'timeOfDay', '10:00'),
-  'internal_function',
-  JSON_OBJECT(
-    'function_name', 'send_email',
-    'params', JSON_OBJECT(
-      'from',    (SELECT value FROM app_settings WHERE `key` = 'email_default_from'),
-      'to',      '{{contacts.contact_email}}',
-      'subject', 'Reminder: Bank Statements Needed',
-      'html',    '<p>Hi {{contacts.contact_fname}},</p><p>We still need your bank statements. Please reply to this email with them attached, or upload at the link we sent previously.</p>'
-    )
-  ),
-  NULL, NULL,
-  JSON_OBJECT('strategy', 'retry_then_ignore', 'max_retries', 2, 'backoff_seconds', 60)
-);
-
--- Step 3: Task for the assigned attorney, 3 business days later at 9 AM
-INSERT INTO sequence_steps
-  (template_id, step_number, timing, action_type, action_config, condition, fire_guard, error_policy)
-VALUES (
-  @tid, 3,
-  JSON_OBJECT('type', 'business_days', 'value', 3, 'timeOfDay', '09:00'),
-  'internal_function',
-  JSON_OBJECT(
-    'function_name', 'create_task',
-    'params', JSON_OBJECT(
-      'title',       'Call client re: missing bank statements',
-      'description', 'Client has not responded to SMS or email. Call to follow up.',
-      'contact_id',  '{{trigger_data.contact_id}}',
-      'assigned_to', 1,
-      'link_type',   'case',
-      'link_id',     '{{trigger_data.case_id}}'
-    )
-  ),
-  NULL, NULL,
-  JSON_OBJECT('strategy', 'abort')
-);
+```json
+{
+  "query":  "SELECT status FROM checklists WHERE link_type='case' AND link=:case_id AND title='Docs Needed'",
+  "params": { "case_id": "trigger_data.case_id" },
+  "assert": { "status": { "in": ["incomplete"] } }
+}
 ```
+
+**Step 1 — SMS, 3 business days later at 10 AM.** `timing`:
+
+```json
+{ "type": "business_days", "value": 3, "timeOfDay": "10:00" }
+```
+
+`action_type` = `internal_function`, `action_config`:
+
+```json
+{
+  "function_name": "send_sms",
+  "params": {
+    "from":    "<default from number>",
+    "to":      "{{contacts.contact_phone}}",
+    "message": "Hi {{contacts.contact_fname}}, we still need your bank statements to proceed with your case. Please upload them at your earliest convenience."
+  }
+}
+```
+
+`error_policy`:
+
+```json
+{ "strategy": "retry_then_ignore", "max_retries": 2, "backoff_seconds": 60 }
+```
+
+**Step 2 — Email, 2 business days after step 1.** Same shape with `send_email` (`to`, `subject`, `html` params).
+
+**Step 3 — Task for the attorney, 3 business days after step 2.** `create_task` with `title`, `description`, `contact_id`, `assigned_to`, `link_type: "case"`, `link_id: "{{trigger_data.case_id}}"`; `error_policy` `{ "strategy": "abort" }`.
+
+To build this for real: create the template in the sequences editor (type `missing_statements`, paste the condition into the Edit modal's query box), add the three steps, then **Publish**. The publish gate re-validates timing and config across the whole draft before anything can enroll.
 
 ### 6.2 Scheduled Job — Recurring with Calendar Gate
 

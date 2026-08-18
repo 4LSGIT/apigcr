@@ -1018,6 +1018,21 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
       steps = stepRows;
     }
 
+    // Draft test-runs parked at wait/decision steps are the ONE case where
+    // renumbering is still consequential (drafts are edited in place; resume
+    // pointers are raw step numbers — final review F3). Count them so the
+    // editor can warn in exactly that case and no other.
+    if (workflow.draft_version != null) {
+      const [[dif]] = await db.query(
+        `SELECT COUNT(*) AS n FROM workflow_executions
+          WHERE workflow_id = ? AND workflow_version = ? AND status IN ('active','delayed','held')`,
+        [workflowId, workflow.draft_version]
+      );
+      workflow.draft_in_flight = Number(dif?.n || 0);
+    } else {
+      workflow.draft_in_flight = 0;
+    }
+
     res.json({
       success: true,
       workflow,

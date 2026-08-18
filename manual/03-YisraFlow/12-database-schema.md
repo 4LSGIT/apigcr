@@ -69,9 +69,9 @@ draft_version            int NULL        -- unpublished draft, NULL = no pending
 #### `workflow_versions` — version metadata (ch. 16)
 
 ```sql
-id            int          PK
+PRIMARY KEY (workflow_id, version)   -- composite; there is NO surrogate id column
 workflow_id   int          FK → workflows
-version       int          -- unique per workflow
+version       int
 name          text         -- snapshot at publish (audit)
 description   text
 test_input    json
@@ -177,9 +177,9 @@ Indexes: `idx_type (type)`, `idx_active (active)`. No FK from `type` to `sequenc
 #### `sequence_template_versions` — version metadata (ch. 16)
 
 ```sql
-id                  int        PK
+PRIMARY KEY (template_id, version)   -- composite; there is NO surrogate id column
 template_id         int        FK → sequence_templates
-version             int        -- unique per template
+version             int
 name, type          --         snapshot at publish (audit)
 template_condition  json       -- THE versioned template condition (executeStep reads
                                -- the enrollment-pinned version's row)
