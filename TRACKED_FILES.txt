@@ -683,4 +683,5 @@ tests/triggerService.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
 tests/workflows.editor.roundtrip.test.js
+tests/workflows.reorder.state.test.js
 views/v.html

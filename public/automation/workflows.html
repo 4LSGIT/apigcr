@@ -621,10 +621,19 @@ const WF = {
   // rebuilding from {} (delete-then-restore), so unknown keys survive by
   // construction. Re-snapshotted on every wfRenderEditor.
   origConfig: null,
-  // Slice 2.1 — per-step tester state. Map<stepIdx, { rows:[{key,value}], touched:bool }>.
-  // Preserves user-typed variable rows across tester re-renders (step switch,
-  // tab switch). Cleared on workflow change and on steps refresh so stale
-  // idx→state mappings don't survive a reorder/delete/add.
+  // Slice 2.1 — per-step tester state.
+  // Map<step.id, { rows:[{key,value}], touched:bool }>. Preserves user-typed
+  // variable rows across tester re-renders (step switch, tab switch).
+  //
+  // Keyed by DB step id, NOT array index. It used to be index-keyed, which
+  // meant every steps refresh had to wipe the whole map — a reorder or a
+  // renumbering insert/delete made idx→state point at the wrong step, and a
+  // plain step Save (which reloads) threw away variables the user had just
+  // typed. Ids are stable across renumbering, so the map now survives reloads
+  // and is only pruned of steps that no longer exist.
+  //
+  // Still cleared wholesale on workflow change (different context) and when
+  // test_input changes (wfEdit / wfCapSaveSample), so the next render re-seeds.
   testerState: {}
 };
 
@@ -1369,14 +1378,18 @@ async function _loadWfSteps(id, silent) {
     // (from loadWorkflows) is used as a fallback; the single-GET is authoritative.
     if (data.workflow) WF.activeWf = data.workflow;
     wfRenderWfMeta();
-    // Steps may have been reordered/renumbered/deleted since last load — old
-    // idx→testerState mappings are no longer reliable. Clear it.
-    WF.testerState = {};
     WF.steps = (data.steps || []).map(s => ({
       ...s,
       config:       typeof s.config       === 'string' ? JSON.parse(s.config)       : s.config,
       error_policy: typeof s.error_policy === 'string' ? JSON.parse(s.error_policy) : s.error_policy
     }));
+    // Tester state is keyed by step id, so a reorder/renumber leaves it valid
+    // — but drop entries for steps that no longer exist. (Object keys are
+    // strings; step.id is a number, hence the String() on the live set.)
+    const liveStepIds = new Set(WF.steps.map(s => String(s.id)));
+    Object.keys(WF.testerState).forEach(k => {
+      if (!liveStepIds.has(k)) delete WF.testerState[k];
+    });
     wfSyncActiveStep();
     wfRenderCanvasKeepFocus();
   } catch (e) {
@@ -2837,7 +2850,10 @@ async function wfDelete() {
 function wfRenderTester(step) {
   document.getElementById('wf-editor-foot').style.display = 'none';
   const cfg = step.config || {};
-  const idx = WF.activeStepIdx;
+  // Tester rows are stored against the step's DB id — stable across the
+  // renumbering that reorder/insert/delete cause. Falls back to the selection
+  // anchor if the caller passed something without an id.
+  const key = step?.id ?? WF.activeStepId ?? null;
 
   // Detect placeholder keys referenced by this step's config — these seed the
   // variable list regardless of test_input (author may still want to test
@@ -2856,7 +2872,7 @@ function wfRenderTester(step) {
   // row for this step since the last pre-pop, preserve their rows. Otherwise
   // re-seed from (detected + test_input) so a freshly-saved test_input value
   // takes effect immediately.
-  const saved = (idx != null) ? WF.testerState[idx] : null;
+  const saved = (key != null) ? WF.testerState[key] : null;
   let rows;
   if (saved && saved.touched) {
     // User has unsaved edits to this step's tester — keep them.
@@ -2882,8 +2898,8 @@ function wfRenderTester(step) {
     // Record as a pre-pop (untouched) snapshot so subsequent re-renders of
     // the SAME step (no intervening user edit) also re-seed freshly rather
     // than getting stuck with a stale snapshot.
-    if (idx != null) {
-      WF.testerState[idx] = { rows: rows.map(r => ({ ...r })), touched: false };
+    if (key != null) {
+      WF.testerState[key] = { rows: rows.map(r => ({ ...r })), touched: false };
     }
   }
 
@@ -2901,12 +2917,12 @@ function wfRenderTester(step) {
 
   // Slice 2.1 — wire dirty tracking. Any keystroke inside #wf-var-rows marks
   // touched=true and snapshots current DOM state. This survives tab switches
-  // (Edit→Test→Edit) and step switches for the SAME step because we store
-  // by idx. wfAddVarRow and wfRemoveVarRow explicitly save too (those don't
-  // emit 'input' events on the container).
+  // (Edit→Test→Edit), step switches, AND steps reloads for the SAME step,
+  // because we store by step id. wfAddVarRow and wfRemoveVarRow explicitly
+  // save too (those don't emit 'input' events on the container).
   const container = document.getElementById('wf-var-rows');
-  if (container && idx != null) {
-    container.addEventListener('input', () => wfSaveTesterState(idx, true));
+  if (container && key != null) {
+    container.addEventListener('input', () => wfSaveTesterState(key, true));
   }
 }
 
@@ -2918,18 +2934,19 @@ function wfAddVarRow() {
   document.getElementById('wf-var-rows').insertAdjacentHTML('beforeend', wfVarRowHTML('', ''));
   // Slice 2.1 — structural change counts as touched; saves new row into state
   // so a subsequent re-render preserves it.
-  if (WF.activeStepIdx != null) wfSaveTesterState(WF.activeStepIdx, true);
+  if (WF.activeStepId != null) wfSaveTesterState(WF.activeStepId, true);
 }
 
 function wfRemoveVarRow(btn) {
   btn.parentElement.remove();
   // Slice 2.1 — keep saved state in sync after row removal.
-  if (WF.activeStepIdx != null) wfSaveTesterState(WF.activeStepIdx, true);
+  if (WF.activeStepId != null) wfSaveTesterState(WF.activeStepId, true);
 }
 
-// Slice 2.1 — snapshot current tester row DOM into WF.testerState[idx]. Sets
-// touched=true if markTouched; otherwise preserves existing touched flag.
-function wfSaveTesterState(idx, markTouched) {
+// Slice 2.1 — snapshot current tester row DOM into WF.testerState[stepId].
+// Sets touched=true if markTouched; otherwise preserves the existing flag.
+function wfSaveTesterState(stepId, markTouched) {
+  if (stepId == null) return;
   const container = document.getElementById('wf-var-rows');
   if (!container) return;
   const rows = [];
@@ -2937,8 +2954,8 @@ function wfSaveTesterState(idx, markTouched) {
     const [k, v] = row.querySelectorAll('input');
     rows.push({ key: k?.value ?? '', value: v?.value ?? '' });
   });
-  const prev = WF.testerState[idx] || { rows: [], touched: false };
-  WF.testerState[idx] = {
+  const prev = WF.testerState[stepId] || { rows: [], touched: false };
+  WF.testerState[stepId] = {
     rows,
     touched: markTouched ? true : prev.touched
   };
