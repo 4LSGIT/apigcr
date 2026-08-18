@@ -383,7 +383,9 @@ describe('sequenceEngine — signing_request_id scoping (real module)', () => {
     const query = jest.fn(async (sql, params = []) => {
       const s = sql.trim();
       if (/^SELECT \* FROM sequence_templates WHERE id = \?/i.test(s)) {
-        return [[{ id: 26, name: 'E-Sign Reminder — Default', type: 'esign_reminder', active: 1 }]];
+        // current_version required since S4 — the enroll funnel fail-louds on
+        // never-published templates instead of defaulting to v1.
+        return [[{ id: 26, name: 'E-Sign Reminder — Default', type: 'esign_reminder', active: 1, current_version: 1 }]];
       }
       if (/^SELECT \* FROM sequence_steps/i.test(s)) {
         return [[{
@@ -424,7 +426,7 @@ describe('sequenceEngine — signing_request_id scoping (real module)', () => {
     // …) — appt_id/signing_request_id shifted one slot right.
     expect(db.captured.insertSql).toMatch(/signing_request_id/);
     expect(db.captured.insertSql).toMatch(/template_version/);
-    expect(db.captured.insertParams[1]).toBe(1);    // template_version (mock template has none → defaults 1)
+    expect(db.captured.insertParams[1]).toBe(1);    // template_version (read-once from template.current_version)
     expect(db.captured.insertParams[3]).toBeNull(); // appt_id
     expect(db.captured.insertParams[4]).toBe(7);    // signing_request_id
   });

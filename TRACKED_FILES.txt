@@ -307,6 +307,7 @@ ref/2026-08-17_contact_token_rename.sql
 ref/2026-08-17_trigger_stage_aged.sql
 ref/2026-08-17_video_landing.sql
 ref/2026-08-18_automation_versioning.sql
+ref/2026-08-18_s4_condition_resync.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/EXTERNAL_CODE_CSS_DECISION.md
@@ -674,6 +675,7 @@ tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
 tests/schemaConventions.test.js
 tests/sequences.editor.roundtrip.test.js
+tests/sequences.ensureDraft.test.js
 tests/sequences.routeOrder.test.js
 tests/su.stepup.test.js
 tests/taskService.status.test.js
@@ -686,6 +688,7 @@ tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
 tests/triggerService.test.js
+tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
 tests/videoLanding.actionUrl.test.js

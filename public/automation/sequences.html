@@ -680,6 +680,8 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="seq-canvas-title">← Select a sequence template</div>
       <div id="seq-canvas-actions" style="display:none;gap:8px">
+        <button class="btn btn-sm" id="seq-publish-btn" style="display:none;background:#d97706;border:1px solid #d97706;color:#fff" onclick="seqPublishModal()"><i class="fa-solid fa-upload"></i> Publish</button>
+        <button class="btn btn-outline btn-sm" id="seq-discard-btn" style="display:none" onclick="seqDiscardDraft()" title="Discard the draft — the published version stays live"><i class="fa-solid fa-rotate-left"></i></button>
         <button class="btn btn-outline btn-sm" id="seq-capture-btn" onclick="seqCaptureModal()"><i class="fa-solid fa-satellite-dish"></i> Capture</button>
         <button class="btn btn-outline btn-sm" onclick="seqShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
         <button class="btn btn-outline btn-sm" onclick="seqOpenPreviewForm()" title="Dry-run this template against a contact — no side effects"><i class="fa-solid fa-flask"></i> Preview</button>
@@ -688,6 +690,7 @@
         <button class="btn btn-danger btn-sm" onclick="seqDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
     </div>
+    <div id="seq-version-strip" style="display:none;padding:6px 20px 0;font-size:12px;line-height:1.5"></div>
     <div class="canvas-body" id="seq-canvas-body">
       <div class="empty-state">
         <i class="fa-solid fa-list-ol"></i>
@@ -847,7 +850,6 @@ const SEQ = {
   moveCommit: null,
   // Template ids already warned about live enrollments this session, so the
   // warning fires once per template rather than on every nudge.
-  reorderWarned: {},
   // Original action_config captured (deep-cloned) at edit-tab open. The
   // metadata-driven internal_function form can only render/gather keys in
   // meta.params MINUS SEQ_HIDDEN_PARAMS, so keys outside that set — `extra`
@@ -1073,7 +1075,7 @@ function renderSeqList() {
     return `
     <div class="left-item${t.id === SEQ.activeTemplateId ? ' active' : ''}" onclick="selectSeqTemplate(${t.id})">
       <div class="left-item-name">${esc(t.name)}</div>
-      <div class="left-item-meta">id: ${t.id} · ${typeDisplay} · ${t.step_count || 0} step${t.step_count !== 1 ? 's' : ''}${_seqFilterChipsList(t.filters)}${t.active ? '' : ' · <span style="color:#f87171">inactive</span>'}</div>
+      <div class="left-item-meta">id: ${t.id} · ${typeDisplay} · ${t.step_count || 0} step${t.step_count !== 1 ? 's' : ''}${_seqFilterChipsList(t.filters)}${t.active ? '' : ' · <span style="color:#f87171">inactive</span>'}${t.draft_version != null ? ' · <span style="color:#fbbf24">draft</span>' : (!t.current_version ? ' · <span style="color:#94a3b8">unpublished</span>' : '')}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();seqEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();seqDuplicate()"><i class="fa-regular fa-copy"></i></button>
@@ -1189,6 +1191,35 @@ function seqTitleText(t) {
   return s;
 }
 
+// ── Versioning strip (S6) — mirrors workflows.html wfRenderWfMeta ────────
+function seqRenderVersionStrip() {
+  const vs = document.getElementById('seq-version-strip');
+  const pubBtn = document.getElementById('seq-publish-btn');
+  const discBtn = document.getElementById('seq-discard-btn');
+  if (!vs || !pubBtn || !discBtn) return;
+  const t = SEQ.activeTemplate;
+  const hasDraft = t && t.draft_version != null;
+  const neverPublished = t && !t.current_version;
+  if (hasDraft) {
+    vs.innerHTML = neverPublished
+      ? `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Draft v${t.draft_version} — never published.</span> <span style="color:#64748b">Contacts cannot enroll until you publish.</span>`
+      : `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Unpublished draft (v${t.draft_version}).</span> <span style="color:#64748b">New enrollments still use v${t.current_version} — publish to make these changes take effect.</span>`;
+    vs.style.display = 'block';
+    pubBtn.style.display = '';
+    discBtn.style.display = '';
+  } else if (neverPublished) {
+    vs.innerHTML = `<span style="color:#64748b"><i class="fa-regular fa-circle"></i> Never published — add steps, then Publish to allow enrollment.</span>`;
+    vs.style.display = 'block';
+    pubBtn.style.display = 'none';
+    discBtn.style.display = 'none';
+  } else {
+    vs.style.display = 'none';
+    vs.innerHTML = '';
+    pubBtn.style.display = 'none';
+    discBtn.style.display = 'none';
+  }
+}
+
 async function selectSeqTemplate(id) {
   // Commit any pending reorder against the OUTGOING template before
   // SEQ.activeTemplateId changes — the commit targets pendingMove.templateId,
@@ -1239,7 +1270,20 @@ async function _loadSeqSteps(id, silent) {
     // Capture slice — the single GET is SELECT *, so refresh the active
     // template row (capture_mode/captured_at ride along; list GET has them
     // too via t.*, but this is the freshest copy).
-    if (data.template) { SEQ.activeTemplate = data.template; seqUpdateCaptureBtn(); }
+    if (data.template) {
+      SEQ.activeTemplate = data.template;
+      seqUpdateCaptureBtn();
+      // Sync the sidebar's copy of this row — the list renders from
+      // SEQ.templates, which otherwise goes stale on draft fork/publish/
+      // discard until the next full list reload.
+      const li = SEQ.templates.findIndex(t => t.id === data.template.id);
+      if (li >= 0) {
+        SEQ.templates[li] = { ...SEQ.templates[li], ...data.template, step_count: (data.steps || []).length };
+        SEQ.filtered = SEQ.filtered.map(t => t.id === data.template.id ? SEQ.templates[li] : t);
+        renderSeqList();
+      }
+      seqRenderVersionStrip();
+    }
     SEQ.steps = (data.steps || []).map(s => ({
       ...s,
       timing:        typeof s.timing === 'string'        ? JSON.parse(s.timing)        : s.timing,
@@ -2577,7 +2621,6 @@ async function seqStepDelete(idx) {
   const step = SEQ.steps[i];
   if (!step) return;
   // Delete renumbers every step above it — same live-pointer exposure as a move.
-  if (!(await seqConfirmRenumberWithEnrollments('delete'))) return;
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
@@ -2612,39 +2655,11 @@ const SEQ_MOVE_DEBOUNCE_MS = 450;
 
 function seqStepIdxById(id) { return SEQ.steps.findIndex(s => s.id === id); }
 
-// Live enrollments make reordering consequential — warn once per template.
-// Precise about what actually happens: a queued job carries the step's ID
-// (sequenceEngine.executeStep takes stepId), so it still fires the step it was
-// scheduled for; but advanceToNextStep walks by step_number + 1, so what runs
-// AFTER that fire follows the new order.
-async function seqConfirmRenumberWithEnrollments(verb) {
-  const tplId = SEQ.activeTemplateId;
-  if (!tplId || SEQ.reorderWarned[tplId]) return true;
-  const n = Number(SEQ.activeTemplate?.active_enrollments || 0);
-  // Don't latch the flag on a zero count — an enrollment may start later in the
-  // session, and the next renumber should still warn.
-  if (n <= 0) return true;
-  const r = await Swal.fire({
-    icon: 'warning',
-    title: `${n} active enrollment${n > 1 ? 's' : ''}`,
-    html: `<div style="text-align:left;font-size:13px;line-height:1.55">
-      <p>Steps that are <b>already scheduled will still fire as intended</b> — a queued
-      job is pinned to the step's ID, not its position.</p>
-      <p style="margin-top:8px">But the sequence advances <b>by position</b>. Once one of
-      those queued steps fires, those enrollments follow the <b>new</b> order from there on
-      — which may repeat a step they already got, or skip one they haven't.</p>
-      ${verb === 'delete' ? `<p style="margin-top:8px">Deleting a step renumbers everything
-      above it, so this applies to those steps too.</p>` : ''}
-    </div>`,
-    width: 560,
-    showCancelButton: true,
-    confirmButtonText: verb === 'delete' ? 'Delete anyway' : 'Reorder anyway',
-    confirmButtonColor: '#f59e0b',
-  });
-  if (!r.isConfirmed) return false;
-  SEQ.reorderWarned[tplId] = true;
-  return true;
-}
+// Versioning (S4/S6): the old seqConfirmRenumberWithEnrollments dialog was
+// retired here. Its premise inverted when drafts shipped — renumbers land on
+// the DRAFT, published versions are immutable, and every enrollment is pinned
+// to the version it started on. The publish modal's in-flight panel is where
+// that conversation happens now.
 
 // Repaint the canvas without stealing focus from a step control the user is
 // still working. The canvas is re-rendered wholesale, so the arrow button under
@@ -2682,8 +2697,6 @@ async function seqMoveStep(fromIdx, toIdx, focusKey) {
   if (!SEQ.activeTemplateId) return;
   const step = SEQ.steps[fromIdx];
   if (!step) return;
-  if (!(await seqConfirmRenumberWithEnrollments('move'))) return;
-
   // A commit in flight, or a batch open on a DIFFERENT step, means the local
   // numbers are ahead of the server — settle that first, then re-resolve this
   // step's position. The intent is carried as a delta so the move still means
@@ -3746,12 +3759,139 @@ async function seqEdit() {
   }
 }
 
+
+// ── Versioning (S6): publish + discard — mirrors workflows.html ──────────
+async function seqPublishModal() {
+  if (!SEQ.activeTemplateId) return;
+  await seqFlushMoves();
+
+  let diff;
+  try { diff = await api(`/sequences/templates/${SEQ.activeTemplateId}/draft-diff`); }
+  catch (e) { Swal.fire('Error', e.message, 'error'); return; }
+
+  if (!diff.has_draft) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No unpublished changes', timer: 2200, showConfirmButton: false });
+    return;
+  }
+
+  const v = diff.validation || { errors: [], warnings: [], info: [] };
+  const blocked = v.errors.length > 0;
+  const contentOnly = diff.classification === 'content_only';
+  const identical = diff.classification === 'identical';
+  const inFlightN = diff.in_flight?.count || 0;
+
+  const li = (arr, color, icon) => arr.map(m =>
+    `<li style="color:${color};margin:2px 0"><i class="fa-solid ${icon}" style="width:16px"></i> ${esc(m)}</li>`).join('');
+
+  const changeLines = (diff.changes || []).map(c => {
+    const label = c.step_number == null ? 'Template condition' : `Step ${c.step_number}`;
+    const what = c.kind === 'modified' ? `changed${c.fields && c.fields.length ? ` (${c.fields.join(', ')})` : ''}` : c.kind;
+    return `<li style="margin:2px 0">${label}: ${esc(what)}</li>`;
+  }).join('');
+
+  const clsBadge = identical
+    ? '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">no changes</span>'
+    : contentOnly
+      ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">content-only</span>'
+      : '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">structural</span>';
+
+  let migrateHtml = '';
+  if (inFlightN > 0 && !identical) {
+    const runsList = (diff.in_flight.enrollments || []).slice(0, 8).map(x =>
+      `<li style="margin:1px 0;color:#64748b">#${x.id} — contact ${x.contact_id}, step ${x.current_step}</li>`).join('');
+    if (contentOnly) {
+      migrateHtml = `
+        <div style="margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;text-align:left">
+          <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+            <input type="checkbox" id="seq-pub-migrate" style="margin-top:2px">
+            <span><b>Also apply to the ${inFlightN} active enrollment${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b><br>
+            <span style="font-size:12px;color:#64748b">Content-only change — step numbering and timing are unchanged, so live enrollments (and their queued steps) can move to the new wording safely.</span></span>
+          </label>
+          <ul style="list-style:none;margin:6px 0 0;padding:0;font-size:12px">${runsList}</ul>
+        </div>`;
+    } else {
+      migrateHtml = `
+        <div style="margin-top:12px;padding:10px;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;text-align:left;font-size:12px">
+          <label style="display:flex;gap:8px;align-items:flex-start;opacity:0.55;cursor:not-allowed">
+            <input type="checkbox" disabled style="margin-top:2px">
+            <span><b>Also apply to the ${inFlightN} active enrollment${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b></span>
+          </label>
+          <div style="color:#92400e;margin-top:4px">Structural changes can't migrate live enrollments — their step pointers and queued jobs only survive content-only publishes. They finish on v${diff.current_version}.</div>
+          <ul style="list-style:none;margin:6px 0 0;padding:0;color:#92400e">${li(diff.structural_reasons || [], '#92400e', 'fa-triangle-exclamation')}</ul>
+        </div>`;
+    }
+  } else if (!identical && (diff.structural_reasons || []).length) {
+    migrateHtml = `<ul style="list-style:none;margin:10px 0 0;padding:0;text-align:left;font-size:12px">${li(diff.structural_reasons, '#92400e', 'fa-triangle-exclamation')}</ul>`;
+  }
+
+  const html = `
+    <div style="text-align:left;font-size:13px">
+      <div style="margin-bottom:8px">v${diff.current_version || '—'} → <b>v${diff.draft_version}</b> &nbsp;${clsBadge}</div>
+      ${changeLines ? `<ul style="list-style:none;margin:0;padding:0">${changeLines}</ul>` : '<div style="color:#64748b">No step changes (metadata-only publish).</div>'}
+      ${v.errors.length ? `<div style="margin-top:10px;font-weight:600;color:#b91c1c">Publish blocked:</div><ul style="list-style:none;margin:4px 0 0;padding:0">${li(v.errors, '#b91c1c', 'fa-circle-xmark')}</ul>` : ''}
+      ${v.warnings.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.warnings, '#b45309', 'fa-triangle-exclamation')}</ul>` : ''}
+      ${v.info.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.info, '#64748b', 'fa-circle-info')}</ul>` : ''}
+      ${migrateHtml}
+      ${(diff.stranded_versions || []).length ? `<div style="margin-top:8px;font-size:12px;color:#64748b"><i class="fa-solid fa-circle-info"></i> Also active, not migratable: ${diff.stranded_versions.map(sv => `${sv.n} on v${sv.template_version}`).join(', ')} — they finish on their pinned versions.</div>` : ''}
+    </div>`;
+
+  const res = await Swal.fire({
+    title: 'Publish changes?',
+    html,
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: blocked ? 'Fix the errors first' : 'Publish',
+    confirmButtonColor: '#d97706',
+    preConfirm: async () => {
+      if (blocked) { Swal.showValidationMessage('Resolve the blocking errors above, then publish.'); return false; }
+      const migrate = !!document.getElementById('seq-pub-migrate')?.checked;
+      try {
+        return await api(`/sequences/templates/${SEQ.activeTemplateId}/publish`, 'POST', { migrate_in_flight: migrate });
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (res.isConfirmed && res.value && res.value.success) {
+    const m = res.value.migrated_count;
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success',
+      title: `Published v${res.value.published_version}` + (m != null ? ` · migrated ${m} enrollment${m === 1 ? '' : 's'}` : ''),
+      timer: 2600, showConfirmButton: false });
+    await loadSequences();
+    await loadSeqSteps(SEQ.activeTemplateId);
+  }
+}
+
+async function seqDiscardDraft() {
+  if (!SEQ.activeTemplate || SEQ.activeTemplate.draft_version == null) return;
+  const cur = SEQ.activeTemplate.current_version;
+  const r = await Swal.fire({
+    title: `Discard draft v${SEQ.activeTemplate.draft_version}?`,
+    html: cur
+      ? `The published version <b>v${cur}</b> stays live and unchanged.<br><span style="font-size:12px;color:#64748b">The draft is retired, not deleted — enrollment history stays viewable.</span>`
+      : `<span style="font-size:12px;color:#64748b">This template has never been published; discarding leaves it with no editable steps until you add new ones.</span>`,
+    icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Discard draft',
+  });
+  if (!r.isConfirmed) return;
+  try {
+    await api(`/sequences/templates/${SEQ.activeTemplateId}/discard-draft`, 'POST', {});
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Draft discarded', timer: 2200, showConfirmButton: false });
+    await loadSequences();
+    await loadSeqSteps(SEQ.activeTemplateId);
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
+}
+
 async function seqDuplicate() {
   if (!SEQ.activeTemplate) return;
   const { value: name } = await Swal.fire({ title: 'Duplicate', input: 'text', inputValue: `Copy of ${SEQ.activeTemplate.name}`, showCancelButton: true, confirmButtonText: 'Duplicate' });
   if (!name) return;
   try {
     const r = await api(`/sequences/templates/${SEQ.activeTemplateId}/duplicate`, 'POST', { name });
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success',
+      title: 'Duplicated as an unpublished draft — publish it to allow enrollment',
+      timer: 3200, showConfirmButton: false });
     await loadSequences();
     selectSeqTemplate(r.templateId);
   } catch (e) {
@@ -3779,6 +3919,7 @@ async function seqDelete() {
     t.textContent = '← Select a sequence template';
     t.classList.add('placeholder');
     document.getElementById('seq-canvas-actions').style.display = 'none';
+    document.getElementById('seq-version-strip').style.display = 'none';
     document.getElementById('seq-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-list-ol"></i><p>Select a template.</p></div>';
     seqClearEditor();
     await loadSequences();

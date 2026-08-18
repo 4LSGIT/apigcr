@@ -27,6 +27,7 @@ const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleStepJob } = require('../lib/sequenceEngine');
+const { diffSequenceSteps, validateSequenceDraftShape } = require('../lib/versionDiff');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // Normalize the optional `type` column. As of Slice B, sequence_templates.type
@@ -313,24 +314,64 @@ async function validateStepConfig(db, action_type, action_config) {
 // ─────────────────────────────────────────────────────────────
 // resolveEditTargetVersion — which version do the step-editing routes write?
 //
-// S2 (version plumbing): the published current_version. Only version 1 exists
-// until draft/publish ships, so this is behavior-neutral. Doubles as the
-// template-existence check (returns null when the template does not exist).
+// ensureDraft — which version do the step-editing routes write? (S4)
 //
-// S4 (draft/publish) replaces THIS FUNCTION'S BODY with ensureDraft — lazy
-// copy-on-first-write of the current version's step rows into a new draft
-// version. Every call site below stays unchanged when that lands.
-// NOTE for S4: several callers below run on the bare pool today (no
-// transaction) — S4 must wrap them in db.withTransaction BEFORE swapping this
-// body to ensureDraft (review D1); a FOR UPDATE on a pooled autocommit
-// connection serializes nothing.
+// Lazy copy-on-first-write, mirroring routes/workflows.js exactly: the first
+// edit after a publish copies the published version's step rows into a NEW
+// draft version, snapshots the template metadata (including the versioned
+// template_condition), and points sequence_templates.draft_version at it.
+// Published versions become immutable by construction.
+//
+// MUST run inside db.withTransaction on a CONNECTION — S4 wrapped the last
+// bare-pool callers (PUT/PATCH step; review D1). Parent-row FOR UPDATE first
+// is both the concurrency arbiter and the lock-ordering invariant shared with
+// publish/discard (withTransaction has no deadlock retry — deliberate).
+//
+// Draft numbering: MAX(version)+1 — retired (discarded) drafts occupy
+// numbers. Returns null when the template does not exist.
+//
+// The metadata stub's template_condition copies the CURRENT VERSION row's
+// value (that is the truth the engine reads post-S4), falling back to the
+// live legacy column for v0 templates that have no version rows yet.
 // ─────────────────────────────────────────────────────────────
-async function resolveEditTargetVersion(dbOrConn, templateId) {
-  const [[row]] = await dbOrConn.query(
-    `SELECT current_version FROM sequence_templates WHERE id = ?`,
+async function ensureDraft(connection, templateId) {
+  const [[t]] = await connection.query(
+    `SELECT current_version, draft_version FROM sequence_templates WHERE id = ? FOR UPDATE`,
     [templateId]
   );
-  return row ? row.current_version : null;
+  if (!t) return null;
+  if (t.draft_version != null) return t.draft_version;
+
+  const [[mx]] = await connection.query(
+    `SELECT COALESCE(MAX(version), 0) AS mx FROM sequence_template_versions WHERE template_id = ?`,
+    [templateId]
+  );
+  const draftVersion = Math.max(Number(mx.mx), Number(t.current_version)) + 1;
+
+  await connection.query(
+    `INSERT INTO sequence_steps (template_id, version, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
+     SELECT template_id, ?, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy
+       FROM sequence_steps
+      WHERE template_id = ? AND version = ?`,
+    [draftVersion, templateId, t.current_version]
+  );
+
+  await connection.query(
+    `INSERT INTO sequence_template_versions (template_id, version, name, type, template_condition, description, test_input)
+     SELECT tt.id, ?, tt.name, tt.type, COALESCE(cv.template_condition, tt.\`condition\`), tt.description, tt.test_input
+       FROM sequence_templates tt
+       LEFT JOIN sequence_template_versions cv
+              ON cv.template_id = tt.id AND cv.version = tt.current_version
+      WHERE tt.id = ?`,
+    [draftVersion, templateId]
+  );
+
+  await connection.query(
+    `UPDATE sequence_templates SET draft_version = ?, updated_at = NOW() WHERE id = ?`,
+    [draftVersion, templateId]
+  );
+
+  return draftVersion;
 }
 
 router.get('/sequences/templates', jwtOrApiKey, async (req, res) => {
@@ -339,7 +380,7 @@ router.get('/sequences/templates', jwtOrApiKey, async (req, res) => {
 
   try {
     let query  = `SELECT t.*,
-                    (SELECT COUNT(*) FROM sequence_steps WHERE template_id = t.id AND version = t.current_version) AS step_count
+                    (SELECT COUNT(*) FROM sequence_steps WHERE template_id = t.id AND version = COALESCE(t.draft_version, t.current_version)) AS step_count
                   FROM sequence_templates t WHERE 1=1`;
     const params = [];
 
@@ -366,10 +407,21 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
     );
     if (!template) return res.status(404).json({ error: 'Template not found' });
 
+    // Editor view (S4): the draft when one exists, else the published version.
+    const editingVersion = template.draft_version ?? template.current_version;
     const [steps] = await db.query(
       `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
-      [id, template.current_version]
+      [id, editingVersion]
     );
+
+    // Versioned-condition overlay (S4): the editable condition lives on the
+    // version row (template_condition), not the legacy live column. Fall back
+    // to the live column only for v0 templates with no version rows yet.
+    const [[condRow]] = await db.query(
+      `SELECT template_condition FROM sequence_template_versions WHERE template_id = ? AND version = ?`,
+      [id, editingVersion]
+    );
+    if (condRow) template.condition = condRow.template_condition;
 
     // Reorder-safety slice — the editor warns before reordering a template
     // that has live enrollments. An already-scheduled job is pinned to a step
@@ -399,9 +451,292 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
       try { template.test_input = JSON.parse(template.test_input); } catch {}
     }
 
-    res.json({ success: true, template, steps });
+    res.json({
+      success: true, template, steps,
+      // Versioning (S4): which version the steps (and condition) above came
+      // from, and whether it is an unpublished draft.
+      editing_version: editingVersion,
+      has_draft: template.draft_version != null
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch template', message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Versioning endpoints (S4) — sequence draft lifecycle.
+// Mirrors routes/workflows.js exactly; see the comments there for the load-
+// bearing reasoning (lock ordering, fail-closed migration, retire-in-place).
+// Sequence-specific deltas: the migrate path also rewrites pending
+// scheduled_jobs' stepId (jobs are pinned to step ROW ids, and the new
+// version has new rows), and publish validation re-runs the editor's own
+// validateTiming / validateStepConfig across the whole draft.
+// ─────────────────────────────────────────────────────────────
+
+// GET /sequences/templates/:id/versions
+router.get('/sequences/templates/:id/versions', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const templateId = parseInt(req.params.id, 10);
+  if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
+  try {
+    const [[t]] = await db.query(
+      `SELECT current_version, draft_version FROM sequence_templates WHERE id = ?`, [templateId]
+    );
+    if (!t) return res.status(404).json({ error: 'Template not found' });
+    const [versions] = await db.query(
+      `SELECT v.version, v.name, v.type, v.description, v.published_at, v.published_by,
+              v.retired_at, v.created_at,
+              (SELECT COUNT(*) FROM sequence_steps s WHERE s.template_id = v.template_id AND s.version = v.version) AS step_count
+         FROM sequence_template_versions v
+        WHERE v.template_id = ?
+        ORDER BY v.version DESC`,
+      [templateId]
+    );
+    res.json({
+      success: true,
+      current_version: t.current_version,
+      draft_version: t.draft_version,
+      versions: versions.map(v => ({ ...v, is_current: v.version === t.current_version, is_draft: v.version === t.draft_version })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch versions', message: err.message });
+  }
+});
+
+// GET /sequences/templates/:id/draft-diff
+router.get('/sequences/templates/:id/draft-diff', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const templateId = parseInt(req.params.id, 10);
+  if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
+  try {
+    const [[t]] = await db.query(
+      `SELECT current_version, draft_version FROM sequence_templates WHERE id = ?`, [templateId]
+    );
+    if (!t) return res.status(404).json({ error: 'Template not found' });
+    if (t.draft_version == null) {
+      return res.json({ success: true, has_draft: false, current_version: t.current_version });
+    }
+
+    const [currentSteps] = await db.query(
+      `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
+      [templateId, t.current_version]
+    );
+    const [draftSteps] = await db.query(
+      `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
+      [templateId, t.draft_version]
+    );
+    const [condRows] = await db.query(
+      `SELECT version, template_condition FROM sequence_template_versions WHERE template_id = ? AND version IN (?, ?)`,
+      [templateId, t.current_version, t.draft_version]
+    );
+    const condOf = (v) => condRows.find(r => r.version === v)?.template_condition ?? null;
+
+    const diff = diffSequenceSteps(currentSteps, draftSteps, {
+      currentCondition: condOf(t.current_version),
+      draftCondition: condOf(t.draft_version),
+    });
+    const validation = await _validateSequenceDraft(db, draftSteps);
+
+    const [inFlight] = await db.query(
+      `SELECT id, status, current_step, contact_id, created_at
+         FROM sequence_enrollments
+        WHERE template_id = ? AND template_version = ? AND status = 'active'
+        ORDER BY id DESC`,
+      [templateId, t.current_version]
+    );
+    const [stranded] = await db.query(
+      `SELECT template_version, COUNT(*) AS n
+         FROM sequence_enrollments
+        WHERE template_id = ? AND template_version <> ? AND status = 'active'
+        GROUP BY template_version ORDER BY template_version DESC`,
+      [templateId, t.current_version]
+    );
+
+    res.json({
+      success: true,
+      has_draft: true,
+      current_version: t.current_version,
+      draft_version: t.draft_version,
+      classification: diff.classification,
+      changes: diff.changes,
+      structural_reasons: diff.structural_reasons,
+      validation,
+      in_flight: { count: inFlight.length, enrollments: inFlight },
+      stranded_versions: stranded,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to diff draft', message: err.message });
+  }
+});
+
+// Publish validation for sequences (plan-v2 ruling O5): shape checks + the
+// editor's own per-step validators re-run across the WHOLE draft — a draft
+// assembled step-by-step can hold rows that were valid when saved but not
+// together (and bulk-copied drafts never passed the editors at all).
+async function _validateSequenceDraft(db, draftSteps) {
+  const { errors } = validateSequenceDraftShape(draftSteps);
+  const warnings = [];
+  const info = [];
+  if (errors.length) return { errors, warnings, info };
+
+  for (const s of draftSteps) {
+    const timing = typeof s.timing === 'string' ? JSON.parse(s.timing) : s.timing;
+    const cfg = typeof s.action_config === 'string' ? JSON.parse(s.action_config) : s.action_config;
+    const tv = validateTiming(timing);
+    if (tv) errors.push(`step ${s.step_number}: ${tv.message || tv.error}`);
+    const cv = await validateStepConfig(db, s.action_type, cfg);
+    if (cv) errors.push(`step ${s.step_number}: ${cv.message || cv.error}`);
+  }
+  return { errors, warnings, info };
+}
+
+// POST /sequences/templates/:id/publish — body { migrate_in_flight? }
+router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const templateId = parseInt(req.params.id, 10);
+  if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
+  const migrateInFlight = req.body?.migrate_in_flight === true;
+  const publishedBy = (req.auth?.username || req.auth?.key_label || 'api').slice(0, 100);
+
+  try {
+    const outcome = await db.withTransaction(async (connection) => {
+      const [[t]] = await connection.query(
+        `SELECT current_version, draft_version FROM sequence_templates WHERE id = ? FOR UPDATE`,
+        [templateId]
+      );
+      if (!t) return { respond: { status: 404, body: { error: 'Template not found' } } };
+      if (t.draft_version == null) {
+        return { respond: { status: 409, body: { error: 'No draft to publish', message: 'There are no unpublished changes.' } } };
+      }
+      const draftV = t.draft_version;
+      const oldV = t.current_version;
+
+      const [draftSteps] = await connection.query(
+        `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
+        [templateId, draftV]
+      );
+      const validation = await _validateSequenceDraft(connection, draftSteps);
+      if (validation.errors.length) {
+        return { respond: { status: 400, body: { error: 'Draft failed publish validation', validation } } };
+      }
+
+      let migratedEnrollments = null;
+      let remappedJobs = null;
+      if (migrateInFlight) {
+        const [currentSteps] = await connection.query(
+          `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
+          [templateId, oldV]
+        );
+        const [condRows] = await connection.query(
+          `SELECT version, template_condition FROM sequence_template_versions WHERE template_id = ? AND version IN (?, ?)`,
+          [templateId, oldV, draftV]
+        );
+        const condOf = (v) => condRows.find(r => r.version === v)?.template_condition ?? null;
+        const diff = diffSequenceSteps(currentSteps, draftSteps, {
+          currentCondition: condOf(oldV), draftCondition: condOf(draftV),
+        });
+        if (diff.classification === 'structural') {
+          return { respond: { status: 409, body: {
+            error: 'Structural changes cannot migrate in-flight enrollments',
+            message: 'Enrollment step pointers and pending jobs survive only content-only publishes.',
+            structural_reasons: diff.structural_reasons,
+          } } };
+        }
+      }
+
+      // Stamp the version row published + refresh the LIVE-field snapshot
+      // (name/type/description/test_input). template_condition is NOT
+      // refreshed — it is the versioned field being published as-is.
+      await connection.query(
+        `UPDATE sequence_template_versions v
+           JOIN sequence_templates t2 ON t2.id = v.template_id
+            SET v.published_at = NOW(), v.published_by = ?,
+                v.name = t2.name, v.type = t2.type, v.description = t2.description, v.test_input = t2.test_input
+          WHERE v.template_id = ? AND v.version = ?`,
+        [publishedBy, templateId, draftV]
+      );
+      await connection.query(
+        `UPDATE sequence_templates SET current_version = ?, draft_version = NULL, updated_at = NOW() WHERE id = ?`,
+        [draftV, templateId]
+      );
+
+      if (migrateInFlight) {
+        // Enrollment ids first (locked), then the two-part migration:
+        // repoint enrollments, then rewrite each pending job's stepId to the
+        // NEW version's row for the same step_number. A job between steps
+        // (none pending) simply isn't rewritten — the next schedule reads the
+        // migrated template_version. affectedRows < enrollment count is the
+        // benign one-step-lag case, not an error.
+        const [enrRows] = await connection.query(
+          `SELECT id FROM sequence_enrollments
+            WHERE template_id = ? AND template_version = ? AND status = 'active' FOR UPDATE`,
+          [templateId, oldV]
+        );
+        const ids = enrRows.map(r => r.id);
+        migratedEnrollments = ids.length;
+        remappedJobs = 0;
+        if (ids.length) {
+          await connection.query(
+            `UPDATE sequence_enrollments SET template_version = ?, updated_at = NOW() WHERE id IN (?)`,
+            [draftV, ids]
+          );
+          const [jr] = await connection.query(
+            `UPDATE scheduled_jobs sj
+               JOIN sequence_steps ns
+                 ON ns.template_id = ?
+                AND ns.version = ?
+                AND ns.step_number = CAST(JSON_UNQUOTE(JSON_EXTRACT(sj.data, '$.stepNumber')) AS UNSIGNED)
+                SET sj.data = JSON_SET(sj.data, '$.stepId', ns.id)
+              WHERE sj.type = 'sequence_step' AND sj.status = 'pending'
+                AND sj.sequence_enrollment_id IN (?)`,
+            [templateId, draftV, ids]
+          );
+          remappedJobs = jr.affectedRows;
+        }
+      }
+
+      return { published_version: draftV, previous_version: oldV, migrated_count: migratedEnrollments, remapped_jobs: remappedJobs, validation };
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+    console.log(`[SEQ PUBLISH] Template ${templateId}: v${outcome.previous_version} → v${outcome.published_version}` +
+      (outcome.migrated_count != null ? ` (migrated ${outcome.migrated_count} enrollments, remapped ${outcome.remapped_jobs} jobs)` : ''));
+    res.json({ success: true, ...outcome });
+  } catch (err) {
+    console.error('[SEQ PUBLISH] Failed:', err);
+    res.status(500).json({ error: 'Failed to publish', message: err.message });
+  }
+});
+
+// POST /sequences/templates/:id/discard-draft — retire in place (ruling O2)
+router.post('/sequences/templates/:id/discard-draft', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const templateId = parseInt(req.params.id, 10);
+  if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
+  try {
+    const outcome = await db.withTransaction(async (connection) => {
+      const [[t]] = await connection.query(
+        `SELECT current_version, draft_version FROM sequence_templates WHERE id = ? FOR UPDATE`,
+        [templateId]
+      );
+      if (!t) return { respond: { status: 404, body: { error: 'Template not found' } } };
+      if (t.draft_version == null) return { respond: { status: 409, body: { error: 'No draft to discard' } } };
+      await connection.query(
+        `UPDATE sequence_template_versions SET retired_at = NOW() WHERE template_id = ? AND version = ?`,
+        [templateId, t.draft_version]
+      );
+      await connection.query(
+        `UPDATE sequence_templates SET draft_version = NULL, updated_at = NOW() WHERE id = ?`,
+        [templateId]
+      );
+      return { retired_version: t.draft_version, current_version: t.current_version };
+    });
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+    console.log(`[SEQ DISCARD DRAFT] Template ${templateId}: retired v${outcome.retired_version}`);
+    res.json({ success: true, ...outcome });
+  } catch (err) {
+    console.error('[SEQ DISCARD DRAFT] Failed:', err);
+    res.status(500).json({ error: 'Failed to discard draft', message: err.message });
   }
 });
 
@@ -448,29 +783,22 @@ router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
   }
 
   try {
+    // Versioning (S4, review D4a): new templates are born UNPUBLISHED —
+    // current_version = 0. Cascade matching filters them out and the enroll
+    // funnel refuses them loudly until the first publish. The `condition`
+    // still lands on the live legacy column here; the first draft fork copies
+    // it into the versioned template_condition (ensureDraft's COALESCE
+    // fallback covers exactly this v0 state). Single statement — the D1
+    // transaction concern applied to the create-plus-seed shape this route
+    // had in the S2 window, not to this one.
     const [result] = await db.query(
-      `INSERT INTO sequence_templates (name, type, filters, \`condition\`, description, active, test_input)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sequence_templates (name, type, filters, \`condition\`, description, active, test_input, current_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
       [name.trim(), typeVal,
        toJson(filters),
        condition ? JSON.stringify(condition) : null,
        description || null, active ? 1 : 0,
        toJson(test_input)]
-    );
-
-    // Versioning invariant: every published version has a
-    // sequence_template_versions metadata row (migration backfilled v1 for
-    // pre-existing templates; this keeps the invariant for templates created
-    // after it). current_version defaults to 1 via schema. S4 reworks
-    // creation to current_version = 0 (unpublished) inside a transaction —
-    // this seed moves to the publish endpoint then.
-    await db.query(
-      `INSERT INTO sequence_template_versions
-        (template_id, version, name, type, template_condition, description, test_input, published_at, published_by)
-       VALUES (?, 1, ?, ?, ?, ?, ?, NOW(), 'create')`,
-      [result.insertId, name.trim(), typeVal,
-       condition ? JSON.stringify(condition) : null,
-       description || null, toJson(test_input)]
     );
 
     res.status(201).json({ success: true, templateId: result.insertId, name: name.trim(), type: typeVal });
@@ -527,22 +855,49 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
     if (!v.valid) return res.status(400).json({ error: v.error });
   }
 
+  // Versioned-field split (S4, plan-v2 ruling O3): `condition` is the ONE
+  // versioned template field — it gates step execution per-run, so a
+  // condition edit goes to the DRAFT and takes effect at publish, exactly
+  // like a step edit. name/type/filters/active/description/test_input stay
+  // live: they steer enroll-time matching and display, where "latest wins"
+  // is the correct semantic and versioning them would only feign a gate the
+  // publish flow doesn't actually control.
   const updates = [];
   const params  = [];
 
   if (name        !== undefined) { updates.push('name = ?');              params.push(name?.trim()); }
   if (type        !== undefined) { updates.push('type = ?');              params.push(normalizeType(type)); }
   if (filters     !== undefined) { updates.push('filters = ?');           params.push(toJson(filters)); }
-  if (condition   !== undefined) { updates.push('\`condition\` = ?');     params.push(condition ? JSON.stringify(condition) : null); }
   if (description !== undefined) { updates.push('description = ?');       params.push(description); }
   if (active      !== undefined) { updates.push('active = ?');            params.push(active ? 1 : 0); }
   if (test_input  !== undefined) { updates.push('test_input = ?');        params.push(toJson(test_input)); }
 
-  if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+  if (!updates.length && condition === undefined) return res.status(400).json({ error: 'Nothing to update' });
 
-  params.push(id);
   try {
-    await db.query(`UPDATE sequence_templates SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`, params);
+    const outcome = await db.withTransaction(async (connection) => {
+      if (condition !== undefined) {
+        // Draft fork first (parent FOR UPDATE inside — lock ordering), then
+        // write the versioned condition onto the draft row.
+        const draftV = await ensureDraft(connection, id);
+        if (draftV == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
+        await connection.query(
+          `UPDATE sequence_template_versions SET template_condition = ? WHERE template_id = ? AND version = ?`,
+          [condition ? JSON.stringify(condition) : null, id, draftV]
+        );
+      }
+      if (updates.length) {
+        const [r] = await connection.query(
+          `UPDATE sequence_templates SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+          [...params, id]
+        );
+        if (r.affectedRows === 0 && condition === undefined) {
+          return { respond: { status: 404, body: { error: 'Template not found' } } };
+        }
+      }
+      return {};
+    });
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
     res.json({ success: true, templateId: id });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update template', message: err.message });
@@ -598,9 +953,14 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
       // Slice E Phase 2: SELECT filters JSON in place of the dropped
       // appt_type_filter / appt_with_filter columns.
       const [tplRows] = await connection.query(
-        `SELECT name, type, filters, \`condition\`, description, test_input,
-                captured_input, captured_at, current_version
-         FROM sequence_templates WHERE id = ?`,
+        `SELECT t.name, t.type, t.filters, t.description, t.test_input,
+                t.captured_input, t.captured_at, t.current_version, t.draft_version,
+                COALESCE(cv.template_condition, t.\`condition\`) AS \`condition\`
+         FROM sequence_templates t
+         LEFT JOIN sequence_template_versions cv
+                ON cv.template_id = t.id
+               AND cv.version = COALESCE(NULLIF(t.current_version, 0), t.draft_version)
+         WHERE t.id = ?`,
         [originalId]
       );
       if (tplRows.length === 0) {
@@ -619,11 +979,17 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
       // parity — the sample powers testing against the duplicate) but
       // capture_mode is NOT copied — live armed state never duplicates
       // (column default 'off' applies).
+      // Versioning (S4): the duplicate lands UNPUBLISHED (current_version 0,
+      // content as draft v1); source content is the source's PUBLISHED
+      // version, falling back to its draft when never published — including
+      // the versioned condition (the COALESCE join above).
+      const sourceVersion = original.current_version || original.draft_version || 0;
+
       const [newTplResult] = await connection.query(
         `INSERT INTO sequence_templates
           (name, type, filters, \`condition\`, description, active, test_input,
-           captured_input, captured_at)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+           captured_input, captured_at, current_version, draft_version)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 1)`,
         [
           newName,
           original.type,
@@ -644,7 +1010,7 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
          FROM sequence_steps
          WHERE template_id = ? AND version = ?
          ORDER BY step_number ASC`,
-        [originalId, original.current_version]
+        [originalId, sourceVersion]
       );
 
       if (steps.length > 0) {
@@ -668,14 +1034,12 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
         );
       }
 
-      // Versioning invariant: seed the duplicate's v1 metadata row. Source
-      // content is the SOURCE's published current_version (plan-v2 decision 7;
-      // S4 amends: never-published sources fall back to their draft, and the
-      // duplicate itself lands unpublished at current_version = 0).
+      // Draft metadata stub for the duplicate's v1 — published_at NULL until
+      // the author publishes.
       await connection.query(
         `INSERT INTO sequence_template_versions
-          (template_id, version, name, type, template_condition, description, test_input, published_at, published_by)
-         VALUES (?, 1, ?, ?, ?, ?, ?, NOW(), 'duplicate')`,
+          (template_id, version, name, type, template_condition, description, test_input)
+         VALUES (?, 1, ?, ?, ?, ?, ?)`,
         [newTemplateId, newName, original.type, toJson(original.condition), original.description, toJson(original.test_input)]
       );
 
@@ -729,7 +1093,7 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
     const outcome = await db.withTransaction(async (connection) => {
 
       // Existence check + edit-target version in one (S4: becomes ensureDraft).
-      const editVersion = await resolveEditTargetVersion(connection, templateId);
+      const editVersion = await ensureDraft(connection, templateId);
       if (editVersion == null) { return { notFound: true }; }
 
       let targetStep = step_number;
@@ -795,26 +1159,32 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
   }
 
   try {
-    // Edit-target version (S4: becomes ensureDraft, inside a transaction —
-    // review D1). Also serves as the template-existence check.
-    const editVersion = await resolveEditTargetVersion(db, templateId);
-    if (editVersion == null) return res.status(404).json({ error: 'Template not found' });
+    // Transaction (review D1, closed in S4): ensureDraft's FOR UPDATE only
+    // serializes on a connection inside a transaction — on the bare pool it
+    // was a no-op. Validators above stay OUTSIDE the tx body: withTransaction
+    // retries the whole callback once on transient errors.
+    const outcome = await db.withTransaction(async (connection) => {
+      const editVersion = await ensureDraft(connection, templateId);
+      if (editVersion == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
 
-    const [[step]] = await db.query(
-      `SELECT id FROM sequence_steps WHERE template_id = ? AND version = ? AND step_number = ?`,
-      [templateId, editVersion, stepNum]
-    );
-    if (!step) return res.status(404).json({ error: 'Step not found' });
+      const [[step]] = await connection.query(
+        `SELECT id FROM sequence_steps WHERE template_id = ? AND version = ? AND step_number = ?`,
+        [templateId, editVersion, stepNum]
+      );
+      if (!step) return { respond: { status: 404, body: { error: 'Step not found' } } };
 
-    await db.query(
-      `UPDATE sequence_steps SET action_type=?, action_config=?, timing=?, \`condition\`=?, fire_guard=?, error_policy=?, updated_at=NOW()
-       WHERE template_id=? AND version=? AND step_number=?`,
-      [action_type, JSON.stringify(action_config), JSON.stringify(timing),
-       condition    ? JSON.stringify(condition)   : null,
-       fire_guard   ? JSON.stringify(fire_guard)  : null,
-       error_policy ? JSON.stringify(error_policy): null,
-       templateId, editVersion, stepNum]
-    );
+      await connection.query(
+        `UPDATE sequence_steps SET action_type=?, action_config=?, timing=?, \`condition\`=?, fire_guard=?, error_policy=?, updated_at=NOW()
+         WHERE template_id=? AND version=? AND step_number=?`,
+        [action_type, JSON.stringify(action_config), JSON.stringify(timing),
+         condition    ? JSON.stringify(condition)   : null,
+         fire_guard   ? JSON.stringify(fire_guard)  : null,
+         error_policy ? JSON.stringify(error_policy): null,
+         templateId, editVersion, stepNum]
+      );
+      return {};
+    });
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
     res.json({ success: true, templateId, stepNumber: stepNum });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update step', message: err.message });
@@ -870,7 +1240,7 @@ router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, 
     const outcome = await db.withTransaction(async (connection) => {
 
       // Existence check + edit-target version in one (S4: becomes ensureDraft).
-      const editVersion = await resolveEditTargetVersion(connection, templateId);
+      const editVersion = await ensureDraft(connection, templateId);
       if (editVersion == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
 
       // ── Case 1: move fromStep → toStep ────────────────────────
@@ -972,12 +1342,16 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
 
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  // Edit-target version (S4: becomes ensureDraft, inside a transaction —
-  // review D1). Also serves as the template-existence check this route
-  // historically lacked (a missing template previously fell through to
-  // "Step not found").
-  const patchVersion = await resolveEditTargetVersion(db, templateId);
-  if (patchVersion == null) return res.status(404).json({ error: 'Template not found' });
+  // Validation reads the version the edit WILL land on — the draft if one
+  // exists, else the published version (a fresh draft is a copy of it, so the
+  // rows are identical). Deliberately NOT ensureDraft here: a request that
+  // fails validation must not fork a draft as a side effect. The fork happens
+  // inside the transaction below (review D1).
+  const [[tpl]] = await db.query(
+    `SELECT current_version, draft_version FROM sequence_templates WHERE id = ?`, [templateId]
+  );
+  if (!tpl) return res.status(404).json({ error: 'Template not found' });
+  const patchVersion = tpl.draft_version ?? tpl.current_version;
 
   // Timing-extensions slice — if `timing` is being updated, validate it.
   if (timing !== undefined) {
@@ -1010,12 +1384,18 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
-  params.push(templateId, patchVersion, stepNum);
   try {
-    await db.query(
-      `UPDATE sequence_steps SET ${updates.join(', ')}, updated_at=NOW() WHERE template_id=? AND version=? AND step_number=?`,
-      params
-    );
+    const outcome = await db.withTransaction(async (connection) => {
+      const editVersion = await ensureDraft(connection, templateId);
+      if (editVersion == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
+      const [r] = await connection.query(
+        `UPDATE sequence_steps SET ${updates.join(', ')}, updated_at=NOW() WHERE template_id=? AND version=? AND step_number=?`,
+        [...params, templateId, editVersion, stepNum]
+      );
+      if (r.affectedRows === 0) return { respond: { status: 404, body: { error: 'Step not found' } } };
+      return {};
+    });
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
     res.json({ success: true, templateId, stepNumber: stepNum });
   } catch (err) {
     res.status(500).json({ error: 'Failed to patch step', message: err.message });
@@ -1032,7 +1412,7 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
     const outcome = await db.withTransaction(async (connection) => {
 
       // Edit-target version (S4: becomes ensureDraft).
-      const editVersion = await resolveEditTargetVersion(connection, templateId);
+      const editVersion = await ensureDraft(connection, templateId);
       if (editVersion == null) { return { notFound: true }; }
 
       const [[step]] = await connection.query(
@@ -1991,3 +2371,7 @@ router.get('/sequences/templates/:id/captured', jwtOrApiKey, async (req, res) =>
 });
 
 module.exports = router;
+
+// Test-only handle (tests/sequences.ensureDraft.test.js) — mirrors
+// routes/workflows.js.
+router._test = { ensureDraft };

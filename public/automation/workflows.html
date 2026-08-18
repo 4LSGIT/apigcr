@@ -617,7 +617,6 @@ const WF = {
   moveCommit: null,
   // Workflow ids already warned about in-flight executions this session, so the
   // warning fires once per workflow rather than on every nudge.
-  renumberWarned: {},
   // Original config captured (deep-cloned) at editor-open. The metadata-
   // driven internal_function form can only render/gather keys declared in
   // meta.params, so keys outside the schema — `extra` forensic blocks on
@@ -1382,7 +1381,18 @@ async function _loadWfSteps(id, silent) {
     // Slice 2.1 — refresh WF.activeWf with the single-template GET response so
     // we have the freshest test_input value for the tester. The list-GET value
     // (from loadWorkflows) is used as a fallback; the single-GET is authoritative.
-    if (data.workflow) WF.activeWf = data.workflow;
+    if (data.workflow) {
+      WF.activeWf = data.workflow;
+      // Sync the sidebar's copy of this row — the list renders from
+      // WF.workflows, which otherwise goes stale on draft fork/publish/discard
+      // until the next full list reload.
+      const li = WF.workflows.findIndex(w => w.id === data.workflow.id);
+      if (li >= 0) {
+        WF.workflows[li] = { ...WF.workflows[li], ...data.workflow, step_count: (data.steps || []).length };
+        WF.filtered = WF.filtered.map(w => w.id === data.workflow.id ? WF.workflows[li] : w);
+        renderWfList();
+      }
+    }
     wfRenderWfMeta();
     WF.steps = (data.steps || []).map(s => ({
       ...s,
@@ -2493,9 +2503,6 @@ async function wfStepDelete(idx) {
   const i = stepId != null ? wfStepIdxById(stepId) : idx;
   const step = WF.steps[i];
   if (!step) return;
-  // Delete renumbers every step above it — same live-pointer exposure as a move,
-  // plus the parked-on-the-deleted-step case.
-  if (!(await wfConfirmRenumberWithExecutions('delete'))) return;
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
@@ -2530,54 +2537,11 @@ const WF_MOVE_DEBOUNCE_MS = 450;
 
 function wfStepIdxById(id) { return WF.steps.findIndex(s => s.id === id); }
 
-// Renumbering a workflow that has executions mid-flight is consequential —
-// warn once per workflow per session. Precise about what does and does not
-// follow the renumber:
-//
-//   Branch targets DO follow — remapBranchTargets rewrites set_next / then /
-//   else / skipToStep / nextStep inside workflow_steps.config, in the same
-//   transaction as the renumber.
-//
-//   Live execution pointers DO NOT. workflow_executions.current_step_number is
-//   a raw number, and a pending workflow_resume job carries data.nextStep — a
-//   raw number too (workflow_engine.scheduleResume). Neither is remapped, so a
-//   delayed execution resumes at whatever step now occupies that POSITION.
-//   Delays routinely run hours: across ~3k historical resume jobs the average
-//   gap is ~36 min and the longest ~33 h.
-//
-// This is a stopgap. The durable fix is versioned definitions with executions
-// pinned to the version they started on — see docs.
-async function wfConfirmRenumberWithExecutions(verb) {
-  const wfId = WF.activeWfId;
-  if (!wfId) return true;
-  if (WF.renumberWarned[wfId]) return true;
-  const n = Number(WF.activeWf?.in_flight_executions || 0);
-  // Don't latch the flag on a zero count — an execution may start later in the
-  // session, and the next renumber should still warn.
-  if (n <= 0) return true;
-  const r = await Swal.fire({
-    icon: 'warning',
-    title: `${n} execution${n > 1 ? 's' : ''} in flight`,
-    html: `<div style="text-align:left;font-size:13px;line-height:1.55">
-      <p>Branch targets inside this workflow (<code>set_next</code>, <code>then</code>,
-      <code>else</code>, <code>skipToStep</code>) <b>are updated automatically</b>.</p>
-      <p style="margin-top:8px">Executions already running are <b>not</b>. They resume by
-      <b>step number</b>, so ${verb === 'delete' ? 'deleting a step' : 'this move'} can land them
-      on a different step than intended — including hours later, when a delayed step wakes up.</p>
-      ${verb === 'delete' ? `<p style="margin-top:8px">If an execution is parked <i>on</i> the
-      step you are deleting, it will resume at whatever slides into that number.</p>` : ''}
-      <p style="margin-top:8px;color:var(--muted)">Check the Executions tab if you need to know
-      which runs are affected.</p>
-    </div>`,
-    width: 580,
-    showCancelButton: true,
-    confirmButtonText: verb === 'delete' ? 'Delete anyway' : 'Move anyway',
-    confirmButtonColor: '#f59e0b',
-  });
-  if (!r.isConfirmed) return false;
-  WF.renumberWarned[wfId] = true;
-  return true;
-}
+// Versioning (S3/S5): the old wfConfirmRenumberWithExecutions dialog was
+// retired here (plan decision 8). Its premise inverted when drafts shipped —
+// renumbers now land on the DRAFT, published versions are immutable, and
+// every in-flight execution is pinned to the version it started on. The
+// publish modal's in-flight panel is where that conversation happens now.
 
 // Repaint the canvas without stealing focus from a step control the user is
 // still working. The canvas is re-rendered wholesale, so the arrow button
@@ -2615,8 +2579,6 @@ async function wfMoveStep(fromIdx, toIdx, focusKey) {
   if (!WF.activeWfId) return;
   const step = WF.steps[fromIdx];
   if (!step) return;
-  if (!(await wfConfirmRenumberWithExecutions('move'))) return;
-
   // A commit in flight, or a batch open on a DIFFERENT step, means the local
   // numbers are ahead of the server — settle that first, then re-resolve this
   // step's position. The intent is carried as a delta so the move still means
@@ -2946,7 +2908,7 @@ async function wfPublishModal() {
         <div style="margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;text-align:left">
           <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
             <input type="checkbox" id="wf-pub-migrate" style="margin-top:2px">
-            <span><b>Also apply to the ${inFlightN} in-flight run${inFlightN === 1 ? '' : 's'}</b><br>
+            <span><b>Also apply to the ${inFlightN} run${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b><br>
             <span style="font-size:12px;color:#64748b">Content-only change — step numbering is unchanged, so live runs can move to the new wording safely.</span></span>
           </label>
           <ul style="list-style:none;margin:6px 0 0;padding:0;font-size:12px">${runsList}</ul>
@@ -2956,7 +2918,7 @@ async function wfPublishModal() {
         <div style="margin-top:12px;padding:10px;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;text-align:left;font-size:12px">
           <label style="display:flex;gap:8px;align-items:flex-start;opacity:0.55;cursor:not-allowed">
             <input type="checkbox" disabled style="margin-top:2px">
-            <span><b>Also apply to the ${inFlightN} in-flight run${inFlightN === 1 ? '' : 's'}</b></span>
+            <span><b>Also apply to the ${inFlightN} run${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b></span>
           </label>
           <div style="color:#92400e;margin-top:4px">Structural changes can't migrate live runs — their step pointers only survive content-only publishes. They finish on v${diff.current_version}.</div>
           <ul style="list-style:none;margin:6px 0 0;padding:0;color:#92400e">${li(diff.structural_reasons || [], '#92400e', 'fa-triangle-exclamation')}</ul>
@@ -2974,6 +2936,7 @@ async function wfPublishModal() {
       ${v.warnings.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.warnings, '#b45309', 'fa-triangle-exclamation')}</ul>` : ''}
       ${v.info.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.info, '#64748b', 'fa-circle-info')}</ul>` : ''}
       ${migrateHtml}
+      ${(diff.stranded_versions || []).length ? `<div style="margin-top:8px;font-size:12px;color:#64748b"><i class="fa-solid fa-circle-info"></i> Also running, not migratable: ${diff.stranded_versions.map(sv => `${sv.n} on v${sv.workflow_version}`).join(', ')} — they finish on their pinned versions.</div>` : ''}
     </div>`;
 
   const res = await Swal.fire({

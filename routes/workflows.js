@@ -1124,11 +1124,24 @@ router.get("/workflows/:id/draft-diff", jwtOrApiKey, async (req, res) => {
       isTerminalSentinel,
     });
 
+    // in_flight = runs a migration would touch (pinned to the version being
+    // superseded). stranded = non-terminal runs pinned to OLDER versions by a
+    // previous publish — never migratable (each hop back would need its own
+    // content-only proof), but the author deserves to know they exist rather
+    // than have the modal imply "the N in-flight runs" is everything.
     const [inFlight] = await db.query(
       `SELECT id, status, current_step_number, contact_id, created_at
          FROM workflow_executions
         WHERE workflow_id = ? AND workflow_version = ? AND status IN ('active','delayed','held')
         ORDER BY id DESC`,
+      [workflowId, wf.current_version]
+    );
+    const [stranded] = await db.query(
+      `SELECT workflow_version, COUNT(*) AS n
+         FROM workflow_executions
+        WHERE workflow_id = ? AND workflow_version <> ? AND status IN ('active','delayed','held')
+        GROUP BY workflow_version
+        ORDER BY workflow_version DESC`,
       [workflowId, wf.current_version]
     );
 
@@ -1142,6 +1155,7 @@ router.get("/workflows/:id/draft-diff", jwtOrApiKey, async (req, res) => {
       structural_reasons: diff.structural_reasons,
       validation,
       in_flight: { count: inFlight.length, executions: inFlight },
+      stranded_versions: stranded,
     });
   } catch (err) {
     console.error("[DRAFT DIFF] Failed:", err);
