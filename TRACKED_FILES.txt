@@ -647,6 +647,7 @@ tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/moduleLoad.smoke.test.js
 tests/pageLanding.originsep.test.js
+tests/paramsMappingCsvList.test.js
 tests/pdfRender.test.js
 tests/pdfRenderIntegration.test.js
 tests/phoneingestservice.dedup.test.js

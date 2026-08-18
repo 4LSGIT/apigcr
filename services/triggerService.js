@@ -1202,11 +1202,25 @@ function _validateActions(actions) {
       case 'hook':
         if (!c.slug || !String(c.slug).trim()) throw _badRequest(`actions[${i}]: slug required`);
         break;
-      case 'internal_function':
+      case 'internal_function': {
         if (!c.function_name || !String(c.function_name).trim()) {
           throw _badRequest(`actions[${i}]: function_name required`);
         }
+        // Same booby-trap argument as the id checks above, one level deeper: a
+        // params_mapping can be syntactically fine and still resolve to a value
+        // the function must reject, and until it is dispatched nothing says so.
+        // Currently covers csvList params (advance_stage guards) — see the
+        // CSV LIST PARAMS block in lib/internal_functions/index.js.
+        // Lazy require (house convention, and it keeps triggerService's module
+        // init off the 70-file internal_functions graph — that graph eagerly
+        // reaches lib/domainEvents, which lazily reaches back here).
+        const internalFunctions = require('../lib/internal_functions');
+        const pmErr = internalFunctions.__validateParamsMapping(
+          String(c.function_name).trim(), c.params_mapping
+        );
+        if (pmErr) throw _badRequest(`actions[${i}]: ${pmErr.error}`);
         break;
+      }
       case 'http':
         if (!c.url || !String(c.url).trim()) throw _badRequest(`actions[${i}]: url required`);
         break;
