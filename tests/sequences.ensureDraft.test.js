@@ -156,6 +156,17 @@ describe('engine-side S4 guards (lib/sequenceEngine.js)', () => {
     expect(src).not.toMatch(/t\.`condition` AS template_condition/);
   });
 
+  test('diagnostic failure rows carry the REAL step number and put the message in error_message (review II.1/II.2)', () => {
+    // /recover resumes at last-logged step_number + 1 — a literal 0 here made
+    // recovery restart from step 1 and RE-SEND already-sent client messages.
+    expect(src).toMatch(/logStep\(db, enrollmentId, stepId, Number\(stepNumber\) \|\| 0, 'failed', null,/);
+    // and the alert scanner reads error_message for the alert body — both
+    // failure paths must use the last (errorMessage) slot, null skip_reason.
+    expect(src).toMatch(/logStep\(db, enrollmentId, stepId, stepNum \|\| 0, 'failed', null,/);
+    expect(src).not.toMatch(/'failed', `template_version_row_missing/);
+    expect(src).not.toMatch(/'failed',\s*\n?\s*`step_not_found/);
+  });
+
   test('executeStep resolves the step by IDENTITY — (template, pinned version, step_number) — with the id lookup as legacy fallback', () => {
     expect(src).toMatch(/SELECT \* FROM sequence_steps WHERE template_id = \? AND version = \? AND step_number = \?/);
     expect(src).toMatch(/SELECT \* FROM sequence_steps WHERE id = \? AND template_id = \? AND version = \?/);

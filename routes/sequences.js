@@ -632,7 +632,10 @@ router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) =>
       }
 
       let migratedEnrollments = null;
-      if (migrateInFlight) {
+      // First publish: migrate_in_flight is vacuous, not refused — same
+      // reasoning as routes/workflows.js (review II.6); no enrollment can be
+      // pinned below v1 (the funnel refuses v0).
+      if (migrateInFlight && oldV > 0) {
         const [currentSteps] = await connection.query(
           `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
           [templateId, oldV]
@@ -670,7 +673,7 @@ router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) =>
         [draftV, templateId]
       );
 
-      if (migrateInFlight) {
+      if (migrateInFlight && oldV > 0) {
         // Repointing enrollments is the WHOLE migration. Queued jobs are NOT
         // rewritten — executeStep resolves the step by (template, pinned
         // version, step_number) at fire time, and a content-only publish
@@ -692,6 +695,8 @@ router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) =>
             [draftV, ids]
           );
         }
+      } else if (migrateInFlight) {
+        migratedEnrollments = 0; // first publish — vacuously migrated nothing
       }
 
       return { published_version: draftV, previous_version: oldV, migrated_count: migratedEnrollments, validation };

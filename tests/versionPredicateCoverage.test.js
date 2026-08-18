@@ -23,6 +23,13 @@
  * (review finding D6 — a `version` predicate binding `undefined` passes any
  * SQL-text scan while matching zero rows at runtime).
  *
+ * The version check requires the bare word `version` in a PREDICATE-ish
+ * position (followed by = , ) < > ! IN IS DESC ASC) — a comment merely
+ * containing the word does not satisfy it (review II.8). Deliberately
+ * unversioned SQL declares its audit class in an in-literal comment
+ * ("Audit class: SWEEP."), which is also its exemption key — the
+ * declaration IS the exemption.
+ *
  *   npx jest tests/versionPredicateCoverage.test.js
  */
 
@@ -30,7 +37,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const SCAN_DIRS = ['routes', 'lib', 'services'];
+const SCAN_DIRS = ['routes', 'lib', 'services', 'scripts'];
 
 // ── Exempt statements, identified by a distinctive substring ────────────────
 // Every entry needs an audit class + reason (see ref/AUTOMATION_VERSIONING_AUDIT.md).
@@ -44,6 +51,14 @@ const EXEMPT = [
     match: 'UPDATE workflow_steps SET config = ?, updated_at = NOW() WHERE id = ?',
     klass: 'ID-JOIN',
     reason: 'row id is version-specific by construction',
+  },
+  { // scripts/ live-sweep validators — deliberately ALL versions incl. drafts
+    // (drafts must validate before they can be published). The in-literal
+    // audit-class declaration doubles as the exemption key: writing it IS
+    // declaring the class, and a future script UPDATE without it fails here.
+    match: 'Audit class: SWEEP.',
+    klass: 'SWEEP',
+    reason: 'read-only sweeps validate every version by design (M3 ruling)',
   },
 ];
 
@@ -101,7 +116,7 @@ describe('version predicate coverage — workflow_steps / sequence_steps SQL', (
         const exempt = EXEMPT.find((e) => lit.includes(e.match));
         if (exempt) continue;
         if (ID_JOIN_RE.test(lit)) continue; // joins keyed on step row id
-        if (/\bversion\b/.test(lit)) continue; // predicate / column present
+        if (/\bversion\b\s*(?:[=,)<>!]|in\b|is\b|desc\b|asc\b)/i.test(lit)) continue; // version in a predicate/column position
         offenders.push({ file: rel, sql: lit.replace(/\s+/g, ' ').slice(0, 160) });
       }
     }

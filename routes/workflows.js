@@ -1151,13 +1151,19 @@ router.get("/workflows/:id/draft-diff", jwtOrApiKey, async (req, res) => {
         ORDER BY id DESC`,
       [workflowId, wf.current_version]
     );
+    // Stranded = pinned to versions that are neither live now NOR about to
+    // be. The draft is excluded (review II.3): a parked draft test-run is
+    // live work on the version being published — wfConfirmDraftRenumber
+    // already treats it as such, and calling it "stranded, not migratable"
+    // in the same modal contradicted that (worst on a first publish, where
+    // current_version = 0 matched every run).
     const [stranded] = await db.query(
       `SELECT workflow_version, COUNT(*) AS n
          FROM workflow_executions
-        WHERE workflow_id = ? AND workflow_version <> ? AND status IN ('active','delayed','held')
+        WHERE workflow_id = ? AND workflow_version NOT IN (?, ?) AND status IN ('active','delayed','held')
         GROUP BY workflow_version
         ORDER BY workflow_version DESC`,
-      [workflowId, wf.current_version]
+      [workflowId, wf.current_version, wf.draft_version]
     );
 
     res.json({
@@ -1230,7 +1236,12 @@ router.post("/workflows/:id/publish", jwtOrApiKey, async (req, res) => {
 
       let migratedCount = null;
       let classification = null;
-      if (migrateInFlight) {
+      // First publish (oldV = 0): there is nothing to compare against and no
+      // run can be pinned to v0, so migrate_in_flight is VACUOUS, not refused
+      // — the old path diffed against zero steps, classified structural, and
+      // 409ed an API caller with a reason that didn't describe their
+      // situation (review II.6).
+      if (migrateInFlight && oldV > 0) {
         const [currentSteps] = await connection.query(
           `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
           [workflowId, oldV]
@@ -1259,7 +1270,7 @@ router.post("/workflows/:id/publish", jwtOrApiKey, async (req, res) => {
         [draftV, workflowId]
       );
 
-      if (migrateInFlight) {
+      if (migrateInFlight && oldV > 0) {
         const [r] = await connection.query(
           `UPDATE workflow_executions
               SET workflow_version = ?
@@ -1267,6 +1278,8 @@ router.post("/workflows/:id/publish", jwtOrApiKey, async (req, res) => {
           [draftV, workflowId, oldV]
         );
         migratedCount = r.affectedRows;
+      } else if (migrateInFlight) {
+        migratedCount = 0; // first publish — vacuously migrated nothing
       }
 
       return { published_version: draftV, previous_version: oldV, migrated_count: migratedCount, classification, validation };

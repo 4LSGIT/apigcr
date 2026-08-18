@@ -1739,7 +1739,7 @@ or, better, make the change through the editor/API on the draft and publish it â
 
 The same applies to **`query_db` steps inside workflows**: `sequence_steps` is in its allowed-tables list, and an author-written SELECT without a `version` predicate returns published, draft, *and retired* rows at once. Read-only, so the blast radius is wrong answers â€” but scope your query.
 
-Related: `sequence_templates.condition` is a **write-once legacy column** (create-time value, `ensureDraft` v0 fallback, never updated after the first fork). The truth is `sequence_template_versions.template_condition` for the relevant version. See chapter 16.
+Related: `sequence_templates.condition` is a **write-once legacy column** (create-time value; read only as a v0 fallback by `ensureDraft`, duplicate, the template-PUT no-op guard, and the list-GET overlay; never updated after the first fork). The truth is `sequence_template_versions.template_condition` for the relevant version. See chapter 16.
 
 ### 5.35 Queued Sequence Steps Resolve by `step_number`, Not `stepId`
 

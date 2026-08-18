@@ -166,6 +166,19 @@ describe('diffWorkflowSteps — classification', () => {
     expect(r.structural_reasons.join(' ')).toMatch(/custom_code/);
   });
 
+  test('internal_function with a missing function_name is structural — fail-closed, not fail-harmless (review II.5)', () => {
+    // Without function_name the branch-target extraction has nothing to key
+    // on, so both sides extract [] and config diffs used to fall through to
+    // content. The step is inert (the engine dispatches on function_name),
+    // but the classifier's contract is fail-closed in every reachable case.
+    const b = [step(1, { config: JSON.stringify({ params: { value: 3 } }) }), step(2)];
+    const d = clone(b);
+    d[0] = { ...d[0], config: JSON.stringify({ params: { value: 9 } }) };
+    const r = diffWorkflowSteps(b, d, OPTS);
+    expect(r.classification).toBe('structural');
+    expect(r.structural_reasons.join(' ')).toMatch(/without a valid function_name/);
+  });
+
   test('added / removed steps are structural', () => {
     expect(diffWorkflowSteps(base, [...clone(base), step(6)], OPTS).classification).toBe('structural');
     expect(diffWorkflowSteps(base, clone(base).slice(0, 4), OPTS).classification).toBe('structural');
