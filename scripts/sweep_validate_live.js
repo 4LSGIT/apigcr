@@ -70,6 +70,9 @@ function diagnose(fnName, params) {
 (async () => {
   const steps = await sql(`
     SELECT s.id, s.workflow_id, s.step_number, s.config, w.name AS wf_name, w.active
+    -- Versioning note (2026-08): deliberately UNVERSIONED — sweeps validate
+    -- ALL versions including unpublished drafts (drafts must pass before
+    -- they can be published). Audit class: SWEEP.
     FROM workflow_steps s
     JOIN workflows w ON w.id = s.workflow_id
     WHERE s.type = 'internal_function'

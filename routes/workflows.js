@@ -110,10 +110,10 @@ const TERMINAL_SENTINELS = new Set(['end', 'cancel', 'fail', 'null']);
 const isTerminalSentinel = v =>
   typeof v === 'string' && TERMINAL_SENTINELS.has(v.trim().toLowerCase());
 
-async function remapBranchTargets(connection, workflowId, mapFn) {
+async function remapBranchTargets(connection, workflowId, version, mapFn) {
   const [steps] = await connection.query(
-    `SELECT id, step_number, type, config FROM workflow_steps WHERE workflow_id = ? ORDER BY step_number ASC`,
-    [workflowId]
+    `SELECT id, step_number, type, config FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
+    [workflowId, version]
   );
 
   const rewritten = [];
@@ -356,6 +356,26 @@ async function validateStartWorkflowConfig(db, type, config) {
 // MUST be defined before any /:id routes to avoid param capture
 // ─────────────────────────────────────────────────────────────
 
+
+// ─────────────────────────────────────────────────────────────
+// resolveEditTargetVersion — which version do the step-editing routes write?
+//
+// S2 (version plumbing): the published current_version. Only version 1 exists
+// until draft/publish ships, so this is behavior-neutral. Doubles as the
+// workflow-existence check (returns null when the workflow does not exist).
+//
+// S3 (draft/publish) replaces THIS FUNCTION'S BODY with ensureDraft — lazy
+// copy-on-first-write of the current version's step rows into a new draft
+// version. Every call site below stays unchanged when that lands.
+// ─────────────────────────────────────────────────────────────
+async function resolveEditTargetVersion(connection, workflowId) {
+  const [[row]] = await connection.query(
+    `SELECT current_version FROM workflows WHERE id = ?`,
+    [workflowId]
+  );
+  return row ? row.current_version : null;
+}
+
 router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
   // Filter out the __-prefixed helpers (validateParamsAgainstMeta, getMeta, getAllMeta)
   // added alongside the metadata registry — those aren't callable functions.
@@ -426,7 +446,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     // Load id + default_contact_id_from in one shot. Adding the column to the
     // SELECT is cheap; skipping it would force a separate round-trip.
     const [wfRows] = await connection.query(
-      `SELECT id, active, default_contact_id_from, capture_mode FROM workflows WHERE id = ?`,
+      `SELECT id, active, default_contact_id_from, capture_mode, current_version FROM workflows WHERE id = ?`,
       [workflowId]
     );
     if (wfRows.length === 0) {
@@ -466,10 +486,10 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     const [result] = await connection.query(
       `
       INSERT INTO workflow_executions
-      (workflow_id, contact_id, status, init_data, variables, current_step_number)
-      VALUES (?, ?, 'active', ?, ?, 1)
+      (workflow_id, contact_id, status, init_data, variables, current_step_number, workflow_version)
+      VALUES (?, ?, 'active', ?, ?, 1, ?)
       `,
-      [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData)]
+      [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData), workflow.current_version]
     );
 
       return { executionId: result.insertId, contactId };
@@ -808,7 +828,8 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
     let query = `
       SELECT 
         id, name, description, active, test_input, capture_mode, captured_at, created_at, updated_at,
-        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
+        current_version, draft_version,
+        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id AND version = w.current_version) as step_count
       FROM workflows w
       WHERE 1=1
     `;
@@ -887,7 +908,8 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
       `
       SELECT 
         id, name, description, active, test_input, capture_mode, captured_at, created_at, updated_at,
-        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count,
+        current_version, draft_version,
+        (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id AND version = w.current_version) as step_count,
         -- Renumber-safety slice — the editor warns before a reorder/delete on a
         -- workflow that has executions mid-flight. Those carry RAW STEP NUMBERS
         -- (workflow_executions.current_step_number, and scheduled_jobs.data.nextStep
@@ -916,10 +938,10 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
         SELECT 
           id, step_number, label, note, type, config, error_policy, created_at, updated_at
         FROM workflow_steps
-        WHERE workflow_id = ?
+        WHERE workflow_id = ? AND version = ?
         ORDER BY step_number ASC
         `,
-        [workflowId]
+        [workflowId, workflow.current_version]
       );
 
       steps = stepRows;
@@ -973,6 +995,17 @@ router.post("/workflows", jwtOrApiKey, async (req, res) => {
     );
 
     const workflowId = result.insertId;
+
+    // Versioning invariant: every published version has a workflow_versions
+    // metadata row (migration backfilled v1 for pre-existing workflows; this
+    // keeps the invariant for workflows created after it). current_version
+    // defaults to 1 via schema. S3 reworks creation to current_version = 0
+    // (unpublished) — this seed moves to the publish endpoint then.
+    await db.query(
+      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input, published_at, published_by)
+       VALUES (?, 1, ?, ?, ?, NOW(), 'create')`,
+      [workflowId, name.trim(), description.trim(), toJson(test_input)]
+    );
 
     console.log(`[CREATE WORKFLOW] Created workflow ${workflowId}: ${name}`);
 
@@ -1043,12 +1076,9 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Verify workflow exists
-    const [wfRows] = await connection.query(
-      `SELECT id FROM workflows WHERE id = ?`,
-      [workflowId]
-    );
-    if (wfRows.length === 0) {
+    // Existence check + edit-target version in one (S3: becomes ensureDraft).
+    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
@@ -1057,8 +1087,8 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
     // If stepNumber not provided → add at the end
     if (!targetStep) {
       const [maxRow] = await connection.query(
-        `SELECT MAX(step_number) as max FROM workflow_steps WHERE workflow_id = ?`,
-        [workflowId]
+        `SELECT MAX(step_number) as max FROM workflow_steps WHERE workflow_id = ? AND version = ?`,
+        [workflowId, editVersion]
       );
       targetStep = (maxRow[0].max || 0) + 1;
     }
@@ -1071,31 +1101,31 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
       await connection.query(
         `UPDATE workflow_steps 
          SET step_number = step_number + 10000 
-         WHERE workflow_id = ? AND step_number >= ?`,
-        [workflowId, targetStep]
+         WHERE workflow_id = ? AND version = ? AND step_number >= ?`,
+        [workflowId, editVersion, targetStep]
       );
       await connection.query(
         `UPDATE workflow_steps 
          SET step_number = step_number - 10000 + 1 
-         WHERE workflow_id = ? AND step_number >= ?`,
-        [workflowId, targetStep + 10000]
+         WHERE workflow_id = ? AND version = ? AND step_number >= ?`,
+        [workflowId, editVersion, targetStep + 10000]
       );
 
       // Branch-target remap slice — every literal target >= targetStep
       // moved up by one; rewrite configs to follow. Runs BEFORE the new
       // step's INSERT so the remap never touches the incoming config
       // (its targets, if any, are authored against POST-insert numbering).
-      remap = await remapBranchTargets(connection, workflowId, (n) => n >= targetStep ? n + 1 : n);
+      remap = await remapBranchTargets(connection, workflowId, editVersion, (n) => n >= targetStep ? n + 1 : n);
     }
 
     // Insert the new step
     await connection.query(
       `
       INSERT INTO workflow_steps 
-      (workflow_id, step_number, label, note, type, config, error_policy)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (workflow_id, version, step_number, label, note, type, config, error_policy)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [workflowId, targetStep,
+      [workflowId, editVersion, targetStep,
        (typeof label === 'string' && label.trim()) ? label.trim().slice(0, 100) : null,
        (typeof note  === 'string' && note.trim())  ? note.trim()                : null,
        type, JSON.stringify(config), JSON.stringify(error_policy)]
@@ -1222,15 +1252,22 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     const workflowId = workflowResult.insertId;
 
     // Patch in the real workflowId now that we have it
-    const rows = stepValues.map(row => [workflowId, row[1], row[2], row[3], row[4], row[5], row[6]]);
+    const rows = stepValues.map(row => [workflowId, 1, row[1], row[2], row[3], row[4], row[5], row[6]]);
 
     await connection.query(
       `
       INSERT INTO workflow_steps
-      (workflow_id, step_number, label, note, type, config, error_policy)
+      (workflow_id, version, step_number, label, note, type, config, error_policy)
       VALUES ?
       `,
       [rows]
+    );
+
+    // Versioning invariant: seed the v1 metadata row (see POST /workflows).
+    await connection.query(
+      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input, published_at, published_by)
+       VALUES (?, 1, ?, ?, ?, NOW(), 'bulk-import')`,
+      [workflowId, name.trim(), description.trim(), toJson(test_input)]
     );
 
       return workflowId;
@@ -1282,7 +1319,9 @@ router.delete("/workflows/:id", jwtOrApiKey, async (req, res) => {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
-    // Delete steps first (foreign key safety)
+    // Delete steps first (foreign key safety). Deliberately unversioned —
+    // deleting the workflow removes EVERY version's rows (workflow_versions
+    // follows via ON DELETE CASCADE). Audit class: ALL-VERSIONS.
     await connection.query(
       `DELETE FROM workflow_steps WHERE workflow_id = ?`,
       [workflowId]
@@ -1332,19 +1371,16 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Verify workflow exists
-    const [wfRows] = await connection.query(
-      `SELECT id FROM workflows WHERE id = ?`,
-      [workflowId]
-    );
-    if (wfRows.length === 0) {
+    // Existence check + edit-target version in one (S3: becomes ensureDraft).
+    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
     // Verify step exists
     const [stepRows] = await connection.query(
-      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
-      [workflowId, stepNum]
+      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+      [workflowId, editVersion, stepNum]
     );
     if (stepRows.length === 0) {
       return { respond: { status: 404, body: { error: "Step not found" } } };
@@ -1352,8 +1388,8 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
 
     // Delete the step
     await connection.query(
-      `DELETE FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
-      [workflowId, stepNum]
+      `DELETE FROM workflow_steps WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+      [workflowId, editVersion, stepNum]
     );
 
     // Renumber all higher steps down by 1.
@@ -1363,15 +1399,15 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
       `
       UPDATE workflow_steps 
       SET step_number = step_number - 1 
-      WHERE workflow_id = ? AND step_number > ?
+      WHERE workflow_id = ? AND version = ? AND step_number > ?
       ORDER BY step_number ASC
       `,
-      [workflowId, stepNum]
+      [workflowId, editVersion, stepNum]
     );
 
     // Branch-target remap slice — targets above the deleted step slid down
     // by one; targets AT the deleted step are dangling (warned, left as-is).
-    const remap = await remapBranchTargets(connection, workflowId, (n) => {
+    const remap = await remapBranchTargets(connection, workflowId, editVersion, (n) => {
       if (n === stepNum) return null;
       return n > stepNum ? n - 1 : n;
     });
@@ -1416,12 +1452,9 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Verify workflow exists
-    const [wfRows] = await connection.query(
-      `SELECT id FROM workflows WHERE id = ?`,
-      [workflowId]
-    );
-    if (wfRows.length === 0) {
+    // Existence check + edit-target version in one (S3: becomes ensureDraft).
+    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    if (editVersion == null) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
@@ -1451,8 +1484,8 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
       const [parked] = await connection.query(
         `UPDATE workflow_steps
          SET step_number = ?
-         WHERE workflow_id = ? AND step_number = ?`,
-        [from + 10000, workflowId, from]
+         WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+        [from + 10000, workflowId, editVersion, from]
       );
       if (parked.affectedRows === 0) {
         throw new Error(`No step at position ${from}`);
@@ -1468,9 +1501,9 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = step_number - 1 
-           WHERE workflow_id = ? AND step_number > ? AND step_number <= ?
+           WHERE workflow_id = ? AND version = ? AND step_number > ? AND step_number <= ?
            ORDER BY step_number ASC`,
-          [workflowId, from, to]
+          [workflowId, editVersion, from, to]
         );
       } else {
         // Moving step backward: shift intermediate steps up — process DESC
@@ -1478,9 +1511,9 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = step_number + 1 
-           WHERE workflow_id = ? AND step_number >= ? AND step_number < ?
+           WHERE workflow_id = ? AND version = ? AND step_number >= ? AND step_number < ?
            ORDER BY step_number DESC`,
-          [workflowId, to, from]
+          [workflowId, editVersion, to, from]
         );
       }
 
@@ -1488,13 +1521,13 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
       await connection.query(
         `UPDATE workflow_steps 
          SET step_number = ? 
-         WHERE workflow_id = ? AND step_number = ?`,
-        [to, workflowId, from + 10000]
+         WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+        [to, workflowId, editVersion, from + 10000]
       );
 
       // Branch-target remap slice — follow the same old→new mapping the
       // renumber just applied.
-      remapResult = await remapBranchTargets(connection, workflowId, (n) => {
+      remapResult = await remapBranchTargets(connection, workflowId, editVersion, (n) => {
         if (n === from) return to;
         if (from < to && n > from && n <= to) return n - 1;
         if (to < from && n >= to && n < from) return n + 1;
@@ -1520,8 +1553,8 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = ? 
-           WHERE workflow_id = ? AND step_number = ?`,
-          [order[i] + 10000, workflowId, order[i]]
+           WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+          [order[i] + 10000, workflowId, editVersion, order[i]]
         );
       }
 
@@ -1530,8 +1563,8 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = ? 
-           WHERE workflow_id = ? AND step_number = ?`,
-          [i + 1, workflowId, order[i] + 10000]
+           WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+          [i + 1, workflowId, editVersion, order[i] + 10000]
         );
       }
 
@@ -1540,7 +1573,7 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
       // endpoint behavior), so unmapped targets pass through unchanged.
       const oldToNew = {};
       order.forEach((oldN, i) => { oldToNew[oldN] = i + 1; });
-      remapResult = await remapBranchTargets(connection, workflowId, (n) => oldToNew[n] ?? n);
+      remapResult = await remapBranchTargets(connection, workflowId, editVersion, (n) => oldToNew[n] ?? n);
     } 
     else {
       return { respond: { status: 400, body: { error: "Must provide either {fromStep, toStep} or {order: array}" } } };
@@ -1705,10 +1738,17 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Verify workflow + step exist
+    // Edit-target version (S3: becomes ensureDraft). Also serves as the
+    // workflow existence check this route historically lacked.
+    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    if (editVersion == null) {
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
+    }
+
+    // Verify step exists on the edit-target version
     const [rows] = await connection.query(
-      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
-      [workflowId, stepNum]
+      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+      [workflowId, editVersion, stepNum]
     );
     if (rows.length === 0) {
       return { respond: { status: 404, body: { error: "Step not found" } } };
@@ -1734,7 +1774,7 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
       `
       UPDATE workflow_steps 
       SET type = ?, config = ?, error_policy = ?${extraSets.length ? ', ' + extraSets.join(', ') : ''}, updated_at = NOW()
-      WHERE workflow_id = ? AND step_number = ?
+      WHERE workflow_id = ? AND version = ? AND step_number = ?
       `,
       [
         type,
@@ -1742,6 +1782,7 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
         error_policy ? JSON.stringify(error_policy) : null,
         ...extraVals,
         workflowId,
+        editVersion,
         stepNum
       ]
     );
@@ -1794,10 +1835,17 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-    // Verify step exists
+    // Edit-target version (S3: becomes ensureDraft). Also serves as the
+    // workflow existence check this route historically lacked.
+    const editVersion = await resolveEditTargetVersion(connection, workflowId);
+    if (editVersion == null) {
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
+    }
+
+    // Verify step exists on the edit-target version
     const [rows] = await connection.query(
-      `SELECT id, type, config FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
-      [workflowId, stepNum]
+      `SELECT id, type, config FROM workflow_steps WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+      [workflowId, editVersion, stepNum]
     );
     if (rows.length === 0) {
       return { respond: { status: 404, body: { error: "Step not found" } } };
@@ -1860,9 +1908,9 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
     const query = `
       UPDATE workflow_steps 
       SET ${updates.join(", ")}, updated_at = NOW()
-      WHERE workflow_id = ? AND step_number = ?
+      WHERE workflow_id = ? AND version = ? AND step_number = ?
     `;
-    params.push(workflowId, stepNum);
+    params.push(workflowId, editVersion, stepNum);
 
     await connection.query(query, params);
 
@@ -1910,7 +1958,7 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     // Slice 2.1: also SELECT test_input so the duplicate carries over the
     // authorial init_data shape doc. Symmetric with description carry-over.
     const [wfRows] = await connection.query(
-      `SELECT name, description, test_input, captured_input, captured_at FROM workflows WHERE id = ?`,
+      `SELECT name, description, test_input, captured_input, captured_at, current_version FROM workflows WHERE id = ?`,
       [originalId]
     );
     if (wfRows.length === 0) {
@@ -1934,15 +1982,16 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       `
       SELECT step_number, label, note, type, config, error_policy 
       FROM workflow_steps 
-      WHERE workflow_id = ? 
+      WHERE workflow_id = ? AND version = ?
       ORDER BY step_number ASC
       `,
-      [originalId]
+      [originalId, original.current_version]
     );
 
     if (steps.length > 0) {
       const stepValues = steps.map(step => [
         newWorkflowId,
+        1,
         step.step_number,
         step.label ?? null,
         step.note ?? null,
@@ -1954,12 +2003,22 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       await connection.query(
         `
         INSERT INTO workflow_steps 
-        (workflow_id, step_number, label, note, type, config, error_policy)
+        (workflow_id, version, step_number, label, note, type, config, error_policy)
         VALUES ?
         `,
         [stepValues]
       );
     }
+
+    // Versioning invariant: seed the duplicate's v1 metadata row. Source
+    // content is the SOURCE's published current_version (plan-v2 decision 7;
+    // S3 amends: never-published sources fall back to their draft, and the
+    // duplicate itself lands unpublished at current_version = 0).
+    await connection.query(
+      `INSERT INTO workflow_versions (workflow_id, version, name, description, test_input, published_at, published_by)
+       VALUES (?, 1, ?, ?, ?, NOW(), 'duplicate')`,
+      [newWorkflowId, newName, original.description || "", toJson(original.test_input)]
+    );
 
       return { newWorkflowId, newName, stepCount: steps.length };
     });
@@ -2163,7 +2222,7 @@ router.post("/executions/:id/resume", jwtOrApiKey, async (req, res) => {
   try {
     // 1. Execution exists.
     const [execRows] = await db.query(
-      `SELECT id, workflow_id, status FROM workflow_executions WHERE id = ?`,
+      `SELECT id, workflow_id, workflow_version, status FROM workflow_executions WHERE id = ?`,
       [executionId]
     );
     if (execRows.length === 0) {
@@ -2195,9 +2254,12 @@ router.post("/executions/:id/resume", jwtOrApiKey, async (req, res) => {
         message: "step_number must be a positive integer",
       });
     }
+    // PINNED-READ: the resume target must exist on the version this execution
+    // is pinned to — validating against current_version would approve a resume
+    // into a version the execution will never run (audit M5).
     const [stepRows] = await db.query(
-      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
-      [execution.workflow_id, stepNum]
+      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+      [execution.workflow_id, execution.workflow_version, stepNum]
     );
     if (stepRows.length === 0) {
       return res.status(400).json({

@@ -418,10 +418,15 @@ describe('sequenceEngine — signing_request_id scoping (real module)', () => {
     expect(db.captured.dupSql).toMatch(/appt_id <=> \?/);
     expect(db.captured.dupSql).toMatch(/signing_request_id <=> \?/);
     expect(db.captured.dupParams).toEqual([301, 26, null, 7]);
-    // INSERT: column named, value positioned after appt_id
+    // INSERT: column named, value positioned after appt_id.
+    // Versioning (S2, 2026-08): template_version now sits at index 1
+    // (template_id, template_version, contact_id, appt_id, signing_request_id,
+    // …) — appt_id/signing_request_id shifted one slot right.
     expect(db.captured.insertSql).toMatch(/signing_request_id/);
-    expect(db.captured.insertParams[2]).toBeNull(); // appt_id
-    expect(db.captured.insertParams[3]).toBe(7);    // signing_request_id
+    expect(db.captured.insertSql).toMatch(/template_version/);
+    expect(db.captured.insertParams[1]).toBe(1);    // template_version (mock template has none → defaults 1)
+    expect(db.captured.insertParams[3]).toBeNull(); // appt_id
+    expect(db.captured.insertParams[4]).toBe(7);    // signing_request_id
   });
 
   test('an active enrollment for the SAME request is refused as a duplicate', async () => {
@@ -434,8 +439,8 @@ describe('sequenceEngine — signing_request_id scoping (real module)', () => {
     const db = engineDb();
     await realEngine.enrollContactByTemplateId(db, 301, 26, { appt_id: 12 });
     expect(db.captured.dupParams).toEqual([301, 26, 12, null]);
-    expect(db.captured.insertParams[2]).toBe(12);
-    expect(db.captured.insertParams[3]).toBeNull();
+    expect(db.captured.insertParams[3]).toBe(12);   // appt_id (shifted by template_version)
+    expect(db.captured.insertParams[4]).toBeNull(); // signing_request_id
   });
 });
 

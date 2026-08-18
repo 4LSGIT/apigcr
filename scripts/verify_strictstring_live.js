@@ -46,6 +46,9 @@ for (const [fn, meta] of Object.entries(IF.__getAllMeta())) {
 
   const steps = await sql(`
     SELECT s.workflow_id, s.step_number, s.config
+    -- Versioning note (2026-08): deliberately UNVERSIONED — sweeps validate
+    -- ALL versions including unpublished drafts (drafts must pass before
+    -- they can be published). Audit class: SWEEP.
     FROM workflow_steps s WHERE s.type='internal_function'
   `);
   const jobs = await sql(`

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-17T22:10:45.635Z
+-- Generated: 2026-08-18T12:38:12.811Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:cccd6500215e426384129f20f0879263
+-- Fingerprint: sha256:8cf2a9df1b00b910808bd73e687f25ff
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2450,7 +2450,8 @@ CREATE TABLE `sequence_enrollments` (
   `cancel_reason` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `enrolled_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `template_version` int NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2493,7 +2494,8 @@ CREATE TABLE `sequence_steps` (
   `fire_guard` json DEFAULT NULL,
   `error_policy` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `version` int NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2510,6 +2512,27 @@ CREATE TABLE `sequence_template_types` (
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `sequence_template_versions`
+--
+
+DROP TABLE IF EXISTS `sequence_template_versions`;
+CREATE TABLE `sequence_template_versions` (
+  `template_id` int unsigned NOT NULL,
+  `version` int NOT NULL,
+  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `type` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `template_condition` json DEFAULT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `test_input` json DEFAULT NULL,
+  `published_at` datetime DEFAULT NULL,
+  `published_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `retired_at` datetime DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2532,7 +2555,9 @@ CREATE TABLE `sequence_templates` (
   `test_input` json DEFAULT NULL,
   `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
   `captured_input` json DEFAULT NULL,
-  `captured_at` datetime DEFAULT NULL
+  `captured_at` datetime DEFAULT NULL,
+  `current_version` int NOT NULL DEFAULT '1',
+  `draft_version` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3133,7 +3158,8 @@ CREATE TABLE `workflow_executions` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
-  `cancel_reason` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL
+  `cancel_reason` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `workflow_version` int NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3153,7 +3179,27 @@ CREATE TABLE `workflow_steps` (
   `config` json NOT NULL,
   `error_policy` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `version` int NOT NULL DEFAULT '1'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `workflow_versions`
+--
+
+DROP TABLE IF EXISTS `workflow_versions`;
+CREATE TABLE `workflow_versions` (
+  `workflow_id` int NOT NULL,
+  `version` int NOT NULL,
+  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `test_input` json DEFAULT NULL,
+  `published_at` datetime DEFAULT NULL,
+  `published_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `retired_at` datetime DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3174,7 +3220,9 @@ CREATE TABLE `workflows` (
   `test_input` json DEFAULT NULL,
   `capture_mode` enum('off','capturing','intercept') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
   `captured_input` json DEFAULT NULL,
-  `captured_at` datetime DEFAULT NULL
+  `captured_at` datetime DEFAULT NULL,
+  `current_version` int NOT NULL DEFAULT '1',
+  `draft_version` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -3918,7 +3966,7 @@ ALTER TABLE `sequence_step_log`
 --
 ALTER TABLE `sequence_steps`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uk_template_step` (`template_id`,`step_number`),
+  ADD UNIQUE KEY `uk_template_version_step` (`template_id`,`version`,`step_number`),
   ADD KEY `idx_template` (`template_id`);
 
 --
@@ -3926,6 +3974,12 @@ ALTER TABLE `sequence_steps`
 --
 ALTER TABLE `sequence_template_types`
   ADD PRIMARY KEY (`type`);
+
+--
+-- Indexes for table `sequence_template_versions`
+--
+ALTER TABLE `sequence_template_versions`
+  ADD PRIMARY KEY (`template_id`,`version`);
 
 --
 -- Indexes for table `sequence_templates`
@@ -4129,8 +4183,14 @@ ALTER TABLE `workflow_executions`
 --
 ALTER TABLE `workflow_steps`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uk_workflow_step` (`workflow_id`,`step_number`),
+  ADD UNIQUE KEY `uk_workflow_version_step` (`workflow_id`,`version`,`step_number`),
   ADD KEY `idx_workflow` (`workflow_id`);
+
+--
+-- Indexes for table `workflow_versions`
+--
+ALTER TABLE `workflow_versions`
+  ADD PRIMARY KEY (`workflow_id`,`version`);
 
 --
 -- Indexes for table `workflows`
@@ -4975,6 +5035,12 @@ ALTER TABLE `sequence_steps`
   ADD CONSTRAINT `fk_seq_steps_template` FOREIGN KEY (`template_id`) REFERENCES `sequence_templates` (`id`) ON DELETE CASCADE;
 
 --
+-- Constraints for table `sequence_template_versions`
+--
+ALTER TABLE `sequence_template_versions`
+  ADD CONSTRAINT `fk_stv_template` FOREIGN KEY (`template_id`) REFERENCES `sequence_templates` (`id`) ON DELETE CASCADE;
+
+--
 -- Constraints for table `trigger_execution_rules`
 --
 ALTER TABLE `trigger_execution_rules`
@@ -5015,6 +5081,12 @@ ALTER TABLE `workflow_executions`
 --
 ALTER TABLE `workflow_steps`
   ADD CONSTRAINT `fk_workflow_steps_workflow` FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `workflow_versions`
+--
+ALTER TABLE `workflow_versions`
+  ADD CONSTRAINT `fk_wfv_workflow` FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`) ON DELETE CASCADE;
 
 SET FOREIGN_KEY_CHECKS = 1;
 COMMIT;
