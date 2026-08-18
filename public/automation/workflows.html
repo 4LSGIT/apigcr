@@ -279,6 +279,26 @@
     .step-act:hover { background: var(--border); }
     .step-act.danger:hover { background: #fee2e2; border-color: #fca5a5; color: var(--red); }
     .step-act:disabled { opacity: 0.3; cursor: not-allowed; }
+    .step-act:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+    /* ── Reorder controls ── */
+    .step-pos-wrap {
+      display: flex; align-items: center; gap: 4px; margin-left: 4px;
+      font-size: 11px; color: var(--muted); white-space: nowrap;
+    }
+    .step-pos-input {
+      width: 48px; padding: 2px 4px; font-size: 11px; text-align: center;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: var(--surface); color: var(--text);
+    }
+    .step-pos-input:focus { outline: none; border-color: var(--blue); }
+
+    .reorder-pending {
+      align-self: flex-start; display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: #b45309; background: #fffbeb;
+      border: 1px solid #fde68a; border-radius: 6px;
+      padding: 4px 9px; margin-bottom: 8px;
+    }
 
     .add-step-btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -574,6 +594,24 @@ const WF = {
   showInactive: false,
   activeWfId: null, activeWf: null, steps: [],
   activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
+  // Reorder slice — the selected step is anchored by its DB id, NOT by its
+  // array index. Any reorder/insert/delete renumbers step_number and shuffles
+  // indices, so an index-only selection silently ends up pointing at a
+  // different step: the canvas highlighted whatever slid into the old slot
+  // while the editor pane still showed the moved step, and Save then PUT the
+  // open editor's config onto the wrong step_number. activeStepId is the
+  // anchor; activeStepIdx is re-derived from it after every steps reload
+  // (wfSyncActiveStep).
+  activeStepId: null,
+  // Pending optimistic reorder, not yet sent: { wfId, stepId, fromStep, timer }.
+  // fromStep is the step's SERVER-side number when the batch opened, so a run
+  // of up/down clicks coalesces into ONE {fromStep,toStep} PATCH instead of N
+  // adjacent swaps — fewer round-trips, and one correct branch-target remap
+  // for the whole move rather than N partial ones.
+  pendingMove: null,
+  // In-flight commit promise. Non-null means the server has not yet caught up
+  // with the local order; anything reading or writing step_number awaits it.
+  moveCommit: null,
   // Original config captured (deep-cloned) at editor-open. The metadata-
   // driven internal_function form can only render/gather keys declared in
   // meta.params, so keys outside the schema — `extra` forensic blocks on
@@ -1276,6 +1314,11 @@ function wfFilter(q) {
 }
 
 async function selectWorkflow(id) {
+  // Commit any pending reorder against the OUTGOING workflow before
+  // WF.activeWfId changes — the commit itself targets pendingMove.wfId, but
+  // the re-sync it does afterwards would otherwise race the incoming one.
+  await wfFlushMoves();
+
   // Reset executions state for the new workflow
   stopWfExecPolling();
   WFEX.offset = 0;
@@ -1288,6 +1331,7 @@ async function selectWorkflow(id) {
   WF.activeWfId = id;
   WF.activeWf   = WF.workflows.find(w => w.id === id);
   WF.activeStepIdx = null;
+  WF.activeStepId  = null;
   renderWfList();
   const t = document.getElementById('wf-canvas-title');
   t.textContent = WF.activeWf?.name || '';
@@ -1303,8 +1347,21 @@ async function selectWorkflow(id) {
   }
 }
 
+// Public entry point for (re)loading steps. Any reload must first commit a
+// pending optimistic reorder, otherwise the fetch clobbers the un-sent local
+// order and the user's moves silently vanish. Putting the flush HERE covers
+// every reload path in this file for free (save, delete, capture arm/disarm,
+// onRefresh); the only extra flushes needed are on paths that send a
+// step_number to the server without reloading first.
 async function loadWfSteps(id) {
-  document.getElementById('wf-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i></div>';
+  await wfFlushMoves();
+  return _loadWfSteps(id);
+}
+
+// silent = skip the spinner. Used by the reorder commit's re-sync, which
+// would otherwise blank the whole canvas after every move.
+async function _loadWfSteps(id, silent) {
+  if (!silent) document.getElementById('wf-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i></div>';
   try {
     const data = await api(`/workflows/${id}`);
     // Slice 2.1 — refresh WF.activeWf with the single-template GET response so
@@ -1320,10 +1377,23 @@ async function loadWfSteps(id) {
       config:       typeof s.config       === 'string' ? JSON.parse(s.config)       : s.config,
       error_policy: typeof s.error_policy === 'string' ? JSON.parse(s.error_policy) : s.error_policy
     }));
-    renderWfCanvas();
+    wfSyncActiveStep();
+    wfRenderCanvasKeepFocus();
   } catch (e) {
     document.getElementById('wf-canvas-body').innerHTML = `<div class="empty-state"><p style="color:var(--red)">${esc(e.message)}</p></div>`;
   }
+}
+
+// Re-derive activeStepIdx from the anchored step id after a steps reload. If
+// the anchored step is gone (deleted here or by another session) the selection
+// is dropped rather than left pointing at a stranger.
+function wfSyncActiveStep() {
+  if (WF.activeStepId == null) return;
+  const i = WF.steps.findIndex(s => s.id === WF.activeStepId);
+  if (i >= 0) { WF.activeStepIdx = i; return; }
+  WF.activeStepId  = null;
+  WF.activeStepIdx = null;
+  if (!WF.editingNew) wfClearEditor();
 }
 
 function renderWfCanvas() {
@@ -1333,6 +1403,9 @@ function renderWfCanvas() {
     return;
   }
   const items = [];
+  if (WF.pendingMove || WF.moveCommit) {
+    items.push(`<div class="reorder-pending"><i class="fa-solid fa-spinner spin"></i> Saving new order…</div>`);
+  }
   WF.steps.forEach((step, idx) => {
     if (idx > 0) items.push(`<div class="step-connector"><i class="fa-solid fa-arrow-down"></i></div>`);
     items.push(wfStepCardHTML(step, idx));
@@ -1372,17 +1445,29 @@ function wfStepCardHTML(step, idx) {
       </div>
       ${isActive ? `
       <div class="step-card-actions">
-        <button class="step-act" onclick="event.stopPropagation();wfStepMove(${idx},-1)" ${idx === 0 ? 'disabled' : ''}>
+        <button class="step-act" data-move="up" title="Move up (Alt+↑)"
+                onclick="event.stopPropagation();wfStepMove(${idx},-1)" ${idx === 0 ? 'disabled' : ''}>
           <i class="fa-solid fa-arrow-up"></i></button>
-        <button class="step-act" onclick="event.stopPropagation();wfStepMove(${idx},1)" ${idx === WF.steps.length - 1 ? 'disabled' : ''}>
+        <button class="step-act" data-move="down" title="Move down (Alt+↓)"
+                onclick="event.stopPropagation();wfStepMove(${idx},1)" ${idx === WF.steps.length - 1 ? 'disabled' : ''}>
           <i class="fa-solid fa-arrow-down"></i></button>
-        <button class="step-act danger" onclick="event.stopPropagation();wfStepDelete(${idx})">
+        <span class="step-pos-wrap" onclick="event.stopPropagation()">
+          <span>to&nbsp;#</span>
+          <input class="step-pos-input" type="number" min="1" max="${WF.steps.length}" step="1"
+                 value="${step.step_number}" title="Type a position, then Enter"
+                 onclick="event.stopPropagation()"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();event.stopPropagation();wfStepMoveTo(${idx},this.value);}"
+                 onchange="event.stopPropagation();wfStepMoveTo(${idx},this.value)">
+          <span style="opacity:.6">of ${WF.steps.length}</span>
+        </span>
+        <button class="step-act danger" style="margin-left:auto" onclick="event.stopPropagation();wfStepDelete(${idx})">
           <i class="fa-solid fa-trash"></i> Delete</button>
       </div>` : ''}</div>`;
 }
 
 function wfSelectStep(idx) {
   WF.activeStepIdx = idx;
+  WF.activeStepId  = WF.steps[idx]?.id ?? null;
   WF.editingNew = false;
   renderWfCanvas();
   if (WF.tab === 'edit') wfRenderEditor(WF.steps[idx]);
@@ -1391,6 +1476,7 @@ function wfSelectStep(idx) {
 
 function wfClearEditor() {
   WF.activeStepIdx = null;
+  WF.activeStepId  = null;
   document.getElementById('wf-editor-body').innerHTML = '<div class="editor-placeholder"><i class="fa-regular fa-hand-pointer"></i><p>Click a step to edit it.</p></div>';
   document.getElementById('wf-editor-foot').style.display = 'none';
 }
@@ -2059,6 +2145,10 @@ function wfGatherConfig(type) {
 
 async function wfStepSave() {
   if (WF.tab === 'test') return;
+  // A pending reorder must land BEFORE this PUT: the local step_number is
+  // already the post-move number, which the server has not applied yet, so
+  // saving first would write this step's config onto a different step.
+  await wfFlushMoves();
   const type = document.getElementById('e-type')?.value;
   if (!type) return;
   const config = wfGatherConfig(type);
@@ -2086,6 +2176,7 @@ async function wfStepSave() {
       WF.editingNew = false;
     } else {
       const step = WF.steps[WF.activeStepIdx];
+      if (!step) throw new Error('The step being edited no longer exists — reload and try again.');
       await api(`/workflows/${WF.activeWfId}/steps/${step.step_number}`, 'PUT', { type, config, error_policy, label, note });
     }
     await loadWfSteps(WF.activeWfId);
@@ -2343,12 +2434,19 @@ async function wfCapSaveSample() {
 }
 
 async function wfStepDelete(idx) {
-  const step = WF.steps[idx];
+  // Resolve by id across the flush — committing a pending reorder reloads the
+  // steps, so the idx baked into the card's onclick can be stale by then.
+  const stepId = WF.steps[idx]?.id ?? null;
+  await wfFlushMoves();
+  const i = stepId != null ? wfStepIdxById(stepId) : idx;
+  const step = WF.steps[i];
+  if (!step) return;
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
     const r = await api(`/workflows/${WF.activeWfId}/steps/${step.step_number}`, 'DELETE');
     WF.activeStepIdx = null;
+    WF.activeStepId  = null;
     wfClearEditor();
     await loadWfSteps(WF.activeWfId);
     wfShowRemapSummary(r?.remap);
@@ -2357,15 +2455,171 @@ async function wfStepDelete(idx) {
   }
 }
 
-async function wfStepMove(idx, dir) {
-  const a = WF.steps[idx], b = WF.steps[idx + dir];
-  try {
-    const r = await api(`/workflows/${WF.activeWfId}/steps/reorder`, 'PATCH', { fromStep: a.step_number, toStep: b.step_number });
-    await loadWfSteps(WF.activeWfId);
-    wfShowRemapSummary(r?.remap);
-  } catch (e) {
-    Swal.fire('Error', e.message, 'error');
+// ══════════════════════════════════════════════════════════════════
+// STEP REORDER
+//
+// Moves apply to WF.steps IMMEDIATELY (optimistic) and the server PATCH is
+// debounced, so a run of up/down clicks coalesces into a single
+// {fromStep,toStep} move. That is not just fewer round-trips: the server's
+// branch-target remap then sees one N-position move instead of N adjacent
+// swaps, so it rewrites literal step targets once and correctly, and emits
+// one summary instead of N toasts.
+//
+// Local step_number is renumbered to what the server will converge to, so a
+// pending move is never wrong "in the end" — only wrong RIGHT NOW. Every path
+// that sends a step_number (PUT/DELETE step, run workflow) or that re-reads
+// steps (loadWfSteps) awaits wfFlushMoves() first.
+// ══════════════════════════════════════════════════════════════════
+
+const WF_MOVE_DEBOUNCE_MS = 450;
+
+function wfStepIdxById(id) { return WF.steps.findIndex(s => s.id === id); }
+
+// Repaint the canvas without stealing focus from a step control the user is
+// still working. The canvas is re-rendered wholesale, so the arrow button
+// under the cursor is destroyed on every move — restoring focus afterwards is
+// what makes clicking the arrow repeatedly actually work.
+function wfRenderCanvasKeepFocus() {
+  const el   = document.activeElement;
+  const card = el && el.closest ? el.closest('.step-card') : null;
+  const key  = !card ? null
+             : (el.dataset && el.dataset.move) ? el.dataset.move
+             : (el.classList && el.classList.contains('step-pos-input')) ? 'pos'
+             : null;
+  renderWfCanvas();
+  wfRestoreMoveFocus(key);
+}
+
+function wfRestoreMoveFocus(key) {
+  if (!key) return;
+  const card = document.querySelector('.step-card.active');
+  if (!card) return;
+  card.scrollIntoView({ block: 'nearest' });
+  const el = key === 'pos'
+    ? card.querySelector('.step-pos-input')
+    : card.querySelector(`.step-act[data-move="${key}"]`);
+  // A disabled button can't take focus — that's the top/bottom of the list,
+  // where the run of clicks is over anyway.
+  if (el && !el.disabled) {
+    el.focus();
+    if (typeof el.select === 'function') el.select();
   }
+}
+
+// Core move. focusKey ∈ 'up' | 'down' | 'pos' | null.
+async function wfMoveStep(fromIdx, toIdx, focusKey) {
+  if (!WF.activeWfId) return;
+  const step = WF.steps[fromIdx];
+  if (!step) return;
+
+  // A commit in flight, or a batch open on a DIFFERENT step, means the local
+  // numbers are ahead of the server — settle that first, then re-resolve this
+  // step's position. The intent is carried as a delta so the move still means
+  // the same thing on the far side of the flush.
+  if (WF.moveCommit || (WF.pendingMove && WF.pendingMove.stepId !== step.id)) {
+    const delta = toIdx - fromIdx;
+    await wfFlushMoves();
+    fromIdx = wfStepIdxById(step.id);
+    if (fromIdx < 0) return;
+    toIdx = fromIdx + delta;
+  }
+
+  toIdx = Math.max(0, Math.min(WF.steps.length - 1, toIdx));
+  if (toIdx === fromIdx) { wfRestoreMoveFocus(focusKey); return; }
+
+  // Open the batch on the first move of a run — fromStep must be the number
+  // the SERVER still holds, not an intermediate optimistic one.
+  if (!WF.pendingMove) {
+    WF.pendingMove = { wfId: WF.activeWfId, stepId: step.id, fromStep: step.step_number, timer: null };
+  }
+
+  WF.steps.splice(fromIdx, 1);
+  WF.steps.splice(toIdx, 0, step);
+  WF.steps.forEach((s, i) => { s.step_number = i + 1; });
+
+  WF.activeStepId  = step.id;
+  WF.activeStepIdx = toIdx;
+  renderWfCanvas();
+  wfRestoreMoveFocus(focusKey);
+  wfScheduleMoveCommit();
+}
+
+function wfScheduleMoveCommit() {
+  if (!WF.pendingMove) return;
+  clearTimeout(WF.pendingMove.timer);
+  WF.pendingMove.timer = setTimeout(wfCommitMoves, WF_MOVE_DEBOUNCE_MS);
+}
+
+// Commit any pending reorder now and wait for it. Safe when nothing is pending
+// (resolves immediately) and safe re-entrantly (returns the in-flight commit
+// rather than starting a second one).
+function wfFlushMoves() {
+  if (WF.moveCommit) return WF.moveCommit;
+  if (!WF.pendingMove) return Promise.resolve();
+  clearTimeout(WF.pendingMove.timer);
+  return wfCommitMoves();
+}
+
+function wfCommitMoves() {
+  if (WF.moveCommit) return WF.moveCommit;
+  const pending = WF.pendingMove;
+  if (!pending) return Promise.resolve();
+  clearTimeout(pending.timer);
+  WF.pendingMove = null;
+
+  const idx    = wfStepIdxById(pending.stepId);
+  const toStep = idx >= 0 ? idx + 1 : null;
+
+  // Net-zero batch (moved down then back up) — nothing for the server to do,
+  // and the local order already matches it.
+  if (toStep === null || toStep === pending.fromStep) {
+    renderWfCanvas();
+    return Promise.resolve();
+  }
+
+  WF.moveCommit = (async () => {
+    try {
+      const r = await api(`/workflows/${pending.wfId}/steps/reorder`, 'PATCH',
+                          { fromStep: pending.fromStep, toStep });
+      // Re-sync even though the local ORDER is already right: the server's
+      // branch-target remap rewrites step CONFIGS, so local copies are stale.
+      if (WF.activeWfId === pending.wfId) await _loadWfSteps(pending.wfId, true);
+      wfShowRemapSummary(r?.remap);
+    } catch (e) {
+      Swal.fire('Error', e.message, 'error');
+      if (WF.activeWfId === pending.wfId) await _loadWfSteps(pending.wfId, true);
+    } finally {
+      WF.moveCommit = null;
+    }
+  })();
+  return WF.moveCommit;
+}
+
+function wfStepMove(idx, dir) {
+  return wfMoveStep(idx, idx + dir, dir < 0 ? 'up' : 'down');
+}
+
+// "to #N" box. An explicit position is a deliberate act, so it commits at once
+// rather than waiting out the debounce.
+async function wfStepMoveTo(idx, value) {
+  const pos = parseInt(value, 10);
+  if (!Number.isFinite(pos)) { renderWfCanvas(); wfRestoreMoveFocus('pos'); return; }
+  const to = Math.max(1, Math.min(WF.steps.length, pos)) - 1;
+  if (to === idx) { renderWfCanvas(); wfRestoreMoveFocus('pos'); return; }
+  await wfMoveStep(idx, to, 'pos');
+  await wfFlushMoves();
+}
+
+// Alt+↑ / Alt+↓ moves the selected step from anywhere on the page.
+function wfInitReorderKeys() {
+  if (window._wfReorderKeys) return;
+  window._wfReorderKeys = true;
+  document.addEventListener('keydown', e => {
+    if (!subPageActive || !e.altKey || e.ctrlKey || e.metaKey) return;
+    if (WF.activeStepIdx === null || WF.editingNew) return;
+    if (e.key === 'ArrowUp')   { e.preventDefault(); wfStepMove(WF.activeStepIdx, -1); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); wfStepMove(WF.activeStepIdx,  1); }
+  });
 }
 
 // Branch-target remap slice — after any renumbering op, the server rewrites
@@ -2794,6 +3048,10 @@ function wfExecStatusBadge(status) {
 // workflow's test_input (string or parsed object per mysql2), else {}.
 async function wfRunWorkflow(prefill) {
   if (!WF.activeWf) return;
+
+  // The server executes the DB order — land any pending reorder first so the
+  // run matches what the canvas is showing.
+  await wfFlushMoves();
 
   // Inactive guard — server would 409 anyway; save the round-trip.
   if (!WF.activeWf.active) {
@@ -3732,6 +3990,7 @@ async function init() {
   subPageActive = true;
   declareTopbar();
   initPanelResize();
+  wfInitReorderKeys();
   // Load FUNCTIONS first — wfRenderConfigFields needs it when a step is
   // selected, and the user may select a step before loadWorkflows completes.
   // CREDENTIALS loaded in parallel — only used when a webhook step editor
@@ -3758,6 +4017,8 @@ function onShow() {
 
 function onHide() {
   subPageActive = false;
+  // Don't strand an un-sent reorder when the user navigates away.
+  wfFlushMoves();
   // Stop polling — saves an API round-trip every 5s when invisible.
   stopWfExecPolling();
 }
@@ -3793,6 +4054,7 @@ window.wfNew                    = wfNew;
 window.wfStepNew                = wfStepNew;
 window.wfStepDelete             = wfStepDelete;
 window.wfStepMove               = wfStepMove;
+window.wfStepMoveTo             = wfStepMoveTo;
 window.wfSelectStep             = wfSelectStep;
 window.wfStepSave               = wfStepSave;
 window.wfStepCancel             = wfStepCancel;

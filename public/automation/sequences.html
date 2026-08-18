@@ -280,6 +280,26 @@
     .step-act:hover { background: var(--border); }
     .step-act.danger:hover { background: #fee2e2; border-color: #fca5a5; color: var(--red); }
     .step-act:disabled { opacity: 0.3; cursor: not-allowed; }
+    .step-act:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+    /* ── Reorder controls ── */
+    .step-pos-wrap {
+      display: flex; align-items: center; gap: 4px; margin-left: 4px;
+      font-size: 11px; color: var(--muted); white-space: nowrap;
+    }
+    .step-pos-input {
+      width: 48px; padding: 2px 4px; font-size: 11px; text-align: center;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: var(--surface); color: var(--text);
+    }
+    .step-pos-input:focus { outline: none; border-color: var(--blue); }
+
+    .reorder-pending {
+      align-self: flex-start; display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: #b45309; background: #fffbeb;
+      border: 1px solid #fde68a; border-radius: 6px;
+      padding: 4px 9px; margin-bottom: 8px;
+    }
 
     .add-step-btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -808,6 +828,26 @@ const SEQ = {
   showInactive: false,
   activeTemplateId: null, activeTemplate: null, steps: [],
   activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
+  // Reorder slice — the selected step is anchored by its DB id, NOT by its
+  // array index. Any reorder/insert/delete renumbers step_number and shuffles
+  // indices, so an index-only selection silently ends up pointing at a
+  // different step: the canvas highlighted whatever slid into the old slot
+  // while the editor pane still showed the moved step, and Save then PUT the
+  // open editor's payload onto the wrong step_number. activeStepId is the
+  // anchor; activeStepIdx is re-derived from it after every steps reload
+  // (seqSyncActiveStep). Mirrors WF.activeStepId in workflows.html.
+  activeStepId: null,
+  // Pending optimistic reorder, not yet sent:
+  //   { templateId, stepId, fromStep, timer }
+  // fromStep is the step's SERVER-side number when the batch opened, so a run
+  // of up/down clicks coalesces into ONE {fromStep,toStep} PATCH.
+  pendingMove: null,
+  // In-flight commit promise — non-null means the server has not yet caught up
+  // with the local order; anything reading or writing step_number awaits it.
+  moveCommit: null,
+  // Template ids already warned about live enrollments this session, so the
+  // warning fires once per template rather than on every nudge.
+  reorderWarned: {},
   // Original action_config captured (deep-cloned) at edit-tab open. The
   // metadata-driven internal_function form can only render/gather keys in
   // meta.params MINUS SEQ_HIDDEN_PARAMS, so keys outside that set — `extra`
@@ -1150,6 +1190,11 @@ function seqTitleText(t) {
 }
 
 async function selectSeqTemplate(id) {
+  // Commit any pending reorder against the OUTGOING template before
+  // SEQ.activeTemplateId changes — the commit targets pendingMove.templateId,
+  // but the re-sync it does afterwards would otherwise race the incoming one.
+  await seqFlushMoves();
+
   // Reset enrollments state for the new template.
   stopSeqEnrollPolling();
   SEQENROLL.offset = 0;
@@ -1158,6 +1203,7 @@ async function selectSeqTemplate(id) {
   SEQ.activeTemplateId = id;
   SEQ.activeTemplate   = SEQ.templates.find(t => t.id === id);
   SEQ.activeStepIdx    = null;
+  SEQ.activeStepId     = null;
   renderSeqList();
   const t = document.getElementById('seq-canvas-title');
   t.textContent = seqTitleText(SEQ.activeTemplate);
@@ -1173,8 +1219,21 @@ async function selectSeqTemplate(id) {
   }
 }
 
+// Public entry point for (re)loading steps. Any reload must first commit a
+// pending optimistic reorder, otherwise the fetch clobbers the un-sent local
+// order and the user's moves silently vanish. Putting the flush HERE covers
+// every reload path in this file for free (save, delete, capture arm/disarm,
+// onRefresh); the only extra flushes needed are on paths that send a
+// step_number to the server without reloading first.
 async function loadSeqSteps(id) {
-  document.getElementById('seq-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i></div>';
+  await seqFlushMoves();
+  return _loadSeqSteps(id);
+}
+
+// silent = skip the spinner. Used by the reorder commit's re-sync, which would
+// otherwise blank the whole canvas after every move.
+async function _loadSeqSteps(id, silent) {
+  if (!silent) document.getElementById('seq-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i></div>';
   try {
     const data = await api(`/sequences/templates/${id}`);
     // Capture slice — the single GET is SELECT *, so refresh the active
@@ -1189,10 +1248,23 @@ async function loadSeqSteps(id) {
       fire_guard:    typeof s.fire_guard === 'string'    ? JSON.parse(s.fire_guard)    : s.fire_guard,
       error_policy:  typeof s.error_policy === 'string'  ? JSON.parse(s.error_policy)  : s.error_policy,
     }));
-    renderSeqCanvas();
+    seqSyncActiveStep();
+    seqRenderCanvasKeepFocus();
   } catch (e) {
     document.getElementById('seq-canvas-body').innerHTML = `<div class="empty-state"><p style="color:var(--red)">${esc(e.message)}</p></div>`;
   }
+}
+
+// Re-derive activeStepIdx from the anchored step id after a steps reload. If
+// the anchored step is gone (deleted here or by another session) the selection
+// is dropped rather than left pointing at a stranger.
+function seqSyncActiveStep() {
+  if (SEQ.activeStepId == null) return;
+  const i = SEQ.steps.findIndex(s => s.id === SEQ.activeStepId);
+  if (i >= 0) { SEQ.activeStepIdx = i; return; }
+  SEQ.activeStepId  = null;
+  SEQ.activeStepIdx = null;
+  if (!SEQ.editingNew) seqClearEditor();
 }
 
 function renderSeqCanvas() {
@@ -1202,6 +1274,9 @@ function renderSeqCanvas() {
     return;
   }
   const items = [];
+  if (SEQ.pendingMove || SEQ.moveCommit) {
+    items.push(`<div class="reorder-pending"><i class="fa-solid fa-spinner spin"></i> Saving new order…</div>`);
+  }
   SEQ.steps.forEach((step, idx) => {
     if (idx > 0) items.push(`<div class="step-connector"><i class="fa-solid fa-arrow-down"></i></div>`);
     items.push(seqStepCardHTML(step, idx));
@@ -1241,17 +1316,29 @@ function seqStepCardHTML(step, idx) {
       </div>
       ${isActive ? `
       <div class="step-card-actions">
-        <button class="step-act" onclick="event.stopPropagation();seqStepMove(${idx},-1)" ${idx === 0 ? 'disabled' : ''}>
+        <button class="step-act" data-move="up" title="Move up (Alt+↑)"
+                onclick="event.stopPropagation();seqStepMove(${idx},-1)" ${idx === 0 ? 'disabled' : ''}>
           <i class="fa-solid fa-arrow-up"></i></button>
-        <button class="step-act" onclick="event.stopPropagation();seqStepMove(${idx},1)" ${idx === SEQ.steps.length - 1 ? 'disabled' : ''}>
+        <button class="step-act" data-move="down" title="Move down (Alt+↓)"
+                onclick="event.stopPropagation();seqStepMove(${idx},1)" ${idx === SEQ.steps.length - 1 ? 'disabled' : ''}>
           <i class="fa-solid fa-arrow-down"></i></button>
-        <button class="step-act danger" onclick="event.stopPropagation();seqStepDelete(${idx})">
+        <span class="step-pos-wrap" onclick="event.stopPropagation()">
+          <span>to&nbsp;#</span>
+          <input class="step-pos-input" type="number" min="1" max="${SEQ.steps.length}" step="1"
+                 value="${step.step_number}" title="Type a position, then Enter"
+                 onclick="event.stopPropagation()"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();event.stopPropagation();seqStepMoveTo(${idx},this.value);}"
+                 onchange="event.stopPropagation();seqStepMoveTo(${idx},this.value)">
+          <span style="opacity:.6">of ${SEQ.steps.length}</span>
+        </span>
+        <button class="step-act danger" style="margin-left:auto" onclick="event.stopPropagation();seqStepDelete(${idx})">
           <i class="fa-solid fa-trash"></i> Delete</button>
       </div>` : ''}</div>`;
 }
 
 function seqSelectStep(idx) {
   SEQ.activeStepIdx = idx;
+  SEQ.activeStepId  = SEQ.steps[idx]?.id ?? null;
   SEQ.editingNew = false;
   renderSeqCanvas();
   seqRenderActiveTab();
@@ -1259,6 +1346,7 @@ function seqSelectStep(idx) {
 
 function seqClearEditor() {
   SEQ.activeStepIdx = null;
+  SEQ.activeStepId  = null;
   document.getElementById('seq-editor-body').innerHTML = '<div class="editor-placeholder"><i class="fa-regular fa-hand-pointer"></i><p>Click a step to edit it.</p></div>';
   document.getElementById('seq-editor-foot').style.display = 'none';
 }
@@ -2441,6 +2529,10 @@ function seqGatherStep() {
 }
 
 async function seqStepSave() {
+  // A pending reorder must land BEFORE this PUT: the local step_number is
+  // already the post-move number, which the server has not applied yet, so
+  // saving first would write this step's payload onto a different step.
+  await seqFlushMoves();
   const payload = seqGatherStep();
   if (!payload) return;
   try {
@@ -2449,6 +2541,7 @@ async function seqStepSave() {
       SEQ.editingNew = false;
     } else {
       const step = SEQ.steps[SEQ.activeStepIdx];
+      if (!step) throw new Error('The step being edited no longer exists — reload and try again.');
       await api(`/sequences/templates/${SEQ.activeTemplateId}/steps/${step.step_number}`, 'PUT', payload);
     }
     await loadSeqSteps(SEQ.activeTemplateId);
@@ -2476,12 +2569,19 @@ function seqStepNew() {
 }
 
 async function seqStepDelete(idx) {
-  const step = SEQ.steps[idx];
+  // Resolve by id across the flush — committing a pending reorder reloads the
+  // steps, so the idx baked into the card's onclick can be stale by then.
+  const stepId = SEQ.steps[idx]?.id ?? null;
+  await seqFlushMoves();
+  const i = stepId != null ? seqStepIdxById(stepId) : idx;
+  const step = SEQ.steps[i];
+  if (!step) return;
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
     await api(`/sequences/templates/${SEQ.activeTemplateId}/steps/${step.step_number}`, 'DELETE');
     SEQ.activeStepIdx = null;
+    SEQ.activeStepId  = null;
     seqClearEditor();
     await loadSeqSteps(SEQ.activeTemplateId);
   } catch (e) {
@@ -2489,14 +2589,200 @@ async function seqStepDelete(idx) {
   }
 }
 
-async function seqStepMove(idx, dir) {
-  const a = SEQ.steps[idx], b = SEQ.steps[idx + dir];
-  try {
-    await api(`/sequences/templates/${SEQ.activeTemplateId}/steps/reorder`, 'PATCH', { fromStep: a.step_number, toStep: b.step_number });
-    await loadSeqSteps(SEQ.activeTemplateId);
-  } catch (e) {
-    Swal.fire('Error', e.message, 'error');
+// ══════════════════════════════════════════════════════════════════
+// STEP REORDER
+//
+// Moves apply to SEQ.steps IMMEDIATELY (optimistic) and the server PATCH is
+// debounced, so a run of up/down clicks coalesces into a single
+// {fromStep,toStep} move instead of N adjacent swaps.
+//
+// Local step_number is renumbered to what the server will converge to, so a
+// pending move is never wrong "in the end" — only wrong RIGHT NOW. Every path
+// that sends a step_number (PUT/DELETE step) or that re-reads steps
+// (loadSeqSteps) awaits seqFlushMoves() first.
+//
+// NOTE the endpoint changed semantics with this slice: it used to SWAP the two
+// step numbers, which is only correct for adjacent steps. It now MOVES and
+// shifts, which is what "to #N" needs.
+// ══════════════════════════════════════════════════════════════════
+
+const SEQ_MOVE_DEBOUNCE_MS = 450;
+
+function seqStepIdxById(id) { return SEQ.steps.findIndex(s => s.id === id); }
+
+// Live enrollments make reordering consequential — warn once per template.
+// Precise about what actually happens: a queued job carries the step's ID
+// (sequenceEngine.executeStep takes stepId), so it still fires the step it was
+// scheduled for; but advanceToNextStep walks by step_number + 1, so what runs
+// AFTER that fire follows the new order.
+async function seqConfirmReorderWithEnrollments() {
+  const tplId = SEQ.activeTemplateId;
+  if (!tplId || SEQ.reorderWarned[tplId]) return true;
+  const n = Number(SEQ.activeTemplate?.active_enrollments || 0);
+  if (n <= 0) { SEQ.reorderWarned[tplId] = true; return true; }
+  const r = await Swal.fire({
+    icon: 'warning',
+    title: `${n} active enrollment${n > 1 ? 's' : ''}`,
+    html: `<div style="text-align:left;font-size:13px;line-height:1.55">
+      <p>Steps that are <b>already scheduled will still fire as intended</b> — a queued
+      job is pinned to the step's ID, not its position.</p>
+      <p style="margin-top:8px">But the sequence advances <b>by position</b>. Once one of
+      those queued steps fires, those enrollments follow the <b>new</b> order from there on
+      — which may repeat a step they already got, or skip one they haven't.</p>
+    </div>`,
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: 'Reorder anyway',
+    confirmButtonColor: '#f59e0b',
+  });
+  if (!r.isConfirmed) return false;
+  SEQ.reorderWarned[tplId] = true;
+  return true;
+}
+
+// Repaint the canvas without stealing focus from a step control the user is
+// still working. The canvas is re-rendered wholesale, so the arrow button under
+// the cursor is destroyed on every move — restoring focus afterwards is what
+// makes clicking the arrow repeatedly actually work.
+function seqRenderCanvasKeepFocus() {
+  const el   = document.activeElement;
+  const card = el && el.closest ? el.closest('.step-card') : null;
+  const key  = !card ? null
+             : (el.dataset && el.dataset.move) ? el.dataset.move
+             : (el.classList && el.classList.contains('step-pos-input')) ? 'pos'
+             : null;
+  renderSeqCanvas();
+  seqRestoreMoveFocus(key);
+}
+
+function seqRestoreMoveFocus(key) {
+  if (!key) return;
+  const card = document.querySelector('.step-card.active');
+  if (!card) return;
+  card.scrollIntoView({ block: 'nearest' });
+  const el = key === 'pos'
+    ? card.querySelector('.step-pos-input')
+    : card.querySelector(`.step-act[data-move="${key}"]`);
+  // A disabled button can't take focus — that's the top/bottom of the list,
+  // where the run of clicks is over anyway.
+  if (el && !el.disabled) {
+    el.focus();
+    if (typeof el.select === 'function') el.select();
   }
+}
+
+// Core move. focusKey ∈ 'up' | 'down' | 'pos' | null.
+async function seqMoveStep(fromIdx, toIdx, focusKey) {
+  if (!SEQ.activeTemplateId) return;
+  const step = SEQ.steps[fromIdx];
+  if (!step) return;
+  if (!(await seqConfirmReorderWithEnrollments())) return;
+
+  // A commit in flight, or a batch open on a DIFFERENT step, means the local
+  // numbers are ahead of the server — settle that first, then re-resolve this
+  // step's position. The intent is carried as a delta so the move still means
+  // the same thing on the far side of the flush.
+  if (SEQ.moveCommit || (SEQ.pendingMove && SEQ.pendingMove.stepId !== step.id)) {
+    const delta = toIdx - fromIdx;
+    await seqFlushMoves();
+    fromIdx = seqStepIdxById(step.id);
+    if (fromIdx < 0) return;
+    toIdx = fromIdx + delta;
+  }
+
+  toIdx = Math.max(0, Math.min(SEQ.steps.length - 1, toIdx));
+  if (toIdx === fromIdx) { seqRestoreMoveFocus(focusKey); return; }
+
+  // Open the batch on the first move of a run — fromStep must be the number
+  // the SERVER still holds, not an intermediate optimistic one.
+  if (!SEQ.pendingMove) {
+    SEQ.pendingMove = { templateId: SEQ.activeTemplateId, stepId: step.id, fromStep: step.step_number, timer: null };
+  }
+
+  SEQ.steps.splice(fromIdx, 1);
+  SEQ.steps.splice(toIdx, 0, step);
+  SEQ.steps.forEach((s, i) => { s.step_number = i + 1; });
+
+  SEQ.activeStepId  = step.id;
+  SEQ.activeStepIdx = toIdx;
+  renderSeqCanvas();
+  seqRestoreMoveFocus(focusKey);
+  seqScheduleMoveCommit();
+}
+
+function seqScheduleMoveCommit() {
+  if (!SEQ.pendingMove) return;
+  clearTimeout(SEQ.pendingMove.timer);
+  SEQ.pendingMove.timer = setTimeout(seqCommitMoves, SEQ_MOVE_DEBOUNCE_MS);
+}
+
+// Commit any pending reorder now and wait for it. Safe when nothing is pending
+// (resolves immediately) and safe re-entrantly (returns the in-flight commit
+// rather than starting a second one).
+function seqFlushMoves() {
+  if (SEQ.moveCommit) return SEQ.moveCommit;
+  if (!SEQ.pendingMove) return Promise.resolve();
+  clearTimeout(SEQ.pendingMove.timer);
+  return seqCommitMoves();
+}
+
+function seqCommitMoves() {
+  if (SEQ.moveCommit) return SEQ.moveCommit;
+  const pending = SEQ.pendingMove;
+  if (!pending) return Promise.resolve();
+  clearTimeout(pending.timer);
+  SEQ.pendingMove = null;
+
+  const idx    = seqStepIdxById(pending.stepId);
+  const toStep = idx >= 0 ? idx + 1 : null;
+
+  // Net-zero batch (moved down then back up) — nothing for the server to do,
+  // and the local order already matches it.
+  if (toStep === null || toStep === pending.fromStep) {
+    renderSeqCanvas();
+    return Promise.resolve();
+  }
+
+  SEQ.moveCommit = (async () => {
+    try {
+      await api(`/sequences/templates/${pending.templateId}/steps/reorder`, 'PATCH',
+                { fromStep: pending.fromStep, toStep });
+      if (SEQ.activeTemplateId === pending.templateId) await _loadSeqSteps(pending.templateId, true);
+    } catch (e) {
+      Swal.fire('Error', e.message, 'error');
+      if (SEQ.activeTemplateId === pending.templateId) await _loadSeqSteps(pending.templateId, true);
+    } finally {
+      SEQ.moveCommit = null;
+    }
+  })();
+  return SEQ.moveCommit;
+}
+
+function seqStepMove(idx, dir) {
+  return seqMoveStep(idx, idx + dir, dir < 0 ? 'up' : 'down');
+}
+
+// "to #N" box. An explicit position is a deliberate act, so it commits at once
+// rather than waiting out the debounce.
+async function seqStepMoveTo(idx, value) {
+  const pos = parseInt(value, 10);
+  if (!Number.isFinite(pos)) { renderSeqCanvas(); seqRestoreMoveFocus('pos'); return; }
+  const to = Math.max(1, Math.min(SEQ.steps.length, pos)) - 1;
+  if (to === idx) { renderSeqCanvas(); seqRestoreMoveFocus('pos'); return; }
+  await seqMoveStep(idx, to, 'pos');
+  await seqFlushMoves();
+}
+
+// Alt+↑ / Alt+↓ moves the selected step from anywhere on the page.
+function seqInitReorderKeys() {
+  if (window._seqReorderKeys) return;
+  window._seqReorderKeys = true;
+  document.addEventListener('keydown', e => {
+    if (!subPageActive || !e.altKey || e.ctrlKey || e.metaKey) return;
+    if (SEQ.activeStepIdx === null || SEQ.editingNew) return;
+    if (e.key === 'ArrowUp')   { e.preventDefault(); seqStepMove(SEQ.activeStepIdx, -1); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); seqStepMove(SEQ.activeStepIdx,  1); }
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -4795,6 +5081,7 @@ async function init() {
   subPageActive = true;
   declareTopbar();
   initPanelResize();
+  seqInitReorderKeys();
   await loadFunctions();
   await loadSequences();
   await loadSeqExtras();
@@ -4817,6 +5104,8 @@ function onShow() {
 
 function onHide() {
   subPageActive = false;
+  // Don't strand an un-sent reorder when the user navigates away.
+  seqFlushMoves();
   stopSeqEnrollPolling();
 }
 
@@ -4851,6 +5140,7 @@ window.seqOpenTypesManager        = seqOpenTypesManager;
 window.seqStepNew                 = seqStepNew;
 window.seqStepDelete              = seqStepDelete;
 window.seqStepMove                = seqStepMove;
+window.seqStepMoveTo              = seqStepMoveTo;
 window.seqSelectStep              = seqSelectStep;
 window.seqStepSave                = seqStepSave;
 window.seqStepCancel              = seqStepCancel;

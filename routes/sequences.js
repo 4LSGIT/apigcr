@@ -13,7 +13,7 @@
 //   PUT    /sequences/templates/:id/steps/:stepNumber   replace step
 //   PATCH  /sequences/templates/:id/steps/:stepNumber   partial update step
 //   DELETE /sequences/templates/:id/steps/:stepNumber   delete + renumber
-//   PATCH  /sequences/templates/:id/steps/reorder       swap two steps
+//   PATCH  /sequences/templates/:id/steps/reorder       move a step / apply full order
 //
 // Enrollments:
 //   POST   /sequences/enroll                           enroll a contact
@@ -345,6 +345,18 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
     const [steps] = await db.query(
       `SELECT * FROM sequence_steps WHERE template_id = ? ORDER BY step_number ASC`, [id]
     );
+
+    // Reorder-safety slice — the editor warns before reordering a template
+    // that has live enrollments. An already-scheduled job is pinned to a step
+    // ID (executeStep takes stepId), so it still fires the step it was queued
+    // for; but advanceToNextStep walks by step_number + 1, so everything
+    // AFTER that fire follows the new order. One indexed COUNT — cheap enough
+    // to always include.
+    const [[enr]] = await db.query(
+      `SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND status = 'active'`,
+      [id]
+    );
+    template.active_enrollments = Number(enr?.n || 0);
 
     // Parse JSON columns for readability
     steps.forEach(s => {
@@ -1714,35 +1726,122 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
   }
 });
 
-// PATCH /sequences/templates/:id/steps/reorder — swap two steps
+// PATCH /sequences/templates/:id/steps/reorder — move a step, or apply a full order
+//
+// Two request shapes:
+//   { fromStep, toStep }  MOVE the step at `fromStep` to position `toStep`;
+//                         every step in between shifts one slot to close the
+//                         gap. THIS USED TO BE A TWO-WAY SWAP. For adjacent
+//                         steps a swap and a move are identical, which is all
+//                         the editor ever sent — but a swap is wrong for any
+//                         longer move ("move to #7"), because it teleports the
+//                         displaced step across everything in between instead
+//                         of shifting them. Now matches the semantics of
+//                         PATCH /workflows/:id/steps/reorder.
+//   { order: [3,1,2] }    Old step numbers in their new order: order[i] lands
+//                         at position i+1. Numbers absent from the array keep
+//                         their current position.
+//
+// Both paths park rows in a +10000 temp range first. uk_template_step is
+// UNIQUE(template_id, step_number), so a shift whose first row lands on a
+// still-occupied slot collides; same convention as the insert-at path above.
 router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, res) => {
   const db         = req.db;
   const templateId = parseInt(req.params.id);
-  const { fromStep, toStep } = req.body;
+  const { fromStep, toStep, order } = req.body;
 
-  if (!fromStep || !toStep) return res.status(400).json({ error: 'fromStep and toStep are required' });
+  if (!Number.isInteger(templateId) || templateId <= 0) {
+    return res.status(400).json({ error: 'Invalid template ID' });
+  }
+
+  const hasMove = fromStep !== undefined && toStep !== undefined;
+  if (!hasMove && !Array.isArray(order)) {
+    return res.status(400).json({ error: 'Must provide either {fromStep, toStep} or {order: array}' });
+  }
 
   try {
-    await db.withTransaction(async (connection) => {
+    const outcome = await db.withTransaction(async (connection) => {
 
-      // Two-pass swap via temp number
-      const temp = 99999;
-      await connection.query(
-        `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-        [temp, templateId, fromStep]
+      const [tplRows] = await connection.query(
+        `SELECT id FROM sequence_templates WHERE id = ?`, [templateId]
       );
-      await connection.query(
-        `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-        [fromStep, templateId, toStep]
-      );
-      await connection.query(
-        `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-        [toStep, templateId, temp]
-      );
+      if (tplRows.length === 0) return { respond: { status: 404, body: { error: 'Template not found' } } };
+
+      // ── Case 1: move fromStep → toStep ────────────────────────
+      if (hasMove) {
+        const from = parseInt(fromStep, 10);
+        const to   = parseInt(toStep, 10);
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < 1) {
+          return { respond: { status: 400, body: { error: 'Invalid fromStep or toStep' } } };
+        }
+        if (from === to) return { moved: null };
+
+        // Vacate `from` FIRST — until it is empty the shift below would land
+        // its first row on a still-occupied slot and hit uk_template_step.
+        const [parked] = await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+          [from + 10000, templateId, from]
+        );
+        if (parked.affectedRows === 0) {
+          return { respond: { status: 404, body: { error: `No step at position ${from}` } } };
+        }
+
+        if (from < to) {
+          // Moving down: pull the in-between steps up. ASC so the lowest
+          // moves first, into the slot `from` just vacated.
+          await connection.query(
+            `UPDATE sequence_steps SET step_number = step_number - 1
+             WHERE template_id = ? AND step_number > ? AND step_number <= ?
+             ORDER BY step_number ASC`,
+            [templateId, from, to]
+          );
+        } else {
+          // Moving up: push the in-between steps down. DESC, same reason.
+          await connection.query(
+            `UPDATE sequence_steps SET step_number = step_number + 1
+             WHERE template_id = ? AND step_number >= ? AND step_number < ?
+             ORDER BY step_number DESC`,
+            [templateId, to, from]
+          );
+        }
+
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+          [to, templateId, from + 10000]
+        );
+
+        return { moved: { from, to } };
+      }
+
+      // ── Case 2: full order array ──────────────────────────────
+      if (!order.length) return { respond: { status: 400, body: { error: 'order array is empty' } } };
+      if (order.some(n => !Number.isInteger(n) || n < 1)) {
+        return { respond: { status: 400, body: { error: 'Invalid step numbers in order array' } } };
+      }
+      if (new Set(order).size !== order.length) {
+        return { respond: { status: 400, body: { error: 'order array contains duplicates' } } };
+      }
+
+      for (const n of order) {
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+          [n + 10000, templateId, n]
+        );
+      }
+      for (let i = 0; i < order.length; i++) {
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+          [i + 1, templateId, order[i] + 10000]
+        );
+      }
+
+      return { moved: { order } };
     });
 
-    res.json({ success: true });
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+    res.json({ success: true, moved: outcome.moved });
   } catch (err) {
+    console.error('[SEQ REORDER STEPS] Failed:', err);
     res.status(500).json({ error: 'Failed to reorder steps', message: err.message });
   }
 });
