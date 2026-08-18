@@ -309,13 +309,37 @@ async function validateStepConfig(db, action_type, action_config) {
 // ─────────────────────────────────────────────────────────────
 
 // GET /sequences/templates
+
+// ─────────────────────────────────────────────────────────────
+// resolveEditTargetVersion — which version do the step-editing routes write?
+//
+// S2 (version plumbing): the published current_version. Only version 1 exists
+// until draft/publish ships, so this is behavior-neutral. Doubles as the
+// template-existence check (returns null when the template does not exist).
+//
+// S4 (draft/publish) replaces THIS FUNCTION'S BODY with ensureDraft — lazy
+// copy-on-first-write of the current version's step rows into a new draft
+// version. Every call site below stays unchanged when that lands.
+// NOTE for S4: several callers below run on the bare pool today (no
+// transaction) — S4 must wrap them in db.withTransaction BEFORE swapping this
+// body to ensureDraft (review D1); a FOR UPDATE on a pooled autocommit
+// connection serializes nothing.
+// ─────────────────────────────────────────────────────────────
+async function resolveEditTargetVersion(dbOrConn, templateId) {
+  const [[row]] = await dbOrConn.query(
+    `SELECT current_version FROM sequence_templates WHERE id = ?`,
+    [templateId]
+  );
+  return row ? row.current_version : null;
+}
+
 router.get('/sequences/templates', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { type, active } = req.query;
 
   try {
     let query  = `SELECT t.*,
-                    (SELECT COUNT(*) FROM sequence_steps WHERE template_id = t.id) AS step_count
+                    (SELECT COUNT(*) FROM sequence_steps WHERE template_id = t.id AND version = t.current_version) AS step_count
                   FROM sequence_templates t WHERE 1=1`;
     const params = [];
 
@@ -343,7 +367,8 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
     if (!template) return res.status(404).json({ error: 'Template not found' });
 
     const [steps] = await db.query(
-      `SELECT * FROM sequence_steps WHERE template_id = ? ORDER BY step_number ASC`, [id]
+      `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
+      [id, template.current_version]
     );
 
     // Reorder-safety slice — the editor warns before reordering a template
@@ -432,6 +457,22 @@ router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
        description || null, active ? 1 : 0,
        toJson(test_input)]
     );
+
+    // Versioning invariant: every published version has a
+    // sequence_template_versions metadata row (migration backfilled v1 for
+    // pre-existing templates; this keeps the invariant for templates created
+    // after it). current_version defaults to 1 via schema. S4 reworks
+    // creation to current_version = 0 (unpublished) inside a transaction —
+    // this seed moves to the publish endpoint then.
+    await db.query(
+      `INSERT INTO sequence_template_versions
+        (template_id, version, name, type, template_condition, description, test_input, published_at, published_by)
+       VALUES (?, 1, ?, ?, ?, ?, ?, NOW(), 'create')`,
+      [result.insertId, name.trim(), typeVal,
+       condition ? JSON.stringify(condition) : null,
+       description || null, toJson(test_input)]
+    );
+
     res.status(201).json({ success: true, templateId: result.insertId, name: name.trim(), type: typeVal });
   } catch (err) {
     res.status(500).json({ error: 'Failed to create template', message: err.message });
@@ -558,7 +599,7 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
       // appt_type_filter / appt_with_filter columns.
       const [tplRows] = await connection.query(
         `SELECT name, type, filters, \`condition\`, description, test_input,
-                captured_input, captured_at
+                captured_input, captured_at, current_version
          FROM sequence_templates WHERE id = ?`,
         [originalId]
       );
@@ -601,14 +642,15 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
       const [steps] = await connection.query(
         `SELECT step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy
          FROM sequence_steps
-         WHERE template_id = ?
+         WHERE template_id = ? AND version = ?
          ORDER BY step_number ASC`,
-        [originalId]
+        [originalId, original.current_version]
       );
 
       if (steps.length > 0) {
         const stepValues = steps.map(s => [
           newTemplateId,
+          1,
           s.step_number,
           s.action_type,
           toJson(s.action_config),
@@ -620,11 +662,23 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
 
         await connection.query(
           `INSERT INTO sequence_steps
-            (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
+            (template_id, version, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
            VALUES ?`,
           [stepValues]
         );
       }
+
+      // Versioning invariant: seed the duplicate's v1 metadata row. Source
+      // content is the SOURCE's published current_version (plan-v2 decision 7;
+      // S4 amends: never-published sources fall back to their draft, and the
+      // duplicate itself lands unpublished at current_version = 0).
+      await connection.query(
+        `INSERT INTO sequence_template_versions
+          (template_id, version, name, type, template_condition, description, test_input, published_at, published_by)
+         VALUES (?, 1, ?, ?, ?, ?, ?, NOW(), 'duplicate')`,
+        [newTemplateId, newName, original.type, toJson(original.condition), original.description, toJson(original.test_input)]
+      );
+
       return { notFound: false, newTemplateId, newName, stepCount: steps.length };
     });
 
@@ -674,31 +728,32 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
-      const [[t]] = await connection.query(`SELECT id FROM sequence_templates WHERE id = ?`, [templateId]);
-      if (!t) { return { notFound: true }; }
+      // Existence check + edit-target version in one (S4: becomes ensureDraft).
+      const editVersion = await resolveEditTargetVersion(connection, templateId);
+      if (editVersion == null) { return { notFound: true }; }
 
       let targetStep = step_number;
       if (!targetStep) {
         const [[maxRow]] = await connection.query(
-          `SELECT MAX(step_number) as max FROM sequence_steps WHERE template_id = ?`, [templateId]
+          `SELECT MAX(step_number) as max FROM sequence_steps WHERE template_id = ? AND version = ?`, [templateId, editVersion]
         );
         targetStep = (maxRow.max || 0) + 1;
       } else {
         // Two-pass shift up
         await connection.query(
-          `UPDATE sequence_steps SET step_number = step_number + 10000 WHERE template_id = ? AND step_number >= ?`,
-          [templateId, targetStep]
+          `UPDATE sequence_steps SET step_number = step_number + 10000 WHERE template_id = ? AND version = ? AND step_number >= ?`,
+          [templateId, editVersion, targetStep]
         );
         await connection.query(
-          `UPDATE sequence_steps SET step_number = step_number - 10000 + 1 WHERE template_id = ? AND step_number >= ?`,
-          [templateId, targetStep + 10000]
+          `UPDATE sequence_steps SET step_number = step_number - 10000 + 1 WHERE template_id = ? AND version = ? AND step_number >= ?`,
+          [templateId, editVersion, targetStep + 10000]
         );
       }
 
       const [result] = await connection.query(
-        `INSERT INTO sequence_steps (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [templateId, targetStep, action_type,
+        `INSERT INTO sequence_steps (template_id, version, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [templateId, editVersion, targetStep, action_type,
          JSON.stringify(action_config), JSON.stringify(timing),
          condition   ? JSON.stringify(condition)   : null,
          fire_guard  ? JSON.stringify(fire_guard)  : null,
@@ -740,25 +795,163 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
   }
 
   try {
+    // Edit-target version (S4: becomes ensureDraft, inside a transaction —
+    // review D1). Also serves as the template-existence check.
+    const editVersion = await resolveEditTargetVersion(db, templateId);
+    if (editVersion == null) return res.status(404).json({ error: 'Template not found' });
+
     const [[step]] = await db.query(
-      `SELECT id FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
+      `SELECT id FROM sequence_steps WHERE template_id = ? AND version = ? AND step_number = ?`,
+      [templateId, editVersion, stepNum]
     );
     if (!step) return res.status(404).json({ error: 'Step not found' });
 
     await db.query(
       `UPDATE sequence_steps SET action_type=?, action_config=?, timing=?, \`condition\`=?, fire_guard=?, error_policy=?, updated_at=NOW()
-       WHERE template_id=? AND step_number=?`,
+       WHERE template_id=? AND version=? AND step_number=?`,
       [action_type, JSON.stringify(action_config), JSON.stringify(timing),
        condition    ? JSON.stringify(condition)   : null,
        fire_guard   ? JSON.stringify(fire_guard)  : null,
        error_policy ? JSON.stringify(error_policy): null,
-       templateId, stepNum]
+       templateId, editVersion, stepNum]
     );
     res.json({ success: true, templateId, stepNumber: stepNum });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update step', message: err.message });
   }
 });
+
+// ─────────────────────────────────────────────────────────────
+// ROUTE-ORDER FIX (2026-08-18): this reorder handler MUST be registered
+// BEFORE the PATCH ':stepNumber' route below. Express matches layers in
+// registration order, and ':stepNumber' happily captures the literal path
+// segment 'reorder' — which is exactly what happened from the day this
+// route shipped: it was registered at the bottom of the file, every
+// PATCH .../steps/reorder landed in the :stepNumber handler, matched no
+// updatable field, and 400ed with "Nothing to update". Sequence step
+// reorder was therefore dead in production until this move.
+// tests/sequences.routeOrder.test.js pins the ordering.
+// (Same class of bug as the /d/:token/respond ordering fix.)
+// ─────────────────────────────────────────────────────────────
+// PATCH /sequences/templates/:id/steps/reorder — move a step, or apply a full order
+//
+// Two request shapes:
+//   { fromStep, toStep }  MOVE the step at `fromStep` to position `toStep`;
+//                         every step in between shifts one slot to close the
+//                         gap. THIS USED TO BE A TWO-WAY SWAP. For adjacent
+//                         steps a swap and a move are identical, which is all
+//                         the editor ever sent — but a swap is wrong for any
+//                         longer move ("move to #7"), because it teleports the
+//                         displaced step across everything in between instead
+//                         of shifting them. Now matches the semantics of
+//                         PATCH /workflows/:id/steps/reorder.
+//   { order: [3,1,2] }    Old step numbers in their new order: order[i] lands
+//                         at position i+1. Numbers absent from the array keep
+//                         their current position.
+//
+// Both paths park rows in a +10000 temp range first. uk_template_step is
+// UNIQUE(template_id, step_number), so a shift whose first row lands on a
+// still-occupied slot collides; same convention as the insert-at path above.
+router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, res) => {
+  const db         = req.db;
+  const templateId = parseInt(req.params.id);
+  const { fromStep, toStep, order } = req.body;
+
+  if (!Number.isInteger(templateId) || templateId <= 0) {
+    return res.status(400).json({ error: 'Invalid template ID' });
+  }
+
+  const hasMove = fromStep !== undefined && toStep !== undefined;
+  if (!hasMove && !Array.isArray(order)) {
+    return res.status(400).json({ error: 'Must provide either {fromStep, toStep} or {order: array}' });
+  }
+
+  try {
+    const outcome = await db.withTransaction(async (connection) => {
+
+      // Existence check + edit-target version in one (S4: becomes ensureDraft).
+      const editVersion = await resolveEditTargetVersion(connection, templateId);
+      if (editVersion == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
+
+      // ── Case 1: move fromStep → toStep ────────────────────────
+      if (hasMove) {
+        const from = parseInt(fromStep, 10);
+        const to   = parseInt(toStep, 10);
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < 1) {
+          return { respond: { status: 400, body: { error: 'Invalid fromStep or toStep' } } };
+        }
+        if (from === to) return { moved: null };
+
+        // Vacate `from` FIRST — until it is empty the shift below would land
+        // its first row on a still-occupied slot and hit uk_template_step.
+        const [parked] = await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND version = ? AND step_number = ?`,
+          [from + 10000, templateId, editVersion, from]
+        );
+        if (parked.affectedRows === 0) {
+          return { respond: { status: 404, body: { error: `No step at position ${from}` } } };
+        }
+
+        if (from < to) {
+          // Moving down: pull the in-between steps up. ASC so the lowest
+          // moves first, into the slot `from` just vacated.
+          await connection.query(
+            `UPDATE sequence_steps SET step_number = step_number - 1
+             WHERE template_id = ? AND version = ? AND step_number > ? AND step_number <= ?
+             ORDER BY step_number ASC`,
+            [templateId, editVersion, from, to]
+          );
+        } else {
+          // Moving up: push the in-between steps down. DESC, same reason.
+          await connection.query(
+            `UPDATE sequence_steps SET step_number = step_number + 1
+             WHERE template_id = ? AND version = ? AND step_number >= ? AND step_number < ?
+             ORDER BY step_number DESC`,
+            [templateId, editVersion, to, from]
+          );
+        }
+
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND version = ? AND step_number = ?`,
+          [to, templateId, editVersion, from + 10000]
+        );
+
+        return { moved: { from, to } };
+      }
+
+      // ── Case 2: full order array ──────────────────────────────
+      if (!order.length) return { respond: { status: 400, body: { error: 'order array is empty' } } };
+      if (order.some(n => !Number.isInteger(n) || n < 1)) {
+        return { respond: { status: 400, body: { error: 'Invalid step numbers in order array' } } };
+      }
+      if (new Set(order).size !== order.length) {
+        return { respond: { status: 400, body: { error: 'order array contains duplicates' } } };
+      }
+
+      for (const n of order) {
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND version = ? AND step_number = ?`,
+          [n + 10000, templateId, editVersion, n]
+        );
+      }
+      for (let i = 0; i < order.length; i++) {
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND version = ? AND step_number = ?`,
+          [i + 1, templateId, editVersion, order[i] + 10000]
+        );
+      }
+
+      return { moved: { order } };
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+    res.json({ success: true, moved: outcome.moved });
+  } catch (err) {
+    console.error('[SEQ REORDER STEPS] Failed:', err);
+    res.status(500).json({ error: 'Failed to reorder steps', message: err.message });
+  }
+});
+
 
 // PATCH /sequences/templates/:id/steps/:stepNumber — partial update
 router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req, res) => {
@@ -779,6 +972,13 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
 
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
 
+  // Edit-target version (S4: becomes ensureDraft, inside a transaction —
+  // review D1). Also serves as the template-existence check this route
+  // historically lacked (a missing template previously fell through to
+  // "Step not found").
+  const patchVersion = await resolveEditTargetVersion(db, templateId);
+  if (patchVersion == null) return res.status(404).json({ error: 'Template not found' });
+
   // Timing-extensions slice — if `timing` is being updated, validate it.
   if (timing !== undefined) {
     const v = validateTiming(timing);
@@ -794,8 +994,8 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
 
     if (typeToCheck === undefined || configToCheck === undefined) {
       const [[existing]] = await db.query(
-        `SELECT action_type, action_config FROM sequence_steps WHERE template_id = ? AND step_number = ?`,
-        [templateId, stepNum]
+        `SELECT action_type, action_config FROM sequence_steps WHERE template_id = ? AND version = ? AND step_number = ?`,
+        [templateId, patchVersion, stepNum]
       );
       if (!existing) return res.status(404).json({ error: 'Step not found' });
       if (typeToCheck === undefined) typeToCheck = existing.action_type;
@@ -810,10 +1010,10 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
-  params.push(templateId, stepNum);
+  params.push(templateId, patchVersion, stepNum);
   try {
     await db.query(
-      `UPDATE sequence_steps SET ${updates.join(', ')}, updated_at=NOW() WHERE template_id=? AND step_number=?`,
+      `UPDATE sequence_steps SET ${updates.join(', ')}, updated_at=NOW() WHERE template_id=? AND version=? AND step_number=?`,
       params
     );
     res.json({ success: true, templateId, stepNumber: stepNum });
@@ -831,18 +1031,24 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
+      // Edit-target version (S4: becomes ensureDraft).
+      const editVersion = await resolveEditTargetVersion(connection, templateId);
+      if (editVersion == null) { return { notFound: true }; }
+
       const [[step]] = await connection.query(
-        `SELECT id FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
+        `SELECT id FROM sequence_steps WHERE template_id = ? AND version = ? AND step_number = ?`,
+        [templateId, editVersion, stepNum]
       );
       if (!step) { return { notFound: true }; }
 
       await connection.query(
-        `DELETE FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
+        `DELETE FROM sequence_steps WHERE template_id = ? AND version = ? AND step_number = ?`,
+        [templateId, editVersion, stepNum]
       );
       await connection.query(
         `UPDATE sequence_steps SET step_number = step_number - 1
-         WHERE template_id = ? AND step_number > ? ORDER BY step_number ASC`,
-        [templateId, stepNum]
+         WHERE template_id = ? AND version = ? AND step_number > ? ORDER BY step_number ASC`,
+        [templateId, editVersion, stepNum]
       );
       return { notFound: false };
     });
@@ -1608,7 +1814,7 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
   try {
     // 1) Load enrollment
     const [[en]] = await db.query(
-      `SELECT id, template_id, status, current_step FROM sequence_enrollments WHERE id = ?`,
+      `SELECT id, template_id, template_version, status, current_step FROM sequence_enrollments WHERE id = ?`,
       [id]
     );
     if (!en) return res.status(404).json({ error: 'Enrollment not found' });
@@ -1650,10 +1856,12 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
 
     // 4) Load the step row. If absent, complete the enrollment (mirrors
     //    advanceToNextStep terminal branch).
+    // PINNED-READ: recover must resume on the enrollment's pinned version —
+    // recovering onto current_version could resurrect a renumbered step.
     const [[step]] = await db.query(
       `SELECT id, step_number, timing FROM sequence_steps
-        WHERE template_id = ? AND step_number = ? LIMIT 1`,
-      [en.template_id, targetStepNumber]
+        WHERE template_id = ? AND version = ? AND step_number = ? LIMIT 1`,
+      [en.template_id, en.template_version, targetStepNumber]
     );
     if (!step) {
       await db.query(
@@ -1723,126 +1931,6 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
   } catch (err) {
     console.error('[POST /sequences/enrollments/:id/recover] failed:', err);
     return res.status(500).json({ error: 'Failed to recover enrollment', message: err.message });
-  }
-});
-
-// PATCH /sequences/templates/:id/steps/reorder — move a step, or apply a full order
-//
-// Two request shapes:
-//   { fromStep, toStep }  MOVE the step at `fromStep` to position `toStep`;
-//                         every step in between shifts one slot to close the
-//                         gap. THIS USED TO BE A TWO-WAY SWAP. For adjacent
-//                         steps a swap and a move are identical, which is all
-//                         the editor ever sent — but a swap is wrong for any
-//                         longer move ("move to #7"), because it teleports the
-//                         displaced step across everything in between instead
-//                         of shifting them. Now matches the semantics of
-//                         PATCH /workflows/:id/steps/reorder.
-//   { order: [3,1,2] }    Old step numbers in their new order: order[i] lands
-//                         at position i+1. Numbers absent from the array keep
-//                         their current position.
-//
-// Both paths park rows in a +10000 temp range first. uk_template_step is
-// UNIQUE(template_id, step_number), so a shift whose first row lands on a
-// still-occupied slot collides; same convention as the insert-at path above.
-router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, res) => {
-  const db         = req.db;
-  const templateId = parseInt(req.params.id);
-  const { fromStep, toStep, order } = req.body;
-
-  if (!Number.isInteger(templateId) || templateId <= 0) {
-    return res.status(400).json({ error: 'Invalid template ID' });
-  }
-
-  const hasMove = fromStep !== undefined && toStep !== undefined;
-  if (!hasMove && !Array.isArray(order)) {
-    return res.status(400).json({ error: 'Must provide either {fromStep, toStep} or {order: array}' });
-  }
-
-  try {
-    const outcome = await db.withTransaction(async (connection) => {
-
-      const [tplRows] = await connection.query(
-        `SELECT id FROM sequence_templates WHERE id = ?`, [templateId]
-      );
-      if (tplRows.length === 0) return { respond: { status: 404, body: { error: 'Template not found' } } };
-
-      // ── Case 1: move fromStep → toStep ────────────────────────
-      if (hasMove) {
-        const from = parseInt(fromStep, 10);
-        const to   = parseInt(toStep, 10);
-        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < 1) {
-          return { respond: { status: 400, body: { error: 'Invalid fromStep or toStep' } } };
-        }
-        if (from === to) return { moved: null };
-
-        // Vacate `from` FIRST — until it is empty the shift below would land
-        // its first row on a still-occupied slot and hit uk_template_step.
-        const [parked] = await connection.query(
-          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-          [from + 10000, templateId, from]
-        );
-        if (parked.affectedRows === 0) {
-          return { respond: { status: 404, body: { error: `No step at position ${from}` } } };
-        }
-
-        if (from < to) {
-          // Moving down: pull the in-between steps up. ASC so the lowest
-          // moves first, into the slot `from` just vacated.
-          await connection.query(
-            `UPDATE sequence_steps SET step_number = step_number - 1
-             WHERE template_id = ? AND step_number > ? AND step_number <= ?
-             ORDER BY step_number ASC`,
-            [templateId, from, to]
-          );
-        } else {
-          // Moving up: push the in-between steps down. DESC, same reason.
-          await connection.query(
-            `UPDATE sequence_steps SET step_number = step_number + 1
-             WHERE template_id = ? AND step_number >= ? AND step_number < ?
-             ORDER BY step_number DESC`,
-            [templateId, to, from]
-          );
-        }
-
-        await connection.query(
-          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-          [to, templateId, from + 10000]
-        );
-
-        return { moved: { from, to } };
-      }
-
-      // ── Case 2: full order array ──────────────────────────────
-      if (!order.length) return { respond: { status: 400, body: { error: 'order array is empty' } } };
-      if (order.some(n => !Number.isInteger(n) || n < 1)) {
-        return { respond: { status: 400, body: { error: 'Invalid step numbers in order array' } } };
-      }
-      if (new Set(order).size !== order.length) {
-        return { respond: { status: 400, body: { error: 'order array contains duplicates' } } };
-      }
-
-      for (const n of order) {
-        await connection.query(
-          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-          [n + 10000, templateId, n]
-        );
-      }
-      for (let i = 0; i < order.length; i++) {
-        await connection.query(
-          `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-          [i + 1, templateId, order[i] + 10000]
-        );
-      }
-
-      return { moved: { order } };
-    });
-
-    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
-    res.json({ success: true, moved: outcome.moved });
-  } catch (err) {
-    console.error('[SEQ REORDER STEPS] Failed:', err);
-    res.status(500).json({ error: 'Failed to reorder steps', message: err.message });
   }
 });
 
