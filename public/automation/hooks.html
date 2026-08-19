@@ -3155,6 +3155,16 @@ async function runLiveTest() {
   window.removeTarget      = removeTarget;
   window.viewExecution     = viewExecution;
 
+  // T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
+  // switching to this tab. viewExecution is a Swal modal fetching by id —
+  // tab-independent, no list state needed. Defined inside the IIFE so it
+  // closes over viewExecution directly.
+  window.onFocusRecord = (payload) => {
+    const id = payload && payload.id;
+    if (id == null) return;
+    viewExecution(id);
+  };
+
   window.hookToggleTargetConditions = hookToggleTargetConditions;
   window.hookAddTargetCondition     = hookAddTargetCondition;
   window.hookClearTargetConditions  = hookClearTargetConditions;

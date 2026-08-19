@@ -1219,6 +1219,15 @@ window.onHide        = onHide;
 window.onRefresh     = onRefresh;
 window.onNew         = onNew;
 
+// T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
+// switching to this tab. jobView is a Swal modal fetching by id — no list
+// state needed (its own credential-label fallback covers a cold cache).
+window.onFocusRecord = (payload) => {
+  const id = payload && payload.id;
+  if (id == null) return;
+  jobView(id);
+};
+
 window.loadJobs          = loadJobs;
 window.loadJobsDebounced = loadJobsDebounced;
 window.jobNew            = jobNew;

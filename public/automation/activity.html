@@ -263,7 +263,9 @@
 // Shell communication:
 //   - P.apiSend(...)            — relayed to a.html
 //   - P.setTopbarButtons({...}) — request button visibility
-//   - P.switchSubPage(id)       — programmatic tab switch (row click)
+//   - P.focusSubPageRecord(id, {id}) — tab switch + deep-link to the
+//     clicked record via the target's onFocusRecord hook (T4). Falls back
+//     to P.switchSubPage(id) (tab switch only) on an older shell.
 //
 // Lifecycle hooks exposed on window: onShow, onHide, onRefresh.
 // (onSave / onDelete / onNew not applicable — read-only view.)
@@ -417,6 +419,7 @@ function normWorkflow(r) {
   return {
     source: 'workflow',
     id: r.id,
+    focusId: r.id,   // viewWorkflowExecution(id) — execution id
     name: r.workflow_name || `Workflow #${r.workflow_id}`,
     status: r.status,
     ts: toMs(r.completed_at) || toMs(r.updated_at) || toMs(r.created_at),
@@ -431,6 +434,7 @@ function normJob(r) {
   return {
     source: 'job',
     id: r.id,
+    focusId: r.id,   // jobView(id) — job id
     name: r.name || `Job #${r.id}`,
     status: r.status,
     ts: toMs(r.updated_at) || toMs(r.scheduled_time) || toMs(r.created_at),
@@ -446,6 +450,7 @@ function normHook(r) {
   return {
     source: 'hook',
     id: r.id,
+    focusId: r.id,   // viewExecution(id) — hook execution id
     name: r.hook_name || r.slug || `Hook #${r.hook_id}`,
     status: r.status,
     ts: toMs(r.created_at),
@@ -461,6 +466,11 @@ function normSequence(r) {
   return {
     source: 'sequence',
     id: r.id,
+    // T4 trap T-3: rows come from sequence_step_log, so r.id is a step-log
+    // id — but sequences.html's opener is viewSequenceEnrollment(enrollment_id).
+    // The step-log projection carries enrollment_id (routes/sequences.js
+    // SELECTs l.enrollment_id), so send that.
+    focusId: r.enrollment_id,
     name: r.template_name || `Template #${r.template_id}`,
     status: r.status,
     ts: toMs(r.executed_at),
@@ -484,6 +494,7 @@ function normTrigger(r) {
   return {
     source: 'trigger',
     id: r.id,
+    focusId: r.id,   // tgOpenExecution(id) — trigger execution id
     name: r.event_type || `Trigger #${r.id}`,
     status: r.status,
     ts: toMs(r.created_at),
@@ -717,19 +728,30 @@ function renderFooter(shown, inWindow, cap) {
 
 // ── Row interactions ───────────────────────────────────────────
 //
-// Row click → switch to the source's sub-tab (the shell's switchSubPage
-// is a plain window-level function, so programmatic switching is
-// trivially supported). No deep-link to the specific record — out of
-// scope for Slice 7; the per-row code button shows the raw JSON.
+// Row click → deep-link (T4): switch to the source's sub-tab AND ask it to
+// open its own execution-detail view on this record, via the shell's
+// focusSubPageRecord. The payload id is the row's focusId — the id the
+// TARGET page's opener wants (== r.id everywhere except sequence rows,
+// which send enrollment_id; see normSequence). Each sub-page keeps sole
+// ownership of its detail UI — this is a call path, not a component.
+//
+// Degrades: shell without focusSubPageRecord → plain tab switch (pre-T4
+// behaviour); no tabId at all → raw-JSON modal. The per-row code button
+// (rowDetail) stays as the escape hatch when a deep-link target misbehaves.
 function rowClick(i) {
   const r = window._actRendered?.[i];
   if (!r) return;
-  const tabId = SOURCES[r.source]?.tabId;
-  if (tabId && typeof P.switchSubPage === 'function') {
-    P.switchSubPage(tabId);
-  } else {
-    rowDetail(i); // fallback if shell contract ever changes
+  const tabId   = SOURCES[r.source]?.tabId;
+  const focusId = r.focusId ?? r.id;
+  if (tabId && focusId != null && typeof P.focusSubPageRecord === 'function') {
+    P.focusSubPageRecord(tabId, { id: focusId });
+    return;
   }
+  if (tabId && typeof P.switchSubPage === 'function') {
+    P.switchSubPage(tabId);   // shell predates T4 — degrade to old behaviour
+    return;
+  }
+  rowDetail(i);
 }
 
 function rowDetail(i) {

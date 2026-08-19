@@ -3256,6 +3256,28 @@ window.eiToggleSidebar = eiToggleSidebar;
   window.onSave = onSave; window.onDelete = onDelete;
   window.onRefresh = onRefresh; window.onNew = onNew;
 
+  // T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
+  // switching to this tab. Two traps make the obvious call wrong:
+  //   T-1: eiSelect dispatches on activeTab — called from the default
+  //        Suppressions tab it would route the execution id into
+  //        selectSuppression() (wrong record type, no thrown error). Go
+  //        through the tab switcher, never the generic selector.
+  //   T-2: eiSwitchTab awaits confirmDiscardIfDirty() and bails early on a
+  //        kept dirty editor, returning undefined either way — the await
+  //        can't tell us whether the switch happened. We're inside the
+  //        module IIFE, so read activeTab directly after the await; if the
+  //        user chose to keep editing, drop the deep-link silently.
+  // selectExecution fetches by id and its renderExecutionTable() is
+  // cold-safe (empty rows → placeholder), so it's fine to open the drawer
+  // while eiSwitchTab's un-awaited loadExecutions is still in flight.
+  window.onFocusRecord = async (payload) => {
+    const id = payload && payload.id;
+    if (id == null) return;
+    await eiSwitchTab('executions');
+    if (activeTab !== 'executions') return;
+    selectExecution(id);
+  };
+
   (function waitForShell() {
     if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') return init();
     setTimeout(waitForShell, 50);

@@ -5280,6 +5280,18 @@ window.onHide    = onHide;
 window.onRefresh = onRefresh;
 window.onNew     = onNew;
 
+// T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
+// switching to this tab. payload.id is an ENROLLMENT id — Activity's
+// normSequence translates from its step-log rows (trap T-3) because this
+// page's opener is enrollment-keyed. viewSequenceEnrollment is a Swal
+// modal fetching /sequences/enrollments/:id directly — no template
+// selection or list state needed.
+window.onFocusRecord = (payload) => {
+  const id = payload && payload.id;
+  if (id == null) return;
+  viewSequenceEnrollment(id);
+};
+
 // Inline onclick handlers
 window.seqFilter                  = seqFilter;
 window.seqToggleInactive          = seqToggleInactive;

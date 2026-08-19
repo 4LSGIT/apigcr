@@ -4297,6 +4297,16 @@ window.onHide    = onHide;
 window.onRefresh = onRefresh;
 window.onNew     = onNew;
 
+// T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
+// switching to this tab (polling until the page has booted). The execution
+// detail is a Swal modal — tab-independent — and viewWorkflowExecution
+// fetches the record by id, so no list or selection state is needed.
+window.onFocusRecord = (payload) => {
+  const id = payload && payload.id;
+  if (id == null) return;
+  viewWorkflowExecution(id);
+};
+
 // Inline onclick handlers
 window.wfFilter                 = wfFilter;
 window.wfToggleInactive         = wfToggleInactive;

@@ -131,7 +131,7 @@ describe('S4 lifecycle endpoints — wiring', () => {
     // All three fallback sites must use CASE WHEN <row>.version IS NULL.
     const caseShapes = src.match(/CASE WHEN \w+\.version IS NULL THEN \w+\.\\?`condition\\?` ELSE \w+\.template_condition END/g) || [];
     expect(caseShapes.length).toBe(3); // ensureDraft stub, PUT no-op guard, duplicate
-    expect(src).not.toMatch(/COALESCE\(\w+\.template_condition, \w+\.`condition`\)/);
+    expect(src).not.toMatch(/COALESCE\(\s*\w*\.?template_condition/);
   });
 
   test('PUT template writes the versioned condition to the DRAFT version row, not the live column', () => {

@@ -1206,6 +1206,23 @@ function fmtTs(v) {
     }
   };
 
+  // T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
+  // switching to this tab. The execution detail is a PANEL (#tg-exec-detail)
+  // that only exists after tgLoadExecutions renders the Executions tab body —
+  // a cold page has nowhere to write — so mirror tgOpenExecutionFromRule:
+  // switch (skipLoad), load the list, then open. tgOpenExecution fetches the
+  // record by id, so it need not be inside the loaded page of the list.
+  window.onFocusRecord = async (payload) => {
+    const id = payload && payload.id;
+    if (id == null) return;
+    tgSwitchTab('executions', { skipLoad: true });
+    await tgLoadExecutions(true);
+    // If the list fetch failed, tgLoadExecutions rendered its error into the
+    // tab body and #tg-exec-detail was never created — bail rather than throw.
+    if (!E('tg-exec-detail')) return;
+    await tgOpenExecution(id);
+  };
+
   // ── Boot ──
   async function init() {
     try {

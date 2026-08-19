@@ -169,6 +169,9 @@
 //   - window.parent.setTopbarButtons({...})          (button visibility)
 //   - by exposing lifecycle hooks (onShow, onHide, onSave, onDelete,
 //     onRefresh, onNew) on their own window, which the shell calls.
+//   - window.parent.focusSubPageRecord(id, {id: recordId}) — switch to a
+//     sub-page AND ask it to open a specific record via its optional
+//     window.onFocusRecord hook (T4 — Activity row deep-links).
 // ═══════════════════════════════════════════════════════════════
 
 // ── Parent bridges ─────────────────────────────────────────────
@@ -443,8 +446,11 @@ function switchSubPage(id) {
   if (iframe && iframe.dataset.src) {
     iframe.src = iframe.dataset.src;
     delete iframe.dataset.src;
-    // onShow will be called by the sub-page's own init() after it boots.
-    // Nothing more to do here.
+    // NOTE: no boot-ready signal exists on this path. Sub-pages boot via
+    // their own waitForShell() poll, and (triggers.html excepted) their
+    // init() does NOT self-invoke onShow — so nothing tells the shell when
+    // a lazily-loaded page is ready. Anything that must reach the page
+    // post-boot has to poll for it (see drainPendingFocus below).
     return;
   }
 
@@ -469,6 +475,60 @@ function activeSubPageWindow() {
   if (!activeSubPageId) return null;
   const iframe = document.getElementById(`subpage-${activeSubPageId}`);
   return (iframe && iframe.contentWindow) ? iframe.contentWindow : null;
+}
+
+// ── Deep-link focus (T4) ───────────────────────────────────────
+//
+// focusSubPageRecord(id, payload): switch to sub-page `id` and ask it to
+// open a specific record by calling its window.onFocusRecord(payload)
+// hook. Payload shape today: { id } — the record id the TARGET page's own
+// opener expects (Activity translates per source; e.g. sequence rows send
+// enrollment_id, not the step-log row id). Object form so future callers
+// can extend it without breaking the seven existing hooks.
+//
+// switchSubPage() returns before a lazily-loaded sub-page has booted, and
+// nothing signals boot completion (see the note inside switchSubPage), so
+// the drain polls for the target's onFocusRecord hook — mirroring the
+// sub-pages' own waitForShell() idiom.
+let pendingFocus = {};   // subPageId → payload
+
+function focusSubPageRecord(id, payload) {
+  const page = SUB_PAGES.find(p => p.id === id);
+  if (!page) return false;
+  // Set BEFORE the switch — switchSubPage may synchronously invoke onShow
+  // on an already-booted page. try/finally: if that onShow throws, the
+  // exception propagates out of switchSubPage (callSubPageHook doesn't
+  // guard hooks) — the drain must still run or the payload sits stale.
+  pendingFocus[id] = payload;
+  try { switchSubPage(id); }
+  finally { drainPendingFocus(id); }
+  return true;
+}
+
+function drainPendingFocus(id, tries = 0) {
+  if (!(id in pendingFocus)) return;
+  // User navigated elsewhere mid-poll — drop the payload rather than pop a
+  // detail view on a tab they are no longer looking at.
+  if (activeSubPageId !== id) { delete pendingFocus[id]; return; }
+  const iframe = document.getElementById(`subpage-${id}`);
+  let fn = null;
+  try { fn = iframe && iframe.contentWindow && iframe.contentWindow.onFocusRecord; }
+  catch { fn = null; }   // cross-origin edge case; shouldn't happen same-origin
+  if (typeof fn === 'function') {
+    const payload = pendingFocus[id];
+    delete pendingFocus[id];
+    try { fn(payload); }
+    catch (e) { console.error(`[shell] onFocusRecord(${id}) threw:`, e); }
+    return;
+  }
+  // ~5s ceiling (100 × 50ms). MUST drop the payload on timeout — a retained
+  // one would fire stale the next time the user opens that tab by hand.
+  if (tries > 100) {
+    delete pendingFocus[id];
+    console.warn(`[shell] focus target '${id}' never exposed onFocusRecord`);
+    return;
+  }
+  setTimeout(() => drainPendingFocus(id, tries + 1), 50);
 }
 
 // ── Topbar button state ────────────────────────────────────────
@@ -508,6 +568,7 @@ window.fdEmailFromSelectHtml   = fdEmailFromSelectHtml;
 window.fdToggleLineWidget      = fdToggleLineWidget;
 window.fdParamSourceDatalistHtml = fdParamSourceDatalistHtml;
 window.setTopbarButtons    = setTopbarButtons;
+window.focusSubPageRecord  = focusSubPageRecord;
 window.esc                 = esc; // useful for sub-pages that want to match helper output
 
 // ── Boot ───────────────────────────────────────────────────────

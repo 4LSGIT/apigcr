@@ -3250,6 +3250,21 @@ window.piToggleSidebar = piToggleSidebar;
   window.onSave = onSave; window.onDelete = onDelete;
   window.onRefresh = onRefresh; window.onNew = onNew;
 
+  // T4 — Activity deep-link (mirror of emailIngest.html's hook — see the
+  // trap notes there). T-1: piSelect dispatches on activeTab, so go through
+  // piSwitchTab, never the generic selector. T-2: piSwitchTab returns
+  // undefined whether or not a dirty editor blocked the switch, so read the
+  // module's activeTab after the await and drop the deep-link if the user
+  // kept editing. selectExecution fetches by id; renderExecutionTable() is
+  // cold-safe.
+  window.onFocusRecord = async (payload) => {
+    const id = payload && payload.id;
+    if (id == null) return;
+    await piSwitchTab('executions');
+    if (activeTab !== 'executions') return;
+    selectExecution(id);
+  };
+
   (function waitForShell() {
     if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') return init();
     setTimeout(waitForShell, 50);
