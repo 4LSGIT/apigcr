@@ -171,6 +171,9 @@ function bootPage(opts = {}) {
       if (!window.CSS) window.CSS = { escape: (v) => String(v).replace(/[^a-zA-Z0-9_\u00A0-\uFFFF-]/g, (ch) => '\\' + ch) };
       window.apiSend = apiSend;
       if (opts.firmData !== null) window.firmData = opts.firmData !== undefined ? opts.firmData : FIRM_DATA;
+      // jsdom top-level: window.parent === window, so this IS the parent shell
+      // (case.html) as far as yc-forms step 7 and tpl6's parentCase() see it.
+      if (opts.entityData) window.entityData = opts.entityData;
     },
   });
   DOMS.push(dom);
@@ -620,6 +623,13 @@ describe('Q tpl6 (case_details): hooks file ≡ code', () => {
     };
   }
 
+  // NB (2026-08-19): the code path now GUARDS the chapter mirror (see the S
+  // block below) while the legacy fixture — a frozen copy of the deleted
+  // /forms/hooks/case_details_bk2.js, kept as the historical migration proof —
+  // does not. The two still agree here only because CASE_ROW.case_subtype is
+  // '' (unset ⇒ derive). Give CASE_ROW a non-chapter subtype and this equality
+  // legitimately breaks; assert the guard in the S block, not by editing the
+  // legacy fixture.
   test('trustee→341-link, docket split, chapter mirror identical', async () => {
     const [a, b] = await renderBoth();
     const ra = driveAndBuild(a);
@@ -632,5 +642,87 @@ describe('Q tpl6 (case_details): hooks file ≡ code', () => {
     if ('case_chapter' in rb.payload) {
       expect(rb.payload.case_subtype).toBe('Chapter 7');
     }
+  }, 30000);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// S — tpl6 chapter→subtype guard (2026-08-19, case 08kulmDV)
+//
+// case_chapter does not determine case_subtype: an Adversary Proceeding or a
+// Creditor matter legitimately carries case_chapter='13'. The unconditional
+// mirror rewrote such a case's subtype to 'Chapter 13' and moved it onto the
+// Ch13 pipeline. The mirror now fires only when the STORED subtype is unset or
+// already chapter-shaped, and writes nothing at all when neither the parent
+// shell nor the loaded row can tell us what it is.
+//
+// Mirrors the hand-built public/forms/casedetails-bk.html guard — keep the two
+// in step.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('S tpl6 chapter→subtype guard', () => {
+  function codeDef() {
+    const d = JSON.parse(JSON.stringify(TPL6_DEF));
+    delete d.hooks;
+    d.code = TPL6_CODE;
+    return d;
+  }
+
+  // Type a chapter and build the payload. Nothing else is driven, so the only
+  // keys under test are case_chapter / case_subtype.
+  function typeChapter(p, value) {
+    const ch = p.doc.querySelector('[name="case_chapter"]');
+    ch.value = value;
+    ch.dispatchEvent(new p.win.Event('change', { bubbles: true }));
+    return p.win.ycForm._buildPatchPayload();
+  }
+
+  const withSubtype = (sub) => Object.assign({}, CASE_ROW, { case_subtype: sub });
+
+  test('unset subtype → derives (unchanged behaviour)', async () => {
+    const p = await ready(bootPage({ definition: codeDef(), caseRow: withSubtype('') }));
+    const payload = typeChapter(p, '7');
+    expect(payload.case_chapter).toBe('7');
+    expect(payload.case_subtype).toBe('Chapter 7');
+  }, 30000);
+
+  test('chapter-shaped subtype → re-derives', async () => {
+    const p = await ready(bootPage({ definition: codeDef(), caseRow: withSubtype('Chapter 13') }));
+    const payload = typeChapter(p, '7');
+    expect(payload.case_subtype).toBe('Chapter 7');
+  }, 30000);
+
+  test('non-chapter subtype → case_subtype is NOT written, chapter still is', async () => {
+    const p = await ready(bootPage({ definition: codeDef(),
+      caseRow: withSubtype('Adversary Proceeding') }));
+    const payload = typeChapter(p, '13');
+    expect(payload.case_chapter).toBe('13');
+    expect('case_subtype' in payload).toBe(false);
+  }, 30000);
+
+  test('clearing the chapter on a non-chapter subtype leaves the subtype alone', async () => {
+    const p = await ready(bootPage({ definition: codeDef(),
+      caseRow: Object.assign(withSubtype('Creditor'), { case_chapter: '13' }) }));
+    const payload = typeChapter(p, '');
+    expect(payload.case_chapter).toBe('');
+    expect('case_subtype' in payload).toBe(false);
+  }, 30000);
+
+  test('parent shell is the source when present (case.html mutates it in place)', async () => {
+    // entityData present ⇒ yc-forms step 7 takes the parent fast-path, so this
+    // object is BOTH parentCase() and _liveData — the live-shell reality.
+    const p = await ready(bootPage({ definition: codeDef(),
+      entityData: { case: Object.assign({}, CASE_ROW, { case_subtype: 'Adversary Proceeding' }) } }));
+    expect('case_subtype' in typeChapter(p, '13')).toBe(false);
+  }, 30000);
+
+  test('parent row for a DIFFERENT case is ignored; the loaded row wins', async () => {
+    // Wrong-entity guard: the shell has some other case open with a
+    // non-chapter subtype. Step 7 rejects it too and falls back to the API,
+    // so the derive must follow the fetched row, not the parent's.
+    const p = await ready(bootPage({ definition: codeDef(),
+      caseRow: withSubtype('Chapter 13'),
+      entityData: { case: { case_id: 'OTHER99', case_subtype: 'Adversary Proceeding' } } }));
+    const payload = typeChapter(p, '7');
+    expect(payload.case_subtype).toBe('Chapter 7');
   }, 30000);
 });

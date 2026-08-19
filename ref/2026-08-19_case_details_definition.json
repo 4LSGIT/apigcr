@@ -1,0 +1,499 @@
+{
+  "code": "/*\n * case_details (template 6) per-form code — Slice 2.6. Successor to\n * /forms/hooks/case_details_bk2.js (file deleted from the repo; this code\n * lives in the definition, restorable from template history / git history).\n * Body was the hook file's IIFE verbatim — behavioural equivalence is\n * test-enforced (tests/formRender.slice26.test.js).\n *\n * The three behaviours with no schema representation:\n *   B. Trustee change rewrites hidden case_341_link from\n *      firmData.settings.trustees (read by appointment automation T19).\n *   D. Docket split: one visible case_number writes case_number (short) +\n *      case_number_full — multi-column writes are the stated code boundary\n *      (contract §4.3).\n *   E. Chapter mirror: case_chapter may also write case_subtype\n *      (\"Chapter 7\") — GUARDED, see below.\n * D and E wrap form._buildPatchPayload (assigned by render.html before init,\n * so the wrap always applies to the renderer's version).\n *\n * 2026-08-19: E is no longer unconditional. Kept byte-for-byte in step with\n * the hand-built public/forms/casedetails-bk.html, which is the form actually\n * wired into case.html today; this template is the candidate replacement.\n * Change the two together or they drift.\n */\n(function () {\n  'use strict';\n\n  /**\n   * \"25-44545-mar\" → { short:'25-44545', full:'25-44545-mar' }\n   * \"25-44545\"     → { short:'25-44545', full:null }\n   * anything else  → { short:<raw>,      full:null, ok:false }  (keep the data)\n   */\n  function splitDocket(raw) {\n    var v = (raw || '').trim();\n    if (!v) return { short: '', full: null, ok: true };\n    var m = /^(\\d{2}-\\d{5})(-[A-Za-z]+)$/.exec(v);\n    if (m) return { short: m[1], full: v, ok: true };\n    if (/^\\d{2}-\\d{5}$/.test(v)) return { short: v, full: null, ok: true };\n    return { short: v, full: null, ok: false };\n  }\n\n  function firmData() {\n    try { return (window.parent && window.parent.firmData) || {}; }\n    catch (e) { return {}; }\n  }\n\n  /**\n   * The parent shell's live case object, or null when it isn't ours to read.\n   *\n   * case.html mutates window.entityData.case.case_subtype in place when its\n   * type/subtype selects are used, so this reflects a change made SINCE this\n   * form loaded — fresher than form._liveData in the standalone-fetch path.\n   * Guarded on case_id the way yc-forms init step 7 guards its own parent\n   * fast-path: an embedded form pointed at a different case must not read the\n   * parent's row.\n   */\n  function parentCase(form) {\n    try {\n      var pc = window.parent && window.parent.entityData && window.parent.entityData.case;\n      if (pc && typeof pc === 'object' &&\n          (pc.case_id == null || pc.case_id == form.config.linkId)) {\n        return pc;\n      }\n    } catch (e) { /* cross-origin or no parent */ }\n    return null;\n  }\n\n  window.ycHooks = {\n    async onLoad(form) {\n      // ── B. trustee change → 341 link ────────────────────────────────────\n      // The dropdown itself is rebuilt by the renderer's optionsFrom (which\n      // runs BEFORE this hook in the generated onLoad); this listener only\n      // maps the selected trustee to their meeting link.\n      var sel = form.el.querySelector('[name=\"case_trustee\"]');\n      var linkEl = form.el.querySelector('[name=\"case_341_link\"]');\n      var list = (firmData().settings && firmData().settings.trustees) || [];\n      if (sel && linkEl) {\n        sel.addEventListener('change', function () {\n          var name = sel.value;\n          if (name === '') { linkEl.value = ''; return; }\n          var t = list.filter(function (x) { return String(x.name) === String(name); })[0];\n          if (t) linkEl.value = t.link || '';   // unlisted legacy value → leave link untouched\n        });\n      }\n\n      // ── D + E. patch payload wrap ───────────────────────────────────────\n      var inner = form._buildPatchPayload.bind(form);\n      form._buildPatchPayload = function () {\n        var payload = inner();\n        var diff = this.getDiff();\n\n        if ('case_number' in diff) {\n          var s = splitDocket(diff.case_number[1]);\n          payload.case_number = s.short;\n          payload.case_number_full = s.full;   // NULL when no judge suffix was typed\n        }\n\n        if ('case_chapter' in diff) {\n          var ch = String(diff.case_chapter[1] || '').trim();\n          payload.case_chapter = ch;\n\n          // ── case_chapter does NOT determine case_subtype ────────────────\n          // For a plain Ch7/Ch13 matter the two agree, so deriving one from\n          // the other is a genuine convenience and stays the default below.\n          // They are INDEPENDENT for the other Bankruptcy subtypes: an\n          // Adversary Proceeding under a Chapter 13 case carries\n          // case_chapter='13' legitimately, and 'Creditor' likewise. Blindly\n          // deriving rewrote such a case's subtype to 'Chapter 13', moving it\n          // off the Adversary pipeline onto the Ch13 one — silently, because\n          // resolveTemplate is a pure function of the row and simply\n          // re-resolves. Live incident 2026-08-19, case 08kulmDV.\n          //\n          // So: derive ONLY when the stored subtype is already chapter-shaped\n          // or unset. Never overwrite a subtype this field cannot speak for.\n          //\n          // Source of the stored value, freshest first:\n          //   1. parent.entityData.case — see parentCase() above. In the\n          //      normal parent-hosted path yc-forms step 7 sets _liveData to\n          //      that same object, so 1 and 2 are the same reference; they\n          //      differ only when step 7 fell back to the API fetch (form\n          //      opened standalone).\n          //   2. this._liveData — the loaded case row.\n          //   3. Neither available -> write NOTHING. A missing subtype is\n          //      visible (the case sits unstaged on the board) and trivially\n          //      fixed from case.html's select; a wrong one files the matter\n          //      on the wrong pipeline and looks correct.\n          var curSub = null;\n          var pc = parentCase(this);\n          if (pc && 'case_subtype' in pc) {\n            curSub = String(pc.case_subtype || '').trim();\n          }\n          if (curSub === null && this._liveData && typeof this._liveData === 'object' &&\n              'case_subtype' in this._liveData) {\n            curSub = String(this._liveData.case_subtype || '').trim();\n          }\n          if (curSub !== null && (curSub === '' || /^chapter\\b/i.test(curSub))) {\n            payload.case_subtype = ch ? 'Chapter ' + ch : '';\n          }\n        }\n\n        return payload;\n      };\n    },\n  };\n})();\n",
+  "note": "Port of public/forms/casedetails-bk.html (formKey case_details). 45 existing submissions. Layout loss: the .yc-section-pair side-by-side pairs (Fee Agreements|Credit Counseling, Matrix|Schedules) become stacked sections — the schema has no section-pair concept. 2.5B: trustee options/derived dates/client names moved into the definition; hook shrunk to case_details_bk2 (341-link on trustee change + docket split + chapter mirror).",
+  "derive": [
+    {
+      "n": 60,
+      "op": "addDays",
+      "from": "case_341_initial",
+      "target": "case_objection"
+    },
+    {
+      "n": 180,
+      "op": "addDays",
+      "from": "case_file_date",
+      "target": "case_180"
+    },
+    {
+      "n": -90,
+      "op": "addDays",
+      "from": "case_file_date",
+      "target": "case_preference"
+    },
+    {
+      "n": -14,
+      "op": "dateFromDatetime",
+      "from": "case_341_current",
+      "target": "docs_due"
+    }
+  ],
+  "toggle": false,
+  "autosave": true,
+  "dataMode": "live",
+  "onSubmit": {
+    "patch": {
+      "url": "/api/cases/{linkId}",
+      "method": "PATCH"
+    }
+  },
+  "sections": [
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "debtor_name",
+              "type": "text",
+              "label": "Debtor",
+              "width": "2x",
+              "prefill": "$load.clients[relate_type=Primary].contact_name",
+              "readonly": true,
+              "lockedMsg": "Edit the client name from the Contact page"
+            },
+            {
+              "name": "codebtor_name",
+              "type": "text",
+              "label": "Co-Debtor",
+              "width": "2x",
+              "prefill": "$load.clients[relate_type=Secondary].contact_name",
+              "readonly": true,
+              "showWhen": {
+                "op": "notEmpty",
+                "field": "codebtor_name"
+              },
+              "lockedMsg": "Edit the co-debtor name from the Contact page"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "case_number",
+              "note": "GAP: the hand-built form splits one typed docket into case_number (short) + case_number_full (full) in _buildPatchPayload. apiColumn is 1:1, so the hook re-installs that split by wrapping _buildPatchPayload. apiColumn stays case_number_full for the LOAD direction (matches the original apiMap).",
+              "type": "text",
+              "label": "Case Number",
+              "width": "2x",
+              "prefill": "$load.case.case_number",
+              "apiColumn": "case_number_full",
+              "placeholder": "25-44545 or 25-44545-mar"
+            },
+            {
+              "name": "case_chapter",
+              "note": "GAP: also mirrors to cases.case_subtype (\"Chapter 7\") in the same wrapped _buildPatchPayload.",
+              "type": "text",
+              "label": "Chapter",
+              "width": "fixed-sm",
+              "apiColumn": "case_chapter",
+              "maxLength": 2,
+              "placeholder": "7"
+            },
+            {
+              "name": "case_trustee",
+              "note": "Static options are the fallback snapshot; optionsFrom (2.5B) rebuilds them at load from firmData.settings.trustees, grouped by chapter, with the flagged-unlisted-value behaviour. The 341-link write on trustee CHANGE stays in the hook (case_details_bk2).",
+              "type": "select",
+              "label": "Trustee",
+              "options": [
+                "Basil T. Simon",
+                "Collene K. Corcoran",
+                "Daniel C. Himmelspach",
+                "Douglas S. Ellmann",
+                "Homer W. McClarty",
+                "K. Jin Lim",
+                "Karen E. Evangelista",
+                "Kenneth A. Nathan",
+                "Mark H. Shapiro",
+                "Michael A. Stevenson",
+                "Randall L. Frank",
+                "Samuel D. Sweet",
+                "Stuart A. Gold",
+                "Timothy J. Miller",
+                "Trustee Namee",
+                "Wendy T. Lewis",
+                "Thomas W. McDonald",
+                "Caouette, Melissa A.",
+                "David Wm Ruskin",
+                "Krispen S. Carroll",
+                "Tammy L. Terry",
+                "Thomas W. Jr. McDonald"
+              ],
+              "apiColumn": "case_trustee",
+              "optionsFrom": {
+                "value": "name",
+                "source": "firmData.settings.trustees",
+                "groupBy": "case_type",
+                "groupLabels": {
+                  "7": "Chapter 7",
+                  "12": "Chapter 12",
+                  "13": "Chapter 13"
+                }
+              }
+            },
+            {
+              "name": "case_341_link",
+              "note": "Written by the hook when the user changes trustee (trustee.link from firmData.settings.trustees). Read by the appointment automation (T19) as the 341 meeting link.",
+              "type": "hidden",
+              "apiColumn": "case_341_link"
+            },
+            {
+              "name": "case_id",
+              "type": "text",
+              "label": "Case ID",
+              "readonly": true,
+              "apiColumn": "case_id",
+              "lockedMsg": "The Case ID cannot be changed"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "case_file_date",
+              "type": "date",
+              "label": "Filed",
+              "apiColumn": "case_file_date"
+            },
+            {
+              "name": "case_341_initial",
+              "type": "date",
+              "label": "Initial 341",
+              "apiColumn": "case_341_initial"
+            },
+            {
+              "name": "case_341_current",
+              "type": "datetime",
+              "label": "Current 341",
+              "width": "2x",
+              "readonly": true,
+              "apiColumn": "case_341_current",
+              "lockedMsg": "The 341 date is managed via the 341 Notes form"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "case_objection",
+              "note": "Derived (+60d from case_341_initial) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "Objection Deadline",
+              "sublabel": "+60 days from initial 341",
+              "apiColumn": "case_objection"
+            },
+            {
+              "name": "case_180",
+              "note": "Derived (+180d from case_file_date) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "180 Days",
+              "sublabel": "+180 days from file date",
+              "apiColumn": "case_180"
+            },
+            {
+              "name": "case_preference",
+              "note": "Derived (−90d from case_file_date) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "90 Day Preference",
+              "sublabel": "file date − 90 days",
+              "apiColumn": "case_preference"
+            }
+          ]
+        }
+      ],
+      "title": "Case Details"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "vehicle",
+              "type": "checkgroup",
+              "label": "Vehicle",
+              "width": "2x",
+              "columns": 1,
+              "options": [
+                "Reaffirmation",
+                "Redemption",
+                "Replacement"
+              ],
+              "apiColumn": "case_issues_bk_vehicle"
+            },
+            {
+              "name": "garnishment",
+              "type": "checkgroup",
+              "label": "Garnishment",
+              "width": "2x",
+              "columns": 1,
+              "options": [
+                "Pre-Petition",
+                "Post-Petition"
+              ],
+              "apiColumn": "case_garnish"
+            },
+            {
+              "name": "other_issues",
+              "type": "checkgroup",
+              "label": "Other",
+              "width": "2x",
+              "columns": 1,
+              "options": [
+                "Automatic Stay Violation",
+                "Student Loans",
+                "Confirmation Objections",
+                "Other"
+              ],
+              "apiColumn": "case_issues_bk_other"
+            }
+          ]
+        }
+      ],
+      "title": "Case Issues"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "pre_petition",
+              "type": "checkgroup",
+              "label": "Pre-Petition",
+              "options": [
+                "Sent",
+                "Signed"
+              ],
+              "apiColumn": "case_pre_petition"
+            },
+            {
+              "name": "post_petition",
+              "type": "checkgroup",
+              "label": "Post-Petition",
+              "columns": 3,
+              "options": [
+                "Sent",
+                "Signed",
+                "N/A"
+              ],
+              "apiColumn": "case_post_petition"
+            }
+          ]
+        }
+      ],
+      "title": "Fee Agreement(s)"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "first_course",
+              "type": "checkgroup",
+              "label": "1st Course",
+              "columns": 3,
+              "options": [
+                "Sent Info",
+                "Received",
+                "Filed"
+              ],
+              "apiColumn": "case_1st_course"
+            },
+            {
+              "name": "second_course",
+              "type": "checkgroup",
+              "label": "2nd Course",
+              "columns": 3,
+              "options": [
+                "Sent Info",
+                "Received",
+                "Filed"
+              ],
+              "apiColumn": "case_2nd_course"
+            }
+          ]
+        }
+      ],
+      "title": "Credit Counseling"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "matrix",
+              "type": "checkgroup",
+              "options": [
+                "Extension Motion",
+                "Uploaded"
+              ],
+              "apiColumn": "matrix"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "matrix_date_original",
+              "type": "date",
+              "label": "Original Due",
+              "apiColumn": "matrix_date_original"
+            },
+            {
+              "name": "matrix_date_proposed",
+              "type": "date",
+              "label": "Proposed Due",
+              "apiColumn": "matrix_date_proposed"
+            }
+          ]
+        }
+      ],
+      "title": "Matrix"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "schedules",
+              "type": "checkgroup",
+              "options": [
+                "Extension Motion",
+                "Filed"
+              ],
+              "apiColumn": "schedules"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "schedules_due_original",
+              "type": "date",
+              "label": "Original Due",
+              "apiColumn": "schedules_due_original"
+            },
+            {
+              "name": "schedules_due_proposed",
+              "type": "date",
+              "label": "Proposed Due",
+              "apiColumn": "schedules_due_proposed"
+            }
+          ]
+        }
+      ],
+      "title": "Schedules"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "filing_fee",
+              "type": "checkgroup",
+              "options": [
+                "Order Uploaded",
+                "Show Cause",
+                "Fee Paid",
+                "Order Issued",
+                "Deadline Extended",
+                "Fee Waived"
+              ],
+              "apiColumn": "filing_fee"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "final_installment",
+              "type": "date",
+              "label": "Final Installment Due",
+              "apiColumn": "final_installment"
+            },
+            {
+              "name": "show_cause",
+              "type": "datetime",
+              "label": "Show Cause Date",
+              "width": "2x",
+              "apiColumn": "show_cause"
+            },
+            {
+              "name": "filing_fee_extended_deadline",
+              "type": "date",
+              "label": "Extended Deadline",
+              "apiColumn": "filing_fee_extended_deadline"
+            }
+          ]
+        }
+      ],
+      "title": "Filing Fee"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "docs_due",
+              "note": "Derived (−14d from case_341_current) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "Documents Due",
+              "sublabel": "14 days before current 341",
+              "apiColumn": "docs_due"
+            },
+            {
+              "name": "docs",
+              "type": "checkgroup",
+              "label": "Documents",
+              "columns": 1,
+              "options": [
+                "Uploaded",
+                "Missing"
+              ],
+              "apiColumn": "docs"
+            },
+            {
+              "name": "docs_missing",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Documents Missing for Trustee",
+              "width": "2x",
+              "apiColumn": "docs_missing",
+              "maxLength": 2000
+            }
+          ]
+        }
+      ],
+      "title": "Documents for Trustee"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "case_notes",
+              "rows": 4,
+              "type": "textarea",
+              "label": "Notes",
+              "apiColumn": "case_notes",
+              "maxLength": 5000
+            },
+            {
+              "name": "case_alerts",
+              "rows": 4,
+              "type": "textarea",
+              "label": "Alerts",
+              "apiColumn": "case_alerts",
+              "maxLength": 5000
+            }
+          ]
+        }
+      ],
+      "title": "Notes & Alerts"
+    }
+  ],
+  "endpoints": {
+    "load": {
+      "url": "/api/cases/{linkId}?include=clients",
+      "path": "case",
+      "method": "GET"
+    }
+  },
+  "autosaveMs": 3000
+}

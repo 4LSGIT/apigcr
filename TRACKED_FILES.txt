@@ -309,7 +309,9 @@ ref/2026-08-17_trigger_stage_aged.sql
 ref/2026-08-17_video_landing.sql
 ref/2026-08-18_automation_versioning.sql
 ref/2026-08-18_s4_condition_resync.sql
+ref/2026-08-19_case_details_definition.json
 ref/2026-08-19_current_version_default_0.sql
+ref/2026-08-19_hook_recovered_retry_error_backfill.sql
 ref/2026-08-19_ingest_action_failure_count.sql
 ref/2026-08-19_pin_column_defaults_0.sql
 ref/2026-08-19_pipeline_phase.sql

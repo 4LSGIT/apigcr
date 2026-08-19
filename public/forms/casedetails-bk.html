@@ -563,7 +563,50 @@
         if (fieldName === 'case_chapter') {
           const ch = String(newVal || '').trim();
           payload.case_chapter = ch;
-          payload.case_subtype = ch ? `Chapter ${ch}` : '';
+
+          // ── case_chapter does NOT determine case_subtype ──────────────
+          // For a plain Ch7/Ch13 matter the two agree, so deriving one from
+          // the other is a genuine convenience and stays the default below.
+          // They are INDEPENDENT for the other Bankruptcy subtypes: an
+          // Adversary Proceeding under a Chapter 13 case carries
+          // case_chapter='13' legitimately, and 'Creditor' likewise. Blindly
+          // deriving rewrote such a case's subtype to 'Chapter 13', moving it
+          // off the Adversary pipeline onto the Ch13 one — silently, because
+          // resolveTemplate is a pure function of the row and simply
+          // re-resolves. Live incident 2026-08-19, case 08kulmDV.
+          //
+          // So: derive ONLY when the stored subtype is already chapter-shaped
+          // or unset. Never overwrite a subtype this field cannot speak for.
+          //
+          // Source of the stored value, freshest first:
+          //   1. parent.entityData.case — the live object case.html mutates
+          //      when its type/subtype selects are used, so it reflects a
+          //      change made since this form loaded. Guarded on case_id the
+          //      way yc-forms step 7 guards its own parent fast-path: an
+          //      embedded form pointed at a different case must not read the
+          //      parent's row.
+          //   2. this._liveData — the loaded case row. In the normal
+          //      parent-hosted path this IS object (1); it differs only when
+          //      step 7 fell back to the API fetch (form opened standalone).
+          //   3. Neither available -> write NOTHING. A missing subtype is
+          //      visible (the case sits unstaged on the board) and trivially
+          //      fixed from case.html's select; a wrong one files the matter
+          //      on the wrong pipeline and looks correct.
+          let curSub = null;
+          try {
+            const pc = window.parent && window.parent.entityData && window.parent.entityData.case;
+            if (pc && typeof pc === 'object' && 'case_subtype' in pc &&
+                (pc.case_id == null || pc.case_id == this.config.linkId)) {
+              curSub = String(pc.case_subtype || '').trim();
+            }
+          } catch (_) { /* cross-origin or no parent */ }
+          if (curSub === null && this._liveData && typeof this._liveData === 'object' &&
+              'case_subtype' in this._liveData) {
+            curSub = String(this._liveData.case_subtype || '').trim();
+          }
+          if (curSub !== null && (curSub === '' || /^chapter\b/i.test(curSub))) {
+            payload.case_subtype = ch ? `Chapter ${ch}` : '';
+          }
           continue;
         }
         const dbCol = reverseApiMap[fieldName] || fieldName;
