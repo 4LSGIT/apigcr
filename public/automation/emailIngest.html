@@ -3274,7 +3274,14 @@ window.eiToggleSidebar = eiToggleSidebar;
     const id = payload && payload.id;
     if (id == null) return;
     await eiSwitchTab('executions');
-    if (activeTab !== 'executions') return;
+    if (activeTab !== 'executions') {
+      // T-2: the user declined the discard prompt, so the switch was
+      // refused. The shell has ALREADY switched to this sub-page, so
+      // returning silently looks like the app ignored their row click.
+      Toast.fire({ icon: 'info',
+        title: 'Finish or discard your edits to open that execution' });
+      return;
+    }
     selectExecution(id);
   };
 
