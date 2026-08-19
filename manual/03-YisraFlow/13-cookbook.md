@@ -1743,7 +1743,7 @@ Related: `sequence_templates.condition` is a **write-once legacy column** (creat
 
 ### 5.35 Queued Sequence Steps Resolve by `step_number`, Not `stepId`
 
-`executeStep` resolves the step to fire as `(template_id, enrollment's pinned version, step_number)` from the job payload; `stepId` is only a legacy fallback (still version-scoped). This is what makes content-only publish migration a pure enrollment repoint — queued jobs, **including ones already claimed `running`**, land on the new version's row at fire time without any rewrite. Consequences:
+`executeStep` resolves the step to fire as `(template_id, enrollment's pinned version, step_number)` from the job payload; `stepId` is only a legacy fallback (still version-scoped). This is what makes content-only publish migration a pure enrollment repoint — queued jobs, **including ones already claimed `running`**, land on the new version's row without any rewrite (a job that read its enrollment just before the repoint committed fires that one step on the old payload; the next step self-heals — at most one step of lag). Consequences:
 
 - Never "fix" a queued step by editing `scheduled_jobs.data.stepId` — the number wins.
 - `step_number` within a *published* version is immutable, so the identity is stable for the enrollment's whole life.
@@ -1755,7 +1755,7 @@ Related: `sequence_templates.condition` is a **write-once legacy column** (creat
 
 ### 6.1 Sequence — Column Shapes by Example (NOT runnable SQL)
 
-**Create sequences in the editor (or via the API) and publish them — never with console INSERTs.** Post-versioning (ch. 16), a hand-inserted template is broken by construction unless you get three things right at once: `current_version` must be `0` (unpublished — the column default is also 0, see §5.34), every `sequence_steps` row must carry a `version`, and the matching `sequence_template_versions` row must exist. Miss the last one and you build a template that passes every guard — cascade match, enroll funnel, step load — and then wedges **every enrollment silently at fire time** (`template_version_row_missing`). The editor + publish flow maintains all three invariants for you and gives you validation for free.
+**Create sequences in the editor (or via the API) and publish them — never with console INSERTs.** Post-versioning (ch. 16), a hand-inserted template is broken by construction unless you get three things right at once: `current_version` must be `0` (unpublished — the column default is also 0 since the 2026-08-19 fixpacks; see ch. 16), every `sequence_steps` row must carry a `version`, and the matching `sequence_template_versions` row must exist. Miss the last one and you build a template that passes every guard — cascade match, enroll funnel, step load — and then wedges **every enrollment silently at fire time** (`template_version_row_missing`). The editor + publish flow maintains all three invariants for you and gives you validation for free.
 
 What follows is therefore *illustration of the JSON column shapes only*, using a worked example: `missing_statements` — a follow-up enrolled after a 341 Meeting is attended, which cancels itself when the "Docs Needed" checklist goes complete.
 

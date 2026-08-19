@@ -51,10 +51,14 @@ describe('sequences ensureDraft — draft fork mechanics', () => {
     expect(copy.params).toEqual([5, 19, 2]);
 
     // The metadata stub takes template_condition from the CURRENT VERSION row
-    // (post-S4 truth), falling back to the legacy live column only for v0
-    // templates — that COALESCE + LEFT JOIN shape is load-bearing.
+    // (post-S4 truth), falling back to the legacy live column ONLY when no
+    // version row exists (v0) — ROW PRESENCE, not value-nullness (review
+    // IV.F1): COALESCE here resurrected a deliberately-cleared (published
+    // NULL) condition from the never-updated legacy column on every draft
+    // fork. The CASE WHEN cv.version IS NULL shape is load-bearing.
     const stub = conn.captured.find(c => /INSERT INTO sequence_template_versions/.test(c.sql));
-    expect(stub.sql).toMatch(/COALESCE\(cv\.template_condition, tt\.`condition`\)/);
+    expect(stub.sql).toMatch(/CASE WHEN cv\.version IS NULL THEN tt\.`condition` ELSE cv\.template_condition END/);
+    expect(stub.sql).not.toMatch(/COALESCE\(cv\.template_condition/);
     expect(stub.sql).toMatch(/LEFT JOIN sequence_template_versions cv/);
     expect(stub.sql).not.toMatch(/published_at/);
   });
@@ -117,6 +121,17 @@ describe('S4 lifecycle endpoints — wiring', () => {
     expect(src).toMatch(/current_version, draft_version\)\s+VALUES \(\?, \?, \?, \?, \?, 0, \?, \?, \?, 0, 1\)/);
     expect(src).not.toMatch(/'create'\)/);
     expect(src).not.toMatch(/'duplicate'\)/);
+  });
+
+  test('every legacy-condition fallback is row-presence, not value-nullness (review IV.F1)', () => {
+    // A published version row with template_condition = NULL means "the
+    // condition was cleared" — COALESCE at any fallback site resurrects the
+    // deleted gate from the legacy column (which nothing updates post-create)
+    // and, at the no-op guard, forks a spurious draft on every metadata save.
+    // All three fallback sites must use CASE WHEN <row>.version IS NULL.
+    const caseShapes = src.match(/CASE WHEN \w+\.version IS NULL THEN \w+\.\\?`condition\\?` ELSE \w+\.template_condition END/g) || [];
+    expect(caseShapes.length).toBe(3); // ensureDraft stub, PUT no-op guard, duplicate
+    expect(src).not.toMatch(/COALESCE\(\w+\.template_condition, \w+\.`condition`\)/);
   });
 
   test('PUT template writes the versioned condition to the DRAFT version row, not the live column', () => {

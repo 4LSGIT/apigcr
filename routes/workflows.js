@@ -1084,10 +1084,16 @@ router.get("/workflows/:id/versions", jwtOrApiKey, async (req, res) => {
         ORDER BY v.version DESC`,
       [workflowId]
     );
+    // Retired-accumulation visibility (review IV rec-5): retire-in-place has
+    // no reaper by design; these totals make the growth observable before it
+    // matters instead of surfacing nowhere.
+    const retired = versions.filter((v) => v.retired_at != null);
     res.json({
       success: true,
       current_version: wf.current_version,
       draft_version: wf.draft_version,
+      retired_versions: retired.length,
+      retired_step_rows: retired.reduce((a, v) => a + Number(v.step_count || 0), 0),
       versions: versions.map((v) => ({
         ...v,
         is_current: v.version === wf.current_version,
@@ -1416,6 +1422,11 @@ router.post("/workflows", jwtOrApiKey, async (req, res) => {
  * }
  */
 router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
+  // NOTE (review IV.F4): stepNumber = insert-at-position renumbers the draft
+  // exactly like a delete, but wfConfirmDraftRenumber (the draft-test-run
+  // guard) only fires on the editor's delete/move paths — the editor never
+  // sends stepNumber on add, so this is API-only today. If the editor ever
+  // grows insert-at-position, wire the guard there too.
   const db = req.db;
   const { id } = req.params;
   const { stepNumber, type, config, error_policy = null, label = null, note = null } = req.body;

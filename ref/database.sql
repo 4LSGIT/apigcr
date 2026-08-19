@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-18T21:39:36.139Z
+-- Generated: 2026-08-19T06:27:33.889Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:2f860082a48d76eacf0dddf370728417
+-- Fingerprint: sha256:3443ef2e6b47d5f2834813952d877e2f
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2495,7 +2495,7 @@ CREATE TABLE `sequence_steps` (
   `error_policy` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `version` int NOT NULL DEFAULT '1'
+  `version` int NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3180,7 +3180,7 @@ CREATE TABLE `workflow_steps` (
   `error_policy` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `version` int NOT NULL DEFAULT '1'
+  `version` int NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

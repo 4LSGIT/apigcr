@@ -358,7 +358,13 @@ async function ensureDraft(connection, templateId) {
 
   await connection.query(
     `INSERT INTO sequence_template_versions (template_id, version, name, type, template_condition, description, test_input)
-     SELECT tt.id, ?, tt.name, tt.type, COALESCE(cv.template_condition, tt.\`condition\`), tt.description, tt.test_input
+     -- Row-presence fallback (review IV.F1): the legacy column applies ONLY
+     -- when no version row exists (v0). CASE, not COALESCE — a published
+     -- version whose condition was deliberately cleared to NULL must fork a
+     -- NULL, not resurrect the deleted gate from the legacy column.
+     SELECT tt.id, ?, tt.name, tt.type,
+            CASE WHEN cv.version IS NULL THEN tt.\`condition\` ELSE cv.template_condition END,
+            tt.description, tt.test_input
        FROM sequence_templates tt
        LEFT JOIN sequence_template_versions cv
               ON cv.template_id = tt.id AND cv.version = tt.current_version
@@ -507,10 +513,14 @@ router.get('/sequences/templates/:id/versions', jwtOrApiKey, async (req, res) =>
         ORDER BY v.version DESC`,
       [templateId]
     );
+    // Retired-accumulation visibility (review IV rec-5) — see workflows.
+    const retired = versions.filter(v => v.retired_at != null);
     res.json({
       success: true,
       current_version: t.current_version,
       draft_version: t.draft_version,
+      retired_versions: retired.length,
+      retired_step_rows: retired.reduce((a, v) => a + Number(v.step_count || 0), 0),
       versions: versions.map(v => ({ ...v, is_current: v.version === t.current_version, is_draft: v.version === t.draft_version })),
     });
   } catch (err) {
@@ -895,7 +905,8 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
         // unchanged, or a later publish would ship the draft's OLD condition
         // instead of what the user last saved.
         const [[cur]] = await connection.query(
-          `SELECT t.draft_version, COALESCE(v.template_condition, t.\`condition\`) AS eff
+          `SELECT t.draft_version,
+                  CASE WHEN v.version IS NULL THEN t.\`condition\` ELSE v.template_condition END AS eff
              FROM sequence_templates t
              LEFT JOIN sequence_template_versions v
                     ON v.template_id = t.id AND v.version = t.current_version
@@ -985,7 +996,7 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
       const [tplRows] = await connection.query(
         `SELECT t.name, t.type, t.filters, t.description, t.test_input,
                 t.captured_input, t.captured_at, t.current_version, t.draft_version,
-                COALESCE(cv.template_condition, t.\`condition\`) AS \`condition\`
+                CASE WHEN cv.version IS NULL THEN t.\`condition\` ELSE cv.template_condition END AS \`condition\`
          FROM sequence_templates t
          LEFT JOIN sequence_template_versions cv
                 ON cv.template_id = t.id
