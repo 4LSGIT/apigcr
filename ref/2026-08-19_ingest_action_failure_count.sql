@@ -55,11 +55,17 @@
 -- semantics, but 'failed' contains no % or _ wildcard, so the match is
 -- exact and skipped_test_envelope cannot be caught by it.
 --
--- T6/F-3 ADDENDUM: a failed TRANSFORM now also emits a synthetic outcome
--- ({ status:'failed', rule_action_id:null, action_type:'transform' }) in
--- both rule services, so this column counts it too. Strictly, the column
--- now means "this execution's rule processing failed" (action OR
--- transform), not only "an action failed" — same detector, wider net.
+-- T6/F-3 + T7/F-8 ADDENDUM: two further synthetic outcomes now feed this
+-- column, so it counts three shapes, not one:
+--   real action  { rule_id:N,    rule_action_id:N,    <dispatchable type> }
+--   transform    { rule_id:N,    rule_action_id:null, 'transform' }        T6/F-3
+--   evaluator    { rule_id:null, rule_action_id:null, 'rule_evaluation' }  T7/F-8
+-- Read the column as "this execution's Layer-3 processing failed" — an
+-- action failed, OR its transform failed, OR the evaluator itself threw.
+-- Same detector, wider net; no expression change was needed, because every
+-- shape is an array entry with status:'failed'. Both synthetic types are
+-- outside the dispatchable action set, so neither can collide with a real
+-- action outcome.
 --
 -- SHAPE ASSUMPTION (T6/F-7): the expression assumes action_outcomes is a
 -- JSON ARRAY of objects whose `status` is a plain string.

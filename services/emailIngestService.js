@@ -337,6 +337,25 @@ function _buildMetadata(suppression, automation, isTest = false) {
   }
   if (automation && automation.matchedRuleIds && automation.matchedRuleIds.length) {
     m.matched_rules   = automation.matchedRuleIds;
+    // Written verbatim, INCLUDING the empty array when a matched rule has no
+    // active actions — 38 live rows carry that exact shape. Do not gate this
+    // on actionOutcomes.length; the empty array is the honest record of "rule
+    // matched, nothing to dispatch."
+    m.action_outcomes = automation.actionOutcomes;
+  } else if (automation && Array.isArray(automation.actionOutcomes)
+             && automation.actionOutcomes.length) {
+    // T7/F-8 — OUTCOMES WITHOUT A MATCH. Only one thing produces this: the
+    // evaluateRules try/catch at step 6b, which synthesizes a failed
+    // 'rule_evaluation' outcome when the evaluator ITSELF throws (rule-loader
+    // / DB failure). matchedRuleIds is empty there — nothing matched, because
+    // nothing got to run — so the branch above would drop the outcome and the
+    // failure would be invisible to action_failure_count, to lib/alerting.js
+    // (which reads only action_outcomes) and to Activity's failures union.
+    // That was the last silent-failure class in this pipeline after T6/F-3
+    // closed the transform path.
+    //
+    // matched_rules is deliberately NOT written here: no rule matched, and
+    // faking one would corrupt the has_match filter.
     m.action_outcomes = automation.actionOutcomes;
   }
   if (automation && automation.parseWarnings && automation.parseWarnings.length) {
@@ -590,7 +609,19 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
   //   per-action in actionOutcomes. The defensive try/catch here covers the
   //   case where the rule loader itself fails (e.g. DB hiccup): we don't
   //   want to 500 a successfully-logged email because automation evaluation
-  //   blew up. Record the failure in _parse_warnings and continue.
+  //   blew up.
+  //
+  //   T7/F-8: this catch used to record the failure ONLY in _parse_warnings,
+  //   which nothing watches — status stayed green, action_failure_count
+  //   stayed 0, and lib/alerting.js (which reads action_outcomes) never
+  //   fired. A total Layer-3 outage was therefore quieter than a single
+  //   failed action inside it. Synthesize a failed outcome instead, exactly
+  //   as T6/F-3 does for a failed transform, so every existing detector
+  //   inherits it for free. rule_id/rule_action_id are null (nothing matched
+  //   — nothing got to run); action_type 'rule_evaluation' is outside the
+  //   dispatchable set, so it can never collide with a real action outcome.
+  //   _parse_warnings is kept as-is: it is where a human reading the
+  //   metadata blob looks first.
   let automation;
   try {
     automation = await emailIngestRuleService.evaluateRules(db, envelope);
@@ -598,7 +629,13 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
     console.error('[emailIngest] Layer 3 evaluateRules threw:', autoErr.message);
     automation = {
       matchedRuleIds: [],
-      actionOutcomes: [],
+      actionOutcomes: [{
+        rule_id:        null,
+        rule_action_id: null,
+        action_type:    'rule_evaluation',
+        status:         'failed',
+        error:          `evaluateRules threw: ${autoErr.message}`,
+      }],
       parseWarnings: [`evaluateRules threw: ${autoErr.message}`],
     };
   }
@@ -747,6 +784,9 @@ module.exports = {
   // Helpers (exported for testability / cross-service use)
   inferDirection,
   isFirmToFirm,
+  // T7/F-8: exported for testing, mirroring phoneIngestService's existing
+  // export of the same function. Pipeline-internal — no production caller.
+  _buildMetadata,
 
   // Module-level constants useful to tests
   RAW_INPUT_LIMIT,

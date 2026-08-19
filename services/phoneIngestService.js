@@ -200,7 +200,16 @@ async function _writeExecution(db, fields) {
  * @param {{suppressed:boolean, matchedRuleIds:number[]}} suppression
  *        (from phoneIngestSuppressionService.evaluateSuppressions)
  * @param {{matchedRuleIds:number[], actionOutcomes:Array, parseWarnings:string[]}} automation
- *        (from phoneIngestRuleService.evaluateRules)
+ *        (from phoneIngestRuleService.evaluateRules, OR the step-3b catch's
+ *        synthesized stand-in when the evaluator threw — see T7/F-8 below)
+ *
+ * action_outcomes entry shapes now reaching this function:
+ *   real action    { rule_id, rule_action_id, action_type:<dispatchable>, … }
+ *   transform      { rule_id, rule_action_id:null, action_type:'transform' }      (T6/F-3)
+ *   evaluator      { rule_id:null, rule_action_id:null,
+ *                    action_type:'rule_evaluation' }                              (T7/F-8)
+ * All three carry status:'failed' when failed, so all three are counted by
+ * the action_failure_count generated column and alerted on by lib/alerting.js.
  */
 function _buildMetadata(suppression, automation) {
   const m = {};
@@ -209,6 +218,21 @@ function _buildMetadata(suppression, automation) {
   }
   if (automation && automation.matchedRuleIds && automation.matchedRuleIds.length) {
     m.matched_rules   = automation.matchedRuleIds;
+    // Written verbatim, INCLUDING the empty array when a matched rule has no
+    // active actions. Do not gate this on actionOutcomes.length — the empty
+    // array is the honest record of "rule matched, nothing to dispatch."
+    m.action_outcomes = automation.actionOutcomes;
+  } else if (automation && Array.isArray(automation.actionOutcomes)
+             && automation.actionOutcomes.length) {
+    // T7/F-8 — OUTCOMES WITHOUT A MATCH. Mirror of emailIngestService; see
+    // the full rationale there. Only the evaluateRules try/catch at step 3b
+    // produces this shape: a synthesized failed 'rule_evaluation' outcome
+    // when the evaluator ITSELF throws. Without this branch that outcome is
+    // dropped and a total Layer-3 outage stays invisible to
+    // action_failure_count, lib/alerting.js and Activity's failures union.
+    //
+    // matched_rules is deliberately NOT written: no rule matched, and faking
+    // one would corrupt the has_match filter.
     m.action_outcomes = automation.actionOutcomes;
   }
   if (automation && automation.parseWarnings && automation.parseWarnings.length) {
@@ -411,6 +435,12 @@ async function ingestPhoneEvent(db, event) {
   //   provider event" — step 1b short-circuits above this point precisely so a
   //   duplicate webhook delivery cannot fire the same actions twice. The seam
   //   is about layer independence, not about at-least-once transport.
+  //   T7/F-8: the catch synthesizes a failed 'rule_evaluation' outcome rather
+  //   than recording the failure only in _parse_warnings (which nothing
+  //   watches — a total Layer-3 outage was quieter than one failed action
+  //   inside it). Mirror of emailIngestService; same shape, same reasoning.
+  //   rule_id/rule_action_id null (nothing matched — nothing got to run);
+  //   'rule_evaluation' is outside the dispatchable action set.
   let automation;
   try {
     automation = await phoneIngestRuleService.evaluateRules(db, p);
@@ -418,7 +448,13 @@ async function ingestPhoneEvent(db, event) {
     console.error('[phone_log] Layer 3 evaluateRules threw:', autoErr.message);
     automation = {
       matchedRuleIds: [],
-      actionOutcomes: [],
+      actionOutcomes: [{
+        rule_id:        null,
+        rule_action_id: null,
+        action_type:    'rule_evaluation',
+        status:         'failed',
+        error:          `evaluateRules threw: ${autoErr.message}`,
+      }],
       parseWarnings: [`evaluateRules threw: ${autoErr.message}`],
     };
   }
