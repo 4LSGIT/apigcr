@@ -13,8 +13,12 @@
  *
  * SEMANTICS (carried verbatim from services/emailIngestRuleService.js —
  * hard-won rules, do not soften):
- *   - Throwing match rules log a warning and count as NON-match (fail-safe:
- *     a broken rule never fires actions).
+ *   - Throwing match rules count as NON-match (fail-safe: a broken rule never
+ *     fires actions). T9/GAP-1: they are also RECORDED now — a warning on the
+ *     execution row, an error_count bump on the rule, and a
+ *     'trigger_match_failed' alert. Previously the fail-safe was silent, which
+ *     meant an active-but-unevaluatable rule looked identical to a rule that
+ *     honestly didn't match. Fail-safe, not fail-quiet.
  *   - NULL match_config on conditions mode is NON-match, NOT match-all.
  *     Explicit always-match = {operator:'and', conditions:[]}.
  *   - A failed transform → the rule still counts as MATCHED (metrics bump)
@@ -437,17 +441,38 @@ async function listActiveRulesForEvent(db, eventType) {
 // MATCH EVALUATION  (semantics verbatim from emailIngestRuleService)
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * @returns {{ matched: boolean, error: string|null }}
+ *
+ * T9/GAP-1. This used to return a bare boolean, which made FOUR distinct
+ * failure modes — unparseable match_config, a throwing conditions evaluation,
+ * a throwing code sandbox, and an unknown match_mode — indistinguishable from
+ * an honest "this event doesn't match". Each console.warn'd and returned
+ * false; the execution row then read `no_match`, green, with nothing in
+ * `outcomes.warnings` and NULL in `error`. A rule that could not be evaluated
+ * at all left no queryable trace anywhere.
+ *
+ * That is the T2/F-3/F-8 shape exactly: a failure occurring outside the
+ * per-action loop produces no outcome entry. Note the asymmetry it created
+ * with the very next block — a failed TRANSFORM was a warning, a failure, and
+ * an alert; a failed MATCH was a line on stderr.
+ *
+ * FAIL-SAFE IS UNCHANGED. `matched` is still false on every error path: a
+ * broken rule must never fire actions. Only the reporting changed — the
+ * caller now records the reason and alerts on it.
+ */
 function _evaluateMatch(rule, envelope) {
   let config = rule.match_config;
   if (typeof config === 'string') {
     try {
       config = JSON.parse(config);
     } catch (e) {
+      const err = `match_config is not parseable JSON: ${e.message}`;
       console.warn(
         `[triggerService] rule ${rule.id} (${rule.name}): ` +
         `match_config is not parseable JSON — treating as non-match`
       );
-      return false;
+      return { matched: false, error: err };
     }
   }
 
@@ -461,15 +486,19 @@ function _evaluateMatch(rule, envelope) {
         `NULL match_config on conditions mode — treating as non-match. ` +
         `For an explicit always-match, use {operator:'and', conditions:[]}.`
       );
-      return false;
+      // MISCONFIGURATION, not an error: NULL-is-non-match is a documented,
+      // deliberate ruling (see the comment above), and a rule saved this way
+      // is authored-but-inert rather than broken at runtime. Reporting it as a
+      // match failure would alert on every event for a state the author chose.
+      return { matched: false, error: null };
     }
     try {
-      return !!evaluateConditions(config, envelope);
+      return { matched: !!evaluateConditions(config, envelope), error: null };
     } catch (err) {
       console.warn(
         `[triggerService] rule ${rule.id} (${rule.name}) conditions error: ${err.message}`
       );
-      return false;
+      return { matched: false, error: `conditions evaluation threw: ${err.message}` };
     }
   }
 
@@ -479,15 +508,15 @@ function _evaluateMatch(rule, envelope) {
       console.warn(
         `[triggerService] rule ${rule.id} (${rule.name}): empty code on code mode — non-match`
       );
-      return false;
+      return { matched: false, error: `empty code on code match mode` };
     }
     try {
-      return !!_runCode(code, envelope);
+      return { matched: !!_runCode(code, envelope), error: null };
     } catch (err) {
       console.warn(
         `[triggerService] rule ${rule.id} (${rule.name}) code error: ${err.message}`
       );
-      return false;
+      return { matched: false, error: `match code threw: ${err.message}` };
     }
   }
 
@@ -495,7 +524,7 @@ function _evaluateMatch(rule, envelope) {
     `[triggerService] rule ${rule.id} (${rule.name}): ` +
     `unknown match_mode '${rule.match_mode}' — treating as non-match`
   );
-  return false;
+  return { matched: false, error: `unknown match_mode '${rule.match_mode}'` };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -914,9 +943,22 @@ async function processEvent(db, envelope) {
   const warnings       = [];
   const planned        = [];   // [{ rule, transformed }] — rules whose actions will dispatch
   const failedTransformRules = [];
+  // T9/GAP-1: rules that could not be EVALUATED (as distinct from rules that
+  // evaluated to false). Deliberately NOT folded into `failures` below: a
+  // rule that never got evaluated never matched, so counting it there would
+  // make `partial`/`error` mean something other than "actions of a matched
+  // rule failed". These get their own warning and their own alert kind.
+  const failedMatchRules = [];   // [{ rule, error }]
 
   for (const rule of rules) {
-    if (!_evaluateMatch(rule, envelope)) continue;
+    const mv = _evaluateMatch(rule, envelope);
+    if (mv.error) {
+      const w = `rule ${rule.id} (${rule.name}) match failed: ${mv.error} — rule did not run`;
+      console.warn(`[triggerService] ${w}`);
+      warnings.push(w);
+      failedMatchRules.push({ rule, error: mv.error });
+    }
+    if (!mv.matched) continue;
 
     // R4/S6 cooldown. RULING: a cooldown-suppressed rule is NOT matched — no
     // match_count bump, no last_matched_at refresh, no actions. Counting it as
@@ -1049,6 +1091,47 @@ async function processEvent(db, envelope) {
       .catch(err => console.error('[triggerService] metrics bump failed:', err.message));
   }
 
+  // T9/GAP-1: an unevaluatable rule is a broken rule — bump its error metric
+  // alongside transform/action failures so the T2 UI's per-rule error_count and
+  // last_error_at tell the truth about it. It is kept OUT of `failures` above
+  // (see failedMatchRules) so the execution STATUS keeps its meaning; only the
+  // rule-level metric and the alert below report it.
+  if (failedMatchRules.length) {
+    _bumpErrorMetrics(db, [...new Set(failedMatchRules.map(m => m.rule.id))])
+      .catch(err => console.error('[triggerService] match-error metrics bump failed:', err.message));
+
+    // Dedicated kind. NOT folded into 'trigger_action_failed': that kind feeds
+    // dedup_key and group_key on existing rows and its title says "action
+    // failure", which this is not. Adding a kind is safe — the standing
+    // constraint is against RENAMING one (which orphans every existing
+    // system_alerts row), not against introducing a new one.
+    //
+    // Date-bucketed dedup_key (same idiom as alerting.js's sweep scan_error
+    // sites): a permanently corrupt rule fires on EVERY event of its type, so
+    // without this a single bad match_config would insert thousands of rows a
+    // day. One row per rule per UTC day — bounded, and it re-arms tomorrow so a
+    // fixed-then-re-broken rule alerts again. group_key matches
+    // trigger_action_failed's `trigger_rule_${id}` so the digest and the shell
+    // banner see one ongoing condition per rule regardless of how it is failing.
+    try {
+      const { alert } = require('../lib/alerting');
+      const day = new Date().toISOString().slice(0, 10);
+      for (const { rule, error } of failedMatchRules) {
+        alert(db, {
+          source: 'app', kind: 'trigger_match_failed', severity: 'warning',
+          group_key: `trigger_rule_${rule.id}`,
+          title: `Trigger rule ${rule.id} (${rule.name}) could not be evaluated on ${envelope.event}`,
+          message:
+            `${error}. The rule is active but cannot run, so it is silently ` +
+            `firing on nothing — its match config needs fixing.`,
+          context: { execution_id: execId, rule_id: rule.id, event: envelope.event,
+                     match_mode: rule.match_mode, error },
+          dedup_key: `trigger:match_failed:${rule.id}:${day}`,
+        }).catch(() => {});
+      }
+    } catch (_) { /* alerting unavailable — the warning is already on the row */ }
+  }
+
   const failedRuleIds = [...new Set([
     ...actionOutcomes.filter(o => o.status !== 'success').map(o => o.rule_id),
     ...failedTransformRules.map(r => r.id),
@@ -1073,7 +1156,12 @@ async function processEvent(db, envelope) {
     } catch (_) {}
   }
 
-  return { status, matchedRuleIds, actionOutcomes, warnings, execution_id: execId };
+  return {
+    status, matchedRuleIds, actionOutcomes, warnings, execution_id: execId,
+    // T9/GAP-1: rule ids that could not be evaluated. Additive — existing
+    // consumers branch on status/matchedRuleIds only.
+    failedMatchRuleIds: failedMatchRules.map(m => m.rule.id),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1086,10 +1174,16 @@ async function evaluateDryRun(db, envelope) {
   const report = [];
 
   for (const rule of rules) {
+    const mv = _evaluateMatch(rule, envelope);
     const entry = {
       rule_id: rule.id,
       name:    rule.name,
-      matched: _evaluateMatch(rule, envelope),
+      matched: mv.matched,
+      // T9/GAP-1: surface WHY a rule didn't match when the reason is a broken
+      // config rather than an honest false. The test panel is where an author
+      // is most likely to be looking at a rule they just broke; `matched:false`
+      // with no explanation sent them hunting the envelope instead.
+      ...(mv.error ? { match_error: mv.error } : {}),
     };
     if (entry.matched) {
       const tr = _runTransform(rule, envelope);
@@ -1118,7 +1212,7 @@ async function evaluateDryRun(db, envelope) {
  *
  * @param {{match_mode, match_config, transform_mode, transform_config}} draft
  * @param {object} envelope
- * @returns {{matched:boolean, transform_ok?:boolean, transformed?:object, transform_error?:string}}
+ * @returns {{matched:boolean, match_error?:string, transform_ok?:boolean, transformed?:object, transform_error?:string}}
  */
 function evaluateDraft(draft, envelope) {
   const rule = {
@@ -1129,7 +1223,8 @@ function evaluateDraft(draft, envelope) {
     transform_mode:   draft.transform_mode || 'passthrough',
     transform_config: draft.transform_config ?? null,
   };
-  const out = { matched: _evaluateMatch(rule, envelope) };
+  const mv = _evaluateMatch(rule, envelope);
+  const out = { matched: mv.matched, ...(mv.error ? { match_error: mv.error } : {}) };
   if (out.matched) {
     const tr = _runTransform(rule, envelope);
     out.transform_ok = tr.ok;

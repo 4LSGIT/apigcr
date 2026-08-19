@@ -846,8 +846,36 @@ async function executeRetry(db, { execution_id, target_id }) {
     );
     const anyFailed = allLogs.some((l) => l.status === 'failed');
     const newStatus = anyFailed ? 'partial' : 'delivered';
+    // T9/WEAK-2: clear `error` when the row goes fully green.
+    //
+    // This flip used to leave the failed attempt's error text behind, so a
+    // recovered execution read `status='delivered'` WITH a populated `error`.
+    // Live example before this fix: execution 15312 ("...internal_function
+    // delivery failed: Gmail API 400: Invalid To header") whose only delivery
+    // log was status='success', attempts=2, error=NULL. The retry worked; the
+    // execution row just never said so.
+    //
+    // Why that mattered enough to fix here: `hook_executions.error IS NOT NULL`
+    // is precisely the predicate the T2/F-3/F-8 pattern trains you to reach for
+    // when hunting "failure recorded in a side field while status stays green",
+    // and a recovered retry made it a guaranteed false positive. Poisoning the
+    // detector someone writes next is worse than the stale string itself.
+    //
+    // Only on 'delivered'. On 'partial' at least one delivery log is still
+    // failed, so the row is a live failure that _scanHooks catches on status
+    // alone — and the old error text, while possibly naming a target that has
+    // since recovered, is not a false positive for "something here is broken".
+    // "This needed a retry" is preserved either way by hook_delivery_logs.attempts > 1.
+    //
+    // NOT fixed here: executeRetry UPDATEs the delivery log IN PLACE, so the
+    // failed attempt's response_status/response_body/error are overwritten and
+    // the first-attempt detail is gone. That is a schema-shaped problem (an
+    // attempts table, or append-only logs) and belongs with the queued
+    // stuck-hook-execution work, not in a one-line honesty fix.
     await db.query(
-      `UPDATE hook_executions SET status = ? WHERE id = ? AND status IN ('failed','partial')`,
+      `UPDATE hook_executions
+          SET status = ?${anyFailed ? '' : ', error = NULL'}
+        WHERE id = ? AND status IN ('failed','partial')`,
       [newStatus, execution_id]
     );
   }

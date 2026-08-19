@@ -652,6 +652,7 @@ tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/hookMapper.test.js
 tests/hookService.duplicate.test.js
+tests/hookService.retryRecovery.test.js
 tests/hookTransforms.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
@@ -698,6 +699,7 @@ tests/test-oauthService.js
 tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
+tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
