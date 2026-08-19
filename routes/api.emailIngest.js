@@ -466,19 +466,32 @@ router.delete('/api/email-ingest/rule-actions/:id', jwtOrApiKey, async (req, res
 // EXECUTIONS (read-only)
 // ─────────────────────────────────────────────────────────────
 
+// NOTE ON `status`: this endpoint takes ONE enum value. executionsService
+// .list() validates it against VALID_STATUSES and SILENTLY DROPS anything
+// unrecognized rather than erroring — so `?status=error,validation_failed`
+// does not filter, it returns EVERY row while looking like it worked. Do not
+// copy the comma-list idiom from /api/hooks/executions (which does split on
+// commas). Callers wanting several statuses must issue parallel requests.
+//
+// T2 adds two flags:
+//   slim=true        drop raw_input from the rows (~16.5 KB/row on live data)
+//   has_failure=true only rows whose Layer-3 actions failed — NOT the same as
+//                    a failure `status`, which stays green in that case
 router.get('/api/email-ingest/executions', jwtOrApiKey, async (req, res) => {
   try {
     const hasMatch = req.query.has_match === 'true' ? true
                    : req.query.has_match === 'false' ? false
                    : undefined;
     const { rows, total, page, page_size } = await executionsService.list(req.db, {
-      page:      req.query.page,
-      page_size: req.query.page_size,
-      status:    req.query.status,
-      source:    req.query.source,
-      since:     req.query.since,
-      until:     req.query.until,
-      has_match: hasMatch,
+      page:        req.query.page,
+      page_size:   req.query.page_size,
+      status:      req.query.status,
+      source:      req.query.source,
+      since:       req.query.since,
+      until:       req.query.until,
+      has_match:   hasMatch,
+      has_failure: req.query.has_failure === 'true',
+      slim:        req.query.slim === 'true',
     });
     res.json({ executions: rows, page, page_size, total });
   } catch (err) {

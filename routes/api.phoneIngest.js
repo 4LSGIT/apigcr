@@ -286,18 +286,27 @@ router.delete('/api/phone-ingest/rule-actions/:id', jwtOrApiKey, async (req, res
 // and the flat {execution, linked} detail shape.
 // ─────────────────────────────────────────────────────────────
 
+// NOTE ON `status`: one enum value only — list() silently DROPS an
+// unrecognized value rather than erroring, so a comma list returns EVERY row
+// while looking like it worked. See the same note on the email endpoint.
+//
+// T2 adds slim=true (drop raw_input) and has_failure=true (rows whose
+// Layer-3 actions failed while `status` stayed green — execution #4529 is
+// the canonical case).
 router.get('/api/phone-ingest/executions', jwtOrApiKey, async (req, res) => {
   try {
     const hasMatch = req.query.has_match === 'true' ? true
                    : req.query.has_match === 'false' ? false
                    : undefined;
     const { rows, total, page, page_size } = await executionsService.list(req.db, {
-      page:      req.query.page,
-      page_size: req.query.page_size,
-      status:    req.query.status,
-      since:     req.query.since,
-      until:     req.query.until,
-      has_match: hasMatch,
+      page:        req.query.page,
+      page_size:   req.query.page_size,
+      status:      req.query.status,
+      since:       req.query.since,
+      until:       req.query.until,
+      has_match:   hasMatch,
+      has_failure: req.query.has_failure === 'true',
+      slim:        req.query.slim === 'true',
     });
     res.json({ executions: rows, page, page_size, total });
   } catch (err) {

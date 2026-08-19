@@ -35,8 +35,29 @@
  * verified metadata shape: { matched_rules:[ids], suppressed_by:[ids],
  * action_outcomes:[...] } (identical to the email shape).
  *
- * raw_input is included in the list response (the pipeline is responsible for
- * any truncation before write, mirroring email's RAW_INPUT_LIMIT).
+ * raw_input is included in the list response by default (the pipeline is
+ * responsible for any truncation before write, mirroring email's
+ * RAW_INPUT_LIMIT) — but see `slim` below.
+ *
+ * ── T2 additions (mirror of the email service) ──────────────────────────
+ *
+ * opts.slim — drop raw_input from the LIST projection. Phone raw_input
+ * averages ~2.9 KB/row against email's 16.5 KB, so the saving is smaller
+ * here, but the Activity page polls both endpoints on the same 60s timer
+ * and the two services must stay contract-identical. getById() unaffected.
+ *
+ * opts.has_failure — rows whose Layer-3 rule actions failed. NOT derivable
+ * from `status`: _buildMetadata records per-action results in
+ * metadata.action_outcomes and never reflects them in the status column.
+ * The canonical proof case lives in THIS table — execution #4529 reads
+ * status='suppressed' while carrying
+ * action_outcomes[0].error = "internal_function delivery failed:
+ * certificate has expired". Backed by the generated column + index from
+ * ref/2026-08-19_ingest_action_failure_count.sql; without that migration
+ * this filter and the action_failure_count projection both throw
+ * ER_BAD_FIELD_ERROR.
+ *
+ * action_failure_count is ALWAYS in the projection (slim and full).
  */
 
 // MTH-2 added 'duplicate' (true provider redelivery — phoneIngestService step
@@ -50,9 +71,17 @@ const VALID_STATUSES = new Set([
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE     = 200;
 
-const _EXEC_COLS =
+// Shared head of both projections. action_failure_count rides along in both:
+// it is an indexed generated column, so it costs nothing and it is the only
+// way a caller can tell a green-status row apart from a green-status row
+// whose action blew up (#4529 is exactly that row).
+const _EXEC_COLS_BASE =
   `e.id, e.event_log_id, e.status, e.log_id, e.error, e.metadata,
-   e.raw_input, e.created_at`;
+   e.created_at, e.action_failure_count`;
+
+// Full projection — adds the payload. Used by getById() and by list() unless
+// the caller asks for slim.
+const _EXEC_COLS = `${_EXEC_COLS_BASE}, e.raw_input`;
 
 
 // ─────────────────────────────────────────────────────────────
@@ -68,6 +97,10 @@ const _EXEC_COLS =
  * @param {string} [opts.since]          ISO datetime, inclusive lower bound
  * @param {string} [opts.until]          ISO datetime, inclusive upper bound
  * @param {boolean}[opts.has_match]      true → only rows with matched_rules
+ * @param {boolean}[opts.has_failure]    true → only rows with a failed action
+ *                                       outcome (see header — NOT the same as
+ *                                       a failure `status`)
+ * @param {boolean}[opts.slim]           true → omit raw_input from the rows
  * @returns {Promise<{rows:Array, total:number, page:number, page_size:number}>}
  */
 async function list(db, opts = {}) {
@@ -96,8 +129,14 @@ async function list(db, opts = {}) {
   if (opts.has_match === true) {
     where.push(`e.metadata->>'$.matched_rules' IS NOT NULL`);
   }
+  // Indexed generated column (idx_action_failures) — a range read, not a
+  // full JSON scan.
+  if (opts.has_failure === true) {
+    where.push('e.action_failure_count > 0');
+  }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const cols     = opts.slim === true ? _EXEC_COLS_BASE : _EXEC_COLS;
 
   // total (separate count query).
   const [[{ total }]] = await db.query(
@@ -109,7 +148,7 @@ async function list(db, opts = {}) {
 
   const offset = (page - 1) * pageSize;
   const [rows] = await db.query(
-    `SELECT ${_EXEC_COLS}
+    `SELECT ${cols}
        FROM phone_ingest_executions e
        ${whereSql}
        ORDER BY e.id DESC

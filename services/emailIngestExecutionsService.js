@@ -21,8 +21,29 @@
  * the verified metadata shape: { matched_rules:[ids], suppressed_by:[ids],
  * action_outcomes:[...] }.
  *
- * raw_input is included in the list response (already truncated to 16KB by
- * the pipeline; RAW_INPUT_LIMIT in emailIngestService).
+ * raw_input is included in the list response by default (already truncated
+ * to 16KB by the pipeline; RAW_INPUT_LIMIT in emailIngestService) — but see
+ * `slim` below.
+ *
+ * ── T2 additions ────────────────────────────────────────────────────────
+ *
+ * opts.slim — drop raw_input from the LIST projection. Measured on live
+ * data, raw_input averages 16.5 KB/row, so a 100-row list response carries
+ * ~1.65 MB of payload the caller almost never reads. The Activity page
+ * polls this endpoint every 60s; it must not pull megabytes to render a
+ * status chip. getById() is unaffected — the detail drawer genuinely wants
+ * the payload.
+ *
+ * opts.has_failure — rows whose Layer-3 rule actions failed. This is NOT
+ * derivable from `status`: _buildMetadata records per-action results in
+ * metadata.action_outcomes and never reflects them in the status column, so
+ * an execution whose action failed still reads 'logged'. Backed by the
+ * generated column + index from ref/2026-08-19_ingest_action_failure_count
+ * .sql; without that migration this filter and the action_failure_count
+ * projection both throw ER_BAD_FIELD_ERROR.
+ *
+ * action_failure_count is ALWAYS in the projection (both slim and full) so a
+ * caller can chip a green-status row as degraded without a second query.
  */
 
 const VALID_STATUSES = new Set([
@@ -33,10 +54,18 @@ const VALID_STATUSES = new Set([
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE     = 200;
 
-const _EXEC_COLS =
+// Shared head of both projections. action_failure_count rides along in both:
+// it is an indexed generated column, so it costs nothing and it is the only
+// way a caller can tell a green-status row apart from a green-status row
+// whose action blew up.
+const _EXEC_COLS_BASE =
   `e.id, e.source_id, e.message_id, e.status, e.log_id, e.email_log_id,
-   e.error, e.metadata, e.raw_input, e.remote_ip, e.created_at,
-   s.name AS source_name`;
+   e.error, e.metadata, e.remote_ip, e.created_at,
+   e.action_failure_count, s.name AS source_name`;
+
+// Full projection — adds the payload. Used by getById() and by list() unless
+// the caller asks for slim.
+const _EXEC_COLS = `${_EXEC_COLS_BASE}, e.raw_input`;
 
 
 // ─────────────────────────────────────────────────────────────
@@ -53,6 +82,10 @@ const _EXEC_COLS =
  * @param {string} [opts.since]          ISO datetime, inclusive lower bound
  * @param {string} [opts.until]          ISO datetime, inclusive upper bound
  * @param {boolean}[opts.has_match]      true → only rows with matched_rules
+ * @param {boolean}[opts.has_failure]    true → only rows with a failed action
+ *                                       outcome (see header — NOT the same as
+ *                                       a failure `status`)
+ * @param {boolean}[opts.slim]           true → omit raw_input from the rows
  * @returns {Promise<{rows:Array, total:number, page:number, page_size:number}>}
  */
 async function list(db, opts = {}) {
@@ -85,8 +118,14 @@ async function list(db, opts = {}) {
   if (opts.has_match === true) {
     where.push(`e.metadata->>'$.matched_rules' IS NOT NULL`);
   }
+  // Indexed generated column (idx_action_failures) — a range read, not the
+  // 528ms JSON scan the equivalent metadata predicate costs.
+  if (opts.has_failure === true) {
+    where.push('e.action_failure_count > 0');
+  }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const cols     = opts.slim === true ? _EXEC_COLS_BASE : _EXEC_COLS;
 
   // total (separate count query; the join is needed only when filtering on
   // source name, but keeping it uniform is simpler and the table is small).
@@ -100,7 +139,7 @@ async function list(db, opts = {}) {
 
   const offset = (page - 1) * pageSize;
   const [rows] = await db.query(
-    `SELECT ${_EXEC_COLS}
+    `SELECT ${cols}
        FROM email_ingest_executions e
        LEFT JOIN email_ingest_sources s ON s.id = e.source_id
        ${whereSql}
