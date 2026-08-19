@@ -24,6 +24,7 @@
       --red:     #ef4444;
       --amber:   #f59e0b;
       --purple:  #8b5cf6;
+      --pink:    #ec4899;
       --bg:      #f1f5f9;
       --surface: #ffffff;
       --border:  #e2e8f0;
@@ -137,6 +138,7 @@
     .act-type-job      i { color: var(--amber); }
     .act-type-hook     i { color: var(--purple); }
     .act-type-sequence i { color: var(--green); }
+    .act-type-trigger  i { color: var(--pink); }
 
     .act-name {
       font-weight: 600; max-width: 320px;
@@ -168,6 +170,16 @@
     }
     .act-json-btn:hover { background: var(--bg); }
 
+    /* Row-count / per-type-cap footer. Hidden when there is nothing to say. */
+    #act-foot {
+      flex-shrink: 0; background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 6px 16px; font-size: 11px; color: var(--muted);
+      display: flex; align-items: center; gap: 8px;
+    }
+    #act-foot.hidden { display: none; }
+    #act-foot .act-foot-cap { color: var(--amber); font-weight: 600; }
+
     .act-swal-pre {
       text-align: left; background: #0f172a; color: #e2e8f0;
       border-radius: 8px; padding: 12px; font-size: 11px;
@@ -192,6 +204,7 @@
     <button data-type="job">Jobs</button>
     <button data-type="hook">Hooks</button>
     <button data-type="sequence">Sequences</button>
+    <button data-type="trigger">Triggers</button>
   </div>
 
   <div class="act-seg" id="act-mode-seg">
@@ -224,15 +237,28 @@
   <div class="empty-state"><i class="fa-solid fa-heart-pulse"></i><div>Loading activity…</div></div>
 </div>
 
+<!-- ── Row-count / per-type-cap footer ── -->
+<div id="act-foot" class="hidden"></div>
+
 <script>
 // ═══════════════════════════════════════════════════════════════
 // ACTIVITY SUB-PAGE — cross-automation "what broke overnight" view.
 //
-// Merges four read-only sources client-side:
-//   - GET /executions              (workflow executions; routes/workflows.js)
-//   - GET /scheduled-jobs          (scheduled jobs; routes/scheduled_jobs.js)
-//   - GET /api/hooks/executions    (global; routes/api.hooks.js, Slice 7)
-//   - GET /sequences/step-log      (global; routes/sequences.js, Slice 7)
+// Merges five read-only sources client-side:
+//   - GET /executions               (workflow executions; routes/workflows.js)
+//   - GET /scheduled-jobs           (scheduled jobs; routes/scheduled_jobs.js)
+//   - GET /api/hooks/executions     (global; routes/api.hooks.js, Slice 7)
+//   - GET /sequences/step-log       (global; routes/sequences.js, Slice 7)
+//   - GET /api/triggers/executions  (routes/api.triggers.js — T1)
+//
+// PER-SOURCE CAPS (T5). The merge used to be one global .slice(0,100) over
+// the union, which let the loudest source crowd the others out: hooks alone
+// run ~197 rows/day against workflow's ~88, job's ~34 and sequence's ~5, so
+// an "All" view was mostly hooks. Rows are now capped PER SOURCE before the
+// final sort, which guarantees every source is represented. Drilling into a
+// single type raises the cap (SINGLE_SOURCE_CAP) so you still get depth.
+// Fetch limits derive from the same cap — no point pulling 100 rows to show
+// 25, and it keeps the request cheap on the 60s auto-refresh loop.
 //
 // Shell communication:
 //   - P.apiSend(...)            — relayed to a.html
@@ -310,12 +336,29 @@ function relativeTime(ms) {
 
 // ── State ──────────────────────────────────────────────────────
 let subPageActive  = false;
-let typeFilter     = 'all';       // all | workflow | job | hook | sequence
+let typeFilter     = 'all';       // all | workflow | job | hook | sequence | trigger
 let modeFilter     = 'failures';  // failures | all
 let windowHours    = 24;          // 24 | 168 | 720
 let refreshTimer   = null;
 let loadInFlight   = false;
 let lastRows       = [];          // normalized rows from the last successful merge
+
+// ── Row caps (T5) ──────────────────────────────────────────────
+//
+// PER_SOURCE_CAP applies in "All types" mode and is what stops a loud source
+// from evicting a quiet one. SINGLE_SOURCE_CAP applies when one type is
+// selected — there is nothing to crowd out, so show depth instead.
+//
+// These drive BOTH the merge trim and the per-fetch `limit`. Fetchers that
+// issue several calls (failures mode fans out over a status list) pass the
+// cap per call and let the merge trim the union — slight over-fetch, exact
+// result.
+const PER_SOURCE_CAP    = 25;
+const SINGLE_SOURCE_CAP = 100;
+
+function rowCap() {
+  return typeFilter === 'all' ? PER_SOURCE_CAP : SINGLE_SOURCE_CAP;
+}
 
 // ── Source metadata ────────────────────────────────────────────
 //
@@ -330,21 +373,35 @@ let lastRows       = [];          // normalized rows from the last successful me
 //   hook_executions:     received|filtered|processing|delivered|partial|
 //                        failed|captured → failures = failed, partial
 //   sequence_step_log:   sent|skipped|failed → failures = failed
+//   trigger_executions:  matched|partial|no_match|no_rules|depth_capped|error
+//                        → failures = error, partial, depth_capped
+//
+// `held` (workflow) is deliberately NOT a failure: it means the execution is
+// parked awaiting a human, not that anything went wrong. It chips amber so it
+// reads as "needs attention" in All mode, and workflows.html owns the resume
+// action (wfResumeExecution).
+//
+// `depth_capped` (trigger) IS a failure: the loop-guard dropped an event
+// before it ran. Silent event loss is exactly what this page exists to catch.
 const SOURCES = {
   workflow: { label: 'Workflow', icon: 'diagram-project', tabId: 'workflows' },
   job:      { label: 'Job',      icon: 'clock',           tabId: 'scheduledJobs' },
   hook:     { label: 'Hook',     icon: 'satellite-dish',  tabId: 'hooks' },
   sequence: { label: 'Sequence', icon: 'list-ol',         tabId: 'sequences' },
+  trigger:  { label: 'Trigger',  icon: 'bolt',            tabId: 'triggers' },
 };
 
 // Status → chip color class. Anything unlisted renders neutral.
 const CHIP_CLASS = {
   completed: 'good', delivered: 'good', sent: 'good', success: 'good',
-  failed: 'bad',
+  matched: 'good',
+  failed: 'bad', error: 'bad', depth_capped: 'bad',
   partial: 'warn', completed_with_errors: 'warn', pending: 'warn',
+  held: 'warn',
   active: 'active', processing: 'active', running: 'active', delayed: 'active',
   skipped: 'neutral', filtered: 'neutral', cancelled: 'neutral',
   captured: 'neutral', received: 'neutral',
+  no_match: 'neutral', no_rules: 'neutral',
 };
 
 // ── Timestamp normalization ────────────────────────────────────
@@ -412,6 +469,29 @@ function normSequence(r) {
   };
 }
 
+// Trigger rows are domain events, so the "name" is the event type — that is
+// what an operator scans for. rules_matched is on the list projection (see
+// triggerService.listExecutions), but `outcomes` and `envelope` are NOT:
+// the list is deliberately lean and the full record lives behind the code
+// button / the Triggers tab.
+function normTrigger(r) {
+  const n    = Number(r.rules_matched) || 0;
+  const bits = [`exec #${r.id}`, `${n} rule${n === 1 ? '' : 's'} matched`];
+  if (r.depth)           bits.push(`depth ${r.depth}`);
+  if (r.case_id)         bits.push(`case ${r.case_id}`);
+  else if (r.contact_id) bits.push(`contact ${r.contact_id}`);
+  if (r.error)           bits.push(r.error);
+  return {
+    source: 'trigger',
+    id: r.id,
+    name: r.event_type || `Trigger #${r.id}`,
+    status: r.status,
+    ts: toMs(r.created_at),
+    detail: bits.join(' · '),
+    raw: r,
+  };
+}
+
 // ── Fetchers ───────────────────────────────────────────────────
 //
 // `since` (ISO) is passed server-side where the endpoint supports it
@@ -423,36 +503,67 @@ function normSequence(r) {
 // /executions accepts a single `status` value only — Failures mode
 // fetches `failed` and `completed_with_errors` as two parallel calls.
 async function fetchWorkflows(sinceIso) {
+  const lim = rowCap();
   if (modeFilter === 'failures') {
     const [a, b] = await Promise.all([
-      api('/executions', 'GET', { status: 'failed', limit: 100 }),
-      api('/executions', 'GET', { status: 'completed_with_errors', limit: 100 }),
+      api('/executions', 'GET', { status: 'failed', limit: lim }),
+      api('/executions', 'GET', { status: 'completed_with_errors', limit: lim }),
     ]);
     return [...(a.executions || []), ...(b.executions || [])].map(normWorkflow);
   }
-  const d = await api('/executions', 'GET', { limit: 100 });
+  const d = await api('/executions', 'GET', { limit: lim });
   return (d.executions || []).map(normWorkflow);
 }
 
 async function fetchJobs(sinceIso) {
-  const params = { limit: 100 };
+  const params = { limit: rowCap() };
   if (modeFilter === 'failures') params.status = 'failed';
   const d = await api('/scheduled-jobs', 'GET', params);
   return (d.jobs || []).map(normJob);
 }
 
 async function fetchHooks(sinceIso) {
-  const params = { limit: 100, since: sinceIso };
+  const params = { limit: rowCap(), since: sinceIso };
+  // /api/hooks/executions splits `status` on commas server-side (it builds a
+  // status IN (...) clause). Do NOT copy this idiom to endpoints that take a
+  // single enum value — several of them silently DROP an unrecognized filter
+  // and return every row instead of erroring.
   if (modeFilter === 'failures') params.status = 'failed,partial';
   const d = await api('/api/hooks/executions', 'GET', params);
   return (d.executions || []).map(normHook);
 }
 
 async function fetchSequences(sinceIso) {
-  const params = { limit: 100, since: sinceIso };
+  const params = { limit: rowCap(), since: sinceIso };
   if (modeFilter === 'failures') params.status = 'failed';
   const d = await api('/sequences/step-log', 'GET', params);
   return (d.step_log || []).map(normSequence);
+}
+
+// trigger_executions failure vocabulary. `partial` = some actions of a matched
+// rule failed; `error` = every action failed (triggerService derives BOTH from
+// the actual action outcomes in its Phase-4 block, so a status filter here is
+// truthful — unlike the ingest pipelines, which record action failures only in
+// metadata and leave `status` green); `depth_capped` = the loop guard dropped
+// the event before any rule ran.
+const TRIGGER_FAILURE_STATUSES = ['error', 'partial', 'depth_capped'];
+
+// /api/triggers/executions accepts ONE `status` value (triggerService
+// .listExecutions builds `status = ?`), so failures mode fans out over the
+// list above. It has no `since` param — the client-side window in
+// applyFiltersAndRender covers it, same as /executions and /scheduled-jobs.
+async function fetchTriggers(sinceIso) {
+  const lim = rowCap();
+  if (modeFilter === 'failures') {
+    const batches = await Promise.all(
+      TRIGGER_FAILURE_STATUSES.map((s) =>
+        api('/api/triggers/executions', 'GET', { status: s, limit: lim })
+      )
+    );
+    return batches.flatMap((d) => d.executions || []).map(normTrigger);
+  }
+  const d = await api('/api/triggers/executions', 'GET', { limit: lim });
+  return (d.executions || []).map(normTrigger);
 }
 
 const FETCHERS = {
@@ -460,6 +571,7 @@ const FETCHERS = {
   job:      fetchJobs,
   hook:     fetchHooks,
   sequence: fetchSequences,
+  trigger:  fetchTriggers,
 };
 
 // ── Load + merge ───────────────────────────────────────────────
@@ -510,19 +622,35 @@ function renderErrors(errors) {
 }
 
 function applyFiltersAndRender(sinceMs) {
-  // Client-side time window — uniform across all sources (covers the two
+  // Client-side time window — uniform across all sources (covers the
   // endpoints without a `since` param, and re-trims the others).
   // Rows with an unparseable timestamp are kept (NaN fails the < check)
   // so a serialization surprise degrades to "shown" rather than silently
   // hidden.
-  const rows = lastRows
-    .filter((r) => !(r.ts < sinceMs))
-    .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-    .slice(0, 100);
+  const cap      = rowCap();
+  const bySource = new Map();
+  let inWindow   = 0;
+
+  for (const r of lastRows) {
+    if (r.ts < sinceMs) continue;          // NaN-safe: NaN < n is false → kept
+    inWindow++;
+    if (!bySource.has(r.source)) bySource.set(r.source, []);
+    bySource.get(r.source).push(r);
+  }
+
+  // Per-source trim BEFORE the global sort — this is what guarantees a quiet
+  // source still appears when a loud one is saturating the window.
+  const rows = [];
+  for (const list of bySource.values()) {
+    list.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    rows.push(...list.slice(0, cap));
+  }
+  rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
   const body = document.getElementById('act-body');
 
   if (!rows.length) {
+    renderFooter(0, 0, cap);
     body.innerHTML = `
       <div class="empty-state">
         <i class="fa-solid ${modeFilter === 'failures' ? 'fa-circle-check' : 'fa-inbox'}"></i>
@@ -532,6 +660,8 @@ function applyFiltersAndRender(sinceMs) {
       </div>`;
     return;
   }
+
+  renderFooter(rows.length, inWindow, cap);
 
   body.innerHTML = `
     <table class="act-table">
@@ -559,6 +689,30 @@ function applyFiltersAndRender(sinceMs) {
 
   // Stash the rendered rows for the click handlers (index-addressed).
   window._actRendered = rows;
+}
+
+/**
+ * Footer accounting. `shown` is what made it past the per-source cap;
+ * `inWindow` is everything the fetchers returned inside the time window.
+ * They diverge only when a source hit its cap — say so explicitly, because a
+ * silently truncated list on a health dashboard is worse than no list.
+ *
+ * Note `inWindow` is bounded by what the fetchers ASKED for (limit = cap per
+ * call), so it is not a true population count — it is "of what we pulled".
+ * Fetchers over-pull relative to the cap only in failures mode, where several
+ * status calls fan out and the union is trimmed here.
+ */
+function renderFooter(shown, inWindow, cap) {
+  const foot = document.getElementById('act-foot');
+  if (!shown) { foot.className = 'hidden'; foot.innerHTML = ''; return; }
+  foot.className = '';
+  const trimmed = inWindow > shown;
+  foot.innerHTML = `
+    <span>Showing ${shown} of ${inWindow} fetched in window</span>
+    ${trimmed ? `<span class="act-foot-cap">
+      <i class="fa-solid fa-filter"></i> capped at ${cap} per type${
+        typeFilter === 'all' ? ' — pick a single type for more depth' : ''}
+    </span>` : ''}`;
 }
 
 // ── Row interactions ───────────────────────────────────────────
