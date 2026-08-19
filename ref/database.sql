@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-19T06:27:33.889Z
+-- Generated: 2026-08-19T08:01:32.947Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:3443ef2e6b47d5f2834813952d877e2f
+-- Fingerprint: sha256:a61c2faba0e4d5513822adf7c7a89d6e
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1271,7 +1271,8 @@ CREATE TABLE `email_ingest_executions` (
   `metadata` json DEFAULT NULL,
   `raw_input` json DEFAULT NULL,
   `remote_ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `action_failure_count` int unsigned GENERATED ALWAYS AS (coalesce(json_length(json_search(json_extract(`metadata`,_utf8mb4'$.action_outcomes[*].status'),_utf8mb4'all',_utf8mb4'failed')),0)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1913,7 +1914,8 @@ CREATE TABLE `phone_ingest_executions` (
   `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `metadata` json DEFAULT NULL,
   `raw_input` json DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `action_failure_count` int unsigned GENERATED ALWAYS AS (coalesce(json_length(json_search(json_extract(`metadata`,_utf8mb4'$.action_outcomes[*].status'),_utf8mb4'all',_utf8mb4'failed')),0)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3551,7 +3553,8 @@ ALTER TABLE `email_ingest_executions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_source_created` (`source_id`,`created_at`),
   ADD KEY `idx_status_created` (`status`,`created_at`),
-  ADD KEY `idx_message_id` (`message_id`);
+  ADD KEY `idx_message_id` (`message_id`),
+  ADD KEY `idx_action_failures` (`action_failure_count`,`created_at`);
 
 --
 -- Indexes for table `email_ingest_log_suppressions`
@@ -3768,7 +3771,8 @@ ALTER TABLE `phone_event_log`
 ALTER TABLE `phone_ingest_executions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_status_created` (`status`,`created_at`),
-  ADD KEY `idx_event_log` (`event_log_id`);
+  ADD KEY `idx_event_log` (`event_log_id`),
+  ADD KEY `idx_action_failures` (`action_failure_count`,`created_at`);
 
 --
 -- Indexes for table `phone_ingest_rule_actions`
