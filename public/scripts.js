@@ -3195,6 +3195,10 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
       const body = {
         contact_id: selectedContactId,
         case_type:  caseType,
+        // The subtype select was read but never SENT (pre-T8 bug): every case
+        // created here landed with case_subtype NULL. Empty → omit, so a type
+        // with no subtypes sends exactly what it used to.
+        ...(caseSubtype ? { case_subtype: caseSubtype } : {}),
         case_number:      num  || null,
         case_number_full: full || null,
       };

@@ -667,20 +667,29 @@ function boardNorm(v) {
  *
  * Membership mirrors resolveTemplate's branch order EXACTLY (that function is
  * read, not modified — this is the SQL restatement of its JS):
- *   branch 1 — blank/'' case_subtype → THE intake template (first active
- *              role='intake' by id). Board clause: TRIM(case_subtype) = ''.
+ *   branch 1 — pipeline_phase != 'case' → THE intake template (first active
+ *              role='intake' by id). Board clause:
+ *              COALESCE(pipeline_phase,'') <> 'case'.
  *   branch 2 — first active role='case' template exactly matching
  *              (case_type, case_subtype), CI + trimmed. Board clause:
- *              non-blank subtype AND both trimmed values equal (collation is
+ *              phase='case' AND both trimmed values equal (collation is
  *              utf8mb4_general_ci, so SQL `=` is the CI half; TRIM supplies
  *              the trim half of ciEq).
  *   branch 3 — first active is_default=1 role='case' template of the
- *              case_type. Board clause: non-blank subtype, type matches,
- *              subtype NOT IN the subtypes that have their own exact active
- *              template for this type (those cases stopped at branch 2).
- *   branch 4 — fallback to the intake template: non-blank subtype with NO
- *              exact active template for its (type, subtype) AND no active
- *              default for its type. Part of the INTAKE board.
+ *              case_type. Board clause: phase='case', type matches, subtype
+ *              NOT IN the subtypes that have their own exact active template
+ *              for this type (those cases stopped at branch 2).
+ *   branch 4 — fallback to the intake template: phase='case' with NO exact
+ *              active template for its (type, subtype) AND no active default
+ *              for its type. Part of the INTAKE board.
+ *
+ * T8 — the branch clauses key on cases.pipeline_phase (LIFECYCLE), not on
+ * blank/non-blank case_subtype (MATTER). The old `TRIM(case_subtype) = ''`
+ * / `<> ''` guards are GONE from every branch, not merely supplemented: a
+ * post-retainer case with a blank subtype must reach branch 3/4 (it does
+ * — 33 such rows live at T8), and a lead with a KNOWN chapter must stay on
+ * the intake board (branch 1) rather than appearing on the chapter board
+ * with no stage. Chapter boards are post-retainer only, by design.
  * First-match-wins ties (resolveTemplate uses .find over id ASC) are mirrored
  * too: a template shadowed by a lower-id duplicate — or an inactive one —
  * resolves for NO case, so its board is structurally empty.
@@ -769,10 +778,10 @@ async function getBoard(db, templateId, { includeClosed = false } = {}) {
   const params = [];
 
   if (isTheIntake) {
-    // Branch 1: blank subtype.
-    clauses.push(`TRIM(c.case_subtype) = ''`);
-    // Branch 4: subtyped case with no exact template and no type default.
-    let b4 = `TRIM(c.case_subtype) <> ''`;
+    // Branch 1: still in the funnel — ANY subtype, known chapter included.
+    clauses.push(`COALESCE(c.pipeline_phase, '') <> 'case'`);
+    // Branch 4: post-retainer case with no exact template and no type default.
+    let b4 = `COALESCE(c.pipeline_phase, '') = 'case'`;
     if (exactTemplates.length) {
       b4 += ` AND (TRIM(c.case_type), TRIM(c.case_subtype)) NOT IN (` +
         exactTemplates.map(() => `(?, ?)`).join(', ') + `)`;
@@ -790,9 +799,10 @@ async function getBoard(db, templateId, { includeClosed = false } = {}) {
   }
 
   if (winsExact) {
-    // Branch 2: exact (type, subtype), subtype non-blank.
+    // Branch 2: post-retainer, exact (type, subtype).
     clauses.push(
-      `(TRIM(c.case_subtype) <> '' AND TRIM(c.case_type) = ? AND TRIM(c.case_subtype) = ?)`
+      `(COALESCE(c.pipeline_phase, '') = 'case' ` +
+      `AND TRIM(c.case_type) = ? AND TRIM(c.case_subtype) = ?)`
     );
     params.push(String(template.case_type == null ? '' : template.case_type).trim());
     params.push(String(template.case_subtype).trim());
@@ -804,7 +814,7 @@ async function getBoard(db, templateId, { includeClosed = false } = {}) {
     const siblingSubtypes = exactTemplates
       .filter(t => boardNorm(t.case_type) === boardNorm(template.case_type))
       .map(t => String(t.case_subtype).trim());
-    let b3 = `TRIM(c.case_subtype) <> '' AND TRIM(c.case_type) = ?`;
+    let b3 = `COALESCE(c.pipeline_phase, '') = 'case' AND TRIM(c.case_type) = ?`;
     const b3Params = [String(template.case_type == null ? '' : template.case_type).trim()];
     if (siblingSubtypes.length) {
       b3 += ` AND TRIM(c.case_subtype) NOT IN (` +

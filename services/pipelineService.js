@@ -6,11 +6,19 @@
  * Backs routes/api.pipeline.js and the `advance_stage` internal function.
  * Owns:
  *   - resolveTemplate — pure resolution of a case → pipeline_templates row
- *     (NO pointer column on cases; template is always a function of the case).
+ *     (NO pointer column on cases; template is always a function of the case
+ *     ROW — as of T8 that row carries cases.pipeline_phase, the LIFECYCLE
+ *     axis, alongside case_type/case_subtype, the MATTER axis).
  *   - getPipeline — { template, current, history, upcoming } read model.
  *   - advanceStage — the ONLY writer of case_stage_log; also overwrites
- *     cases.case_stage / case_status / case_rec from the entered stage
- *     (overwrite-on-advance is the decided design).
+ *     cases.case_stage / case_status / case_rec / pipeline_phase from the
+ *     entered stage (overwrite-on-advance is the decided design).
+ *     pipeline_phase is taken from the entered stage's OWNING template role
+ *     and is the ONLY automatic writer of that column — PATCH /api/cases/:id
+ *     can still set it by hand (caseService.updateCase blocks only the PK),
+ *     exactly as it can already set case_stage/case_status. Doing so on a
+ *     lead moves it to a chapter board with no stage; treat it as the same
+ *     class of footgun as hand-editing case_stage.
  *   - resolveStageField — stable-key → column resolver stub for future
  *     stage config (config JSON stays unread in v1).
  *
@@ -74,6 +82,17 @@ function ciEq(a, b) {
          String(b == null ? '' : b).trim().toLowerCase();
 }
 
+/**
+ * T8 — the LIFECYCLE axis. True only for an explicit 'case' phase; NULL, '',
+ * 'intake', or a silently-coerced bad enum value (the session lacks
+ * STRICT_TRANS_TABLES, so an invalid enum write lands as '') all read as
+ * intake. Intake is where every case starts, so it is the safe default.
+ */
+function isCasePhase(caseRow) {
+  return String(caseRow && caseRow.pipeline_phase != null ? caseRow.pipeline_phase : '')
+    .trim().toLowerCase() === 'case';
+}
+
 /** Defensive truncate (session lacks strict mode — DB would clip silently). */
 function clip(s, max) {
   if (s == null) return null;
@@ -89,32 +108,56 @@ const domainEvents = require('../lib/domainEvents'); // Trigger T3 — safe top-
 
 /**
  * Resolve the pipeline template for a case. Pure function of the case row —
- * there is NO pointer column; changing case_type/case_subtype re-resolves
- * naturally on the next read.
+ * there is NO pointer column; changing pipeline_phase/case_type/case_subtype
+ * re-resolves naturally on the next read.
+ *
+ * ── T8: TWO AXES, NOT ONE ────────────────────────────────────────────────
+ * Branch 1 used to read `case_subtype blank/'' → intake`, using WHAT KIND OF
+ * MATTER it is to answer WHERE IT IS IN ITS LIFECYCLE. That proxy is false:
+ * a referral can be an obvious Chapter 7 on day one and still be an unsigned
+ * lead. Cases whose chapter was known pre-retainer resolved to a chapter
+ * template whose first stage is `retained` — a state not yet true — so they
+ * had no valid stage to occupy and landed in the board's `unstaged` bucket
+ * with their intake position erased.
+ *
+ * cases.pipeline_phase ('intake' | 'case') is now the LIFECYCLE axis and is
+ * asked FIRST; case_type/case_subtype stay the MATTER axis and are asked
+ * second. case_subtype therefore means subtype and nothing else — it is
+ * legitimate, and expected, on a lead.
  *
  * Branch order (first match wins):
- *   1. case_subtype blank/'' → the active role='intake' template.
+ *   1. pipeline_phase != 'case' → the active role='intake' template.
+ *      (Anything not exactly 'case' — NULL, '', a bad enum write under the
+ *      session's non-strict sql_mode — reads as intake. Intake is the safe
+ *      default: it is where every case starts.)
  *   2. Active role='case' template matching (case_type, case_subtype).
  *   3. Active is_default=1 role='case' template for case_type.
  *   4. The intake template (fallback).
  * Returns the full pipeline_templates row, or null ONLY when even the intake
  * template is missing — callers degrade (empty upcoming), never throw on null.
  *
+ * NOTE branch 4 is now reachable by post-retainer cases with no matching
+ * template (Litigation, Adversary Proceeding, Chapter 11, and Bankruptcies
+ * retained with no chapter recorded — 33 rows live at T8). They resolve to
+ * Intake and sit `unstaged`. That is a VISIBLE wrong rather than a silent
+ * one, and its fix is new templates, not new resolution logic. Do NOT set
+ * is_default=1 on Chapter 7 to sweep them up — that files a Chapter 11 on a
+ * Chapter 7 pipeline.
+ *
  * One query (templates table is tiny); ties broken by lowest id.
  *
  * @param {object} db      mysql2 pool or transaction connection
- * @param {object} caseRow row carrying at least { case_type, case_subtype }
+ * @param {object} caseRow row carrying at least
+ *                         { pipeline_phase, case_type, case_subtype }
  * @returns {object|null}  pipeline_templates row or null
  */
-async function resolveTemplate(db, caseRow) {
-  const [templates] = await db.query(
-    `SELECT * FROM pipeline_templates WHERE active = 1 ORDER BY id ASC`
-  );
+const TPL_SQL = `SELECT * FROM pipeline_templates WHERE active = 1 ORDER BY id ASC`;
 
+/** PURE — branches 2 and 3 of the order above (the MATTER axis), over an
+ *  already-loaded template list. Null when no role='case' template matches,
+ *  so a caller can tell "no matter template" from "fell back to intake". */
+function _pickMatter(templates, caseRow) {
   const subtype = String(caseRow.case_subtype == null ? '' : caseRow.case_subtype).trim();
-  const intake  = templates.find(t => t.role === 'intake') || null;
-
-  if (subtype === '') return intake;                                       // 1
 
   const exact = templates.find(t =>
     t.role === 'case' &&
@@ -123,12 +166,34 @@ async function resolveTemplate(db, caseRow) {
   );
   if (exact) return exact;                                                 // 2
 
-  const dflt = templates.find(t =>
+  return templates.find(t =>                                              // 3
     t.role === 'case' && t.is_default && ciEq(t.case_type, caseRow.case_type)
-  );
-  if (dflt) return dflt;                                                   // 3
+  ) || null;
+}
 
-  return intake;                                                           // 4
+/** PURE — the whole branch order, over an already-loaded template list. */
+function _pickTemplate(templates, caseRow) {
+  const intake = templates.find(t => t.role === 'intake') || null;
+  if (!isCasePhase(caseRow)) return intake;                                // 1
+  return _pickMatter(templates, caseRow) || intake;                        // 2 / 3 / 4
+}
+
+async function resolveTemplate(db, caseRow) {
+  const [templates] = await db.query(TPL_SQL);
+  return _pickTemplate(templates, caseRow);
+}
+
+/**
+ * Resolve the template a case WOULD land on if its phase were 'case' — the
+ * matter-axis answer, ignoring lifecycle. Used ONLY by _resolveTarget's
+ * cross-phase search (see there); never by the read model.
+ *
+ * Returns null when no role='case' template matches, so a caller can tell
+ * "no matter template" apart from "fell back to intake".
+ */
+async function resolveMatterTemplate(db, caseRow) {
+  const [templates] = await db.query(TPL_SQL);
+  return _pickMatter(templates, caseRow);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,7 +241,8 @@ function projectLogRow(r) {
  */
 async function getPipeline(db, caseId) {
   const [[caseRow]] = await db.query(
-    `SELECT case_id, case_type, case_subtype FROM cases WHERE case_id = ?`,
+    `SELECT case_id, case_type, case_subtype, pipeline_phase
+       FROM cases WHERE case_id = ?`,
     [caseId]
   );
   if (!caseRow) throw notFound(`Case ${caseId} not found`);
@@ -279,7 +345,8 @@ async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey =
     return stage;
   }
 
-  const template = await resolveTemplate(conn, caseRow);
+  const [templates] = await conn.query(TPL_SQL);
+  const template = _pickTemplate(templates, caseRow);
   if (!template) {
     if (soft) {
       console.warn(
@@ -294,10 +361,46 @@ async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey =
       `cannot advance by stage_key "${s}" (numeric stage_id still works)`
     );
   }
+
+  // T8 — CROSS-PHASE KEY SEARCH. The phase-resolved template is tried FIRST;
+  // the case's MATTER template is the fallback. This is what makes the
+  // intake→case transition self-bootstrapping, and it is load-bearing:
+  //
+  //   workflow 42 step 5 asks for 'retained' while the case is still phase
+  //   'intake'. Phase resolution returns the Intake template, where
+  //   `retained` is active=0 and unreachable. Without this fallback the
+  //   retainer advance would resolve nothing and (being guarded) skip
+  //   SILENTLY — every retention in the firm would stop being recorded.
+  //   Same shape for api.intake.petition.js's 'filed' advance on a
+  //   brand-new case.
+  //
+  // advanceStage then writes pipeline_phase from the ENTERED stage's
+  // template role, so the very first case-template stage flips the case to
+  // phase 'case' and every later read resolves there directly. No case
+  // creator has to set the phase, and there is no chicken-and-egg.
+  //
+  // This does NOT open a back door into the case phase: `docs` and the other
+  // post-retainer keys are only ever advanced by callers guarded
+  // onlyFrom:['retained'] or an only_from list of case-phase keys, and the
+  // intake keys don't exist on any case template, so the fallback can only
+  // fire on a genuine lifecycle transition.
+  //
+  // Phase template first (ORDER BY) so a key present on BOTH — `retained`
+  // lives on Intake (inactive) and on every chapter template — resolves
+  // deterministically to where the case actually is.
+  // Same single template load as above — no second round-trip.
+  const matter = isCasePhase(caseRow) ? null : _pickMatter(templates, caseRow);
+  const searchIds = matter && matter.id !== template.id
+    ? [template.id, matter.id]
+    : [template.id];
+
   const [[stage]] = await conn.query(
     `SELECT * FROM pipeline_stages
-      WHERE template_id = ? AND stage_key = ? AND active = 1`,
-    [template.id, s]
+      WHERE template_id IN (${searchIds.map(() => '?').join(', ')})
+        AND stage_key = ? AND active = 1
+      ORDER BY (template_id = ?) DESC, template_id ASC
+      LIMIT 1`,
+    [...searchIds, s, template.id]
   );
   if (!stage) {
     if (soft) {
@@ -323,7 +426,11 @@ async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey =
  *     stage's internal_label at entry time).
  *   - UPDATE cases SET case_stage = <stage bucket>,
  *                      case_status = <internal_label, clipped to 50>,
- *                      case_rec = <stage default_rec>   — overwrite-on-advance.
+ *                      case_rec = <stage default_rec>,
+ *                      pipeline_phase = <entered stage's template role>
+ *                                                       — overwrite-on-advance.
+ *     (T8: the phase write is what makes _resolveTarget's cross-phase search
+ *     a one-time bootstrap rather than a permanent crutch.)
  *
  * Idempotency: if the case's latest log row already carries the same
  * stage_key AND template_id as the resolved target, nothing is written and
@@ -420,7 +527,8 @@ async function advanceStage(db, caseId, target, {
 
     try {
       const [[caseRow]] = await conn.query(
-        `SELECT case_id, case_type, case_subtype FROM cases WHERE case_id = ?`,
+        `SELECT case_id, case_type, case_subtype, pipeline_phase
+           FROM cases WHERE case_id = ?`,
         [caseId]
       );
       if (!caseRow) throw notFound(`Case ${caseId} not found`);
@@ -504,15 +612,29 @@ async function advanceStage(db, caseId, target, {
         ]
       );
 
-      // Overwrite-on-advance for all three (decided design). case_status is
+      // T8 — the entered stage's OWNING template decides the case's phase.
+      // Stage rows never move between templates, so this is the authoritative
+      // lifecycle signal: entering any role='case' stage means retained,
+      // entering any role='intake' stage means (back) in the funnel.
+      // Sub-selected rather than carried in JS so it cannot drift from
+      // pipeline_templates.role, and COALESCEd so a stage whose template row
+      // vanished leaves the phase untouched instead of nulling it.
+      const [[stageTpl]] = await conn.query(
+        `SELECT role FROM pipeline_templates WHERE id = ?`, [stage.template_id]
+      );
+      const newPhase = stageTpl && stageTpl.role === 'case' ? 'case' : 'intake';
+
+      // Overwrite-on-advance for all four (decided design). case_status is
       // varchar(50) — clip in JS; without strict mode the DB would clip
       // silently mid-word.
       await conn.query(
-        `UPDATE cases SET case_stage = ?, case_status = ?, case_rec = ? WHERE case_id = ?`,
+        `UPDATE cases SET case_stage = ?, case_status = ?, case_rec = ?, pipeline_phase = ?
+          WHERE case_id = ?`,
         [
           stage.case_stage,
           clip(stage.internal_label, 50),
           clip(stage.default_rec == null ? '' : stage.default_rec, 128),
+          newPhase,
           caseId,
         ]
       );
@@ -617,6 +739,7 @@ function resolveStageField(key) {
 
 module.exports = {
   resolveTemplate,
+  resolveMatterTemplate,
   getPipeline,
   advanceStage,
   resolveStageField,

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-19T08:01:32.947Z
+-- Generated: 2026-08-19T16:00:39.864Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a61c2faba0e4d5513822adf7c7a89d6e
+-- Fingerprint: sha256:b110c2d70c61be7637edc3b9c6351dd9
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -463,6 +463,7 @@ CREATE TABLE `cases` (
   `case_our_role` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_type` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
   `case_subtype` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `pipeline_phase` enum('intake','case') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'intake' COMMENT 'T8 lifecycle axis: intake funnel vs post-retainer case. Written by pipelineService.advanceStage from the entered stage template role.',
   `case_stage` enum('Open','Pending','Filed','Concluded','Closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Open',
   `case_status` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_rec` varchar(128) COLLATE utf8mb4_general_ci NOT NULL,

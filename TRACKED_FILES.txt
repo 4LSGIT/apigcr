@@ -312,6 +312,7 @@ ref/2026-08-18_s4_condition_resync.sql
 ref/2026-08-19_current_version_default_0.sql
 ref/2026-08-19_ingest_action_failure_count.sql
 ref/2026-08-19_pin_column_defaults_0.sql
+ref/2026-08-19_pipeline_phase.sql
 ref/2026-08-19_step_version_defaults_0.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md

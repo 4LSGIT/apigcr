@@ -90,12 +90,16 @@ describe('getBoard membership mirrors resolveTemplate', () => {
     ]);
     const out = await svc.getBoard(db, 2);
     const cards = db.calls[3];
-    expect(cards.sql).toContain(`TRIM(c.case_subtype) <> ''`);
+    // T8: membership is phase-gated, not subtype-gated.
+    expect(cards.sql).toContain(`COALESCE(c.pipeline_phase, '') = 'case'`);
     expect(cards.sql).toContain(`TRIM(c.case_type) = ?`);
     expect(cards.sql).toContain(`TRIM(c.case_subtype) = ?`);
     expect(cards.params).toEqual(['Bankruptcy', 'Chapter 7']);
     expect(cards.sql).toContain(`case_stage <> 'Closed'`);
     // no intake / default clauses leaked in
+    expect(cards.sql).not.toContain(`COALESCE(c.pipeline_phase, '') <> 'case'`);
+    // the old subtype-as-lifecycle proxy must be GONE, not merely joined
+    expect(cards.sql).not.toContain(`TRIM(c.case_subtype) <> ''`);
     expect(cards.sql).not.toContain(`TRIM(c.case_subtype) = ''`);
     expect(out.columns).toHaveProperty('unstaged');
     expect(out.columns).toHaveProperty('docs');
@@ -118,7 +122,7 @@ describe('getBoard membership mirrors resolveTemplate', () => {
     ]);
     await svc.getBoard(db, 1);
     const cards = db.calls[3];
-    expect(cards.sql).toContain(`TRIM(c.case_subtype) = ''`);                          // branch 1
+    expect(cards.sql).toContain(`COALESCE(c.pipeline_phase, '') <> 'case'`);           // branch 1
     expect(cards.sql).toContain(`(TRIM(c.case_type), TRIM(c.case_subtype)) NOT IN`);   // branch 4 pairs
     expect(cards.sql).toContain(`TRIM(c.case_type) NOT IN`);                           // branch 4 defaults
     expect(cards.params).toEqual([

@@ -110,47 +110,110 @@ const CH7_STAGES = [
 // resolveTemplate — branch order
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('resolveTemplate branch order', () => {
-  test('blank subtype → intake template', async () => {
+describe('resolveTemplate branch order (T8: phase first, matter second)', () => {
+  // Branch 1 is now the LIFECYCLE test. These four prove the T8 thesis:
+  // subtype no longer decides the template, phase does.
+  test('phase intake + blank subtype → intake template', async () => {
     const db = stubDb([ALL_TPLS.slice()]);
-    const t = await svc.resolveTemplate(db, { case_type: 'Bankruptcy', case_subtype: '' });
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: '' });
     expect(t).toBe(ALL_TPLS[0]);
     expect(t.role).toBe('intake');
   });
 
-  test('null subtype counts as blank → intake', async () => {
+  test('phase intake + KNOWN chapter → STILL intake (the T8 fix)', async () => {
     const db = stubDb([ALL_TPLS.slice()]);
-    const t = await svc.resolveTemplate(db, { case_type: 'Bankruptcy', case_subtype: null });
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' });
     expect(t.role).toBe('intake');
   });
 
-  test('exact (type, subtype) match wins', async () => {
+  test('missing/null phase reads as intake (safe default)', async () => {
     const db = stubDb([ALL_TPLS.slice()]);
-    const t = await svc.resolveTemplate(db, { case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
+    const t = await svc.resolveTemplate(db,
+      { case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
+    expect(t.role).toBe('intake');
+    const db2 = stubDb([ALL_TPLS.slice()]);
+    const t2 = await svc.resolveTemplate(db2,
+      { pipeline_phase: null, case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
+    expect(t2.role).toBe('intake');
+  });
+
+  test('bad enum value (silent "" under non-strict sql_mode) reads as intake', async () => {
+    const db = stubDb([ALL_TPLS.slice()]);
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: '', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' });
+    expect(t.role).toBe('intake');
+  });
+
+  test('phase case + exact (type, subtype) match wins', async () => {
+    const db = stubDb([ALL_TPLS.slice()]);
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'case', case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
     expect(t.id).toBe(TPL_CH13.id);
+  });
+
+  test('phase matching is trimmed + caseless', async () => {
+    const db = stubDb([ALL_TPLS.slice()]);
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: ' CASE ', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' });
+    expect(t.id).toBe(TPL_CH7.id);
   });
 
   test('matching mirrors utf8mb4_general_ci (caseless)', async () => {
     const db = stubDb([ALL_TPLS.slice()]);
-    const t = await svc.resolveTemplate(db, { case_type: 'bankruptcy', case_subtype: 'chapter 7' });
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'case', case_type: 'bankruptcy', case_subtype: 'chapter 7' });
     expect(t.id).toBe(TPL_CH7.id);
   });
 
-  test('no exact match → is_default=1 template for the case_type', async () => {
+  test('phase case, no exact match → is_default=1 template for the case_type', async () => {
     const db = stubDb([[...ALL_TPLS, TPL_BK_DEFAULT]]);
-    const t = await svc.resolveTemplate(db, { case_type: 'Bankruptcy', case_subtype: 'Chapter 11' });
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'case', case_type: 'Bankruptcy', case_subtype: 'Chapter 11' });
     expect(t.id).toBe(TPL_BK_DEFAULT.id);
   });
 
-  test('no exact, no default → intake fallback', async () => {
+  test('phase case, no exact, no default → intake fallback', async () => {
     const db = stubDb([ALL_TPLS.slice()]);
-    const t = await svc.resolveTemplate(db, { case_type: 'Bankruptcy', case_subtype: 'Chapter 11' });
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'case', case_type: 'Bankruptcy', case_subtype: 'Chapter 11' });
     expect(t.role).toBe('intake');
+  });
+
+  test('phase case + BLANK subtype reaches branch 3/4, not branch 1', async () => {
+    // The 12 live "retained, chapter never recorded" rows. Must NOT be
+    // short-circuited to intake by a subtype test — that test is gone.
+    const db = stubDb([[...ALL_TPLS, TPL_BK_DEFAULT]]);
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'case', case_type: 'Bankruptcy', case_subtype: '' });
+    expect(t.id).toBe(TPL_BK_DEFAULT.id);
   });
 
   test('nothing resolves (no intake either) → null, no throw', async () => {
     const db = stubDb([[TPL_CH7]]); // active templates but no intake, no match
-    const t = await svc.resolveTemplate(db, { case_type: 'Estate', case_subtype: 'Probate' });
+    const t = await svc.resolveTemplate(db,
+      { pipeline_phase: 'case', case_type: 'Estate', case_subtype: 'Probate' });
+    expect(t).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveMatterTemplate (T8) — the matter axis alone, ignoring phase
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('resolveMatterTemplate', () => {
+  test('exact match regardless of phase', async () => {
+    const db = stubDb([ALL_TPLS.slice()]);
+    const t = await svc.resolveMatterTemplate(db,
+      { pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' });
+    expect(t.id).toBe(TPL_CH7.id);
+  });
+
+  test('no match → NULL (not the intake fallback)', async () => {
+    const db = stubDb([ALL_TPLS.slice()]);
+    const t = await svc.resolveMatterTemplate(db,
+      { pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: '' });
     expect(t).toBeNull();
   });
 });
@@ -169,7 +232,7 @@ describe('getPipeline', () => {
 
   test('no history: current null, upcoming = ALL template stages', async () => {
     const db = stubDb([
-      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
       ALL_TPLS.slice(),
       [],                       // no log rows — the universal day-one state
       CH7_STAGES.slice(),
@@ -183,7 +246,7 @@ describe('getPipeline', () => {
 
   test('mid-pipeline: upcoming = stages after the current (matched by stage_key)', async () => {
     const db = stubDb([
-      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
       ALL_TPLS.slice(),
       [ // ascending history; last row is current
         { stage_id: 21, stage_key: 'docs',  case_stage: 'Pending', status_label: 'Documents & Prep', entered_at: 't1', entered_by: 6, source: 'manual', note: null },
@@ -201,7 +264,7 @@ describe('getPipeline', () => {
 
   test('branched from intake: current stage_key not in template → upcoming = ALL stages', async () => {
     const db = stubDb([
-      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
       ALL_TPLS.slice(),
       [ // history is intake-shaped; case just gained a subtype
         { stage_id: 4, stage_key: 'retained', case_stage: 'Pending', status_label: 'Retained', entered_at: 't1', entered_by: 6, source: 'manual', note: null },
@@ -216,7 +279,7 @@ describe('getPipeline', () => {
 
   test('no template resolves → template null, upcoming empty, no throw', async () => {
     const db = stubDb([
-      [{ case_id: 'C1', case_type: 'Estate', case_subtype: 'Probate' }],
+      [{ case_id: 'C1', case_type: 'Estate', case_subtype: 'Probate', pipeline_phase: 'case' }],
       [TPL_CH7],                // no intake, no match
       [],                       // log
       // NOTE: no stages query — template is null, so it must not run.
@@ -243,14 +306,14 @@ describe('advanceStage', () => {
     const db = stubTxDb(
       [
         LOCK_OK,
-        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
         [{ id: 900, template_id: 2, stage_key: 'filed' }],   // latest === target
         ALL_TPLS.slice(),
         [stageRow],
         RELEASED,
       ],
       [ // post-tx getPipeline on the pool: case → templates → log → stages
-        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
         ALL_TPLS.slice(),
         [{ stage_id: 22, stage_key: 'filed', case_stage: 'Filed', status_label: 'Filed', entered_at: 't', entered_by: null, source: 'system', note: null }],
         CH7_STAGES.slice(),
@@ -273,15 +336,16 @@ describe('advanceStage', () => {
     const db = stubTxDb(
       [
         LOCK_OK,
-        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
         [],                                                  // no latest row (read before resolution)
         [stageRow],                                          // direct id lookup (no template resolve)
         [{ insertId: 1 }],                                   // INSERT
+        [{ role: 'case' }],                                  // T8 phase source
         [{ affectedRows: 1 }],                               // UPDATE
         RELEASED,
       ],
       [
-        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
         ALL_TPLS.slice(),
         [{ stage_id: 77, stage_key: 'long', case_stage: 'Pending', status_label: longLabel, entered_at: 't', entered_by: 6, source: 'manual', note: 'hi' }],
         CH7_STAGES.slice(),
@@ -304,7 +368,9 @@ describe('advanceStage', () => {
     expect(update.params[1]).toBe(longLabel.slice(0, 50));  // varchar(50) clip
     expect(update.params[1]).toHaveLength(50);
     expect(update.params[2]).toBe('Do the thing');
-    expect(update.params[3]).toBe('C1');
+    // T8: pipeline_phase from the ENTERED stage's template role, then the PK.
+    expect(update.params[3]).toBe('case');
+    expect(update.params[4]).toBe('C1');
 
     // (Trigger T3) exactly one post-commit case.stage_advanced emission,
     // carrying the from/to details lifted out of the transaction.
@@ -332,7 +398,7 @@ describe('advanceStage', () => {
     const db = stubTxDb(
       [
         LOCK_OK,
-        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }],
+        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
         [],                                                 // latest log row (read before resolution)
         ALL_TPLS.slice(),
         [],                                                 // no matching stage
@@ -364,7 +430,11 @@ describe('advanceStage', () => {
 describe('advanceStage guards (Slice E1)', () => {
   const LOCK_OK = [{ lockAcquired: 1 }];
   const RELEASED = [{ 'RELEASE_LOCK(?)': 1 }];
-  const CASE_CH7 = [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7' }];
+  const CASE_CH7 = [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }];
+  // T8: same matter, still in the funnel — a lead whose chapter is already
+  // known. Pre-T8 this row was IMPOSSIBLE to express: a written subtype WAS
+  // the case phase.
+  const LEAD_CH7 = [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'intake' }];
   const DOCS_STAGE = { id: 5, template_id: 2, stage_key: 'docs', stage_number: 2, internal_label: 'Documents & Prep', case_stage: 'Pending', default_rec: 'Collect docs', active: 1 };
   const RETAINED_T2 = { id: 23, template_id: 2, stage_key: 'retained', stage_number: 1, internal_label: 'Retained', case_stage: 'Pending', default_rec: 'Send doc request', active: 1 };
   const POOL_PIPELINE = () => [ // post-tx getPipeline: case → templates → log → stages
@@ -384,6 +454,7 @@ describe('advanceStage guards (Slice E1)', () => {
         ALL_TPLS.slice(),
         [DOCS_STAGE],
         [{ insertId: 1 }],
+        [{ role: 'case' }],
         [{ affectedRows: 1 }],
         RELEASED,
       ],
@@ -429,6 +500,7 @@ describe('advanceStage guards (Slice E1)', () => {
         ALL_TPLS.slice(),
         [RETAINED_T2],
         [{ insertId: 1 }],
+        [{ role: 'case' }],
         [{ affectedRows: 1 }],
         RELEASED,
       ],
@@ -488,6 +560,7 @@ describe('advanceStage guards (Slice E1)', () => {
         ALL_TPLS.slice(),
         [RETAINED_T2],
         [{ insertId: 1 }],
+        [{ role: 'case' }],
         [{ affectedRows: 1 }],
         RELEASED,
       ],
@@ -497,6 +570,70 @@ describe('advanceStage guards (Slice E1)', () => {
     expect(p.skipped).toBe(false);
     expect(p.noop).toBe(false);
     expect(db.connCalls.some(c => c.sql.startsWith('INSERT INTO case_stage_log'))).toBe(true);
+  });
+
+  // ── T8 — the cross-phase bootstrap ──────────────────────────────────────
+  test('T8: phase-intake case advancing to a CASE-template stage resolves via the matter template and flips the phase', async () => {
+    // Workflow 42 step 5's post-T8 shape. The case is a KNOWN Chapter 7 that
+    // has not retained: pipeline_phase 'intake', so resolveTemplate returns
+    // the Intake template, where `retained` is active=0 and unreachable.
+    // Without the cross-phase fallback this guarded advance would resolve
+    // NOTHING and skip SILENTLY — every retention in the firm would stop
+    // being recorded. It must find `retained` on t2 instead.
+    const db = stubTxDb(
+      [
+        LOCK_OK, LEAD_CH7.slice(),
+        [{ id: 905, template_id: 1, stage_key: 'contract_sent' }],
+        [{ role: 'intake' }],     // guard: latest log row's template role
+        ALL_TPLS.slice(),         // ONE load, serving both axes
+        [RETAINED_T2],            // found on the MATTER template, not the phase one
+        [{ insertId: 1 }],
+        [{ role: 'case' }],       // entered stage's template role
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'retained', { onlyFromRole: ['intake', null], source: 'system' });
+    expect(p.skipped).toBe(false);
+    expect(p.noop).toBe(false);
+
+    // The key search spanned BOTH templates, phase template first.
+    const lookup = db.connCalls.find(c => c.sql.includes('FROM pipeline_stages'));
+    expect(lookup.params.slice(0, 2)).toEqual([1, 2]);   // intake, then Ch7
+    expect(lookup.params[2]).toBe('retained');
+    expect(lookup.params[3]).toBe(1);                    // ORDER BY phase-template-first
+
+    // The log row carries the MATTER template — which is what keeps
+    // onlyFromRole meaningful for every later advance.
+    const insert = db.connCalls.find(c => c.sql.startsWith('INSERT INTO case_stage_log'));
+    expect(insert.params[1]).toBe(2);
+
+    // …and the case is now phase 'case', so the fallback is a one-time
+    // bootstrap rather than a permanent crutch.
+    const update = db.connCalls.find(c => c.sql.startsWith('UPDATE cases'));
+    expect(update.sql).toContain('pipeline_phase = ?');
+    expect(update.params[3]).toBe('case');
+  });
+
+  test('T8: an intake-phase case is NOT dragged into the case phase by a stage that stays on the intake template', async () => {
+    const CONSULT = { id: 4, template_id: 1, stage_key: 'consult_held', stage_number: 4, internal_label: 'Consult Held', case_stage: 'Open', default_rec: 'Send contract', active: 1 };
+    const db = stubTxDb(
+      [
+        LOCK_OK, LEAD_CH7.slice(),
+        [],                       // no log rows yet
+        ALL_TPLS.slice(),
+        [CONSULT],
+        [{ insertId: 1 }],
+        [{ role: 'intake' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    await svc.advanceStage(db, 'C1', 'consult_held', { source: 'system' });
+    const update = db.connCalls.find(c => c.sql.startsWith('UPDATE cases'));
+    expect(update.params[3]).toBe('intake');
   });
 
   test('onlyFromRole intake: latest row on a case template → skipped', async () => {
@@ -523,6 +660,7 @@ describe('advanceStage guards (Slice E1)', () => {
         ALL_TPLS.slice(),
         [RETAINED_T2],
         [{ insertId: 1 }],
+        [{ role: 'case' }],
         [{ affectedRows: 1 }],
         RELEASED,
       ],
@@ -569,6 +707,7 @@ describe('advanceStage guards (Slice E1)', () => {
         ALL_TPLS.slice(),
         [DOCS_STAGE],
         [{ insertId: 1 }],
+        [{ role: 'case' }],
         [{ affectedRows: 1 }],
         RELEASED,
       ],
