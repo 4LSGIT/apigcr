@@ -295,9 +295,14 @@ router.delete('/api/phone-ingest/rule-actions/:id', jwtOrApiKey, async (req, res
 // the canonical case).
 router.get('/api/phone-ingest/executions', jwtOrApiKey, async (req, res) => {
   try {
-    const hasMatch = req.query.has_match === 'true' ? true
-                   : req.query.has_match === 'false' ? false
-                   : undefined;
+    // has_match is true-or-absent, NOT tri-state: executionsService.list()
+    // only honors `=== true`, so a parsed `false` was silently identical to
+    // omitting the param — the same silent-drop family as the status note
+    // above. T6/F-4 removed the dead false branch so the route contract
+    // matches real behavior. (No caller ever sent has_match=false; if one
+    // ever needs "rows WITHOUT matched rules", add the false predicate to
+    // the SERVICE first, then restore tri-state parsing here.)
+    const hasMatch = req.query.has_match === 'true' ? true : undefined;
     const { rows, total, page, page_size } = await executionsService.list(req.db, {
       page:        req.query.page,
       page_size:   req.query.page_size,

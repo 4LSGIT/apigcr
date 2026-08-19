@@ -576,6 +576,13 @@ function _extractActionResult(actionType, logData) {
  *                          error?, result?}>,
  *   parseWarnings:  string[]   // transform failures / non-firing diagnostics
  * }>}
+ *
+ * actionOutcomes entries are one-per-dispatched-action, PLUS (T6/F-3) one
+ * synthetic entry per matched rule whose transform failed:
+ *   { rule_id, rule_action_id:null, action_type:'transform',
+ *     status:'failed', error }
+ * — so `action_failure_count` / the alerting sweep / Activity's degraded
+ * marker all see transform failures, not just action failures.
  */
 async function evaluateRules(db, envelope) {
   const rules = await listActiveRules(db);
@@ -604,12 +611,33 @@ async function evaluateRules(db, envelope) {
 
     // 2. Transform. A failed transform means the rule does NOT fire its
     //    actions (they'd get garbage input) — but the rule still counts as
-    //    matched. Record a diagnostic.
+    //    matched. Record a diagnostic AND a synthetic failed outcome.
+    //
+    //    T6/F-3: the synthetic outcome is what makes a transform failure
+    //    VISIBLE. Before it, a broken transform recorded only
+    //    metadata._parse_warnings — no action outcome, status stayed green,
+    //    action_failure_count stayed 0, and lib/alerting.js (which watches
+    //    only action_outcomes) never fired: the same silent-failure class as
+    //    phone execution #4529, with no detector at all. One entry here and
+    //    everything downstream inherits it for free — the generated column
+    //    counts it, the alerting sweep alerts on it, Activity's failures
+    //    union catches it, the degraded marker renders. rule_action_id is
+    //    null (no single action failed — the whole action set was skipped);
+    //    action_type 'transform' is outside the dispatchable set, which is
+    //    deliberate: it can never collide with a real action's outcome.
+    //    parseWarnings still carries the human-readable diagnostic.
     const tr = _runTransform(rule, envelope);
     if (!tr.ok) {
       const w = `rule ${rule.id} (${rule.name}) transform failed: ${tr.error} — actions skipped`;
       console.warn(`[emailIngestRule] ${w}`);
       parseWarnings.push(w);
+      actionOutcomes.push({
+        rule_id:        rule.id,
+        rule_action_id: null,
+        action_type:    'transform',
+        status:         'failed',
+        error:          tr.error,
+      });
       continue;
     }
     const transformedInput = tr.output;

@@ -77,6 +77,10 @@ const TRANSFORM_MODES = [
   { value: 'code',        label: 'Custom code (JS)' },
 ];
 
+// HAND-SYNCED status vocabulary — site 3 of 5. Full checklist lives at
+// emailIngestExecutionsService.VALID_STATUSES (T6/F-6): DB ENUM →
+// VALID_STATUSES → THIS list (the /meta dropdown) → emailIngest.html
+// STATUS_META → activity.html EMAIL_FAILURE_STATUSES (failure classes only).
 const EXECUTION_STATUSES = [
   { value: 'logged',               label: 'Logged' },
   { value: 'duplicate',            label: 'Duplicate' },

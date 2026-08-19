@@ -304,7 +304,7 @@
 // 25, and it keeps the request cheap on the 60s auto-refresh loop.
 //
 // Shell communication:
-//   - P.apiSend(...)            — relayed to a.html
+//   - P.apiSend(...)            — relayed to index.html (the only production shell; a.html is retired)
 //   - P.setTopbarButtons({...}) — request button visibility
 //   - P.focusSubPageRecord(id, {id}) — tab switch + deep-link to the
 //     clicked record via the target's onFocusRecord hook (T4). Falls back
@@ -718,6 +718,13 @@ async function fetchTriggers(sinceIso) {
 //    status filter takes ONE enum value — the service silently DROPS an
 //    unrecognized one and returns EVERY row, so a comma list would look
 //    like it worked while disabling the filter entirely. Fan out instead.
+// HAND-SYNCED status vocabulary — site 5 of 5 for BOTH ingest chains, and
+// the one where a miss is NOT cosmetic: a failure-class status added to a
+// table ENUM but not listed here makes failures mode blind to it — exactly
+// the blindness T2/T3 removed. Full checklists live at
+// emailIngestExecutionsService.VALID_STATUSES and
+// phoneIngestExecutionsService.VALID_STATUSES (T6/F-6). Non-failure
+// statuses (logged, suppressed, duplicate, skipped_*) do NOT belong here.
 const EMAIL_FAILURE_STATUSES = ['auth_failed', 'validation_failed', 'error'];
 const PHONE_FAILURE_STATUSES = ['error'];
 

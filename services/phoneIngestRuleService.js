@@ -526,6 +526,13 @@ function _extractActionResult(actionType, logData) {
  *   actionOutcomes: Array<{rule_id, rule_action_id, action_type, status, error?, result?}>,
  *   parseWarnings:  string[]   // transform failures / non-firing diagnostics
  * }>}
+ *
+ * actionOutcomes entries are one-per-dispatched-action, PLUS (T6/F-3) one
+ * synthetic entry per matched rule whose transform failed:
+ *   { rule_id, rule_action_id:null, action_type:'transform',
+ *     status:'failed', error }
+ * — so `action_failure_count` / the alerting sweep / Activity's degraded
+ * marker all see transform failures, not just action failures.
  */
 async function evaluateRules(db, event) {
   const rules = await listActiveRules(db);
@@ -546,12 +553,29 @@ async function evaluateRules(db, event) {
 
     // 2. Transform. A failed transform means the rule does NOT fire its
     //    actions (they'd get garbage input) — but the rule still counts as
-    //    matched. Record a diagnostic.
+    //    matched. Record a diagnostic AND a synthetic failed outcome.
+    //
+    //    T6/F-3, mirror of emailIngestRuleService (the two transform paths
+    //    are line-identical): without this entry a broken transform recorded
+    //    only metadata._parse_warnings — no action outcome, green status,
+    //    action_failure_count 0, and lib/alerting.js (which watches only
+    //    action_outcomes) never fired. One entry here and the generated
+    //    column, the alerting sweep, Activity's failures union and the
+    //    degraded marker all inherit it. rule_action_id null (whole action
+    //    set skipped); action_type 'transform' is outside the dispatchable
+    //    set so it cannot collide with a real action's outcome.
     const tr = _runTransform(rule, event);
     if (!tr.ok) {
       const w = `rule ${rule.id} (${rule.name}) transform failed: ${tr.error} — actions skipped`;
       console.warn(`[phoneIngestRule] ${w}`);
       parseWarnings.push(w);
+      actionOutcomes.push({
+        rule_id:        rule.id,
+        rule_action_id: null,
+        action_type:    'transform',
+        status:         'failed',
+        error:          tr.error,
+      });
       continue;
     }
     const transformedInput = tr.output;

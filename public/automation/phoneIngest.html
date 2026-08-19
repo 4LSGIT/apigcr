@@ -763,7 +763,7 @@
 // PHONE INGEST SUB-PAGE  (ported from emailIngest.html)
 //
 // Communicates with the shell (automationManager.html) via:
-//   - P.apiSend(path, method?, data?)  — relayed to a.html
+//   - P.apiSend(path, method?, data?)  — relayed to index.html (the only production shell; a.html is retired)
 //   - P.setTopbarButtons({...})        — request topbar button visibility
 //   - P.firmData / P.fd*()             — available, unused this slice
 //
@@ -807,9 +807,14 @@ window.piToggleSidebar = piToggleSidebar;
   const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
 
   // Phone execution enum (phoneIngestExecutionsService.VALID_STATUSES):
-  // logged | suppressed | error. The dropdown labels come from
+  // logged | suppressed | error | duplicate. The dropdown labels come from
   // meta.execution_statuses; this map drives the chip colors. Unknown values
   // fall through to the gray default in statusMeta().
+  //
+  // HAND-SYNCED status vocabulary — site 4 of 5 (a miss here is cosmetic).
+  // Full checklist: phoneIngestExecutionsService.VALID_STATUSES (T6/F-6) —
+  // DB ENUM → VALID_STATUSES → phoneIngestMetaService.EXECUTION_STATUSES →
+  // THIS map → activity.html PHONE_FAILURE_STATUSES (failure classes only).
   const STATUS_META = {
     logged:     { label: 'Logged',     bg: '#dcfce7', fg: '#166534', dot: '#22c55e' },
     suppressed: { label: 'Suppressed', bg: '#dbeafe', fg: '#1e40af', dot: '#3b82f6' },
@@ -3301,10 +3306,12 @@ A. Match fields are SERVER-OWNED. The hardcoded EMAIL_MATCH_FIELDS constant is
    direction, extra.provider) renders instead.
 
 B. Executions tab has NO source column/filter/param (phone has no sources
-   table). The list query sends only page/page_size/status. The table columns
+   table). The list query sends page/page_size[/status]. The table columns
    are Created / Status / Event log / Match — NOTE the email "Message ID"
    column is ALSO dropped (phone executions rows carry no message_id; the row
-   shape is id/event_log_id/status/log_id/error/metadata/raw_input/created_at).
+   shape is id/event_log_id/status/log_id/error/metadata/raw_input/created_at/
+   action_failure_count — the last is T2's generated column, always in the
+   projection).
    "Event log" shows event_log_id (the phone forensic catch-all reference).
 
 C. Execution drawer renders the phone `linked` shape:

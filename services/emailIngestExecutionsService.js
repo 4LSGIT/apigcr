@@ -46,6 +46,23 @@
  * caller can chip a green-status row as degraded without a second query.
  */
 
+// ── STATUS VOCABULARY CHECKLIST (T6/F-6) ────────────────────────────────
+// The email execution status set is HAND-SYNCED across five places. Adding
+// a status to the DB ENUM without chasing ALL of these recreates exactly
+// the blindness T2/T3 removed (MTH-2's 'duplicate' already forced one
+// manual chase). Checklist:
+//   1. DB ENUM email_ingest_executions.status (ALTER TABLE;
+//      ref/database.sql is a generated snapshot — do not hand-edit it)
+//   2. THIS set (VALID_STATUSES below) — list() silently DROPS an
+//      unrecognized filter value, so a missing entry returns EVERY row
+//      while looking like it worked
+//   3. emailIngestMetaService.EXECUTION_STATUSES — the /meta dropdown
+//   4. public/automation/emailIngest.html STATUS_META — chip colors
+//      (unknown falls to gray: cosmetic only)
+//   5. public/automation/activity.html EMAIL_FAILURE_STATUSES — ONLY if
+//      the new status is a failure class; miss it and Activity's failures
+//      mode is blind to it
+// Durable fix (separate slice): derive 4/5 from /meta. Not built here.
 const VALID_STATUSES = new Set([
   'logged', 'duplicate', 'skipped_firm_to_firm', 'skipped_suppression',
   'auth_failed', 'validation_failed', 'error',

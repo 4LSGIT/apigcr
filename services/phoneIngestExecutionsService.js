@@ -60,6 +60,21 @@
  * action_failure_count is ALWAYS in the projection (slim and full).
  */
 
+// ── STATUS VOCABULARY CHECKLIST (T6/F-6) ────────────────────────────────
+// The phone execution status set is HAND-SYNCED across five places. Adding
+// a status to the DB ENUM without chasing ALL of these recreates exactly
+// the blindness T2/T3 removed. Checklist:
+//   1. DB ENUM phone_ingest_executions.status (ALTER TABLE;
+//      ref/database.sql is a generated snapshot — do not hand-edit it)
+//   2. THIS set (VALID_STATUSES below) — see MTH-2 note
+//   3. phoneIngestMetaService.EXECUTION_STATUSES — the /meta dropdown
+//   4. public/automation/phoneIngest.html STATUS_META — chip colors
+//      (unknown falls to gray: cosmetic only)
+//   5. public/automation/activity.html PHONE_FAILURE_STATUSES — ONLY if
+//      the new status is a failure class; miss it and Activity's failures
+//      mode is blind to it
+// Durable fix (separate slice): derive 4/5 from /meta. Not built here.
+//
 // MTH-2 added 'duplicate' (true provider redelivery — phoneIngestService step
 // 1b). It MUST be listed here: list() silently DROPS an unrecognized status
 // filter rather than rejecting it, so without this entry `?status=duplicate`

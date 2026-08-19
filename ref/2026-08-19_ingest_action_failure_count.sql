@@ -13,13 +13,31 @@
 --                         error:"internal_function delivery failed:
 --                                certificate has expired" }
 --
--- An expired certificate silently killed a rule action and no failure view
--- in the app could see it. Adding the ingest sources to the Activity page
--- with a status-only filter would have shipped that same blindness.
+-- The failure WAS detected — lib/alerting.js (_scanPhoneIngest) already
+-- watches action_outcomes and streamed it into system_alerts: alert id 81,
+-- kind='action_failed', ref phone_ingest_executions #4529, created
+-- 2026-07-16T15:00:03Z — 33 minutes after the execution (14:27:09), on the
+-- hourly sweep. (Verified live, T6 review remediation; an earlier draft of
+-- this comment claimed "no failure view in the app could see it," which was
+-- false.)
+--
+-- What was MISSING is an inline, per-row signal. The alert lands in a
+-- separate ledger; the Activity page and the ingest admin lists rendered
+-- #4529 as a green `suppressed` chip with nothing indicating its action had
+-- failed. Adding the ingest sources to the Activity page with a status-only
+-- filter would have shipped that same per-row blindness.
+--
+-- The `slim` half of T2 is justified independently of any of this:
+-- raw_input averages 16.5 KB/row on email, so a 25-row fetch went
+-- 399.6 KB → 2.0 KB on the Activity page's 60s auto-refresh loop.
 --
 -- WHAT: a generated column counting failed action outcomes, plus an index,
 -- so `has_failure` becomes an index range read instead of the 528ms full
--- JSON scan measured against live data (and growing with the table).
+-- JSON scan measured against live data (and growing with the table). The
+-- index also serves the alerting sweep itself: T6/F-2 pointed
+-- _scanEmailIngest / _scanPhoneIngest at this column, replacing their
+-- duplicated JSON_SEARCH predicate — one definition of "failed" instead of
+-- two SQL dialects of it.
 --
 -- EXPRESSION — verified against live rows and a seven-case edge matrix
 -- BEFORE being written here:
@@ -36,6 +54,24 @@
 -- (emailIngestRuleService). Only 'failed' counts. JSON_SEARCH uses LIKE
 -- semantics, but 'failed' contains no % or _ wildcard, so the match is
 -- exact and skipped_test_envelope cannot be caught by it.
+--
+-- T6/F-3 ADDENDUM: a failed TRANSFORM now also emits a synthetic outcome
+-- ({ status:'failed', rule_action_id:null, action_type:'transform' }) in
+-- both rule services, so this column counts it too. Strictly, the column
+-- now means "this execution's rule processing failed" (action OR
+-- transform), not only "an action failed" — same detector, wider net.
+--
+-- SHAPE ASSUMPTION (T6/F-7): the expression assumes action_outcomes is a
+-- JSON ARRAY of objects whose `status` is a plain string.
+-- JSON_EXTRACT('$.action_outcomes[*].status') does NOT autowrap a bare
+-- object — {action_outcomes:{status:"failed"}} yields 0 (silent
+-- under-report). Conversely JSON_SEARCH recurses, so a non-string `status`
+-- containing a nested "failed" string would over-count. All 739 values
+-- live at verification time were JSON ARRAYs and every writer
+-- (emailIngestService / phoneIngestService _buildMetadata ←
+-- *IngestRuleService.evaluateRules) builds arrays of flat objects — a
+-- future writer emitting a bare object breaks this column silently. Keep
+-- it an array.
 --
 -- VIRTUAL, NOT STORED: a STORED column forces a full table rebuild, and
 -- email_ingest_executions is 62.5 MB (almost entirely raw_input JSON).

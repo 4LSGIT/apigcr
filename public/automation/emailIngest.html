@@ -766,7 +766,7 @@
 // EMAIL INGEST SUB-PAGE  (Phase 3.2 — skeleton)
 //
 // Communicates with the shell (automationManager.html) via:
-//   - P.apiSend(path, method?, data?)  — relayed to a.html
+//   - P.apiSend(path, method?, data?)  — relayed to index.html (the only production shell; a.html is retired)
 //   - P.setTopbarButtons({...})        — request topbar button visibility
 //   - P.firmData / P.fd*()             — available, unused this slice
 //
@@ -809,6 +809,11 @@ window.eiToggleSidebar = eiToggleSidebar;
   const E = id => document.getElementById(id);
   const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
 
+  // HAND-SYNCED status vocabulary — site 4 of 5 (chip colors; unknown values
+  // fall to the gray default in statusMeta(), so a miss here is cosmetic).
+  // Full checklist: emailIngestExecutionsService.VALID_STATUSES (T6/F-6) —
+  // DB ENUM → VALID_STATUSES → emailIngestMetaService.EXECUTION_STATUSES →
+  // THIS map → activity.html EMAIL_FAILURE_STATUSES (failure classes only).
   const STATUS_META = {
     logged:               { label: 'Logged',           bg: '#dcfce7', fg: '#166534', dot: '#22c55e' },
     duplicate:            { label: 'Duplicate',         bg: '#f1f5f9', fg: '#475569', dot: '#94a3b8' },

@@ -652,6 +652,7 @@ tests/hookMapper.test.js
 tests/hookService.duplicate.test.js
 tests/hookTransforms.test.js
 tests/ingestRuleService.duplicate.test.js
+tests/ingestRuleService.transformFailure.test.js
 tests/internal_functions.meta.test.js
 tests/jest.setup.js
 tests/logService.updateLogLink.test.js

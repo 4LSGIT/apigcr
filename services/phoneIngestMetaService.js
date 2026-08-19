@@ -14,8 +14,8 @@
  *   - No `sources` target list (phone has no sources table — events arrive via
  *     YisraHooks→workflows, not multi-source HTTP receivers).
  *   - `execution_statuses` carries the phone enum only: logged | suppressed |
- *     error. (Phone never auto-skips firm-to-firm as a distinct status — see
- *     phoneIngestExecutionsService header.)
+ *     error | duplicate. (Phone never auto-skips firm-to-firm as a distinct
+ *     status — see phoneIngestExecutionsService header.)
  *   - `match_fields` is the phone catalog (incl. extra.firmToFirm); email has
  *     no equivalent curated catalog block.
  *
@@ -97,6 +97,11 @@ const TRANSFORM_MODES = [
 // 'duplicate' was added in MTH-2 (true provider redelivery — the event's
 // (provider, provider_ref) key already exists with a log_id, so Layer 2 and
 // Layer 3 are skipped and the original log_id is returned).
+//
+// HAND-SYNCED status vocabulary — site 3 of 5. Full checklist lives at
+// phoneIngestExecutionsService.VALID_STATUSES (T6/F-6): DB ENUM →
+// VALID_STATUSES → THIS list (the /meta dropdown) → phoneIngest.html
+// STATUS_META → activity.html PHONE_FAILURE_STATUSES (failure classes only).
 const EXECUTION_STATUSES = [
   { value: 'logged',     label: 'Logged' },
   { value: 'suppressed', label: 'Suppressed' },
