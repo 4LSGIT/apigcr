@@ -398,6 +398,36 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   // default-off, so the UI passes active=true to hide paused jobs.
   const activeFilter = active === undefined ? null : (active === 'true' ? 1 : 0);
 
+  // T7: optional time window. Filters on updated_at, NOT created_at and NOT
+  // scheduled_time: updated_at is the row's "last activity" — it moves on
+  // every run/state change — and it is what the Activity merge treats as the
+  // job's timestamp (normJob). A created_at bound would hide a months-old
+  // recurring job that failed an hour ago, the exact row a failure window
+  // exists to surface; scheduled_time points at the NEXT occurrence for
+  // recurring jobs. `since` is inclusive (>=), `until` EXCLUSIVE (<) for
+  // time-cursor paging. When either bound is present the list also orders by
+  // updated_at DESC so LIMIT truncation and the cursor walk the same axis;
+  // with no bound the order stays scheduled_time DESC exactly as before
+  // (scheduledJobs.html and every other existing caller see no change).
+  // Parse/format copies GET /api/hooks/executions (400 on garbage, UTC
+  // 'YYYY-MM-DD HH:MM:SS' literal — server + DB both run UTC).
+  let sinceSql = null;
+  let untilSql = null;
+  if (req.query.since) {
+    const d = new Date(req.query.since);
+    if (isNaN(d.getTime())) {
+      return res.status(400).json({ error: "Invalid since datetime" });
+    }
+    sinceSql = d.toISOString().slice(0, 19).replace("T", " ");
+  }
+  if (req.query.until) {
+    const d = new Date(req.query.until);
+    if (isNaN(d.getTime())) {
+      return res.status(400).json({ error: "Invalid until datetime" });
+    }
+    untilSql = d.toISOString().slice(0, 19).replace("T", " ");
+  }
+
   try {
     let query  = `SELECT id, type, status, active, name, description, scheduled_time, recurrence_rule,
                     attempts, max_attempts, execution_count, created_at, updated_at
@@ -414,7 +444,16 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
       query += ` AND type NOT IN ('workflow_resume', 'sequence_step')`;
     }
 
-    query += ` ORDER BY scheduled_time DESC LIMIT ? OFFSET ?`;
+    // T7 time window (see parse block above for the updated_at rationale).
+    if (sinceSql) { query += ` AND updated_at >= ?`; params.push(sinceSql); }
+    if (untilSql) { query += ` AND updated_at < ?`;  params.push(untilSql); }
+
+    // Time-bounded callers page on updated_at, so order by it; everyone else
+    // keeps the original scheduled_time ordering. The count query's regex
+    // strips whichever ORDER BY is present.
+    query += (sinceSql || untilSql)
+      ? ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+      : ` ORDER BY scheduled_time DESC LIMIT ? OFFSET ?`;
     params.push(limitInt, offset);
 
     const [rows] = await db.query(query, params);

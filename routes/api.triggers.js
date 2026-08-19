@@ -10,7 +10,7 @@
  * POST   /api/triggers/rules                 — create { event_type, name, …, actions?: [] }
  * PUT    /api/triggers/rules/:id             — partial update; `actions` array (if present) REPLACES the set
  * DELETE /api/triggers/rules/:id             — hard delete rule + actions
- * GET    /api/triggers/executions            — list (?event_type&status&case_id&contact_id&limit&before_id)
+ * GET    /api/triggers/executions            — list (?event_type&status&case_id&contact_id&limit&before_id&since&until — since >=, until < on created_at)
  * GET    /api/triggers/executions/:id        — full row (envelope + outcomes)
  * GET    /api/triggers/samples/:event_type   — recent envelopes for the field-discovery panel (?limit)
  * POST   /api/triggers/test                  — dry run { event_type, envelope? | payload? } → match/transform report; NOTHING dispatches
@@ -140,6 +140,28 @@ router.delete('/api/triggers/rules/:id', jwtOrApiKey, async (req, res) => {
 
 router.get('/api/triggers/executions', jwtOrApiKey, async (req, res) => {
   try {
+    // T7: optional created_at window. since inclusive (>=), until EXCLUSIVE
+    // (<) — a time-cursor pager passes the oldest row it already holds and
+    // must not get it back. Parse/format copies GET /api/hooks/executions:
+    // new Date(), 400 on garbage, UTC 'YYYY-MM-DD HH:MM:SS' literal (server
+    // + DB both run UTC). The service receives the formatted literal.
+    let sinceSql = null;
+    let untilSql = null;
+    if (req.query.since) {
+      const d = new Date(req.query.since);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'Invalid since datetime' });
+      }
+      sinceSql = d.toISOString().slice(0, 19).replace('T', ' ');
+    }
+    if (req.query.until) {
+      const d = new Date(req.query.until);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'Invalid until datetime' });
+      }
+      untilSql = d.toISOString().slice(0, 19).replace('T', ' ');
+    }
+
     const rows = await triggerService.listExecutions(req.db, {
       event_type: req.query.event_type || null,
       status:     req.query.status || null,
@@ -147,6 +169,8 @@ router.get('/api/triggers/executions', jwtOrApiKey, async (req, res) => {
       contact_id: req.query.contact_id ? parseInt(req.query.contact_id, 10) : null,
       limit:      req.query.limit,
       before_id:  req.query.before_id ? parseInt(req.query.before_id, 10) : null,
+      since:      sinceSql,
+      until:      untilSql,
     });
     res.json({ status: 'success', executions: rows });
   } catch (err) { fail(res, err); }

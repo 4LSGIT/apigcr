@@ -1380,7 +1380,7 @@ async function deleteRule(db, id) {
 
 async function listExecutions(db, {
   event_type = null, status = null, case_id = null, contact_id = null,
-  limit = 50, before_id = null,
+  limit = 50, before_id = null, since = null, until = null,
 } = {}) {
   const where = [];
   const params = [];
@@ -1389,6 +1389,12 @@ async function listExecutions(db, {
   if (case_id)    { where.push('case_id = ?');    params.push(String(case_id)); }
   if (contact_id) { where.push('contact_id = ?'); params.push(contact_id); }
   if (before_id)  { where.push('id < ?');         params.push(before_id); }
+  // T7 created_at window. since inclusive, until EXCLUSIVE (<) so a time-
+  // cursor pager never gets back the row it paged from. The route hands in
+  // pre-formatted UTC 'YYYY-MM-DD HH:MM:SS' literals (DB runs UTC); ORDER BY
+  // id DESC below is created_at-monotonic (autoincrement insert order).
+  if (since)      { where.push('created_at >= ?'); params.push(since); }
+  if (until)      { where.push('created_at < ?');  params.push(until); }
 
   const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
   const [rows] = await db.query(

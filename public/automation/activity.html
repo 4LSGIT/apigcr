@@ -101,6 +101,35 @@
       outline: none; cursor: pointer;
     }
 
+    /* Status multi-select (T7 Part C) */
+    .act-status-wrap { position: relative; }
+    .act-status-btn.act-filtering { border-color: var(--blue); color: var(--blue); font-weight: 600; }
+    .act-status-menu {
+      position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,0.14);
+      padding: 8px; min-width: 240px; max-height: 340px; overflow-y: auto;
+    }
+    .act-status-menu.hidden { display: none; }
+    .act-status-menu label {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 6px; border-radius: 5px; font-size: 12px;
+      cursor: pointer; color: var(--text); white-space: nowrap;
+    }
+    .act-status-menu label:hover { background: var(--bg); }
+    .act-status-menu input { accent-color: var(--blue); }
+    .act-status-src { margin-left: auto; font-size: 10px; color: var(--muted); }
+    .act-status-clear {
+      display: block; width: 100%; margin-top: 6px; padding: 5px;
+      border: none; border-top: 1px solid var(--border); background: none;
+      font-size: 11px; color: var(--blue); cursor: pointer; text-align: center;
+    }
+
+    /* Footer paging controls (T7 Part B) */
+    #act-foot .act-foot-spacer { flex: 1; }
+    #act-foot .act-foot-paused { color: var(--amber); font-weight: 600; white-space: nowrap; }
+    #act-foot .act-foot-done   { color: var(--muted); white-space: nowrap; }
+
     .act-toolbar .act-updated {
       margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap;
     }
@@ -238,6 +267,16 @@
     <option value="2160">Last 90 days</option>
   </select>
 
+  <!-- Status multi-select (T7 Part C). Empty = the mode toggle's status sets
+       apply; any selection OVERRIDES them and fetches those statuses
+       server-side per source. -->
+  <div class="act-status-wrap" id="act-status-wrap">
+    <button class="act-select act-status-btn" id="act-status-btn" onclick="toggleStatusMenu(event)">
+      Status: any <i class="fa-solid fa-chevron-down" style="font-size:9px"></i>
+    </button>
+    <div class="act-status-menu hidden" id="act-status-menu"></div>
+  </div>
+
   <button class="btn btn-primary btn-sm" id="act-refresh-btn" onclick="loadActivity()">
     <i class="fa-solid fa-rotate-right" id="act-refresh-icon"></i> Refresh
   </button>
@@ -277,12 +316,26 @@
 // are load-bearing, not cosmetic:
 //   limit vs page/page_size ... the four originals + triggers take `limit`;
 //                               the two ingest endpoints take page_size.
-//   comma status vs single .... ONLY /api/hooks/executions splits `status`
-//                               on commas. The others take one enum value,
-//                               and the ingest services SILENTLY DROP an
-//                               unrecognized one — a comma list there
-//                               returns every row while looking correct.
-//                               Everything else fans out over parallel calls.
+//   comma status vs single .... /api/hooks/executions AND /sequences/step-log
+//                               split `status` on commas (both build a
+//                               status IN (...) clause — verified in
+//                               routes/api.hooks.js + routes/sequences.js;
+//                               an older revision of this comment claimed
+//                               hooks was the only one). The others take one
+//                               enum value, and the ingest services SILENTLY
+//                               DROP an unrecognized one — a comma list
+//                               there returns every row while looking
+//                               correct. Those fan out over parallel calls.
+//   time window ............... ALL SEVEN take `since` (T7 added it to
+//                               /executions, /scheduled-jobs and
+//                               /api/triggers/executions — before that the
+//                               window selector was decorative for those
+//                               three) and `until` for cursor paging. until
+//                               is EXCLUSIVE (<) on the five T7 endpoints
+//                               and INCLUSIVE (<=) on the two pre-existing
+//                               ingest endpoints — the seenKeys dedupe in
+//                               the pager absorbs the difference. Filter
+//                               COLUMNS differ per source: see FETCH_SPEC.
 //   status truthfulness ....... workflow/job/hook/sequence/trigger statuses
 //                               reflect what happened. INGEST STATUSES DO
 //                               NOT reflect action failures — see SOURCES.
@@ -387,7 +440,32 @@ let modeFilter     = 'failures';  // failures | all
 let windowHours    = 24;          // 24 | 168 | 720 | 2160
 let refreshTimer   = null;
 let loadInFlight   = false;
-let lastRows       = [];          // normalized rows from the last successful merge
+let lastRows       = [];          // normalized rows accumulated this paging session
+let lastErrors     = [];          // per-source fetch errors (accumulates across pages)
+
+// ── Paging state (T7 Part B) ───────────────────────────────────
+// "Load older" walks each source backward through time INDEPENDENTLY.
+// Offset paging does not port here (see the fetch-layer header); instead
+// cursors[source] holds the oldest fetched value of that source's
+// SERVER-SIDE filter column, in epoch ms — null until the source has been
+// fetched once. exhausted collects sources with nothing older left inside
+// the window. seenKeys ('source:id') is the display-level dedupe that makes
+// the boundary-overlap paging scheme loss-free (see fetch-layer header).
+// windowSinceMs freezes the window start at page-1 time so every later
+// page queries the exact same lower bound instead of a drifting Date.now().
+let cursors       = { workflow: null, job: null, hook: null, sequence: null,
+                      trigger: null, emailIngest: null, phoneIngest: null };
+let exhausted     = new Set();
+let pagesLoaded   = 1;
+let seenKeys      = new Set();
+let pagingPaused  = false;        // pagesLoaded > 1 → auto-refresh suspended
+let windowSinceMs = null;
+
+// ── Status filter state (T7 Part C) ────────────────────────────
+// Empty set → the Failures/All mode's status sets apply (pre-T7 behavior).
+// Non-empty → OVERRIDES the mode: each source is fetched with
+// (selection ∩ its vocabulary); empty intersection skips the source.
+let statusFilter  = new Set();
 
 // ── Row caps (T5) ──────────────────────────────────────────────
 //
@@ -399,6 +477,10 @@ let lastRows       = [];          // normalized rows from the last successful me
 // issue several calls (failures mode fans out over a status list) pass the
 // cap per call and let the merge trim the union — slight over-fetch, exact
 // result.
+//
+// T7: rowCap() stays the PER-FETCH batch size; the DISPLAY trim in
+// applyFiltersAndRender uses rowCap() * pagesLoaded so "Load older" pages
+// accumulate instead of being fetched and immediately trimmed away.
 const PER_SOURCE_CAP    = 25;
 const SINGLE_SOURCE_CAP = 100;
 
@@ -415,7 +497,9 @@ function rowCap() {
 //   workflow_executions: pending|active|processing|delayed|completed|
 //                        completed_with_errors|failed|cancelled
 //                        → failures = failed, completed_with_errors
-//   scheduled_jobs:      pending|running|completed|failed → failures = failed
+//   scheduled_jobs:      pending|running|completed|failed|cancelled
+//                        → failures = failed  (cancelled was missing from an
+//                        older revision of this list; the ENUM has it)
 //   hook_executions:     received|filtered|processing|delivered|partial|
 //                        failed|captured → failures = failed, partial
 //   sequence_step_log:   sent|skipped|failed → failures = failed
@@ -627,53 +711,90 @@ function normPhoneIngest(r) {
   };
 }
 
-// ── Fetchers ───────────────────────────────────────────────────
+// ── Fetch layer (T7 rewrite) ───────────────────────────────────
 //
-// `since` (ISO) is passed server-side where the endpoint supports it
-// (the two new Slice 7 endpoints). /executions and /scheduled-jobs have
-// no `since` param — those get the same window applied client-side in
-// applyFiltersAndRender(). (The cutoff is applied to ALL rows client-side
-// as well, so the server-side `since` is just a row-count optimization.)
+// Every source now takes a server-side time window:
+//   since — window start, inclusive (>=). ALL seven endpoints honor it.
+//           T7 added it to /executions, /scheduled-jobs and
+//           /api/triggers/executions; before that the window selector was
+//           DECORATIVE for those three — they returned newest-N regardless,
+//           and at ~88 workflow rows/day a 25-row fetch spans ~7 hours, so
+//           "Last 30 days" filtered a 7-hour slice against a 30-day
+//           predicate and changed nothing.
+//   until — upper bound, sent only while paging (see PAGING below).
+//           EXCLUSIVE (<) on the five T7 endpoints; the two ingest
+//           endpoints predate T7 with an INCLUSIVE (<=) until — left
+//           untouched per T7, the seenKeys dedupe absorbs the difference.
 //
-// /executions accepts a single `status` value only — Failures mode
-// fetches `failed` and `completed_with_errors` as two parallel calls.
-async function fetchWorkflows(sinceIso) {
-  const lim = rowCap();
-  if (modeFilter === 'failures') {
-    const [a, b] = await Promise.all([
-      api('/executions', 'GET', { status: 'failed', limit: lim }),
-      api('/executions', 'GET', { status: 'completed_with_errors', limit: lim }),
-    ]);
-    return [...(a.executions || []), ...(b.executions || [])].map(normWorkflow);
-  }
-  const d = await api('/executions', 'GET', { limit: lim });
-  return (d.executions || []).map(normWorkflow);
-}
+// Time values go over the wire as UTC 'YYYY-MM-DD HH:MM:SS' literals — the
+// one format every endpoint accepts: the five T7 endpoints re-parse with
+// new Date() on a UTC server, and the ingest endpoints pass the raw string
+// straight into SQL, where MySQL wants exactly this shape.
+//
+// SERVER FILTER COLUMN per source. The cursor must track the column the
+// SERVER filters on, which is NOT always the ts the row displays:
+//   workflow  e.created_at   display ts prefers completed_at — always >=
+//                            created_at, so the client window trim never
+//                            hides a row the server returned
+//   job       updated_at     jobs REUSE their row across runs; a created_at
+//                            bound would hide a months-old recurring job
+//                            that failed an hour ago (display ts is
+//                            updated_at too — normJob)
+//   hook      created_at     · sequence executed_at · trigger created_at
+//   ingest    created_at
+//
+// PAGING (T7 Part B). Offset paging (the renderWfExecPager pattern in
+// workflows.html) does NOT port here: it pages ONE source with a server
+// total; a shared offset over seven sources advancing at different rates
+// silently skips rows. Instead each source keeps a TIME CURSOR = the
+// oldest value of its filter column fetched so far, and "Load older"
+// re-queries [windowStart, cursor + 1s) per source. The +1s is deliberate:
+// every filter column is a second-resolution DATETIME and live data has
+// multiple rows per second (workflow_executions carries 2-row seconds). An
+// exact exclusive bound at the oldest fetched second would permanently
+// LOSE a same-second row that missed the previous LIMIT cut; +1s
+// re-covers the boundary second and seenKeys drops the repeats. So the
+// DISPLAY never duplicates and never loses a row, while raw responses MAY
+// repeat boundary rows — the dedupe is load-bearing, not defensive.
+//
+// FAN-OUT vs ONE CURSOR. In failures mode (and under a status-filter
+// override) a source issues several parallel calls that drain at different
+// rates. The cursor advances to the SHALLOWEST call's oldest row (max of
+// per-call minima): deeper calls re-return already-seen rows next page —
+// deduped — which is the price of one cursor per source. Taking the min
+// instead would jump the frontier past rows the shallow call never
+// fetched, i.e. silent row loss.
+//
+// STATUS FILTER (T7 Part C). A non-empty selection OVERRIDES the mode's
+// status sets. Per source it sends (selection ∩ that source's vocabulary);
+// an empty intersection SKIPS the source — no fetch. Fan-out rules are NOT
+// uniform and getting them wrong returns everything while looking correct:
+//   comma list, one call ... /api/hooks/executions AND /sequences/step-log
+//                            (both split status on commas server-side).
+//   one value per call ..... everything else. The ingest services SILENTLY
+//                            DROP an unrecognized value and return every
+//                            row — a comma list there disables the filter
+//                            while looking like it worked.
+// Ingest under an override sends LITERAL statuses only — the has_failure
+// union belongs to failures MODE, which the override replaces.
 
-async function fetchJobs(sinceIso) {
-  const params = { limit: rowCap() };
-  if (modeFilter === 'failures') params.status = 'failed';
-  const d = await api('/scheduled-jobs', 'GET', params);
-  return (d.jobs || []).map(normJob);
-}
-
-async function fetchHooks(sinceIso) {
-  const params = { limit: rowCap(), since: sinceIso };
-  // /api/hooks/executions splits `status` on commas server-side (it builds a
-  // status IN (...) clause). Do NOT copy this idiom to endpoints that take a
-  // single enum value — several of them silently DROP an unrecognized filter
-  // and return every row instead of erroring.
-  if (modeFilter === 'failures') params.status = 'failed,partial';
-  const d = await api('/api/hooks/executions', 'GET', params);
-  return (d.executions || []).map(normHook);
-}
-
-async function fetchSequences(sinceIso) {
-  const params = { limit: rowCap(), since: sinceIso };
-  if (modeFilter === 'failures') params.status = 'failed';
-  const d = await api('/sequences/step-log', 'GET', params);
-  return (d.step_log || []).map(normSequence);
-}
+// Per-source status vocabularies — verified against the live
+// information_schema.COLUMNS ENUM definitions (T7). These drive both the
+// status-filter menu (union) and the per-source intersection fan-out.
+const STATUS_VOCAB = {
+  workflow:    ['pending', 'active', 'processing', 'delayed', 'completed',
+                'completed_with_errors', 'failed', 'cancelled', 'held'],
+  job:         ['pending', 'running', 'completed', 'failed', 'cancelled'],
+  hook:        ['received', 'filtered', 'processing', 'delivered', 'partial',
+                'failed', 'captured'],
+  sequence:    ['sent', 'skipped', 'failed'],
+  trigger:     ['matched', 'partial', 'no_match', 'no_rules', 'depth_capped',
+                'error'],
+  emailIngest: ['logged', 'duplicate', 'skipped_firm_to_firm',
+                'skipped_suppression', 'auth_failed', 'validation_failed',
+                'error'],
+  phoneIngest: ['logged', 'suppressed', 'error', 'duplicate'],
+};
 
 // trigger_executions failure vocabulary. `partial` = some actions of a matched
 // rule failed; `error` = every action failed (triggerService derives BOTH from
@@ -683,43 +804,8 @@ async function fetchSequences(sinceIso) {
 // the event before any rule ran.
 const TRIGGER_FAILURE_STATUSES = ['error', 'partial', 'depth_capped'];
 
-// /api/triggers/executions accepts ONE `status` value (triggerService
-// .listExecutions builds `status = ?`), so failures mode fans out over the
-// list above. It has no `since` param — the client-side window in
-// applyFiltersAndRender covers it, same as /executions and /scheduled-jobs.
-async function fetchTriggers(sinceIso) {
-  const lim = rowCap();
-  if (modeFilter === 'failures') {
-    const batches = await Promise.all(
-      TRIGGER_FAILURE_STATUSES.map((s) =>
-        api('/api/triggers/executions', 'GET', { status: s, limit: lim })
-      )
-    );
-    return batches.flatMap((d) => d.executions || []).map(normTrigger);
-  }
-  const d = await api('/api/triggers/executions', 'GET', { limit: lim });
-  return (d.executions || []).map(normTrigger);
-}
-
-// ── Ingest fetchers ────────────────────────────────────────────
-//
-// Three things make these different from the four above:
-//
-// 1. PAGINATION CONTRACT. These endpoints take page/page_size, not limit.
-//
-// 2. slim=true. raw_input averages 16.5 KB/row on email (62.5 MB of the
-//    table is payload). Without slim, one 25-row fetch is ~410 KB and a
-//    100-row fetch ~1.65 MB — on a 60s auto-refresh loop. The list never
-//    renders raw_input; the detail drawer (getById) still gets it.
-//
-// 3. FAILURES ARE A UNION, NOT A STATUS. See the SOURCES header: ingest
-//    records action failures only in metadata and leaves `status` green.
-//    So failures mode = failure statuses UNION has_failure=true. And the
-//    status filter takes ONE enum value — the service silently DROPS an
-//    unrecognized one and returns EVERY row, so a comma list would look
-//    like it worked while disabling the filter entirely. Fan out instead.
-// HAND-SYNCED status vocabulary — site 5 of 5 for BOTH ingest chains, and
-// the one where a miss is NOT cosmetic: a failure-class status added to a
+// HAND-SYNCED ingest failure vocabulary — site 5 of 5 for BOTH ingest chains,
+// and the one where a miss is NOT cosmetic: a failure-class status added to a
 // table ENUM but not listed here makes failures mode blind to it — exactly
 // the blindness T2/T3 removed. Full checklists live at
 // emailIngestExecutionsService.VALID_STATUSES and
@@ -728,87 +814,260 @@ async function fetchTriggers(sinceIso) {
 const EMAIL_FAILURE_STATUSES = ['auth_failed', 'validation_failed', 'error'];
 const PHONE_FAILURE_STATUSES = ['error'];
 
+// One descriptor per source. cursorCol is the RAW-row field mirroring the
+// server's filter column (see the header). multiStatus = the endpoint splits
+// `status` on commas; everything else takes one value per call. failures
+// drives failures-mode fan-out; ingest additionally unions has_failure=true
+// there (the ingest status column lies about action failures — see SOURCES).
+const FETCH_SPEC = {
+  workflow: {
+    path: '/executions', pick: (d) => d.executions, limitKey: 'limit',
+    multiStatus: false, cursorCol: 'created_at',
+    failureStatuses: ['failed', 'completed_with_errors'], norm: normWorkflow,
+  },
+  job: {
+    path: '/scheduled-jobs', pick: (d) => d.jobs, limitKey: 'limit',
+    multiStatus: false, cursorCol: 'updated_at',
+    failureStatuses: ['failed'], norm: normJob,
+  },
+  hook: {
+    path: '/api/hooks/executions', pick: (d) => d.executions, limitKey: 'limit',
+    multiStatus: true, cursorCol: 'created_at',
+    failureStatuses: ['failed', 'partial'], norm: normHook,
+  },
+  sequence: {
+    path: '/sequences/step-log', pick: (d) => d.step_log, limitKey: 'limit',
+    multiStatus: true, cursorCol: 'executed_at',
+    failureStatuses: ['failed'], norm: normSequence,
+  },
+  trigger: {
+    path: '/api/triggers/executions', pick: (d) => d.executions, limitKey: 'limit',
+    multiStatus: false, cursorCol: 'created_at',
+    failureStatuses: TRIGGER_FAILURE_STATUSES, norm: normTrigger,
+  },
+  emailIngest: {
+    path: '/api/email-ingest/executions', pick: (d) => d.executions,
+    limitKey: 'page_size', multiStatus: false, cursorCol: 'created_at',
+    ingest: true, extra: { slim: 'true' },
+    failureStatuses: EMAIL_FAILURE_STATUSES, norm: normEmailIngest,
+  },
+  phoneIngest: {
+    path: '/api/phone-ingest/executions', pick: (d) => d.executions,
+    limitKey: 'page_size', multiStatus: false, cursorCol: 'created_at',
+    ingest: true, extra: { slim: 'true' },
+    failureStatuses: PHONE_FAILURE_STATUSES, norm: normPhoneIngest,
+  },
+};
+
+// UTC 'YYYY-MM-DD HH:MM:SS' — the wire format for since/until (see header).
+function toSqlUtc(ms) {
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 // Same id can arrive from several parallel calls (a row with status='error'
-// AND a failed action matches two of them). Dedupe on id before normalizing.
+// AND a failed action matches two of an ingest source's failure calls).
+// Dedupe on id before normalizing.
 function _dedupeById(rows) {
   const seen = new Map();
   for (const r of rows) if (!seen.has(r.id)) seen.set(r.id, r);
   return [...seen.values()];
 }
 
-async function _fetchIngest(base, failureStatuses, sinceIso, norm) {
-  const common = { page_size: rowCap(), since: sinceIso, slim: 'true' };
-  if (modeFilter === 'failures') {
-    const batches = await Promise.all([
-      ...failureStatuses.map((st) => api(base, 'GET', { ...common, status: st })),
-      api(base, 'GET', { ...common, has_failure: 'true' }),
-    ]);
-    return _dedupeById(batches.flatMap((d) => d.executions || [])).map(norm);
+// The list of per-call status params for one source, or null to skip the
+// source entirely (status-filter override with an empty intersection).
+function buildStatusCalls(source) {
+  const spec = FETCH_SPEC[source];
+  if (statusFilter.size) {                                   // Part C override
+    const inter = STATUS_VOCAB[source].filter((s) => statusFilter.has(s));
+    if (!inter.length) return null;
+    if (spec.multiStatus) return [{ status: inter.join(',') }];
+    return inter.map((s) => ({ status: s }));
   }
-  const d = await api(base, 'GET', common);
-  return (d.executions || []).map(norm);
+  if (modeFilter === 'failures') {
+    const fs = spec.failureStatuses;
+    const calls = spec.multiStatus
+      ? [{ status: fs.join(',') }]
+      : fs.map((s) => ({ status: s }));
+    if (spec.ingest) calls.push({ has_failure: 'true' });
+    return calls;
+  }
+  return [{}];                                               // All mode — one unfiltered call
 }
 
-function fetchEmailIngest(sinceIso) {
-  return _fetchIngest('/api/email-ingest/executions', EMAIL_FAILURE_STATUSES,
-                      sinceIso, normEmailIngest);
-}
+// Fetch one source's next batch (page 1 when its cursor is null, the next
+// older page otherwise). Returns:
+//   rows     — normalized union of all parallel calls, id-deduped
+//   drained  — every call returned fewer rows than it asked for → nothing
+//              older remains in the window for the statuses it can see
+//   oldestMs — new cursor candidate: max of per-call minima of cursorCol
+//              (null when no call returned a row)
+//   skipped  — status-override intersection was empty; source not queried
+async function fetchSource(source) {
+  const spec  = FETCH_SPEC[source];
+  const calls = buildStatusCalls(source);
+  if (!calls) return { rows: [], drained: true, oldestMs: null, skipped: true };
 
-function fetchPhoneIngest(sinceIso) {
-  return _fetchIngest('/api/phone-ingest/executions', PHONE_FAILURE_STATUSES,
-                      sinceIso, normPhoneIngest);
-}
+  const lim        = rowCap();
+  const timeParams = { since: toSqlUtc(windowSinceMs) };
+  const cursor     = cursors[source];
+  if (cursor != null) timeParams.until = toSqlUtc(cursor + 1000); // +1s — see PAGING
 
-const FETCHERS = {
-  workflow:    fetchWorkflows,
-  job:         fetchJobs,
-  hook:        fetchHooks,
-  sequence:    fetchSequences,
-  trigger:     fetchTriggers,
-  emailIngest: fetchEmailIngest,
-  phoneIngest: fetchPhoneIngest,
-};
+  const batches = await Promise.all(calls.map((c) =>
+    api(spec.path, 'GET',
+        { ...(spec.extra || {}), ...timeParams, [spec.limitKey]: lim, ...c })));
+
+  let drained  = true;
+  let oldestMs = null;
+  const union  = [];
+  for (const d of batches) {
+    const arr = spec.pick(d) || [];
+    if (arr.length >= lim) drained = false;   // full page → may be more below
+    let m = Infinity;
+    for (const r of arr) {
+      const t = toMs(r[spec.cursorCol]);
+      if (Number.isFinite(t) && t < m) m = t;
+    }
+    if (arr.length && Number.isFinite(m)) {
+      oldestMs = oldestMs == null ? m : Math.max(oldestMs, m); // frontier = max of minima
+    }
+    union.push(...arr);
+  }
+  return { rows: _dedupeById(union).map(spec.norm), drained, oldestMs, skipped: false };
+}
 
 // ── Load + merge ───────────────────────────────────────────────
+
+function activeSources() {
+  return typeFilter === 'all' ? Object.keys(FETCH_SPEC) : [typeFilter];
+}
+
+function resetPaging() {
+  cursors = { workflow: null, job: null, hook: null, sequence: null,
+              trigger: null, emailIngest: null, phoneIngest: null };
+  exhausted    = new Set();
+  pagesLoaded  = 1;
+  seenKeys     = new Set();
+  pagingPaused = false;
+  lastErrors   = [];
+}
+
+// Page-1 / live load. Resets ALL paging state — every entry point that
+// changes what "the window" means (window / mode / type / status change,
+// the Refresh button, Back to live, the 60s tick) routes through here.
 async function loadActivity() {
   if (loadInFlight) return;
   loadInFlight = true;
   const icon = document.getElementById('act-refresh-icon');
   icon.classList.add('spin');
 
-  const sinceMs  = Date.now() - windowHours * 3600 * 1000;
-  const sinceIso = new Date(sinceMs).toISOString();
-
-  const activeSources = typeFilter === 'all'
-    ? Object.keys(FETCHERS)
-    : [typeFilter];
+  resetPaging();
+  // Frozen for the whole paging session — later pages must query the exact
+  // same lower bound, not a Date.now() that drifted forward while reading.
+  windowSinceMs = Date.now() - windowHours * 3600 * 1000;
+  const active = activeSources();
 
   try {
-    const results = await Promise.allSettled(activeSources.map((s) => FETCHERS[s](sinceIso)));
+    const results = await Promise.allSettled(active.map((s) => fetchSource(s)));
 
     const rows = [];
-    const errors = [];
     results.forEach((r, i) => {
-      const src = activeSources[i];
-      if (r.status === 'fulfilled') rows.push(...r.value);
-      else errors.push({ source: src, message: r.reason?.message || String(r.reason) });
+      const src = active[i];
+      if (r.status === 'fulfilled') {
+        rows.push(...r.value.rows);
+        if (r.value.drained || r.value.skipped) exhausted.add(src);
+        if (r.value.oldestMs != null) cursors[src] = r.value.oldestMs;
+        else exhausted.add(src);       // empty page 1 → nothing older either
+      } else {
+        lastErrors.push({ source: src, message: r.reason?.message || String(r.reason) });
+        exhausted.add(src);            // don't page a broken source; Refresh retries it
+      }
     });
 
     lastRows = rows;
-    renderErrors(errors);
-    applyFiltersAndRender(sinceMs);
+    seenKeys = new Set(rows.map((r) => r.source + ':' + r.id));
+    renderErrors();
+    applyFiltersAndRender();
     document.getElementById('act-updated').textContent =
       `Updated ${new Date().toLocaleTimeString()}`;
   } finally {
     loadInFlight = false;
     icon.classList.remove('spin');
+    // Re-arm the 60s loop (it self-gates on visibility and on pagingPaused,
+    // which resetPaging just cleared). Covers the "paged, then changed the
+    // window" path, where the timer was stopped by loadOlder and nothing
+    // else would restart it.
+    startAutoRefresh();
   }
 }
 
-function renderErrors(errors) {
+// "Load older" (T7 Part B): one more page per non-exhausted source, APPENDED
+// to lastRows. Suspends auto-refresh — the 60s tick replaces lastRows
+// wholesale, which would silently discard every loaded page while the user
+// is reading it. Merging a live refresh into a paged view is a bug farm;
+// pausing is correct and simple. "Back to live" resumes.
+async function loadOlder() {
+  if (loadInFlight) return;
+  const active = activeSources().filter((s) => !exhausted.has(s));
+  if (!active.length) return;
+
+  loadInFlight = true;
+  pagingPaused = true;
+  stopAutoRefresh();
+  const btn  = document.getElementById('act-older-btn');
+  const icon = document.getElementById('act-older-icon');
+  if (btn)  btn.disabled = true;
+  if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
+
+  try {
+    const results = await Promise.allSettled(active.map((s) => fetchSource(s)));
+
+    results.forEach((r, i) => {
+      const src = active[i];
+      if (r.status !== 'fulfilled') {
+        lastErrors.push({ source: src, message: r.reason?.message || String(r.reason) });
+        exhausted.add(src);
+        return;
+      }
+      const { rows, drained, oldestMs } = r.value;
+      let fresh = 0;
+      for (const row of rows) {
+        const k = row.source + ':' + row.id;
+        if (seenKeys.has(k)) continue;   // boundary-second repeats + ingest's inclusive until
+        seenKeys.add(k);
+        lastRows.push(row);
+        fresh++;
+      }
+      if (drained) exhausted.add(src);
+      if (oldestMs == null) { exhausted.add(src); return; }
+      if (fresh === 0 && cursors[src] != null && oldestMs >= cursors[src]) {
+        // Stall guard: a whole page inside one boundary second would need
+        // more than rowCap() rows sharing a timestamp — unobserved in live
+        // data (max 2/sec). Exhaust rather than loop forever.
+        exhausted.add(src);
+        return;
+      }
+      cursors[src] = oldestMs;
+    });
+
+    pagesLoaded++;                       // BEFORE render — grows the display cap
+    renderErrors();
+    applyFiltersAndRender();
+  } finally {
+    loadInFlight = false;
+    // applyFiltersAndRender rebuilt the footer (and its buttons) already.
+  }
+}
+
+function backToLive() {
+  // loadActivity resets cursors, pagesLoaded, exhausted, seenKeys and
+  // pagingPaused, then its finally re-arms the 60s auto-refresh.
+  loadActivity();
+}
+
+function renderErrors() {
   const box = document.getElementById('act-errors');
-  if (!errors.length) { box.innerHTML = ''; return; }
-  box.innerHTML = errors.map((e) => `
+  if (!lastErrors.length) { box.innerHTML = ''; return; }
+  box.innerHTML = lastErrors.map((e) => `
     <div class="act-error-note">
       <i class="fa-solid fa-circle-exclamation"></i>
       Failed to load ${esc(SOURCES[e.source]?.label || e.source)} activity: ${esc(e.message)}
@@ -816,13 +1075,18 @@ function renderErrors(errors) {
   `).join('');
 }
 
-function applyFiltersAndRender(sinceMs) {
-  // Client-side time window — uniform across all sources (covers the
-  // endpoints without a `since` param, and re-trims the others).
+function applyFiltersAndRender() {
+  // Client-side time window — a uniform re-trim on top of the server-side
+  // `since` every fetch now carries (T7). Uses the frozen session anchor so
+  // paged rows near the window edge don't fall out as wall-clock advances.
   // Rows with an unparseable timestamp are kept (NaN fails the < check)
   // so a serialization surprise degrades to "shown" rather than silently
   // hidden.
-  const cap      = rowCap();
+  const sinceMs  = windowSinceMs ?? (Date.now() - windowHours * 3600 * 1000);
+  // Effective per-source cap GROWS with pages loaded (T7) — otherwise every
+  // appended older row would be fetched and immediately trimmed away here.
+  // SINGLE_SOURCE_CAP scales the same way via rowCap().
+  const cap      = rowCap() * pagesLoaded;
   const bySource = new Map();
   let inWindow   = 0;
 
@@ -848,10 +1112,12 @@ function applyFiltersAndRender(sinceMs) {
     renderFooter(0, 0, cap);
     body.innerHTML = `
       <div class="empty-state">
-        <i class="fa-solid ${modeFilter === 'failures' ? 'fa-circle-check' : 'fa-inbox'}"></i>
-        <div>${modeFilter === 'failures'
-          ? 'No failures in the selected window. All quiet.'
-          : 'No activity in the selected window.'}</div>
+        <i class="fa-solid ${modeFilter === 'failures' && !statusFilter.size ? 'fa-circle-check' : 'fa-inbox'}"></i>
+        <div>${statusFilter.size
+          ? 'No rows match the selected statuses in this window.'
+          : modeFilter === 'failures'
+            ? 'No failures in the selected window. All quiet.'
+            : 'No activity in the selected window.'}</div>
       </div>`;
     return;
   }
@@ -904,12 +1170,29 @@ function renderFooter(shown, inWindow, cap) {
   if (!shown) { foot.className = 'hidden'; foot.innerHTML = ''; return; }
   foot.className = '';
   const trimmed = inWindow > shown;
+  // T7 paging controls. "Load older" pages every non-exhausted source one
+  // batch deeper (see loadOlder). Once every active source is exhausted the
+  // button gives way to a plain "all loaded" note. While pagesLoaded > 1
+  // the auto-refresh pause indicator + "Back to live" render as well.
+  const allDone = activeSources().every((s) => exhausted.has(s));
   foot.innerHTML = `
-    <span>Showing ${shown} of ${inWindow} fetched in window</span>
+    <span>Showing ${shown} of ${inWindow} fetched in window${
+      pagesLoaded > 1 ? ` · ${pagesLoaded} pages` : ''}</span>
     ${trimmed ? `<span class="act-foot-cap">
       <i class="fa-solid fa-filter"></i> capped at ${cap} per type${
         typeFilter === 'all' ? ' — pick a single type for more depth' : ''}
-    </span>` : ''}`;
+    </span>` : ''}
+    <span class="act-foot-spacer"></span>
+    ${pagingPaused ? `
+      <span class="act-foot-paused"><i class="fa-solid fa-pause"></i> Paused — showing older results</span>
+      <button class="btn btn-outline btn-sm" onclick="backToLive()">
+        <i class="fa-solid fa-tower-broadcast"></i> Back to live
+      </button>` : ''}
+    ${allDone
+      ? `<span class="act-foot-done">All older rows loaded for this window</span>`
+      : `<button class="btn btn-outline btn-sm" id="act-older-btn" onclick="loadOlder()">
+           <i class="fa-solid fa-angles-down" id="act-older-icon"></i> Load older
+         </button>`}`;
 }
 
 // ── Row interactions ───────────────────────────────────────────
@@ -976,13 +1259,92 @@ document.getElementById('act-window').addEventListener('change', (e) => {
   loadActivity();
 });
 
-// ── Auto-refresh (60s, visibility-gated) ───────────────────────
+// ── Status multi-select (T7 Part C) ────────────────────────────
+//
+// The menu is the UNION of the seven vocabularies (STATUS_VOCAB), each entry
+// annotated with the sources that carry it — so `held` reads as
+// workflow-only, `partial` as hook + trigger, etc. Selection is applied
+// per-source as an intersection at fetch time (buildStatusCalls).
+
+function buildStatusMenu() {
+  const menu = document.getElementById('act-status-menu');
+  const bySt = new Map();
+  for (const [src, list] of Object.entries(STATUS_VOCAB)) {
+    for (const st of list) {
+      if (!bySt.has(st)) bySt.set(st, []);
+      bySt.get(st).push(SOURCES[src].label);
+    }
+  }
+  const entries = [...bySt.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  menu.innerHTML = entries.map(([st, srcs]) => `
+    <label>
+      <input type="checkbox" value="${esc(st)}" ${statusFilter.has(st) ? 'checked' : ''}
+             onchange="statusToggled(this)">
+      <span>${esc(st)}</span>
+      <span class="act-status-src">${esc(srcs.join(', '))}</span>
+    </label>`).join('') + `
+    <button class="act-status-clear" onclick="clearStatusFilter()">Clear — use mode's default statuses</button>`;
+}
+
+let statusDebounce = null;
+function statusToggled(cb) {
+  if (cb.checked) statusFilter.add(cb.value);
+  else statusFilter.delete(cb.value);
+  updateStatusBtn();
+  // Batch rapid toggles into one reload (each reload is up to ~15 requests
+  // in All-types failures mode).
+  clearTimeout(statusDebounce);
+  statusDebounce = setTimeout(loadActivity, 300);
+}
+
+function clearStatusFilter() {
+  statusFilter.clear();
+  buildStatusMenu();
+  updateStatusBtn();
+  clearTimeout(statusDebounce);
+  statusDebounce = setTimeout(loadActivity, 150);
+}
+
+function updateStatusBtn() {
+  const btn = document.getElementById('act-status-btn');
+  const n = statusFilter.size;
+  btn.classList.toggle('act-filtering', n > 0);
+  btn.innerHTML = n === 0
+    ? `Status: any <i class="fa-solid fa-chevron-down" style="font-size:9px"></i>`
+    : `Status: ${esc([...statusFilter][0])}${n > 1 ? ` +${n - 1}` : ''} <i class="fa-solid fa-chevron-down" style="font-size:9px"></i>`;
+  // A non-empty selection overrides the Failures/All mode's status sets —
+  // dim the mode toggle so the UI says so.
+  const modeSeg = document.getElementById('act-mode-seg');
+  modeSeg.style.opacity = n > 0 ? '0.45' : '';
+  modeSeg.title = n > 0 ? 'Status filter overrides the mode while set' : '';
+}
+
+function toggleStatusMenu(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('act-status-menu');
+  if (menu.classList.contains('hidden')) buildStatusMenu();
+  menu.classList.toggle('hidden');
+}
+
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('act-status-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('act-status-menu').classList.add('hidden');
+  }
+});
+
+// ── Auto-refresh (60s, visibility-gated, paging-gated) ─────────
 function startAutoRefresh() {
   stopAutoRefresh();
+  // T7: a paged view suspends the loop entirely — the tick calls
+  // loadActivity, which resets to page 1 and would discard every loaded
+  // page while the user is reading it. Back to live re-arms.
+  if (pagingPaused) return;
   if (!subPageActive || document.visibilityState !== 'visible') return;
   refreshTimer = setInterval(() => {
     // Double-check gates at fire time — belt and suspenders against a
-    // missed lifecycle event.
+    // missed lifecycle event (and against a pause set after arming).
+    if (pagingPaused) return;
     if (subPageActive && document.visibilityState === 'visible') loadActivity();
   }, 60 * 1000);
 }
@@ -993,7 +1355,12 @@ function stopAutoRefresh() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    if (subPageActive) { loadActivity(); startAutoRefresh(); }
+    if (!subPageActive) return;
+    // T7: don't nuke a paged view just because the browser tab regained
+    // focus — the user resumes explicitly via Back to live / Refresh.
+    if (pagingPaused) return;
+    loadActivity();
+    startAutoRefresh();
   } else {
     stopAutoRefresh();
   }
@@ -1018,6 +1385,9 @@ function declareTopbar() {
 function onShow() {
   subPageActive = true;
   declareTopbar();
+  // T7: a paged view survives sub-tab switches — reloading here would
+  // discard the loaded pages. The user resumes via Back to live / Refresh.
+  if (pagingPaused) return;
   loadActivity();       // refresh on re-show — activity is time-sensitive
   startAutoRefresh();
 }
@@ -1039,6 +1409,12 @@ window.onRefresh    = onRefresh;
 window.loadActivity = loadActivity;
 window.rowClick     = rowClick;
 window.rowDetail    = rowDetail;
+// T7 — paging + status filter inline handlers
+window.loadOlder         = loadOlder;
+window.backToLive        = backToLive;
+window.toggleStatusMenu  = toggleStatusMenu;
+window.statusToggled     = statusToggled;
+window.clearStatusFilter = clearStatusFilter;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

@@ -1781,6 +1781,10 @@ router.get('/sequences/templates/:id/enrollments', jwtOrApiKey, async (req, res)
 //            sequence_step_log enum: sent | skipped | failed.
 //            (Failure status for the Activity view: failed.)
 //   since  — optional ISO datetime; filters executed_at >= since.
+//   until  — optional ISO datetime; filters executed_at < until (EXCLUSIVE,
+//            T7 — a time-cursor pager passes the oldest row it already
+//            holds and must not get it back on the next page). Note the
+//            time column here is executed_at, not created_at.
 //   limit  — default 50, capped at 200.
 //
 // Returns { success: true, step_log: [...] }, newest first.
@@ -1810,6 +1814,16 @@ router.get('/sequences/step-log', jwtOrApiKey, async (req, res) => {
       // Server + DB run in UTC; format as UTC 'YYYY-MM-DD HH:MM:SS' so a
       // 'Z'-suffixed ISO string never trips MySQL's datetime parsing.
       where.push('l.executed_at >= ?');
+      params.push(d.toISOString().slice(0, 19).replace('T', ' '));
+    }
+
+    // T7: exclusive upper bound — see the param comment above.
+    if (req.query.until) {
+      const d = new Date(req.query.until);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ error: 'Invalid until datetime' });
+      }
+      where.push('l.executed_at < ?');
       params.push(d.toISOString().slice(0, 19).replace('T', ' '));
     }
 

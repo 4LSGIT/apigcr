@@ -611,6 +611,31 @@ router.get("/executions", jwtOrApiKey, async (req, res) => {
   const workflowId = req.query.workflow_id ? parseInt(req.query.workflow_id) : null;
   const search = req.query.search || null; // basic text search on name/variables
 
+  // T7: optional time window on e.created_at — the column this list is
+  // ordered by. `since` is an inclusive lower bound (>=); `until` is an
+  // EXCLUSIVE upper bound (<) so a time-cursor pager can pass the oldest
+  // row it already holds without getting it back on the next page.
+  // Parse/format copies GET /api/hooks/executions: new Date(), 400 on
+  // garbage, then a UTC 'YYYY-MM-DD HH:MM:SS' literal (server + DB both
+  // run UTC) so a 'Z'-suffixed ISO string never trips MySQL date parsing.
+  // Omitting both leaves this endpoint byte-identical to its old behavior.
+  let sinceSql = null;
+  let untilSql = null;
+  if (req.query.since) {
+    const d = new Date(req.query.since);
+    if (isNaN(d.getTime())) {
+      return res.status(400).json({ error: "Invalid since datetime" });
+    }
+    sinceSql = d.toISOString().slice(0, 19).replace("T", " ");
+  }
+  if (req.query.until) {
+    const d = new Date(req.query.until);
+    if (isNaN(d.getTime())) {
+      return res.status(400).json({ error: "Invalid until datetime" });
+    }
+    untilSql = d.toISOString().slice(0, 19).replace("T", " ");
+  }
+
   try {
     let query = `
       SELECT 
@@ -636,6 +661,16 @@ router.get("/executions", jwtOrApiKey, async (req, res) => {
       query += ` AND (w.name LIKE ? OR JSON_SEARCH(e.variables, 'one', ?) IS NOT NULL)`;
       params.push(`%${search}%`, `%${search}%`);
     }
+    // T7 time window (see parse block above). Pushed AFTER search so the
+    // count query's params.slice(0, -2) below stays position-aligned.
+    if (sinceSql) {
+      query += ` AND e.created_at >= ?`;
+      params.push(sinceSql);
+    }
+    if (untilSql) {
+      query += ` AND e.created_at < ?`;
+      params.push(untilSql);
+    }
 
     query += ` ORDER BY e.created_at DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
@@ -643,14 +678,18 @@ router.get("/executions", jwtOrApiKey, async (req, res) => {
     const [rows] = await db.query(query, params);
 
     // Total count for pagination — must include the JOIN when search is active
-    // because the WHERE clause references w.name
+    // because the WHERE clause references w.name. Condition order MUST match
+    // the main query (status, workflowId, search, since, until) because the
+    // params are reused positionally via slice.
     const [countRows] = await db.query(
       `SELECT COUNT(*) as total FROM workflow_executions e` +
       (search ? ` LEFT JOIN workflows w ON e.workflow_id = w.id` : '') +
       ` WHERE 1=1` +
       (status ? ` AND e.status = ?` : '') +
       (workflowId ? ` AND e.workflow_id = ?` : '') +
-      (search ? ` AND (w.name LIKE ? OR JSON_SEARCH(e.variables, 'one', ?) IS NOT NULL)` : ''),
+      (search ? ` AND (w.name LIKE ? OR JSON_SEARCH(e.variables, 'one', ?) IS NOT NULL)` : '') +
+      (sinceSql ? ` AND e.created_at >= ?` : '') +
+      (untilSql ? ` AND e.created_at < ?` : ''),
       params.slice(0, -2) // exclude limit/offset
     );
 

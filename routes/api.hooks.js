@@ -266,6 +266,9 @@ router.get('/api/hooks/meta', jwtOrApiKey, async (req, res) => {
 //            delivered | partial | failed | captured.
 //            (Failure statuses for the Activity view: failed, partial.)
 //   since  — optional ISO datetime; filters created_at >= since.
+//   until  — optional ISO datetime; filters created_at < until (EXCLUSIVE,
+//            T7 — a time-cursor pager passes the oldest row it already
+//            holds and must not get it back on the next page).
 //   limit  — default 50, capped at 200.
 //
 // Returns { status: 'success', executions: [...] } — each row carries
@@ -298,6 +301,16 @@ router.get('/api/hooks/executions', jwtOrApiKey, async (req, res) => {
       // UTC 'YYYY-MM-DD HH:MM:SS' literal so a 'Z'-suffixed ISO string
       // from the client never trips MySQL's datetime parsing.
       where.push('he.created_at >= ?');
+      params.push(d.toISOString().slice(0, 19).replace('T', ' '));
+    }
+
+    // T7: exclusive upper bound — see the param comment above.
+    if (req.query.until) {
+      const d = new Date(req.query.until);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'Invalid until datetime' });
+      }
+      where.push('he.created_at < ?');
       params.push(d.toISOString().slice(0, 19).replace('T', ' '));
     }
 
