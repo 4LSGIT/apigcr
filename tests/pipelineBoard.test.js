@@ -27,6 +27,10 @@
 'use strict';
 
 const svc = require('../services/pipelineAdminService');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs (same shape as tests/pipelineService.test.js)
@@ -35,11 +39,13 @@ const svc = require('../services/pipelineAdminService');
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       return [script.shift()];
     },
   };

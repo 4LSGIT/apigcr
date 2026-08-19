@@ -28,6 +28,10 @@
 'use strict';
 
 const branding = require('../routes/portal.branding');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 const EXPECTED_KEYS = [
   'portal_logo_url', 'portal_favicon_url', 'portal_logo_href',
@@ -37,11 +41,13 @@ const EXPECTED_KEYS = [
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       const next = script.shift();
       if (next instanceof Error) throw next;
       return [next];
@@ -223,7 +229,10 @@ describe('brandingHandler', () => {
       expect(res.statusCode).toBe(200);
     }
     const res61 = fakeRes();
-    const db61 = stubDb([[]]);
+    // Empty script on purpose: the limiter must reject before any read, so a
+    // single query here is an OVER-CONSUMPTION the drift guard reports even if
+    // something upstream swallows the throw.
+    const db61 = stubDb([]);
     await branding._brandingHandler(fakeReq(db61, { headers: { ...ipHeaders } }), res61);
     expect(res61.statusCode).toBe(429);
     expect(db61.calls).toHaveLength(0);          // limited BEFORE the read

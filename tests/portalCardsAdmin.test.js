@@ -32,6 +32,10 @@ const admin     = require('../routes/api.portalCardsAdmin');
 
 const { DateTime } = require('luxon');
 const { FIRM_TZ }  = require('../services/timezoneService');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures
@@ -42,11 +46,13 @@ const { FIRM_TZ }  = require('../services/timezoneService');
 // used — lets a script assert or branch mid-sequence.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       let next = script.shift();
       if (typeof next === 'function') next = next(sql, params);
       if (next instanceof Error) throw next;

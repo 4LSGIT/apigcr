@@ -76,6 +76,10 @@ const uploadTarget  = require('../services/uploadTargetService');
 const { getSetting, getSettings } = require('../services/settingsService');
 const { cfg }        = require('../lib/firmConfig');
 const svc            = require('../services/portalDocsService');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // Live app_settings / firm-config values as they actually stand (verified
 // against app_settings 2026-08-07). portal_docs_notify_from is GONE — the
@@ -90,11 +94,13 @@ const SEEDED_SENDER      = 'automations@4lsg.com';
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       return [script.shift()];
     },
   };

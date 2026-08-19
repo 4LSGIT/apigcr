@@ -37,6 +37,10 @@ jest.mock('../lib/domainEvents', () => ({
 
 const domainEvents = require('../lib/domainEvents');
 const svc = require('../services/pipelineService');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 beforeEach(() => { domainEvents.emit.mockClear(); });
 
@@ -47,11 +51,13 @@ beforeEach(() => { domainEvents.emit.mockClear(); });
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       return [script.shift()];
     },
   };
@@ -63,10 +69,17 @@ function stubDb(script) {
 function stubTxDb(connScript, poolScript) {
   const connCalls = [];
   const poolCalls = [];
+  // Two arrays, two guards. The conn guard is the load-bearing one: advanceStage's
+  // RELEASE_LOCK sits in a finally that swallows errors, so its exhaustion throw
+  // never escapes — the guard records the overrun before throwing so the global
+  // afterEach sees it anyway. That swallow is correct production behaviour and
+  // stays exactly as it is; this is the test layer catching what it hides.
+  const connGuard = scriptGuard('stubTxDb(conn)', connScript);
+  const poolGuard = scriptGuard('stubTxDb(pool)', poolScript);
   const conn = {
     query: async (sql, params) => {
       connCalls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!connScript.length) throw new Error('stubTxDb(conn): unscripted query: ' + sql);
+      if (!connScript.length) connGuard.overrun(sql);
       return [connScript.shift()];
     },
     beginTransaction: async () => {},
@@ -81,7 +94,7 @@ function stubTxDb(connScript, poolScript) {
     getConnection: async () => conn,
     query: async (sql, params) => {
       poolCalls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!poolScript.length) throw new Error('stubTxDb(pool): unscripted query: ' + sql);
+      if (!poolScript.length) poolGuard.overrun(sql);
       return [poolScript.shift()];
     },
   };

@@ -14,6 +14,10 @@
 const path = require('path');
 const assert = require('assert');
 const express = require('express');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 const formSvc = require(path.join(__dirname, '..', 'services', 'formService.js'));
 
@@ -22,11 +26,13 @@ const formSvc = require(path.join(__dirname, '..', 'services', 'formService.js')
 //    scripted as result objects ({ affectedRows }).
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       return [script.shift()];
     },
   };
@@ -143,6 +149,8 @@ describe('X4 — linkSubmission', () => {
       { affectedRows: 1 },
       // nothing scripted for the log INSERT → stubDb throws → caught inside
     ]);
+    db.guard.expectOverruns(1,
+      'the unscripted log INSERT IS the simulated failure this test exercises');
     const out = await formSvc.linkSubmission(db, 50, 'contact', '1001', 22);
     assert.strictEqual(out.intake_stamped, false);
     assert.strictEqual(out.logged, false, 'log failure surfaces as logged:false, not an error');

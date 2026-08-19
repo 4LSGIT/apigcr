@@ -31,6 +31,10 @@ jest.mock('../lib/alerting', () => ({
 const { alert } = require('../lib/alerting');
 const engine    = require('../lib/portalCardEngine');
 const admin     = require('../routes/api.portalCardsAdmin');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures (portalCardEngine.test.js patterns)
@@ -38,11 +42,13 @@ const admin     = require('../routes/api.portalCardsAdmin');
 
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       const next = script.shift();
       if (next instanceof Error) throw next;
       return [next];

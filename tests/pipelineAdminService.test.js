@@ -27,6 +27,10 @@
 'use strict';
 
 const svc = require('../services/pipelineAdminService');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs (same shapes as tests/pipelineService.test.js)
@@ -35,11 +39,13 @@ const svc = require('../services/pipelineAdminService');
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       return [script.shift()];
     },
   };
@@ -53,12 +59,17 @@ function stubDb(script) {
 function stubTxDb(connScript, poolScript = []) {
   const connCalls = [];
   const poolCalls = [];
-  const shift = (script, calls, tag) => async (sql, params) => {
-    calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-    if (!script.length) throw new Error(`stubTxDb(${tag}): unscripted query: ` + sql);
-    const next = script.shift();
-    const rows = (typeof next === 'function') ? next(sql, params) : next;
-    return [rows];
+  // One guard per script array — shift() is called once per array, so the guard
+  // is created in the factory rather than inside the returned query fn.
+  const shift = (script, calls, tag) => {
+    const guard = scriptGuard(`stubTxDb(${tag})`, script);
+    return async (sql, params) => {
+      calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
+      if (!script.length) guard.overrun(sql);
+      const next = script.shift();
+      const rows = (typeof next === 'function') ? next(sql, params) : next;
+      return [rows];
+    };
   };
   const conn = {
     query: shift(connScript, connCalls, 'conn'),

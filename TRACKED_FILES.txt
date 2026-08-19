@@ -649,6 +649,7 @@ tests/formsubmissions.x4.test.js
 tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
 tests/helpers/renderSmoke.js
+tests/helpers/scriptGuard.js
 tests/hookMapper.test.js
 tests/hookService.duplicate.test.js
 tests/hookTransforms.test.js
@@ -682,6 +683,8 @@ tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
 tests/schemaConventions.test.js
+tests/scriptGuard.setup.js
+tests/scriptGuardCoverage.test.js
 tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js
 tests/sequences.routeOrder.test.js

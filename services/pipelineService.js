@@ -617,8 +617,11 @@ async function advanceStage(db, caseId, target, {
       // lifecycle signal: entering any role='case' stage means retained,
       // entering any role='intake' stage means (back) in the funnel.
       // Sub-selected rather than carried in JS so it cannot drift from
-      // pipeline_templates.role, and COALESCEd so a stage whose template row
-      // vanished leaves the phase untouched instead of nulling it.
+      // pipeline_templates.role. A missing template row falls back to
+      // 'intake' rather than leaving the phase alone — unreachable in
+      // practice, since pipelineAdminService only hard-deletes a template
+      // with zero case_stage_log references and the INSERT above has already
+      // created one for this stage inside this transaction.
       const [[stageTpl]] = await conn.query(
         `SELECT role FROM pipeline_templates WHERE id = ?`, [stage.template_id]
       );

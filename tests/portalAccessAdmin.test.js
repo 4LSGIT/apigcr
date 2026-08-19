@@ -16,15 +16,21 @@
 'use strict';
 
 const admin = require('../routes/api.portalAccessAdmin');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // Sequential scripted pool stub (portalCardsAdmin pattern).
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       let next = script.shift();
       if (typeof next === 'function') next = next(sql, params);
       if (next instanceof Error) throw next;
@@ -76,7 +82,6 @@ describe('searchContacts', () => {
   });
 
   test('limit clamps to [1, 100]', async () => {
-    const db = stubDb([[]], []);
     const d1 = stubDb([[]]); await admin._searchContacts(d1, { limit: 9999 });
     expect(d1.calls[0].params.at(-1)).toBe(100);
     const d2 = stubDb([[]]); await admin._searchContacts(d2, { limit: 0 });

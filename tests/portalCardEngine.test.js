@@ -34,6 +34,10 @@ const portalCases     = require('../services/portalCaseService');
 
 const { DateTime } = require('luxon');
 const { FIRM_TZ }  = require('../services/timezoneService');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures
@@ -42,11 +46,13 @@ const { FIRM_TZ }  = require('../services/timezoneService');
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       const next = script.shift();
       if (next instanceof Error) throw next;
       return [next];
@@ -547,7 +553,10 @@ describe('body content and rendering mechanics', () => {
   });
 
   test('renderCards: active filter is in the SQL; sort order rides sort,id', async () => {
-    const db = stubDb(scriptRenderCards([]));
+    // Zero cards → renderCards short-circuits before context hydration, so the
+    // case/contact rows scriptRenderCards() would add are never read. One query,
+    // one scripted result.
+    const db = stubDb([[]]);
     await engine.renderCards(db, args);
     expect(db.calls[0].sql).toContain('active = 1');
     expect(db.calls[0].sql).toContain('ORDER BY sort ASC, id ASC');

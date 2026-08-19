@@ -61,6 +61,10 @@ const { FIRM_TZ }  = require('../services/timezoneService');
 
 const svc = require('../services/portalCallbackService');
 const reminderFns = require('../lib/internal_functions/portalCallback.js');
+// T9 script-drift guard: registers this file's scripted stubs so a global
+// afterEach can fail on over- OR under-consumption of the script array.
+// See tests/helpers/scriptGuard.js.
+const { scriptGuard } = require('./helpers/scriptGuard');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures
@@ -69,11 +73,13 @@ const reminderFns = require('../lib/internal_functions/portalCallback.js');
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
   const calls = [];
+  const guard = scriptGuard('stubDb', script);
   return {
     calls,
+    guard,                       // escape hatches: expectOverruns() / allowLeftovers()
     query: async (sql, params) => {
       calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: params || [] });
-      if (!script.length) throw new Error('stubDb: unscripted query: ' + sql);
+      if (!script.length) guard.overrun(sql);
       return [script.shift()];
     },
   };
@@ -336,7 +342,10 @@ describe('createRequest task + reminder job', () => {
 
   test('misconfigured assignee setting → throws (never assigns to 0/NaN)', async () => {
     getSetting.mockResolvedValue(null);
-    const db = stubDb(createScript());
+    // 4 of createScript()'s 5 entries: the throw lands after the contacts read
+    // and before the scheduled_jobs INSERT, so the INSERT result is never used.
+    // Scripting it anyway would hide a regression that ran the INSERT.
+    const db = stubDb(createScript().slice(0, 4));
     await expect(svc.createRequest(db, CONTACT_ID, validBody()))
       .rejects.toThrow(/portal_callback_task_to/);
     expect(taskService.createTask).not.toHaveBeenCalled();
