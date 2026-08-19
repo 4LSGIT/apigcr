@@ -207,4 +207,32 @@ describe('scriptGuard mechanics', () => {
     expect(() => scriptGuard('t', null)).toThrow(/must be an array/);
     expect(() => scriptGuard('t', { length: 0 })).toThrow(/must be an array/);
   });
+
+  test('jest.resetModules() cannot disarm the guard', () => {
+    // REGRESSION. With a module-level registry array this was a silent
+    // no-op: the suite re-required scriptGuard and registered into a FRESH
+    // array, while the afterEach in tests/scriptGuard.setup.js kept draining
+    // the original one. Three unconsumed entries passed green — a checker
+    // with the exact void it exists to close.
+    //
+    // Five suites in tests/ call resetModules or isolateModules today. None
+    // is a scripted-DB suite; nothing stops the next one from being both.
+    // The registry now lives on globalThis, which resetModules does not touch.
+    jest.resetModules();
+    const fresh = require('./helpers/scriptGuard');
+
+    // Same array, across the module boundary a reset just created.
+    fresh.scriptGuard('afterReset', [[1], [2]]);
+    expect(_registrySizeLocal()).toBe(1);          // ORIGINAL instance sees it
+
+    const problems = drainScriptGuards();          // ORIGINAL instance drains it
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('UNDER-CONSUMED');
+    expect(fresh._registrySize()).toBe(0);         // FRESH instance sees the drain
+  });
+
+  // Bound here so the reference survives the resetModules above.
+  function _registrySizeLocal() {
+    return require('./helpers/scriptGuard')._registrySize();
+  }
 });

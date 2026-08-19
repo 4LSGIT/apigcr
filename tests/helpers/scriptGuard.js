@@ -89,11 +89,34 @@
 'use strict';
 
 /**
- * Guards constructed since the last drain. Jest gives each test FILE its own
- * module registry, and setupFilesAfterEnv shares that registry, so this array
- * is per-file — never shared across concurrently running suites.
+ * Guards constructed since the last drain.
+ *
+ * ON globalThis, NOT a module-level const. Jest gives each test FILE its own
+ * module registry AND its own global object, so either would be correctly
+ * per-file and never shared across concurrently running suites. The
+ * difference is `jest.resetModules()`:
+ *
+ *   a module-level array   → the suite re-requires this file, gets a FRESH
+ *                            registry, and registers into it — while the
+ *                            afterEach in tests/scriptGuard.setup.js still
+ *                            holds the ORIGINAL instance and drains an array
+ *                            nothing writes to any more. The guard silently
+ *                            degrades to a no-op for the rest of that suite.
+ *   globalThis             → survives resetModules, so both sides keep
+ *                            addressing the same array.
+ *
+ * This was measured, not theorised: with a module-level const, a probe that
+ * called jest.resetModules() and then left three script entries unconsumed
+ * passed green. Five suites in tests/ call resetModules or isolateModules
+ * today (none of them scripted-DB suites — yet), and nothing stops the next
+ * one from being both.
+ *
+ * A checker that can be silently disarmed is the exact failure mode this file
+ * exists to close, so it must not have one of its own.
  */
-const _registry = [];
+const _REG = Symbol.for('yisracase.scriptGuard.registry');
+if (!globalThis[_REG]) globalThis[_REG] = [];
+const _registry = globalThis[_REG];
 
 const _MAX_SQL = 200;
 
