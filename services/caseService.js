@@ -1242,7 +1242,12 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   // Special-cased out of the generic pass:
   //   case_id (PK), docket cols (above), notes/alerts (concat),
   //   dropbox (keep + note).
-  const SKIP = new Set(['case_id', ...DOCKET_COLS, 'case_notes', 'case_alerts', 'case_dropbox']);
+  //   pipeline_phase (T8): system-managed lifecycle column, NOT NULL on both
+  //   sides, so a cross-phase merge (the canonical one: a duplicate lead
+  //   absorbed into a retained case) would otherwise land in `conflicts` and
+  //   409 on a column the user cannot see or reason about. Resolved below.
+  const SKIP = new Set(['case_id', ...DOCKET_COLS, 'case_notes', 'case_alerts', 'case_dropbox',
+    'pipeline_phase']);
   // Survivor-wins BY DESIGN — differ on ~every real pair; never blocking.
   const SILENT_SURVIVOR_WINS = new Set(['case_stage', 'case_status', 'case_open_date']);
 
@@ -1259,6 +1264,15 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     const rec = { column: col, survivor: sv, loser: lv };
     if (SILENT_SURVIVOR_WINS.has(col)) survivorWins.push(rec);
     else conflicts.push(rec);
+  }
+
+  // ── pipeline_phase (T8) ──
+  // Lifecycle is MONOTONIC across a merge: once either participant has
+  // retained, the merged case has retained. Survivor-wins would be wrong —
+  // absorbing a retained case into a lead would silently demote it back into
+  // the intake funnel.
+  if (norm(loser.pipeline_phase) === 'case' && norm(survivor.pipeline_phase) !== 'case') {
+    filled.pipeline_phase = 'case';
   }
 
   // ── notes / alerts / dropbox plan ──
