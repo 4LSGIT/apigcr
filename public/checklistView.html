@@ -1313,7 +1313,23 @@ async function saveBody(key) {
   if (d.inflight) { d.timer = setTimeout(() => saveBody(key), 250); return; }
 
   const cl = lists.find(l => draftKeyOf(l) === key);
-  if (!cl) { bodyDrafts.delete(key); return; }   // deleted out from under us
+  if (!cl) {
+    // Absent from `lists` means one of two very different things, and dropping
+    // the draft is only right for one of them:
+    //
+    //   DELETED   the row is gone; there is nothing to save it back to.
+    //   FILTERED  the kind filter (or a scope change) rebuilt `lists` without
+    //             it. The row still exists and the card will return.
+    //
+    // A dirty draft here is text the user typed that a failed save has not yet
+    // landed. Deleting it discards that text SILENTLY — no toast, no flag,
+    // because the card it would render on is not on screen. So keep anything
+    // dirty: shownBody() restores it the moment the card comes back, and
+    // beforeunload still warns if the tab closes first. Clean entries are just
+    // bookkeeping and go.
+    if (!d.dirty) bodyDrafts.delete(key);
+    return;
+  }
 
   // Belt and braces: renderNoteBody leaves an unavailable native card disabled,
   // so nothing can mark it dirty in the first place.
