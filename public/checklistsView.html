@@ -61,6 +61,10 @@
       color: #1e40af; background: #dbeafe; border: 1px solid #bfdbfe;
       border-radius: 4px; padding: 1px 5px;
     }
+    /* Kind glyph (S2). Browse is the one place notes and lists sit adjacent in
+       a flat list, so the shape needs to be readable before the title is. */
+    .cx-kind { color: #94a3b8; font-size: 13px; width: 14px; text-align: center; flex: none; }
+    .cx-kind.note { color: #d97706; }
     .cx-prog {
       margin-left: auto; font-size: 13px; font-weight: 600;
       color: #475569; white-space: nowrap;
@@ -103,7 +107,13 @@
 
    Mine and Unlinked are small and want full editing, so they load
    checklistView.html in an iframe rather than reimplementing the card. Browse is
-   a picker across ~all lists, so it stays compact and opens one on click.
+   a picker across ~all rows, so it stays compact and opens one on click.
+
+   KINDS (S2). A row is a 'checklist' (items, DERIVED status) or a 'note'
+   (freeform body, MANUAL status) — see routes/api.checklists.js's header.
+   browseRow() below is a SECOND, independent renderer to checklistView.html's
+   card, so the kind branch has to be repeated here; it is not inherited.
+   Mine and Unlinked ARE inherited, because they iframe that file whole.
 
    "Mine" is link_type=user & link=me, NOT created_by=me. Those diverge as soon
    as someone makes a list FOR someone else, which the API now allows —
@@ -122,6 +132,10 @@ let scope   = 'browse';
 let q       = '';
 let tagFilter = '';          // '' = all, 'none' = untagged, else a tag value
 let tagOptions = [];         // from the API's ?facets=1 payload
+/* Tri-state kind filter (S2): '' = both, 'note', 'checklist'. '' is sent as
+   NO `kind` key at all — see loadBrowse. Sticky across searches and scope
+   switches, same as q and tagFilter. */
+let kindFilter = '';
 let rows    = [];
 let total   = 0;
 let offset  = 0;
@@ -168,6 +182,23 @@ function renderHead() {
   head.appendChild(grp);
 
   if (scope === 'browse') {
+    // Kind tri-state. Borrows .cx-scope's styling so it reads as a sibling of
+    // the scope switcher rather than a second, unrelated control — and matches
+    // .ck-kinds inside the framed checklistView.html.
+    const kgrp = document.createElement('div');
+    kgrp.className = 'cx-scope cx-kinds';
+    [['', 'All'], ['note', 'Notes'], ['checklist', 'Lists']].forEach(([v, label]) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (kindFilter === v) b.classList.add('active');
+      b.onclick = () => {
+        if (kindFilter === v) return;
+        kindFilter = v; offset = 0; openId = null; loadBrowse();
+      };
+      kgrp.appendChild(b);
+    });
+    head.appendChild(kgrp);
+
     const s = document.createElement('input');
     s.type = 'search';
     s.className = 'cx-search';
@@ -255,7 +286,7 @@ function render() {
 
   if (!rows.length) {
     body.innerHTML = '<div class="cx-note">'
-      + (q ? 'No checklists match that search.' : 'No checklists yet.') + '</div>';
+      + (q ? 'Nothing matches that search.' : 'Nothing here yet.') + '</div>';
     return;
   }
 
@@ -320,6 +351,13 @@ function browseRow(cl) {
   row.className = 'cx-row';
   row.onclick = () => { openId = cl.id; render(); };
 
+  const isNote = cl.kind === 'note';
+
+  const glyph = document.createElement('i');
+  glyph.className = 'cx-kind ' + (isNote ? 'note fa-regular fa-note-sticky' : 'fa-solid fa-list-check');
+  glyph.title = isNote ? 'Note' : 'Checklist';
+  row.appendChild(glyph);
+
   const title = document.createElement('span');
   title.className = 'cx-row-title';
   title.textContent = cl.title;
@@ -357,10 +395,20 @@ function browseRow(cl) {
   }
   row.appendChild(scopeEl);
 
+  // BRANCHED ON KIND, NOT ON A ZERO COUNT. items_total/items_done are both 0
+  // on every note (it has no checkitems rows), so the count below would render
+  // 'empty' — indistinguishable from an empty checklist. A note's status is
+  // MANUAL (S1), so show that instead.
   const prog = document.createElement('span');
-  const done = cl.items_done, tot = cl.items_total;
-  prog.className = 'cx-prog' + (tot && done === tot ? ' done' : '');
-  prog.textContent = tot ? `${done}/${tot}` : 'empty';
+  if (isNote) {
+    const noteDone = cl.status === 'complete';
+    prog.className = 'cx-prog' + (noteDone ? ' done' : '');
+    prog.textContent = noteDone ? 'done' : 'not done';
+  } else {
+    const done = cl.items_done, tot = cl.items_total;
+    prog.className = 'cx-prog' + (tot && done === tot ? ' done' : '');
+    prog.textContent = tot ? `${done}/${tot}` : 'empty';
+  }
   row.appendChild(prog);
 
   return row;
@@ -375,8 +423,9 @@ async function loadBrowse(append) {
       order: 'updated_desc', limit: String(PAGE), offset: String(offset),
       facets: '1',
     };
-    if (q)         params.q   = q;
-    if (tagFilter) params.tag = tagFilter;   // 'none' means IS NULL, per the route
+    if (q)          params.q    = q;
+    if (tagFilter)  params.tag  = tagFilter;   // 'none' means IS NULL, per the route
+    if (kindFilter) params.kind = kindFilter;  // omitted = both kinds, per the route
     const data = await api('/checklists', 'GET', params);
     const batch = data?.checklists || [];
     rows  = append ? rows.concat(batch) : batch;

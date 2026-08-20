@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Checklists</title>
+  <title>Notes &amp; Lists</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
@@ -26,23 +26,62 @@
       padding: 18px 4px;
     }
 
-    /* ── One checklist card ── */
+    /* ── Kind filter (S2) ──
+       Tri-state: All (default) · Notes · Lists. Deliberately styled to match
+       .cx-scope in checklistsView.html — that page frames this one for the
+       Mine and Unlinked scopes, so two differently-shaped segmented controls
+       would otherwise stack on one screen. */
+    .ck-kinds {
+      display: inline-flex;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .ck-kinds button {
+      background: #fff; border: none; padding: 5px 12px;
+      font-size: 13px; cursor: pointer; color: #334155; font-family: inherit;
+    }
+    .ck-kinds button.active { background: #2563eb; color: #fff; }
+    .ck-kinds button:not(.active):hover { background: #f1f5f9; }
+
+    /* ── The card stack (S2) ──
+       A GRID, not CSS `columns:`. `columns:` reflows reading order
+       top-to-bottom per column, which would fight manual reordering if that is
+       ever added, and can split one card across the column break.
+
+       The card's own margin-bottom is GONE — `gap` owns inter-card spacing
+       now, and keeping both would double it.
+
+       The media query below evaluates against THIS IFRAME's viewport, not the
+       window. The case tab measures ~835px in practice, and
+       checklistsView.html frames this file inside an 860px .cx-wrap, so the
+       900px breakpoint does NOT fire on either surface today — it activates
+       only if a surface is ever widened. That is intended: do not try to
+       detect the parent's width. */
+    .ck-stack { display: grid; gap: 8px; }
+    @media (min-width: 900px) {
+      /* align-items:start so a two-line note does not stretch to the height of
+         the 30-item list beside it. */
+      .ck-stack { grid-template-columns: 1fr 1fr; align-items: start; }
+    }
+
+    /* ── One card ── */
     .ck-card {
       border: 1px solid #e2e8f0;
       border-radius: 8px;
-      margin-bottom: 14px;
       background: #fff;
     }
     .ck-card-head {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 12px;
+      padding: 6px 10px;
       border-bottom: 1px solid #f1f5f9;
       flex-wrap: wrap;
     }
     .ck-title {
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 700;
       color: #0f172a;
       cursor: text;
@@ -52,7 +91,8 @@
     }
     .ck-title:hover { background: #f8fafc; border-color: #e2e8f0; }
     .ck-title-input {
-      font-size: 15px;
+      /* Must match .ck-title's font-size or the swap-to-edit jumps. */
+      font-size: 14px;
       font-weight: 700;
       color: #0f172a;
       padding: 2px 4px;
@@ -108,25 +148,90 @@
     .ck-icon-btn:hover { background: #f1f5f9; }
     .ck-icon-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
 
+    /* ── Note card (S2) ──
+       The distinguishing cue is a left border tint plus a warm background: a
+       user must be able to tell a note from a list at a glance, before
+       reading either. */
+    .ck-card.ck-note {
+      border-left: 3px solid #f59e0b;
+      background: #fffdf7;
+    }
+    .ck-card.ck-note .ck-card-head { border-bottom-color: #fdf0d5; }
+
+    /* ALWAYS-EDITABLE, no click-to-edit swap — the idiom case.html
+       (#overviewCaseNotes) and tabLeads.html already use for notes fields.
+       resize:none because the height is driven by resizeTextarea(). */
+    .ck-note-body {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 6px 10px 10px;
+      border: none;
+      background: transparent;
+      font-family: inherit;
+      font-size: 14px;
+      line-height: 1.45;
+      color: #0f172a;
+      resize: none;
+      /* ~3 rows floor; 300px ceiling then scroll, so one long note cannot
+         dominate the column. The 300 MUST agree with resizeTextarea() in
+         scripts.js, which caps scrollHeight at the same number. */
+      min-height: 58px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .ck-note-body:focus { outline: none; background: #fff; }
+    .ck-note-body::placeholder { color: #94a3b8; }
+
+    /* Manual completion for a note. Labelled so it does not read as an item
+       checkbox — a note has no items, and its status is set by hand (S1). */
+    .ck-done {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #475569;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      padding: 2px 9px 2px 6px;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .ck-done input { margin: 0; cursor: pointer; }
+    .ck-done.done { color: #15803d; background: #f0fdf4; border-color: #bbf7d0; }
+
+    /* Save state for a note body. Empty by default and collapsed, so a saved
+       note costs no vertical space. */
+    .ck-saveflag { font-size: 11px; color: #94a3b8; padding: 0 10px 8px; }
+    .ck-saveflag:empty { display: none; }
+    .ck-saveflag.err { color: #b91c1c; font-weight: 600; }
+
     /* ── Items ── */
-    .ck-items { padding: 6px 12px 2px; }
+    .ck-items { padding: 4px 10px 2px; }
     .ck-row {
       display: flex;
       align-items: flex-start;
       gap: 8px;
-      padding: 4px 0;
+      padding: 2px 0;
       border-bottom: 1px solid #f8fafc;
     }
     .ck-row:last-child { border-bottom: none; }
     .ck-box {
       transform: scale(1.25);
-      margin-top: 4px;
+      margin-top: 3px;
       cursor: pointer;
       flex: none;
     }
     .ck-name {
       flex: 1;
-      font-size: 15px;
+      font-size: 14px;
       color: #0f172a;
       cursor: text;
       padding: 2px 4px;
@@ -138,7 +243,8 @@
     .ck-row.complete .ck-name { text-decoration: line-through; color: #94a3b8; }
     .ck-name-input {
       flex: 1;
-      font-size: 15px;
+      /* Must match .ck-name or the swap-to-edit jumps. */
+      font-size: 14px;
       padding: 2px 4px;
       border: 1px solid #2563eb;
       border-radius: 4px;
@@ -161,7 +267,7 @@
     .ck-add {
       display: flex;
       gap: 8px;
-      padding: 8px 12px 12px;
+      padding: 6px 10px 10px;
     }
     .ck-add input {
       flex: 1;
@@ -185,17 +291,25 @@
     }
     .ck-btn:hover { background: #1d4ed8; }
     .ck-btn:disabled { background: #cbd5e1; cursor: default; }
+    /* Secondary action in the footer — New Note sits beside New List and
+       should not compete with it for the primary affordance. */
+    .ck-btn.ck-btn-alt {
+      background: #fff; color: #b45309; border: 1px solid #fcd34d;
+    }
+    .ck-btn.ck-btn-alt:hover { background: #fffbeb; }
 
-    /* ── New-checklist footer ── */
+    /* ── New-card footer ── */
     .ck-newlist {
       display: flex;
       gap: 8px;
       padding: 12px 0 4px;
       border-top: 1px solid #e2e8f0;
       margin-top: 6px;
+      flex-wrap: wrap;
     }
     .ck-newlist input {
       flex: 1;
+      min-width: 140px;
       font-size: 14px;
       padding: 6px 8px;
       border: 1px solid #cbd5e1;
@@ -222,15 +336,29 @@
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════
-   checklistView.html — stacked checklist surface.
+   checklistView.html — stacked notes & lists surface.
 
    MODES (from the query string):
-     ?id=123                          one list
-     ?link_type=case&link=rIxpyvYG    every list on that entity
-     ?link_type=user&link=me          the caller's personal lists
-     (no params) or ?unlinked=1       lists with no link
+     ?id=123                          one card
+     ?link_type=case&link=rIxpyvYG    every card on that entity
+     ?link_type=user&link=me          the caller's personal cards
+     (no params) or ?unlinked=1       cards with no link
 
    `link` is the column name and the API's param name — NOT `link_id`.
+
+   KINDS (S2). Every row is a 'checklist' (title + checkitems, status DERIVED
+   from the items) or a 'note' (title + freeform `body`, never any items,
+   status MANUAL). One table, one route, one board — see the file header of
+   routes/api.checklists.js, which is the contract this page consumes.
+
+   Two consequences run through everything below:
+     - Branch on `cl.kind`, NEVER on a zero item count. A note has zero items
+       and so does an empty checklist; the old `items.length ? … : 'empty'`
+       badge cannot tell them apart.
+     - Note bodies are PLAIN TEXT. `.value` on a <textarea>, never innerHTML.
+       There is no HTML sanitizer anywhere in this repo, and a body is an
+       obvious future sink for machine-written content (form submissions, AI
+       extraction).
 
    TRANSPORT: window.top.apiSend, NOT P.apiSend. When this page is iframed
    into case.html, scripts.js's `P` is window.parent === case.html, whose own
@@ -256,6 +384,38 @@ const MODE = P_ID ? 'single'
 
 let lists   = [];
 let busy    = false;   // suppresses re-entrant writes from double-Enter
+
+/* Tri-state kind filter: '' = both (the merged board, and the default),
+   'note', or 'checklist'. '' is sent as NO `kind` key at all — never
+   `kind=''`, which would put a bare `kind=` on the wire. */
+let kindFilter = '';
+
+// ── Note body drafts ──────────────────────────────────────────────
+/* THE RE-RENDER HAZARD. render() rebuilds the whole DOM from scratch, and
+   every mutation handler in this file calls it after committing. A <textarea>
+   cannot survive that: the element being typed into is destroyed and the
+   caret is lost mid-word. (The add-item input already works around this with
+   refocusAddInput, which re-finds the rebuilt element by card index — a
+   focus target is recoverable, a caret inside free text is not.)
+
+   So the body-save path NEVER calls render() on success. It writes the saved
+   value into cl.body in memory and stops there.
+
+   This map is the second half of that defence: it holds per-card draft state
+   OUTSIDE the DOM, so a render() triggered by something else (a title edit on
+   another card, an item toggle, a failed status flip) restores what the user
+   had typed instead of reverting it. It is a safety net, not a substitute —
+   a render() still costs the caret, which is why the save path avoids one.
+
+     draft     the textarea's current text, or null when clean
+     dirty     draft differs from the STORED value (cl.body)
+     timer     pending debounced autosave
+     inflight  a PATCH is in the air; a second save reschedules rather than racing
+     flag      the .ck-saveflag element from the last render (may be detached —
+               writing to a detached node is harmless, and the next render
+               re-points it) */
+const bodyDrafts = new Map();
+const BODY_AUTOSAVE_MS = 2000;
 
 function api(...args) {
   try {
@@ -283,7 +443,7 @@ function isSU() {
   catch (_) { return false; }
 }
 
-/* The scope a newly-created list should be attached to. In `single` mode there
+/* The scope a newly-created card should be attached to. In `single` mode there
    is no scope — the footer is hidden. */
 function newListScope() {
   if (MODE === 'entity') {
@@ -344,8 +504,8 @@ async function confirmDialog(o) {
   return !!r.isConfirmed;
 }
 
-/* Escapes values interpolated into Swal `html`. Checklist titles and item
-   names are free text typed by staff — without this, a title containing
+/* Escapes values interpolated into Swal `html`. Titles, item names and note
+   bodies are free text typed by staff — without this, a title containing
    markup would render as markup inside the dialog. */
 function esc(v) {
   return String(v == null ? '' : v)
@@ -362,6 +522,10 @@ function apiError(err, fallback) {
 
 // ── Load ──────────────────────────────────────────────────────────
 async function load() {
+  // Any unsaved note body goes to the server BEFORE the refetch, or the GET
+  // races the PATCH and the response overwrites cl.body with the stale value.
+  // Reached on tab re-entry (reloadChecklists) and on every filter change.
+  await flushBodies();
   try {
     if (MODE === 'single') {
       const one = await api('/checklists/' + encodeURIComponent(P_ID), 'GET');
@@ -373,23 +537,32 @@ async function load() {
       const q = { include: 'items', order: 'created_asc' };
       if (MODE === 'entity') { q.link_type = P_LINK_TYPE; q.link = P_LINK; }
       else                   { q.unlinked = '1'; }
+      // Omitted means BOTH kinds, which is what the All position wants. The
+      // route treats '' as absent too, but sending it would still put a bare
+      // `kind=` on the wire.
+      if (kindFilter) q.kind = kindFilter;
       const data = await api('/checklists', 'GET', q);
       lists = data?.checklists || [];
     }
-    // Tagged lists pin to the top — on a case that means Docs Needed sits
+    // Tagged cards pin to the top — on a case that means Docs Needed sits
     // above whatever working lists staff have added.
     lists.sort((a, b) => (b.tag ? 1 : 0) - (a.tag ? 1 : 0));
+    // Drop settled draft entries; anything still dirty (a save that failed)
+    // is kept so the user's text survives the reload.
+    for (const [id, d] of bodyDrafts) {
+      if (!d.dirty && !d.inflight) bodyDrafts.delete(id);
+    }
     render();
   } catch (err) {
     E('ckBody').innerHTML = '';
     const box = document.createElement('div');
     box.className = 'ck-error';
-    box.textContent = 'Could not load checklists: ' + (err?.message || 'unknown error');
+    box.textContent = 'Could not load notes & lists: ' + (err?.message || 'unknown error');
     E('ckBody').appendChild(box);
   }
 }
 
-// Called by case.html on tab re-entry (autoFrame idiom) so the lists are fresh.
+// Called by case.html on tab re-entry (autoFrame idiom) so the cards are fresh.
 window.reloadChecklists = load;
 
 // ── Render ────────────────────────────────────────────────────────
@@ -397,28 +570,59 @@ function render() {
   const body = E('ckBody');
   body.innerHTML = '';
 
+  // Nothing to filter in single mode — there is exactly one card.
+  if (MODE !== 'single') body.appendChild(renderKindFilter());
+
   if (!lists.length) {
     const empty = document.createElement('div');
     empty.className = 'ck-empty';
-    empty.textContent = MODE === 'single'
-      ? 'Checklist not found.'
-      : 'No checklists yet.';
+    empty.textContent = MODE === 'single'          ? 'Not found.'
+                      : kindFilter === 'note'      ? 'No notes yet.'
+                      : kindFilter === 'checklist' ? 'No lists yet.'
+                      : 'Nothing here yet.';
     body.appendChild(empty);
+  } else {
+    // The stack is the grid container (see .ck-stack). The empty message and
+    // the footer stay OUTSIDE it so they never become grid items.
+    const stack = document.createElement('div');
+    stack.className = 'ck-stack';
+    lists.forEach(cl => stack.appendChild(renderCard(cl)));
+    body.appendChild(stack);
   }
 
-  lists.forEach(cl => body.appendChild(renderCard(cl)));
-
   if (MODE !== 'single') body.appendChild(renderNewListFooter());
+
+  // Height every note body now that they are in the document — scrollHeight
+  // is meaningless on a detached node.
+  body.querySelectorAll('.ck-note-body').forEach(resizeTextarea);
+}
+
+function renderKindFilter() {
+  const grp = document.createElement('div');
+  grp.className = 'ck-kinds';
+  [['', 'All'], ['note', 'Notes'], ['checklist', 'Lists']].forEach(([v, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (kindFilter === v) b.classList.add('active');
+    // load(), not render(): the filter is applied server-side by the GET
+    // route's `kind` param, so there is nothing local to re-filter.
+    b.onclick = () => { if (kindFilter === v) return; kindFilter = v; load(); };
+    grp.appendChild(b);
+  });
+  return grp;
 }
 
 function renderCard(cl) {
+  const isNote = cl.kind === 'note';
+
   const card = document.createElement('section');
-  card.className = 'ck-card';
+  card.className = 'ck-card' + (isNote ? ' ck-note' : '');
 
   const items = cl.items || [];
   const done  = items.filter(i => i.status === 'complete').length;
 
-  // ── header ──
+  // ── header (shared by both kinds) ──
   const head = document.createElement('div');
   head.className = 'ck-card-head';
 
@@ -444,19 +648,39 @@ function renderCard(cl) {
     head.appendChild(badge);
   }
 
-  const prog = document.createElement('span');
-  prog.className = 'ck-progress' + (items.length && done === items.length ? ' done' : '');
-  prog.textContent = items.length ? `${done}/${items.length}` : 'empty';
-  head.appendChild(prog);
+  if (isNote) {
+    // A note's status is MANUAL (S1) — there are no items to derive it from.
+    head.appendChild(renderDonePill(cl));
+  } else {
+    // BRANCHED ON KIND, NOT ON items.length. A note has zero items and would
+    // render 'empty' here — indistinguishable from an empty checklist.
+    const prog = document.createElement('span');
+    prog.className = 'ck-progress' + (items.length && done === items.length ? ' done' : '');
+    prog.textContent = items.length ? `${done}/${items.length}` : 'empty';
+    head.appendChild(prog);
+  }
 
   const del = document.createElement('button');
   del.className = 'ck-icon-btn danger';
   del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
-  del.title = 'Delete this checklist';
+  del.title = isNote ? 'Delete this note' : 'Delete this checklist';
   del.onclick = () => deleteList(cl);
   head.appendChild(del);
 
   card.appendChild(head);
+
+  if (isNote) {
+    // ── body ── (replaces BOTH the items list and the add-item row)
+    card.appendChild(renderNoteBody(cl));
+    const flag = document.createElement('div');
+    flag.className = 'ck-saveflag';
+    const d = draftFor(cl.id);
+    d.flag = flag;                       // re-pointed on every render
+    flag.textContent = d.flagText || '';
+    flag.classList.toggle('err', !!d.flagErr);
+    card.appendChild(flag);
+    return card;
+  }
 
   // ── items ──
   const wrap = document.createElement('div');
@@ -513,28 +737,66 @@ function renderRow(cl, item) {
   return row;
 }
 
-function renderNewListFooter() {
-  const foot = document.createElement('div');
-  foot.className = 'ck-newlist';
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.placeholder = 'New checklist name…';
-  const btn = document.createElement('button');
-  btn.className = 'ck-btn';
-  btn.textContent = 'New Checklist';
-  const submit = () => addList(input);
-  input.onkeydown = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+/* Notes only. Labelled "Done" rather than left as a bare checkbox so it does
+   not read as an item checkbox — the two mean different things and sit within
+   a few pixels of each other on a mixed board. */
+function renderDonePill(cl) {
+  const label = document.createElement('label');
+  label.className = 'ck-done' + (cl.status === 'complete' ? ' done' : '');
+  label.title = 'A note has no items — mark it done by hand.';
+
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = cl.status === 'complete';
+  box.onchange = () => toggleNoteDone(cl, box, label);
+  label.appendChild(box);
+
+  const txt = document.createElement('span');
+  txt.textContent = 'Done';
+  label.appendChild(txt);
+
+  return label;
+}
+
+/* The note body. ALWAYS EDITABLE — no click-to-edit swap, matching how
+   case.html (#overviewCaseNotes) and tabLeads.html already treat notes.
+
+   `.value`, never innerHTML: this is plain text and must stay plain text. */
+function renderNoteBody(cl) {
+  const d = draftFor(cl.id);
+
+  const ta = document.createElement('textarea');
+  ta.className = 'ck-note-body';
+  ta.placeholder = 'Write a note…';
+  // An unsaved draft wins over the stored value, so a render() triggered
+  // elsewhere does not silently revert what the user typed.
+  ta.value = (d.dirty && d.draft != null) ? d.draft : (cl.body ?? '');
+
+  ta.oninput = () => {
+    // resizeTextarea() is scripts.js's shared helper (height:auto, then
+    // scrollHeight capped at 300px). The same one case.html uses for case
+    // notes — see .ck-note-body's max-height, which must agree with it.
+    resizeTextarea(ta);
+    d.draft = ta.value;
+    // Dirty means "differs from what the server holds" — typing and undoing
+    // back to the stored text leaves nothing to save.
+    d.dirty = ta.value !== (cl.body ?? '');
+    setFlag(d, d.dirty ? 'Unsaved…' : '');
+    if (d.timer) { clearTimeout(d.timer); d.timer = null; }
+    if (d.dirty) d.timer = setTimeout(() => saveBody(cl.id), BODY_AUTOSAVE_MS);
   };
-  btn.onclick = submit;
-  foot.appendChild(input);
-  foot.appendChild(btn);
-  return foot;
+
+  // Blur commits immediately. saveBody() clears the pending timer first, so
+  // the debounce and the blur cannot both fire a PATCH for the same edit.
+  ta.onblur = () => { saveBody(cl.id); };
+
+  return ta;
 }
 
 // ── Inline editing ────────────────────────────────────────────────
 /* Shared swap-to-input helper. Commits on Enter or blur, cancels on Escape,
-   and no-ops when the value is unchanged so a stray click costs no request. */
+   and no-ops when the value is unchanged so a stray click costs no request.
+   NOT used for note bodies: those are always editable and multi-line. */
 function inlineEdit(el, current, inputClass, onCommit, allowEmpty) {
   const input = document.createElement('input');
   input.type = 'text';
@@ -567,7 +829,7 @@ function editTitle(cl, el) {
       await api('/checklists/' + cl.id, 'PATCH', { title: next });
       cl.title = next;
       render();
-    } catch (err) { apiError(err, 'Could not rename checklist'); render(); }
+    } catch (err) { apiError(err, 'Could not rename'); render(); }
   });
 }
 
@@ -576,16 +838,17 @@ function editTitle(cl, el) {
    Renaming or clearing it does NOT error — the portal card and document
    requests just go quietly empty. Hence the explicit confirm naming the
    consequence, rather than a generic "are you sure".
-   Adding a duplicate is already impossible: uq_link_tag returns 409. */
+   Adding a duplicate is already impossible: uq_link_kind_tag returns 409. */
 async function editTag(cl, el) {
   const current = cl.tag || '';
+  const what    = cl.kind === 'note' ? 'note' : 'checklist';
   const body = current
-    ? `<p style="text-align:left">The tag <code>${esc(current)}</code> is how automation finds this checklist.</p>`
+    ? `<p style="text-align:left">The tag <code>${esc(current)}</code> is how automation finds this ${what}.</p>`
       + (current === 'docs_needed'
           ? '<p style="text-align:left;color:#b91c1c"><b>This is the list the client portal '
             + 'and document requests read.</b> Renaming or clearing it makes both go blank '
             + 'for this case &mdash; silently, with no error.</p>'
-          : '<p style="text-align:left">Changing it detaches this list from whatever matches that tag.</p>')
+          : `<p style="text-align:left">Changing it detaches this ${what} from whatever matches that tag.</p>`)
       + '<p style="text-align:left;color:#64748b">Clear the box to remove the tag entirely.</p>'
     : '<p style="text-align:left">Tags are matched by automation and never shown to clients. '
       + 'Only set one if you know what reads it.</p>';
@@ -602,11 +865,12 @@ async function editTag(cl, el) {
     try {
       await api('/checklists/' + cl.id, 'PATCH', { tag: next || null });
       cl.tag = next || null;
-      // Re-pin: tagged lists sort above untagged ones.
+      // Re-pin: tagged cards sort above untagged ones.
       lists.sort((a, b) => (b.tag ? 1 : 0) - (a.tag ? 1 : 0));
       render();
     } catch (err) {
-      // 409 = another list on this entity already holds that tag (uq_link_tag).
+      // 409 = another row OF THE SAME KIND on this entity already holds that
+      // tag (uq_link_kind_tag). A note and a checklist may share one.
       apiError(err, 'Could not change tag');
       render();
     }
@@ -633,6 +897,10 @@ async function toggleItem(cl, item, box) {
     await api('/checkitems/' + item.id, 'PATCH', { status: next });
     // The parent's status is recomputed server-side; refetch is overkill for
     // a checkbox, so recompute the same rule locally for the progress badge.
+    //
+    // The "zero items -> incomplete" polarity below is WRONG for a note, but
+    // unreachable on one: this function is only ever wired up by renderRow,
+    // which runs only for items, which a note never has.
     const items = cl.items || [];
     cl.status = items.length && items.every(i => i.status === 'complete')
       ? 'complete' : 'incomplete';
@@ -641,6 +909,100 @@ async function toggleItem(cl, item, box) {
     apiError(err, 'Could not update item');
     render();
   }
+}
+
+/* Notes only. Optimistic in the same shape as toggleItem — the checkbox has
+   already moved, so flip the model to match and revert on failure.
+
+   Does NOT render() on success: the click that got here blurred any focused
+   note body (committing it), but a save may still be in the air, and a full
+   rebuild costs the caret for no gain. The pill is updated in place. */
+async function toggleNoteDone(cl, box, label) {
+  const next = box.checked ? 'complete' : 'incomplete';
+  const prev = cl.status;
+  if (next === prev) return;
+  cl.status = next;
+  label.classList.toggle('done', next === 'complete');
+  try {
+    await api('/checklists/' + cl.id, 'PATCH', { status: next });
+  } catch (err) {
+    cl.status = prev;
+    apiError(err, 'Could not update note');
+    render();
+  }
+}
+
+// ── Note body persistence ─────────────────────────────────────────
+function draftFor(id) {
+  let d = bodyDrafts.get(id);
+  if (!d) {
+    d = { draft: null, dirty: false, timer: null, inflight: false,
+          flag: null, flagText: '', flagErr: false };
+    bodyDrafts.set(id, d);
+  }
+  return d;
+}
+
+/* The save-state line under a note body. Held on the draft entry as well as
+   written to the DOM, so the next render() can restore it. */
+function setFlag(d, text, isErr) {
+  d.flagText = text || '';
+  d.flagErr  = !!isErr;
+  if (!d.flag) return;
+  d.flag.textContent = d.flagText;
+  d.flag.classList.toggle('err', d.flagErr);
+}
+
+/**
+ * Commit one note body. Both the blur handler and the debounced autosave land
+ * here; the pending timer is cleared before the dirty check, so exactly one
+ * PATCH fires per edit no matter which path wins the race.
+ *
+ * An EMPTY STRING is a legitimate body — a title-only note. The route
+ * distinguishes '' from null (`body ?? null`, not `body || null`), so this
+ * must not `|| null` it on the way out either.
+ *
+ * NEVER calls render() on success — see the bodyDrafts comment at the top.
+ * On failure the draft is KEPT and the card is marked unsaved rather than
+ * reverted: a title is cheap to retype, a paragraph is not, and the next blur
+ * or idle retries it. cl.body still holds the STORED value throughout, so the
+ * card never lies about what the server has.
+ */
+async function saveBody(clId) {
+  const d = bodyDrafts.get(clId);
+  if (!d) return;
+  if (d.timer) { clearTimeout(d.timer); d.timer = null; }
+  if (!d.dirty) return;
+  // A second save while one is in the air would race to write the same row.
+  // Re-arm instead; the follow-up picks up whatever the latest draft is.
+  if (d.inflight) { d.timer = setTimeout(() => saveBody(clId), 250); return; }
+
+  const cl = lists.find(l => l.id === clId);
+  if (!cl) { bodyDrafts.delete(clId); return; }   // deleted out from under us
+
+  const value = d.draft ?? '';
+  d.dirty    = false;
+  d.inflight = true;
+  setFlag(d, 'Saving…');
+  try {
+    await api('/checklists/' + cl.id, 'PATCH', { body: value });
+    cl.body = value;
+    if (d.draft === value) d.draft = null;
+    setFlag(d, '');
+  } catch (err) {
+    d.dirty = true;                                // keep the text, allow retry
+    setFlag(d, 'Unsaved — retrying on next edit', true);
+    apiError(err, 'Could not save note');
+  } finally {
+    d.inflight = false;
+  }
+}
+
+/* Flush every dirty body. Called before a refetch so the GET cannot race a
+   pending PATCH and hand back the stale text. */
+async function flushBodies() {
+  const ids = [...bodyDrafts.keys()];
+  await Promise.allSettled(ids.map(id => saveBody(id)));
 }
 
 async function addItem(cl, input) {
@@ -660,7 +1022,12 @@ async function addItem(cl, input) {
 }
 
 /* render() rebuilds the DOM, so the input that was just typed into is gone.
-   Find the rebuilt one for the same card and put the cursor back. */
+   Find the rebuilt one for the same card and put the cursor back.
+
+   Still index-safe with notes in the stack: every row in `lists` produces
+   exactly one .ck-card, in order. A note has no .ck-add input, so the
+   optional chain below simply finds nothing — and nothing calls this for a
+   note anyway (addItem is unreachable without an add row). */
 function refocusAddInput(clId) {
   const idx = lists.findIndex(l => l.id === clId);
   if (idx < 0) return;
@@ -681,6 +1048,8 @@ async function deleteItem(cl, item) {
     await api('/checkitems/' + item.id, 'DELETE');
     cl.items = (cl.items || []).filter(i => i.id !== item.id);
     const items = cl.items;
+    // Same reachability argument as toggleItem: only renderRow wires this up,
+    // so `cl` is always a checklist here and the derivation polarity holds.
     cl.status = items.length && items.every(i => i.status === 'complete')
       ? 'complete' : 'incomplete';
     render();
@@ -688,19 +1057,21 @@ async function deleteItem(cl, item) {
 }
 
 async function deleteList(cl) {
-  const n = (cl.items || []).length;
+  const isNote  = cl.kind === 'note';
+  const n       = (cl.items || []).length;
+  const hasBody = !!String(cl.body || '').trim();
   const warn = cl.tag
-    ? `<p style="text-align:left;color:#b91c1c"><b>This is a system list `
-      + `(<code>${esc(cl.tag)}</code>).</b> Deleting it removes it from the client `
-      + `portal and document requests until it is recreated.</p>`
+    ? `<p style="text-align:left;color:#b91c1c"><b>This is a system `
+      + `${isNote ? 'note' : 'list'} (<code>${esc(cl.tag)}</code>).</b> Deleting it removes `
+      + `it from the client portal and document requests until it is recreated.</p>`
     : '';
+  const detail = isNote
+    ? (hasBody ? ' <span style="color:#64748b">&mdash; its text will be deleted too.</span>' : '')
+    : (n ? ` <span style="color:#64748b">&mdash; ${n} item${n === 1 ? '' : 's'} `
+         + `will be deleted too.</span>` : '');
   const ok = await confirmDialog({
-    title: 'Delete checklist?',
-    html: warn
-        + `<p style="text-align:left">${esc(cl.title)}`
-        + (n ? ` <span style="color:#64748b">&mdash; ${n} item${n === 1 ? '' : 's'} `
-             + `will be deleted too.</span>` : '')
-        + '</p>',
+    title: isNote ? 'Delete note?' : 'Delete checklist?',
+    html: warn + `<p style="text-align:left">${esc(cl.title)}${detail}</p>`,
     confirmText: 'Delete',
     danger: true,
   });
@@ -708,33 +1079,86 @@ async function deleteList(cl) {
   try {
     await api('/checklists/' + cl.id, 'DELETE');
     lists = lists.filter(l => l.id !== cl.id);
+    // Drop any pending draft with it, or a queued autosave would 404 and the
+    // entry would leak for the life of the page.
+    const d = bodyDrafts.get(cl.id);
+    if (d?.timer) clearTimeout(d.timer);
+    bodyDrafts.delete(cl.id);
     render();
-  } catch (err) { apiError(err, 'Could not delete checklist'); }
+  } catch (err) {
+    apiError(err, isNote ? 'Could not delete note' : 'Could not delete checklist');
+  }
 }
 
-async function addList(input) {
+/**
+ * Create a card of either kind.
+ *
+ * SHAPE KEYS ARE TESTED BY PRESENCE, NOT CONTENTS (POST /checklists): `items`
+ * on a note is a 400 even as `[]`, and `body` on a checklist is a 400 even as
+ * `''`. So a note is created with NO body key at all, and a checklist with no
+ * items key — neither is sent below, deliberately.
+ *
+ * `kind` is omitted for a checklist so the request stays byte-identical to
+ * what this page sent before S2; the route and the column both default to it.
+ */
+async function addList(input, kind) {
   const title = input.value.trim();
   if (!title || busy) return;
   const scope = newListScope();
   if (scope.link_type === 'user' && !scope.link) {
-    toast('error', 'Could not create list', 'No current user — reload the page.');
+    toast('error', 'Could not create', 'No current user — reload the page.');
     return;
   }
   busy = true;
   try {
-    const created = await api('/checklists', 'POST', {
+    const payload = {
       title,
       link:      scope.link,
       link_type: scope.link_type,
-    });
+    };
+    if (kind === 'note') payload.kind = 'note';
+    const created = await api('/checklists', 'POST', payload);
     created.items = created.items || [];
+    // Pushed even when it does not match the active filter — the user just
+    // made this thing and has to be able to see it. The next load() re-applies
+    // the filter honestly.
     lists.push(created);
     render();
   } catch (err) {
     // 409 (tag collision) and 403 (someone else's personal list) both arrive
     // here with a real message from the route.
-    apiError(err, 'Could not create checklist');
+    apiError(err, kind === 'note' ? 'Could not create note' : 'Could not create checklist');
   } finally { busy = false; }
+}
+
+/* One input, two buttons. Enter keeps its pre-S2 meaning — it creates a
+   CHECKLIST — so existing muscle memory is unbroken; a note needs the button. */
+function renderNewListFooter() {
+  const foot = document.createElement('div');
+  foot.className = 'ck-newlist';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'New list or note name…';
+
+  const listBtn = document.createElement('button');
+  listBtn.className = 'ck-btn';
+  listBtn.textContent = 'New List';
+  listBtn.onclick = () => addList(input, 'checklist');
+
+  const noteBtn = document.createElement('button');
+  noteBtn.className = 'ck-btn ck-btn-alt';
+  noteBtn.textContent = 'New Note';
+  noteBtn.onclick = () => addList(input, 'note');
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addList(input, 'checklist'); }
+  };
+
+  foot.appendChild(input);
+  foot.appendChild(listBtn);
+  foot.appendChild(noteBtn);
+  return foot;
 }
 
 // ── Boot ──────────────────────────────────────────────────────────

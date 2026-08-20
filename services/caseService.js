@@ -1354,8 +1354,18 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   // there is nothing to consolidate. Without this clause the join would still
   // match, fold zero items across (a note has none), and DELETE the note. A
   // silent loss of its body, with no error and no count to notice.
+  //
+  // It does NOT save a note↔NOTE pair, though (S2). Two notes sharing a tag
+  // still match on kind, and the item fold below is a no-op on both sides — so
+  // the loser would be deleted and its body lost exactly the same way.
+  // Excluding notes from consolidation is not available: this runs at step 1b,
+  // deliberately AHEAD of the step-2 repoint, and skipping it would carry a
+  // same-(link_type, link, kind, tag) note onto the survivor, violate
+  // uq_link_kind_tag, and roll the entire merge back. So the loop FOLDS THE
+  // BODY instead — the same treatment case_notes already gets above. `l.kind`
+  // rides along on the SELECT for that branch.
   const CONSOLIDATE_FIND_SQL =
-    `SELECT l.id AS loser_list, s.id AS survivor_list, l.tag
+    `SELECT l.id AS loser_list, s.id AS survivor_list, l.tag, l.kind
        FROM checklists l
        JOIN checklists s
          ON s.link_type = 'case' AND s.link = ? AND s.tag = l.tag
@@ -1435,6 +1445,29 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     //     See CONSOLIDATE_FIND_SQL above for why.
     const [dupTags] = await conn.query(CONSOLIDATE_FIND_SQL, [survivorId, loserId]);
     for (const d of dupTags) {
+      // NOTES: no items to fold — the payload is the body. Concatenated onto
+      // the survivor's with the same visible separator case_notes uses, so a
+      // merged note reads as two dated sections rather than one run-on blob.
+      // The loser's `status` is dropped on purpose: a note's status is MANUAL
+      // (S1) and the survivor's was set by a human about the survivor's text.
+      if (d.kind === 'note') {
+        const [[loserNote]] = await conn.query(
+          'SELECT body FROM checklists WHERE id = ?', [d.loser_list]
+        );
+        // An empty-string body is a legitimate title-only note — nothing to
+        // carry across, and appending a bare separator would be noise.
+        if (loserNote && loserNote.body != null && loserNote.body !== '') {
+          await conn.query(
+            `UPDATE checklists SET body = CONCAT(IFNULL(body, ''), ?) WHERE id = ?`,
+            [sep(`note "${d.tag}"`) + loserNote.body, d.survivor_list]
+          );
+        }
+        await conn.query('DELETE FROM checklists WHERE id = ?', [d.loser_list]);
+        // No computeAndSaveStatus: S1's lib guard makes it a no-op on a note,
+        // and calling it anyway would imply this status is derived.
+        continue;
+      }
+
       // Append after the survivor's existing items. COALESCE because
       // checkitems.position is nullable, and NULL + n is NULL — which would
       // sort the folded-in items to the TOP under `ORDER BY position ASC`.
