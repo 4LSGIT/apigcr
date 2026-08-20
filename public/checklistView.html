@@ -158,6 +158,39 @@
     }
     .ck-card.ck-note .ck-card-head { border-bottom-color: #fdf0d5; }
 
+    /* ── Native (pinned) note card (S5) ──
+       Synthesized from a column on the ENTITY (cases.case_notes and friends),
+       not from a checklists row. Deliberately NOT the note amber: a native
+       card has no delete, no tag and no Done pill, and someone hunting for the
+       trash can must be able to see before they hunt that this card is a
+       different animal. Three classes, so it outranks .ck-card.ck-note. */
+    .ck-card.ck-note.ck-native {
+      border-left-color: #6366f1;
+      background: #f8f9ff;
+    }
+    .ck-card.ck-native .ck-card-head { border-bottom-color: #e0e7ff; }
+    .ck-pin { color: #6366f1; font-size: 12px; }
+    /* Title comes from the adapter, not the database — kill the rename
+       affordance rather than leaving a hover state that does nothing. */
+    .ck-title.ck-title-fixed { cursor: default; }
+    .ck-title.ck-title-fixed:hover { background: transparent; border-color: transparent; }
+    /* Occupies the slot .ck-progress / .ck-done hold on the other kinds, and
+       carries the explanation for everything this card is missing. */
+    .ck-native-badge {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #4338ca;
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 4px;
+      padding: 2px 6px;
+      cursor: default;
+      white-space: nowrap;
+    }
+
     /* ALWAYS-EDITABLE, no click-to-edit swap — the idiom case.html
        (#overviewCaseNotes) and tabLeads.html already use for notes fields.
        resize:none because the height is driven by resizeTextarea(). */
@@ -183,6 +216,9 @@
     }
     .ck-note-body:focus { outline: none; background: #fff; }
     .ck-note-body::placeholder { color: #94a3b8; }
+    /* Only a NATIVE card whose entity read failed (S5) — editing it would
+       save an empty string over whatever the column actually holds. */
+    .ck-note-body:disabled { background: #f8fafc; color: #64748b; cursor: not-allowed; }
 
     /* Manual completion for a note. Labelled so it does not read as an item
        checkbox — a note has no items, and its status is set by hand (S1). */
@@ -212,6 +248,16 @@
     .ck-saveflag { font-size: 11px; color: #94a3b8; padding: 0 10px 8px; }
     .ck-saveflag:empty { display: none; }
     .ck-saveflag.err { color: #b91c1c; font-weight: 600; }
+
+    /* Character counter (S5). Stays EMPTY — and so collapsed — until a body
+       approaches NOTE_MAX_CHARS; see updateCount(). A counter on every note
+       would be noise on the ~100% of them nowhere near 10,000 characters. */
+    .ck-count {
+      font-size: 11px; color: #94a3b8;
+      padding: 0 10px 8px; text-align: right;
+    }
+    .ck-count:empty { display: none; }
+    .ck-count.over { color: #b91c1c; font-weight: 600; }
 
     /* ── Items ── */
     .ck-items { padding: 4px 10px 2px; }
@@ -370,6 +416,31 @@
    The tag is rendered as a read-only badge. Titles are staff-editable and
    nothing keys off them (identity is tag='docs_needed'); tags are machine
    fields and the backend 403s a non-SU write, so the UI just agrees.
+
+   NATIVE FIELDS (S5). Four entities carry a single freeform notes column that
+   predates this page — cases.case_notes, cases.341_notes,
+   contacts.contact_notes, appts.appt_note. Now that an entity can also hold N
+   proper notes, staff would otherwise have two unrelated places to look, and
+   341_notes / appt_note are invisible today.
+
+   NATIVE_NOTES below synthesizes a PINNED VIRTUAL CARD per column. It is a
+   VIEW, not a migration: the column stays the one and only store, the card
+   reads and writes it directly, and there is nothing to sync and nothing to
+   drift. No route, no table, no column was added for this. cases.case_notes in
+   particular cannot move — caseService.searchCases, report definition 10, and
+   three published form templates all read it.
+
+   A native card has no checklists row, so it has no id, no tag, no items and
+   no status. Everything keyed by checklist id must therefore tolerate one:
+   see draftKeyOf().
+
+   KNOWN WART — NOT FIXED HERE. On the case tab, case_notes is now editable in
+   TWO places: the Overview tab's #overviewCaseNotes textarea (case.html) and
+   the pinned card here. Both write the same column, last write wins, and the
+   other surface shows a stale value until its tab reloads. They are different
+   tabs, so a collision needs one person editing both in one sitting — low
+   risk, and making Overview read-only is a case.html change outside this
+   slice. Documented rather than fixed, deliberately.
    ═══════════════════════════════════════════════════════════════════ */
 
 const params = new URLSearchParams(location.search);
@@ -407,15 +478,81 @@ let kindFilter = '';
    had typed instead of reverting it. It is a safety net, not a substitute —
    a render() still costs the caret, which is why the save path avoids one.
 
+   KEYED BY draftKeyOf(cl), NOT by cl.id — a native card (S5) has no id. See
+   that function for why the two key spaces cannot collide.
+
      draft     the textarea's current text, or null when clean
      dirty     draft differs from the STORED value (cl.body)
      timer     pending debounced autosave
      inflight  a PATCH is in the air; a second save reschedules rather than racing
      flag      the .ck-saveflag element from the last render (may be detached —
                writing to a detached node is harmless, and the next render
-               re-points it) */
+               re-points it)
+     count     the .ck-count element, same re-pointing contract as `flag`
+     countText what updateCount() last computed, restored on the next render */
 const bodyDrafts = new Map();
 const BODY_AUTOSAVE_MS = 2000;
+
+/* MUST STAY IN SYNC with NOTE_MAX_CHARS in lib/noteLimits.js — the browser
+   cannot require a Node module, so the number is duplicated. The SERVER is the
+   guarantee (checklists, cases, contacts and appts all reject past it with a
+   400); this copy exists only so the user is stopped before the 400, the same
+   way .ck-note-body's max-height duplicates resizeTextarea()'s 300.
+   If you change one, change the other. */
+const NOTE_MAX_CHARS = 10000;
+/* The counter stays hidden below this. 90% of the ceiling. */
+const COUNT_SHOW_AT  = Math.floor(NOTE_MAX_CHARS * 0.9);
+
+// ── Native notes adapter (S5) ─────────────────────────────────────
+/* Freeform notes columns that live on the ENTITY, surfaced here as pinned
+   virtual cards. See the NATIVE FIELDS block in the file header.
+
+   THIS IS THE WHOLE CONFIGURATION. Adding a fifth native field is a one-line
+   edit here and nothing else — unless it is on an entity not already listed,
+   which also needs a NATIVE_ENVELOPE row for that endpoint's response shape.
+   There is no per-field length: lib/noteLimits.js governs all of them with one
+   number.
+
+   341_notes is currently populated on 0 of 1,077 cases. That is not a sign it
+   should be dropped — surfacing it here is its first real use. */
+const NATIVE_NOTES = {
+  case: [
+    { field: 'case_notes', title: 'Case Notes', endpoint: '/api/cases' },
+    { field: '341_notes',  title: '341 Notes',  endpoint: '/api/cases' },
+  ],
+  contact: [
+    { field: 'contact_notes', title: 'Notes', endpoint: '/api/contacts' },
+  ],
+  appt: [
+    { field: 'appt_note', title: 'Note', endpoint: '/api/appts' },
+  ],
+};
+
+/* The three GET-one endpoints wrap their row in three different keys, so the
+   adapter cannot read them uniformly:
+     GET /api/cases/:id     -> { case:    {...} }   caseService.getCase
+     GET /api/contacts/:id  -> { contact: {...} }   contactService.getContact
+     GET /api/appts/:id     -> { data:    {...} }   inline in routes/api.appts.js
+   A missing entry means "the response IS the row". */
+const NATIVE_ENVELOPE = {
+  '/api/cases':    'case',
+  '/api/contacts': 'contact',
+  '/api/appts':    'data',
+};
+
+function unwrapEntity(endpoint, res) {
+  const key = NATIVE_ENVELOPE[endpoint];
+  const row = key ? (res && res[key]) : res;
+  return (row && typeof row === 'object') ? row : null;
+}
+
+/* The native fields in play for this page load. Empty for every mode and
+   link_type that has none — `single`, `unlinked` and link_type='user' must
+   behave exactly as they did before S5. */
+function nativeSpecs() {
+  if (MODE !== 'entity') return [];
+  return NATIVE_NOTES[P_LINK_TYPE] || [];
+}
 
 function api(...args) {
   try {
@@ -541,16 +678,22 @@ async function load() {
       // route treats '' as absent too, but sending it would still put a bare
       // `kind=` on the wire.
       if (kindFilter) q.kind = kindFilter;
-      const data = await api('/checklists', 'GET', q);
-      lists = data?.checklists || [];
+      // IN PARALLEL, not in sequence — this is the case tab's first paint, and
+      // the native read is a second round trip that must not be stacked on top
+      // of the first. loadNativeCards() never rejects (see its comment), so
+      // Promise.all can only fail on the /checklists leg, which is the one the
+      // catch below is already about.
+      const [data, natives] = await Promise.all([
+        api('/checklists', 'GET', q),
+        loadNativeCards(),
+      ]);
+      lists = natives.concat(data?.checklists || []);
     }
-    // Tagged cards pin to the top — on a case that means Docs Needed sits
-    // above whatever working lists staff have added.
-    lists.sort((a, b) => (b.tag ? 1 : 0) - (a.tag ? 1 : 0));
+    sortLists();
     // Drop settled draft entries; anything still dirty (a save that failed)
     // is kept so the user's text survives the reload.
-    for (const [id, d] of bodyDrafts) {
-      if (!d.dirty && !d.inflight) bodyDrafts.delete(id);
+    for (const [key, d] of bodyDrafts) {
+      if (!d.dirty && !d.inflight) bodyDrafts.delete(key);
     }
     render();
   } catch (err) {
@@ -560,6 +703,89 @@ async function load() {
     box.textContent = 'Could not load notes & lists: ' + (err?.message || 'unknown error');
     E('ckBody').appendChild(box);
   }
+}
+
+/* Card order, in one place because TWO callers need the same rule: load()
+   after a fetch, and editTag() after a tag change (which re-pins).
+
+   Native cards (S5) pin above EVERYTHING — they are the fields staff have
+   always looked at, and burying them under a working list would defeat the
+   point. Tagged rows then pin above untagged ones, so on a case Docs Needed
+   still sits above whatever lists staff have added.
+
+   Array.sort is stable (ES2019+), so within each band the server's
+   created_asc order — and the adapter's declaration order for natives — is
+   preserved. */
+function sortLists() {
+  lists.sort((a, b) =>
+       (b.native ? 1 : 0) - (a.native ? 1 : 0)
+    || (b.tag    ? 1 : 0) - (a.tag    ? 1 : 0));
+}
+
+/**
+ * Build the pinned virtual cards for this entity (S5).
+ *
+ * NEVER REJECTS. A native field is a nice-to-have pinned on top of the real
+ * board; a case with an unreachable /api/cases must still show its checklists.
+ * So a failed entity read degrades to `unavailable` cards — rendered, locked,
+ * and flagged — rather than propagating and blanking the list.
+ *
+ * The notes route knows nothing about these columns and S5 adds no route, so
+ * the values come from the entity's own GET. One request per DISTINCT
+ * endpoint, not per field: a case declares two native fields and they arrive
+ * on the same row.
+ *
+ * Shaped to need the smallest possible branch in renderCard():
+ *   status: null   there is no status column to fake — no Done pill
+ *   tag:    null   there is no tag column — no badge
+ *   items:  []     a note never has items
+ *   id:     null   there is no checklists row; see draftKeyOf()
+ */
+async function loadNativeCards() {
+  const specs = nativeSpecs();
+  if (!specs.length) return [];
+  // The Lists position of the kind filter hides notes, and a native card IS a
+  // note. The filter is applied SERVER-SIDE on /checklists and cannot know
+  // about natives, so it is applied here instead. Dropping them from `lists`
+  // (rather than hiding them in CSS) is what keeps refocusAddInput's
+  // positional index honest — see its comment.
+  if (kindFilter === 'checklist') return [];
+
+  const endpoints = [...new Set(specs.map(s => s.endpoint))];
+  const rows = new Map();                       // endpoint -> row, or null on failure
+  await Promise.all(endpoints.map(async (ep) => {
+    try {
+      const res = await api(ep + '/' + encodeURIComponent(P_LINK), 'GET');
+      rows.set(ep, unwrapEntity(ep, res));
+    } catch (err) {
+      // Deliberately swallowed. Surfaced on the card itself, not as a toast:
+      // a toast on every tab entry for a field the user may not even be
+      // looking at is worse than a locked card that says why.
+      console.error('checklistView: native notes fetch failed for ' + ep, err);
+      rows.set(ep, null);
+    }
+  }));
+
+  return specs.map(s => {
+    const row = rows.get(s.endpoint);
+    return {
+      id: null,
+      kind: 'note',
+      title: s.title,
+      // All four columns are NOT NULL, so `?? ''` is belt-and-braces against a
+      // response that omits the key entirely rather than against a real NULL.
+      body: row ? (row[s.field] ?? '') : '',
+      status: null,
+      tag: null,
+      items: [],
+      native: {
+        field:       s.field,
+        endpoint:    s.endpoint,
+        entityId:    P_LINK,
+        unavailable: !row,
+      },
+    };
+  });
 }
 
 // Called by case.html on tab re-entry (autoFrame idiom) so the cards are fresh.
@@ -615,9 +841,15 @@ function renderKindFilter() {
 
 function renderCard(cl) {
   const isNote = cl.kind === 'note';
+  // S5. A native card is a note SYNTHESIZED from an entity column — it has no
+  // checklists row behind it, so every affordance that needs one is suppressed
+  // below: rename, tag, Done, delete, re-home.
+  const isNative = !!cl.native;
 
   const card = document.createElement('section');
-  card.className = 'ck-card' + (isNote ? ' ck-note' : '');
+  card.className = 'ck-card'
+    + (isNote   ? ' ck-note'   : '')
+    + (isNative ? ' ck-native' : '');
 
   const items = cl.items || [];
   const done  = items.filter(i => i.status === 'complete').length;
@@ -626,14 +858,29 @@ function renderCard(cl) {
   const head = document.createElement('div');
   head.className = 'ck-card-head';
 
+  if (isNative) {
+    const pin = document.createElement('i');
+    pin.className = 'fa-solid fa-thumbtack ck-pin';
+    pin.title = 'Pinned — this field lives on the record itself.';
+    head.appendChild(pin);
+  }
+
   const title = document.createElement('span');
-  title.className = 'ck-title';
+  title.className = 'ck-title' + (isNative ? ' ck-title-fixed' : '');
   title.textContent = cl.title;
-  title.title = 'Click to rename';
-  title.onclick = () => editTitle(cl, title);
+  if (isNative) {
+    // The title comes from the NATIVE_NOTES adapter, not from a database
+    // column. There is nothing to PATCH, so it is not wired to editTitle.
+    title.title = 'Built-in field name — not editable';
+  } else {
+    title.title = 'Click to rename';
+    title.onclick = () => editTitle(cl, title);
+  }
   head.appendChild(title);
 
-  if (cl.tag || isSU()) {
+  // No tag column on a native card — not even for a superuser, who would
+  // otherwise get an edit affordance with nothing behind it.
+  if (!isNative && (cl.tag || isSU())) {
     const badge = document.createElement('span');
     badge.className = 'ck-tag'
       + (isSU() ? ' ck-tag-su' : '')
@@ -648,7 +895,18 @@ function renderCard(cl) {
     head.appendChild(badge);
   }
 
-  if (isNote) {
+  if (isNative) {
+    // Takes the slot .ck-progress / .ck-done hold on the other kinds, and
+    // carries the explanation for everything this card is missing. There is NO
+    // status column behind a native field, so a Done pill would be a lie —
+    // hence a label here rather than a disabled checkbox.
+    const badge = document.createElement('span');
+    badge.className = 'ck-native-badge';
+    badge.textContent = 'Built-in';
+    badge.title = 'A field on the record itself, shown here for convenience. '
+                + 'It cannot be renamed, tagged, marked done or deleted.';
+    head.appendChild(badge);
+  } else if (isNote) {
     // A note's status is MANUAL (S1) — there are no items to derive it from.
     head.appendChild(renderDonePill(cl));
   } else {
@@ -660,25 +918,40 @@ function renderCard(cl) {
     head.appendChild(prog);
   }
 
-  const del = document.createElement('button');
-  del.className = 'ck-icon-btn danger';
-  del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
-  del.title = isNote ? 'Delete this note' : 'Delete this checklist';
-  del.onclick = () => deleteList(cl);
-  head.appendChild(del);
+  // Nothing to delete on a native card — the column is not the card's to
+  // remove, and DELETE /checklists/null is not a thing.
+  if (!isNative) {
+    const del = document.createElement('button');
+    del.className = 'ck-icon-btn danger';
+    del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+    del.title = isNote ? 'Delete this note' : 'Delete this checklist';
+    del.onclick = () => deleteList(cl);
+    head.appendChild(del);
+  }
 
   card.appendChild(head);
 
   if (isNote) {
     // ── body ── (replaces BOTH the items list and the add-item row)
+    const d = draftFor(draftKeyOf(cl));
+
     card.appendChild(renderNoteBody(cl));
+
     const flag = document.createElement('div');
     flag.className = 'ck-saveflag';
-    const d = draftFor(cl.id);
     d.flag = flag;                       // re-pointed on every render
     flag.textContent = d.flagText || '';
     flag.classList.toggle('err', !!d.flagErr);
     card.appendChild(flag);
+
+    // Same re-pointing contract as the flag: held on the draft so a render()
+    // triggered elsewhere restores it.
+    const count = document.createElement('div');
+    count.className = 'ck-count';
+    d.count = count;
+    card.appendChild(count);
+    updateCount(d, shownBody(cl, d).length);
+
     return card;
   }
 
@@ -763,14 +1036,33 @@ function renderDonePill(cl) {
 
    `.value`, never innerHTML: this is plain text and must stay plain text. */
 function renderNoteBody(cl) {
-  const d = draftFor(cl.id);
+  const key = draftKeyOf(cl);
+  const d   = draftFor(key);
 
   const ta = document.createElement('textarea');
   ta.className = 'ck-note-body';
   ta.placeholder = 'Write a note…';
+  // Browser-level guard: blocks typing past the ceiling and CLAMPS a paste to
+  // it, so the 400 from lib/noteLimits.js is normally never reached. It is not
+  // sufficient on its own — it does not clamp a value assigned in script, and
+  // a stored value can already exceed the limit (caseService's merge concat is
+  // deliberately exempt). saveBody() is the guard that actually holds.
+  ta.maxLength = NOTE_MAX_CHARS;
   // An unsaved draft wins over the stored value, so a render() triggered
   // elsewhere does not silently revert what the user typed.
-  ta.value = (d.dirty && d.draft != null) ? d.draft : (cl.body ?? '');
+  ta.value = shownBody(cl, d);
+
+  // S5: the entity read failed, so cl.body is a placeholder, not the column.
+  // Typing here and saving would write that placeholder over whatever the
+  // column really holds — so the field is locked until the next successful
+  // load. No oninput, no onblur: nothing can mark it dirty.
+  if (cl.native && cl.native.unavailable) {
+    ta.disabled = true;
+    ta.value = '';
+    ta.placeholder = 'Could not load this field — reopen the tab to retry.';
+    setFlag(d, 'Unavailable — this field could not be loaded.', true);
+    return ta;
+  }
 
   ta.oninput = () => {
     // resizeTextarea() is scripts.js's shared helper (height:auto, then
@@ -781,14 +1073,15 @@ function renderNoteBody(cl) {
     // Dirty means "differs from what the server holds" — typing and undoing
     // back to the stored text leaves nothing to save.
     d.dirty = ta.value !== (cl.body ?? '');
+    updateCount(d, ta.value.length);
     setFlag(d, d.dirty ? 'Unsaved…' : '');
     if (d.timer) { clearTimeout(d.timer); d.timer = null; }
-    if (d.dirty) d.timer = setTimeout(() => saveBody(cl.id), BODY_AUTOSAVE_MS);
+    if (d.dirty) d.timer = setTimeout(() => saveBody(key), BODY_AUTOSAVE_MS);
   };
 
   // Blur commits immediately. saveBody() clears the pending timer first, so
   // the debounce and the blur cannot both fire a PATCH for the same edit.
-  ta.onblur = () => { saveBody(cl.id); };
+  ta.onblur = () => { saveBody(key); };
 
   return ta;
 }
@@ -865,8 +1158,10 @@ async function editTag(cl, el) {
     try {
       await api('/checklists/' + cl.id, 'PATCH', { tag: next || null });
       cl.tag = next || null;
-      // Re-pin: tagged cards sort above untagged ones.
-      lists.sort((a, b) => (b.tag ? 1 : 0) - (a.tag ? 1 : 0));
+      // Re-pin: tagged cards sort above untagged ones. Via sortLists(), NOT a
+      // bare tag sort — a tag-only comparator would rank every native card
+      // (tag: null) below a tagged one and knock them off the top.
+      sortLists();
       render();
     } catch (err) {
       // 409 = another row OF THE SAME KIND on this entity already holds that
@@ -933,12 +1228,30 @@ async function toggleNoteDone(cl, box, label) {
 }
 
 // ── Note body persistence ─────────────────────────────────────────
-function draftFor(id) {
-  let d = bodyDrafts.get(id);
+/* THE bodyDrafts KEY. A real note is keyed by its checklists id. A NATIVE card
+   (S5) has id === null, and every native on the page would therefore collide
+   on the same `null` key — one shared draft, one shared save flag, and a
+   saveBody() lookup that finds whichever native happens to sit first.
+   So natives are keyed by their column instead. The two key spaces cannot
+   overlap: one is a number, the other a 'native:…' string. */
+function draftKeyOf(cl) {
+  return cl.native ? ('native:' + cl.native.field) : cl.id;
+}
+
+/* What the textarea should be showing: an unsaved draft if there is one,
+   otherwise the stored value. Shared by renderNoteBody (which sets it) and
+   renderCard (which counts it). */
+function shownBody(cl, d) {
+  return (d.dirty && d.draft != null) ? d.draft : (cl.body ?? '');
+}
+
+function draftFor(key) {
+  let d = bodyDrafts.get(key);
   if (!d) {
     d = { draft: null, dirty: false, timer: null, inflight: false,
-          flag: null, flagText: '', flagErr: false };
-    bodyDrafts.set(id, d);
+          flag: null, flagText: '', flagErr: false,
+          count: null, countText: '' };
+    bodyDrafts.set(key, d);
   }
   return d;
 }
@@ -951,6 +1264,21 @@ function setFlag(d, text, isErr) {
   if (!d.flag) return;
   d.flag.textContent = d.flagText;
   d.flag.classList.toggle('err', d.flagErr);
+}
+
+/* The character counter, on the same held-on-the-draft contract as setFlag.
+   Silent below COUNT_SHOW_AT so a normal note costs no chrome; red once a body
+   is actually over the ceiling, which is only reachable on a value the browser
+   did not clamp (a stored row that predates the limit, or one grown by an
+   append path that lib/noteLimits.js exempts). */
+function updateCount(d, len) {
+  d.countText = len >= COUNT_SHOW_AT
+    ? len.toLocaleString() + ' / ' + NOTE_MAX_CHARS.toLocaleString()
+    : '';
+  d.countOver = len > NOTE_MAX_CHARS;
+  if (!d.count) return;
+  d.count.textContent = d.countText;
+  d.count.classList.toggle('over', d.countOver);
 }
 
 /**
@@ -967,42 +1295,87 @@ function setFlag(d, text, isErr) {
  * reverted: a title is cheap to retype, a paragraph is not, and the next blur
  * or idle retries it. cl.body still holds the STORED value throughout, so the
  * card never lies about what the server has.
+ *
+ * S5: ONE save path, two requests. A native card writes its column on the
+ * entity; a real note writes checklists.body. Everything either side of the
+ * request — the dirty flag, the debounce, the blur commit, the in-flight
+ * re-arm, the keep-the-text-on-failure rule — is identical, deliberately.
+ *
+ * @param {number|string} key  a bodyDrafts key — see draftKeyOf()
  */
-async function saveBody(clId) {
-  const d = bodyDrafts.get(clId);
+async function saveBody(key) {
+  const d = bodyDrafts.get(key);
   if (!d) return;
   if (d.timer) { clearTimeout(d.timer); d.timer = null; }
   if (!d.dirty) return;
   // A second save while one is in the air would race to write the same row.
   // Re-arm instead; the follow-up picks up whatever the latest draft is.
-  if (d.inflight) { d.timer = setTimeout(() => saveBody(clId), 250); return; }
+  if (d.inflight) { d.timer = setTimeout(() => saveBody(key), 250); return; }
 
-  const cl = lists.find(l => l.id === clId);
-  if (!cl) { bodyDrafts.delete(clId); return; }   // deleted out from under us
+  const cl = lists.find(l => draftKeyOf(l) === key);
+  if (!cl) { bodyDrafts.delete(key); return; }   // deleted out from under us
+
+  // Belt and braces: renderNoteBody leaves an unavailable native card disabled,
+  // so nothing can mark it dirty in the first place.
+  if (cl.native && cl.native.unavailable) {
+    d.dirty = false;
+    setFlag(d, 'Unavailable — this field could not be loaded.', true);
+    return;
+  }
 
   const value = d.draft ?? '';
+
+  // OVER-LENGTH. The server rejects this with a 400 (lib/noteLimits.js) on
+  // every one of these endpoints, and the textarea's maxLength normally stops
+  // it long before — but a STORED value can already exceed the ceiling (the
+  // merge concat and apptService's CONCAT sites are exempt from the limit),
+  // and maxLength does not clamp a value assigned in script. Refuse to send
+  // rather than eat the 400: `dirty` stays true, so the text is kept and the
+  // next edit or blur retries, exactly like any other failed save.
+  if (value.length > NOTE_MAX_CHARS) {
+    updateCount(d, value.length);
+    setFlag(d, `Too long to save — ${value.length.toLocaleString()} characters, `
+             + `limit ${NOTE_MAX_CHARS.toLocaleString()}.`, true);
+    return;
+  }
+
   d.dirty    = false;
   d.inflight = true;
   setFlag(d, 'Saving…');
   try {
-    await api('/checklists/' + cl.id, 'PATCH', { body: value });
+    if (cl.native) {
+      // '' when cleared, NEVER null: all four native columns are NOT NULL.
+      // (checklists.body is nullable and S1 treats null as a legitimate value;
+      // these columns do not.)
+      await api(cl.native.endpoint + '/' + encodeURIComponent(cl.native.entityId),
+                'PATCH', { [cl.native.field]: value });
+    } else {
+      await api('/checklists/' + cl.id, 'PATCH', { body: value });
+    }
     cl.body = value;
     if (d.draft === value) d.draft = null;
     setFlag(d, '');
   } catch (err) {
     d.dirty = true;                                // keep the text, allow retry
     setFlag(d, 'Unsaved — retrying on next edit', true);
-    apiError(err, 'Could not save note');
+    apiError(err, cl.native ? `Could not save ${cl.title}` : 'Could not save note');
   } finally {
     d.inflight = false;
   }
 }
 
 /* Flush every dirty body. Called before a refetch so the GET cannot race a
-   pending PATCH and hand back the stale text. */
+   pending PATCH and hand back the stale text.
+
+   Covers native cards too, and has to: their refetch is a DIFFERENT endpoint
+   (loadNativeCards' entity GET, not /checklists), so an unflushed native draft
+   would be clobbered by a response this function never saw. Nothing special is
+   needed for that — the drafts share one Map, so iterating its keys reaches
+   both kinds, and saveBody() picks the right request per card. Same reason
+   beforeunload's dirty check covers natives for free. */
 async function flushBodies() {
-  const ids = [...bodyDrafts.keys()];
-  await Promise.allSettled(ids.map(id => saveBody(id)));
+  const keys = [...bodyDrafts.keys()];
+  await Promise.allSettled(keys.map(k => saveBody(k)));
 }
 
 async function addItem(cl, input) {
@@ -1024,12 +1397,23 @@ async function addItem(cl, input) {
 /* render() rebuilds the DOM, so the input that was just typed into is gone.
    Find the rebuilt one for the same card and put the cursor back.
 
-   Still index-safe with notes in the stack: every row in `lists` produces
-   exactly one .ck-card, in order. A note has no .ck-add input, so the
-   optional chain below simply finds nothing — and nothing calls this for a
-   note anyway (addItem is unreachable without an add row). */
+   POSITIONAL, and it stays correct only because of one invariant: every entry
+   in `lists` produces exactly one .ck-card, in order. Notes hold to it (S2),
+   and so do the pinned native cards (S5) — they are PREPENDED INTO `lists`,
+   not rendered separately ahead of the stack, so the index of a checklist
+   shifts by exactly the same amount in both the array and the DOM.
+
+   That is also why the Lists filter drops natives from `lists` rather than
+   hiding them with CSS: a display:none card is still a .ck-card and would
+   throw this off by one per hidden native. The failure is quiet — focus simply
+   lands on the wrong card's input after adding an item.
+
+   The findIndex excludes natives explicitly. `clId` is always a real id here
+   (addItem is unreachable without an add row, and neither a note nor a native
+   has one), but a native's id is null and `l.id === clId` would match it for a
+   null clId — cheaper to exclude than to reason about. */
 function refocusAddInput(clId) {
-  const idx = lists.findIndex(l => l.id === clId);
+  const idx = lists.findIndex(l => !l.native && l.id === clId);
   if (idx < 0) return;
   const cards = document.querySelectorAll('.ck-card');
   const input = cards[idx]?.querySelector('.ck-add input');
@@ -1057,6 +1441,10 @@ async function deleteItem(cl, item) {
 }
 
 async function deleteList(cl) {
+  // Unreachable — renderCard gives a native card no delete button. Guarded
+  // anyway because the filter below removes by id, and a native's id is null:
+  // one slip here would silently drop EVERY native card from the board.
+  if (cl.native) return;
   const isNote  = cl.kind === 'note';
   const n       = (cl.items || []).length;
   const hasBody = !!String(cl.body || '').trim();
@@ -1080,10 +1468,13 @@ async function deleteList(cl) {
     await api('/checklists/' + cl.id, 'DELETE');
     lists = lists.filter(l => l.id !== cl.id);
     // Drop any pending draft with it, or a queued autosave would 404 and the
-    // entry would leak for the life of the page.
-    const d = bodyDrafts.get(cl.id);
+    // entry would leak for the life of the page. Keyed via draftKeyOf for
+    // consistency — a native card is unreachable here (it has no delete
+    // button), and filtering by `l.id !== cl.id` would drop every native along
+    // with it if one ever were.
+    const d = bodyDrafts.get(draftKeyOf(cl));
     if (d?.timer) clearTimeout(d.timer);
-    bodyDrafts.delete(cl.id);
+    bodyDrafts.delete(draftKeyOf(cl));
     render();
   } catch (err) {
     apiError(err, isNote ? 'Could not delete note' : 'Could not delete checklist');
