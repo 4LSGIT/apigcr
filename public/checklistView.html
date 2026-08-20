@@ -1161,6 +1161,33 @@ function renderNewListFooter() {
   return foot;
 }
 
+/* Last line of defence for an unsaved body.
+ *
+ * bodyDrafts lives in memory, so it survives render() and survives load()
+ * while dirty — but NOT a real page unload. A save that failed shows
+ * "Unsaved — retrying on next edit", and if the user simply walks away that
+ * retry never comes and the text is gone.
+ *
+ * SCOPE, deliberately narrow: case.html HIDES its tabs rather than unloading
+ * the iframe, and the shell's addFile() does not navigate this document
+ * either. So this fires only on an actual reload or close of the whole app —
+ * which is exactly the case nothing else covers. Typing in the textarea gives
+ * the frame sticky activation, so the browser will honour the prompt.
+ *
+ * A child frame's beforeunload runs when the parent document unloads, so this
+ * works from inside the iframe. The text is ignored by modern browsers, which
+ * render their own wording; returnValue is set for older ones. */
+window.addEventListener('beforeunload', (e) => {
+  let dirty = false;
+  for (const d of bodyDrafts.values()) {
+    if (d.dirty || d.inflight) { dirty = true; break; }
+  }
+  if (!dirty) return;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+
 // ── Boot ──────────────────────────────────────────────────────────
 // Wait for the shell to expose apiSend (esign/automationsWidget idiom). The
 // iframe can parse before index.html has finished defining it.
