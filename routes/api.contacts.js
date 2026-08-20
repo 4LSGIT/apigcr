@@ -183,8 +183,11 @@ router.patch('/api/contacts/:id', jwtOrApiKey, async (req, res) => {
 
     console.error('PATCH /api/contacts/:id error:', err);
     const m = err.message || '';
+    // err.status is set by structured validation errors (lib/noteLimits.js)
+    // so they map without string-matching the message.
     const status =
-      m.includes('blocked')                                    ? 400
+      err.status                                               ? err.status
+      : m.includes('blocked')                                  ? 400
       : m.includes('must be an array')                         ? 400
       : m.includes('not found')                                ? 404
       : (m.includes('concurrent') || m.includes('Concurrent')) ? 400

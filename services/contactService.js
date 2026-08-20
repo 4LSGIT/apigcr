@@ -68,6 +68,7 @@ const addrSvc  = require('./contactAddressService');
 const logService = require('./logService');
 const crypto = require('crypto');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
+const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
 
 const DEFAULT_LOG_LIMIT = 200;
@@ -2202,6 +2203,10 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   if (blocked.length) {
     throw new Error(`updateContact: blocked columns: ${blocked.join(', ')}`);
   }
+
+  // Notes length — contact_notes is TEXT and truncates silently under this
+  // session's non-strict sql_mode. Throws with status 400. See lib/noteLimits.js.
+  assertNoteLengths(scalarFields);
 
   // Normalize phone + email fields if present.
   // blankDatesToNull also does the shallow copy: contact_dob = '' would

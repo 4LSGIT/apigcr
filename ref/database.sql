@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-20T12:01:35.632Z
+-- Generated: 2026-08-20T12:40:48.268Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:fb15f1de3fafa908e73121acccec6121
+-- Fingerprint: sha256:06180b29de247ca687660020e4209ba2
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -243,7 +243,7 @@ CREATE TABLE `appts` (
   `appt_date_utc` datetime DEFAULT NULL,
   `appt_gcal` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_ref_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `appt_note` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `appt_note` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_platform` enum('telephone','Zoom','in-person') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_create_date` datetime DEFAULT NULL,
   `appt_with` tinyint DEFAULT '1',
@@ -515,7 +515,7 @@ CREATE TABLE `cases` (
   `341_status` enum('Continued','Completed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `341_docs` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `341_amend` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `341_notes` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `341_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_clio_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_alerts` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
@@ -826,7 +826,7 @@ CREATE TABLE `contacts` (
   `contact_ssn` char(11) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_marital_status` enum('Single','Married','Separated','Divorced','Widowed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `contact_tags` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `contact_notes` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `contact_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_clio_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_google_resource_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `contact_google_etag` varchar(160) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',

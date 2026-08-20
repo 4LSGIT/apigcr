@@ -65,6 +65,7 @@ lib/internal_functions/variables.js
 lib/job_executor.js
 lib/legacyTrap.js
 lib/logMeta.js
+lib/noteLimits.js
 lib/parseName.js
 lib/portalCardEngine.js
 lib/rateLimiter.js

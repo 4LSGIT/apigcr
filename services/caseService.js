@@ -39,6 +39,7 @@ const crypto = require('crypto');
 const { stripSsn } = require('./contactService');
 const logService = require('./logService');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
+const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
 // Merge consolidation recomputes the survivor's docs-checklist status. Shared
 // with routes/api.checklists.js — one copy of the rule, see the lib.
@@ -395,6 +396,12 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
       throw new Error(`updateCase: invalid column name "${k}"`);
     }
   }
+
+  // Notes length. case_notes and 341_notes are TEXT, and this session's
+  // sql_mode has no STRICT_TRANS_TABLES — an oversized value would be
+  // truncated silently and reported as a success. Throws with status 400.
+  // The merge concat further down is deliberately exempt; see lib/noteLimits.js.
+  assertNoteLengths(fields);
 
   // Blank date -> NULL. This UPDATE writes caller values verbatim, and the
   // session sql_mode has no STRICT_TRANS_TABLES, so '' on a DATE column would

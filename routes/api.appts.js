@@ -15,6 +15,7 @@
  */
 
 const express      = require('express');
+const { checkNoteLengths } = require('../lib/noteLimits');
 const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const apptService  = require('../services/apptService');
@@ -153,6 +154,13 @@ router.patch('/api/appts/:id', jwtOrApiKey, async (req, res) => {
   if (blocked.length) {
     return res.status(400).json({ status: 'error', message: `Blocked columns: ${blocked.join(', ')}` });
   }
+
+  // Notes length. appt_note is TEXT and truncates SILENTLY under this
+  // session's non-strict sql_mode — four rows were already clipped at the old
+  // varchar(1000) ceiling before anyone noticed. See lib/noteLimits.js.
+  // apptService's CONCAT append sites are deliberately exempt.
+  const tooLong = checkNoteLengths(fields);
+  if (tooLong) return res.status(400).json({ status: 'error', message: tooLong });
 
   try {
     const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');

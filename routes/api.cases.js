@@ -92,7 +92,11 @@ router.patch('/api/cases/:id', jwtOrApiKey, async (req, res) => {
     res.json({ status: 'success', data: updated });
   } catch (err) {
     console.error('PATCH /api/cases/:id error:', err);
-    const status = err.message.includes('cannot update') ? 400 : err.message.includes('not found') ? 404 : 500;
+    // err.status is set by structured validation errors (lib/noteLimits.js)
+    // so they map without string-matching the message. The substring ladder
+    // stays for everything that predates it.
+    const status = err.status ? err.status
+      : err.message.includes('cannot update') ? 400 : err.message.includes('not found') ? 404 : 500;
     res.status(status).json({ status: 'error', message: err.message });
   }
 });

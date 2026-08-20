@@ -77,6 +77,7 @@ const { isSuperuser } = require('../lib/auth.superuser');
 // Shared with services/caseService.js (merge consolidation) — see the lib for
 // the rule. Do not re-implement it here.
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
+const { checkNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T4
 const emailService = require('../services/emailService');
 const logService   = require('../services/logService');
@@ -544,6 +545,14 @@ router.post('/checklists', jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ status: 'error', message: 'body must be a string or null.' });
   }
 
+  // Length. TEXT truncates SILENTLY under this session's non-strict sql_mode,
+  // so an unchecked oversized body would be accepted and quietly clipped.
+  // See lib/noteLimits.js.
+  {
+    const tooLong = checkNoteLengths({ body });
+    if (tooLong) return res.status(400).json({ status: 'error', message: tooLong });
+  }
+
   if (link_type != null && link_type !== '' && !LINK_TYPES.includes(link_type)) {
     return res.status(400).json({
       status: 'error',
@@ -659,6 +668,13 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
 
   if (body !== undefined && body !== null && typeof body !== 'string') {
     return res.status(400).json({ status: 'error', message: 'body must be a string or null.' });
+  }
+
+  // Length — see lib/noteLimits.js. Checked before the row load: an oversized
+  // body is oversized whichever kind the stored row turns out to be.
+  {
+    const tooLong = checkNoteLengths({ body });
+    if (tooLong) return res.status(400).json({ status: 'error', message: tooLong });
   }
 
   // Vocab check runs here, before the row load, so a bad value fails the same
