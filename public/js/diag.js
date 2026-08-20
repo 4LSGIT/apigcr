@@ -1,6 +1,6 @@
 /* public/js/diag.js
  *
- * Client diagnostics ring buffer — the payload behind "Report an Issue".
+ * Client diagnostics ring buffer — the payload behind "Help & Support".
  *
  * WHY IT EXISTS. Until this file there was no window.onerror and no
  * unhandledrejection handler anywhere in the client, so the single most useful

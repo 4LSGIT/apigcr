@@ -658,13 +658,13 @@
       <i class="fa-solid fa-grip"></i><span>More Features</span>
     </div>
 
-    <!-- Report an Issue. Deliberately has NO data-tab: it opens a dialog, it
+    <!-- Help & Support. Deliberately has NO data-tab: it opens a dialog, it
          does not navigate, so updateSidebarActive() must never give it the
          active highlight and steal it from the view you are actually on.
          Being a .sb-item is enough for the skinny-mode tooltip to pick it up.
          Implementation: the reportIssue() block near the bottom of this file. -->
-    <div class="sb-item" onclick="reportIssue()" title="Report an Issue">
-      <i class="fa-solid fa-bug"></i><span>Report an Issue</span>
+    <div class="sb-item" onclick="reportIssue()" title="Help &amp; Support">
+      <i class="fa-solid fa-life-ring"></i><span>Help &amp; Support</span>
     </div>
 
     <div class="sb-spacer"></div>
@@ -2178,7 +2178,7 @@
   <br><br>
   <button class="big-button" data-target="systemAlertsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.25; --fa-animation-duration:0.7s"><i class="fa-solid fa-triangle-exclamation fa-2xl"></i><br><br>System Alerts (SU)</button>
   <button class="big-button" data-target="usersDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-users-gear fa-2xl"></i><br><br>Users (SU)</button>
-  <button class="big-button" data-target="issueReportsDiv" data-exclusive-group="admin" data-hover-anim="fa-shake" style="--fa-animation-duration:1.1s"><i class="fa-solid fa-bug fa-2xl"></i><br><br>Issue Reports</button>
+  <button class="big-button" data-target="issueReportsDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-life-ring fa-2xl"></i><br><br>Support Inbox</button>
 
   <div id="sequencesDiv" style="display:none"></div>
   <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
@@ -2208,7 +2208,7 @@
     <iframe data-src="/users.html"
             style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
   </div>
-  <!-- Issue Reports. NOT "(SU)" like its neighbours on purpose: reading what
+  <!-- Support Inbox. NOT "(SU)" like its neighbours on purpose: reading what
        staff reported is not a superuser act, and the API gates it at
        admin-or-SU with no step-up elevation (routes/api.issueReports.js). -->
   <div id="issueReportsDiv" style="display:none; margin-top:10px;">
@@ -2702,7 +2702,7 @@
         err.url        = url;
         err.method     = options.method;
         // Tee into the diagnostics ring buffer (js/diag.js) BEFORE throwing, so
-        // a later "Report an Issue" carries the failed call even when the
+        // a later "Help & Support" report carries the failed call even when the
         // caller caught this and showed the user nothing.
         try {
           window.ycDiag && window.ycDiag.push('api',
@@ -3917,7 +3917,7 @@ async function initAuth() {
     })();
   </script>
 
-  <!-- ── Report an Issue ────────────────────────────────────────────────────
+  <!-- ── Help & Support ─────────────────────────────────────────────────────
        One button, one textarea, sent from wherever the user already is — with
        the technical state attached automatically. It exists for the report
        that never gets filed on the Feature Requests board: "this just broke
@@ -4120,7 +4120,7 @@ async function initAuth() {
         let kind = (draft && draft.kind) || 'problem';
 
         const result = await Swal.fire({
-          title: 'Report an Issue',
+          title: 'Help & Support',
           width: 540,
           showCancelButton: true,
           confirmButtonText: 'Send',
@@ -4212,7 +4212,7 @@ async function initAuth() {
                     ? 'That\u2019s a lot of reports in a short window. Try again in a few minutes.'
                     : ((err && err.message) ? String(err.message) : 'Something went wrong.'))
                   + '<div style="margin-top:12px;font-size:12px;color:#6b7280">'
-                  + 'Your message has been kept \u2014 reopen Report an Issue and it will '
+                  + 'Your message has been kept \u2014 reopen Help & Support and it will '
                   + 'still be there.</div>',
             confirmButtonColor: ACCENT
           });

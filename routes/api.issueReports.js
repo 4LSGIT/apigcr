@@ -1,7 +1,7 @@
 // routes/api.issueReports.js
 //
 /**
- * Issue Reports API — the "Report an Issue" button in the shell.
+ * Issue Reports API — the "Help & Support" button in the shell.
  * routes/api.issueReports.js
  *
  *   POST  /api/issue-reports          any authed staff — file a report
@@ -210,7 +210,7 @@ function buildEmail({ id, kind, note, userLabel, userEmail, pageUrl, context }) 
       <pre style="margin:0;padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;color:#4b5563;overflow:auto;white-space:pre-wrap;word-break:break-word">${esc(ctxJson)}</pre>
 
       <p style="margin:18px 0 0;font-size:12px;color:#9ca3af">
-        Sent by the Report an Issue button in the YisraCase shell (${esc(APP_URL())}).
+        Sent by the Help &amp; Support button in the YisraCase shell (${esc(APP_URL())}).
         The reporter saw none of the technical detail above — only their own message.
       </p>
     </div>`;
