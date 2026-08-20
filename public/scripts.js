@@ -2461,6 +2461,11 @@ function newApptDialog(opts = {}) {
      defaultDate: 'YYYY-MM-DD'           prefill the date on create.
      onSaved:     fn(data)               after success (create OR edit).
 
+   BOTH link options are CREATE-ONLY. In edit mode the link renders as a locked
+   line and neither column is sent: an event's entity is fixed at creation
+   (Slice 4 Phase B), and PATCHing either one is a 400. See the "CREATE ONLY"
+   block in preConfirm.
+
    Reminder (verified editable via PATCH — the route threads body.reminder to
    updateEvent's { reminder } option): a reminder is offered in BOTH create and
    edit mode. In edit mode the existing reminder task is NOT shown (reminders
@@ -2557,12 +2562,42 @@ function newEventDialog(opts = {}) {
   let picker = null;
   function destroyPicker() { if (picker) { picker.destroy(); picker = null; } }
 
+  // EDIT MODE: the link is DISPLAY ONLY — see the "CREATE ONLY" block in
+  // preConfirm for why. Derived straight off the event row so the locked line
+  // reads the same whether or not the caller passed linkFixed.
+  function editLinkLine() {
+    const t = ev.event_link_type;
+    if (t === 'case') {
+      return { noun: 'Case',
+               label: ev.link_label || ev.case_number_display || String(ev.event_link_id ?? '') };
+    }
+    if (t === 'contact') {
+      return { noun: 'Contact',
+               label: ev.link_label || ev.contact_name || ('Contact #' + ev.event_link_id) };
+    }
+    if (t === 'case_number') {
+      // The docket, verbatim. Opaque free text — never parsed or validated.
+      return { noun: 'Case #', label: String(ev.event_link_id ?? '') };
+    }
+    return { noun: 'Link', label: 'none (internal)' };
+  }
+
   // Render the link area according to link.mode / link.kind.
   function renderLink() {
     const host = E('neLinkHost');
     if (!host) return;
     destroyPicker();
     host.innerHTML = '';
+
+    // An event's entity is decided when it is created (Slice 4 Phase B). A
+    // picker here would offer a change the server rejects with a 400, so edit
+    // mode shows the current link locked.
+    if (isEdit) {
+      const L = editLinkLine();
+      host.innerHTML = `<div class="na-fixed"><b>${L.noun}:</b> ${escAttr(L.label)}`
+        + ` <span style="color:#6c757d;font-size:0.85em;">(set at creation)</span></div>`;
+      return;
+    }
 
     if (link.mode === 'fixed') {
       const noun = link.fixedType === 'case' ? 'Case' : 'Contact';
@@ -2826,9 +2861,25 @@ function newEventDialog(opts = {}) {
         return false;
       }
 
-      // Resolve link target
+      // Resolve link target. CREATE ONLY.
+      //
+      // Slice 4 Phase B removed event_link_type / event_link_id from
+      // UPDATE_ALLOWED in services/eventService.js: a relink invalidates the
+      // natural key findDuplicateEvent is built on, so PATCH now 400s with
+      // "blocked fields: event_link_type, event_link_id" on either column.
+      //
+      // This dialog kept sending them on edit — via this block, or via an
+      // `else if (isEdit)` fallback that set both to null to "allow clearing a
+      // link on edit". One branch or the other always fired, so EVERY edit
+      // save 400'd from the day Phase B shipped until 2026-08-20. Both are now
+      // gated on create, and renderLink() shows the link locked in edit mode
+      // so the UI stops offering a change the server will refuse.
+      //
+      // To move an event: cancel it and create it on the right entity.
       let linkType = null, linkId = null;
-      if (link.mode === 'fixed') {
+      if (isEdit) {
+        // no-op — identity is creation-time
+      } else if (link.mode === 'fixed') {
         linkType = link.fixedType;
         linkId   = String(link.fixedId);
       } else if (link.kind === 'case_number') {
@@ -2861,13 +2912,10 @@ function newEventDialog(opts = {}) {
         event_link:     urlLink || null,
         event_note:     note || null,
       };
+      // Unreachable on edit — linkType stays null there (see above).
       if (linkType) {
         body.event_link_type = linkType;
         body.event_link_id   = linkId;
-      } else if (isEdit) {
-        // Allow clearing a link on edit (whitelist permits these columns).
-        body.event_link_type = null;
-        body.event_link_id   = null;
       }
       if (remindTo) {
         body.reminder = { to: Number(remindTo), date: remindDate };

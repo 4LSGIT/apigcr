@@ -589,7 +589,8 @@
             ? "All day"
             : (ev.event_time ? String(ev.event_time).slice(0, 5) : "");
           row.innerHTML =
-            `<td>${ev.event_id}</td>` +
+            // Matches putAppts()' id cell: the id opens the entity's own modal.
+            `<td><a href="#" onclick="P.showEvent(${ev.event_id});return false">${ev.event_id}</a></td>` +
             `<td>${eventEsc(ev.event_type)}</td>` +
             `<td>${eventEsc(ev.event_title)}</td>` +
             `<td>${date}</td>` +

@@ -20,6 +20,7 @@ const express      = require('express');
 const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const eventService = require('../services/eventService');
+const { checkNoteLengths } = require('../lib/noteLimits');
 
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 router.get('/api/events', jwtOrApiKey, async (req, res) => {
@@ -146,6 +147,15 @@ router.patch('/api/events/:id(\\d+)', jwtOrApiKey, async (req, res) => {
   if (!Object.keys(fields).length && !hasReminder) {
     return res.status(400).json({ status: 'error', message: 'No fields to update' });
   }
+
+  // Notes length. event_note is TEXT and truncates SILENTLY under this
+  // session's non-strict sql_mode — see lib/noteLimits.js for the four
+  // appt_note rows that were clipped mid-sentence before anyone noticed.
+  // Added with W2, which put a 10,000-character textarea in front of this
+  // column (checklistView.html's pinned native card); until then the only
+  // writers were newEventDialog and the court pipeline.
+  const tooLong = checkNoteLengths(fields);
+  if (tooLong) return res.status(400).json({ status: 'error', title: 'Error', message: tooLong });
 
   try {
     const result = await eventService.updateEvent(

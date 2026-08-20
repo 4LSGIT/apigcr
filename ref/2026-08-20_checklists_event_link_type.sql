@@ -1,0 +1,106 @@
+-- ============================================================
+-- W2 — checklists.link_type gains an 'event' member.
+--
+-- WHY: events now carry notes and lists like every other entity. The note
+-- attaches to the EVENT ITSELF (link_type='event', link='<event_id>'), which
+-- is what makes it unambiguous — see the link-model note below.
+--
+-- PRECEDENT, NOT INVENTION: tasks.task_link_type is already
+-- enum('contact','case','appt','bill','event'). Events have been a linkable
+-- entity in this schema since reminder tasks shipped; this brings checklists
+-- into line.
+--
+-- checklists.link is varchar(20) and events.event_id is an int currently at
+-- 151 (AUTO_INCREMENT=152). It fits with room to spare; no width change.
+--
+-- ── APPEND ONLY. DO NOT REORDER. ────────────────────────────────────────
+-- MySQL stores an ENUM as its ORDINAL, not its text. Reordering the members
+-- would silently reinterpret every existing row: 270 link_type='case' rows
+-- (ordinal 2) would become whatever now sits second. The new member goes on
+-- the END, and the six that precede it keep their exact positions.
+--
+-- 6 -> 7 members stays inside the 1-byte ENUM range (<=255), so this is an
+-- in-place metadata change, not a table rebuild. link_type participates in
+-- UNIQUE KEY uq_link_kind_tag and KEY idx_link; neither is touched.
+--
+-- ── NULLABILITY AND DEFAULT ARE PRESERVED ───────────────────────────────
+-- Verified against the live table on 2026-08-20 immediately before writing
+-- this. BEFORE:
+--
+--   `link_type` enum('contact','case','bill','appt','task','user')
+--               COLLATE utf8mb4_general_ci DEFAULT NULL
+--
+-- AFTER: identical but for the appended member. The column stays NULLABLE
+-- with DEFAULT NULL — 2 of the 272 live rows are unlinked (link_type IS NULL),
+-- which is the "loose lists" bucket the index page browses, so a NOT NULL
+-- here would fail the migration outright.
+--
+-- No CHARACTER SET clause: the original does not carry one either (it inherits
+-- utf8mb4 from the table). Adding one would make this line disagree with the
+-- rest of the table for no reason. COLLATE utf8mb4_general_ci is restated
+-- because MODIFY COLUMN rewrites the whole definition and omitting it would
+-- fall back to the CHARSET default, utf8mb4_0900_ai_ci on MySQL 8 — the
+-- collation trap tests/schemaConventions.test.js exists to catch.
+--
+-- ── THE LINK MODEL — READ BEFORE EXTENDING THIS ─────────────────────────
+-- 113 of 151 events link upward by event_link_type='case_number', where
+-- event_link_id holds a DOCKET STRING verbatim. A docket is opaque free text,
+-- not a foreign key, and is not unique-constrained. Nothing here resolves an
+-- event to a case through it, and nothing should: eventService does that
+-- query-side, self-healing, with a LIMIT 1 correlated subquery, and it is not
+-- this table's business.
+--
+-- Hanging the note off the EVENT is what sidesteps all of that. An event-
+-- scoped note is unambiguous whether the event links by case, by contact, by
+-- docket, or by nothing at all (1 row).
+--
+-- ── RUN ORDER ───────────────────────────────────────────────────────────
+-- ONE statement, standalone: no session variables, no cross-statement
+-- transaction. Safe on its own connection in the DB console.
+--
+--   1. Run it.
+--   2. Deploy the backend AFTER it completes.
+--
+-- The order is not optional. routes/api.checklists.js adds 'event' to
+-- LINK_TYPES, so a backend deployed first would accept link_type='event' on
+-- POST /checklists and write it into a column that has no such member. Under
+-- this session's sql_mode (no STRICT_TRANS_TABLES) that lands as '' SILENTLY
+-- — an unreadable row, no error anywhere, and the note is simply lost.
+--
+-- Running this without deploying is harmless: an unused ENUM member.
+--
+--   3. After it completes, run `npm run db:ref` to regenerate
+--      ref/database.sql, which tests/schemaConventions.test.js lints and
+--      `npm run db:ref:check` drift-checks.
+--
+-- ROLLBACK: delete any event-scoped rows first, or the MODIFY back to six
+-- members coerces them to '' rather than erroring.
+--   DELETE FROM checklists WHERE link_type = 'event';
+--   ALTER TABLE checklists
+--     MODIFY COLUMN link_type
+--     ENUM('contact','case','bill','appt','task','user')
+--     COLLATE utf8mb4_general_ci DEFAULT NULL;
+-- ============================================================
+
+
+-- 1 of 1 ----------------------------------------------------------------
+ALTER TABLE checklists
+  MODIFY COLUMN link_type
+  ENUM('contact','case','bill','appt','task','user','event')
+  COLLATE utf8mb4_general_ci DEFAULT NULL;
+
+
+-- VERIFY 1 — the column definition. Expect the seven members in the order
+-- above, still `DEFAULT NULL`:
+--   SHOW CREATE TABLE checklists;
+--
+-- VERIFY 2 — BLOCKING. No existing row may have changed meaning. Expect the
+-- SAME counts as before the run (measured 2026-08-20: case=270, user=1,
+-- NULL=2, and zero rows on the other four members), and in particular ZERO
+-- rows with link_type = '':
+--   SELECT link_type, COUNT(*) n FROM checklists GROUP BY link_type;
+--
+-- VERIFY 3 — after the backend deploy, that a note can actually land on an
+-- event. Expect the row to read back as 'event', NOT as '':
+--   SELECT id, link_type, link, kind, title
+--     FROM checklists WHERE link_type = 'event';

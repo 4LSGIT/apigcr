@@ -326,24 +326,31 @@ function autoSize(f) {
 }
 
 /* Scope-cell navigation, by link_type (LINK_TYPES in routes/api.checklists.js
-   is contact | case | bill | appt | task | user).
+   is contact | case | bill | appt | task | user | event).
 
    FILES — case/contact/bill open as workspace files through the shell's
    addFile(fileName, fileType, fileID). Note the argument order (name FIRST)
    and that a contact is 'client' there: passing the id where fileType belongs
    matches no branch and opens an empty file.
 
-   MODALS — appts and tasks have no file of their own. Appts get the shell's
-   showAppt() Swal (same one case.html and the calendar use); tasks get the
-   shell's showTask(), which drives the Tasks tab's own viewTask().
+   MODALS — appts, tasks and events have no file of their own. Appts get the
+   shell's showAppt() Swal (same one case.html and the calendar use); tasks get
+   showTask(), which drives the Tasks tab's own viewTask(); events get
+   showEvent(), which frames public/eventform.html (W2).
 
-   'user' is not here: it renders as a name, with nowhere to navigate to. */
+   'user' is not here: it renders as a name, with nowhere to navigate to.
+
+   NOTE: this page has no link_type FILTER — Browse filters on q / tag / kind
+   only, and the scope switcher is mine|unlinked|browse. So an event-scoped
+   card is found by searching its title, not by filtering to events. Adding
+   such a filter is a separate change to renderHead() + loadBrowse(). */
 const SCOPE_NAV = {
   case:    (id) => shell().addFile(id, 'case',   id),
   contact: (id) => shell().addFile(id, 'client', id),
   bill:    (id) => shell().addFile(id, 'bill',   id),
   appt:    (id) => shell().showAppt(id),
   task:    (id) => shell().showTask(id),
+  event:   (id) => shell().showEvent(id),
 };
 
 function browseRow(cl) {

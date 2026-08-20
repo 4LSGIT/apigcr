@@ -148,7 +148,13 @@ async function getChecklistWithItems(db, checklistId) {
 // Mirrors the live enums. Validating instead of silently passing a bad value
 // into the WHERE matters: an unrecognised link_type would otherwise return an
 // empty list, which reads as "you have no checklists" rather than "typo".
-const LINK_TYPES = ['contact', 'case', 'bill', 'appt', 'task', 'user'];
+// 'event' is APPENDED, matching the ENUM's ordinal order after the W2
+// migration. tasks.task_link_type already carries an 'event' member, so this
+// follows precedent rather than inventing a link form. Notes attach to the
+// EVENT itself (link='<event_id>'), never to whatever the event links upward
+// to — 113 of 151 events link by `case_number`, a free-text docket that is not
+// a foreign key and must never be resolved here.
+const LINK_TYPES = ['contact', 'case', 'bill', 'appt', 'task', 'user', 'event'];
 const STATUSES   = ['incomplete', 'complete'];
 // Row shape (S1). 'checklist' = title + checkitems, status derived.
 // 'note' = title + freeform body, no items ever, status manual. Omitted on

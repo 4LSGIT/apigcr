@@ -417,11 +417,11 @@
    nothing keys off them (identity is tag='docs_needed'); tags are machine
    fields and the backend 403s a non-SU write, so the UI just agrees.
 
-   NATIVE FIELDS (S5). Four entities carry a single freeform notes column that
-   predates this page — cases.case_notes, cases.341_notes,
-   contacts.contact_notes, appts.appt_note. Now that an entity can also hold N
-   proper notes, staff would otherwise have two unrelated places to look, and
-   341_notes / appt_note are invisible today.
+   NATIVE FIELDS (S5). Several entities carry a single freeform notes column
+   that predates this page — cases.case_notes, cases.341_notes,
+   contacts.contact_notes, appts.appt_note, and (W2) events.event_note. Now
+   that an entity can also hold N proper notes, staff would otherwise have two
+   unrelated places to look, and 341_notes / appt_note are invisible today.
 
    NATIVE_NOTES below synthesizes a PINNED VIRTUAL CARD per column. It is a
    VIEW, not a migration: the column stays the one and only store, the card
@@ -532,7 +532,7 @@ const COUNT_SHOW_AT  = 1;                                   // ANY TEXT AT ALL. 
 /* Freeform notes columns that live on the ENTITY, surfaced here as pinned
    virtual cards. See the NATIVE FIELDS block in the file header.
 
-   THIS IS THE WHOLE CONFIGURATION. Adding a fifth native field is a one-line
+   THIS IS THE WHOLE CONFIGURATION. Adding another native field is a one-line
    edit here and nothing else — unless it is on an entity not already listed,
    which also needs a NATIVE_ENVELOPE row for that endpoint's response shape.
    There is no per-field length: lib/noteLimits.js governs all of them with one
@@ -551,18 +551,33 @@ const NATIVE_NOTES = {
   appt: [
     { field: 'appt_note', title: 'Note', endpoint: '/api/appts' },
   ],
+  /* events.event_note (W2). DIVERGES from the four above in one respect: it is
+     NULLABLE, where case_notes / 341_notes / contact_notes / appt_note are all
+     NOT NULL. Nothing special-cases it — saveBody() sends '' on a clear for
+     every native field, and '' is a legitimate value in a nullable column too.
+     Writing NULL here instead would buy nothing and would fork the save path.
+
+     The card attaches to the EVENT, not to whatever the event links upward to.
+     113 of 151 events link by `event_link_type='case_number'` — a free-text
+     docket, not a foreign key — so an event-scoped note is the only
+     unambiguous place to hang this. */
+  event: [
+    { field: 'event_note', title: 'Note', endpoint: '/api/events' },
+  ],
 };
 
-/* The three GET-one endpoints wrap their row in three different keys, so the
-   adapter cannot read them uniformly:
+/* The GET-one endpoints wrap their row in different keys, so the adapter
+   cannot read them uniformly:
      GET /api/cases/:id     -> { case:    {...} }   caseService.getCase
      GET /api/contacts/:id  -> { contact: {...} }   contactService.getContact
      GET /api/appts/:id     -> { data:    {...} }   inline in routes/api.appts.js
+     GET /api/events/:id    -> { data:    {...} }   routes/api.events.js
    A missing entry means "the response IS the row". */
 const NATIVE_ENVELOPE = {
   '/api/cases':    'case',
   '/api/contacts': 'contact',
   '/api/appts':    'data',
+  '/api/events':   'data',
 };
 
 function unwrapEntity(endpoint, res) {
@@ -797,8 +812,9 @@ async function loadNativeCards() {
       id: null,
       kind: 'note',
       title: s.title,
-      // All four columns are NOT NULL, so `?? ''` is belt-and-braces against a
-      // response that omits the key entirely rather than against a real NULL.
+      // `?? ''` guards a response that omits the key AND a real NULL. Four of
+      // the five columns are NOT NULL and can only hit the first case;
+      // events.event_note is nullable and hits the second (42 of 151 rows).
       body: row ? (row[s.field] ?? '') : '',
       status: null,
       tag: null,
@@ -1386,9 +1402,12 @@ async function saveBody(key) {
   setFlag(d, 'Saving…');
   try {
     if (cl.native) {
-      // '' when cleared, NEVER null: all four native columns are NOT NULL.
+      // '' when cleared, NEVER null. Four of the five native columns are NOT
+      // NULL and would reject it. events.event_note IS nullable, but is sent
+      // '' anyway rather than forking the save path on a per-field
+      // nullability flag — '' is a legitimate empty in a nullable column too.
       // (checklists.body is nullable and S1 treats null as a legitimate value;
-      // these columns do not.)
+      // the native columns do not.)
       await api(cl.native.endpoint + '/' + encodeURIComponent(cl.native.entityId),
                 'PATCH', { [cl.native.field]: value });
     } else {
