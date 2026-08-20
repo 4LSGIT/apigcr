@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-20T10:32:37.461Z
+-- Generated: 2026-08-20T12:01:35.632Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:b09156cda62b15dc9e719bd0c4cee6d1
+-- Fingerprint: sha256:fb15f1de3fafa908e73121acccec6121
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1570,7 +1570,7 @@ CREATE TABLE `hook_delivery_logs` (
   `request_body` json DEFAULT NULL,
   `response_status` int DEFAULT NULL,
   `response_body` text COLLATE utf8mb4_general_ci,
-  `status` enum('success','failed') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'failed',
+  `status` enum('success','failed','queued') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'failed',
   `error` text COLLATE utf8mb4_general_ci,
   `attempts` int NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP

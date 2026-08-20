@@ -672,7 +672,14 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     // Live delivery — pass db so internal targets can reach their engines
     const deliveryLog = await deliverToTarget(target, transformResult.output, db);
 
-    // Log the delivery
+    // Log the delivery.
+    // `log_status` (§7) lets a dispatcher record a finer-grained persisted
+    // outcome than the control-flow `status` it returns — currently only
+    // deliverWorkflow, which reports 'success' to callers (the dispatch DID
+    // succeed) but persists 'queued' (nothing has run yet). Defaults to
+    // `status` for every other target type.
+    const persistedStatus = deliveryLog.log_status || deliveryLog.status;
+
     await db.query(
       `INSERT INTO hook_delivery_logs
         (execution_id, target_id, request_url, request_method, request_body,
@@ -686,7 +693,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
         deliveryLog.request_body,
         deliveryLog.response_status,
         deliveryLog.response_body,
-        deliveryLog.status,
+        persistedStatus,
         deliveryLog.error || null,
       ]
     );
@@ -819,12 +826,17 @@ async function executeRetry(db, { execution_id, target_id }) {
     [execution_id, target_id]
   );
 
+  // Same §7 split as the initial INSERT: a workflow target that re-queues
+  // successfully persists 'queued', while `status` stays 'success' for the
+  // control-flow re-check below.
+  const persistedStatus = deliveryLog.log_status || deliveryLog.status;
+
   if (existing.length) {
     await db.query(
       `UPDATE hook_delivery_logs
        SET response_status = ?, response_body = ?, status = ?, error = ?, attempts = attempts + 1
        WHERE id = ?`,
-      [deliveryLog.response_status, deliveryLog.response_body, deliveryLog.status, deliveryLog.error, existing[0].id]
+      [deliveryLog.response_status, deliveryLog.response_body, persistedStatus, deliveryLog.error, existing[0].id]
     );
   } else {
     await db.query(
@@ -834,7 +846,7 @@ async function executeRetry(db, { execution_id, target_id }) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2)`,
       [execution_id, target_id, deliveryLog.request_url, deliveryLog.request_method,
        deliveryLog.request_body, deliveryLog.response_status, deliveryLog.response_body,
-       deliveryLog.status, deliveryLog.error]
+       persistedStatus, deliveryLog.error]
     );
   }
 

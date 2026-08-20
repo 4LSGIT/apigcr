@@ -344,6 +344,7 @@ ref/pages/submitted.html
 ref/plans.md
 ref/review.md
 ref/routes.md
+ref/s7_migration.sql
 routes/_aitest.js
 routes/_courtexec.js
 routes/_errtest.js
