@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-20T10:04:47.401Z
+-- Generated: 2026-08-20T10:32:37.461Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:6478f9f73ea165caa5dae99d35763f17
+-- Fingerprint: sha256:b09156cda62b15dc9e719bd0c4cee6d1
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1672,6 +1672,28 @@ CREATE TABLE `image_library` (
   `uploaded_by` tinyint unsigned DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `deleted_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `issue_reports`
+--
+
+DROP TABLE IF EXISTS `issue_reports`;
+CREATE TABLE `issue_reports` (
+  `id` bigint NOT NULL,
+  `user_id` int DEFAULT NULL,
+  `user_name` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `kind` enum('problem','idea','question') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'problem',
+  `note` text COLLATE utf8mb4_general_ci NOT NULL,
+  `page_url` varchar(1000) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `context` json DEFAULT NULL,
+  `emailed_at` datetime DEFAULT NULL,
+  `email_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `resolved_at` datetime DEFAULT NULL,
+  `resolved_by` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3704,6 +3726,14 @@ ALTER TABLE `image_library`
   ADD KEY `idx_il_deleted` (`deleted_at`);
 
 --
+-- Indexes for table `issue_reports`
+--
+ALTER TABLE `issue_reports`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_issue_reports_created` (`created_at`),
+  ADD KEY `idx_issue_reports_open` (`resolved_at`,`created_at`);
+
+--
 -- Indexes for table `job_results`
 --
 ALTER TABLE `job_results`
@@ -4532,6 +4562,12 @@ ALTER TABLE `hooks`
 --
 ALTER TABLE `image_library`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `issue_reports`
+--
+ALTER TABLE `issue_reports`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `job_results`

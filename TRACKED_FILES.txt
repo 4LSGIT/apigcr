@@ -230,7 +230,9 @@ public/forms/liveHost.html
 public/forms/render.html
 public/forms/submissionsWidget.html
 public/index.html
+public/issueReports.html
 public/js/assetpicker.js
+public/js/diag.js
 public/js/reportCharts.js
 public/js/versionGuard.js
 public/js/videoInsert.js
@@ -316,6 +318,7 @@ ref/2026-08-19_ingest_action_failure_count.sql
 ref/2026-08-19_pin_column_defaults_0.sql
 ref/2026-08-19_pipeline_phase.sql
 ref/2026-08-19_step_version_defaults_0.sql
+ref/2026-08-20_issue_reports.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/EXTERNAL_CODE_CSS_DECISION.md
@@ -384,6 +387,7 @@ routes/api.gcontacts.js
 routes/api.hooks.js
 routes/api.intake.js
 routes/api.intake.petition.js
+routes/api.issueReports.js
 routes/api.jwt.js
 routes/api.log.js
 routes/api.mySignatures.js

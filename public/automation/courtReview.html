@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Court Review</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <!-- Diagnostics ring buffer. This page CANNOT load /scripts.js — it declares
+       a top-level `const P` (and courtReview `const E`/`const Toast`) that
+       scripts.js also declares, and a duplicate top-level const is a
+       parse-time SyntaxError that would kill this page's whole inline block.
+       diag.js declares nothing at top level. See public/js/diag.js. -->
+  <script src="/js/diag.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

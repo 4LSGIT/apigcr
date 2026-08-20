@@ -38,6 +38,9 @@
   </script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
+       errors thrown by scripts.js itself. See public/js/diag.js. -->
+  <script src="/js/diag.js"></script>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
        build than the one this tab booted on. Started at the bottom of the boot
@@ -653,6 +656,15 @@
     </div>
     <div class="sb-item" data-tab="tabMore" onclick="openMainTab('tabMore')" title="More Features">
       <i class="fa-solid fa-grip"></i><span>More Features</span>
+    </div>
+
+    <!-- Report an Issue. Deliberately has NO data-tab: it opens a dialog, it
+         does not navigate, so updateSidebarActive() must never give it the
+         active highlight and steal it from the view you are actually on.
+         Being a .sb-item is enough for the skinny-mode tooltip to pick it up.
+         Implementation: the reportIssue() block near the bottom of this file. -->
+    <div class="sb-item" onclick="reportIssue()" title="Report an Issue">
+      <i class="fa-solid fa-bug"></i><span>Report an Issue</span>
     </div>
 
     <div class="sb-spacer"></div>
@@ -2165,6 +2177,7 @@
   <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin" data-hover-anim="fa-shake" style="--fa-animation-duration:0.7s"><i class="fa-solid fa-vial fa-2xl"></i><br><br>API Tester (SU)</button>
   <button class="big-button" data-target="systemAlertsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.25; --fa-animation-duration:0.7s"><i class="fa-solid fa-triangle-exclamation fa-2xl"></i><br><br>System Alerts (SU)</button>
   <button class="big-button" data-target="usersDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-users-gear fa-2xl"></i><br><br>Users (SU)</button>
+  <button class="big-button" data-target="issueReportsDiv" data-exclusive-group="admin" data-hover-anim="fa-shake" style="--fa-animation-duration:1.1s"><i class="fa-solid fa-bug fa-2xl"></i><br><br>Issue Reports</button>
 
   <div id="sequencesDiv" style="display:none"></div>
   <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
@@ -2192,6 +2205,13 @@
   </div>
   <div id="usersDiv" style="display:none; margin-top:10px;">
     <iframe data-src="/users.html"
+            style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
+  </div>
+  <!-- Issue Reports. NOT "(SU)" like its neighbours on purpose: reading what
+       staff reported is not a superuser act, and the API gates it at
+       admin-or-SU with no step-up elevation (routes/api.issueReports.js). -->
+  <div id="issueReportsDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/issueReports.html"
             style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
   </div>
 </div>
@@ -2680,6 +2700,13 @@
         err.body       = (data && typeof data === 'object') ? data : { _raw: data };
         err.url        = url;
         err.method     = options.method;
+        // Tee into the diagnostics ring buffer (js/diag.js) BEFORE throwing, so
+        // a later "Report an Issue" carries the failed call even when the
+        // caller caught this and showed the user nothing.
+        try {
+          window.ycDiag && window.ycDiag.push('api',
+            options.method + ' ' + url + ' \u2192 ' + res.status + ' ' + msg);
+        } catch (_) { }
         throw err;
       }
       return data;
@@ -3886,6 +3913,314 @@ async function initAuth() {
 
       poll();
       setInterval(poll, POLL_MS);
+    })();
+  </script>
+
+  <!-- ── Report an Issue ────────────────────────────────────────────────────
+       One button, one textarea, sent from wherever the user already is — with
+       the technical state attached automatically. It exists for the report
+       that never gets filed on the Feature Requests board: "this just broke
+       and I don't know how to describe it".
+
+       The user is shown NOTHING technical. They pick problem / idea / question
+       and type a sentence. Everything in ycCollectDiagnostics() rides along
+       invisibly, so nobody has to remember which tab they were on or read a
+       console back over the phone.
+
+       Server: POST /api/issue-reports (routes/api.issueReports.js). The row is
+       the durable record; the email to the IT address is the notification, and
+       it is AWAITED server-side — so `emailed:false` here is the truth, not a
+       guess, and the dialog says so instead of promising a mail that never
+       left.
+
+       DIALOG COLOURS ARE HARDCODED, NOT THEME VARS. SweetAlert2's popup keeps
+       its own white background in this app (nothing overrides .swal2-popup for
+       body.dark), so var(--text) — near-white in dark mode — would render
+       invisible on it. Same posture as every other dialog in the app. -->
+  <script>
+    (function () {
+      const DRAFT_KEY = 'yc.issueDraft';
+      const DRAFT_TTL = 24 * 60 * 60 * 1000;
+
+      const KINDS = [
+        { v: 'problem',  icon: 'fa-bug',             label: 'Something\u2019s broken' },
+        { v: 'idea',     icon: 'fa-lightbulb',       label: 'I have an idea' },
+        { v: 'question', icon: 'fa-circle-question', label: 'I have a question' }
+      ];
+
+      const PLACEHOLDER = {
+        problem:  'What were you trying to do, and what happened instead?',
+        idea:     'What would you like it to do?',
+        question: 'What would you like to know?'
+      };
+
+      /** Never throws. Any single probe failing must cost one field, not the report. */
+      function safe(fn, dflt) {
+        try { const v = fn(); return (v === undefined || v === null) ? dflt : v; }
+        catch (_) { return dflt; }
+      }
+
+      /**
+       * Everything the shell can learn about "where the user is right now"
+       * without asking them a single technical question.
+       *
+       * Workspace iframes are same-origin, so contentDocument reads work — but
+       * each is individually guarded anyway: a frame mid-navigation throws, and
+       * a future feature pointing a frame at the landing origin would too.
+       */
+      function ycCollectDiagnostics() {
+        const out = {};
+
+        out.build = safe(() => window.VersionGuard && VersionGuard.versionText(), null);
+        out.page  = safe(() => location.href, null);
+
+        // Active main tab, named the way the user would name it.
+        const tabId = safe(() => currentMainTabId(), null);
+        out.active_tab = { id: tabId, label: null };
+        if (tabId) {
+          out.active_tab.label = safe(() => {
+            if (tabId.indexOf('file-div') === 0) {
+              const btn = document.querySelector(
+                '#tabOpenFiles .file-button[data-file-id="' + tabId + '"]');
+              return btn ? ('Open File: ' + (btn.title || btn.name || '')) : 'Open File';
+            }
+            const item = document.querySelector(
+              '#appSidebar .sb-item[data-tab="' + tabId + '"] span');
+            return item ? item.textContent.trim() : tabId;
+          }, null);
+        }
+
+        // Walk the VISIBLE iframe chain down from the active tab:
+        // shell -> case.html -> its widget frame. offsetParent is null under a
+        // display:none ancestor, which is exactly how both tab machineries hide
+        // inactive panels, so it is the cheapest "is this actually on screen"
+        // test available. Depth-capped at 3.
+        out.active_frame = safe(() => {
+          const root = tabId && E(tabId);
+          if (!root) return null;
+          const chain = [];
+          let scope = root, depth = 0;
+          while (depth++ < 3) {
+            const frames = Array.from(scope.querySelectorAll('iframe'));
+            const vis = frames.find(f => f.src && f.offsetParent !== null)
+                     || (depth === 1 ? frames.find(f => f.src) : null);
+            if (!vis) break;
+            const entry = {
+              url: safe(() => vis.contentWindow.location.pathname
+                             + vis.contentWindow.location.search,
+                        vis.getAttribute('src')),
+              sub_tab: null
+            };
+            const innerDoc = safe(() => vis.contentDocument, null);
+            if (!innerDoc) { chain.push(entry); break; }
+            // `.tab.active` is the shared convention in case.html / contact.html
+            // and the widgets, so one selector names the sub-tab everywhere.
+            entry.sub_tab = safe(() => {
+              const t = innerDoc.querySelector('.tab.active');
+              return t ? t.textContent.replace(/\s+/g, ' ').trim() : null;
+            }, null);
+            chain.push(entry);
+            scope = innerDoc;
+          }
+          if (!chain.length) return null;
+          return {
+            url:     chain[chain.length - 1].url,
+            sub_tab: chain.map(c => c.sub_tab).filter(Boolean).join(' \u203A ') || null,
+            chain:   chain
+          };
+        }, null);
+
+        out.open_files = safe(() => Array.from(
+          document.querySelectorAll('#tabOpenFiles .file-button')
+        ).map(b => ({
+          title:  b.title || b.name || null,
+          spec:   b.dataset.fileSpec || null,   // ids only — never a client name in a URL
+          active: b.classList.contains('active')
+        })), []);
+
+        out.browser = {
+          ua:         safe(() => navigator.userAgent, null),
+          platform:   safe(() => navigator.platform, null),
+          language:   safe(() => navigator.language, null),
+          online:     safe(() => navigator.onLine, null),
+          viewport:   safe(() => window.innerWidth + '\u00D7' + window.innerHeight, null),
+          screen:     safe(() => window.screen.width + '\u00D7' + window.screen.height, null),
+          dpr:        safe(() => window.devicePixelRatio, null),
+          tz:         safe(() => Intl.DateTimeFormat().resolvedOptions().timeZone, null),
+          local_time: safe(() => new Date().toString(), null)
+        };
+
+        out.session = {
+          user: safe(() => ({
+            id:   user && user.user,
+            name: user && user.user_name,
+            auth: user && user.user_auth
+          }), null),
+          theme:      safe(() => document.body.classList.contains('dark') ? 'dark' : 'light', null),
+          body_class: safe(() => document.body.className || '(none)', null),
+          // A silently-expired session is a common cause of "nothing happens
+          // when I click", and the user has no way to see it.
+          jwt_expires_in_min: safe(() => {
+            const p = getJwtPayload(window.AUTH_STATE && AUTH_STATE.jwt);
+            return (p && p.exp) ? Math.round((p.exp * 1000 - Date.now()) / 60000) : null;
+          }, null)
+        };
+
+        out.version_guard = safe(() => VersionGuard.info(), null);
+        out.errors        = safe(() => (window.ycDiag && window.ycDiag.entries()) || [], []);
+
+        return out;
+      }
+
+      // ── draft persistence ────────────────────────────────────────────────
+      // This button gets pressed when things are already going wrong, so the
+      // note survives a failed send AND a reload. Cleared on success only.
+      function readDraft() {
+        try {
+          const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+          if (!d || !d.note || (Date.now() - (d.at || 0)) > DRAFT_TTL) return null;
+          return d;
+        } catch (_) { return null; }
+      }
+      function writeDraft(kind, note) {
+        try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ kind, note, at: Date.now() })); }
+        catch (_) { }
+      }
+      function clearDraft() {
+        try { localStorage.removeItem(DRAFT_KEY); } catch (_) { }
+      }
+
+      // ── dialog ───────────────────────────────────────────────────────────
+      const ACCENT = '#07ADEF';
+
+      function kindButtonHtml(k) {
+        return '<button type="button" class="ri-kind" data-kind="' + k.v + '" '
+          + 'style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;'
+          + 'padding:10px 4px;border-radius:8px;cursor:pointer;font-size:12px;line-height:1.25;'
+          + 'border:1px solid #e5e7eb;background:#fff;color:#374151">'
+          + '<i class="fa-solid ' + k.icon + '" style="font-size:16px"></i>'
+          + k.label + '</button>';
+      }
+
+      function paintKinds(popup, kind) {
+        popup.querySelectorAll('.ri-kind').forEach(b => {
+          const on = b.dataset.kind === kind;
+          b.style.borderColor = on ? ACCENT : '#e5e7eb';
+          b.style.background  = on ? 'rgba(7,173,239,0.10)' : '#fff';
+          b.style.color       = on ? '#0b6f96' : '#374151';
+          b.style.fontWeight  = on ? '600' : '400';
+        });
+        const ta = popup.querySelector('#riNote');
+        if (ta) ta.placeholder = PLACEHOLDER[kind] || '';
+      }
+
+      window.reportIssue = async function reportIssue() {
+        const draft = readDraft();
+        let kind = (draft && draft.kind) || 'problem';
+
+        const result = await Swal.fire({
+          title: 'Report an Issue',
+          width: 540,
+          showCancelButton: true,
+          confirmButtonText: 'Send',
+          confirmButtonColor: ACCENT,
+          cancelButtonText: 'Cancel',
+          focusConfirm: false,
+          html:
+            '<div style="text-align:left">'
+            + '<div id="riKinds" style="display:flex;gap:8px;margin:2px 0 14px">'
+            + KINDS.map(kindButtonHtml).join('')
+            + '</div>'
+            + '<textarea id="riNote" rows="6" '
+            + 'style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e5e7eb;'
+            + 'border-radius:6px;font-family:inherit;font-size:14px;line-height:1.5;color:#111827;'
+            + 'resize:vertical;outline:none"></textarea>'
+            + '<div style="margin-top:10px;font-size:12px;color:#6b7280;line-height:1.45">'
+            + '<i class="fa-solid fa-circle-info" style="margin-right:5px"></i>'
+            + 'Just say what happened in your own words \u2014 no need to explain where you '
+            + 'were or what you clicked. That gets sent along automatically.'
+            + '</div></div>',
+          didOpen: (popup) => {
+            const ta = popup.querySelector('#riNote');
+            if (draft && draft.note) ta.value = draft.note;
+            paintKinds(popup, kind);
+            popup.querySelectorAll('.ri-kind').forEach(b => {
+              b.addEventListener('click', () => { kind = b.dataset.kind; paintKinds(popup, kind); });
+            });
+            // Ctrl/Cmd+Enter submits — the textarea swallows plain Enter.
+            ta.addEventListener('keydown', (e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') Swal.clickConfirm();
+            });
+            ta.focus();
+            // Caret to the end when restoring a draft.
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+          },
+          preConfirm: () => {
+            const note = (document.getElementById('riNote').value || '').trim();
+            if (!note) { Swal.showValidationMessage('Please describe what happened.'); return false; }
+            return { kind, note };
+          }
+        });
+
+        if (!result.isConfirmed || !result.value) return;
+        const { kind: sendKind, note } = result.value;
+
+        // Persist BEFORE the network call, not after — the whole point is to
+        // survive the send failing.
+        writeDraft(sendKind, note);
+
+        Swal.fire({
+          title: 'Sending\u2026',
+          allowOutsideClick: false,
+          allowEscapeKey: false,
+          showConfirmButton: false,
+          didOpen: () => Swal.showLoading()
+        });
+
+        try {
+          const r = await apiSend('/api/issue-reports', 'POST', {
+            kind: sendKind,
+            note: note,
+            page_url: location.href,
+            context: ycCollectDiagnostics()
+          });
+          clearDraft();
+          Swal.close();
+
+          if (r && r.emailed === false) {
+            // The row is filed; only the notification failed. Say exactly that
+            // rather than a cheerful "Sent!" that isn't true.
+            Swal.fire({
+              icon: 'warning',
+              iconColor: '#d97706',
+              title: 'Saved \u2014 but the email didn\u2019t go out',
+              html: 'Your report was recorded, so it won\u2019t be lost. '
+                  + 'If it\u2019s urgent, mention it directly as well.',
+              confirmButtonColor: ACCENT
+            });
+          } else {
+            Toast.fire({ icon: 'success', title: 'Sent \u2014 thank you!', timer: 2500 });
+          }
+        } catch (err) {
+          Swal.close();
+          const tooMany = err && err.status === 429;
+          Swal.fire({
+            icon: 'error',
+            title: tooMany ? 'Slow down a moment' : 'Couldn\u2019t send that',
+            html: (tooMany
+                    ? 'That\u2019s a lot of reports in a short window. Try again in a few minutes.'
+                    : ((err && err.message) ? String(err.message) : 'Something went wrong.'))
+                  + '<div style="margin-top:12px;font-size:12px;color:#6b7280">'
+                  + 'Your message has been kept \u2014 reopen Report an Issue and it will '
+                  + 'still be there.</div>',
+            confirmButtonColor: ACCENT
+          });
+        }
+      };
+
+      // Console handle, so a report can be assembled by hand if the button
+      // itself is what's broken.
+      window.ycCollectDiagnostics = ycCollectDiagnostics;
     })();
   </script>
 </body>

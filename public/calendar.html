@@ -9,6 +9,9 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <!-- Shared dialogs (newApptDialog + pickers). Runs IN this iframe so its
        Swal stacks here and never replaces the shell modal hosting us. -->
+  <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
+       errors thrown by scripts.js itself. See public/js/diag.js. -->
+  <script src="/js/diag.js"></script>
   <script src="/scripts.js"></script>
   <!-- FullCalendar 6 ships its CSS inside the global JS bundle — no separate
        stylesheet exists for v6 (the old index.global.min.css link 404'd). -->

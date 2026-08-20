@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Issue Reports</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<!-- Diagnostics ring buffer. This page is a triage tool for the reports that
+     buffer produces, but it is also just another page — an error in here is
+     worth capturing too. See public/js/diag.js. -->
+<script src="/js/diag.js"></script>
+<style>
+  /* Palette lifted verbatim from systemAlerts.html so the two triage tools in
+     the Admin tab look like one product. The host iframe in index.html sets
+     background:#0f1117 to match --bg during load. */
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --idea: #c084fc;
+  }
+  html, body { margin:0; padding:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:-apple-system, Segoe UI, Roboto, sans-serif; font-size:13px; }
+  .main { display:flex; flex-direction:column; height:100vh; min-width:0; }
+
+  /* summary cards */
+  .cards { display:flex; gap:8px; padding:10px; flex-wrap:wrap; background:var(--panel); border-bottom:1px solid var(--border); }
+  .card { flex:1 1 110px; min-width:110px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px;
+    padding:8px 12px; cursor:pointer; user-select:none; }
+  .card:hover { border-color:var(--accent); }
+  .card.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .card .n { font-size:22px; font-weight:700; line-height:1.1; }
+  .card .l { font-size:10px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-top:2px; }
+  .card.all  .n { color:var(--text); }
+  .card.prob .n { color:var(--danger); }
+  .card.idea .n { color:var(--idea); }
+  .card.ques .n { color:var(--accent); }
+  .card.resv .n { color:var(--ok); }
+  .card.mail .n { color:var(--warn); }
+
+  /* toolbar */
+  .toolbar { display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--panel);
+    border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .toolbar select, .toolbar input[type="text"] { background:var(--panel-2); color:var(--text);
+    border:1px solid var(--border); border-radius:4px; padding:6px 8px; font-size:12px; }
+  .toolbar input[type="text"] { flex:1 1 160px; min-width:120px; }
+  .toolbar button { background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:4px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  .toolbar button:hover:not(:disabled) { border-color:var(--accent); }
+  .toolbar button:disabled { opacity:.4; cursor:not-allowed; }
+  .toolbar button.good { border-color:var(--ok); color:var(--ok); }
+  .toolbar button.good:hover:not(:disabled) { background:var(--ok); color:#001; }
+  .toolbar button.warnb { border-color:var(--warn); color:var(--warn); }
+  .toolbar button.warnb:hover:not(:disabled) { background:var(--warn); color:#001; }
+  .toolbar .sep { flex:1; }
+  .toolbar label.auto { color:var(--muted); font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+
+  .status { padding:5px 10px; font-size:11px; color:var(--muted); border-bottom:1px solid var(--border); background:var(--panel); }
+  .status .ok { color:var(--ok); } .status .err { color:var(--danger); }
+
+  /* table */
+  .results { flex:1; overflow:auto; min-height:0; }
+  table.r { border-collapse:collapse; width:100%; font-size:12px; }
+  table.r th, table.r td { border-bottom:1px solid var(--border); padding:5px 8px; text-align:left; vertical-align:top; }
+  table.r th { background:var(--panel); position:sticky; top:0; white-space:nowrap; font-size:11px;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--muted); z-index:1; }
+  table.r tbody tr.row { cursor:pointer; }
+  table.r tbody tr.row:hover { background:var(--panel-2); }
+  table.r tbody tr.row.sel { background:rgba(110,168,254,.08); }
+  table.r tbody tr.row.done td:not(.actions-cell) { opacity:.55; }
+  td.mono, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+  td.note-cell { max-width:520px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.nowrap { white-space:nowrap; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:10px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.05em; }
+  .badge.problem  { background:rgba(255,107,107,.15); color:var(--danger); border:1px solid var(--danger); }
+  .badge.idea     { background:rgba(192,132,252,.12); color:var(--idea);   border:1px solid var(--idea); }
+  .badge.question { background:rgba(110,168,254,.12); color:var(--accent); border:1px solid var(--accent); }
+  .state { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+  .state.open { color:var(--danger); } .state.resv { color:var(--ok); }
+  .muted { color:var(--muted); }
+  .mailfail { color:var(--warn); }
+
+  /* detail expansion */
+  tr.detail td { background:var(--panel); padding:10px 14px 12px; }
+  .detail-grid { display:grid; grid-template-columns:120px 1fr; gap:3px 12px; font-size:12px; margin-bottom:8px; }
+  .detail-grid .k { color:var(--muted); }
+  .note-blk { margin:0 0 10px; padding:10px 12px; background:var(--bg); border-left:3px solid var(--accent);
+    border-radius:4px; font-size:13px; line-height:1.55; white-space:pre-wrap; word-break:break-word; }
+  pre.blk { margin:6px 0 0; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; line-height:1.5;
+    white-space:pre-wrap; word-break:break-word; max-height:320px; overflow:auto; }
+  .sub-h { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:12px 0 4px; }
+  .errline { margin:0 0 6px; padding:6px 9px; background:var(--bg); border-left:3px solid var(--danger); border-radius:3px; }
+  .errline .meta { font-size:10px; color:var(--muted); margin-bottom:2px; }
+  .errline .det { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px;
+    white-space:pre-wrap; word-break:break-word; }
+  .errline.api      { border-left-color:var(--warn); }
+  .errline.resource { border-left-color:var(--idea); }
+  .row-actions { margin-top:10px; display:flex; gap:6px; flex-wrap:wrap; }
+  .row-actions button { background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:4px; padding:4px 10px; cursor:pointer; font-size:11px; }
+  .row-actions button:hover { border-color:var(--accent); }
+
+  .empty { padding:30px; color:var(--muted); text-align:center; }
+  .pager { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--panel);
+    border-top:1px solid var(--border); font-size:11px; color:var(--muted); }
+  .pager button { background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:4px;
+    padding:3px 10px; cursor:pointer; font-size:11px; }
+  .pager button:disabled { opacity:.4; cursor:not-allowed; }
+</style>
+</head>
+<body>
+<div class="main">
+  <div class="cards" id="cards">
+    <div class="card all  active" data-status="open"     data-kind=""><div class="n" id="cAll">–</div><div class="l">Open</div></div>
+    <div class="card prob"        data-status="open"     data-kind="problem"><div class="n" id="cProb">–</div><div class="l">Problems</div></div>
+    <div class="card idea"        data-status="open"     data-kind="idea"><div class="n" id="cIdea">–</div><div class="l">Ideas</div></div>
+    <div class="card ques"        data-status="open"     data-kind="question"><div class="n" id="cQues">–</div><div class="l">Questions</div></div>
+    <div class="card resv"        data-status="resolved" data-kind=""><div class="n" id="cResv">–</div><div class="l">Resolved 7d</div></div>
+    <div class="card mail"        data-status="all"      data-kind=""><div class="n" id="cMail">–</div><div class="l">Email failed</div></div>
+  </div>
+
+  <div class="toolbar">
+    <select id="fStatus">
+      <option value="open" selected>Open</option>
+      <option value="resolved">Resolved</option>
+      <option value="all">All</option>
+    </select>
+    <select id="fKind">
+      <option value="">All types</option>
+      <option value="problem">Problems</option>
+      <option value="idea">Ideas</option>
+      <option value="question">Questions</option>
+    </select>
+    <input type="text" id="fQ" placeholder="Search note or reporter… (Enter)">
+    <button id="btnRefresh"><i class="fa-solid fa-rotate"></i> Refresh</button>
+    <span class="sep"></span>
+    <button id="btnResolve" class="good" disabled>Resolve</button>
+    <button id="btnReopen" class="warnb" disabled>Reopen</button>
+    <label class="auto"><input type="checkbox" id="autoRefresh"> auto 60s</label>
+  </div>
+
+  <div class="status" id="statusBar">Loading…</div>
+
+  <div class="results">
+    <table class="r">
+      <thead>
+        <tr>
+          <th style="width:26px"><input type="checkbox" id="selAll"></th>
+          <th style="width:50px">ID</th>
+          <th style="width:88px">Type</th>
+          <th style="width:120px">From</th>
+          <th>Note</th>
+          <th style="width:120px">When</th>
+          <th style="width:64px">Emailed</th>
+          <th style="width:130px">Resolved</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="emptyMsg" style="display:none">Nothing here. That's the good outcome.</div>
+  </div>
+
+  <div class="pager">
+    <button id="pgPrev" disabled>‹ Prev</button>
+    <span id="pgInfo"></span>
+    <button id="pgNext" disabled>Next ›</button>
+  </div>
+</div>
+
+<script>
+// ── parent-bridge auth (same pattern as systemAlerts.html / dbConsole.html) ───
+const P = window.parent;
+function api(endpoint, method = "GET", payload = null) {
+  if (!P || !P.apiSend) throw new Error("This page must be loaded inside the admin app.");
+  return P.apiSend(endpoint, method, payload);
+}
+
+// Admin OR SU, NOT superuser-only. Its neighbours in the Admin tab are all
+// SU-gated because they are dangerous (DB console, API keys, users); reading
+// what staff reported is not, and the server agrees — routes/api.issueReports.js
+// mounts jwtOrApiKey + requireAdmin with no step-up elevation. Gating this at
+// SU would only mean an admin sees the button and then a refusal.
+let authed = false;
+(function checkAdmin() {
+  try {
+    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
+    if (!token) throw new Error("no token");
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (!["authorized - SU", "authorized - admin"].includes(payload.user_auth)) {
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Admin access required.</div>';
+      return;
+    }
+    authed = true;
+  } catch (e) {
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+  }
+})();
+
+// ── state ────────────────────────────────────────────────────────────────────
+const E = (id) => document.getElementById(id);
+const LIMIT = 50;
+let offset = 0, total = 0, rows = [], selected = new Set(), expanded = null;
+let autoTimer = null;
+
+// Full rows (the ones carrying `context`) are fetched one at a time on
+// expansion and cached here. The list endpoint omits context deliberately —
+// 50 × 24KB would be a megabyte of JSON the table never renders.
+const detailCache = new Map();
+
+// ── rendering ────────────────────────────────────────────────────────────────
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+function fmtTs(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function ago(ts) {
+  if (!ts) return "";
+  const m = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  if (m < 1440) return `${Math.round(m/60)}h`;
+  return `${Math.round(m/1440)}d`;
+}
+const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+
+function render() {
+  const tb = E("tbody");
+  tb.innerHTML = "";
+  E("emptyMsg").style.display = rows.length ? "none" : "";
+  for (const r of rows) {
+    const done = !!r.resolved_at;
+    const tr = document.createElement("tr");
+    tr.className = "row" + (selected.has(r.id) ? " sel" : "") + (done ? " done" : "");
+    tr.dataset.id = r.id;
+    // emailed_at NULL is the interesting case — the report exists but the
+    // notification never left, so nobody was told. Surface it loudly.
+    const mail = r.emailed_at
+      ? '<span style="color:var(--ok)">✓</span>'
+      : `<span class="mailfail" title="${esc(r.email_error || "not sent")}">✗</span>`;
+    tr.innerHTML = `
+      <td onclick="event.stopPropagation()"><input type="checkbox" data-id="${r.id}" ${selected.has(r.id) ? "checked" : ""}></td>
+      <td class="mono">${r.id}</td>
+      <td><span class="badge ${esc(r.kind)}">${esc(r.kind)}</span></td>
+      <td>${esc(r.user_name || "—")}</td>
+      <td class="note-cell" title="${esc(oneLine(r.note))}">${esc(oneLine(r.note))}</td>
+      <td class="nowrap" title="${esc(r.created_at)}">${fmtTs(r.created_at)} <span class="muted">(${ago(r.created_at)})</span></td>
+      <td style="text-align:center">${mail}</td>
+      <td class="nowrap">${done
+        ? `<span class="state resv">resolved</span> <span class="muted">${esc(r.resolved_by || "")}</span>`
+        : '<span class="state open">open</span>'}</td>`;
+    tr.addEventListener("click", () => toggleDetail(r.id));
+    tb.appendChild(tr);
+    if (expanded === r.id) tb.appendChild(detailRow(r));
+  }
+  tb.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const id = Number(cb.dataset.id);
+      cb.checked ? selected.add(id) : selected.delete(id);
+      syncButtons(); render();
+    });
+  });
+  syncButtons();
+  E("pgInfo").textContent = total
+    ? `${offset + 1}–${Math.min(offset + rows.length, total)} of ${total}` : "0 results";
+  E("pgPrev").disabled = offset <= 0;
+  E("pgNext").disabled = offset + LIMIT >= total;
+}
+
+function parseCtx(raw) {
+  if (!raw) return null;
+  try { return typeof raw === "string" ? JSON.parse(raw) : raw; }
+  catch { return null; }
+}
+const dig = (o, path) => path.split(".").reduce((x, k) => (x == null ? undefined : x[k]), o);
+
+function renderErrors(errors) {
+  if (!Array.isArray(errors) || !errors.length) {
+    return '<div class="muted" style="font-size:11px">No client errors were captured.</div>';
+  }
+  return errors.map((e) => {
+    const cls = ["api", "resource"].includes(e?.type) ? e.type : "";
+    const rep = e?.n > 1 ? ` <b style="color:var(--danger)">×${Number(e.n)}</b>` : "";
+    return `<div class="errline ${cls}">
+      <div class="meta">${esc(String(e?.t || "").replace("T", " ").slice(0, 19))} · ${esc(e?.type || "error")}
+        ${e?.frame ? `· <span class="muted">${esc(e.frame)}</span>` : ""}${rep}</div>
+      <div class="det">${esc(e?.detail)}</div></div>`;
+  }).join("");
+}
+
+function detailRow(listRow) {
+  const tr = document.createElement("tr");
+  tr.className = "detail";
+  const td = document.createElement("td");
+  td.colSpan = 8;
+
+  const full = detailCache.get(listRow.id);
+  if (!full) {
+    td.innerHTML = '<div class="muted">Loading detail…</div>';
+    tr.appendChild(td);
+    return tr;
+  }
+
+  const ctx = parseCtx(full.context);
+  const activeView = [dig(ctx, "active_tab.label"), dig(ctx, "active_frame.sub_tab")]
+    .filter(Boolean).join(" › ");
+  const openFiles = Array.isArray(ctx?.open_files) && ctx.open_files.length
+    ? ctx.open_files.map((f) => f?.title).filter(Boolean).join(", ") : "";
+  const vp = dig(ctx, "browser.viewport"), sc = dig(ctx, "browser.screen");
+
+  let ctxJson = "";
+  if (ctx) { try { ctxJson = JSON.stringify(ctx, null, 2); } catch { ctxJson = String(full.context); } }
+
+  const grid = [
+    ["reporter",     `${full.user_name || "—"}${full.user_id != null ? ` (user ${full.user_id})` : ""}`],
+    ["filed",        full.created_at],
+    ["active view",  activeView],
+    ["open files",   openFiles],
+    ["frame url",    dig(ctx, "active_frame.url")],
+    ["page url",     full.page_url],
+    ["app build",    ctx?.build],
+    ["browser",      dig(ctx, "browser.ua")],
+    ["screen",       vp && sc ? `${vp} viewport / ${sc} screen` : (vp || sc)],
+    ["theme",        dig(ctx, "session.theme")],
+    ["jwt expiry",   dig(ctx, "session.jwt_expires_in_min") != null
+                       ? `${dig(ctx, "session.jwt_expires_in_min")} min` : null],
+    ["emailed",      full.emailed_at || `NOT SENT — ${full.email_error || "unknown error"}`],
+    ["resolved",     full.resolved_at ? `${full.resolved_at} by ${full.resolved_by || "?"}` : null],
+  ].filter(([, v]) => v != null && v !== "");
+
+  td.innerHTML = `
+    <div class="note-blk">${esc(full.note)}</div>
+    <div class="detail-grid">
+      ${grid.map(([k, v]) => `<div class="k">${esc(k)}</div><div>${esc(v)}</div>`).join("")}
+    </div>
+    <div class="sub-h">Client errors captured before the report</div>
+    ${renderErrors(ctx?.errors)}
+    ${ctxJson ? `<div class="sub-h">Full context</div><pre class="blk">${esc(ctxJson)}</pre>` : ""}
+    <div class="row-actions">
+      ${full.resolved_at
+        ? `<button onclick="doResolve([${full.id}], false)">Reopen</button>`
+        : `<button onclick="doResolve([${full.id}], true)">Resolve</button>`}
+      <button onclick="copyDetail(${full.id})">Copy context JSON</button>
+    </div>`;
+  tr.appendChild(td);
+  return tr;
+}
+
+async function toggleDetail(id) {
+  if (expanded === id) { expanded = null; render(); return; }
+  expanded = id;
+  render();                                   // paints the "Loading detail…" row
+  if (detailCache.has(id)) { render(); return; }
+  try {
+    const d = await api(`/api/issue-reports/${id}`, "GET");
+    detailCache.set(id, d.row);
+  } catch (err) {
+    detailCache.set(id, { ...rows.find((r) => r.id === id), context: null,
+                          note: `(detail fetch failed: ${err.message || "error"})` });
+  }
+  if (expanded === id) render();
+}
+
+function copyDetail(id) {
+  const full = detailCache.get(id);
+  if (!full) return;
+  const ctx = parseCtx(full.context);
+  navigator.clipboard.writeText(JSON.stringify(ctx ?? full, null, 2))
+    .then(() => setStatus('<span class="ok">✓</span> context copied to clipboard'))
+    .catch(() => setStatus('<span class="err">✗ clipboard blocked</span>'));
+}
+window.copyDetail = copyDetail;
+
+function syncButtons() {
+  const any = selected.size > 0;
+  E("btnResolve").disabled = E("btnReopen").disabled = !any;
+  const visIds = new Set(rows.map((r) => r.id));
+  E("selAll").checked = any && rows.length > 0 && rows.every((r) => selected.has(r.id));
+  for (const id of [...selected]) if (!visIds.has(id)) selected.delete(id);
+}
+
+// ── data ─────────────────────────────────────────────────────────────────────
+function setStatus(html) { E("statusBar").innerHTML = html; }
+
+async function load() {
+  if (!authed) return;
+  const p = new URLSearchParams({ status: E("fStatus").value, limit: LIMIT, offset });
+  if (E("fKind").value) p.set("kind", E("fKind").value);
+  if (E("fQ").value.trim()) p.set("q", E("fQ").value.trim());
+  setStatus("Loading…");
+  try {
+    const data = await api(`/api/issue-reports?${p}`, "GET");
+    rows = data.rows; total = data.total;
+    const c = data.counts;
+    E("cAll").textContent  = c.open_total;    E("cProb").textContent = c.open_problem;
+    E("cIdea").textContent = c.open_idea;     E("cQues").textContent = c.open_question;
+    E("cResv").textContent = c.resolved_7d;   E("cMail").textContent = c.never_emailed;
+    setStatus(`<span class="ok">✓</span> ${total} report(s) · updated ${new Date().toLocaleTimeString()}`
+      + (c.never_emailed > 0
+          ? ` · <span class="err">${c.never_emailed} report(s) whose email never went out</span>` : ""));
+    render();
+  } catch (err) {
+    setStatus(`<span class="err">✗ ${esc(err.message || "load failed")}</span>`);
+  }
+}
+
+async function doResolve(ids, resolved) {
+  if (!ids.length) return;
+  const verb = resolved ? "Resolve" : "Reopen";
+  if (ids.length > 1 && !confirm(`${verb} ${ids.length} report(s)?`)) return;
+  try {
+    const r = await api("/api/issue-reports/resolve", "POST", { ids, resolved });
+    setStatus(`<span class="ok">✓ ${verb}: ${r.updated} row(s) updated</span>`);
+    selected.clear(); expanded = null;
+    ids.forEach((id) => detailCache.delete(id));   // resolved_at/by are now stale
+    await load();
+  } catch (err) {
+    setStatus(`<span class="err">✗ ${verb.toLowerCase()} failed: ${esc(err.message || "")}</span>`);
+  }
+}
+window.doResolve = doResolve;
+
+// ── wiring ───────────────────────────────────────────────────────────────────
+["fStatus", "fKind"].forEach((id) =>
+  E(id).addEventListener("change", () => { offset = 0; load(); }));
+E("fQ").addEventListener("keydown", (e) => { if (e.key === "Enter") { offset = 0; load(); } });
+E("btnRefresh").addEventListener("click", () => load());
+E("btnResolve").addEventListener("click", () => doResolve([...selected], true));
+E("btnReopen").addEventListener("click", () => doResolve([...selected], false));
+E("selAll").addEventListener("change", (e) => {
+  e.target.checked ? rows.forEach((r) => selected.add(r.id)) : selected.clear();
+  render();
+});
+E("pgPrev").addEventListener("click", () => { offset = Math.max(0, offset - LIMIT); load(); });
+E("pgNext").addEventListener("click", () => { offset += LIMIT; load(); });
+E("autoRefresh").addEventListener("change", (e) => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (e.target.checked) autoTimer = setInterval(load, 60_000);
+});
+
+// Cards act as filter shortcuts. "Email failed" has no server-side filter of
+// its own — it widens to all statuses and leans on the loud ✗ in the Emailed
+// column, which is honest about being a nudge rather than a real filter.
+document.querySelectorAll(".card").forEach((card) => {
+  card.addEventListener("click", () => {
+    document.querySelectorAll(".card").forEach((c) => c.classList.remove("active"));
+    card.classList.add("active");
+    E("fStatus").value = card.dataset.status;
+    E("fKind").value = card.dataset.kind;
+    offset = 0; load();
+  });
+});
+
+if (authed) load();
+</script>
+</body>
+</html>
