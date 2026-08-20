@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-20T12:40:48.268Z
+-- Generated: 2026-08-20T18:01:39.301Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:06180b29de247ca687660020e4209ba2
+-- Fingerprint: sha256:74e39b5211b179ea354e3af09e0b3216
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -654,7 +654,7 @@ CREATE TABLE `checklists` (
   `updated_date` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `created_by` tinyint NOT NULL,
   `link` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `link_type` enum('contact','case','bill','appt','task','user') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link_type` enum('contact','case','bill','appt','task','user','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `tag` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
