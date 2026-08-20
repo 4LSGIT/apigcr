@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YisraCase Docs</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@18.0.10/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -211,23 +211,54 @@
       flex-shrink: 0;
     }
 
-    .file-label { flex: 1; font-size: 13px; font-weight: 500; }
+    .file-text  { flex: 1; min-width: 0; }
+    .file-label { font-size: 13px; font-weight: 500; }
     .file-arrow { color: #c0c8d8; }
 
-    /* ── Markdown ── */
-    #md-body h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: #0f0f1a; }
-    #md-body h2 { font-size: 18px; font-weight: 650; margin: 36px 0 12px;
-                  padding-bottom: 7px; border-bottom: 1px solid var(--border); }
-    #md-body h3 { font-size: 15px; font-weight: 650; margin: 24px 0 8px; }
-    #md-body h4 { font-size: 13px; font-weight: 600; margin: 18px 0 6px; color: #555; }
-    #md-body p  { margin-bottom: 13px; }
-    #md-body ul, #md-body ol { margin: 0 0 13px 22px; }
-    #md-body li { margin-bottom: 3px; }
-    #md-body strong { font-weight: 650; }
-    #md-body a  { color: var(--blue); cursor: pointer; }
-    #md-body hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+    /* Harvested from the section README's TOC table. */
+    .file-desc {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+      margin-top: 1px;
+    }
 
-    #md-body blockquote {
+    .file-desc code {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      background: #eef0f6;
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: #7a6070;
+    }
+
+    /* ── Section intro / outro (README prose) ── */
+    .section-intro { margin-bottom: 22px; }
+    .section-outro { margin-top: 26px; }
+    .section-intro > *:first-child,
+    .section-outro > *:first-child { margin-top: 0; }
+    .section-intro > *:last-child,
+    .section-outro > *:last-child  { margin-bottom: 0; }
+
+    /* ── Markdown ── */
+    .md-body h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: #0f0f1a; }
+    .md-body h2 { font-size: 18px; font-weight: 650; margin: 36px 0 12px;
+                  padding-bottom: 7px; border-bottom: 1px solid var(--border); }
+    .md-body h3 { font-size: 15px; font-weight: 650; margin: 24px 0 8px; }
+    .md-body h4 { font-size: 13px; font-weight: 600; margin: 18px 0 6px; color: #555; }
+    .md-body p  { margin-bottom: 13px; }
+    .md-body ul, .md-body ol { margin: 0 0 13px 22px; }
+    .md-body li { margin-bottom: 3px; }
+    .md-body strong { font-weight: 650; }
+    .md-body a  { color: var(--blue); cursor: pointer; }
+    .md-body a[data-inert] {
+      color: var(--muted);
+      cursor: default;
+      text-decoration: underline dotted;
+    }
+    .md-body hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
+    .md-body blockquote {
       border-left: 4px solid var(--blue);
       background: #eef3ff;
       margin: 14px 0;
@@ -237,7 +268,7 @@
       font-size: 13px;
     }
 
-    #md-body code {
+    .md-body code {
       font-family: 'SF Mono', 'Fira Code', monospace;
       font-size: 12px;
       background: #eef0f6;
@@ -246,7 +277,7 @@
       color: #c7254e;
     }
 
-    #md-body pre {
+    .md-body pre {
       background: var(--navy);
       border-radius: 8px;
       padding: 18px 22px;
@@ -254,16 +285,16 @@
       margin: 14px 0 18px;
     }
 
-    #md-body pre code {
+    .md-body pre code {
       background: none; color: #e2e8f8; padding: 0;
       font-size: 12px; line-height: 1.6;
     }
 
-    #md-body table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; font-size: 13px; }
-    #md-body th { background: var(--navy); color: #fff; font-weight: 600; padding: 9px 13px; text-align: left; }
-    #md-body td { padding: 8px 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
-    #md-body tr:last-child td { border-bottom: none; }
-    #md-body tr:nth-child(even) td { background: #f4f6fb; }
+    .md-body table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; font-size: 13px; }
+    .md-body th { background: var(--navy); color: #fff; font-weight: 600; padding: 9px 13px; text-align: left; }
+    .md-body td { padding: 8px 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .md-body tr:last-child td { border-bottom: none; }
+    .md-body tr:nth-child(even) td { background: #f4f6fb; }
 
     /* ── Prev/Next ── */
     .prev-next {
@@ -327,16 +358,141 @@ function setContent(html) { $('content').innerHTML = html; }
 function setLoading()     { setContent('<div class="state-msg">Loading…</div>'); }
 function setError(msg)    { setContent(`<div class="state-msg">⚠ ${msg}</div>`); }
 
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Breadcrumb handlers are held here and dispatched by index. They used to be
+// stringified into an inline onclick — which silently broke every section
+// crumb, because `onclick="(() => loadSection(sectionSlug))()"` evaluates in
+// global scope where the closure variable doesn't exist.
+let bcParts = [];
+
 function setBreadcrumb(parts) {
   // parts: [{ label, onClick? }]  — last one has no onClick (current)
-  const html = parts.map((p, i) => {
+  bcParts = parts;
+  $('topbar').innerHTML = parts.map((p, i) => {
     const isLast = i === parts.length - 1;
-    if (isLast) return `<span class="bc-current">${p.label}</span>`;
-    const click = p.onClick ? `onclick="(${p.onClick})()"` : '';
-    return `<span class="bc-link" ${click}>${p.label}</span><span class="bc-sep">›</span>`;
+    if (isLast) return `<span class="bc-current">${esc(p.label)}</span>`;
+    return `<span class="bc-link" data-bc="${i}">${esc(p.label)}</span>`
+         + `<span class="bc-sep">›</span>`;
   }).join('');
-  $('topbar').innerHTML = html;
 }
+
+$('topbar').addEventListener('click', e => {
+  const el = e.target.closest('[data-bc]');
+  if (!el) return;
+  const p = bcParts[Number(el.dataset.bc)];
+  if (p && typeof p.onClick === 'function') p.onClick();
+});
+
+// ─────────────────────────────────────────────────────────────
+// Markdown rendering helpers
+// ─────────────────────────────────────────────────────────────
+
+function renderMd(md) {
+  try { return marked.parse(md); }
+  catch { return `<p>${esc(md)}</p>`; }
+}
+
+// Descriptions come from README table cells and carry inline markdown
+// (`code`, *emphasis*). parseInline exists in every marked 2.1+; fall back to
+// escaped text if the CDN ever serves something that lacks it.
+function renderMdInline(md) {
+  try { return marked.parseInline(md); }
+  catch { return esc(md); }
+}
+
+/**
+ * marked stopped emitting heading ids in v5 (moved to a plugin), so anchor
+ * links like `06-reports.md#locking` land nowhere. Slug them here instead —
+ * pure DOM, so it survives whatever version the CDN serves.
+ */
+function addHeadingIds(root) {
+  const seen = new Set();
+  root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+    if (h.id) { seen.add(h.id); return; }
+    const base = h.textContent.toLowerCase().trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/\s+/g, '-');
+    if (!base) return;
+    let id = base, n = 2;
+    while (seen.has(id)) id = `${base}-${n++}`;
+    seen.add(id);
+    h.id = id;
+  });
+}
+
+function scrollToAnchor(hash) {
+  if (!hash) { $('content').scrollTop = 0; return; }
+  const el = document.getElementById(hash);
+  if (el) el.scrollIntoView({ block: 'start' });
+  else $('content').scrollTop = 0;
+}
+
+/**
+ * Markdown links are authored to work on GitHub — relative to the file's own
+ * folder. In the viewer they used to navigate the iframe to a path that
+ * doesn't exist (`06-data-modes.md` → `/06-data-modes.md` → 404), blowing the
+ * whole page away. Map them onto the loader instead.
+ *
+ * Returns one of:
+ *   { kind: 'external' }                     leave to the browser
+ *   { kind: 'anchor',  hash }                same page
+ *   { kind: 'section', sec }                 ../<section>/
+ *   { kind: 'file',    sec, file, hash }     <file>.md | ../<section>/<file>.md
+ *   { kind: 'outside' }                      ../../routes/logs.js etc — real
+ *                                            targets on GitHub, not servable here
+ */
+function resolveDocLink(raw, currentSection) {
+  if (!raw) return { kind: 'outside' };
+  if (/^(?:https?:|mailto:|tel:)/i.test(raw)) return { kind: 'external' };
+
+  const [pathPart, hash] = raw.split('#');
+  if (!pathPart) return { kind: 'anchor', hash };
+
+  let m;
+  if ((m = pathPart.match(/^(?:\.\/)?\.\.\/([^/]+)\/([^/]+)\.md$/i)))
+    return { kind: 'file', sec: m[1], file: m[2], hash };
+  if ((m = pathPart.match(/^(?:\.\/)?\.\.\/([^/]+)\/?$/)))
+    return { kind: 'section', sec: m[1] };
+  if ((m = pathPart.match(/^(?:\.\/)?([^/]+)\.md$/i)) && currentSection)
+    return { kind: 'file', sec: currentSection, file: m[1], hash };
+
+  return { kind: 'outside' };
+}
+
+/** Flag links the viewer can't follow so they don't look clickable-but-dead. */
+function markDeadLinks(root) {
+  root.querySelectorAll('a[href]').forEach(a => {
+    if (resolveDocLink(a.getAttribute('href'), state.currentSection?.slug).kind !== 'outside') return;
+    a.dataset.inert = '1';
+    a.title = 'Repo file — not served by the manual viewer';
+  });
+}
+
+$('content').addEventListener('click', e => {
+  const a = e.target.closest('a');
+  if (!a || !$('content').contains(a)) return;
+
+  const raw = a.getAttribute('href') || '';
+  if (!raw) return;
+
+  const r = resolveDocLink(raw, state.currentSection?.slug);
+
+  // External — break out of the iframe rather than replacing the viewer.
+  if (r.kind === 'external') {
+    a.target = '_blank';
+    a.rel    = 'noopener noreferrer';
+    return;
+  }
+
+  e.preventDefault();
+  if (r.kind === 'anchor')  scrollToAnchor(r.hash);
+  if (r.kind === 'section') loadSection(r.sec);
+  if (r.kind === 'file')    loadFile(r.sec, r.file, r.hash);
+});
 
 // ─────────────────────────────────────────────────────────────
 // Sidebar
@@ -350,14 +506,14 @@ function renderSidebar() {
   for (const sec of state.sections) {
     const isActive = state.currentSection?.slug === sec.slug;
     html += `<div class="sidebar-section${isActive ? ' active' : ''}"
-               onclick="loadSection('${sec.slug}')">${sec.label}</div>`;
+               onclick="loadSection('${sec.slug}')">${esc(sec.label)}</div>`;
 
     if (isActive && state.currentFiles.length) {
       for (const file of state.currentFiles) {
         const isFileActive = state.currentFile?.slug === file.slug;
         html += `<div class="sidebar-file${isFileActive ? ' active' : ''}"
                    onclick="loadFile('${sec.slug}','${file.slug}')"
-                   title="${file.label}">${file.label}</div>`;
+                   title="${esc(file.desc || file.label)}">${esc(file.label)}</div>`;
       }
     }
   }
@@ -390,7 +546,7 @@ async function showIndex() {
 
     const cards = state.sections.map(sec => `
       <div class="card" onclick="loadSection('${sec.slug}')">
-        <div class="card-title">${sec.label}</div>
+        <div class="card-title">${esc(sec.label)}</div>
         <div class="card-meta">Click to browse</div>
       </div>`).join('');
 
@@ -427,29 +583,52 @@ async function loadSection(sectionSlug) {
       { label: data.section.label }
     ]);
 
+    // intro / outro are the section README's prose, split around its TOC
+    // table — see routes/manuals.js. The chapter list between them is
+    // generated from the filesystem, so it can't go stale.
+    const intro = data.intro
+      ? `<div class="md-body section-intro">${renderMd(data.intro)}</div>` : '';
+    const outro = data.outro
+      ? `<div class="md-body section-outro">${renderMd(data.outro)}</div>` : '';
+
     if (!state.currentFiles.length) {
-      setContent('<div class="state-msg">No files in this section.</div>');
+      setContent(`
+        <div class="section-title">${esc(data.section.label)}</div>
+        ${intro}
+        <div class="state-msg">No files in this section.</div>
+        ${outro}`);
       return;
     }
 
     const rows = state.currentFiles.map((f, i) => `
       <div class="file-row" onclick="loadFile('${sectionSlug}','${f.slug}')">
         <div class="file-num">${i + 1}</div>
-        <div class="file-label">${f.label}</div>
+        <div class="file-text">
+          <div class="file-label">${esc(f.label)}</div>
+          ${f.desc ? `<div class="file-desc">${renderMdInline(f.desc)}</div>` : ''}
+        </div>
         <div class="file-arrow">›</div>
       </div>`).join('');
 
     setContent(`
-      <div class="section-title">${data.section.label}</div>
-      <div class="file-list">${rows}</div>`);
+      <div class="section-title">${esc(data.section.label)}</div>
+      ${intro}
+      <div class="file-list">${rows}</div>
+      ${outro}`);
+
+    $('content').querySelectorAll('.md-body').forEach(el => {
+      addHeadingIds(el);
+      markDeadLinks(el);
+    });
+    $('content').scrollTop = 0;
 
   } catch {
     setError('Could not load section.');
   }
 }
 
-// File — rendered markdown
-async function loadFile(sectionSlug, fileSlug) {
+// File — rendered markdown. `hash` is an optional heading anchor to land on.
+async function loadFile(sectionSlug, fileSlug, hash) {
   state.currentFile = { slug: fileSlug, label: '' };
   setLoading();
 
@@ -488,8 +667,10 @@ async function loadFile(sectionSlug, fileSlug) {
           : ''}</div>
       </div>` : '';
 
-    setContent(`<div id="md-body">${marked.parse(md)}</div>${prevNext}`);
-    $('content').scrollTop = 0;
+    setContent(`<div id="md-body" class="md-body">${renderMd(md)}</div>${prevNext}`);
+    addHeadingIds($('md-body'));
+    markDeadLinks($('md-body'));
+    scrollToAnchor(hash);
 
   } catch {
     setError('Could not load file.');
@@ -500,9 +681,9 @@ async function loadFile(sectionSlug, fileSlug) {
 // Entry point — called by index.html button on first open,
 // and by the sidebar logo. Safe to call multiple times.
 // ─────────────────────────────────────────────────────────────
-async function manualsLoad(sectionSlug, fileSlug) {
+async function manualsLoad(sectionSlug, fileSlug, hash) {
   if (fileSlug) {
-    await loadFile(sectionSlug, fileSlug);
+    await loadFile(sectionSlug, fileSlug, hash);
   } else if (sectionSlug) {
     await loadSection(sectionSlug);
   } else {

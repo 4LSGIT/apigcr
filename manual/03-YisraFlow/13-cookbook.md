@@ -1020,7 +1020,7 @@ The `POST /api/email/ingest` endpoint is the new external entrypoint for inbound
 
 **`log_date`.** The `log` row's `log_date` is `NOW()` at ingest time (logService doesn't accept an override). The original RFC `Date:` header lives in `log_extra.envelope_date` for cases where the difference matters (forwarded-from-archive scenarios).
 
-**Forensic continuity.** The four legacy `email_log` writers ([routes/logs.js](routes/logs.js), [adapters/email/pabbly.js](services/adapters/email/pabbly.js), [adapters/email/smtp.js](services/adapters/email/smtp.js), [adapters/email/gmail.js](services/adapters/email/gmail.js)) all stamp `source` in their INSERTs: `gmail-firm`, `outbound-pabbly`, `outbound-smtp`, `outbound-gmail` respectively. The composite UNIQUE means same RFC message_id from different sources is no longer a duplicate.
+**Forensic continuity.** The four legacy `email_log` writers ([routes/logs.js](../../routes/logs.js), [adapters/email/pabbly.js](../../services/adapters/email/pabbly.js), [adapters/email/smtp.js](../../services/adapters/email/smtp.js), [adapters/email/gmail.js](../../services/adapters/email/gmail.js)) all stamp `source` in their INSERTs: `gmail-firm`, `outbound-pabbly`, `outbound-smtp`, `outbound-gmail` respectively. The composite UNIQUE means same RFC message_id from different sources is no longer a duplicate.
 
 **Forward-looking.** Rules table, transforms, dispatch (workflow/sequence/hook actions), code-mode eval, capture mode, and UI are Phase 2. The old `email_router_*` tables and `services/emailRouter.js` stay dead — they are not the foundation of the new system.
 

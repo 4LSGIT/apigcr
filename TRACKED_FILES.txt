@@ -93,6 +93,7 @@ manual/01-YisraCase-overview/08-events.md
 manual/01-YisraCase-overview/09-users-and-staff.md
 manual/01-YisraCase-overview/10-sending-form.md
 manual/01-YisraCase-overview/11-campaign-manager.md
+manual/01-YisraCase-overview/README.md
 manual/02-YisraForms/01-overview.md
 manual/02-YisraForms/02-creating-a-form.md
 manual/02-YisraForms/03-ycform-config.md
@@ -673,6 +674,7 @@ tests/internal_functions.meta.test.js
 tests/jest.setup.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
+tests/manualReadmeCoverage.test.js
 tests/moduleLoad.smoke.test.js
 tests/pageLanding.originsep.test.js
 tests/paramsMappingCsvList.test.js

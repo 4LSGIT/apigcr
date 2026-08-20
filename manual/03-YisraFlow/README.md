@@ -13,6 +13,8 @@ There are six subsystems. Five share one job queue and one heartbeat; the Trigge
 | **Email Router** | Routing layer in front of YisraHook for inbound email | Sending all firm email through one adapter and dispatching to different hooks based on subject/sender/etc. |
 | **Trigger System** | Rules that fire on internal domain events | Reacting to something that happened *inside* YisraCase — appointment attended, docket filled in, checklist finished |
 
+Integration docs (Connections, RingCentral bootstrap, Google Calendar, Dropbox) moved to [04-Integrations](../04-Integrations/).
+
 ---
 
 ## Reading order
@@ -34,10 +36,9 @@ If you've never used the system before, read these in order:
 | 11 | [11-api-reference.md](11-api-reference.md) | Every endpoint across all five subsystems |
 | 12 | [12-database-schema.md](12-database-schema.md) | Every table, every column, every index |
 | 13 | [13-cookbook.md](13-cookbook.md) | Patterns and pitfalls catalog. Practical answers to "I need X — which engine, what shape, what gotchas." |
+| 14 | [14-human-in-the-loop.md](14-human-in-the-loop.md) | `request_decision` — pausing a workflow to ask a person, resuming with their answer, deadline defaults |
 | 15 | [15-triggers.md](15-triggers.md) | Trigger System — domain events, the event catalog, match/transform rulings, actions, testing and replay |
 | 16 | [16-versioning.md](16-versioning.md) | Definition versioning — draft/publish lifecycle, the content-vs-structural classifier, in-flight migration, pinned execution |
-
-Integration docs (Connections, RingCentral bootstrap, Google Calendar, Dropbox) moved to [04-Integrations](../04-Integrations/).
 
 Each chapter opens with a short **For operators** section — plain-English summary of what it does and how to use the UI — followed by **Technical reference** for everyone else.
 
