@@ -19,3 +19,17 @@
 ALTER TABLE hook_delivery_logs
   MODIFY COLUMN status ENUM('success','failed','queued')
   COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'failed';
+
+-- -----------------------------------------------------------------
+-- Escalation half — no code needed
+
+-- The other instance was right that alerting already works. I traced it: 
+-- _scanWorkflows caught the wf27 abort as severity='error', alert 127 
+-- created 21:00:03, digested 21:00:05. The failure was 20:38 — so detection
+-- lag was 22 min, and the digest went out 2 seconds later. The delay is entirely
+-- the sweep cadence, not the digest.
+
+-- The sweep is scheduled job 867, recurrence_rule = '0 * * * *'. One row changes
+-- worst-case detection from 60 min to 15:
+
+UPDATE scheduled_jobs SET recurrence_rule = '*/15 * * * *' WHERE id = 867;
