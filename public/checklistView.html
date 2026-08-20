@@ -249,9 +249,9 @@
     .ck-saveflag:empty { display: none; }
     .ck-saveflag.err { color: #b91c1c; font-weight: 600; }
 
-    /* Character counter (S5). Stays EMPTY — and so collapsed — until a body
-       approaches NOTE_MAX_CHARS; see updateCount(). A counter on every note
-       would be noise on the ~100% of them nowhere near 10,000 characters. */
+    /* Character counter (S5). Stays EMPTY — and so collapsed, reserving no
+       space — while a body is shorter than COUNT_SHOW_AT. See the counter
+       visibility block near NOTE_MAX_CHARS for the threshold options. */
     .ck-count {
       font-size: 11px; color: #94a3b8;
       padding: 0 10px 8px; text-align: right;
@@ -500,8 +500,33 @@ const BODY_AUTOSAVE_MS = 2000;
    way .ck-note-body's max-height duplicates resizeTextarea()'s 300.
    If you change one, change the other. */
 const NOTE_MAX_CHARS = 10000;
-/* The counter stays hidden below this. 90% of the ceiling. */
-const COUNT_SHOW_AT  = Math.floor(NOTE_MAX_CHARS * 0.9);
+/* ── Counter visibility ───────────────────────────────────────────
+   How much text a body needs before the "n / 10,000" counter appears under
+   it. updateCount() shows it when `len >= COUNT_SHOW_AT` and blanks it
+   otherwise; .ck-count:empty collapses the blank one, so a hidden counter
+   reserves no space.
+
+   UNCOMMENT EXACTLY ONE. Two live `const` lines is a SyntaxError that takes
+   the whole widget down at parse time — loud, which is the point.
+
+   Sizes for reference, measured 2026-08-20:
+     case_notes     avg 63, max 3,558   ← the longest real note text in the app
+     contact_notes  max 141
+     appt_note      max 1,000           (the old varchar ceiling, since widened)
+     341_notes      empty on all 1,077 cases
+   Nothing in production is within 6,000 characters of the limit, so anything
+   above ~4,000 here means the counter is effectively never seen today. */
+
+// const COUNT_SHOW_AT = 0;                                 // ALWAYS. Pins "0 / 10,000" under every
+                                                            // empty note too — including Case Notes
+                                                            // and 341 Notes, which render on every case.
+const COUNT_SHOW_AT  = 1;                                   // ANY TEXT AT ALL. Empty cards stay clean;
+                                                            // the limit shows the moment you type.
+// const COUNT_SHOW_AT = Math.floor(NOTE_MAX_CHARS * 0.5);  // 5,000. Silent for every real note today,
+                                                            // but well before anyone is in trouble.
+// const COUNT_SHOW_AT = Math.floor(NOTE_MAX_CHARS * 0.9);  // 9,000. Only near the ceiling. Original
+                                                            // S5 behaviour: 1,000 chars of runway.
+/* ─────────────────────────────────────────────────────────────── */
 
 // ── Native notes adapter (S5) ─────────────────────────────────────
 /* Freeform notes columns that live on the ENTITY, surfaced here as pinned
@@ -1267,10 +1292,11 @@ function setFlag(d, text, isErr) {
 }
 
 /* The character counter, on the same held-on-the-draft contract as setFlag.
-   Silent below COUNT_SHOW_AT so a normal note costs no chrome; red once a body
-   is actually over the ceiling, which is only reachable on a value the browser
-   did not clamp (a stored row that predates the limit, or one grown by an
-   append path that lib/noteLimits.js exempts). */
+   Silent below COUNT_SHOW_AT — see the counter visibility block near
+   NOTE_MAX_CHARS to change where that sits. Red once a body is actually over
+   the ceiling, which is only reachable on a value the browser did not clamp
+   (a stored row that predates the limit, or one grown by an append path that
+   lib/noteLimits.js exempts). */
 function updateCount(d, len) {
   d.countText = len >= COUNT_SHOW_AT
     ? len.toLocaleString() + ' / ' + NOTE_MAX_CHARS.toLocaleString()
