@@ -347,6 +347,11 @@
       <button class="tab" onclick="openTab(this, 'tabRels')"><i class="fa-solid fa-people-arrows"></i> Relationships</button>
       <button class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Communication</button>
       <button class="tab" id="tasksButton" onclick="openTab(this, 'tabTasks'); if (!E('tasksFrame').src) E('tasksFrame').src = `tasks.html?link_type=contact&link_id=${clientID}`; else E('tasksFrame').contentWindow?.reloadTasks?.();"><i class="fa-solid fa-clipboard"></i> Tasks</button>
+      <!-- Notes & Lists widget — public/checklistView.html in entity mode.
+           Same lazy-src / reload-on-re-entry idiom as tasksButton above. Note
+           the param is `link`, not `link_id` — that page reads the checklists
+           COLUMN name, unlike tasks.html. -->
+      <button class="tab" id="notesButton" onclick="openTab(this, 'tabNotes'); if (!E('notesFrame').src) E('notesFrame').src = `checklistView.html?link_type=contact&link=${clientID}`; else E('notesFrame').contentWindow?.reloadChecklists?.();"><i class="fa-solid fa-list-check"></i> Notes &amp; Lists</button>
       <button class="tab" onclick="Swal.fire({ title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
                                    icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
                                    preConfirm: () => { location.reload();}});"><i class="fa-solid fa-circle-down"></i> Refresh</button>
@@ -656,6 +661,14 @@ async function addLog() {
      by the tab button (esignButton idiom). -->
 <div id="tabTasks" class="tab-content">
   <iframe id="tasksFrame"></iframe>
+</div>
+
+<!-- Notes & Lists widget — public/checklistView.html in entity mode. The first
+     card is pinned and virtual: it reads and writes contacts.contact_notes
+     directly (NATIVE_NOTES in that file), so there is nothing to add here for
+     it. src set lazily by the tab button. -->
+<div id="tabNotes" class="tab-content">
+  <iframe id="notesFrame"></iframe>
 </div>
 
 </div>

@@ -949,7 +949,7 @@ function renderCard(cl) {
     const del = document.createElement('button');
     del.className = 'ck-icon-btn danger';
     del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
-    del.title = isNote ? 'Delete this note' : 'Delete this checklist';
+    del.title = isNote ? 'Delete this note' : 'Delete this list';
     del.onclick = () => deleteList(cl);
     head.appendChild(del);
   }
@@ -1159,7 +1159,7 @@ function editTitle(cl, el) {
    Adding a duplicate is already impossible: uq_link_kind_tag returns 409. */
 async function editTag(cl, el) {
   const current = cl.tag || '';
-  const what    = cl.kind === 'note' ? 'note' : 'checklist';
+  const what    = cl.kind === 'note' ? 'note' : 'list';
   const body = current
     ? `<p style="text-align:left">The tag <code>${esc(current)}</code> is how automation finds this ${what}.</p>`
       + (current === 'docs_needed'
@@ -1500,7 +1500,7 @@ async function deleteList(cl) {
     : (n ? ` <span style="color:#64748b">&mdash; ${n} item${n === 1 ? '' : 's'} `
          + `will be deleted too.</span>` : '');
   const ok = await confirmDialog({
-    title: isNote ? 'Delete note?' : 'Delete checklist?',
+    title: isNote ? 'Delete note?' : 'Delete list?',
     html: warn + `<p style="text-align:left">${esc(cl.title)}${detail}</p>`,
     confirmText: 'Delete',
     danger: true,
@@ -1519,7 +1519,7 @@ async function deleteList(cl) {
     bodyDrafts.delete(draftKeyOf(cl));
     render();
   } catch (err) {
-    apiError(err, isNote ? 'Could not delete note' : 'Could not delete checklist');
+    apiError(err, isNote ? 'Could not delete note' : 'Could not delete list');
   }
 }
 
@@ -1560,7 +1560,7 @@ async function addList(input, kind) {
   } catch (err) {
     // 409 (tag collision) and 403 (someone else's personal list) both arrive
     // here with a real message from the route.
-    apiError(err, kind === 'note' ? 'Could not create note' : 'Could not create checklist');
+    apiError(err, kind === 'note' ? 'Could not create note' : 'Could not create list');
   } finally { busy = false; }
 }
 

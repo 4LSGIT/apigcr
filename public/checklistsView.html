@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Checklists</title>
+  <title>Notes &amp; Lists</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
@@ -202,7 +202,7 @@ function renderHead() {
     const s = document.createElement('input');
     s.type = 'search';
     s.className = 'cx-search';
-    s.placeholder = 'Search checklist titles…';
+    s.placeholder = 'Search titles…';
     s.value = q;
     let t;
     s.oninput = () => { clearTimeout(t); t = setTimeout(() => {
@@ -277,7 +277,7 @@ function render() {
   if (openId != null) {
     const back = document.createElement('button');
     back.className = 'cx-back';
-    back.innerHTML = '<i class="fa-solid fa-arrow-left"></i> Back to all checklists';
+    back.innerHTML = '<i class="fa-solid fa-arrow-left"></i> Back to all notes &amp; lists';
     back.onclick = () => { openId = null; render(); };
     body.appendChild(back);
     body.appendChild(frameTo('checklistView.html?id=' + encodeURIComponent(openId)));
@@ -355,7 +355,7 @@ function browseRow(cl) {
 
   const glyph = document.createElement('i');
   glyph.className = 'cx-kind ' + (isNote ? 'note fa-regular fa-note-sticky' : 'fa-solid fa-list-check');
-  glyph.title = isNote ? 'Note' : 'Checklist';
+  glyph.title = isNote ? 'Note' : 'List';
   row.appendChild(glyph);
 
   const title = document.createElement('span');
@@ -436,7 +436,7 @@ async function loadBrowse(append) {
     E('cxBody').innerHTML = '';
     const box = document.createElement('div');
     box.className = 'cx-error';
-    box.textContent = 'Could not load checklists: ' + (err?.message || 'unknown error');
+    box.textContent = 'Could not load notes & lists: ' + (err?.message || 'unknown error');
     E('cxBody').appendChild(box);
   }
 }
