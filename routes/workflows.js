@@ -12,7 +12,7 @@ const {
   captureWorkflowInput,
 } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
-const { diffWorkflowSteps, validateWorkflowDraft } = require("../lib/versionDiff");
+const { diffWorkflowSteps, validateWorkflowDraft, retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC } = require("../lib/versionDiff");
 // JSON columns may come back from mysql2 as either a string (unparsed)
 // or a parsed object depending on driver version/config. Normalize to a
 // string for INSERT so mysql2 doesn't SET-expand objects.
@@ -342,6 +342,31 @@ async function validateStartWorkflowConfig(db, type, config) {
   const [[row]] = await db.query(`SELECT id FROM workflows WHERE id = ?`, [n]);
   if (!row) {
     return { status: 400, error: `start_workflow params.workflow_id ${n} does not exist in workflows table` };
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// error_policy retry-ladder budget — background-CPU slice, 2026-08.
+//
+// Workflow advances run request-bound (see routes/process_jobs.js), so
+// executeStep's inter-attempt sleeps are in-request wall-clock. Reject at
+// save time any policy whose ladder alone exceeds the shared budget
+// (RETRY_LADDER_BUDGET_SEC in lib/versionDiff.js — the publish gate applies
+// the same check, catching pre-existing drafts). Defaults mirror
+// workflow_engine.executeStep: max_retries||0, backoff_seconds||5.
+//
+// Returns null on success, or { status, error } on failure.
+// ─────────────────────────────────────────────────────────────
+function validateErrorPolicyBudget(error_policy) {
+  const ladderSec = retryLadderSleepSec(error_policy);
+  if (ladderSec > RETRY_LADDER_BUDGET_SEC) {
+    return {
+      status: 400,
+      error: `error_policy retry sleeps total ${ladderSec}s ` +
+             `(backoff_seconds × max_retries·(max_retries+1)/2) — exceeds the ` +
+             `${RETRY_LADDER_BUDGET_SEC}s in-request budget; lower max_retries or backoff_seconds`,
+    };
   }
   return null;
 }
@@ -1500,6 +1525,12 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
+  // Background-CPU slice — retry-ladder budget on error_policy
+  {
+    const v = validateErrorPolicyBudget(error_policy);
+    if (v) return res.status(v.status).json({ error: v.error });
+  }
+
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
@@ -1648,6 +1679,12 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
         error: `Step ${i + 1}: ${v.error}`,
         message: v.message,
       });
+    }
+
+    // Background-CPU slice — retry-ladder budget on error_policy
+    {
+      const v = validateErrorPolicyBudget(step.error_policy);
+      if (v) return res.status(v.status).json({ error: `Step ${i + 1}: ${v.error}` });
     }
 
     const stepNumber = step.stepNumber ?? (i + 1);
@@ -2169,6 +2206,12 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
+  // Background-CPU slice — retry-ladder budget on error_policy
+  {
+    const v = validateErrorPolicyBudget(error_policy);
+    if (v) return res.status(v.status).json({ error: v.error });
+  }
+
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
@@ -2264,6 +2307,14 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
   if (type === undefined && config === undefined && error_policy === undefined
       && label === undefined && note === undefined) {
     return res.status(400).json({ error: "At least one field is required" });
+  }
+
+  // Background-CPU slice — retry-ladder budget on error_policy (only when
+  // supplied; an absent key leaves the column unchanged and the publish
+  // gate re-checks the whole draft anyway).
+  if (error_policy !== undefined) {
+    const v = validateErrorPolicyBudget(error_policy);
+    if (v) return res.status(v.status).json({ error: v.error });
   }
 
   try {

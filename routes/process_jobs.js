@@ -137,11 +137,14 @@ async function recoverStuckJobs(db) {
   //
   // Old behavior flipped 'processing' → 'active' and stopped. That only
   // works for executions that ALSO have a pending workflow_resume job (the
-  // delayed path). Hook/manual/sequence-started executions advance in a
-  // detached background call with NO scheduled job — a bare flip stranded
-  // them at 'active' forever (observed 7×, 2026-03→2026-08: executions 16,
-  // 17, 850, 4850, 5060, 6702, 8336). Each flipped row now also gets an
-  // immediate workflow_resume job at its persisted step pointer.
+  // delayed path). Hook/manual/sequence-started executions used to advance
+  // in a detached background call with NO scheduled job — a bare flip
+  // stranded them at 'active' forever (observed 7×, 2026-03→2026-08:
+  // executions 16, 17, 850, 4850, 5060, 6702, 8336). Each flipped row now
+  // also gets an immediate workflow_resume job at its persisted step
+  // pointer. (Background-CPU slice, 2026-08: hook/sequence/WF→WF starts are
+  // now queued via scheduleResume rather than detached, so this recovery
+  // path mostly covers manual starts and mid-advance crashes.)
   //
   // Correctness of the resume step depends on advanceWorkflow persisting
   // current_step_number at every advance (shipped together with this
@@ -254,6 +257,26 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
   // STEP 2: Execute jobs one by one
   const results = [];
 
+  // Background-CPU slice (2026-08): workflow_resume / sequence_step /
+  // hook_retry executors used to be FULLY detached — their async IIFEs
+  // outlived res.json, so under Cloud Run's request-based billing they ran
+  // CPU-throttled (observed 20–45× slowdowns; vm-watchdog aborts on trivial
+  // custom_code). They still start immediately and run CONCURRENTLY with the
+  // rest of the batch (same as before), but their promises are now collected
+  // here and awaited before the response, keeping the request in flight —
+  // and the instance un-throttled — until the work finishes.
+  //
+  // Crash semantics unchanged: each executor updates its own job status on
+  // completion; a container death mid-work leaves the job 'running' for
+  // recoverStuckJobs. A Cloud Run request-timeout kill behaves like a crash
+  // (jobs recovered at the 15-min sweep) — timeoutSeconds must comfortably
+  // exceed the worst batch; see the retry-ladder budget in lib/versionDiff.js
+  // (300s/step) against the service's 900s timeout.
+  //
+  // Overlap is safe: the next minute's tick claims other pending jobs
+  // (FOR UPDATE SKIP LOCKED) while this request is still open.
+  const deferredWork = [];
+
   for (const job of jobs) {
     const start = Date.now();
     const attempt = job.attempts + 1;
@@ -262,7 +285,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
     try {
       // SPECIAL CASE: workflow_resume
       // NOTE: Job status is left as 'running' (set in STEP 1) and only
-      // updated to 'completed'/'failed' AFTER the detached executor finishes.
+      // updated to 'completed'/'failed' AFTER the executor finishes (awaited via deferredWork).
       // This ensures that if the container crashes mid-execution, recoverStuckJobs
       // resets the job to 'pending' and it will be re-run on the next poll.
       // Tradeoff: re-run can cause duplicate step execution (executor is not
@@ -311,11 +334,13 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
           continue; // next job in the batch
         }
 
-        // Advance in background (non-blocking).
+        // Advance concurrently with the rest of the batch, but AWAITED before
+        // the response (see deferredWork above) so the whole advance runs
+        // request-bound at full CPU instead of throttled after res.json.
         // The job's scheduled_jobs.status update happens AFTER advanceWorkflow
         // returns, so a mid-execution crash leaves status='running' for
         // recoverStuckJobs to recover.
-        (async () => {
+        deferredWork.push((async () => {
           try {
             const advanceResult = await advanceWorkflow(executionId, db);
             console.log(`[RESUME ADVANCE] Execution ${executionId} finished with ${advanceResult.status}`);
@@ -334,7 +359,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
               console.error(`[RESUME ADVANCE] Failed to mark job ${job.id} as failed:`, dbErr.message);
             }
           }
-        })();
+        })());
 
         results.push({
           id: job.id,
@@ -347,7 +372,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
       // SPECIAL CASE: sequence_step
       // See workflow_resume comment above — same pattern: status stays 'running'
-      // until detached executor finishes so a crash doesn't silently drop the step.
+      // until the executor (awaited via deferredWork) finishes so a crash doesn't silently drop the step.
       // No claim transaction is needed: there is no pre-dispatch DB write here, so
       // the previous empty begin/commit was a no-op and has been removed.
       if (job.type === 'sequence_step') {
@@ -356,8 +381,8 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
         console.log(`[SEQ STEP] enrollment=${enrollmentId} step=${stepId} n=${stepNumber ?? '-'}`);
 
-        // Execute in background (non-blocking)
-        (async () => {
+        // Execute concurrently, awaited before the response (deferredWork)
+        deferredWork.push((async () => {
           try {
             // stepNumber is the step's identity across content-only publishes
             // (executeStep resolves by it against the enrollment's pinned
@@ -379,7 +404,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
               console.error(`[SEQ STEP] Failed to mark job ${job.id} as failed:`, dbErr.message);
             }
           }
-        })();
+        })());
 
         results.push({
           id:     job.id,
@@ -392,7 +417,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
       // SPECIAL CASE: hook_retry
       // See workflow_resume comment above — same pattern: status stays 'running'
-      // until detached executor finishes so a crash doesn't silently drop the retry.
+      // until the executor (awaited via deferredWork) finishes so a crash doesn't silently drop the retry.
       // No claim transaction is needed: there is no pre-dispatch DB write here, so
       // the previous empty begin/commit was a no-op and has been removed.
       if (job.type === 'hook_retry') {
@@ -400,7 +425,8 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
         console.log(`[HOOK RETRY] execution=${data.execution_id} target=${data.target_id}`);
 
-        (async () => {
+        // Execute concurrently, awaited before the response (deferredWork)
+        deferredWork.push((async () => {
           try {
             const hookService = require('../services/hookService');
             await hookService.executeRetry(db, data);
@@ -420,7 +446,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
               console.error(`[HOOK RETRY] Failed to mark job ${job.id} as failed:`, dbErr.message);
             }
           }
-        })();
+        })());
 
         results.push({
           id:     job.id,
@@ -534,6 +560,12 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       }
     }
   }
+
+  // Hold the request open until every deferred executor finishes — this is
+  // what keeps the instance un-throttled for the whole batch. allSettled,
+  // not all: each executor already handles its own errors and never rejects,
+  // but a future rethrow must not skip the heartbeat/response.
+  await Promise.allSettled(deferredWork);
 
   stampHeartbeat(db); // fire-and-forget — poll cycle ran (even if some jobs failed)
   res.json({ processed: jobs.length, results });
