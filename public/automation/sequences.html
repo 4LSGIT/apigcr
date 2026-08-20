@@ -1333,7 +1333,7 @@ function renderSeqCanvas() {
 function seqStepCardHTML(step, idx) {
   const cfg = step.action_config || {}, timing = step.timing || {};
   const isActive = SEQ.activeStepIdx === idx;
-  const typeIcons = { sms: 'fa-message', email: 'fa-envelope', task: 'fa-list-check', internal_function: 'fa-bolt', webhook: 'fa-globe' };
+  const typeIcons = { sms: 'fa-message', email: 'fa-envelope', task: 'fa-list', internal_function: 'fa-bolt', webhook: 'fa-globe' };
   const main = cfg.function_name || step.action_type || 'step';
   const sub = cfg.params?.message ? cfg.params.message.slice(0, 40) + (cfg.params.message.length > 40 ? '…' : '') : cfg.params?.to || '';
   const badges = [];

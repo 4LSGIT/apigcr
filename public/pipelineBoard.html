@@ -58,8 +58,10 @@
     }
     html, body { height: 100%; }
     body { margin: 0; padding: 12px; background: var(--pb-bg); color: var(--pb-fg); display: flex; flex-direction: column; box-sizing: border-box; }
+    /* Banner title row (matches the shell's other tabs). flex-shrink:0 keeps
+       it off the board's flex:1 height budget. */
+    .pb-title { margin: 0 0 8px; text-align: center; flex-shrink: 0; }
     .pb-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; flex-shrink: 0; }
-    .pb-top h2 { margin: 0; }
     .pb-top label { font-size: 13px; white-space: nowrap; cursor: pointer; }
     .pb-top select, .pb-top input[type="text"] {
       padding: 6px 8px; font-size: 13px;
@@ -131,8 +133,9 @@
   Column counts read "visible / total" while filters hide anything.
 ═══════════════════════════════════════════════════════════════ -->
 
+<h1 class="pb-title"><i class="fa-solid fa-table-columns"></i> Pipeline Board <i class="fa-solid fa-table-columns"></i></h1>
+
 <div class="pb-top">
-  <h2><i class="fa-solid fa-table-columns"></i> Pipeline Board</h2>
   <select id="pb-template" onchange="onTemplateChange()"></select>
   <input type="text" id="pb-filter" placeholder="Filter cards…" oninput="applyFilter()" style="width:160px">
   <label title="Hides Unstaged cases opened before the cutoff (staged cases always show)">Opened:

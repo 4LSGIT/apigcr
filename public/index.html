@@ -580,7 +580,7 @@
     <div class="hdr-right" id="hdrUserArea" style="display:none">
       <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
       <button class="hdr-btn" onclick="openTasksTab({assigned_to:user.user,status:'Incomplete',defer:'active'})" title="My Tasks">
-        <i class="fa-solid fa-list-check"></i><span>My Tasks</span><span class="hdr-badge" id="hdrTasksBadge" style="display:none">0</span>
+        <i class="fa-solid fa-list"></i><span>My Tasks</span><span class="hdr-badge" id="hdrTasksBadge" style="display:none">0</span>
       </button>
       <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">
         <i class="fa-solid fa-moon" id="themeIcon"></i>
@@ -652,7 +652,7 @@
       <i class="fa-solid fa-gear"></i><span>Settings</span>
     </div>
     <div class="sb-item" id="sbAdmin" data-tab="tabAdmin" onclick="openMainTab('tabAdmin')" style="display:none" title="Admin">
-      <i class="fa-solid fa-crown"></i><span>Admin</span>
+      <i class="fa-solid fa-user-secret"></i><span>Admin</span>
     </div>
     <div class="sb-item" data-tab="tabMore" onclick="openMainTab('tabMore')" title="More Features">
       <i class="fa-solid fa-grip"></i><span>More Features</span>
@@ -694,7 +694,7 @@
     </button>
     <div style="height: 5px"></div>
     <button class="home-btn" onclick="openMainTab('tabBills')">
-      <i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br /><br />Bills
+      <i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br /><br />Billing
     </button>
     <button class="home-btn" onclick="openMainTab('tabPipeline')">
       <i class="fa-solid fa-table-columns fa-2xl"></i><br /><br />Pipeline Board
@@ -731,7 +731,7 @@
   </div>
 
   <div id="tabBills" class="tab-main">
-    <h1>Billing</h1>
+    <h1><i class="fa-solid fa-file-invoice-dollar"></i> Billing <i class="fa-solid fa-file-invoice-dollar"></i></h1>
     <p>Was this page intentionally left blank?</p>
   </div>
 
@@ -749,7 +749,7 @@
 
 
   <div id="tabCases" class="tab-main">
-    <h1>This is the Cases Tab</h1>
+    <h1><i class="fa-solid fa-landmark"></i> Cases <i class="fa-solid fa-landmark"></i></h1>
     <span><button onclick="NewCaseForm()">
         <i class="fa-solid fa-folder-plus"></i> New Case
       </button>
@@ -897,7 +897,7 @@
   </script>
 
   <div id="tabContacts" class="tab-main">
-    <h1>This is Contacts Tab</h1>
+    <h1><i class="fa-solid fa-users"></i> Contacts <i class="fa-solid fa-users"></i></h1>
     <span><button onclick="newContact()">
         <i class="fa-solid fa-user-plus"></i> New Contact
       </button>
@@ -1021,7 +1021,7 @@
   </script>
 
 <div id="tabAppts" class="tab-main">
-    <h1>Appointments</h1>
+    <h1><i class="fa-solid fa-calendar-days"></i> Appointments <i class="fa-solid fa-calendar-days"></i></h1>
     <span>
       <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
       <button id="tabApptsNew" onclick="newApptDialog({ contactPick: true, casePick: true, onCreated: () => tabApptsGet(0) })"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
@@ -1082,7 +1082,7 @@
   </div>
 
   <div id="tabEvents" class="tab-main">
-    <h1>Events</h1>
+    <h1><i class="fa-solid fa-flag"></i> Events <i class="fa-solid fa-flag"></i></h1>
     <span>
       <button id="tabEventsNew" onclick="newEventDialog({ linkPick: true, onSaved: () => tabEventsGet(0) })"><i class="fa-solid fa-flag"></i> New Event</button>
       Type:
@@ -1765,6 +1765,7 @@
   </script>
 
   <div id="tabLogs" class="tab-main">
+    <h1><i class="fa-solid fa-box-archive"></i> Logs <i class="fa-solid fa-box-archive"></i></h1>
     <span>Query:
       <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}" />
       Type:
@@ -1973,7 +1974,7 @@
 
 
 <div id="tabMore" class="tab-main">
-  <h2>More Features</h2>
+  <h1><i class="fa-solid fa-grip"></i> More Features <i class="fa-solid fa-grip"></i></h1>
   <!-- data-hover-anim: Font Awesome animation class(es) played on the icon while
        the pointer is over the button (see the hover-animation script below).
        Tune speed/axis per button with inline --fa-* custom properties.
@@ -2165,8 +2166,8 @@
     }
 </script>
   
-<div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-crown"></i>'>
-  <h2>Admin</h2>
+<div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-user-secret"></i>'>
+  <h1><i class="fa-solid fa-user-secret"></i> Admin <i class="fa-solid fa-user-secret"></i></h1>
   <!-- data-hover-anim: see the More Features grid / hover-animation script below. -->
   <button class="big-button" onclick="etchSwal()" data-hover-anim="fa-shake" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-pen-ruler fa-2xl"></i><br><br>Etch</button>
   <button class="big-button" data-target="readonlyKeysDiv" data-exclusive-group="admin" data-hover-anim="fa-fade" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-eye fa-2xl"></i><br><br>Readonly Keys (SU)</button>

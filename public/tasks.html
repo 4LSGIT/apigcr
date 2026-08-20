@@ -55,12 +55,20 @@
     body.dark .logTable tr:hover, body.dark .logTable tr:hover td { background: #2a313d !important; }
 
     /* ── Toolbar ─────────────────────────────────────────────────────────── */
-    .tk-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+    /* Shell mode: 3-column grid (1fr auto 1fr) so the banner h1 sits dead
+       centre regardless of the Create Task button's width — column 3 is left
+       empty as the counterweight. Entity mode reverts to the old flex row:
+       its heading is a sentence ("Tasks linked to this case"), not a banner. */
+    .tk-top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .tk-top > button { justify-self: start; }
     .tk-top h2 { margin: 0 6px 0 0; font-size: 20px; }
+    .tk-title { margin: 0; /*font-size: 22px;*/ white-space: nowrap; }
     .tk-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
     .tk-filters label { color: var(--tk-muted); white-space: nowrap; }
     .tk-filters select, .tk-filters input { padding: 4px 6px; }
+    body.entity .tk-top { display: flex; flex-wrap: wrap; }
     body.entity .shell-only { display: none !important; }
+    body:not(.entity) .entity-only { display: none !important; }
 
     /* Preset chips (shell mode) */
     .tk-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -142,14 +150,20 @@
     #tasksTableFoot .log-pagination-ellipsis { color: var(--tk-muted); padding: 0 0.1em; }
     #tasksTableFoot .logPageInput {
       width: 4.5em; text-align: center; font-weight: bold; padding: 0.15em 0.3em;
-      border: 1px solid var(--tk-border); border-radius: 3px; -moz-appearance: textfield;
+      border: 1px solid var(--tk-border); border-radius: 3px; -moz-appearance: textfield; appearance: textfield;
     }
     #tasksTableFoot .logPageInput::-webkit-outer-spin-button,
-    #tasksTableFoot .logPageInput::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    #tasksTableFoot .logPageInput::-webkit-inner-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
 
     /* ── Responsive: progressive column hiding (B-7) ─────────────────────── */
     @media (max-width: 900px) { .col-by, .col-created { display: none; } }
-    @media (max-width: 640px) { .col-to, .col-link { display: none; } body { padding: 8px 4px; } }
+    @media (max-width: 640px) {
+      .col-to, .col-link { display: none; } body { padding: 8px 4px; }
+      /* Too narrow to centre a banner beside the button — fall back to a
+         wrapping row. */
+      .tk-top { display: flex; flex-wrap: wrap; }
+      .tk-title { font-size: 18px; }
+    }
 
     /* Entity mode: narrower column set (B-6/B-14) */
     body.entity .col-by, body.entity .col-link, body.entity .col-created { display: none; }
@@ -215,9 +229,13 @@
 <div id="tkError" style="display:none;padding:24px;color:#b91c1c;font-size:15px"></div>
 
 <div id="tkMain" style="display:none">
+  <!-- DOM order is entity order (heading, then button); in shell mode the h2
+       is hidden so grid auto-placement puts the button in col 1 and the h1
+       banner in col 2. -->
   <div class="tk-top">
-    <h2 id="tkHeading">Tasks</h2>
+    <h2 id="tkHeading" class="entity-only">Tasks</h2>
     <button onclick="newTaskDialog()"><i class="fa-solid fa-plus"></i> Create Task</button>
+    <h1 class="tk-title shell-only"><i class="fa-solid fa-list"></i> Tasks <i class="fa-solid fa-list"></i></h1>
   </div>
 
   <div class="tk-presets shell-only">

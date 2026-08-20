@@ -31,7 +31,10 @@
     font-size: 13px;
   }
   .page { max-width: 860px; margin: 0 auto; padding: 14px 16px 60px; }
-  h1 { font-size: 17px; font-weight: 600; margin: 4px 0 14px; }
+  /* Tab banner: centred at the default h1 scale so it reads like the shell's
+     other tabs (Cases, Tasks, Pipeline Board) rather than this page's own
+     compact 13.5px section heads. */
+  h1 { text-align: center; margin: 4px 0 14px; }
 
   /* Custom tab editor */
   .icon-grid {
@@ -175,7 +178,7 @@
 </head>
 <body>
 <div class="page">
-  <h1>Settings</h1>
+  <h1><i class="fa-solid fa-gear"></i> Settings <i class="fa-solid fa-gear"></i></h1>
   <div id="loading" class="loading">Loading…</div>
   <div id="content" style="display:none">
 
