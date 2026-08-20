@@ -1347,11 +1347,19 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   // survivor's same-tag list and drop the emptied loser list. UNTAGGED lists
   // are deliberately left alone — they're staff working lists and the survivor
   // legitimately ends up with both.
+  //
+  // s.kind = l.kind (S1) is load-bearing, not symmetry. uq_link_kind_tag now
+  // keys on kind too, so a loser NOTE tagged 'docs_needed' repointing onto a
+  // survivor that holds a same-tagged CHECKLIST no longer violates anything —
+  // there is nothing to consolidate. Without this clause the join would still
+  // match, fold zero items across (a note has none), and DELETE the note. A
+  // silent loss of its body, with no error and no count to notice.
   const CONSOLIDATE_FIND_SQL =
     `SELECT l.id AS loser_list, s.id AS survivor_list, l.tag
        FROM checklists l
        JOIN checklists s
          ON s.link_type = 'case' AND s.link = ? AND s.tag = l.tag
+        AND s.kind = l.kind
       WHERE l.link_type = 'case' AND l.link = ? AND l.tag IS NOT NULL`;
 
   // case_relate dedupe count (rows that would violate the uniqueness trigger

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-19T16:00:39.864Z
+-- Generated: 2026-08-20T10:04:47.401Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:b110c2d70c61be7637edc3b9c6351dd9
+-- Fingerprint: sha256:6478f9f73ea165caa5dae99d35763f17
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -647,6 +647,8 @@ DROP TABLE IF EXISTS `checklists`;
 CREATE TABLE `checklists` (
   `id` int NOT NULL,
   `title` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `kind` enum('checklist','note') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'checklist',
+  `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `status` enum('incomplete','complete') COLLATE utf8mb4_general_ci DEFAULT 'incomplete',
   `created_date` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_date` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -3399,7 +3401,7 @@ ALTER TABLE `checkitems1`
 --
 ALTER TABLE `checklists`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uq_link_tag` (`link_type`,`link`,`tag`),
+  ADD UNIQUE KEY `uq_link_kind_tag` (`link_type`,`link`,`kind`,`tag`),
   ADD KEY `idx_link` (`link_type`,`link`);
 
 --

@@ -326,6 +326,7 @@ ref/ORIGIN_SEPARATION_ROLLOUT.md
 ref/ORIGIN_SEPARATION_WORKER_PROMPT.md
 ref/RIDER_D_VIDEO_CONTACT_PARAM_OPTIONS.md
 ref/RIDER_E_PUBLIC_SURFACE_SWEEP.md
+ref/S1_notes_migration.sql
 ref/SCHEMA_CONVENTIONS.md
 ref/X2_DESIGN_AMENDMENTS.md
 ref/database.sql
@@ -589,6 +590,7 @@ tests/aimatch.service.test.js
 tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/caseId.test.js
+tests/checklists.s1notes.test.js
 tests/control.flow.test.js
 tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js

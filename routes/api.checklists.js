@@ -6,7 +6,7 @@
  * GET    /checklists                          list + filters + item counts (see route)
  * GET    /checklists/:id                      single checklist + items
  * POST   /checklists                          create
- * PATCH  /checklists/:id                      update title/tag/link/link_type
+ * PATCH  /checklists/:id                      update title/tag/link/link_type/body/status
  * DELETE /checklists/:id                      delete (cascades items)
  * POST   /checklists/:id/items                add item
  * PATCH  /checkitems/:id                      update item (name, status)
@@ -36,11 +36,31 @@
  * via mayWriteTag(). Staff edit titles; tags are set by machines. Surfaces
  * should render the tag as an immutable badge, never an input.
  *
- * UNIQUENESS: UNIQUE KEY uq_link_tag (link_type, link, tag) allows at most one
- * TAGGED checklist per entity per tag, while leaving untagged lists unlimited
- * (MySQL exempts rows with a NULL in the key). POST and PATCH surface a
- * violation as 409, not 500. upsert-items instead RECOVERS from it — a
- * concurrent caller winning the insert race is not an error there.
+ * KIND (S1): every row is a 'checklist' (title + checkitems) or a 'note'
+ * (title + freeform `body`, never any items). ONE table, ONE route, ONE board
+ * — the Google Keep model — discriminated by `kind`. The two shapes are
+ * mutually exclusive and the routes enforce it in both directions: a note
+ * rejects `items`, a checklist rejects `body`.
+ *
+ * That split inverts the status rule. A checklist's status is DERIVED from its
+ * items (lib/checklistStatus.js); a note has no items, so its status is
+ * MANUAL — PATCH writes it directly, and lib/checklistStatus.js refuses to
+ * recompute it. Each route rejects the other kind's write with a message
+ * naming the reason. `kind` itself is immutable after creation: converting a
+ * note to a list or back would strand a body or a set of items, so PATCH 400s
+ * on it rather than choosing which data to lose.
+ *
+ * Manual note status deliberately emits NO domain event. `note.completed` is
+ * additive later and breaking to remove — it stays out until something needs
+ * it.
+ *
+ * UNIQUENESS: UNIQUE KEY uq_link_kind_tag (link_type, link, kind, tag) allows
+ * at most one TAGGED row per entity per KIND per tag, while leaving untagged
+ * rows unlimited (MySQL exempts rows with a NULL in the key). A case may
+ * therefore hold both a tag='docs_needed' checklist and a tag='docs_needed'
+ * note. POST and PATCH surface a violation as 409, not 500. upsert-items
+ * instead RECOVERS from it — a concurrent caller winning the insert race is
+ * not an error there.
  *
  * mayDetachPersonal() is deliberately NOT exported. Test it the way
  * tests/portalDocsRoutes.js tests its route: mount this router in a real
@@ -129,6 +149,11 @@ async function getChecklistWithItems(db, checklistId) {
 // empty list, which reads as "you have no checklists" rather than "typo".
 const LINK_TYPES = ['contact', 'case', 'bill', 'appt', 'task', 'user'];
 const STATUSES   = ['incomplete', 'complete'];
+// Row shape (S1). 'checklist' = title + checkitems, status derived.
+// 'note' = title + freeform body, no items ever, status manual. Omitted on
+// create defaults to 'checklist' — both here and in the column default, so a
+// caller that predates notes is unaffected.
+const KINDS      = ['checklist', 'note'];
 
 // Whitelisted ORDER BY — never interpolate client text into the clause.
 // Default is created_asc: case.html renders checklists in creation order and
@@ -217,26 +242,42 @@ function denyTag(res) {
 }
 
 /**
- * UNIQUE KEY uq_link_tag (link_type, link, tag) enforces "at most one tagged
- * checklist per entity per tag". MySQL treats a row as non-duplicate when ANY
- * column of a unique key is NULL, so untagged lists stay unlimited per entity
- * — which is exactly the invariant we want and is why the constraint is on the
- * three columns rather than on `link` alone (the old, since-dropped index).
+ * UNIQUE KEY uq_link_kind_tag (link_type, link, kind, tag) enforces "at most
+ * one tagged row per entity per KIND per tag". MySQL treats a row as
+ * non-duplicate when ANY column of a unique key is NULL, so untagged rows stay
+ * unlimited per entity — which is exactly the invariant we want and is why the
+ * constraint is on the four columns rather than on `link` alone (the old,
+ * since-dropped index).
+ *
+ * `kind` joined the key in S1, replacing uq_link_tag (link_type, link, tag).
+ * The new key is strictly WEAKER — same columns plus one — so it permits
+ * everything the old one did, and additionally lets a note and a checklist
+ * carry the SAME tag on the same entity. That pairing is the point: a case's
+ * docs_needed checklist and a docs_needed note are different objects.
  *
  * PRIMARY is auto-increment, so any ER_DUP_ENTRY on a checklists write is this
- * key. The sqlMessage check is belt-and-braces: MySQL 8 renders the key as
- * 'checklists.uq_link_tag' and 5.7 as 'uq_link_tag', so match on the substring.
+ * key. The errno check is belt-and-braces: MySQL 8 renders the key as
+ * 'checklists.uq_link_kind_tag' and 5.7 as 'uq_link_kind_tag', so nothing here
+ * matches on the name.
  */
 function isDupTag(err) {
   return !!err && (err.code === 'ER_DUP_ENTRY' || err.errno === 1062);
 }
 
-/** Minimal parent row for a checkitem — id + the two gate columns. */
+/**
+ * Minimal parent row for a checkitem — id + the two gate columns.
+ *
+ * `cl.kind` rides along (S1) so an item route can reason about the parent's
+ * shape without a second round trip. In practice a checkitem's parent is
+ * ALWAYS kind='checklist' — notes are refused an item at creation time by both
+ * POST /checklists (rejects `items`) and POST /checklists/:id/items (rejects a
+ * note parent) — so this is a diagnostic handle, not a live branch.
+ */
 async function getItemParent(db, itemId) {
   const [[row]] = await db.query(
     `SELECT ci.id AS item_id, ci.status AS item_status,
             cl.id AS checklist_id, cl.status AS checklist_status,
-            cl.link_type, cl.link, cl.tag, cl.title
+            cl.link_type, cl.link, cl.tag, cl.title, cl.kind
        FROM checkitems ci
        JOIN checklists cl ON cl.id = ci.checklist_id
       WHERE ci.id = ?`,
@@ -257,16 +298,24 @@ async function getItemParent(db, itemId) {
  *   unlinked=1  link IS NULL. Overrides link/link_type — the "loose lists"
  *               bucket on the index page.
  *   tag         machine key. `tag=none` matches tag IS NULL.
- *   status      incomplete | complete (the auto-computed parent status)
+ *   status      incomplete | complete (derived for a checklist, manual for a
+ *               note — see lib/checklistStatus.js)
+ *   kind        checklist | note. OMITTED = both, which is what the merged
+ *               board wants; the filter exists for a surface that renders one
+ *               shape only. 400 on anything else, same as link_type/status.
  *   created_by  user id
  *   q           substring match on title
  *   order       one of ORDERS (default created_asc — case.html depends on it)
  *   limit       default 200, max 1000
  *   offset      default 0
- *   include     `items` bulk-loads every item (single IN query, no N+1)
+ *   include     `items` bulk-loads every item (single IN query, no N+1).
+ *               Needs no kind-awareness: a note has no checkitems rows, so the
+ *               `grouped[cl.id] || []` fallback below hands it [] naturally.
  *
  * Every row carries items_total / items_done so an index page can draw
- * progress without pulling ~1.9k item rows it will never render.
+ * progress without pulling ~1.9k item rows it will never render. Both are 0
+ * on a note — a renderer should branch on `kind`, not on a zero count, since
+ * an empty checklist reads identically.
  *
  * Counts are correlated subqueries, NOT a LEFT JOIN + GROUP BY. The session
  * sql_mode here lacks ONLY_FULL_GROUP_BY, so `SELECT cl.* ... GROUP BY cl.id`
@@ -280,7 +329,7 @@ async function getItemParent(db, itemId) {
 router.get('/checklists', jwtOrApiKey, async (req, res) => {
   try {
     const {
-      link_type, link, unlinked, tag, status, created_by, q,
+      link_type, link, unlinked, tag, status, kind, created_by, q,
       order, limit, offset, include,
     } = req.query;
 
@@ -328,6 +377,18 @@ router.get('/checklists', jwtOrApiKey, async (req, res) => {
         });
       }
       where.push('cl.status = ?'); params.push(status);
+    }
+
+    // Omitted = BOTH kinds. The merged board is the default surface, so the
+    // absence of this param must not silently mean 'checklist'.
+    if (kind !== undefined && kind !== '') {
+      if (!KINDS.includes(kind)) {
+        return res.status(400).json({
+          status: 'error',
+          message: `kind must be one of: ${KINDS.join(', ')}`,
+        });
+      }
+      where.push('cl.kind = ?'); params.push(kind);
     }
 
     if (created_by !== undefined && created_by !== '') {
@@ -426,10 +487,62 @@ router.get('/checklists/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
-// POST /checklists
+/**
+ * POST /checklists
+ *
+ * Body: { title, kind?, body?, items?, link?, link_type?, tag? }
+ *
+ * `kind` defaults to 'checklist', so every caller that predates notes keeps
+ * working unchanged. The two shapes are mutually exclusive and BOTH directions
+ * are enforced:
+ *
+ *   kind='note'       body allowed (nullable) · items REJECTED
+ *   kind='checklist'  items allowed           · body  REJECTED
+ *
+ * Rejecting a stray body on a checklist is not pedantry — it would be a column
+ * no surface renders and no route returns to the top of a card, i.e. data that
+ * exists and is invisible. Fail at the door instead.
+ */
 router.post('/checklists', jwtOrApiKey, async (req, res) => {
-  const { title, link, link_type, tag, items } = req.body;
+  const { title, kind, body, link, link_type, tag, items } = req.body;
   if (!title?.trim()) return res.status(400).json({ status: 'error', message: 'title is required' });
+
+  if (kind != null && kind !== '' && !KINDS.includes(kind)) {
+    return res.status(400).json({
+      status: 'error',
+      message: `kind must be one of: ${KINDS.join(', ')}`,
+    });
+  }
+  const kindVal = (kind == null || kind === '') ? 'checklist' : kind;
+
+  // Shape exclusivity, enforced in BOTH directions. Checked before the tag
+  // gate on purpose: a malformed shape is malformed no matter who sent it, and
+  // a 403 about tags would be a misleading answer to "I sent items to a note".
+  //
+  // Presence of the KEY is the test, not its contents — `items: []` on a note
+  // still 400s. An empty array would be a harmless no-op to execute, but it
+  // signals checklist-shaped intent from a caller that has misunderstood which
+  // kind it is creating, and swallowing that produces a note the caller
+  // believes has items. Explicit null is the one spelling that passes: it
+  // means "not supplied", same as omitting it.
+  if (kindVal === 'note' && items !== undefined && items !== null) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'A note holds freeform text, not items. Send `body`, or create it with kind="checklist".',
+    });
+  }
+  if (kindVal === 'checklist' && body !== undefined && body !== null) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'A checklist holds items, not a body. Send `items`, or create it with kind="note".',
+    });
+  }
+  // TEXT column: anything non-string that survives to the bind lands as
+  // "[object Object]" or a coerced number. Cheaper to refuse it here than to
+  // explain it later.
+  if (body !== undefined && body !== null && typeof body !== 'string') {
+    return res.status(400).json({ status: 'error', message: 'body must be a string or null.' });
+  }
 
   if (link_type != null && link_type !== '' && !LINK_TYPES.includes(link_type)) {
     return res.status(400).json({
@@ -453,11 +566,17 @@ router.post('/checklists', jwtOrApiKey, async (req, res) => {
 
   try {
     const [result] = await req.db.query(
-      'INSERT INTO checklists (title, created_by, link, link_type, tag) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO checklists (title, kind, body, created_by, link, link_type, tag) VALUES (?, ?, ?, ?, ?, ?, ?)',
       // `|| 0` matches upsert-items. created_by is tinyint NOT NULL and
       // api_key callers carry no userId — mysql2 throws on an undefined bind
       // param, so without this every workflow-created checklist 500s.
-      [title.trim(), req.auth.userId || 0, link || null, link_type || null, tag || null]
+      //
+      // `body ?? null` NOT `body || null`: an empty-string body on a note is a
+      // legitimate value (a title-only note), and `||` would rewrite it to
+      // NULL. The guards above already proved body is a string or nullish, and
+      // that it is absent entirely on a checklist.
+      [title.trim(), kindVal, body ?? null,
+       req.auth.userId || 0, link || null, link_type || null, tag || null]
     );
     const checklistId = result.insertId;
 
@@ -476,13 +595,13 @@ router.post('/checklists', jwtOrApiKey, async (req, res) => {
   } catch (err) {
     if (isDupTag(err)) {
       // An untagged POST cannot actually collide (NULL exempts the row from
-      // uq_link_tag), but don't interpolate `undefined` into a user-facing
+      // uq_link_kind_tag), but don't interpolate `undefined` into a user-facing
       // string on the strength of that reasoning.
       const which = tag ? `tagged "${tag}"` : 'with that tag';
       return res.status(409).json({
         status: 'error',
-        message: `A checklist ${which} already exists on that ${link_type || 'entity'}. `
-               + 'Only one tagged checklist is allowed per entity per tag.',
+        message: `A ${kindVal} ${which} already exists on that ${link_type || 'entity'}. `
+               + 'Only one tagged row is allowed per entity per kind per tag.',
       });
     }
     console.error('POST /checklists error:', err);
@@ -490,17 +609,66 @@ router.post('/checklists', jwtOrApiKey, async (req, res) => {
   }
 });
 
-// PATCH /checklists/:id
+/**
+ * PATCH /checklists/:id
+ *
+ * Body: { title?, tag?, link?, link_type?, body?, status? }
+ *
+ * `body` and `status` are NOTE-ONLY, and both are validated against the STORED
+ * row rather than anything the client claims:
+ *
+ *   body    a checklist has no body column worth writing — see POST.
+ *   status  a checklist's status is DERIVED (lib/checklistStatus.js) and the
+ *           next item change overwrites whatever you set, so accepting the
+ *           write would be a lie. A note has no items, so manual is the only
+ *           mechanism it can have.
+ *
+ * `kind` is REJECTED outright. Flipping a note to a checklist strands its
+ * body; flipping a checklist to a note strands its items. Neither is a
+ * migration this route is entitled to choose. Delete and recreate.
+ *
+ * A manual note status change emits NO domain event. `note.completed` is out
+ * of scope for S1 — additive later, breaking to remove.
+ */
 router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
-  const { title, tag, link, link_type } = req.body;
+  const { title, tag, link, link_type, body, status, kind } = req.body;
+
+  // Immutable — refused before the row is even loaded, since no stored value
+  // could make it legal.
+  if (kind !== undefined) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'kind cannot be changed after creation — converting a note to a checklist '
+             + 'would strand its body, and the reverse would strand its items. '
+             + 'Delete and recreate instead.',
+    });
+  }
+
   const fields = [], params = [];
   if (title     !== undefined) { fields.push('title = ?');     params.push(title); }
   if (tag       !== undefined) { fields.push('tag = ?');       params.push(tag); }
   if (link      !== undefined) { fields.push('link = ?');      params.push(link); }
   if (link_type !== undefined) { fields.push('link_type = ?'); params.push(link_type); }
+  // `body ?? null` and not `body || null` — an empty-string body is a
+  // legitimate "cleared note", and `||` would silently store NULL instead.
+  if (body      !== undefined) { fields.push('body = ?');      params.push(body ?? null); }
+  if (status    !== undefined) { fields.push('status = ?');    params.push(status); }
   if (!fields.length) return res.status(400).json({ status: 'error', message: 'Nothing to update' });
 
   if (tag !== undefined && !mayWriteTag(req.auth)) return denyTag(res);
+
+  if (body !== undefined && body !== null && typeof body !== 'string') {
+    return res.status(400).json({ status: 'error', message: 'body must be a string or null.' });
+  }
+
+  // Vocab check runs here, before the row load, so a bad value fails the same
+  // way whether the target is a note or a checklist.
+  if (status !== undefined && !STATUSES.includes(status)) {
+    return res.status(400).json({
+      status: 'error',
+      message: `status must be one of: ${STATUSES.join(', ')}`,
+    });
+  }
 
   if (link_type !== undefined && link_type !== null && link_type !== ''
       && !LINK_TYPES.includes(link_type)) {
@@ -513,11 +681,28 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
   try {
     // Load first: the gate needs the CURRENT owner, and re-homing needs the
     // TARGET checked too — otherwise anyone could PATCH their own list onto
-    // another user, or PATCH someone else's away from them.
+    // another user, or PATCH someone else's away from them. `kind` rides on
+    // the SAME select (S1) rather than costing a second round trip.
     const [[current]] = await req.db.query(
-      'SELECT id, link_type, link FROM checklists WHERE id = ?', [req.params.id]
+      'SELECT id, link_type, link, kind FROM checklists WHERE id = ?', [req.params.id]
     );
     if (!current) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
+
+    // Kind-gated fields — judged on the STORED kind, which is the only
+    // authority (PATCH cannot change it, see above).
+    if (body !== undefined && current.kind !== 'note') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A checklist holds items, not a body. Only a note has a body.',
+      });
+    }
+    if (status !== undefined && current.kind !== 'note') {
+      return res.status(400).json({
+        status: 'error',
+        message: "A checklist's status is derived from its items and cannot be set directly. "
+               + 'Complete or reopen its items instead.',
+      });
+    }
 
     const nextType = link_type !== undefined ? link_type : current.link_type;
     const nextLink = link      !== undefined ? link      : current.link;
@@ -543,12 +728,12 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
     res.json(checklist);
   } catch (err) {
     if (isDupTag(err)) {
-      // Re-homing a tagged list onto an entity that already has that tag, or
-      // setting a tag that collides where the list already sits.
+      // Re-homing a tagged row onto an entity that already has that tag on the
+      // same kind, or setting a tag that collides where the row already sits.
       return res.status(409).json({
         status: 'error',
-        message: 'The target already has a checklist with that tag. '
-               + 'Only one tagged checklist is allowed per entity per tag.',
+        message: 'The target already has a row of that kind with that tag. '
+               + 'Only one tagged row is allowed per entity per kind per tag.',
       });
     }
     console.error('PATCH /checklists/:id error:', err);
@@ -582,9 +767,22 @@ router.post('/checklists/:id/items', jwtOrApiKey, async (req, res) => {
 
   try {
     const [[parent]] = await req.db.query(
-      'SELECT id, link_type, link FROM checklists WHERE id = ?', [req.params.id]
+      'SELECT id, link_type, link, kind FROM checklists WHERE id = ?', [req.params.id]
     );
     if (!parent) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
+
+    // Notes never hold items. Defence in depth alongside the guard in
+    // lib/checklistStatus.js: that one stops a note's status being recomputed,
+    // THIS one stops the orphan checkitem row existing at all. Without it a
+    // note would silently acquire items that no surface renders and that
+    // getItemParent would happily hand back.
+    if (parent.kind === 'note') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'That is a note, not a checklist — notes hold freeform text, not items. '
+               + 'Edit its body instead.',
+      });
+    }
 
     // `position` may legitimately be 0. The old `if (!pos)` treated an
     // explicit 0 as "not supplied" and silently pushed the item to the end.
@@ -740,9 +938,18 @@ router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
     // in checklistView.html. The title clause is a transition fallback for rows
     // created between the backfill and this deploy; drop it once tag coverage
     // is 100% (SELECT COUNT(*) FROM checklists WHERE link_type='case' AND tag IS NULL).
+    //
+    // kind = 'checklist' is NOT optional (S1). uq_link_kind_tag now permits a
+    // note tagged 'docs_needed' alongside the real docs list, and a staff note
+    // titled "Docs Needed" needs no tag at all to match the title fallback.
+    // Either one selected here would become the upsert target: this route
+    // would then write checkitems onto a note, and portalDocsService /
+    // docReq.html / the public unauthenticated docs GET would all read a
+    // DIFFERENT row and render nothing. The client portal goes blank silently.
     const FIND_DOCS_SQL =
       `SELECT id, tag FROM checklists
         WHERE link_type = 'case' AND link = ?
+          AND kind = 'checklist'
           AND (tag = 'docs_needed' OR title = 'Docs Needed')
         ORDER BY (tag = 'docs_needed') DESC, id ASC
         LIMIT 1`;
@@ -751,15 +958,19 @@ router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
 
     if (!checklist) {
       try {
+        // `kind` is stated, not left to the column default. The default is
+        // the right value today, but this INSERT is the one that must agree
+        // with the FIND_DOCS_SQL predicate above forever — spelling it out
+        // means the pair can be read together and changed together.
         const [result] = await req.db.query(
-          `INSERT INTO checklists (title, created_by, link, link_type, tag) VALUES ('Docs Needed', ?, ?, 'case', 'docs_needed')`,
+          `INSERT INTO checklists (title, kind, created_by, link, link_type, tag) VALUES ('Docs Needed', 'checklist', ?, ?, 'case', 'docs_needed')`,
           [req.auth.userId || 0, case_id]
         );
         checklist = { id: result.insertId };
       } catch (err) {
         if (!isDupTag(err)) throw err;
         // Lost a race: a concurrent upsert-items for this case inserted between
-        // our SELECT and our INSERT, and uq_link_tag rejected the second row.
+        // our SELECT and our INSERT, and uq_link_kind_tag rejected the second row.
         // The caller wants the list, not an error — re-read the winner. Before
         // the constraint existed this race silently produced TWO docs lists.
         const [[raced]] = await req.db.query(FIND_DOCS_SQL, [case_id]);
@@ -768,8 +979,10 @@ router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
       }
     } else if (!checklist.tag) {
       // Self-heal a legacy untagged row so the title fallback can retire.
-      // Cannot collide with uq_link_tag: the ORDER BY above prefers a tagged
-      // row, so reaching this branch proves no tagged row exists for the case.
+      // Cannot collide with uq_link_kind_tag: FIND_DOCS_SQL is scoped to
+      // kind='checklist' and its ORDER BY prefers a tagged row, so reaching
+      // this branch proves no tagged CHECKLIST exists for the case — and a
+      // same-tagged note is a different point in the key.
       await req.db.query(
         `UPDATE checklists SET tag = 'docs_needed' WHERE id = ? AND tag IS NULL`,
         [checklist.id]
