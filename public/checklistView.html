@@ -191,6 +191,73 @@
       white-space: nowrap;
     }
 
+    /* ── Foreign (contact-scoped) cards on a case board (W3) ──
+       A card that belongs to a CONTACT related to this case, not to the case.
+       TEAL — the third cue after S2's amber (a note) and S5's indigo (a native
+       pinned field), and it has to outrank both: a card can be foreign AND a
+       note AND native at once, and "this is not this case's" is the fact that
+       matters most when deciding whether to edit it.
+
+       SPECIFICITY, deliberately explicit. `.ck-card.ck-note.ck-native` is three
+       classes, so a two-class `.ck-card.ck-foreign` would lose to it on a
+       foreign native. Each combination is therefore listed at its own weight,
+       and the whole block sits AFTER the note and native rules so an equal-
+       weight tie also resolves this way. */
+    .ck-card.ck-foreign,
+    .ck-card.ck-note.ck-foreign,
+    .ck-card.ck-note.ck-native.ck-foreign {
+      border-left: 3px solid #0d9488;
+      background: #f4fefc;
+    }
+    .ck-card.ck-foreign .ck-card-head { border-bottom-color: #ccfbf1; }
+
+    /* The group heading. One per related contact, above that contact's cards. */
+    .ck-group {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 20px 0 8px;
+      padding: 7px 10px;
+      border-left: 3px solid #0d9488;
+      background: #f0fdfa;
+      border-radius: 0 6px 6px 0;
+    }
+    .ck-group-name {
+      font-size: 14px; font-weight: 700; color: #0f766e;
+      text-decoration: none; cursor: pointer;
+    }
+    .ck-group-name:hover { text-decoration: underline; }
+    .ck-group-rel { font-size: 12px; color: #0f766e; opacity: .75; }
+    /* The multi-case disclosure. AMBER, not teal — it is a warning about the
+       blast radius of an edit, not more scope chrome. */
+    .ck-group-warn {
+      margin-left: auto;
+      font-size: 11px; font-weight: 700; letter-spacing: .02em;
+      color: #b45309; background: #fffbeb;
+      border: 1px solid #fcd34d; border-radius: 4px;
+      padding: 2px 7px; white-space: nowrap; cursor: help;
+    }
+    .ck-group-warn i { margin-right: 4px; }
+
+    /* Label over the case's OWN cards. Rendered only when at least one contact
+       group is also on screen — on a board with no groups there is nothing to
+       tell it apart from, and a lone "This case" heading would be noise. */
+    .ck-own-head {
+      font-size: 12px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase; color: #64748b;
+      margin: 2px 0 8px; padding: 0 2px;
+    }
+
+    /* Degraded states. A contact group that could not be loaded says so in
+       place rather than vanishing — the case's own board is unaffected either
+       way. */
+    .ck-group-note {
+      font-size: 13px; color: #b45309;
+      background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px;
+      padding: 7px 10px; margin-bottom: 8px;
+    }
+
     /* ALWAYS-EDITABLE, no click-to-edit swap — the idiom case.html
        (#overviewCaseNotes) and tabLeads.html already use for notes fields.
        resize:none because the height is driven by resizeTextarea(). */
@@ -418,10 +485,12 @@
    fields and the backend 403s a non-SU write, so the UI just agrees.
 
    NATIVE FIELDS (S5). Several entities carry a single freeform notes column
-   that predates this page — cases.case_notes, cases.341_notes,
-   contacts.contact_notes, appts.appt_note, and (W2) events.event_note. Now
-   that an entity can also hold N proper notes, staff would otherwise have two
-   unrelated places to look, and 341_notes / appt_note are invisible today.
+   that predates this page — cases.case_notes, contacts.contact_notes,
+   appts.appt_note, and (W2) events.event_note. Now that an entity can also
+   hold N proper notes, staff would otherwise have two unrelated places to
+   look, and appt_note was invisible before this.
+
+   cases.341_notes is deliberately NOT here — see the note above NATIVE_NOTES.
 
    NATIVE_NOTES below synthesizes a PINNED VIRTUAL CARD per column. It is a
    VIEW, not a migration: the column stays the one and only store, the card
@@ -433,6 +502,28 @@
    A native card has no checklists row, so it has no id, no tag, no items and
    no status. Everything keyed by checklist id must therefore tolerate one:
    see draftKeyOf().
+
+   RELATED CONTACTS (W3). A CASE board additionally shows the cards of every
+   contact linked to it through case_relate, in a separate labelled group BELOW
+   everything case-scoped — never interleaved, never sorted in. This follows the
+   log, whose case view already expands to each related contact, and it costs
+   almost nothing: 1,065 of 1,077 cases have exactly one contact (11 have two,
+   1 has three).
+
+   ONE ASYMMETRY WITH THE LOG drives the whole design. The log is read-only;
+   these cards are editable. A note shown here belongs to the CONTACT, and 47
+   contacts are attached to more than one case — so editing one from case A
+   silently changes what case B shows. Expansion is free; the EDIT TARGET must
+   never be ambiguous. Hence, in order of importance:
+     - a distinct teal border on every foreign card, outranking note and native;
+     - a heading naming the contact and the relation, which opens that contact;
+     - an "also on N other cases" badge on the heading when the edit reaches
+       further than this case;
+     - the New List / New Note footer sits ABOVE the groups and still creates
+       on the CASE, always. It gained no target picker. To make a note on a
+       contact, open the contact (its own Notes & Lists tab, W1).
+
+   The reverse direction — a case's notes on the CONTACT board — is NOT built.
 
    KNOWN WART — NOT FIXED HERE. On the case tab, case_notes is now editable in
    TWO places: the Overview tab's #overviewCaseNotes textarea (case.html) and
@@ -455,6 +546,15 @@ const MODE = P_ID ? 'single'
 
 let lists   = [];
 let busy    = false;   // suppresses re-entrant writes from double-Enter
+
+/* W3 — related-contact groups on a CASE board, in the order they are rendered.
+   `lists` holds their cards too (see sortLists / render); this holds only the
+   per-group LABEL data: id, name, relate types, other-case count, failure.
+   Empty on every other mode and link_type. */
+let contactGroups = [];
+/* Set when GET /api/cases/:id/contacts itself failed. The case's own board
+   still renders; the groups are replaced by one line saying why. */
+let groupsError = null;
 
 /* Tri-state kind filter: '' = both (the merged board, and the default),
    'note', or 'checklist'. '' is sent as NO `kind` key at all — never
@@ -513,13 +613,12 @@ const NOTE_MAX_CHARS = 10000;
      case_notes     avg 63, max 3,558   ← the longest real note text in the app
      contact_notes  max 141
      appt_note      max 1,000           (the old varchar ceiling, since widened)
-     341_notes      empty on all 1,077 cases
    Nothing in production is within 6,000 characters of the limit, so anything
    above ~4,000 here means the counter is effectively never seen today. */
 
 // const COUNT_SHOW_AT = 0;                                 // ALWAYS. Pins "0 / 10,000" under every
-                                                            // empty note too — including Case Notes
-                                                            // and 341 Notes, which render on every case.
+                                                            // empty note too — including Case Notes,
+                                                            // which renders on every case.
 const COUNT_SHOW_AT  = 1;                                   // ANY TEXT AT ALL. Empty cards stay clean;
                                                             // the limit shows the moment you type.
 // const COUNT_SHOW_AT = Math.floor(NOTE_MAX_CHARS * 0.5);  // 5,000. Silent for every real note today,
@@ -538,12 +637,25 @@ const COUNT_SHOW_AT  = 1;                                   // ANY TEXT AT ALL. 
    There is no per-field length: lib/noteLimits.js governs all of them with one
    number.
 
-   341_notes is currently populated on 0 of 1,077 cases. That is not a sign it
-   should be dropped — surfacing it here is its first real use. */
+   WHY cases.341_notes IS NOT HERE. S5 originally pinned it. It was removed
+   2026-08-20 once the reason for its emptiness became clear: the column has
+   never had a write path. Form template 5 (form_key='341_notes', "341 Meeting
+   Notes", published, rendered by case.html's 341 tab) maps its fields to
+   341_status / docs_missing / docs_due / case_trustee / case_number_full /
+   case_id — NOT to cases.341_notes. So 0 of 1,077 was never staff declining to
+   fill it in; nothing in the app could write it. Pinning a card on all 1,077
+   cases to expose a dead column — when only a subset of cases ever hold a 341
+   meeting, and case.html already has a 341 tab — was chrome for a third place
+   to look.
+
+   The column still exists (it is in cases.js's automation allowlist and in
+   noteLimits.NOTE_COLUMNS, so a write would still be length-checked). Do not
+   re-add it here. If 341 notes are wanted, the right shape is the docs_needed
+   pattern: have the 341 form upsert a TAGGED NOTE on the case, so the card
+   exists only where there is a 341 to write about. */
 const NATIVE_NOTES = {
   case: [
     { field: 'case_notes', title: 'Case Notes', endpoint: '/api/cases' },
-    { field: '341_notes',  title: '341 Notes',  endpoint: '/api/cases' },
   ],
   contact: [
     { field: 'contact_notes', title: 'Notes', endpoint: '/api/contacts' },
@@ -552,9 +664,9 @@ const NATIVE_NOTES = {
     { field: 'appt_note', title: 'Note', endpoint: '/api/appts' },
   ],
   /* events.event_note (W2). DIVERGES from the four above in one respect: it is
-     NULLABLE, where case_notes / 341_notes / contact_notes / appt_note are all
-     NOT NULL. Nothing special-cases it — saveBody() sends '' on a clear for
-     every native field, and '' is a legitimate value in a nullable column too.
+     NULLABLE, where case_notes / contact_notes / appt_note are all NOT NULL.
+     Nothing special-cases it — saveBody() sends '' on a clear for every native
+     field, and '' is a legitimate value in a nullable column too.
      Writing NULL here instead would buy nothing and would fork the save path.
 
      The card attaches to the EVENT, not to whatever the event links upward to.
@@ -586,12 +698,16 @@ function unwrapEntity(endpoint, res) {
   return (row && typeof row === 'object') ? row : null;
 }
 
-/* The native fields in play for this page load. Empty for every mode and
+/* The native fields in play for one link_type. Empty for every mode and
    link_type that has none — `single`, `unlinked` and link_type='user' must
-   behave exactly as they did before S5. */
-function nativeSpecs() {
+   behave exactly as they did before S5.
+
+   TAKES A PARAMETER since W3: a case board also builds the native cards of the
+   CONTACTS related to it, which is a different link_type from this page's own.
+   Called bare it still means "this page's entity", as before. */
+function nativeSpecs(linkType) {
   if (MODE !== 'entity') return [];
-  return NATIVE_NOTES[P_LINK_TYPE] || [];
+  return NATIVE_NOTES[linkType || P_LINK_TYPE] || [];
 }
 
 function api(...args) {
@@ -720,15 +836,26 @@ async function load() {
       if (kindFilter) q.kind = kindFilter;
       // IN PARALLEL, not in sequence — this is the case tab's first paint, and
       // the native read is a second round trip that must not be stacked on top
-      // of the first. loadNativeCards() never rejects (see its comment), so
-      // Promise.all can only fail on the /checklists leg, which is the one the
-      // catch below is already about.
-      const [data, natives] = await Promise.all([
+      // of the first. Neither loadNativeCards() nor loadContactGroups() ever
+      // rejects (see their comments), so Promise.all can only fail on the
+      // /checklists leg, which is the one the catch below is already about.
+      //
+      // W3's leg is unavoidably two deep — the per-contact fan-out cannot start
+      // until GET /api/cases/:id/contacts has said who the contacts are — but
+      // it STARTS here rather than after the other two, and the fan-out itself
+      // is parallel across contacts. Flattening it would need a route that
+      // returned contacts and their cards together, which this slice may not
+      // add.
+      const [data, natives, foreign] = await Promise.all([
         api('/checklists', 'GET', q),
         loadNativeCards(),
+        loadContactGroups(),
       ]);
-      lists = natives.concat(data?.checklists || []);
+      contactGroups = foreign.groups;
+      groupsError   = foreign.error;
+      lists = natives.concat(data?.checklists || [], foreign.cards);
     }
+    // sortLists() ranks by owner FIRST, so it has to see the groups.
     sortLists();
     // Drop settled draft entries; anything still dirty (a save that failed)
     // is kept so the user's text survives the reload.
@@ -755,11 +882,32 @@ async function load() {
 
    Array.sort is stable (ES2019+), so within each band the server's
    created_asc order — and the adapter's declaration order for natives — is
-   preserved. */
+   preserved.
+
+   W3 adds an OUTER key, ranked ahead of both: the owner. The case's own cards
+   come first, then each contact group in contactGroups order. This is what
+   makes every owner's cards one CONTIGUOUS RUN in `lists`, which render()'s
+   single-cursor walk depends on — and through that, so does refocusAddInput.
+   Pinning and tagging then apply WITHIN a group, so a contact's native Notes
+   card heads its own group rather than jumping to the top of the board. */
+function ownerRank(cl) {
+  if (!cl.ownerKey) return 0;
+  const i = contactGroups.findIndex(g => g.key === cl.ownerKey);
+  // An unknown owner sorts last rather than colliding with 0 — it would
+  // otherwise be dropped into the case's own section, which is precisely the
+  // ambiguity this whole slice exists to avoid.
+  return i < 0 ? contactGroups.length + 1 : i + 1;
+}
+
 function sortLists() {
   lists.sort((a, b) =>
-       (b.native ? 1 : 0) - (a.native ? 1 : 0)
+       ownerRank(a) - ownerRank(b)
+    || (b.native ? 1 : 0) - (a.native ? 1 : 0)
     || (b.tag    ? 1 : 0) - (a.tag    ? 1 : 0));
+}
+
+function groupFor(key) {
+  return contactGroups.find(g => g.key === key) || null;
 }
 
 /**
@@ -791,23 +939,58 @@ async function loadNativeCards() {
   // positional index honest — see its comment.
   if (kindFilter === 'checklist') return [];
 
+  const rows = await fetchNativeRows(specs, P_LINK);
+  return buildNativeCards(specs, rows, P_LINK_TYPE, P_LINK, null);
+}
+
+/**
+ * Read the entity rows a set of native specs needs. ONE request per DISTINCT
+ * endpoint, never one per field — a case declares two native fields and they
+ * arrive on the same row.
+ *
+ * NEVER REJECTS, for the reason in loadNativeCards' docblock. A failed read
+ * lands as `row: null`, which becomes an `unavailable` card downstream.
+ *
+ * Returns endpoint -> { res, row }. `res` is the RAW response and `row` is it
+ * unwrapped: W3 needs both, because the multi-case count rides in a SIBLING
+ * key (`cases`) that unwrapEntity deliberately drops on the floor.
+ *
+ * @param {object[]} specs     NATIVE_NOTES entries
+ * @param {string}   entityId  the id to read
+ * @param {object=}  query     extra GET params, e.g. { include: 'cases' }
+ */
+async function fetchNativeRows(specs, entityId, query) {
   const endpoints = [...new Set(specs.map(s => s.endpoint))];
-  const rows = new Map();                       // endpoint -> row, or null on failure
+  const out = new Map();
   await Promise.all(endpoints.map(async (ep) => {
     try {
-      const res = await api(ep + '/' + encodeURIComponent(P_LINK), 'GET');
-      rows.set(ep, unwrapEntity(ep, res));
+      // `query || null` keeps the no-query call byte-identical to what S5 sent:
+      // apiSend only appends a `?` when the payload is non-null.
+      const res = await api(ep + '/' + encodeURIComponent(entityId), 'GET', query || null);
+      out.set(ep, { res, row: unwrapEntity(ep, res) });
     } catch (err) {
       // Deliberately swallowed. Surfaced on the card itself, not as a toast:
       // a toast on every tab entry for a field the user may not even be
       // looking at is worse than a locked card that says why.
       console.error('checklistView: native notes fetch failed for ' + ep, err);
-      rows.set(ep, null);
+      out.set(ep, { res: null, row: null });
     }
   }));
+  return out;
+}
 
+/**
+ * Turn fetched rows into pinned virtual cards.
+ *
+ * @param {Map} rows       from fetchNativeRows
+ * @param {string} linkType   the entity's link_type — 'case', 'contact', …
+ * @param {string} ownerKey   null for this page's own entity; 'contact:<id>'
+ *                            for a related contact's card (W3)
+ */
+function buildNativeCards(specs, rows, linkType, entityId, ownerKey) {
   return specs.map(s => {
-    const row = rows.get(s.endpoint);
+    const got = rows.get(s.endpoint);
+    const row = got ? got.row : null;
     return {
       id: null,
       kind: 'note',
@@ -819,20 +1002,149 @@ async function loadNativeCards() {
       status: null,
       tag: null,
       items: [],
+      ownerKey: ownerKey || null,
       native: {
         field:       s.field,
         endpoint:    s.endpoint,
-        entityId:    P_LINK,
+        // W3. Part of the bodyDrafts key — two contacts on one case both
+        // declare contact_notes, and without the entity in the key they would
+        // share one draft, one save flag and one save target. See draftKeyOf.
+        entityType:  linkType,
+        entityId,
         unavailable: !row,
       },
     };
   });
 }
 
+/**
+ * The related-contact groups for a CASE board (W3).
+ *
+ * NEVER REJECTS, for the same reason loadNativeCards does not: the case's own
+ * board is the point of the page, and a contact's notes are an expansion of it.
+ * Every failure degrades to a flag on the returned shape and is rendered in
+ * place — the contacts call failing costs the groups, one contact's call
+ * failing costs only that group's cards.
+ *
+ * Returns { groups, cards, error }. `cards` are ordinary card objects carrying
+ * `ownerKey`, concatenated into `lists` by the caller so that ONE array drives
+ * both the render and refocusAddInput's index.
+ *
+ * NO NEW ROUTE. The multi-case count comes from `include=cases` on the contact
+ * read the native card already needs, so the disclosure costs zero extra round
+ * trips.
+ */
+async function loadContactGroups() {
+  const out = { groups: [], cards: [], error: null };
+  if (MODE !== 'entity' || P_LINK_TYPE !== 'case') return out;
+
+  let rows;
+  try {
+    const res = await api('/api/cases/' + encodeURIComponent(P_LINK) + '/contacts', 'GET');
+    rows = Array.isArray(res?.contacts) ? res.contacts : [];
+  } catch (err) {
+    console.error('checklistView: case contacts fetch failed', err);
+    out.error = err?.message || 'unknown error';
+    return out;
+  }
+  if (!rows.length) return out;
+
+  // DEDUPE BY contact_id. case_relate's unique key is (case, client, TYPE) —
+  // so one contact may legally hold two rows on one case (Primary AND
+  // Secondary). None do today, but two rows would otherwise become two groups
+  // sharing an ownerKey, and render()'s cursor walk would hand every card to
+  // the first and leave the second an empty heading. Merge the relate types
+  // into one label instead.
+  const byId = new Map();
+  for (const r of rows) {
+    if (r.contact_id == null) continue;
+    const id = String(r.contact_id);
+    const g  = byId.get(id);
+    if (g) {
+      if (r.relate_type && !g.relates.includes(r.relate_type)) g.relates.push(r.relate_type);
+      continue;
+    }
+    byId.set(id, {
+      id,
+      key:        'contact:' + id,
+      name:       r.contact_name || ('Contact ' + id),
+      relates:    r.relate_type ? [r.relate_type] : [],
+      otherCases: null,      // unknown until the contact read lands
+      failed:     false,
+      cards:      [],
+    });
+  }
+  const groups = [...byId.values()];
+
+  const specs      = nativeSpecs('contact');
+  // Same rule as loadNativeCards: a native card IS a note, and the Lists
+  // position of the filter hides notes.
+  const wantNative = specs.length > 0 && kindFilter !== 'checklist';
+
+  const baseQuery = { include: 'items', order: 'created_asc', link_type: 'contact' };
+  if (kindFilter) baseQuery.kind = kindFilter;
+
+  await Promise.all(groups.map(async (g) => {
+    const [listRes, nativeRows] = await Promise.all([
+      api('/checklists', 'GET', { ...baseQuery, link: g.id }).catch((err) => {
+        console.error('checklistView: contact checklists fetch failed for ' + g.id, err);
+        g.failed = true;
+        return null;
+      }),
+      wantNative ? fetchNativeRows(specs, g.id, { include: 'cases' }) : null,
+    ]);
+
+    let natives = [];
+    if (nativeRows) {
+      natives = buildNativeCards(specs, nativeRows, 'contact', g.id, g.key);
+      // The disclosure. `cases` is a sibling of `contact` in the response, so
+      // it is read off the raw `res`, not off the unwrapped row.
+      const got = nativeRows.get('/api/contacts');
+      const cs  = (got && got.res && Array.isArray(got.res.cases)) ? got.res.cases : null;
+      if (cs) g.otherCases = cs.filter(c => String(c.case_id) !== String(P_LINK)).length;
+    }
+
+    const real = (listRes?.checklists || []).map((cl) => {
+      cl.ownerKey = g.key;
+      cl.items    = cl.items || [];
+      return cl;
+    });
+
+    g.cards = natives.concat(real);
+  }));
+
+  out.groups = groups;
+  for (const g of groups) out.cards = out.cards.concat(g.cards);
+  return out;
+}
+
 // Called by case.html on tab re-entry (autoFrame idiom) so the cards are fresh.
 window.reloadChecklists = load;
 
 // ── Render ────────────────────────────────────────────────────────
+/* THE INVARIANT, restated because W3 is the change most likely to break it:
+   every entry in `lists` produces exactly ONE .ck-card, and the Nth .ck-card in
+   the document is lists[N]. refocusAddInput depends on it (it matches a
+   findIndex against querySelectorAll('.ck-card')[idx]), and the failure is
+   silent — focus lands on the wrong card's add-item input.
+
+   Grouping is compatible with it because of two rules kept together:
+
+     1. sortLists() ranks by owner FIRST, so each owner's cards are one
+        contiguous run in `lists`.
+     2. The partition below holds a SINGLE cursor `i` into `lists`, moves it
+        forward only, and every card it passes goes into exactly one section —
+        which is then rendered, in section order, into stacks appended in that
+        same order. Nothing is skipped, nothing is reordered, and nothing is
+        built-then-hidden (S5's lesson: a display:none card is still a .ck-card
+        and would throw the count off by one).
+
+   Anything the cursor could not place lands in `leftover` and is rendered at
+   the end rather than dropped — dropping one is the failure that breaks the
+   invariant, so it is made loud instead.
+
+   Headings, the footer and the failure notices are NOT .ck-card, so they can
+   sit anywhere between the stacks without affecting the count. */
 function render() {
   const body = E('ckBody');
   body.innerHTML = '';
@@ -840,7 +1152,31 @@ function render() {
   // Nothing to filter in single mode — there is exactly one card.
   if (MODE !== 'single') body.appendChild(renderKindFilter());
 
-  if (!lists.length) {
+  // PARTITION FIRST, render second. The cursor is consumed in owner order in
+  // one pass here, so the sections below are exactly the runs of `lists` — and
+  // `hasGroup` can then be asked of what will ACTUALLY render rather than of
+  // what loadContactGroups fetched, which drifts the moment a card is deleted.
+  let i = 0;
+  const take = (key) => {
+    const out = [];
+    while (i < lists.length && (lists[i].ownerKey || '') === key) out.push(lists[i++]);
+    return out;
+  };
+  const own      = take('');
+  const sections = contactGroups.map(g => ({ g, cards: take(g.key) }));
+  const leftover = lists.slice(i);
+
+  const hasGroup = sections.some(s => s.cards.length || s.g.failed) || !!groupsError;
+
+  // Only worth labelling when there is something below to tell it apart from.
+  if (hasGroup && MODE !== 'single') {
+    const h = document.createElement('div');
+    h.className = 'ck-own-head';
+    h.textContent = 'This case';
+    body.appendChild(h);
+  }
+
+  if (!own.length) {
     const empty = document.createElement('div');
     empty.className = 'ck-empty';
     empty.textContent = MODE === 'single'          ? 'Not found.'
@@ -849,19 +1185,113 @@ function render() {
                       : 'Nothing here yet.';
     body.appendChild(empty);
   } else {
-    // The stack is the grid container (see .ck-stack). The empty message and
-    // the footer stay OUTSIDE it so they never become grid items.
-    const stack = document.createElement('div');
-    stack.className = 'ck-stack';
-    lists.forEach(cl => stack.appendChild(renderCard(cl)));
-    body.appendChild(stack);
+    body.appendChild(renderStack(own));
   }
 
+  // ABOVE the contact groups, not below them. The footer creates on the CASE
+  // and nothing else (W3 deliberately gave it no target picker), so it stays
+  // welded to the case's own section rather than floating at the bottom of a
+  // board whose last card belongs to someone else.
   if (MODE !== 'single') body.appendChild(renderNewListFooter());
+
+  // ── one section per related contact (W3) ──
+  for (const { g, cards } of sections) {
+    // Absent, not empty: a contact with nothing to show under the Lists filter
+    // would otherwise leave a heading with nothing under it. A FAILED group
+    // still renders — the whole point is to say so.
+    if (!cards.length && !g.failed) continue;
+    body.appendChild(renderGroupHeading(g));
+    if (g.failed) {
+      const note = document.createElement('div');
+      note.className = 'ck-group-note';
+      note.textContent = 'Could not load this contact’s notes & lists. '
+                       + 'Reopen the tab to retry.';
+      body.appendChild(note);
+    }
+    if (cards.length) body.appendChild(renderStack(cards));
+  }
+
+  if (groupsError) {
+    const note = document.createElement('div');
+    note.className = 'ck-group-note';
+    note.textContent = 'Could not load this case’s contacts, so their notes are '
+                     + 'not shown: ' + groupsError;
+    body.appendChild(note);
+  }
+
+  // Defensive. Unreachable while sortLists and contactGroups agree — but if
+  // they ever disagree, DROPPING a card would break the invariant above
+  // silently: `lists` would be longer than the .ck-card count and every index
+  // past the gap would be wrong. Render the remainder rather than lose it, and
+  // say so loudly in the console.
+  if (leftover.length) {
+    console.error('checklistView: ' + leftover.length + ' card(s) with an '
+                + 'unplaced owner — check sortLists/contactGroups agreement.');
+    body.appendChild(renderStack(leftover));
+  }
 
   // Height every note body now that they are in the document — scrollHeight
   // is meaningless on a detached node.
   body.querySelectorAll('.ck-note-body').forEach(resizeTextarea);
+}
+
+/* The grid container (see .ck-stack). Headings, the empty message, the footer
+   and the failure notices stay OUTSIDE it so they never become grid items. */
+function renderStack(cards) {
+  const stack = document.createElement('div');
+  stack.className = 'ck-stack';
+  cards.forEach(cl => stack.appendChild(renderCard(cl)));
+  return stack;
+}
+
+/* One related contact's heading (W3): who they are, how they relate, whether
+   an edit here reaches beyond this case, and a way to go and edit it at
+   source. */
+function renderGroupHeading(g) {
+  const head = document.createElement('div');
+  head.className = 'ck-group';
+
+  const link = document.createElement('a');
+  link.className = 'ck-group-name';
+  link.href = '#';
+  link.textContent = g.name;
+  link.title = 'Open this contact';
+  link.onclick = (e) => {
+    e.preventDefault();
+    // The shell's workspace-file idiom, same call SCOPE_NAV.contact makes in
+    // checklistsView.html. ARGUMENT ORDER IS (fileName, fileType, fileID) and a
+    // contact is 'client' there — passing the id where fileType belongs matches
+    // no branch and opens an empty file. Unlike SCOPE_NAV we have a real name
+    // to label the tab with, so pass it.
+    try { window.top.addFile(g.name, 'client', String(g.id)); }
+    catch (err) { apiError(err, 'Could not open ' + g.name); }
+  };
+  head.appendChild(link);
+
+  const rel = document.createElement('span');
+  rel.className = 'ck-group-rel';
+  rel.textContent = '· ' + (g.relates.length
+    ? g.relates.join(' / ') + ' contact'
+    : 'related contact');
+  head.appendChild(rel);
+
+  // THE DISCLOSURE, shown at the moment it matters — beside the cards whose
+  // edits would reach those other cases. Null means the contact read failed and
+  // the count is simply unknown; claiming "0 other cases" would be a lie.
+  if (g.otherCases > 0) {
+    const warn = document.createElement('span');
+    warn.className = 'ck-group-warn';
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-triangle-exclamation';
+    warn.appendChild(icon);
+    warn.appendChild(document.createTextNode(
+      'also on ' + g.otherCases + ' other case' + (g.otherCases === 1 ? '' : 's')));
+    warn.title = 'These cards belong to ' + g.name + ', not to this case. '
+               + 'Editing one changes what those other cases show too.';
+    head.appendChild(warn);
+  }
+
+  return head;
 }
 
 function renderKindFilter() {
@@ -886,11 +1316,16 @@ function renderCard(cl) {
   // checklists row behind it, so every affordance that needs one is suppressed
   // below: rename, tag, Done, delete, re-home.
   const isNative = !!cl.native;
+  // W3. The card belongs to a related CONTACT, not to the entity this board is
+  // for. Derived from ownerKey rather than passed in, so there is one source of
+  // truth for it and a card cannot be tinted into the wrong group.
+  const isForeign = !!cl.ownerKey;
 
   const card = document.createElement('section');
   card.className = 'ck-card'
-    + (isNote   ? ' ck-note'   : '')
-    + (isNative ? ' ck-native' : '');
+    + (isNote    ? ' ck-note'    : '')
+    + (isNative  ? ' ck-native'  : '')
+    + (isForeign ? ' ck-foreign' : '');
 
   const items = cl.items || [];
   const done  = items.filter(i => i.status === 'complete').length;
@@ -1274,9 +1709,21 @@ async function toggleNoteDone(cl, box, label) {
    on the same `null` key — one shared draft, one shared save flag, and a
    saveBody() lookup that finds whichever native happens to sit first.
    So natives are keyed by their column instead. The two key spaces cannot
-   overlap: one is a number, the other a 'native:…' string. */
+   overlap: one is a number, the other a 'native:…' string.
+
+   W3 ADDS THE ENTITY to that key. The column alone was unique while a board
+   showed exactly one entity's natives; a case board now also shows its related
+   contacts', and two contacts on one case would BOTH key 'native:contact_notes'
+   — sharing a draft, a save flag and, worst, a save target, so typing in one
+   would PATCH the other. 11 cases have two contacts and 1 has three, so this is
+   reachable today, not hypothetical.
+
+   Contact-scoped REAL cards need nothing here: they are ordinary rows with
+   ordinary ids, unique across the whole table. */
 function draftKeyOf(cl) {
-  return cl.native ? ('native:' + cl.native.field) : cl.id;
+  if (!cl.native) return cl.id;
+  return 'native:' + cl.native.entityType + ':' + cl.native.entityId
+       + ':' + cl.native.field;
 }
 
 /* What the textarea should be showing: an unsaved draft if there is one,
@@ -1469,7 +1916,16 @@ async function addItem(cl, input) {
    throw this off by one per hidden native. The failure is quiet — focus simply
    lands on the wrong card's input after adding an item.
 
-   The findIndex excludes natives explicitly. `clId` is always a real id here
+   W3's contact groups hold to the same invariant, and it survives for exactly
+   the same reason: their cards are IN `lists`, and render() walks it with one
+   forward-only cursor. A group's heading and failure notice are not .ck-card,
+   an empty group is skipped rather than rendered hidden, and a group whose
+   cards the filter removed contributes nothing to either side. See render()'s
+   docblock, which states the two rules that keep it true.
+
+   The findIndex is ACROSS ALL GROUPS, which is correct — checklists.id is
+   unique table-wide, so a contact-scoped card matches its own index and no
+   other. It excludes natives explicitly. `clId` is always a real id here
    (addItem is unreachable without an add row, and neither a note nor a native
    has one), but a native's id is null and `l.id === clId` would match it for a
    null clId — cheaper to exclude than to reason about. */
@@ -1514,13 +1970,27 @@ async function deleteList(cl) {
       + `${isNote ? 'note' : 'list'} (<code>${esc(cl.tag)}</code>).</b> Deleting it removes `
       + `it from the client portal and document requests until it is recreated.</p>`
     : '';
+  /* W3. The card is on a case board but the ROW belongs to a contact, and the
+     delete reaches every case that contact is on. The heading already carries
+     the standing disclosure; this is the same fact restated at the one moment
+     it is irreversible. */
+  const g = cl.ownerKey ? groupFor(cl.ownerKey) : null;
+  const foreignWarn = g
+    ? `<p style="text-align:left;color:#b45309"><b>This ${isNote ? 'note' : 'list'} `
+      + `belongs to ${esc(g.name)}, not to this case.</b> Deleting it removes it `
+      + `from that contact everywhere`
+      + (g.otherCases > 0
+          ? `, including ${g.otherCases} other case${g.otherCases === 1 ? '' : 's'}`
+          : '')
+      + `.</p>`
+    : '';
   const detail = isNote
     ? (hasBody ? ' <span style="color:#64748b">&mdash; its text will be deleted too.</span>' : '')
     : (n ? ` <span style="color:#64748b">&mdash; ${n} item${n === 1 ? '' : 's'} `
          + `will be deleted too.</span>` : '');
   const ok = await confirmDialog({
     title: isNote ? 'Delete note?' : 'Delete list?',
-    html: warn + `<p style="text-align:left">${esc(cl.title)}${detail}</p>`,
+    html: foreignWarn + warn + `<p style="text-align:left">${esc(cl.title)}${detail}</p>`,
     confirmText: 'Delete',
     danger: true,
   });
@@ -1571,10 +2041,20 @@ async function addList(input, kind) {
     if (kind === 'note') payload.kind = 'note';
     const created = await api('/checklists', 'POST', payload);
     created.items = created.items || [];
+    // W3. newListScope() is THIS BOARD's scope and nothing else — on a case
+    // board that is always the case, never a contact — so the new card belongs
+    // in the own section. Stated rather than left undefined, because sortLists
+    // now ranks on it.
+    created.ownerKey = null;
     // Pushed even when it does not match the active filter — the user just
     // made this thing and has to be able to see it. The next load() re-applies
     // the filter honestly.
     lists.push(created);
+    // W3. A bare push would leave it AFTER the contact groups, which breaks the
+    // contiguous-run rule render()'s cursor walk relies on. sortLists puts it
+    // back at the end of the own-untagged band — the same place the push landed
+    // it on a board with no groups, so nothing changes there.
+    sortLists();
     render();
   } catch (err) {
     // 409 (tag collision) and 403 (someone else's personal list) both arrive
