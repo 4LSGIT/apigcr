@@ -67,6 +67,37 @@
   }
   .warn-text { color: var(--warn); font-size: 11px; }
   .note { color: var(--muted); font-size: 11px; margin: 6px 0 0; line-height: 1.5; }
+
+  /* ── usage log ────────────────────────────────────────────── */
+  .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+  }
+  .log-route { max-width: 420px; word-break: break-all; }
+  /* Browser UAs run 120+ chars and would otherwise dominate the row. Clamp and
+     expose the full string on hover. */
+  .log-ua {
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--muted);
+  }
+  .log-payload {
+    white-space: pre-wrap; word-break: break-all;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px; margin: 4px 0 0;
+    max-height: 220px; overflow: auto; color: var(--muted);
+  }
+  .status-authorized { color: var(--ok); }
+  .status-unauthorized, .status-invalid_token { color: var(--danger); }
+  details.log-more { margin-top: 4px; }
+  details.log-more > summary { cursor: pointer; color: var(--muted); font-size: 11px; list-style: none; }
+  details.log-more > summary::-webkit-details-marker { display: none; }
+  details.log-more > summary::before { content: "▸ "; }
+  details.log-more[open] > summary::before { content: "▾ "; }
+  .banner {
+    border: 1px solid var(--warn); background: rgba(224,179,65,.08);
+    color: var(--warn); border-radius: 4px; padding: 6px 8px;
+    font-size: 11px; line-height: 1.5; margin-bottom: 8px;
+  }
 </style>
 </head>
 <body>
@@ -76,6 +107,7 @@
   <h2>Internal key <span class="muted">(app → itself)</span></h2>
   <div class="row">
     <span id="internalStatus" class="muted">Loading…</span>
+    <button class="ghost" onclick="viewInternalLog()">log</button>
     <button class="warn" id="rotateBtn" onclick="rotateInternal()" disabled>Rotate</button>
   </div>
   <p class="note">
@@ -104,6 +136,8 @@
   <h2>
     External keys
     <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="load()">Refresh</button>
+    <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;margin-right:6px;"
+            onclick="viewRejected()">Rejected calls</button>
   </h2>
   <table>
     <thead>
@@ -122,6 +156,50 @@
     for retiring a caller: swap its key, watch the old one go quiet, revoke.
     Revocation applies immediately on the instance you hit and within ~60s on
     the rest.
+  </p>
+</div>
+
+<!-- ── Usage log ────────────────────────────────────────────── -->
+<div class="panel" id="logPanel" style="display:none;">
+  <h2>
+    Usage log — <span id="logKeyName"></span>
+    <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="closeLog()">Close</button>
+    <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;margin-right:6px;" onclick="reloadLog()">Refresh</button>
+  </h2>
+  <div id="logBanner"></div>
+  <div class="muted" id="logWindow" style="margin-bottom:6px;"></div>
+  <table>
+    <thead id="logThead"></thead>
+    <tbody id="logTbody"></tbody>
+  </table>
+  <div class="row" style="margin-top:8px;">
+    <button class="ghost" id="logMoreBtn" style="display:none;" onclick="loadMoreLog()">Load 100 more</button>
+    <span class="muted" id="logCount"></span>
+  </div>
+
+  <p class="note" id="logNoteKey">
+    Rows come from <code>jwt_api_audit_log</code>, which records the key's
+    <b>label</b> — not its id. The window is clipped to this key's lifetime, and
+    to the point a later key took the same label, so reused labels don't bleed
+    together. Two keys alive at once under one label cannot be told apart.<br>
+    <b>Rejected calls never appear here.</b> A revoked or unrecognized key
+    resolves to no label, so it's logged with no username — see
+    <b>Rejected calls</b> above. Silence after revocation is therefore not
+    evidence the caller stopped.
+  </p>
+
+  <p class="note" id="logNoteRejected" style="display:none;">
+    Every request rejected for presenting no usable credential
+    (<code>auth_status = 'unauthorized'</code>) — which is where a revoked or
+    wrong <code>x-api-key</code> lands. Expired staff JWTs
+    (<code>invalid_token</code>, mostly browsers) are excluded; at ~4× the
+    volume they'd bury the signal. Role and audience failures are excluded too —
+    those are permissions problems, not credential ones.<br>
+    <b>There is no key attribution here, and there can't be:</b> the
+    <code>x-api-key</code> header is redacted before the row is written, so the
+    presented key never reaches the table. Match on <b>user agent</b> and
+    <b>IP</b> instead — a caller keeps its UA across a credential change, which
+    in practice is enough to recognize it.
   </p>
 </div>
 
@@ -178,7 +256,10 @@
             <td>${fmtDate(row.created_at)}</td>
             <td>${fmtDate(row.last_used_at)}</td>
             <td><span class="badge ${revoked ? "revoked" : "active"}">${revoked ? "revoked" : "active"}</span></td>
-            <td>${revoked ? "" : `<button class="danger" style="font-size:11px;padding:2px 6px;" onclick="revokeKey(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">revoke</button>`}</td>
+            <td>
+              <button class="ghost" style="font-size:11px;padding:2px 6px;" onclick="viewLog(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">log</button>
+              ${revoked ? "" : `<button class="danger" style="font-size:11px;padding:2px 6px;" onclick="revokeKey(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">revoke</button>`}
+            </td>
           </tr>
         `;
       }).join("");
@@ -248,6 +329,179 @@
       alert("Rotation failed: " + err.message);
       btn.disabled = false;
     }
+  }
+
+  // ── usage log ──────────────────────────────────────────────────────────────
+  // logState.url is the endpoint minus paging; the cursor is keyset (beforeId)
+  // so "load more" stays cheap however deep it goes and can't skip or repeat
+  // rows when new ones land mid-read (this table is written on every request).
+  const LOG_PAGE = 100;
+
+  // Two views share one panel, one fetch loop and one row renderer; only the
+  // columns and the footnote differ. In 'key' mode auth_status varies and the
+  // UA is constant (one caller), so Status earns a column and UA is folded into
+  // details. In 'rejected' mode it's the exact inverse — status is always
+  // 'unauthorized', and the UA is the only thing identifying the caller.
+  const LOG_MODES = {
+    key: {
+      cols: [
+        { label: "Time",   style: "width:150px;" },
+        { label: "Status", style: "width:80px;"  },
+        { label: "Method", style: "width:60px;"  },
+        { label: "Route",  style: ""             },
+        { label: "IP",     style: "width:120px;" },
+      ],
+      note: "logNoteKey",
+    },
+    rejected: {
+      cols: [
+        { label: "Time",       style: "width:150px;" },
+        { label: "Method",     style: "width:60px;"  },
+        { label: "Route",      style: ""             },
+        { label: "IP",         style: "width:120px;" },
+        { label: "User agent", style: "width:200px;" },
+      ],
+      note: "logNoteRejected",
+    },
+  };
+
+  let logState = { url: null, title: "", mode: "key", cursor: null, count: 0 };
+
+  function viewLog(id, label)  { openLog(`/api/api-keys/${id}/log`, `#${id} "${label}"`, "key"); }
+  function viewInternalLog()   { openLog(`/api/api-keys/internal/log`, `internal key`, "key"); }
+  function viewRejected()      { openLog(`/api/api-keys/rejected`, `rejected calls`, "rejected"); }
+
+  function closeLog() { document.getElementById("logPanel").style.display = "none"; }
+
+  function reloadLog() {
+    if (!logState.url) return;
+    openLog(logState.url, logState.title, logState.mode);
+  }
+
+  function logColspan() { return LOG_MODES[logState.mode].cols.length; }
+
+  async function openLog(url, title, mode) {
+    logState = { url, title, mode, cursor: null, count: 0 };
+    const cfg = LOG_MODES[mode];
+
+    document.getElementById("logKeyName").textContent = title;
+    document.getElementById("logPanel").style.display = "block";
+    document.getElementById("logBanner").innerHTML = "";
+    document.getElementById("logWindow").textContent = "";
+    document.getElementById("logCount").textContent = "";
+    document.getElementById("logMoreBtn").style.display = "none";
+
+    document.getElementById("logThead").innerHTML =
+      `<tr>${cfg.cols.map(c => `<th style="${c.style}">${c.label}</th>`).join("")}</tr>`;
+
+    for (const m of Object.values(LOG_MODES)) {
+      document.getElementById(m.note).style.display = m.note === cfg.note ? "" : "none";
+    }
+
+    const tbody = document.getElementById("logTbody");
+    tbody.innerHTML = `<tr><td colspan="${logColspan()}" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    tbody.dataset.fresh = "1";
+    await fetchLogPage();
+  }
+
+  async function loadMoreLog() {
+    const btn = document.getElementById("logMoreBtn");
+    btn.disabled = true;
+    try { await fetchLogPage(); } finally { btn.disabled = false; }
+  }
+
+  async function fetchLogPage() {
+    const tbody = document.getElementById("logTbody");
+    const qs = new URLSearchParams({ limit: String(LOG_PAGE) });
+    if (logState.cursor) qs.set("beforeId", String(logState.cursor));
+
+    try {
+      const data = await P.apiSend(`${logState.url}?${qs.toString()}`, "GET");
+
+      if (tbody.dataset.fresh === "1") {
+        tbody.innerHTML = "";
+        tbody.dataset.fresh = "0";
+        renderLogMeta(data);
+      }
+
+      const rows = data.log || [];
+      if (!rows.length && !logState.count) {
+        const empty = logState.mode === "rejected" ? "No rejected calls recorded." : "No calls recorded.";
+        tbody.innerHTML = `<tr><td colspan="${logColspan()}" class="muted" style="text-align:center;padding:20px;">${empty}</td></tr>`;
+      } else {
+        tbody.insertAdjacentHTML("beforeend", rows.map(logRowHtml).join(""));
+      }
+
+      logState.count += rows.length;
+      logState.cursor = data.next_before_id || null;
+      document.getElementById("logMoreBtn").style.display = logState.cursor ? "" : "none";
+      document.getElementById("logCount").textContent =
+        `${logState.count} row${logState.count === 1 ? "" : "s"}${logState.cursor ? " (more available)" : ""}`;
+    } catch (err) {
+      if (tbody.dataset.fresh === "1") {
+        tbody.innerHTML = `<tr><td colspan="${logColspan()}" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+        tbody.dataset.fresh = "0";
+      } else {
+        document.getElementById("logCount").innerHTML =
+          `<span style="color:var(--danger);">Error: ${esc(err.message)}</span>`;
+      }
+    }
+  }
+
+  function renderLogMeta(data) {
+    const banner = document.getElementById("logBanner");
+    const windowEl = document.getElementById("logWindow");
+
+    // The rejected view isn't scoped to a key, so neither the label-collision
+    // warning nor the lifetime window applies.
+    if (logState.mode === "rejected") {
+      banner.innerHTML = "";
+      windowEl.textContent = "App-wide — newest first.";
+      return;
+    }
+
+    banner.innerHTML = data.label_shared
+      ? `⚠ Another key shares the label <b>${esc(data.key.label)}</b>. Their traffic is
+         indistinguishable in the audit log — rows below may belong to either.`
+      : "";
+    const w = data.window || {};
+    const parts = [];
+    if (w.since) parts.push(`from ${fmtDate(w.since)}`);
+    if (w.until) parts.push(`until ${fmtDate(w.until)} (label reused by a later key)`);
+    windowEl.textContent =
+      parts.length ? `Window: ${parts.join(" · ")}` : "Window: all recorded calls";
+  }
+
+  function logRowHtml(row) {
+    // query_text / body_text are server-truncated JSON strings. Show them raw —
+    // pretty-printing a truncated document just fails, and the redaction that
+    // matters (auth headers, passwords) already happened at write time.
+    const rejected = logState.mode === "rejected";
+
+    const extras = [];
+    // In rejected mode the UA has its own column, so don't repeat it here.
+    if (row.user_agent && !rejected) extras.push(`UA: ${esc(row.user_agent)}`);
+    const bits = [];
+    if (row.query_text && row.query_text !== "{}") bits.push(`query ${esc(row.query_text)}`);
+    if (row.body_text  && row.body_text  !== "{}") bits.push(`body ${esc(row.body_text)}`);
+
+    const detail = (extras.length || bits.length)
+      ? `<details class="log-more"><summary>details</summary>
+           ${extras.length ? `<div class="mono log-payload">${extras.join("<br>")}</div>` : ""}
+           ${bits.map(b => `<div class="mono log-payload">${b}</div>`).join("")}
+         </details>`
+      : "";
+
+    const time   = `<td>${fmtDate(row.created_at)}</td>`;
+    const status = `<td class="status-${esc(row.auth_status)}">${esc(row.auth_status)}</td>`;
+    const method = `<td class="mono">${esc(row.method)}</td>`;
+    const route  = `<td class="log-route"><span class="mono">${esc(row.route)}</span>${detail}</td>`;
+    const ip     = `<td class="mono">${esc(row.ip_address)}</td>`;
+    const ua     = `<td class="mono log-ua" title="${esc(row.user_agent)}">${esc(row.user_agent)}</td>`;
+
+    return rejected
+      ? `<tr>${time}${method}${route}${ip}${ua}</tr>`
+      : `<tr>${time}${status}${method}${route}${ip}</tr>`;
   }
 </script>
 </body>

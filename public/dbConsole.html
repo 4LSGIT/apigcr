@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DB Console</title>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
   :root {
     --bg: #0f1117;
@@ -129,6 +130,16 @@
   .table-row .edit-table { opacity: 0; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 4px; float: right; }
   .table-row:hover .edit-table { opacity: 1; }
   .table-row .edit-table:hover { color: var(--accent); }
+
+  /* SweetAlert — same pattern as index.html/reports.html, but unconditional:
+     this console has no light mode, so there's no body.dark to key off. */
+  .swal2-popup { background: var(--panel) !important; color: var(--text) !important; font-size: 13px !important; }
+  .swal2-title, .swal2-html-container { color: var(--text) !important; }
+  .swal2-input, .swal2-textarea, .swal2-select {
+    background: var(--bg) !important; color: var(--text) !important; border-color: var(--border) !important;
+  }
+  .swal2-html-container code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--warn); }
+  .swal2-html-container .sw-left { text-align: left; line-height: 1.55; }
 </style>
 </head>
 <body>
@@ -195,16 +206,8 @@
   </main>
 </div>
 
-<dialog id="nameDialog">
-  <form method="dialog" id="nameForm">
-    <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:6px;">Save query as…</label>
-    <input id="nameInput" required maxlength="120" placeholder="e.g. Active users last 7d">
-    <div class="actions">
-      <button value="cancel">Cancel</button>
-      <button value="ok" class="primary" style="background:var(--accent); color:#001;">Save</button>
-    </div>
-  </form>
-</dialog>
+<!-- The "save query as…" prompt is a Swal input now (see btnSaveQuery below).
+     #schemaDialog stays a native <dialog>: it's a full editor, not a prompt. -->
 
 <dialog id="schemaDialog">
   <div class="title">
@@ -309,14 +312,35 @@ try { setStopOnError(localStorage.getItem(STOP_KEY) === "1", false); }
 catch (_) { setStopOnError(false, false); }
 
 // ── write toggle ─────────────────────────────────────────────────────────────
-btnWrite.addEventListener("click", () => {
+// The enable path is async now (Swal), unlike the old blocking confirm(). The
+// in-flight guard is what replaces that blocking: without it a second click
+// while the dialog is open would stack a second dialog on the same decision.
+let writePromptOpen = false;
+btnWrite.addEventListener("click", async () => {
   if (!writeMode) {
-    if (!confirm(
-      "Enable WRITE mode?\n\n" +
-      "You will be able to run INSERT/UPDATE/DELETE/DROP/ALTER.\n" +
-      "Every query is audit-logged to admin_audit_log.\n\n" +
-      "Run All will also switch to stop-on-error (you can turn that back off)."
-    )) return;
+    if (writePromptOpen) return;
+    writePromptOpen = true;
+    let ok;
+    try {
+      ({ isConfirmed: ok } = await Swal.fire({
+        icon: "warning",
+        title: "Enable WRITE mode?",
+        html:
+          '<div class="sw-left">' +
+          "You will be able to run INSERT / UPDATE / DELETE / DROP / ALTER.<br>" +
+          "Every query is audit-logged to <code>admin_audit_log</code>.<br><br>" +
+          "Run All will also switch to stop-on-error (you can turn that back off)." +
+          "</div>",
+        showCancelButton: true,
+        confirmButtonText: "Enable writes",
+        confirmButtonColor: "#ff6b6b",
+        cancelButtonText: "Cancel",
+        focusCancel: true,
+      }));
+    } finally {
+      writePromptOpen = false;
+    }
+    if (!ok) return;
     writeMode = true;
     btnWrite.textContent = "⚠️ WRITES ON";
     btnWrite.classList.add("active");
@@ -913,7 +937,10 @@ function openTableEditor(existingTableName) {
 
   if (editing) {
     const t = (schemaCache.tables || []).find(x => x.name === existingTableName);
-    if (!t) { alert("Table not found in schema cache. Reload schema."); return; }
+    if (!t) {
+      Swal.fire({ icon: "error", title: "Table not found", text: "Not in the schema cache — reload the schema and try again." });
+      return;
+    }
     editorState = {
       mode: "alter",
       tableName: existingTableName,
@@ -1182,8 +1209,6 @@ document.getElementById("btnSaveToRef").addEventListener("click", async () => {
 
 // ── saved queries ────────────────────────────────────────────────────────────
 const savedList = document.getElementById("savedList");
-const nameDialog = document.getElementById("nameDialog");
-const nameInput  = document.getElementById("nameInput");
 
 async function loadSaved() {
   try {
@@ -1203,9 +1228,24 @@ async function loadSaved() {
       });
       el.querySelector("[data-delete]").addEventListener("click", async (e) => {
         e.stopPropagation();
-        if (!confirm("Delete this saved query?")) return;
-        await api(`/admin/db/saved-queries/${el.dataset.id}`, "DELETE");
-        loadSaved();
+        const row = rows.find(r => r.id == el.dataset.id);
+        const { isConfirmed } = await Swal.fire({
+          icon: "warning",
+          title: "Delete saved query?",
+          text: row ? row.name : undefined,
+          showCancelButton: true,
+          confirmButtonText: "Delete",
+          confirmButtonColor: "#ff6b6b",
+          cancelButtonText: "Cancel",
+          focusCancel: true,
+        });
+        if (!isConfirmed) return;
+        try {
+          await api(`/admin/db/saved-queries/${el.dataset.id}`, "DELETE");
+          loadSaved();
+        } catch (err) {
+          Swal.fire({ icon: "error", title: "Delete failed", text: err.message });
+        }
       });
     });
   } catch (err) {
@@ -1213,21 +1253,37 @@ async function loadSaved() {
   }
 }
 
-document.getElementById("btnSaveQuery").addEventListener("click", () => {
-  if (!editor.value.trim()) { alert("Editor is empty."); return; }
-  nameInput.value = "";
-  nameDialog.showModal();
-});
-document.getElementById("nameForm").addEventListener("submit", async (e) => {
-  if (e.submitter?.value !== "ok") return;
-  const name = nameInput.value.trim();
-  if (!name) return;
-  try {
-    await api("/admin/db/saved-queries", "POST", { name, query: editor.value });
-    loadSaved();
-  } catch (err) {
-    alert("Save failed: " + err.message);
+// One flow instead of two handlers: the old <dialog> needed a click handler to
+// open it and a submit handler to consume the result. preConfirm does the POST
+// inside the dialog, so a failing save keeps the typed name on screen to retry
+// rather than dumping it and firing an alert() over an already-closed prompt.
+document.getElementById("btnSaveQuery").addEventListener("click", async () => {
+  const query = editor.value;
+  if (!query.trim()) {
+    Swal.fire({ icon: "info", title: "Editor is empty", text: "Nothing to save." });
+    return;
   }
+  const { isConfirmed } = await Swal.fire({
+    title: "Save query as…",
+    input: "text",
+    inputPlaceholder: "e.g. Active users last 7d",
+    inputAttributes: { maxlength: 120, autocapitalize: "off", autocorrect: "off" },
+    showCancelButton: true,
+    confirmButtonText: "Save",
+    confirmButtonColor: "#6ea8fe",
+    cancelButtonText: "Cancel",
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    inputValidator: (v) => (v && v.trim() ? undefined : "Name required"),
+    preConfirm: async (v) => {
+      try {
+        await api("/admin/db/saved-queries", "POST", { name: v.trim(), query });
+      } catch (err) {
+        Swal.showValidationMessage(`Save failed: ${err.message}`);
+      }
+    },
+  });
+  if (isConfirmed) loadSaved();
 });
 
 // ── history (localStorage, last 50) ──────────────────────────────────────────
@@ -1238,8 +1294,20 @@ document.getElementById("btnHistory").addEventListener("click", () => {
   historyPanel.classList.toggle("open");
   if (historyPanel.classList.contains("open")) renderHistory();
 });
-document.getElementById("btnClearHistory").addEventListener("click", () => {
-  if (confirm("Clear local query history?")) { localStorage.removeItem(HIST_KEY); renderHistory(); }
+document.getElementById("btnClearHistory").addEventListener("click", async () => {
+  const { isConfirmed } = await Swal.fire({
+    icon: "warning",
+    title: "Clear local query history?",
+    text: "This browser only — saved queries are untouched.",
+    showCancelButton: true,
+    confirmButtonText: "Clear",
+    confirmButtonColor: "#ff6b6b",
+    cancelButtonText: "Cancel",
+    focusCancel: true,
+  });
+  if (!isConfirmed) return;
+  localStorage.removeItem(HIST_KEY);
+  renderHistory();
 });
 
 // pushHistory dedupes against the most-recent entry: re-running the same query
