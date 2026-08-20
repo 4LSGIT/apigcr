@@ -1694,6 +1694,30 @@
     }
 
     /**
+     * Open one task's detail modal from anywhere in the shell (checklist scope
+     * links, entity widgets). The sibling of showAppt() — except tasks have no
+     * standalone form page, so instead of a Swal-hosted iframe this drives the
+     * Tasks tab's own viewTask(), which owns the modal, its action buttons and
+     * the history fetch.
+     *
+     * Cold iframe: openTasksTab() has just set .src, so viewTask does not exist
+     * yet. Poll briefly rather than hanging on 'load' alone — the function is a
+     * hoisted declaration, available as soon as the page's script evaluates.
+     */
+    function showTask(taskId) {
+      const frame = E('tasksFrame');
+      openTasksTab();
+      let tries = 0;
+      (function go() {
+        try {
+          const w = frame.contentWindow;
+          if (w && typeof w.viewTask === 'function') { w.viewTask(taskId); return; }
+        } catch (_) { /* cross-origin can't happen here; ignore mid-navigation */ }
+        if (++tries < 60) setTimeout(go, 100);   // ~6s, then give up silently
+      })();
+    }
+
+    /**
      * Task badges (sidebar Tasks item + header "My Tasks" button): the
      * current user's overdue + due-today count. Refreshed at boot
      * (loadUserContext) and poked by tasks.html after every task mutation

@@ -291,6 +291,27 @@ function autoSize(f) {
   } catch (_) { setInterval(fit, 700); }
 }
 
+/* Scope-cell navigation, by link_type (LINK_TYPES in routes/api.checklists.js
+   is contact | case | bill | appt | task | user).
+
+   FILES — case/contact/bill open as workspace files through the shell's
+   addFile(fileName, fileType, fileID). Note the argument order (name FIRST)
+   and that a contact is 'client' there: passing the id where fileType belongs
+   matches no branch and opens an empty file.
+
+   MODALS — appts and tasks have no file of their own. Appts get the shell's
+   showAppt() Swal (same one case.html and the calendar use); tasks get the
+   shell's showTask(), which drives the Tasks tab's own viewTask().
+
+   'user' is not here: it renders as a name, with nowhere to navigate to. */
+const SCOPE_NAV = {
+  case:    (id) => shell().addFile(id, 'case',   id),
+  contact: (id) => shell().addFile(id, 'client', id),
+  bill:    (id) => shell().addFile(id, 'bill',   id),
+  appt:    (id) => shell().showAppt(id),
+  task:    (id) => shell().showTask(id),
+};
+
 function browseRow(cl) {
   const row = document.createElement('div');
   row.className = 'cx-row';
@@ -310,20 +331,22 @@ function browseRow(cl) {
 
   const scopeEl = document.createElement('span');
   scopeEl.className = 'cx-row-scope';
+  const nav = cl.link ? SCOPE_NAV[cl.link_type] : null;
   if (!cl.link) {
     scopeEl.textContent = 'unlinked';
   } else if (cl.link_type === 'user') {
     scopeEl.textContent = userName(cl.link);
-  } else if (cl.link_type === 'case') {
-    // The API returns the raw case_id; resolving it to a docket number would
-    // need a join the list route doesn't do. The link still navigates.
+  } else if (nav) {
+    // The API returns raw ids; resolving them to docket numbers or names would
+    // need joins the list route doesn't do, so the id doubles as the label.
     const a = document.createElement('a');
     a.href = '#';
-    a.textContent = 'case ' + cl.link;
+    a.textContent = cl.link_type + ' ' + cl.link;
     a.onclick = (e) => {
       e.stopPropagation();
       e.preventDefault();
-      try { shell().addFile('case', cl.link); } catch (_) { toast('error', 'Could not open case'); }
+      try { nav(String(cl.link)); }
+      catch (_) { toast('error', 'Could not open ' + cl.link_type); }
     };
     scopeEl.appendChild(a);
   } else {
