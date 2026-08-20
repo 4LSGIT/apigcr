@@ -143,13 +143,8 @@
     .correction-banner i { color: #e6a800; margin-right: 6px; }
     .correction-banner strong { color: #4d3500; }
 
-    /* ── Notes ── */
-    #noteField {
-      width: 100%; border: 1px solid #d5d9de; border-radius: 6px;
-      padding: 10px 12px; font-size: 0.88rem; resize: vertical;
-      font-family: inherit; min-height: 70px;
-    }
-    #noteField:focus { outline: none; border-color: #86b7fe; box-shadow: 0 0 0 3px rgba(13,110,253,0.12); }
+    /* ── Notes & Lists frame (W4) ── */
+    #apptNotesFrame { width: 100%; border: none; min-height: 150px; display: block; }
 
     /* ── Case section ── */
     #caseDisplay a { font-weight: 600; font-size: 0.95rem; }
@@ -287,17 +282,6 @@
     </div>
   </div>
 
-  <!-- ═══ NOTES ═══ -->
-  <div class="appt-section">
-    <div class="appt-section-title">Notes</div>
-    <div class="yc-field">
-      <textarea id="noteField" rows="3" maxlength="3000" placeholder="Appointment notes"></textarea>
-    </div>
-    <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="updateNote()" style="margin-top:6px;">
-      <i class="fa-solid fa-floppy-disk"></i> Update Note
-    </button>
-  </div>
-
   <!-- ═══ CASE ═══ -->
   <div class="appt-section" id="caseSection">
     <div class="appt-section-title">Case</div>
@@ -330,10 +314,43 @@
       </div>
     </div>
   </div>
+
+  <!-- ═══ NOTES & LISTS ═══ -->
+  <!-- checklistView.html in entity mode. The pinned Note card IS appts.appt_note
+       (NATIVE_NOTES in that file) — the same column the old #noteField textarea
+       and its Update Note button wrote, which this section replaces outright.
+       Anything else here is a real checklists row with link_type='appt' and
+       link=<appt_id>.
+
+       LAST, deliberately. The widget's height is unbounded (a 30-item list is a
+       tall card); everything above it is fixed-height. Putting it anywhere else
+       would push the Case section off the bottom of the 650px Swal iframe.
+
+       KNOWN, NOT FIXED HERE. apptService still appends to appt_note from five
+       CONCAT sites (booking, reschedule ×2, cancel audit trails), and those are
+       deliberately exempt from the noteLimits ceiling. They keep appending
+       behind this card, and a card save is last-write-wins against them: the
+       card PATCHes the whole column with whatever it loaded. That is exactly
+       what the Update Note button did, so it is pre-existing behaviour, not a
+       regression this slice introduces. -->
+  <div class="appt-section">
+    <div class="appt-section-title">Notes &amp; Lists</div>
+    <iframe id="apptNotesFrame"></iframe>
+  </div>
 </div>
 
 <script>
-const P = window.parent;
+/* TRANSPORT: window.top, not window.parent.
+   Only index.html frames this file (showAppt()'s Swal), so parent === top
+   today and the two resolve identically — case.html, contact.html and
+   calendar.html all reach this page by calling the SHELL's showAppt(), which
+   opens the Swal in the shell's document, not in theirs. All four members
+   used below live on the shell and nowhere else: apiSend (index.html:2652 —
+   case/contact only relay it), addFile (index.html:3202), postMessage, and
+   onApptUpdate (which nothing anywhere actually sets). window.top is the
+   house idiom for a framed widget (checklistView.html, eventform.html) and
+   keeps working if this page is ever framed more than one deep. */
+const P = window.top;
 const params = new URLSearchParams(location.search);
 const apptId = params.get('apptID') || params.get('apptid');
 
@@ -403,6 +420,7 @@ async function loadAppt() {
     apptData = resp.data;
     if (!apptData) throw new Error('Not found');
     render();
+    mountNotes();
   } catch (err) {
     document.getElementById('loading').innerHTML = `<span style="color:red;">Failed to load appointment: ${err.message}</span>`;
   }
@@ -433,8 +451,8 @@ function render() {
   document.getElementById('length').textContent = a.appt_length ? `${a.appt_length} min` : '—';
   document.getElementById('withUser').textContent = a.user_name || `User #${a.appt_with}`;
 
-  // Notes
-  document.getElementById('noteField').value = a.appt_note || '';
+  // Notes live in the pinned Note card inside #apptNotesFrame — one field,
+  // one editor. See mountNotes().
 
   // Case
   renderCase();
@@ -623,17 +641,39 @@ async function doRescheduleLater() {
   }
 }
 
-// ─── NOTE UPDATE ───
+// ─── NOTES & LISTS FRAME ───
 
-async function updateNote() {
+/* MOUNT ONCE. loadAppt() is called from nine places on this page — every
+   status action re-loads — and re-pointing .src on each would blow away the
+   widget's in-memory state (unsaved body drafts, the kind filter, a
+   half-typed add-item input) and re-fire its two GETs. The dataset guard is
+   the whole reason this is a separate function rather than a line in
+   render(). */
+function mountNotes() {
+  const f = document.getElementById('apptNotesFrame');
+  if (f.dataset.mounted) return;
+  f.dataset.mounted = '1';
+  f.src = '/checklistView.html?link_type=appt&link=' + encodeURIComponent(apptData.appt_id);
+  // checklistView.html sizes to its own content; without this it keeps the
+  // default iframe height and grows its own scrollbar inside ours. Same idiom
+  // as eventform.html's efAutoSize() and checklistsView.html's autoSize().
+  f.onload = () => { try { autoSizeNotes(f); } catch (_) {} };
+}
+
+function autoSizeNotes(f) {
+  const fit = () => {
+    try {
+      const h = f.contentDocument && f.contentDocument.body && f.contentDocument.body.scrollHeight;
+      if (h) f.style.height = (h + 24) + 'px';
+    } catch (_) {}
+  };
+  fit();
+  // The widget rebuilds its DOM on every edit, so watch it rather than
+  // measuring once.
   try {
-    await P.apiSend(`/api/appts/${apptData.appt_id}`, 'PATCH', {
-      appt_note: document.getElementById('noteField').value
-    });
-    Toast.fire({ icon: 'success', title: 'Note updated' });
-  } catch (err) {
-    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
-  }
+    const obs = new f.contentWindow.MutationObserver(fit);
+    obs.observe(f.contentDocument.body, { childList: true, subtree: true });
+  } catch (_) { setInterval(fit, 700); }
 }
 
 // ─── CASE LINKING ───
@@ -684,10 +724,20 @@ function notifyParent() {
 }
 
 // ─── INIT ───
+/* This document parses inside an iframe inside a Swal inside the shell, and
+   can win that race: the shell may not have defined apiSend yet. Poll for it
+   rather than calling loadAppt() bare — checklistView.html's boot block is the
+   reference implementation of the same wait, and eventform.html's
+   efWaitForShell() is the same loop written around a missing-id guard. */
 if (!apptId) {
   document.getElementById('loading').innerHTML = '<span style="color:red;">Missing appointment ID.</span>';
 } else {
-  loadAppt();
+  (function waitForParent() {
+    try {
+      if (P && typeof P.apiSend === 'function') return loadAppt();
+    } catch (_) { /* same-origin, cannot actually throw */ }
+    setTimeout(waitForParent, 100);
+  })();
 }
 </script>
 </body>

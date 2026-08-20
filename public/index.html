@@ -1323,6 +1323,27 @@
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/'/g, "&#39;");
     }
 
+    /**
+     * Open one appointment in a modal.
+     *
+     * didClose used to query `.tab-content[style*="block"] iframe` and call
+     * refresh() on it. Neither exists: this shell's main tabs are `.tab-main`,
+     * `.tab-content` appears nowhere else in this file, and no framed page
+     * defines a global refresh() (the two esign widgets do, and they are never
+     * that iframe). It had always been a no-op.
+     *
+     * Appts refresh through apptform2's notifyParent() → 'appt-updated' → the
+     * listener above → refreshAppts() on every iframe (case.html:1412 and
+     * contact.html:846 both define one). But that only ever fired on a STATUS
+     * action: the old Update Note button never called notifyParent(), so a note
+     * edit never refreshed the Note column in the table behind — and the pinned
+     * Note card that replaced it (W4) will not either, since checklistView
+     * saves through its own path and knows nothing about this shell.
+     *
+     * So broadcast on close, exactly as showEvent() does. This tab's own Appts
+     * table is inline markup rather than an iframe, so the listener cannot
+     * reach it — hence the second half.
+     */
     function showAppt(apptID) {
       Swal.fire({
         title: `Appointment ${apptID}`,
@@ -1332,12 +1353,11 @@
         showConfirmButton: false,
         showCloseButton: true,
         didClose: () => {
-          // Notify the active tab to refresh (if it has a refresh function)
-          // This catches any changes made inside the appointment form
+          try { window.postMessage({ type: 'appt-updated' }, '*'); } catch (_) { }
           try {
-            const activeIframe = document.querySelector('.tab-content[style*="block"] iframe');
-            if (activeIframe && activeIframe.contentWindow.refresh) {
-              activeIframe.contentWindow.refresh();
+            const tab = E("tabAppts");
+            if (tab && tab.style.display === "block") {
+              tabApptsGet(offsets.appts || 0);
             }
           } catch (_) { }
         }
@@ -1346,20 +1366,15 @@
 
     /**
      * Open one event in a modal (W2). The sibling of showAppt() — same Swal,
-     * same iframe idiom, DIFFERENT close handler, deliberately.
+     * same iframe idiom, and since W4 the same close handler with the entity
+     * swapped. (It was written first: showAppt's didClose was a dead
+     * `.tab-content` selector until W4 replaced it with this shape.)
      *
-     * showAppt's didClose queries `.tab-content[style*="block"] iframe` and
-     * calls refresh() on it. Nothing in this shell has class `tab-content`
-     * (main tabs are `.tab-main`) and no framed page defines a global
-     * refresh(), so that handler has always been a no-op. Appts actually
-     * refresh through apptform2's notifyParent() → 'appt-updated' broadcast.
-     *
-     * Events already have that broadcast (the 'event-updated' listener above
-     * calls refreshEvents() on every iframe, which case.html and contact.html
-     * both export), so this posts it rather than copying the dead selector.
-     * eventform.html posts it too after each write; this is the belt-and-
-     * braces for a close, and the ONLY thing that reaches THIS page's Events
-     * tab, which is inline markup rather than an iframe.
+     * The 'event-updated' listener above calls refreshEvents() on every
+     * iframe, which case.html and contact.html both export. eventform.html
+     * posts it too after each write; this is the belt-and-braces for a close,
+     * and the ONLY thing that reaches THIS page's Events tab, which is inline
+     * markup rather than an iframe.
      */
     function showEvent(eventID) {
       Swal.fire({
