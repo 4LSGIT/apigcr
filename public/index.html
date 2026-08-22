@@ -2177,9 +2177,10 @@
       //
       // Freshness policy added 2026-08-22 after the "Clio code not updating"
       // incident: a user read a three-day-old code four times in 26 seconds
-      // and tried to log in with it. There is a 0-60s delay between the SMS
-      // arriving and app_settings.clio_login_code being written (separate
-      // issue). This function makes the UI immune to that delay by refusing
+      // and tried to log in with it. Inbound SMS reaches us by RingCentral
+      // push subscription (see rc_renew_subscriptions), so the write to
+      // app_settings.clio_login_code is prompt; the variable wait is carrier
+      // SMS delivery. This function makes the UI immune to that wait by refusing
       // to present a stale code AS USABLE — it names it as dead and waits for
       // the new one instead.
       async function showClioCode() {
@@ -2341,7 +2342,8 @@
           html: `
             <div style="font-size: 14px; margin: 10px 0;">${staleLine}</div>
             <div style="font-size: 14px; margin: 10px 0;">
-              Start the Clio login now. The new code will appear here automatically.
+              Start the Clio login now. The new code will appear here automatically &mdash;
+              usually a few seconds after the text arrives, occasionally up to a minute.
             </div>
             <div style="font-size: 12px; color: #888; margin-top: 14px;">
               <span id="clioNextCheck">Next check in ${Math.round(POLL_INTERVAL_MS / 1000)}s</span>
