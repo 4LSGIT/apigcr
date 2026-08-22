@@ -2806,8 +2806,15 @@
       }
       const target = E(tabName);
       target.style.display = "block";
-      // Lazy-load any iframe inside the tab on first open
-      const iframe = target.querySelector('iframe[data-src]');
+      // Lazy-load the tab's OWN iframe on first open (tabSettings, tabTasks,
+      // tabPipeline — tabs whose whole body is one iframe). ":scope >" is
+      // load-bearing: hub tabs (tabMore, tabAdmin) hold ~20 more panel iframes
+      // in hidden divs, and an unscoped querySelector picked the first of those
+      // in DOM order — loading /manuals.html and /readonlyKeys.html, and firing
+      // their startup fetches, just because you opened the tab. Hidden iframes
+      // still load and run their JS. Panel iframes are the click handler's job
+      // (see the data-target listener above).
+      const iframe = target.querySelector(':scope > iframe[data-src]');
       if (iframe) {
         iframe.src = iframe.dataset.src;
         delete iframe.dataset.src;
