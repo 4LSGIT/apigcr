@@ -2180,11 +2180,17 @@
       // and tried to log in with it. There is a 0-60s delay between the SMS
       // arriving and app_settings.clio_login_code being written (separate
       // issue). This function makes the UI immune to that delay by refusing
-      // to present a stale code at all — it waits for the new one instead.
+      // to present a stale code AS USABLE — it names it as dead and waits for
+      // the new one instead.
       async function showClioCode() {
         const FRESH_MAX_AGE_S  = 180;    // <= this many seconds old: show it
-        const POLL_INTERVAL_MS = 2000;   // re-check cadence while waiting
+        const POLL_INTERVAL_MS = 3000;   // gap between automatic re-checks
         const POLL_MAX_MS      = 120000; // stop waiting after this long
+        const TICK_MS          = 250;    // countdown repaint granularity
+
+        const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => (
+          { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
 
         const fmtTime = (ts) => new Date(ts).toLocaleString("en-US", {
           timeZone: "America/New_York",
@@ -2205,7 +2211,19 @@
           return Number.isFinite(n) ? n : Infinity;
         };
 
-        // The normal dialog — byte-for-byte the pre-2026-08-22 presentation.
+        // "3 minutes", "4 hours", "3 days". Null when the age is unknown.
+        // Cutoffs are chosen so the singular never actually fires (this path
+        // is only reached above FRESH_MAX_AGE_S), but pluralize anyway.
+        const humanAge = (s) => {
+          if (!Number.isFinite(s)) return null;
+          const u = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+          if (s < 90)     return u(Math.round(s), "second");
+          if (s < 5400)   return u(Math.round(s / 60), "minute");
+          if (s < 172800) return u(Math.round(s / 3600), "hour");
+          return u(Math.round(s / 86400), "day");
+        };
+
+        // The normal dialog — the pre-2026-08-22 presentation.
         const showCode = (d) => {
           const secondsOld = ageOf(d);
           let freshnessLabel = "";
@@ -2217,9 +2235,9 @@
           Swal.fire({
             title: "Clio Login Code",
             html: `
-              <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${d.value}</div>
-              <div style="font-size: 13px; color: #666;"> Updated ${d.updated_at ? fmtTime(d.updated_at) : "unknown"}</div>
-              <div style="font-size: 12px; color: #888;">${freshnessLabel}</div>`,
+              <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${esc(d.value)}</div>
+              <div style="font-size: 13px; color: #666;"> Updated ${d.updated_at ? esc(fmtTime(d.updated_at)) : "unknown"}</div>
+              <div style="font-size: 12px; color: #888;">${esc(freshnessLabel)}</div>`,
             showCancelButton: true,
             confirmButtonText: "Copy Code",
             cancelButtonText: "Close",
@@ -2245,18 +2263,23 @@
           return;
         }
 
-        // ---- stale: wait for a new code rather than show a dead one ----
+        // ---- stale: name it as dead and wait for a new one ----
+        //
+        // The old code IS shown here, in body text, inside a sentence that
+        // says it will not work. That is the opposite of the bug: the bug was
+        // a 24px bold number with the staleness in 12px grey underneath.
+        // Seeing it lets the user confirm it matches the one they already
+        // tried and failed with.
         const baselineUpdatedAt = data.updated_at;
         const baselineValue     = data.value;
         const startedAt         = Date.now();
-        let latest    = data;     // most recent successful fetch
-        let poller    = null;
-        let ticker    = null;
-        let inFlight  = false;    // stops overlapping polls if one runs long
-        let settled   = false;    // set BEFORE we swap dialogs — see .then()
+        let latest      = data;   // most recent successful fetch
+        let ticker      = null;
+        let inFlight    = false;  // stops overlapping checks
+        let settled     = false;  // set BEFORE we swap dialogs — see .then()
+        let nextCheckAt = Date.now() + POLL_INTERVAL_MS;
 
         const stop = () => {
-          if (poller) { clearInterval(poller); poller = null; }
           if (ticker) { clearInterval(ticker); ticker = null; }
         };
 
@@ -2267,67 +2290,33 @@
           showCode(d);            // Swal.fire replaces the waiting popup
         };
 
-        const lastAge  = ageOf(data);
-        const lastSeen = data.updated_at ? fmtTime(data.updated_at) : "unknown";
-        const lastAgeText = Number.isFinite(lastAge)
-          ? (lastAge < 5400
-              ? `${Math.floor(lastAge / 60)} minutes old`
-              : `${Math.floor(lastAge / 3600)} hours old`)
-          : "of unknown age";
+        const setStatus = (text) => {
+          const el = document.getElementById("clioNextCheck");
+          if (el) el.textContent = text;
+        };
 
-        Swal.fire({
-          title: "Waiting for a new code",
-          html: `
-            <div style="font-size: 14px; margin: 10px 0;">
-              The last code arrived <b>${lastSeen}</b> — it is ${lastAgeText} and will not work.
-            </div>
-            <div style="font-size: 14px; margin: 10px 0;">
-              Start the Clio login now. The new code will appear here automatically.
-            </div>
-            <div style="font-size: 12px; color: #888;">
-              Waiting <span id="clioWaitElapsed">0</span>s&hellip;
-            </div>`,
-          icon: "warning",
-          showConfirmButton: false,
-          showCancelButton: true,
-          cancelButtonText: "Show the old code anyway",
-          allowOutsideClick: false,
-          }).then(result => {
-          // settled === true means the poller (or the timeout) swapped in the
-          // real dialog. SweetAlert resolves THIS promise when that happens,
-          // so without the flag we would fire a second dialog on top of it.
-          if (settled) return;
-          stop();
-          if (result.dismiss === Swal.DismissReason.cancel) showCode(latest);
-        });
-
-        ticker = setInterval(() => {
-          const el = document.getElementById("clioWaitElapsed");
-          if (el) el.textContent = String(Math.floor((Date.now() - startedAt) / 1000));
-        }, 1000);
-
-        poller = setInterval(async () => {
+        const doCheck = async () => {
           if (settled || inFlight) return;
 
-          if (Date.now() - startedAt >= POLL_MAX_MS) {
-            finish(latest);       // gave up — show the best we have
+          // Don't let a mid-wait token expiry pop apiSend's blocking login
+          // dialog on top of ours. Skip this check; the user's next action
+          // re-authenticates normally.
+          if (!window.AUTH_STATE || !window.AUTH_STATE.jwt || isJwtExpired(window.AUTH_STATE.jwt)) {
+            nextCheckAt = Date.now() + POLL_INTERVAL_MS;
             return;
           }
 
-          // Don't let a mid-wait token expiry pop apiSend's blocking login
-          // dialog on top of ours. Skip the tick; the user's next action
-          // re-authenticates normally.
-          if (!window.AUTH_STATE || !window.AUTH_STATE.jwt || isJwtExpired(window.AUTH_STATE.jwt)) return;
-
           inFlight = true;
+          setStatus("Checking\u2026");
           let fresh;
           try {
             fresh = await apiSend("/clio-code");
           } catch (e) {
-            console.warn("clio-code poll failed, retrying", e);
-            return;               // transient — keep the loop alive
+            console.warn("clio-code check failed, will retry", e);
+            return;               // transient — the ticker keeps going
           } finally {
-            inFlight = false;
+            inFlight    = false;
+            nextCheckAt = Date.now() + POLL_INTERVAL_MS;
           }
 
           latest = fresh;
@@ -2337,7 +2326,66 @@
           if (fresh.updated_at !== baselineUpdatedAt || fresh.value !== baselineValue) {
             finish(fresh);
           }
-        }, POLL_INTERVAL_MS);
+        };
+
+        const lastAge  = ageOf(data);
+        const ageText  = humanAge(lastAge);
+        const codeText = (data.value === null || data.value === undefined || data.value === "")
+          ? "none stored" : esc(data.value);
+        const staleLine = (data.updated_at && ageText)
+          ? `The last code (<b>${codeText}</b>) arrived <b>${esc(fmtTime(data.updated_at))}</b> &mdash; it is ${esc(ageText)} old and will not work.`
+          : `The last code (<b>${codeText}</b>) is of unknown age and cannot be trusted.`;
+
+        Swal.fire({
+          title: "Waiting for a new code",
+          html: `
+            <div style="font-size: 14px; margin: 10px 0;">${staleLine}</div>
+            <div style="font-size: 14px; margin: 10px 0;">
+              Start the Clio login now. The new code will appear here automatically.
+            </div>
+            <div style="font-size: 12px; color: #888; margin-top: 14px;">
+              <span id="clioNextCheck">Next check in ${Math.round(POLL_INTERVAL_MS / 1000)}s</span>
+              <button type="button" id="clioCheckNow"
+                      style="margin-left:10px; font-size:12px; padding:3px 10px; cursor:pointer;
+                             border:1px solid #bbb; border-radius:4px; background:#f6f6f6; color:#333;">
+                Check now
+              </button>
+            </div>`,
+          icon: "warning",
+          showConfirmButton: false,
+          showCancelButton: true,
+          cancelButtonText: "Show the old code anyway",
+          allowOutsideClick: false,
+          didOpen: () => {
+            // "Check now" lives in the HTML, not as a Swal confirm button, so
+            // that clicking it cannot close the dialog. A Swal button would
+            // resolve the promise and need a preConfirm dance to stay open.
+            const btn = document.getElementById("clioCheckNow");
+            if (btn) btn.addEventListener("click", () => { doCheck(); });
+          },
+          }).then(result => {
+          // settled === true means doCheck (or the timeout) swapped in the
+          // real dialog. SweetAlert resolves THIS promise when that happens,
+          // so without the flag we would fire a second dialog on top of it.
+          if (settled) return;
+          stop();
+          if (result.dismiss === Swal.DismissReason.cancel) showCode(latest);
+        });
+
+        // One timer drives everything: the give-up check, the automatic
+        // re-check, and the countdown repaint. Ticking at 250ms keeps the
+        // button responsive while the visible text still only changes once a
+        // second.
+        ticker = setInterval(() => {
+          if (settled) return;
+          if (Date.now() - startedAt >= POLL_MAX_MS) {
+            finish(latest);       // gave up — show the best we have
+            return;
+          }
+          if (inFlight) return;   // status already reads "Checking…"
+          if (Date.now() >= nextCheckAt) { doCheck(); return; }
+          setStatus(`Next check in ${Math.max(1, Math.ceil((nextCheckAt - Date.now()) / 1000))}s`);
+        }, TICK_MS);
       }
 </script>
   
