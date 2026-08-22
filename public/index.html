@@ -2177,17 +2177,61 @@
       //
       // Freshness policy added 2026-08-22 after the "Clio code not updating"
       // incident: a user read a three-day-old code four times in 26 seconds
-      // and tried to log in with it. Inbound SMS reaches us by RingCentral
-      // push subscription (see rc_renew_subscriptions), so the write to
-      // app_settings.clio_login_code is prompt; the variable wait is carrier
-      // SMS delivery. This function makes the UI immune to that wait by refusing
-      // to present a stale code AS USABLE — it names it as dead and waits for
-      // the new one instead.
+      // and tried to log in with it. There is a 0-60s delay between the SMS
+      // arriving and app_settings.clio_login_code being written, and it is
+      // NOT carrier latency: the inbound webhook only QUEUES the work
+      // (lib/actionDispatchers.js deliverWorkflow -> scheduleResume inserts a
+      // workflow_resume row), which then sits until the next Cloud Scheduler
+      // tick hits POST /process-jobs. This function attacks the delay from
+      // both ends — it refuses to present a stale code AS USABLE (names it as
+      // dead and waits for the new one), and it drains the queue itself so
+      // the wait collapses to seconds.
       async function showClioCode() {
         const FRESH_MAX_AGE_S  = 180;    // <= this many seconds old: show it
-        const POLL_INTERVAL_MS = 3000;   // gap between automatic re-checks
+        const POLL_INTERVAL_MS = 5000;   // gap between automatic re-checks
         const POLL_MAX_MS      = 120000; // stop waiting after this long
         const TICK_MS          = 250;    // countdown repaint granularity
+        const KICK_INTERVAL_MS = 10000;  // how often to nudge the job queue
+
+        // Nudge the job queue while we wait.
+        //
+        // The inbound SMS creates a scheduled_jobs row immediately, but the
+        // row only runs when the 60s Cloud Scheduler tick hits POST
+        // /process-jobs — which is the whole reason the code shows up late.
+        // Hitting that endpoint ourselves collapses the wait to seconds.
+        //
+        // Safe to call repeatedly: the claim is transactional
+        // (FOR UPDATE SKIP LOCKED, pending->running) and recoverStuckJobs is
+        // purely time-thresholded, so extra invocations are no-ops. The
+        // engine explicitly documents overlapping polls as harmless —
+        // advanceWorkflow's claim-lock lets exactly one win.
+        //
+        // The inFlight guard is NOT about correctness, it is about the
+        // thundering herd: each call can claim up to BATCH_SIZE jobs, so N
+        // stacked calls could drain a backlog 10N-wide in parallel and fan
+        // out that many webhooks/SMS at once. One at a time.
+        let kickInFlight = false;
+        let lastKickAt   = 0;
+        let nextCheckAt  = 0;       // set when the wait path starts
+        let settled      = false;   // declared early: kickQueue reads it
+
+        const authReady = () =>
+          !!(window.AUTH_STATE && window.AUTH_STATE.jwt && !isJwtExpired(window.AUTH_STATE.jwt));
+
+        const kickQueue = () => {
+          if (settled || kickInFlight || !authReady()) return;
+          kickInFlight = true;
+          lastKickAt   = Date.now();
+          apiSend("/process-jobs", "POST")
+            .then(r => {
+              // Something actually ran — re-read the code now instead of
+              // waiting out the countdown. nextCheckAt is picked up by the
+              // ticker on its next pass, so no reentrancy here.
+              if (!settled && r && r.processed > 0) nextCheckAt = 0;
+            })
+            .catch(e => console.warn("process-jobs kick failed", e))
+            .finally(() => { kickInFlight = false; });
+        };
 
         const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => (
           { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
@@ -2250,6 +2294,12 @@
           });
         };
 
+        // Fire the first nudge in parallel with the initial read rather than
+        // after it. If the code turns out to be stale, the queue is already
+        // draining by the time we know; if it turns out to be fresh, we have
+        // spent one cheap request and processed any other due jobs early.
+        kickQueue();
+
         let data;
         try {
           data = await apiSend("/clio-code");
@@ -2277,8 +2327,7 @@
         let latest      = data;   // most recent successful fetch
         let ticker      = null;
         let inFlight    = false;  // stops overlapping checks
-        let settled     = false;  // set BEFORE we swap dialogs — see .then()
-        let nextCheckAt = Date.now() + POLL_INTERVAL_MS;
+        nextCheckAt     = Date.now() + POLL_INTERVAL_MS;
 
         const stop = () => {
           if (ticker) { clearInterval(ticker); ticker = null; }
@@ -2302,13 +2351,13 @@
           // Don't let a mid-wait token expiry pop apiSend's blocking login
           // dialog on top of ours. Skip this check; the user's next action
           // re-authenticates normally.
-          if (!window.AUTH_STATE || !window.AUTH_STATE.jwt || isJwtExpired(window.AUTH_STATE.jwt)) {
+          if (!authReady()) {
             nextCheckAt = Date.now() + POLL_INTERVAL_MS;
             return;
           }
 
           inFlight = true;
-          setStatus("Checking\u2026");
+          setStatus("Checking…");
           let fresh;
           try {
             fresh = await apiSend("/clio-code");
@@ -2363,7 +2412,7 @@
             // that clicking it cannot close the dialog. A Swal button would
             // resolve the promise and need a preConfirm dance to stay open.
             const btn = document.getElementById("clioCheckNow");
-            if (btn) btn.addEventListener("click", () => { doCheck(); });
+            if (btn) btn.addEventListener("click", () => { kickQueue(); doCheck(); });
           },
           }).then(result => {
           // settled === true means doCheck (or the timeout) swapped in the
@@ -2375,15 +2424,16 @@
         });
 
         // One timer drives everything: the give-up check, the automatic
-        // re-check, and the countdown repaint. Ticking at 250ms keeps the
-        // button responsive while the visible text still only changes once a
-        // second.
+        // re-check, the queue nudge, and the countdown repaint. Ticking at
+        // 250ms keeps the button responsive while the visible text still only
+        // changes once a second.
         ticker = setInterval(() => {
           if (settled) return;
           if (Date.now() - startedAt >= POLL_MAX_MS) {
             finish(latest);       // gave up — show the best we have
             return;
           }
+          if (Date.now() - lastKickAt >= KICK_INTERVAL_MS) kickQueue();
           if (inFlight) return;   // status already reads "Checking…"
           if (Date.now() >= nextCheckAt) { doCheck(); return; }
           setStatus(`Next check in ${Math.max(1, Math.ceil((nextCheckAt - Date.now()) / 1000))}s`);
