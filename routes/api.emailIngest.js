@@ -479,26 +479,57 @@ router.delete('/api/email-ingest/rule-actions/:id', jwtOrApiKey, async (req, res
 //                    a failure `status`, which stays green in that case
 router.get('/api/email-ingest/executions', jwtOrApiKey, async (req, res) => {
   try {
-    // has_match is true-or-absent, NOT tri-state: executionsService.list()
-    // only honors `=== true`, so a parsed `false` was silently identical to
-    // omitting the param — the same silent-drop family as the status note
-    // above. T6/F-4 removed the dead false branch so the route contract
-    // matches real behavior. (No caller ever sent has_match=false; if one
-    // ever needs "rows WITHOUT matched rules", add the false predicate to
-    // the SERVICE first, then restore tri-state parsing here.)
-    const hasMatch = req.query.has_match === 'true' ? true : undefined;
-    const { rows, total, page, page_size } = await executionsService.list(req.db, {
+    // has_match is TRI-STATE again as of T8. T6/F-4 had collapsed it to
+    // true-or-absent because the SERVICE had no false predicate, so a parsed
+    // `false` was silently identical to omitting the param. The service now
+    // has that predicate (metadata->>'$.matched_rules' IS NULL), which is
+    // exactly the precondition T6/F-4 named, so the false branch is live:
+    // has_match=false means "rows where NO rule matched".
+    const hasMatch = req.query.has_match === 'true'  ? true
+                   : req.query.has_match === 'false' ? false
+                   : undefined;
+
+    // T8 — rule-scoped filters.
+    //   rule_id       matched THAT rule (metadata.matched_rules)
+    //   action_status an action outcome with that status; scoped to rule_id
+    //                 when both are present.
+    // Both are REJECTED with 400 on a bad value rather than silently dropped:
+    // the whole point of these filters is answering "did rule N fire", and a
+    // silently-ignored filter answers "yes" for every row on the page.
+    let ruleId;
+    if (req.query.rule_id !== undefined && req.query.rule_id !== '') {
+      ruleId = Number(req.query.rule_id);
+      if (!Number.isInteger(ruleId) || ruleId < 1) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'rule_id must be a positive integer',
+        });
+      }
+    }
+    const actionStatus = req.query.action_status || undefined;
+    if (actionStatus && !executionsService.VALID_ACTION_STATUSES.has(actionStatus)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `action_status must be one of: ${[...executionsService.VALID_ACTION_STATUSES].join(', ')}`,
+      });
+    }
+
+    const { rows, total, page, page_size, names } = await executionsService.list(req.db, {
       page:        req.query.page,
       page_size:   req.query.page_size,
       status:      req.query.status,
       source:      req.query.source,
       since:       req.query.since,
       until:       req.query.until,
-      has_match:   hasMatch,
-      has_failure: req.query.has_failure === 'true',
-      slim:        req.query.slim === 'true',
+      has_match:     hasMatch,
+      has_failure:   req.query.has_failure === 'true',
+      rule_id:       ruleId,
+      action_status: actionStatus,
+      slim:          req.query.slim === 'true',
     });
-    res.json({ executions: rows, page, page_size, total });
+    // `names` is additive — activity.html and any other consumer read only
+    // `executions` and are unaffected.
+    res.json({ executions: rows, page, page_size, total, names });
   } catch (err) {
     console.error('[email-ingest] list executions error:', err);
     res.status(500).json({ status: 'error', message: err.message });

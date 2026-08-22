@@ -58,6 +58,19 @@
  * ER_BAD_FIELD_ERROR.
  *
  * action_failure_count is ALWAYS in the projection (slim and full).
+ *
+ * ── T8 additions (rule-scoped filtering + name hydration) ───────────────
+ *
+ * Mirror of the email service — read that header for the full rationale.
+ * Phone-specific divergences:
+ *   * rule ids resolve against phone_ingest_rules, action ids against
+ *     phone_ingest_rule_actions, suppression ids against
+ *     phone_log_suppressions (the Layer-2 table).
+ *   * VALID_ACTION_STATUSES OMITS 'skipped_test_envelope'. That value only
+ *     exists on the email side: phoneIngestRuleService._dispatchAction is
+ *     otherwise line-identical but deliberately carries no TEST-ENVELOPE
+ *     GATE, because phone events have no "-test-" replay path. Adding it
+ *     here would put a permanently-empty option in the phone UI.
  */
 
 // ── STATUS VOCABULARY CHECKLIST (T6/F-6) ────────────────────────────────
@@ -81,6 +94,22 @@
 // would quietly return every row instead of the duplicates.
 const VALID_STATUSES = new Set([
   'logged', 'suppressed', 'error', 'duplicate',
+]);
+
+// ── ACTION-OUTCOME STATUS VOCABULARY ────────────────────────────────────
+// Written by phoneIngestRuleService._dispatchAction. Not a DB enum — a plain
+// JSON string — so this set is the only defense against a typo'd filter
+// value. list() DROPS an unrecognized value (same convention as `status`);
+// the ROUTE rejects one with 400 so a caller finds out.
+//
+//   success — dispatcher returned success
+//   failed  — dispatcher returned failure, or the transform / evaluator
+//             threw (synthetic outcomes carrying action_type 'transform' /
+//             'rule_evaluation' and a null rule_action_id)
+//
+// NO 'skipped_test_envelope' here — see the header note.
+const VALID_ACTION_STATUSES = new Set([
+  'success', 'failed',
 ]);
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -111,12 +140,19 @@ const _EXEC_COLS = `${_EXEC_COLS_BASE}, e.raw_input`;
  * @param {string} [opts.status]         one enum value
  * @param {string} [opts.since]          ISO datetime, inclusive lower bound
  * @param {string} [opts.until]          ISO datetime, inclusive upper bound
- * @param {boolean}[opts.has_match]      true → only rows with matched_rules
+ * @param {boolean}[opts.has_match]      true → rows WITH matched_rules;
+ *                                       false → rows WITHOUT; omit → no filter
  * @param {boolean}[opts.has_failure]    true → only rows with a failed action
  *                                       outcome (see header — NOT the same as
  *                                       a failure `status`)
+ * @param {number} [opts.rule_id]        only rows where this rule matched
+ * @param {string} [opts.action_status]  only rows with an action outcome of
+ *                                       this status; scoped to opts.rule_id
+ *                                       when that is also set
  * @param {boolean}[opts.slim]           true → omit raw_input from the rows
- * @returns {Promise<{rows:Array, total:number, page:number, page_size:number}>}
+ * @returns {Promise<{rows:Array, total:number, page:number, page_size:number,
+ *                    names:{rules:object, rule_actions:object,
+ *                           suppressions:object}}>}
  */
 async function list(db, opts = {}) {
   let page = parseInt(opts.page, 10);
@@ -141,13 +177,60 @@ async function list(db, opts = {}) {
     where.push('e.created_at <= ?');
     params.push(opts.until);
   }
+  // Tri-state (T8). false = "no rule matched" — the branch the route's
+  // T6/F-4 comment reserved for whenever a caller needed it.
   if (opts.has_match === true) {
     where.push(`e.metadata->>'$.matched_rules' IS NOT NULL`);
+  } else if (opts.has_match === false) {
+    where.push(`e.metadata->>'$.matched_rules' IS NULL`);
   }
   // Indexed generated column (idx_action_failures) — a range read, not a
   // full JSON scan.
   if (opts.has_failure === true) {
     where.push('e.action_failure_count > 0');
+  }
+
+  // ── T8: rule-scoped filters ────────────────────────────────────────────
+  //
+  // `ruleId` MUST be pushed as a JS NUMBER, never a string. matched_rules
+  // holds JSON *numbers*; mysql2 renders a numeric param as a bare literal
+  // (21) but a string param as a quoted one ('21'), and '21' MEMBER OF (…)
+  // compares string-to-number and matches ZERO rows while looking like it
+  // worked — the same silent-drop family as the `status` note above.
+  // Number() + Number.isInteger() below is what guarantees that; do not
+  // relax it to a truthiness check.
+  //
+  // `? MEMBER OF (col->'$.path')` is deliberately the exact shape MySQL
+  // documents as multi-valued-index-eligible, so the optional index in
+  // ref/2026-08-22_ingest_matched_rules_index.sql is picked up with no code
+  // change. A CAST(? AS UNSIGNED) wrapper would work too but is not needed
+  // once the param is a number, and wrapping the probe is the kind of thing
+  // that quietly costs you the index. Leave it bare.
+  const ruleId = Number(opts.rule_id);
+  const hasRuleId = Number.isInteger(ruleId) && ruleId > 0;
+  if (hasRuleId) {
+    where.push(`? MEMBER OF (e.metadata->'$.matched_rules')`);
+    params.push(ruleId);
+  }
+  if (opts.action_status && VALID_ACTION_STATUSES.has(opts.action_status)) {
+    if (hasRuleId) {
+      // Partial object containment: an array target contains a non-array
+      // candidate iff some element contains it, and object containment is
+      // per-key. So this reads "some outcome FOR RULE N has status S" —
+      // which is the whole point. The unscoped form below would instead
+      // answer "some outcome on a row where rule N also matched", i.e. it
+      // would blame rule N for another rule's failure.
+      where.push(
+        `JSON_CONTAINS(e.metadata->'$.action_outcomes',
+                       JSON_OBJECT('rule_id', ?, 'status', ?))`
+      );
+      params.push(ruleId, opts.action_status);
+    } else {
+      where.push(
+        `JSON_CONTAINS(e.metadata->'$.action_outcomes', JSON_OBJECT('status', ?))`
+      );
+      params.push(opts.action_status);
+    }
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -171,7 +254,9 @@ async function list(db, opts = {}) {
     [...params, pageSize, offset]
   );
 
-  return { rows, total: Number(total), page, page_size: pageSize };
+  const names = await _hydrateNames(db, rows);
+
+  return { rows, total: Number(total), page, page_size: pageSize, names };
 }
 
 
@@ -186,6 +271,70 @@ async function list(db, opts = {}) {
 function _idArray(v) {
   if (!Array.isArray(v)) return [];
   return v.map(Number).filter(n => Number.isInteger(n));
+}
+
+/**
+ * mysql2 hands back a parsed object for a JSON column, but parse defensively
+ * anyway (fixtures / non-typeCast drivers) and never throw.
+ */
+function _meta(row) {
+  const m = row && row.metadata;
+  if (!m) return {};
+  if (typeof m === 'object') return m;
+  try { const p = JSON.parse(m); return (p && typeof p === 'object') ? p : {}; }
+  catch { return {}; }
+}
+
+/**
+ * Collect every rule / rule-action / suppression id referenced by a page of
+ * execution rows and resolve them to names in ONE query each. Flat maps, not
+ * per-row detail arrays: a page repeats the same handful of rules, so per-row
+ * expansion would duplicate the same {id,name} hundreds of times on the wire.
+ * The UI joins client-side.
+ *
+ * Rule-action `name` is nullable, and outcomes synthesized for a failed
+ * transform / failed evaluator carry rule_action_id: null — both simply
+ * produce no entry and the UI falls back to action_type.
+ *
+ * @returns {Promise<{rules:object, rule_actions:object, suppressions:object}>}
+ */
+async function _hydrateNames(db, rows) {
+  const ruleIds = new Set();
+  const actionIds = new Set();
+  const suppIds = new Set();
+
+  for (const row of (rows || [])) {
+    const meta = _meta(row);
+    for (const id of _idArray(meta.matched_rules)) ruleIds.add(id);
+    for (const id of _idArray(meta.suppressed_by)) suppIds.add(id);
+    if (Array.isArray(meta.action_outcomes)) {
+      for (const o of meta.action_outcomes) {
+        if (!o || typeof o !== 'object') continue;
+        if (Number.isInteger(Number(o.rule_id)))        ruleIds.add(Number(o.rule_id));
+        if (Number.isInteger(Number(o.rule_action_id))) actionIds.add(Number(o.rule_action_id));
+      }
+    }
+  }
+
+  const out = { rules: {}, rule_actions: {}, suppressions: {} };
+
+  const fill = async (ids, table, bucket) => {
+    if (!ids.size) return;
+    const list = [...ids];
+    const ph = list.map(() => '?').join(',');
+    const [found] = await db.query(
+      `SELECT id, name FROM ${table} WHERE id IN (${ph})`, list
+    );
+    for (const r of found) bucket[r.id] = r.name ?? null;
+  };
+
+  await Promise.all([
+    fill(ruleIds,   'phone_ingest_rules',        out.rules),
+    fill(actionIds, 'phone_ingest_rule_actions', out.rule_actions),
+    fill(suppIds,   'phone_log_suppressions',    out.suppressions),
+  ]);
+
+  return out;
 }
 
 /**
@@ -207,6 +356,12 @@ async function getById(db, id) {
     log:                   null,
     matched_rule_details:  [],
     suppressed_by_details: [],
+    // T8 — same shape list() returns, so the drawer renderer that reads
+    // `names` works identically whether it was reached from the table or
+    // from a direct getById. matched_rule_details / suppressed_by_details
+    // are kept as-is: existing callers read them, and `names` cannot express
+    // ORDER or a deleted-row {id, name:null} placeholder.
+    names: { rules: {}, rule_actions: {}, suppressions: {} },
   };
 
   // phone_event_log (PK is `id`)
@@ -231,6 +386,8 @@ async function getById(db, id) {
   // {id, name}. Tolerates missing rows (deleted rule/suppression).
   const meta = execution.metadata && typeof execution.metadata === 'object'
     ? execution.metadata : {};
+
+  linked.names = await _hydrateNames(db, [execution]);
 
   const matchedIds = _idArray(meta.matched_rules);
   if (matchedIds.length) {
@@ -267,6 +424,7 @@ module.exports = {
   list,
   getById,
   VALID_STATUSES,
+  VALID_ACTION_STATUSES,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
 };

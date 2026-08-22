@@ -323,6 +323,7 @@ ref/2026-08-19_pipeline_phase.sql
 ref/2026-08-19_step_version_defaults_0.sql
 ref/2026-08-20_checklists_event_link_type.sql
 ref/2026-08-20_issue_reports.sql
+ref/2026-08-22_ingest_matched_rules_index.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/EXTERNAL_CODE_CSS_DECISION.md

@@ -44,6 +44,36 @@
  *
  * action_failure_count is ALWAYS in the projection (both slim and full) so a
  * caller can chip a green-status row as degraded without a second query.
+ *
+ * ── T8 additions (rule-scoped filtering + name hydration) ───────────────
+ *
+ * opts.rule_id — executions whose Layer-3 evaluation MATCHED that rule id.
+ * Backed by metadata.matched_rules (a JSON array of ints written by
+ * emailIngestService._buildMetadata). Predicate is
+ *   ? MEMBER OF (e.metadata->'$.matched_rules')
+ * with the param bound as a NUMBER — see the load-bearing comment at the
+ * predicate itself. MEMBER OF (not JSON_CONTAINS) is chosen because it is
+ * the form the optimizer can satisfy from a multi-valued index; see
+ * ref/2026-08-22_ingest_matched_rules_index.sql, which is OPTIONAL — without
+ * it this is a full scan (~420ms at 16k rows, fine for an admin surface).
+ *
+ * opts.action_status — executions carrying an action_outcomes entry with
+ * that status. SCOPED TO rule_id when rule_id is also supplied (i.e. "this
+ * rule's action failed", not "some rule's action failed on a row where this
+ * rule also matched") — that distinction is the whole point of the filter.
+ * Note 'failed' alone is ALSO answerable via has_failure, which is indexed;
+ * prefer has_failure when you don't need the rule scope.
+ *
+ * opts.has_match is now TRI-STATE (true / false / undefined). The false
+ * branch — rows where NO rule matched — is what the route's T6/F-4 comment
+ * said to add here first; it is now added, and the route parses accordingly.
+ *
+ * list() additionally returns a `names` block:
+ *   { rules:{id:name}, rule_actions:{id:name}, suppressions:{id:name} }
+ * covering every id referenced by the returned page's metadata. This is what
+ * lets the UI render "which rule fired, and what did its actions do" inline
+ * in the table instead of forcing a drawer open per row. It is 0–3 tiny
+ * indexed lookups against tables in the tens of rows — NOT an N+1.
  */
 
 // ── STATUS VOCABULARY CHECKLIST (T6/F-6) ────────────────────────────────
@@ -66,6 +96,26 @@
 const VALID_STATUSES = new Set([
   'logged', 'duplicate', 'skipped_firm_to_firm', 'skipped_suppression',
   'auth_failed', 'validation_failed', 'error',
+]);
+
+// ── ACTION-OUTCOME STATUS VOCABULARY ────────────────────────────────────
+// Written by emailIngestRuleService._dispatchAction. Unlike the execution
+// `status` above this is NOT a DB enum — it is a plain JSON string — so the
+// only defense against a typo'd filter value is this set. list() DROPS an
+// unrecognized value (same convention as `status`); the ROUTE rejects one
+// with 400 so a caller finds out.
+//
+//   success               — dispatcher returned success
+//   failed                — dispatcher returned failure, or the transform /
+//                           evaluator threw (synthetic outcomes, T6/F-3 and
+//                           T7/F-8; those carry action_type 'transform' /
+//                           'rule_evaluation' and a null rule_action_id)
+//   skipped_test_envelope — workflow action suppressed on a "-test-" replay
+//                           (TEST-ENVELOPE GATE in _dispatchAction). EMAIL
+//                           ONLY: the phone pipeline has no replay path, so
+//                           phoneIngestExecutionsService omits this value.
+const VALID_ACTION_STATUSES = new Set([
+  'success', 'failed', 'skipped_test_envelope',
 ]);
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -98,12 +148,19 @@ const _EXEC_COLS = `${_EXEC_COLS_BASE}, e.raw_input`;
  * @param {string} [opts.source]         source NAME (not id)
  * @param {string} [opts.since]          ISO datetime, inclusive lower bound
  * @param {string} [opts.until]          ISO datetime, inclusive upper bound
- * @param {boolean}[opts.has_match]      true → only rows with matched_rules
+ * @param {boolean}[opts.has_match]      true → rows WITH matched_rules;
+ *                                       false → rows WITHOUT; omit → no filter
  * @param {boolean}[opts.has_failure]    true → only rows with a failed action
  *                                       outcome (see header — NOT the same as
  *                                       a failure `status`)
+ * @param {number} [opts.rule_id]        only rows where this rule matched
+ * @param {string} [opts.action_status]  only rows with an action outcome of
+ *                                       this status; scoped to opts.rule_id
+ *                                       when that is also set
  * @param {boolean}[opts.slim]           true → omit raw_input from the rows
- * @returns {Promise<{rows:Array, total:number, page:number, page_size:number}>}
+ * @returns {Promise<{rows:Array, total:number, page:number, page_size:number,
+ *                    names:{rules:object, rule_actions:object,
+ *                           suppressions:object}}>}
  */
 async function list(db, opts = {}) {
   let page = parseInt(opts.page, 10);
@@ -132,13 +189,60 @@ async function list(db, opts = {}) {
     where.push('e.created_at <= ?');
     params.push(opts.until);
   }
+  // Tri-state (T8). false = "no rule matched" — the branch the route's
+  // T6/F-4 comment reserved for whenever a caller needed it.
   if (opts.has_match === true) {
     where.push(`e.metadata->>'$.matched_rules' IS NOT NULL`);
+  } else if (opts.has_match === false) {
+    where.push(`e.metadata->>'$.matched_rules' IS NULL`);
   }
   // Indexed generated column (idx_action_failures) — a range read, not the
   // 528ms JSON scan the equivalent metadata predicate costs.
   if (opts.has_failure === true) {
     where.push('e.action_failure_count > 0');
+  }
+
+  // ── T8: rule-scoped filters ────────────────────────────────────────────
+  //
+  // `ruleId` MUST be pushed as a JS NUMBER, never a string. matched_rules
+  // holds JSON *numbers*; mysql2 renders a numeric param as a bare literal
+  // (21) but a string param as a quoted one ('21'), and '21' MEMBER OF (…)
+  // compares string-to-number and matches ZERO rows while looking like it
+  // worked — the same silent-drop family as the `status` note above.
+  // Number() + Number.isInteger() below is what guarantees that; do not
+  // relax it to a truthiness check.
+  //
+  // `? MEMBER OF (col->'$.path')` is deliberately the exact shape MySQL
+  // documents as multi-valued-index-eligible, so the optional index in
+  // ref/2026-08-22_ingest_matched_rules_index.sql is picked up with no code
+  // change. A CAST(? AS UNSIGNED) wrapper would work too but is not needed
+  // once the param is a number, and wrapping the probe is the kind of thing
+  // that quietly costs you the index. Leave it bare.
+  const ruleId = Number(opts.rule_id);
+  const hasRuleId = Number.isInteger(ruleId) && ruleId > 0;
+  if (hasRuleId) {
+    where.push(`? MEMBER OF (e.metadata->'$.matched_rules')`);
+    params.push(ruleId);
+  }
+  if (opts.action_status && VALID_ACTION_STATUSES.has(opts.action_status)) {
+    if (hasRuleId) {
+      // Partial object containment: an array target contains a non-array
+      // candidate iff some element contains it, and object containment is
+      // per-key. So this reads "some outcome FOR RULE N has status S" —
+      // which is the whole point. The unscoped form below would instead
+      // answer "some outcome on a row where rule N also matched", i.e. it
+      // would blame rule N for another rule's failure.
+      where.push(
+        `JSON_CONTAINS(e.metadata->'$.action_outcomes',
+                       JSON_OBJECT('rule_id', ?, 'status', ?))`
+      );
+      params.push(ruleId, opts.action_status);
+    } else {
+      where.push(
+        `JSON_CONTAINS(e.metadata->'$.action_outcomes', JSON_OBJECT('status', ?))`
+      );
+      params.push(opts.action_status);
+    }
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -165,7 +269,9 @@ async function list(db, opts = {}) {
     [...params, pageSize, offset]
   );
 
-  return { rows, total: Number(total), page, page_size: pageSize };
+  const names = await _hydrateNames(db, rows);
+
+  return { rows, total: Number(total), page, page_size: pageSize, names };
 }
 
 
@@ -180,6 +286,74 @@ async function list(db, opts = {}) {
 function _idArray(v) {
   if (!Array.isArray(v)) return [];
   return v.map(Number).filter(n => Number.isInteger(n));
+}
+
+/**
+ * mysql2 hands back a parsed object for a JSON column, but every caller of
+ * this file also has to survive a string (a row fetched through a driver
+ * config without typeCast, or a hand-built fixture in a test). Parse
+ * defensively and never throw.
+ */
+function _meta(row) {
+  const m = row && row.metadata;
+  if (!m) return {};
+  if (typeof m === 'object') return m;
+  try { const p = JSON.parse(m); return (p && typeof p === 'object') ? p : {}; }
+  catch { return {}; }
+}
+
+/**
+ * Collect every rule / rule-action / suppression id referenced by a page of
+ * execution rows and resolve them to names in ONE query each.
+ *
+ * Why a flat map rather than per-row detail arrays: a page of 200 rows
+ * typically references the same handful of rules, so per-row expansion would
+ * repeat the same {id,name} object hundreds of times on the wire for no gain.
+ * The UI joins client-side.
+ *
+ * Rule-action `name` is nullable in the schema, and outcomes synthesized for
+ * a failed transform / failed evaluator carry rule_action_id: null — both
+ * simply produce no entry, and the UI falls back to action_type.
+ *
+ * @returns {Promise<{rules:object, rule_actions:object, suppressions:object}>}
+ */
+async function _hydrateNames(db, rows) {
+  const ruleIds = new Set();
+  const actionIds = new Set();
+  const suppIds = new Set();
+
+  for (const row of (rows || [])) {
+    const meta = _meta(row);
+    for (const id of _idArray(meta.matched_rules)) ruleIds.add(id);
+    for (const id of _idArray(meta.suppressed_by)) suppIds.add(id);
+    if (Array.isArray(meta.action_outcomes)) {
+      for (const o of meta.action_outcomes) {
+        if (!o || typeof o !== 'object') continue;
+        if (Number.isInteger(Number(o.rule_id)))        ruleIds.add(Number(o.rule_id));
+        if (Number.isInteger(Number(o.rule_action_id))) actionIds.add(Number(o.rule_action_id));
+      }
+    }
+  }
+
+  const out = { rules: {}, rule_actions: {}, suppressions: {} };
+
+  const fill = async (ids, table, bucket) => {
+    if (!ids.size) return;
+    const list = [...ids];
+    const ph = list.map(() => '?').join(',');
+    const [found] = await db.query(
+      `SELECT id, name FROM ${table} WHERE id IN (${ph})`, list
+    );
+    for (const r of found) bucket[r.id] = r.name ?? null;
+  };
+
+  await Promise.all([
+    fill(ruleIds,   'email_ingest_rules',            out.rules),
+    fill(actionIds, 'email_ingest_rule_actions',     out.rule_actions),
+    fill(suppIds,   'email_ingest_log_suppressions', out.suppressions),
+  ]);
+
+  return out;
 }
 
 /**
@@ -202,6 +376,13 @@ async function getById(db, id) {
     log:                  null,
     matched_rule_details: [],
     suppressed_by_details: [],
+    // T8 — same shape list() returns, so the drawer renderer that reads
+    // `names` works identically whether it was reached from the table or
+    // from a direct getById (the test-match panel's tmOpenExecution path).
+    // matched_rule_details / suppressed_by_details are kept as-is: existing
+    // callers read them, and `names` cannot express ORDER or a deleted-row
+    // {id, name:null} placeholder.
+    names: { rules: {}, rule_actions: {}, suppressions: {} },
   };
 
   // email_log (PK is `id`)
@@ -226,6 +407,8 @@ async function getById(db, id) {
   // {id, name}. Tolerates missing rows (deleted rule/suppression).
   const meta = execution.metadata && typeof execution.metadata === 'object'
     ? execution.metadata : {};
+
+  linked.names = await _hydrateNames(db, [execution]);
 
   const matchedIds = _idArray(meta.matched_rules);
   if (matchedIds.length) {
@@ -262,6 +445,7 @@ module.exports = {
   list,
   getById,
   VALID_STATUSES,
+  VALID_ACTION_STATUSES,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
 };

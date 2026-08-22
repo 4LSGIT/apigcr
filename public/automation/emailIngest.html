@@ -254,6 +254,56 @@
     .exec-error { color: var(--red); }
 
     .col-created { white-space: nowrap; color: var(--text2); }
+
+    /* ══ RULE / ACTION CHIPS (T8) ══
+       Rendered in the executions table's "Rules & actions" column and in the
+       drawer's outcomes card. Kept deliberately small: this column can carry
+       several rules × several actions on one row, and anything chunkier
+       forces the row height past the other columns' single line. */
+    .rule-chip {
+      display: inline-flex; align-items: center; max-width: 190px;
+      padding: 2px 7px; margin: 1px 4px 1px 0; border-radius: 4px;
+      background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe;
+      font-size: 11px; font-weight: 600; line-height: 1.5;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .rule-chip.rule-orphan {
+      background: #f8fafc; color: #64748b; border-color: var(--border);
+      font-weight: 500; font-style: italic;
+    }
+    .act-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 6px; margin: 1px 3px 1px 0; border-radius: 4px;
+      font-size: 11px; line-height: 1.5; white-space: nowrap;
+      border: 1px solid transparent; cursor: help;
+    }
+    .act-chip i { font-size: 9px; }
+    .act-ok   { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .act-bad  { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+    .act-skip { background: #fef9c3; color: #854d0e; border-color: #fde68a; }
+    .act-none {
+      background: #f8fafc; color: var(--muted); border-color: var(--border);
+      font-style: italic; cursor: default;
+    }
+    /* Visual break between rule groups on a multi-rule row. */
+    .rule-sep { display: inline-block; width: 1px; height: 11px; margin: 0 7px 0 3px;
+                background: var(--border); vertical-align: middle; }
+    .col-rules { max-width: 460px; }
+
+    /* Drawer outcomes card */
+    .oc-rule {
+      padding: 9px 14px; border-top: 1px solid var(--border);
+    }
+    .oc-rule:first-child { border-top: none; }
+    .oc-rule-head { margin-bottom: 6px; }
+    .oc-acts { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .oc-acts th {
+      text-align: left; padding: 3px 8px 3px 0; font-size: 10px; font-weight: 600;
+      color: var(--text2); text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .oc-acts td { padding: 4px 8px 4px 0; vertical-align: top; }
+    .oc-err  { color: var(--red); word-break: break-word; }
+    .oc-res  { color: var(--text2); word-break: break-word; }
     .col-source  { color: var(--text2); }
     .col-msgid   { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -736,6 +786,18 @@
           </select>
         </div>
         <div class="tb-group">
+          <label>Rule</label>
+          <select id="ei-rule-filter" onchange="eiRuleFilterChanged(this.value)">
+            <option value="">All</option>
+          </select>
+        </div>
+        <div class="tb-group">
+          <label>Action</label>
+          <select id="ei-action-filter" onchange="eiActionFilterChanged(this.value)">
+            <option value="">Any</option>
+          </select>
+        </div>
+        <div class="tb-group">
           <label>Limit</label>
           <select id="ei-limit" onchange="eiLimitChanged(this.value)">
             <option value="50">50</option>
@@ -844,8 +906,17 @@ window.eiToggleSidebar = eiToggleSidebar;
   const cache = {
     suppressions: { loaded: false, rows: [], filter: '' },
     rules:        { loaded: false, rows: [], filter: '' },
-    // executions: offset/limit model (mirrors the log tab), total from server
-    executions:   { loaded: false, rows: [], offset: 0, limit: 50, total: 0, status: '', selId: null },
+    // executions: offset/limit model (mirrors the log tab), total from server.
+    // T8 adds three fields:
+    //   rule        '' = all | '__any' | '__none' | '<ruleId>'  (see
+    //               loadExecutions for the mapping onto has_match / rule_id)
+    //   actionStatus  '' | 'success' | 'failed' | 'skipped_test_envelope'
+    //   names       {rules, rule_actions, suppressions} id->name maps for the
+    //               CURRENT page, returned by the list endpoint. Replaced
+    //               wholesale on every fetch — never merge, or a renamed or
+    //               deleted rule would keep rendering its stale name forever.
+    executions:   { loaded: false, rows: [], offset: 0, limit: 50, total: 0, status: '',
+                    rule: '', actionStatus: '', names: {}, selId: null },
   };
 
   // ── Suppression-editor form state ──
@@ -1664,14 +1735,64 @@ window.eiToggleSidebar = eiToggleSidebar;
   // ════════════════════════════════════════════════════════════════
   // RULES  (sidebar list + right detail)
   // ════════════════════════════════════════════════════════════════
+  // Fetch the rule list into cache.rules WITHOUT touching the sidebar DOM.
+  // Split out of loadRules (T8) because the executions tab needs the same
+  // rows to populate its Rule dropdown, and the sidebar it would otherwise
+  // render is hidden in exec-mode. Throws on failure — callers decide
+  // whether that is fatal.
+  async function fetchRulesIfNeeded(force = false) {
+    const c = cache.rules;
+    if (c.loaded && !force) return c.rows;
+    const data = await api('/api/email-ingest/rules');
+    c.rows = (data && data.rules) || [];
+    c.loaded = true;
+    return c.rows;
+  }
+
+  // Populate the executions Rule dropdown. Non-fatal: a failure here leaves
+  // the "any / none" options usable and only costs the per-rule entries.
+  //
+  // Rebuilt on every executions load rather than once at init, because the
+  // rules tab invalidates cache.rules on create/delete — so a rule added in
+  // this session appears without a page reload.
+  async function eiPopulateRuleFilter() {
+    const sel = E('ei-rule-filter');
+    if (!sel) return;
+    let rows = [];
+    try { rows = await fetchRulesIfNeeded(); } catch (e) {
+      console.warn('[email-ingest] rule filter load failed:', e.message);
+    }
+    const opts = rows.map(r =>
+      `<option value="${esc(String(r.id))}">${esc(r.name || ('rule #' + r.id))}${r.active ? '' : ' (off)'}</option>`
+    ).join('');
+    sel.innerHTML =
+      `<option value="">All</option>` +
+      `<option value="__any">— Any rule matched —</option>` +
+      `<option value="__none">— No rule matched —</option>` +
+      (opts ? `<optgroup label="Matched this rule">${opts}</optgroup>` : '');
+    sel.value = cache.executions.rule || '';
+  }
+
+  // Action-outcome dropdown. Values must stay in sync with
+  // emailIngestExecutionsService.VALID_ACTION_STATUSES — the route 400s on anything
+  // else, so a typo here is loud rather than silent.
+  function eiPopulateActionFilter() {
+    const sel = E('ei-action-filter');
+    if (!sel) return;
+    sel.innerHTML =
+      `<option value="">Any</option>` +
+      `<option value="success">Succeeded</option>` +
+      `<option value="failed">Failed</option>` +
+      `<option value="skipped_test_envelope">Skipped (test envelope)</option>`;
+    sel.value = cache.executions.actionStatus || '';
+  }
+
   async function loadRules(force = false) {
     const c = cache.rules;
     if (c.loaded && !force) { renderRuleList(); return; }
     setSidebarLoading();
     try {
-      const data = await api('/api/email-ingest/rules');
-      c.rows = (data && data.rules) || [];
-      c.loaded = true;
+      await fetchRulesIfNeeded(force);
       renderRuleList();
     } catch (e) { setSidebarError(e.message); }
   }
@@ -2725,16 +2846,156 @@ window.eiToggleSidebar = eiToggleSidebar;
   // ════════════════════════════════════════════════════════════════
   // EXECUTIONS  (center table + drawer)
   // ════════════════════════════════════════════════════════════════
+  // ── T8: action-outcome vocabulary → chip styling. ──────────────────────
+  // Mirrors emailIngestExecutionsService.VALID_ACTION_STATUSES. An unrecognized value falls to the
+  // gray default rather than disappearing, so a new outcome status is
+  // cosmetically wrong here but never invisible.
+  const OUTCOME_META = {
+    success:               { cls: 'act-ok',   icon: 'fa-check',   label: 'succeeded' },
+    failed:                { cls: 'act-bad',  icon: 'fa-xmark',   label: 'FAILED'    },
+    skipped_test_envelope: { cls: 'act-skip', icon: 'fa-forward', label: 'skipped (test envelope)' },
+  };
+  function outcomeMeta(s) {
+    return OUTCOME_META[s] || { cls: 'act-none', icon: 'fa-circle-question', label: s || 'unknown' };
+  }
+
+  // Human label for one rule id, using the page's current name map. Falls
+  // back to "#N" so a rule deleted after the execution ran still renders as
+  // something an operator can act on rather than vanishing.
+  function ruleLabel(id, names) {
+    const n = (names && names.rules) ? names.rules[id] : null;
+    return n || `rule #${id}`;
+  }
+
+  // One action outcome → a chip. `title` carries the detail (action name,
+  // error, result) so the table stays one line but nothing is hidden.
+  function actionChip(o, names) {
+    const m = outcomeMeta(o && o.status);
+    const type = (o && o.action_type) || 'action';
+    const an = (o && o.rule_action_id != null && names && names.rule_actions)
+      ? names.rule_actions[o.rule_action_id] : null;
+    const bits = [`${type}${an ? ` — ${an}` : ''}`, m.label];
+    if (o && o.error) bits.push(`error: ${o.error}`);
+    if (o && o.result != null) {
+      try { bits.push(`result: ${JSON.stringify(o.result)}`); } catch { /* ignore */ }
+    }
+    return `<span class="act-chip ${m.cls}" title="${esc(bits.join('\n'))}"><i class="fa-solid ${m.icon}"></i>${esc(type)}</span>`;
+  }
+
+  // Group a row's matched rules and action outcomes into [ruleId, outcomes[]].
+  // Two shapes have to survive here:
+  //   * a rule matched but had no active actions — _buildMetadata writes
+  //     matched_rules:[N] with action_outcomes:[] (38 live rows). The rule
+  //     must still show, with a "no actions" marker.
+  //   * an outcome with rule_id:null — the synthetic 'rule_evaluation'
+  //     failure (T7/F-8), where the evaluator itself threw so NOTHING
+  //     matched. It is bucketed under the '_' key and labelled as pipeline-
+  //     level, because attributing it to a rule would be a lie.
+  function groupOutcomes(md) {
+    const mr   = Array.isArray(md.matched_rules)   ? md.matched_rules   : [];
+    const outs = Array.isArray(md.action_outcomes) ? md.action_outcomes : [];
+    const byRule = new Map();
+    for (const id of mr) byRule.set(id, []);
+    for (const o of outs) {
+      const k = (o && o.rule_id != null) ? o.rule_id : '_';
+      if (!byRule.has(k)) byRule.set(k, []);
+      byRule.get(k).push(o);
+    }
+    return [...byRule.entries()];
+  }
+
+  // The "Rules & actions" cell: which rules fired on this execution and what
+  // their actions did — the whole point of T8. Reads names off the cache, so
+  // it is only ever called for the page those names came from.
+  function execRuleCell(r) {
+    const md = parseJson(r.metadata) || {};
+    const names = cache.executions.names || {};
+    const groups = groupOutcomes(md);
+    if (!groups.length) return '<span class="text-muted">—</span>';
+    return groups.map(([rid, list]) => {
+      const orphan = (rid === '_');
+      const label = orphan ? 'pipeline' : ruleLabel(rid, names);
+      const title = orphan
+        ? 'Layer-3 evaluation failed before any rule matched'
+        : label;
+      const chip = `<span class="rule-chip${orphan ? ' rule-orphan' : ''}" title="${esc(title)}">${esc(label)}</span>`;
+      const acts = list.length
+        ? list.map(o => actionChip(o, names)).join('')
+        : '<span class="act-chip act-none" title="Rule matched; no active actions to dispatch">no actions</span>';
+      return chip + acts;
+    }).join('<span class="rule-sep"></span>');
+  }
+
+  // Drawer counterpart of execRuleCell — same grouping, expanded to a table
+  // so errors and results are readable rather than tooltip-only. Returns ''
+  // when there is nothing to show, so the caller can concatenate it blindly.
+  function outcomesCard(x, linked) {
+    const md = parseJson(x.metadata) || {};
+    const names = (linked && linked.names) || {};
+    const groups = groupOutcomes(md);
+    if (!groups.length) return '';
+
+    const body = groups.map(([rid, list]) => {
+      const orphan = (rid === '_');
+      const label = orphan ? 'pipeline (no rule matched)' : ruleLabel(rid, names);
+      const head = `<div class="oc-rule-head"><span class="rule-chip${orphan ? ' rule-orphan' : ''}">${esc(label)}</span></div>`;
+      if (!list.length) {
+        return `<div class="oc-rule">${head}<div class="text-muted" style="font-size:12px">Matched; no active actions to dispatch.</div></div>`;
+      }
+      const rows = list.map(o => {
+        const m = outcomeMeta(o && o.status);
+        const an = (o && o.rule_action_id != null && names.rule_actions)
+          ? names.rule_actions[o.rule_action_id] : null;
+        let res = '';
+        if (o && o.result != null) {
+          try { res = JSON.stringify(o.result); } catch { res = String(o.result); }
+        }
+        return `<tr>
+          <td>${an ? esc(an) : `<span class="text-muted">${o && o.rule_action_id != null ? '#' + esc(String(o.rule_action_id)) : '—'}</span>`}</td>
+          <td class="mono">${esc((o && o.action_type) || '—')}</td>
+          <td><span class="act-chip ${m.cls}"><i class="fa-solid ${m.icon}"></i>${esc((o && o.status) || '?')}</span></td>
+          <td>${o && o.error ? `<span class="oc-err">${esc(o.error)}</span>` : (res ? `<span class="oc-res mono">${esc(res)}</span>` : '<span class="text-muted">—</span>')}</td>
+        </tr>`;
+      }).join('');
+      return `<div class="oc-rule">${head}
+        <table class="oc-acts">
+          <thead><tr><th>Action</th><th>Type</th><th>Outcome</th><th>Result / error</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>`;
+    }).join('');
+
+    return `<div class="kv-card"><div class="kv-card-head">Rule outcomes</div>${body}</div>`;
+  }
+
   async function loadExecutions(force = false) {
     const c = cache.executions;
     if (c.loaded && !force) { renderExecutionTable(); return; }
     E('ei-exec-body').innerHTML = `<div class="exec-loading"><i class="fa-solid fa-spinner spin"></i> Loading…</div>`;
     E('ei-exec-footer').style.display = 'none';
+    eiPopulateActionFilter();
+    await eiPopulateRuleFilter();
     try {
       const params = new URLSearchParams({ page: String(Math.floor(c.offset / c.limit) + 1), page_size: String(c.limit) });
       if (c.status) params.set('status', c.status);
+      // T8 — the Rule dropdown multiplexes onto two different server params:
+      // the two pseudo-values map to has_match (now tri-state server-side),
+      // a real id maps to rule_id. Sending both would be redundant, not
+      // wrong, but keeping them exclusive keeps the request legible in the
+      // network tab when someone is debugging "why is this row here".
+      if (c.rule === '__any')       params.set('has_match', 'true');
+      else if (c.rule === '__none') params.set('has_match', 'false');
+      else if (c.rule)              params.set('rule_id', c.rule);
+      if (c.actionStatus) params.set('action_status', c.actionStatus);
+      // slim: drop raw_input from the LIST projection. Nothing in the table
+      // reads it — the drawer refetches the full row via getById — and it
+      // dominates the payload (16.5 KB/row on email, so ~825 KB for a
+      // 50-row page). This was always available; the table simply never
+      // asked for it.
+      params.set('slim', 'true');
       const data = await api(`/api/email-ingest/executions?${params.toString()}`);
       c.rows = (data && data.executions) || [];
+      // Replace, never merge — see the cache declaration.
+      c.names = (data && data.names) || {};
       // Reconcile from the server's own paging echo so the UI reflects
       // what we actually got (handles a server-side page_size cap).
       const srvPageSize = Number(data?.page_size ?? c.limit);
@@ -2761,16 +3022,19 @@ window.eiToggleSidebar = eiToggleSidebar;
     } else {
       const rowsHtml = c.rows.map(r => {
         const sm = statusMeta(r.status);
-        const md = parseJson(r.metadata);
-        const matched = md && Array.isArray(md.matched_rules) && md.matched_rules.length;
         const src = r.source_name || (r.source_id != null ? 'src#' + r.source_id : '—');
+        // T8 replaced the bullseye Match column with execRuleCell. The
+        // bullseye only ever said "matched_rules is non-empty", which the
+        // rule chips say better AND qualify — a row can match a rule and
+        // still have every action fail, and the old icon rendered that
+        // identically to a clean success.
         return `
           <tr class="${r.id === c.selId ? 'active' : ''}" onclick="eiSelect(${r.id})">
             <td class="col-created">${esc(fmtDate(r.created_at))}</td>
             <td><span class="status-badge" style="background:${sm.bg};color:${sm.fg}"><span class="status-dot" style="background:${sm.dot}"></span>${esc(sm.label)}</span></td>
             <td class="col-source">${esc(src)}</td>
             <td class="col-msgid mono" title="${esc(r.message_id || '')}">${esc(r.message_id || '(none)')}</td>
-            <td style="text-align:center">${matched ? '<i class="fa-solid fa-bullseye" title="Matched rule(s)" style="color:#16a34a"></i>' : '<span class="text-muted">—</span>'}</td>
+            <td class="col-rules">${execRuleCell(r)}</td>
           </tr>`;
       }).join('');
       E('ei-exec-body').innerHTML = `
@@ -2778,9 +3042,9 @@ window.eiToggleSidebar = eiToggleSidebar;
           <thead><tr>
             <th style="width:160px">Created</th>
             <th style="width:150px">Status</th>
-            <th style="width:160px">Source</th>
-            <th>Message ID</th>
-            <th style="width:70px;text-align:center">Match</th>
+            <th style="width:150px">Source</th>
+            <th style="width:200px">Message ID</th>
+            <th>Rules &amp; actions</th>
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>`;
@@ -2833,6 +3097,24 @@ window.eiToggleSidebar = eiToggleSidebar;
   }
   window.eiLimitChanged = eiLimitChanged;
 
+  // T8 — Rule / Action filters. Both reset paging and clear the selection,
+  // exactly like the status filter: the selected row is very unlikely to
+  // survive a filter change, and leaving selId set would highlight a
+  // different row that happens to land at the same index.
+  function eiRuleFilterChanged(val) {
+    const c = cache.executions;
+    c.rule = val || ''; c.offset = 0; c.loaded = false; c.selId = null;
+    loadExecutions(true);
+  }
+  window.eiRuleFilterChanged = eiRuleFilterChanged;
+
+  function eiActionFilterChanged(val) {
+    const c = cache.executions;
+    c.actionStatus = val || ''; c.offset = 0; c.loaded = false; c.selId = null;
+    loadExecutions(true);
+  }
+  window.eiActionFilterChanged = eiActionFilterChanged;
+
   async function selectExecution(id) {
     cache.executions.selId = id;
     renderExecutionTable();
@@ -2870,6 +3152,7 @@ window.eiToggleSidebar = eiToggleSidebar;
 
     E('ei-drawer-body').innerHTML =
       kvCard('Execution', fields) +
+      outcomesCard(x, linked) +
       jsonCard('metadata', x.metadata) +
       jsonCard('raw_input', x.raw_input) +
       linkedHtml;
