@@ -2173,12 +2173,20 @@
   </div>
 </div>
 <script>
+      // Get Clio Code.
+      //
+      // Freshness policy added 2026-08-22 after the "Clio code not updating"
+      // incident: a user read a three-day-old code four times in 26 seconds
+      // and tried to log in with it. There is a 0-60s delay between the SMS
+      // arriving and app_settings.clio_login_code being written (separate
+      // issue). This function makes the UI immune to that delay by refusing
+      // to present a stale code at all — it waits for the new one instead.
       async function showClioCode() {
-      try {
-        const data = await apiSend("/clio-code");
+        const FRESH_MAX_AGE_S  = 180;    // <= this many seconds old: show it
+        const POLL_INTERVAL_MS = 2000;   // re-check cadence while waiting
+        const POLL_MAX_MS      = 120000; // stop waiting after this long
 
-        const updatedAt = new Date(data.updated_at);
-        const formattedTime = updatedAt.toLocaleString("en-US", {
+        const fmtTime = (ts) => new Date(ts).toLocaleString("en-US", {
           timeZone: "America/New_York",
           year: "numeric",
           month: "short",
@@ -2189,33 +2197,148 @@
           timeZoneName: "short"
         });
 
-        const secondsOld = Math.floor((Date.now() - updatedAt.getTime()) / 1000);
-        let freshnessLabel = "";
-        if (secondsOld < 60) freshnessLabel = "Just updated";
-        else if (secondsOld < 300) freshnessLabel = "Recently updated";
-        else freshnessLabel = `${Math.floor(secondsOld / 60)} min ago`;
+        // Server-computed age. NULL updated_at (the column is nullable) or a
+        // missing field means "we don't know" — treat as infinitely old so it
+        // can never pass the freshness gate.
+        const ageOf = (d) => {
+          const n = Number(d && d.age_seconds);
+          return Number.isFinite(n) ? n : Infinity;
+        };
+
+        // The normal dialog — byte-for-byte the pre-2026-08-22 presentation.
+        const showCode = (d) => {
+          const secondsOld = ageOf(d);
+          let freshnessLabel = "";
+          if (secondsOld < 60) freshnessLabel = "Just updated";
+          else if (secondsOld < 300) freshnessLabel = "Recently updated";
+          else if (Number.isFinite(secondsOld)) freshnessLabel = `${Math.floor(secondsOld / 60)} min ago`;
+          else freshnessLabel = "Age unknown";
+
+          Swal.fire({
+            title: "Clio Login Code",
+            html: `
+              <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${d.value}</div>
+              <div style="font-size: 13px; color: #666;"> Updated ${d.updated_at ? fmtTime(d.updated_at) : "unknown"}</div>
+              <div style="font-size: 12px; color: #888;">${freshnessLabel}</div>`,
+            showCancelButton: true,
+            confirmButtonText: "Copy Code",
+            cancelButtonText: "Close",
+            icon: "info",
+            }).then(result => {
+            if (result.isConfirmed) {
+              navigator.clipboard.writeText(d.value);
+            }
+          });
+        };
+
+        let data;
+        try {
+          data = await apiSend("/clio-code");
+        } catch (err) {
+          console.error(err);
+          Swal.fire({ title: "Error", text: "Unable to fetch login code", icon: "error", });
+          return;
+        }
+
+        if (ageOf(data) <= FRESH_MAX_AGE_S) {
+          showCode(data);
+          return;
+        }
+
+        // ---- stale: wait for a new code rather than show a dead one ----
+        const baselineUpdatedAt = data.updated_at;
+        const baselineValue     = data.value;
+        const startedAt         = Date.now();
+        let latest    = data;     // most recent successful fetch
+        let poller    = null;
+        let ticker    = null;
+        let inFlight  = false;    // stops overlapping polls if one runs long
+        let settled   = false;    // set BEFORE we swap dialogs — see .then()
+
+        const stop = () => {
+          if (poller) { clearInterval(poller); poller = null; }
+          if (ticker) { clearInterval(ticker); ticker = null; }
+        };
+
+        const finish = (d) => {
+          if (settled) return;
+          settled = true;
+          stop();
+          showCode(d);            // Swal.fire replaces the waiting popup
+        };
+
+        const lastAge  = ageOf(data);
+        const lastSeen = data.updated_at ? fmtTime(data.updated_at) : "unknown";
+        const lastAgeText = Number.isFinite(lastAge)
+          ? (lastAge < 5400
+              ? `${Math.floor(lastAge / 60)} minutes old`
+              : `${Math.floor(lastAge / 3600)} hours old`)
+          : "of unknown age";
 
         Swal.fire({
-          title: "Clio Login Code",
+          title: "Waiting for a new code",
           html: `
-            <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${data.value}</div>
-            <div style="font-size: 13px; color: #666;"> Updated ${formattedTime}</div>
-            <div style="font-size: 12px; color: #888;">${freshnessLabel}</div>`,
+            <div style="font-size: 14px; margin: 10px 0;">
+              The last code arrived <b>${lastSeen}</b> — it is ${lastAgeText} and will not work.
+            </div>
+            <div style="font-size: 14px; margin: 10px 0;">
+              Start the Clio login now. The new code will appear here automatically.
+            </div>
+            <div style="font-size: 12px; color: #888;">
+              Waiting <span id="clioWaitElapsed">0</span>s&hellip;
+            </div>`,
+          icon: "warning",
+          showConfirmButton: false,
           showCancelButton: true,
-          confirmButtonText: "Copy Code",
-          cancelButtonText: "Close",
-          icon: "info",
+          cancelButtonText: "Show the old code anyway",
+          allowOutsideClick: false,
           }).then(result => {
-          if (result.isConfirmed) {
-            navigator.clipboard.writeText(data.value);
-          }
+          // settled === true means the poller (or the timeout) swapped in the
+          // real dialog. SweetAlert resolves THIS promise when that happens,
+          // so without the flag we would fire a second dialog on top of it.
+          if (settled) return;
+          stop();
+          if (result.dismiss === Swal.DismissReason.cancel) showCode(latest);
         });
 
-      } catch (err) {
-        console.error(err);
-        Swal.fire({ title: "Error", text: "Unable to fetch login code", icon: "error", });
+        ticker = setInterval(() => {
+          const el = document.getElementById("clioWaitElapsed");
+          if (el) el.textContent = String(Math.floor((Date.now() - startedAt) / 1000));
+        }, 1000);
+
+        poller = setInterval(async () => {
+          if (settled || inFlight) return;
+
+          if (Date.now() - startedAt >= POLL_MAX_MS) {
+            finish(latest);       // gave up — show the best we have
+            return;
+          }
+
+          // Don't let a mid-wait token expiry pop apiSend's blocking login
+          // dialog on top of ours. Skip the tick; the user's next action
+          // re-authenticates normally.
+          if (!window.AUTH_STATE || !window.AUTH_STATE.jwt || isJwtExpired(window.AUTH_STATE.jwt)) return;
+
+          inFlight = true;
+          let fresh;
+          try {
+            fresh = await apiSend("/clio-code");
+          } catch (e) {
+            console.warn("clio-code poll failed, retrying", e);
+            return;               // transient — keep the loop alive
+          } finally {
+            inFlight = false;
+          }
+
+          latest = fresh;
+          // set_setting relies on ON UPDATE CURRENT_TIMESTAMP, which does not
+          // fire when the written value is identical to the stored one. Watch
+          // the value too, and accept either as "a new code landed".
+          if (fresh.updated_at !== baselineUpdatedAt || fresh.value !== baselineValue) {
+            finish(fresh);
+          }
+        }, POLL_INTERVAL_MS);
       }
-    }
 </script>
   
 <div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-mug-hot"></i>'>

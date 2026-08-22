@@ -13,10 +13,20 @@ router.get('/api/cause_error', jwtOrApiKey, (req, res, next) => {
   next(new Error('Intentional test error'));
 });
 
+// Returns the Clio login 2FA code captured from inbound SMS by phone-ingest
+// rule 4 and written to app_settings.clio_login_code by set_setting.
+//
+// age_seconds (added 2026-08-22) is computed IN SQL so it is immune to client
+// clock skew. It exists because the UI must never present a dead code as
+// usable: on 2026-08-21 a user read a three-day-old code four times in 26
+// seconds and tried to log in with it. See public/index.html showClioCode().
+// NULL when updated_at is NULL (the column is nullable) — callers must treat
+// null as "infinitely old", not as "fresh".
 router.get("/clio-code", jwtOrApiKey, async (req, res) => {
   try {
     const [rows] = await req.db.query(
-      `SELECT value, updated_at 
+      `SELECT value, updated_at,
+              TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS age_seconds
        FROM app_settings 
        WHERE \`key\` = "clio_login_code"
        LIMIT 1`
@@ -26,7 +36,13 @@ router.get("/clio-code", jwtOrApiKey, async (req, res) => {
       return res.status(404).json({ error: "Code not found" });
     }
 
-    res.json(rows[0]);
+    const row = rows[0];
+    // Normalise to a JS number (or null) so the client never has to guess
+    // whether it got "180" or 180. The main pool is not configured with
+    // bigNumberStrings, but pin the contract anyway.
+    row.age_seconds = row.age_seconds == null ? null : Number(row.age_seconds);
+
+    res.json(row);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });

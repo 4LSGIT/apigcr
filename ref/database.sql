@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-20T18:01:39.301Z
+-- Generated: 2026-08-22T20:40:13.453Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:74e39b5211b179ea354e3af09e0b3216
+-- Fingerprint: sha256:d2aa46675d14711a2eb630e25c722936
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3579,7 +3579,8 @@ ALTER TABLE `email_ingest_executions`
   ADD KEY `idx_source_created` (`source_id`,`created_at`),
   ADD KEY `idx_status_created` (`status`,`created_at`),
   ADD KEY `idx_message_id` (`message_id`),
-  ADD KEY `idx_action_failures` (`action_failure_count`,`created_at`);
+  ADD KEY `idx_action_failures` (`action_failure_count`,`created_at`),
+  ADD KEY `idx_matched_rules` ((cast(json_extract(`metadata`,_utf8mb4'$.matched_rules') as unsigned array)));
 
 --
 -- Indexes for table `email_ingest_log_suppressions`
@@ -3805,7 +3806,8 @@ ALTER TABLE `phone_ingest_executions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_status_created` (`status`,`created_at`),
   ADD KEY `idx_event_log` (`event_log_id`),
-  ADD KEY `idx_action_failures` (`action_failure_count`,`created_at`);
+  ADD KEY `idx_action_failures` (`action_failure_count`,`created_at`),
+  ADD KEY `idx_matched_rules` ((cast(json_extract(`metadata`,_utf8mb4'$.matched_rules') as unsigned array)));
 
 --
 -- Indexes for table `phone_ingest_rule_actions`
