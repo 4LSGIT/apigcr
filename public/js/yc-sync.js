@@ -39,10 +39,16 @@
  * ── Addresses ───────────────────────────────────────────────────────────────
  *
  *   'case:AAAAAAAA'  'contact:1001'  'appt:55'  'event:12'
+ *   'setting:fe-case_types'   ← Slice 2: an app_settings row, not an entity
  *
  * Subscribe to a specific entity, or to `'case:*'` for every case (the Cases
  * tab's "something, somewhere, changed" subscription). The wildcard is a
  * PREFIX match on the type, so 'case:*' never matches 'contact:1'.
+ *
+ * `setting:<key>` carries ONE field, `value` — the raw stored string, exactly
+ * as app_settings holds it (JSON-stringified for structured settings).
+ * Consumers parse; the bus does not. See applyFeSetting in scripts.js, which
+ * mirrors /api/firm-data's fe-* semantics for the frontend settings map.
  */
 (function () {
   'use strict';
@@ -253,15 +259,18 @@
      * This is why the forget-to-emit bug class does not exist: every frame's
      * API traffic funnels through the shell's single apiSend (iframes alias
      * it, deep frames call window.top.apiSend), so ONE hook covers every
-     * current and future writer of these four endpoints.
+     * current and future writer of these five endpoints.
      *
-     * @param {string} method    'PATCH' | 'POST' | …
+     * @param {string} method    'PATCH' | 'POST' | 'PUT' | …
      * @param {string} endpoint  the path as passed to apiSend
      * @param {*}      body      the parsed response body
      */
     _sniff: function (method, endpoint, body) {
       var m = String(method || '').toUpperCase();
-      if (m !== 'PATCH' && m !== 'POST') return;
+      // PUT admitted for Slice 2 (app-settings is a PUT route). The gate is
+      // still a gate: GET/DELETE/HEAD never reach a matcher, and a matcher may
+      // narrow further via its own optional method list (see MATCHERS).
+      if (m !== 'PATCH' && m !== 'POST' && m !== 'PUT') return;
 
       // STRIP THE QUERY STRING before matching. The 409 cross-contact
       // transfer retries as `PATCH /api/contacts/:id?force=true`
@@ -273,6 +282,11 @@
       for (var i = 0; i < MATCHERS.length; i++) {
         var hit = MATCHERS[i][0].exec(path);
         if (!hit) continue;                       // first match wins, and ends the scan
+        // Optional 4th element: the methods THIS endpoint actually accepts.
+        // Absent = the global gate above is the whole rule (the original four,
+        // which are PATCH/POST endpoints and have no other verb).
+        var methods = MATCHERS[i][3];
+        if (methods && methods.indexOf(m) === -1) return;
         var type = MATCHERS[i][1];
         var changes = null;
         try { changes = MATCHERS[i][2](body); } catch (_) { changes = null; }
@@ -285,7 +299,7 @@
     },
   };
 
-  /* Endpoint -> (type, where the diff lives in the response).
+  /* Endpoint -> (type, where the diff lives in the response[, methods]).
      Order matters only in that the bare `/api/cases/:id` pattern is anchored
      ($), so it cannot swallow /docket or /pipeline/advance. */
   var MATCHERS = [
@@ -293,6 +307,26 @@
     [/^\/api\/contacts\/(\d+)$/,                            'contact', function (r) { return r && r.data && r.data.changes; }],
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/docket$/,            'case',    function (r) { return r && r.changes; }],
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/advance$/, 'case',    function (r) { return r && r.changes; }],
+
+    /* app_settings (Slice 2). PUT-ONLY on purpose — routes/api.appSettings.js
+       has exactly one per-key writer and it is a PUT; POST /api/app-settings
+       (create) has no `/:key` segment and so cannot match this pattern at all.
+       The 4th element states that, rather than leaning on "no such route
+       exists" to keep a PATCH from announcing a setting change.
+
+       The emitted field is `value` — the RAW stored string, byte-for-byte what
+       app_settings holds (JSON-stringified for structured settings). The bus
+       does not parse; applyFeSetting (scripts.js) does, mirroring the fe-*
+       semantics of /api/firm-data.
+
+       Key charset: `.` is included defensively. No live key contains one
+       (verified 2026-08-23) and the POST create route's KEY_RE forbids it, but
+       app_settings is also writable from the DB console, which has no such
+       rule. */
+    [/^\/api\/app-settings\/([A-Za-z0-9_.\-]+)$/,           'setting', function (r) {
+      return r && r.setting && typeof r.setting.value === 'string'
+        ? { value: r.setting.value } : null;
+    }, ['PUT']],
   ];
 
   openChannel();

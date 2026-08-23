@@ -2862,6 +2862,35 @@
     }
     window.applyCustomTab = applyCustomTab;
 
+    /* ── "your host tab was re-entered" ────────────────────────────────────
+       NOTHING fires inside an iframe when a parent flips `display`. No load,
+       no resize, no visibilitychange — the frame has no way to know it just
+       came back on screen. A tab-hosted READER (one that refetches when the
+       bus says its data moved) therefore needs an explicit poke, or it sits
+       on a stale render until the user hits Refresh.
+
+       So: on every tab open, tell the frames in that tab. Generic by design —
+       the Pipeline board is merely the first implementer. A frame opts in by
+       defining `window.ycBecameVisible`; everything else is a no-op.
+
+       Zero-width frames are skipped so the name stays honest: hub tabs
+       (tabMore, tabAdmin) hold ~20 panel iframes in hidden divs, and those did
+       NOT become visible. A drilled-into panel that is still open on re-entry
+       has width and correctly gets the ping.
+
+       Per-frame try/catch: cross-origin frames (the legacy Jotform ISSN
+       embeds) throw on contentWindow access, and one throw must not cost the
+       remaining frames their ping. */
+    function pingBecameVisible(target) {
+      if (!target) return;
+      target.querySelectorAll('iframe').forEach(frame => {
+        try {
+          if (!frame.getBoundingClientRect().width) return;
+          frame.contentWindow.ycBecameVisible?.();
+        } catch (_) { /* cross-origin, or not loaded yet */ }
+      });
+    }
+
     function openMainTab(tabName) {
       var i, tabs;
       // Re-opening the tab you are ALREADY on (More Features / Admin) reads as
@@ -2888,6 +2917,7 @@
         iframe.src = iframe.dataset.src;
         delete iframe.dataset.src;
       }
+      pingBecameVisible(target);
       // Update sidebar active state
       updateSidebarActive(tabName);
       // Auto-close mobile drawer after navigation
@@ -3088,6 +3118,27 @@ async function loadFirmData() {
   window.firmData.firmTimezone = data.firmTimezone || "America/Detroit";
   if (!window.firmData.currentUser) throw new Error("No user data returned");
 }
+
+/* ── Settings liveness (sync bus) ────────────────────────────────────────────
+   settings.html PUTs an app_settings row; the shell's apiSend sniffs it and
+   the bus announces `setting:<key>` with the raw stored string. Keeping THIS
+   realm's firmData.settings current matters for two populations that never
+   see the message themselves:
+
+     · frames that boot LATER and read firmData.settings once at init
+     · live-getter consumers (automationManager's `firmData` getter reads
+       through to window.top on every access)
+
+   No repaint work here — the shell's own surfaces that read these settings
+   (the Cases-tab type filter, the events filter) are re-populated on their
+   existing paths, and settings.html still calls loadFirmData() after an fe-*
+   save. This subscriber is what makes the value correct IMMEDIATELY, and
+   correct in every OTHER browser tab, where no loadFirmData() runs at all.
+
+   §3.6: merges state, paints nothing, emits nothing. */
+YC.on('setting:*', '*', (fields, msg) => {
+  applyFeSetting(msg.addr.slice('setting:'.length), fields.value);
+});
 
 
 

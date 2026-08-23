@@ -359,6 +359,143 @@ describe('_sniff', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// _sniff — app_settings (Slice 2)
+//
+// The bus carries the RAW STORED STRING and nothing else. Everything
+// downstream (applyFeSetting) parses. These tests pin that contract, because
+// the temptation to "helpfully" JSON.parse in the transport is real and would
+// make the message shape depend on the row's type.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — app_settings', () => {
+  function spy(w, addr) {
+    const seen = [];
+    w.YC.on(addr, '*', (f, m) => seen.push({ fields: f, origin: m.origin, addr: m.addr }));
+    return seen;
+  }
+
+  test('PUT /api/app-settings/:key emits setting:<key> with the raw string', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'setting:fe-case_types');
+    const raw = '{"Bankruptcy":["Chapter 7","Chapter 13"]}';
+    w.YC._sniff('PUT', '/api/app-settings/fe-case_types', {
+      status: 'success',
+      setting: { key: 'fe-case_types', value: raw, updated_at: '2026-08-23T12:00:00.000Z' },
+    });
+    expect(seen).toEqual([{
+      fields: { value: raw },
+      origin: 'auto:PUT /api/app-settings/fe-case_types',
+      addr:   'setting:fe-case_types',
+    }]);
+  });
+
+  test('the value is NOT parsed by the bus — structured settings stay strings', () => {
+    // If this ever fails, someone moved JSON.parse into the transport and every
+    // subscriber's contract changed underneath it.
+    const w = mkWindow();
+    const seen = spy(w, 'setting:*');
+    w.YC._sniff('PUT', '/api/app-settings/fe-event_types',
+                { setting: { key: 'fe-event_types', value: '["Hearing"]' } });
+    expect(typeof seen[0].fields.value).toBe('string');
+    expect(seen[0].fields.value).toBe('["Hearing"]');
+  });
+
+  test('an empty-string value still emits — blanking a setting is a real change', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'setting:*');
+    w.YC._sniff('PUT', '/api/app-settings/fe-lead_sources',
+                { setting: { key: 'fe-lead_sources', value: '' } });
+    expect(seen.length).toBe(1);
+    expect(seen[0].fields).toEqual({ value: '' });
+  });
+
+  test('a NON-STRING setting.value emits nothing', () => {
+    // The route refuses non-strings (400), so this shape can only arrive from a
+    // future/altered response. Fail closed rather than broadcast an object.
+    const w = mkWindow();
+    const seen = spy(w, 'setting:*');
+    w.YC._sniff('PUT', '/api/app-settings/fe-case_types',
+                { setting: { key: 'fe-case_types', value: { a: 1 } } });
+    w.YC._sniff('PUT', '/api/app-settings/fe-case_types',
+                { setting: { key: 'fe-case_types', value: null } });
+    expect(seen).toEqual([]);
+  });
+
+  test('an absent setting.value — or no setting key at all — emits nothing', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'setting:*');
+    w.YC._sniff('PUT', '/api/app-settings/fe-case_types', { setting: { key: 'fe-case_types' } });
+    w.YC._sniff('PUT', '/api/app-settings/fe-case_types', { status: 'success' });
+    w.YC._sniff('PUT', '/api/app-settings/fe-case_types', null);
+    expect(seen).toEqual([]);
+  });
+
+  test('PATCH to the same path emits nothing — the matcher is PUT-only', () => {
+    // The method gate was WIDENED for PUT, not removed. app-settings has
+    // exactly one per-key writer and it is a PUT; a PATCH reaching this path
+    // is not a settings write and must not announce one.
+    const w = mkWindow();
+    const seen = spy(w, 'setting:*');
+    const body = { setting: { key: 'fe-case_types', value: '{}' } };
+    w.YC._sniff('PATCH', '/api/app-settings/fe-case_types', body);
+    w.YC._sniff('POST',  '/api/app-settings/fe-case_types', body);
+    w.YC._sniff('GET',   '/api/app-settings/fe-case_types', body);
+    expect(seen).toEqual([]);
+  });
+
+  test('POST /api/app-settings (create) has no :key segment and cannot match', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'setting:*');
+    w.YC._sniff('POST', '/api/app-settings',
+                { setting: { key: 'fe-new_thing', value: '[]' } });
+    expect(seen).toEqual([]);
+  });
+
+  test('KEY CHARSET: dots, hyphens and underscores all round-trip in the address', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'setting:*');
+    for (const key of ['dropbox_case_folder_templates', 'fe-firm_site_url', 'some.dotted.key']) {
+      w.YC._sniff('PUT', '/api/app-settings/' + key, { setting: { key, value: 'v' } });
+    }
+    expect(seen.map(s => s.addr)).toEqual([
+      'setting:dropbox_case_folder_templates',
+      'setting:fe-firm_site_url',
+      'setting:some.dotted.key',
+    ]);
+  });
+
+  test("'setting:*' does not pick up case/contact traffic, and vice versa", () => {
+    const w = mkWindow();
+    const settings = spy(w, 'setting:*');
+    const cases = spy(w, 'case:*');
+    w.YC._sniff('PUT', '/api/app-settings/fe-case_types',
+                { setting: { key: 'fe-case_types', value: '{}' } });
+    w.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: { case_stage: 'Filed' } } });
+    expect(settings.map(s => s.addr)).toEqual(['setting:fe-case_types']);
+    expect(cases.map(s => s.addr)).toEqual(['case:AAAA']);
+  });
+
+  test('THE ORIGINAL FOUR are unchanged by the widened gate', () => {
+    // Regression fence for the gate widening: PATCH and POST must still reach
+    // the pre-Slice-2 matchers exactly as before, and GET must still not.
+    const w = mkWindow();
+    const seen = spy(w, 'case:*');
+    const contacts = spy(w, 'contact:*');
+    w.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: { case_stage: 'Filed' } } });
+    w.YC._sniff('PATCH', '/api/contacts/5', { data: { changes: { contact_phone: '2' } } });
+    w.YC._sniff('PATCH', '/api/cases/AAAA/docket', { changes: { case_number: '24-1' } });
+    w.YC._sniff('POST',  '/api/cases/AAAA/pipeline/advance', { changes: { pipeline_phase: 'case' } });
+    w.YC._sniff('GET',   '/api/cases/AAAA', { data: { changes: { case_stage: 'Filed' } } });
+    expect(seen.map(s => s.origin)).toEqual([
+      'auto:PATCH /api/cases/AAAA',
+      'auto:PATCH /api/cases/AAAA/docket',
+      'auto:POST /api/cases/AAAA/pipeline/advance',
+    ]);
+    expect(contacts.length).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // Transport
 // ─────────────────────────────────────────────────────────────
 

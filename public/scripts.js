@@ -32,6 +32,59 @@ const p = dec(new URLSearchParams(location.search).get('v'));
 */
 
 /* ──────────────────────────────────────────────────────────────────────────
+   applyFeSetting — keep the LIVE firm-data settings map current.
+
+   The shell fetches /api/firm-data once at boot; every frame then reads
+   firmData.settings for its dropdown vocabularies (case types, event types,
+   lead sources, trustees). Editing one of those rows in settings.html used to
+   leave every already-open frame reading a stale map until reload. The sync
+   bus now announces `setting:<key>` with the raw stored string (see
+   public/js/yc-sync.js), and this is the ONE function that turns that string
+   back into what /api/firm-data would have shipped.
+
+   It mirrors routes/api.firmData.js EXACTLY — same prefix strip, same
+   JSON.parse-with-raw-string-fallback, same "only fe-* rows are frontend
+   settings" rule. If that route's semantics ever change, change both.
+
+   WHY EVERY FRAME CALLS THIS, not just the shell: BroadcastChannel delivery
+   order across browsing contexts is unspecified, so in a SECOND browser tab
+   case.html's handler may run before that tab's shell handler. Every handler
+   doing the same idempotent write from the same payload makes ordering
+   irrelevant. (In the writing tab the shell's local dispatch inside emit() is
+   synchronous and runs first anyway.) In a frame that aliases the shell's
+   object — case.html does `window.firmData = P.firmData` — the two writes
+   land on the same object, so "idempotent" is structural, not just careful.
+
+   §3.6: this MUTATES STATE AND RETURNS. It must never emit.
+
+   @param   {string} key    the full app_settings key, e.g. 'fe-case_types'
+   @param   {*}      value  the raw stored value (a string in practice)
+   @returns {boolean} true if the live map was written, false otherwise
+   ────────────────────────────────────────────────────────────────────────── */
+function applyFeSetting(key, value) {
+  if (typeof key !== 'string' || key.indexOf('fe-') !== 0) return false;
+  const k = key.slice(3);                       // drop 'fe-' — same as the route
+
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    // A row can ship an array/object/number/bool; plain scalars aren't quoted,
+    // so a parse failure is normal and means "it was already a string".
+    try { parsed = JSON.parse(parsed); } catch { /* keep raw string */ }
+  }
+
+  let firm = (typeof window !== 'undefined' && window.firmData) ? window.firmData : null;
+  if (!firm) {
+    // Frames that never aliased it (pipelineBoard, tasks, the widgets) read
+    // through to the shell. Guarded: window.top throws cross-origin.
+    try { firm = (window.top && window.top.firmData) || null; } catch { firm = null; }
+  }
+  if (!firm || !firm.settings) return false;
+
+  firm.settings[k] = parsed;
+  return true;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
    Event types — single source of truth.
 
    getEventTypeOptions() is the ONE place the create/edit dialog and the

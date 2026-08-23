@@ -165,6 +165,12 @@ let sortables = [];      // live Sortable instances (destroyed each render)
 let dragging = false;    // suppress card-click firing right after a drag
 let advancing = false;   // one in-flight advance at a time
 
+// Sync-bus reader state (see the case:* subscriber at the bottom of the file).
+let boardLastLoad = 0;   // ms timestamp of the last loadBoard() start
+let boardStale = false;  // a case changed while we were off-screen
+let boardDeb = null;     // refetch debounce handle
+const BOARD_FRESH_MS = 1500;
+
 const api = (...args) => window.top.apiSend(...args);
 
 // ── Boot — wait for the shell to expose apiSend (esign/dashboard idiom) ──
@@ -224,6 +230,11 @@ async function loadBoard() {
   if (!templateId) return;
   E('pb-load').style.display = '';
   try {
+    // Stamped BEFORE the await, which is what makes the echo guard work: the
+    // advance's own loadBoard() runs as a microtask off `await api(...)`, and
+    // the bus message announcing that same advance arrives as a macrotask —
+    // strictly later. See the case:* subscriber below.
+    boardLastLoad = Date.now();
     const params = { template_id: templateId };
     if (E('pb-closed').checked) params.include_closed = 1;
     board = await api('/api/pipeline-board', 'GET', params);
@@ -498,6 +509,62 @@ function updateCounts() {
     badge.textContent = visible === total ? String(total) : `${visible} / ${total}`;
   });
 }
+
+/* ── Sync-bus reader (public/js/yc-sync.js) ──────────────────────────────────
+   THE BOARD IS A QUERY VIEW, NOT AN ENTITY VIEW. Which column a case sits in
+   is computed server-side off case_stage_log — not off any column the bus
+   carries — so a message can tell us "something about a case changed" but can
+   never tell us where the card belongs now. Per design §3.4 that means
+   REFETCH, never cell-patch. Same rule the shell's Cases tab follows, and the
+   same reason: membership, ordering and counts are the server's answer.
+
+   (A per-chip repaint for the fields that DO surface on cards — status, type,
+   note tooltip — was floated and deliberately dropped for v1: uniformity with
+   the Cases-tab pattern, and much less code. Revisit only if the refetch turns
+   out to feel heavy in practice.)
+
+   Any field triggers it. Once the response is a whole board, distinguishing
+   fields buys nothing.
+
+   §3.6: neither handler emits. loadBoard() is a GET. */
+function boardVisible() {
+  const fe = window.frameElement;              // same-origin; null when standalone
+  if (document.hidden) return false;
+  return !fe || fe.getBoundingClientRect().width > 0;
+}
+
+YC.on('case:*', '*', () => {
+  if (!E('pb-template').value) return;         // no template chosen — nothing to refresh
+  if (!boardVisible()) { boardStale = true; return; }
+  // THE ECHO GUARD. A drag-advance from this very board already calls
+  // loadBoard() in confirmAndAdvance's success path; the bus then announces
+  // that same advance back to us. Without this, every drag costs two board
+  // fetches. The stamp is taken before loadBoard's await, so it is always in
+  // the past by the time the (macrotask) message lands.
+  if (Date.now() - boardLastLoad < BOARD_FRESH_MS) return;
+  clearTimeout(boardDeb);
+  boardDeb = setTimeout(loadBoard, 300);
+});
+
+/* Two ways an off-screen board comes back into view, and NEITHER of them
+   notifies an iframe by itself:
+     · the shell switches main tabs  → index.html's pingBecameVisible() calls
+       window.ycBecameVisible on the frames in the newly shown tab
+     · the browser tab regains focus → document.hidden flips, which DOES fire
+       here, but only in this frame
+
+   Both run the same stale check, and both go through boardVisible(). The
+   visibility guard is not redundant on the visibilitychange path: returning to
+   the browser tab while the board sits behind ANOTHER shell tab would
+   otherwise clear boardStale for a board nobody can see, and the later
+   ycBecameVisible would then find nothing to do. */
+function boardRefreshIfStale() {
+  if (!boardStale || !boardVisible()) return;
+  boardStale = false;
+  loadBoard();
+}
+window.ycBecameVisible = boardRefreshIfStale;
+document.addEventListener('visibilitychange', boardRefreshIfStale);
 </script>
 </body>
 </html>

@@ -1896,6 +1896,41 @@ function applyFieldsToOverview(fields) {
   }
 }
 
+/* ── Settings readers (sync bus) ─────────────────────────────────────────────
+   The two Overview vocabularies that come from app_settings rather than from
+   the case row. Editing them in settings.html used to strand every open case
+   file on the old list until reload — the dropdown you were looking at simply
+   did not have the type you had just created.
+
+   applyFeSetting() first (it writes the parsed value into the LIVE firmData
+   object that getCaseTypeMap/getLeadSourceOptions read through), then the
+   repaint. Both are needed and the order is load-bearing: the sync helpers
+   re-read the map, so painting before the write would paint the old list.
+
+   Calling applyFeSetting here rather than trusting the shell's subscriber is
+   deliberate — see its header comment: BC delivery order across contexts is
+   unspecified, and the write is idempotent, so every handler does it.
+
+   Registered OUTSIDE the boot IIFE, same rationale as the case subscriber
+   above: a page whose initial load threw must not also go permanently deaf.
+   `entityData.case` null → repaint skipped, but the firmData write still
+   lands, so the next full render is correct.
+
+   §3.6: no writer, no synthetic change event, no emit. */
+YC.on('setting:fe-case_types', '*', (fields) => {
+  applyFeSetting('fe-case_types', fields.value);
+  const c = window.entityData.case;
+  if (c) {
+    syncCaseTypeSelects(c);
+    E('type').innerHTML = fmtCaseType(c) || 'N/A';
+  }
+});
+
+YC.on('setting:fe-lead_sources', '*', (fields) => {
+  applyFeSetting('fe-lead_sources', fields.value);
+  if (window.entityData.case) syncLeadSourceList(window.entityData.case);
+});
+
 async function newDB() {
   Swal.fire({
     title: 'Create Dropbox Folder?',
