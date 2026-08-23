@@ -53,13 +53,18 @@
     RESCAN_MS: 1200,       // platform rescan throttle
     MAX_PLATFORMS: 40,
     KEY: 'yc.mascot.on',   // matches the yc.* convention in scripts.js
-    MET: 'yc.mascot.met',  // has this browser been introduced yet?
 
     // THE DEBUT. Until this moment the cat comes out on its own for anyone who
-    // has not made a choice about it, and introduces itself once. After it, the
-    // cat only ever appears for someone who asked for it. Deliberately a hard
-    // date and not a duration: an introduction that quietly never ends is just
-    // a default, and turning it off again would cost a deploy.
+    // has not made a choice about it, and introduces itself on every load. After
+    // it, the cat only ever appears for someone who asked for it. Deliberately a
+    // hard date and not a duration: an introduction that quietly never ends is
+    // just a default, and turning it off again would cost a deploy.
+    //
+    // The introduction repeats EVERY page load until the person actually makes a
+    // choice, because the bubble is the only place the gesture is explained. Show
+    // it once per browser and anyone who missed it in those 14 seconds is left
+    // with an unexplained animal and no way to get rid of it. Dismissing the cat
+    // writes the pref, the pref ends the debut branch, and the bubble stops.
     //
     // Parsed as LOCAL time (no timezone suffix), so the window closes at the end
     // of that day in each person's own browser.
@@ -69,15 +74,15 @@
     // opt-in only. To remove it for real:
     //   1. The kill switch is ONE edit — delete the `else if (pref === null &&
     //      inDebut())` branch in boot(). Nothing auto-starts after that.
-    //   2. Then, at leisure, the rest is dead: CFG.MET and CFG.DEBUT_UNTIL,
-    //      DEBUT_ENDS/inDebut(), store.met()/store.meet(), showSay()/hideSay()
-    //      and the `if (say)` block in draw(), the `.yc-say` CSS, `say` and
-    //      `autoDebut`, and the expiry check at the top of frame().
+    //   2. Then, at leisure, the rest is dead: CFG.DEBUT_UNTIL, DEBUT_ENDS/
+    //      inDebut(), showSay()/hideSay() and the `if (say)` block in draw(),
+    //      the `.yc-say` CSS, `say` and `autoDebut`, and the expiry check at the
+    //      top of frame().
     //   3. KEEP toLeave() and leaveRecords — dismissal uses them, not just the
     //      debut. Keep the three-state store too; harmless, and '0' still means
     //      "this person said no" rather than "never asked".
-    // Leaves behind one localStorage key per browser, `yc.mascot.met`, which is
-    // ignorable — it is only read to avoid introducing the cat twice.
+    // Older builds left a `yc.mascot.met` key in some browsers. Nothing reads it
+    // any more; it can be ignored.
     DEBUT_UNTIL: '2026-08-27T23:59:59'
   };
 
@@ -109,9 +114,7 @@
       return {
         pref: function () { try { return localStorage.getItem(CFG.KEY); } catch (e) { return '0'; } },
         get: function () { return store.pref() === '1'; },
-        set: function (v) { try { localStorage.setItem(CFG.KEY, v ? '1' : '0'); } catch (e) { } },
-        met: function () { try { return localStorage.getItem(CFG.MET) === '1'; } catch (e) { return true; } },
-        meet: function () { try { localStorage.setItem(CFG.MET, '1'); } catch (e) { } }
+        set: function (v) { try { localStorage.setItem(CFG.KEY, v ? '1' : '0'); } catch (e) { } }
       };
     } catch (e) { return null; }
   })();
@@ -622,9 +625,10 @@
 
   // ── Build / teardown ─────────────────────────────────────────────────────────
   // ── The introduction ─────────────────────────────────────────────────────────
-  // Shown once per browser, during the debut only. Without it the cat is just an
-  // unexplained animal on a case-management screen, and the gesture that
-  // controls it is undiscoverable.
+  // Shown on every load during the debut, until the person makes a choice.
+  // Without it the cat is just an unexplained animal on a case-management
+  // screen, and the gesture that controls it is undiscoverable — so it keeps
+  // offering itself rather than betting everything on one 14-second window.
   function showSay() {
     if (!root || say) return;
     say = document.createElement('div');
@@ -784,7 +788,7 @@
     else if (pref === null && inDebut()) {           // no opinion, and still the debut
       autoDebut = true;
       start();
-      if (!store.met()) { store.meet(); showSay(); }
+      showSay();                                     // every load until they decide
     }
     // Wired once, at boot rather than per build(), so on/off cycles don't stack
     // up duplicate listeners. It only feeds the occasional cursor chase.
