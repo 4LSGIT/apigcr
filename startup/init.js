@@ -1,18 +1,32 @@
 // startup/init.js
 //
-// HISTORICAL: this used to call ringcentralService.loadToken() to pre-warm
-// the legacy in-memory RC token cache at server boot. Both the cache and
-// loadToken are gone — credentials live in the credentials table and are
-// loaded lazily by oauthService.getValidAccessToken on first use.
+// Boot-time initialization hook, invoked once from server.js:
+//   require("./startup/init")(db);
 //
-// Kept as a no-op so existing `require('./startup/init')` calls don't break.
-// Safe to delete once the entry-point file (server.js / index.js / app.js)
-// drops its require + invocation of this module.
+// HISTORY: originally pre-warmed the legacy RingCentral token cache; that
+// went away and this sat as a kept-alive no-op. It has a real job again:
+//
+// Cloud Tasks accelerator warmup (P1 follow-up, 2026-08-23). The enqueue
+// call sites (lib/workflow_engine.scheduleResume, sequenceEngine
+// scheduleStepJob) run in DETACHED post-response context on the hook path —
+// routes/api.hooks.js responds, THEN executes the pipeline — i.e. under
+// Cloud Run's request-based CPU throttling, the very condition the whole
+// slice exists to dodge. A cold CloudTasksClient does its expensive one-time
+// setup (ADC token, HTTP/2 + TLS to cloudtasks.googleapis.com) on the first
+// createTask; doing that throttled at 20–45× risks eating the RPC deadline
+// and silently degrading the first enqueue per instance to cron latency.
+// Boot runs at full CPU — pay the setup cost here, once per instance.
+//
+// warmup() never throws, no-ops when CLOUD_TASKS_LOCATION is unset, and is
+// deliberately NOT awaited: a slow metadata server must not delay serving.
 
 module.exports = async function init(_db) {
-  // intentionally empty
+  require('../lib/taskQueue').warmup();
 };
 
+// ── Legacy RingCentral cleanup checklist (still pending) ──
+// NOTE step 5 is SUPERSEDED: this file now hosts the Cloud Tasks warmup
+// and must NOT be deleted. Steps 1–4 and the SQL remain valid.
 // # 1. Verify zero references remain
 // grep -rn "smsService\|quoService\|ringcentralService" --include="*.js" \
 //   | grep -v node_modules | grep -v "\.claude/worktrees" | grep -v local/files

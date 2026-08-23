@@ -226,6 +226,21 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
       ]
     );
 
+    // Cloud Tasks accelerator (2026-08-23): the default scheduled_time here
+    // is now+5s and the documented `delay` param accepts "30s" — API-created
+    // one_time jobs can land squarely in the 0–60s cron dead zone. Ring the
+    // doorbell for near-immediate ones. Recurring rows are NEVER enqueued:
+    // the row id is immortal and rescheduled in place, which fights named-
+    // task retention (lib/taskQueue.js header §3a). Awaited — never rejects,
+    // bounded ≤15s; failure just means the row rides the cron.
+    if (type === 'one_time') {
+      const { enqueueJobDispatch, ACCEL_WINDOW_MS } = require('../lib/taskQueue');
+      const dueMs = finalScheduledTime.getTime();
+      if (Number.isFinite(dueMs) && dueMs <= Date.now() + ACCEL_WINDOW_MS) {
+        await enqueueJobDispatch(result.insertId, dueMs);
+      }
+    }
+
     res.status(201).json({
       id: result.insertId,
       message: "Job created",
@@ -497,6 +512,7 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
 
     if (name             !== undefined) { updates.push("name = ?");             params.push(name); }
     if (description      !== undefined) { updates.push("description = ?");      params.push((typeof description === 'string' && description.trim()) ? description.trim() : null); }
+    let newScheduledDt = null; // hoisted for the post-UPDATE accelerator enqueue
     if (scheduled_time   !== undefined) {
       let dt;
       if (timezone) {
@@ -510,6 +526,7 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
         if (isNaN(dt.getTime())) return res.status(400).json({ error: "Invalid scheduled_time" });
       }
       updates.push("scheduled_time = ?"); params.push(dt);
+      newScheduledDt = dt;
     }
     if (recurrence_rule  !== undefined) { updates.push("recurrence_rule = ?");  params.push(recurrence_rule); }
     if (max_attempts     !== undefined) { updates.push("max_attempts = ?");     params.push(parseInt(max_attempts)); }
@@ -553,6 +570,22 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
       `UPDATE scheduled_jobs SET ${updates.join(", ")}, updated_at = NOW() WHERE id = ?`,
       params
     );
+
+    // Cloud Tasks accelerator (2026-08-23): an admin moving a job to
+    // now/near-now expects it to run promptly, but this path UPDATEs in
+    // place — no insert-site enqueue exists for it. Ring the doorbell when
+    // the NEW time is near-immediate. Recurring rows excluded (immortal id,
+    // lib/taskQueue.js header §3a); failed/cancelled rows were reset to
+    // pending above whenever scheduled_time is edited, so the targeted
+    // claim can take them. The due-time-suffixed task name keeps this
+    // distinct from any task the row had at its original schedule.
+    if (newScheduledDt && job.type !== 'recurring') {
+      const { enqueueJobDispatch, ACCEL_WINDOW_MS } = require('../lib/taskQueue');
+      const dueMs = newScheduledDt.getTime();
+      if (Number.isFinite(dueMs) && dueMs <= Date.now() + ACCEL_WINDOW_MS) {
+        await enqueueJobDispatch(parseInt(id), dueMs);
+      }
+    }
 
     res.json({ success: true, id: parseInt(id), message: "Job updated" });
   } catch (err) {

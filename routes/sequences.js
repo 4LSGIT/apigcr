@@ -2172,6 +2172,17 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
       return res.status(409).json({ error: 'Job is already executing' });
     }
 
+    // Cloud Tasks accelerator (2026-08-23): a human just clicked "run now" —
+    // the definitional doorbell case — but this path UPDATEs the existing
+    // row in place, so scheduleStepJob's insert-site enqueue never ran.
+    // Ring it here. The task name carries the due time, so a task from the
+    // step's ORIGINAL schedule can't shadow this one via Cloud Tasks'
+    // ~1h completed-name retention (lib/taskQueue.js). Awaited: bounded
+    // ≤15s, never rejects; any failure means the row waits for the cron —
+    // exactly the pre-slice behavior the response note describes.
+    const { enqueueJobDispatch } = require('../lib/taskQueue');
+    await enqueueJobDispatch(job.id, Date.now());
+
     // 4) Read back the new scheduled_time (NOW() at UPDATE moment) and
     //    pull stepNumber out of the data JSON for the response.
     const [[after]] = await db.query(
@@ -2191,8 +2202,9 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
       original_scheduled_at: new Date(job.scheduled_time).toISOString(),
       new_scheduled_at:      new Date(after.scheduled_time).toISOString(),
       step_number:           stepNumber,
-      note: "Job will fire on the next /process-jobs tick (within ~5 min, "
-          + "target ~1 min once cadence is tightened). The step's fire_guard "
+      note: "Job dispatched via Cloud Tasks (typically within a few seconds "
+          + "when the accelerator is enabled; otherwise on the next "
+          + "/process-jobs tick, within ~1 min). The step's fire_guard "
           + "and condition still apply at execution.",
     });
   } catch (err) {

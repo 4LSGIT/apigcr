@@ -189,13 +189,38 @@ async function recoverStuckJobs(db) {
   }
 }
 
-router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
-  const db = req.db;
-  const BATCH_SIZE = 10;
+/**
+ * runJobPass — the whole poll/dispatch cycle, extracted (Cloud Tasks slice,
+ * 2026-08) so the 60s cron batch and the per-job push dispatch share ONE
+ * execution path. Do not fork this: a copy-pasted second dispatch loop will
+ * diverge.
+ *
+ * Modes:
+ *   jobId === null  (cron batch — the pre-slice behavior, unchanged):
+ *     recoverStuckJobs housekeeping, claim up to batchSize due jobs
+ *     (FOR UPDATE SKIP LOCKED), dispatch, stamp the heartbeat.
+ *   jobId set       (targeted — POST /process-job/:id from a Cloud Task):
+ *     claim ONLY that job with the same predicates. NO recoverStuckJobs
+ *     (per-minute housekeeping; running it per task multiplies DB load for
+ *     no benefit) and NO heartbeat (the heartbeat means "the POLL cycle
+ *     ran" — routes/api.systemStatus.js uses its age to detect a dead
+ *     Cloud Scheduler job; task traffic stamping it would mask exactly
+ *     that failure). A job that is not claimable — already taken by the
+ *     cron, completed, inactive, not yet due — is a NORMAL outcome, not an
+ *     error: return processed:0 / already_claimed so Cloud Tasks (which
+ *     retries on any non-2xx) treats the task as done.
+ *
+ * Claim errors propagate to the caller (the routes map them to HTTP 500 —
+ * for a Cloud Task that means a retry, which is correct for a DB blip).
+ * Everything after the claim handles its own errors per job, exactly as
+ * before the extraction.
+ */
+async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
+  const targeted = jobId !== null;
 
   let jobs = [];
 
-  // STEP 1: Atomically claim a batch of due jobs (pure-DB → retries: 3).
+  // STEP 1: Atomically claim due jobs (pure-DB → retries: 3).
   //
   // Why retries: 3 — observed failure mode (7/2026): the MySQL server drops all
   // idle pooled connections at once (PROTOCOL_CONNECTION_LOST); each failed
@@ -203,55 +228,74 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
   // second corpse and still fail. Three retries drains a small pool of stale
   // sockets and lands on a fresh dial. Claim is pure-DB and rolls back on
   // failure, so extra retries are side-effect-safe.
-  try {
-    // Housekeeping — must never kill the poll cycle. It re-runs on every poll,
-    // so a skipped pass costs at most one minute of recovery delay.
+
+  // Housekeeping — must never kill the poll cycle. It re-runs on every poll,
+  // so a skipped pass costs at most one minute of recovery delay.
+  // Batch mode only: it is per-minute housekeeping, not per-job work.
+  if (!targeted) {
     try {
       await recoverStuckJobs(db);
     } catch (recoveryErr) {
       console.warn(`[PROCESS-JOBS] recoverStuckJobs failed (non-fatal): ${recoveryErr.code || ""} ${recoveryErr.message}`);
     }
+  }
 
-    jobs = await db.withTransaction(async (connection) => {
-      const [rows] = await connection.query(
-        `
-        SELECT *
-        FROM scheduled_jobs
-        WHERE status = 'pending'
-          AND active = 1
-          AND scheduled_time <= NOW()
-          AND (expires_at IS NULL OR expires_at > NOW())
-          AND (max_executions IS NULL OR execution_count < max_executions)
-        ORDER BY scheduled_time
-        LIMIT ?
-        FOR UPDATE SKIP LOCKED
-        `,
-        [BATCH_SIZE]
-      );
+  jobs = await db.withTransaction(async (connection) => {
+    // Targeted and batch claims share every predicate. SKIP LOCKED in BOTH:
+    // for the targeted claim it means a row currently being claimed by the
+    // cron returns 0 rows immediately (→ already_claimed) instead of a lock
+    // wait holding the Cloud Task's request open — same outcome, no stall.
+    const [rows] = targeted
+      ? await connection.query(
+          `
+          SELECT *
+          FROM scheduled_jobs
+          WHERE id = ?
+            AND status = 'pending'
+            AND active = 1
+            AND scheduled_time <= NOW()
+            AND (expires_at IS NULL OR expires_at > NOW())
+            AND (max_executions IS NULL OR execution_count < max_executions)
+          FOR UPDATE SKIP LOCKED
+          `,
+          [jobId]
+        )
+      : await connection.query(
+          `
+          SELECT *
+          FROM scheduled_jobs
+          WHERE status = 'pending'
+            AND active = 1
+            AND scheduled_time <= NOW()
+            AND (expires_at IS NULL OR expires_at > NOW())
+            AND (max_executions IS NULL OR execution_count < max_executions)
+          ORDER BY scheduled_time
+          LIMIT ?
+          FOR UPDATE SKIP LOCKED
+          `,
+          [batchSize]
+        );
 
-      if (rows.length === 0) return [];
+    if (rows.length === 0) return [];
 
-      const jobIds = rows.map((j) => j.id);
+    const jobIds = rows.map((j) => j.id);
 
-      await connection.query(
-        `UPDATE scheduled_jobs SET status = 'running', updated_at = NOW() WHERE id IN (?)`,
-        [jobIds]
-      );
+    await connection.query(
+      `UPDATE scheduled_jobs SET status = 'running', updated_at = NOW() WHERE id IN (?)`,
+      [jobIds]
+    );
 
-      return rows;
-    }, { retries: 3 });
+    return rows;
+  }, { retries: 3 });
 
-    if (jobs.length === 0) {
-      stampHeartbeat(db); // fire-and-forget — poll cycle ran (common path)
-      return res.json({ processed: 0, results: [] });
+  if (jobs.length === 0) {
+    if (targeted) {
+      // The cron got there first (or the job is done/inactive/not due).
+      // Expected — HTTP 200 so Cloud Tasks does not retry.
+      return { processed: 0, results: [{ id: jobId, status: 'already_claimed' }] };
     }
-  } catch (err) {
-    console.error("[PROCESS-JOBS] Claim failed:", err);
-    return res.status(500).json({
-      error: "Failed to claim jobs",
-      code: err.code || err.errno || null,
-      detail: String(err.message || "").slice(0, 300),
-    });
+    stampHeartbeat(db); // fire-and-forget — poll cycle ran (common path)
+    return { processed: 0, results: [] };
   }
 
   // STEP 2: Execute jobs one by one
@@ -278,6 +322,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
   const deferredWork = [];
 
   for (const job of jobs) {
+
     const start = Date.now();
     const attempt = job.attempts + 1;
     const executionNumber = job.execution_count + 1;
@@ -567,8 +612,53 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
   // but a future rethrow must not skip the heartbeat/response.
   await Promise.allSettled(deferredWork);
 
-  stampHeartbeat(db); // fire-and-forget — poll cycle ran (even if some jobs failed)
-  res.json({ processed: jobs.length, results });
+  if (!targeted) {
+    stampHeartbeat(db); // fire-and-forget — poll cycle ran (even if some jobs failed)
+  }
+  return { processed: jobs.length, results };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Routes — two thin wrappers over runJobPass
+// ─────────────────────────────────────────────────────────────
+
+// Cron batch — externally unchanged: same auth, same response shape, same
+// 500 shape on claim failure.
+router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
+  try {
+    const out = await runJobPass(req.db);
+    res.json(out);
+  } catch (err) {
+    console.error("[PROCESS-JOBS] Claim failed:", err);
+    return res.status(500).json({
+      error: "Failed to claim jobs",
+      code: err.code || err.errno || null,
+      detail: String(err.message || "").slice(0, 300),
+    });
+  }
+});
+
+// Targeted dispatch — Cloud Tasks push target (lib/taskQueue.js). One job,
+// claimed with the batch's exact predicates; already-claimed is HTTP 200
+// (Cloud Tasks retries on any non-2xx, and losing the race to the cron is a
+// normal outcome). Malformed id → 400, which Cloud Tasks does NOT retry —
+// correct for a request that can never succeed.
+router.post("/process-job/:id", jwtOrApiKey, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid job id" });
+  }
+  try {
+    const out = await runJobPass(req.db, { jobId: id });
+    res.json(out);
+  } catch (err) {
+    console.error(`[PROCESS-JOB ${id}] Claim failed:`, err);
+    return res.status(500).json({
+      error: "Failed to claim job",
+      code: err.code || err.errno || null,
+      detail: String(err.message || "").slice(0, 300),
+    });
+  }
 });
 
 module.exports = router;

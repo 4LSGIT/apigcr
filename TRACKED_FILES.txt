@@ -77,6 +77,7 @@ lib/sequenceEngine.js
 lib/signatureValidation.js
 lib/sqlGuard.js
 lib/ssrfGuard.js
+lib/taskQueue.js
 lib/unplacehold.js
 lib/versionDiff.js
 lib/webhookExecutor.js
@@ -597,6 +598,7 @@ startup/init.js
 tests/adminapikeys.k2.test.js
 tests/aiService.attachments.test.js
 tests/aimatch.service.test.js
+tests/alertingStartLatency.test.js
 tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/caseId.test.js
@@ -697,7 +699,10 @@ tests/portalCaseService.test.js
 tests/portalDocsRoutes.test.js
 tests/portalDocsService.test.js
 tests/portalHome.test.js
+tests/processJobs.targeted.test.js
 tests/refreshonmiss.k3.test.js
+tests/scheduleResume.accel.test.js
+tests/scheduledJobs.doorbell.test.js
 tests/schemaConventions.test.js
 tests/scriptGuard.setup.js
 tests/scriptGuardCoverage.test.js
@@ -705,6 +710,7 @@ tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js
 tests/sequences.routeOrder.test.js
 tests/su.stepup.test.js
+tests/taskQueue.accel.test.js
 tests/taskService.status.test.js
 tests/taskService.test.js
 tests/tasksUi.boot.test.js
