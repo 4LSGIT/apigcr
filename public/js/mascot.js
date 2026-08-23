@@ -98,6 +98,7 @@
   var mouse = { x: -1, y: -1, t: 0 };
 
   var ledges = [], walls = [], lastScan = -1e9;
+  var bounds = { left: 0, top: 0 };   // the visible content box, set by scan()
 
   // ── Small helpers ────────────────────────────────────────────────────────────
   function rand(a, b) { return a + Math.random() * (b - a); }
@@ -134,26 +135,32 @@
   // throttle, and the cat re-finds its footing afterwards (see refoot).
   function scan() {
     var W = vw(), H = vh();
-    var L = [{ x1: 0, x2: W, y: H }];                       // the floor
-    var A = [
-      { x: 1, y1: 0, y2: H, rot: 90 },                      // left viewport wall
-      { x: W - 1, y1: 0, y2: H, rot: -90 }                  // right viewport wall
-    ];
 
-    // The header's underside is the classic ledge — a cat walking along the
-    // bottom edge of a window, drawn over the window itself.
+    // Work out the CONTENT BOX — the region bounded by edges a person can
+    // actually see. The viewport's own left edge is the wrong wall to climb: the
+    // sidebar sits on top of it, so a cat clinging to x=0 looks like it is stuck
+    // to the nav items rather than standing on anything. Where the sidebar is
+    // open, its right edge is the visible left wall; likewise the header's
+    // underside is the visible ceiling.
+    var top = 0, left = 0;
     var hdr = document.getElementById('appHeader');
     if (visible(hdr)) {
       var hr = hdr.getBoundingClientRect();
-      if (hr.bottom > 10 && hr.bottom < H - 10) L.push({ x1: hr.left, x2: hr.right, y: hr.bottom });
+      if (hr.top <= 2 && hr.bottom > 10 && hr.bottom < H - 40) top = hr.bottom;
     }
-
-    // The sidebar's right edge is a wall worth climbing.
     var sb = document.getElementById('appSidebar');
     if (visible(sb)) {
       var sr = sb.getBoundingClientRect();
-      if (sr.width > 24 && sr.right < W - 40) A.push({ x: sr.right, y1: sr.top, y2: sr.bottom, rot: 90 });
+      if (sr.left <= 2 && sr.right > 24 && sr.right < W - 80) left = sr.right;
     }
+    bounds = { left: left, top: top };
+
+    var L = [{ x1: left, x2: W, y: H }];                          // the floor
+    if (top > 0) L.push({ x1: left, x2: W, y: top });             // header's underside
+    var A = [
+      { x: left, y1: top, y2: H, rot: 90, ceil: true },           // sidebar edge / window edge
+      { x: W - 1, y1: top, y2: H, rot: -90, ceil: true }          // right window edge
+    ];
 
     frameLedges(L, W, H);
 
@@ -316,7 +323,7 @@
 
     if (state === 'leave') {
       px += face * CFG.CHASE * dt;
-      if (px < -50 || px > W + 50) { stop(); store.set(false); }
+      if (px < bounds.left - 50 || px > W + 50) { stop(); store.set(false); }
       return;
     }
 
@@ -330,11 +337,11 @@
       var y0 = py;
       px += vx * dt;
       py += vy * dt;
-      if (px < 4) { px = 4; vx = Math.abs(vx) * 0.4; }
+      if (px < bounds.left + 4) { px = bounds.left + 4; vx = Math.abs(vx) * 0.4; }
       if (px > W - 4) { px = W - 4; vx = -Math.abs(vx) * 0.4; }
       var hit = ledgeBelow(px, y0, py);
       if (hit) { land(hit); }
-      else if (py >= H) { land({ x1: 0, x2: W, y: H }); }
+      else if (py >= H) { land({ x1: bounds.left, x2: W, y: H }); }
       return;
     }
 
@@ -347,8 +354,8 @@
       // cat just stepped off — which is how it ended up here.
       if (up && py <= w.y1 + 1) {
         py = w.y1 + 1;
-        if (w.y1 <= 2) {                         // the ceiling — hang from it
-          wall = null; rot = 180; py = 0;
+        if (w.ceil) {                            // the ceiling — hang from it
+          wall = null; rot = 180; py = w.y1;
           aim(px > W / 2 ? -1 : 1, 0);           // head back towards the middle
           setState('hang');
           stateUntil = clock + rand(2, 6);
@@ -381,9 +388,9 @@
     if (state === 'hang') {
       var fh = fwd();
       px += fh.x * face * CFG.HANGSPEED * dt;
-      if (px < 6 || px > W - 6) {
-        px = clamp(px, 6, W - 6);
-        var wcl = wallNear(px, 4);
+      if (px < bounds.left + 6 || px > W - 6) {
+        px = clamp(px, bounds.left + 6, W - 6);
+        var wcl = wallNear(px, bounds.top + 4);
         if (wcl) toClimb(wcl, false); else face = -face;
         return;
       }
@@ -485,7 +492,13 @@
       lastDown = now;
       e.preventDefault();
       try { cat.setPointerCapture(e.pointerId); } catch (err) { }
-      grab = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), vx: 0, vy: 0 };
+      // Stash where it was standing: a click that never moves is a poke, not a
+      // pick-up, and the cat should stay put for it — otherwise the second click
+      // of a dismissal has to hit a cat that is already falling away.
+      grab = {
+        id: e.pointerId, x: e.clientX, y: e.clientY, t: now, t0: now,
+        vx: 0, vy: 0, moved: false, px0: px, py0: py, ledge0: ledge
+      };
       ledge = null; wall = null; rot = 0;
       setState('drag');
       cat.classList.add('yc-grabbed');
@@ -497,6 +510,7 @@
       grab.vx = (e.clientX - grab.x) / dt;
       grab.vy = (e.clientY - grab.y) / dt;
       grab.x = e.clientX; grab.y = e.clientY; grab.t = now;
+      if (Math.abs(e.clientX - grab.px0) > 4 || Math.abs(e.clientY - grab.py0) > 6) grab.moved = true;
       px = e.clientX;
       py = e.clientY + CFG.H * 0.45;      // dangles just below the cursor
       aim(grab.vx, 0);
@@ -507,6 +521,14 @@
       if (!grab || (e && e.pointerId !== grab.id)) return;
       var g = grab; grab = null;
       cat.classList.remove('yc-grabbed');
+      // A poke: put it back where it was and let it notice you.
+      if (!g.moved && performance.now() - g.t0 < 350) {
+        px = g.px0; py = g.py0; rot = 0;
+        ledge = g.ledge0;
+        if (ledge) { setState('idle', 'look'); stateUntil = clock + rand(1.2, 2.5); }
+        else toFall(0, 0);
+        return;
+      }
       toFall(clamp(g.vx * 0.35, -520, 520), clamp(g.vy * 0.35, -520, 520));
     }
     cat.addEventListener('pointerup', release);
@@ -542,8 +564,8 @@
     scan();
     lastScan = performance.now();
     clock = 0;
-    px = vw() * rand(0.35, 0.65);
-    py = -40;
+    px = bounds.left + (vw() - bounds.left) * rand(0.35, 0.65);
+    py = bounds.top - 40;
     toFall(rand(-20, 20), 0);            // drops in from off the top
     draw();
     last = performance.now();
