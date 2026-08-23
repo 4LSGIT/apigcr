@@ -1454,6 +1454,7 @@ async function refreshEntityData(sourceFormKey) {
  */
 async function pushFormsFromEntityData(sourceFormKey) {
   for (const iframe of document.querySelectorAll('iframe')) {
+    if (isCrossOriginFrame(iframe)) continue;              // see below
     try {
       const form = iframe.contentWindow?.ycForm;
       if (!form) continue;                                   // not loaded yet
@@ -1464,9 +1465,33 @@ async function pushFormsFromEntityData(sourceFormKey) {
         loadResult: window.entityData,
       });
     } catch (err) {
+      // A cross-origin frame that slipped past the pre-check (src set after we
+      // looked, a redirect) is EXPECTED, not a fault — swallow it silently for
+      // the same reason isCrossOriginFrame exists.
+      if (err && err.name === 'SecurityError') continue;
       console.warn('[pushFormsFromEntityData] form refresh failed:', err);
     }
   }
+}
+
+/* Is this iframe on another origin?
+ *
+ * Legacy cases (case_ISSN_form set) point #ISSNinfo at jotform.com — see
+ * updateHeader's back-compat branch. Reading .contentWindow.ycForm on it throws
+ * SecurityError, and the try/catch above has always swallowed that. It was
+ * quiet noise while the loop only ran on form-saved; since the bus landed the
+ * loop runs on every case write, so the same benign throw now warns constantly.
+ *
+ * Checking the src is strictly cheaper than throwing, and reads as intent
+ * rather than as an accident that happens to be handled. No src (or a blank
+ * one) means the frame has not been pointed anywhere yet — same origin,
+ * nothing loaded, and the `!form` check below handles it.
+ */
+function isCrossOriginFrame(iframe) {
+  const src = iframe.getAttribute('src');
+  if (!src) return false;
+  try { return new URL(src, location.href).origin !== location.origin; }
+  catch (_) { return true; }              // unparseable → do not touch it
 }
 
 /* ── The push chain ─────────────────────────────────────────────────────────

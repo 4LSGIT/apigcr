@@ -879,6 +879,7 @@ async function refreshEntityData(sourceFormKey) {
  */
 async function pushFormsFromEntityData(sourceFormKey) {
   for (const iframe of document.querySelectorAll('iframe')) {
+    if (isCrossOriginFrame(iframe)) continue;              // see below
     try {
       const form = iframe.contentWindow?.ycForm;
       if (!form) continue;                                   // not loaded yet
@@ -889,9 +890,24 @@ async function pushFormsFromEntityData(sourceFormKey) {
         loadResult: window.entityData,
       });
     } catch (err) {
+      if (err && err.name === 'SecurityError') continue;
       console.warn('[pushFormsFromEntityData] form refresh failed:', err);
     }
   }
+}
+
+/* Is this iframe on another origin?
+ *
+ * No contact.html iframe is cross-origin today (contact-form, communicate,
+ * tasks, notes — all local). This is here so the two pages' push loops stay
+ * BYTE-IDENTICAL: they were factored out of one shared body precisely so they
+ * could not drift, and case.html genuinely needs it (legacy Jotform ISSN
+ * frames). See the fuller comment there. */
+function isCrossOriginFrame(iframe) {
+  const src = iframe.getAttribute('src');
+  if (!src) return false;
+  try { return new URL(src, location.href).origin !== location.origin; }
+  catch (_) { return true; }
 }
 
 /* ── The push chain ─────────────────────────────────────────────────────────

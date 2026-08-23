@@ -43,7 +43,8 @@
     GRAVITY: 1500,         // px/s²
     TERMINAL: 900,         // px/s
     WALK: 46,              // px/s
-    CLIMB: 34,
+    CLIMB: 55,             // cats go up faster than they saunter
+
     HANGSPEED: 30,
     CHASE: 92,
     HOLD_MS: 900,          // long-press duration on the logo
@@ -98,7 +99,9 @@
   var mouse = { x: -1, y: -1, t: 0 };
 
   var ledges = [], walls = [], lastScan = -1e9;
-  var bounds = { left: 0, top: 0 };   // the visible content box, set by scan()
+  // The visible content box, set by scan(). Everything positional is relative to
+  // this, not the viewport — see the note in scan().
+  var bounds = { left: 0, top: 0, right: 0, bottom: 0 };
 
   // ── Small helpers ────────────────────────────────────────────────────────────
   function rand(a, b) { return a + Math.random() * (b - a); }
@@ -106,6 +109,7 @@
   function visible(el) { return !!el && el.getClientRects().length > 0; }
   function vw() { return window.innerWidth; }
   function vh() { return window.innerHeight; }
+  function mid() { return (bounds.left + bounds.right) / 2; }
 
   // Screen-space unit vector the sprite walks along when face === 1.
   // rot is applied by CSS rotate(), which is clockwise in a y-down space, so this
@@ -136,42 +140,50 @@
   function scan() {
     var W = vw(), H = vh();
 
-    // Work out the CONTENT BOX — the region bounded by edges a person can
-    // actually see. The viewport's own left edge is the wrong wall to climb: the
-    // sidebar sits on top of it, so a cat clinging to x=0 looks like it is stuck
-    // to the nav items rather than standing on anything. Where the sidebar is
-    // open, its right edge is the visible left wall; likewise the header's
-    // underside is the visible ceiling.
-    var top = 0, left = 0;
-    var hdr = document.getElementById('appHeader');
-    if (visible(hdr)) {
-      var hr = hdr.getBoundingClientRect();
-      if (hr.top <= 2 && hr.bottom > 10 && hr.bottom < H - 40) top = hr.bottom;
+    // THE CONTENT BOX is the open page's iframe, measured directly. Its edges are
+    // the ones a person can actually see: its left edge is exactly where the
+    // sidebar ends and its top is exactly under the header, by construction.
+    // Measuring #appSidebar instead was the mistake — it has skinny, hidden and
+    // mobile-drawer states, and getting it wrong puts the cat inside the nav,
+    // clinging to an edge that isn't there.
+    var left = 0, top = 0, right = W, bottom = H;
+    var f = contentFrame();
+    if (f) {
+      var fr = f.getBoundingClientRect();
+      if (fr.width > 200 && fr.height > 120) {
+        left = Math.max(0, fr.left); top = Math.max(0, fr.top);
+        right = Math.min(W, fr.right); bottom = Math.min(H, fr.bottom);
+      }
+    } else {
+      // No open page (login, a bare tab): fall back to the shell's own chrome.
+      var hdr = document.getElementById('appHeader');
+      if (visible(hdr)) {
+        var hr = hdr.getBoundingClientRect();
+        if (hr.top <= 2 && hr.bottom > 10 && hr.bottom < H - 40) top = hr.bottom;
+      }
+      var sb = document.getElementById('appSidebar');
+      if (visible(sb)) {
+        var sr = sb.getBoundingClientRect();
+        if (sr.left <= 2 && sr.right > 24 && sr.right < W - 80) left = sr.right;
+      }
     }
-    var sb = document.getElementById('appSidebar');
-    if (visible(sb)) {
-      var sr = sb.getBoundingClientRect();
-      if (sr.left <= 2 && sr.right > 24 && sr.right < W - 80) left = sr.right;
-    }
-    bounds = { left: left, top: top };
+    bounds = { left: left, top: top, right: right, bottom: bottom };
 
-    var L = [{ x1: left, x2: W, y: H }];                          // the floor
-    if (top > 0) L.push({ x1: left, x2: W, y: top });             // header's underside
+    var L = [{ x1: left, x2: right, y: bottom }];                       // the floor
+    if (top > 2) L.push({ x1: left, x2: right, y: top });               // the ceiling's ledge
     var A = [
-      { x: left, y1: top, y2: H, rot: 90, ceil: true },           // sidebar edge / window edge
-      { x: W - 1, y1: top, y2: H, rot: -90, ceil: true }          // right window edge
+      { x: left, y1: top, y2: bottom, rot: 90, ceil: true },            // left edge
+      { x: right - 1, y1: top, y2: bottom, rot: -90, ceil: true }       // right edge
     ];
 
-    frameLedges(L, W, H);
+    frameLedges(L, f, W, H);
 
     ledges = L;
     walls = A;
   }
 
-  // Reach into the open page and collect the tops of its real furniture.
-  // Every step is defensive: the frame may be cross-origin one day, may not have
-  // loaded, may be mid-navigation. Any failure just means shell-only platforms.
-  function frameLedges(out, W, H) {
+  // The largest visible iframe in the open tab — the page the user is looking at.
+  function contentFrame() {
     var frame = null, best = 0;
     try {
       var tabs = document.querySelectorAll('.tab-main');
@@ -184,7 +196,14 @@
           if (area > best && fr.width > 200 && fr.height > 120) { best = area; frame = fs[i]; }
         }
       }
-    } catch (e) { return; }
+    } catch (e) { return null; }
+    return frame;
+  }
+
+  // Reach into the open page and collect the tops of its real furniture.
+  // Every step is defensive: the frame may be cross-origin one day, may not have
+  // loaded, may be mid-navigation. Any failure just means shell-only platforms.
+  function frameLedges(out, frame, W, H) {
     if (!frame) return;
 
     var doc;
@@ -323,7 +342,7 @@
 
     if (state === 'leave') {
       px += face * CFG.CHASE * dt;
-      if (px < bounds.left - 50 || px > W + 50) { stop(); store.set(false); }
+      if (px < bounds.left - 50 || px > bounds.right + 50) { stop(); store.set(false); }
       return;
     }
 
@@ -338,10 +357,10 @@
       px += vx * dt;
       py += vy * dt;
       if (px < bounds.left + 4) { px = bounds.left + 4; vx = Math.abs(vx) * 0.4; }
-      if (px > W - 4) { px = W - 4; vx = -Math.abs(vx) * 0.4; }
+      if (px > bounds.right - 4) { px = bounds.right - 4; vx = -Math.abs(vx) * 0.4; }
       var hit = ledgeBelow(px, y0, py);
       if (hit) { land(hit); }
-      else if (py >= H) { land({ x1: bounds.left, x2: W, y: H }); }
+      else if (py >= bounds.bottom) { land({ x1: bounds.left, x2: bounds.right, y: bounds.bottom }); }
       return;
     }
 
@@ -356,12 +375,12 @@
         py = w.y1 + 1;
         if (w.ceil) {                            // the ceiling — hang from it
           wall = null; rot = 180; py = w.y1;
-          aim(px > W / 2 ? -1 : 1, 0);           // head back towards the middle
+          aim(px > mid() ? -1 : 1, 0);           // head back towards the middle
           setState('hang');
           stateUntil = clock + rand(2, 6);
         } else {
           var l = ledgeBelow(px, w.y1 - 2, w.y1 + 6);
-          if (l) { land(l); aim(px > W / 2 ? -1 : 1, 0); } else face = -face;
+          if (l) { land(l); aim(px > mid() ? -1 : 1, 0); } else face = -face;
         }
         return;
       }
@@ -369,18 +388,18 @@
         py = w.y2 - 1;
         var l2 = ledgeBelow(px, py - 4, py + 10);
         // Step off towards open space, or it just paces against the wall.
-        if (l2) { land(l2); aim(px > W / 2 ? -1 : 1, 0); } else face = -face;
+        if (l2) { land(l2); aim(px > mid() ? -1 : 1, 0); } else face = -face;
         return;
       }
-      // Cats also just let go sometimes. "Carry on" has to be in the mix: with
-      // only let-go and reverse, a climb never outlasts one timer, and at 34px/s
-      // the ceiling of a real window is further than that — the hang state was
-      // unreachable until this roll existed.
+      // Cats also just let go sometimes — but rarely, and this is why. A climb has
+      // to survive several of these rolls to cross a real window's height, so at
+      // a 50/50 let-go the ceiling was unreachable in practice and the whole hang
+      // state was dead code. Committed climber, occasional change of heart.
       if (clock >= stateUntil) {
         var r = Math.random();
         stateUntil = clock + rand(1.5, 4);
-        if (r < 0.3) toFall((px < W / 2 ? 1 : -1) * 30, -40);
-        else if (r < 0.55) face = -face;
+        if (r < 0.06) toFall((px < mid() ? 1 : -1) * 30, -40);
+        else if (r < 0.12) face = -face;
       }
       return;
     }
@@ -388,8 +407,8 @@
     if (state === 'hang') {
       var fh = fwd();
       px += fh.x * face * CFG.HANGSPEED * dt;
-      if (px < bounds.left + 6 || px > W - 6) {
-        px = clamp(px, bounds.left + 6, W - 6);
+      if (px < bounds.left + 6 || px > bounds.right - 6) {
+        px = clamp(px, bounds.left + 6, bounds.right - 6);
         var wcl = wallNear(px, bounds.top + 4);
         if (wcl) toClimb(wcl, false); else face = -face;
         return;
@@ -484,7 +503,7 @@
         grab = null;
         cat.classList.remove('yc-grabbed');
         rot = 0;
-        face = px < vw() / 2 ? -1 : 1;
+        face = px < mid() ? -1 : 1;
         setState('leave');
         e.preventDefault();
         return;
@@ -564,7 +583,7 @@
     scan();
     lastScan = performance.now();
     clock = 0;
-    px = bounds.left + (vw() - bounds.left) * rand(0.35, 0.65);
+    px = bounds.left + (bounds.right - bounds.left) * rand(0.35, 0.65);
     py = bounds.top - 40;
     toFall(rand(-20, 20), 0);            // drops in from off the top
     draw();
@@ -627,14 +646,47 @@
   }
 
   function toggle() {
-    if (running) { rot = 0; face = px < vw() / 2 ? -1 : 1; setState('leave'); }
+    if (running) { rot = 0; face = px < mid() ? -1 : 1; setState('leave'); }
     else { store.set(true); start(); }
   }
 
   window.Mascot = {
     on: function () { store.set(true); start(); },
     off: function () { store.set(false); stop(); },
-    toggle: toggle
+    toggle: toggle,
+    // Console aid for "why is it standing THERE": outlines the content box the
+    // cat believes it lives in for three seconds, and returns the numbers.
+    debug: function () {
+      scan();
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;pointer-events:none;z-index:' + (CFG.Z + 1) +
+        ';border:2px dashed #07ADEF;background:rgba(7,173,239,.06);' +
+        'left:' + bounds.left + 'px;top:' + bounds.top + 'px;' +
+        'width:' + (bounds.right - bounds.left) + 'px;height:' + (bounds.bottom - bounds.top) + 'px';
+      document.body.appendChild(d);
+      setTimeout(function () { d.remove(); }, 3000);
+      var f = contentFrame();
+      var r = function (el) {
+        if (!el) return null;
+        var b = el.getBoundingClientRect();
+        return [Math.round(b.left), Math.round(b.top), Math.round(b.right), Math.round(b.bottom)].join(',');
+      };
+      return {
+        bounds: bounds,
+        cat: { state: state, x: Math.round(px), y: Math.round(py), rot: rot },
+        // Where it is actually PAINTED. If painted.left is not ~cat.x while
+        // climbing the left wall, the container is not resolving against the
+        // viewport and some ancestor is creating a containing block.
+        painted: r(cat), container: r(root),
+        offsetParent: root && root.offsetParent ? root.offsetParent.tagName : null,
+        ledges: ledges.length,
+        wallXs: walls.map(function (w) { return Math.round(w.x); }),
+        frame: r(f), frameSrc: f && (f.getAttribute('src') || f.dataset.src),
+        header: r(document.getElementById('appHeader')),
+        sidebar: r(document.getElementById('appSidebar')),
+        viewport: vw() + 'x' + vh(), dpr: window.devicePixelRatio
+      };
+    }
   };
 
   function boot() {
