@@ -237,6 +237,7 @@ public/index.html
 public/issueReports.html
 public/js/assetpicker.js
 public/js/diag.js
+public/js/mascot.js
 public/js/reportCharts.js
 public/js/versionGuard.js
 public/js/videoInsert.js
