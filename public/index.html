@@ -48,10 +48,14 @@
        script (VersionGuard.start()). See public/js/versionGuard.js. -->
   <script src="/js/versionGuard.js"></script>
   <!-- EASTER EGG — remove this one line (and public/js/mascot.js) to disable.
-       A Win95-style desktop pet. Off by default for everyone: it only appears
-       for someone who long-presses the header logo, and only in this shell.
+       A Win95-style desktop pet, summoned by long-pressing the header logo.
        Entirely self-contained — no deps, no assets, no network, no server side.
-       See the header comment in public/js/mascot.js. -->
+
+       NOTE — DEBUT: until 2026-08-26 it comes out on its own for anyone who has
+       not made a choice about it, and introduces itself once. After that date it
+       is opt-in only, with no action needed: the window is a hard date and the
+       code goes inert on its own. To pull the debut out early or clean it up,
+       see the DEBUT_UNTIL block near the top of public/js/mascot.js. -->
   <script defer src="/js/mascot.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />

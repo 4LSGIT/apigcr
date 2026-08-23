@@ -52,7 +52,33 @@
     MIN_VW: 900,           // below this the shell is in mobile layout — no cat
     RESCAN_MS: 1200,       // platform rescan throttle
     MAX_PLATFORMS: 40,
-    KEY: 'yc.mascot.on'    // matches the yc.* convention in scripts.js
+    KEY: 'yc.mascot.on',   // matches the yc.* convention in scripts.js
+    MET: 'yc.mascot.met',  // has this browser been introduced yet?
+
+    // THE DEBUT. Until this moment the cat comes out on its own for anyone who
+    // has not made a choice about it, and introduces itself once. After it, the
+    // cat only ever appears for someone who asked for it. Deliberately a hard
+    // date and not a duration: an introduction that quietly never ends is just
+    // a default, and turning it off again would cost a deploy.
+    //
+    // Parsed as LOCAL time (no timezone suffix), so the window closes at the end
+    // of that day in each person's own browser.
+    //
+    // ── RIPPING THE DEBUT OUT LATER ──────────────────────────────────────────
+    // Nothing has to be done: once the date passes this is inert, and the cat is
+    // opt-in only. To remove it for real:
+    //   1. The kill switch is ONE edit — delete the `else if (pref === null &&
+    //      inDebut())` branch in boot(). Nothing auto-starts after that.
+    //   2. Then, at leisure, the rest is dead: CFG.MET and CFG.DEBUT_UNTIL,
+    //      DEBUT_ENDS/inDebut(), store.met()/store.meet(), showSay()/hideSay()
+    //      and the `if (say)` block in draw(), the `.yc-say` CSS, `say` and
+    //      `autoDebut`, and the expiry check at the top of frame().
+    //   3. KEEP toLeave() and leaveRecords — dismissal uses them, not just the
+    //      debut. Keep the three-state store too; harmless, and '0' still means
+    //      "this person said no" rather than "never asked".
+    // Leaves behind one localStorage key per browser, `yc.mascot.met`, which is
+    // ignorable — it is only read to avoid introducing the cat twice.
+    DEBUT_UNTIL: '2026-08-26T23:59:59'
   };
 
   // Elements inside the open page that are chunky enough to stand on.
@@ -73,16 +99,28 @@
 
   // localStorage throws outright under some privacy modes; if we cannot remember
   // the user's choice we should not be starting anything.
+  // THREE states, not two. "Never decided" has to be distinguishable from "sent
+  // it away", or the debut below would come back for precisely the people who
+  // already made it clear they did not want a cat.
+  //   null → no opinion yet   '1' → asked for it   '0' → sent it away
   var store = (function () {
     try {
       localStorage.getItem(CFG.KEY);
       return {
-        get: function () { try { return localStorage.getItem(CFG.KEY) === '1'; } catch (e) { return false; } },
-        set: function (v) { try { v ? localStorage.setItem(CFG.KEY, '1') : localStorage.removeItem(CFG.KEY); } catch (e) { } }
+        pref: function () { try { return localStorage.getItem(CFG.KEY); } catch (e) { return '0'; } },
+        get: function () { return store.pref() === '1'; },
+        set: function (v) { try { localStorage.setItem(CFG.KEY, v ? '1' : '0'); } catch (e) { } },
+        met: function () { try { return localStorage.getItem(CFG.MET) === '1'; } catch (e) { return true; } },
+        meet: function () { try { localStorage.setItem(CFG.MET, '1'); } catch (e) { } }
       };
     } catch (e) { return null; }
   })();
   if (!store) return;
+
+  // Debut window still open? A bad clock just means someone does or doesn't get
+  // an introduction, which is not worth defending against.
+  var DEBUT_ENDS = Date.parse(CFG.DEBUT_UNTIL);
+  function inDebut() { return !isNaN(DEBUT_ENDS) && Date.now() < DEBUT_ENDS; }
 
   // ── State ────────────────────────────────────────────────────────────────────
   var root = null, cat = null, styleEl = null;   // DOM
@@ -97,6 +135,9 @@
   var stateUntil = 0, clock = 0;
   var grab = null;
   var mouse = { x: -1, y: -1, t: 0 };
+  var say = null;              // the introduction bubble, debut only
+  var leaveRecords = true;     // does walking off count as "sent away"?
+  var autoDebut = false;       // started by the debut rather than by a person
 
   var ledges = [], walls = [], lastScan = -1e9;
   // The visible content box, set by scan(). Everything positional is relative to
@@ -301,6 +342,16 @@
     setState('fall');
   }
 
+  // `record` false means "stop being here", not "the user said no".
+  function toLeave(record) {
+    leaveRecords = record !== false;
+    grab = null;
+    rot = 0;
+    face = px < mid() ? -1 : 1;
+    hideSay();
+    setState('leave');
+  }
+
   function toClimb(w, up) {
     wall = w; ledge = null;
     rot = w.rot;
@@ -342,7 +393,14 @@
 
     if (state === 'leave') {
       px += face * CFG.CHASE * dt;
-      if (px < bounds.left - 50 || px > bounds.right + 50) { stop(); store.set(false); }
+      if (px < bounds.left - 50 || px > bounds.right + 50) {
+        var rec = leaveRecords;
+        stop();
+        // Only a person sending it away is a decision. The debut expiring is
+        // not — that must leave "no opinion yet" intact, so anyone who liked it
+        // can still summon it afterwards.
+        if (rec) store.set(false);
+      }
       return;
     }
 
@@ -460,6 +518,13 @@
       ' rotate(' + rot + 'deg)' +
       ' scaleX(' + face + ')' +
       ' translate(' + (-CFG.W / 2) + 'px,' + (-CFG.H) + 'px)';
+
+    if (say) {
+      var bw = say.offsetWidth || 200, bh = say.offsetHeight || 34;
+      var bx = clamp(px + 20, bounds.left + 6, Math.max(bounds.left + 6, bounds.right - bw - 6));
+      var by = clamp(py - bh - 20, bounds.top + 6, Math.max(bounds.top + 6, bounds.bottom - bh - 6));
+      say.style.transform = 'translate3d(' + Math.round(bx) + 'px,' + Math.round(by) + 'px,0)';
+    }
   }
 
   function frame(now) {
@@ -483,6 +548,10 @@
       if (state === 'walk' || state === 'idle' || state === 'chase' || state === 'land') refoot();
     }
 
+    // A tab left open across the end of the debut must let the cat go too, or
+    // the window only ends for people who happen to reload.
+    if (autoDebut && state !== 'leave' && !inDebut()) toLeave(false);
+
     update(dt);
     // 'leave' tears everything down from inside update(), so the cat may be gone.
     if (!running || !cat) return;
@@ -500,11 +569,8 @@
       var now = performance.now();
       if (now - lastDown < 400) {
         lastDown = 0;
-        grab = null;
         cat.classList.remove('yc-grabbed');
-        rot = 0;
-        face = px < mid() ? -1 : 1;
-        setState('leave');
+        toLeave(true);
         e.preventDefault();
         return;
       }
@@ -555,6 +621,28 @@
   }
 
   // ── Build / teardown ─────────────────────────────────────────────────────────
+  // ── The introduction ─────────────────────────────────────────────────────────
+  // Shown once per browser, during the debut only. Without it the cat is just an
+  // unexplained animal on a case-management screen, and the gesture that
+  // controls it is undiscoverable.
+  function showSay() {
+    if (!root || say) return;
+    say = document.createElement('div');
+    say.className = 'yc-say';
+    say.textContent = 'Hello! Long-press the logo to send me away — or to bring me back.';
+    root.appendChild(say);
+    requestAnimationFrame(function () { if (say) say.classList.add('show'); });
+    setTimeout(hideSay, 14000);
+  }
+
+  function hideSay() {
+    if (!say) return;
+    var s = say;
+    say = null;
+    s.classList.remove('show');
+    setTimeout(function () { s.remove(); }, 500);
+  }
+
   function build() {
     styleEl = document.createElement('style');
     styleEl.id = 'yc-mascot-style';
@@ -646,8 +734,8 @@
   }
 
   function toggle() {
-    if (running) { rot = 0; face = px < mid() ? -1 : 1; setState('leave'); }
-    else { store.set(true); start(); }
+    if (running) toLeave(true);
+    else { store.set(true); autoDebut = false; start(); }
   }
 
   window.Mascot = {
@@ -691,13 +779,19 @@
 
   function boot() {
     wireTrigger();
+    var pref = store.pref();
+    if (pref === '1') start();                       // asked for it
+    else if (pref === null && inDebut()) {           // no opinion, and still the debut
+      autoDebut = true;
+      start();
+      if (!store.met()) { store.meet(); showSay(); }
+    }
     // Wired once, at boot rather than per build(), so on/off cycles don't stack
     // up duplicate listeners. It only feeds the occasional cursor chase.
     document.addEventListener('pointermove', function (e) {
       mouse.x = e.clientX; mouse.y = e.clientY; mouse.t = clock;
     }, { passive: true });
     window.addEventListener('resize', function () { lastScan = -1e9; });
-    if (store.get()) start();
   }
   // NOTE: boot() is called at the very BOTTOM of this file, not here. This script
   // is deferred, so readyState is already "interactive" and boot() would run
@@ -745,6 +839,12 @@
     'pointer-events:auto;cursor:grab;touch-action:none;will-change:transform;',
     'filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.30));}',
     '.yc-cat.yc-grabbed{cursor:grabbing}',
+    '.yc-say{position:absolute;left:0;top:0;max-width:250px;padding:8px 12px;border-radius:13px;',
+    'background:#fff;color:#1f2430;border:1px solid #d8dde3;box-shadow:0 4px 14px rgba(0,0,0,.16);',
+    'font:500 12.5px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;',
+    'pointer-events:none;opacity:0;transition:opacity .45s ease;will-change:transform}',
+    '.yc-say.show{opacity:1}',
+    'body.dark .yc-say{background:#2b3039;color:#e9ecf1;border-color:#3b424c}',
     'body.dark .yc-cat{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.08)}',
     '.yc-cat svg{display:block;overflow:visible}',
     '.yc-cat g,.yc-cat path,.yc-cat rect,.yc-cat text{transform-box:view-box}',
