@@ -737,6 +737,11 @@
     '#yc-mascot{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:' + CFG.Z + ';}',
     '@media print{#yc-mascot{display:none!important}}',
     '.yc-cat{position:absolute;left:0;top:0;width:' + CFG.W + 'px;height:' + CFG.H + 'px;',
+    // LOAD-BEARING. draw() composes rotate/scaleX about the element's origin;
+    // the CSS default of 50% 50% pivots about the sprite's centre instead and
+    // throws the cat 32px off its anchor — invisibly at rot:0, but every climb
+    // and hang lands beside the wall rather than on it.
+    'transform-origin:0 0;',
     'pointer-events:auto;cursor:grab;touch-action:none;will-change:transform;',
     'filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.30));}',
     '.yc-cat.yc-grabbed{cursor:grabbing}',
