@@ -3,6 +3,7 @@
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
+  <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css">
 <style>
@@ -858,13 +859,25 @@ async function refreshEntityData(sourceFormKey) {
   putCases();
   putAppt();
 
-  // Push fresh data into every non-dirty sibling YCForm iframe.
-  //
-  // for...of, not forEach: refresh() is async (it awaits the form's onLoad, which
-  // may do an API lookup) and an async forEach callback is fire-and-forget — the
-  // re-baseline inside refresh() would never be sequenced. The dirty guard, the
-  // await, the re-baseline and the conditionals all live in YCForm.refresh() now,
-  // so this can't drift out of sync with init() again.
+  await pushFormsFromEntityData(sourceFormKey);
+}
+
+/* Push fresh data into every non-dirty sibling YCForm iframe.
+ *
+ * for...of, not forEach: refresh() is async (it awaits the form's onLoad, which
+ * may do an API lookup) and an async forEach callback is fire-and-forget — the
+ * re-baseline inside refresh() would never be sequenced. The dirty guard, the
+ * await, the re-baseline and the conditionals all live in YCForm.refresh() now,
+ * so this can't drift out of sync with init() again.
+ *
+ * READS window.entityData AT RUN TIME, never a payload captured at enqueue.
+ * On THIS page that is not a nicety: loadEntityData FLATTENS phones/emails/
+ * addresses onto entityData.contact, so a push holding a pre-refetch snapshot
+ * would repopulate contact-form's repeaters with the aggregates as they were
+ * BEFORE the save — the just-added phone visibly flickering back out. Reading
+ * at run time means the last push to run always sees the newest state.
+ */
+async function pushFormsFromEntityData(sourceFormKey) {
   for (const iframe of document.querySelectorAll('iframe')) {
     try {
       const form = iframe.contentWindow?.ycForm;
@@ -876,15 +889,46 @@ async function refreshEntityData(sourceFormKey) {
         loadResult: window.entityData,
       });
     } catch (err) {
-      console.warn('[refreshEntityData] form refresh failed:', err);
+      console.warn('[pushFormsFromEntityData] form refresh failed:', err);
     }
   }
 }
 
+/* ── The push chain ─────────────────────────────────────────────────────────
+   YCForm.refresh() is not reentrant — two loops over the same instances
+   interleave at the awaited onLoad and cross-baseline each other. Two callers
+   now exist (the form-saved refetch and the sync bus), so both go through ONE
+   chain per page. See the aggregate-flattening note above for why this page is
+   where the race is actually VISIBLE. */
+let _pushChain = Promise.resolve();
+const queuePush = fn => (_pushChain = _pushChain.then(fn, fn));
+
+/* When a form-saved refetch was last STARTED. Read by queueBusFormPush. */
+let lastFormSavedAt = 0;
+
+/* The bus's way onto the chain. A contact save produces BOTH a bus emit (the
+   sniff sees its PATCH — including the ?force=true retry) and a form-saved
+   message; the refetch push strictly dominates the bus push, so when both are
+   in flight the bus one is dropped rather than queued behind it. Correctness
+   comes from the chain plus the run-time read; this only removes a redundant
+   pass. */
+function queueBusFormPush() {
+  const t = Date.now();
+  setTimeout(() => {
+    if (lastFormSavedAt >= t) return;      // a refetch push covers this
+    queuePush(() => pushFormsFromEntityData(null));
+  }, 50);
+}
+
 // ── Message listener (centralized) ──────────────────────────
-window.addEventListener('message', async (e) => {
+window.addEventListener('message', (e) => {
   if (e.data?.type === 'form-saved') {
-    await refreshEntityData(e.data.form);
+    // Stamped on ARRIVAL — queueBusFormPush asks "has a refetch been triggered
+    // since the bus message I'm holding?", and that becomes true immediately.
+    lastFormSavedAt = Date.now();
+    // Refetch AND push as ONE queued unit, so no bus push can slot in between
+    // the GET and the form refresh.
+    queuePush(() => refreshEntityData(e.data.form));
   }
   // Slice 3 Stage B.2: contact-form grows when the user adds
   // phone/email/address rows or expands per-row advanced sections.
@@ -1669,5 +1713,33 @@ processing();
     P.Toast.fire({ icon: "error", title: "Error loading contact", text: err.message });
   }
 })();
+
+/* ── Sync bus subscriber (public/js/yc-sync.js) ─────────────────────────────
+   One subscription for the page. SCALARS ONLY — `changes` from
+   PATCH /api/contacts/:id carries scalar columns; the phones/emails/addresses
+   aggregates never ride the bus and keep refreshing through form-saved.
+
+   §3.6: THIS HANDLER MUST NEVER EMIT. Merge and paint, nothing else.
+
+   Registered outside the boot IIFE so a failed initial load leaves the page
+   deaf-but-recoverable rather than permanently unsubscribed. */
+YC.on(`contact:${clientID}`, '*', (fields) => {
+  const c = window.entityData.contact;
+  if (!c) return;
+
+  Object.assign(c, fields);
+
+  // The header is three bare spans, not inputs — nothing to type into, so the
+  // only fence needed is "did this field actually arrive?".
+  const has = (k) => Object.prototype.hasOwnProperty.call(fields, k);
+  if (has('contact_fname')) E('fname').innerHTML = c.contact_fname || '';
+  if (has('contact_lname')) E('lname').innerHTML = c.contact_lname || '';
+  if (has('contact_phone')) {
+    E('phone').innerHTML = c.contact_phone
+      ? c.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : '';
+  }
+
+  queueBusFormPush();
+});
 
 </script>

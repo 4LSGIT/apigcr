@@ -256,13 +256,18 @@ router.patch('/api/cases/:id/docket', jwtOrApiKey, async (req, res) => {
     if (caseNumber     != null) fields.case_number      = caseNumber;
     if (caseNumberFull != null) fields.case_number_full = caseNumberFull;
 
-    await caseService.updateCase(req.db, caseId, fields, {
+    const upd = await caseService.updateCase(req.db, caseId, fields, {
       userId: actingUserId(req),
       source: 'docket_adopt',
     });
 
     const updated = await caseService.getCase(req.db, caseId);
-    res.json({ status: 'success', data: updated });
+    // `changes` ({field:{from,to}}) rides alongside the existing `data` for
+    // the sync bus (public/js/yc-sync.js) — this is the case-number writer,
+    // and the shell's Cases list has a case-number column. updateCase has
+    // always returned it; this route simply stopped discarding it. Additive:
+    // `data` is untouched.
+    res.json({ status: 'success', data: updated, changes: upd.changes });
   } catch (err) {
     console.error('PATCH /api/cases/:id/docket error:', err);
     const status = err.message && err.message.includes('not found') ? 404 : 500;

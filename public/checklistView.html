@@ -9,6 +9,7 @@
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
+  <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <style>
@@ -692,6 +693,28 @@ const NATIVE_ENVELOPE = {
   '/api/events':   'data',
 };
 
+/* Sync-bus address TYPE per native endpoint — the other half of NATIVE_ENVELOPE.
+   Kept as its own table rather than reusing `cl.native.entityType`: the address
+   space is a property of the ENDPOINT (what the bus calls the thing), while
+   entityType is a checklists link_type. They agree today; a divergence should
+   be a visible edit here, not a silent mismatch. */
+const TYPE_BY_ENDPOINT = {
+  '/api/cases':    'case',
+  '/api/contacts': 'contact',
+  '/api/appts':    'appt',
+  '/api/events':   'event',
+};
+
+/* Live YC.on unsubscribe functions, one per native card. load() rebuilds every
+   card object from scratch, so these MUST be dropped there or each reload
+   leaves another generation of handlers closed over dead cards. */
+let busUnsubs = [];
+
+function clearBusSubs() {
+  for (const off of busUnsubs) { try { off(); } catch (_) { /* noop */ } }
+  busUnsubs = [];
+}
+
 function unwrapEntity(endpoint, res) {
   const key = NATIVE_ENVELOPE[endpoint];
   const row = key ? (res && res[key]) : res;
@@ -815,6 +838,10 @@ function apiError(err, fallback) {
 
 // ── Load ──────────────────────────────────────────────────────────
 async function load() {
+  // Every card object is about to be replaced, so last load's bus handlers —
+  // which close over the OLD card objects — have to go first. Dropped before
+  // flushBodies() so a PATCH it fires cannot echo back into a stale handler.
+  clearBusSubs();
   // Any unsaved note body goes to the server BEFORE the refetch, or the GET
   // races the PATCH and the response overwrites cl.body with the stale value.
   // Reached on tab re-entry (reloadChecklists) and on every filter change.
@@ -991,7 +1018,7 @@ function buildNativeCards(specs, rows, linkType, entityId, ownerKey) {
   return specs.map(s => {
     const got = rows.get(s.endpoint);
     const row = got ? got.row : null;
-    return {
+    const cl = {
       id: null,
       kind: 'note',
       title: s.title,
@@ -1014,7 +1041,57 @@ function buildNativeCards(specs, rows, linkType, entityId, ownerKey) {
         unavailable: !row,
       },
     };
+    subscribeNativeCard(cl);
+    return cl;
   });
+}
+
+/**
+ * Keep one native card in step with the rest of the app.
+ *
+ * The same column is editable in more than one place — case_notes lives here
+ * AND in case.html's Overview textarea; contact_notes lives here AND in
+ * contact-form. Whichever one you type in, the other should follow without a
+ * tab switch or a reload.
+ *
+ * §3.6: NEVER EMITS. It writes cl.body and repaints. It does not call
+ * saveBody(), so the value it just received cannot bounce back out.
+ *
+ * THREE FENCES, in order:
+ *   1. dirty/inflight — the user has unsaved text here, or a PATCH of theirs
+ *      is in the air. A draft always outranks an announcement.
+ *   2. value equality — this card's OWN save echoes back through the bus
+ *      (local dispatch + the shell's sniff), arriving while the user may still
+ *      be sitting in the textarea after a debounced (non-blur) save. Assigning
+ *      an identical string to a focused textarea still moves the caret in some
+ *      browsers, so don't touch the DOM when there is nothing to change.
+ *   3. shownBody() — the draft-wins read, the same fence render() uses.
+ *
+ * A minimal repaint, never load(): a full reload would rebuild every card on
+ * the board and cost the caret in whichever one is being typed into.
+ */
+function subscribeNativeCard(cl) {
+  const type = TYPE_BY_ENDPOINT[cl.native.endpoint];
+  // An unavailable card holds a placeholder, not the column — painting a real
+  // value into a locked, blanked textarea would be a lie about what is saved.
+  if (!type || !window.YC || cl.native.unavailable) return;
+
+  const off = YC.on(`${type}:${cl.native.entityId}`, cl.native.field, (fields) => {
+    const value = fields[cl.native.field];
+    const d = bodyDrafts.get(draftKeyOf(cl));
+    if (d && (d.dirty || d.inflight)) return;          // fence 1
+
+    cl.body = value == null ? '' : value;
+
+    if (!d) return;                                    // never rendered yet
+    const shown = shownBody(cl, d);                    // fence 3
+    if (d.ta && d.ta.value !== shown) {                // fence 2
+      d.ta.value = shown;
+      resizeTextarea(d.ta);
+    }
+    updateCount(d, shown.length);
+  });
+  busUnsubs.push(off);
 }
 
 /**
@@ -1527,6 +1604,11 @@ function renderNoteBody(cl) {
   // An unsaved draft wins over the stored value, so a render() triggered
   // elsewhere does not silently revert what the user typed.
   ta.value = shownBody(cl, d);
+  // Held on the draft entry, SAME RE-POINTING CONTRACT as `flag` and `count`:
+  // a detached node from a previous render is harmless to write to, and the
+  // next render re-points it. The sync-bus subscriber needs a handle on the
+  // live textarea to repaint one card without a full render().
+  d.ta = ta;
 
   // S5: the entity read failed, so cl.body is a placeholder, not the column.
   // Typing here and saving would write that placeholder over whatever the
@@ -1738,7 +1820,7 @@ function draftFor(key) {
   if (!d) {
     d = { draft: null, dirty: false, timer: null, inflight: false,
           flag: null, flagText: '', flagErr: false,
-          count: null, countText: '' };
+          count: null, countText: '', ta: null };
     bodyDrafts.set(key, d);
   }
   return d;
@@ -1857,6 +1939,16 @@ async function saveBody(key) {
       // the native columns do not.)
       await api(cl.native.endpoint + '/' + encodeURIComponent(cl.native.entityId),
                 'PATCH', { [cl.native.field]: value });
+      // Sync bus (public/js/yc-sync.js). REQUIRED for appt/event notes: those
+      // PATCH responses carry no `changes`, so the shell's auto-sniff has
+      // nothing to read and this is the only announcement. For case/contact it
+      // harmlessly double-covers the sniff — emits are idempotent by design,
+      // and a duplicate costs one extra guarded repaint.
+      const type = TYPE_BY_ENDPOINT[cl.native.endpoint];
+      if (type && window.YC) {
+        YC.emit(`${type}:${cl.native.entityId}`,
+                { [cl.native.field]: value }, 'checklistView:saveBody');
+      }
     } else {
       await api('/checklists/' + cl.id, 'PATCH', { body: value });
     }

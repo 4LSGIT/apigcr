@@ -19,6 +19,7 @@
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
+  <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
 </head>
@@ -197,7 +198,7 @@
       <label class="input-label">Recommendation:</label>
       <input
         id="caseRecInput"
-        onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_Rec:this.value}).then(()=>Toast.fire({icon:'success',title:'Recommendation updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
+        onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_rec:this.value}).then(()=>Toast.fire({icon:'success',title:'Recommendation updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><br>
       <label class="input-label">Lead Source:</label>
       <!-- cases.case_source. As of 2026-08 this means MARKETING LEAD SOURCE
@@ -275,7 +276,7 @@
         id="overviewCaseNotes"
         style="width: 90%; box-sizing: border-box; resize: none; min-height: 100px; max-height: 300px;"
         placeholder="Enter your text here..."
-        oninput="resizeTextarea(this)"
+        oninput="resizeTextarea(this); this.dataset.ycDirty='1'"
       ></textarea>
       <br>
       <div style="width: 95%; text-align: right; box-sizing: border-box; margin-top: 5px;">
@@ -464,6 +465,9 @@
       const notes = E("overviewCaseNotes").value;
       try {
         await P.apiSend(`/api/cases/${caseID}`, "PATCH", { case_notes: notes });
+        // The draft is now the stored value — release the dirty fence so
+        // updateHeader() and the sync bus may repaint this textarea again.
+        E("overviewCaseNotes").dataset.ycDirty = '';
         Swal.close();
         Toast.fire({ icon: "success", title: "Updated", text: "Case notes updated successfully." });
       } catch (err) {
@@ -1170,9 +1174,17 @@ function updateHeader() {
   E("caseStatusInput").value = c.case_status || "N/A";
   E("caseRecInput").value    = c.case_rec    || "N/A";
   syncLeadSourceList(c);
-  E("overviewCaseNotes").value = c.case_notes || "";
+  // GUARDED. updateHeader runs on every form-saved refresh, and used to
+  // overwrite this textarea unconditionally — so saving any OTHER form on the
+  // page silently ate an unsaved case-notes draft. (The pipeline block comment
+  // below admits this; it is why pwAdvance refreshes three inputs by hand
+  // instead of calling updateHeader.) Same two fences as YC.bindValue.
+  const notesEl = E("overviewCaseNotes");
+  if (notesEl !== document.activeElement && notesEl.dataset.ycDirty !== '1') {
+    notesEl.value = c.case_notes || "";
+    resizeTextarea(notesEl);
+  }
   E("alertsDiv").textContent = c.case_alerts || "";
-  resizeTextarea(E("overviewCaseNotes"));
 }
 
 // ── Lead source (cases.case_source) ─────────────────────────
@@ -1424,13 +1436,23 @@ async function refreshEntityData(sourceFormKey) {
   putClients();
   putAppts();
 
-  // Push fresh data into every non-dirty sibling YCForm iframe.
-  //
-  // for...of, not forEach: refresh() is async (it awaits the form's onLoad, which
-  // may do an API lookup) and an async forEach callback is fire-and-forget — the
-  // re-baseline inside refresh() would never be sequenced. The dirty guard, the
-  // await, the re-baseline and the conditionals all live in YCForm.refresh() now,
-  // so this can't drift out of sync with init() again.
+  await pushFormsFromEntityData(sourceFormKey);
+}
+
+/* Push fresh data into every non-dirty sibling YCForm iframe.
+ *
+ * for...of, not forEach: refresh() is async (it awaits the form's onLoad, which
+ * may do an API lookup) and an async forEach callback is fire-and-forget — the
+ * re-baseline inside refresh() would never be sequenced. The dirty guard, the
+ * await, the re-baseline and the conditionals all live in YCForm.refresh() now,
+ * so this can't drift out of sync with init() again.
+ *
+ * READS window.entityData AT RUN TIME, never a payload captured when the push
+ * was enqueued. That is the whole reason serialization is sufficient: whichever
+ * queued push runs LAST reads the newest state, so the terminal state is
+ * correct no matter what order the two callers arrived in.
+ */
+async function pushFormsFromEntityData(sourceFormKey) {
   for (const iframe of document.querySelectorAll('iframe')) {
     try {
       const form = iframe.contentWindow?.ycForm;
@@ -1442,15 +1464,59 @@ async function refreshEntityData(sourceFormKey) {
         loadResult: window.entityData,
       });
     } catch (err) {
-      console.warn('[refreshEntityData] form refresh failed:', err);
+      console.warn('[pushFormsFromEntityData] form refresh failed:', err);
     }
   }
 }
 
+/* ── The push chain ─────────────────────────────────────────────────────────
+   YCForm.refresh() IS NOT REENTRANT. It awaits the form's onLoad, and two
+   loops running over the same instances interleave at that await — clobbering
+   _liveData/_loadResult and re-baselining each form against the other loop's
+   data. There is now more than one caller (the form-saved refetch and the sync
+   bus), so every push goes through ONE chain per page and they cannot overlap.
+
+   `.then(fn, fn)` on both settlements deliberately: a rejected chain must not
+   swallow every push that follows it. */
+let _pushChain = Promise.resolve();
+const queuePush = fn => (_pushChain = _pushChain.then(fn, fn));
+
+/* When a form-saved refetch was last STARTED. Read by queueBusFormPush. */
+let lastFormSavedAt = 0;
+
+/* The bus's way onto the chain.
+ *
+ * COALESCE: a form save produces BOTH a bus emit (the sniff sees its PATCH)
+ * and a form-saved message. The refetch push strictly dominates the bus push —
+ * it re-reads the server, where the bus push only carries merged scalars — so
+ * when both are in flight the bus one is dropped rather than queued behind it.
+ *
+ * This matters most on contact.html, where loadEntityData FLATTENS phones/
+ * emails/addresses onto entityData.contact: a bus push built before the
+ * refetch would repopulate contact-form with the pre-save aggregates. Here it
+ * is merely redundant work, but the two pages keep one shape.
+ *
+ * Correctness never depends on the coalesce winning the race — it depends on
+ * the chain plus the run-time read in pushFormsFromEntityData. This only
+ * removes a redundant pass. */
+function queueBusFormPush() {
+  const t = Date.now();
+  setTimeout(() => {
+    if (lastFormSavedAt >= t) return;      // a refetch push covers this
+    queuePush(() => pushFormsFromEntityData(null));
+  }, 50);
+}
+
 // ── Message listener (centralized) ──────────────────────────
-window.addEventListener('message', async (e) => {
+window.addEventListener('message', (e) => {
   if (e.data?.type === 'form-saved') {
-    await refreshEntityData(e.data.form);
+    // Stamped on ARRIVAL, not after the refetch: queueBusFormPush is asking
+    // "has a refetch been triggered since the bus message I'm holding?", and
+    // the answer becomes true the moment the message lands.
+    lastFormSavedAt = Date.now();
+    // Refetch AND push enqueue as ONE unit — splitting them would let a bus
+    // push slot in between the GET and the form refresh.
+    queuePush(() => refreshEntityData(e.data.form));
   }
 });
 
@@ -1474,6 +1540,15 @@ window.addEventListener('message', async (e) => {
 let pwData = null;      // latest pipeline payload (GET or advance response)
 let pwShowAll = false;  // advance select: false = upcoming only, true = every active stage
 
+/* When pwData was last replaced with a server payload. The sync-bus subscriber
+   skips loadPipeline() inside this window, because an in-page advance ALREADY
+   drew the fresh payload — and its own echo (the sniff emits the four written
+   columns straight back at us) would otherwise buy a second, identical
+   /pipeline GET on every single advance. */
+let pwLastSet = 0;
+const PW_FRESH_MS = 1500;
+const pwRecentlyRefreshed = () => (Date.now() - pwLastSet) < PW_FRESH_MS;
+
 const pwDate = (d) => d
   ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
   : "";
@@ -1481,6 +1556,7 @@ const pwDate = (d) => d
 async function loadPipeline() {
   try {
     pwData = await P.apiSend(`/api/cases/${caseID}/pipeline`, 'GET');
+    pwLastSet = Date.now();
     renderPipeline();
   } catch (err) {
     // Additive widget — a load failure must never break the page.
@@ -1601,6 +1677,7 @@ async function pwAdvance() {
       note ? { stage: key, note } : { stage: key }
     );
     pwData = payload;                 // advance returns a fresh pipeline payload
+    pwLastSet = Date.now();
     E('pwNoteInput').value = '';
     renderPipeline();
 
@@ -1654,6 +1731,88 @@ processing();
     P.Toast.fire({ icon: "error", title: "Error loading case", text: err.message });
   }
 })();
+
+/* ── Sync bus subscriber (public/js/yc-sync.js) ─────────────────────────────
+   ONE subscription for the whole page. Anything that writes this case — the
+   four inline Overview handlers, updateCaseNotes, the Notes & Lists card, a
+   YCForm save, a docket adopt, a pipeline advance from here, from the Kanban
+   board, or from a different browser tab — arrives here as {column: value}.
+
+   §3.6: THIS HANDLER MUST NEVER EMIT. Everything below merges state and
+   paints. No API writer, no synthetic change event, no YC.emit.
+
+   Registered OUTSIDE the boot IIFE deliberately: if the initial load throws,
+   entityData.case stays null and the handler no-ops — but a subscription that
+   only exists on the success path would leave a half-loaded page permanently
+   deaf. */
+YC.on(`case:${caseID}`, '*', (fields) => {
+  const c = window.entityData.case;
+  if (!c) return;
+
+  // Also fixes a pre-existing gap: the inline Overview writers PATCH the
+  // server and never touched entityData, so the page's single source of truth
+  // disagreed with the DB until the next full load.
+  Object.assign(c, fields);
+
+  applyFieldsToOverview(fields);
+
+  if (('case_stage' in fields || 'pipeline_phase' in fields) && !pwRecentlyRefreshed()) {
+    loadPipeline();
+  }
+
+  queueBusFormPush();
+});
+
+/* Paint ONLY the fields that actually arrived — never a full updateHeader(),
+   which would touch every surface on the page for a one-column change.
+   Every input write is fenced the same way YC.bindValue fences: skip a focused
+   element, skip one carrying an unsaved draft. */
+function applyFieldsToOverview(fields) {
+  const c = window.entityData.case;
+  const has = (k) => Object.prototype.hasOwnProperty.call(fields, k);
+
+  // Guarded input setter. `fallback` mirrors what updateHeader() writes for
+  // the same element, so the two paths cannot render the same row differently.
+  const setInput = (id, value, fallback = '') => {
+    const el = E(id);
+    if (!el) return;
+    if (el === document.activeElement) return;
+    if (el.dataset.ycDirty === '1') return;
+    el.value = value || fallback;
+  };
+
+  if (has('case_stage'))  setInput('caseStageSelect',  c.case_stage);
+  if (has('case_status')) setInput('caseStatusInput',  c.case_status, 'N/A');
+  if (has('case_rec'))    setInput('caseRecInput',     c.case_rec,    'N/A');
+  if (has('case_source')) setInput('caseSourceInput',  c.case_source);
+
+  if (has('case_notes')) {
+    const el = E('overviewCaseNotes');
+    if (el && el !== document.activeElement && el.dataset.ycDirty !== '1') {
+      el.value = c.case_notes || '';
+      resizeTextarea(el);
+    }
+  }
+
+  // Header case number — same fallback ladder updateHeader uses.
+  if (has('case_number') || has('case_number_full')) {
+    E('case').innerHTML = c.case_number_full || c.case_number || 'Not Filed';
+  }
+
+  // Caption line is hidden entirely when empty (updateHeader's rule).
+  if (has('case_caption')) {
+    const caption = (c.case_caption || '').trim();
+    E('caption').textContent = caption;
+    E('captionLine').style.display = caption ? '' : 'none';
+  }
+
+  if (has('case_alerts')) E('alertsDiv').textContent = c.case_alerts || '';
+
+  if (has('case_type') || has('case_subtype')) {
+    syncCaseTypeSelects(c);
+    E('type').innerHTML = fmtCaseType(c) || 'N/A';
+  }
+}
 
 async function newDB() {
   Swal.fire({

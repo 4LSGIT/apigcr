@@ -630,13 +630,26 @@ async function advanceStage(db, caseId, target, {
       // Overwrite-on-advance for all four (decided design). case_status is
       // varchar(50) — clip in JS; without strict mode the DB would clip
       // silently mid-word.
+      //
+      // Computed ONCE into locals because two consumers need them and they
+      // must not drift: the UPDATE below, and `written` in the success shape
+      // (the sync bus announces these values to every open frame). Clipping
+      // twice, or announcing stage.internal_label instead of the clipped
+      // case_status, would broadcast a value the DB does not hold — every
+      // frame would paint a longer status than the row carries and disagree
+      // with the next GET. `written` is BYTE-IDENTICAL to the UPDATE's
+      // parameters, by construction.
+      const wCaseStage = stage.case_stage;
+      const wCaseStatus = clip(stage.internal_label, 50);
+      const wCaseRec = clip(stage.default_rec == null ? '' : stage.default_rec, 128);
+
       await conn.query(
         `UPDATE cases SET case_stage = ?, case_status = ?, case_rec = ?, pipeline_phase = ?
           WHERE case_id = ?`,
         [
-          stage.case_stage,
-          clip(stage.internal_label, 50),
-          clip(stage.default_rec == null ? '' : stage.default_rec, 128),
+          wCaseStage,
+          wCaseStatus,
+          wCaseRec,
           newPhase,
           caseId,
         ]
@@ -658,6 +671,17 @@ async function advanceStage(db, caseId, target, {
         },
         case_type:    caseRow.case_type,
         case_subtype: caseRow.case_subtype,
+        // Exactly what the UPDATE above wrote to `cases`, for the sync bus.
+        // NOT the same thing as `to` — `to` describes the STAGE (its key, its
+        // template, its unclipped internal_label); `written` describes the
+        // CASE ROW. They differ wherever clipping bites and wherever a column
+        // name differs from the stage field it came from.
+        written: {
+          case_stage:     wCaseStage,
+          case_status:    wCaseStatus,
+          case_rec:       wCaseRec,
+          pipeline_phase: newPhase,
+        },
       };
     } finally {
       // Guarded: a dead connection releases its named locks on close, and an
@@ -707,6 +731,16 @@ async function advanceStage(db, caseId, target, {
   const payload = await getPipeline(db, caseId);
   payload.noop = outcome.noop;
   payload.skipped = false;
+  // Sync bus (public/js/yc-sync.js): the four cases columns overwrite-on-
+  // advance just wrote. Plain {field: value} — the bus normalizes both that
+  // and the {from,to} API diff shape. Additive: existing consumers branch on
+  // .skipped / .noop and never enumerate keys.
+  //
+  // ONLY on a real advance. A noop wrote nothing, and announcing values
+  // nobody changed would make every open frame repaint (and the Cases tab
+  // refetch) for a button press that did nothing. The skipped path returns
+  // above and never reaches here.
+  if (!outcome.noop) payload.changes = outcome.written;
   return payload;
 }
 

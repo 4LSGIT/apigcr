@@ -622,8 +622,11 @@
     window.addEventListener('resize', function () { lastScan = -1e9; });
     if (store.get()) start();
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  // NOTE: boot() is called at the very BOTTOM of this file, not here. This script
+  // is deferred, so readyState is already "interactive" and boot() would run
+  // synchronously — before the SVG and CSS below have been assigned. That put the
+  // string "undefined" in the cat and in the stylesheet, but only for someone who
+  // already had the pref set, because a long-press happens long after evaluation.
 
   // ── The sprite ───────────────────────────────────────────────────────────────
   // 36×28, side view, facing right, feet on the bottom edge of the box. Parts are
@@ -753,4 +756,8 @@
     '.hdr-logo.yc-charging{transform:scale(.86);opacity:.6;',
     'transition:transform ' + CFG.HOLD_MS + 'ms ease-in,opacity ' + CFG.HOLD_MS + 'ms ease-in;}'
   ].join('\n');
+
+  // Last line on purpose — everything the cat is made of has to exist first.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 })();

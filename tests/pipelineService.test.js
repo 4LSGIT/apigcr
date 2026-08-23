@@ -334,6 +334,10 @@ describe('advanceStage', () => {
     );
     const p = await svc.advanceStage(db, 'C1', 'filed', { userId: 6, source: 'manual' });
     expect(p.noop).toBe(true);
+    // Sync bus: a no-op wrote nothing, so it announces nothing. Emitting here
+    // would make every open frame repaint — and the Cases tab refetch — for a
+    // button press that changed no row.
+    expect(p.changes).toBeUndefined();
     const sqls = db.connCalls.map(c => c.sql);
     expect(sqls.some(s => s.startsWith('INSERT INTO case_stage_log'))).toBe(false);
     expect(sqls.some(s => s.startsWith('UPDATE cases'))).toBe(false);
@@ -399,6 +403,22 @@ describe('advanceStage', () => {
     expect(payload.data.status_label).toBe(longLabel);   // full label, not clipped
     expect(payload.extra.from_stage).toBeNull();          // no prior log row
     expect(payload.extra.note).toBe('hi');
+
+    // ── Sync bus: payload.changes = WHAT THE UPDATE WROTE ────────────────
+    // The trap this guards: `outcome.to.internal_label` is the FULL label,
+    // while the row holds it clipped to 50. Announcing `to` would broadcast a
+    // status no case row anywhere actually carries — every open frame would
+    // paint 80 characters and then disagree with its own next GET. So the
+    // assertion is deliberately against `update.params`, not against literals:
+    // the two must be byte-identical by construction.
+    expect(p.changes).toEqual({
+      case_stage:     update.params[0],
+      case_status:    update.params[1],
+      case_rec:       update.params[2],
+      pipeline_phase: update.params[3],
+    });
+    expect(p.changes.case_status).toHaveLength(50);
+    expect(p.changes.case_status).not.toBe(longLabel);
   });
 
   test('lock timeout → 409, no further conn work', async () => {
@@ -491,6 +511,8 @@ describe('advanceStage guards (Slice E1)', () => {
       [] // NO pool queries — skipped path must not re-read getPipeline
     );
     const p = await svc.advanceStage(db, 'C1', 'docs', { onlyFrom: ['retained'], source: 'system' });
+    // Exact shape, deliberately: the guarded callers branch on it. The sync
+    // bus must not have widened the skip envelope — nothing was written.
     expect(p).toEqual({ skipped: true, noop: false, from: 'meeting_341', reason: 'guard' });
     const sqls = db.connCalls.map(c => c.sql);
     expect(sqls.some(s => s.startsWith('INSERT INTO case_stage_log'))).toBe(false);

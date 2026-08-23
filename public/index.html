@@ -41,6 +41,7 @@
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
+  <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
        build than the one this tab booted on. Started at the bottom of the boot
@@ -619,7 +620,7 @@
     </div>
 
     <div class="sb-section-label">Records</div>
-    <div class="sb-item" data-tab="tabCases" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases')" title="Cases">
+    <div class="sb-item" data-tab="tabCases" onclick="openCasesTab()" title="Cases">
       <i class="fa-solid fa-landmark"></i><span>Cases</span>
     </div>
     <div class="sb-item" data-tab="tabContacts" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')" title="Contacts">
@@ -689,7 +690,7 @@
   </nav>
 
   <div id="tabHome" class="tab-main"><br><br>
-    <button class="home-btn" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases', this)">
+    <button class="home-btn" onclick="openCasesTab()">
       <i class="fa-solid fa-landmark fa-2xl"></i><br /><br />Cases
     </button>
     <button class="home-btn" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')">
@@ -815,7 +816,19 @@
   </div>
 
   <script>
-    async function tabCasesGet(offset) {
+    /**
+     * @param {number}  offset
+     * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
+     *   Suppresses both user-facing toasts, for two different reasons:
+     *     · "No cases found!" — a filtered page legitimately emptying is the
+     *       ADVERTISED behaviour of the filter, not an error. Change a case's
+     *       stage while filtered to that stage and the row correctly vanishes;
+     *       red-toasting that would be lying about it.
+     *     · the catch-block toast — a background fetch that fails must not
+     *       red-toast a user who did nothing. console.warn instead.
+     *   Every pre-existing caller passes nothing and keeps today's behaviour.
+     */
+    async function tabCasesGet(offset, silent = false) {
       offsets.cases = offset;
       E("tabCasesLoad").style.display = "block";
 
@@ -891,15 +904,61 @@
                 <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
                 <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
               </select> | <button onclick="window.print()">Print</button>`;
-        } else {
+        } else if (!silent) {
           Toast.fire({ icon: "error", title: "No cases found!" });
         }
       } catch (err) {
-        Toast.fire({ icon: "error", title: "Error loading cases", text: err.message });
+        if (silent) console.warn("[cases] background refetch failed:", err);
+        else Toast.fire({ icon: "error", title: "Error loading cases", text: err.message });
       }
 
       E("tabCasesLoad").style.display = "none";
     }
+
+    /* ── Cases-tab liveness (sync bus) ──────────────────────────────────────
+       Before this, the tab fetched ONCE — on first open — and never again.
+       Reopen it an hour later and you were reading an hour-old list.
+
+       Now any case write anywhere in the app (this tab, another frame, another
+       browser tab) refetches THE CURRENT PAGE with the current filters, sort
+       and offset. Never a cell patch: membership, ordering and page boundaries
+       are all server-computed, so a row that no longer matches the active
+       filter has to vanish, and only the server knows that.
+
+       Hidden tab → mark stale, refetch on the way back in. Refetching a tab
+       nobody is looking at costs a request per write for nothing. */
+    let casesStale = false;
+    let casesDeb = null;
+
+    /** Is the Cases tab the one actually on screen right now? */
+    function casesTabVisible() {
+      return currentMainTabId() === 'tabCases' && !document.hidden;
+    }
+
+    YC.on('case:*', '*', () => {
+      if (!casesTabVisible()) { casesStale = true; return; }
+      // Debounced: a pipeline advance writes four columns and lands as one
+      // message, but a burst of writes across frames should still cost one
+      // refetch.
+      clearTimeout(casesDeb);
+      casesDeb = setTimeout(() => tabCasesGet(offsets.cases, true), 250);
+    });
+
+    /** Sole opener for the Cases tab — sidebar item AND home button. */
+    function openCasesTab() {
+      if (!cases) tabCasesGet(0);                      // first open: unchanged
+      else if (casesStale) { casesStale = false; tabCasesGet(offsets.cases, true); }
+      openMainTab('tabCases');
+    }
+
+    // Coming back to the browser tab with Cases already on screen is the other
+    // way a stale list becomes visible.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !casesStale) return;
+      if (currentMainTabId() !== 'tabCases') return;
+      casesStale = false;
+      tabCasesGet(offsets.cases, true);
+    });
   </script>
 
   <div id="tabContacts" class="tab-main">
@@ -2999,6 +3058,16 @@
         } catch (_) { }
         throw err;
       }
+      // ── Sync-bus auto-sniff (public/js/yc-sync.js) ───────────────────────
+      // Every frame's API traffic funnels through THIS function (iframes
+      // alias it, deep frames call window.top.apiSend), so this one line is
+      // the whole emit surface for case/contact writes — no writer has to
+      // remember to announce anything. `endpoint` is the clean path here:
+      // the query string is appended to `url`, not `endpoint`, and only for
+      // GET/HEAD — but _sniff strips one anyway, because callers bake
+      // `?force=true` into the endpoint string itself (contact-form.html).
+      // Wrapped: a bus fault must never fail an API call that succeeded.
+      try { window.YC && YC._sniff(options.method, endpoint, data); } catch (_) { }
       return data;
     }
 

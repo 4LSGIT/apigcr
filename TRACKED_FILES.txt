@@ -242,6 +242,7 @@ public/js/reportCharts.js
 public/js/versionGuard.js
 public/js/videoInsert.js
 public/js/yc-forms.js
+public/js/yc-sync.js
 public/manage.html
 public/manuals.html
 public/pageManager.html
@@ -666,6 +667,7 @@ tests/formrender.x4view.test.js
 tests/formsubmissions.x4.test.js
 tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
+tests/helpers/bcPolyfill.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/hookMapper.test.js
@@ -732,4 +734,5 @@ tests/videoLanding.rateLimit.test.js
 tests/workflows.editor.roundtrip.test.js
 tests/workflows.ensureDraft.test.js
 tests/workflows.reorder.state.test.js
+tests/ycSync.test.js
 views/v.html
