@@ -365,12 +365,15 @@
         if (l2) { land(l2); aim(px > W / 2 ? -1 : 1, 0); } else face = -face;
         return;
       }
-      // Cats also just let go sometimes.
-      if (clock >= stateUntil && Math.random() < 0.5) {
-        toFall((px < W / 2 ? 1 : -1) * 30, -40);
-      } else if (clock >= stateUntil) {
+      // Cats also just let go sometimes. "Carry on" has to be in the mix: with
+      // only let-go and reverse, a climb never outlasts one timer, and at 34px/s
+      // the ceiling of a real window is further than that — the hang state was
+      // unreachable until this roll existed.
+      if (clock >= stateUntil) {
+        var r = Math.random();
         stateUntil = clock + rand(1.5, 4);
-        face = -face;
+        if (r < 0.3) toFall((px < W / 2 ? 1 : -1) * 30, -40);
+        else if (r < 0.55) face = -face;
       }
       return;
     }
