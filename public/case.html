@@ -276,7 +276,7 @@
         id="overviewCaseNotes"
         style="width: 90%; box-sizing: border-box; resize: none; min-height: 100px; max-height: 300px;"
         placeholder="Enter your text here..."
-        oninput="resizeTextarea(this); this.dataset.ycDirty='1'"
+        oninput="resizeTextarea(this); markNotesDirty(this)"
       ></textarea>
       <br>
       <div style="width: 95%; text-align: right; box-sizing: border-box; margin-top: 5px;">
@@ -465,9 +465,12 @@
       const notes = E("overviewCaseNotes").value;
       try {
         await P.apiSend(`/api/cases/${caseID}`, "PATCH", { case_notes: notes });
-        // The draft is now the stored value — release the dirty fence so
-        // updateHeader() and the sync bus may repaint this textarea again.
-        E("overviewCaseNotes").dataset.ycDirty = '';
+        // Keep the page's single source of truth in step BEFORE re-deriving the
+        // dirty flag. The bus echo would set this too, but a round trip later —
+        // and until it lands, markNotesDirty would still be comparing against
+        // the pre-save value and would call a just-saved textarea dirty.
+        if (window.entityData.case) window.entityData.case.case_notes = notes;
+        markNotesDirty(E("overviewCaseNotes"));
         Swal.close();
         Toast.fire({ icon: "success", title: "Updated", text: "Case notes updated successfully." });
       } catch (err) {
@@ -1187,6 +1190,31 @@ function updateHeader() {
   E("alertsDiv").textContent = c.case_alerts || "";
 }
 
+/* DIRTY IS A COMPARISON, NOT A LATCH.
+ *
+ * The first cut of this set ycDirty='1' on input and cleared it only in
+ * updateCaseNotes(). That made the flag mean "has been touched", which sticks:
+ * type here, then save the same note from the Notes & Lists card instead, and
+ * this textarea stayed dirty FOREVER — deaf to the bus and to updateHeader for
+ * the life of the page. Typing and undoing back to the original text had the
+ * same effect.
+ *
+ * So it is re-derived on every keystroke against what the server holds, which
+ * is what checklistView's note bodies already do
+ * (`d.dirty = ta.value !== (cl.body ?? '')`). Revert your edit and the fence
+ * lifts by itself; save from anywhere and it lifts on the next input or on the
+ * explicit call in updateCaseNotes().
+ *
+ * entityData.case.case_notes is the comparison target because the bus
+ * subscriber Object.assigns every incoming change into it, so it tracks the
+ * stored value even when the write came from another frame or another browser
+ * tab. */
+function markNotesDirty(el) {
+  if (!el) return;
+  const stored = window.entityData.case ? (window.entityData.case.case_notes ?? '') : '';
+  el.dataset.ycDirty = el.value !== stored ? '1' : '';
+}
+
 // ── Lead source (cases.case_source) ─────────────────────────
 // Suggestions come from the app_settings row 'fe-lead_sources', which
 // /api/firm-data JSON-parses into firmData.settings.lead_sources like every
@@ -1438,6 +1466,26 @@ async function refreshEntityData(sourceFormKey) {
 
   await pushFormsFromEntityData(sourceFormKey);
 }
+
+/* THE QUEUED ENTRY POINT — use this from OUTSIDE the page.
+ *
+ * refreshEntityData() is the raw body and is NOT safe to call bare: it ends in
+ * pushFormsFromEntityData(), and YCForm.refresh() is not reentrant, so a call
+ * that races the form-saved path interleaves at the awaited onLoad and
+ * cross-baselines the forms.
+ *
+ * There is a third caller besides form-saved and the bus: the shell's addFile()
+ * dedupe reaches ACROSS THE FRAME BOUNDARY on refocus (index.html — "focus an
+ * already-open file instead of opening a twin") and pulls fresh data through
+ * this page's own refresh hook. That call has no way to see the chain, so the
+ * chain is exposed to it here.
+ *
+ * NOT self-enqueued inside refreshEntityData itself: form-saved already wraps
+ * it in queuePush(), and a queuePush() nested inside a queued closure would
+ * await the very chain link it is running on — a deadlock that would silently
+ * freeze every later push on the page.
+ */
+window.ycRefreshEntity = (sourceFormKey) => queuePush(() => refreshEntityData(sourceFormKey));
 
 /* Push fresh data into every non-dirty sibling YCForm iframe.
  *
@@ -1781,7 +1829,16 @@ YC.on(`case:${caseID}`, '*', (fields) => {
 
   applyFieldsToOverview(fields);
 
-  if (('case_stage' in fields || 'pipeline_phase' in fields) && !pwRecentlyRefreshed()) {
+  // PIPELINE POSITION LIVES IN case_stage_log, NOT IN cases.case_stage.
+  // An advance writes both — a log row AND the four overwrite-on-advance
+  // columns — so `pipeline_phase` present is a reliable advance signature
+  // (`written` is never partial). A bare case_stage change is someone editing
+  // the column from the Overview select, which moves no pipeline position and
+  // would buy a /pipeline GET that re-renders identical markup.
+  //
+  // Widen this back to `'case_stage' in fields || …` if a writer ever appears
+  // that appends a log row without touching pipeline_phase.
+  if ('pipeline_phase' in fields && !pwRecentlyRefreshed()) {
     loadPipeline();
   }
 

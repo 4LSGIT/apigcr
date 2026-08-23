@@ -3584,8 +3584,18 @@ async function initAuth() {
               const _btn = _w.document.getElementById(_sub[1] + "Button");
               if (_btn && _btn.classList.contains("tab")) _btn.click();
             }
-            if (typeof _w?.refreshEntityData === "function") {
-              Promise.resolve(_w.refreshEntityData()).catch((err) =>
+            // Prefer the entity page's QUEUED refresh entry point: bare
+            // refreshEntityData() ends in a YCForm push loop that is not
+            // reentrant, so a refocus landing while a form-saved refresh (or a
+            // sync-bus push) is mid-flight would interleave at the awaited
+            // onLoad and cross-baseline the forms. ycRefreshEntity puts it on
+            // the page's one push chain.
+            //
+            // Falls back to the bare call so a frame still running a
+            // pre-sync-bus build keeps today's behaviour during a rollout.
+            const _refresh = _w?.ycRefreshEntity || _w?.refreshEntityData;
+            if (typeof _refresh === "function") {
+              Promise.resolve(_refresh()).catch((err) =>
                 console.warn("[addFile] refresh on refocus failed:", err)
               );
             }

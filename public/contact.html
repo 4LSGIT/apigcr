@@ -862,6 +862,26 @@ async function refreshEntityData(sourceFormKey) {
   await pushFormsFromEntityData(sourceFormKey);
 }
 
+/* THE QUEUED ENTRY POINT — use this from OUTSIDE the page.
+ *
+ * refreshEntityData() is the raw body and is NOT safe to call bare: it ends in
+ * pushFormsFromEntityData(), and YCForm.refresh() is not reentrant, so a call
+ * that races the form-saved path interleaves at the awaited onLoad and
+ * cross-baselines the forms.
+ *
+ * There is a third caller besides form-saved and the bus: the shell's addFile()
+ * dedupe reaches ACROSS THE FRAME BOUNDARY on refocus (index.html — "focus an
+ * already-open file instead of opening a twin") and pulls fresh data through
+ * this page's own refresh hook. That call has no way to see the chain, so the
+ * chain is exposed to it here.
+ *
+ * NOT self-enqueued inside refreshEntityData itself: form-saved already wraps
+ * it in queuePush(), and a queuePush() nested inside a queued closure would
+ * await the very chain link it is running on — a deadlock that would silently
+ * freeze every later push on the page.
+ */
+window.ycRefreshEntity = (sourceFormKey) => queuePush(() => refreshEntityData(sourceFormKey));
+
 /* Push fresh data into every non-dirty sibling YCForm iframe.
  *
  * for...of, not forEach: refresh() is async (it awaits the form's onLoad, which
