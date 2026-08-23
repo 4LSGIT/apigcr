@@ -78,7 +78,7 @@
     //      "this person said no" rather than "never asked".
     // Leaves behind one localStorage key per browser, `yc.mascot.met`, which is
     // ignorable — it is only read to avoid introducing the cat twice.
-    DEBUT_UNTIL: '2026-08-26T23:59:59'
+    DEBUT_UNTIL: '2026-08-27T23:59:59'
   };
 
   // Elements inside the open page that are chunky enough to stand on.
