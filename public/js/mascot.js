@@ -279,6 +279,7 @@
     wall = w; ledge = null;
     rot = w.rot;
     px = w.x;
+    py = clamp(py + (up ? -3 : 3), w.y1 + 2, w.y2 - 2);   // clear of the end it started from
     aim(0, up ? -1 : 1);
     setState('climb');
     stateUntil = clock + rand(1.5, 5);
@@ -298,7 +299,11 @@
     var w = wallNear(px, py);
     var roll = Math.random();
     if (w && roll < 0.42) { toClimb(w, true); return; }        // up the wall
-    if (roll < 0.72) { face = -face; return; }                  // think better of it
+    if (roll < 0.72) {                                          // think better of it
+      face = -face;
+      px -= dirX * 3;      // step clear, or next frame lands on this edge again
+      return;
+    }
     toFall(dirX * CFG.WALK * 0.55, 0);                          // step off into space
   }
 
@@ -335,9 +340,12 @@
 
     if (state === 'climb') {
       var w = wall, f = fwd();
+      var up = (f.y * face) < 0;
       py += f.y * face * CFG.CLIMB * dt;
-      // Reached the top of this wall.
-      if (py <= w.y1 + 1) {
+      // Only the end it is actually heading for counts. Checking both would end
+      // the climb on its first frame, because a wall's bottom IS the floor the
+      // cat just stepped off — which is how it ended up here.
+      if (up && py <= w.y1 + 1) {
         py = w.y1 + 1;
         if (w.y1 <= 2) {                         // the ceiling — hang from it
           wall = null; rot = 180; py = 0;
@@ -346,15 +354,15 @@
           stateUntil = clock + rand(2, 6);
         } else {
           var l = ledgeBelow(px, w.y1 - 2, w.y1 + 6);
-          if (l) land(l); else face = -face;
+          if (l) { land(l); aim(px > W / 2 ? -1 : 1, 0); } else face = -face;
         }
         return;
       }
-      // Reached the bottom.
-      if (py >= w.y2 - 1) {
+      if (!up && py >= w.y2 - 1) {
         py = w.y2 - 1;
-        var l2 = ledgeBelow(px, py - 2, py + 8);
-        if (l2) land(l2); else face = -face;
+        var l2 = ledgeBelow(px, py - 4, py + 10);
+        // Step off towards open space, or it just paces against the wall.
+        if (l2) { land(l2); aim(px > W / 2 ? -1 : 1, 0); } else face = -face;
         return;
       }
       // Cats also just let go sometimes.
@@ -454,8 +462,24 @@
 
   // ── Drag ─────────────────────────────────────────────────────────────────────
   function wireCat() {
+    var lastDown = 0;
+
     cat.addEventListener('pointerdown', function (e) {
       if (e.button !== 0 && e.pointerType === 'mouse') return;
+      // preventDefault below kills the compatibility mouse events, dblclick
+      // included, so the "send it away" gesture is timed here by hand.
+      var now = performance.now();
+      if (now - lastDown < 400) {
+        lastDown = 0;
+        grab = null;
+        cat.classList.remove('yc-grabbed');
+        rot = 0;
+        face = px < vw() / 2 ? -1 : 1;
+        setState('leave');
+        e.preventDefault();
+        return;
+      }
+      lastDown = now;
       e.preventDefault();
       try { cat.setPointerCapture(e.pointerId); } catch (err) { }
       grab = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), vx: 0, vy: 0 };
@@ -484,15 +508,6 @@
     }
     cat.addEventListener('pointerup', release);
     cat.addEventListener('pointercancel', release);
-
-    // The way out that does not require remembering the logo gesture.
-    cat.addEventListener('dblclick', function (e) {
-      e.preventDefault();
-      grab = null;
-      rot = 0;
-      face = px < vw() / 2 ? -1 : 1;
-      setState('leave');
-    });
   }
 
   // ── Build / teardown ─────────────────────────────────────────────────────────
