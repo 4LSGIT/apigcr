@@ -2,6 +2,25 @@
 <html>
 
 <head>
+  <!-- THEME PRE-PAINT — must stay FIRST in <head>, before any stylesheet and
+       before any iframe. Sets data-theme from storage so the shell never paints
+       the wrong mode, and migrates the old `theme` key onto `yc-theme` once.
+       Inline on purpose: the shell is the source of truth every frame observes,
+       so it cannot wait on a network fetch. See ref/THEME-HANDOFF-v2.md §3.1. -->
+  <script>
+    (function () {
+      var t = null;
+      try {
+        t = localStorage.getItem('yc-theme');
+        if (t === null) {                       // one-time migration off the old key
+          var old = localStorage.getItem('theme');
+          if (old) { t = old; localStorage.setItem('yc-theme', old); }
+        }
+      } catch (e) {}
+      document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+    })();
+  </script>
+
   <title>4LSG YisraCase</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon-32.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png">
@@ -58,6 +77,9 @@
        own. To pull the debut out early or clean it up,
        see the DEBUT_UNTIL block near the top of public/js/mascot.js. -->
   <script defer src="/js/mascot.js"></script>
+  <!-- Token sheet loads immediately BEFORE style.css: style.css must keep
+       winning the body font-family (Arial stays this arc — charter §0.1/§7). -->
+  <link rel="stylesheet" href="/theme.css">
   <link rel="stylesheet" type="text/css" href="style.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
@@ -4410,22 +4432,31 @@ async function initAuth() {
     }
 
     // ============ DARK MODE ============
+    function applyTheme(t) {
+      t = (t === 'dark') ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', t);
+      try { localStorage.setItem('yc-theme', t); } catch (e) {}
+
+      // LEGACY BRIDGE — remove only when the last body.dark consumer is converted.
+      // Keeps the 41 unconverted body.dark rules in this file, and the four pages
+      // still observing top's body class, working during the migration. Without
+      // it the arc becomes big-bang.
+      document.body.classList.toggle('dark', t === 'dark');
+
+      var icon = document.getElementById('themeIcon');
+      if (icon) icon.className = (t === 'dark') ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    }
+
     function toggleTheme() {
-      const dark = document.body.classList.toggle('dark');
-      localStorage.setItem('theme', dark ? 'dark' : 'light');
-      const icon = document.getElementById('themeIcon');
-      if (icon) icon.className = dark ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+      applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
     }
 
     // Restore sidebar state + theme on page load
     (function () {
-      // Theme — apply BEFORE first paint to avoid flash
-      const theme = localStorage.getItem('theme');
-      if (theme === 'dark') {
-        document.body.classList.add('dark');
-        const icon = document.getElementById('themeIcon');
-        if (icon) icon.className = 'fa-solid fa-sun';
-      }
+      // Theme — data-theme is already set pre-paint by the inline script in
+      // <head>. This only syncs the legacy body.dark bridge and the toggle icon
+      // to it; it deliberately does not re-read storage. Charter §3.2.
+      applyTheme(document.documentElement.getAttribute('data-theme'));
 
       // Sidebar state
       const state = localStorage.getItem('sidebarState');
