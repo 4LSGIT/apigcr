@@ -121,6 +121,21 @@ async function boot({ noTemplates = false, advance = null } = {}) {
   };
   window.addFile = () => {};
 
+  /* A FAKE SortableJS, so the shipped onStart/onEnd closures actually run.
+     Without it `window.Sortable` is undefined, `hookSortables()` returns early,
+     and the drag guards below would be untestable — the board would also render
+     its CDN-fail "Move…" buttons, which is a different code path from the one
+     under test. This records the options object each column is hooked with;
+     `__t.drag()` then drives them exactly as the real library would: onStart,
+     then onEnd one macrotask later. Nothing about the board is stubbed — only
+     the library that calls into it. */
+  const sortableOpts = [];
+  window.Sortable = function (el, opts) {
+    sortableOpts.push({ el, opts });
+    return { destroy() {} };
+  };
+  window.__sortableOpts = sortableOpts;
+
   // SweetAlert: confirm-with-empty-note, which is what a drag-advance sees
   // when the user just presses "Yes, advance".
   window.Swal = {
@@ -155,6 +170,14 @@ async function boot({ noTemplates = false, advance = null } = {}) {
     '\n;Object.assign(window, { __t: {' +
     '  ageLastLoad: () => { boardLastLoad = 0; },' +
     '  isStale:     () => boardStale,' +
+    '  isDragging:  () => dragging,' +
+    // Drive the REAL Sortable callbacks the board registered. startDrag/endDrag
+    // are separate so a test can hold a drag open across a bus message.
+    '  startDrag:   () => { window.__sortableOpts[0].opts.onStart(); },' +
+    '  endDrag:     () => { window.__sortableOpts[0].opts.onEnd(' +
+    '                        { from: window.__sortableOpts[0].el,' +
+    '                          to:   window.__sortableOpts[0].el,' +
+    '                          item: { dataset: { caseId: "AAAA" } } }); },' +
     '} });');
 
   await tick(window, 50);
@@ -369,5 +392,145 @@ describe('visibility', () => {
     window.ycBecameVisible();
     await tick(window, 20);
     expect(boardGets(calls).length).toBe(2);        // flag survived and paid off
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Mid-drag teardown (Slice 3c)
+//
+// loadBoard() ends in render(), which destroys every Sortable instance and
+// replaces the whole board's innerHTML — with the card currently in the user's
+// hand among the nodes it throws away. A write from ANOTHER window landing
+// mid-drag would therefore yank the DOM out from under an in-progress drag: the
+// card vanishes in mid-air, onEnd fires against detached nodes, and handleDrop
+// reads evt.to.dataset.stageKey off an element no longer in the document.
+//
+// Nothing here can stop the message arriving. What it can do is not act on it
+// until the hand is empty.
+// ─────────────────────────────────────────────────────────────
+
+describe('mid-drag teardown guard', () => {
+  test('A MESSAGE MID-DRAG DEFERS — no refetch, and the stale flag is set', async () => {
+    const { window, calls } = await boot();
+    window.__t.ageLastLoad();                       // echo guard out of the way
+    window.__t.startDrag();
+    expect(window.__t.isDragging()).toBe(true);
+
+    window.YC.emit('case:ZZZZ', { case_status: 'Filed' }, 'test');
+    await tick(window, 400);                        // well past the 300ms debounce
+
+    expect(boardGets(calls).length).toBe(1);        // boot only — nothing refetched
+    expect(window.__t.isStale()).toBe(true);
+  });
+
+  test('IT FLUSHES ON DRAG END — the deferred refresh actually happens', async () => {
+    const { window, calls } = await boot();
+    window.__t.ageLastLoad();
+    window.__t.startDrag();
+    window.YC.emit('case:ZZZZ', { case_status: 'Filed' }, 'test');
+    await tick(window, 400);
+    expect(boardGets(calls).length).toBe(1);
+
+    window.__t.endDrag();                           // same-column drop: no advance
+    await tick(window, 120);                        // the 50ms dragging-clear timeout
+
+    expect(boardGets(calls).length).toBe(2);
+    expect(window.__t.isStale()).toBe(false);
+  });
+
+  test('a drag with NO message costs nothing on release', async () => {
+    // The flush is guarded by the flag, not by "a drag just ended". A user who
+    // drags a card back where it came from must not buy a board fetch for it.
+    const { window, calls } = await boot();
+    window.__t.ageLastLoad();
+    window.__t.startDrag();
+    window.__t.endDrag();
+    await tick(window, 120);
+    expect(boardGets(calls).length).toBe(1);
+  });
+
+  test('a burst mid-drag still costs ONE refresh on release', async () => {
+    const { window, calls } = await boot();
+    window.__t.ageLastLoad();
+    window.__t.startDrag();
+    for (let i = 0; i < 5; i++) window.YC.emit('case:Z' + i, { case_stage: 'x' }, 'test');
+    await tick(window, 400);
+    expect(boardGets(calls).length).toBe(1);
+
+    window.__t.endDrag();
+    await tick(window, 120);
+    expect(boardGets(calls).length).toBe(2);        // one, not five
+  });
+
+  test('the drag guard sits BELOW the visibility check — an off-screen drag is impossible', async () => {
+    // Ordering matters only in that a hidden board sets the same flag either
+    // way. Asserted so a future reorder cannot make a hidden board skip the
+    // flag because it happened to be "dragging".
+    const { window, calls } = await boot();
+    window.__t.ageLastLoad();
+    setHidden(window, true);
+    window.__t.startDrag();
+    window.YC.emit('case:ZZZZ', { case_stage: 'Filed' }, 'test');
+    await tick(window, 400);
+    expect(boardGets(calls).length).toBe(1);
+    expect(window.__t.isStale()).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Scroll preservation across a rebuild (Slice 3c)
+//
+// render() blanks the host, so every column body's scrollTop went to zero.
+// On a board that is refreshed by the bus, that meant a remote write snapped a
+// reader back to the top of a long column mid-read.
+// ─────────────────────────────────────────────────────────────
+
+describe('column scroll preservation', () => {
+  /** jsdom has no layout, so scrollTop is a plain settable property here. */
+  const bodies = w => [...w.document.querySelectorAll('.pb-col-body')];
+  const byStage = (w, key) =>
+    bodies(w).find(b => b.dataset.stageKey === key);
+
+  test('SCROLL SURVIVES a same-columns rebuild', async () => {
+    const { window, calls } = await boot();
+    byStage(window, 'consult').scrollTop = 240;
+    byStage(window, 'unstaged').scrollTop = 60;
+
+    window.__t.ageLastLoad();
+    window.YC.emit('case:ZZZZ', { case_status: 'Filed' }, 'test');
+    await tick(window, 400);
+
+    expect(boardGets(calls).length).toBe(2);        // it really did rebuild
+    expect(byStage(window, 'consult').scrollTop).toBe(240);
+    expect(byStage(window, 'unstaged').scrollTop).toBe(60);
+  });
+
+  test('it is keyed on the STAGE KEY, not on column order', async () => {
+    // A column can appear or disappear between renders (a stage added in Case
+    // Config, include-closed toggled). An index-keyed restore would then pour
+    // one column's position into a different column.
+    const { window } = await boot();
+    byStage(window, 'consult').scrollTop = 240;
+    byStage(window, 'retained').scrollTop = 0;
+
+    window.__t.ageLastLoad();
+    window.YC.emit('case:ZZZZ', { case_status: 'Filed' }, 'test');
+    await tick(window, 400);
+
+    expect(byStage(window, 'consult').scrollTop).toBe(240);
+    expect(byStage(window, 'retained').scrollTop).toBe(0);
+  });
+
+  test('a column absent from the new board is simply not restored', async () => {
+    // Nothing to assert on the missing column itself — the point is that its
+    // stored position is never poured into a survivor, and that the rebuild
+    // does not throw looking for it.
+    const { window, errors } = await boot();
+    byStage(window, 'consult').scrollTop = 240;
+    window.__t.ageLastLoad();
+    window.YC.emit('case:ZZZZ', { case_status: 'Filed' }, 'test');
+    await tick(window, 400);
+    expect(errors).toEqual([]);
+    expect(byStage(window, 'unstaged').scrollTop).toBe(0);
   });
 });

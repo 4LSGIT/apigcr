@@ -187,6 +187,7 @@ async function boot({ payloads = [contactPayload()] } = {}) {
     '                   lname: E("lname").innerHTML,' +
     '                   phone: E("phone").innerHTML }),' +
     '  isStale: () => apptEventStale,' +
+    '  isEntityStale: () => entityStale,' +
     '} });'
   );
 
@@ -440,5 +441,116 @@ describe('appt / event readers — visibility fence', () => {
     await tick(window, 100);
     expect(window.entityData.contact.contact_lname).toBe('Baum');
     expect(window.__t.header().lname).toBe('Baum');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// yc_refetch network fence (Slice 3c)
+//
+// The MIRROR of case.html's. `yc_refetch` reaches this page from two writers
+// that fire on ordinary staff work — the cross-contact transfer (both the
+// aggregate save and the revive flow) and the intake upsert — and each one made
+// every open contact file, in every background window, spend a full contact GET
+// on a page nobody could see.
+//
+// One flag is enough here: unlike case.html this page has no pipeline widget,
+// so the refetch is the only network call this subscriber can make.
+// ─────────────────────────────────────────────────────────────
+
+describe('contact.html — yc_refetch visibility fence', () => {
+  test('HIDDEN: zero GETs, flag set', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    expect(contactGets(calls).length).toBe(1);        // boot only
+    expect(window.__t.isEntityStale()).toBe(true);
+  });
+
+  test('ycBecameVisible() → EXACTLY ONE refetch, flag spent', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 100);
+    expect(contactGets(calls).length).toBe(2);
+    expect(window.__t.isEntityStale()).toBe(false);
+
+    window.ycBecameVisible();
+    await tick(window, 100);
+    expect(contactGets(calls).length).toBe(2);
+  });
+
+  test('a burst of transfers while hidden costs ONE refetch on return', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    for (let i = 0; i < 4; i++) {
+      window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    }
+    await tick(window, 200);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 100);
+    expect(contactGets(calls).length).toBe(2);
+  });
+
+  test('VISIBLE: still refetches immediately — no regression', async () => {
+    const { window, calls } = await boot();
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(contactGets(calls).length).toBe(2);
+  });
+
+  test('THE SCALAR MERGE AND PAINT ARE NOT FENCED', async () => {
+    // Same rule as case.html: nothing re-renders this page when it is shown
+    // again, so its DOM must track messages as they arrive.
+    const { window } = await boot();
+    setHidden(window, true);
+
+    window.YC.emit(`contact:${CLIENT_ID}`,
+                   { contact_lname: { from: 'Applebaum', to: 'Baum' } }, 'test');
+    await tick(window, 200);
+
+    expect(window.entityData.contact.contact_lname).toBe('Baum');
+    expect(window.__t.header().lname).toBe('Baum');
+  });
+
+  test('THE TWO FLAGS DO NOT STRAND EACH OTHER', async () => {
+    // The flush used to early-return on apptEventStale alone. A page that went
+    // stale on a transfer but not on an appointment would have come back on
+    // screen and never refetched.
+    const { window, calls } = await boot();
+    const apptGets  = c => c.filter(x => x.params && x.params.include === 'appts');
+    setHidden(window, true);
+
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(window.__t.isStale()).toBe(false);         // appt/event flag untouched
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 150);
+
+    expect(contactGets(calls).length).toBe(2);        // the entity flag flushed
+    expect(apptGets(calls).length).toBe(0);           // and nothing it did not need
+  });
+
+  test('visibilitychange while STILL hidden keeps the flag', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    window.document.dispatchEvent(new window.Event('visibilitychange'));
+    await tick(window, 100);
+
+    expect(contactGets(calls).length).toBe(1);
+    expect(window.__t.isEntityStale()).toBe(true);
   });
 });

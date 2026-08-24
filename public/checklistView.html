@@ -1939,11 +1939,26 @@ async function saveBody(key) {
       // the native columns do not.)
       await api(cl.native.endpoint + '/' + encodeURIComponent(cl.native.entityId),
                 'PATCH', { [cl.native.field]: value });
-      // Sync bus (public/js/yc-sync.js). REQUIRED for appt/event notes: those
-      // PATCH responses carry no `changes`, so the shell's auto-sniff has
-      // nothing to read and this is the only announcement. For case/contact it
-      // harmlessly double-covers the sniff — emits are idempotent by design,
-      // and a duplicate costs one extra guarded repaint.
+      /* Sync bus (public/js/yc-sync.js). NO LONGER THE ONLY ANNOUNCEMENT, and
+         the old comment here said it was — corrected in Slice 3c.
+
+         Since Slice 3 the shell's auto-sniff covers ALL FOUR of these
+         endpoints: `/api/cases/:id` and `/api/contacts/:id` announce their
+         `changes` diff, and `/api/appts/:id` and `/api/events/:id` announce a
+         `{yc_refetch:1}` marker. So the PATCH above is already on the bus
+         before this line runs, on every one of the four.
+
+         What this emit still adds is the note's VALUE on the appt/event
+         addresses, where the sniff can only manage a marker (those responses
+         carry the written column names, never their values). No reader wants it
+         yet — every appt/event subscriber today is a query view that refetches
+         on any message and is explicitly forbidden from reading the fields
+         (design v2.3 E3) — but an entity-scoped reader, one open appointment,
+         would, and this is the only writer in the system that knows what it
+         wrote.
+
+         Double-covering the case/contact pair costs nothing: emits are
+         idempotent by design, and a duplicate buys one extra guarded repaint. */
       const type = TYPE_BY_ENDPOINT[cl.native.endpoint];
       if (type && window.YC) {
         YC.emit(`${type}:${cl.native.entityId}`,

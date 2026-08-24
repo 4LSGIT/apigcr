@@ -255,6 +255,20 @@ function render() {
   sortables = [];
 
   const host = E('pb-board');
+  /* SCROLL PRESERVATION. `host.innerHTML = ''` below discards every column
+     body, and with it every scroll position — so a remote write while someone
+     was reading down a long column snapped them back to the top mid-read. The
+     board is a live query view refreshed by the bus, which makes that a
+     regular occurrence rather than an edge case.
+     Keyed on data-stage-key, not on index: a column can appear or disappear
+     between renders (a stage added in Case Config, include-closed toggled), and
+     an index-keyed restore would then pour one column's position into another.
+     A key with no column in the new board is simply never read. */
+  const scrollByStage = {};
+  host.querySelectorAll('.pb-col-body').forEach(b => {
+    if (b.dataset.stageKey) scrollByStage[b.dataset.stageKey] = b.scrollTop;
+  });
+
   E('pb-msg').style.display = 'none';
   host.style.display = '';
   host.innerHTML = '';
@@ -276,6 +290,13 @@ function render() {
       isUnstaged: false,
     }));
   }
+
+  // Restore after the rebuild, before the filter pass — applyFilter only
+  // toggles display on cards, so it cannot invalidate these.
+  host.querySelectorAll('.pb-col-body').forEach(b => {
+    const prev = scrollByStage[b.dataset.stageKey];
+    if (prev) b.scrollTop = prev;
+  });
 
   hookSortables();
   applyFilter();
@@ -380,7 +401,13 @@ function hookSortables() {
       animation: 150,
       onStart: () => { dragging = true; },
       onEnd: (evt) => {
-        setTimeout(() => { dragging = false; }, 50);  // swallow the post-drag click
+        // The 50ms also swallows the post-drag click (see buildCard). The
+        // stale flush is here rather than in handleDrop because it must run on
+        // EVERY drag end — a cancelled drag, a same-column drop, a drop on
+        // Unstaged — not only on the ones that advance. Ordered after the flag
+        // clears so boardRefreshIfStale's own visibility check sees a board
+        // that is no longer mid-drag.
+        setTimeout(() => { dragging = false; boardRefreshIfStale(); }, 50);
         handleDrop(evt);
       },
     }));
@@ -536,6 +563,17 @@ function boardVisible() {
 YC.on('case:*', '*', () => {
   if (!E('pb-template').value) return;         // no template chosen — nothing to refresh
   if (!boardVisible()) { boardStale = true; return; }
+  /* MID-DRAG TEARDOWN GUARD. `loadBoard()` ends in `render()`, which destroys
+     every Sortable instance and replaces the whole board's innerHTML — with the
+     dragged card among the nodes it throws away. A write from ANOTHER window
+     landing while someone here has a card in hand would therefore yank the DOM
+     out from under an in-progress drag: the card vanishes mid-air, Sortable's
+     onEnd fires against detached nodes, and `handleDrop` reads
+     `evt.to.dataset.stageKey` off an element no longer in the document.
+     Nothing here can prevent the message; what it can do is not act on it yet.
+     The stale flag already exists for exactly this "refresh later" shape, so
+     the drag borrows it and the drag-end handler flushes it. */
+  if (dragging) { boardStale = true; return; }
   // THE ECHO GUARD. A drag-advance from this very board already calls
   // loadBoard() in confirmAndAdvance's success path; the bus then announces
   // that same advance back to us. Without this, every drag costs two board

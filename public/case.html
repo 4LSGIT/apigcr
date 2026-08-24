@@ -190,14 +190,26 @@
         <option>Concluded</option>
         <option>Closed</option></select
       ><br />
+      <!-- maxlength = the DB column width (verified live 2026-08-24:
+           case_status varchar(50), case_rec varchar(128), case_source
+           varchar(40)). Not cosmetic: sql_mode has no STRICT_TRANS_TABLES, so
+           an over-length value is TRUNCATED BY THE SERVER WITH A WARNING, not
+           rejected. The row then holds 50 characters, the emitted `changes`
+           carry the 70 the client sent, and every other open window paints a
+           value that does not exist in the database until it reloads. Stopping
+           it at the input is the cheap half of the fix; clipping in updateCase
+           the way advanceStage already does is the robust half and is deferred
+           (design v2.5) because it changes write semantics. -->
       <label class="input-label">Status:</label>
       <input
         id="caseStatusInput"
+        maxlength="50"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_status:this.value}).then(()=>Toast.fire({icon:'success',title:'Status updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><br>
       <label class="input-label">Recommendation:</label>
       <input
         id="caseRecInput"
+        maxlength="128"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_rec:this.value}).then(()=>Toast.fire({icon:'success',title:'Recommendation updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><br>
       <label class="input-label">Lead Source:</label>
@@ -209,6 +221,7 @@
       <input
         id="caseSourceInput"
         list="leadSourceList"
+        maxlength="40"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_source:this.value}).then(()=>Toast.fire({icon:'success',title:'Lead source updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><datalist id="leadSourceList"></datalist><br><br>
     </div><br>
@@ -928,7 +941,15 @@
                 const idx = window.entityData.clients.findIndex(c => c.contact_id == contactId);
                 if (idx !== -1) window.entityData.clients[idx].relate_type = value;
               }
+              // Same two lines _refreshCaseClients ends on, and for the same
+              // reason: both branches above MUTATE entityData.clients in place,
+              // which is what PC/SC are derived from and what the header's
+              // client name and phone are painted from. The bus echo would also
+              // repaint (this write is sniffed as of Slice 3c), but that path
+              // needs BroadcastChannel — this one does not.
+              deriveContactRefs();
               putClients();
+              updateHeader();
               Toast.fire({ icon: "success", title: "Updated" });
             } catch (err) {
               Toast.fire({ icon: "error", title: "Error", text: err.message });
@@ -938,10 +959,16 @@
       }
 
       // Shared refresh: re-pull contacts for this case and re-render the table.
+      // Ends in deriveContactRefs() + updateHeader() (Slice 3c): the header's
+      // client name and phone come from PC, which is derived from this list, so
+      // a refresh that skipped them left the header naming the previous Primary
+      // on the page that had just changed it.
       async function _refreshCaseClients() {
         const refresh = await P.apiSend(`/api/cases/${caseID}`, "GET", { include: "contacts" });
         window.entityData.clients = refresh.clients || [];
+        deriveContactRefs();
         putClients();
+        updateHeader();
       }
 
       // ContactPicker-driven add dialog. Attach an existing contact, or branch
@@ -1154,9 +1181,27 @@ async function loadEntityData() {
   ed.appts   = data.appts   || [];
   ed.log     = data.log     || [];
 
-  // Derive convenience refs
-  PC = ed.clients.find(c => (c.relate_type || c.case_relate_type) === "Primary")   || null;
-  SC = ed.clients.find(c => (c.relate_type || c.case_relate_type) === "Secondary") || null;
+  deriveContactRefs();
+}
+
+/* PC / SC — the case's Primary and Secondary contacts, derived from
+ * entityData.clients. HOISTED OUT OF loadEntityData (Slice 3c) because it had
+ * TWO producers and only one of them ran it: `_refreshCaseClients` re-pulls the
+ * client list after an attach / relate-change / removal and used to leave PC
+ * and SC pointing at the PREVIOUS Primary — so the header kept naming the old
+ * client while the table below it showed the new one, on the very page that
+ * made the change, until a full reload.
+ *
+ * One derivation, both callers. Call it after any write to entityData.clients.
+ *
+ * The `relate_type || case_relate_type` fallback is the two shapes the server
+ * returns for the same thing (the include=contacts join vs the case_relate
+ * column name); kept verbatim from the original.
+ */
+function deriveContactRefs() {
+  const list = window.entityData.clients || [];
+  PC = list.find(c => (c.relate_type || c.case_relate_type) === "Primary")   || null;
+  SC = list.find(c => (c.relate_type || c.case_relate_type) === "Secondary") || null;
 }
 
 // ── Header & overview updates ───────────────────────────────
@@ -1235,10 +1280,30 @@ function getLeadSourceOptions() {
   if (typeof raw === 'string') return raw.split(',').map(s => s.trim()).filter(Boolean);
   return [];
 }
-function syncLeadSourceList(c) {
-  E("caseSourceInput").value = c.case_source || "";
+/* SPLIT IN TWO, and the split is the fix (Slice 3c).
+ *
+ * This used to be one function doing two unrelated things — write the input's
+ * VALUE from the case row, and rebuild the datalist's OPTIONS from firmData —
+ * and the `setting:fe-lead_sources` subscriber called it for the options half.
+ * So editing the lead-source vocabulary in settings.html, in any window,
+ * reached into every open case file and overwrote whatever was in the Lead
+ * Source box with the stored value: an unsaved edit, typed and not yet blurred,
+ * silently reverted. The bus paints everywhere else are fenced on focus and
+ * ycDirty precisely to stop that; this path had no fence because it was never
+ * meant to be a value write at all.
+ *
+ * `syncLeadSourceList(c)` keeps its old behaviour byte-for-byte for the two
+ * callers that legitimately want both (updateHeader and boot — a full render,
+ * where the value SHOULD come from the row). `syncLeadSourceOptions()` is the
+ * options-only half, and it is what a vocabulary change is allowed to touch.
+ */
+function syncLeadSourceOptions() {
   E("leadSourceList").innerHTML =
     getLeadSourceOptions().map(s => `<option value="${escAttr(s)}"></option>`).join("");
+}
+function syncLeadSourceList(c) {
+  E("caseSourceInput").value = c.case_source || "";
+  syncLeadSourceOptions();
 }
 
 // ── Case type / subtype cascading selects ───────────────────
@@ -1776,14 +1841,26 @@ async function pwAdvance() {
     Toast.fire({ icon: 'success', title: `Advanced to ${label}` });
 
     // Overwrite-on-advance touched case_stage/case_status/case_rec — refresh
-    // the trio from a fresh case row (single-source-of-truth entityData kept
-    // current; NOT full updateHeader(), see block comment above).
+    // the trio from a fresh case row. The GET stays (design C1): when
+    // BroadcastChannel is unavailable the sniff dispatches in the shell realm
+    // only and never reaches this frame, so this is the correctness path.
+    //
+    // ── THE REPAINT GOES THROUGH THE SAME FENCES AS EVERY BUS PAINT ────────
+    // (Slice 3c). This used to write the three inputs directly, which made it
+    // the ONE painter on the page with no focus/ycDirty guard: an advance
+    // landing while someone had the Status box open, mid-edit, ate what they
+    // were typing. applyFieldsToOverview carries those guards, and it takes its
+    // argument as a PRESENCE FILTER — it paints from entityData.case — so
+    // merging first and then naming the three columns is the whole repaint.
+    //
+    // Object.assign, not `entityData.case = d.case`: replacing the object drops
+    // any column the bus merged in between this advance and its response, and
+    // hands the form-push loop a different object than the one it read.
     try {
       const d = await P.apiSend(`/api/cases/${caseID}`, 'GET');
-      window.entityData.case = d.case;
-      E('caseStageSelect').value = d.case.case_stage  || '';
-      E('caseStatusInput').value = d.case.case_status || 'N/A';
-      E('caseRecInput').value    = d.case.case_rec    || 'N/A';
+      const ed = window.entityData;
+      if (ed.case) Object.assign(ed.case, d.case); else ed.case = d.case;
+      applyFieldsToOverview({ case_stage: 1, case_status: 1, case_rec: 1 });
     } catch (e2) {
       console.warn('[pipeline] header refresh failed:', e2);
     }
@@ -1833,6 +1910,28 @@ processing();
    entityData.case stays null and the handler no-ops — but a subscription that
    only exists on the success path would leave a half-loaded page permanently
    deaf. */
+
+/* THE TWO DEFERRED NETWORK CALLS OF THIS SUBSCRIBER (Slice 3c). Separate flags,
+   unlike the appt/event pair below, because they answer with genuinely
+   different work and a parked file should only pay for what it actually
+   missed:
+
+     entityStale    → ycRefreshEntity()  — full case GET, header, form push
+     pipelineStale  → loadPipeline()     — the pipeline widget's own GET
+
+   Deliberately NOT collapsed, and deliberately not treated as overlapping:
+   `refreshEntityData` does NOT call `loadPipeline` (verified — it runs
+   loadEntityData → updateHeader → putClients → putAppts → push), so a refetch
+   is not a superset of a pipeline refresh. Two flags, two answers. Both are
+   flushed by ycRefreshIfStale() at the foot of this file.
+
+   Declared here, above their only writer, rather than beside apptEventStale:
+   `let` has no hoisting, and a flag referenced 150 lines before its declaration
+   is a temporal-dead-zone throw waiting for the first message that arrives
+   during evaluation. */
+let entityStale   = false;
+let pipelineStale = false;
+
 YC.on(`case:${caseID}`, '*', (fields) => {
   /* RESERVED FIELD — the sanctioned invalidation (design §3.1 amendment, v2.2;
      third shape added v2.4). Something happened to this case that has no
@@ -1850,8 +1949,19 @@ YC.on(`case:${caseID}`, '*', (fields) => {
      page whose initial load failed still answers a refetch rather than staying
      deaf. contact.html made the same choice for the same reason. §3.6 holds —
      the refetch is a GET, which the sniff's method gate drops before any
-     matcher runs, so this cannot loop. */
-  if ('yc_refetch' in fields) { window.ycRefreshEntity(); return; }
+     matcher runs, so this cannot loop.
+
+     VISIBILITY-FENCED (Slice 3c), and ONLY here — the fence is around the
+     NETWORK CALL, not around the message. A parked file that answered every
+     merge and every intake create with a full case GET was spending a
+     round-trip per write, per open file, per background window, to redraw a
+     page nobody could see. Deferred to `ycRefreshIfStale()`, which runs when
+     the file comes back on screen. */
+  if ('yc_refetch' in fields) {
+    if (!pageVisible()) { entityStale = true; return; }
+    window.ycRefreshEntity();
+    return;
+  }
 
   const c = window.entityData.case;
   if (!c) return;
@@ -1872,8 +1982,14 @@ YC.on(`case:${caseID}`, '*', (fields) => {
   //
   // Widen this back to `'case_stage' in fields || …` if a writer ever appears
   // that appends a log row without touching pipeline_phase.
+  //
+  // VISIBILITY-FENCED (Slice 3c) for the same reason as the refetch above: this
+  // is a GET, and an advance anywhere in the app was buying one from every
+  // parked file. The MERGE and PAINT above stay unfenced deliberately — see
+  // ycRefreshIfStale.
   if ('pipeline_phase' in fields && !pwRecentlyRefreshed()) {
-    loadPipeline();
+    if (pageVisible()) loadPipeline();
+    else pipelineStale = true;
   }
 
   queueBusFormPush();
@@ -1965,11 +2081,15 @@ const BUS_FRESH_MS = 1500;
 let apptsBusDeb = null;
 let eventsBusDeb = null;
 
-/* ONE stale flag for BOTH subscribers, on purpose. Coming back on screen runs
-   a single refresh pass over both tables, so tracking which of the two went
-   stale would buy nothing but a second flag to keep in sync — and the two
-   lists are refetched by two independent GETs either way. */
+/* ONE stale flag for BOTH appt/event subscribers, on purpose. Coming back on
+   screen runs a single refresh pass over both tables, so tracking which of the
+   two went stale would buy nothing but a second flag to keep in sync — and the
+   two lists are refetched by two independent GETs either way. */
 let apptEventStale = false;
+
+/* `entityStale` / `pipelineStale` are declared ABOVE the case subscriber that
+   sets them — see the comment there. All three flags are flushed by
+   ycRefreshIfStale() below. */
 
 /* Is this file actually on screen? `frameElement` is the shell's iframe inside
    the file div (null when the page is opened standalone); the shell hides a
@@ -2009,16 +2129,39 @@ YC.on('event:*', '*', () => {
    Both run the same stale check, and both go through pageVisible(). The
    visibility guard is not redundant on the visibilitychange path: returning to
    the browser window while this file sits behind ANOTHER file would otherwise
-   spend apptEventStale on tables nobody can see, and the later
-   ycBecameVisible would find nothing to do. */
-function apptEventRefreshIfStale() {
-  if (!apptEventStale || !pageVisible()) return;
-  apptEventStale = false;
-  refreshAppts();
-  refreshEvents();
+   spend the flags on surfaces nobody can see, and the later ycBecameVisible
+   would find nothing to do.
+
+   ── ONE FLUSH, THREE FLAGS (Slice 3c) ───────────────────────────────────────
+   This was `apptEventRefreshIfStale`, and it opened with
+   `if (!apptEventStale …) return;` — a single early return on the appt/event
+   flag. Adding `entityStale` and `pipelineStale` beside it under that shape
+   would have STRANDED both: a file that went stale on a merge but not on an
+   appointment would return to screen, hit the early return, and never refetch.
+   So the guard is now per-flag, and the visibility check is the only thing
+   checked up front.
+
+   Order matters slightly and is chosen: the entity refetch first, since it
+   redraws the header and the client/appt tables the other two feed into. */
+function ycRefreshIfStale() {
+  if (!pageVisible()) return;
+
+  if (entityStale) {
+    entityStale = false;
+    window.ycRefreshEntity();
+  }
+  if (pipelineStale) {
+    pipelineStale = false;
+    loadPipeline();
+  }
+  if (apptEventStale) {
+    apptEventStale = false;
+    refreshAppts();
+    refreshEvents();
+  }
 }
-window.ycBecameVisible = apptEventRefreshIfStale;
-document.addEventListener('visibilitychange', apptEventRefreshIfStale);
+window.ycBecameVisible = ycRefreshIfStale;
+document.addEventListener('visibilitychange', ycRefreshIfStale);
 
 /* ── Settings readers (sync bus) ─────────────────────────────────────────────
    The two Overview vocabularies that come from app_settings rather than from
@@ -2050,9 +2193,14 @@ YC.on('setting:fe-case_types', '*', (fields) => {
   }
 });
 
+/* OPTIONS ONLY — never the value. A vocabulary change is not a change to this
+   case's lead source, and treating it as one clobbered unsaved typing (see the
+   split at syncLeadSourceOptions). No `entityData.case` guard either: the
+   datalist is built from firmData, not from the row, so it repaints correctly
+   on a page whose case load failed. */
 YC.on('setting:fe-lead_sources', '*', (fields) => {
   applyFeSetting('fe-lead_sources', fields.value);
-  if (window.entityData.case) syncLeadSourceList(window.entityData.case);
+  syncLeadSourceOptions();
 });
 
 async function newDB() {

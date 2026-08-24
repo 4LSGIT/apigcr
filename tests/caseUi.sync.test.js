@@ -231,6 +231,14 @@ async function boot({ payloads = [casePayload()], pipelines = ['Intake'] } = {})
     '  agePipeline:  () => { pwLastSet = 0; },' +
     '  pipelineName: () => (pwData && pwData.template ? pwData.template.name : null),' +
     '  isStale:      () => apptEventStale,' +
+    '  isEntityStale:   () => entityStale,' +
+    '  isPipelineStale: () => pipelineStale,' +
+    '  sourceEl:     () => E("caseSourceInput"),' +
+    '  datalist:     () => [...E("leadSourceList").querySelectorAll("option")]' +
+    '                        .map(o => o.value),' +
+    '  clientLine:   () => ({ name: E("clientName").innerHTML,' +
+    '                         phone: E("phone").innerHTML }),' +
+    '  primary:      () => (PC ? PC.contact_id : null),' +
     '  markSaved:    () => { lastFormSavedAt = Date.now(); },' +
     '} });'
   );
@@ -381,11 +389,23 @@ describe('form push — coalesce and serialization', () => {
     // Both fire on any form save: the sniff sees the PATCH, and the form posts
     // form-saved. The refetch push strictly dominates (it re-reads the server),
     // so the bus one must not also run.
+    //
+    // ── ORDER IS THE TEST, AND THIS USED TO BE FLAKY (fixed Slice 3c) ───────
+    // The guard is `if (lastFormSavedAt >= t) return;` where `t` is stamped
+    // when the BUS message arrives — "did a form-saved land in the 50ms window
+    // AFTER this message". That is the production order: the sniff fires on the
+    // PATCH response, and the form posts form-saved immediately after.
+    //
+    // This test used to call markSaved() BEFORE the emit, which made the two
+    // stamps race inside one synchronous block: it passed only when both landed
+    // in the same millisecond and failed roughly one run in three, on baseline,
+    // with nothing wrong with the code. Stamping after the emit models the real
+    // sequence and is deterministic.
     const { window } = await boot();
     const pushes = attachForm(window);
 
-    window.__t.markSaved();          // as if a form-saved just arrived
     window.YC.emit(`case:${CASE_ID}`, { case_status: 'Working' }, 'test');
+    window.__t.markSaved();          // the form-saved that follows the save
     await tick(window, 200);
 
     expect(pushes.length).toBe(0);
@@ -759,5 +779,355 @@ describe('appt / event readers — visibility fence', () => {
     expect(apptGets(calls).length).toBe(1);
     expect(window.YC._log.map(m => m.addr)).toEqual(['appt:55']);
     expect(calls.every(c => c.method === 'GET')).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Lead-source vocabulary changes (Slice 3c)
+//
+// `fe-lead_sources` is an app_settings row edited in settings.html, and every
+// open case file subscribes to it so its datalist stays current. The subscriber
+// used to answer by calling syncLeadSourceList(c), which ALSO writes the input's
+// value from the stored row — so editing the vocabulary in one window reached
+// into every open case file and reverted whatever was in the Lead Source box.
+//
+// Every other bus paint on this page is fenced on focus and ycDirty precisely
+// to stop that. This path had no fence because it was never meant to be a value
+// write at all. The dirty-fence tests above are the template.
+// ─────────────────────────────────────────────────────────────
+
+describe('lead source — vocabulary vs value', () => {
+  const setting = (window, list) =>
+    window.YC.emit('setting:fe-lead_sources', { value: JSON.stringify(list) }, 'test');
+
+  test('AN UNSAVED TYPED VALUE SURVIVES a vocabulary change', async () => {
+    const { window } = await boot();
+    const el = window.__t.sourceEl();
+    expect(el.value).toBe('Referral');            // painted from the case row at boot
+
+    el.value = 'Word of mouth, sort of';          // typed, not yet blurred/saved
+    setting(window, ['Referral', 'Google', 'Billboard']);
+    await tick(window, 50);
+
+    expect(el.value).toBe('Word of mouth, sort of');
+  });
+
+  test('…and the datalist DOES update — the fix is not "ignore the message"', async () => {
+    const { window } = await boot();
+    expect(window.__t.datalist()).toEqual(['Referral', 'Google']);
+
+    setting(window, ['Referral', 'Google', 'Billboard']);
+    await tick(window, 50);
+
+    expect(window.__t.datalist()).toEqual(['Referral', 'Google', 'Billboard']);
+  });
+
+  test('A FOCUSED input is left alone too, even when its value is clean', async () => {
+    const { window } = await boot();
+    const el = window.__t.sourceEl();
+    el.focus();
+    expect(el).toBe(window.document.activeElement);
+
+    setting(window, ['Referral', 'Google', 'Billboard']);
+    await tick(window, 50);
+
+    expect(el.value).toBe('Referral');            // unchanged, and never rewritten
+    expect(window.__t.datalist()).toEqual(['Referral', 'Google', 'Billboard']);
+  });
+
+  test('the datalist repaints even when the case row never loaded', async () => {
+    // The subscriber used to guard on `entityData.case`, which meant a page
+    // whose load failed also stopped tracking the vocabulary. The datalist is
+    // built from firmData, not from the row, so there is nothing to guard.
+    const { window } = await boot();
+    window.entityData.case = null;
+
+    setting(window, ['Only', 'These']);
+    await tick(window, 50);
+
+    expect(window.__t.datalist()).toEqual(['Only', 'These']);
+  });
+
+  test('a FULL render still writes the value — syncLeadSourceList is unchanged', async () => {
+    // The split must not cost the legitimate caller. updateHeader() is a full
+    // render and the value SHOULD come from the row there.
+    const { window } = await boot();
+    const el = window.__t.sourceEl();
+    el.value = 'scratch';
+    window.updateHeader();
+    expect(el.value).toBe('Referral');
+  });
+
+  test('§3.6 — a setting message produces no API traffic at all', async () => {
+    const { window, calls } = await boot();
+    const before = calls.length;
+    setting(window, ['Referral', 'Google', 'Billboard']);
+    await tick(window, 100);
+    expect(calls.length).toBe(before);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// case_relate — the Primary contact reaches the header (Slice 3c)
+//
+// The Primary is not a column on `cases`; it is the case_relate row whose type
+// is 'Primary'. The header's client name and phone are painted from PC, which
+// is derived from entityData.clients — and that derivation used to live inside
+// loadEntityData, so every OTHER writer of that list left PC pointing at the
+// previous Primary.
+// ─────────────────────────────────────────────────────────────
+
+describe('Primary contact → header', () => {
+  test('a case_relate refetch repaints the CLIENT LINE, not just the table', async () => {
+    // The end-to-end shape of the gate: a relate change anywhere announces
+    // `{yc_refetch:1}` to this case, the page re-reads, and the header follows.
+    const { window } = await boot({
+      payloads: [
+        casePayload(),
+        // The refetch: a different contact is now Primary.
+        (() => {
+          const p = casePayload();
+          p.clients = [
+            { contact_id: 1001, contact_name: 'Ann Applebaum',
+              contact_phone: '2485550001', relate_type: 'Other' },
+            { contact_id: 2002, contact_name: 'Zed Zimmer',
+              contact_phone: '2485559999', relate_type: 'Primary' },
+          ];
+          return p;
+        })(),
+      ],
+    });
+
+    expect(window.__t.clientLine()).toEqual({ name: 'Ann Applebaum', phone: '248-555-0001' });
+    expect(window.__t.primary()).toBe(1001);
+
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    expect(window.__t.primary()).toBe(2002);
+    expect(window.__t.clientLine()).toEqual({ name: 'Zed Zimmer', phone: '248-555-9999' });
+  });
+
+  test('deriveContactRefs runs on the refetch, not only on the first load', async () => {
+    // The narrow assertion under the one above: PC tracks entityData.clients
+    // wherever that list is replaced.
+    const { window } = await boot({
+      payloads: [
+        casePayload(),
+        (() => {
+          const p = casePayload();
+          p.clients = [{ contact_id: 3003, contact_name: 'New Primary',
+                         contact_phone: '', relate_type: 'Primary' }];
+          return p;
+        })(),
+      ],
+    });
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(window.__t.primary()).toBe(3003);
+  });
+
+  test('a case with NO Primary clears the line rather than keeping a ghost', async () => {
+    const { window } = await boot({
+      payloads: [
+        casePayload(),
+        (() => {
+          const p = casePayload();
+          p.clients = [{ contact_id: 1001, contact_name: 'Ann Applebaum',
+                         contact_phone: '2485550001', relate_type: 'Other' }];
+          return p;
+        })(),
+      ],
+    });
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(window.__t.primary()).toBe(null);
+    expect(window.__t.clientLine()).toEqual({ name: '', phone: '' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Entity-subscriber network fences (Slice 3c)
+//
+// The appt/event readers took the visibility fence in Slice 3b; the ENTITY
+// subscriber did not. So a parked case file still answered every merge, every
+// intake create and every case_relate change with a full case GET, and every
+// pipeline advance anywhere with a /pipeline GET — one round-trip per write,
+// per open file, per background browser window, to redraw a page nobody could
+// see.
+//
+// THE FENCE IS AROUND THE NETWORK CALL ONLY. Merge and paint stay unfenced,
+// deliberately: a hidden page does not re-render when it is shown again, so its
+// DOM has to track messages as they arrive or it comes back wrong.
+// ─────────────────────────────────────────────────────────────
+
+describe('entity subscriber — network fences', () => {
+  test('HIDDEN: a yc_refetch costs ZERO GETs and sets the flag', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    const before = caseLoads(calls).length;
+
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    expect(caseLoads(calls).length).toBe(before);
+    expect(window.__t.isEntityStale()).toBe(true);
+  });
+
+  test('ycBecameVisible() → EXACTLY ONE refetch, and the flag is spent', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(caseLoads(calls).length).toBe(1);          // boot only
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 100);
+    expect(caseLoads(calls).length).toBe(2);
+    expect(window.__t.isEntityStale()).toBe(false);
+
+    // Spent once, not per tab click.
+    window.ycBecameVisible();
+    await tick(window, 100);
+    expect(caseLoads(calls).length).toBe(2);
+  });
+
+  test('A BURST WHILE HIDDEN still costs ONE refetch on return', async () => {
+    // Three merges and an intake create land while the file is parked. The flag
+    // is a boolean, so returning re-reads the server once — which is the whole
+    // point of an invalidation rather than a queue of them.
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    for (let i = 0; i < 4; i++) {
+      window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    }
+    await tick(window, 200);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 100);
+    expect(caseLoads(calls).length).toBe(2);
+  });
+
+  test('VISIBLE: a yc_refetch still refetches immediately — no regression', async () => {
+    const { window, calls } = await boot();
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(caseLoads(calls).length).toBe(2);
+    expect(window.__t.isEntityStale()).toBe(false);
+  });
+
+  test('HIDDEN: pipeline_phase defers its /pipeline GET behind its OWN flag', async () => {
+    const { window, calls } = await boot();
+    window.__t.agePipeline();                        // past the freshness window
+    setHidden(window, true);
+    const before = pipelineGets(calls).length;
+
+    window.YC.emit(`case:${CASE_ID}`, { pipeline_phase: 'case' }, 'test');
+    await tick(window, 200);
+
+    expect(pipelineGets(calls).length).toBe(before);
+    expect(window.__t.isPipelineStale()).toBe(true);
+    expect(window.__t.isEntityStale()).toBe(false);   // a different flag entirely
+  });
+
+  test('THE MERGE AND PAINT ARE NOT FENCED — a hidden page still tracks state', async () => {
+    // Load-bearing, and the reason the fence is around the network call rather
+    // than around the message: nothing re-renders this page when it is shown
+    // again. If a hidden page dropped its scalar messages, coming back would
+    // show values the database stopped holding minutes ago.
+    const { window } = await boot();
+    setHidden(window, true);
+
+    window.YC.emit(`case:${CASE_ID}`, { case_status: 'Working' }, 'test');
+    await tick(window, 200);
+
+    expect(window.entityData.case.case_status).toBe('Working');
+    expect(window.document.getElementById('caseStatusInput').value).toBe('Working');
+  });
+
+  test('THE THREE FLAGS DO NOT STRAND EACH OTHER', async () => {
+    /* THE BUG THIS SLICE ALMOST SHIPPED. The old flush opened with
+       `if (!apptEventStale || !pageVisible()) return;` — a single early return
+       on ONE flag. Adding two more beside it under that shape would have meant a
+       file that went stale on a merge but not on an appointment came back on
+       screen, hit the early return, and never refetched at all.
+       Each flag is now checked on its own. */
+    const { window, calls } = await boot();
+    window.__t.agePipeline();
+    setHidden(window, true);
+
+    // Entity + pipeline go stale; the appt/event pair deliberately does NOT.
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    window.YC.emit(`case:${CASE_ID}`, { pipeline_phase: 'case' }, 'test');
+    await tick(window, 200);
+    expect(window.__t.isStale()).toBe(false);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 150);
+
+    expect(caseLoads(calls).length).toBe(2);          // entity flushed
+    expect(pipelineGets(calls).length).toBe(2);       // pipeline flushed
+  });
+
+  test('the appt/event flag still flushes when it is the ONLY one set', async () => {
+    // The mirror of the test above — the flag that used to own the early return
+    // must not have lost anything in the restructure.
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit('appt:55', { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 100);
+
+    expect(apptGets(calls).length).toBe(1);
+    expect(eventGets(calls).length).toBe(1);
+    expect(caseLoads(calls).length).toBe(1);          // no entity refetch it never needed
+  });
+
+  test('visibilitychange flushes the entity flag when the window returns', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    setHidden(window, false);
+    window.document.dispatchEvent(new window.Event('visibilitychange'));
+    await tick(window, 100);
+
+    expect(caseLoads(calls).length).toBe(2);
+  });
+
+  test('visibilitychange while STILL hidden keeps every flag for later', async () => {
+    // Returning to the browser window while this file sits behind ANOTHER file
+    // must not spend the flags on surfaces nobody can see.
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    window.document.dispatchEvent(new window.Event('visibilitychange'));
+    await tick(window, 100);
+
+    expect(caseLoads(calls).length).toBe(1);
+    expect(window.__t.isEntityStale()).toBe(true);
+  });
+
+  test('§3.6 — the deferred refetch is still a GET and cannot loop', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 200);
+
+    // The stub sniffs everything it is given; a GET matches nothing, so the
+    // refetch produces no second message and no second refetch.
+    expect(caseLoads(calls).length).toBe(2);
   });
 });

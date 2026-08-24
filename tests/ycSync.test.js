@@ -324,7 +324,12 @@ describe('_sniff', () => {
     const w = mkWindow();
     const seen = spy(w, 'case:*');
     w.YC._sniff('PATCH', '/api/cases/AAAA/other', { data: { changes: { a: 1 } } });
-    w.YC._sniff('PATCH', '/api/cases/AAAA/contacts', { data: { changes: { a: 1 } } });
+    // `/api/cases/:id/contacts` USED TO BE the second example here, chosen in
+    // Slice 1 precisely because it was a real route the bus deliberately did
+    // not watch. Slice 3c watches it (case_relate is where the Primary contact
+    // lives), so it moved to its own describe block below and this test keeps
+    // only paths that genuinely have no matcher.
+    w.YC._sniff('PATCH', '/api/cases/AAAA/tasks', { data: { changes: { a: 1 } } });
     expect(seen).toEqual([]);
   });
 
@@ -1226,10 +1231,21 @@ describe('_sniff — appt / event matchers', () => {
     expect(seen).toEqual([]);
   });
 
-  test('DELETE reaches no matcher — neither resource has a DELETE route', () => {
-    // Cancel is the delete analogue on both. If a real DELETE route ever
-    // appears, _sniff's global method gate has to admit it FIRST — this test
-    // is the reminder that the gate, not the matcher, is the thing to change.
+  test('DELETE reaches no APPT/EVENT matcher — the prediction, resolved', () => {
+    /* THIS TEST MADE A PREDICTION IN SLICE 3 AND SLICE 3c CASHED IT.
+
+       It used to read: "neither resource has a DELETE route… if a real DELETE
+       route ever appears, _sniff's global method gate has to admit it FIRST —
+       this test is the reminder that the gate, not the matcher, is the thing to
+       change." That day came. `DELETE /api/cases/:id/contacts/:contactId` is
+       the app's first sniffed delete, the gate was widened for it, and the
+       reminder did its job.
+
+       What it asserts now is narrower and still worth having: appts and events
+       STILL have no DELETE route (cancel is the delete analogue on both,
+       verified 2026-08-24), so their matchers stay PATCH/POST-only and reject
+       the verb the gate now lets through. The gate is no longer what protects
+       them — their own method lists are. */
     const w = mkWindow();
     const seen = spy(w);
     w.YC._sniff('DELETE', '/api/appts/55',  { status: 'success' });
@@ -1405,12 +1421,9 @@ describe('_sniff — case merge', () => {
     expect(seen.map(s => s.addr)).toEqual(['case:FROMBODY']);
   });
 
-  test('SHAPE SURPRISES FAIL CLOSED — no dry_run key, no survivor, no data', () => {
+  test('SHAPE SURPRISES FAIL CLOSED — no survivor, no data', () => {
     const w = mkWindow();
     const seen = spy(w);
-    const d = body().data;
-    delete d.dry_run;
-    w.YC._sniff('POST', '/api/cases/AAAA/merge', { status: 'success', data: d });
     w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ survivor_id: '' }));
     w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ survivor_id: null }));
     w.YC._sniff('POST', '/api/cases/AAAA/merge', { status: 'success' });
@@ -1419,6 +1432,40 @@ describe('_sniff — case merge', () => {
     // A truthy non-boolean dry_run is still a dry run as far as this is concerned.
     w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ dry_run: 1 }));
     expect(seen).toEqual([]);
+  });
+
+  test('A MISSING dry_run KEY NOW ANNOUNCES — the asymmetry, flipped in 3c', () => {
+    // Slice 3b required `dry_run === false` and went SILENT on a plan that had
+    // lost the key, on the theory that a shape change should not be guessed at.
+    // Third-pass review reversed it, and the reasoning is that the two failure
+    // modes are not comparable: a missing emit on a real merge reopens the
+    // exact HIGH this matcher exists to close (a survivor absorbing another
+    // case, silently, on every open surface), while a wrong emit on a preview
+    // costs one idempotent refetch of correct data that nobody perceives as a
+    // bug. So an unrecognised shape now defaults to announcing.
+    //
+    // The dry-run silence itself is unchanged and is pinned by the test above:
+    // it keys on the flag being present and truthy, which is what the producer
+    // actually sends (pinned at the producer in
+    // tests/caseMergeShapes.test.js).
+    const w = mkWindow();
+    const seen = spy(w);
+    const d = body().data;
+    delete d.dry_run;
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', { status: 'success', data: d });
+    expect(seen.map(s => s.addr)).toEqual(['case:AAAA']);
+    expect(seen[0].fields).toEqual({ yc_refetch: 1 });
+  });
+
+  test('dry_run false in every falsy spelling still announces', () => {
+    // The getter is a truthy check now, so these are all "not a dry run".
+    const w = mkWindow();
+    const seen = spy(w);
+    for (const v of [false, 0, null, undefined, '']) {
+      w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ dry_run: v }));
+    }
+    expect(seen.map(s => s.addr)).toEqual(
+      ['case:AAAA', 'case:AAAA', 'case:AAAA', 'case:AAAA', 'case:AAAA']);
   });
 
   test('the merge matcher is POST-only and does not shadow the bare case matcher', () => {
@@ -1576,14 +1623,16 @@ describe('_sniff — intake matchers', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Regression fence for the whole matcher table (Slice 3b)
+// Regression fence for the whole matcher table (Slice 3b, extended 3c)
 // ─────────────────────────────────────────────────────────────
 
-describe('_sniff — Slice 3b leaves every prior matcher untouched', () => {
+describe('_sniff — every matcher in the table, no shadowing', () => {
   test('THE FULL TABLE, one call each, exact addresses', () => {
-    // Every matcher that existed before this slice, plus the three added by it.
-    // Anchoring is the property under test: no new pattern may shadow an old
-    // path, and no old pattern may swallow /merge or /intake/*.
+    // Every matcher in the file, in table order. Anchoring is the property
+    // under test: no pattern may shadow another's path. The Slice-3c additions
+    // make this sharper than it was — `/api/cases/:id/contacts` sits under the
+    // same prefix as four other case matchers, and the booking-link path sits
+    // under `/api/contacts/:id`, which is anchored and must not swallow it.
     const w = mkWindow();
     const seen = [];
     ['case:*', 'contact:*', 'setting:*', 'appt:*', 'event:*'].forEach(a =>
@@ -1608,6 +1657,11 @@ describe('_sniff — Slice 3b leaves every prior matcher untouched', () => {
     w.YC._sniff('POST',  '/api/events',                      { data: { event_id: 13 } });
     w.YC._sniff('POST',  '/api/intake/contact',              { status: 'success', action: 'created', id: 1002 });
     w.YC._sniff('POST',  '/api/intake/case',                 { status: 'success', action: 'created', id: 'CCCC' });
+    // Slice 3c additions.
+    w.YC._sniff('POST',   '/api/cases/AAAA/contacts',        { status: 'success' });
+    w.YC._sniff('PATCH',  '/api/cases/AAAA/contacts/1001',   { status: 'success' });
+    w.YC._sniff('DELETE', '/api/cases/AAAA/contacts/1001',   { status: 'success' });
+    w.YC._sniff('POST',   '/api/contacts/1001/booking-link', { success: true, token: 'abc123' });
 
     expect(seen).toEqual([
       'case:AAAA', 'contact:5', 'case:AAAA', 'case:AAAA', 'case:AAAA',
@@ -1616,15 +1670,415 @@ describe('_sniff — Slice 3b leaves every prior matcher untouched', () => {
       'appt:55', 'appt:55', 'appt:56', 'appt:57', 'appt:58', 'appt:59',
       'event:12', 'event:12', 'event:13',
       'contact:1002', 'case:CCCC',
+      'case:AAAA', 'case:AAAA', 'case:AAAA', 'contact:1001',
     ]);
   });
 
-  test('the method gate is unchanged — GET and DELETE reach no matcher', () => {
+  test('GET is still dropped by the gate; DELETE is dropped by the matcher', () => {
+    // The gate admits DELETE as of Slice 3c (see the case_relate block), so
+    // what keeps a DELETE off these two addresses is now the intake matchers'
+    // own ['POST'] lists, not the gate. GET remains gate-dropped, and that is
+    // the load-bearing half: every subscriber answers with a GET.
     const w = mkWindow();
     const seen = [];
     ['case:*', 'contact:*'].forEach(a => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
     w.YC._sniff('GET',    '/api/cases/AAAA/merge',  { status: 'success', data: { dry_run: false, survivor_id: 'AAAA' } });
     w.YC._sniff('DELETE', '/api/intake/contact',    { status: 'success', action: 'created', id: 1 });
     expect(seen).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — case ↔ contact links (case_relate), Slice 3c
+//
+// The Primary contact is not a column on `cases`; it is the case_relate row
+// whose type is 'Primary'. So the case's client name and phone, its Cases-tab
+// row and its Kanban card headline all derive from a table the bus did not
+// watch until this slice — and changing a Primary wrote nothing to `cases`,
+// announced nothing, and left every other open surface naming the wrong person.
+//
+// This is also the app's FIRST SNIFFED DELETE, which is why _sniff's global
+// method gate had to be widened. The gate tests below are the other half.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — case_relate matcher', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('case:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  test('POST (attach) announces a marker addressed to the CASE', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // The real response is the service result; the getter never reads it — the
+    // URL names the entity whose readers care.
+    w.YC._sniff('POST', '/api/cases/AAAA/contacts',
+                { status: 'success', case_relate_id: 9, contact_id: 1001 });
+    expect(seen).toEqual([{
+      addr: 'case:AAAA',
+      fields: { yc_refetch: 1 },
+      origin: 'auto:POST /api/cases/AAAA/contacts',
+    }]);
+  });
+
+  test('PATCH (relate_type change) announces — the Primary swap', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/cases/AAAA/contacts/1001',
+                { status: 'success', message: 'Relation updated to Primary' });
+    expect(seen.map(s => s.addr)).toEqual(['case:AAAA']);
+    expect(seen[0].fields).toEqual({ yc_refetch: 1 });
+  });
+
+  test('DELETE (detach) announces — the destructive half, and the point of the gate widening', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('DELETE', '/api/cases/AAAA/contacts/1001',
+                { status: 'success', message: 'Contact removed from case' });
+    expect(seen.map(s => s.addr)).toEqual(['case:AAAA']);
+    expect(seen[0].fields).toEqual({ yc_refetch: 1 });
+  });
+
+  test('GET is silent — the listing route shares the path with the writers', () => {
+    // §3.6 in miniature: every reader answers these messages by re-reading the
+    // case, which hits exactly this path. If GET could sniff, the bus would eat
+    // the browser.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('GET', '/api/cases/AAAA/contacts',      { contacts: [] });
+    w.YC._sniff('GET', '/api/cases/AAAA/contacts/1001', { contacts: [] });
+    expect(seen).toEqual([]);
+  });
+
+  test('PUT is silent — the matcher names three verbs and PUT is not one', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PUT', '/api/cases/AAAA/contacts/1001', { status: 'success' });
+    expect(seen).toEqual([]);
+  });
+
+  test('the contactId segment is optional AND numeric-only', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // Both live shapes match…
+    w.YC._sniff('POST',   '/api/cases/AAAA/contacts',      { status: 'success' });
+    w.YC._sniff('DELETE', '/api/cases/AAAA/contacts/7',    { status: 'success' });
+    expect(seen.length).toBe(2);
+    // …and a deeper or non-numeric path does not. `contactId` is read with
+    // parseInt-free `req.params.contactId` against an integer PK column;
+    // widening this to [^/]+ would let a future sub-resource announce as if it
+    // were a link change.
+    seen.length = 0;
+    w.YC._sniff('DELETE', '/api/cases/AAAA/contacts/7/notes', { status: 'success' });
+    w.YC._sniff('PATCH',  '/api/cases/AAAA/contacts/abc',     { status: 'success' });
+    expect(seen).toEqual([]);
+  });
+
+  test('it does not shadow — or get shadowed by — the other four case matchers', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // The bare case matcher is anchored, so it cannot swallow /contacts…
+    w.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: { case_stage: 'Filed' } } });
+    // …and /contacts cannot swallow /docket, /merge or /pipeline/advance.
+    w.YC._sniff('PATCH', '/api/cases/AAAA/docket',           { changes: { case_number: '24-1' } });
+    w.YC._sniff('POST',  '/api/cases/AAAA/pipeline/advance', { changes: { pipeline_phase: 'case' } });
+    expect(seen.map(s => s.fields)).toEqual([
+      { case_stage: 'Filed' },
+      { case_number: '24-1' },
+      { pipeline_phase: 'case' },
+    ]);
+  });
+
+  test('a relate change crosses windows — the case open elsewhere hears it', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = [];
+    b.YC.on('case:AAAA', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    a.YC._sniff('PATCH', '/api/cases/AAAA/contacts/1001', { status: 'success' });
+    await settle();
+    expect(seenB).toEqual([{ addr: 'case:AAAA', fields: { yc_refetch: 1 } }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — booking link (Slice 3c)
+//
+// One of the few writes that can honestly carry its own change: contact_token
+// IS the column and the response IS the written value, so a contact file merges
+// it with no refetch at all.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — booking-link matcher', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('contact:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f }));
+    return seen;
+  }
+
+  test('a minted token announces the REAL VALUE, not a marker', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link',
+                { success: true, token: 'deadbeefcafe' });
+    expect(seen).toEqual([{
+      addr: 'contact:1001',
+      fields: { contact_token: 'deadbeefcafe' },
+    }]);
+  });
+
+  test('FAILS CLOSED on a missing, empty or non-string token', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link', { success: true });
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link', { success: true, token: '' });
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link', { success: true, token: null });
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link', { success: true, token: 123 });
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link', null);
+    expect(seen).toEqual([]);
+  });
+
+  test('POST-only, and the anchored contacts matcher does not swallow the path', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/1001/booking-link', { success: true, token: 'x' });
+    w.YC._sniff('GET',   '/api/contacts/1001/booking-link', { success: true, token: 'x' });
+    expect(seen).toEqual([]);
+    // And the bare contacts matcher still owns its own path, unchanged.
+    w.YC._sniff('PATCH', '/api/contacts/1001', { data: { changes: { contact_fname: 'A' } } });
+    expect(seen).toEqual([{ addr: 'contact:1001', fields: { contact_fname: 'A' } }]);
+  });
+
+  test('MINT AND RETURN ARE INDISTINGUISHABLE — accepted, pinned', () => {
+    // All three success branches of the route return the same
+    // {success:true, token}: already had one, minted one, lost the mint race
+    // and re-read the winner's. A get-or-mint that WROTE NOTHING therefore
+    // announces too. Harmless by idempotence — a contact file merges a value it
+    // already holds — but it does cost the shell's Contacts tab a wildcard
+    // refetch. If this ever needs fixing, fix it at the ROUTE (echo a `minted`
+    // flag); a getter cannot tell them apart, and this test says so.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link', { success: true, token: 'same' });
+    w.YC._sniff('POST', '/api/contacts/1001/booking-link', { success: true, token: 'same' });
+    expect(seen.length).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — the method gate after Slice 3c
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — method gate', () => {
+  test('GET and HEAD never reach a matcher — this is what makes §3.6 structural', () => {
+    const w = mkWindow();
+    const seen = [];
+    ['case:*', 'contact:*', 'setting:*', 'appt:*', 'event:*'].forEach(a =>
+      w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    for (const m of ['GET', 'HEAD', 'OPTIONS']) {
+      w.YC._sniff(m, '/api/cases/AAAA',                  { data: { changes: { a: 1 } } });
+      w.YC._sniff(m, '/api/cases/AAAA/contacts/1',       { status: 'success' });
+      w.YC._sniff(m, '/api/contacts/1/booking-link',     { success: true, token: 't' });
+    }
+    expect(seen).toEqual([]);
+  });
+
+  test('DELETE now passes the GATE and is stopped only by per-matcher verb lists', () => {
+    // The distinction matters: before 3c the gate was the whole defence, and
+    // widening it would have opened every matcher that omitted a verb list.
+    // Every matcher names its verbs now, so the gate can admit DELETE without
+    // admitting it anywhere it is not wanted.
+    const w = mkWindow();
+    const seen = [];
+    ['case:*', 'contact:*', 'setting:*'].forEach(a => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    w.YC._sniff('DELETE', '/api/cases/AAAA',            { data: { changes: { case_stage: 'Filed' } } });
+    w.YC._sniff('DELETE', '/api/contacts/5',            { data: { changes: { contact_fname: 'B' } } });
+    w.YC._sniff('DELETE', '/api/cases/AAAA/docket',     { changes: { case_number: '24-1' } });
+    w.YC._sniff('DELETE', '/api/app-settings/fe-x',     { setting: { key: 'fe-x', value: 'v' } });
+    expect(seen).toEqual([]);
+    // …and the one path that DOES want it.
+    w.YC._sniff('DELETE', '/api/cases/AAAA/contacts/1', { status: 'success' });
+    expect(seen).toEqual(['case:AAAA']);
+  });
+
+  test('A VERB MISS CONTINUES THE SCAN, it does not end it', () => {
+    /* LOW-2. `_sniff` used to `return` when a matcher matched the path but
+       rejected the verb, which quietly made the FIRST path-match authoritative
+       for every verb. Inert today — no two matchers share a path, so the scan
+       finds nothing either way — and that is exactly why it was safe to change
+       now rather than on the day two matchers do share one and the first
+       silently eats the second's traffic.
+
+       Observable proof that the loop keeps going: a verb-rejected match must
+       not stop a LATER matcher from being reached in the same call. The two
+       app-settings matchers are the closest thing the table has to overlapping
+       paths — `POST /api/app-settings` is rejected by the PUT-only per-key
+       matcher's sibling ordering — so this asserts the general property
+       instead: every matcher is still reachable for its own verb after a
+       neighbour has rejected one. */
+    const w = mkWindow();
+    const seen = [];
+    ['setting:*', 'appt:*', 'case:*'].forEach(a => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    // PATCH on the PUT-only per-key settings matcher: rejected, scan continues,
+    // nothing else matches → silence, no throw.
+    w.YC._sniff('PATCH', '/api/app-settings/fe-x', { setting: { key: 'fe-x', value: 'v' } });
+    expect(seen).toEqual([]);
+    // The very next call on the same window still reaches every other matcher.
+    w.YC._sniff('PUT',   '/api/app-settings/fe-x', { setting: { key: 'fe-x', value: 'v' } });
+    w.YC._sniff('PATCH', '/api/appts/55',          { status: 'success' });
+    w.YC._sniff('POST',  '/api/cases/AAAA/contacts', { status: 'success' });
+    expect(seen).toEqual(['setting:fe-x', 'appt:55', 'case:AAAA']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The auto-emit circuit breaker (Slice 3c)
+//
+// WHY IT EXISTS, since the code it defends against is not in this repo:
+//
+// A form's per-form `code` hook lives in the DATABASE. Those hooks run inside
+// YCForm.refresh(), which runs inside a bus-triggered form push — so a hook that
+// WRITES is a handler that emits, one indirection away from §3.6, and no amount
+// of reading public/ can prove none does. An idempotent hook-write terminates by
+// itself (the second identical PATCH diffs empty and `emit` drops it); a
+// value-varying one — a timestamp, a counter, a re-derive that never settles —
+// would not.
+//
+// The breaker caps that and any future loop of any shape. It is deliberately on
+// the SNIFF path only: YC.emit call sites are hand-placed and auditable.
+// ─────────────────────────────────────────────────────────────
+
+describe('auto-emit circuit breaker', () => {
+  /** Sniff a matched PATCH n times against one case, collecting emits + warns. */
+  function hammer(w, n, addr = 'AAAA') {
+    for (let i = 0; i < n; i++) {
+      // A CHANGING value each time — the pathological shape. An unchanging one
+      // would be dropped by emit's empty-changes guard and never reach here.
+      w.YC._sniff('PATCH', `/api/cases/${addr}`,
+                  { data: { changes: { case_status: 'v' + i } } });
+    }
+  }
+
+  function watch(w) {
+    const seen = [];
+    const warns = [];
+    w.YC.on('case:*', '*', (f, m) => seen.push(m.addr));
+    w.console.warn = (...a) => warns.push(a.join(' '));
+    return { seen, warns };
+  }
+
+  test('EIGHT get through, the ninth is dropped, and it warns once', () => {
+    const w = mkWindow();
+    const { seen, warns } = watch(w);
+    hammer(w, 9);
+    expect(seen.length).toBe(8);
+    expect(warns.length).toBe(1);
+    expect(warns[0]).toMatch(/case:AAAA/);
+    expect(warns[0]).toMatch(/rate limit/i);
+  });
+
+  test('it keeps dropping past the threshold, and does NOT keep warning', () => {
+    // One warn per address per window. A loop firing hundreds of times a second
+    // must not turn the console into the second problem.
+    const w = mkWindow();
+    const { seen, warns } = watch(w);
+    hammer(w, 40);
+    expect(seen.length).toBe(8);
+    expect(warns.length).toBe(1);
+  });
+
+  test('IT IS PER-ADDRESS — a different case in the same window is untouched', () => {
+    // The whole reason it is keyed on the address: a bulk action announcing
+    // fifty different cases is legitimate traffic and must not be capped.
+    const w = mkWindow();
+    const { seen } = watch(w);
+    hammer(w, 12, 'AAAA');          // trips
+    hammer(w, 3,  'BBBB');          // well under
+    expect(seen.filter(a => a === 'case:AAAA').length).toBe(8);
+    expect(seen.filter(a => a === 'case:BBBB').length).toBe(3);
+  });
+
+  test('THE WINDOW EXPIRES — a tripped address recovers, and warns again', () => {
+    // Real time is not available here (the window is 4s), so the clock is moved
+    // instead. THE STUB MUST GO ON THE JSDOM WINDOW: yc-sync is evaluated inside
+    // `w`, so its `Date.now` resolves against `w.Date`, not Node's. Stubbing
+    // Node's global does nothing and the test passes vacuously in the wrong
+    // direction — it was written that way first and this comment is the scar.
+    const w = mkWindow();
+    const { seen, warns } = watch(w);
+    const realNow = w.Date.now;
+    let t = realNow();
+    w.Date.now = () => t;
+    try {
+      hammer(w, 9);
+      expect(seen.length).toBe(8);
+      expect(warns.length).toBe(1);
+
+      t += 5000;                    // past BREAKER_WINDOW_MS
+      hammer(w, 9);
+      expect(seen.length).toBe(16); // eight more got through
+      expect(warns.length).toBe(2); // and the second trip warns again
+    } finally {
+      w.Date.now = realNow;
+    }
+  });
+
+  test('EXPLICIT YC.emit IS EXEMPT — hand-placed call sites are auditable', () => {
+    // checklistView.saveBody is the one explicit emitter in the system. Capping
+    // it would mean a user who edits one note nine times in four seconds stops
+    // syncing, which is a real thing a fast typist with autosave can do.
+    const w = mkWindow();
+    const { seen, warns } = watch(w);
+    for (let i = 0; i < 30; i++) {
+      w.YC.emit('case:AAAA', { case_notes: 'draft ' + i }, 'checklistView:saveBody');
+    }
+    expect(seen.length).toBe(30);
+    expect(warns).toEqual([]);
+  });
+
+  test('an emit the breaker DROPPED does not reach the log either', () => {
+    // _log is the traceability answer; a dropped message never happened, so it
+    // must not appear there and imply that it did.
+    const w = mkWindow();
+    watch(w);
+    hammer(w, 20);
+    expect(w.YC._log.filter(m => m.addr === 'case:AAAA').length).toBe(8);
+  });
+
+  test('EMPTY-CHANGES CALLS DO NOT SPEND THE BUDGET', () => {
+    // A matcher that keeps announcing nothing must not exhaust the allowance a
+    // real message would need. The empty check runs before the breaker sees the
+    // address.
+    const w = mkWindow();
+    const { seen, warns } = watch(w);
+    for (let i = 0; i < 20; i++) {
+      w.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: {} } });
+    }
+    expect(seen).toEqual([]);
+    hammer(w, 8);                   // the full allowance is still there
+    expect(seen.length).toBe(8);
+    expect(warns).toEqual([]);
+  });
+
+  test('the breaker does not leak across windows', async () => {
+    // Per-frame state. Two browser tabs each get their own budget, which is
+    // correct: the loop this defends against is per-frame.
+    const a = mkWindow();
+    const b = mkWindow();
+    a.console.warn = () => {};
+    b.console.warn = () => {};
+    const seenB = [];
+    b.YC.on('case:*', '*', (f, m) => seenB.push(m.addr));
+    for (let i = 0; i < 20; i++) {
+      a.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: { case_status: 'v' + i } } });
+    }
+    await settle();                 // BroadcastChannel delivery is async
+    // b heard a's first eight over the wire — the cap applied at the SENDER…
+    expect(seenB.filter(x => x === 'case:AAAA').length).toBe(8);
+    // …and b's OWN budget is untouched.
+    for (let i = 0; i < 8; i++) {
+      b.YC._sniff('PATCH', '/api/cases/BBBB', { data: { changes: { case_status: 'x' + i } } });
+    }
+    expect(seenB.filter(x => x === 'case:BBBB').length).toBe(8);
   });
 });

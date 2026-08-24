@@ -1782,6 +1782,14 @@ processing();
 
    Registered outside the boot IIFE so a failed initial load leaves the page
    deaf-but-recoverable rather than permanently unsubscribed. */
+
+/* A `yc_refetch` arrived while this page was off screen (Slice 3c). Flushed by
+   ycRefreshIfStale() at the foot of this file. Declared above its only writer
+   rather than beside apptEventStale: `let` does not hoist, and a flag
+   referenced 100 lines before its declaration is a temporal-dead-zone throw
+   waiting for the first message that lands during evaluation. */
+let entityStale = false;
+
 YC.on(`contact:${clientID}`, '*', (fields) => {
   /* RESERVED FIELD — the one sanctioned invalidation (design §3.1 amendment,
      v2.2). A cross-contact transfer ENDED a phone/email row on this contact:
@@ -1798,8 +1806,21 @@ YC.on(`contact:${clientID}`, '*', (fields) => {
      Note the guard order: this runs BEFORE the `!entityData.contact` bail, so a
      page whose initial load failed still answers a refetch rather than staying
      deaf. §3.6 holds — the refetch is a GET, which the sniff's method gate
-     drops before any matcher runs, so this cannot loop. */
-  if ('yc_refetch' in fields) { window.ycRefreshEntity(); return; }
+     drops before any matcher runs, so this cannot loop.
+
+     VISIBILITY-FENCED (Slice 3c), around the NETWORK CALL only. A contact file
+     parked behind another file, or sitting in a background browser window, was
+     answering every transfer and every intake upsert with a full contact GET —
+     a round-trip per write, per open file, per window, to redraw a page nobody
+     could see. Deferred to ycRefreshIfStale() at the foot of this file, which
+     runs when the page comes back on screen. One flag is enough here: unlike
+     case.html this page has no pipeline widget, so the refetch is the only
+     network call this subscriber can make. */
+  if ('yc_refetch' in fields) {
+    if (!pageVisible()) { entityStale = true; return; }
+    window.ycRefreshEntity();
+    return;
+  }
 
   const c = window.entityData.contact;
   if (!c) return;
@@ -1898,15 +1919,30 @@ YC.on('event:*', '*', () => {
    Both run the same stale check, and both go through pageVisible(). The
    visibility guard is not redundant on the visibilitychange path: returning to
    the browser window while this file sits behind ANOTHER file would otherwise
-   spend apptEventStale on tables nobody can see, and the later
-   ycBecameVisible would find nothing to do. */
-function apptEventRefreshIfStale() {
-  if (!apptEventStale || !pageVisible()) return;
-  apptEventStale = false;
-  refreshAppts();
-  refreshEvents();
+   spend the flags on surfaces nobody can see, and the later ycBecameVisible
+   would find nothing to do.
+
+   ── ONE FLUSH, TWO FLAGS (Slice 3c) ─────────────────────────────────────────
+   This was `apptEventRefreshIfStale` and it opened with
+   `if (!apptEventStale …) return;`. Adding `entityStale` beside it under that
+   shape would have STRANDED it: a page that went stale on a transfer but not on
+   an appointment would come back on screen, hit the early return, and never
+   refetch. The guard is therefore per-flag, with visibility the only thing
+   checked up front. case.html carries the same shape with three flags. */
+function ycRefreshIfStale() {
+  if (!pageVisible()) return;
+
+  if (entityStale) {
+    entityStale = false;
+    window.ycRefreshEntity();
+  }
+  if (apptEventStale) {
+    apptEventStale = false;
+    refreshAppts();
+    refreshEvents();
+  }
 }
-window.ycBecameVisible = apptEventRefreshIfStale;
-document.addEventListener('visibilitychange', apptEventRefreshIfStale);
+window.ycBecameVisible = ycRefreshIfStale;
+document.addEventListener('visibilitychange', ycRefreshIfStale);
 
 </script>

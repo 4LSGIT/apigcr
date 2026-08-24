@@ -84,6 +84,26 @@
  * as app_settings holds it (JSON-stringified for structured settings).
  * Consumers parse; the bus does not. See applyFeSetting in scripts.js, which
  * mirrors /api/firm-data's fe-* semantics for the frontend settings map.
+ *
+ * ── WHAT THE SNIFF CANNOT SEE (the carve-out list, v2.5) ────────────────────
+ *
+ * `_sniff` is called from ONE place: the success-return point of index.html's
+ * `apiSend`. Three paths reach the server without passing it, and all three are
+ * silent with no error anywhere:
+ *
+ *   1. `apiSend`'s 204 return          — above the hook (see the comment there)
+ *   2. `apiSend`'s responseType fork   — 'blob' / 'text' / 'response', likewise
+ *   3. EXTERNAL-MODE YCForm            — `YCForm._api` (public/js/yc-forms.js
+ *      :2021) forks on `config.external` and issues a bare
+ *      `fetch(config.baseUrl + url)`, never touching `apiSend` at all. Public
+ *      form submissions therefore announce nothing. Correct today (an external
+ *      submission writes `form_submissions`, not case/contact scalars, and no
+ *      external frame subscribes anyway — design §6), but it is a THIRD
+ *      sniff-blind transport, not a variant of the first two: widening the
+ *      hook inside apiSend would not reach it.
+ *
+ * Plus the standing one: SERVER-SIDE writers (workflows, court pipeline,
+ * sequences, Cloud Tasks) never involve a browser. That is Slice 4's whole job.
  */
 (function () {
   'use strict';
@@ -102,6 +122,87 @@
 
   var bc = null;
   var warnedNoBc = false;
+
+  /* ── AUTO-EMIT CIRCUIT BREAKER (Slice 3c) ──────────────────────────────────
+     A rate limit on the SNIFF path only. `YC.emit` is exempt: those call sites
+     are hand-placed and auditable (there is one, checklistView.saveBody).
+     The auto path is not auditable the same way, and here is the specific
+     reason it needs a floor rather than a review:
+
+       A form's per-form `code` hook lives in the DATABASE, not the repo. Those
+       hooks run inside `form.refresh()`, which runs inside a bus-triggered form
+       push — so a hook that WRITES is a handler that emits, one indirection
+       away from §3.6, and no amount of reading public/ can prove none does.
+       An idempotent hook-write self-terminates (the second identical PATCH
+       diffs empty and `emit` drops it). A value-varying one — a timestamp, a
+       counter, a re-derive that never settles — would not.
+
+     The breaker caps that, and any future loop of any shape, generically. It is
+     preferred over the obvious alternative (a suppress-the-sniff flag held
+     around each push window) because a flag cannot tell a loop from a
+     legitimate cross-frame write that happens to land inside the window, and
+     would swallow the second kind to stop the first. This never does: under the
+     threshold it is invisible, and over it the only thing lost is the tail of a
+     burst that was already pathological.
+
+     Tuned well above human speed and well below a runaway: eight auto-emits to
+     ONE address inside four seconds. A rapid human editing one case does not
+     reach it (each field is one emit and a save takes a second); a loop reaches
+     it in a few hundred milliseconds. Per-ADDRESS, so a genuine burst across
+     many rows (a bulk action announcing fifty different cases) is unaffected. */
+  var BREAKER_MAX_EMITS = 8;
+  var BREAKER_WINDOW_MS = 4000;
+  var breakerHits   = Object.create(null);   // addr -> [timestamp, …] in window
+  var breakerWarned = Object.create(null);   // addr -> true while tripped
+
+  /**
+   * Should this AUTO emit be allowed through?
+   *
+   * @param   {string} addr
+   * @returns {boolean} false → drop it (and warn, once per addr per window)
+   */
+  function breakerAllows(addr) {
+    var now = Date.now();
+    var hits = breakerHits[addr];
+    if (!hits) hits = breakerHits[addr] = [];
+
+    // Prune the window. Timestamps are pushed in order, so a shift-from-front
+    // walk is enough.
+    while (hits.length && (now - hits[0]) > BREAKER_WINDOW_MS) hits.shift();
+    // Window fully expired → the address is forgiven, and a later trip warns
+    // again rather than staying silent forever.
+    if (!hits.length) delete breakerWarned[addr];
+
+    if (hits.length >= BREAKER_MAX_EMITS) {
+      if (!breakerWarned[addr]) {
+        breakerWarned[addr] = true;
+        console.warn('[yc-sync] auto-emit rate limit hit for ' + addr +
+                     ' (>' + BREAKER_MAX_EMITS + ' in ' + BREAKER_WINDOW_MS +
+                     'ms) — dropping further sniffed emits to this address. ' +
+                     'Something is probably writing in a loop.');
+      }
+      return false;
+    }
+
+    hits.push(now);
+    return true;
+  }
+
+  /**
+   * The sniff's emit. Identical to `YC.emit` except that it is rate-limited.
+   *
+   * The empty-fields check is done HERE, before the breaker sees the address,
+   * so a matcher that keeps announcing nothing cannot spend the budget that a
+   * real message would need. (`emit` drops empties too — this is the same
+   * guard, moved earlier, not a second one.)
+   */
+  function autoEmit(addr, changes, origin) {
+    if (!addr) return;
+    var fields = normalize(changes);
+    if (!Object.keys(fields).length) return;
+    if (!breakerAllows(String(addr))) return;
+    YC.emit(addr, fields, origin);
+  }
 
   /**
    * Normalize a changes object to `{field: newValue}`.
@@ -215,8 +316,20 @@
     emit: function (addr, changes, origin) {
       if (!addr) return;
       var fields = normalize(changes);
-      // Nothing changed → nothing to say. This is the guard that keeps a
-      // no-op PATCH (same value written twice) off the bus entirely.
+      /* Nothing changed → nothing to say. This is the guard that keeps a no-op
+         PATCH (same value written twice) off the bus entirely.
+
+         IT ALSO SWALLOWS A NARROW CLASS OF REAL WRITES, and that is worth
+         knowing rather than rediscovering: `changes` is built by
+         domainEvents.buildChanges, which compares through `_diffNorm` —
+         and `_diffNorm` TRIMS. Saving `"Filed "` over `"Filed"` writes the
+         database and produces an empty diff, so the bus says nothing and a
+         second frame keeps showing the untrimmed value until it reloads.
+         Whitespace-only edits, in other words. Left alone deliberately: the
+         normalization is the producer's, it is right for the trigger system it
+         was written for, and a whitespace-only difference is not a difference
+         anyone is looking at. Fix it at `_diffNorm` if it ever matters, never
+         by loosening this guard. */
       if (!Object.keys(fields).length) return;
 
       var msg = {
@@ -322,10 +435,19 @@
      */
     _sniff: function (method, endpoint, body) {
       var m = String(method || '').toUpperCase();
-      // PUT admitted for Slice 2 (app-settings is a PUT route). The gate is
-      // still a gate: GET/DELETE/HEAD never reach a matcher, and a matcher may
-      // narrow further via its own optional method list (see MATCHERS).
-      if (m !== 'PATCH' && m !== 'POST' && m !== 'PUT') return;
+      /* PUT admitted for Slice 2 (app-settings is a PUT route). DELETE admitted
+         for Slice 3c, and that was a DELIBERATE ACT, not a loosening:
+         `DELETE /api/cases/:id/contacts/:contactId` is the app's first sniffed
+         write that is a delete, and the Slice-3 test that pinned "DELETE
+         reaches no matcher" said in as many words that the GATE, not the
+         matcher, would be the thing to change. This is that change.
+
+         The gate is still a gate — GET and HEAD never reach a matcher, which is
+         what makes §3.6 structural: every subscriber answers with a GET, and a
+         GET can never announce. Below the gate, EVERY matcher now names its own
+         verbs (the 4th element), so admitting a verb here can no longer widen
+         anything by accident: a matcher opts in or it does not run. */
+      if (m !== 'PATCH' && m !== 'POST' && m !== 'PUT' && m !== 'DELETE') return;
 
       // STRIP THE QUERY STRING before matching. The 409 cross-contact
       // transfer retries as `PATCH /api/contacts/:id?force=true`
@@ -341,7 +463,14 @@
         // Absent = the global gate above is the whole rule (the original four,
         // which are PATCH/POST endpoints and have no other verb).
         var methods = MATCHERS[i][3];
-        if (methods && methods.indexOf(m) === -1) return;
+        /* CONTINUE, NOT RETURN (Slice 3c). A matcher that matches the PATH but
+           rejects the VERB is not an answer — it is a matcher that does not
+           apply, and the scan should carry on to one that might. Inert today
+           (no two matchers share a path, so the next iteration finds nothing
+           either) and it is exactly that fact which makes changing it safe now
+           rather than on the day a second matcher is added to a path and the
+           first one silently eats its traffic. */
+        if (methods && methods.indexOf(m) === -1) continue;
         var type = MATCHERS[i][1];
         // hit[1] is `undefined` for a capture-less matcher (POST /api/app-settings).
         // Such a matcher MUST return the array shape and supply its own addrs.
@@ -356,25 +485,37 @@
           for (var e = 0; e < out.length; e++) {
             var ent = out[e];
             if (!ent || typeof ent !== 'object' || !ent.addr) continue;
-            // emit() drops a message whose fields normalize to empty, so the
+            // autoEmit drops a message whose fields normalize to empty, so the
             // per-entry empty check is that same guard, not a second one.
-            YC.emit(ent.addr, ent.fields, origin);
+            autoEmit(ent.addr, ent.fields, origin);
           }
           return;
         }
 
         if (!Object.keys(out).length) return;
-        YC.emit(type + ':' + id, out, origin);
+        autoEmit(type + ':' + id, out, origin);
         return;
       }
     },
   };
 
-  /* Endpoint -> (type, where the diff lives in the response[, methods]).
+  /* Endpoint -> (type, where the diff lives in the response, methods).
      Order matters only in that the bare `/api/cases/:id` pattern is anchored
-     ($), so it cannot swallow /docket or /pipeline/advance. */
+     ($), so it cannot swallow /docket, /pipeline/advance or /contacts.
+
+     THE 4th ELEMENT IS NOW MANDATORY IN PRACTICE (Slice 3c). The four Slice-1
+     matchers used to omit it and lean on the global method gate — which was
+     fine while that gate was PATCH/POST/PUT, and stopped being fine the moment
+     the gate had to admit DELETE for the case_relate matcher below. An omitted
+     list means "whatever the gate allows", which is a coupling that turns every
+     future gate widening into a silent widening of these four. Verified against
+     the routes 2026-08-24: `PATCH /api/cases/:id` (api.cases.js:86),
+     `PATCH /api/contacts/:id` (api.contacts.js:135),
+     `PATCH /api/cases/:id/docket` (api.cases.js:169),
+     `POST /api/cases/:id/pipeline/advance` (api.pipeline.js:57) — no other verb
+     exists on any of the four (GET aside, which the gate drops). */
   var MATCHERS = [
-    [/^\/api\/cases\/([A-Za-z0-9_-]+)$/,                    'case',    function (r) { return r && r.data && r.data.changes; }],
+    [/^\/api\/cases\/([A-Za-z0-9_-]+)$/,                    'case',    function (r) { return r && r.data && r.data.changes; }, ['PATCH']],
     /* Contacts. TWO entities can change in one response, so this is the array
        shape (getter contract v2).
 
@@ -423,9 +564,69 @@
       }
 
       return out;
-    }],
-    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/docket$/,            'case',    function (r) { return r && r.changes; }],
-    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/advance$/, 'case',    function (r) { return r && r.changes; }],
+    }, ['PATCH']],
+    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/docket$/,            'case',    function (r) { return r && r.changes; }, ['PATCH']],
+    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/advance$/, 'case',    function (r) { return r && r.changes; }, ['POST']],
+
+    /* CASE ↔ CONTACT LINKS (Slice 3c). `case_relate` — who is attached to this
+       case and in what role. Four verbs, ONE matcher, because every write to
+       this family has the same consequence for every open surface:
+
+         POST   /api/cases/:id/contacts               attach a contact
+         PATCH  /api/cases/:id/contacts/:contactId    change the relate_type
+         DELETE /api/cases/:id/contacts/:contactId    detach
+
+       (`GET` is the fourth route and the gate drops it before we get here.)
+
+       ── WHY THIS MATTERS MORE THAN IT LOOKS ────────────────────────────────
+       The PRIMARY contact is not a column on `cases` — it is the case_relate
+       row whose type is 'Primary'. So the case's client name and phone, the
+       Cases-tab row, the Kanban card's headline and every "who is this case
+       about" surface in the app all derive from a table the bus did not watch.
+       Changing a Primary from one contact to another wrote nothing to `cases`,
+       announced nothing, and left every other open surface naming the wrong
+       person until its next full load.
+
+       A MARKER, not values, and there is no honest alternative: `PATCH` returns
+       `{status, message}`, `DELETE` returns `{status, message}`, and `POST`
+       returns the service result — none of them the case's new client list, and
+       "who is Primary now" is a query over the table rather than a column
+       anybody could carry. The URL names the case, which is the entity whose
+       readers care.
+
+       DELETE IS THE POINT. Detaching is the destructive half and the half a
+       stale surface renders most wrongly (a removed client keeps showing). It
+       is also the app's first sniffed DELETE, which is why `_sniff`'s global
+       gate was widened for this slice — see the comment there. */
+    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/contacts(?:\/\d+)?$/, 'case',   markerGetter, ['POST', 'PATCH', 'DELETE']],
+
+    /* BOOKING LINK (Slice 3c). `POST /api/contacts/:id/booking-link` mints
+       `contacts.contact_token` when the contact has none and returns it either
+       way (routes/booking.js:972). Callers: bookingviewsmanager's link helper,
+       videoManager's insert dialog, and js/videoInsert.js on every video send.
+
+       REAL VALUES, not a marker — one of the few writes that can honestly carry
+       its own change. `contact_token` IS the column, and the response IS the
+       written value, so `{contact_token: token}` merges into `entityData.contact`
+       on any open contact file and the page is correct with no refetch at all.
+
+       ── MINT AND RETURN ARE INDISTINGUISHABLE. ACCEPTED. ───────────────────
+       All three success branches (already had one, minted one, lost the mint
+       race and re-read the winner's) return the same `{success:true, token}`.
+       A get-or-mint that WROTE NOTHING therefore announces too. Harmless by
+       idempotence — a contact file merges a value it already holds and paints
+       nothing — but it does cost the shell's Contacts tab a refetch on the
+       `contact:*` wildcard. Left as-is deliberately: distinguishing them needs a
+       route change (echo a `minted` flag) for a saving of one list fetch on a
+       button nobody presses in a loop. Revisit with the route, not here.
+
+       Fails closed on a missing or empty token, the `createGetter` rule: no
+       value, no message. */
+    [/^\/api\/contacts\/(\d+)\/booking-link$/, 'contact',
+      function (r) {
+        return (r && typeof r.token === 'string' && r.token) ? { contact_token: r.token } : null;
+      },
+      ['POST']],
 
     /* CASE MERGE (Slice 3b). `POST /api/cases/:survivor/merge` absorbs another
        case: every child record (appts, tasks, checklists, events, log rows,
@@ -740,9 +941,24 @@
   function mergeGetter(r) {
     var d = r && r.data;
     if (!d || typeof d !== 'object') return null;
-    // Strictly `false`: a truthy dry_run is a preview (nothing written) and a
-    // missing one is a shape change. Both stay silent.
-    if (d.dry_run !== false) return null;
+    /* TRUTHY, not strictly-false (changed Slice 3c). A truthy `dry_run` is a
+       preview and stays silent; a MISSING one now announces.
+
+       The old rule was `!== false`, which treated a lost key as a shape change
+       and went quiet. That is the wrong side of the asymmetry, and the two
+       failure modes are not comparable:
+
+         · a MISSING emit on a real merge reopens the exact HIGH this matcher
+           was added to close — a survivor absorbing another case, silently, on
+           every open surface, until someone reloads.
+         · a WRONG emit on a preview costs one idempotent refetch per open
+           surface. The refetch is correct data. Nobody sees a bug.
+
+       So the default for an unrecognised shape is now "announce". The dry-run
+       silence itself is unchanged and still deliberate — it is keyed on the
+       flag being THERE and true, which is what the producer actually sends
+       (caseService.mergeCases:1402, pinned by a producer test). */
+    if (d.dry_run) return null;
     var survivor = d.survivor_id;
     if (survivor == null || survivor === '') return null;
     return [{ addr: 'case:' + survivor, fields: { yc_refetch: 1 } }];
