@@ -121,9 +121,13 @@ the next person has to find it again.
 | `--logout-color` | `#d9534f` / `#ff7670` | `--danger` |
 | `--logout-hover-bg` | `#fdecea` / `#3a1f1f` | `--danger-soft` |
 
-`--header-h` changes **56px → 52px**. That is a real layout shift in the
-shell, not a no-op. It is the mockup's value and the compact direction, so
-take it — but take it knowingly, and eyeball the header after.
+**`--header-h` stays at 56px.** `theme.css` ships the shell's current value.
+The mockup's 52px is correct and is where this lands, but it is a metric
+change and moves in charter §8. Do not take it here.
+
+*(This paragraph previously said the opposite. It was written before the §0.1
+metric rule existed and was not propagated. The charter is authoritative; if
+these two ever disagree again, stop and report rather than picking one.)*
 
 ## 7. `--pb-*` — pipelineBoard.html
 

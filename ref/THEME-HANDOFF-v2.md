@@ -79,9 +79,16 @@ externally as the public form target. Its two vars (`--yc-ext-bg-from`,
 The single most important thing in this document. Every in-scope page falls
 into one of four families, and **the conversion recipe differs per family.**
 
-### Family C — already light + dark (6 pages)
+### Family C — already light + dark (5 pages)
 `index.html`, `pipelineBoard.html`, `tasks.html`, `customView.html`,
-`reports.html`, `dbConsole.html`
+`reports.html`
+
+*(`dbConsole.html` was listed here in the first cut of this charter and is
+wrong. The classifier matched `.dark {` inside a comment at dbConsole.html:135
+which says, verbatim, that the console has no light mode. Its `:root` is
+`--bg:#0f1117` — it is family B. Same false-positive class as the 44-vs-41
+`body.dark` count: **a grep for a CSS pattern also matches prose about that
+pattern.** Filter comments before trusting any count in this document.)*
 
 They have a light `:root` plus a `body.dark` override, and the first four
 already follow the shell live via a `window.top` MutationObserver. Converting
@@ -89,9 +96,9 @@ these is mostly renaming: the dual values collapse onto one token that already
 handles both modes. **Lowest risk — do these first**, and they prove the
 whole mechanism end to end.
 
-### Family B — dark-only today, will INVERT (12 pages)
+### Family B — dark-only today, will INVERT (13 pages)
 `apikeys.html`, `availabilitymanager.html`, `bookingviewsmanager.html`,
-`connections.html`, `formBuilder.html`, `issueReports.html`,
+`connections.html`, `dbConsole.html`, `formBuilder.html`, `issueReports.html`,
 `pageManager.html`, `readonlyKeys.html`, `redirects.html`, `settings.html`,
 `systemAlerts.html`, `users.html`
 
@@ -130,6 +137,43 @@ no mechanical shortcut and no punch list to grep for. Budget accordingly.
 `etch.html` has zero hexes and converts for free; `checklistView.html` (41),
 `campaign.html` (36) and `contact.html` (36) are the expensive ones.
 
+### Family E — `public/js/`, no HTML at all (6 files)
+
+Not in the first cut of this charter, and a real gap. These modules inject
+inline-styled UI that renders against themed surfaces. Unconverted, you get
+light-mode widgets sitting on dark pages.
+
+| file | uniq hex | JS-side dark reads |
+|---|---|---|
+| `public/scripts.js` | 32 | 0 |
+| `public/js/mascot.js` | 20 | 0 |
+| `public/js/reportCharts.js` | 16 | 3 |
+| `public/js/assetpicker.js` | 16 | 0 |
+| `public/js/videoInsert.js` | 11 | 0 |
+| `public/js/versionGuard.js` | 9 | 0 |
+
+`scripts.js` is the important one: the shell and 9 other pages load it, and it
+carries ContactPicker, the adopt dialog and the name-slot widget as
+inline-styled markup. Its colours are literals — family-D-style work.
+
+**`reportCharts.js` is different and urgent.** At :496–500 it reads tokens
+through `getComputedStyle`:
+
+```js
+text: cs.getPropertyValue("--muted").trim() || "#6b7280",
+grid: cs.getPropertyValue("--line").trim() || "#e5e7eb",
+dark: document.body.classList.contains("dark"),
+```
+
+`--muted` and `--line` are both deleted by `TOKEN-MAP.md`. The moment
+`reports.html` or `customView.html` converts, this silently falls back to its
+hardcoded light greys and paints them on a dark chart. **It cannot be caught
+by the `var(--` grep in §5** — `getPropertyValue("--muted")` is not `var(--muted)`.
+
+Both consumers are in family C, so the fix is coordinated inside slice 3.
+These are the only two such reads in the repo; `grep -rn getPropertyValue public/`
+confirms.
+
 ### Scope table
 
 | fam | page | orphans | uniq hex |
@@ -139,7 +183,7 @@ no mechanical shortcut and no punch list to grep for. Budget accordingly.
 | C | `index.html` | 8 | 45 |
 | C | `customView.html` | 5 | 21 |
 | C | `reports.html` | 5 | 21 |
-| C | `dbConsole.html` | 4 | 14 |
+| B | `dbConsole.html` | 4 | 14 |
 | B | `formBuilder.html` | 7 | 19 |
 | B | `settings.html` | 5 | 15 |
 | B | `connections.html` | 5 | 14 |
@@ -271,9 +315,22 @@ First thing in `<head>`, before any stylesheet and before any iframe:
   document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
 })();
 </script>
-<link rel="stylesheet" href="/theme.css">
-<link rel="stylesheet" href="/style.css">
 ```
+
+The inline script goes at the very top of `<head>`. **The stylesheet link does
+not** — insert `theme.css` immediately above the existing `style.css` line,
+wherever it sits, and change nothing else:
+
+```html
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" type="text/css" href="style.css" />
+```
+
+In `index.html` that is lines 82/83, after the Font Awesome CDN. Lifting
+`style.css` to the top of `<head>` to sit beside `theme.css` would flip its
+precedence against Font Awesome for no reason. The only requirement is
+`theme.css` **before** `style.css`, so `style.css` keeps winning on
+`body { font-family: Arial }`, which §0.1 is holding.
 
 This must be inline, not `themeSync.js`. The shell is the source of truth —
 it sets the attribute that every frame observes, so it cannot be waiting on a
@@ -329,15 +386,44 @@ theme: safe(() => document.documentElement.getAttribute('data-theme') || 'light'
 Works either way while the bridge is up; update it with §3.3 so it does not
 get orphaned.
 
-### 3.5 Header logo
+### 3.5 Header logo — its own commit, NOT slice 2
+
+The first cut of this charter put this in slice 2, next to an acceptance
+criterion demanding slice 2 be a visual no-op. Those contradict, and §0.1
+settles it: the logo moves pixels, so it does not ride along in the no-op
+commit.
+
+Measured in production terms:
+
+| | source | natural | at `height:40px` |
+|---|---|---|---|
+| now | `https://legalsolutions.group/assets/lsg-logo.webp` | 400×175 | **91×40** |
+| after | `/assets/icon-192.png` (local, 18,941 bytes) | 192×192 | **40×40** |
+
+Every header element shifts **51px left** at desktop, 41px at the narrow
+breakpoint (73×32 → 32×32).
+
+Keep the class; do not use an inline style:
 
 ```html
 <a href="https://app.4lsg.com/">
-  <img src="/assets/icon-192.png" alt="4LSG YisraCase" style="height:40px;width:auto">
+  <img class="hdr-logo" src="/assets/icon-192.png" alt="4LSG YisraCase">
 </a>
 ```
 
-`public/assets/icon-192.png` exists — verified, 18,941 bytes.
+`.hdr-logo` supplies `height:40px; width:auto` and `flex-shrink:0`
+(index.html:149) plus the narrow-viewport `height:32px` rule at :436. An
+inline `style="height:40px"` beats that media query and makes the logo 40px on
+mobile — a metric change, which §0.1 forbids.
+
+Two non-aesthetic points for whoever decides:
+
+- The current logo is a **cross-domain fetch on the critical header render**.
+  If `legalsolutions.group` is slow or down, the header shows broken-image alt
+  text. The swap removes that dependency.
+- `public/js/mascot.js:1004` binds its long-press to
+  `document.querySelector('.hdr-logo')`. Keeping the class keeps the easter
+  egg alive; dropping it silently kills it.
 
 ### 3.6 `--header-h` — leave at 56px
 
@@ -406,6 +492,11 @@ Run all five before committing:
 
 1. `grep -o 'var(--[a-zA-Z0-9_-]*' <page> | sort -u` — every name must exist
    in `theme.css`.
+1b. `grep -nE "getPropertyValue|classList.contains\(['\"]dark" <page>` — token
+   reads and theme branches **in JavaScript**, which step 1 cannot see. A
+   `getPropertyValue("--x")` on a token the page just deleted fails silently
+   into a hardcoded fallback rather than rendering wrong-and-obvious. Check any
+   shared module the page loads, not just the page.
 2. Open the page in the shell. Toggle. Both modes legible, nothing invisible,
    nothing transparent that should not be.
 3. If the page is nested (`automation/*`, `caseconfig/*`, `portaladmin/*`,
@@ -424,14 +515,16 @@ Run all five before committing:
 |---|---|---|
 | 1 | Add `theme.css` + `themeSync.js`. Purely additive, nothing references them yet | commit 1 |
 | 2 | Shell §3.1–3.2 + 3.5 + 3.6. Bridge keeps `body.dark` alive | commit 2 |
-| 3 | Family C, one page per commit. `dbConsole` → `customView` → `reports` → `tasks` → `pipelineBoard` (ascending orphan count) | per page |
+| 3 | Family C, one page per commit: `customView` → `reports` → `tasks` → `pipelineBoard`. Includes the `reportCharts.js` fix | per page |
 | 4 | Shell §3.3–3.4 — the 41 selectors + telemetry | commit |
 | 5 | **`apikeys.html` alone. Stop. Fred reviews the inversion.** | commit |
-| 6 | Family B, remaining 11 | per page |
+| 5b | Header logo §3.5 — own commit, own review | commit |
+| 6 | Family B, remaining 12 (incl. `dbConsole`) | per page |
 | 7 | Family A, 25 pages. Nearly identical `:root` — batch by directory | per directory |
 | 8 | Remove the legacy bridge from `applyTheme` | commit |
 | 9 | `style.css` hexes only — §7. Arial stays | commit |
 | 10 | Family D, 21 pages, ascending hex count | per page |
+| 10b | Family E, `public/js/` — 6 files, `scripts.js` last (highest reach) | per file |
 | 11 | Density pass — §8. Includes `--header-h` 56→52 and `style.css` Arial → `var(--ui)`, each its own commit | separate arc |
 
 Steps 1–2 revert as a pair. Everything after is independently revertible.
@@ -508,3 +601,8 @@ impossible to bisect.
   other eleven.
 - **Does it move a pixel? Then it is not this arc.** §0.1. This is the rule
   that resolves the borderline cases without escalating each one.
+- **A grep for a code pattern also matches prose about that pattern.** The
+  `body.dark` count and the family-C list were both wrong for this reason.
+  Filter comments before trusting a count — including the counts in this file.
+- **CSS greps do not see JavaScript.** Before declaring a page done, check the
+  shared modules it loads for `getPropertyValue` and `classList.contains('dark')`.
