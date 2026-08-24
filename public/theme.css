@@ -29,6 +29,14 @@
   --page-bg: #f6f7f9;
   --surface: #ffffff;
   --surface-2: #f1f3f6;
+  /* ADDED: a container that is recessed BELOW --page-bg in BOTH modes.
+     --surface-2 is a *contrast tone* next to --surface and it deliberately
+     flips direction by mode (recessed in light, raised in dark) because dark
+     mode has no room to go darker. That is fine for chips and striped rows,
+     and wrong for nesting: pipelineBoard puts cards inside column troughs, and
+     mapping the trough to --surface-2 makes cards sit ABOVE their column in
+     light and BELOW it in dark. Use this for any container a card sits inside. */
+  --surface-sunken: #f1f3f6;
 
   --sidebar-bg: #f7f8fa;
   --sidebar-sublist-bg: #eef0f3;
@@ -124,6 +132,7 @@ html[data-theme="dark"] {
   --page-bg: #131722;
   --surface: #1a1e2a;
   --surface-2: #202634;
+  --surface-sunken: #0e1119;   /* below --page-bg, so the trough stays a trough */
 
   --sidebar-bg: #1a1e2a;
   --sidebar-sublist-bg: #131722;

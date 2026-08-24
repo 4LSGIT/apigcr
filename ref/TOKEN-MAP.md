@@ -140,7 +140,7 @@ below; the mapping collapses them into one token that handles both.
 | `--pb-fg` | `#1e293b` | `#e6e8ee` | `--text` |
 | `--pb-muted` | `#999` | `#9aa3b2` | `--text-muted` |
 | `--pb-link` | `#1a73b7` | `#60a5fa` | `--accent` |
-| `--pb-col-bg` | `#f4f6f8` | `#1d2230` | `--surface-2` |
+| `--pb-col-bg` | `#f4f6f8` | `#1d2230` | `--surface-sunken` |
 | `--pb-col-border` | `#dde3e8` | `#2a313d` | `--border` |
 | `--pb-card-bg` | `#fff` | `#232a3a` | `--surface` |
 | `--pb-card-border` | `#d6dde4` | `#323b4d` | `--border` |
@@ -157,6 +157,13 @@ below; the mapping collapses them into one token that handles both.
 | `--pb-warm-fg` | `#a4700d` | `#e0b341` | `--warn` |
 | `--pb-input-bg` | `#fff` | `#1d2230` | `--surface` |
 | `--pb-input-border` | `#ccc` | `#2a313d` | `--border-strong` |
+
+**`--pb-col-bg` note:** it maps to `--surface-sunken`, **not** `--surface-2`.
+The column is a trough that cards sit inside, so it has to stay below
+`--surface` in both modes. `--surface-2` is a contrast tone whose direction
+flips by mode — using it here makes cards sit above their column in light and
+below it in dark. `--pb-chip-bg` still maps to `--surface-2`; a chip is a
+contrast tone, not a container.
 
 **`--pb-card-shadow` note:** it is a shadow *colour*, consumed as
 `box-shadow: 0 1px 2px var(--pb-card-shadow)`. `--shadow` is a complete
