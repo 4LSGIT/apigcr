@@ -118,3 +118,4 @@ Applied by `yc-forms.js` automatically:
 ## Responsive
 
 At 600px and below: `.yc-row` stacks vertically, width modifiers reset to full width, radio groups go vertical, tab bars become scrollable. Built into `yc-forms.css` — no configuration needed.
+
