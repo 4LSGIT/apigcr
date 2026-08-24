@@ -93,6 +93,7 @@ manual/01-YisraCase-overview/08-events.md
 manual/01-YisraCase-overview/09-users-and-staff.md
 manual/01-YisraCase-overview/10-sending-form.md
 manual/01-YisraCase-overview/11-campaign-manager.md
+manual/01-YisraCase-overview/12-sync-bus.md
 manual/01-YisraCase-overview/README.md
 manual/02-YisraForms/01-overview.md
 manual/02-YisraForms/02-creating-a-form.md

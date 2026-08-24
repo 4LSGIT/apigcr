@@ -23,6 +23,7 @@ independent: read the one matching the record you're working with.
 | 9 | [09-users-and-staff.md](09-users-and-staff.md) | Users — staff logins, auth levels, and how actions are attributed to a person |
 | 10 | [10-sending-form.md](10-sending-form.md) | The Sending Form — composing and sending messages and document requests to case contacts |
 | 11 | [11-campaign-manager.md](11-campaign-manager.md) | Campaign Manager — bulk SMS and email to filtered groups, personalization, scheduling |
+| 12 | [12-sync-bus.md](12-sync-bus.md) | The sync bus — how every open screen, frame, and browser window hears about data changes. Developer reference: what announces, who listens, the fences, and the honest list of what it doesn't cover |
 
 ---
 
