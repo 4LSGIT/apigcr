@@ -12,53 +12,14 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <style>
     /* pb- = pipeline board. Scoped page styles on top of style.css.
-       Theme: CSS vars, light defaults + body.dark overrides; the dark class
-       is inherited live from the shell (reports.html observer pattern). */
-    :root {
-      --pb-bg: #fff;
-      --pb-fg: #1e293b;
-      --pb-muted: #999;
-      --pb-col-bg: #f4f6f8;
-      --pb-col-border: #dde3e8;
-      --pb-card-bg: #fff;
-      --pb-card-border: #d6dde4;
-      --pb-card-shadow: rgba(0,0,0,0.06);
-      --pb-link: #1a73b7;
-      --pb-count: #26abe2;
-      --pb-count-un: #8a93a3;
-      --pb-chip-bg: #eef1f4;
-      --pb-chip-fg: #555;
-      --pb-days-bg: #e3f0e6;   --pb-days-fg: #2c7a3d;
-      --pb-warm-bg: #fdf0dc;   --pb-warm-fg: #a4700d;
-      --pb-hot-bg:  #fbe3e3;   --pb-hot-fg:  #b32222;
-      --pb-input-bg: #fff;
-      --pb-input-border: #ccc;
-    }
-    body.dark {
-      --pb-bg: #151a23;
-      --pb-fg: #e6e8ee;
-      --pb-muted: #9aa3b2;
-      --pb-col-bg: #1d2230;
-      --pb-col-border: #2a313d;
-      --pb-card-bg: #232a3a;
-      --pb-card-border: #323b4d;
-      --pb-card-shadow: rgba(0,0,0,0.35);
-      --pb-link: #60a5fa;
-      --pb-count: #2b7fb0;
-      --pb-count-un: #5b6472;
-      --pb-chip-bg: #2a313d;
-      --pb-chip-fg: #b8c0cc;
-      --pb-days-bg: #1e3325;   --pb-days-fg: #6fd08c;
-      --pb-warm-bg: #3a2f16;   --pb-warm-fg: #e0b341;
-      --pb-hot-bg:  #3a1d1d;   --pb-hot-fg:  #f08c8c;
-      --pb-input-bg: #1d2230;
-      --pb-input-border: #2a313d;
-    }
+       Theme: tokens come from /theme.css; /themeSync.js follows the shell. */
     html, body { height: 100%; }
-    body { margin: 0; padding: 12px; background: var(--pb-bg); color: var(--pb-fg); display: flex; flex-direction: column; box-sizing: border-box; }
+    body { margin: 0; padding: 12px; background: var(--page-bg); color: var(--text); display: flex; flex-direction: column; box-sizing: border-box; }
     /* Banner title row (matches the shell's other tabs). flex-shrink:0 keeps
        it off the board's flex:1 height budget. */
     .pb-title { margin: 0 0 8px; text-align: center; flex-shrink: 0; }
@@ -66,40 +27,40 @@
     .pb-top label { font-size: 13px; white-space: nowrap; cursor: pointer; }
     .pb-top select, .pb-top input[type="text"] {
       padding: 6px 8px; font-size: 13px;
-      background: var(--pb-input-bg); color: var(--pb-fg);
-      border: 1px solid var(--pb-input-border); border-radius: 4px;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: 4px;
     }
     .pb-spacer { flex: 1; }
-    .pb-refreshed { font-size: 11px; color: var(--pb-muted); }
+    .pb-refreshed { font-size: 11px; color: var(--text-muted); }
 
     #pb-board { flex: 1; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; align-items: stretch; padding-bottom: 6px; }
-    .pb-col { flex: 0 0 250px; display: flex; flex-direction: column; background: var(--pb-col-bg); border: 1px solid var(--pb-col-border); border-radius: 8px; max-height: 100%; }
-    .pb-col-head { padding: 8px 10px 6px; border-bottom: 1px solid var(--pb-col-border); flex-shrink: 0; }
+    .pb-col { flex: 0 0 250px; display: flex; flex-direction: column; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; max-height: 100%; }
+    .pb-col-head { padding: 8px 10px 6px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
     .pb-col-title { font-weight: bold; font-size: 13px; display: flex; align-items: center; gap: 6px; }
-    .pb-col-count { font-weight: normal; font-size: 11px; color: #fff; background: var(--pb-count); border-radius: 9px; padding: 0 7px; line-height: 17px; }
-    .pb-col.pb-unstaged .pb-col-count { background: var(--pb-count-un); }
-    .pb-col-client { font-size: 11px; color: var(--pb-muted); font-style: italic; min-height: 13px; }
+    .pb-col-count { font-weight: normal; font-size: 11px; color: #fff; background: var(--accent); border-radius: 9px; padding: 0 7px; line-height: 17px; }
+    .pb-col.pb-unstaged .pb-col-count { background: var(--text-muted); }
+    .pb-col-client { font-size: 11px; color: var(--text-muted); font-style: italic; min-height: 13px; }
     .pb-col-body { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
 
-    .pb-card { background: var(--pb-card-bg); border: 1px solid var(--pb-card-border); border-radius: 6px; padding: 7px 9px; margin-bottom: 7px; cursor: grab; box-shadow: 0 1px 2px var(--pb-card-shadow); }
+    .pb-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; margin-bottom: 7px; cursor: grab; box-shadow: var(--shadow); }
     .pb-card:active { cursor: grabbing; }
     .pb-card-name { font-weight: bold; font-size: 13px; }
-    .pb-card-name .pb-noname { color: var(--pb-muted); font-weight: normal; font-style: italic; }
-    .pb-card-num { font-size: 12px; color: var(--pb-link); }
+    .pb-card-name .pb-noname { color: var(--text-muted); font-weight: normal; font-style: italic; }
+    .pb-card-num { font-size: 12px; color: var(--accent); }
     .pb-card-num:hover { text-decoration: underline; }
-    .pb-card-open { font-size: 10px; color: var(--pb-muted); margin-top: 1px; }
+    .pb-card-open { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
     .pb-card-meta { margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-    .pb-chip { font-size: 10px; border-radius: 3px; padding: 1px 6px; background: var(--pb-chip-bg); color: var(--pb-chip-fg); }
-    .pb-chip-days { background: var(--pb-days-bg); color: var(--pb-days-fg); }
-    .pb-chip-days.warm { background: var(--pb-warm-bg); color: var(--pb-warm-fg); }
-    .pb-chip-days.hot { background: var(--pb-hot-bg); color: var(--pb-hot-fg); }
-    .pb-move-btn { border: none; background: transparent; color: var(--pb-count); cursor: pointer; font-size: 11px; padding: 0; margin-left: auto; }
+    .pb-chip { font-size: 10px; border-radius: 3px; padding: 1px 6px; background: var(--surface-2); color: var(--text-2); }
+    .pb-chip-days { background: var(--ok-soft); color: var(--ok); }
+    .pb-chip-days.warm { background: var(--warn-soft); color: var(--warn); }
+    .pb-chip-days.hot { background: var(--danger-soft); color: var(--danger); }
+    .pb-move-btn { border: none; background: transparent; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; margin-left: auto; }
 
     .sortable-ghost { opacity: 0.4; }
     .sortable-drag { opacity: 0.9; }
-    .pb-empty-col { color: var(--pb-muted); font-size: 11px; text-align: center; padding: 12px 4px; }
+    .pb-empty-col { color: var(--text-muted); font-size: 11px; text-align: center; padding: 12px 4px; }
     #pb-load { text-align: center; padding: 30px; }
-    #pb-msg { color: var(--pb-muted); padding: 20px; text-align: center; }
+    #pb-msg { color: var(--text-muted); padding: 20px; text-align: center; }
   </style>
 </head>
 <body>
@@ -127,7 +88,7 @@
   driving the same confirm/advance path.
 
   Card click opens the case via window.top.addFile(label, 'case', id).
-  Theme: body.dark inherited live from the shell (reports.html observer).
+  Theme: /theme.css tokens; /themeSync.js follows top's data-theme live.
   Client-side filters: free-text (all cards) + opened-age dropdown
   (UNSTAGED cards only, default 12 months — the ~700-card intake backlog;
   staged cards always show since long-running Ch13s would otherwise vanish).
@@ -188,18 +149,6 @@ const api = (...args) => window.top.apiSend(...args);
 })();
 
 async function init() {
-  // Inherit the shell's dark mode and keep following it — the shell's theme
-  // toggle flips body.dark after this iframe has booted (reports.html pattern).
-  try {
-    const T = window.top;
-    const syncTheme = () =>
-      document.body.classList.toggle('dark', T.document.body.classList.contains('dark'));
-    syncTheme();
-    new MutationObserver(syncTheme).observe(T.document.body, {
-      attributes: true, attributeFilter: ['class'],
-    });
-  } catch (_) { }
-
   try {
     const d = await api('/api/pipeline-admin/templates', 'GET');
     templates = (d.templates || []).filter(t => t.active);
