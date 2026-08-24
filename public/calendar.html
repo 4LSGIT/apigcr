@@ -180,7 +180,7 @@ function onDateClick(info) {
     contactPick: true,
     casePick:    true,
     defaultDate,
-    onCreated:   () => { if (calState.calendar) calState.calendar.refetchEvents(); },
+    onCreated:   calRefetch,
   });
 
   // Provider preselect: no opts param exists for appt_with, but Swal renders
@@ -335,6 +335,78 @@ function init() {
     E(id).addEventListener('change', () => calendar.refetchEvents());
   });
 }
+
+/* ── Sync-bus reader (public/js/yc-sync.js) — Slice 3 ───────────────────────
+   The calendar had NO remote refresh at all before this: it redrew only on a
+   view change, a filter toggle, or an appt created from its own dateClick. An
+   appointment cancelled anywhere else left a ghost on the grid until someone
+   navigated.
+
+   REFETCH, NEVER PATCH. This is a query view twice over — the feed merges
+   appts, events, availability blocks and free shading, and which of those a
+   given day shows is computed server-side from the current filter set. A
+   message can say "an appointment changed"; only /api/calendar-feed knows what
+   the grid should look like afterwards.
+
+   HOSTING (verified 2026-08-24): this page is framed ONLY by the shell's
+   tabApptsCal() Swal, not by a `.tab-main` div — so index.html's
+   pingBecameVisible(), which walks the iframes of the tab it just showed,
+   structurally cannot reach us. `window.ycBecameVisible` is defined anyway:
+   it is free, it is the house contract for a framed reader, and it is what
+   makes this correct on the day the calendar moves into a real tab. The path
+   that actually carries weight today is visibilitychange — the modal is open
+   or it does not exist, so the only way to be stale is a backgrounded browser
+   window, which is exactly the cross-window case this slice exists for.
+
+   calState.seq makes a refetch safe against an in-flight feed fetch: fetchFeed
+   takes a ticket at entry and drops its own response if a newer fetch has
+   started, so the last request always owns the canvas.
+
+   §3.6: both handlers end in a GET. Nothing loops. */
+let calStale = false;
+let calDeb   = null;
+let calLastRefetch = 0;
+const CAL_FRESH_MS = 1500;
+
+function calVisible() {
+  const fe = window.frameElement;          // same-origin; null when standalone
+  if (document.hidden) return false;
+  return !fe || fe.getBoundingClientRect().width > 0;
+}
+
+/* The one refetch entry point, so the echo-fence stamp cannot be bypassed.
+   onDateClick's onCreated points here too: creating an appointment from the
+   grid already redraws it, and the bus then announces that same create back. */
+function calRefetch() {
+  if (!calState.calendar) return;
+  calLastRefetch = Date.now();
+  calState.calendar.refetchEvents();
+}
+
+function calOnBus() {
+  // Pre-init: no calendar to refetch, and init()'s first feed fetch is still
+  // to come — it will read current data by itself. Dropping is correct.
+  if (!calState.calendar) return;
+  if (!calVisible()) { calStale = true; return; }
+  if (Date.now() - calLastRefetch < CAL_FRESH_MS) return;   // our own write
+  clearTimeout(calDeb);
+  calDeb = setTimeout(calRefetch, 250);
+}
+
+YC.on('appt:*',  '*', calOnBus);
+YC.on('event:*', '*', calOnBus);
+
+/* Guarded the same way the pipeline board guards its own: returning to the
+   browser window while this frame is NOT actually on screen must not spend the
+   stale flag on a grid nobody can see, or the later ycBecameVisible would find
+   nothing to do. */
+function calRefreshIfStale() {
+  if (!calStale || !calVisible()) return;
+  calStale = false;
+  calRefetch();
+}
+window.ycBecameVisible = calRefreshIfStale;
+document.addEventListener('visibilitychange', calRefreshIfStale);
 
 // Boot — standard iframe pattern: wait for the shell's apiSend + firmData
 // (newApptDialog seeds its appt_with list from P.firmData.users).

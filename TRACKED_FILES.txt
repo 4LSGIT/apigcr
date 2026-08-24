@@ -603,8 +603,10 @@ tests/alertingStartLatency.test.js
 tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js
+tests/calendarUi.sync.test.js
 tests/caseId.test.js
 tests/checklists.s1notes.test.js
+tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
 tests/control.flow.test.js
 tests/courtexecutor.cancel.test.js

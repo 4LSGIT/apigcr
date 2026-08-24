@@ -1080,3 +1080,250 @@ describe('_sniff — revive matchers', () => {
     expect(seen.map(s => s.addr)).toEqual(['contact:77', 'contact:77']);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Appt / event matchers (Slice 3)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * These eight matchers RETIRE the appt-updated / event-updated postMessage
+ * system, so between them they have to cover every client-side write path that
+ * system covered — plus the ones it never did. What is worth pinning:
+ *
+ *   · EVERY WRITE ENDPOINT IS COVERED. A gap here is not a degraded refresh,
+ *     it is a list that silently stops updating. The endpoint census below is
+ *     the actual contract.
+ *   · THE TWO BODY-ADDRESSED ROUTES. `POST /api/appts/cancel` and
+ *     `/reschedule` name their appointment in the REQUEST body, which the
+ *     sniff never sees — routes/api.appts.js echoes `appt_id` back purely so
+ *     these matchers can address it. If that key is ever dropped from the
+ *     route, cancel goes unannounced and nothing else fails. These tests are
+ *     the tripwire.
+ *   · FAIL CLOSED. A create response missing its id must announce NOTHING
+ *     rather than `appt:undefined` — an address no subscriber can act on, in a
+ *     log that then lies about coverage.
+ *   · THE MARKER, NOT VALUES. Readers are query views; a matcher that started
+ *     emitting real columns would quietly change what `appt:*` means.
+ */
+describe('_sniff — appt / event matchers', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('appt:*',  '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    w.YC.on('event:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  const MARKER = { yc_refetch: 1 };
+
+  test('THE CENSUS: every client-side appt/event write endpoint announces', () => {
+    // Verified against routes/api.appts.js + routes/api.events.js and every
+    // caller in public/ on 2026-08-24. A new write endpoint with a client
+    // caller belongs in this list AND in MATCHERS.
+    const w = mkWindow();
+    const seen = spy(w);
+
+    w.YC._sniff('PATCH', '/api/appts/55',              { status: 'success', updated_fields: ['appt_note'] });
+    w.YC._sniff('POST',  '/api/appts/55/attended',     { status: 'success' });
+    w.YC._sniff('POST',  '/api/appts/55/no-show',      { status: 'success' });
+    w.YC._sniff('POST',  '/api/appts',                 { data: { appt_id: 56 } });
+    w.YC._sniff('POST',  '/api/appts/cancel',          { status: 'success', appt_id: 57 });
+    w.YC._sniff('POST',  '/api/appts/reschedule',      { status: 'success', appt_id: 58, new_appt_id: 59 });
+    w.YC._sniff('PATCH', '/api/events/12',             { data: { event_id: 12 } });
+    w.YC._sniff('PATCH', '/api/events/12/complete',    { data: { event_id: 12 } });
+    w.YC._sniff('PATCH', '/api/events/12/cancel',      { data: { event_id: 12 } });
+    w.YC._sniff('POST',  '/api/events',                { data: { event_id: 13 } });
+
+    expect(seen.map(s => s.addr)).toEqual([
+      'appt:55', 'appt:55', 'appt:55', 'appt:56', 'appt:57', 'appt:58', 'appt:59',
+      'event:12', 'event:12', 'event:12', 'event:13',
+    ]);
+    // Marker only — never a column value, on any of them.
+    expect(seen.every(s => JSON.stringify(s.fields) === JSON.stringify(MARKER))).toBe(true);
+  });
+
+  test('the id comes from the URL where the URL has one', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // A response body naming a DIFFERENT row must not win over the URL.
+    w.YC._sniff('PATCH', '/api/appts/55', { data: { appt_id: 999 } });
+    expect(seen.map(s => s.addr)).toEqual(['appt:55']);
+  });
+
+  test('CANCEL: the appt id comes from the response body the route echoes', () => {
+    // routes/api.appts.js adds `appt_id` to this response for this matcher and
+    // nothing else. Drop it there and cancel goes silently unannounced.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/appts/cancel', { status: 'success', title: 'Appointment Canceled', appt_id: 57 });
+    expect(seen).toEqual([
+      { addr: 'appt:57', fields: MARKER, origin: 'auto:POST /api/appts/cancel' },
+    ]);
+  });
+
+  test('CANCEL fails closed when the route stops echoing appt_id', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/appts/cancel', { status: 'success', message: 'Canceled' });
+    expect(seen).toEqual([]);
+  });
+
+  test('RESCHEDULE announces BOTH appointments — the old one and its successor', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/appts/reschedule', { appt_id: 58, new_appt_id: 59 });
+    expect(seen.map(s => s.addr)).toEqual(['appt:58', 'appt:59']);
+  });
+
+  test('RESCHEDULE LATER has no successor — one message', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/appts/reschedule', { appt_id: 58 });
+    expect(seen.map(s => s.addr)).toEqual(['appt:58']);
+  });
+
+  test('RESCHEDULE dedupes if the two ids ever coincide', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/appts/reschedule', { appt_id: 58, new_appt_id: '58' });
+    expect(seen.map(s => s.addr)).toEqual(['appt:58']);
+  });
+
+  test('CREATE fails closed on a malformed response', () => {
+    // No `appt:undefined` / `event:undefined`: an address no subscriber can act
+    // on, logged as if it were coverage.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/appts',  { status: 'success' });          // no data
+    w.YC._sniff('POST', '/api/appts',  { data: {} });                   // no appt_id
+    w.YC._sniff('POST', '/api/appts',  { data: { appt_id: null } });
+    w.YC._sniff('POST', '/api/appts',  { data: { appt_id: '' } });
+    w.YC._sniff('POST', '/api/events', { status: 'success' });
+    w.YC._sniff('POST', '/api/events', { data: { event_title: 'no id' } });
+    expect(seen).toEqual([]);
+  });
+
+  test('GET announces nothing on any of them — this is what stops the loop', () => {
+    // §3.6: every reader answers these messages with a GET. If GET could sniff,
+    // the bus would eat the browser.
+    const w = mkWindow();
+    const seen = spy(w);
+    for (const url of ['/api/appts/55', '/api/appts', '/api/appts/cancel',
+                       '/api/events/12', '/api/events']) {
+      w.YC._sniff('GET', url, { data: { appt_id: 55, event_id: 12 }, appt_id: 55 });
+    }
+    expect(seen).toEqual([]);
+  });
+
+  test('the method gates hold — no route accepts the verb these reject', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',  '/api/appts/55',           { data: { appt_id: 55 } });  // PATCH-only
+    w.YC._sniff('PATCH', '/api/appts',              { data: { appt_id: 56 } });  // POST-only
+    w.YC._sniff('PATCH', '/api/appts/cancel',       { appt_id: 57 });            // POST-only
+    w.YC._sniff('POST',  '/api/events/12',          { data: { event_id: 12 } }); // PATCH-only
+    w.YC._sniff('POST',  '/api/events/12/complete', { data: { event_id: 12 } }); // PATCH-only
+    w.YC._sniff('PUT',   '/api/events',             { data: { event_id: 13 } }); // POST-only
+    expect(seen).toEqual([]);
+  });
+
+  test('DELETE reaches no matcher — neither resource has a DELETE route', () => {
+    // Cancel is the delete analogue on both. If a real DELETE route ever
+    // appears, _sniff's global method gate has to admit it FIRST — this test
+    // is the reminder that the gate, not the matcher, is the thing to change.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('DELETE', '/api/appts/55',  { status: 'success' });
+    w.YC._sniff('DELETE', '/api/events/12', { status: 'success' });
+    expect(seen).toEqual([]);
+  });
+
+  test('/api/events/batch is NOT matched — it has no client-side caller', () => {
+    // Workflows and the court pipeline call it server-side, where there is no
+    // apiSend to sniff. A matcher here would be dead code pretending to help;
+    // server-side writers wait for the Slice-4 change feed.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/events/batch',
+                { created: 2, results: [{ ok: true, event_id: 1 }, { ok: true, event_id: 2 }] });
+    expect(seen).toEqual([]);
+  });
+
+  test('appt and event address spaces do not poach each other', () => {
+    const w = mkWindow();
+    const appts = [], events = [];
+    w.YC.on('appt:*',  '*', (f, m) => appts.push(m.addr));
+    w.YC.on('event:*', '*', (f, m) => events.push(m.addr));
+    w.YC._sniff('PATCH', '/api/appts/55',  { status: 'success' });
+    w.YC._sniff('PATCH', '/api/events/55', { data: { event_id: 55 } });
+    expect(appts).toEqual(['appt:55']);
+    expect(events).toEqual(['event:55']);
+  });
+
+  test('a marker reaches an entity-scoped subscriber, not just the wildcard', () => {
+    const w = mkWindow();
+    const one = [];
+    w.YC.on('appt:55', '*', f => one.push(f));
+    w.YC._sniff('POST', '/api/appts/55/attended', { status: 'success' });
+    expect(one).toEqual([{ yc_refetch: 1 }]);
+  });
+
+  test('checklistView value emits COEXIST with sniff markers on the same address', () => {
+    // A note save produces BOTH: the sniff's marker (the PATCH is sniffed) and
+    // checklistView's own value emit. Wildcard readers must treat either as
+    // "refetch" — which is why they must never branch on field names.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/appts/55', { status: 'success', updated_fields: ['appt_note'] });
+    w.YC.emit('appt:55', { appt_note: 'called client' }, 'checklistView:saveBody');
+    expect(seen.map(s => s.fields)).toEqual([
+      { yc_refetch: 1 },
+      { appt_note: 'called client' },
+    ]);
+  });
+
+  test('the query strip applies here too', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/appts/55?foo=1', { status: 'success' });
+    expect(seen.map(s => s.addr)).toEqual(['appt:55']);
+  });
+
+  test('a non-numeric id does not match the per-row matchers', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/appts/abc',  { status: 'success' });
+    w.YC._sniff('PATCH', '/api/events/abc', { data: {} });
+    expect(seen).toEqual([]);
+  });
+
+  test('a marker crosses windows like any other message', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = [];
+    b.YC.on('appt:*', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    a.YC._sniff('POST', '/api/appts/cancel', { appt_id: 57 });
+    await settle();
+    expect(seenB).toEqual([{ addr: 'appt:57', fields: { yc_refetch: 1 } }]);
+  });
+
+  test('THE PRE-SLICE-3 MATCHERS are untouched', () => {
+    // Regression fence: the appt/event patterns are all anchored, so none of
+    // them may shadow a case/contact/setting endpoint.
+    const w = mkWindow();
+    const cases = [], contacts = [], settings = [];
+    w.YC.on('case:*',    '*', (f, m) => cases.push(m.addr));
+    w.YC.on('contact:*', '*', (f, m) => contacts.push(m.addr));
+    w.YC.on('setting:*', '*', (f, m) => settings.push(m.addr));
+    w.YC._sniff('PATCH', '/api/cases/AAAA',                    { data: { changes: { case_stage: 'Filed' } } });
+    w.YC._sniff('PATCH', '/api/contacts/5',                    { data: { changes: { contact_phone: '2' } } });
+    w.YC._sniff('PATCH', '/api/cases/AAAA/docket',             { changes: { case_number: '24-1' } });
+    w.YC._sniff('POST',  '/api/cases/AAAA/pipeline/advance',   { changes: { pipeline_phase: 'case' } });
+    w.YC._sniff('PUT',   '/api/app-settings/fe-case_types',    { setting: { value: '[]' } });
+    w.YC._sniff('POST',  '/api/app-settings',                  { setting: { key: 'fe-x', value: '1' } });
+    w.YC._sniff('POST',  '/api/contact-phones?force=true',
+                { phone: { id: 1, contact_id: 5 }, transferred_from: { contact_id: 77 } });
+    expect(cases).toEqual(['case:AAAA', 'case:AAAA', 'case:AAAA']);
+    expect(contacts).toEqual(['contact:5', 'contact:77']);
+    expect(settings).toEqual(['setting:fe-case_types', 'setting:fe-x']);
+  });
+});

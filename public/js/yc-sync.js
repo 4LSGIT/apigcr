@@ -36,19 +36,22 @@
  * SCALARS only. Aggregate arrays (a contact's phones/emails/addresses) do NOT
  * ride the bus; they refresh through the existing `form-saved` path.
  *
- * ── RESERVED FIELD: `yc_refetch` (design §3.1 amendment, v2.2) ──────────────
+ * ── RESERVED FIELD: `yc_refetch` (design §3.1 amendment, v2.2 + v2.3) ───────
  *
- * `yc_refetch` CARRIES NO VALUE. It means "refetch this entity", and it is the
- * ONE sanctioned invalidation on an otherwise values-only bus. It exists for
- * exactly one shape of change: the change is an ABSENCE.
+ * `yc_refetch` CARRIES NO VALUE. It means "refetch this entity". On an
+ * otherwise values-only bus it exists for changes whose values the sniff
+ * cannot honestly recover. There are now two such shapes:
  *
- * The cross-contact transfer is that shape, and there are TWO endpoints that
- * perform one: `PATCH /api/contacts/:id?force=true` (the contact-form save)
- * and `POST /api/contact-{phones,emails}?force=true` (the revive-an-ended-row
- * flow). Both move a phone/email row OFF a donor contact; nothing about the
- * donor has a new `{column: value}` — a child row simply left. There is no
- * value to announce, so the sniff announces the need instead, once per unique
- * donor.
+ *   1. THE CHANGE IS AN ABSENCE (v2.2). The cross-contact transfer, on two
+ *      endpoints: `PATCH /api/contacts/:id?force=true` (the contact-form save)
+ *      and `POST /api/contact-{phones,emails}?force=true` (the revive flow).
+ *      Both move a phone/email row OFF a donor contact; nothing about the
+ *      donor has a new `{column: value}` — a child row simply left. One
+ *      message per unique donor.
+ *
+ *   2. THE RESPONSE DOES NOT CARRY THE VALUES (v2.3, appts + events). Every
+ *      appt/event write endpoint is a marker for this reason — see the
+ *      appt/event matcher comments below for the per-endpoint detail.
  *
  * A handler receiving it MUST NOT merge it into entity state — it is not a
  * column. Answer it with a refetch and return.
@@ -61,6 +64,16 @@
  * Subscribe to a specific entity, or to `'case:*'` for every case (the Cases
  * tab's "something, somewhere, changed" subscription). The wildcard is a
  * PREFIX match on the type, so 'case:*' never matches 'contact:1'.
+ *
+ * `appt:*` / `event:*` carry TWO kinds of traffic and a reader must cope with
+ * both: `{yc_refetch:1}` markers from the sniff (every write endpoint), and
+ * real note values from checklistView's explicit emit (`{appt_note: '…'}` /
+ * `{event_note: '…'}`, the only writer that knows what it wrote). EVERY
+ * CURRENT READER IS A QUERY VIEW — a case's appt table, the shell's Appts tab,
+ * the calendar — so the correct handling of ANY message on these addresses is
+ * "refetch", never "parse the fields". Wildcard readers must not branch on
+ * field names. A future entity-scoped reader (one open appointment) may read
+ * the note value; nothing does today.
  *
  * `setting:<key>` carries ONE field, `value` — the raw stored string, exactly
  * as app_settings holds it (JSON-stringified for structured settings).
@@ -480,7 +493,147 @@
        `transferred_from` (contactAddressService.js:26). Nothing to announce. */
     [/^\/api\/contact-phones$/, 'contact', reviveDonorGetter('phone'), ['POST']],
     [/^\/api\/contact-emails$/, 'contact', reviveDonorGetter('email'), ['POST']],
+
+    /* ── APPOINTMENTS & EVENTS (Slice 3) ──────────────────────────────────
+       These matchers RETIRE the `appt-updated` / `event-updated` postMessage
+       system. That system worked by having each writer post to the shell,
+       which then walked its own iframes calling refreshAppts()/refreshEvents()
+       — so it reached the shell's direct children and nothing else, and never
+       another browser tab. Every writer already funnels through the shell's
+       apiSend, so the sniff covers them all with no writer edits at all,
+       including the four that never posted (apptform2's linkCase/createCase,
+       both PATCH sites, and every future writer of these endpoints).
+
+       ALL OF THEM EMIT A MARKER, `{yc_refetch:1}`, and the honesty of that is
+       endpoint-specific:
+
+         PATCH /api/appts/:id     `{status, message, updated_fields}` — a raw
+                                  UPDATE. The NAMES of the written columns come
+                                  back; the VALUES do not. Nothing to announce
+                                  but the need.
+         POST  /api/appts/:id/attended, /no-show, /api/appts/cancel,
+               /api/appts/reschedule
+                                  `{status, title, message}` — status actions
+                                  whose whole effect (appt_status, log rows,
+                                  sequence enrollment, a successor appt) is far
+                                  wider than any field list.
+         PATCH /api/events/:id, /complete, /cancel
+                                  these DO return the fresh row under `data`.
+                                  A marker is emitted anyway, for uniformity:
+                                  every reader today is a query view that
+                                  refetches regardless, so carrying values
+                                  would buy nothing and would fork the
+                                  appt/event reader contract into two shapes.
+                                  Values-on-event is a clean future extension
+                                  — return `r.data` instead of the marker here
+                                  — the day a reader wants them.
+
+       No DELETE matchers: neither resource has a DELETE route (verified
+       2026-08-24). Cancel is the delete analogue and is covered above. The
+       global method gate in _sniff still drops DELETE before any matcher runs.
+
+       No `/api/events/batch` matcher: it has no client-side caller (workflows
+       and the court pipeline call it server-side, where there is no apiSend to
+       sniff). Server-side writers stay invisible to the bus until the Slice-4
+       change feed — see the design doc's accepted costs. */
+    [/^\/api\/appts\/(\d+)$/,                        'appt',  markerGetter,          ['PATCH']],
+    [/^\/api\/appts\/(\d+)\/(?:attended|no-show)$/,  'appt',  markerGetter,          ['POST']],
+    [/^\/api\/appts$/,                               'appt',  createGetter('appt_id'),  ['POST']],
+    [/^\/api\/appts\/cancel$/,                       'appt',  bodyIdGetter('appt'),  ['POST']],
+    [/^\/api\/appts\/reschedule$/,                   'appt',  rescheduleGetter,      ['POST']],
+
+    [/^\/api\/events\/(\d+)$/,                       'event', markerGetter,          ['PATCH']],
+    [/^\/api\/events\/(\d+)\/(?:complete|cancel)$/,  'event', markerGetter,          ['PATCH']],
+    [/^\/api\/events$/,                              'event', createGetter('event_id'), ['POST']],
   ];
+
+  /**
+   * The id is in the URL — announce the need against it.
+   *
+   * Legacy OBJECT return (getter contract v1): `_sniff` addresses it as
+   * `${type}:${urlCapture}`, which is exactly right when the URL names the
+   * row. Non-capturing groups in those patterns keep hit[1] on the id.
+   *
+   * @param   {*}      _r  response body — deliberately unread
+   * @param   {string} id  the URL capture
+   * @returns {object|null}
+   */
+  function markerGetter(_r, id) {
+    return id ? { yc_refetch: 1 } : null;
+  }
+
+  /**
+   * Collection-path CREATE: the id exists only in the response body.
+   *
+   * Array return (getter contract v2), for the same reason the app-settings
+   * create matcher uses it — there is no `/:id` segment to capture, so the
+   * address has to come from the entry.
+   *
+   * FAILS CLOSED. A body without the id key announces nothing rather than
+   * emitting `appt:undefined`, which would address a row that does not exist
+   * and log a message no subscriber can act on. The revive getter is the
+   * precedent.
+   *
+   * @param   {string} idKey 'appt_id' (POST /api/appts) | 'event_id' (POST /api/events)
+   * @returns {function(object): (Array|null)}
+   */
+  function createGetter(idKey) {
+    var type = idKey === 'appt_id' ? 'appt' : 'event';
+    return function (r) {
+      // Both create routes wrap the row under `data` — appts as the service
+      // result `{appt_id, appt, appt_date_utc}`, events as the hydrated row
+      // itself. `data[idKey]` reads correctly against both.
+      var d = r && r.data;
+      var id = d && d[idKey];
+      if (id == null || id === '') return null;
+      return [{ addr: type + ':' + id, fields: { yc_refetch: 1 } }];
+    };
+  }
+
+  /**
+   * Collection-path ACTION whose subject is named in the REQUEST body.
+   *
+   * `POST /api/appts/cancel` takes `{appt: <id>}` and the sniff never sees a
+   * request body — so routes/api.appts.js echoes the service's canonical
+   * `appt_id` back in the response purely for this. Same fail-closed rule as
+   * createGetter: no id, no message.
+   *
+   * @param   {string} type 'appt'
+   * @returns {function(object): (Array|null)}
+   */
+  function bodyIdGetter(type) {
+    return function (r) {
+      var id = r && r.appt_id;
+      if (id == null || id === '') return null;
+      return [{ addr: type + ':' + id, fields: { yc_refetch: 1 } }];
+    };
+  }
+
+  /**
+   * Reschedule — the one write that touches TWO appointments.
+   *
+   * "Now" ends the old appt as Rescheduled AND creates a successor; "later"
+   * only marks the old one. The route echoes `appt_id` (old) always and
+   * `new_appt_id` when there is a successor, so both are announced.
+   *
+   * Announcing both is belt and braces for TODAY — every reader is a wildcard
+   * query view, so either message alone would already trigger the refetch —
+   * and correctness for tomorrow, when an entity-scoped `appt:<id>` reader
+   * exists. Deduped defensively; the two ids can never actually collide.
+   */
+  function rescheduleGetter(r) {
+    var out = [];
+    var seen = Object.create(null);
+    var ids = [r && r.appt_id, r && r.new_appt_id];
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      if (id == null || id === '') continue;
+      if (seen[String(id)]) continue;
+      seen[String(id)] = true;
+      out.push({ addr: 'appt:' + id, fields: { yc_refetch: 1 } });
+    }
+    return out;
+  }
 
   /**
    * Getter factory for the two revive endpoints — one shape, two row keys.

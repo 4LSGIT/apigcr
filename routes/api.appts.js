@@ -283,10 +283,19 @@ router.post('/api/appts/cancel', jwtOrApiKey, async (req, res) => {
 
     // Non-blocking side effects (SMS, email, GCal) already fired inside service.
     // Response is immediate.
+    //
+    // `appt_id` is additive and exists for ONE reason: the sync bus. This is a
+    // collection-path POST — the appointment is named in the REQUEST body, and
+    // the bus sniff (public/js/yc-sync.js, hooked into the shell's apiSend)
+    // only ever sees the RESPONSE. Without this key a cancel is unaddressable
+    // and every open appt list in every frame silently misses it. Taken from
+    // the service's return rather than from req.body so it is the canonical
+    // id the service actually acted on. See ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md.
     res.json({
       status:  'success',
       title:   'Appointment Canceled',
-      message: result.taskId ? `Canceled — follow-up task #${result.taskId} created` : 'Canceled'
+      message: result.taskId ? `Canceled — follow-up task #${result.taskId} created` : 'Canceled',
+      appt_id: result.appt_id
     });
 
   } catch (err) {
@@ -329,10 +338,16 @@ router.post('/api/appts/reschedule', jwtOrApiKey, async (req, res) => {
         source:          'staff'
       });
 
+      // `appt_id` / `new_appt_id` are additive, for the sync bus — see the
+      // cancel route above. A reschedule touches TWO appointments (the old one
+      // becomes 'Rescheduled', a successor is created), and both are named
+      // only in the request body / the service return, never in the URL.
       res.json({
-        status:  'success',
-        title:   'Success!',
-        message: `Rescheduled — new appointment #${result.new_appt_id}`
+        status:      'success',
+        title:       'Success!',
+        message:     `Rescheduled — new appointment #${result.new_appt_id}`,
+        appt_id:     result.old_appt_id,
+        new_appt_id: result.new_appt_id
       });
 
     } else {
@@ -349,7 +364,8 @@ router.post('/api/appts/reschedule', jwtOrApiKey, async (req, res) => {
         ? `Marked Rescheduled — task #${result.taskId} created to follow up`
         : 'Marked Rescheduled — no follow-up task created';
 
-      res.json({ status: 'success', title: 'Success!', message });
+      // `appt_id` additive, for the sync bus — see the cancel route above.
+      res.json({ status: 'success', title: 'Success!', message, appt_id: result.appt_id });
     }
   } catch (err) {
     console.error('POST /api/appts/reschedule error:', err);

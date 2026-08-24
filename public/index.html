@@ -631,10 +631,10 @@
     <div class="sb-item" data-tab="tabContacts" onclick="openContactsTab()" title="Contacts">
       <i class="fa-solid fa-users"></i><span>Contacts</span>
     </div>
-    <div class="sb-item" data-tab="tabAppts" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')" title="Appointments">
+    <div class="sb-item" data-tab="tabAppts" onclick="openApptsTab()" title="Appointments">
       <i class="fa-solid fa-calendar-days"></i><span>Appointments</span>
     </div>
-    <div class="sb-item" data-tab="tabEvents" onclick="events?'':tabEventsGet(0);openMainTab('tabEvents')" title="Events">
+    <div class="sb-item" data-tab="tabEvents" onclick="openEventsTab()" title="Events">
       <i class="fa-solid fa-flag"></i><span>Events</span>
     </div>
     <div class="sb-item" data-tab="tabTasks" onclick="openMainTab('tabTasks')" title="Tasks">
@@ -701,7 +701,7 @@
     <button class="home-btn" onclick="openContactsTab()">
       <i class="fa-solid fa-users fa-2xl"></i><br /><br />Contacts
     </button>
-    <button class="home-btn" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')">
+    <button class="home-btn" onclick="openApptsTab()">
       <i class="fa-solid fa-calendar-days fa-2xl"></i><br /><br />Appointments
     </button>
     <div style="height: 5px"></div>
@@ -711,7 +711,7 @@
     <button class="home-btn" onclick="openMainTab('tabPipeline')">
       <i class="fa-solid fa-table-columns fa-2xl"></i><br /><br />Pipeline Board
     </button>
-    <button class="home-btn" onclick="events?'':tabEventsGet(0);openMainTab('tabEvents')">
+    <button class="home-btn" onclick="openEventsTab()">
       <i class="fa-solid fa-flag fa-2xl"></i><br /><br />Events
     </button>
     <div style="height: 5px"></div>
@@ -966,13 +966,15 @@
         tabCasesGet(offsets.cases, true);
       }
 
-      /* The Contacts half lives in the next <script> block, so it is reached
-         through its global rather than through `contactsStale` directly: a
-         visibilitychange firing mid-parse — after this listener registers but
-         before that block evaluates — would hit a `let` in its temporal dead
-         zone and throw. `typeof` on a not-yet-defined function declaration is
-         simply false. */
+      /* The Contacts, Appts and Events halves live in LATER <script> blocks,
+         so each is reached through its global rather than through its
+         `…Stale` flag directly: a visibilitychange firing mid-parse — after
+         this listener registers but before those blocks evaluate — would hit a
+         `let` in its temporal dead zone and throw. `typeof` on a
+         not-yet-defined function declaration is simply false. */
       if (typeof refreshStaleContactsTab === 'function') refreshStaleContactsTab();
+      if (typeof refreshStaleApptsTab    === 'function') refreshStaleApptsTab();
+      if (typeof refreshStaleEventsTab   === 'function') refreshStaleEventsTab();
     });
   </script>
 
@@ -1289,39 +1291,21 @@
     }
 
 
-    // Refresh any visible appointment lists
-    // tabAppts, case appts tab, contact appts tab will pick this up
-    window.addEventListener('message', (e) => {
-      if (e.data?.type === 'appt-updated') {
-        try {
-          document.querySelectorAll('iframe').forEach(frame => {
-            try {
-              if (frame.contentWindow.refreshAppts) frame.contentWindow.refreshAppts();
-            } catch (_) { }
-          });
-        } catch (_) { }
-      }
-    });
+    /* ── RETIRED (Slice 3): the appt-updated / event-updated postMessage system.
+       Two `message` listeners lived here. Each walked THIS document's iframes
+       calling refreshAppts()/refreshEvents() on whichever ones exported them —
+       so it reached the shell's direct children (case.html, contact.html) and
+       nothing deeper, and never another browser tab. eventsChanged() sat here
+       too, self-posting `event-updated` before refetching this tab.
 
-    // Refresh any visible event lists (entity-page iframes define refreshEvents)
-    window.addEventListener('message', (e) => {
-      if (e.data?.type === 'event-updated') {
-        try {
-          document.querySelectorAll('iframe').forEach(frame => {
-            try {
-              if (frame.contentWindow.refreshEvents) frame.contentWindow.refreshEvents();
-            } catch (_) { }
-          });
-        } catch (_) { }
-      }
-    });
-
-    // Broadcast an event change so open entity iframes refresh, then refresh
-    // this tab. Used as the onSaved/onDone callback for the shell Events tab.
-    function eventsChanged() {
-      try { window.postMessage({ type: 'event-updated' }, '*'); } catch (_) { }
-      tabEventsGet(offsets.events || 0);
-    }
+       All three are gone. Every appt/event write funnels through this file's
+       apiSend, which the sync bus sniffs (public/js/yc-sync.js) into an
+       `appt:<id>` / `event:<id>` announcement; case.html, contact.html and
+       calendar.html now subscribe directly instead of being walked. That
+       reaches any frame at any depth AND every other browser tab, and it also
+       covers the writers that never posted at all (apptform2's linkCase /
+       createCase). The Appts and Events tabs below are readers like any
+       other — see each tab's liveness block. */
 
     function tabEventsTimeChange(time) {
       if (time == "All") {
@@ -1339,7 +1323,22 @@
       }
     }
 
-    async function tabEventsGet(offset) {
+    /**
+     * @param {number}  offset
+     * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
+     *   Same two suppressions, for the same two reasons, as tabCasesGet /
+     *   tabContactsGet:
+     *     · "No events found." — a filtered page legitimately emptying is the
+     *       filter working, not an error. Cancel the last Scheduled event
+     *       while filtered to Scheduled and the row correctly vanishes.
+     *     · the catch-block toast — a background fetch that fails must not
+     *       red-toast a user who did nothing. console.warn instead.
+     *   Every pre-existing caller passes nothing and keeps today's behaviour.
+     *   NOTE the `events = ""` reset in the empty branch is NOT suppressed: it
+     *   is what makes openEventsTab()'s first-open check fire again, and a
+     *   background refetch that empties the list has genuinely emptied it.
+     */
+    async function tabEventsGet(offset, silent = false) {
       offsets.events = offset;
       E("tabEventsButton").disabled = true;
       E("tabEventsLoad").style.display = "block";
@@ -1424,11 +1423,15 @@
               <td>${linked}</td>
               <td>${esc(ev.event_location)}</td>`;
 
+            // No onSaved / onDone callback: each of these writes through the
+            // shell's apiSend, the sniff announces `event:<id>`, and this
+            // tab's own `event:*` subscriber refetches the current page. The
+            // callback would be a second, redundant fetch of the same page.
             const buttons = [];
-            buttons.push(`<button onclick='newEventDialog({ event: ${escAttrJSON(ev)}, onSaved: eventsChanged })'><i class="fa-solid fa-pen"></i> Edit</button>`);
+            buttons.push(`<button onclick='newEventDialog({ event: ${escAttrJSON(ev)} })'><i class="fa-solid fa-pen"></i> Edit</button>`);
             if (ev.event_status === "Scheduled") {
-              buttons.push(`<button onclick="eventComplete(${ev.event_id}, eventsChanged)"><i class="fa-solid fa-check"></i> Complete</button>`);
-              buttons.push(`<button onclick="eventCancel(${ev.event_id}, eventsChanged)"><i class="fa-solid fa-ban"></i> Cancel</button>`);
+              buttons.push(`<button onclick="eventComplete(${ev.event_id})"><i class="fa-solid fa-check"></i> Complete</button>`);
+              buttons.push(`<button onclick="eventCancel(${ev.event_id})"><i class="fa-solid fa-ban"></i> Cancel</button>`);
             }
             row.innerHTML += `<td>${buttons.join(" ")}</td>`;
           });
@@ -1440,14 +1443,67 @@
         } else {
           events = "";
           foot.innerHTML = "";
-          Toast.fire({ icon: "info", title: "No events found." });
+          if (!silent) Toast.fire({ icon: "info", title: "No events found." });
         }
       } catch (err) {
-        Toast.fire({ icon: "error", title: "Error loading events", text: err.message });
+        if (silent) console.warn("[events] background refetch failed:", err);
+        else Toast.fire({ icon: "error", title: "Error loading events", text: err.message });
       }
 
       E("tabEventsLoad").style.display = "none";
       E("tabEventsButton").disabled = false;
+    }
+
+    /* ── Events-tab liveness (sync bus) ─────────────────────────────────────
+       Structural twin of the Cases and Contacts blocks: same first-open-only
+       history, same stale flag, same debounce, same never-cell-patch rule
+       (membership, ordering and page boundaries are all server-computed, so an
+       event that no longer matches the active status/date filter has to vanish
+       and only the server knows that).
+
+       The wildcard is the point. `event:*` fires for a save from eventform, an
+       edit or status action from this tab, a note edit in a checklistView card
+       two frames down, a court-pipeline write from another browser tab — the
+       tab does not care which, because it refetches regardless of the fields.
+
+       NO ECHO FENCE HERE, unlike the Appts twin below. Nothing left in this
+       tab refetches itself after a write: eventsChanged() is gone, and so is
+       showEvent()'s didClose refetch. The single bus refetch IS the refresh.
+       If a local refetch-after-write is ever reintroduced here, copy the
+       appts fence with it — otherwise every such write costs two fetches. */
+    let eventsStale = false;
+    let eventsDeb = null;
+
+    /** Is the Events tab the one actually on screen right now? */
+    function eventsTabVisible() {
+      return currentMainTabId() === 'tabEvents' && !document.hidden;
+    }
+
+    YC.on('event:*', '*', () => {
+      if (!eventsTabVisible()) { eventsStale = true; return; }
+      // Debounced: one write can land as several messages (a checklistView note
+      // save emits the sniff's marker AND its own value emit), and a burst
+      // across frames should still cost one refetch.
+      clearTimeout(eventsDeb);
+      eventsDeb = setTimeout(() => tabEventsGet(offsets.events || 0, true), 250);
+    });
+
+    /** Sole opener for the Events tab — sidebar item AND home button. */
+    function openEventsTab() {
+      if (!events) tabEventsGet(0);                    // first open: unchanged
+      else if (eventsStale) { eventsStale = false; tabEventsGet(offsets.events || 0, true); }
+      openMainTab('tabEvents');
+    }
+
+    /* Called by the visibilitychange handler in the Cases block, which owns the
+       single listener for all four main lists. A FUNCTION DECLARATION on
+       purpose — see refreshStaleContactsTab's comment for why the guarded
+       `typeof` up there needs one. */
+    function refreshStaleEventsTab() {
+      if (!eventsStale) return;
+      if (currentMainTabId() !== 'tabEvents') return;
+      eventsStale = false;
+      tabEventsGet(offsets.events || 0, true);
     }
 
     // Small HTML-escape helpers local to the shell for the events table.
@@ -1466,23 +1522,20 @@
     /**
      * Open one appointment in a modal.
      *
-     * didClose used to query `.tab-content[style*="block"] iframe` and call
-     * refresh() on it. Neither exists: this shell's main tabs are `.tab-main`,
-     * `.tab-content` appears nowhere else in this file, and no framed page
-     * defines a global refresh() (the two esign widgets do, and they are never
-     * that iframe). It had always been a no-op.
+     * NO didClose (Slice 3). It used to self-post 'appt-updated' and refetch
+     * this tab on EVERY close — including a close with no write, which is most
+     * of them: the dialog is opened to read an appointment at least as often as
+     * to change one. Refetch-on-close was a proxy for "something might have
+     * happened in there", and it existed because the pieces that could tell us
+     * did not talk to this shell: apptform2's notifyParent() only fired on a
+     * status action, and the pinned Note card (W4) saves through checklistView,
+     * which knows nothing about this page.
      *
-     * Appts refresh through apptform2's notifyParent() → 'appt-updated' → the
-     * listener above → refreshAppts() on every iframe (case.html:1412 and
-     * contact.html:846 both define one). But that only ever fired on a STATUS
-     * action: the old Update Note button never called notifyParent(), so a note
-     * edit never refreshed the Note column in the table behind — and the pinned
-     * Note card that replaced it (W4) will not either, since checklistView
-     * saves through its own path and knows nothing about this shell.
-     *
-     * So broadcast on close, exactly as showEvent() does. This tab's own Appts
-     * table is inline markup rather than an iframe, so the listener cannot
-     * reach it — hence the second half.
+     * The bus answers that properly. Every write inside this iframe — status
+     * actions, case linking, the note card — goes through the shell's apiSend
+     * and is announced as `appt:<id>`, so this tab's `appt:*` subscriber
+     * refetches on the WRITE, from the frame that made it, with no proxy and no
+     * cost when nothing changed.
      */
     function showAppt(apptID) {
       Swal.fire({
@@ -1492,29 +1545,15 @@
         heightAuto: true,
         showConfirmButton: false,
         showCloseButton: true,
-        didClose: () => {
-          try { window.postMessage({ type: 'appt-updated' }, '*'); } catch (_) { }
-          try {
-            const tab = E("tabAppts");
-            if (tab && tab.style.display === "block") {
-              tabApptsGet(offsets.appts || 0);
-            }
-          } catch (_) { }
-        }
       });
     }
 
     /**
      * Open one event in a modal (W2). The sibling of showAppt() — same Swal,
-     * same iframe idiom, and since W4 the same close handler with the entity
-     * swapped. (It was written first: showAppt's didClose was a dead
-     * `.tab-content` selector until W4 replaced it with this shape.)
-     *
-     * The 'event-updated' listener above calls refreshEvents() on every
-     * iframe, which case.html and contact.html both export. eventform.html
-     * posts it too after each write; this is the belt-and-braces for a close,
-     * and the ONLY thing that reaches THIS page's Events tab, which is inline
-     * markup rather than an iframe.
+     * same iframe idiom, and since Slice 3 the same absence of a close handler
+     * for the same reason: eventform's writes are announced on the bus as
+     * `event:<id>`, so this tab's `event:*` subscriber refetches on the write
+     * rather than on every close.
      */
     function showEvent(eventID) {
       Swal.fire({
@@ -1524,15 +1563,6 @@
         heightAuto: true,
         showConfirmButton: false,
         showCloseButton: true,
-        didClose: () => {
-          try { window.postMessage({ type: 'event-updated' }, '*'); } catch (_) { }
-          try {
-            const tab = E("tabEvents");
-            if (tab && tab.style.display === "block") {
-              tabEventsGet(offsets.events || 0);
-            }
-          } catch (_) { }
-        }
       });
     }
 
@@ -1552,7 +1582,23 @@
       }
     }
 
-    async function tabApptsGet(offset) {
+    /**
+     * @param {number}  offset
+     * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
+     *   Same two suppressions, for the same two reasons, as tabCasesGet /
+     *   tabContactsGet:
+     *     · "No appointments found!" — a filtered page legitimately emptying
+     *       is the filter working, not an error.
+     *     · the catch-block toast — a background fetch that fails must not
+     *       red-toast a user who did nothing. console.warn instead.
+     *   Every pre-existing caller passes nothing and keeps today's behaviour.
+     */
+    async function tabApptsGet(offset, silent = false) {
+      // ECHO-FENCE STAMP — read by the `appt:*` subscriber below. Taken here,
+      // before the await, so it is always in the past by the time the (macro-
+      // task) bus message announcing the write that triggered this fetch
+      // lands. Same shape and same reasoning as pipelineBoard's boardLastLoad.
+      apptsLastLoad = Date.now();
       offsets.appts = offset;
       E("tabApptsButton").disabled = true;
       E("tabApptsLoad").style.display = "block";
@@ -1649,15 +1695,75 @@
             <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
             <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
           </select> | <button onclick="window.print()">Print</button>`;
-        } else {
+        } else if (!silent) {
           Toast.fire({ icon: "error", title: "No appointments found!" });
         }
       } catch (err) {
-        Toast.fire({ icon: "error", title: "Error loading appointments", text: err.message });
+        if (silent) console.warn("[appts] background refetch failed:", err);
+        else Toast.fire({ icon: "error", title: "Error loading appointments", text: err.message });
       }
 
       E("tabApptsLoad").style.display = "none";
       E("tabApptsButton").disabled = false;
+    }
+
+    /* ── Appts-tab liveness (sync bus) ──────────────────────────────────────
+       The Cases/Contacts/Events twin, PLUS an echo fence that those three do
+       not need.
+
+       THE FENCE. Unlike the other three lists, this tab has writers of its own
+       that already refetch: apptUpdate() calls tabApptsGet(offsets.appts) in
+       all six of its preConfirm/preDeny branches, and the New Appointment
+       button passes `onCreated: () => tabApptsGet(0)` (which deliberately
+       jumps back to page 1 — the bus, which refetches the CURRENT offset,
+       cannot reproduce that and should not try). Without the fence every one
+       of those writes would cost two full list fetches: the explicit one, then
+       the bus echo announcing the same write back to us.
+
+       So a message arriving within APPTS_FRESH_MS of a fetch this tab already
+       started is dropped. The tradeoff is the board's, knowingly inherited: a
+       genuinely unrelated write from another browser window landing inside
+       that window is also dropped, and the tab shows it on the next refresh.
+       Rare, and cheaper than doubling every status action.
+
+       Deleting apptUpdate's six refetches instead would remove the need for
+       the fence, but it would also delete the immediate in-dialog feedback
+       those calls give — and leave the onCreated page-1 jump unsolved. */
+    let apptsStale = false;
+    let apptsDeb = null;
+    let apptsLastLoad = 0;
+    const APPTS_FRESH_MS = 1500;
+
+    /** Is the Appts tab the one actually on screen right now? */
+    function apptsTabVisible() {
+      return currentMainTabId() === 'tabAppts' && !document.hidden;
+    }
+
+    YC.on('appt:*', '*', () => {
+      if (!apptsTabVisible()) { apptsStale = true; return; }
+      if (Date.now() - apptsLastLoad < APPTS_FRESH_MS) return;   // echo — see above
+      // Debounced: a reschedule announces two appointments (the old one and
+      // its successor) and a checklistView note save announces twice (the
+      // sniff's marker plus its own value emit). One refetch either way.
+      clearTimeout(apptsDeb);
+      apptsDeb = setTimeout(() => tabApptsGet(offsets.appts || 0, true), 250);
+    });
+
+    /** Sole opener for the Appts tab — sidebar item AND home button. */
+    function openApptsTab() {
+      if (!appts) tabApptsGet(0);                      // first open: unchanged
+      else if (apptsStale) { apptsStale = false; tabApptsGet(offsets.appts || 0, true); }
+      openMainTab('tabAppts');
+    }
+
+    /* Called by the visibilitychange handler in the Cases block, which owns the
+       single listener for all four main lists. FUNCTION DECLARATION on purpose
+       — see refreshStaleContactsTab's comment. */
+    function refreshStaleApptsTab() {
+      if (!apptsStale) return;
+      if (currentMainTabId() !== 'tabAppts') return;
+      apptsStale = false;
+      tabApptsGet(offsets.appts || 0, true);
     }
 
     function rescheduledConfMsg(date1, date2, apptype) {

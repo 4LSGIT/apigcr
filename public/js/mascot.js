@@ -4,9 +4,10 @@
  *
  * A Win95-style desktop pet for the YisraCase shell. It wanders, sits, grooms,
  * sleeps, climbs the walls, hangs off the ceiling, falls off ledges, and — the
- * whole reason it is worth doing here — walks along the tops of the real tables
- * and cards inside whatever page is open, because every content page in this
- * shell is a SAME-ORIGIN iframe and `contentDocument` is readable.
+ * whole reason it is worth doing here — walks along the tops of the real tables,
+ * cards and buttons inside whatever page is open, dropping down onto a lower one
+ * when it sees a landing it likes, because every content page in this shell is a
+ * SAME-ORIGIN iframe and `contentDocument` is readable.
  *
  * Self-contained by design: this file is the entire feature. It has no
  * dependencies (no Font Awesome, no SweetAlert, no images, no network), injects
@@ -54,6 +55,27 @@
     MAX_PLATFORMS: 40,
     KEY: 'yc.mascot.on',   // matches the yc.* convention in scripts.js
 
+    // PERCHES — buttons, tabs, pills. Far smaller than the furniture above, so
+    // they need their own size floor (a button is ~30px tall, and the furniture
+    // floor of 24px height / 120px width excludes every one of them) and their
+    // own slice of the platform budget: the list is sorted by area, so on a page
+    // full of cards a shared budget would crowd out every button on it.
+    PERCH_W: 44, PERCH_H: 16, PERCH_SPAN: 40,
+    MAX_PERCHES: 18,
+
+    // DROPPING DOWN. A cat on a ledge with something a short way below it will
+    // sometimes just take the drop rather than walk to the end. Looks every
+    // HOP_EVERY seconds while walking and takes it HOP_CHANCE of the time, so
+    // it stays an occasional flourish and not a permanent pinball.
+    HOP_CHANCE: 0.22,
+    HOP_EVERY: [0.7, 1.7], // s between looks
+    HOP_DROP_MIN: 20,      // below this it is a step, not a drop
+    HOP_DROP_MAX: 200,
+    HOP_LEAD: 26,          // aim this far ahead of the feet
+    HOP_LIFT: 130,         // px/s of push-off, so it arcs instead of sliding off
+    HOP_VX_MAX: 210,       // further sideways than this is not a drop, it's a leap
+    HOP_CROUCH: 0.14,      // s of wind-up before the push
+
     // THE DEBUT. Until this moment the cat comes out on its own for anyone who
     // has not made a choice about it, and introduces itself on every load. After
     // it, the cat only ever appears for someone who asked for it. Deliberately a
@@ -88,6 +110,15 @@
 
   // Elements inside the open page that are chunky enough to stand on.
   var FRAME_SEL = 'table, thead, .card, .panel, fieldset, h1, h2, h3, .swal2-popup';
+
+  // …and the small stuff worth perching on. Matched by shape rather than by
+  // name: the pages in here spell a button .btn, .yc-btn, .icon-btn, .tg-btn,
+  // .add-step-btn and a dozen other ways, so anything with "btn" in its class
+  // counts. Containers like .btn-row match too, which is fine — the top of a row
+  // of buttons is exactly where the buttons' tops are, and the dedupe in
+  // collectTops() keeps only one ledge out of the pair.
+  var PERCH_SEL = 'button, [class*="btn"], .tab, .nav-link, .chip, .pill, select, ' +
+    'input[type="button"], input[type="submit"]';
 
   // Idle actions, with weights. This is where the personality lives.
   var IDLE_ACTS = [
@@ -138,6 +169,9 @@
   var stateUntil = 0, clock = 0;
   var grab = null;
   var mouse = { x: -1, y: -1, t: 0 };
+  var hop = null;              // the drop being wound up for, during 'crouch'
+  var hopFloor = -1e9;         // mid-drop, ignore any ledge above this (see toHop)
+  var nextHop = 0;             // clock time of the next "is there something below me"
   var say = null;              // the introduction bubble, debut only
   var leaveRecords = true;     // does walking off count as "sent away"?
   var autoDebut = false;       // started by the debut rather than by a person
@@ -255,22 +289,46 @@
     if (!doc || !doc.body) return;
 
     var box = frame.getBoundingClientRect();
-    var top = Math.max(box.top, 0), bot = Math.min(box.bottom, H);
-    var els;
-    try { els = doc.querySelectorAll(FRAME_SEL); } catch (e) { return; }
+    var view = {
+      box: box, W: W,
+      top: Math.max(box.top, 0),
+      bot: Math.min(box.bottom, H)
+    };
 
-    var found = [], seen = {}, n = Math.min(els.length, 250);
+    // Furniture first, then perches, sharing one `seen` map: a button sitting on
+    // a card's own top edge would otherwise become a second ledge in the same
+    // place, and the cat would walk the upper one and never touch the button.
+    var seen = {};
+    var big = collectTops(doc, FRAME_SEL, 120, 24, 70, view, seen);
+    var small = collectTops(doc, PERCH_SEL, CFG.PERCH_W, CFG.PERCH_H, CFG.PERCH_SPAN, view, seen);
+
+    var j;
+    for (j = 0; j < big.length && j < CFG.MAX_PLATFORMS; j++) out.push(big[j]);
+    for (j = 0; j < small.length && j < CFG.MAX_PERCHES; j++) {
+      small[j].perch = 1;                     // only Mascot.debug() reads this
+      out.push(small[j]);
+    }
+  }
+
+  // Top edges of everything matching `sel` that is big enough to hold a cat,
+  // in viewport coordinates, biggest first. `seen` is carried across calls so
+  // two selectors can't both claim the same edge.
+  function collectTops(doc, sel, minW, minH, minSpan, view, seen) {
+    var els;
+    try { els = doc.querySelectorAll(sel); } catch (e) { return []; }
+
+    var box = view.box, found = [], n = Math.min(els.length, 250);
     for (var k = 0; k < n; k++) {
       var r;
       try { r = els[k].getBoundingClientRect(); } catch (e) { continue; }
-      if (r.width < 120 || r.height < 24) continue;
+      if (r.width < minW || r.height < minH) continue;
       // Child rects are relative to the FRAME's viewport, so scrolling is already
       // baked in — the only correction needed is the frame's own offset.
       var y = box.top + r.top;
-      if (y < top + 8 || y > bot - 8) continue;
+      if (y < view.top + 8 || y > view.bot - 8) continue;
       var x1 = Math.max(box.left + r.left, box.left, 0);
-      var x2 = Math.min(box.left + r.right, box.right, W);
-      if (x2 - x1 < 70) continue;
+      var x2 = Math.min(box.left + r.right, box.right, view.W);
+      if (x2 - x1 < minSpan) continue;
       // A table and its thead share a top edge; one ledge is enough.
       var key = Math.round(y / 4) + ':' + Math.round(x1 / 8);
       if (seen[key]) continue;
@@ -278,9 +336,7 @@
       found.push({ x1: x1, x2: x2, y: y, area: (x2 - x1) * r.height });
     }
     found.sort(function (a, b) { return b.area - a.area; });
-    for (var j = 0; j < found.length && j < CFG.MAX_PLATFORMS; j++) {
-      out.push({ x1: found[j].x1, x2: found[j].x2, y: found[j].y });
-    }
+    return found;
   }
 
   // After a rescan the cat's ledge object is stale. Find the equivalent one in
@@ -296,7 +352,7 @@
       if (gap < bestGap) { bestGap = gap; found = l; }
     }
     if (found) { ledge = found; py = found.y; }
-    else { ledge = null; setState('fall'); vx = 0; vy = 0; }
+    else toFall(0, 0);
   }
 
   // First surface strictly below (y0 → y1] at this x.
@@ -329,6 +385,7 @@
   function toWalk() {
     setState('walk');
     stateUntil = clock + rand(2.4, 7);
+    nextHop = clock + rand(CFG.HOP_EVERY[0], CFG.HOP_EVERY[1]);
   }
 
   function toIdle() {
@@ -342,7 +399,52 @@
     ledge = null; wall = null;
     vx = ivx || 0; vy = ivy || 0;
     rot = 0;
+    hopFloor = -1e9;
     setState('fall');
+  }
+
+  // Is there something worth dropping onto? Looks for the nearest surface below
+  // and not behind — the button inside the card it is standing on, the table
+  // under that — and solves the arc that lands on it. Returns true if it
+  // committed, in which case the cat is now crouching to jump.
+  //
+  // Only the landing SPOT is solved for, not the path: nothing checks whether
+  // the arc clips a ledge on the way. It cannot go wrong, because the ledge it
+  // clipped is one it can stand on, and landing early on the way to a lower
+  // perch is just a cat changing its mind.
+  function tryHop(dirX) {
+    var best = null, bestX = 0, bestCost = 1e9;
+    for (var i = 0; i < ledges.length; i++) {
+      var l = ledges[i];
+      var dy = l.y - py;
+      if (dy < CFG.HOP_DROP_MIN || dy > CFG.HOP_DROP_MAX) continue;
+      if (l.x2 - l.x1 < CFG.PERCH_SPAN) continue;
+      // Land a step ahead of where the feet are now, or as close to that as this
+      // ledge reaches — that is what turns "over a button" into "onto a button".
+      var lx = clamp(px + dirX * CFG.HOP_LEAD, l.x1 + 5, l.x2 - 5);
+      var dx = lx - px;
+      if (dx * dirX < -6) continue;                  // never leap backwards
+      var cost = dy * 0.5 + Math.abs(dx);            // nearest thing below wins
+      if (cost < bestCost) { best = l; bestX = lx; bestCost = cost; }
+    }
+    return best ? toHop(best, bestX) : false;
+  }
+
+  function toHop(l, lx) {
+    // Time to fall dy from a push-off of HOP_LIFT upwards, then the horizontal
+    // speed that covers dx in exactly that long: 0 = -LIFT·t + ½g·t² - dy.
+    var dy = l.y - py;
+    var t = (CFG.HOP_LIFT + Math.sqrt(CFG.HOP_LIFT * CFG.HOP_LIFT + 2 * CFG.GRAVITY * dy)) / CFG.GRAVITY;
+    var need = (lx - px) / t;
+    if (Math.abs(need) > CFG.HOP_VX_MAX) return false;    // out of a cat's reach
+
+    // The launch is deferred to the end of the crouch; the ledge is kept until
+    // then so a cat interrupted mid-wind-up is still standing on something.
+    hop = { vx: need, vy: -CFG.HOP_LIFT, floor: py + 10 };
+    aim(need >= 0 ? 1 : -1, 0);
+    setState('crouch');
+    stateUntil = clock + CFG.HOP_CROUCH;
+    return true;
   }
 
   // `record` false means "stop being here", not "the user said no".
@@ -368,6 +470,7 @@
   function land(l) {
     ledge = l; wall = null;
     py = l.y; rot = 0; vy = 0;
+    hop = null; hopFloor = -1e9;
     aim(vx >= 0 ? 1 : -1, 0);
     setState('land');
     stateUntil = clock + 0.22;
@@ -412,14 +515,27 @@
       return;
     }
 
-    if (state === 'fall') {
+    if (state === 'crouch') {
+      if (!ledge) { toFall(0, 0); return; }        // the ground left during the wind-up
+      if (clock < stateUntil) return;
+      ledge = null; wall = null; rot = 0;
+      vx = hop.vx; vy = hop.vy;
+      // A drop starts ON a ledge, so the arc passes back through the height it
+      // launched from — without this the cat lands right back where it started.
+      hopFloor = hop.floor;
+      hop = null;
+      setState('hop');
+      return;
+    }
+
+    if (state === 'fall' || state === 'hop') {
       vy = Math.min(vy + CFG.GRAVITY * dt, CFG.TERMINAL);
       var y0 = py;
       px += vx * dt;
       py += vy * dt;
       if (px < bounds.left + 4) { px = bounds.left + 4; vx = Math.abs(vx) * 0.4; }
       if (px > bounds.right - 4) { px = bounds.right - 4; vx = -Math.abs(vx) * 0.4; }
-      var hit = ledgeBelow(px, y0, py);
+      var hit = ledgeBelow(px, Math.max(y0, hopFloor), py);
       if (hit) { land(hit); }
       else if (py >= bounds.bottom) { land({ x1: bounds.left, x2: bounds.right, y: bounds.bottom }); }
       return;
@@ -503,6 +619,10 @@
     var f2 = fwd();
     px += f2.x * face * CFG.WALK * dt;
     if (px <= ledge.x1 + 1 || px >= ledge.x2 - 1) { atEdge(px <= ledge.x1 + 1 ? -1 : 1); return; }
+    if (clock >= nextHop) {
+      nextHop = clock + rand(CFG.HOP_EVERY[0], CFG.HOP_EVERY[1]);
+      if (Math.random() < CFG.HOP_CHANCE && tryHop(f2.x * face >= 0 ? 1 : -1)) return;
+    }
     if (clock >= stateUntil) {
       // Occasionally it notices the cursor instead of settling down.
       var fresh = clock - mouse.t < 4 && mouse.x > ledge.x1 && mouse.x < ledge.x2 &&
@@ -548,7 +668,8 @@
     if (now - lastScan > CFG.RESCAN_MS) {
       lastScan = now;
       scan();
-      if (state === 'walk' || state === 'idle' || state === 'chase' || state === 'land') refoot();
+      if (state === 'walk' || state === 'idle' || state === 'chase' ||
+        state === 'land' || state === 'crouch') refoot();
     }
 
     // A tab left open across the end of the debut must let the cat go too, or
@@ -772,6 +893,7 @@
         painted: r(cat), container: r(root),
         offsetParent: root && root.offsetParent ? root.offsetParent.tagName : null,
         ledges: ledges.length,
+        perches: ledges.filter(function (l) { return l.perch; }).length,
         wallXs: walls.map(function (w) { return Math.round(w.x); }),
         frame: r(f), frameSrc: f && (f.getAttribute('src') || f.dataset.src),
         header: r(document.getElementById('appHeader')),
@@ -894,6 +1016,17 @@
     '[data-state="fall"] .m-bl,[data-state="fall"] .m-br{transform:rotate(30deg)}',
     '[data-state="fall"] .m-tail{transform:rotate(-32deg)}',
     '[data-state="fall"] .m-head{transform:rotate(-8deg)}',
+
+    /* dropping to a lower perch: the wind-up, then the tuck. The .18s transition
+       on .m-all is what makes the crouch read as a gather rather than a pop. */
+    '[data-state="crouch"] .m-all{transform:translateY(3px) scaleY(.80) scaleX(1.09)}',
+    '[data-state="crouch"] .m-head{transform:rotate(7deg)}',      /* eyeing the landing */
+    '[data-state="crouch"] .m-tail{transform:rotate(-20deg)}',
+    '[data-state="hop"] .m-fl,[data-state="hop"] .m-fr{transform:rotate(-26deg)}',
+    '[data-state="hop"] .m-bl,[data-state="hop"] .m-br{transform:rotate(22deg)}',
+    '[data-state="hop"] .m-tail{transform:rotate(-30deg)}',
+    '[data-state="hop"] .m-head{transform:rotate(6deg)}',
+    '[data-state="hop"] .m-all{transform:scaleY(1.06) scaleX(.95)}',
 
     /* the landing squash */
     '@keyframes ycm-land{0%{transform:scaleY(.68) scaleX(1.18)}60%{transform:scaleY(1.06) scaleX(.96)}100%{transform:none}}',

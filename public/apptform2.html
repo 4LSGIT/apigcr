@@ -344,12 +344,14 @@
    Only index.html frames this file (showAppt()'s Swal), so parent === top
    today and the two resolve identically — case.html, contact.html and
    calendar.html all reach this page by calling the SHELL's showAppt(), which
-   opens the Swal in the shell's document, not in theirs. All four members
-   used below live on the shell and nowhere else: apiSend (index.html:2652 —
-   case/contact only relay it), addFile (index.html:3202), postMessage, and
-   onApptUpdate (which nothing anywhere actually sets). window.top is the
-   house idiom for a framed widget (checklistView.html, eventform.html) and
-   keeps working if this page is ever framed more than one deep. */
+   opens the Swal in the shell's document, not in theirs. Both members used
+   below live on the shell and nowhere else: apiSend (case/contact only relay
+   it) and addFile. window.top is the house idiom for a framed widget
+   (checklistView.html, eventform.html) and keeps working if this page is ever
+   framed more than one deep.
+
+   (postMessage and onApptUpdate were the other two until Slice 3 retired
+   notifyParent — see its marker below.) */
 const P = window.top;
 const params = new URLSearchParams(location.search);
 const apptId = params.get('apptID') || params.get('apptid');
@@ -531,7 +533,6 @@ async function doAttended() {
     const r = await P.apiSend(`/api/appts/${apptData.appt_id}/attended`, 'POST', {});
     Toast.fire({ icon: 'success', title: r.message || 'Marked Attended' });
     await loadAppt();
-    notifyParent();
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
   }
@@ -552,7 +553,6 @@ async function doNoShow() {
     const r = await P.apiSend(`/api/appts/${apptData.appt_id}/no-show`, 'POST', { enroll: value.enroll });
     Toast.fire({ icon: 'success', title: r.message || 'Marked No Show' });
     await loadAppt();
-    notifyParent();
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
   }
@@ -581,7 +581,6 @@ async function doCancel() {
     Toast.fire({ icon: 'success', title: r.message || 'Canceled' });
     hidePanel('cancelPanel');
     await loadAppt();
-    notifyParent();
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
   }
@@ -618,7 +617,6 @@ async function doRescheduleNow() {
     Toast.fire({ icon: 'success', title: r.message || 'Rescheduled' });
     hidePanel('reschedulePanel');
     await loadAppt();
-    notifyParent();
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
   }
@@ -635,7 +633,6 @@ async function doRescheduleLater() {
     Toast.fire({ icon: 'success', title: r.message || 'Marked for rescheduling' });
     hidePanel('reschedulePanel');
     await loadAppt();
-    notifyParent();
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
   }
@@ -713,15 +710,19 @@ async function createCase() {
   }
 }
 
-// ─── PARENT NOTIFICATION ───
+/* ─── PARENT NOTIFICATION — RETIRED (Slice 3) ───
+   notifyParent() lived here. It posted `{type:'appt-updated'}` to the shell,
+   which walked its own iframes calling refreshAppts() on whichever exported
+   one, and additionally called `P.onApptUpdate` (a hook nothing anywhere ever
+   set). Both the listener and the hook are gone.
 
-function notifyParent() {
-  try {
-    P.postMessage({ type: 'appt-updated', apptId: apptData.appt_id }, '*');
-  } catch (_) {}
-  // Also try callback if parent passed one
-  if (typeof P.onApptUpdate === 'function') P.onApptUpdate();
-}
+   Nothing replaces it AT THIS END, which is the point: every write on this
+   page already goes through the shell's apiSend, and the sync bus sniffs that
+   into an `appt:<id>` announcement (public/js/yc-sync.js). Readers subscribe
+   directly. That covers the four status actions this function was called from
+   AND the two case-linking PATCHes below that never called it — plus any
+   frame at any depth, and every other browser tab, which the walk never
+   reached. */
 
 // ─── INIT ───
 /* This document parses inside an iframe inside a Swal inside the shell, and

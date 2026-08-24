@@ -844,10 +844,27 @@ function processing() {
 }
 
 // ── onSuccess callbacks for parent actions ───────────────────
+/* ECHO-FENCE STAMP, read by the `appt:*` subscriber at the foot of this file.
+   This function is ALREADY the onSuccess callback for P.apptUpdate() on every
+   row button and newAppt()'s onCreated — so without the stamp every appt
+   action here would cost two GETs: this one, then the bus announcing that same
+   write back to us. Taken before the request, so it is always in the past when
+   the (macrotask) message lands. Same shape as pipelineBoard's boardLastLoad. */
+let apptsLastRefresh = 0;
 async function refreshAppts() {
-  const data = await P.apiSend(`/api/contacts/${clientID}`, 'GET', { include: 'appts' });
-  window.entityData.appts = data.appts || [];
-  putAppt();
+  apptsLastRefresh = Date.now();
+  // try/catch added with the bus subscriber: a bus-triggered call has no
+  // caller to reject to, and an unhandled rejection here would surface as a
+  // page error for a background refresh nobody asked for. The existing
+  // callers (apptUpdate's onSuccess, newAppt's onCreated) never awaited a
+  // rejection either. Mirrors refreshEvents' own handler below.
+  try {
+    const data = await P.apiSend(`/api/contacts/${clientID}`, 'GET', { include: 'appts' });
+    window.entityData.appts = data.appts || [];
+    putAppt();
+  } catch (err) {
+    console.error('refreshAppts failed:', err.message);
+  }
 }
 
 // ── Refresh after form save ─────────────────────────────────
@@ -1036,7 +1053,11 @@ function newEvent() {
   });
 }
 
+/* ECHO-FENCE STAMP — see refreshAppts' comment. newEvent()'s onSaved and both
+   row status helpers already call this directly. */
+let eventsLastRefresh = 0;
 async function refreshEvents() {
+  eventsLastRefresh = Date.now();
   try {
     const data = await P.apiSend('/api/events', 'GET',
       { link_type: 'contact', link_id: clientID, status: 'all', sort: 'asc' });
@@ -1046,7 +1067,9 @@ async function refreshEvents() {
     console.error('refreshEvents failed:', err.message);
   }
 }
-// Exposed so the shell's 'event-updated' listener can refresh this iframe.
+/* Kept as a parent hook. The shell's 'event-updated' listener that used to
+   call it is gone (Slice 3) — this page now subscribes to `event:*` on the
+   sync bus directly, at the foot of this file. */
 window.refreshEvents = refreshEvents;
 
 function putEvents() {
@@ -1794,6 +1817,47 @@ YC.on(`contact:${clientID}`, '*', (fields) => {
   }
 
   queueBusFormPush();
+});
+
+
+/* ── Appt / Event readers (sync bus) ────────────────────────────────────────
+   REPLACES the shell's `appt-updated` / `event-updated` postMessage walk,
+   which reached this page by enumerating the shell's own iframes and calling
+   the two functions below. Subscribing directly gets the same refresh from any
+   writer at any frame depth AND from another browser tab, and it also covers
+   the writers that never posted at all (apptform2's case-linking PATCHes).
+
+   THESE ARE QUERY VIEWS, so any message means REFETCH — never read the fields.
+   `appt:*` / `event:*` carry two kinds of traffic (the sniff's `yc_refetch`
+   marker, and checklistView's real note values) and both mean the same thing
+   here: the list on screen may be wrong, ask the server.
+
+   Debounced, because one write can land as several messages — a reschedule
+   announces the old appointment AND its successor, and a checklistView note
+   save announces twice (the sniff's marker plus its own value emit).
+
+   Echo-fenced, because both functions are already the success callback for
+   this page's own writers. See the stamp comments where they are defined.
+
+   §3.6: both handlers end in a GET and a table repaint. The sniff's method
+   gate drops GET before any matcher runs, so nothing can loop.
+
+   Registered OUTSIDE the boot IIFE, same rationale as the entity subscriber
+   above: a page whose initial load threw must not also go permanently deaf. */
+const BUS_FRESH_MS = 1500;
+let apptsBusDeb = null;
+let eventsBusDeb = null;
+
+YC.on('appt:*', '*', () => {
+  if (Date.now() - apptsLastRefresh < BUS_FRESH_MS) return;   // our own write
+  clearTimeout(apptsBusDeb);
+  apptsBusDeb = setTimeout(refreshAppts, 250);
+});
+
+YC.on('event:*', '*', () => {
+  if (Date.now() - eventsLastRefresh < BUS_FRESH_MS) return;  // our own write
+  clearTimeout(eventsBusDeb);
+  eventsBusDeb = setTimeout(refreshEvents, 250);
 });
 
 </script>

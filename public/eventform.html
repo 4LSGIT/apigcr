@@ -661,7 +661,6 @@ async function efSave() {
     efRender();
     flag.className = 'ef-flag saved';
     flag.textContent = 'Saved';
-    efNotifyShell();
   } catch (err) {
     efBusy = false;
     flag.className = 'ef-flag';
@@ -671,18 +670,22 @@ async function efSave() {
   }
 }
 
-/* Re-read after a status action, then tell everyone else. */
+/* Re-read after a status action. Everyone else hears about it from the bus —
+   the status PATCH went through the shell's apiSend and was sniffed. */
 async function efAfterWrite() {
   await efLoad();
-  efNotifyShell();
 }
 
-/* The shell listens for this and calls refreshEvents() on every iframe —
-   case.html and contact.html both export one. Its own Events tab is inline
-   markup rather than an iframe, so showEvent()'s didClose refreshes that. */
-function efNotifyShell() {
-  try { efShell().postMessage({ type: 'event-updated' }, '*'); } catch (_) {}
-}
+/* ─── efNotifyShell() — RETIRED (Slice 3) ───
+   It posted `{type:'event-updated'}` to the shell, which walked its own iframes
+   calling refreshEvents() on whichever exported one. That listener is gone, and
+   so is showEvent()'s didClose refetch of the shell's Events tab.
+
+   Nothing replaces it AT THIS END: every write on this page goes through the
+   shell's apiSend via efApi(), and the sync bus sniffs that into an
+   `event:<id>` announcement (public/js/yc-sync.js). case.html, contact.html,
+   calendar.html and the shell's Events tab all subscribe directly — which also
+   reaches other browser tabs, which the walk never did. */
 
 // ── Notes & Lists frame ──────────────────────────────────────────
 /* link_type='event', link=<event_id>. The note attaches to the EVENT, never to
