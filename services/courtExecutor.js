@@ -57,7 +57,9 @@
 //                         NEVER a discharge date.
 //
 // This is load-bearing for more than tidiness: BOTH columns now drive
-// trigger rules on case.updated that advance the pipeline, and `closed` is
+// trigger rules that advance the pipeline (on case.updated for MANUAL entry;
+// this executor's raw writes bypass case.updated by design, so the COURT
+// path advances via rules on case.court_processed — see STEP 6), and `closed` is
 // client-visible in the portal as "Case closed". Writing a discharge date
 // into case_close_date tells a client their case is finished while it is
 // still open. If you add a terminal-ish date column, give it its own
@@ -798,15 +800,41 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       }
       const newTime = fields.time || null;
       const newLoc = fields.location || null;
-      // FUTURE Scheduled events of THIS TYPE for the case. event_title is now
-      // SELECTed so we can disambiguate two same-type hearings by title (a
-      // reschedule must update the SAME hearing, never a different same-type one).
-      const [typeMatches] = await db.query(
-        `SELECT event_id, event_date, event_time, event_all_day, event_location, event_title
+      const wantShow = isShowCauseType(eventType) || isShowCauseType(fields.event_title);
+      // FUTURE Scheduled events for the case — TYPE MATCHING HAPPENS IN JS,
+      // not SQL (the cancel_event pattern below, ported here 2026-08 after
+      // the events 32/111 dupe). The old `event_type<=>?` SQL filter was an
+      // EXACT string match, and the live data carries type drift across
+      // pipelines: wf24 writes 'confirmation_hearing' (underscore — not equal
+      // to the model's 'Confirmation Hearing' under any collation), and the
+      // model drifts against itself on show cause ('Show Cause' vs 'Show
+      // Cause Hearing', live rows 119/120). An adjournment whose target was
+      // wf24-created therefore found ZERO type matches, fell into the
+      // "nothing exists → clean create" branch, and silently duplicated the
+      // hearing with NO review flag (event 32 left Scheduled at its old
+      // date, event 111 created — while findDuplicateEvent could not catch
+      // the create because the adjournment MOVED the date out of the natural
+      // key's slot). The candidate arms mirror cancel_event exactly:
+      // normalized type (_normType folds case + punctuation), strict title
+      // match, and the show-cause drift regex. The Scheduled + future-date
+      // floor stays — unlike a dissolution, a reschedule targets a live
+      // hearing, and CURDATE() keeps a same-day adjournment reachable.
+      const [candidates] = await db.query(
+        `SELECT event_id, event_type, event_date, event_time, event_all_day, event_location, event_title
            FROM events
-          WHERE event_link_type='case_number' AND event_link_id=? AND event_type<=>?
+          WHERE event_link_type='case_number' AND event_link_id=?
             AND event_status='Scheduled' AND event_date >= CURDATE()`,
-        [resolved.case_number, eventType]
+        [resolved.case_number]
+      );
+      // _normType(null) === _normType(null) preserves the old <=> NULL-safe
+      // semantics: a typeless action still pairs only with typeless rows.
+      const _updSameType = (m) => _normType(m.event_type) === _normType(eventType);
+      const _updSameTitle = (m) =>
+        fields.event_title && titlesMatch(m.event_title, fields.event_title, identityTokens);
+      const _updShowDrift = (m) =>
+        wantShow && (isShowCauseType(m.event_type) || isShowCauseType(m.event_title));
+      const typeMatches = candidates.filter(
+        (m) => _updSameType(m) || _updSameTitle(m) || _updShowDrift(m)
       );
       // Same hearing = strict title match, OR same DATE+TIME with a loosely-similar
       // title (a re-notice the model re-titled — e.g. "Confirmation Hearing" vs
@@ -835,6 +863,40 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         const old = titleMatches[0];
         const oldSummary = eventSummary(toDatePart(old.event_date), toTimePart(old.event_time), old.event_location);
         const newSummary = eventSummary(newDate, newTime, newLoc);
+        // COMPARE-FIRST NOOP (2026-08, from live logs 417–419): the court
+        // sends duplicate copies and re-notices of the same adjournment, and
+        // each one used to reach updateEvent with values identical to the
+        // row — a "change" whose before and after states matched. That was
+        // not free: date/time/location are GCAL_AFFECTING, so updateEvent
+        // delete-and-recreated the Google Calendar entry, wrote an 'updated'
+        // activity-log row, and pushed an ai_change_log row — churn ×3 per
+        // replayed copy. Converged means done: quiet skip, same contract as
+        // cancel_already_done. The state strings below are EXACTLY the ones
+        // the change row would persist, so "noop" and "what revert would
+        // restore" can never disagree. Show cause still converges first —
+        // writeShowCauseColumn is itself compare-first, and a replayed OSC
+        // re-notice must set the column even when the event needs nothing
+        // (same rule as doCreateEvent's dedup-skip path).
+        const oldState = JSON.stringify({
+          date: toDatePart(old.event_date),
+          time: toTimePart(old.event_time),
+          all_day: old.event_all_day,
+          location: old.event_location == null ? null : old.event_location,
+        });
+        const newState = JSON.stringify({
+          date: toDatePart(newDate) || newDate,
+          time: toTimePart(newTime),
+          all_day: newTime ? 0 : 1,
+          location: newLoc == null ? null : newLoc,
+        });
+        if (wantShow || isShowCauseType(old.event_type) || isShowCauseType(old.event_title)) {
+          await writeShowCauseColumn(i, toDatePart(newDate) || newDate, newTime);
+        }
+        if (oldState === newState) {
+          skipped.push({ action_index: i, type, reason: 'update_already_done',
+            event_id: old.event_id });
+          continue;
+        }
         if (!effectiveDryRun) {
           // Through eventService.updateEvent, NOT raw SQL: date/time/location
           // are GCAL_AFFECTING, so updateEvent delete-then-recreates the Google
@@ -850,25 +912,9 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
             event_location: newLoc,
           }, 0);
         }
-        // A rescheduled Show Cause hearing moves cases.show_cause with it.
-        if (isShowCauseType(eventType) || isShowCauseType(old.event_title)) {
-          await writeShowCauseColumn(i, toDatePart(newDate) || newDate, newTime);
-        }
-        // Slice 4b D4: persist STRUCTURED before/after state (not lossy summaries)
-        // so revertCourtActions can reconstruct the row. Summaries stay in
-        // applied[] for human readability.
-        const oldState = JSON.stringify({
-          date: toDatePart(old.event_date),
-          time: toTimePart(old.event_time),
-          all_day: old.event_all_day,
-          location: old.event_location == null ? null : old.event_location,
-        });
-        const newState = JSON.stringify({
-          date: toDatePart(newDate) || newDate,
-          time: toTimePart(newTime),
-          all_day: newTime ? 0 : 1,
-          location: newLoc == null ? null : newLoc,
-        });
+        // Slice 4b D4: the STRUCTURED before/after states built above (not
+        // lossy summaries) persist to the change row so revertCourtActions
+        // can reconstruct the row. Summaries stay in applied[] for humans.
         pushChange('event', String(old.event_id), 'update', oldState, newState);
         applied.push({ action_index: i, type, entity_type: 'event', entity_id: String(old.event_id),
           summary: `reschedule ${oldSummary} -> ${newSummary}` });
@@ -906,9 +952,10 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       }
 
       // Candidate pool: ALL events of the case, any status, any date. No
-      // event_type<=>? in SQL (unlike update_event) because the live data
-      // already carries type drift ('Show Cause' vs 'Show Cause Hearing') —
-      // matching happens in JS. No date floor: the dissolution email is
+      // event_type<=>? in SQL because the live data already carries type
+      // drift ('Show Cause' vs 'Show Cause Hearing') — matching happens in
+      // JS (update_event now uses the same three arms; this branch is the
+      // original pattern). No date floor: the dissolution email is
       // authoritative, and canceling a stale past-dated Scheduled row is
       // hygiene, not a hazard.
       const [candidates] = await db.query(

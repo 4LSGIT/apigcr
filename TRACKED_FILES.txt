@@ -611,6 +611,7 @@ tests/contactUi.sync.test.js
 tests/control.flow.test.js
 tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
+tests/courtexecutor.update.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
 tests/esignActionsUi.test.js
