@@ -425,121 +425,121 @@
     }
 
     /* === Dark mode overrides for main content === */
-    body.dark .tab-main {
+    html[data-theme="dark"] .tab-main {
       color: var(--text);
     }
     /* Default buttons (excluding the branded blue CTAs) */
-    body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button) {
+    html[data-theme="dark"] .tab-main button:not(.big-button):not(.pop-button):not(.switch-button) {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 4px;
     }
-    body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button):hover:not(:disabled) {
+    html[data-theme="dark"] .tab-main button:not(.big-button):not(.pop-button):not(.switch-button):hover:not(:disabled) {
       background: var(--hover);
     }
-    body.dark .tab-main button:disabled {
+    html[data-theme="dark"] .tab-main button:disabled {
       opacity: 0.5;
     }
     /* Keep branded blue CTAs blue in dark mode */
-    body.dark .tab-main .big-button,
-    body.dark .tab-main .pop-button,
-    body.dark .tab-main .switch-button {
+    html[data-theme="dark"] .tab-main .big-button,
+    html[data-theme="dark"] .tab-main .pop-button,
+    html[data-theme="dark"] .tab-main .switch-button {
       background-color: var(--accent);
       color: #fff;
       border: none;
     }
-    body.dark .tab-main .big-button:hover,
-    body.dark .tab-main .pop-button:hover,
-    body.dark .tab-main .switch-button:hover {
+    html[data-theme="dark"] .tab-main .big-button:hover,
+    html[data-theme="dark"] .tab-main .pop-button:hover,
+    html[data-theme="dark"] .tab-main .switch-button:hover {
       background-color: var(--accent-dark);
     }
-    body.dark .tab-main input,
-    body.dark .tab-main select,
-    body.dark .tab-main textarea {
+    html[data-theme="dark"] .tab-main input,
+    html[data-theme="dark"] .tab-main select,
+    html[data-theme="dark"] .tab-main textarea {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border) !important;
     }
-    body.dark .tab-main input:focus,
-    body.dark .tab-main select:focus,
-    body.dark .tab-main textarea:focus {
+    html[data-theme="dark"] .tab-main input:focus,
+    html[data-theme="dark"] .tab-main select:focus,
+    html[data-theme="dark"] .tab-main textarea:focus {
       outline: none;
       border-color: var(--accent) !important;
     }
     /* Tables — need solid bg on tr to override style.css's #f2f2f2 stripe */
-    body.dark .tab-main table.logTable {
+    html[data-theme="dark"] .tab-main table.logTable {
       background: var(--surface);
       color: var(--text);
     }
-    body.dark .tab-main table.logTable th {
+    html[data-theme="dark"] .tab-main table.logTable th {
       background-color: var(--accent-dark);
       color: #fff;
       border-color: var(--border);
     }
-    body.dark .tab-main table.logTable td {
+    html[data-theme="dark"] .tab-main table.logTable td {
       border-color: var(--border);
       background: var(--surface);
     }
-    body.dark .tab-main table.logTable tr {
+    html[data-theme="dark"] .tab-main table.logTable tr {
       background-color: var(--surface);
     }
-    body.dark .tab-main table.logTable tr:nth-child(even) {
+    html[data-theme="dark"] .tab-main table.logTable tr:nth-child(even) {
       background-color: var(--sidebar-bg);
     }
-    body.dark .tab-main table.logTable tr:nth-child(even) td {
+    html[data-theme="dark"] .tab-main table.logTable tr:nth-child(even) td {
       background-color: var(--sidebar-bg);
     }
-    body.dark .tab-main table.logTable tr:hover,
-    body.dark .tab-main table.logTable tr:hover td {
+    html[data-theme="dark"] .tab-main table.logTable tr:hover,
+    html[data-theme="dark"] .tab-main table.logTable tr:hover td {
       background-color: var(--hover) !important;
     }
-    body.dark .tab-main a,
-    body.dark .tab-main a:visited {
+    html[data-theme="dark"] .tab-main a,
+    html[data-theme="dark"] .tab-main a:visited {
       color: var(--accent);
     }
-    body.dark .tab-main hr {
+    html[data-theme="dark"] .tab-main hr {
       border: none;
       border-top: 1px solid var(--border);
     }
     /* Appointment box etc. */
-    body.dark .tab-main .appointment-box {
+    html[data-theme="dark"] .tab-main .appointment-box {
       border-color: var(--border);
       background: var(--surface);
     }
     /* style.css .tab (tabs class) */
-    body.dark .tab {
+    html[data-theme="dark"] .tab {
       background-color: var(--sidebar-bg);
       color: var(--text);
     }
-    body.dark .tab:hover {
+    html[data-theme="dark"] .tab:hover {
       background-color: var(--hover);
     }
     /* Campaign tab styles from style.css */
-    body.dark .campaign-tab-button {
+    html[data-theme="dark"] .campaign-tab-button {
       background-color: var(--sidebar-bg);
       color: var(--text);
       border-color: var(--border);
     }
-    body.dark .campaign-tab-button.active {
+    html[data-theme="dark"] .campaign-tab-button.active {
       background-color: var(--surface);
     }
-    body.dark .campaign-tab-main {
+    html[data-theme="dark"] .campaign-tab-main {
       background-color: var(--surface);
       border-color: var(--border);
     }
     /* SweetAlert in dark mode */
-    body.dark .swal2-popup {
+    html[data-theme="dark"] .swal2-popup {
       background: var(--surface) !important;
       color: var(--text) !important;
     }
-    body.dark .swal2-title,
-    body.dark .swal2-html-container {
+    html[data-theme="dark"] .swal2-title,
+    html[data-theme="dark"] .swal2-html-container {
       color: var(--text) !important;
     }
-    body.dark .swal2-input,
-    body.dark .swal2-textarea,
-    body.dark .swal2-select {
+    html[data-theme="dark"] .swal2-input,
+    html[data-theme="dark"] .swal2-textarea,
+    html[data-theme="dark"] .swal2-select {
       background: var(--sidebar-bg) !important;
       color: var(--text) !important;
       border-color: var(--border) !important;
@@ -4686,7 +4686,7 @@ async function initAuth() {
             name: user && user.user_name,
             auth: user && user.user_auth
           }), null),
-          theme:      safe(() => document.body.classList.contains('dark') ? 'dark' : 'light', null),
+          theme:      safe(() => document.documentElement.getAttribute('data-theme') || 'light', null),
           body_class: safe(() => document.body.className || '(none)', null),
           // A silently-expired session is a common cause of "nothing happens
           // when I click", and the user has no way to see it.
