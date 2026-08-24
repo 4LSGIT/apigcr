@@ -282,12 +282,12 @@
    * @param {object} viz      normalised (see normalizeViz)
    * @param {Array}  rows
    * @param {Array}  profile  from profileColumns
-   * @param {object} theme    { text, grid, dark }
+   * @param {object} theme    { text, grid, bg, dark }
    * @returns {{kind:'chart', config:object} | {kind:'stat', cards:Array} |
    *           {kind:'none', reason:string}}
    */
   function buildChartConfig(viz, rows, profile, theme) {
-    theme = theme || { text: "#6b7280", grid: "#e5e7eb", dark: false };
+    theme = theme || { text: "#6c757d", grid: "#e1e4e8", bg: "#f6f7f9", dark: false };
     if (!viz) return { kind: "none", reason: "no chart for this shape" };
     if (viz.type === "table") return { kind: "none", reason: "table only" };
     if (!rows || !rows.length) return { kind: "none", reason: "no rows" };
@@ -363,7 +363,7 @@
             datasets: [{
               data,
               backgroundColor: colors,
-              borderColor: theme.dark ? "#151a23" : "#ffffff",
+              borderColor: theme.bg,
               borderWidth: 2,
             }],
           },
@@ -495,12 +495,13 @@
     try {
       const cs = getComputedStyle(document.body);
       return {
-        text: cs.getPropertyValue("--muted").trim() || "#6b7280",
-        grid: cs.getPropertyValue("--line").trim() || "#e5e7eb",
-        dark: document.body.classList.contains("dark"),
+        text: cs.getPropertyValue("--text-muted").trim() || "#6c757d",
+        grid: cs.getPropertyValue("--border").trim() || "#e1e4e8",
+        bg: cs.getPropertyValue("--page-bg").trim() || "#f6f7f9",
+        dark: document.documentElement.getAttribute("data-theme") === "dark",
       };
     } catch (_) {
-      return { text: "#6b7280", grid: "#e5e7eb", dark: false };
+      return { text: "#6c757d", grid: "#e1e4e8", bg: "#f6f7f9", dark: false };
     }
   }
 
