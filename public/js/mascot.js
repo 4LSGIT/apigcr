@@ -113,8 +113,13 @@
     FLY_CHANCE: 0.15,      // per settle-down, once the cooldown is up
     FLY_COOLDOWN: 240,     // s from one balloon to the next being possible
     FLY_FIRST: 45,         // …and none at all in the first seconds after it arrives
-    FLY_GAP_MIN: 90,       // how far overhead the target must be. Less than this
-    FLY_GAP_MAX: 420,      // and it may as well have climbed or hopped.
+    FLY_GAP_MIN: 90,       // less overhead than this and it may as well have hopped
+    // How FAR up it will go is really a question of how LONG the float lasts, so
+    // that is the number kept here and the reach falls out of it. A flat pixel
+    // cap was the second reason the top ledge was unreachable: from the floor of
+    // a 900px window the header strip is ~844px up, and any cap tight enough to
+    // feel safe cut it off. Crossing the whole page is the trick, not a bug.
+    FLY_MAX_SECS: 11,      // longest a float may last, at FLY_MAX_VY
     POP_CLEAR: 46,         // px above the target the feet reach before it bursts
     FLY_HEAD: 52,          // px from the feet to the top of the balloon — see the SVG
 
@@ -132,7 +137,7 @@
     // header below ~55 and the top ledge quietly stops being a target again.
     POP_MIN: 3,            // least clearance still worth calling a landing
     FLY_LIFT: 150,         // px/s² the balloon pulls with, so it takes up the slack
-    FLY_MAX_VY: 74,        // px/s ceiling on the rise. A balloon is not a rocket.
+    FLY_MAX_VY: 95,        // px/s ceiling on the rise. A balloon is not a rocket.
     FLY_SWAY: 9,           // px of side-to-side drift, about the launch column
     INFLATE_MS: 0.95,      // wind-up: the balloon filling
     POP_MS: 0.22,          // the burst, before it starts falling
@@ -534,6 +539,7 @@
   function tryFly(force) {
     var pad = CFG.FLY_SWAY + 10;      // sway, plus room for the drift off the pop
     var roof = CFG.FLY_HEAD;          // feet here ⇒ the crown is at the top of the window
+    var maxGap = CFG.FLY_MAX_VY * CFG.FLY_MAX_SECS;
     var cands = [];
     for (var i = 0; i < ledges.length; i++) {
       var l = ledges[i];
@@ -542,7 +548,7 @@
       // The ledge it is standing on scores gap 0 and drops out here, along with
       // anything else too close overhead to be worth the trouble.
       var gap = py - l.y;
-      if (gap < CFG.FLY_GAP_MIN || gap > CFG.FLY_GAP_MAX) continue;
+      if (gap < CFG.FLY_GAP_MIN || gap > maxGap) continue;
       // Usually the full POP_CLEAR. Over the topmost ledge it is whatever is left
       // before the balloon runs out of window — a few px, but a few px above the
       // surface is all a landing needs.
