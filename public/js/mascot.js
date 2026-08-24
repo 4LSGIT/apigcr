@@ -9,6 +9,10 @@
  * when it sees a landing it likes, because every content page in this shell is a
  * SAME-ORIGIN iframe and `contentDocument` is readable.
  *
+ * Once in a long while it also blows up a balloon and floats UP to something
+ * overhead, where the balloon bursts against the ledge and drops it onto it.
+ * That one is rare on purpose — see the FLY_* block in CFG.
+ *
  * Self-contained by design: this file is the entire feature. It has no
  * dependencies (no Font Awesome, no SweetAlert, no images, no network), injects
  * its own <style> and its own inline SVG, and touches exactly one line of
@@ -20,6 +24,14 @@
  *   double-clicking the cat, or Mascot.off() from the console. The choice is
  *   remembered per browser in localStorage. OFF by default for everyone — a
  *   colleague who never finds the gesture never sees a cat.
+ *
+ * DRIVING IT FROM THE CONSOLE
+ *   Mascot.list()   — every action it can be told to do, and what each needs
+ *   Mascot.fly()    — …or .jump() .climb() .sleep() .hang() etc, one per action
+ *   Mascot.do(name) — the same thing by name; Mascot.do() rolls a random one
+ *   Mascot.debug()  — outlines the box the cat thinks it lives in
+ *   Nothing else in the file calls these: they exist so the thing can be poked
+ *   at without waiting twenty minutes for it to feel like doing the trick.
  *
  * WHY IT CANNOT BITE YOU
  *   - z-index 900: above shell chrome (≤100), below the versionGuard bar (999)
@@ -84,6 +96,46 @@
     HOP_LIFT: 130,         // px/s of push-off, so it arcs instead of sliding off
     HOP_VX_MAX: 210,       // further sideways than this is not a drop, it's a leap
     HOP_CROUCH: 0.14,      // s of wind-up before the push
+
+    // THE BALLOON. The only thing in here a cat cannot actually do, which is
+    // exactly why it has to stay rare: seen twice it is a delight, seen every
+    // minute it is a physics engine with a bug in it. The rarity is carried by
+    // the COOLDOWN, not the roll — the roll only stops it being clockwork — and
+    // it is decided when the cat settles down, so it reads as a cat with an idea
+    // rather than a cat interrupted mid-stride.
+    //
+    // It rises CLEAR of a real ledge overhead — feet POP_CLEAR above the surface,
+    // not below it — and bursts there. Getting that the wrong way round is the
+    // one mistake this whole thing can make: burst under the ledge and the cat
+    // drops away from the very thing it spent six seconds floating up to. Pop
+    // above it and the ordinary fall code lands it on top, exactly the way a drop
+    // does. No new landing path, no new special case.
+    FLY_CHANCE: 0.15,      // per settle-down, once the cooldown is up
+    FLY_COOLDOWN: 240,     // s from one balloon to the next being possible
+    FLY_FIRST: 45,         // …and none at all in the first seconds after it arrives
+    FLY_GAP_MIN: 90,       // how far overhead the target must be. Less than this
+    FLY_GAP_MAX: 420,      // and it may as well have climbed or hopped.
+    POP_CLEAR: 46,         // px above the target the feet reach before it bursts
+    FLY_HEAD: 52,          // px from the feet to the top of the balloon — see the SVG
+
+    // …except over the TOPMOST ledge, the strip under the header, where there is
+    // not 46px of anything to rise into. The balloon's crown is FLY_HEAD above
+    // the feet, so landing up there means the balloon spends its last second in
+    // the header — which is allowed and always was: the cat is painted at z-index
+    // 900, above shell chrome. The real ceiling is the WINDOW, not the content
+    // box, and measuring against the content box was what made the top ledge
+    // unreachable: every candidate failed a test it could never pass.
+    //
+    // So the clearance is whatever is left before the crown reaches y 0, and the
+    // balloon bursting against the top of the window is the nicer beat anyway.
+    // With --header-h at 56px that leaves 4, which clears POP_MIN. Shrink the
+    // header below ~55 and the top ledge quietly stops being a target again.
+    POP_MIN: 3,            // least clearance still worth calling a landing
+    FLY_LIFT: 150,         // px/s² the balloon pulls with, so it takes up the slack
+    FLY_MAX_VY: 74,        // px/s ceiling on the rise. A balloon is not a rocket.
+    FLY_SWAY: 9,           // px of side-to-side drift, about the launch column
+    INFLATE_MS: 0.95,      // wind-up: the balloon filling
+    POP_MS: 0.22,          // the burst, before it starts falling
 
     // THE DEBUT. Until this moment the cat comes out on its own for anyone who
     // has not made a choice about it, and introduces itself on every load. After
@@ -181,6 +233,8 @@
   var hop = null;              // the drop being wound up for, during 'crouch'
   var hopFloor = -1e9;         // mid-drop, ignore any ledge above this (see toHop)
   var nextHop = 0;             // clock time of the next "is there something below me"
+  var fly = null;              // the balloon trip in progress: { popY, x0, t0 }
+  var flyReady = 0;            // clock time the next balloon becomes possible
   var say = null;              // the introduction bubble, debut only
   var leaveRecords = true;     // does walking off count as "sent away"?
   var autoDebut = false;       // started by the debut rather than by a person
@@ -398,6 +452,11 @@
   }
 
   function toIdle() {
+    // The balloon is decided HERE, at the moment the cat stops walking, because
+    // a cat that has just settled is the one with time to have an idea. Rolling
+    // it on a timer instead meant the timer usually elapsed mid-walk and the
+    // chance was silently thrown away, which makes the real frequency a fiction.
+    if (clock >= flyReady && Math.random() < CFG.FLY_CHANCE && tryFly(false)) return;
     setState('idle', pick(IDLE_ACTS));
     // A sleeping cat always faces right, so the floating z's are never mirrored.
     if (act === 'sleep') face = 1;
@@ -409,6 +468,7 @@
     vx = ivx || 0; vy = ivy || 0;
     rot = 0;
     hopFloor = -1e9;
+    fly = null;
     setState('fall');
   }
 
@@ -456,10 +516,71 @@
     return true;
   }
 
+  // Is there anything overhead worth a balloon? The mirror of tryHop, except the
+  // cat has to end up OVER the target rather than beside it, which sets all three
+  // of these tests:
+  //   · the rise is a straight column, so the ledge must still be under the cat
+  //     after the sway — hence the pad on each end;
+  //   · it bursts at POP_CLEAR ABOVE the surface, so the fall that follows lands
+  //     on top of it. Popping below would drop the cat back the way it came;
+  //   · and it needs headroom for that: a ledge so near the top of the page that
+  //     clearing it would push the balloon out of the content box is no good.
+  //
+  // `force` is the console's Mascot.fly(): a person who asked for a balloon gets
+  // one even with nothing above, and it carries the cat to the top of the page
+  // and bursts there. The ambient roll never does that — an idle cat that floats
+  // to the top and falls all the way back down has done a trick with no payoff
+  // at the end of it.
+  function tryFly(force) {
+    var pad = CFG.FLY_SWAY + 10;      // sway, plus room for the drift off the pop
+    var roof = CFG.FLY_HEAD;          // feet here ⇒ the crown is at the top of the window
+    var cands = [];
+    for (var i = 0; i < ledges.length; i++) {
+      var l = ledges[i];
+      if (l.x2 - l.x1 < CFG.PERCH_SPAN) continue;
+      if (px < l.x1 + pad || px > l.x2 - pad) continue;
+      // The ledge it is standing on scores gap 0 and drops out here, along with
+      // anything else too close overhead to be worth the trouble.
+      var gap = py - l.y;
+      if (gap < CFG.FLY_GAP_MIN || gap > CFG.FLY_GAP_MAX) continue;
+      // Usually the full POP_CLEAR. Over the topmost ledge it is whatever is left
+      // before the balloon runs out of window — a few px, but a few px above the
+      // surface is all a landing needs.
+      var clear = Math.min(CFG.POP_CLEAR, l.y - roof);
+      if (clear < CFG.POP_MIN) continue;
+      cands.push({ y: l.y, clear: clear });
+    }
+    if (!cands.length && !force) return false;
+
+    // Pick at RANDOM, not nearest. tryHop takes the nearest thing below because a
+    // fall stops at the first surface whatever it aimed at; a balloon has no such
+    // excuse, and "nearest" quietly made the strip under the header unreachable —
+    // on any real page there is a card somewhere in between, and the nearest rule
+    // picks that card every single time. Random also just makes it a better
+    // trick: you cannot tell where it is going until it stops going.
+    var t = cands.length ? cands[Math.floor(Math.random() * cands.length)] : null;
+    var popY = t ? t.y - t.clear : roof;
+    if (py - popY < 24) return false;                       // already up there
+    fly = { popY: popY, x0: px, t0: 0 };
+    flyReady = clock + CFG.FLY_COOLDOWN;
+    // The ledge is kept through the wind-up, exactly as the crouch keeps it: a
+    // cat interrupted halfway through inflating is still standing on something.
+    setState('inflate');
+    stateUntil = clock + CFG.INFLATE_MS;
+    return true;
+  }
+
+  function toPop() {
+    vy = 0;
+    setState('pop');
+    stateUntil = clock + CFG.POP_MS;
+  }
+
   // `record` false means "stop being here", not "the user said no".
   function toLeave(record) {
     leaveRecords = record !== false;
     grab = null;
+    fly = null;
     rot = 0;
     face = px < mid() ? -1 : 1;
     hideSay();
@@ -479,7 +600,7 @@
   function land(l) {
     ledge = l; wall = null;
     py = l.y; rot = 0; vy = 0;
-    hop = null; hopFloor = -1e9;
+    hop = null; hopFloor = -1e9; fly = null;
     aim(vx >= 0 ? 1 : -1, 0);
     setState('land');
     stateUntil = clock + 0.22;
@@ -537,6 +658,40 @@
       return;
     }
 
+    if (state === 'inflate') {
+      if (!ledge || !fly) { toFall(0, 0); return; }   // the ground left mid-inflate
+      if (clock < stateUntil) return;
+      ledge = null; wall = null; rot = 0;
+      vx = 0; vy = 0;
+      fly.x0 = px; fly.t0 = clock;
+      setState('float');
+      return;
+    }
+
+    // The one place gravity does not apply. Note this branch sits ABOVE the
+    // fall/hop one deliberately — that branch adds GRAVITY unconditionally, and
+    // a floating cat sharing it would be a cat with a balloon falling anyway.
+    if (state === 'float') {
+      if (!fly) { toFall(0, 0); return; }
+      vy = Math.max(vy - CFG.FLY_LIFT * dt, -CFG.FLY_MAX_VY);
+      py += vy * dt;
+      // Sway is an oscillation about the launch column, not a drift: the target
+      // ledge was chosen for being under THIS x, and a drift would wander off it.
+      px = clamp(fly.x0 + Math.sin((clock - fly.t0) * 1.7) * CFG.FLY_SWAY,
+        bounds.left + 6, bounds.right - 6);
+      if (py <= fly.popY || py <= CFG.FLY_HEAD) toPop();   // never past the window
+      return;
+    }
+
+    if (state === 'pop') {
+      // Startled, and already dropping. The sideways kick is small on purpose:
+      // over a POP_CLEAR-high drop it is worth a few px, and the pad in tryFly()
+      // is sized to absorb exactly that. Make it bigger and the cat starts
+      // missing the ledge it just spent six seconds floating up to.
+      if (clock >= stateUntil) toFall(rand(-16, 16), 15);
+      return;
+    }
+
     if (state === 'fall' || state === 'hop') {
       vy = Math.min(vy + CFG.GRAVITY * dt, CFG.TERMINAL);
       var y0 = py;
@@ -559,8 +714,19 @@
       // cat just stepped off — which is how it ended up here.
       if (up && py <= w.y1 + 1) {
         py = w.y1 + 1;
-        if (w.ceil) {                            // the ceiling — hang from it
-          wall = null; rot = 180; py = w.y1;
+        if (w.ceil) {
+          // The strip under the header is a real surface, and this is the only
+          // route to it once the cat has left the one it drops onto at start().
+          // Hanging unconditionally meant a cat that walked off it early could
+          // never stand up there again — the top ledge existed but was, in
+          // practice, spawn-only furniture.
+          var topL = ledgeBelow(px, w.y1 - 2, w.y1 + 6);
+          if (topL && Math.random() < 0.4) {     // …or step up onto it
+            land(topL);
+            aim(px > mid() ? -1 : 1, 0);
+            return;
+          }
+          wall = null; rot = 180; py = w.y1;     // the ceiling — hang from it
           aim(px > mid() ? -1 : 1, 0);           // head back towards the middle
           setState('hang');
           stateUntil = clock + rand(2, 6);
@@ -677,8 +843,11 @@
     if (now - lastScan > CFG.RESCAN_MS) {
       lastScan = now;
       scan();
+      // Every state that believes it is standing on a specific ledge object.
+      // 'float' and 'pop' are airborne like fall/hop and must NOT be here; they
+      // hold a bare y, not a ledge, precisely because ledges go stale on rescan.
       if (state === 'walk' || state === 'idle' || state === 'chase' ||
-        state === 'land' || state === 'crouch') refoot();
+        state === 'land' || state === 'crouch' || state === 'inflate') refoot();
     }
 
     // A tab left open across the end of the debut must let the cat go too, or
@@ -805,6 +974,8 @@
     scan();
     lastScan = performance.now();
     clock = 0;
+    fly = null;
+    flyReady = CFG.FLY_FIRST;      // it has to be here a while before it gets ideas
     px = bounds.left + (bounds.right - bounds.left) * rand(0.35, 0.65);
     py = bounds.top - 40;
     toFall(rand(-20, 20), 0);            // drops in from off the top
@@ -872,10 +1043,138 @@
     else { store.set(true); autoDebut = false; start(); }
   }
 
+  // ── Console control ──────────────────────────────────────────────────────────
+  // Nothing in the file calls any of this; it exists so the cat can be made to do
+  // a thing on demand instead of waiting for it to feel like it — which for the
+  // balloon is otherwise a four-minute wait per attempt.
+  //
+  // `run` returns nothing when the action took, or a STRING saying why it did
+  // not. A console command that silently does nothing is worse than one that
+  // says "no wall in reach" — you cannot tell a refusal from a broken build.
+  var ACTIONS = [
+    { name: 'walk', needs: 'ledge', what: 'set off along the ledge it is on', run: function () { toWalk(); } },
+    { name: 'idle', needs: 'ledge', what: 'stop, and roll one of the idle acts', run: function () { toIdle(); } },
+    {
+      name: 'jump', needs: 'ledge', what: 'drop to a lower ledge — or hop on the spot if there is none',
+      run: function () {
+        var d = fwd().x * face >= 0 ? 1 : -1;
+        if (tryHop(d) || tryHop(-d)) return;
+        // Nothing below worth dropping to. Do the hop anyway rather than refuse:
+        // it is the same crouch and the same arc, it just lands where it started.
+        hop = { vx: 0, vy: -CFG.HOP_LIFT * 1.15, floor: py + 10 };
+        setState('crouch');
+        stateUntil = clock + CFG.HOP_CROUCH;
+      }
+    },
+    {
+      name: 'fly', needs: 'ledge', what: 'the balloon. Ignores the cooldown, and bursts on the ceiling if nothing is overhead',
+      run: function () { if (!tryFly(true)) return 'no room above it to rise'; }
+    },
+    {
+      name: 'climb', needs: 'any', what: 'take the nearest wall and go up it',
+      run: function () {
+        var best = null, gap = 1e9;
+        for (var i = 0; i < walls.length; i++) {
+          var g = Math.abs(walls[i].x - px);
+          // Inclusive at both ends: a wall's y2 IS the floor, so an exclusive
+          // test refuses every cat standing on the ground — which is most of them.
+          if (g < gap && py >= walls[i].y1 - 2 && py <= walls[i].y2 + 2) { gap = g; best = walls[i]; }
+        }
+        if (!best) return 'no wall in reach';
+        toClimb(best, true);        // note: toClimb snaps px to the wall, so this teleports
+      }
+    },
+    {
+      name: 'hang', needs: 'any', what: 'hang from the ceiling (cheats — it does not walk there)',
+      run: function () {
+        ledge = null; wall = null; fly = null;
+        rot = 180; py = bounds.top;
+        px = clamp(px, bounds.left + 8, bounds.right - 8);
+        aim(px > mid() ? -1 : 1, 0);
+        setState('hang');
+        stateUntil = clock + rand(3, 7);
+      }
+    },
+    {
+      name: 'fall', needs: 'any', what: 'let go and drop from wherever it is',
+      run: function () {
+        // The nudge is load-bearing. ledgeBelow() searches (y0 .. py] inclusive
+        // of y0, so a cat that lets go while standing ON a ledge finds that same
+        // ledge on its first airborne frame and lands straight back on it. The
+        // walking path never hits this because atEdge() steps off the end first.
+        py += 2;
+        toFall(rand(-40, 40), 30);
+      }
+    },
+    {
+      name: 'chase', needs: 'ledge', what: 'run at the cursor',
+      run: function () {
+        if (mouse.x < 0) return 'move the mouse first — it has not seen the cursor yet';
+        setState('chase');
+        stateUntil = clock + 4;
+      }
+    },
+    { name: 'flip', needs: 'any', what: 'turn around', run: function () { face = -face; } }
+  ];
+
+  // The idle repertoire gets one command each, read straight off IDLE_ACTS so
+  // the two lists cannot drift apart when someone adds a seventh thing to do.
+  (function () {
+    for (var i = 0; i < IDLE_ACTS.length; i++) {
+      (function (a) {
+        ACTIONS.push({
+          name: a, needs: 'ledge', what: 'idle: ' + a,
+          run: function () {
+            setState('idle', a);
+            if (a === 'sleep') face = 1;      // …or the z's come out mirrored
+            stateUntil = clock + (a === 'sleep' ? rand(6, 12) : rand(3, 6));
+          }
+        });
+      })(IDLE_ACTS[i][0]);
+    }
+  })();
+
+  function findAction(n) {
+    n = String(n == null ? '' : n).toLowerCase();
+    for (var i = 0; i < ACTIONS.length; i++) if (ACTIONS[i].name === n) return ACTIONS[i];
+    return null;
+  }
+
+  function doAction(name) {
+    if (!running || !cat) {
+      console.warn('[Mascot] not out — Mascot.on(), or long-press the logo');
+      return false;
+    }
+    if (name == null) name = ACTIONS[Math.floor(Math.random() * ACTIONS.length)].name;
+    var a = findAction(name);
+    if (!a) { console.warn('[Mascot] no action "' + name + '" — try Mascot.list()'); return false; }
+    // 'drag' and every airborne state have no ledge, so this one test covers all
+    // the ways the cat can be in no position to oblige.
+    if (a.needs === 'ledge' && !ledge) {
+      console.warn('[Mascot] ' + a.name + ' needs it standing on something (state: ' + state + ')');
+      return false;
+    }
+    var why = a.run();
+    if (typeof why === 'string') { console.warn('[Mascot] ' + a.name + ': ' + why); return false; }
+    draw();          // so the new pose shows at once, even mid-freeze
+    return a.name;
+  }
+
   window.Mascot = {
     on: function () { store.set(true); start(); },
     off: function () { store.set(false); stop(); },
     toggle: toggle,
+    'do': doAction,
+    list: function () {
+      var rows = [], names = [];
+      for (var i = 0; i < ACTIONS.length; i++) {
+        rows.push({ call: 'Mascot.' + ACTIONS[i].name + '()', needs: ACTIONS[i].needs, what: ACTIONS[i].what });
+        names.push(ACTIONS[i].name);
+      }
+      try { console.table(rows); } catch (e) { console.log(rows); }
+      console.log('Mascot.do("name") runs one by name · Mascot.do() rolls a random one');
+      return names;
+    },
     // Console aid for "why is it standing THERE": outlines the content box the
     // cat believes it lives in for three seconds, and returns the numbers.
     debug: function () {
@@ -896,6 +1195,9 @@
       return {
         bounds: bounds,
         cat: { state: state, x: Math.round(px), y: Math.round(py), rot: rot },
+        // Seconds until a balloon is possible again. 0 means the only thing left
+        // between you and one is the roll in toIdle() and something to fly to.
+        balloonIn: Math.max(0, Math.round(flyReady - clock)),
         // Where it is actually PAINTED. If painted.left is not ~cat.x while
         // climbing the left wall, the container is not resolving against the
         // viewport and some ancestor is creating a containing block.
@@ -911,6 +1213,18 @@
       };
     }
   };
+
+  // One shorthand per action — Mascot.fly(), Mascot.sleep(), Mascot.jump()…
+  // Guarded so an action can never quietly overwrite on/off/toggle/list/debug if
+  // someone adds one called 'toggle' later.
+  (function () {
+    for (var i = 0; i < ACTIONS.length; i++) {
+      (function (n) {
+        if (window.Mascot[n]) return;
+        window.Mascot[n] = function () { return doAction(n); };
+      })(ACTIONS[i].name);
+    }
+  })();
 
   function boot() {
     wireTrigger();
@@ -939,6 +1253,28 @@
   // grouped so the CSS below can pose them per state.
   var SVG =
     '<svg class="m-svg" viewBox="0 0 36 28" width="36" height="28" aria-hidden="true" focusable="false">' +
+    // The balloon lives ABOVE the viewBox, which works because the svg is
+    // overflow:visible (the sleep z's already do it). It sits outside .m-all so
+    // it does not inherit the body's bob and squash — and so the cat can swing
+    // underneath it during the float while the balloon itself stays put.
+    // Its crown is at viewBox y −23.8, i.e. CFG.FLY_HEAD above the feet at y 28.
+    // Change the geometry here and FLY_HEAD has to change with it.
+    '<g class="m-bal">' +
+    '<path class="m-string" d="M20 -3 q-3 7 -2.4 10.5 q.4 2.4 -.6 3.9" fill="none" stroke="#B0783A" stroke-width=".9" stroke-linecap="round"/>' +
+    '<g class="m-balloon">' +
+    '<ellipse cx="20" cy="-14" rx="8.3" ry="9.8" fill="#E4574C"/>' +
+    '<ellipse cx="16.8" cy="-18" rx="2.4" ry="3.2" fill="#F6A79F" opacity=".8"/>' +
+    '<path d="M18.4 -4.5 L21.6 -4.5 L20 -1.7 Z" fill="#C4443A"/>' +
+    '</g>' +
+    // Shards start ON the rim and fly outward, rather than growing out of the
+    // middle — a burst radiating from the centre just paints over the skin that
+    // is still fading and reads as a smudge, not a pop.
+    '<g class="m-shards">' +
+    '<path d="M11.7 -14 l-4.6 -.6 M28.3 -14 l4.6 -.6 M20 -23.8 l.6 -4.6' +
+    ' M14.1 -20.9 l-3.2 -3.4 M25.9 -20.9 l3.2 -3.4' +
+    ' M14.1 -7.1 l-3.2 3.2 M25.9 -7.1 l3.2 3.2"' +
+    ' fill="none" stroke="#E4574C" stroke-width="1.7" stroke-linecap="round"/>' +
+    '</g></g>' +
     '<g class="m-all">' +
     '<path class="m-tail" d="M6 15 C1 15.5 -0.5 9 2.5 5.5" fill="none" stroke="#D9762F" stroke-width="2.8" stroke-linecap="round"/>' +
     '<g class="m-leg m-bl"><rect x="8" y="17.5" width="3.4" height="10.5" rx="1.7" fill="#CE7130"/></g>' +
@@ -1036,6 +1372,48 @@
     '[data-state="hop"] .m-tail{transform:rotate(-30deg)}',
     '[data-state="hop"] .m-head{transform:rotate(6deg)}',
     '[data-state="hop"] .m-all{transform:scaleY(1.06) scaleX(.95)}',
+
+    /* ── the balloon ─────────────────────────────────────────────────────────
+       Shown ONLY by these three state selectors, and hidden by default. That is
+       load-bearing, not tidiness: it means toLeave(), a drag, the debut expiring
+       and every other way out of a float all put the balloon away for free,
+       without a single one of them having to know it exists. */
+    '.m-bal{opacity:0}',
+    '[data-state="inflate"] .m-bal,[data-state="float"] .m-bal,[data-state="pop"] .m-bal{opacity:1}',
+    '.m-balloon{transform-origin:20px -3.5px}',   /* the knot — it fills from there */
+    '.m-shards{transform-origin:20px -14px;opacity:0}',
+    '@keyframes ycm-inflate{0%{transform:scale(.05)}60%{transform:scale(1.11)}80%{transform:scale(.97)}100%{transform:scale(1)}}',
+    '@keyframes ycm-bobble{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}',
+    /* the skin goes early and the shards outlive it, or the two overlap for most
+       of the burst and it reads as the balloon melting rather than popping */
+    '@keyframes ycm-burst{0%{transform:scale(1);opacity:1}30%{transform:scale(1.24);opacity:.5}55%,100%{transform:scale(1.32);opacity:0}}',
+    '@keyframes ycm-shards{0%{transform:scale(1);opacity:1}70%{opacity:.9}100%{transform:scale(2);opacity:0}}',
+    '@keyframes ycm-swing{0%,100%{transform:rotate(-7deg)}50%{transform:rotate(7deg)}}',
+    '[data-state="inflate"] .m-balloon{animation:ycm-inflate ' + CFG.INFLATE_MS + 's ease-out both}',
+    '[data-state="inflate"] .m-all{transform:translateY(2px) scaleY(.94) scaleX(1.05)}',
+    '[data-state="inflate"] .m-head{transform:rotate(-17deg)}',   /* watching it fill */
+    '[data-state="inflate"] .m-tail{transform:rotate(-12deg)}',
+    '[data-state="float"] .m-balloon{animation:ycm-bobble 2.9s ease-in-out infinite}',
+    /* the pivot moves to the KNOT for the float, so the cat swings from the
+       string like a pendulum instead of about its own feet. The balloon is
+       outside .m-all, so it holds still while the cat sways under it. */
+    '[data-state="float"] .m-all{transform-origin:20px -2px;animation:ycm-swing 2.4s ease-in-out infinite}',
+    /* NOT a dangle on all four: four legs swinging in antiphase is a gait, and a
+       floating cat that appears to be walking is the whole illusion gone. The
+       front pair holds the splay the fall pose uses — which already reads as
+       airborne — and only the back pair swings, slowly enough to be a sway. */
+    '[data-state="float"] .m-fl,[data-state="float"] .m-fr{transform:rotate(-18deg)}',
+    '[data-state="float"] .m-bl,[data-state="float"] .m-br{animation:ycm-dangle 1.7s ease-in-out infinite}',
+    '[data-state="float"] .m-br{animation-delay:.85s}',
+    '[data-state="float"] .m-tail{transform:rotate(16deg)}',
+    '[data-state="float"] .m-head{transform:rotate(-7deg)}',
+    '[data-state="pop"] .m-balloon{animation:ycm-burst ' + CFG.POP_MS + 's ease-out forwards}',
+    '[data-state="pop"] .m-shards{opacity:1;animation:ycm-shards ' + CFG.POP_MS + 's ease-out forwards}',
+    '[data-state="pop"] .m-string{opacity:0}',
+    '[data-state="pop"] .m-head{transform:rotate(-15deg)}',       /* startled */
+    '[data-state="pop"] .m-fl,[data-state="pop"] .m-fr{transform:rotate(-38deg)}',
+    '[data-state="pop"] .m-bl,[data-state="pop"] .m-br{transform:rotate(34deg)}',
+    '[data-state="pop"] .m-all{transform:scaleY(.94) scaleX(1.07)}',
 
     /* the landing squash */
     '@keyframes ycm-land{0%{transform:scaleY(.68) scaleX(1.18)}60%{transform:scaleY(1.06) scaleX(.96)}100%{transform:none}}',
