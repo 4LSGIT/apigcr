@@ -1,0 +1,189 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   YisraCase — unified theme tokens
+   Single source of truth. Load FIRST in the shell and in every framed page,
+   before that page's own <style> block or stylesheet.
+
+   Colour + density values come from the Claude Design mockup
+   ("YisraCase Theme.dc.html"). Everything past the CORE block is an addition
+   required by the real repo — each one is annotated with why it exists and
+   which pages needed it. Do not add tokens without doing the same.
+
+   Scope: index.html and every page nested outward from it, at any depth.
+   OUT of scope: portal/*, book.html, manage.html, and the other externally
+   served pages. They keep their own :root.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── CORE (from the mockup — do not retune) ─────────────────────────── */
+  --sidebar-w: 220px;
+  /* 56px is the SHELL'S CURRENT VALUE, held deliberately. The mockup says
+     52px and that is where this lands — but in the density pass, not here.
+     Changing it in the colour arc would make the shell shift in the one commit
+     whose entire value is being a visual no-op. See charter §8. */
+  --header-h: 56px;
+
+  --accent: #07ADEF;
+  --accent-dark: #0590c8;
+  --accent-soft: rgba(7, 173, 239, 0.12);
+
+  --page-bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+
+  --sidebar-bg: #f7f8fa;
+  --sidebar-sublist-bg: #eef0f3;
+  --hover: #e8eaed;
+
+  --border: #e1e4e8;
+  --border-strong: #cfd4da;
+
+  --text: #2c3e50;
+  --text-2: #5a6b7c;
+  --text-muted: #6c757d;
+
+  --ok: #16a34a;
+  --warn: #d97706;
+  --danger: #d9534f;
+  --info: #4f8ef7;
+  --ok-soft: rgba(22, 163, 74, .12);
+  --warn-soft: rgba(217, 119, 6, .12);
+  --danger-soft: rgba(217, 83, 79, .12);
+
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --radius: 6px;
+  --radius-sm: 4px;
+
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* ── ADDED: shell chrome ─────────────────────────────────────────────
+     index.html defines these today and nothing else does. Lifted here so
+     the shell's :root can be deleted like every other page's. */
+  --sidebar-skinny-w: 56px;
+  --shadow-drawer: 2px 0 12px rgba(0, 0, 0, 0.18);
+  --backdrop: rgba(0, 0, 0, 0.4);
+
+  /* ── ADDED: text that sits ON the accent ─────────────────────────────
+     Used 6× (book, manage, portal/*). Must stay white in both modes — it is
+     not --text and never inverts. Kept out of the dark block on purpose. */
+  --accent-text: #ffffff;
+
+  /* ── ADDED: secondary + info-hover ───────────────────────────────────
+     --accent-2 replaces the #82c0ff used across availabilitymanager,
+     bookingviewsmanager, connections, pageManager, redirects.
+     --info-dark replaces --blue2 (#3a7de8, 17 uses) — the hover partner of
+     --blue/--info across the automation family. */
+  --accent-2: #82c0ff;
+  --info-dark: #3a7de8;
+  --info-soft: rgba(79, 142, 247, .12);
+
+  /* ── ADDED: code / pre surface ───────────────────────────────────────
+     --navy (#1a1a2e) and --navy2 (#16213e) are used as <pre> backgrounds in
+     hooks/workflows/sequences/emailIngest/phoneIngest, always paired with a
+     hardcoded color:#e2e8f0. That is a real concept the core sheet lacked:
+     a code surface that is dark in BOTH modes. Convert those inline
+     color:#e2e8f0 declarations to var(--code-fg) at the same time. */
+  --code-bg: #1a1a2e;
+  --code-bg-2: #16213e;
+  --code-fg: #e2e8f0;
+
+  /* ── ADDED: categorical hues ─────────────────────────────────────────
+     automation/activity.html colour-codes event categories and genuinely
+     needs distinct hues that carry no status meaning. Mapping these onto
+     ok/warn/danger would make unrelated rows read as errors. Keep the set
+     small — four is the ceiling; do not grow it to cover one-off badges. */
+  --cat-purple: #8b5cf6;
+  --cat-teal: #14b8a6;
+  --cat-indigo: #6366f1;
+  --cat-pink: #ec4899;
+
+  /* ── ADDED: density scale (measured off the mockup) ──────────────────
+     Optional in the colour pass, mandatory in the density pass. These are
+     the numbers that make the app read as one compact UI rather than nine
+     different ones. Frequency in the mockup is in the comments. */
+  --fs: 12.5px;      /* base — 46 uses */
+  --fs-sm: 11.5px;   /* secondary / meta — 15 uses */
+  --fs-xs: 10.5px;   /* badges, counts — 5 uses */
+  --fs-lg: 14px;     /* section headings — 20 uses */
+  --fs-title: 19px;  /* page title — 1 use */
+
+  --ctl-h: 28px;     /* inputs, selects, table-row buttons */
+  --ctl-h-lg: 32px;  /* toolbar / primary buttons */
+
+  --pad-cell: 6px 8px;    /* table cells — 33 uses */
+  --pad-btn: 7px 12px;    /* buttons — 15 uses */
+  --pad-card: 13px;       /* card interiors — 6 uses */
+  --pad-panel: 18px 20px; /* outer panels — 4 uses */
+
+  --gap-sm: 6px;
+  --gap: 8px;
+  --gap-lg: 14px;
+}
+
+html[data-theme="dark"] {
+  --page-bg: #131722;
+  --surface: #1a1e2a;
+  --surface-2: #202634;
+
+  --sidebar-bg: #1a1e2a;
+  --sidebar-sublist-bg: #131722;
+  --hover: #2a2f3d;
+
+  --border: #2c313d;
+  --border-strong: #3b4252;
+
+  --text: #e1e4e8;
+  --text-2: #b3bcc9;
+  --text-muted: #8b95a8;
+
+  --accent-soft: rgba(7, 173, 239, 0.22);
+
+  --ok: #4ad28b;
+  --warn: #e0b341;
+  --danger: #ff7670;
+  --info: #6ea3ff;
+  --ok-soft: rgba(74, 210, 139, .15);
+  --warn-soft: rgba(224, 179, 65, .15);
+  --danger-soft: rgba(255, 118, 112, .15);
+
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+
+  /* additions, dark variants */
+  --shadow-drawer: 2px 0 12px rgba(0, 0, 0, 0.5);
+  --backdrop: rgba(0, 0, 0, 0.6);
+  --accent-2: #6ea8fe;
+  --info-dark: #4f8ef7;
+  --info-soft: rgba(110, 163, 255, .18);
+
+  /* code surface stays dark; only the second tone lifts so it stays
+     distinguishable from --surface once the page around it is dark too */
+  --code-bg: #12151f;
+  --code-bg-2: #1b2233;
+
+  --cat-purple: #a78bfa;
+  --cat-teal: #2dd4bf;
+  --cat-indigo: #8ea2ff;
+  --cat-pink: #f472b6;
+
+  /* NOT restated, and that is deliberate: --accent, --accent-dark,
+     --accent-text, --code-fg, --radius*, --sidebar-w, --sidebar-skinny-w,
+     --header-h, --ui, --mono, and the whole density scale are
+     mode-independent and inherit from :root. */
+}
+
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: var(--ui);
+  transition: background .18s ease, color .18s ease;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-dark); text-decoration: underline; }
+
+/* Deliberately NOT here: a global `* { box-sizing: border-box }` reset.
+   style.css sets box-sizing per-element today and several pages lay out
+   against content-box. A global reset would break them all at once, in a way
+   that is hard to attribute back to this change. If we want it, it is its own
+   slice with its own verification pass. */
