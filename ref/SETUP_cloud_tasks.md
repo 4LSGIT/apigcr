@@ -198,8 +198,16 @@ rows/year but permanent):
 CREATE INDEX idx_wf_exec_created ON workflow_executions (created_at);
 ```
 
-**The ~3% silent-fallback tail** (enqueue RPC starving in the throttled
-post-response tail at idle hours; e.g. job 4000, Sun 22:39, 48s) is the
-evidence base for the split-phase hook dispatch slice. The follow-up patch's
-buffer reduction (2000→750ms) trims the typical floor but does not touch the
-tail — only moving the enqueue into the request-bound phase does.
+**The ~3% silent-fallback tail is now fixed structurally** — the
+post-deploy patch includes split-phase hook dispatch: workflow/sequence
+targets (100% of live hook traffic) are delivered BEFORE the webhook
+response, request-bound at full CPU, so the Cloud Tasks enqueue never runs
+throttled on the hook path. http/internal_function targets stay detached as
+before. Webhook response cost: ~100–300ms typical (was ~83ms), bounded by
+the enqueue's 15s deadline on a Cloud Tasks outage — inside sender timeouts.
+Verification after deploy: the flip-event log signature inverts — expect
+`[taskQueue] enqueued dispatch` BEFORE the hook route's response completes,
+and the enqueue segment at ~50–150ms instead of the measured 0.6–5.2s.
+Re-run the §7 hook→step-1 query after 24h; the tail (jobs landing ~48–60s)
+should be gone entirely, and typical should drop toward ~2–3s with the
+750ms buffer.

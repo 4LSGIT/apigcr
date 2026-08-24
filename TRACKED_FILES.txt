@@ -671,8 +671,10 @@ tests/helpers/bcPolyfill.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/hookMapper.test.js
+tests/hookReceiver.splitPhase.test.js
 tests/hookService.duplicate.test.js
 tests/hookService.retryRecovery.test.js
+tests/hookService.splitPhase.test.js
 tests/hookTransforms.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js

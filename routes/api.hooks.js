@@ -207,12 +207,31 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
       }
     }
 
-    // Normal path: return 200 immediately, execute pipeline async
-    res.json({ status: 'received', slug });
-
-    hookService.executeHook(db, slug, input, { hook }).catch((err) => {
+    // Normal path — SPLIT-PHASE dispatch (2026-08-24). Previously this
+    // responded 200 first and ran the whole pipeline detached, which put
+    // every workflow start — including the Cloud Tasks enqueue whose entire
+    // job is latency — in Cloud Run's throttled post-response tail (measured:
+    // the awaited createTask RPC starved for 5.22s on the flip event, and
+    // ~3% of immediate jobs silently fell back to the 60s cron at idle
+    // hours). Now the FAST targets (workflow/sequence — the latency-critical
+    // ones, and today 100% of live hook traffic) are delivered BEFORE the
+    // response, request-bound at full CPU; http/internal_function targets
+    // stay detached exactly as before via the returned `detached` promise.
+    // The response body is byte-identical to the old contract, and the
+    // catch keeps the old guarantee: our pipeline errors never turn into
+    // sender-side retries. Filtered/captured results carry no `detached`.
+    try {
+      const result = await hookService.executeHook(db, slug, input, { hook, splitPhase: true });
+      res.json({ status: 'received', slug });
+      if (result && result.detached) {
+        result.detached.catch((err) => {
+          console.error(`[hook] Detached-phase pipeline error for ${slug}:`, err);
+        });
+      }
+    } catch (err) {
       console.error(`[hook] Pipeline error for ${slug}:`, err);
-    });
+      if (!res.headersSent) res.status(200).json({ status: 'received', slug });
+    }
 
   } catch (err) {
     console.error(`[hook] Receiver error for ${slug}:`, err);

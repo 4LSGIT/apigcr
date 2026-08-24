@@ -537,7 +537,38 @@ function buildDryRunPreview(target, hookTransformOutput) {
  * @param {object}  [opts.hook=null]    - pre-loaded hook object (skips DB lookup if provided)
  * @returns {object} execution result
  */
-async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = null } = {}) {
+/**
+ * splitPhase (2026-08-24, split-phase dispatch slice): when true, the target
+ * loop is partitioned by type. FAST targets ('workflow', 'sequence' — a few
+ * small DB writes plus one bounded RPC each) are delivered BEFORE this
+ * function returns, i.e. request-bound at full CPU. SLOW targets ('http',
+ * 'internal_function' — arbitrary outbound work) run afterwards on a
+ * `detached` promise included in the return value, exactly as the whole
+ * pipeline used to. Only the webhook receiver's normal path sets this; every
+ * other caller (dry-run/test-fire, replay, email router, capture path) keeps
+ * the fully-serial behavior and return shape, byte for byte.
+ *
+ * WHY: the post-deploy report measured the awaited Cloud Tasks enqueue
+ * starving in the throttled post-response tail (5.22s on the flip event;
+ * ~3% of immediate jobs silently falling back to the 60s cron at idle
+ * hours). Running the fast targets pre-response removes the throttled
+ * context from the enqueue STRUCTURALLY instead of compensating for it.
+ * Cost: the webhook response waits for the fast targets — ~100–300ms
+ * typically; worst case is a Cloud Tasks outage where the enqueue's own
+ * 15s deadline bounds it, still inside webhook-sender timeouts.
+ *
+ * Invariants preserved under splitPhase (locked by
+ * tests/hookService.splitPhase.test.js):
+ *   - `targets` result array keeps ORIGINAL position order (sparse-filled
+ *     by index; phase 2 fills its slots later). Delivery-LOG rows for slow
+ *     targets are necessarily inserted after fast ones — the UI orders by
+ *     target position via join, so display is unaffected.
+ *   - successCount/failCount and the final hook_executions status are
+ *     computed AFTER phase 2, in the detached continuation.
+ *   - A slow target's failure cannot block a fast target (it already ran),
+ *     and a fast target's failure doesn't skip slow ones — same as serial.
+ */
+async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = null, splitPhase = false } = {}) {
   // 1. Look up hook (skip if caller already loaded it, e.g. the receiver route)
   const hook = preloaded || await getHookBySlug(db, slug);
   if (!hook) {
@@ -636,11 +667,16 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   }
 
   // 5. Deliver to each matching target
-  const targetResults = [];
+  //
+  // targetResults is POSITION-INDEXED (not push-ordered) so split-phase
+  // execution can fill fast and slow slots out of order while the returned
+  // array keeps the targets' original order. In serial mode the two are
+  // identical.
+  const targetResults = new Array(hook.targets.length);
   let successCount = 0;
   let failCount = 0;
 
-  for (const target of hook.targets) {
+  const runTarget = async (target, idx) => {
     // Evaluate target-level conditions (against transform output, not raw input).
     // Applies equally to all target types.
     const targetConditions = typeof target.conditions === 'string'
@@ -648,25 +684,25 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     const conditionsPassed = evaluateConditions(targetConditions, transformResult.output);
 
     if (!conditionsPassed) {
-      targetResults.push({
+      targetResults[idx] = {
         target_id: target.id,
         name: target.name,
         target_type: target.target_type || 'http',
         conditions_passed: false,
         skip_reason: 'condition not met',
-      });
-      continue;
+      };
+      return;
     }
 
     if (dryRun) {
       const preview = buildDryRunPreview(target, transformResult.output);
-      targetResults.push({
+      targetResults[idx] = {
         target_id: target.id,
         name: target.name,
         conditions_passed: true,
         ...preview,
-      });
-      continue;
+      };
+      return;
     }
 
     // Live delivery — pass db so internal targets can reach their engines
@@ -706,21 +742,28 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
       await queueRetryJob(db, executionId, target.id);
     }
 
-    targetResults.push({
+    targetResults[idx] = {
       target_id: target.id,
       name: target.name,
       target_type: target.target_type || 'http',
       conditions_passed: true,
       delivery: deliveryLog,
-    });
-  }
+    };
+  };
 
-  // 6. Update execution status
+  // Fast target types under split-phase: cheap, bounded, and carrying the
+  // latency-critical Cloud Tasks enqueue. Everything else is 'slow'
+  // (http = third-party outbound; internal_function = arbitrary work).
+  const FAST_TARGET_TYPES = new Set(['workflow', 'sequence']);
+
+  // 6. Update execution status — extracted so serial mode runs it inline and
+  // split-phase runs it after phase 2 (it needs the COMPLETE tallies).
+  const finalize = async () => {
   let finalStatus;
   if (dryRun) {
     finalStatus = 'dry_run';
   } else {
-    const activeTargetCount = targetResults.filter((t) => t.conditions_passed).length;
+    const activeTargetCount = targetResults.filter((t) => t && t.conditions_passed).length;
     // Status semantics:
     //   delivered — all active targets succeeded (or no targets matched conditions,
     //               meaning the pipeline itself completed successfully)
@@ -750,6 +793,53 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     filter: filterResult,
     transform: { output: transformResult.output, errors: transformResult.errors },
     targets: targetResults,
+  };
+  }; // end finalize
+
+  // ── Serial mode (every caller except the receiver's normal path) ──
+  // Identical to the pre-slice behavior: original order, one at a time,
+  // finalize inline. dryRun ALWAYS takes this path — test-fire previews
+  // must never partition.
+  if (!splitPhase || dryRun) {
+    for (let i = 0; i < hook.targets.length; i++) {
+      await runTarget(hook.targets[i], i);
+    }
+    return finalize();
+  }
+
+  // ── Split-phase mode ──
+  // Phase 1 (request-bound): fast targets, in original relative order.
+  const slow = [];
+  for (let i = 0; i < hook.targets.length; i++) {
+    const t = hook.targets[i];
+    if (FAST_TARGET_TYPES.has(t.target_type || 'http')) {
+      await runTarget(t, i);
+    } else {
+      slow.push([t, i]);
+    }
+  }
+
+  // Phase 2 (detached): slow targets in original relative order, then the
+  // finalization UPDATE. The caller owns .catch on this promise — runTarget
+  // and finalize handle their own per-target errors, so a rejection here is
+  // an infrastructure failure (DB down), same blast radius as the fully
+  // detached pipeline had.
+  const detached = (async () => {
+    for (const [t, i] of slow) {
+      await runTarget(t, i);
+    }
+    return finalize();
+  })();
+
+  // status 'accepted': phase 1 done, phase 2 in flight. Only the receiver
+  // sees this shape, and it discards everything except `detached`.
+  return {
+    status: 'accepted',
+    executionId,
+    filter: filterResult,
+    transform: { output: transformResult.output, errors: transformResult.errors },
+    targets: targetResults,
+    detached,
   };
 }
 

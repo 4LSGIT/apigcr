@@ -293,8 +293,19 @@ describe('live court create → createEvent', () => {
     expect(t.title).toMatch(/^Filing fee — Show Cause 2026-08-07/);
     // due = hearing − 7d clamped to today (never < today, so the past-due
     // guard in spawnReminderTask can never refuse it).
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.FIRM_TIMEZONE || 'UTC' }).format(new Date());
-    expect(t.due >= today || t.due === today).toBe(true);
+    //
+    // FLAKE FIX (2026-08-24): this assertion previously computed "today" in
+    // FIRM_TIMEZONE-or-UTC, but the clamp in services/eventService.js uses
+    // FIRM_TZ (America/Detroit when the env is unset under jest). Between
+    // 8pm and midnight Detroit time, UTC's date is one day ahead, so
+    // t.due (Detroit-today) < today (UTC-tomorrow) and the test failed —
+    // a daily four-hour flake window, first hit on the Aug 22/23 sandbox
+    // runs. Mirror the code under test's timezone exactly. The old
+    // `|| t.due === today` clause was dead (subsumed by >=) and is gone.
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: process.env.FIRM_TIMEZONE || 'America/Detroit',
+    }).format(new Date());
+    expect(t.due >= today).toBe(true);
   });
 
   test('non-show-cause court event spawns NO reminder task', async () => {
