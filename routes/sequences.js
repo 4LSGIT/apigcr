@@ -2372,8 +2372,10 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
       job_id:            after.id,
       step_number:       step.step_number,
       new_scheduled_at:  new Date(after.scheduled_time).toISOString(),
-      note: "Job will fire on the next /process-jobs tick (within ~5 min). "
-          + "The step's fire_guard and condition still apply at execution.",
+      note: "Job dispatched via Cloud Tasks (typically within a few seconds "
+          + "when the accelerator is enabled; otherwise on the next "
+          + "/process-jobs tick, within ~1 min). The step's fire_guard "
+          + "and condition still apply at execution.",
     });
   } catch (err) {
     console.error('[POST /sequences/enrollments/:id/recover] failed:', err);
