@@ -1,7 +1,7 @@
-# YisraCase — Sync Bus Design v2.1
+# YisraCase — Sync Bus Design v2.2
 
-**Status:** ratified design, ready for Slice 1
-**Date:** 2026-08-23 (v1: 2026-08-21; v2.1 incorporates SYNC_BUS_V2_SECONDARY_REVIEW, all findings verified)
+**Status:** Slice 1 shipped; Slice 2 shipped; Slice 2b shipped (v2.2 amendments at the foot of this file)
+**Date:** 2026-08-24 (v1: 2026-08-21; v2.1: 2026-08-23, SYNC_BUS_V2_SECONDARY_REVIEW; v2.2: Slice 2b multi-emit sniff)
 **Scope:** cross-frame + cross-browser-tab data consistency in `public/`
 **Verified against:** `4LSGIT/apigcr` @ main, fresh tarball 2026-08-23 + live DB
 **Supersedes:** YISRACASE_STORE_AND_BUS_DESIGN.md (v1)
@@ -197,3 +197,23 @@ Preview mode: same discipline, form-builder context only. Legacy Jotform ISSN if
 3. case_notes double surface → **keep both editable, bus-synced** (v1's own lean, now cheap).
 4. Store hoist → **deferred** (unchanged).
 5. appt-updated/event-updated → **leave in place**, revisit Slice 2.
+
+---
+
+## v2.2 amendments (Slice 2b — multi-emit sniff, verified)
+
+**Date:** 2026-08-24 · **Verified against:** `4LSGIT/apigcr` @ main, fresh tarball 2026-08-24
+
+| # | Amendment | Source |
+|---|---|---|
+| D1 | **§3.1 exception, NAMED: the cross-contact transfer.** `PATCH /api/contacts/:id?force=true` ends a phone/email row on a DONOR contact and re-creates it on the recipient. The donor's change is an **absence** — a child row left — and an absence has no `{column: value}` representation, so there is nothing for a values-only bus to carry. The sniff therefore emits `{yc_refetch: 1}` to `contact:<donor>`, **once per unique donor** (a phone and an email from the same donor are one message), and the entity page answers with its queued refetch. This is the ONE sanctioned invalidation. Everything else on the bus remains values. | close-out B7, manager decision: Option B |
+| D2 | **Getter contract v2.** A matcher's getter is now called `(responseBody, urlCapture)` and may return EITHER a fields object — legacy, one emit to `${type}:${capture}` — OR an **array of `{addr, fields}`**, one emit per entry, each carrying the same `auto:` origin. The address comes from the ENTRY, which is what lets one response announce a second entity the URL never named (the donor) and an entity whose address only exists in the body (app-settings create). Empty array → nothing; an entry whose fields normalize to empty is dropped by `emit` itself. All five pre-2b getters keep the object shape and are byte-identical. | Slice 2b item 1 |
+| D3 | **Reserved field `yc_refetch`.** Carries no value; means "refetch this entity". A handler receiving it MUST NOT merge it into entity state — it is not a column, and on an entity page it would be pushed into every YCForm as one. Answer it with a refetch and return. Documented in the yc-sync header docblock. | Slice 2b item 1 |
+| D4 | **Close-out Finding 2 CLOSED** by a capture-less create matcher: `[/^\/api\/app-settings$/, 'setting', getter, ['POST']]`, whose getter reads `r.setting.key` out of the 201 body. Zero `settings.html` edits: every open frame's `setting:*` / `setting:fe-…` subscriber already handles the message, and that includes the WRITING shell — `emit` dispatches locally before it hits the wire, so `index.html`'s `setting:*` subscriber refreshes that realm's `firmData.settings` on the echo. The create handler not calling `loadFirmData()` (unlike its PUT siblings) stops mattering for any frame that is open. **Verified against the code.** | close-out Finding 2 |
+| D5 | **Contacts tab is now a reader.** `index.html` gains the Cases-tab twin: `tabContactsGet(offset, silent)`, a debounced `contact:*` subscriber with a hidden-tab stale flag, `openContactsTab()` collapsing the two inline openers, and the Contacts half of the one `visibilitychange` listener. The donor's stale row is covered by this wildcard for free — `yc_refetch` is just another `contact:*` message here, and the tab refetches regardless of fields. | Slice 1 gap |
+
+**§3.6 still holds, and this is the first handler that answers a message with a network call.** `contact.html`'s `yc_refetch` branch calls `window.ycRefreshEntity()` → `refreshEntityData` → a **GET**, which `_sniff`'s method gate drops before any matcher runs → plus form pushes, which populate and never save. No emit is produced, so the invalidation cannot loop.
+
+### Accepted gap, documented
+
+A **recipient** contact open in a THIRD frame or browser tab still misses aggregate additions: the scalar `changes` diff arrives and merges, but the newly created phone/email row does not (aggregates never ride the bus — v1 §3.1). Same absence-class as the donor, materially lower severity: the recipient's own scalar mirror is announced and correct, and the missing row is an addition rather than a stale row claiming to be current. Deliberately **not fixed** — extending `yc_refetch` to the recipient would make every aggregate save on the page cost a refetch in every other frame, which is the cost the values-only design exists to avoid. Revisit only if it surfaces in practice.

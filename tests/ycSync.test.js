@@ -443,12 +443,20 @@ describe('_sniff — app_settings', () => {
     expect(seen).toEqual([]);
   });
 
-  test('POST /api/app-settings (create) has no :key segment and cannot match', () => {
+  test('POST /api/app-settings (create) addresses from the BODY, not the URL', () => {
+    // Was asserted silent through Slice 2 — the bare path has no :key segment,
+    // so the PUT matcher structurally cannot reach it. Slice 2b gives it its own
+    // capture-less matcher whose getter reads the key out of the response, which
+    // is close-out Finding 2: a newly created fe-* row now reaches open frames.
     const w = mkWindow();
     const seen = spy(w, 'setting:*');
     w.YC._sniff('POST', '/api/app-settings',
-                { setting: { key: 'fe-new_thing', value: '[]' } });
-    expect(seen).toEqual([]);
+                { status: 'success', setting: { key: 'fe-new_thing', value: '[]' } });
+    expect(seen).toEqual([{
+      fields: { value: '[]' },
+      origin: 'auto:POST /api/app-settings',
+      addr:   'setting:fe-new_thing',
+    }]);
   });
 
   test('KEY CHARSET: dots, hyphens and underscores all round-trip in the address', () => {
@@ -564,5 +572,335 @@ describe('transport', () => {
     expect(w.YC).toBe(first);
     w.YC.emit('case:AAAA', { a: 1 }, 't');
     expect(seen).toEqual([{ a: 1 }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Getter contract v2 (Slice 2b) — multi-emit
+//
+// A getter may now return an ARRAY of {addr, fields} instead of a single fields
+// object. Two matchers need it: the contacts matcher (a transfer changes TWO
+// contacts, and the second one is not in the URL) and the app-settings CREATE
+// route (no :key segment at all — the address is in the body).
+//
+// The regression fence matters as much as the new behaviour: four of the six
+// matchers still return a plain object, and their emit path must be untouched.
+// ─────────────────────────────────────────────────────────────
+
+describe('getter contract v2 — legacy object return is untouched', () => {
+  function spy(w, addr) {
+    const seen = [];
+    w.YC.on(addr, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  test('the FIVE object-returning matchers emit exactly one message each, keyed off the URL', () => {
+    // The four originals plus the app-settings PUT. If a refactor of _sniff ever
+    // routes one of these down the array branch, the addr or the count moves.
+    const w = mkWindow();
+    const seen = [];
+    for (const t of ['case', 'contact', 'setting']) {
+      w.YC.on(t + ':*', '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    }
+
+    w.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: { case_stage: { from: 'Open', to: 'Filed' } } } });
+    w.YC._sniff('PATCH', '/api/contacts/5', { data: { changes: { contact_fname: { from: 'A', to: 'B' } } } });
+    w.YC._sniff('PATCH', '/api/cases/AAAA/docket', { changes: { case_number: '24-1' } });
+    w.YC._sniff('POST',  '/api/cases/AAAA/pipeline/advance', { changes: { pipeline_phase: 'case' } });
+    w.YC._sniff('PUT',   '/api/app-settings/fe-case_types', { setting: { key: 'fe-case_types', value: '{}' } });
+
+    expect(seen).toEqual([
+      { addr: 'case:AAAA',              fields: { case_stage: 'Filed' },   origin: 'auto:PATCH /api/cases/AAAA' },
+      { addr: 'contact:5',              fields: { contact_fname: 'B' },    origin: 'auto:PATCH /api/contacts/5' },
+      { addr: 'case:AAAA',              fields: { case_number: '24-1' },   origin: 'auto:PATCH /api/cases/AAAA/docket' },
+      { addr: 'case:AAAA',              fields: { pipeline_phase: 'case' }, origin: 'auto:POST /api/cases/AAAA/pipeline/advance' },
+      { addr: 'setting:fe-case_types',  fields: { value: '{}' },           origin: 'auto:PUT /api/app-settings/fe-case_types' },
+    ]);
+  });
+
+  test('an object getter returning empty / null / a non-object still emits nothing', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'case:*');
+    w.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: {} } });
+    w.YC._sniff('PATCH', '/api/cases/AAAA', { data: {} });
+    w.YC._sniff('PATCH', '/api/cases/AAAA/docket', { changes: null });
+    w.YC._sniff('PATCH', '/api/cases/AAAA/docket', { changes: 'nope' });
+    expect(seen).toEqual([]);
+  });
+});
+
+describe('getter contract v2 — array return', () => {
+  /* The array branch is exercised through the two shipped matchers rather than
+     an injected fake: MATCHERS is closed over inside the IIFE, so a test that
+     reached in to add a synthetic matcher would be testing a fixture. These
+     cover the branch's own semantics — N emits, empty array, per-entry empty
+     fields — using the contacts matcher as the vehicle. */
+  function spy(w, addr) {
+    const seen = [];
+    w.YC.on(addr, '*', (f, m) => seen.push({ addr: m.addr, fields: f }));
+    return seen;
+  }
+
+  test('N entries produce N emits, each with the same auto: origin', () => {
+    const w = mkWindow();
+    const seen = [];
+    w.YC.on('contact:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: {
+        changes: { contact_phone: { from: '1', to: '2' } },
+        transferred_from: [
+          { kind: 'phone', from_contact_id: 77, from_contact_name: 'Don', phone: '2' },
+          { kind: 'email', from_contact_id: 88, from_contact_name: 'Eve', email: 'e@x.com' },
+        ],
+      },
+    });
+    expect(seen).toEqual([
+      { addr: 'contact:5',  fields: { contact_phone: '2' }, origin: 'auto:PATCH /api/contacts/5?force=true' },
+      { addr: 'contact:77', fields: { yc_refetch: 1 },      origin: 'auto:PATCH /api/contacts/5?force=true' },
+      { addr: 'contact:88', fields: { yc_refetch: 1 },      origin: 'auto:PATCH /api/contacts/5?force=true' },
+    ]);
+  });
+
+  test('an EMPTY array emits nothing and logs nothing', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'contact:*');
+    // No changes, no transfers → the getter returns [].
+    w.YC._sniff('PATCH', '/api/contacts/5', { data: { changes: {}, transferred_from: [] } });
+    expect(seen).toEqual([]);
+    expect(w.YC._log.length).toBe(0);
+  });
+
+  test('an entry whose fields are empty is skipped, the rest still emit', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'contact:*');
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: {
+        changes: {},                                       // recipient entry never built
+        transferred_from: [{ kind: 'phone', from_contact_id: 77, phone: '2' }],
+      },
+    });
+    expect(seen).toEqual([{ addr: 'contact:77', fields: { yc_refetch: 1 } }]);
+  });
+
+  test('each entry is an independent message in _log', () => {
+    const w = mkWindow();
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: {
+        changes: { contact_phone: '2' },
+        transferred_from: [{ kind: 'phone', from_contact_id: 77, phone: '2' }],
+      },
+    });
+    expect(w.YC._log.map(m => m.addr)).toEqual(['contact:5', 'contact:77']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The contacts matcher (Slice 2b) — transfer donors
+//
+// B7: a cross-contact transfer moves a phone/email row OFF a donor contact. The
+// donor's change is an ABSENCE, which has no {column: value} form, so it rides
+// the bus as the reserved `yc_refetch` field. This is the ONE sanctioned
+// invalidation on an otherwise values-only bus.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — contacts matcher', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('contact:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f }));
+    return seen;
+  }
+
+  test('a plain save with `changes` only emits ONE message — Slice 1 behaviour, unchanged', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/5',
+                { data: { changes: { contact_fname: { from: 'A', to: 'B' } } } });
+    expect(seen).toEqual([{ addr: 'contact:5', fields: { contact_fname: 'B' } }]);
+  });
+
+  test('ONE donor emit for a phone AND an email from the SAME donor', () => {
+    // The dedupe that matters: contactService concatenates the phone plan's and
+    // the email plan's transferred_from arrays, so one donor legitimately appears
+    // twice. Two refetch messages would cost that page a second round-trip for
+    // exactly the same refetch.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: {
+        changes: { contact_phone: { from: '1', to: '2' } },
+        transferred_from: [
+          { kind: 'phone', from_contact_id: 77, from_contact_name: 'Don', phone: '2486000000' },
+          { kind: 'email', from_contact_id: 77, from_contact_name: 'Don', email: 'don@x.com' },
+        ],
+      },
+    });
+    expect(seen).toEqual([
+      { addr: 'contact:5',  fields: { contact_phone: '2' } },
+      { addr: 'contact:77', fields: { yc_refetch: 1 } },
+    ]);
+  });
+
+  test('a donor id EQUAL to the recipient is excluded — nothing was left behind', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: {
+        changes: { contact_phone: '2' },
+        transferred_from: [{ kind: 'phone', from_contact_id: 5, phone: '2' }],
+      },
+    });
+    expect(seen).toEqual([{ addr: 'contact:5', fields: { contact_phone: '2' } }]);
+  });
+
+  test('a STRING donor id equal to the numeric recipient id is also excluded', () => {
+    // The URL capture is a string and from_contact_id is a number; the exclusion
+    // compares String(...) on both sides so a JSON shape change can't slip a
+    // self-refetch through.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: { changes: { contact_phone: '2' }, transferred_from: [{ from_contact_id: '5' }] },
+    });
+    expect(seen).toEqual([{ addr: 'contact:5', fields: { contact_phone: '2' } }]);
+  });
+
+  test('`changes` EMPTY but transfers present → donor emit still fires', () => {
+    // The aggregate-only save: repeaters changed, no scalar column did. Before
+    // 2b the whole response went unannounced; the donor still needs telling.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: {
+        changes: {},
+        phones_changed: 1,
+        transferred_from: [{ kind: 'phone', from_contact_id: 77, phone: '2' }],
+      },
+    });
+    expect(seen).toEqual([{ addr: 'contact:77', fields: { yc_refetch: 1 } }]);
+  });
+
+  test('no `changes` key at all, transfers present → donor emit still fires', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true',
+                { data: { transferred_from: [{ from_contact_id: 77 }] } });
+    expect(seen).toEqual([{ addr: 'contact:77', fields: { yc_refetch: 1 } }]);
+  });
+
+  test('a malformed transferred_from is ignored, not thrown on', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    for (const tf of [null, 'nope', 42, [{}], [null], [{ from_contact_id: null }], [{ from_contact_id: '' }]]) {
+      w.YC._sniff('PATCH', '/api/contacts/9?force=true',
+                  { data: { changes: { contact_lname: 'X' }, transferred_from: tf } });
+    }
+    // Seven calls, seven recipient emits, zero donor emits.
+    expect(seen.map(s => s.addr)).toEqual(Array(7).fill('contact:9'));
+  });
+
+  test('transferred_from at the TOP LEVEL is ignored — the route nests it under data', () => {
+    // routes/api.contacts.js returns the service payload as `data`. Reading the
+    // top level would be reading a shape the server never sends.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: { changes: { contact_phone: '2' } },
+      transferred_from: [{ from_contact_id: 77 }],
+    });
+    expect(seen).toEqual([{ addr: 'contact:5', fields: { contact_phone: '2' } }]);
+  });
+
+  test('a donor message reaches a contact:<donor> subscriber, not just the wildcard', () => {
+    // The entity page subscribes to its OWN address. If the donor emit only ever
+    // matched 'contact:*' the whole B7 fix would be dead on arrival.
+    const w = mkWindow();
+    const donor = [];
+    w.YC.on('contact:77', '*', f => donor.push(f));
+    w.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: { changes: {}, transferred_from: [{ from_contact_id: 77 }] },
+    });
+    expect(donor).toEqual([{ yc_refetch: 1 }]);
+  });
+
+  test('a donor emit crosses windows like any other message', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = [];
+    b.YC.on('contact:77', '*', f => seenB.push(f));
+    a.YC._sniff('PATCH', '/api/contacts/5?force=true', {
+      data: { changes: {}, transferred_from: [{ from_contact_id: 77 }] },
+    });
+    await settle();
+    expect(seenB).toEqual([{ yc_refetch: 1 }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The app-settings CREATE matcher (Slice 2b) — close-out Finding 2
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — app-settings create', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('setting:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f }));
+    return seen;
+  }
+
+  test('a non-string value emits nothing — fail closed, same as the PUT matcher', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    for (const value of [{ a: 1 }, null, 42, undefined, ['x']]) {
+      w.YC._sniff('POST', '/api/app-settings', { setting: { key: 'fe-x', value } });
+    }
+    expect(seen).toEqual([]);
+  });
+
+  test('a missing / non-string / empty key emits nothing', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/app-settings', { setting: { value: 'v' } });
+    w.YC._sniff('POST', '/api/app-settings', { setting: { key: 7, value: 'v' } });
+    w.YC._sniff('POST', '/api/app-settings', { setting: { key: '', value: 'v' } });
+    w.YC._sniff('POST', '/api/app-settings', { status: 'success' });
+    w.YC._sniff('POST', '/api/app-settings', null);
+    expect(seen).toEqual([]);
+  });
+
+  test('an empty-string value still emits — creating a blank setting is a real event', () => {
+    // The route defaults an omitted value to ''. That row exists and open frames
+    // should know its key.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/app-settings', { setting: { key: 'fe-blank', value: '' } });
+    expect(seen).toEqual([{ addr: 'setting:fe-blank', fields: { value: '' } }]);
+  });
+
+  test('PUT / PATCH / GET on the BARE path emit nothing — the matcher is POST-only', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const body = { setting: { key: 'fe-x', value: 'v' } };
+    w.YC._sniff('PUT',   '/api/app-settings', body);
+    w.YC._sniff('PATCH', '/api/app-settings', body);
+    w.YC._sniff('GET',   '/api/app-settings', body);
+    expect(seen).toEqual([]);
+  });
+
+  test('the bare-path and per-key matchers do not poach each other', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // POST to a per-key path: matches the PUT-only matcher, which refuses POST.
+    w.YC._sniff('POST', '/api/app-settings/fe-x', { setting: { key: 'fe-x', value: 'v' } });
+    // PUT to a per-key path: still works, unchanged.
+    w.YC._sniff('PUT',  '/api/app-settings/fe-y', { setting: { key: 'fe-y', value: 'v' } });
+    expect(seen).toEqual([{ addr: 'setting:fe-y', fields: { value: 'v' } }]);
+  });
+
+  test('the created key addresses the row, even when the URL knows nothing about it', () => {
+    const w = mkWindow();
+    const exact = [];
+    w.YC.on('setting:fe-lead_sources', '*', f => exact.push(f));
+    w.YC._sniff('POST', '/api/app-settings',
+                { setting: { key: 'fe-lead_sources', value: '["Web"]', type: 'json_array' } });
+    expect(exact).toEqual([{ value: '["Web"]' }]);
   });
 });

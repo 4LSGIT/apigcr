@@ -628,7 +628,7 @@
     <div class="sb-item" data-tab="tabCases" onclick="openCasesTab()" title="Cases">
       <i class="fa-solid fa-landmark"></i><span>Cases</span>
     </div>
-    <div class="sb-item" data-tab="tabContacts" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')" title="Contacts">
+    <div class="sb-item" data-tab="tabContacts" onclick="openContactsTab()" title="Contacts">
       <i class="fa-solid fa-users"></i><span>Contacts</span>
     </div>
     <div class="sb-item" data-tab="tabAppts" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')" title="Appointments">
@@ -698,7 +698,7 @@
     <button class="home-btn" onclick="openCasesTab()">
       <i class="fa-solid fa-landmark fa-2xl"></i><br /><br />Cases
     </button>
-    <button class="home-btn" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')">
+    <button class="home-btn" onclick="openContactsTab()">
       <i class="fa-solid fa-users fa-2xl"></i><br /><br />Contacts
     </button>
     <button class="home-btn" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')">
@@ -956,13 +956,23 @@
       openMainTab('tabCases');
     }
 
-    // Coming back to the browser tab with Cases already on screen is the other
-    // way a stale list becomes visible.
+    // Coming back to the browser tab with a list already on screen is the other
+    // way a stale list becomes visible. ONE listener covers both main lists.
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden || !casesStale) return;
-      if (currentMainTabId() !== 'tabCases') return;
-      casesStale = false;
-      tabCasesGet(offsets.cases, true);
+      if (document.hidden) return;
+
+      if (casesStale && currentMainTabId() === 'tabCases') {
+        casesStale = false;
+        tabCasesGet(offsets.cases, true);
+      }
+
+      /* The Contacts half lives in the next <script> block, so it is reached
+         through its global rather than through `contactsStale` directly: a
+         visibilitychange firing mid-parse — after this listener registers but
+         before that block evaluates — would hit a `let` in its temporal dead
+         zone and throw. `typeof` on a not-yet-defined function declaration is
+         simply false. */
+      if (typeof refreshStaleContactsTab === 'function') refreshStaleContactsTab();
     });
   </script>
 
@@ -1015,7 +1025,17 @@
   </div>
 
   <script>
-    async function tabContactsGet(offset) {
+    /**
+     * @param {number}  offset
+     * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
+     *   Same two suppressions, for the same two reasons, as tabCasesGet:
+     *     · "No contacts found!" — a filtered page legitimately emptying is
+     *       the query working, not an error.
+     *     · the catch-block toast — a background fetch that fails must not
+     *       red-toast a user who did nothing. console.warn instead.
+     *   Every pre-existing caller passes nothing and keeps today's behaviour.
+     */
+    async function tabContactsGet(offset, silent = false) {
       offsets.contacts = offset;
       E("tabContactsLoad").style.display = "block";
 
@@ -1079,14 +1099,64 @@
             <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
             <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
           </select> | <button onclick="window.print()">Print</button>`;
-        } else {
+        } else if (!silent) {
           Toast.fire({ icon: "error", title: "No contacts found!" });
         }
       } catch (err) {
-        Toast.fire({ icon: "error", title: "Error loading contacts", text: err.message });
+        if (silent) console.warn("[contacts] background refetch failed:", err);
+        else Toast.fire({ icon: "error", title: "Error loading contacts", text: err.message });
       }
 
       E("tabContactsLoad").style.display = "none";
+    }
+
+    /* ── Contacts-tab liveness (sync bus) ───────────────────────────────────
+       Structural twin of the Cases-tab block above — same first-open-only
+       history, same stale-flag, same debounce, same never-cell-patch rule
+       (membership, ordering and page boundaries are all server-computed, so a
+       row that no longer matches the active query has to vanish and only the
+       server knows that).
+
+       This also covers the TRANSFER DONOR for free. A cross-contact phone
+       transfer announces `contact:<donor>` carrying `{yc_refetch:1}`; here that
+       is just another `contact:*` message — the tab refetches regardless of
+       which fields arrived, so the donor's now-stale phone cell corrects
+       itself with no special case. */
+    let contactsStale = false;
+    let contactsDeb = null;
+
+    /** Is the Contacts tab the one actually on screen right now? */
+    function contactsTabVisible() {
+      return currentMainTabId() === 'tabContacts' && !document.hidden;
+    }
+
+    YC.on('contact:*', '*', () => {
+      if (!contactsTabVisible()) { contactsStale = true; return; }
+      // Debounced: one contact save can land as several messages (the recipient
+      // diff plus a donor refetch), and a burst across frames should still cost
+      // one refetch.
+      clearTimeout(contactsDeb);
+      contactsDeb = setTimeout(() => tabContactsGet(offsets.contacts, true), 250);
+    });
+
+    /** Sole opener for the Contacts tab — sidebar item AND home button. */
+    function openContactsTab() {
+      if (!contacts) tabContactsGet(0);                // first open: unchanged
+      else if (contactsStale) { contactsStale = false; tabContactsGet(offsets.contacts, true); }
+      openMainTab('tabContacts');
+    }
+
+    /* Called by the visibilitychange handler in the Cases block above, which
+       owns the single listener for both tabs. A FUNCTION DECLARATION on
+       purpose: that makes it a window property, so the guarded `typeof` check
+       up there is safe even if a visibilitychange fires mid-parse, before this
+       script block has evaluated. A `let`/`const` would be in its temporal dead
+       zone at that moment and throw. */
+    function refreshStaleContactsTab() {
+      if (!contactsStale) return;
+      if (currentMainTabId() !== 'tabContacts') return;
+      contactsStale = false;
+      tabContactsGet(offsets.contacts, true);
     }
   </script>
 

@@ -273,7 +273,6 @@ public/style.css
 public/survey.html
 public/sw.js
 public/systemAlerts.html
-public/tabLeads.html
 public/tasks.html
 public/users.html
 public/videoManager.html
@@ -473,7 +472,6 @@ routes/scheduled_jobs.js
 routes/sequenceTypes.js
 routes/sequences.js
 routes/taskActions.js
-routes/temp.jwt.js
 routes/temp_auth_validate.js
 routes/test_wf_advance.js
 routes/unplacehold.js
@@ -607,6 +605,7 @@ tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js
 tests/caseId.test.js
 tests/checklists.s1notes.test.js
+tests/contactUi.sync.test.js
 tests/control.flow.test.js
 tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js

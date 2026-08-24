@@ -1760,6 +1760,24 @@ processing();
    Registered outside the boot IIFE so a failed initial load leaves the page
    deaf-but-recoverable rather than permanently unsubscribed. */
 YC.on(`contact:${clientID}`, '*', (fields) => {
+  /* RESERVED FIELD — the one sanctioned invalidation (design §3.1 amendment,
+     v2.2). A cross-contact transfer ENDED a phone/email row on this contact:
+     the change is an absence, so there is no value to merge, only a refetch to
+     do. Handled FIRST and it returns, because everything below it would be
+     wrong or redundant:
+
+       · Object.assign would write a `yc_refetch` key into entityData.contact,
+         where it is not a column and would be pushed into forms as one.
+       · the header spans and queueBusFormPush are both strictly SUPERSEDED —
+         ycRefreshEntity re-GETs and then runs updateHeader() + the same form
+         push loop, with the fresh aggregates the bus deliberately never carries.
+
+     Note the guard order: this runs BEFORE the `!entityData.contact` bail, so a
+     page whose initial load failed still answers a refetch rather than staying
+     deaf. §3.6 holds — the refetch is a GET, which the sniff's method gate
+     drops before any matcher runs, so this cannot loop. */
+  if ('yc_refetch' in fields) { window.ycRefreshEntity(); return; }
+
   const c = window.entityData.contact;
   if (!c) return;
 

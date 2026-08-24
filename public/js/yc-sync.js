@@ -36,6 +36,20 @@
  * SCALARS only. Aggregate arrays (a contact's phones/emails/addresses) do NOT
  * ride the bus; they refresh through the existing `form-saved` path.
  *
+ * ── RESERVED FIELD: `yc_refetch` (design §3.1 amendment, v2.2) ──────────────
+ *
+ * `yc_refetch` CARRIES NO VALUE. It means "refetch this entity", and it is the
+ * ONE sanctioned invalidation on an otherwise values-only bus. It exists for
+ * exactly one shape of change: the change is an ABSENCE.
+ *
+ * The cross-contact transfer is that shape. `PATCH /api/contacts/:id?force=true`
+ * moves a phone/email row OFF a donor contact; nothing about the donor has a
+ * new `{column: value}` — a child row simply left. There is no value to
+ * announce, so the sniff announces the need instead, once per unique donor.
+ *
+ * A handler receiving it MUST NOT merge it into entity state — it is not a
+ * column. Answer it with a refetch and return.
+ *
  * ── Addresses ───────────────────────────────────────────────────────────────
  *
  *   'case:AAAAAAAA'  'contact:1001'  'appt:55'  'event:12'
@@ -261,6 +275,26 @@
      * it, deep frames call window.top.apiSend), so ONE hook covers every
      * current and future writer of these five endpoints.
      *
+     * ── GETTER CONTRACT v2 (Slice 2b) ────────────────────────────────────
+     *
+     * A matcher's getter is called `(responseBody, urlCapture)` and may return
+     * EITHER of two shapes:
+     *
+     *   · a FIELDS OBJECT — `{field: value}` or the API `{field:{from,to}}`
+     *     diff. One emit, to `${type}:${urlCapture}`. This is the original
+     *     contract and every pre-2b getter still uses it.
+     *
+     *   · an ARRAY of `{addr, fields}` — one emit per entry, each carrying the
+     *     same `auto:` origin. The address comes from the ENTRY, which is what
+     *     lets one response announce (a) more than one entity and (b) an
+     *     entity the URL never named. Two things need that: the transfer
+     *     donor (a second contact, absent from the URL) and the app-settings
+     *     CREATE route (no `/:key` segment at all — the key is in the body).
+     *
+     * An empty array emits nothing; an entry whose fields normalize to empty
+     * is skipped by `emit` itself. Idempotence and `_log` are per-emit and
+     * unchanged — each entry is an independent message.
+     *
      * @param {string} method    'PATCH' | 'POST' | 'PUT' | …
      * @param {string} endpoint  the path as passed to apiSend
      * @param {*}      body      the parsed response body
@@ -288,12 +322,28 @@
         var methods = MATCHERS[i][3];
         if (methods && methods.indexOf(m) === -1) return;
         var type = MATCHERS[i][1];
-        var changes = null;
-        try { changes = MATCHERS[i][2](body); } catch (_) { changes = null; }
-        if (!changes || typeof changes !== 'object') return;
-        if (!Object.keys(changes).length) return;
-        YC.emit(type + ':' + hit[1], changes,
-                'auto:' + m + ' ' + endpoint);
+        // hit[1] is `undefined` for a capture-less matcher (POST /api/app-settings).
+        // Such a matcher MUST return the array shape and supply its own addrs.
+        var id = hit[1];
+        var origin = 'auto:' + m + ' ' + endpoint;
+
+        var out = null;
+        try { out = MATCHERS[i][2](body, id); } catch (_) { out = null; }
+        if (!out || typeof out !== 'object') return;
+
+        if (Array.isArray(out)) {
+          for (var e = 0; e < out.length; e++) {
+            var ent = out[e];
+            if (!ent || typeof ent !== 'object' || !ent.addr) continue;
+            // emit() drops a message whose fields normalize to empty, so the
+            // per-entry empty check is that same guard, not a second one.
+            YC.emit(ent.addr, ent.fields, origin);
+          }
+          return;
+        }
+
+        if (!Object.keys(out).length) return;
+        YC.emit(type + ':' + id, out, origin);
         return;
       }
     },
@@ -304,13 +354,60 @@
      ($), so it cannot swallow /docket or /pipeline/advance. */
   var MATCHERS = [
     [/^\/api\/cases\/([A-Za-z0-9_-]+)$/,                    'case',    function (r) { return r && r.data && r.data.changes; }],
-    [/^\/api\/contacts\/(\d+)$/,                            'contact', function (r) { return r && r.data && r.data.changes; }],
+    /* Contacts. TWO entities can change in one response, so this is the array
+       shape (getter contract v2).
+
+       Entry 1 is the recipient, semantics unchanged from Slice 1: the scalar
+       `data.changes` diff, skipped when empty exactly as before.
+
+       The REST are transfer donors. `PATCH /api/contacts/:id?force=true` with a
+       cross-contact phone/email collision MOVES the child row: it is ended on
+       the donor and created on the recipient (contactService `_applyPhonePlan`
+       / `_applyEmailPlan`, step 5 assembles `data.transferred_from`). The
+       donor's change is therefore an ABSENCE — a row left — which has no
+       `{column: value}` form, so it gets `yc_refetch` instead. See the
+       reserved-field note in the header.
+
+       Response shape (verified): `data.transferred_from` =
+       `[{kind, from_contact_id, from_contact_name, phone|email, closed_*_id}]`.
+
+       DEDUPED PER DONOR: transferring a phone AND an email from the same donor
+       produces two array items and must produce ONE message — a refetch is a
+       refetch, and two would cost that page a second round-trip for nothing.
+
+       The recipient is excluded from the donor list defensively: a donor id
+       equal to the id being written is a same-contact move, where nothing was
+       left behind and the recipient emit already covers it. */
+    [/^\/api\/contacts\/(\d+)$/,                            'contact', function (r, id) {
+      var out = [];
+      var d = (r && r.data) || null;
+
+      var changes = d && d.changes;
+      if (changes && typeof changes === 'object' && Object.keys(changes).length) {
+        out.push({ addr: 'contact:' + id, fields: changes });
+      }
+
+      var tf = d && d.transferred_from;
+      if (Array.isArray(tf)) {
+        var seen = Object.create(null);
+        for (var i = 0; i < tf.length; i++) {
+          var from = tf[i] && tf[i].from_contact_id;
+          if (from == null || from === '') continue;
+          var key = String(from);
+          if (key === String(id)) continue;      // same-contact move: nothing left
+          if (seen[key]) continue;               // phone + email, one donor, one message
+          seen[key] = true;
+          out.push({ addr: 'contact:' + key, fields: { yc_refetch: 1 } });
+        }
+      }
+
+      return out;
+    }],
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/docket$/,            'case',    function (r) { return r && r.changes; }],
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/advance$/, 'case',    function (r) { return r && r.changes; }],
 
-    /* app_settings (Slice 2). PUT-ONLY on purpose — routes/api.appSettings.js
-       has exactly one per-key writer and it is a PUT; POST /api/app-settings
-       (create) has no `/:key` segment and so cannot match this pattern at all.
+    /* app_settings UPDATE (Slice 2). PUT-ONLY on purpose —
+       routes/api.appSettings.js has exactly one per-key writer and it is a PUT.
        The 4th element states that, rather than leaning on "no such route
        exists" to keep a PATCH from announcing a setting change.
 
@@ -327,6 +424,31 @@
       return r && r.setting && typeof r.setting.value === 'string'
         ? { value: r.setting.value } : null;
     }, ['PUT']],
+
+    /* app_settings CREATE (Slice 2b). The create route is `POST` on the BARE
+       collection path — there is no `/:key` segment to capture, so the address
+       cannot come from the URL. It comes from the response instead
+       (`res.status(201).json({status:'success', setting: row})`), which is the
+       whole reason the getter contract grew the array shape.
+
+       This closes Slice-2 close-out Finding 2 with ZERO settings.html edits.
+       Every open frame's `setting:*` / `setting:fe-…` subscriber already
+       handles the message, and that includes the WRITING shell: `emit`
+       dispatches locally before it hits the wire, so index.html's `setting:*`
+       subscriber updates that realm's `firmData.settings` on the echo. The
+       create handler in settings.html not calling `loadFirmData()` (unlike its
+       PUT siblings) therefore stops mattering for any frame that is open.
+
+       Fails closed on a non-string value, same as the PUT matcher: the route
+       refuses non-strings with a 400, so that shape can only come from a
+       future/altered response, and broadcasting an object would silently
+       change every subscriber's contract. */
+    [/^\/api\/app-settings$/,                               'setting', function (r) {
+      var s = r && r.setting;
+      if (!s || typeof s.key !== 'string' || !s.key) return null;
+      if (typeof s.value !== 'string') return null;
+      return [{ addr: 'setting:' + s.key, fields: { value: s.value } }];
+    }, ['POST']],
   ];
 
   openChannel();
