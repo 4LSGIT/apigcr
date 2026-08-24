@@ -1,6 +1,6 @@
 # YisraCase — Sync Bus Design v2.2
 
-**Status:** Slice 1 shipped; Slice 2 shipped; Slice 2b shipped (v2.2 amendments at the foot of this file)
+**Status:** Slice 1 shipped; Slice 2 shipped; Slice 2b + 2c shipped (v2.2 amendments at the foot of this file)
 **Date:** 2026-08-24 (v1: 2026-08-21; v2.1: 2026-08-23, SYNC_BUS_V2_SECONDARY_REVIEW; v2.2: Slice 2b multi-emit sniff)
 **Scope:** cross-frame + cross-browser-tab data consistency in `public/`
 **Verified against:** `4LSGIT/apigcr` @ main, fresh tarball 2026-08-23 + live DB
@@ -200,7 +200,7 @@ Preview mode: same discipline, form-builder context only. Legacy Jotform ISSN if
 
 ---
 
-## v2.2 amendments (Slice 2b — multi-emit sniff, verified)
+## v2.2 amendments (Slices 2b + 2c — multi-emit sniff, verified)
 
 **Date:** 2026-08-24 · **Verified against:** `4LSGIT/apigcr` @ main, fresh tarball 2026-08-24
 
@@ -210,6 +210,7 @@ Preview mode: same discipline, form-builder context only. Legacy Jotform ISSN if
 | D2 | **Getter contract v2.** A matcher's getter is now called `(responseBody, urlCapture)` and may return EITHER a fields object — legacy, one emit to `${type}:${capture}` — OR an **array of `{addr, fields}`**, one emit per entry, each carrying the same `auto:` origin. The address comes from the ENTRY, which is what lets one response announce a second entity the URL never named (the donor) and an entity whose address only exists in the body (app-settings create). Empty array → nothing; an entry whose fields normalize to empty is dropped by `emit` itself. All five pre-2b getters keep the object shape and are byte-identical. | Slice 2b item 1 |
 | D3 | **Reserved field `yc_refetch`.** Carries no value; means "refetch this entity". A handler receiving it MUST NOT merge it into entity state — it is not a column, and on an entity page it would be pushed into every YCForm as one. Answer it with a refetch and return. Documented in the yc-sync header docblock. | Slice 2b item 1 |
 | D4 | **Close-out Finding 2 CLOSED** by a capture-less create matcher: `[/^\/api\/app-settings$/, 'setting', getter, ['POST']]`, whose getter reads `r.setting.key` out of the 201 body. Zero `settings.html` edits: every open frame's `setting:*` / `setting:fe-…` subscriber already handles the message, and that includes the WRITING shell — `emit` dispatches locally before it hits the wire, so `index.html`'s `setting:*` subscriber refreshes that realm's `firmData.settings` on the echo. The create handler not calling `loadFirmData()` (unlike its PUT siblings) stops mattering for any frame that is open. **Verified against the code.** | close-out Finding 2 |
+| D6 | **The SECOND transfer endpoint (Slice 2c).** `contact-form.html` has two 409-force flows, not one: the aggregate form save (D1) and `reviveRow`'s `POST /api/contact-{phones,emails}?force=true` (:1399), which also ends the value on whoever holds it. The revive path was completely unannounced through 2b. It now has its own donor matchers. **Its response shape differs from the PATCH path in all three ways that matter** — `transferred_from` is TOP-LEVEL (not under `data`), SINGULAR (an object, not an array), and keyed `contact_id` (not `from_contact_id`). A getter copied from the contacts matcher reads `undefined` and silently announces nothing; three tests pin that. **DONOR ONLY:** the recipient is the page that clicked Revive and already refetches twice (reviveRow's own GET, then the `form-saved` refetch); a recipient emit would make it three, because `contact.html`'s `yc_refetch` branch has no `lastFormSavedAt`-style coalescing fence. No `/api/contact-addresses` matcher — addresses have no cross-contact uniqueness, so that route has no `force` opt and no `transferred_from` at all. | Slice 2b gate walkthrough |
 | D5 | **Contacts tab is now a reader.** `index.html` gains the Cases-tab twin: `tabContactsGet(offset, silent)`, a debounced `contact:*` subscriber with a hidden-tab stale flag, `openContactsTab()` collapsing the two inline openers, and the Contacts half of the one `visibilitychange` listener. The donor's stale row is covered by this wildcard for free — `yc_refetch` is just another `contact:*` message here, and the tab refetches regardless of fields. | Slice 1 gap |
 
 **§3.6 still holds, and this is the first handler that answers a message with a network call.** `contact.html`'s `yc_refetch` branch calls `window.ycRefreshEntity()` → `refreshEntityData` → a **GET**, which `_sniff`'s method gate drops before any matcher runs → plus form pushes, which populate and never save. No emit is produced, so the invalidation cannot loop.
@@ -217,3 +218,5 @@ Preview mode: same discipline, form-builder context only. Legacy Jotform ISSN if
 ### Accepted gap, documented
 
 A **recipient** contact open in a THIRD frame or browser tab still misses aggregate additions: the scalar `changes` diff arrives and merges, but the newly created phone/email row does not (aggregates never ride the bus — v1 §3.1). Same absence-class as the donor, materially lower severity: the recipient's own scalar mirror is announced and correct, and the missing row is an addition rather than a stale row claiming to be current. Deliberately **not fixed** — extending `yc_refetch` to the recipient would make every aggregate save on the page cost a refetch in every other frame, which is the cost the values-only design exists to avoid. Revisit only if it surfaces in practice.
+
+The revive path (D6) inherits this gap in a slightly sharper form: it carries no `changes` at all, so a recipient open elsewhere misses the scalar mirror move too (`auto_promoted: true` means `contacts.contact_phone` was recomputed) and not just the new row. Still left open, for the same reason plus the reviving page's own triple-fetch. If this is ever closed, close it by giving `contact.html`'s `yc_refetch` branch a coalescing fence FIRST — the fence is the prerequisite, not the emit.

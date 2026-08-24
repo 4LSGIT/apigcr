@@ -42,10 +42,13 @@
  * ONE sanctioned invalidation on an otherwise values-only bus. It exists for
  * exactly one shape of change: the change is an ABSENCE.
  *
- * The cross-contact transfer is that shape. `PATCH /api/contacts/:id?force=true`
- * moves a phone/email row OFF a donor contact; nothing about the donor has a
- * new `{column: value}` — a child row simply left. There is no value to
- * announce, so the sniff announces the need instead, once per unique donor.
+ * The cross-contact transfer is that shape, and there are TWO endpoints that
+ * perform one: `PATCH /api/contacts/:id?force=true` (the contact-form save)
+ * and `POST /api/contact-{phones,emails}?force=true` (the revive-an-ended-row
+ * flow). Both move a phone/email row OFF a donor contact; nothing about the
+ * donor has a new `{column: value}` — a child row simply left. There is no
+ * value to announce, so the sniff announces the need instead, once per unique
+ * donor.
  *
  * A handler receiving it MUST NOT merge it into entity state — it is not a
  * column. Answer it with a refetch and return.
@@ -449,7 +452,64 @@
       if (typeof s.value !== 'string') return null;
       return [{ addr: 'setting:' + s.key, fields: { value: s.value } }];
     }, ['POST']],
+
+    /* Contact phone / email REVIVE (Slice 2c) — the SECOND transfer endpoint.
+       `contact-form.html`'s reviveRow (:1399) brings an ended row back with
+       `POST /api/contact-{phones,emails}` and retries `?force=true` on a 409,
+       which ends the value on whoever currently holds it. Same donor absence
+       as the aggregate PATCH path, different endpoint, and — the trap —
+       A DIFFERENT RESPONSE SHAPE:
+
+         PATCH /api/contacts/:id  →  data.transferred_from = [{ from_contact_id, kind, … }]
+         POST  /api/contact-phones →      transferred_from =  { contact_id, contact_name, phone_id }
+
+       Top level, not under `data`. SINGULAR object, not an array. And the id
+       key is `contact_id`, not `from_contact_id` — a getter copied from the
+       contacts matcher would read `undefined` and silently announce nothing.
+       Verified against contactPhoneService/contactEmailService createContact*.
+
+       DONOR ONLY, deliberately. The RECIPIENT is the page that clicked Revive
+       and it already refetches twice (reviveRow's own GET, then the `form-saved`
+       refetch); a recipient emit would make that three, because contact.html's
+       `yc_refetch` branch has no `lastFormSavedAt`-style coalescing fence. A
+       recipient open in some OTHER frame falls under the recipient-aggregate
+       gap documented in design v2.2 — unchanged by this matcher.
+
+       No `/api/contact-addresses` matcher: addresses have no cross-contact
+       uniqueness, so that route has no `force` opt, no 409 path and no
+       `transferred_from` (contactAddressService.js:26). Nothing to announce. */
+    [/^\/api\/contact-phones$/, 'contact', reviveDonorGetter('phone'), ['POST']],
+    [/^\/api\/contact-emails$/, 'contact', reviveDonorGetter('email'), ['POST']],
   ];
+
+  /**
+   * Getter factory for the two revive endpoints — one shape, two row keys.
+   *
+   * @param   {string} rowKey 'phone' | 'email' — where the created row sits in
+   *                          the 201 body, and the only place the RECIPIENT id
+   *                          appears (there is no `:id` in the URL to capture).
+   * @returns {function(object): (Array|null)}
+   */
+  function reviveDonorGetter(rowKey) {
+    return function (r) {
+      var tf = r && r.transferred_from;
+      // Fail closed on the ARRAY shape: that is the aggregate PATCH path's
+      // payload, and seeing it here means the route's contract moved.
+      if (!tf || typeof tf !== 'object' || Array.isArray(tf)) return null;
+
+      var donor = tf.contact_id;
+      if (donor == null || donor === '') return null;
+
+      // Self-exclusion, defensive: the route rejects a same-contact collision
+      // as a 400 before it ever reaches the force path, so this should be
+      // unreachable — but a donor === recipient refetch would be pure noise.
+      var row = r[rowKey];
+      var recipient = row && row.contact_id;
+      if (recipient != null && String(recipient) === String(donor)) return null;
+
+      return [{ addr: 'contact:' + donor, fields: { yc_refetch: 1 } }];
+    };
+  }
 
   openChannel();
   window.YC = YC;

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-22T20:40:13.453Z
+-- Generated: 2026-08-24T08:59:21.701Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d2aa46675d14711a2eb630e25c722936
+-- Fingerprint: sha256:255f3797333ab46aa78e183e69129a32
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -4215,7 +4215,8 @@ ALTER TABLE `workflow_executions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_workflow_status` (`workflow_id`,`status`),
   ADD KEY `idx_status` (`status`),
-  ADD KEY `idx_wf_exec_contact` (`contact_id`);
+  ADD KEY `idx_wf_exec_contact` (`contact_id`),
+  ADD KEY `idx_wf_exec_created` (`created_at`);
 
 --
 -- Indexes for table `workflow_steps`

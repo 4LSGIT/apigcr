@@ -904,3 +904,179 @@ describe('_sniff — app-settings create', () => {
     expect(exact).toEqual([{ value: '["Web"]' }]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// The revive matchers (Slice 2c) — the SECOND transfer endpoint
+//
+// contact-form.html has two 409-force flows. The aggregate form save
+// (PATCH /api/contacts/:id) was covered in 2b; this is the other one —
+// reviveRow's POST /api/contact-{phones,emails}, which ends the value on
+// whoever currently holds it.
+//
+// The whole reason this needed its own matcher rather than a shared one is the
+// RESPONSE SHAPE, which is different in all three ways that matter:
+//
+//   PATCH  →  data.transferred_from = [{ from_contact_id, kind, … }]   nested, array, from_contact_id
+//   POST   →       transferred_from =  { contact_id, contact_name, … }  top-level, object, contact_id
+//
+// A getter copied from the contacts matcher reads `undefined` and announces
+// nothing — green tests, silent donor. These pin the real shape.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — revive matchers', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('contact:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  /** The real 201 body shape, per contactPhoneService.createContactPhone. */
+  function phoneBody(over = {}) {
+    return {
+      status: 'success',
+      phone: { id: 9, contact_id: 5, phone: '2485550001', is_primary: 1 },
+      auto_promoted: true,
+      ...over,
+    };
+  }
+
+  test('POST /api/contact-phones?force=true announces the DONOR', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones?force=true', phoneBody({
+      transferred_from: { contact_id: 77, contact_name: 'Don', phone_id: 3 },
+    }));
+    expect(seen).toEqual([{
+      addr: 'contact:77',
+      fields: { yc_refetch: 1 },
+      origin: 'auto:POST /api/contact-phones?force=true',
+    }]);
+  });
+
+  test('POST /api/contact-emails?force=true announces the DONOR', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-emails?force=true', {
+      email: { id: 4, contact_id: 5, email: 'don@x.com' },
+      auto_promoted: false,
+      transferred_from: { contact_id: 88, contact_name: 'Eve', email_id: 2 },
+    });
+    expect(seen).toEqual([{
+      addr: 'contact:88',
+      fields: { yc_refetch: 1 },
+      origin: 'auto:POST /api/contact-emails?force=true',
+    }]);
+  });
+
+  test('the id key is `contact_id`, NOT `from_contact_id`', () => {
+    // The trap, pinned. A getter copied from the contacts matcher reads
+    // from_contact_id, gets undefined, and silently announces nothing.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones?force=true',
+                phoneBody({ transferred_from: { from_contact_id: 77, phone_id: 3 } }));
+    expect(seen).toEqual([]);
+  });
+
+  test('the payload is TOP-LEVEL, not nested under `data`', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones?force=true',
+                phoneBody({ data: { transferred_from: { contact_id: 77 } } }));
+    expect(seen).toEqual([]);
+  });
+
+  test('the ARRAY shape fails closed — that is the PATCH path\'s payload', () => {
+    // Seeing an array here means the route's contract moved. Announcing
+    // `contact:[object Object]` would be worse than announcing nothing.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones?force=true',
+                phoneBody({ transferred_from: [{ contact_id: 77 }] }));
+    expect(seen).toEqual([]);
+  });
+
+  test('a PLAIN revive — no collision, no transfer — announces nothing', () => {
+    // The common case by far: reviving a row nobody else holds. `force` is
+    // never even reached, and there is no donor to tell.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones', phoneBody());
+    w.YC._sniff('POST', '/api/contact-emails', { email: { id: 4, contact_id: 5 }, auto_promoted: false });
+    expect(seen).toEqual([]);
+  });
+
+  test('a malformed transferred_from is ignored, not thrown on', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    for (const tf of [null, 'nope', 42, {}, { contact_id: null }, { contact_id: '' }]) {
+      w.YC._sniff('POST', '/api/contact-phones?force=true', phoneBody({ transferred_from: tf }));
+    }
+    expect(seen).toEqual([]);
+  });
+
+  test('donor === recipient is excluded', () => {
+    // Unreachable through the route (a same-contact collision is a 400 long
+    // before the force path), but a self-refetch would be pure noise.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones?force=true',
+                phoneBody({ transferred_from: { contact_id: 5 } }));
+    expect(seen).toEqual([]);
+  });
+
+  test('a missing row key does not block the donor emit', () => {
+    // The recipient id is only used for the self-exclusion. If the response
+    // ever stops carrying the row, the donor still gets told.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones?force=true',
+                { auto_promoted: false, transferred_from: { contact_id: 77 } });
+    expect(seen.map(s => s.addr)).toEqual(['contact:77']);
+  });
+
+  test('the per-row PATCH and DELETE announce nothing — they cannot transfer', () => {
+    // routes/api.contactPhones.js never passes `force` to updateContactPhone,
+    // so PATCH has no transfer path. There is deliberately no matcher for it.
+    const w = mkWindow();
+    const seen = spy(w);
+    const body = phoneBody({ transferred_from: { contact_id: 77 } });
+    w.YC._sniff('PATCH', '/api/contact-phones/9', body);
+    w.YC._sniff('PUT',   '/api/contact-phones',   body);
+    w.YC._sniff('PATCH', '/api/contact-phones',   body);
+    w.YC._sniff('GET',   '/api/contact-phones',   body);
+    expect(seen).toEqual([]);
+  });
+
+  test('/api/contact-addresses is NOT matched — addresses cannot transfer', () => {
+    // No cross-contact uniqueness on addresses → no force opt, no 409 path, no
+    // transferred_from. A matcher there would be dead code pretending to help.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-addresses?force=true',
+                { address: { id: 1, contact_id: 5 }, transferred_from: { contact_id: 77 } });
+    expect(seen).toEqual([]);
+  });
+
+  test('the donor message reaches a contact:<donor> subscriber', () => {
+    const w = mkWindow();
+    const donor = [];
+    w.YC.on('contact:77', '*', f => donor.push(f));
+    w.YC._sniff('POST', '/api/contact-phones?force=true',
+                phoneBody({ transferred_from: { contact_id: 77 } }));
+    expect(donor).toEqual([{ yc_refetch: 1 }]);
+  });
+
+  test('phones and emails from the same donor are two SEPARATE calls, two messages', () => {
+    // Unlike the aggregate PATCH (one response, deduped), revive is one row per
+    // request. Two reviving clicks are two refetches on the donor — correct, and
+    // idempotent either way.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/contact-phones?force=true',
+                phoneBody({ transferred_from: { contact_id: 77 } }));
+    w.YC._sniff('POST', '/api/contact-emails?force=true',
+                { email: { id: 4, contact_id: 5 }, transferred_from: { contact_id: 77 } });
+    expect(seen.map(s => s.addr)).toEqual(['contact:77', 'contact:77']);
+  });
+});
