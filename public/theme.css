@@ -57,6 +57,27 @@
   --warn-soft: rgba(217, 119, 6, .12);
   --danger-soft: rgba(217, 83, 79, .12);
 
+  /* ── ADDED: status colours as FILLS ──────────────────────────────────
+     --ok/--warn/--danger above are tuned as TEXT on a surface, which is why
+     they LIGHTEN in dark mode (#16a34a on #131722 fails; #4ad28b passes).
+     That reasoning is exactly backwards when the same token is used as a
+     button background with text on top: dark mode's lighter value makes white
+     label text fail. Measured on apikeys.html — the revoke button went 4.13:1
+     to 2.60:1 purely from adopting the shared sheet.
+
+     These are mode-INDEPENDENT on purpose. A solid fill needs the same
+     contrast against its label in both modes, so there is nothing to invert.
+     17 sites across 14 files use a status token as a background; they all
+     want these, not the text tokens above.
+
+     Pairing: --ok-fill and --danger-fill take --accent-text (white).
+              --warn-fill takes --warn-text (near-black) — white on amber is
+              3.19:1 and fails, near-black is 5.46:1 and passes. */
+  --ok-fill: #15803d;       /* white on this: 5.02 */
+  --warn-fill: #d97706;     /* --warn-text on this: 5.46 */
+  --danger-fill: #c0392b;   /* white on this: 5.44 */
+  --warn-text: #1a1a1a;     /* text that sits ON --warn-fill */
+
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   --radius: 6px;
   --radius-sm: 4px;
@@ -74,7 +95,7 @@
   /* ── ADDED: text that sits ON the accent ─────────────────────────────
      Used 6× (book, manage, portal/*). Must stay white in both modes — it is
      not --text and never inverts. Kept out of the dark block on purpose. */
-  --accent-text: #ffffff;
+  --accent-text: #ffffff;   /* also the label colour on --ok-fill / --danger-fill */
 
   /* ── ADDED: secondary + info-hover ───────────────────────────────────
      --accent-2 replaces the #82c0ff used across availabilitymanager,
@@ -175,9 +196,10 @@ html[data-theme="dark"] {
   --cat-pink: #f472b6;
 
   /* NOT restated, and that is deliberate: --accent, --accent-dark,
-     --accent-text, --code-fg, --radius*, --sidebar-w, --sidebar-skinny-w,
-     --header-h, --ui, --mono, and the whole density scale are
-     mode-independent and inherit from :root. */
+     --accent-text, --code-fg, --ok-fill, --warn-fill, --danger-fill,
+     --warn-text, --radius*, --sidebar-w, --sidebar-skinny-w, --header-h,
+     --ui, --mono, and the whole density scale are mode-independent and
+     inherit from :root. */
 }
 
 body {

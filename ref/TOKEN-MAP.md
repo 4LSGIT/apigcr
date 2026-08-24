@@ -77,6 +77,29 @@ change that element's appearance. Verify it looks right rather than assuming.
 | `--tag-feat` | 1 | `#f0f7ff` | `--accent-soft` |
 | `--tag-feat-c` | 1 | `#2b6cb0` | `--accent` |
 
+## 3.1 Status as TEXT vs status as FILL
+
+`--ok`, `--warn` and `--danger` are tuned as **text on a surface**. That is why
+they lighten in dark mode. Using them as a **button background** inverts the
+requirement and breaks the label:
+
+| use | token | why |
+|---|---|---|
+| status text, badge text, icon | `--ok` / `--warn` / `--danger` | lightens in dark so it stays readable on a dark surface |
+| solid button / chip background | `--ok-fill` / `--warn-fill` / `--danger-fill` | mode-independent, dark enough for its label in both modes |
+
+Label colour on a fill: `--accent-text` (white) for `--ok-fill` and
+`--danger-fill`; `--warn-text` (near-black) for `--warn-fill` — white on amber
+measures 3.19:1 and fails, near-black measures 5.46:1 and passes.
+
+**When converting, read which role the site is in.** `color: var(--danger)` on a
+label stays `--danger`. `background: var(--danger)` on a button becomes
+`--danger-fill`, and its `color: white` becomes `var(--accent-text)`.
+
+There are 17 such fill sites across 14 files. Every one is a `background` or
+`background-color` declaration; `grep -nE "background(-color)?:\s*var\(--(danger|warn|ok)\)"`
+finds them.
+
 ## 4. Categorical hues
 
 `automation/activity.html` colour-codes event categories. These carry no
