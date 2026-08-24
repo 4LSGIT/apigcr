@@ -27,31 +27,23 @@
   COPY RULE: never name a person. Comments say SU; UI strings say
   "an administrator".
 -->
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <style>
-  :root {
-    --bg: #ffffff; --fg: #1f2430; --muted: #6b7280; --line: #e5e7eb;
-    --accent: #2563eb; --accent-dark: #1d4ed8; --ok: #16a34a;
-    --warn: #d97706; --danger: #dc2626; --panel: #f9fafb;
-  }
-  body.dark {
-    --bg: #151a23; --fg: #e6e8ee; --muted: #9aa3b2; --line: #2a313d;
-    --accent: #60a5fa; --accent-dark: #3b82f6; --ok: #4ade80;
-    --warn: #fbbf24; --danger: #f87171; --panel: #1d2230;
-  }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    margin: 0; padding: 16px; background: var(--page-bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 14px;
   }
   h2 { margin: 0 0 12px; font-size: 17px; }
   h3 { margin: 0 0 8px; font-size: 14px; }
   .panel {
-    background: var(--panel); border: 1px solid var(--line);
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: 8px; padding: 14px; margin-bottom: 14px;
   }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .muted { color: var(--muted); }
+  .muted { color: var(--text-muted); }
   .small { font-size: 12px; }
   button {
     background: var(--accent); color: #fff; border: none; border-radius: 6px;
@@ -59,11 +51,11 @@
   }
   button:hover { background: var(--accent-dark); }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
-  button.ghost:hover { background: var(--line); }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+  button.ghost:hover { background: var(--border); }
   button.danger { background: var(--danger); }
   input, select, textarea {
-    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 9px; font-size: 13px; font-family: inherit;
   }
   textarea {
@@ -75,26 +67,26 @@
   /* Report list */
   .rpt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
   .rpt-card {
-    border: 1px solid var(--line); border-radius: 8px; padding: 11px;
-    cursor: pointer; background: var(--bg); transition: border-color .12s;
+    border: 1px solid var(--border); border-radius: 8px; padding: 11px;
+    cursor: pointer; background: var(--page-bg); transition: border-color .12s;
   }
   .rpt-card:hover { border-color: var(--accent); }
   .rpt-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .rpt-card .t { font-weight: 600; margin-bottom: 3px; }
-  .rpt-card .d { font-size: 12px; color: var(--muted); line-height: 1.45; }
+  .rpt-card .d { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
   .cat-label {
     font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
-    color: var(--muted); margin: 12px 0 6px; font-weight: 600;
+    color: var(--text-muted); margin: 12px 0 6px; font-weight: 600;
   }
 
   /* Results */
   table.rpt { border-collapse: collapse; width: 100%; font-size: 13px; }
   table.rpt th, table.rpt td {
-    border-bottom: 1px solid var(--line); padding: 6px 9px; text-align: left;
+    border-bottom: 1px solid var(--border); padding: 6px 9px; text-align: left;
   }
-  table.rpt th { font-weight: 600; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  table.rpt th { font-weight: 600; color: var(--text-muted); font-size: 12px; white-space: nowrap; }
   table.rpt td.num, table.rpt th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  table.rpt tr:hover td { background: var(--panel); }
+  table.rpt tr:hover td { background: var(--surface); }
   .scroll-x { overflow-x: auto; }
 
   /* AI refine banner */
@@ -108,16 +100,16 @@
      same rules read correctly on the dark theme. */
   .diffbox {
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
-    line-height: 1.55; border: 1px solid var(--line); border-radius: 6px;
-    margin: 6px 0 10px; overflow-x: auto; background: var(--bg);
+    line-height: 1.55; border: 1px solid var(--border); border-radius: 6px;
+    margin: 6px 0 10px; overflow-x: auto; background: var(--page-bg);
   }
   .diffbox .dl { white-space: pre; padding: 0 9px; }
   .diffbox .dl.add { background: rgba(22, 163, 74, .14); }
   .diffbox .dl.del { background: rgba(220, 38, 38, .13); }
-  .diffbox .dl.skip { color: var(--muted); font-style: italic; padding: 1px 9px; }
+  .diffbox .dl.skip { color: var(--text-muted); font-style: italic; padding: 1px 9px; }
   .diff-label {
     font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
-    color: var(--muted); font-weight: 600; margin-top: 8px;
+    color: var(--text-muted); font-weight: 600; margin-top: 8px;
   }
   .diff-inline { font-size: 13px; margin: 3px 0; }
   .diff-inline .del { background: rgba(220, 38, 38, .13); text-decoration: line-through; padding: 0 3px; border-radius: 3px; }
@@ -126,7 +118,7 @@
   /* Charts */
   .chart-wrap {
     position: relative; height: 320px; margin: 4px 0 12px;
-    border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--page-bg);
   }
   .chart-wrap.tall { height: 400px; }
   .chart-bar {
@@ -137,24 +129,24 @@
     font-size: 12px; padding: 3px 8px;
   }
   button.mini {
-    background: transparent; color: var(--muted); border: 1px solid var(--line);
+    background: transparent; color: var(--text-muted); border: 1px solid var(--border);
     border-radius: 5px; padding: 3px 8px; font-size: 12px;
   }
-  button.mini:hover { background: var(--line); color: var(--fg); }
+  button.mini:hover { background: var(--border); color: var(--text); }
   button.mini.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .stat-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 10px; margin: 4px 0 12px;
   }
   .stat-card {
-    border: 1px solid var(--line); border-radius: 8px; padding: 13px 14px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 13px 14px; background: var(--page-bg);
   }
   .stat-card .v {
     font-size: 26px; font-weight: 650; line-height: 1.15;
     font-variant-numeric: tabular-nums; color: var(--accent);
   }
   .stat-card .l {
-    font-size: 11.5px; color: var(--muted); margin-top: 4px;
+    font-size: 11.5px; color: var(--text-muted); margin-top: 4px;
     text-transform: uppercase; letter-spacing: .03em;
   }
 
@@ -172,28 +164,29 @@
   }
   .sqlbox {
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
     padding: 9px; white-space: pre-wrap; word-break: break-word; margin-top: 8px;
     line-height: 1.5;
   }
-  details summary { cursor: pointer; color: var(--muted); font-size: 12px; user-select: none; }
+  details summary { cursor: pointer; color: var(--text-muted); font-size: 12px; user-select: none; }
   details[open] summary { margin-bottom: 6px; }
   .spin { display: inline-block; animation: sp 1s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
   .pill {
     display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
-    background: var(--line); color: var(--muted);
+    background: var(--border); color: var(--text-muted);
   }
   .hidden { display: none !important; }
-  label.fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  label.fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-muted); }
 
   /* Lock badge (list cards + run panel) */
   .pill.lockpill { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
   .pill.lockpill i { margin-right: 3px; }
 
   /* SweetAlert in dark mode — same pattern as index.html */
-  body.dark .swal2-popup { background: var(--panel) !important; color: var(--fg) !important; }
-  body.dark .swal2-title, body.dark .swal2-html-container { color: var(--fg) !important; }
+  html[data-theme="dark"] .swal2-popup { background: var(--surface) !important; color: var(--text) !important; }
+  html[data-theme="dark"] .swal2-title,
+  html[data-theme="dark"] .swal2-html-container { color: var(--text) !important; }
 </style>
 </head>
 <body>
@@ -357,22 +350,10 @@ let histLoadedFor = null;   // report id whose history is currently rendered
 })();
 
 function init() {
-  // Inherit the parent's dark mode, and keep following it — the parent's
-  // theme toggle flips body.dark after this iframe has already booted.
-  try {
-    const syncTheme = () => {
-      const wasDark = document.body.classList.contains("dark");
-      const isDark = P.document.body.classList.contains("dark");
-      document.body.classList.toggle("dark", isDark);
-      // Chart.js bakes axis/label colours in at construction, so a theme flip
-      // needs a redraw or the chart keeps light-mode greys on a dark panel.
-      if (wasDark !== isDark && chartState) drawCurrent();
-    };
-    syncTheme();
-    new MutationObserver(syncTheme).observe(P.document.body, {
-      attributes: true, attributeFilter: ["class"],
-    });
-  } catch (_) {}
+  // themeSync.js owns the theme now. It still has to be told about the chart:
+  // Chart.js bakes axis/label colours in at construction, so a theme flip needs
+  // a redraw or the chart keeps the old palette on the new background.
+  addEventListener("yc-theme", () => { if (chartState) drawCurrent(); });
 
   // Authoring is open to every logged-in user (S3). isSU is kept purely as
   // the lock-BYPASS flag. The per-report Edit / Ask-AI / lock buttons live in
@@ -668,7 +649,7 @@ async function toggleSchema() {
     E("schemaBody").innerHTML = `
       <div class="rpt-grid">
         ${(d.tables || []).map(t => `
-          <div style="border:1px solid var(--line); border-radius:6px; padding:9px">
+          <div style="border:1px solid var(--border); border-radius:6px; padding:9px">
             <div style="font-weight:600; font-family:ui-monospace,Menlo,monospace; font-size:12px">${esc(t.table)}</div>
             <div class="muted small" style="margin-top:3px; line-height:1.45">${esc(t.note || "")}</div>
           </div>
@@ -947,12 +928,15 @@ function switchType(viz, type, profile) {
 function downloadChartPng() {
   if (!chartInstance) return;
   const a = document.createElement("a");
-  // Flatten onto the panel colour — a transparent PNG looks broken in email.
+  // Flatten onto the chart's own backdrop — a transparent PNG looks broken in
+  // email. .chart-wrap paints var(--page-bg), so read that off the computed
+  // style; a class branch would not survive the move to data-theme.
   const src = chartInstance.canvas;
   const out = document.createElement("canvas");
   out.width = src.width; out.height = src.height;
   const ctx = out.getContext("2d");
-  ctx.fillStyle = document.body.classList.contains("dark") ? "#151a23" : "#ffffff";
+  ctx.fillStyle =
+    getComputedStyle(document.body).getPropertyValue("--page-bg").trim() || "#f6f7f9";
   ctx.fillRect(0, 0, out.width, out.height);
   ctx.drawImage(src, 0, 0);
   a.href = out.toDataURL("image/png");
@@ -1189,7 +1173,7 @@ function renderDraft(d) {
   const isUpdate = lastDraftBaseId != null;
   const isView = def.kind === "view";
 
-  let html = `<div style="border:1px solid var(--line); border-radius:8px; padding:12px">
+  let html = `<div style="border:1px solid var(--border); border-radius:8px; padding:12px">
     <div style="font-weight:600; font-size:15px">${esc(def.title)}</div>
     <div class="muted small" style="margin-top:4px; line-height:1.5">${esc(def.description || "")}</div>
     <div style="margin-top:7px">
@@ -1660,7 +1644,7 @@ async function viewVersion(versionNo) {
     // the question being asked ("what would restoring change?").
     const sqlDiff = diffBoxHtml(E("edSql").value, v.sql_text);
     host.innerHTML = `
-      <div style="border:1px solid var(--line); border-radius:8px; padding:11px">
+      <div style="border:1px solid var(--border); border-radius:8px; padding:11px">
         <div style="font-weight:600">v${v.version_no} — ${esc(v.title)}</div>
         <div class="muted small" style="margin-top:3px">${esc(v.change_note || "")} · ${esc(String(v.created_at || "").replace("T", " ").slice(0, 16))}</div>
         ${sqlDiff
