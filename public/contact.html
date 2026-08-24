@@ -1839,6 +1839,12 @@ YC.on(`contact:${clientID}`, '*', (fields) => {
    Echo-fenced, because both functions are already the success callback for
    this page's own writers. See the stamp comments where they are defined.
 
+   VISIBILITY-FENCED, wrapped AROUND the echo fence — pipelineBoard's pattern,
+   ported here because the cost is the same shape and larger: an open file
+   parked behind another file or another shell tab was spending TWO GETs
+   (appts + events) on every appointment or event write anywhere in the app,
+   in every background browser window, for two tables nobody could see.
+
    §3.6: both handlers end in a GET and a table repaint. The sniff's method
    gate drops GET before any matcher runs, so nothing can loop.
 
@@ -1848,16 +1854,59 @@ const BUS_FRESH_MS = 1500;
 let apptsBusDeb = null;
 let eventsBusDeb = null;
 
+/* ONE stale flag for BOTH subscribers, on purpose. Coming back on screen runs
+   a single refresh pass over both tables, so tracking which of the two went
+   stale would buy nothing but a second flag to keep in sync — and the two
+   lists are refetched by two independent GETs either way. */
+let apptEventStale = false;
+
+/* Is this file actually on screen? `frameElement` is the shell's iframe inside
+   the file div (null when the page is opened standalone); the shell hides a
+   parked file by setting display:none on that div, which zeroes the frame's
+   width. Same test pipelineBoard uses, same two reasons to be off-screen:
+   another shell tab is showing, or the browser window is in the background. */
+function pageVisible() {
+  const fe = window.frameElement;              // same-origin; null when standalone
+  if (document.hidden) return false;
+  return !fe || fe.getBoundingClientRect().width > 0;
+}
+
 YC.on('appt:*', '*', () => {
+  if (!pageVisible()) { apptEventStale = true; return; }
   if (Date.now() - apptsLastRefresh < BUS_FRESH_MS) return;   // our own write
   clearTimeout(apptsBusDeb);
   apptsBusDeb = setTimeout(refreshAppts, 250);
 });
 
 YC.on('event:*', '*', () => {
+  if (!pageVisible()) { apptEventStale = true; return; }
   if (Date.now() - eventsLastRefresh < BUS_FRESH_MS) return;  // our own write
   clearTimeout(eventsBusDeb);
   eventsBusDeb = setTimeout(refreshEvents, 250);
 });
+
+/* Two ways an off-screen file comes back into view, and NEITHER of them
+   notifies an iframe by itself:
+     · the shell switches to this file  → index.html's openMainTab() ends in
+       pingBecameVisible(), which calls window.ycBecameVisible on the frames in
+       the div it just showed. File divs carry class "tab-main file" and are
+       opened through openMainTab like any other tab, so this page IS on that
+       path (verified 2026-08-24).
+     · the browser window regains focus  → document.hidden flips, which DOES
+       fire here, but only in this frame.
+
+   Both run the same stale check, and both go through pageVisible(). The
+   visibility guard is not redundant on the visibilitychange path: returning to
+   the browser window while this file sits behind ANOTHER file would otherwise
+   spend apptEventStale on tables nobody can see, and the later
+   ycBecameVisible would find nothing to do. */
+function apptEventRefreshIfStale() {
+  if (!apptEventStale || !pageVisible()) return;
+  apptEventStale = false;
+  refreshAppts();
+  refreshEvents();
+}
+window.ycBecameVisible = apptEventRefreshIfStale;
+document.addEventListener('visibilitychange', apptEventRefreshIfStale);
 
 </script>

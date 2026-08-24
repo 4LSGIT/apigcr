@@ -924,11 +924,21 @@
        Before this, the tab fetched ONCE — on first open — and never again.
        Reopen it an hour later and you were reading an hour-old list.
 
-       Now any case write anywhere in the app (this tab, another frame, another
-       browser tab) refetches THE CURRENT PAGE with the current filters, sort
-       and offset. Never a cell patch: membership, ordering and page boundaries
-       are all server-computed, so a row that no longer matches the active
-       filter has to vanish, and only the server knows that.
+       Now a case write from any FRAME or any BROWSER TAB — this tab, an open
+       case file, the Kanban board, a second window — refetches THE CURRENT
+       PAGE with the current filters, sort and offset. Never a cell patch:
+       membership, ordering and page boundaries are all server-computed, so a
+       row that no longer matches the active filter has to vanish, and only the
+       server knows that.
+
+       "Any write", precisely: every write that goes through THIS apiSend, which
+       is every client-side writer at every frame depth (iframes alias it, deep
+       frames call window.top.apiSend), across all the sniffed endpoints —
+       including case creation via /api/intake/case and case merges as of Slice
+       3b. SERVER-SIDE writers are the standing exception and stay invisible:
+       workflows, the court pipeline, sequence-driven changes and the Cloud
+       Tasks runner never touch a browser's apiSend, so nothing announces them
+       until the Slice-4 change feed.
 
        Hidden tab → mark stale, refetch on the way back in. Refetching a tab
        nobody is looking at costs a request per write for nothing. */
@@ -1118,6 +1128,12 @@
        (membership, ordering and page boundaries are all server-computed, so a
        row that no longer matches the active query has to vanish and only the
        server knows that).
+
+       The Cases block's "any write, precisely" note applies here verbatim and
+       is not repeated: client-side writers through this apiSend at any frame
+       depth or browser tab, server-side writers excluded until Slice 4.
+       Contact CREATION and intake's phone/email-matched UPDATE both announce
+       as of Slice 3b (/api/intake/contact).
 
        This also covers the TRANSFER DONOR for free. A cross-contact phone
        transfer announces `contact:<donor>` carrying `{yc_refetch:1}`; here that
@@ -3231,10 +3247,24 @@
       // an actively-used tab running old JS is caught on its very next request.
       try { window.VersionGuard && window.VersionGuard.noteResponse(res); } catch (_) { }
       // Handle empty responses (204, etc.)
+      // SNIFF-BLIND RETURN: this is above the sync-bus hook at the foot of this
+      // function, so a write endpoint that answers 204 announces NOTHING — the
+      // bus never sees it, and no subscriber can act on it. None of today's
+      // sniffed endpoints returns 204. If a future one does (a DELETE route is
+      // the obvious candidate), widen this DELIBERATELY — hoist the hook, or
+      // give the matcher a shape the endpoint can actually return. Do not
+      // discover it in production as "the bus stopped working for that button".
       if (res.status === 204) return null;
 
       // Non-json success shapes (X5.1). Failures fall through to the shared
       // error path below — an error body is JSON whatever the success body is.
+      // SNIFF-BLIND, same as the 204 above and for the same reason: each of
+      // these three returns before the sync-bus hook. A matched endpoint called
+      // with responseType 'blob' / 'text' / 'response' is invisible to the bus.
+      // Harmless today — the non-json callers are PDF, export and upload reads,
+      // none of them a sniffed write — but a matched WRITE that starts
+      // returning a blob would go silent with no error anywhere. Widen on
+      // purpose if that day comes.
       const responseType = opts.responseType || "json";
       if (responseType !== "json" && res.ok) {
         if (responseType === "response") return res;

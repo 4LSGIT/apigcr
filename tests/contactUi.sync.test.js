@@ -186,6 +186,7 @@ async function boot({ payloads = [contactPayload()] } = {}) {
     '  header: () => ({ fname: E("fname").innerHTML,' +
     '                   lname: E("lname").innerHTML,' +
     '                   phone: E("phone").innerHTML }),' +
+    '  isStale: () => apptEventStale,' +
     '} });'
   );
 
@@ -347,5 +348,97 @@ describe('yc_refetch handler', () => {
     await tick(window, 100);
     expect(contactGets(calls).length).toBe(2);
     expect(window.__t.header().phone).toBe('');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Appt / event readers — the visibility fence (Slice 3b)
+//
+// The twin of the block in tests/caseUi.sync.test.js, and the same cost: a
+// contact file parked behind another file was spending TWO GETs on every
+// appointment or event write anywhere in the app, for tables nobody could see.
+// ─────────────────────────────────────────────────────────────
+
+describe('appt / event readers — visibility fence', () => {
+  const apptGets  = calls => calls.filter(c => c.params && c.params.include === 'appts');
+  const eventGets = calls => calls.filter(c => c.url === '/api/events');
+
+  test('VISIBLE: an appt message refetches; an event message refetches', async () => {
+    const { window, calls } = await boot();
+    window.YC.emit('appt:55',  { yc_refetch: 1 }, 'test');
+    window.YC.emit('event:12', { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(apptGets(calls).length).toBe(1);
+    expect(eventGets(calls).length).toBe(1);
+  });
+
+  test('HIDDEN: no GETs at all, and the stale flag is set', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit('appt:55',  { yc_refetch: 1 }, 'test');
+    window.YC.emit('event:12', { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(apptGets(calls).length).toBe(0);
+    expect(eventGets(calls).length).toBe(0);
+    expect(window.__t.isStale()).toBe(true);
+  });
+
+  test('ycBecameVisible() — coming back runs EXACTLY ONE refresh pass', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit('appt:55', { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 50);
+    expect(apptGets(calls).length).toBe(1);
+    expect(eventGets(calls).length).toBe(1);
+
+    window.ycBecameVisible();          // spent once, not again
+    await tick(window, 50);
+    expect(apptGets(calls).length).toBe(1);
+    expect(eventGets(calls).length).toBe(1);
+  });
+
+  test('visibilitychange while STILL hidden keeps the flag for later', async () => {
+    const { window, calls } = await boot();
+    setHidden(window, true);
+    window.YC.emit('appt:55', { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+
+    window.document.dispatchEvent(new window.Event('visibilitychange'));  // still hidden
+    await tick(window, 50);
+    expect(apptGets(calls).length).toBe(0);
+    expect(window.__t.isStale()).toBe(true);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 50);
+    expect(apptGets(calls).length).toBe(1);
+  });
+
+  test('THE ECHO FENCE STILL WORKS under the visibility fence', async () => {
+    const { window, calls } = await boot();
+    await window.refreshAppts();                 // stamps apptsLastRefresh
+    expect(apptGets(calls).length).toBe(1);
+
+    window.YC.emit('appt:55', { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(apptGets(calls).length).toBe(1);      // dropped as our own echo
+    expect(window.__t.isStale()).toBe(false);
+  });
+
+  test('THE ENTITY SUBSCRIBER IS NOT FENCED — scalars still paint off-screen', async () => {
+    // Only the two GET-refetch subscribers get the visibility fence. The
+    // contact:<id> handler does DOM-write work off data it was handed, costs no
+    // request, and must keep applying immediately so a file switched back to is
+    // already correct.
+    const { window } = await boot();
+    setHidden(window, true);
+    window.YC.emit(`contact:${CLIENT_ID}`, { contact_lname: 'Baum' }, 'test');
+    await tick(window, 100);
+    expect(window.entityData.contact.contact_lname).toBe('Baum');
+    expect(window.__t.header().lname).toBe('Baum');
   });
 });

@@ -1327,3 +1327,304 @@ describe('_sniff — appt / event matchers', () => {
     expect(settings).toEqual(['setting:fe-case_types', 'setting:fe-x']);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Case merge (Slice 3b)
+//
+// The endpoint that serves BOTH the preview and the real thing, with the same
+// 200 shape. `data.dry_run` is the only thing separating "nothing happened" from
+// "eleven log rows and three appointments just moved onto this case", so it is
+// the assertion that matters most in this block.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — case merge', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('case:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  /** The route's real envelope: res.json({status, data: <plan>}). */
+  const body = (over = {}) => ({
+    status: 'success',
+    data: {
+      dry_run: false,
+      survivor_id: 'AAAA',
+      loser_id: 'BBBB',
+      docket: { adopted: {} },
+      fields: { filled: ['case_dropbox'], survivor_wins: [], conflicts: [] },
+      notes_appended: true, alerts_appended: false, dropbox_noted: false,
+      children: { appts: 3, log: 11 },
+      ...over,
+    },
+  });
+
+  test('a REAL merge announces the survivor, once, with a marker', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', body());
+    expect(seen).toEqual([{
+      addr: 'case:AAAA',
+      fields: { yc_refetch: 1 },
+      origin: 'auto:POST /api/cases/AAAA/merge',
+    }]);
+  });
+
+  test('THE DRY RUN ANNOUNCES NOTHING — same endpoint, same 200, no writes', () => {
+    // The preview dialog runs this on every "Preview merge" click. If it
+    // announced, opening the dialog and cancelling would still cost every open
+    // Cases tab, Kanban board and case file a refetch.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ dry_run: true }));
+    expect(seen).toEqual([]);
+    expect(w.YC._log).toEqual([]);
+  });
+
+  test('THE ABSORBED CASE IS NEVER ADDRESSED — accepted gap, pinned', () => {
+    // Manager decision (design v2.4): a remote page on the loser would answer a
+    // refetch with a GET for a deleted row and land in a 404 error state, which
+    // is worse than stale. If this ever starts failing, someone has added a
+    // loser emit and the "deleted" bus concept needs designing first.
+    const w = mkWindow();
+    const loser = [];
+    w.YC.on('case:BBBB', '*', f => loser.push(f));
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', body());
+    expect(loser).toEqual([]);
+    expect(seen.map(s => s.addr)).toEqual(['case:AAAA']);
+  });
+
+  test('the address comes from the BODY, not the URL capture', () => {
+    // They agree by construction (the route builds survivor_id from
+    // req.params.id). Pinned so the getter cannot quietly regress to the URL:
+    // the body is the server's account of what it actually merged.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/cases/FROMURL/merge', body({ survivor_id: 'FROMBODY' }));
+    expect(seen.map(s => s.addr)).toEqual(['case:FROMBODY']);
+  });
+
+  test('SHAPE SURPRISES FAIL CLOSED — no dry_run key, no survivor, no data', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const d = body().data;
+    delete d.dry_run;
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', { status: 'success', data: d });
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ survivor_id: '' }));
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ survivor_id: null }));
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', { status: 'success' });
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', { status: 'success', data: null });
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', null);
+    // A truthy non-boolean dry_run is still a dry run as far as this is concerned.
+    w.YC._sniff('POST', '/api/cases/AAAA/merge', body({ dry_run: 1 }));
+    expect(seen).toEqual([]);
+  });
+
+  test('the merge matcher is POST-only and does not shadow the bare case matcher', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // PATCH to the same path: the 4th element rejects it.
+    w.YC._sniff('PATCH', '/api/cases/AAAA/merge', body());
+    expect(seen).toEqual([]);
+    // And the anchored bare-case matcher still owns its own path.
+    w.YC._sniff('PATCH', '/api/cases/AAAA', { data: { changes: { case_stage: 'Filed' } } });
+    expect(seen.map(s => s.fields)).toEqual([{ case_stage: 'Filed' }]);
+  });
+
+  test('a merge crosses windows — the survivor open in a second window hears it', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = [];
+    b.YC.on('case:AAAA', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    a.YC._sniff('POST', '/api/cases/AAAA/merge', body());
+    await settle();
+    expect(seenB).toEqual([{ addr: 'case:AAAA', fields: { yc_refetch: 1 } }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Intake create / update (Slice 3b)
+//
+// Response shapes read off routes/api.intake.js on 2026-08-24. Both handlers
+// return `{status:'success', action, id, …}` on their success paths; every
+// other branch is a 4xx/5xx that apiSend throws on before the sniff runs.
+//
+//   /api/intake/contact  :353  action 'updated'  → id, contact_id, name
+//   /api/intake/contact  :426  action 'created'  → id, contact_id, name
+//   /api/intake/case     :597  action 'found'    → id            ← NO WRITES
+//   /api/intake/case     :677  action 'created'  → id, case_relate
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — intake matchers', () => {
+  function spy(w) {
+    const seen = [];
+    w.YC.on('case:*',    '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    w.YC.on('contact:*', '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  const MARKER = { yc_refetch: 1 };
+
+  test('THE CENSUS: every writing success shape announces, and `found` does not', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+
+    w.YC._sniff('POST', '/api/intake/contact',
+      { status: 'success', message: 'client 1001 found and updated',
+        action: 'updated', id: 1001, contact_id: 1001, name: 'Ann Applebaum' });
+    w.YC._sniff('POST', '/api/intake/contact',
+      { status: 'success', message: 'client 1002 added',
+        action: 'created', id: 1002, contact_id: 1002, name: 'Bob Baum' });
+    w.YC._sniff('POST', '/api/intake/case',
+      { status: 'success', message: 'case created',
+        action: 'created', id: 'CCCC', case_relate: 91 });
+    w.YC._sniff('POST', '/api/intake/case',
+      { status: 'success', message: 'case found', action: 'found', id: 'DDDD' });
+
+    expect(seen.map(s => s.addr)).toEqual(['contact:1001', 'contact:1002', 'case:CCCC']);
+    expect(seen.map(s => s.fields)).toEqual([MARKER, MARKER, MARKER]);
+  });
+
+  test("action 'found' WRITES NOTHING, so it announces nothing", () => {
+    // The endpoint's third success shape: an active case of the same type
+    // already existed and its id is being returned. A refetch on every open
+    // surface for a row that did not change is pure cost.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/intake/case',
+      { status: 'success', message: 'case found', action: 'found', id: 'DDDD' });
+    expect(seen).toEqual([]);
+    expect(w.YC._log).toEqual([]);
+  });
+
+  test('an UPDATE announces as loudly as a create — intake/contact is an upsert', () => {
+    // It matches on phone/email and updates the contact it finds. That write
+    // lands on a contact that may be open in three frames.
+    const w = mkWindow();
+    const seen = [];
+    w.YC.on('contact:1001', '*', f => seen.push(f));
+    w.YC._sniff('POST', '/api/intake/contact',
+      { status: 'success', action: 'updated', id: 1001, contact_id: 1001, name: 'Ann' });
+    expect(seen).toEqual([MARKER]);
+  });
+
+  test('the origin string names the endpoint, for _log traceability', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/intake/case', { status: 'success', action: 'created', id: 'CCCC' });
+    expect(seen[0].origin).toBe('auto:POST /api/intake/case');
+  });
+
+  test('MALFORMED FAILS CLOSED — no id, empty id, no action, unknown action, no body', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/intake/case',    { status: 'success', action: 'created' });
+    w.YC._sniff('POST', '/api/intake/case',    { status: 'success', action: 'created', id: '' });
+    w.YC._sniff('POST', '/api/intake/case',    { status: 'success', action: 'created', id: null });
+    w.YC._sniff('POST', '/api/intake/contact', { status: 'success', id: 1001 });
+    w.YC._sniff('POST', '/api/intake/contact', { status: 'success', action: 'merged', id: 1001 });
+    w.YC._sniff('POST', '/api/intake/contact', { status: 'success', action: 'created', id: '' });
+    w.YC._sniff('POST', '/api/intake/case',    null);
+    w.YC._sniff('POST', '/api/intake/case',    'not an object');
+    expect(seen).toEqual([]);
+  });
+
+  test('a numeric-zero id is not treated as missing', () => {
+    // 0 is not a real contact_id, but `!id` would drop it while `id == null`
+    // does not — pinning which rule the getter uses.
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/intake/contact',
+      { status: 'success', action: 'created', id: 0, contact_id: 0 });
+    expect(seen.map(s => s.addr)).toEqual(['contact:0']);
+  });
+
+  test('the intake matchers are POST-only and do not cross-address', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/api/intake/contact', { status: 'success', action: 'created', id: 1 });
+    w.YC._sniff('PUT',   '/api/intake/case',    { status: 'success', action: 'created', id: 'X' });
+    expect(seen).toEqual([]);
+    // The contact endpoint never produces a case address, and vice versa.
+    const cases = [], contacts = [];
+    w.YC.on('case:*',    '*', (f, m) => cases.push(m.addr));
+    w.YC.on('contact:*', '*', (f, m) => contacts.push(m.addr));
+    w.YC._sniff('POST', '/api/intake/contact', { status: 'success', action: 'created', id: 7 });
+    w.YC._sniff('POST', '/api/intake/case',    { status: 'success', action: 'created', id: 'ZZZZ' });
+    expect(cases).toEqual(['case:ZZZZ']);
+    expect(contacts).toEqual(['contact:7']);
+  });
+
+  test('a sub-path under /api/intake is not matched', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/intake/contact/merge', { status: 'success', action: 'created', id: 1 });
+    w.YC._sniff('POST', '/api/intake',               { status: 'success', action: 'created', id: 1 });
+    expect(seen).toEqual([]);
+  });
+
+  test('an intake create crosses windows — window B\'s Cases tab hears it', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = [];
+    b.YC.on('case:*', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    a.YC._sniff('POST', '/api/intake/case', { status: 'success', action: 'created', id: 'CCCC' });
+    await settle();
+    expect(seenB).toEqual([{ addr: 'case:CCCC', fields: { yc_refetch: 1 } }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Regression fence for the whole matcher table (Slice 3b)
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — Slice 3b leaves every prior matcher untouched', () => {
+  test('THE FULL TABLE, one call each, exact addresses', () => {
+    // Every matcher that existed before this slice, plus the three added by it.
+    // Anchoring is the property under test: no new pattern may shadow an old
+    // path, and no old pattern may swallow /merge or /intake/*.
+    const w = mkWindow();
+    const seen = [];
+    ['case:*', 'contact:*', 'setting:*', 'appt:*', 'event:*'].forEach(a =>
+      w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+
+    w.YC._sniff('PATCH', '/api/cases/AAAA',                  { data: { changes: { case_stage: 'Filed' } } });
+    w.YC._sniff('PATCH', '/api/contacts/5',                  { data: { changes: { contact_phone: '2' } } });
+    w.YC._sniff('PATCH', '/api/cases/AAAA/docket',           { changes: { case_number: '24-1' } });
+    w.YC._sniff('POST',  '/api/cases/AAAA/pipeline/advance', { changes: { pipeline_phase: 'case' } });
+    w.YC._sniff('POST',  '/api/cases/AAAA/merge',            { status: 'success', data: { dry_run: false, survivor_id: 'AAAA', loser_id: 'BBBB' } });
+    w.YC._sniff('PUT',   '/api/app-settings/fe-case_types',  { setting: { value: '[]' } });
+    w.YC._sniff('POST',  '/api/app-settings',                { setting: { key: 'fe-x', value: '1' } });
+    w.YC._sniff('POST',  '/api/contact-phones?force=true',   { phone: { id: 1, contact_id: 5 }, transferred_from: { contact_id: 77 } });
+    w.YC._sniff('POST',  '/api/contact-emails?force=true',   { email: { id: 1, contact_id: 5 }, transferred_from: { contact_id: 78 } });
+    w.YC._sniff('PATCH', '/api/appts/55',                    { status: 'success' });
+    w.YC._sniff('POST',  '/api/appts/55/attended',           { status: 'success' });
+    w.YC._sniff('POST',  '/api/appts',                       { data: { appt_id: 56 } });
+    w.YC._sniff('POST',  '/api/appts/cancel',                { status: 'success', appt_id: 57 });
+    w.YC._sniff('POST',  '/api/appts/reschedule',            { status: 'success', appt_id: 58, new_appt_id: 59 });
+    w.YC._sniff('PATCH', '/api/events/12',                   { data: { event_id: 12 } });
+    w.YC._sniff('PATCH', '/api/events/12/complete',          { data: { event_id: 12 } });
+    w.YC._sniff('POST',  '/api/events',                      { data: { event_id: 13 } });
+    w.YC._sniff('POST',  '/api/intake/contact',              { status: 'success', action: 'created', id: 1002 });
+    w.YC._sniff('POST',  '/api/intake/case',                 { status: 'success', action: 'created', id: 'CCCC' });
+
+    expect(seen).toEqual([
+      'case:AAAA', 'contact:5', 'case:AAAA', 'case:AAAA', 'case:AAAA',
+      'setting:fe-case_types', 'setting:fe-x',
+      'contact:77', 'contact:78',
+      'appt:55', 'appt:55', 'appt:56', 'appt:57', 'appt:58', 'appt:59',
+      'event:12', 'event:12', 'event:13',
+      'contact:1002', 'case:CCCC',
+    ]);
+  });
+
+  test('the method gate is unchanged — GET and DELETE reach no matcher', () => {
+    const w = mkWindow();
+    const seen = [];
+    ['case:*', 'contact:*'].forEach(a => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    w.YC._sniff('GET',    '/api/cases/AAAA/merge',  { status: 'success', data: { dry_run: false, survivor_id: 'AAAA' } });
+    w.YC._sniff('DELETE', '/api/intake/contact',    { status: 'success', action: 'created', id: 1 });
+    expect(seen).toEqual([]);
+  });
+});

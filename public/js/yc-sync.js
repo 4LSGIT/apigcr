@@ -53,6 +53,11 @@
  *      appt/event write endpoint is a marker for this reason — see the
  *      appt/event matcher comments below for the per-endpoint detail.
  *
+ *   3. THE CHANGE IS NOT A SET OF COLUMNS AT ALL (v2.4). The case merge moves
+ *      every child record of one case onto another and deletes the source; the
+ *      intake endpoints bring a whole row into existence. Neither has a
+ *      `{column: value}` form worth carrying — see those matchers below.
+ *
  * A handler receiving it MUST NOT merge it into entity state — it is not a
  * column. Answer it with a refetch and return.
  *
@@ -422,6 +427,43 @@
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/docket$/,            'case',    function (r) { return r && r.changes; }],
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/advance$/, 'case',    function (r) { return r && r.changes; }],
 
+    /* CASE MERGE (Slice 3b). `POST /api/cases/:survivor/merge` absorbs another
+       case: every child record (appts, tasks, checklists, events, log rows,
+       form submissions, signing requests, sequences) is repointed onto the
+       survivor, the survivor's empty columns are additively filled from the
+       loser, docket values may be adopted, and the loser row is deleted.
+
+       A `yc_refetch` MARKER, not values, and this is the clearest case for one
+       in the system: the survivor's change is mostly a change in what is
+       ATTACHED to it. `data.fields.filled` names the columns that were filled
+       but not their values, and no field list could represent "eleven log rows
+       and three appointments moved here".
+
+       ── SURVIVOR ONLY. MANAGER DECISION, RECORDED. ──────────────────────────
+       Nothing is emitted to the absorbed case, deliberately. A remote page
+       still sitting on the loser would answer a refetch with a GET for a row
+       that no longer exists and land in a 404 error state — strictly worse
+       than showing stale-but-readable data, for a rare race (the same absorbed
+       case open in a second window at the moment of the merge). The WRITING
+       page already self-handles: mergeCaseDialog replaces its body with a "was
+       merged into X" notice and opens the survivor. A "deleted" bus concept is
+       future work if it ever earns its keep.
+
+       ── FAILS CLOSED TWICE ──────────────────────────────────────────────────
+       1. DRY RUN. The preview and the real merge are THE SAME ENDPOINT with
+          the same 200 shape; only `data.dry_run` tells them apart. A preview
+          writes nothing, so announcing one would cost every open surface a
+          refetch for a dialog someone opened and may yet cancel.
+       2. SHAPE. `dry_run` must be present AND boolean-false. A plan that has
+          lost the key is a contract change, and this stops announcing rather
+          than guessing. THE TRADEOFF, stated so it is not rediscovered in
+          production: if a future refactor drops `dry_run` from the plan,
+          merges go silent (stale survivor) rather than noisy (dry runs
+          announcing). Chosen because a wrong emit reaches every open frame and
+          a missing one only delays one page to its next reload — but if that
+          refactor happens, this matcher needs updating with it. */
+    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/merge$/,             'case',    mergeGetter, ['POST']],
+
     /* app_settings UPDATE (Slice 2). PUT-ONLY on purpose —
        routes/api.appSettings.js has exactly one per-key writer and it is a PUT.
        The 4th element states that, rather than leaning on "no such route
@@ -435,7 +477,10 @@
        Key charset: `.` is included defensively. No live key contains one
        (verified 2026-08-23) and the POST create route's KEY_RE forbids it, but
        app_settings is also writable from the DB console, which has no such
-       rule. */
+       rule. NOT DECODED: a key needing percent-encoding in the URL would match
+       as its escaped form and address `setting:fe%2Dx` — accepted, because
+       KEY_RE forbids every character that would need escaping and the live
+       table is clean (re-verified 2026-08-24). Decode here if that changes. */
     [/^\/api\/app-settings\/([A-Za-z0-9_.\-]+)$/,           'setting', function (r) {
       return r && r.setting && typeof r.setting.value === 'string'
         ? { value: r.setting.value } : null;
@@ -545,6 +590,47 @@
     [/^\/api\/events\/(\d+)$/,                       'event', markerGetter,          ['PATCH']],
     [/^\/api\/events\/(\d+)\/(?:complete|cancel)$/,  'event', markerGetter,          ['PATCH']],
     [/^\/api\/events$/,                              'event', createGetter('event_id'), ['POST']],
+
+    /* ── INTAKE CREATE / UPDATE (Slice 3b) ────────────────────────────────
+       The app's TWO entity-creation endpoints, and until now the only writes
+       of a whole case or contact that no open surface ever heard about. Every
+       other matcher announces a change to a row somebody may be looking at;
+       these announce a row's EXISTENCE, which is what the `case:*` / `contact:*`
+       query views (the shell's Cases and Contacts tabs, the Kanban board) need
+       in order to show it without a manual refresh.
+
+       Callers, all through the shell's apiSend: scripts.js's NewCaseForm
+       (:1855 both endpoints, :3308 case-only), forms/issn.html (:959 contact),
+       apptform2.html (:696 case, the appointment dialog's inline create),
+       and formInbox's adopt flow.
+
+       Markers, not values. The responses carry an id and a name, never a row —
+       and a create has no `{from, to}` diff to carry in the first place.
+
+       ── BOTH ACTIONS ANNOUNCE, and the reason is not symmetry ──────────────
+       `POST /api/intake/contact` is an UPSERT: it resolves the payload's
+       phone/email against existing contacts and updates the match when it
+       finds one. That update writes real columns to a contact that may be open
+       in three frames, so it matters to open surfaces exactly as much as a
+       create does — arguably more, since a create has no open surface yet.
+
+       ── FAILS CLOSED ON `action`, AND THAT IS LOAD-BEARING ────────────────
+       `POST /api/intake/case` has a THIRD success shape the other endpoints
+       have no analogue for: `{status:'success', action:'found', id}`, returned
+       when an active case of the same type already exists for the contact and
+       is reused (routes/api.intake.js). NOTHING IS WRITTEN on that path — it
+       is a lookup that returns an id. Announcing it would make every "create a
+       case" click that lands on an existing case cost a refetch on every open
+       Cases tab, Kanban board and case file, for a row that did not change.
+       So the getters allow-list `created` and `updated`; anything else,
+       including `found` and any action a future branch adds, is silent until
+       someone deliberately widens the list.
+
+       Error shapes (the 400/409/500 branches, which are the majority of the
+       `res.json` sites in these two handlers) are structurally unreachable
+       here: apiSend throws on a non-ok response before the sniff hook runs. */
+    [/^\/api\/intake\/contact$/, 'contact', intakeGetter('contact'), ['POST']],
+    [/^\/api\/intake\/case$/,    'case',    intakeGetter('case'),    ['POST']],
   ];
 
   /**
@@ -633,6 +719,60 @@
       out.push({ addr: 'appt:' + id, fields: { yc_refetch: 1 } });
     }
     return out;
+  }
+
+  /**
+   * Case merge — announce the SURVIVOR, and only on a real merge.
+   *
+   * Array return (getter contract v2) even though the URL names the survivor:
+   * the address comes from `data.survivor_id` because the BODY is the
+   * authority on what actually happened. The route builds it from
+   * `req.params.id`, so the two agree by construction today; reading the body
+   * means a future asymmetry announces the case the server says it merged
+   * rather than the one the caller asked about.
+   *
+   * See the matcher comment for the survivor-only decision and both
+   * fail-closed rules.
+   *
+   * @param   {object} r  `{status:'success', data: <merge plan>}`
+   * @returns {Array|null}
+   */
+  function mergeGetter(r) {
+    var d = r && r.data;
+    if (!d || typeof d !== 'object') return null;
+    // Strictly `false`: a truthy dry_run is a preview (nothing written) and a
+    // missing one is a shape change. Both stay silent.
+    if (d.dry_run !== false) return null;
+    var survivor = d.survivor_id;
+    if (survivor == null || survivor === '') return null;
+    return [{ addr: 'case:' + survivor, fields: { yc_refetch: 1 } }];
+  }
+
+  /**
+   * Intake create/update — announce the row the response names.
+   *
+   * Array return (getter contract v2) for the app-settings-create reason: the
+   * endpoint is a bare collection path with no `/:id` segment, so the address
+   * exists only in the body.
+   *
+   * `id` is the key both handlers share. The contact handler also echoes
+   * `contact_id` (the same value); the case handler has no such alias, so `id`
+   * is the one field to read against both.
+   *
+   * @param   {string} type 'contact' (POST /api/intake/contact)
+   *                      | 'case'    (POST /api/intake/case)
+   * @returns {function(object): (Array|null)}
+   */
+  function intakeGetter(type) {
+    return function (r) {
+      if (!r || typeof r !== 'object') return null;
+      // The allow-list, not a denylist: `found` writes nothing, and a future
+      // action must be considered before it announces. See the matcher note.
+      if (r.action !== 'created' && r.action !== 'updated') return null;
+      var id = r.id;
+      if (id == null || id === '') return null;
+      return [{ addr: type + ':' + id, fields: { yc_refetch: 1 } }];
+    };
   }
 
   /**
