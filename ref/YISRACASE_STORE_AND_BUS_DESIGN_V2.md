@@ -1,7 +1,7 @@
-# YisraCase — Sync Bus Design v2.5
+# YisraCase — Sync Bus Design v2.6
 
-**Status:** Slice 1 shipped; Slice 2 shipped; Slice 2b + 2c shipped; Slice 3 shipped; Slice 3b shipped; Slice 3c shipped (amendments at the foot of this file)
-**Date:** 2026-08-24 (v1: 2026-08-21; v2.1: 2026-08-23, SYNC_BUS_V2_SECONDARY_REVIEW; v2.2: Slice 2b multi-emit sniff; v2.3: Slice 3 appt/event fold-in; v2.4: Slice 3b review remediation; v2.5: Slice 3c third-pass review remediation)
+**Status:** Slice 1 shipped; Slice 2 shipped; Slice 2b + 2c shipped; Slice 3 shipped; Slice 3b shipped; Slice 3c shipped; Slice 3d shipped (amendments at the foot of this file)
+**Date:** 2026-08-24 (v1: 2026-08-21; v2.1: 2026-08-23, SYNC_BUS_V2_SECONDARY_REVIEW; v2.2: Slice 2b multi-emit sniff; v2.3: Slice 3 appt/event fold-in; v2.4: Slice 3b review remediation; v2.5: Slice 3c third-pass review remediation; v2.6: Slice 3d residuals)
 **Scope:** cross-frame + cross-browser-tab data consistency in `public/`
 **Verified against:** `4LSGIT/apigcr` @ main, fresh tarball 2026-08-23 + live DB
 **Supersedes:** YISRACASE_STORE_AND_BUS_DESIGN.md (v1)
@@ -355,3 +355,25 @@ Four named carve-outs, none of them "the bus is broken":
 Nothing in this slice adds an emit path. The new `case_relate` and booking-link matchers are sniff-side only. Every fence added is a *narrowing* — a network call deferred, never a new one — and the deferred calls are the same GETs that were already there (`ycRefreshEntity` → `loadEntityData`, `loadPipeline`, `refreshAppts`/`refreshEvents`, `loadBoard`), all of which the method gate drops before any matcher runs. `ycRefreshIfStale` on both entity pages and `boardRefreshIfStale` on the board call those same functions and add no emit path. The circuit breaker (G16) only ever *removes* emits.
 
 The breaker is also the first thing in the arc that defends §3.6 rather than merely relying on it: §3.6 is a rule about code in this repository, and DB-stored form `code` hooks are code that runs inside a bus-triggered push without being in it. The rule still holds for everything auditable; the breaker is the floor under everything that is not.
+
+---
+
+## v2.6 amendments (Slice 3d — post-3c residuals)
+
+**Date:** 2026-08-24 · **Verified against:** `4LSGIT/apigcr` @ main + the 3c working tree
+
+Two residuals found by a manager pass over the shipped 3c work. Small, but the first is a lie in load-bearing documentation and the second is a cost regression 3c introduced.
+
+| # | Amendment | Source |
+|---|---|---|
+| H1 | **THE MERGE MATCHER'S TRADEOFF BLOCK NOW MATCHES THE SHIPPED CODE.** G17 flipped `dry_run` to a truthy check and rewrote the comment *at the guard*, but the matcher's block comment 300 lines above still read "`dry_run` must be present AND boolean-false… if a future refactor drops `dry_run` from the plan, merges go silent (stale survivor) rather than noisy". That is not a stale comment — it is **the reverse of the shipped behaviour, stating the reverse rationale**, in the one place the tradeoff was written down to be found. Anyone reasoning about a merge regression would have reasoned from it and been wrong twice. Now: fails closed on a truthy `dry_run`, fails **open** on a missing key, with the asymmetry spelled out (a missing emit on a real merge goes stale on EVERY open surface, not "one page" as the old text claimed; a wrong emit on a preview costs idempotent refetches of correct data) and the residual tradeoff restated in the right direction. | manager pass |
+| H2 | **THE RELATE-WRITE ECHO DOUBLE-GET IS FENCED** — `entityLastRefetch` / `ENTITY_FRESH_MS` (1500ms), the `pwLastSet` and `boardLastLoad` idiom applied to the entity refetch. G2 put `case_relate` on the bus, which gave the WRITING page an unfenced echo of its own write: a Primary swap cost a local contacts GET *and* a full-include entity GET to learn what the page had already applied. Stamped by `refreshEntityData`, `_refreshCaseClients` and `modifyCaseClient`'s tail; the `yc_refetch` branch returns inside the window **above the visibility check**, so a hidden page does not flag itself stale on its own echo either (which would defer the redundant GET rather than remove it). Slice 2c predicted exactly this when it deferred the recipient emit: *"the fence is the prerequisite."* | manager pass |
+| H3 | **STAMPED BEFORE THE AWAIT, NOT AFTER — worker correction.** The rider specified the stamp sites; taken literally at the *end* of `_refreshCaseClients` it would lose the race it exists to win. The write that prompted the refresh has already resolved, so its echo is a macrotask **already in flight** while the GET is still awaiting, and an after-the-fact stamp arrives too late. `boardLastLoad` is stamped at the start of `loadBoard` for this exact reason and says so in its comment. Both `refreshEntityData` and `_refreshCaseClients` now stamp at entry. `modifyCaseClient`'s tail is genuinely a tail and is correct there — its continuation is a microtask off the write's own `await`, strictly before the echo. | worker verification |
+| H4 | **The mirror on `contact.html` lands the 2c prerequisite.** Same stamp, same constant, stamped in `refreshEntityData`. This is what finally makes the recipient emit affordable: the revive flow announced the recipient *and* every donor, so the recipient page heard its own write and bought a second full contact GET on top of the refetch it had already issued. That collapses to the accepted "a coalesce can lose its race" semantics the rest of the arc already runs on. | manager pass |
+| H5 | **BOOT IS DELIBERATELY NOT STAMPED.** `loadEntityData()` is called bare from the boot IIFE on both pages, so `entityLastRefetch` is 0 after a page opens and a remote write landing immediately is still honoured. Correct: nobody's write caused the boot, so there is no echo to suppress, and fencing there would silently drop the first remote change on every freshly-opened file. Pinned by a test on both pages so it reads as a decision rather than an oversight. | worker decision |
+
+**The tradeoff, restated once for all four stamps in the arc** (`pwLastSet`, `boardLastLoad`, and now `entityLastRefetch` on both entity pages): a *legitimate* remote refetch landing inside the window is dropped and the page waits for the next event or a reload. The loser is a race between a remote write and a local one on the same record within 1.5 seconds, and losing it costs stale-but-readable data. Accepted uniformly, and now pinned uniformly.
+
+### §3.6 statement
+
+Unchanged, and strengthened in the same direction as every fence in 3c: the echo fence only ever *removes* a network call. No new emit path exists on either page.

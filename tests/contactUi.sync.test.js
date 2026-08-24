@@ -188,6 +188,7 @@ async function boot({ payloads = [contactPayload()] } = {}) {
     '                   phone: E("phone").innerHTML }),' +
     '  isStale: () => apptEventStale,' +
     '  isEntityStale: () => entityStale,' +
+    '  ageRefetch: () => { entityLastRefetch = 0; },' +
     '} });'
   );
 
@@ -552,5 +553,80 @@ describe('contact.html — yc_refetch visibility fence', () => {
 
     expect(contactGets(calls).length).toBe(1);
     expect(window.__t.isEntityStale()).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The echo fence (Slice 3d)
+//
+// The mirror of case.html's, and on this page it is the fence Slice 2c said had
+// to precede any recipient emit ("the fence is the prerequisite").
+//
+// The revive flow is the worst case: a cross-contact transfer PATCHes, this
+// page refetches to show the moved phone or email, and the sniff's
+// `transferred_from` array announces BOTH the recipient and every donor — so
+// the recipient page heard its own write and bought a second full contact GET
+// on top of the refetch it had already issued.
+// ─────────────────────────────────────────────────────────────
+
+describe('contact.html — entity refetch echo fence', () => {
+  test('A REFETCH SUPPRESSES ITS OWN ECHO — the recipient stops double-fetching', async () => {
+    const { window, calls } = await boot();
+
+    // The refetch a transfer triggers…
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(contactGets(calls).length).toBe(2);
+
+    // …and the recipient emit that arrives with it. Same write, no new data.
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(contactGets(calls).length).toBe(2);
+  });
+
+  test('A REMOTE yc_refetch OUTSIDE THE WINDOW STILL REFETCHES', async () => {
+    const { window, calls } = await boot();
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(contactGets(calls).length).toBe(2);
+
+    window.__t.ageRefetch();
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(contactGets(calls).length).toBe(3);
+  });
+
+  test('a fresh page is NOT fenced — boot does not stamp', async () => {
+    const { window, calls } = await boot();
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(contactGets(calls).length).toBe(2);
+  });
+
+  test('THE FENCE SITS ABOVE THE VISIBILITY CHECK — no stale flag on an own echo', async () => {
+    const { window, calls } = await boot();
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    setHidden(window, true);
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(window.__t.isEntityStale()).toBe(false);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 200);
+    expect(contactGets(calls).length).toBe(2);       // nothing deferred, nothing spent
+  });
+
+  test('the fence does NOT touch scalar messages', async () => {
+    const { window } = await boot();
+    window.YC.emit(`contact:${CLIENT_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    window.YC.emit(`contact:${CLIENT_ID}`,
+                   { contact_lname: { from: 'Applebaum', to: 'Baum' } }, 'test');
+    await tick(window, 100);
+    expect(window.__t.header().lname).toBe('Baum');
   });
 });

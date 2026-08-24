@@ -650,19 +650,37 @@
        merged into X" notice and opens the survivor. A "deleted" bus concept is
        future work if it ever earns its keep.
 
-       ── FAILS CLOSED TWICE ──────────────────────────────────────────────────
-       1. DRY RUN. The preview and the real merge are THE SAME ENDPOINT with
-          the same 200 shape; only `data.dry_run` tells them apart. A preview
-          writes nothing, so announcing one would cost every open surface a
-          refetch for a dialog someone opened and may yet cancel.
-       2. SHAPE. `dry_run` must be present AND boolean-false. A plan that has
-          lost the key is a contract change, and this stops announcing rather
-          than guessing. THE TRADEOFF, stated so it is not rediscovered in
-          production: if a future refactor drops `dry_run` from the plan,
-          merges go silent (stale survivor) rather than noisy (dry runs
-          announcing). Chosen because a wrong emit reaches every open frame and
-          a missing one only delays one page to its next reload — but if that
-          refactor happens, this matcher needs updating with it. */
+       ── FAILS CLOSED ONCE, AND OPEN ONCE. BOTH DELIBERATE. ──────────────────
+       1. DRY RUN — FAILS CLOSED. The preview and the real merge are THE SAME
+          ENDPOINT with the same 200 shape; only `data.dry_run` tells them
+          apart. A preview writes nothing, so announcing one would cost every
+          open surface a refetch for a dialog someone opened and may yet cancel.
+          The check is TRUTHY (`if (d.dry_run) return null;`), so a dry run
+          stays silent in every spelling the producer might use.
+       2. SHAPE — FAILS OPEN, REVERSED IN SLICE 3c. A plan that has LOST the
+          `dry_run` key now ANNOUNCES.
+
+          This block used to require the key to be present AND boolean-false,
+          and argued that a missing key is a contract change the matcher should
+          not guess at. Third-pass review reversed that judgement, and the old
+          reasoning ("a wrong emit reaches every open frame and a missing one
+          only delays one page to its next reload") was simply wrong about the
+          second half. The two failure modes are not comparable:
+
+            · a MISSING emit on a real merge reopens the exact HIGH this
+              matcher exists to close — a survivor that has absorbed another
+              case, silently, on EVERY open surface, until each one reloads.
+              Not "one page".
+            · a WRONG emit on a preview costs one idempotent refetch per open
+              surface. The refetch returns correct data. Nobody sees a bug.
+
+          So an unrecognised shape defaults to announcing. THE REMAINING
+          TRADEOFF, stated so it is not rediscovered in production: if a future
+          refactor drops `dry_run` from the plan, DRY RUNS START ANNOUNCING
+          (harmless refetches) rather than merges going silent (stale
+          survivors). The producer side is pinned by
+          tests/caseMergeShapes.test.js so that refactor breaks a test at the
+          service, not here. */
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/merge$/,             'case',    mergeGetter, ['POST']],
 
     /* app_settings UPDATE (Slice 2). PUT-ONLY on purpose —

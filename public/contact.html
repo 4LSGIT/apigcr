@@ -327,7 +327,7 @@
 .crel-other-link:hover {
   text-decoration: underline;
 }
-</style>  
+</style>
 
 
 <div id="tabViewClient" class="tab-main" style="text-align: center;display:none">
@@ -381,7 +381,7 @@
     <iframe id="tabSendIframe"></iframe>
   </div>
 
-  
+
 <!-- Automations widget (sequences + workflows for this contact). The former
      inline implementation (slice 4.3 Parts A+B) moved wholesale to
      public/automation/automationsWidget.html, shared with case.html's
@@ -466,7 +466,7 @@
     Everything you want?!
   </div>
 
-  <div id="tabLog" class="tab-content"> 
+  <div id="tabLog" class="tab-content">
     <h1>Client Log</h1>
     <span><button onclick="addLog()">Add Log</button>
       Query:
@@ -489,7 +489,7 @@
         <option value="">Any Direction</option>
         <option value="outgoing">Outgoing</option>
         <option value="incoming">Incoming</option>
-      </select>Time: 
+      </select>Time:
       <select id="tabLogTime" style="width:150px" onchange="tabLogTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
@@ -500,7 +500,7 @@
       <input id="tabLogDate1" type="date" style="width:150px;display:none;">
       <label id="tabLogDateLabel"></label>
       <input id="tabLogDate2" type="date" style="width:150px;;display:none">
-      
+
       <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
     </span>
     <table id="logTable" class="logTable" style="text-align: left;">
@@ -510,11 +510,11 @@
     <div id="tabLogLoad" style="display:none;">
       <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
     </div>
-  </div>  
-  
-  
+  </div>
+
+
 <script>
-  
+
 function tabLogTimeChange(time) {
   if (time === 'All') {
     E('tabLogDate1').style.display = 'none';
@@ -652,11 +652,11 @@ async function addLog() {
     }
   });
 }
-  </script>  
+  </script>
 
-  
-  
-  
+
+
+
 
 <!-- Tasks widget — consolidated /tasks.html in entity mode. src set lazily
      by the tab button (esignButton idiom). -->
@@ -869,6 +869,7 @@ async function refreshAppts() {
 
 // ── Refresh after form save ─────────────────────────────────
 async function refreshEntityData(sourceFormKey) {
+  entityLastRefetch = Date.now();   // echo fence (Slice 3d) — stamped at START, see the declaration
   await loadEntityData();
   updateHeader();
 
@@ -1790,6 +1791,27 @@ processing();
    waiting for the first message that lands during evaluation. */
 let entityStale = false;
 
+/* THE ECHO FENCE (Slice 3d) — the mirror of case.html's, and on this page it
+   lands the fence Slice 2c said had to precede any recipient emit ("the fence
+   is the prerequisite").
+
+   The revive flow is the worst case here: a cross-contact transfer PATCHes,
+   this page refetches to show the moved phone or email, and the sniff's
+   `transferred_from` array announces BOTH the recipient and every donor — so
+   the recipient page heard its own write and bought a second full contact GET
+   on top of the refetch it had already issued. With the stamp that collapses to
+   the accepted "a coalesce can lose its race" semantics the rest of the arc
+   already runs on.
+
+   Stamped at the START of refreshEntityData, not after: the write that prompted
+   it has already resolved, so its echo is a macrotask in flight while the GET
+   is still awaiting, and a stamp taken afterwards loses that race. Same idiom
+   and the same 1500ms as case.html and the board. Same accepted tradeoff too —
+   a legitimate remote refetch inside the window waits for the next event. */
+let entityLastRefetch = 0;
+const ENTITY_FRESH_MS = 1500;
+const entityRecentlyRefetched = () => (Date.now() - entityLastRefetch) < ENTITY_FRESH_MS;
+
 YC.on(`contact:${clientID}`, '*', (fields) => {
   /* RESERVED FIELD — the one sanctioned invalidation (design §3.1 amendment,
      v2.2). A cross-contact transfer ENDED a phone/email row on this contact:
@@ -1817,6 +1839,9 @@ YC.on(`contact:${clientID}`, '*', (fields) => {
      case.html this page has no pipeline widget, so the refetch is the only
      network call this subscriber can make. */
   if ('yc_refetch' in fields) {
+    // THE ECHO FENCE first — see entityLastRefetch. A page that read the server
+    // moments ago is not stale, so it neither refetches nor flags itself.
+    if (entityRecentlyRefetched()) return;
     if (!pageVisible()) { entityStale = true; return; }
     window.ycRefreshEntity();
     return;

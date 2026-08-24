@@ -947,6 +947,13 @@
               // client name and phone are painted from. The bus echo would also
               // repaint (this write is sniffed as of Slice 3c), but that path
               // needs BroadcastChannel — this one does not.
+              //
+              // ECHO FENCE (Slice 3d). This branch does NOT call
+              // _refreshCaseClients — it patches the list locally — so it has to
+              // stamp for itself, or the echo of its own PATCH/DELETE would buy
+              // a full entity GET to learn what the three lines below already
+              // applied.
+              entityLastRefetch = Date.now();
               deriveContactRefs();
               putClients();
               updateHeader();
@@ -964,6 +971,14 @@
       // a refresh that skipped them left the header naming the previous Primary
       // on the page that had just changed it.
       async function _refreshCaseClients() {
+        /* Echo fence (Slice 3d), stamped BEFORE the await — the boardLastLoad
+           idiom, and it has to be before rather than after. The write that
+           prompted this refresh has already resolved, so its echo is a
+           macrotask ALREADY IN FLIGHT while the GET below is awaiting. A stamp
+           taken afterwards loses that race and the redundant entity GET goes
+           out anyway; taken here it is always in the past by the time the
+           message lands. */
+        entityLastRefetch = Date.now();
         const refresh = await P.apiSend(`/api/cases/${caseID}`, "GET", { include: "contacts" });
         window.entityData.clients = refresh.clients || [];
         deriveContactRefs();
@@ -1537,6 +1552,7 @@ function refreshAppts() {
 
 // ── Refresh after form save ─────────────────────────────────
 async function refreshEntityData(sourceFormKey) {
+  entityLastRefetch = Date.now();   // echo fence (Slice 3d) — stamped at START, see _refreshCaseClients
   await loadEntityData();
   updateHeader();
 
@@ -1932,6 +1948,42 @@ processing();
 let entityStale   = false;
 let pipelineStale = false;
 
+/* THE ECHO FENCE (Slice 3d) — when this page last re-read itself from the
+   server. The same stamp idiom as `pwLastSet` and the board's `boardLastLoad`,
+   applied to the entity refetch, and Slice 2c predicted the need for it in as
+   many words: "the fence is the prerequisite".
+
+   ── THE DOUBLE-GET IT CLOSES ────────────────────────────────────────────────
+   Slice 3c put `case_relate` on the bus, which means the page that CHANGES a
+   Primary contact now hears its own write come back:
+
+     modifyCaseClient → PATCH .../contacts/:id
+       → _refreshCaseClients()  ......... GET /api/cases/:id?include=contacts
+       → sniff emits {yc_refetch:1} back at this very frame
+         → ycRefreshEntity() ............ GET /api/cases/:id (full include)
+
+   Two GETs for one click, the second one strictly redundant — the local
+   refresh already read the server, and the echo carries no information the
+   page does not already have. Exactly the class `pwLastSet` closes for the
+   pipeline widget, arriving on a new path.
+
+   ── WHY IT SITS ABOVE THE VISIBILITY CHECK ──────────────────────────────────
+   A page that just refetched is not stale, so it must not SET `entityStale`
+   either. Fencing below the visibility check would leave a hidden page marking
+   itself dirty on its own echo and buying the redundant GET later instead of
+   now — the cost deferred, not removed.
+
+   ── THE TRADEOFF, same as every stamp on this page ──────────────────────────
+   A LEGITIMATE remote refetch landing inside the window is dropped, and this
+   page waits for the next event or a reload. Accepted, and already accepted
+   for `pwLastSet` (1500ms, same constant) and the board (`BOARD_FRESH_MS`).
+   The window is small, the loser is a race between a remote write and a local
+   one on the same case in the same 1.5s, and the cost of losing it is
+   stale-but-readable data rather than anything wrong. */
+let entityLastRefetch = 0;
+const ENTITY_FRESH_MS = 1500;
+const entityRecentlyRefetched = () => (Date.now() - entityLastRefetch) < ENTITY_FRESH_MS;
+
 YC.on(`case:${caseID}`, '*', (fields) => {
   /* RESERVED FIELD — the sanctioned invalidation (design §3.1 amendment, v2.2;
      third shape added v2.4). Something happened to this case that has no
@@ -1958,6 +2010,9 @@ YC.on(`case:${caseID}`, '*', (fields) => {
      page nobody could see. Deferred to `ycRefreshIfStale()`, which runs when
      the file comes back on screen. */
   if ('yc_refetch' in fields) {
+    // THE ECHO FENCE first — see entityLastRefetch. A page that read the server
+    // moments ago is not stale, so it neither refetches nor flags itself.
+    if (entityRecentlyRefetched()) return;
     if (!pageVisible()) { entityStale = true; return; }
     window.ycRefreshEntity();
     return;

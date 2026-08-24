@@ -185,9 +185,22 @@ async function boot({ payloads = [casePayload()], pipelines = ['Intake'] } = {})
   // SweetAlert: scripts.js builds window.Toast from Swal.mixin at evaluation
   // time, so the stub has to exist before the eval and has to answer mixin().
   const toasts = [];
+  // `fire` answers "cancelled" by default, but when a test has armed
+  // __swalValue it runs the dialog's REAL preConfirm with that value — which is
+  // how a relate change is driven end-to-end without stubbing around
+  // modifyCaseClient's body.
+  window.__swalValue = undefined;
   window.Swal = {
     mixin: () => ({ fire: (o) => { toasts.push(o); } }),
-    fire: async () => ({ isConfirmed: false }),
+    fire: async (o) => {
+      if (window.__swalValue !== undefined && o && typeof o.preConfirm === 'function') {
+        const v = window.__swalValue;
+        window.__swalValue = undefined;
+        const value = await o.preConfirm(v);
+        return { isConfirmed: value !== false, value };
+      }
+      return { isConfirmed: false };
+    },
     close: () => {},
     showLoading: () => {},
     update: () => {},
@@ -239,6 +252,9 @@ async function boot({ payloads = [casePayload()], pipelines = ['Intake'] } = {})
     '  clientLine:   () => ({ name: E("clientName").innerHTML,' +
     '                         phone: E("phone").innerHTML }),' +
     '  primary:      () => (PC ? PC.contact_id : null),' +
+    '  modifyClient: (id, cur) => modifyCaseClient(id, cur),' +
+    '  ageRefetch:   () => { entityLastRefetch = 0; },' +
+    '  refetchFresh: () => entityRecentlyRefetched(),' +
     '  markSaved:    () => { lastFormSavedAt = Date.now(); },' +
     '} });'
   );
@@ -1129,5 +1145,172 @@ describe('entity subscriber — network fences', () => {
     // The stub sniffs everything it is given; a GET matches nothing, so the
     // refetch produces no second message and no second refetch.
     expect(caseLoads(calls).length).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The relate-write echo fence (Slice 3d)
+//
+// Slice 3c put case_relate on the bus, which means the page that CHANGES a
+// Primary now hears its own write come back:
+//
+//   modifyCaseClient → PATCH .../contacts/:id
+//     → local list patch + repaint
+//     → sniff emits {yc_refetch:1} straight back at this frame
+//       → ycRefreshEntity() → a full-include GET the page did not need
+//
+// Two GETs for one click, the second strictly redundant. Exactly the class
+// pwLastSet closes for the pipeline widget and boardLastLoad for the board,
+// arriving on a new path — and Slice 2c predicted it in as many words when it
+// deferred the recipient emit: "the fence is the prerequisite".
+// ─────────────────────────────────────────────────────────────
+
+describe('entity refetch — echo fence', () => {
+  // loadEntityData sends include=contacts,appts,log; _refreshCaseClients sends
+  // include=contacts. Both are GETs on /api/cases/:id, so they have to be told
+  // apart by their include or the assertions below mean nothing.
+  const entityGets   = calls => calls.filter(c =>
+    /^\/api\/cases\/[^/]+$/.test(c.url) && c.method === 'GET' &&
+    c.params && c.params.include === 'contacts,appts,log');
+  const contactsGets = calls => calls.filter(c =>
+    /^\/api\/cases\/[^/]+$/.test(c.url) && c.method === 'GET' &&
+    c.params && c.params.include === 'contacts');
+
+  test('A RELATE WRITE COSTS ONE CONTACTS GET AND ZERO ENTITY GETS', async () => {
+    // The headline assertion of this slice. The whole round trip runs: the real
+    // dialog's preConfirm, the real PATCH, the real local patch and repaint,
+    // and the real echo arriving one macrotask later.
+    const { window, calls } = await boot();
+    const before = { entity: entityGets(calls).length, contacts: contactsGets(calls).length };
+
+    window.__swalValue = 'Secondary';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);          // well past the echo macrotask
+
+    expect(calls.filter(c => c.method === 'PATCH').length).toBe(1);
+    expect(entityGets(calls).length - before.entity).toBe(0);
+    expect(contactsGets(calls).length - before.contacts).toBe(0);
+  });
+
+  test('a REMOVE costs no entity GET either — the DELETE echoes the same way', async () => {
+    const { window, calls } = await boot();
+    const before = entityGets(calls).length;
+
+    window.__swalValue = 'Remove';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);
+
+    expect(calls.filter(c => c.method === 'DELETE').length).toBe(1);
+    expect(entityGets(calls).length).toBe(before);
+  });
+
+  test('the local repaint still happens — the fence suppresses the GET, not the update', async () => {
+    // Load-bearing. Dropping the echo is only safe because the writing page
+    // already applied the change itself.
+    const { window } = await boot();
+    expect(window.__t.primary()).toBe(1001);
+
+    window.__swalValue = 'Other';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);
+
+    expect(window.__t.primary()).toBe(null);          // no Primary any more
+    expect(window.__t.clientLine()).toEqual({ name: '', phone: '' });
+  });
+
+  test('A REMOTE yc_refetch OUTSIDE THE WINDOW STILL REFETCHES', async () => {
+    // The fence must not become a mute button. This is the case the window
+    // exists to keep working.
+    const { window, calls } = await boot();
+    window.__swalValue = 'Secondary';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);
+    const after = entityGets(calls).length;
+
+    window.__t.ageRefetch();                          // as if 1500ms had passed
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+
+    expect(entityGets(calls).length).toBe(after + 1);
+  });
+
+  test('a fresh page is NOT fenced — boot does not stamp', async () => {
+    // boot calls loadEntityData() directly rather than refreshEntityData(), so
+    // a remote write landing right after a page opens is still honoured. That
+    // is deliberate: nobody's write caused the boot, so there is no echo to
+    // suppress.
+    const { window, calls } = await boot();
+    expect(window.__t.refetchFresh()).toBe(false);
+
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(entityGets(calls).length).toBe(2);
+  });
+
+  test('THE FENCE SITS ABOVE THE VISIBILITY CHECK — a hidden page does not go stale on its own echo', async () => {
+    // Fencing below it would leave a parked page marking itself dirty on its
+    // own write and buying the redundant GET later instead of now: the cost
+    // deferred, not removed.
+    const { window, calls } = await boot();
+    setHidden(window, true);
+
+    window.__swalValue = 'Secondary';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);
+
+    expect(window.__t.isEntityStale()).toBe(false);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 200);
+    expect(entityGets(calls).length).toBe(1);         // boot only
+  });
+
+  test('the fence coalesces a burst, then reopens — the accepted tradeoff, stated', async () => {
+    // A legitimate remote refetch inside the window IS dropped, and the page
+    // waits for the next event. Already accepted for pwLastSet (same 1500ms)
+    // and the board. Pinned so the behaviour is a decision, not a surprise.
+    const { window, calls } = await boot();
+    window.__swalValue = 'Secondary';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);
+    const after = entityGets(calls).length;
+
+    for (let i = 0; i < 3; i++) {
+      window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    }
+    await tick(window, 200);
+    expect(entityGets(calls).length).toBe(after);     // all three inside the window
+
+    window.__t.ageRefetch();
+    window.YC.emit(`case:${CASE_ID}`, { yc_refetch: 1 }, 'test');
+    await tick(window, 200);
+    expect(entityGets(calls).length).toBe(after + 1); // and the window reopens
+  });
+
+  test('the fence does NOT touch scalar messages', async () => {
+    // It guards one branch. A remote status change inside the window must still
+    // merge and paint — it carries its own values and costs no network call.
+    const { window } = await boot();
+    window.__swalValue = 'Secondary';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);
+
+    window.YC.emit(`case:${CASE_ID}`, { case_status: 'Working' }, 'test');
+    await tick(window, 100);
+    expect(window.entityData.case.case_status).toBe('Working');
+  });
+
+  test('and it does NOT touch the pipeline branch', async () => {
+    const { window, calls } = await boot();
+    window.__t.agePipeline();
+    window.__swalValue = 'Secondary';
+    await window.__t.modifyClient('1001', 'Primary');
+    await tick(window, 300);
+    const before = pipelineGets(calls).length;
+
+    window.YC.emit(`case:${CASE_ID}`, { pipeline_phase: 'case' }, 'test');
+    await tick(window, 200);
+    expect(pipelineGets(calls).length).toBe(before + 1);
   });
 });
