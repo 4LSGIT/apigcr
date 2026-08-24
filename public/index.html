@@ -86,43 +86,11 @@
     .tab-main > iframe { display: block; height: calc(100vh - var(--header-h)); }
 
     /* === HEADER + SIDEBAR === */
-    :root {
-      --sidebar-w: 220px;
-      --sidebar-skinny-w: 56px;
-      --header-h: 56px;
-      --accent: #07ADEF;
-      --accent-dark: #0590c8;
-      --page-bg: #ffffff;
-      --surface-bg: #ffffff;
-      --sidebar-bg: #f7f8fa;
-      --sidebar-sublist-bg: #eef0f3;
-      --sidebar-hover: #e8eaed;
-      --sidebar-active-bg: rgba(7,173,239,0.12);
-      --border: #e1e4e8;
-      --text: #2c3e50;
-      --text-muted: #6c757d;
-      --shadow: 0 1px 3px rgba(0,0,0,0.04);
-      --shadow-drawer: 2px 0 12px rgba(0,0,0,0.18);
-      --backdrop: rgba(0,0,0,0.4);
-      --logout-color: #d9534f;
-      --logout-hover-bg: #fdecea;
-    }
-    body.dark {
-      --page-bg: #131722;
-      --surface-bg: #1a1e2a;
-      --sidebar-bg: #1a1e2a;
-      --sidebar-sublist-bg: #131722;
-      --sidebar-hover: #2a2f3d;
-      --sidebar-active-bg: rgba(7,173,239,0.22);
-      --border: #2c313d;
-      --text: #e1e4e8;
-      --text-muted: #8b95a8;
-      --shadow: 0 1px 3px rgba(0,0,0,0.4);
-      --shadow-drawer: 2px 0 12px rgba(0,0,0,0.5);
-      --backdrop: rgba(0,0,0,0.6);
-      --logout-color: #ff7670;
-      --logout-hover-bg: #3a1f1f;
-    }
+    /* Token definitions deleted — /theme.css is the single source of truth for
+       both modes (charter §3, §4 family C). The five names theme.css does not
+       carry were remapped per TOKEN-MAP.md §6: --surface-bg→--surface,
+       --sidebar-hover→--hover, --sidebar-active-bg→--accent-soft,
+       --logout-color→--danger, --logout-hover-bg→--danger-soft. */
     body {
       margin: 0;
       padding-top: var(--header-h);
@@ -138,7 +106,7 @@
     #appHeader {
       position: fixed; top: 0; left: 0; right: 0;
       height: var(--header-h);
-      background: var(--surface-bg);
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center;
       padding: 0 16px; gap: 12px;
@@ -160,7 +128,7 @@
       flex: 1; height: 36px; padding: 0 14px;
       border: 1px solid var(--border); border-radius: 6px;
       font-size: 14px; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
-      background: var(--surface-bg); color: var(--text);
+      background: var(--surface); color: var(--text);
     }
     #appHeader .hdr-search input:focus {
       border-color: var(--accent);
@@ -185,7 +153,7 @@
       flex: 1; height: 40px; padding: 0 14px;
       border: 1px solid var(--border); border-radius: 6px;
       font-size: 15px; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
-      background: var(--surface-bg); color: var(--text);
+      background: var(--surface); color: var(--text);
     }
     #tabHome .home-search input:focus {
       border-color: var(--accent);
@@ -208,7 +176,7 @@
       transition: background 0.15s;
       user-select: none;
     }
-    #appHeader .hdr-greeting:hover { background: var(--sidebar-hover); }
+    #appHeader .hdr-greeting:hover { background: var(--hover); }
     #appHeader .hdr-greeting b { color: var(--accent); }
     #appHeader .hdr-clock {
       display: flex; align-items: center; gap: 7px;
@@ -220,12 +188,12 @@
     }
     #appHeader .hdr-clock i { color: var(--accent); font-size: 13px; }
     #appHeader .hdr-btn, #appHeader .hdr-logout {
-      background: var(--surface-bg); border: 1px solid var(--border);
+      background: var(--surface); border: 1px solid var(--border);
       height: 36px; padding: 0 12px; border-radius: 6px;
       cursor: pointer; color: var(--text); font-size: 13px;
       display: flex; align-items: center; gap: 6px;
     }
-    #appHeader .hdr-btn:hover, #appHeader .hdr-logout:hover { background: var(--sidebar-hover); }
+    #appHeader .hdr-btn:hover, #appHeader .hdr-logout:hover { background: var(--hover); }
     #appHeader .hdr-btn-icon { padding: 0 10px; }
     #appHeader .hdr-btn .hdr-badge {
       background: #dc2626; color: #fff; font-size: 11px; font-weight: 600;
@@ -233,8 +201,8 @@
       margin-left: 6px;
     }
     #appHeader .hdr-btn-icon i { font-size: 15px; }
-    #appHeader .hdr-logout { color: var(--logout-color); }
-    #appHeader .hdr-logout:hover { background: var(--logout-hover-bg); }
+    #appHeader .hdr-logout { color: var(--danger); }
+    #appHeader .hdr-logout:hover { background: var(--danger-soft); }
 
     /* Sidebar */
     #appSidebar {
@@ -259,9 +227,9 @@
       width: 20px; text-align: center; flex-shrink: 0;
       color: var(--text-muted); font-size: 15px;
     }
-    #appSidebar .sb-item:hover { background: var(--sidebar-hover); }
+    #appSidebar .sb-item:hover { background: var(--hover); }
     #appSidebar .sb-item.active {
-      background: var(--sidebar-active-bg);
+      background: var(--accent-soft);
       border-left-color: var(--accent);
       color: var(--accent); font-weight: 500;
     }
@@ -300,9 +268,9 @@
     #appSidebar .sb-sublist .file-button i:first-child {
       color: var(--text-muted); font-size: 13px; flex-shrink: 0;
     }
-    #appSidebar .sb-sublist .file-button:hover { background: var(--sidebar-hover); }
+    #appSidebar .sb-sublist .file-button:hover { background: var(--hover); }
     #appSidebar .sb-sublist .file-button.active {
-      background: var(--sidebar-active-bg);
+      background: var(--accent-soft);
       border-left-color: var(--accent);
       color: var(--accent); font-weight: 500;
     }
@@ -312,7 +280,7 @@
       padding: 2px 4px; cursor: pointer; font-size: 13px;
     }
     #appSidebar .sb-sublist .file-button:hover .file-close { opacity: 0.8; }
-    #appSidebar .sb-sublist .file-button .file-close:hover { opacity: 1; color: var(--logout-color); }
+    #appSidebar .sb-sublist .file-button .file-close:hover { opacity: 1; color: var(--danger); }
     /* Close-all X on the Open Files header. Base opacity keeps it visible
        (and tappable on the mobile drawer — no hover there); row hover
        brightens it, matching the per-file .file-close behavior. */
@@ -321,7 +289,7 @@
       padding: 2px; cursor: pointer; margin-left: -4px;
     }
     #appSidebar #sbOpenFiles:hover #sbCloseAll { opacity: 0.85; }
-    #appSidebar #sbCloseAll:hover { opacity: 1; color: var(--logout-color); }
+    #appSidebar #sbCloseAll:hover { opacity: 1; color: var(--danger); }
     #appSidebar .sb-sublist #noOpenFiles { display: none !important; }
 
     /* Sidebar footer + collapse bar */
@@ -337,12 +305,12 @@
       position: sticky; bottom: 0; z-index: 1;
     }
     #appSidebar .sb-collapse-bar button {
-      flex: 1; padding: 8px; background: var(--surface-bg);
+      flex: 1; padding: 8px; background: var(--surface);
       border: 1px solid var(--border); border-radius: 4px;
       cursor: pointer; color: var(--text-muted);
       font-size: 13px;
     }
-    #appSidebar .sb-collapse-bar button:hover { background: var(--sidebar-hover); color: var(--text); }
+    #appSidebar .sb-collapse-bar button:hover { background: var(--hover); color: var(--text); }
 
     /* Fast hover tooltip for icon-only (skinny) sidebar items.
        Rendered on <body> so it escapes the sidebar's overflow clipping. */
@@ -462,13 +430,13 @@
     }
     /* Default buttons (excluding the branded blue CTAs) */
     body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button) {
-      background: var(--surface-bg);
+      background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 4px;
     }
     body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button):hover:not(:disabled) {
-      background: var(--sidebar-hover);
+      background: var(--hover);
     }
     body.dark .tab-main button:disabled {
       opacity: 0.5;
@@ -489,7 +457,7 @@
     body.dark .tab-main input,
     body.dark .tab-main select,
     body.dark .tab-main textarea {
-      background: var(--surface-bg);
+      background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border) !important;
     }
@@ -501,7 +469,7 @@
     }
     /* Tables — need solid bg on tr to override style.css's #f2f2f2 stripe */
     body.dark .tab-main table.logTable {
-      background: var(--surface-bg);
+      background: var(--surface);
       color: var(--text);
     }
     body.dark .tab-main table.logTable th {
@@ -511,10 +479,10 @@
     }
     body.dark .tab-main table.logTable td {
       border-color: var(--border);
-      background: var(--surface-bg);
+      background: var(--surface);
     }
     body.dark .tab-main table.logTable tr {
-      background-color: var(--surface-bg);
+      background-color: var(--surface);
     }
     body.dark .tab-main table.logTable tr:nth-child(even) {
       background-color: var(--sidebar-bg);
@@ -524,7 +492,7 @@
     }
     body.dark .tab-main table.logTable tr:hover,
     body.dark .tab-main table.logTable tr:hover td {
-      background-color: var(--sidebar-hover) !important;
+      background-color: var(--hover) !important;
     }
     body.dark .tab-main a,
     body.dark .tab-main a:visited {
@@ -537,7 +505,7 @@
     /* Appointment box etc. */
     body.dark .tab-main .appointment-box {
       border-color: var(--border);
-      background: var(--surface-bg);
+      background: var(--surface);
     }
     /* style.css .tab (tabs class) */
     body.dark .tab {
@@ -545,7 +513,7 @@
       color: var(--text);
     }
     body.dark .tab:hover {
-      background-color: var(--sidebar-hover);
+      background-color: var(--hover);
     }
     /* Campaign tab styles from style.css */
     body.dark .campaign-tab-button {
@@ -554,15 +522,15 @@
       border-color: var(--border);
     }
     body.dark .campaign-tab-button.active {
-      background-color: var(--surface-bg);
+      background-color: var(--surface);
     }
     body.dark .campaign-tab-main {
-      background-color: var(--surface-bg);
+      background-color: var(--surface);
       border-color: var(--border);
     }
     /* SweetAlert in dark mode */
     body.dark .swal2-popup {
-      background: var(--surface-bg) !important;
+      background: var(--surface) !important;
       color: var(--text) !important;
     }
     body.dark .swal2-title,
