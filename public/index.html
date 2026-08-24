@@ -4405,12 +4405,6 @@ async function initAuth() {
       document.documentElement.setAttribute('data-theme', t);
       try { localStorage.setItem('yc-theme', t); } catch (e) {}
 
-      // LEGACY BRIDGE — remove only when the last body.dark consumer is converted.
-      // Keeps the 41 unconverted body.dark rules in this file, and the four pages
-      // still observing top's body class, working during the migration. Without
-      // it the arc becomes big-bang.
-      document.body.classList.toggle('dark', t === 'dark');
-
       var icon = document.getElementById('themeIcon');
       if (icon) icon.className = (t === 'dark') ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
     }
@@ -4422,8 +4416,8 @@ async function initAuth() {
     // Restore sidebar state + theme on page load
     (function () {
       // Theme — data-theme is already set pre-paint by the inline script in
-      // <head>. This only syncs the legacy body.dark bridge and the toggle icon
-      // to it; it deliberately does not re-read storage. Charter §3.2.
+      // <head>. This only syncs the toggle icon to it; it deliberately does
+      // not re-read storage. Charter §3.2.
       applyTheme(document.documentElement.getAttribute('data-theme'));
 
       // Sidebar state
