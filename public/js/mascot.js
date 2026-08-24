@@ -63,6 +63,15 @@
     PERCH_W: 44, PERCH_H: 16, PERCH_SPAN: 40,
     MAX_PERCHES: 18,
 
+    // How hard scan() is allowed to look. The old limit was 250 elements in
+    // DOCUMENT order, which on a long page scrolled halfway down spends the
+    // whole budget on rows that are off the top of the frame and finds the cat
+    // nothing to stand on. Buttons made that much likelier — there are ten of
+    // them for every card — so the budget now counts what it FINDS, walking
+    // further down the document until it has enough that is actually on screen.
+    SCAN_ELS: 1400,        // hard stop on rects measured, per selector
+    SCAN_KEEP: 60,         // …or stop early once this many are in view
+
     // DROPPING DOWN. A cat on a ledge with something a short way below it will
     // sometimes just take the drop rather than walk to the end. Looks every
     // HOP_EVERY seconds while walking and takes it HOP_CHANCE of the time, so
@@ -317,8 +326,8 @@
     var els;
     try { els = doc.querySelectorAll(sel); } catch (e) { return []; }
 
-    var box = view.box, found = [], n = Math.min(els.length, 250);
-    for (var k = 0; k < n; k++) {
+    var box = view.box, found = [], n = Math.min(els.length, CFG.SCAN_ELS);
+    for (var k = 0; k < n && found.length < CFG.SCAN_KEEP; k++) {
       var r;
       try { r = els[k].getBoundingClientRect(); } catch (e) { continue; }
       if (r.width < minW || r.height < minH) continue;
