@@ -1321,8 +1321,8 @@
     'font:500 12.5px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;',
     'pointer-events:none;opacity:0;transition:opacity .45s ease;will-change:transform}',
     '.yc-say.show{opacity:1}',
-    'body.dark .yc-say{background:#2b3039;color:#e9ecf1;border-color:#3b424c}',
-    'body.dark .yc-cat{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.08)}',
+    'html[data-theme="dark"] .yc-say{background:#2b3039;color:#e9ecf1;border-color:#3b424c}',
+    'html[data-theme="dark"] .yc-cat{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.08)}',
     '.yc-cat svg{display:block;overflow:visible}',
     '.yc-cat g,.yc-cat path,.yc-cat rect,.yc-cat text{transform-box:view-box}',
 
@@ -1458,7 +1458,7 @@
     '.m-zzz{opacity:0}',
     '.m-zzz text{font:italic 700 7px/1 Georgia,serif;fill:#8a8f98;',
     'transform-box:fill-box;transform-origin:50% 50%}',   /* each z scales about itself */
-    'body.dark .m-zzz text{fill:#c8ced8}',
+    'html[data-theme="dark"] .m-zzz text{fill:#c8ced8}',
     '@keyframes ycm-z{0%{opacity:0;transform:translate(0,0) scale(.7)}25%{opacity:.9}100%{opacity:0;transform:translate(4px,-9px) scale(1.1)}}',
     '[data-act="sleep"] .m-zzz{opacity:1}',
     '[data-act="sleep"] .m-z1{animation:ycm-z 2.6s ease-out infinite}',
