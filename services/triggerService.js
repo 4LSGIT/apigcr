@@ -718,6 +718,18 @@ async function _dispatchAction(db, rule, action, transformedInput) {
     rule_id:        rule.id,
     rule_name:      rule.name,          // denormalized: survives rule deletion (S17e)
     rule_action_id: action.id,
+    // DENORMALIZED FOR THE SAME REASON rule_name IS, AND MORE URGENTLY.
+    // updateRule replaces a rule's action set wholesale (DELETE all +
+    // reinsert), so every edit renumbers the surviving actions. That makes
+    // rule_action_id a DANGLING reference the moment anyone touches the rule
+    // — and, worse, a silently WRONG one: the id gets reused by an unrelated
+    // action, so a reader matching an old execution against today's
+    // trigger_rule_actions lands on a real row that had nothing to do with
+    // it. Live example (cascade audit 2026-08): executions #242/#249 carry
+    // rule_action_id 8/7, ids that now belong to other rules entirely, and
+    // the only way to date the edit was to notice the ids could not be right.
+    // The name is stable across the reinsert and is what a human reads.
+    action_name:    action.name || null,
     action_type:    action.action_type,
   };
 

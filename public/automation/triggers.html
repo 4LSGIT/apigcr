@@ -983,8 +983,13 @@ function fmtTs(v) {
   async function tgReplay(executionId) {
     try {
       const out = await api('/api/triggers/replay', 'POST', { execution_id: executionId });
+      // action_name is the readable half of the identity: rule_action_id is
+      // renumbered by every rule edit (updateRule reinserts the whole set),
+      // so on any execution older than the last edit the id is stale and the
+      // name is the only thing that still means something. Older rows predate
+      // the field — fall back to the type rather than printing 'null'.
       const outcomes = (out.actionOutcomes || []).map(o =>
-        `<div>#${o.rule_id}/${o.rule_action_id} ${esc(o.action_type)} — ${o.status === 'success' ? '<span style="color:var(--green)">success</span>' : `<span style="color:var(--red)">${esc(o.status)}${o.error ? ': ' + esc(o.error) : ''}</span>`}</div>`
+        `<div>#${o.rule_id}/${o.rule_action_id} ${esc(o.action_name || o.action_type)} — ${o.status === 'success' ? '<span style="color:var(--green)">success</span>' : `<span style="color:var(--red)">${esc(o.status)}${o.error ? ': ' + esc(o.error) : ''}</span>`}</div>`
       ).join('') || '<div>(no actions fired)</div>';
       Swal.fire({
         title: `Replayed #${executionId} — ${esc(out.status)}`,
