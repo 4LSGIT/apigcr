@@ -49,9 +49,16 @@
   --text-2: #5a6b7c;
   --text-muted: #6c757d;
 
-  --ok: #16a34a;
-  --warn: #d97706;
-  --danger: #d9534f;
+  /* RETUNED from the mockup's #16a34a / #d97706 / #d9534f. Those measured
+     2.87–3.96 as text on every light surface (--surface, --page-bg,
+     --surface-2) and failed AA everywhere they were used as text, an icon or
+     a border label. The mockup's values were chosen against its dark preview;
+     the light direction was never checked. These pass on all three light
+     surfaces (5.86–6.93) AND on their own -soft tint (5.70–5.95), which is
+     what makes the -on-soft role below redundant for these three. */
+  --ok: #136c34;
+  --warn: #96450a;
+  --danger: #a52f23;
   --info: #4f8ef7;
   --ok-soft: rgba(22, 163, 74, .12);
   --warn-soft: rgba(217, 119, 6, .12);
@@ -70,24 +77,27 @@
      17 sites across 14 files use a status token as a background; they all
      want these, not the text tokens above.
 
-     Pairing: --ok-fill and --danger-fill take --accent-text (white).
+     Pairing: --ok-fill and --danger-fill take --fill-text (white).
               --warn-fill takes --warn-text (near-black) — white on amber is
-              3.19:1 and fails, near-black is 5.46:1 and passes. */
+              3.19:1 and fails, near-black is 5.46:1 and passes.
+              --accent takes --accent-text (near-black). */
   --ok-fill: #136c34;       /* --fill-text on this: 6.52 */
   --warn-fill: #d97706;     /* --warn-text on this: 5.46 */
   --danger-fill: #a52f23;   /* --fill-text on this: 6.93 */
   --warn-text: #1a1a1a;     /* label that sits ON --warn-fill */
 
-  /* ── ADDED: text sitting ON a --*-soft tint ──────────────────────────
-     A third role, and the sheet had only modelled two. --ok/--warn/--danger
-     are tuned as text on a PLAIN surface; on their own pale tint in light
-     mode they measure 2.27–3.40 and fail. In DARK mode they are already fine
-     (4.49–6.37 measured), so the dark block does not restate these — they
-     collapse back onto the plain tokens there. Light-only problem, light-only
-     fix. --accent-2 is text-only and needs no soft partner. */
-  --ok-on-soft: #136c34;      /* on --ok-soft:     5.70 */
-  --warn-on-soft: #96450a;    /* on --warn-soft:   5.87 */
-  --danger-on-soft: #a52f23;  /* on --danger-soft: 5.95 */
+  /* ── text sitting ON a --*-soft tint ─────────────────────────────────
+     DEPRECATED for ok/warn/danger. These existed because the light status
+     values were too pale to read on their own tint; retuning those values
+     above fixed the cause, so all three are now plain aliases. ~50 call sites
+     use them and keep working unchanged; new code should use --ok / --warn /
+     --danger directly. A later slice can collapse the call sites.
+
+     --accent-on-soft is NOT an alias and is not deprecated: --accent is the
+     brand blue and cannot be retuned, so it genuinely needs a partner. */
+  --ok-on-soft: var(--ok);
+  --warn-on-soft: var(--warn);
+  --danger-on-soft: var(--danger);
   --accent-on-soft: #0a5f80;  /* on --accent-soft: 6.31 */
 
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
@@ -104,9 +114,10 @@
   --shadow-drawer: 2px 0 12px rgba(0, 0, 0, 0.18);
   --backdrop: rgba(0, 0, 0, 0.4);
 
-  /* ── ADDED: text that sits ON the accent ─────────────────────────────
-     Used 6× (book, manage, portal/*). Must stay white in both modes — it is
-     not --text and never inverts. Kept out of the dark block on purpose. */
+  /* ── ADDED: label colours for solid fills ───────────────────────────
+     Mode-independent — a solid fill needs the same contrast against its label
+     in both modes, so these never invert and are kept out of the dark block
+     on purpose. Neither is --text. */
   /* Label ON --accent. White measures 2.55:1 against #07ADEF and fails; the
      app had already worked this out — seven family-B pages hardcode `#001` on
      accent fills, which measures 8.17:1. This makes that convention a token.
@@ -198,12 +209,11 @@ html[data-theme="dark"] {
   --warn-soft: rgba(224, 179, 65, .15);
   --danger-soft: rgba(255, 118, 112, .15);
 
-  /* Dark needs no separate on-soft values — the plain tokens already measure
-     4.49–6.37 on their own tints here. Collapse them back. */
-  --ok-on-soft: #4ad28b;
-  --warn-on-soft: #e0b341;
-  --danger-on-soft: #ff7670;
-  --accent-on-soft: #07ADEF;
+  /* ok/warn/danger -on-soft are var() aliases in :root and follow the dark
+     values above automatically — nothing to restate. --accent-on-soft does
+     need a dark value: --accent on the dark tint measures 4.47, just under
+     AA, which is why it is not an alias in either direction. */
+  --accent-on-soft: #3fc3ff;  /* on dark --accent-soft: 5.71 */
 
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 

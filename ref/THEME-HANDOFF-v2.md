@@ -654,9 +654,16 @@ impossible to bisect.
 - **No new tokens without adding them to `TOKEN-MAP.md` first.** If a page
   needs a concept the sheet lacks, that is a finding to report, not a local
   `:root` to reintroduce.
-- **Do not retune the core block of `theme.css`.** The values are the
-  mockup's. Additions past the CORE block are annotated with why they exist;
-  match that standard.
+- **Do not retune the core block of `theme.css` for taste.** The values are
+  the mockup's. Additions past the CORE block are annotated with why they
+  exist; match that standard.
+  **A measured accessibility failure is not taste.** `--ok`, `--warn` and
+  `--danger` were retuned after slice 6b showed all three failing AA as text
+  on every light surface (2.87–3.96) — the mockup picked them against its dark
+  preview and the light direction was never checked. When retuning for a
+  measured failure: state the measurement, state what it fixes, and check
+  whether the fix makes some other token redundant. That one did — it
+  collapsed the whole `-on-soft` role for those three.
 - Family B pages: **stop after `apikeys.html`** and get sign-off before the
   other eleven.
 - **Does it move a pixel? Then it is not this arc.** §0.1. This is the rule

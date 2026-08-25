@@ -89,11 +89,20 @@ Every semantic colour has **three** roles, not two. The mockup modelled one.
 |---|---|---|
 | text or icon on a plain surface | `--ok` / `--warn` / `--danger` / `--accent` | lightens in dark so it stays readable on a dark surface |
 | solid button / chip background | `--ok-fill` / `--warn-fill` / `--danger-fill` | mode-independent — a fill needs the same contrast against its label in both modes |
-| text on that colour's own `-soft` tint | `--ok-on-soft` / `--warn-on-soft` / `--danger-on-soft` / `--accent-on-soft` | the plain tokens measure 2.27–3.40 on their own tint in light mode and fail |
+| text on that colour's own `-soft` tint | `--accent-on-soft` only | see below |
 
-The third role is **light-only**. In dark the plain tokens already measure
-4.49–6.37 on their own tints, so the dark block collapses `-on-soft` back onto
-them. If a badge looks right in dark and washed out in light, this is why.
+**The third role is deprecated for ok/warn/danger.** It existed because the
+light values of those three were too pale to read on their own tint. Slice 6b
+showed the same three also failed on plain light surfaces, so the light values
+were retuned at the source — and once they were, they passed on their soft
+tints too. `--ok-on-soft`, `--warn-on-soft` and `--danger-on-soft` are now
+plain `var()` aliases. Roughly 50 call sites use them and keep working; **new
+code should use `--ok` / `--warn` / `--danger` directly.**
+
+`--accent-on-soft` is the exception and is not deprecated. `--accent` is the
+brand blue and cannot be retuned, so it needs a real partner in both modes —
+including a distinct dark value, because `--accent` on the dark tint measures
+4.47 and just misses AA.
 
 Label colour on a fill:
 
