@@ -7,72 +7,74 @@
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.min.js"></script>
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, Helvetica, sans-serif; padding: 12px; background: #fff; color: #333; font-size: 14px; }
+    body { font-family: Arial, Helvetica, sans-serif; padding: 12px; background: var(--page-bg); color: var(--text); font-size: 14px; }
 
     /* ── Tabs ── */
     .tab-bar { display: flex; gap: 4px; margin-bottom: 0; }
     .tab-btn {
-      padding: 10px 22px; background: #f2f2f2; border: 1px solid #ccc;
+      padding: 10px 22px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
       border-bottom: none; cursor: pointer; font-weight: 600; border-radius: 4px 4px 0 0;
     }
-    .tab-btn.active { background: #fff; border-bottom: 2px solid #007bff; color: #007bff; }
-    .tab-panel { display: none; padding: 18px; border: 1px solid #ccc; border-radius: 0 4px 4px 4px; }
+    .tab-btn.active { background: var(--surface); border-bottom: 2px solid var(--accent); color: var(--accent-2); }
+    .tab-panel { display: none; padding: 18px; border: 1px solid var(--border-strong); border-radius: 0 4px 4px 4px; }
     .tab-panel.active { display: block; }
 
     /* ── Forms / controls ── */
     .filter-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
     .filter-group { display: flex; flex-direction: column; gap: 3px; }
-    .filter-group label { font-size: 12px; font-weight: 600; color: #555; }
-    input, select, textarea { padding: 7px 10px; border: 1px solid #ccc; border-radius: 3px; font-size: 13px; font-family: inherit; }
+    .filter-group label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+    input, select, textarea { padding: 7px 10px; border: 1px solid var(--border-strong); border-radius: 3px; font-size: 13px; font-family: inherit; }
     input[type="text"], input[type="date"], select { min-width: 150px; }
     textarea { width: 100%; resize: vertical; }
     .btn {
       padding: 8px 18px; border: none; border-radius: 3px; cursor: pointer;
-      font-weight: 600; font-size: 13px; color: #fff; transition: opacity .2s;
+      font-weight: 600; font-size: 13px; color: var(--fill-text); transition: opacity .2s;
     }
     .btn:hover { opacity: .85; }
-    .btn-primary { background: #007bff; }
-    .btn-success { background: #28a745; }
-    .btn-danger  { background: #dc3545; }
-    .btn-outline { background: #fff; color: #007bff; border: 1px solid #007bff; }
-    .btn-outline:hover { background: #f0f7ff; opacity: 1; }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-success { background: var(--ok-fill); }
+    .btn-danger  { background: var(--danger-fill); }
+    .btn-outline { background: var(--surface); color: var(--accent-2); border: 1px solid var(--accent); }
+    .btn-outline:hover { background: var(--accent-soft); opacity: 1; }
     .btn-sm { padding: 4px 10px; font-size: 12px; }
 
     /* ── Tables ── */
     .logTable { border-collapse: collapse; width: 100%; font-size: 13px; }
-    .logTable td, .logTable th { border: 1px solid #ddd; padding: 7px 8px; text-align: left; }
-    .logTable th { background: #26abe2; color: #fff; font-weight: 600; }
-    .logTable tr:nth-child(even) { background: #f9f9f9; }
-    .logTable tr:hover { background: #eef5ff; }
+    .logTable td, .logTable th { border: 1px solid var(--border); padding: 7px 8px; text-align: left; }
+    .logTable th { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+    .logTable tr:nth-child(even) { background: var(--surface-2); }
+    .logTable tr:hover { background: var(--hover); }
 
     /* ── Info banner ── */
     .info-banner { padding: 8px 14px; border-radius: 4px; margin-bottom: 12px; font-size: 13px; }
-    .info-banner.info  { background: #e7f3ff; color: #0c5cad; border: 1px solid #b3d7ff; }
-    .info-banner.warn  { background: #fff8e1; color: #8a6d00; border: 1px solid #ffe082; }
-    .info-banner.muted { background: #f5f5f5; color: #777; border: 1px solid #ddd; }
+    .info-banner.info  { background: var(--accent-soft); color: var(--accent-on-soft); border: 1px solid var(--accent); }
+    .info-banner.warn  { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
+    .info-banner.muted { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
 
     /* ── Status badges ── */
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: 10px;
       font-size: 11px; font-weight: 600; text-transform: uppercase;
     }
-    .badge-sent       { background: #d4edda; color: #155724; }
-    .badge-sending     { background: #fff3cd; color: #856404; }
-    .badge-scheduled   { background: #e7f3ff; color: #0c5cad; }
-    .badge-failed      { background: #f8d7da; color: #721c24; }
-    .badge-partial_fail{ background: #ffeeba; color: #856404; }
-    .badge-canceled    { background: #e2e3e5; color: #383d41; }
-    .badge-draft       { background: #f0f0f0; color: #666; }
+    .badge-sent       { background: var(--ok-soft); color: var(--ok); }
+    .badge-sending     { background: var(--warn-soft); color: var(--warn); }
+    .badge-scheduled   { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .badge-failed      { background: var(--danger-soft); color: var(--danger); }
+    .badge-partial_fail{ background: var(--warn-soft); color: var(--warn); }
+    .badge-canceled    { background: var(--border); color: var(--text-2); }
+    .badge-draft       { background: var(--border); color: var(--text-2); }
 
     /* ── Compose ── */
     .compose-section { margin-bottom: 14px; }
     .compose-section > label { font-weight: 600; display: block; margin-bottom: 4px; }
-    .editor-wrap { border: 1px solid #ccc; border-radius: 3px; min-height: 200px; }
+    .editor-wrap { border: 1px solid var(--border-strong); border-radius: 3px; min-height: 200px; }
     .editor-wrap .ql-container { min-height: 160px; font-size: 14px; }
     .editor-wrap .ql-editor img { cursor: pointer; transition: outline .15s; }
-    .editor-wrap .ql-editor img:hover { outline: 2px solid #007bff; outline-offset: 2px; }
+    .editor-wrap .ql-editor img:hover { outline: 2px solid var(--accent); outline-offset: 2px; }
     #html-editor { width: 100%; min-height: 200px; font-family: 'Courier New', monospace; font-size: 13px; display: none; }
     .compose-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
     .compose-row .filter-group { flex: 1; min-width: 180px; }
@@ -80,15 +82,15 @@
     .schedule-row label { font-weight: 600; }
 
     /* ── Progress ── */
-    .progress-bar { height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden; margin-top: 6px; }
-    .progress-fill { height: 100%; background: #28a745; transition: width .4s ease; }
+    .progress-bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin-top: 6px; }
+    .progress-fill { height: 100%; background: var(--ok-fill); transition: width .4s ease; }
 
     /* ── Misc ── */
     .mt-10 { margin-top: 10px; }
     .mb-10 { margin-bottom: 10px; }
-    .text-muted { color: #888; font-size: 12px; }
+    .text-muted { color: var(--text-muted); font-size: 12px; }
     .hidden { display: none !important; }
-    .clickable { cursor: pointer; color: #007bff; text-decoration: underline; }
+    .clickable { cursor: pointer; color: var(--accent-2); text-decoration: underline; }
     .select-all-wrap { margin-bottom: 6px; font-size: 13px; }
   </style>
 </head>
@@ -233,7 +235,7 @@
         <span id="c-sig-note" class="text-muted" style="margin-left:6px;"></span>
       </label>
       <div id="c-sig-block" contenteditable="true" spellcheck="false"
-           style="display:none;border:1px dashed #bbb;border-radius:4px;padding:8px;margin-top:4px;background:#fafafa;overflow:auto;"></div>
+           style="display:none;border:1px dashed var(--border-strong);border-radius:4px;padding:8px;margin-top:4px;background:var(--surface-2);overflow:auto;"></div>
     </div>
 
     <!-- Email attachment -->
@@ -285,7 +287,7 @@
       </button>
     </div>
     <div id="mms-preview" class="hidden" style="margin-top:8px; display:inline-flex; align-items:flex-start; gap:8px;">
-      <img id="mms-preview-img" src="" style="max-width:120px; max-height:90px; border-radius:4px; border:1px solid #ddd;">
+      <img id="mms-preview-img" src="" style="max-width:120px; max-height:90px; border-radius:4px; border:1px solid var(--border);">
       <button class="btn btn-danger btn-sm" onclick="removeMmsAttachment()">&times; Remove</button>
     </div>
   </div>
@@ -764,9 +766,9 @@ function updateSubjectHint() {
   const len = document.getElementById('c-subject').value.length;
   const hint = document.getElementById('subject-hint');
   if (len === 0) { hint.textContent = ''; return; }
-  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'green'; }
-  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'orange'; }
-  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'red'; }
+  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'var(--ok)'; }
+  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'var(--warn)'; }
+  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'var(--danger)'; }
 }
 
 function getBody() {
@@ -963,7 +965,7 @@ async function previewCampaign() {
     html += res.body;
 
     if (res.unresolved?.length) {
-      html += `<hr><p style="color:orange;font-size:13px;"><strong>Unresolved placeholders:</strong> ${res.unresolved.map(esc).join(', ')}</p>`;
+      html += `<hr><p style="color:var(--warn);font-size:13px;"><strong>Unresolved placeholders:</strong> ${res.unresolved.map(esc).join(', ')}</p>`;
     }
 
     html += `<hr><p class="text-muted" style="font-size:12px;">Preview shown for: ${esc(selectedContacts[0].contact_name || 'Contact #' + selectedContacts[0].contact_id)}</p>`;
@@ -1036,7 +1038,7 @@ async function createCampaign() {
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: sendNow ? 'Send Now' : 'Schedule',
-    confirmButtonColor: '#28a745'
+    confirmButtonColor: 'var(--ok-fill)'
   });
 
   if (!confirm.isConfirmed) return;
@@ -1093,7 +1095,7 @@ function renderCampaignList(campaigns) {
   const tbody = document.getElementById('view-tbody');
 
   if (!campaigns.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888;">No campaigns found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);">No campaigns found</td></tr>';
     return;
   }
 
@@ -1109,7 +1111,7 @@ function renderCampaignList(campaigns) {
     if (c.status === 'sending') {
       progressHtml = `${done}/${total}<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>`;
     } else if (['sent', 'failed', 'partial_fail'].includes(c.status)) {
-      progressHtml = `<span style="color:green">${sent}</span> / <span style="color:red">${failed}</span>` + (skipped ? ` / <span style="color:#888">${skipped} skip</span>` : '');
+      progressHtml = `<span style="color:var(--ok)">${sent}</span> / <span style="color:var(--danger)">${failed}</span>` + (skipped ? ` / <span style="color:var(--text-muted)">${skipped} skip</span>` : '');
     } else {
       progressHtml = `${total} contact${total !== 1 ? 's' : ''}`;
     }
@@ -1181,7 +1183,7 @@ async function cancelCampaign(id) {
     icon: 'warning',
     showCancelButton: true,
     confirmButtonText: 'Cancel Campaign',
-    confirmButtonColor: '#dc3545'
+    confirmButtonColor: 'var(--danger-fill)'
   });
   if (!r.isConfirmed) return;
 
