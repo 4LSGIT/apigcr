@@ -1846,7 +1846,11 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
          COALESCE(c.contact_name, c_phone.contact_name, c_email.contact_name) AS contact_name,
          COALESCE(c.contact_id,   c_phone.contact_id,   c_email.contact_id)   AS contact_id,
          ca.case_id,
-         COALESCE(ca.case_number_full, ca.case_number) AS case_number
+         COALESCE(ca.case_number_full, ca.case_number) AS case_number,
+         ab_ca.case_id AS about_case_id,
+         COALESCE(ab_ca.case_number_full, ab_ca.case_number) AS about_case_number,
+         ab_ct.contact_id AS about_contact_id,
+         ab_ct.contact_name AS about_contact_name
        FROM log l
        LEFT JOIN users    u  ON l.log_by = u.user
        LEFT JOIN contacts c  ON l.log_link = c.contact_id
@@ -1866,6 +1870,14 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
                                   AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
                                   AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
        LEFT JOIN contacts c_email  ON c_email.contact_id = ce.contact_id
+       /* About-link S3.2 (N-d): hydration mirror of listLog/getLogEntry —
+          log_about_type-gated in the ON clause, PK-only probes, proven
+          eq_ref. Added so this payload never again carries the raw about
+          columns without their labels. */
+       LEFT JOIN cases    ab_ca ON l.log_about_type = 'case'
+                               AND ab_ca.case_id    = l.log_about_id
+       LEFT JOIN contacts ab_ct ON l.log_about_type = 'contact'
+                               AND ab_ct.contact_id = l.log_about_id
        WHERE ${whereFragment}
        ORDER BY l.log_date DESC
        LIMIT ?`,
