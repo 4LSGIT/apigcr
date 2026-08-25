@@ -303,6 +303,69 @@ body {
 a { color: var(--accent-2); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* ── Control colour baseline, dark only ──────────────────────────────────
+   A deliberate exception to plan §3.1's "no element rules in theme.css",
+   and the plan has been amended to say so. That rule is about DENSITY: the
+   45 pages that load no element layer are already at 11-13px and need no
+   padding. COLOUR is a different thing, and this sheet already sets it on
+   `body` and `a` for exactly the same reason.
+
+   THE BUG: 25 pages have an <input>, <select> or <textarea> with no colour
+   rule anywhere. Only style.css:350 paints controls dark, and only 14 pages
+   link it. On the rest the UA renders the field white -- in dark mode. The
+   colour arc tokenised what each page declared and never asked what each
+   page OMITTED, which is how this survived eleven slices.
+
+   SPECIFICITY IS THE WHOLE DESIGN, so :where() and not :not().
+
+   The obvious spelling, `input:not([type=checkbox]):not([type=radio])`,
+   weighs 0,3,2 -- because :not() contributes its ARGUMENT's specificity,
+   twice. That is heavier than style.css's own 0,1,2, and heavy enough to
+   beat page rules style.css has coexisted with for the whole arc. Measured
+   in Chromium, it silently overrode all three of these:
+
+     css/yc-forms.css:448  .yc-readonly .yc-field input     0,2,1
+     automation/sequences.html:511
+                           .pfe-row input[type=text].invalid 0,3,1
+     connections.html:175  .pw-row input[readonly]           0,2,1
+
+   -- readonly fields stop looking readonly and invalid fields stop looking
+   invalid, in dark only, on pages that had already done the work right.
+
+   :where() contributes ZERO, so the guards cost nothing and this lands at
+   0,1,2: byte-for-byte the cascade weight style.css has carried on 14 pages
+   since slice 9c. A backstop for controls nothing else paints, not an
+   override of controls something already does.
+
+   Both halves, never one. A rule that set only `background` would leave
+   --text inheriting onto it; one that set only `color` would leave a dark
+   label on whatever the page chose. That asymmetry is the defect class this
+   commit exists to close -- see plan §3.2 -- so it must not reintroduce it.
+
+   CHECKBOX AND RADIO ARE EXCLUDED ON PURPOSE: painting them --surface
+   flattens the UA's own checked rendering. style.css does not exclude them
+   and so still paints them on its 14 pages; that is pre-existing and left
+   alone rather than changed from here.
+
+   style.css keeps its own copy. Same values, loaded after theme.css on all
+   14 of its pages and now at the same specificity, so it wins there -- plus
+   the !important border it needs to beat inline overrides. Do not delete it. */
+html[data-theme="dark"] input:where(:not([type=checkbox]):not([type=radio])),
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background: var(--surface);
+  color: var(--text);
+  /* border-STYLE too, or border-color does not draw a border. A control with
+     no border rule keeps the UA's `2px inset`, and `inset` renders a colour as
+     a 3D bevel -- with --border that came out as a pale bar along the bottom
+     and right edge, which is worse than the grey it replaced. `solid` is also
+     what style.css ships. border-WIDTH is deliberately NOT set: that is the
+     density lever and it stays out of this sheet per plan §3.1, so nothing
+     reflows. */
+  border-color: var(--border);
+  border-style: solid;
+}
+
 /* Deliberately NOT here: a global `* { box-sizing: border-box }` reset.
    style.css sets box-sizing per-element today and several pages lay out
    against content-box. A global reset would break them all at once, in a way

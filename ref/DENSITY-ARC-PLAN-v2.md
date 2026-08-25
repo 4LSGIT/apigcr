@@ -146,6 +146,41 @@ The boundary that actually holds:
 Density rules stay in `style.css` and `css/yc-forms.css`. The rest of this
 section is about density and still stands.
 
+**The baseline's specificity is the whole design, and the obvious spelling is
+wrong.** `input:not([type=checkbox]):not([type=radio])` weighs **0,3,2** —
+`:not()` contributes its *argument's* specificity, twice. That is heavier than
+`style.css`'s own **0,1,2**, and heavy enough to beat page rules `style.css`
+has coexisted with for the entire colour arc. Measured in Chromium, it
+silently overrode all three of these:
+
+| rule | spec | what breaks in dark |
+|---|---|---|
+| `css/yc-forms.css:448` `.yc-readonly .yc-field input` | 0,2,1 | readonly fields stop looking readonly |
+| `automation/sequences.html:511` `.pfe-row input[type=text].invalid` | 0,3,1 | invalid fields stop looking invalid |
+| `connections.html:175` `.pw-row input[readonly]` | 0,2,1 | readonly rows stop looking readonly |
+
+…and it split the yc-forms case in half, because the `select` and `textarea`
+branches carry no `:not()` and stay at 0,1,2 — so a readonly `<select>` kept
+its tint while the `<input>` beside it lost one.
+
+`:where()` contributes **zero**, so `input:where(:not([type=checkbox]):not(
+[type=radio]))` lands at **0,1,2** — byte-for-byte the weight `style.css` has
+carried on 14 pages since slice 9c, and a known quantity rather than a new
+one. That is what shipped. **A baseline backstops controls nothing else
+paints; it does not override controls something already does.**
+
+**Set both halves or neither.** A baseline that set only `background` would
+leave `--text` inheriting onto it, and one that set only `color` would leave a
+dark label on whatever the page chose — which is §3.2's defect class, created
+by the rule meant to close it.
+
+**And `border-color` needs `border-style` beside it.** A control with no
+border rule keeps the UA's `2px inset`; `inset` renders a colour as a 3D
+bevel, so `border-color: var(--border)` alone produced a pale bar along the
+bottom and right edge rather than a border. `border-style: solid` fixes it and
+is what `style.css` already ships. `border-width` stays unset — that is the
+density lever, so nothing reflows.
+
 The tempting move in this arc is to lift `input` / `select` / `textarea` /
 `button` / `table` rules out of `style.css` and into `theme.css`, because
 `theme.css` reaches 69 pages and `style.css` reaches 14. **Do not.**
