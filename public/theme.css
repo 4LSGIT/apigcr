@@ -73,10 +73,22 @@
      Pairing: --ok-fill and --danger-fill take --accent-text (white).
               --warn-fill takes --warn-text (near-black) — white on amber is
               3.19:1 and fails, near-black is 5.46:1 and passes. */
-  --ok-fill: #15803d;       /* white on this: 5.02 */
+  --ok-fill: #136c34;       /* --fill-text on this: 6.52 */
   --warn-fill: #d97706;     /* --warn-text on this: 5.46 */
-  --danger-fill: #c0392b;   /* white on this: 5.44 */
-  --warn-text: #1a1a1a;     /* text that sits ON --warn-fill */
+  --danger-fill: #a52f23;   /* --fill-text on this: 6.93 */
+  --warn-text: #1a1a1a;     /* label that sits ON --warn-fill */
+
+  /* ── ADDED: text sitting ON a --*-soft tint ──────────────────────────
+     A third role, and the sheet had only modelled two. --ok/--warn/--danger
+     are tuned as text on a PLAIN surface; on their own pale tint in light
+     mode they measure 2.27–3.40 and fail. In DARK mode they are already fine
+     (4.49–6.37 measured), so the dark block does not restate these — they
+     collapse back onto the plain tokens there. Light-only problem, light-only
+     fix. --accent-2 is text-only and needs no soft partner. */
+  --ok-on-soft: #136c34;      /* on --ok-soft:     5.70 */
+  --warn-on-soft: #96450a;    /* on --warn-soft:   5.87 */
+  --danger-on-soft: #a52f23;  /* on --danger-soft: 5.95 */
+  --accent-on-soft: #0a5f80;  /* on --accent-soft: 6.31 */
 
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   --radius: 6px;
@@ -95,14 +107,24 @@
   /* ── ADDED: text that sits ON the accent ─────────────────────────────
      Used 6× (book, manage, portal/*). Must stay white in both modes — it is
      not --text and never inverts. Kept out of the dark block on purpose. */
-  --accent-text: #ffffff;   /* also the label colour on --ok-fill / --danger-fill */
+  /* Label ON --accent. White measures 2.55:1 against #07ADEF and fails; the
+     app had already worked this out — seven family-B pages hardcode `#001` on
+     accent fills, which measures 8.17:1. This makes that convention a token.
+     NOT white: use --fill-text for the status fills below. */
+  --accent-text: #001018;   /* on --accent: 7.57 */
+  --fill-text: #ffffff;     /* on --ok-fill 6.52, on --danger-fill 6.93 */
 
   /* ── ADDED: secondary + info-hover ───────────────────────────────────
      --accent-2 replaces the #82c0ff used across availabilitymanager,
      bookingviewsmanager, connections, pageManager, redirects.
      --info-dark replaces --blue2 (#3a7de8, 17 uses) — the hover partner of
      --blue/--info across the automation family. */
-  --accent-2: #82c0ff;
+  /* --accent-2 was #82c0ff — the family-B DARK value, installed as the light
+     value by mistake. All 13 uses are `color:`, never a fill, and it measured
+     1.92:1 on white: pale-blue-on-white, effectively unreadable. #0d6f94 is
+     5.65 on --surface and 5.08 on --surface-2. The dark block keeps the light
+     blue, which is correct there. */
+  --accent-2: #0d6f94;
   --info-dark: #3a7de8;
   --info-soft: rgba(79, 142, 247, .12);
 
@@ -176,6 +198,13 @@ html[data-theme="dark"] {
   --warn-soft: rgba(224, 179, 65, .15);
   --danger-soft: rgba(255, 118, 112, .15);
 
+  /* Dark needs no separate on-soft values — the plain tokens already measure
+     4.49–6.37 on their own tints here. Collapse them back. */
+  --ok-on-soft: #4ad28b;
+  --warn-on-soft: #e0b341;
+  --danger-on-soft: #ff7670;
+  --accent-on-soft: #07ADEF;
+
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 
   /* additions, dark variants */
@@ -196,10 +225,10 @@ html[data-theme="dark"] {
   --cat-pink: #f472b6;
 
   /* NOT restated, and that is deliberate: --accent, --accent-dark,
-     --accent-text, --code-fg, --ok-fill, --warn-fill, --danger-fill,
-     --warn-text, --radius*, --sidebar-w, --sidebar-skinny-w, --header-h,
-     --ui, --mono, and the whole density scale are mode-independent and
-     inherit from :root. */
+     --accent-text, --fill-text, --code-fg, --ok-fill, --warn-fill,
+     --danger-fill, --warn-text, --radius*, --sidebar-w, --sidebar-skinny-w,
+     --header-h, --ui, --mono, and the whole density scale are
+     mode-independent and inherit from :root. */
 }
 
 body {

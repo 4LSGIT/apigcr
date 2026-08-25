@@ -83,18 +83,36 @@ change that element's appearance. Verify it looks right rather than assuming.
 they lighten in dark mode. Using them as a **button background** inverts the
 requirement and breaks the label:
 
-| use | token | why |
-|---|---|---|
-| status text, badge text, icon | `--ok` / `--warn` / `--danger` | lightens in dark so it stays readable on a dark surface |
-| solid button / chip background | `--ok-fill` / `--warn-fill` / `--danger-fill` | mode-independent, dark enough for its label in both modes |
+Every semantic colour has **three** roles, not two. The mockup modelled one.
 
-Label colour on a fill: `--accent-text` (white) for `--ok-fill` and
-`--danger-fill`; `--warn-text` (near-black) for `--warn-fill` — white on amber
-measures 3.19:1 and fails, near-black measures 5.46:1 and passes.
+| role | token | why |
+|---|---|---|
+| text or icon on a plain surface | `--ok` / `--warn` / `--danger` / `--accent` | lightens in dark so it stays readable on a dark surface |
+| solid button / chip background | `--ok-fill` / `--warn-fill` / `--danger-fill` | mode-independent — a fill needs the same contrast against its label in both modes |
+| text on that colour's own `-soft` tint | `--ok-on-soft` / `--warn-on-soft` / `--danger-on-soft` / `--accent-on-soft` | the plain tokens measure 2.27–3.40 on their own tint in light mode and fail |
+
+The third role is **light-only**. In dark the plain tokens already measure
+4.49–6.37 on their own tints, so the dark block collapses `-on-soft` back onto
+them. If a badge looks right in dark and washed out in light, this is why.
+
+Label colour on a fill:
+
+| fill | label |
+|---|---|
+| `--accent` | `--accent-text` (near-black, 7.57) |
+| `--ok-fill`, `--danger-fill` | `--fill-text` (white, 6.52 / 6.93) |
+| `--warn-fill` | `--warn-text` (near-black, 5.46) — white on amber is 3.19 and fails |
+
+`--accent-text` is **near-black, not white**. White on `#07ADEF` measures
+2.55:1. Seven family-B pages had already worked this out and hardcoded `#001`
+(8.17:1); those literals should become `var(--accent-text)`.
 
 **When converting, read which role the site is in.** `color: var(--danger)` on a
 label stays `--danger`. `background: var(--danger)` on a button becomes
 `--danger-fill`, and its `color: white` becomes `var(--accent-text)`.
+
+`--accent-2` is text-only — 13 sites, all `color:`, zero fills — so it has no
+fill or soft partner.
 
 There are 17 such fill sites across 14 files. Every one is a `background` or
 `background-color` declaration; `grep -nE "background(-color)?:\s*var\(--(danger|warn|ok)\)"`
