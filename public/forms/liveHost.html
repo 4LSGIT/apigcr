@@ -4,18 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Live form</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <style>
   html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   body { display: flex; flex-direction: column; }
   #bar {
     flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     padding: 6px 12px; font-size: 12px;
-    background: #fef2f2; border-bottom: 1px solid #fecaca; color: #991b1b;
+    background: var(--danger-soft); border-bottom: 1px solid var(--danger); color: var(--danger);
   }
-  #bar .key { font-family: ui-monospace, Menlo, Consolas, monospace; color: #374151; }
+  #bar .key { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text); }
   #frame { flex: 1 1 auto; width: 100%; border: 0; }
   #gate { padding: 28px; max-width: 640px; line-height: 1.5; }
-  #gate h1 { font-size: 17px; margin: 0 0 10px; color: #b91c1c; }
+  #gate h1 { font-size: 17px; margin: 0 0 10px; color: var(--danger); }
   #gate button { margin-top: 14px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
 </style>
 </head>
