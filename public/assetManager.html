@@ -6,49 +6,36 @@
   <title>Asset Manager</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy:    #1a1a2e;
-      --navy2:   #16213e;
-      --blue:    #4f8ef7;
-      --blue2:   #3a7de8;
-      --green:   #22c55e;
-      --red:     #ef4444;
-      --amber:   #f59e0b;
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --border:  #e2e8f0;
-      --muted:   #94a3b8;
-      --text:    #1e293b;
-      --text2:   #475569;
-    }
 
     html, body {
       height: 100%;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px;
       color: var(--text);
-      background: var(--bg);
+      background: var(--page-bg);
     }
     body { display: flex; flex-direction: column; overflow: hidden; }
 
     /* ── Topbar ────────────────────────────────────── */
     #topbar {
-      background: var(--navy);
-      color: #fff;
+      background: var(--code-bg);
+      color: var(--code-fg);
       height: 44px;
       display: flex;
       align-items: center;
       padding: 0 14px;
       flex-shrink: 0;
-      border-bottom: 2px solid var(--blue);
+      border-bottom: 2px solid var(--info);
     }
     #topbar .title { font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
-    #topbar .title span { color: var(--blue); }
+    #topbar .title span { color: var(--info); }
     #topbar .spacer { flex: 1; }
-    #topbar .count { color: rgba(255,255,255,0.65); font-size: 12px; margin-right: 4px; }
+    #topbar .count { color: var(--code-fg); opacity: .65; font-size: 12px; margin-right: 4px; }
 
     .btn {
       display: inline-flex; align-items: center; gap: 6px;
@@ -58,18 +45,19 @@
       font-family: inherit;
     }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover:not(:disabled) { background: var(--blue2); }
-    .btn-ghost { background: rgba(255,255,255,0.08); color: #fff; }
-    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover:not(:disabled) { background: var(--info-dark); }
+    .btn-ghost { background: transparent; color: var(--code-fg); border: 1px solid var(--border-strong); }
+    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
     .btn-outline {
       background: var(--surface); color: var(--text);
       border: 1px solid var(--border);
     }
-    .btn-outline:hover:not(:disabled) { background: var(--bg); }
-    .btn-outline.ok { color: var(--green); border-color: rgba(34,197,94,0.5); }
-    .btn-danger { background: var(--red); color: #fff; }
-    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-outline:hover:not(:disabled) { background: var(--page-bg); }
+    .btn-outline.ok { color: var(--ok); border-color: var(--ok); }
+    .btn-danger { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover:not(:disabled) { filter: brightness(1.12); }
     .btn-sm { padding: 3px 8px; font-size: 11px; }
     .btn-icon { padding: 4px 8px; }
 
@@ -94,7 +82,7 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      color: var(--text2);
+      color: var(--text-2);
       margin-bottom: 12px;
     }
 
@@ -103,19 +91,19 @@
       border-radius: 8px;
       padding: 22px 16px;
       text-align: center;
-      color: var(--muted);
-      background: var(--bg);
+      color: var(--text-muted);
+      background: var(--page-bg);
       cursor: pointer;
       transition: all 0.15s;
     }
-    .dropzone:hover { border-color: var(--blue); color: var(--text2); }
+    .dropzone:hover { border-color: var(--info); color: var(--text-2); }
     .dropzone.dragover {
-      border-color: var(--blue);
-      background: rgba(79,142,247,0.08);
-      color: var(--blue2);
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-on-soft);
     }
     .dropzone i { font-size: 26px; display: block; margin-bottom: 8px; opacity: 0.7; }
-    .dropzone .dz-main { font-size: 13px; font-weight: 600; color: var(--text2); }
+    .dropzone .dz-main { font-size: 13px; font-weight: 600; color: var(--text-2); }
     .dropzone .dz-sub  { font-size: 11px; margin-top: 4px; }
     .dropzone.busy { pointer-events: none; opacity: 0.7; }
 
@@ -130,10 +118,10 @@
       display: block;
       font-size: 11px;
       font-weight: 600;
-      color: var(--text2);
+      color: var(--text-2);
       margin-bottom: 4px;
     }
-    .upload-fields .fld label .hint { font-weight: 400; color: var(--muted); margin-left: 5px; }
+    .upload-fields .fld label .hint { font-weight: 400; color: var(--text-muted); margin-left: 5px; }
     input[type="text"], select {
       width: 100%;
       padding: 7px 10px;
@@ -146,8 +134,8 @@
     }
     input[type="text"]:focus, select:focus {
       outline: none;
-      border-color: var(--blue);
-      box-shadow: 0 0 0 2px rgba(79,142,247,0.15);
+      border-color: var(--info);
+      box-shadow: 0 0 0 2px var(--accent-soft);
     }
 
     .progress {
@@ -161,14 +149,14 @@
     .progress.active { display: block; }
     .progress-bar {
       height: 100%;
-      background: var(--blue);
+      background: var(--info);
       width: 0%;
       transition: width 0.18s;
     }
     .progress-label {
       display: none;
       font-size: 11px;
-      color: var(--text2);
+      color: var(--text-2);
       margin-top: 6px;
     }
     .progress-label.active { display: block; }
@@ -191,7 +179,7 @@
       left: 10px;
       top: 50%;
       transform: translateY(-50%);
-      color: var(--muted);
+      color: var(--text-muted);
       font-size: 12px;
       pointer-events: none;
     }
@@ -200,7 +188,7 @@
     .toolbar .ctl label {
       font-size: 11px;
       font-weight: 600;
-      color: var(--text2);
+      color: var(--text-2);
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
@@ -222,12 +210,12 @@
     }
     .asset-thumb {
       height: 120px;
-      background: var(--bg);
+      background: var(--page-bg);
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      color: var(--muted);
+      color: var(--text-muted);
       border-bottom: 1px solid var(--border);
     }
     .asset-thumb img {
@@ -246,7 +234,7 @@
     }
     .asset-sub {
       font-size: 11px;
-      color: var(--muted);
+      color: var(--text-muted);
       margin-top: 3px;
       display: flex;
       gap: 5px;
@@ -254,8 +242,8 @@
       min-width: 0;
     }
     .asset-sub .asset-coll {
-      background: rgba(79,142,247,0.12);
-      color: #1e40af;
+      background: var(--accent-soft);
+      color: var(--accent-on-soft);
       padding: 1px 6px;
       border-radius: 3px;
       font-weight: 600;
@@ -266,7 +254,7 @@
       max-width: 95px;
     }
     .asset-sub .asset-size { white-space: nowrap; }
-    .asset-date { font-size: 10px; color: var(--muted); margin-top: 4px; }
+    .asset-date { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
     .asset-actions {
       display: flex;
       gap: 4px;
@@ -281,24 +269,24 @@
       background: var(--surface);
       border-radius: 5px;
       cursor: pointer;
-      color: var(--text2);
+      color: var(--text-2);
       font-size: 12px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
     }
-    .asset-actions .icon-btn:hover { background: var(--bg); }
-    .asset-actions .icon-btn.del:hover { background: rgba(239,68,68,0.1); color: var(--red); }
+    .asset-actions .icon-btn:hover { background: var(--page-bg); }
+    .asset-actions .icon-btn.del:hover { background: var(--danger-soft); color: var(--danger); }
 
     /* ── States ─────────────────────────────────────── */
     .state {
       grid-column: 1 / -1;
       padding: 48px 24px;
       text-align: center;
-      color: var(--muted);
+      color: var(--text-muted);
     }
     .state i { font-size: 34px; display: block; margin-bottom: 12px; opacity: 0.5; }
-    .state.err { color: var(--red); }
+    .state.err { color: var(--danger); }
     .state .sub { font-size: 12px; margin-top: 6px; }
 
     /* ── Pagination ─────────────────────────────────── */
@@ -311,7 +299,7 @@
       flex-wrap: wrap;
     }
     #pager .range {
-      color: var(--muted);
+      color: var(--text-muted);
       font-size: 12px;
       margin-right: 8px;
     }
@@ -323,22 +311,22 @@
       background: var(--surface);
       border-radius: 5px;
       cursor: pointer;
-      color: var(--text2);
+      color: var(--text-2);
       font-size: 12px;
       font-family: inherit;
     }
-    #pager .page-btn:hover:not(:disabled) { background: var(--bg); }
+    #pager .page-btn:hover:not(:disabled) { background: var(--page-bg); }
     #pager .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     #pager .page-btn.active {
-      background: var(--blue);
-      color: #fff;
-      border-color: var(--blue);
+      background: var(--accent);
+      color: var(--accent-text);
+      border-color: var(--accent);
       font-weight: 600;
     }
-    #pager .ellipsis { color: var(--muted); padding: 0 2px; }
+    #pager .ellipsis { color: var(--text-muted); padding: 0 2px; }
 
     .swal2-popup { font-size: 13px !important; }
-    .swal-lbl { font-weight: 600; font-size: 12px; color: var(--text2); display: block; }
+    .swal-lbl { font-weight: 600; font-size: 12px; color: var(--text-2); display: block; }
   </style>
 </head>
 <body>
@@ -437,7 +425,8 @@
 const P = window.parent;
 
 if (!P || !P.AUTH_STATE) {
-  document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ef4444;">'
+  // CSS-in-JS auth guard — no CSS grep sees this.
+  document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">'
     + 'This page must be loaded inside the YisraCase admin app.</div>';
   throw new Error('No parent auth context');
 }
@@ -805,7 +794,7 @@ async function editAsset(id) {
       +   '<label class="swal-lbl">Title</label>'
       +   '<input id="ea-title" class="swal2-input" style="width:100%; margin:4px 0 12px;" '
       +     'maxlength="255" value="' + esc(a.title || '') + '">'
-      +   '<label class="swal-lbl">Tags <span style="color:#94a3b8; font-weight:400;">(comma-separated)</span></label>'
+      +   '<label class="swal-lbl">Tags <span style="color:var(--text-muted); font-weight:400;">(comma-separated)</span></label>'
       +   '<input id="ea-tags" class="swal2-input" style="width:100%; margin:4px 0 12px;" '
       +     'value="' + esc(a.tags || '') + '">'
       +   '<label class="swal-lbl">Collection</label>'
@@ -850,11 +839,11 @@ async function deleteAsset(id) {
   const r = await Swal.fire({
     title: 'Delete asset?',
     html:  '“' + esc(label) + '” will be removed from the library.'
-         + '<br><span style="font-size:12px; color:#64748b;">The underlying file stays in storage.</span>',
+         + '<br><span style="font-size:12px; color:var(--text-2);">The underlying file stays in storage.</span>',
     icon:  'warning',
     showCancelButton: true,
     confirmButtonText: 'Delete',
-    confirmButtonColor: '#ef4444',
+    confirmButtonColor: 'var(--danger-fill)',
   });
   if (!r.isConfirmed) return;
 
