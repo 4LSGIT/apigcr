@@ -137,6 +137,32 @@ label stays `--danger`. `background: var(--danger)` on a button becomes
 `--accent-2` is text-only — 13 sites, all `color:`, zero fills — so it has no
 fill or soft partner.
 
+### Derived tints and hover states — no tokens needed
+
+Two gaps come up repeatedly and neither needs new tokens:
+
+- **A soft tint for a colour that has no `-soft`** (the categorical hues, for
+  instance): derive it with `color-mix`, which `reports.html:157` has used
+  since slice 3.
+  ```css
+  background: color-mix(in srgb, var(--cat-teal) 7%, transparent);
+  ```
+  It follows the token through both modes automatically, which a hand-picked
+  rgba() literal cannot.
+- **A hover state for a fill**: use `filter: brightness(0.92)` or similar.
+  Mode-independent, and it tracks whatever the fill token becomes.
+
+### Anti-pattern: `--border` as a chip background
+
+`--border` is a border colour. Used as a chip or badge fill it is darker than
+`--surface-2`, and text on it loses contrast: `--text-2` measures **4.30** and
+`--accent-2` **4.43**, both just under AA. On `--surface-2` the same text
+measures 4.93 and 5.08 and passes.
+
+Four pages ship this today (slice 7's cancelled/skipped chip convention,
+matched deliberately in slice 8 so it stays fixable in one place). Use
+`--surface-2` for new chips.
+
 **Categorical hues have fill partners:** `--cat-purple-fill`, `--cat-teal-fill`,
 `--cat-indigo-fill`, `--cat-pink-fill`, label `--fill-text`. They are
 mode-independent and identical to the light hues, because a fill's label

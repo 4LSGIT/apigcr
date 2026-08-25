@@ -137,7 +137,7 @@ no mechanical shortcut and no punch list to grep for. Budget accordingly.
 `etch.html` has zero hexes and converts for free; `checklistView.html` (41),
 `campaign.html` (36) and `contact.html` (36) are the expensive ones.
 
-### Family E — `public/js/`, no HTML at all (6 files)
+### Family E — JS modules, no HTML at all (8 files)
 
 Not in the first cut of this charter, and a real gap. These modules inject
 inline-styled UI that renders against themed surfaces. Unconverted, you get
@@ -151,6 +151,8 @@ light-mode widgets sitting on dark pages.
 | `public/js/assetpicker.js` | 16 | 0 |
 | `public/js/videoInsert.js` | 11 | 0 |
 | `public/js/versionGuard.js` | 9 | 0 |
+| `public/esign/esignActions.js` | — | injects a stylesheet via `style.textContent` |
+| `public/esign/placementEditor.js` | — | same |
 
 `scripts.js` is the important one: the shell and 9 other pages load it, and it
 carries ContactPicker, the adopt dialog and the name-slot widget as
@@ -549,15 +551,46 @@ Run all five before committing:
 | 6 | Family B, remaining 12 (incl. `dbConsole`) | per page |
 | 7 | Family A, 25 pages. Nearly identical `:root` — batch by directory | per directory |
 | 8 | *(moved into slice 4 — `index.html` was the last `body.dark` consumer once its selectors converted)* | — |
-| 8b | **Prerequisite** — add the `theme.css` link to all 19 `style.css` consumers, §6.1. Verify each is a visual no-op | per page |
-| 9 | `style.css` hexes only — §7. Arial stays. Also move the shell's 33 `.tab-main` dark rules in here, unscoped, and delete `tasks.html`'s hand-rolled equivalent | commit |
-| 10 | Family D, 21 pages, ascending hex count | per page |
-| 10b | Family E, `public/js/` — 6 files, `scripts.js` last (highest reach) | per file |
+| 9 | **`css/yc-forms.css`** §6.0 — tokenise, then the six family D pages it blocks | commit + per page |
+| 9b | **Prerequisite** — add the `theme.css` link to any remaining `style.css` consumer, §6.1 | per page |
+| 9c | `style.css` hexes only — §7. Arial stays. Also move the shell's 33 `.tab-main` dark rules in here, unscoped, and delete `tasks.html`'s hand-rolled equivalent | commit |
+| 10 | *(family D moved ahead of `style.css` — it delivers `theme.css` to most of `style.css`'s consumers, which §6.1 requires. 15 of 21 shipped in slice 8; the other 6 are blocked on §6.0)* | — |
+| 10b | Family E, `public/js/` — **8 files**, `assetpicker.js` first (already loaded by a themed page), `scripts.js` last (highest reach) | per file |
 | 11 | Density pass — §8. Includes `--header-h` 56→52 and `style.css` Arial → `var(--ui)`, each its own commit | separate arc |
 
 Steps 1–2 revert as a pair. Everything after is independently revertible.
 
 ---
+
+## 6.0 `css/yc-forms.css` — a second shared stylesheet, missed until slice 8
+
+The charter had no step for this file and should have. 30,768 bytes, 47 hexes,
+light-only, and it is **worse than `style.css`**: it sets `body { background:
+#f8f9fa }`, which breaks the link ordering the charter mandates in both
+directions.
+
+| ordering | result |
+|---|---|
+| `theme.css` **above** it (charter §4's rule) | `yc-forms.css` wins on `body`, so the page never themes. The link is a **silent no-op** |
+| `theme.css` **below** it | body themes, but `.yc-form` is a hardcoded white card declaring no `color`, so 66 descendants inherit `--text` at **1.28:1** — the whole form invisible |
+
+11 bare light backgrounds in the file, including `body` and `.yc-form`. No
+per-page link placement fixes it. **The file has to be tokenised before any
+page that loads it can convert.**
+
+Real `<link>` consumers — ten, and the same prerequisite as §6.1 applies to all
+of them:
+
+| status | pages |
+|---|---|
+| in scope, blocked on this | `apptform2`, `eventform`, `forms/casedetails`, `forms/contact-form`, `forms/issn`, `sendingform` |
+| out of arc scope | `forms/341notes.html` |
+| deferred (dual-use) | `forms/render.html` |
+| backups | `forms/casedetails-bk.html`, `sendingform-bk.html` |
+
+`formBuilderSimple.html` appears in a `grep -l` for the filename but only
+mentions it in a comment at :451. It does not load it. (Sixth instance of a
+grep matching prose about a pattern rather than the pattern.)
 
 ## 6.1 `style.css` has a hard prerequisite
 

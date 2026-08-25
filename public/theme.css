@@ -89,6 +89,11 @@
               --warn-fill takes --warn-text (near-black) — white on amber is
               3.19:1 and fails, near-black is 5.46:1 and passes.
               --accent takes --accent-text (near-black). */
+  /* Neutral solid button. The sheet had no token for a grey fill, so
+     communicate.html's .btn-log kept a literal. --text-muted is close but is
+     a text token; a fill needs its own. Label: --fill-text. */
+  --neutral-fill: #525a64;  /* --fill-text on this: 6.99 */
+
   --ok-fill: #136c34;       /* --fill-text on this: 6.52 */
   --warn-fill: #d97706;     /* --warn-text on this: 5.46 */
   --danger-fill: #a52f23;   /* --fill-text on this: 6.93 */
@@ -273,8 +278,19 @@ body {
   transition: background .18s ease, color .18s ease;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: var(--accent-dark); text-decoration: underline; }
+/* Links use --accent-2, NOT --accent. This rule said --accent until slice 8
+   measured it: 2.55 / 2.38 / 2.29 on the three light surfaces — exactly the
+   range §3.1 quotes as the reason --accent must never carry text. The rule
+   predated that correction and was never updated with it, so every converted
+   page inherited a failing link colour from the sheet itself. Worst case was
+   calendar.html, where FullCalendar builds every day number as an <a>: they
+   went from black at 21:1 to 2.38 the moment theme.css was linked.
+   --accent-2 measures 5.65 / 5.27 / 5.08 light and 6.88 dark.
+
+   The hover no longer changes colour. --accent-dark was 3.24–3.60 and failed
+   too; the underline already carries the affordance. */
+a { color: var(--accent-2); text-decoration: none; }
+a:hover { text-decoration: underline; }
 
 /* Deliberately NOT here: a global `* { box-sizing: border-box }` reset.
    style.css sets box-sizing per-element today and several pages lay out
