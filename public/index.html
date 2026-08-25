@@ -4441,10 +4441,34 @@ async function initAuth() {
        guess, and the dialog says so instead of promising a mail that never
        left.
 
-       DIALOG COLOURS ARE HARDCODED, NOT THEME VARS. SweetAlert2's popup keeps
-       its own white background in this app (nothing overrides .swal2-popup for
-       body.dark), so var(--text) — near-white in dark mode — would render
-       invisible on it. Same posture as every other dialog in the app. -->
+       DIALOG COLOURS ARE HARDCODED, AND THAT IS NOW A BUG — NOT A POSTURE.
+       This paragraph used to justify the literals below by claiming "nothing
+       overrides .swal2-popup for body.dark". Every clause of that was wrong:
+
+         - body.dark has not existed since slice 4. The selector is
+           html[data-theme="dark"].
+         - .swal2-popup WAS overridden, four thousand lines above this comment,
+           at index.html:428 — added in the same slice that introduced dark
+           mode. The claim was false the day it was written.
+         - since slice 10b those rules live in theme.css, so the popup is now
+           --surface in dark on every page in the arc, not just the shell.
+         - "same posture as every other dialog in the app" is false too:
+           scripts.js (.yc-popup), js/assetpicker.js (.ap-popup),
+           js/videoInsert.js (.yvi-popup) and esign/esignActions.js (.es-popup)
+           all theme their dialogs with tokens.
+
+       So the literals are NOT sitting on a white card, and the reasoning is
+       inverted: hardcoding is what breaks here. Measured in dark, popup
+       --surface #1a1e2a:
+
+         #riNote text     #111827 on #1a1e2a   1.07:1   <- typing is INVISIBLE
+         hint text        #6b7280 on #1a1e2a   3.44:1   fails AA at 12px
+         unselected chip  #fff bg, #374151 text         a light island
+
+       Cheat-sheet trap #2, exactly: a hardcoded colour whose background moved
+       out from under it. NOT fixed here — slice 10b is scoped to the SweetAlert
+       cascade, and repainting this dialog is a content change with its own
+       review. Tokenise it before trusting anything below. -->
   <script>
     (function () {
       const DRAFT_KEY = 'yc.issueDraft';
