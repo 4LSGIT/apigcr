@@ -837,7 +837,9 @@
               // Slice B.3: leading link-type icon + trailing extras-inspector icon
               const typeIcon = logEntryIcon(entry);
               const extrasIcon = logExtrasIcon(entry);
-              row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}${extrasIcon}</td>`;
+              // About-link S3: badge / add-link affordance (shared helper in scripts.js).
+              const aboutBadge = logAboutBadge(entry, "() => tabLogGet(0)");
+              row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}${extrasIcon}</td>`;
             });
             // Slice B.4: unified footer
             renderLogFooter(foot, data, limit, offset,

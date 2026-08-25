@@ -669,7 +669,11 @@ async function listLog(db, {
      COALESCE(c.contact_name, c_phone.contact_name, c_email.contact_name) AS contact_name,
      COALESCE(c.contact_id,   c_phone.contact_id,   c_email.contact_id)   AS contact_id,
      ca.case_id,
-     COALESCE(ca.case_number_full, ca.case_number) AS case_number
+     COALESCE(ca.case_number_full, ca.case_number) AS case_number,
+     ab_ca.case_id AS about_case_id,
+     COALESCE(ab_ca.case_number_full, ab_ca.case_number) AS about_case_number,
+     ab_ct.contact_id AS about_contact_id,
+     ab_ct.contact_name AS about_contact_name
    FROM log l
    LEFT JOIN users    u  ON l.log_by = u.user
    LEFT JOIN contacts c  ON l.log_link = c.contact_id
@@ -689,6 +693,18 @@ async function listLog(db, {
                               AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
                               AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
    LEFT JOIN contacts c_email  ON c_email.contact_id = ce.contact_id
+   /* About-link S3: hydrate the about target for display. Both joins are
+      gated on log_about_type in the ON clause (H-bug discipline — without
+      the gate a coincidentally id-shaped about_id would spuriously hydrate)
+      and probe by PRIMARY KEY ONLY, so neither can inflate rows. The cases
+      join is deliberately case_id-only — NOT the triple-OR docket match the
+      primary ca join uses — so a docket-form about value simply renders
+      raw instead of importing that join's duplicate-docket inflation hazard
+      onto a second column. */
+   LEFT JOIN cases    ab_ca ON l.log_about_type = 'case'
+                           AND ab_ca.case_id    = l.log_about_id
+   LEFT JOIN contacts ab_ct ON l.log_about_type = 'contact'
+                           AND ab_ct.contact_id = l.log_about_id
    ${whereSQL}
    ORDER BY l.log_date DESC
    LIMIT ? OFFSET ?`,

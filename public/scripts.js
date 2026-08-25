@@ -584,6 +584,72 @@ function logExtrasIcon(entry) {
               onclick="showLogDetails(${entry.log_id});return false"></i>`;
 }
 
+/* ── About-link badge (About-link S3) ─────────────────────────────────────
+   Renders in the entity cell of every log feed row, AFTER the primary link.
+   Two states:
+     · about set  → second line: link icon + hydrated label (about_case_number
+                    / about_contact_name from listLog's PK-gated joins;
+                    falls back to the raw type:id for unhydrated values, e.g.
+                    docket-form about values or appt/bill/task/event types).
+                    Click opens LogAboutDialog (change / remove).
+     · no about   → a single muted link icon, click opens LogAboutDialog to
+                    set one. Mirrors the OrphanAdoptDialog user-plus icon
+                    precedent on the global feed: per-row fix-up affordance.
+
+   refreshExpr is a JS EXPRESSION STRING embedded verbatim in the onclick
+   (e.g. "() => tabLogGet(0)"); it must contain no quote characters. Only
+   entry.log_id (coerced to Number) is interpolated from row data into the
+   handler — every displayed string goes through escText/escAttr, same rule
+   as buildLogDataCell (about labels are attacker-reachable via the API). */
+function logAboutBadge(entry, refreshExpr) {
+  const rid = Number(entry.log_id);
+  if (!Number.isInteger(rid) || rid <= 0) return '';
+  const open = `LogAboutDialog(${rid}, ${refreshExpr});return false`;
+
+  if (entry.log_about_type) {
+    let label;
+    if (entry.log_about_type === 'case') {
+      label = entry.about_case_number || entry.log_about_id;
+    } else if (entry.log_about_type === 'contact') {
+      label = entry.about_contact_name || ('Contact ' + entry.log_about_id);
+    } else {
+      label = entry.log_about_type + ': ' + entry.log_about_id;
+    }
+    return `<br><a href="#" class="log-about-badge" onclick="${open}"
+       title="About: ${escAttr(label)} \u2014 click to change or remove">` +
+       `<i class="fa-solid fa-link"></i> ${escText(label)}</a>`;
+  }
+  return ` <a href="#" class="log-about-add" onclick="${open}"
+       title="Link to a case or contact\u2026"><i class="fa-solid fa-link"></i></a>`;
+}
+
+/* Once-per-document styles for the badge + LogAboutDialog. Same guarded-IIFE
+   pattern as injectContactPickerStyles. */
+(function injectLogAboutStyles() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('log-about-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'log-about-styles';
+  style.textContent = `
+    .log-about-badge { font-size: 0.85em; color: var(--accent-2, #4a7); text-decoration: none; }
+    .log-about-badge:hover { text-decoration: underline; }
+    .log-about-badge .fa-link { font-size: 0.9em; }
+    .log-about-add { color: var(--text-muted, #888); opacity: 0.55; text-decoration: none; }
+    .log-about-add:hover { opacity: 1; }
+    .log-about-add .fa-link { font-size: 0.8em; }
+    /* Dialog: same dropdown-spill fix as cad/oad/na — let the embedded
+       Case/Contact picker escape SWAL's overflow:auto html container. */
+    .swal2-html-container.lab-html { overflow: visible; }
+    .lab-html .cp-dropdown { max-height: 12em; }
+    .lab-current { text-align: left; font-size: 0.92em; margin: 0 0 0.6em; }
+    .lab-current:empty { display: none; }
+    .lab-kind-row { display: flex; gap: 1.2em; text-align: left; margin: 0 0 0.5em; font-size: 0.95em; }
+    .lab-chosen { font-size: 0.85em; color: var(--text-2, #555); margin-top: 0.35em; text-align: left; }
+    .lab-chosen:empty { display: none; }
+  `;
+  document.head.appendChild(style);
+})();
+
 /* Escape a string for safe insertion inside an HTML attribute value
    (quoted with double quotes). Also escapes < to avoid breaking out of
    attribute context if the browser tolerates malformed input. */
@@ -3842,5 +3908,167 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
   Toast.fire({ icon: 'success', title: 'Attached' });
   if (typeof onDone === 'function') {
     onDone({ action: 'attached', contact_id: selected.contact_id, force_used: forceUsed });
+  }
+}
+
+
+/* ── LogAboutDialog (About-link S3) ──────────────────────────────────────────
+   Set / change / remove the SECONDARY "what it's about" attribution
+   (log_about_type / log_about_id) on a log row. Backed by
+   PUT /api/log/:id/about; never touches the primary identity link.
+
+   Fetches the row fresh via GET /api/log/:id rather than trusting the feed's
+   copy (showLogDetails precedent) — the badge may be stale if another tab
+   changed the link.
+
+   UI scope is deliberately case | contact only. The API accepts the full
+   8-type enum; the other six are automation/API territory and get no picker.
+   A pre-existing about of another type still displays in the "currently
+   linked" line and can be removed or replaced here.
+
+   SWAL single-instance rule (AssetPicker precedent): no nested Swal while
+   open. Remove is a deny-button, writes happen in preConfirm/preDeny with
+   Swal.showValidationMessage on failure, Toasts fire only after close.
+
+   Sync: emits {yc_refetch:1} to the NEW target address and (when different)
+   the OLD one, so open case/contact surfaces that subscribe can refetch.
+   Guarded on window.YCSync — scripts.js does not require the bus. Log feeds
+   themselves don't subscribe (no log write broadcasts today; consistent),
+   the local feed refreshes via onDone. */
+async function LogAboutDialog(logId, onDone = null) {
+  let entry;
+  try {
+    const r = await P.apiSend('/api/log/' + encodeURIComponent(logId), 'GET');
+    entry = (r && (r.data || r.entry)) || null;
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Could not load log row', text: err.message });
+    return;
+  }
+  if (!entry) { Toast.fire({ icon: 'error', title: 'Log row not found' }); return; }
+
+  const cur = entry.log_about_type
+    ? { type: String(entry.log_about_type), id: String(entry.log_about_id) }
+    : null;
+
+  let picker = null;      // active Case/Contact picker instance
+  let sel    = null;      // { type, id, label } — the user's pick
+
+  function emitRefetch(t, id) {
+    if (!window.YCSync) return;
+    if (t !== 'case' && t !== 'contact') return;
+    if (id == null || id === '') return;
+    try { YCSync.emit(t + ':' + id, { yc_refetch: 1 }, 'LogAboutDialog'); }
+    catch (e) { console.warn('[LogAboutDialog] emit failed:', e); }
+  }
+
+  function setChosen() {
+    const el = E('lab-chosen');
+    if (!el) return;
+    el.textContent = sel ? ('Selected: ' + sel.label) : '';
+  }
+
+  function mountPicker(kind) {
+    const host = E('lab-picker');
+    if (!host) return;
+    if (picker && typeof picker.destroy === 'function') picker.destroy();
+    sel = null;
+    setChosen();
+    if (kind === 'contact') {
+      picker = ContactPicker(host, {
+        placeholder: 'Search contacts\u2026',
+        onSelect: (id, row) => {
+          sel = { type: 'contact', id: String(id),
+                  label: (row && row.contact_name) || ('Contact ' + id) };
+          setChosen();
+        }
+      });
+    } else {
+      picker = CasePicker(host, {
+        placeholder: 'Search cases\u2026',
+        onSelect: (id, row) => {
+          const r = row || {};
+          sel = { type: 'case', id: String(id),
+                  label: r.case_number_full || r.case_number || String(id) };
+          setChosen();
+        }
+      });
+    }
+    if (typeof picker.focus === 'function') picker.focus();
+  }
+
+  const result = await Swal.fire({
+    customClass: { popup: 'yc-popup', htmlContainer: 'lab-html' },
+    title: 'Link log entry',
+    html: `
+      <div style="text-align:left">
+        <div id="lab-current" class="lab-current"></div>
+        <div class="lab-kind-row">
+          <label><input type="radio" name="lab-kind" value="case" checked> Case</label>
+          <label><input type="radio" name="lab-kind" value="contact"> Contact</label>
+        </div>
+        <div id="lab-picker"></div>
+        <div id="lab-chosen" class="lab-chosen"></div>
+      </div>
+    `,
+    showCancelButton: true,
+    showDenyButton: !!cur,
+    confirmButtonText: 'Link',
+    denyButtonText: 'Remove link',
+    cancelButtonText: 'Cancel',
+    focusConfirm: false,
+    didOpen: () => {
+      // "Currently linked" line — textContent only; the label can carry an
+      // attacker-supplied about_id (set via raw API).
+      if (cur) {
+        const el = E('lab-current');
+        let label;
+        if (cur.type === 'case') {
+          label = 'case ' + (entry.about_case_number || cur.id);
+        } else if (cur.type === 'contact') {
+          label = 'contact ' + (entry.about_contact_name || cur.id);
+        } else {
+          label = cur.type + ' ' + cur.id;
+        }
+        el.textContent = 'Currently linked to ' + label + '.';
+      }
+      document.querySelectorAll('input[name="lab-kind"]').forEach((r) => {
+        r.addEventListener('change', () => mountPicker(r.value));
+      });
+      mountPicker('case');
+    },
+    preConfirm: async () => {
+      if (!sel) { Swal.showValidationMessage('Pick a case or contact first'); return false; }
+      try {
+        await P.apiSend('/api/log/' + encodeURIComponent(logId) + '/about', 'PUT',
+                        { about_type: sel.type, about_id: sel.id });
+        return { action: 'set' };
+      } catch (err) {
+        Swal.showValidationMessage('Link failed: ' + err.message);
+        return false;
+      }
+    },
+    preDeny: async () => {
+      try {
+        await P.apiSend('/api/log/' + encodeURIComponent(logId) + '/about', 'PUT',
+                        { about_type: 'none' });
+        return { action: 'removed' };
+      } catch (err) {
+        Swal.showValidationMessage('Remove failed: ' + err.message);
+        return false;
+      }
+    },
+  });
+
+  if (picker && typeof picker.destroy === 'function') picker.destroy();
+
+  if (result.isConfirmed && result.value) {
+    Toast.fire({ icon: 'success', title: 'Linked' });
+    emitRefetch(sel.type, sel.id);
+    if (cur && (cur.type !== sel.type || cur.id !== sel.id)) emitRefetch(cur.type, cur.id);
+    if (onDone) onDone();
+  } else if (result.isDenied && result.value) {
+    Toast.fire({ icon: 'success', title: 'Link removed' });
+    if (cur) emitRefetch(cur.type, cur.id);
+    if (onDone) onDone();
   }
 }
