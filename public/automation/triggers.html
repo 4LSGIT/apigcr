@@ -8,22 +8,18 @@
 <script src="/automation/fnPicker.js"></script>
 <script src="/automation/paramsMapping.js"></script>
 <script src="/automation/matchBuilder.js"></script>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <style>
 /* ══════════════════════════════════════════════════════════════
    TRIGGERS SUB-PAGE (Trigger System T2)
    Structure + idioms follow emailIngest.html; prefix tg-.
    ══════════════════════════════════════════════════════════════ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --navy:#1a1a2e; --blue:#4f8ef7; --blue2:#3a7de8; --green:#22c55e;
-  --red:#ef4444; --amber:#f59e0b; --purple:#8b5cf6;
-  --bg:#f1f5f9; --surface:#ffffff; --border:#e2e8f0;
-  --muted:#94a3b8; --text:#1e293b; --text2:#475569;
-}
 html, body { height: 100%; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 14px; color: var(--text); background: var(--bg);
+  font-size: 14px; color: var(--text); background: var(--page-bg);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .mono { font-family: 'SF Mono','Cascadia Code','Consolas',monospace; }
@@ -35,10 +31,10 @@ body {
 }
 .tg-tab {
   padding: 10px 14px; border: none; background: none; cursor: pointer;
-  font-size: 13px; font-weight: 600; color: var(--muted);
+  font-size: 13px; font-weight: 600; color: var(--text-muted);
   border-bottom: 2px solid transparent;
 }
-.tg-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+.tg-tab.active { color: var(--info); border-bottom-color: var(--info); }
 
 /* ── Layout ── */
 #tg-main { flex: 1; display: flex; overflow: hidden; }
@@ -54,78 +50,79 @@ body {
 #tg-rule-list { flex: 1; overflow-y: auto; }
 .tg-evt-head {
   padding: 8px 12px 4px; font-size: 10px; font-weight: 800; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--text-muted);
   position: sticky; top: 0; background: var(--surface);
 }
 .tg-rule-item {
   padding: 8px 12px; cursor: pointer; border-left: 3px solid transparent;
 }
-.tg-rule-item:hover { background: var(--bg); }
-.tg-rule-item.selected { background: #eef4ff; border-left-color: var(--blue); }
+.tg-rule-item:hover { background: var(--page-bg); }
+.tg-rule-item.selected { background: var(--accent-soft); border-left-color: var(--accent); }
 .tg-rule-item .nm { font-size: 13px; font-weight: 600; display:flex; align-items:center; gap:6px; }
-.tg-rule-item .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.tg-rule-item .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .tg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.tg-dot.on { background: var(--green); } .tg-dot.off { background: var(--muted); }
+.tg-dot.on { background: var(--ok); } .tg-dot.off { background: var(--text-muted); }
 
 #tg-detail { flex: 1; overflow-y: auto; padding: 18px 22px; }
-#tg-detail .tg-empty { color: var(--muted); padding: 40px; text-align: center; }
+#tg-detail .tg-empty { color: var(--text-muted); padding: 40px; text-align: center; }
 
 /* ── Form ── */
 .tg-form { max-width: 860px; }
 .tg-row { margin-bottom: 14px; }
 .tg-label {
-  display: block; font-size: 11px; font-weight: 700; color: var(--text2);
+  display: block; font-size: 11px; font-weight: 700; color: var(--text-2);
   text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px;
 }
 .tg-input, .tg-textarea, .tg-select {
   width: 100%; padding: 8px 10px; font-size: 13px;
   border: 1px solid var(--border); border-radius: 6px;
-  background: #fff; color: var(--text); font-family: inherit;
+  background: var(--surface); color: var(--text); font-family: inherit;
 }
-.tg-input:focus, .tg-textarea:focus, .tg-select:focus { outline: none; border-color: var(--blue); }
+.tg-input:focus, .tg-textarea:focus, .tg-select:focus { outline: none; border-color: var(--info); }
 .tg-textarea { resize: vertical; min-height: 64px; }
 .tg-code { min-height: 150px; font-family: 'SF Mono','Cascadia Code','Consolas',monospace; font-size: 12px; line-height: 1.5; }
-.tg-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.tg-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 .tg-inline { display: flex; gap: 14px; }
 .tg-inline > div { flex: 1; }
 .tg-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .tg-check input { width: 16px; height: 16px; cursor: pointer; }
 .tg-card {
-  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
   padding: 14px; margin-bottom: 14px;
 }
-.tg-card-title { font-size: 12px; font-weight: 800; color: var(--text2); text-transform: uppercase; letter-spacing:.04em; margin-bottom: 10px; display:flex; align-items:center; justify-content:space-between; }
+.tg-card-title { font-size: 12px; font-weight: 800; color: var(--text-2); text-transform: uppercase; letter-spacing:.04em; margin-bottom: 10px; display:flex; align-items:center; justify-content:space-between; }
 .tg-btn {
   display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
-  border-radius: 6px; border: 1px solid var(--border); background: var(--bg);
-  font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text2);
+  border-radius: 6px; border: 1px solid var(--border); background: var(--page-bg);
+  font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text-2);
 }
 .tg-btn:hover { background: var(--border); color: var(--text); }
-.tg-btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
-.tg-btn.danger  { color: var(--red); }
+/* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+.tg-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.tg-btn.danger  { color: var(--danger); }
 
 /* ── Match-builder CSS (required by matchBuilder.js; copied from emailIngest.html) ── */
-.cond-group { border:1px solid var(--border); border-radius:6px; padding:10px; margin-bottom:8px; background:#fafbfc; }
+.cond-group { border:1px solid var(--border); border-radius:6px; padding:10px; margin-bottom:8px; background:var(--surface-2); }
 .cond-group-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.cond-group-head select { padding:4px 8px; font-size:11px; border:1px solid var(--border); border-radius:4px; font-weight:600; background:#fff; color:var(--text); }
-.cond-group-head .cond-group-hint { font-size:12px; color:var(--muted); }
+.cond-group-head select { padding:4px 8px; font-size:11px; border:1px solid var(--border); border-radius:4px; font-weight:600; background:var(--surface); color:var(--text); }
+.cond-group-head .cond-group-hint { font-size:12px; color:var(--text-muted); }
 .cond-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap; }
-.cond-row input, .cond-row select { padding:5px 8px; font-size:12px; border:1px solid var(--border); border-radius:4px; background:#fff; color:var(--text); }
-.cond-row input:focus, .cond-row select:focus { outline:none; border-color:var(--blue); }
+.cond-row input, .cond-row select { padding:5px 8px; font-size:12px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); }
+.cond-row input:focus, .cond-row select:focus { outline:none; border-color:var(--info); }
 .cond-field { flex:2; min-width:150px; }
 .cond-path-custom { flex:2; min-width:130px; }
 .cond-op { width:130px; }
 .cond-value { flex:2; min-width:110px; }
-.cond-value[disabled] { background:var(--bg); color:var(--muted); }
-.mb-add-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; flex:1; margin:0; padding:5px; background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text2); font-size:12px; font-weight:500; cursor:pointer; }
+.cond-value[disabled] { background:var(--page-bg); color:var(--text-muted); }
+.mb-add-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; flex:1; margin:0; padding:5px; background:var(--page-bg); border:1px solid var(--border); border-radius:5px; color:var(--text-2); font-size:12px; font-weight:500; cursor:pointer; }
 .mb-add-btn:hover { background:var(--border); color:var(--text); }
-.cond-remove { background:none; border:none; color:var(--muted); cursor:pointer; padding:6px; font-size:13px; line-height:1; }
-.cond-remove:hover { color:var(--red); }
+.cond-remove { background:none; border:none; color:var(--text-muted); cursor:pointer; padding:6px; font-size:13px; line-height:1; }
+.cond-remove:hover { color:var(--danger); }
 
 /* ── Action rows ── */
 .tg-action {
   border: 1px solid var(--border); border-radius: 8px; padding: 12px;
-  margin-bottom: 10px; background: #fafbfc;
+  margin-bottom: 10px; background: var(--surface-2);
 }
 .tg-action-head { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .tg-action-head .tg-select { flex: 0 0 220px; width: auto; }
@@ -134,31 +131,31 @@ body {
 
 /* ── Sample panel ── */
 .tg-sample-item { border-bottom: 1px solid var(--border); padding: 8px 0; }
-.tg-sample-head { display:flex; justify-content:space-between; align-items:center; cursor:pointer; font-size:12px; color:var(--text2); }
+.tg-sample-head { display:flex; justify-content:space-between; align-items:center; cursor:pointer; font-size:12px; color:var(--text-2); }
 .tg-sample-fields { display:none; margin-top:6px; }
 .tg-sample-item.open .tg-sample-fields { display:block; }
 .tg-chip {
   display:inline-flex; gap:6px; max-width:100%; margin:2px 4px 2px 0; padding:3px 8px;
-  background:#eef4ff; border:1px solid #d5e3fe; border-radius:12px;
+  background:var(--accent-soft); border:1px solid var(--accent); border-radius:12px;
   font-size:11px; cursor:pointer; align-items:center;
   font-family:inherit; color:inherit; text-align:left;   /* button reset (M1) */
 }
-.tg-chip:focus { outline:2px solid var(--blue); outline-offset:1px; }
-.tg-chip:hover { background:#dcebff; }
-.tg-chip .v { color:var(--muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tg-chip:focus { outline:2px solid var(--info); outline-offset:1px; }
+.tg-chip:hover { background:var(--hover); }
+.tg-chip .v { color:var(--text-muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* ── Executions ── */
 #tg-exec-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 #tg-exec-toolbar { display:flex; gap:10px; padding:10px 14px; background:var(--surface); border-bottom:1px solid var(--border); align-items:center; flex-wrap:wrap; }
 #tg-exec-toolbar select { padding:6px 8px; font-size:12px; border:1px solid var(--border); border-radius:6px; }
 #tg-exec-body { flex:1; overflow-y:auto; padding: 0 14px 14px; }
-table.tg-table { width:100%; border-collapse:collapse; font-size:12px; background:#fff; }
-.tg-table th { text-align:left; padding:8px 10px; background:var(--bg); border-bottom:1px solid var(--border); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--text2); position:sticky; top:0; }
+table.tg-table { width:100%; border-collapse:collapse; font-size:12px; background:var(--surface); }
+.tg-table th { text-align:left; padding:8px 10px; background:var(--page-bg); border-bottom:1px solid var(--border); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-2); position:sticky; top:0; }
 .tg-table td { padding:7px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
 .tg-table tr.clickable { cursor:pointer; }
-.tg-table tr.clickable:hover td { background:#f8fafc; }
+.tg-table tr.clickable:hover td { background:var(--hover); }
 .tg-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
-pre.tg-json { background:#0f172a; color:#e2e8f0; border-radius:8px; padding:12px; font-size:11px; overflow:auto; max-height:420px; white-space:pre-wrap; word-break:break-word; }
+pre.tg-json { background:var(--code-bg); color:var(--code-fg); border-radius:8px; padding:12px; font-size:11px; overflow:auto; max-height:420px; white-space:pre-wrap; word-break:break-word; }
 ::-webkit-scrollbar { width:4px; height:4px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 </style>
@@ -196,7 +193,7 @@ pre.tg-json { background:#0f172a; color:#e2e8f0; border-radius:8px; padding:12px
       <option>50</option><option>100</option><option>200</option>
     </select>
     <button class="tg-btn" onclick="tgLoadExecutions(true)"><i class="fa-solid fa-rotate-right"></i> Reload</button>
-    <span id="tg-exec-count" style="font-size:12px;color:var(--muted)"></span>
+    <span id="tg-exec-count" style="font-size:12px;color:var(--text-muted)"></span>
   </div>
   <div id="tg-exec-body"></div>
 </div>
@@ -238,14 +235,17 @@ function fmtTs(v) {
   const E = id => document.getElementById(id);
   const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
 
+  // CSS-in-JS (trap 2): a stylesheet grep never sees this palette. Tokens, so
+  // it follows the theme like the rest of the page.
   const STATUS_META = {
-    matched:      { bg:'#dcfce7', fg:'#166534' },
-    partial:      { bg:'#fef3c7', fg:'#92400e' },
-    no_match:     { bg:'#f1f5f9', fg:'#475569' },
-    no_rules:     { bg:'#f1f5f9', fg:'#94a3b8' },
-    depth_capped: { bg:'#fef3c7', fg:'#92400e' },
-    error:        { bg:'#fef2f2', fg:'#991b1b' },
+    matched:      { bg:'var(--ok-soft)',      fg:'var(--ok)' },
+    partial:      { bg:'var(--warn-soft)',    fg:'var(--warn)' },
+    no_match:     { bg:'var(--surface-2)',    fg:'var(--text-2)' },
+    no_rules:     { bg:'var(--surface-2)',    fg:'var(--text-muted)' },
+    depth_capped: { bg:'var(--warn-soft)',    fg:'var(--warn)' },
+    error:        { bg:'var(--danger-soft)',  fg:'var(--danger)' },
   };
+  const STATUS_FALLBACK = { bg: 'var(--surface-2)', fg: 'var(--text-2)' };
 
   // ── State ──
   let meta = null;                 // /api/triggers/meta payload
@@ -299,7 +299,7 @@ function fmtTs(v) {
     const shown = rules.filter(r =>
       !q || (r.name || '').toLowerCase().includes(q) || (r.event_type || '').toLowerCase().includes(q));
     if (!shown.length) {
-      list.innerHTML = `<div style="padding:20px;color:var(--muted);font-size:12px">No rules${q ? ' match' : ' yet — press New Trigger Rule'}</div>`;
+      list.innerHTML = `<div style="padding:20px;color:var(--text-muted);font-size:12px">No rules${q ? ' match' : ' yet — press New Trigger Rule'}</div>`;
       return;
     }
     // group by event_type, ordered by registry order then unknown
@@ -319,7 +319,7 @@ function fmtTs(v) {
         <div class="tg-rule-item ${r.id === selectedId ? 'selected' : ''}" onclick="tgSelectRule(${r.id})">
           <div class="nm"><span class="tg-dot ${r.active ? 'on' : 'off'}"></span>${esc(r.name)}</div>
           <div class="sub">${(r.actions || []).length} action${(r.actions || []).length === 1 ? '' : 's'} · matched ${r.match_count ?? 0}×${
-            (r.error_count > 0) ? ` · <span style="color:var(--red)">error ${r.error_count}×</span>` : ''
+            (r.error_count > 0) ? ` · <span style="color:var(--danger)">error ${r.error_count}×</span>` : ''
           }${(r.min_interval_s > 0) ? ` · <span title="Cooldown: suppressed if it matched within ${r.min_interval_s}s">⏱ ${r.min_interval_s}s</span>` : ''}</div>
         </div>`).join('')}
     `).join('');
@@ -542,7 +542,7 @@ function fmtTs(v) {
       if (!warnEl) {
         warnEl = document.createElement('div');
         warnEl.id = 'tg-evt-orphan-warn';
-        warnEl.style.cssText = 'margin-top:8px;padding:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#991b1b';
+        warnEl.style.cssText = 'margin-top:8px;padding:8px;background:var(--danger-soft);border:1px solid var(--danger);border-radius:6px;font-size:12px;color:var(--danger)';
         E('tg-mb-root').after(warnEl);
       }
       if (orphans.length) {
@@ -836,7 +836,7 @@ function fmtTs(v) {
       let pinnedHtml = '';
       if (pinnedEnvelope) {
         const flatP = flattenPaths(pinnedEnvelope.envelope);
-        pinnedHtml = `<div class="tg-sample-item open" style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px">
+        pinnedHtml = `<div class="tg-sample-item open" style="background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;padding:8px">
           <div class="tg-sample-head">
             <span><i class="fa-solid fa-thumbtack"></i> Pinned from execution #${pinnedEnvelope.execution_id} (${esc(pinnedEnvelope.envelope.event)})</span>
             <span>
@@ -864,7 +864,7 @@ function fmtTs(v) {
       }).join('');
       box._samples = samples;
     } catch (e) {
-      box.innerHTML = `<div class="tg-hint" style="color:var(--red)">${esc(e.message)}</div>`;
+      box.innerHTML = `<div class="tg-hint" style="color:var(--danger)">${esc(e.message)}</div>`;
     }
   };
 
@@ -945,22 +945,22 @@ function fmtTs(v) {
           const draft = harvestDraft();
           const dr = await api('/api/triggers/test-draft', 'POST', { execution_id: executionId, ...draft });
           const r = dr.result || {};
-          let s = r.matched ? '<span style="color:var(--green)">MATCH</span>' : '<span style="color:var(--muted)">no match</span>';
-          if (r.matched && r.transform_ok === false) s += ` — <span style="color:var(--red)">transform failed: ${esc(r.transform_error)}</span>`;
+          let s = r.matched ? '<span style="color:var(--ok)">MATCH</span>' : '<span style="color:var(--text-muted)">no match</span>';
+          if (r.matched && r.transform_ok === false) s += ` — <span style="color:var(--danger)">transform failed: ${esc(r.transform_error)}</span>`;
           if (r.matched && r.transform_ok) s += `<details style="margin-top:4px"><summary style="cursor:pointer">transformed output</summary><pre class="tg-json" style="max-height:180px">${esc(JSON.stringify(r.transformed, null, 2))}</pre></details>`;
-          draftHtml = `<div style="margin-bottom:12px;padding:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px"><b>This editor (unsaved):</b> ${s}</div>`;
+          draftHtml = `<div style="margin-bottom:12px;padding:8px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px"><b>This editor (unsaved):</b> ${s}</div>`;
         } catch (e) {
-          draftHtml = `<div style="margin-bottom:12px;color:var(--red)">Draft not testable: ${esc(e.message)}</div>`;
+          draftHtml = `<div style="margin-bottom:12px;color:var(--danger)">Draft not testable: ${esc(e.message)}</div>`;
         }
       }
 
       // 2. saved rules
       const data = await api('/api/triggers/test', 'POST', { event_type: ev, envelope });
       const lines = (data.report || []).map(r => {
-        let s = `<b>${esc(r.name)}</b> (#${r.rule_id}): ${r.matched ? '<span style="color:var(--green)">MATCH</span>' : '<span style="color:var(--muted)">no match</span>'}`;
-        if (r.matched && r.transform_ok === false) s += ` — <span style="color:var(--red)">transform failed: ${esc(r.transform_error)}</span>`;
+        let s = `<b>${esc(r.name)}</b> (#${r.rule_id}): ${r.matched ? '<span style="color:var(--ok)">MATCH</span>' : '<span style="color:var(--text-muted)">no match</span>'}`;
+        if (r.matched && r.transform_ok === false) s += ` — <span style="color:var(--danger)">transform failed: ${esc(r.transform_error)}</span>`;
         if (r.matched && r.would_fire) s += ` → would fire: ${r.would_fire.map(a => esc(a.action_type + (a.name ? ` (${a.name})` : ''))).join(', ') || '(no actions)'}`;
-        if (r.matched && r.transformed) s += `<details style="margin-top:2px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">transformed output</summary><pre class="tg-json" style="max-height:180px">${esc(JSON.stringify(r.transformed, null, 2))}</pre></details>`;
+        if (r.matched && r.transformed) s += `<details style="margin-top:2px"><summary style="cursor:pointer;font-size:11px;color:var(--text-muted)">transformed output</summary><pre class="tg-json" style="max-height:180px">${esc(JSON.stringify(r.transformed, null, 2))}</pre></details>`;
         return `<div style="margin-bottom:8px">${s}</div>`;
       }).join('') || '<div>No active rules for this event.</div>';
 
@@ -971,7 +971,7 @@ function fmtTs(v) {
         showCancelButton: true,
         cancelButtonText: 'Close',
         confirmButtonText: 'Run live',
-        confirmButtonColor: '#ef4444',
+        confirmButtonColor: 'var(--danger-fill)',
         focusCancel: true,   // Review S3: Enter must NOT dispatch real actions
       });
       if (res.isConfirmed) await tgReplay(executionId);
@@ -989,7 +989,7 @@ function fmtTs(v) {
       // name is the only thing that still means something. Older rows predate
       // the field — fall back to the type rather than printing 'null'.
       const outcomes = (out.actionOutcomes || []).map(o =>
-        `<div>#${o.rule_id}/${o.rule_action_id} ${esc(o.action_name || o.action_type)} — ${o.status === 'success' ? '<span style="color:var(--green)">success</span>' : `<span style="color:var(--red)">${esc(o.status)}${o.error ? ': ' + esc(o.error) : ''}</span>`}</div>`
+        `<div>#${o.rule_id}/${o.rule_action_id} ${esc(o.action_name || o.action_type)} — ${o.status === 'success' ? '<span style="color:var(--ok)">success</span>' : `<span style="color:var(--danger)">${esc(o.status)}${o.error ? ': ' + esc(o.error) : ''}</span>`}</div>`
       ).join('') || '<div>(no actions fired)</div>';
       Swal.fire({
         title: `Replayed #${executionId} — ${esc(out.status)}`,
@@ -1032,9 +1032,9 @@ function fmtTs(v) {
       box.innerHTML = `<table class="tg-table"><thead><tr>
           <th>When</th><th>Event</th><th>Status</th><th>Result</th><th>Case</th>
         </tr></thead><tbody>${rows.map(r => {
-          const m = STATUS_META[r.status] || { bg: '#f1f5f9', fg: '#475569' };
+          const m = STATUS_META[r.status] || STATUS_FALLBACK;
           const failed = r.failed_count > 0
-            ? ` / <span style="color:var(--red)">${r.failed_count} failed</span>` : '';
+            ? ` / <span style="color:var(--danger)">${r.failed_count} failed</span>` : '';
           return `<tr class="clickable" onclick="tgOpenExecutionFromRule(${r.execution_id})"
                       title="Open execution #${r.execution_id} in the Executions tab">
             <td>${esc(fmtTs(r.created_at))}</td>
@@ -1045,7 +1045,7 @@ function fmtTs(v) {
           </tr>`;
         }).join('')}</tbody></table>`;
     } catch (e) {
-      box.innerHTML = `<div class="tg-hint" style="color:var(--red)">${esc(e.message)}</div>`;
+      box.innerHTML = `<div class="tg-hint" style="color:var(--danger)">${esc(e.message)}</div>`;
     }
   };
 
@@ -1066,7 +1066,7 @@ function fmtTs(v) {
 
   window.tgLoadExecutions = async (reset = true, beforeId = null) => {
     const body = E('tg-exec-body');
-    if (reset) { execRows = []; body.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading…</div>'; }
+    if (reset) { execRows = []; body.innerHTML = '<div style="padding:20px;color:var(--text-muted)">Loading…</div>'; }
     try {
       const ev = E('tg-exec-event').value;
       const st = E('tg-exec-status').value;
@@ -1082,23 +1082,23 @@ function fmtTs(v) {
       const rows = execRows;
       const more = batch.length === Number(lim);
       E('tg-exec-count').textContent = `${rows.length} shown`;
-      if (!rows.length) { body.innerHTML = '<div style="padding:20px;color:var(--muted)">No executions.</div>'; return; }
+      if (!rows.length) { body.innerHTML = '<div style="padding:20px;color:var(--text-muted)">No executions.</div>'; return; }
       body.innerHTML = `<table class="tg-table"><thead><tr>
           <th>#</th><th>Event</th><th>Status</th><th>Rules</th><th>Depth</th><th>Contact</th><th>Case</th><th>When</th>
         </tr></thead><tbody>${rows.map(r => {
-          const m = STATUS_META[r.status] || { bg: '#f1f5f9', fg: '#475569' };
+          const m = STATUS_META[r.status] || STATUS_FALLBACK;
           return `<tr class="clickable" onclick="tgOpenExecution(${r.id})">
             <td>${r.id}</td><td class="mono">${esc(r.event_type)}</td>
             <td><span class="tg-badge" style="background:${m.bg};color:${m.fg}">${esc(r.status)}</span></td>
             <td>${r.rules_matched}</td><td>${r.depth}</td>
             <td>${r.contact_id ?? ''}</td><td class="mono">${esc(r.case_id ?? '')}</td>
             <td>${esc(fmtTs(r.created_at))}</td>
-          </tr>${r.error ? `<tr><td></td><td colspan="7" style="color:var(--red);font-size:11px">${esc(r.error)}</td></tr>` : ''}`;
+          </tr>${r.error ? `<tr><td></td><td colspan="7" style="color:var(--danger);font-size:11px">${esc(r.error)}</td></tr>` : ''}`;
         }).join('')}</tbody></table>
         ${more ? `<div style="text-align:center;padding:10px"><button class="tg-btn" onclick="tgLoadExecutions(false, ${rows[rows.length - 1].id})"><i class="fa-solid fa-angles-down"></i> Load more</button></div>` : ''}
         <div id="tg-exec-detail" style="margin-top:14px"></div>`;
     } catch (e) {
-      body.innerHTML = `<div style="padding:20px;color:var(--red)">${esc(e.message)}</div>`;
+      body.innerHTML = `<div style="padding:20px;color:var(--danger)">${esc(e.message)}</div>`;
     }
   };
 
@@ -1123,7 +1123,7 @@ function fmtTs(v) {
         </div>`;
       box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
-      box.innerHTML = `<div class="tg-hint" style="color:var(--red)">${esc(e.message)}</div>`;
+      box.innerHTML = `<div class="tg-hint" style="color:var(--danger)">${esc(e.message)}</div>`;
     }
   };
 
@@ -1197,7 +1197,7 @@ function fmtTs(v) {
   };
   window.onDelete = async () => {
     if (!editor || editor.isNew) return;
-    const c = await Swal.fire({ title: `Delete rule "${editor.rule.name}"?`, text: 'Actions are deleted with it. Executions history is kept.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444' });
+    const c = await Swal.fire({ title: `Delete rule "${editor.rule.name}"?`, text: 'Actions are deleted with it. Executions history is kept.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: 'var(--danger-fill)' });
     if (!c.isConfirmed) return;
     try {
       await api(`/api/triggers/rules/${editor.rule.id}`, 'DELETE');
@@ -1234,7 +1234,7 @@ function fmtTs(v) {
       await loadMeta();
       await loadRules();
     } catch (e) {
-      E('tg-rule-list').innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">${esc(e.message)}</div>`;
+      E('tg-rule-list').innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px">${esc(e.message)}</div>`;
     }
     updateTopbar();
     if (typeof window.onShow === 'function') window.onShow();
