@@ -4,27 +4,65 @@
  * Built on Bootstrap 5. All classes prefixed with yc- to avoid collisions.
  * Mobile-first: stacks to single column below 600px.
  *
- * Include after Bootstrap CSS:
+ * Include after Bootstrap CSS, and after theme.css:
+ *   <link rel="stylesheet" href="/theme.css">
+ *   <script src="/themeSync.js"></script>
  *   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
  *   <link href="/css/yc-forms.css" rel="stylesheet">
+ *
+ * THEME.CSS IS A HARD DEPENDENCY. Every colour below is a var() off the
+ * shared token sheet; without it they resolve to nothing and you get
+ * transparent surfaces and invisible text, not merely wrong colours.
+ *
+ * This file used to hardcode `body { background: #f8f9fa }` and
+ * `.yc-form { background: #fff }`, which broke the charter's link ordering in
+ * BOTH directions: theme.css above it and the page never themed (yc-forms won
+ * on body, so the link was a silent no-op); theme.css below it and .yc-form
+ * stayed a white card declaring no colour, so its 66 descendants inherited
+ * --text onto white at 1.28:1. Tokenising is what makes the ordering stop
+ * mattering; theme.css above is now correct again (charter §4, §6.0).
+ *
+ * font-family: Arial on body stays. It is a metric, not a colour, and moves in
+ * the density arc (charter §0.1) — same hold as style.css.
  */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LINKS — re-assert theme.css's decision over Bootstrap
+   ═══════════════════════════════════════════════════════════════════════════
+   theme.css sets `a { color: var(--accent-2) }`, but it has to load FIRST
+   (charter §4) and Bootstrap loads after it, so --bs-link-color (#0d6efd) wins
+   on every page in this family. Measured: 4.50 on --surface, 4.20 on
+   --page-bg, 4.05 on --surface-2, 3.69 on dark --surface, 3.98 on dark
+   --page-bg — AA fails on four of the five. --accent-2 measures 5.65 / 5.27 /
+   5.08 / 6.88 / 7.41. This file loads after Bootstrap, so it is where the
+   sheet's decision can actually land. Same reasoning as the slice-8 theme.css
+   correction; no new token. */
+a { color: var(--accent-2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    FORM WRAPPER
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .yc-form {
-  background: #fff;
+  background: var(--surface);
+  /* .yc-form declares its own colour on purpose. It has 66 descendants and
+     most of them declare none; without this they inherit from whatever is
+     above the card, which is how a themed body under a hardcoded white card
+     produced 1.28:1 text. Charter §6.0. */
+  color: var(--text);
   padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow);
   max-width: 950px;
   margin: 0 auto;
 }
 
 body {
   font-family: Arial, sans-serif;
-  background: #f8f9fa;
+  background: var(--page-bg);
+  color: var(--text);
   padding: 16px;
   margin: 0;
 }
@@ -47,7 +85,7 @@ body {
 }
 
 .yc-warning {
-  color: #dc3545;
+  color: var(--danger);
   font-weight: bold;
   display: none;
   font-size: 0.9rem;
@@ -60,7 +98,7 @@ body {
 
 .yc-save-status {
   font-size: 0.82rem;
-  color: #6c757d;
+  color: var(--text-muted);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -70,8 +108,8 @@ body {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid #dee2e6;
-  border-top-color: #0d6efd;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: yc-spin 0.6s linear infinite;
 }
@@ -124,23 +162,23 @@ body {
 /* Default state: view mode active (toggle unchecked) */
 .yc-toggle-label-view {
   font-weight: 700;
-  color: #495057;
+  color: var(--text);
 }
 
 .yc-toggle-label-edit {
   font-weight: 400;
-  color: #adb5bd;
+  color: var(--text-muted);
 }
 
 /* Edit mode active (toggle checked) — class set by JS */
 .yc-toggle.yc-toggle-edit .yc-toggle-label-view {
   font-weight: 400;
-  color: #adb5bd;
+  color: var(--text-muted);
 }
 
 .yc-toggle.yc-toggle-edit .yc-toggle-label-edit {
   font-weight: 700;
-  color: #0d6efd;
+  color: var(--accent-2);
 }
 
 
@@ -149,8 +187,9 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .yc-draft-banner {
-  background: #fff3cd;
-  border: 1px solid #ffc107;
+  background: var(--warn-soft);
+  color: var(--text);
+  border: 1px solid var(--warn);
   border-radius: 6px;
   padding: 10px 16px;
   margin-bottom: 16px;
@@ -166,7 +205,7 @@ body {
 }
 
 .yc-draft-banner .yc-draft-warning {
-  color: #856404;
+  color: var(--warn);
   font-style: italic;
   font-size: 0.82rem;
 }
@@ -177,8 +216,8 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .yc-snapshot-banner {
-  background: #e8f0fe;
-  border: 1px solid #b8d4fe;
+  background: var(--info-soft);
+  border: 1px solid var(--info);
   border-radius: 6px;
   padding: 8px 16px;
   margin-bottom: 12px;
@@ -186,7 +225,7 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 0.85rem;
-  color: #1a56db;
+  color: var(--info);
   font-weight: 500;
   max-width: 950px;
   margin-left: auto;
@@ -215,7 +254,7 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 0.88rem;
-  color: #495057;
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -234,15 +273,16 @@ body {
 .yc-check-grid .yc-other-text input {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 0.88rem;
-  background: #f1f3f5;
+  background: var(--surface-2);
+  color: var(--text);   /* inputs do not inherit — see .yc-tags-input */
 }
 
 .yc-check-grid .yc-other-text input:focus {
-  border-color: #86b7fe;
-  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
   outline: none;
 }
 
@@ -295,17 +335,17 @@ body {
 
 .yc-section-title {
   font-weight: bold;
-  color: #343a40;
+  color: var(--text);
   font-size: 1.05rem;
   margin-top: 20px;
   margin-bottom: 10px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #dee2e6;
+  border-bottom: 1px solid var(--border);
 }
 
 .yc-section-subtitle {
   font-size: 0.85rem;
-  color: #6c757d;
+  color: var(--text-muted);
   margin-top: -6px;
   margin-bottom: 10px;
 }
@@ -318,26 +358,26 @@ body {
 .yc-label {
   display: block;
   font-weight: bold;
-  color: #495057;
+  color: var(--text);
   margin-bottom: 5px;
   font-size: 0.92rem;
 }
 
 .yc-required {
-  color: #dc3545;
+  color: var(--danger);
   margin-left: 2px;
 }
 
 .yc-sublabel {
   display: block;
-  color: #6c757d;
+  color: var(--text-muted);
   margin-top: 4px;
   font-size: 0.8rem;
 }
 
 .yc-error {
   display: none;
-  color: #dc3545;
+  color: var(--danger);
   font-weight: bold;
   font-size: 0.8rem;
   margin-top: 4px;
@@ -350,7 +390,7 @@ body {
 .yc-char-counter {
   display: block;
   text-align: right;
-  color: #6c757d;
+  color: var(--text-muted);
   font-size: 0.75rem;
   margin-top: 2px;
 }
@@ -365,29 +405,33 @@ body {
 .yc-field textarea {
   width: 100%;
   padding: 8px;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   box-sizing: border-box;
-  background-color: #f1f3f5;
+  background-color: var(--surface-2);
   font-family: inherit;
   font-size: 0.92rem;
-  color: #212529;
+  color: var(--text);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .yc-field input:focus,
 .yc-field select:focus,
 .yc-field textarea:focus {
-  border-color: #86b7fe;
-  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
   outline: none;
 }
 
 .yc-field input:disabled,
 .yc-field select:disabled,
 .yc-field textarea:disabled {
-  background-color: #e9ecef;
-  color: #495057;
+  /* --hover is the sheet's neutral inert tone (#e8eaed light / #2a2f3d dark);
+     it was #e9ecef. The disabled cue is the background, as it is today — the
+     text keeps --text like every other #495057 in this file. --text-muted was
+     tried and measures 4.43 on --hover in dark mode. */
+  background-color: var(--hover);
+  color: var(--text);
 }
 
 .yc-field textarea {
@@ -411,7 +455,7 @@ body {
 .yc-readonly .yc-check-grid input,
 .yc-readonly .yc-check-grid label {
   pointer-events: none;
-  background-color: #f1f3f5;
+  background-color: var(--surface-2);
 }
 
 /* Override for elements that don't have a visible background */
@@ -434,8 +478,8 @@ body {
 .yc-field-locked select,
 .yc-field-locked textarea {
   pointer-events: none;
-  background-color: #e9ecef;
-  color: #495057;
+  background-color: var(--hover);
+  color: var(--text);   /* see :disabled above */
 }
 
 /* Date/datetime locked fields */
@@ -446,7 +490,7 @@ body {
 
 /* Changed field indicator — subtle left border accent */
 .yc-field.yc-changed {
-  border-left: 3px solid #0d6efd;
+  border-left: 3px solid var(--accent);
   padding-left: 7px;
 }
 
@@ -487,7 +531,7 @@ body {
   gap: 6px;
   cursor: pointer;
   font-size: 0.92rem;
-  color: #495057;
+  color: var(--text);
 }
 
 .yc-radio-group input[type="radio"] {
@@ -501,7 +545,7 @@ body {
 }
 
 .yc-radio-group input[type="radio"]:checked {
-  accent-color: #0d6efd;
+  accent-color: var(--accent);
 }
 
 /* Readonly: radios non-interactive */
@@ -530,7 +574,7 @@ body {
 .yc-check label {
   cursor: pointer;
   font-size: 0.92rem;
-  color: #495057;
+  color: var(--text);
 }
 
 .yc-check-group {
@@ -553,17 +597,17 @@ body {
   flex-wrap: wrap;
   gap: 6px;
   padding: 6px 8px;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: #f1f3f5;
+  background: var(--surface-2);
   min-height: 42px;
   cursor: text;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .yc-tags-wrap:focus-within {
-  border-color: #86b7fe;
-  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .yc-tag-pill {
@@ -586,6 +630,9 @@ body {
   text-overflow: ellipsis;
 }
 
+/* rgba(0,0,0,.15/.3) KEPT: these darken whatever pill they sit on, and the
+   pills above are mode-independent literals. color:inherit takes the pill's
+   own dark text colour. Nothing here tracks the theme, and nothing should. */
 .yc-tag-pill .yc-tag-remove {
   display: inline-flex;
   align-items: center;
@@ -612,6 +659,11 @@ body {
   border: none;
   outline: none;
   background: transparent;
+  /* An <input> does not inherit color — UA `fieldtext` is black in both
+     modes. .yc-field input already supplies one, but only while the widget
+     sits inside a .yc-field; declare it here so a themed --surface-2 wrap
+     can never end up holding invisible text. */
+  color: var(--text);
   font-size: 0.88rem;
   font-family: inherit;
   padding: 2px 4px;
@@ -620,7 +672,7 @@ body {
 }
 
 .yc-tags-input::placeholder {
-  color: #adb5bd;
+  color: var(--text-muted);
 }
 
 /* Readonly: hide input and remove buttons */
@@ -646,6 +698,12 @@ body {
 }
 
 /* ── Tag color palette (deterministic from hash) ── */
+/* LITERALS KEPT DELIBERATELY. Ten hues chosen by hash; the token sheet has
+   four categorical hues and folding ten onto four makes distinct tags collide,
+   which defeats the point of hashing. Each rule ships its own background AND
+   its own colour, so contrast is self-contained and independent of the surface
+   underneath — the same reason --cat-*-fill is mode-independent. They stay
+   light in both modes, on purpose. */
 .yc-tag-color-0  { background: #dbeafe; color: #1e40af; }
 .yc-tag-color-1  { background: #dcfce7; color: #166534; }
 .yc-tag-color-2  { background: #fef3c7; color: #92400e; }
@@ -669,7 +727,7 @@ body {
 .yc-tab-bar {
   display: flex;
   gap: 0;
-  border-bottom: 2px solid #dee2e6;
+  border-bottom: 2px solid var(--border);
   margin-bottom: 16px;
 }
 
@@ -680,19 +738,19 @@ body {
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
-  color: #6c757d;
+  color: var(--text-muted);
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
   transition: color 0.15s, border-color 0.15s;
 }
 
 .yc-tab-bar button:hover {
-  color: #495057;
+  color: var(--text);
 }
 
 .yc-tab-bar button.active {
-  color: #0d6efd;
-  border-bottom-color: #0d6efd;
+  color: var(--accent-2);
+  border-bottom-color: var(--accent);
 }
 
 .yc-tab-panel {
@@ -707,7 +765,7 @@ body {
 .yc-tab-sticky {
   margin-bottom: 12px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border);
 }
 
 
@@ -757,7 +815,7 @@ body {
 }
 
 .yc-card-count {
-  color: #6c757d;
+  color: var(--text-muted);
   font-size: 0.85rem;
   white-space: nowrap;
 }
@@ -775,7 +833,7 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ced4da;
+  background: var(--border-strong);
   border: none;
   padding: 0;
   cursor: default;
@@ -787,18 +845,18 @@ body {
 }
 
 .yc-card-dot.done {
-  background: #28a745;
+  background: var(--ok-fill);
 }
 
 .yc-card-dot.error {
-  background: #dc3545;
+  background: var(--danger-fill);
 }
 
 .yc-card-dot.current {
   width: 16px;
   height: 16px;
-  background: #fff;
-  border: 2px solid #0d6efd;
+  background: var(--surface);
+  border: 2px solid var(--accent);
 }
 
 /* Review page */
@@ -809,7 +867,7 @@ body {
 }
 
 .yc-card-review-block {
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border);
   padding: 10px 0;
 }
 
@@ -827,14 +885,14 @@ body {
   border: none;
   padding: 0;
   margin-left: 8px;
-  color: #0d6efd;
+  color: var(--accent-2);
   font-size: 0.8rem;
   cursor: pointer;
   text-decoration: underline;
 }
 
 .yc-card-review-num {
-  color: #adb5bd;
+  color: var(--text-muted);
   margin-right: 2px;
 }
 
@@ -846,13 +904,13 @@ body {
 }
 
 .yc-card-review-label {
-  color: #6c757d;
+  color: var(--text-muted);
   flex: 0 0 40%;
   min-width: 0;
 }
 
 .yc-card-review-value {
-  color: #198754;
+  color: var(--ok);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -867,8 +925,8 @@ body {
 }
 
 .yc-repeater-item {
-  background: #f8f9fa;
-  border: 1px solid #dee2e6;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 8px;
@@ -887,9 +945,9 @@ body {
   align-items: center;
   justify-content: center;
   background: none;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #dc3545;
+  color: var(--danger);
   cursor: pointer;
   font-size: 1rem;
   margin-bottom: 12px;
@@ -897,8 +955,8 @@ body {
 }
 
 .yc-repeater-remove:hover {
-  background: #fee2e2;
-  border-color: #fca5a5;
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 /* Hide remove buttons in view mode */
@@ -912,10 +970,10 @@ body {
   justify-content: center;
   gap: 6px;
   padding: 8px;
-  border: 2px dashed #dee2e6;
+  border: 2px dashed var(--border);
   border-radius: 6px;
   background: none;
-  color: #6c757d;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 0.88rem;
   width: 100%;
@@ -923,8 +981,8 @@ body {
 }
 
 .yc-repeater-add:hover {
-  border-color: #0d6efd;
-  color: #0d6efd;
+  border-color: var(--accent);
+  color: var(--accent-2);
 }
 
 /* Hide add button in view mode */
@@ -957,35 +1015,36 @@ body {
 }
 
 .yc-btn-primary {
-  background: #28a745;
-  color: #fff;
-  border-color: #28a745;
+  background: var(--ok-fill);
+  color: var(--fill-text);
+  border-color: var(--ok-fill);
 }
 
 .yc-btn-primary:hover:not(:disabled) {
-  background: #218838;
-  border-color: #1e7e34;
+  /* Fill hovers use filter, not a second literal — TOKEN-MAP §3.1. It tracks
+     whatever --ok-fill becomes and needs no per-mode value. */
+  filter: brightness(0.92);
 }
 
 .yc-btn-secondary {
-  background: #fff;
-  color: #495057;
-  border-color: #ced4da;
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
 .yc-btn-secondary:hover:not(:disabled) {
-  background: #e9ecef;
+  background: var(--hover);
 }
 
 .yc-btn-danger {
-  background: #dc3545;
-  color: #fff;
-  border-color: #dc3545;
+  background: var(--danger-fill);
+  color: var(--fill-text);
+  border-color: var(--danger-fill);
 }
 
 .yc-btn-danger:hover:not(:disabled) {
-  background: #c82333;
-  border-color: #bd2130;
+  filter: brightness(0.92);
+  /* was #c82333 / #bd2130 — see .yc-btn-primary:hover above */
 }
 
 .yc-btn-sm {
@@ -1067,7 +1126,7 @@ body {
 .yc-loading-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(248, 249, 250, 0.85);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1080,15 +1139,15 @@ body {
 .yc-loading-spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid #dee2e6;
-  border-top-color: #0d6efd;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: yc-spin 0.6s linear infinite;
 }
 
 .yc-loading-text {
   font-size: 0.9rem;
-  color: #6c757d;
+  color: var(--text-muted);
   font-weight: 500;
 }
 
@@ -1105,7 +1164,7 @@ body {
   border-radius: 6px;
   font-size: 0.9rem;
   font-weight: 500;
-  color: #fff;
+  color: var(--fill-text);
   z-index: 9999;
   opacity: 0;
   transform: translateY(-10px);
@@ -1119,15 +1178,15 @@ body {
 }
 
 .yc-toast-success {
-  background: #28a745;
+  background: var(--ok-fill);
 }
 
 .yc-toast-error {
-  background: #dc3545;
+  background: var(--danger-fill);
 }
 
 .yc-toast-info {
-  background: #495057;
+  background: var(--neutral-fill);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
