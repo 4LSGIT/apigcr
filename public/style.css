@@ -269,3 +269,62 @@ body.swal2-shown > [aria-hidden="true"] {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* ── Dark mode ───────────────────────────────────────────────────────────
+   Moved out of index.html (charter §6.1; slice 9c commit 3) and unscoped
+   from .tab-main, so every page that loads style.css gets dark support
+   instead of hand-rolling it. 19 pages load this file; 3 loaded the shell's
+   copy of these rules.
+
+   Only what is still NEEDED is here. The other 22 of the shell's 33 dark
+   selector lines covered style.css's OWN components, and tokenising them
+   above made those mode-correct without an override — measured, not
+   assumed. Deleted rather than moved:
+     .big-button/.pop-button/.switch-button  — charter §7 says fixing these
+       to var(--accent) in both modes makes the overrides redundant; it does.
+     table.logTable and its th/td/tr/nth-child/hover rules — the tokens
+       carry both modes now. Even rows measure 11.86:1 in dark, odd 14.03:1.
+     .tab, .tab:hover, .campaign-tab-{button,button.active,main} — style.css
+       now sets exactly the same token pairs these restated.
+     .tab-main{color} and .appointment-box — theme.css's body{} and the
+       tokenised border already cover them.
+     .tab-main a — this was the link defect fixed in theme.css in slice 9
+       (--accent as text, 2.55:1). theme.css already supplies --accent-2 at
+       5.27 light / 7.41 dark, so dropping the rule IS the fix; restating it
+       would only re-open the hole.
+
+   .tab and .campaign-tab-button are excluded from the button rule below.
+   Without that, html[data-theme="dark"] button:not(...) (0,4,1) would
+   outrank .tab (0,1,0) and undo their tokens.
+
+   The swal2 rules stay in index.html: SweetAlert is a third-party overlay
+   the shell owns, not a style.css component. */
+
+html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button) {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):hover:not(:disabled) {
+  background: var(--hover);
+}
+html[data-theme="dark"] button:disabled {
+  opacity: 0.5;
+}
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border) !important;
+}
+html[data-theme="dark"] input:focus,
+html[data-theme="dark"] select:focus,
+html[data-theme="dark"] textarea:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+}
+html[data-theme="dark"] hr {
+  border: none;
+  border-top: 1px solid var(--border);
+}
