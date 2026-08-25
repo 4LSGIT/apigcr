@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Appointment Details</title>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
@@ -16,11 +18,11 @@
     /* ── Loading ── */
     #loading {
       display: flex; align-items: center; justify-content: center;
-      gap: 10px; padding: 60px 20px; color: #6c757d; font-size: 0.9rem;
+      gap: 10px; padding: 60px 20px; color: var(--text-muted); font-size: 0.9rem;
     }
     #loading::before {
       content: ''; width: 20px; height: 20px;
-      border: 2.5px solid #dee2e6; border-top-color: #0d6efd;
+      border: 2.5px solid var(--border); border-top-color: var(--accent);
       border-radius: 50%; animation: spin 0.7s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -29,81 +31,94 @@
     .appt-header {
       display: flex; justify-content: space-between; align-items: center;
       padding-bottom: 14px; margin-bottom: 16px;
-      border-bottom: 2px solid #e9ecef;
+      border-bottom: 2px solid var(--border);
     }
-    .appt-title { font-size: 1.15rem; font-weight: 700; color: #1a1a2e; letter-spacing: -0.01em; }
-    .appt-title span { color: #495057; }
+    .appt-title { font-size: 1.15rem; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+    .appt-title span { color: var(--text-2); }
 
     /* ── Status badge ── */
     .status-badge {
       display: inline-flex; align-items: center; gap: 5px;
       padding: 5px 14px; border-radius: 20px;
       font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em;
-      text-transform: uppercase; color: #fff;
+      text-transform: uppercase; color: var(--fill-text);
     }
-    .status-Scheduled    { background: linear-gradient(135deg, #28a745, #20c040); }
-    .status-Attended     { background: linear-gradient(135deg, #0d6efd, #4990ff); }
-    .status-No-Show      { background: linear-gradient(135deg, #dc3545, #e85d6a); }
-    .status-Canceled     { background: linear-gradient(135deg, #6c757d, #8a939c); }
-    .status-Rescheduled  { background: linear-gradient(135deg, #e6a800, #ffc107); color: #2d2200; }
+    /* Gradients derived from each fill token with color-mix. The second stop
+       always moves AWAY from the label — darker under a white label, lighter
+       under a near-black one — so the sweep is never less legible than the
+       token's own pairing. The originals ran fill → LIGHTER under a white
+       label: white on #20c040 measured 2.4. Measured stop1/stop2:
+         Scheduled   --fill-text  on --ok-fill       6.52 / 8.81
+         Attended    --accent-text on --accent       7.57 / 8.95
+         No-Show     --fill-text  on --danger-fill   6.93 / 9.23
+         Canceled    --fill-text  on --neutral-fill  6.99 / 9.23
+         Rescheduled --warn-text  on --warn-fill     5.46 / 6.94 */
+    .status-Scheduled    { background: linear-gradient(135deg, var(--ok-fill), color-mix(in srgb, var(--ok-fill) 80%, black)); }
+    .status-Attended     { background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 80%, white)); color: var(--accent-text); }
+    .status-No-Show      { background: linear-gradient(135deg, var(--danger-fill), color-mix(in srgb, var(--danger-fill) 80%, black)); }
+    .status-Canceled     { background: linear-gradient(135deg, var(--neutral-fill), color-mix(in srgb, var(--neutral-fill) 80%, black)); }
+    .status-Rescheduled  { background: linear-gradient(135deg, var(--warn-fill), color-mix(in srgb, var(--warn-fill) 80%, white)); color: var(--warn-text); }
 
     /* ── Info grid ── */
     .info-grid {
       display: grid; grid-template-columns: 1fr 1fr 1fr;
-      gap: 1px; background: #e9ecef; border-radius: 8px; overflow: hidden;
+      gap: 1px; background: var(--border); border-radius: 8px; overflow: hidden;
       margin-bottom: 16px;
     }
     .info-item {
-      background: #fff; padding: 10px 14px;
+      background: var(--surface); padding: 10px 14px;
     }
     .info-item label {
       display: block; font-size: 0.7rem; font-weight: 600;
       text-transform: uppercase; letter-spacing: 0.05em;
-      color: #8a939c; margin-bottom: 3px;
+      color: var(--text-muted); margin-bottom: 3px;
     }
-    .info-item span { font-size: 0.88rem; font-weight: 500; color: #212529; }
-    .info-item a { color: #0d6efd; text-decoration: none; font-weight: 600; }
+    .info-item span { font-size: 0.88rem; font-weight: 500; color: var(--text); }
+    .info-item a { color: var(--accent-2); text-decoration: none; font-weight: 600; }
     .info-item a:hover { text-decoration: underline; }
 
     /* ── Action buttons ── */
     .action-bar {
       display: flex; gap: 8px; flex-wrap: wrap;
-      padding: 14px 0; border-bottom: 1px solid #e9ecef;
+      padding: 14px 0; border-bottom: 1px solid var(--border);
     }
     .action-bar button {
       display: inline-flex; align-items: center; gap: 7px;
       padding: 9px 16px; border: none; border-radius: 8px;
       font-size: 0.84rem; font-weight: 600; cursor: pointer;
-      transition: all 0.15s ease; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      transition: all 0.15s ease; box-shadow: var(--shadow);
     }
+        /* hover shadow literal KEPT: the sheet has one shadow token, the resting
+       elevation. Inventing --shadow-lg is forbidden (§9) and rgba(0,0,0,a)
+       is mode-neutral. */
     .action-bar button:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.12); }
     .action-bar button:active { transform: translateY(0); }
     .action-bar button i { font-size: 0.9rem; }
-    .btn-attended  { background: #0d6efd; color: #fff; }
-    .btn-noshow    { background: #dc3545; color: #fff; }
-    .btn-cancel    { background: #6c757d; color: #fff; }
-    .btn-reschedule { background: #f0ad00; color: #2d2200; }
+    .btn-attended  { background: var(--accent); color: var(--accent-text); }
+    .btn-noshow    { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-cancel    { background: var(--neutral-fill); color: var(--fill-text); }
+    .btn-reschedule { background: var(--warn-fill); color: var(--warn-text); }
 
     /* ── Sections ── */
-    .appt-section { padding-top: 16px; margin-top: 16px; border-top: 1px solid #e9ecef; }
+    .appt-section { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--border); }
     .appt-section-title {
-      font-weight: 700; font-size: 0.82rem; color: #495057;
+      font-weight: 700; font-size: 0.82rem; color: var(--text-2);
       text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;
     }
 
     /* ── Cancel panel ── */
     .cancel-panel {
-      background: #fafafa; border: 1px solid #e0e0e0; border-left: 3px solid #dc3545;
+      background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--danger);
       border-radius: 0 8px 8px 0; padding: 16px; margin-top: 12px; display: none;
     }
-    .cancel-panel .appt-section-title { color: #dc3545; }
+    .cancel-panel .appt-section-title { color: var(--danger); }
 
     /* ── Reschedule panel ── */
     .reschedule-panel {
-      background: #fffcf0; border: 1px solid #f0dfa0; border-left: 3px solid #f0ad00;
+      background: var(--warn-soft); border: 1px solid var(--warn); border-left: 3px solid var(--warn);
       border-radius: 0 8px 8px 0; padding: 16px; margin-top: 12px; display: none;
     }
-    .reschedule-panel .appt-section-title { color: #a07800; }
+    .reschedule-panel .appt-section-title { color: var(--warn); }
     .reschedule-panel label,
     .cancel-panel label { font-size: 0.84rem; }
 
@@ -111,24 +126,26 @@
     .panel-options { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0; }
     .panel-options label {
       display: inline-flex; align-items: center; gap: 5px;
-      font-size: 0.84rem; color: #495057; cursor: pointer;
+      font-size: 0.84rem; color: var(--text-2); cursor: pointer;
     }
     .panel-options input[type="checkbox"] {
-      width: 15px; height: 15px; accent-color: #0d6efd; cursor: pointer;
+      width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer;
     }
 
     /* ── Panel textareas ── */
     .cancel-panel textarea,
     .reschedule-panel textarea {
-      width: 100%; border: 1px solid #d0d0d0; border-radius: 6px;
+      width: 100%; border: 1px solid var(--border-strong); border-radius: 6px;
       padding: 8px 10px; font-size: 0.88rem; resize: vertical;
       font-family: inherit; margin-top: 4px;
+      background: var(--surface); color: var(--text);
     }
     .cancel-panel textarea:focus,
-    .reschedule-panel textarea:focus { outline: none; border-color: #86b7fe; box-shadow: 0 0 0 3px rgba(13,110,253,0.12); }
+    .reschedule-panel textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
     .reschedule-panel input[type="datetime-local"] {
-      width: 100%; border: 1px solid #d0d0d0; border-radius: 6px;
+      width: 100%; border: 1px solid var(--border-strong); border-radius: 6px;
       padding: 8px 10px; font-size: 0.88rem; font-family: inherit;
+      background: var(--surface); color: var(--text);
     }
 
     /* ── Panel buttons ── */
@@ -136,12 +153,14 @@
 
     /* ── Correction warning banner (shown when acting on non-Scheduled appt) ── */
     .correction-banner {
-      background: #fff8e1; border: 1px solid #f0d878; border-left: 3px solid #e6a800;
+      background: var(--warn-soft); border: 1px solid var(--warn); border-left: 3px solid var(--warn);
       border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;
-      font-size: 0.84rem; color: #6d4c00; display: none;
+      font-size: 0.84rem; color: var(--warn); display: none;
     }
-    .correction-banner i { color: #e6a800; margin-right: 6px; }
-    .correction-banner strong { color: #4d3500; }
+    .correction-banner i { color: var(--warn); margin-right: 6px; }
+        /* neutral emphasis on the amber tint — --warn is already the banner text,
+       so a second amber would not read as emphasis at all */
+    .correction-banner strong { color: var(--text); }
 
     /* ── Notes & Lists frame (W4) ── */
     #apptNotesFrame { width: 100%; border: none; min-height: 150px; display: block; }
@@ -149,15 +168,15 @@
     /* ── Case section ── */
     #caseDisplay a { font-weight: 600; font-size: 0.95rem; }
     #addCasePanel {
-      background: #f8f9fa; border-radius: 8px; padding: 14px; margin-top: 10px;
+      background: var(--surface-2); border-radius: 8px; padding: 14px; margin-top: 10px;
     }
     .or-divider {
-      text-align: center; color: #adb5bd; font-size: 0.82rem;
+      text-align: center; color: var(--text-muted); font-size: 0.82rem;
       margin: 8px 0; position: relative;
     }
     .or-divider::before, .or-divider::after {
       content: ''; position: absolute; top: 50%;
-      width: calc(50% - 20px); height: 1px; background: #dee2e6;
+      width: calc(50% - 20px); height: 1px; background: var(--border);
     }
     .or-divider::before { left: 0; }
     .or-divider::after { right: 0; }
@@ -174,7 +193,7 @@
 </head>
 <body>
 
-<div id="loading" style="text-align:center;padding:40px;color:#6c757d;">Loading appointment...</div>
+<div id="loading" style="text-align:center;padding:40px;color:var(--text-muted);">Loading appointment...</div>
 
 <div id="apptView" class="yc-form" style="display:none;">
 
@@ -424,7 +443,7 @@ async function loadAppt() {
     render();
     mountNotes();
   } catch (err) {
-    document.getElementById('loading').innerHTML = `<span style="color:red;">Failed to load appointment: ${err.message}</span>`;
+    document.getElementById('loading').innerHTML = `<span style="color:var(--danger);">Failed to load appointment: ${err.message}</span>`;
   }
 }
 
@@ -471,12 +490,12 @@ function renderCase() {
   if (a.appt_case_id) {
     const caseNum = a.case_number_display || a.case_number || a.appt_case_id;
     display.innerHTML = `<a href="#" onclick="P.addFile('${caseNum}', 'case', '${a.appt_case_id}'); return false;">${caseNum}</a>` +
-      ` <span style="color:#6c757d;font-size:0.84rem;">(${a.appt_case_id})</span>`;
+      ` <span style="color:var(--text-muted);font-size:0.84rem;">(${a.appt_case_id})</span>`;
     document.getElementById('caseInfo').innerHTML = `<a href="#" onclick="P.addFile('${caseNum}', 'case', '${a.appt_case_id}'); return false;">${caseNum}</a>`;
     addPanel.style.display = 'none';
   } else {
-    display.innerHTML = '<span style="color:#6c757d;">No case linked</span>';
-    document.getElementById('caseInfo').innerHTML = '<span style="color:#6c757d;">None</span>';
+    display.innerHTML = '<span style="color:var(--text-muted);">No case linked</span>';
+    document.getElementById('caseInfo').innerHTML = '<span style="color:var(--text-muted);">None</span>';
     addPanel.style.display = 'block';
   }
 }
@@ -731,7 +750,7 @@ async function createCase() {
    reference implementation of the same wait, and eventform.html's
    efWaitForShell() is the same loop written around a missing-id guard. */
 if (!apptId) {
-  document.getElementById('loading').innerHTML = '<span style="color:red;">Missing appointment ID.</span>';
+  document.getElementById('loading').innerHTML = '<span style="color:var(--danger);">Missing appointment ID.</span>';
 } else {
   (function waitForParent() {
     try {
