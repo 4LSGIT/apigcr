@@ -332,6 +332,7 @@ ref/2026-08-22_ingest_matched_rules_index.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
+ref/DENSITY-ARC-PLAN-v2.md
 ref/EXTERNAL_CODE_CSS_DECISION.md
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/Edit-r4b-stranded-detector.md
