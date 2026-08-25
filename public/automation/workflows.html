@@ -4142,11 +4142,14 @@ const _WF_EXPLAIN_CSS = `
   .ex-desc  { margin: 0; color: var(--text-muted); font-size: 12px; }
   .ex-steps { display: flex; flex-direction: column; gap: 10px; }
   .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; scroll-margin-top: 12px; }
-  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--cat-indigo); color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  /* A FILL, so the mode-independent --cat-indigo-fill + --fill-text pair:
+     --cat-indigo is a TEXT token and lightens to #8ea2ff in dark, where a
+     white label lands at 2.40. TOKEN-MAP §3.1. */
+  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--cat-indigo-fill); color: var(--fill-text); font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
   .ex-step-body { flex: 1; min-width: 0; }
   .ex-line   { margin-bottom: 4px; }
   .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: var(--text-2); }
-  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   .ex-code { margin: 6px 0 0; padding: 8px; background: var(--code-bg); color: var(--code-fg); border-radius: 6px; font-size: 11.5px; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; max-height: 200px; overflow: auto; }
   .ex-muted { color: var(--text-muted); font-size: 11.5px; }
   .ex-policy { color: var(--warn); }

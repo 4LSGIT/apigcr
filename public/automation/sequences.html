@@ -386,7 +386,10 @@
     }
     .phr-pf b { color: var(--cat-indigo); font-weight: 700; }
     .phr-ti {
-      flex: 1 1 100%; margin: 0; padding: 8px 10px; background: white;
+      /* The pair, not just the background: a tokenised border around a
+         hardcoded white box left --text inheriting onto white at 1.28 in dark. */
+      flex: 1 1 100%; margin: 0; padding: 8px 10px;
+      background: var(--surface); color: var(--text);
       border: 1px solid var(--border); border-radius: 4px; font-size: 11.5px;
       font-family: ui-monospace, Menlo, monospace;
       max-height: 180px; overflow: auto; white-space: pre-wrap;
@@ -4973,14 +4976,17 @@ const _SEQ_EXPLAIN_CSS = `
   .ex-chip  { display: inline-block; padding: 2px 8px; background: var(--accent-soft); color: var(--cat-indigo); border-radius: 10px; font-size: 11px; }
   .ex-steps { display: flex; flex-direction: column; gap: 10px; }
   .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; }
-  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--cat-indigo); color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  /* A FILL, so the mode-independent --cat-indigo-fill + --fill-text pair:
+     --cat-indigo is a TEXT token and lightens to #8ea2ff in dark, where a
+     white label lands at 2.40. TOKEN-MAP §3.1. */
+  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--cat-indigo-fill); color: var(--fill-text); font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
   .ex-step-body { flex: 1; min-width: 0; }
   .ex-timing { padding: 5px 9px; background: var(--ok-soft); border-radius: 5px; font-size: 12px; color: var(--ok); margin-bottom: 8px; }
   .ex-cond   { padding: 5px 9px; background: var(--warn-soft); border-radius: 5px; color: var(--warn); margin: 4px 0; font-size: 12px; }
   .ex-action { margin-top: 4px; }
   .ex-line   { margin-bottom: 4px; }
   .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: var(--text-2); }
-  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   .ex-muted  { color: var(--text-muted); font-size: 11.5px; }
   .ex-policy { color: var(--warn); }
   .ex-jump   { margin-top: 6px; }
