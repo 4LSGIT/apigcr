@@ -44,11 +44,10 @@
     border-radius:4px; padding:6px 10px; cursor:pointer; font-size:12px; }
   .toolbar button:hover:not(:disabled) { border-color:var(--accent); }
   .toolbar button:disabled { opacity:.4; cursor:not-allowed; }
-  /* #001 stays a literal. This is text ON --accent, and it is NOT a §3.1
-     status fill, so --accent-text does not apply: measured, near-black on
-     #07ADEF is 8.17:1 and --accent-text (white) is 2.55:1. The page's own
-     choice is the better one in both modes; --accent is mode-independent. */
-  .toolbar button.primary { background:var(--accent); color:#001; border-color:var(--accent); font-weight:600; }
+  /* Text ON --accent. The page was right that near-black beats white here;
+     --accent-text is now that near-black (#001018, 7.57:1) rather than the
+     white it held when this was written, so the literal becomes the token. */
+  .toolbar button.primary { background:var(--accent); color:var(--accent-text); border-color:var(--accent); font-weight:600; }
   .toolbar button.good { border-color:var(--ok); color:var(--ok); }
   .toolbar button.good:hover:not(:disabled) { background:var(--ok-fill); color:var(--accent-text); }
   .toolbar button.warnb { border-color:var(--warn); color:var(--warn); }

@@ -38,9 +38,9 @@
   .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .toolbar button { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
   .toolbar button:hover { border-color: var(--accent); }
-  /* #001 stays a literal: text ON --accent, not a §3.1 status fill.
-     Measured, near-black on #07ADEF is 8.17:1 and --accent-text is 2.55:1. */
-  .toolbar button.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  /* Text ON --accent. --accent-text is now that near-black (#001018, 7.57:1);
+     before slice 6b it was white, which measured 2.55:1 and failed. */
+  .toolbar button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
   .toolbar button.primary:hover { filter: brightness(1.08); }
   .toolbar button.danger-toggle { border-color: var(--danger); color: var(--danger); }
   .toolbar button.danger-toggle.active { background: var(--danger-fill); color: var(--accent-text); }
@@ -231,7 +231,7 @@
   <button type="button" class="add-col" id="schemaAddCol">+ Add column</button>
   <div class="actions">
     <button type="button" id="schemaCancel">Cancel</button>
-    <button type="button" id="schemaGenerate" class="primary" style="background:var(--accent); color:#001;">Generate SQL → Editor</button>
+    <button type="button" id="schemaGenerate" class="primary" style="background:var(--accent); color:var(--accent-text);">Generate SQL → Editor</button>
   </div>
 </dialog>
 

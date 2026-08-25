@@ -65,9 +65,9 @@
     transition: border-color 0.12s, background 0.12s;
   }
   .btn:hover { border-color: var(--accent); }
-  /* #001 stays a literal: text ON --accent, which is not a §3.1 status fill.
-     Measured, near-black on #07ADEF is 8.17:1 and --accent-text is 2.55:1. */
-  .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  /* Text ON --accent. --accent-text is now that near-black (#001018, 7.57:1);
+     before slice 6b it was white, which measured 2.55:1 and failed. */
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
   .btn.primary:hover { filter: brightness(1.08); }
   .btn.danger { border-color: var(--danger); color: var(--danger); }
   .btn.danger:hover { background: var(--danger-fill); color: var(--accent-text); }
