@@ -6,48 +6,35 @@
   <title>Video Manager</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy:    #1a1a2e;
-      --navy2:   #16213e;
-      --blue:    #4f8ef7;
-      --blue2:   #3a7de8;
-      --green:   #22c55e;
-      --red:     #ef4444;
-      --amber:   #f59e0b;
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --border:  #e2e8f0;
-      --muted:   #94a3b8;
-      --text:    #1e293b;
-      --text2:   #475569;
-    }
 
     html, body {
       height: 100%;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px;
       color: var(--text);
-      background: var(--bg);
+      background: var(--page-bg);
     }
 
     body { display: flex; flex-direction: column; overflow: hidden; }
 
     /* ── Topbar ────────────────────────────────────── */
     #topbar {
-      background: var(--navy);
-      color: #fff;
+      background: var(--code-bg);
+      color: var(--code-fg);
       height: 44px;
       display: flex;
       align-items: center;
       padding: 0 14px;
       flex-shrink: 0;
-      border-bottom: 2px solid var(--blue);
+      border-bottom: 2px solid var(--info);
     }
     #topbar .title { font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
-    #topbar .title span { color: var(--blue); }
+    #topbar .title span { color: var(--info); }
     #topbar .spacer { flex: 1; }
 
     .btn {
@@ -58,28 +45,29 @@
       font-family: inherit;
     }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover:not(:disabled) { background: var(--blue2); }
-    .btn-ghost { background: rgba(255,255,255,0.08); color: #fff; }
-    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-dark); }
+    .btn-ghost { background: transparent; color: var(--code-fg); border: 1px solid var(--border-strong); }
+    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
     .btn-outline {
       background: var(--surface); color: var(--text);
       border: 1px solid var(--border);
     }
-    .btn-outline:hover:not(:disabled) { background: var(--bg); }
-    .btn-danger { background: var(--red); color: #fff; }
-    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-outline:hover:not(:disabled) { background: var(--page-bg); }
+    .btn-danger { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover:not(:disabled) { filter: brightness(1.12); }
     /* Outlined danger — quieter than .btn-danger but reads as destructive.
        Used for the analytics Reset button. Matches the danger color
        language of the Delete button (which uses solid red). */
     .btn-outline-danger {
       background: var(--surface);
-      color: var(--red);
+      color: var(--danger);
       border: 1px solid rgba(239, 68, 68, 0.4);
     }
     .btn-outline-danger:hover:not(:disabled) {
       background: rgba(239, 68, 68, 0.08);
-      border-color: var(--red);
+      border-color: var(--danger);
     }
     .btn-sm { padding: 3px 8px; font-size: 11px; }
 
@@ -108,12 +96,12 @@
     #listHeader .label {
       font-weight: 600;
       font-size: 12px;
-      color: var(--text2);
+      color: var(--text-2);
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
     #listHeader .count {
-      color: var(--muted);
+      color: var(--text-muted);
       font-size: 11px;
     }
     #listHeader .spacer { flex: 1; }
@@ -133,24 +121,24 @@
       transition: background 0.1s;
       align-items: flex-start;
     }
-    .list-item:hover { background: var(--bg); }
+    .list-item:hover { background: var(--page-bg); }
     .list-item.active {
       background: rgba(79, 142, 247, 0.08);
-      border-left: 3px solid var(--blue);
+      border-left: 3px solid var(--info);
       padding-left: 11px;
     }
     .list-item .thumb {
       width: 60px;
       height: 34px;
       flex-shrink: 0;
-      background: var(--bg);
+      background: var(--page-bg);
       border: 1px solid var(--border);
       border-radius: 3px;
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      color: var(--muted);
+      color: var(--text-muted);
       margin-top: 1px;
     }
     .list-item .thumb img {
@@ -166,14 +154,14 @@
     }
     .list-item .meta .sub {
       font-size: 11px;
-      color: var(--muted);
+      color: var(--text-muted);
       margin-top: 3px;
       line-height: 1.4;
       word-break: break-word;
     }
     .list-item .meta .sub .slug {
       font-family: ui-monospace, Menlo, Consolas, monospace;
-      color: var(--text2);
+      color: var(--text-2);
     }
     .list-item .meta .badges {
       margin-top: 5px;
@@ -194,15 +182,15 @@
       letter-spacing: 0.03em;
       margin-right: 4px;
     }
-    .badge-published { background: rgba(34, 197, 94, 0.15); color: #15803d; }
-    .badge-draft     { background: rgba(148, 163, 184, 0.20); color: #475569; }
-    .badge-public    { background: rgba(79, 142, 247, 0.15); color: #1e40af; }
-    .badge-contact   { background: rgba(245, 158, 11, 0.18); color: #92400e; }
+    .badge-published { background: var(--ok-soft); color: var(--ok); }
+    .badge-draft     { background: var(--surface-2); color: var(--text-2); }
+    .badge-public    { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .badge-contact   { background: var(--warn-soft); color: var(--warn); }
 
     .empty-state {
       padding: 40px 24px;
       text-align: center;
-      color: var(--muted);
+      color: var(--text-muted);
     }
     .empty-state i { font-size: 30px; margin-bottom: 12px; opacity: 0.5; }
 
@@ -218,7 +206,7 @@
       max-width: 480px;
       margin: 80px auto 0;
       text-align: center;
-      color: var(--muted);
+      color: var(--text-muted);
     }
     #editorEmpty i { font-size: 48px; opacity: 0.4; margin-bottom: 16px; display: block; }
 
@@ -234,12 +222,12 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      color: var(--text2);
+      color: var(--text-2);
       margin-bottom: 14px;
     }
     .form-section .section-note {
       font-size: 11px;
-      color: var(--muted);
+      color: var(--text-muted);
       margin-top: -6px;
       margin-bottom: 12px;
       line-height: 1.4;
@@ -266,7 +254,7 @@
     }
     .analytics-row .a-label {
       width: 130px;
-      color: var(--text2);
+      color: var(--text-2);
       font-weight: 500;
       flex-shrink: 0;
     }
@@ -277,13 +265,13 @@
       min-width: 38px;
     }
     .analytics-row .a-detail {
-      color: var(--muted);
+      color: var(--text-muted);
       font-size: 12px;
     }
     .analytics-cta-block { margin-top: 12px; }
     .analytics-cta-block .a-section-head {
       font-weight: 600;
-      color: var(--text2);
+      color: var(--text-2);
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -297,7 +285,7 @@
       color: var(--text);
     }
     .analytics-empty {
-      color: var(--muted);
+      color: var(--text-muted);
       font-size: 12px;
       padding: 6px 0;
     }
@@ -306,7 +294,7 @@
        a tooltip via the title attribute. */
     .analytics-reset-notice {
       font-size: 11px;
-      color: var(--muted);
+      color: var(--text-muted);
       margin-bottom: 10px;
       padding-bottom: 8px;
       border-bottom: 1px dashed var(--border);
@@ -320,12 +308,12 @@
       display: block;
       font-size: 12px;
       font-weight: 600;
-      color: var(--text2);
+      color: var(--text-2);
       margin-bottom: 5px;
     }
     .form-row label .hint {
       font-weight: 400;
-      color: var(--muted);
+      color: var(--text-muted);
       margin-left: 6px;
     }
     .form-row input[type="text"],
@@ -346,7 +334,7 @@
     .form-row textarea:focus,
     .form-row select:focus {
       outline: none;
-      border-color: var(--blue);
+      border-color: var(--info);
       box-shadow: 0 0 0 2px rgba(79, 142, 247, 0.15);
     }
     .form-row textarea { min-height: 70px; resize: vertical; }
@@ -365,11 +353,11 @@
       display: none;
       margin-top: 6px;
       padding: 8px 10px;
-      background: rgba(245, 158, 11, 0.10);
-      border: 1px solid rgba(245, 158, 11, 0.35);
+      background: var(--warn-soft);
+      border: 1px solid var(--warn);
       border-radius: 5px;
       font-size: 12px;
-      color: #92400e;
+      color: var(--warn);
       line-height: 1.4;
     }
     .inline-warning.active { display: block; }
@@ -378,12 +366,12 @@
     .alias-list {
       margin-top: 8px;
       padding: 10px 12px;
-      background: var(--bg);
+      background: var(--page-bg);
       border-radius: 5px;
       font-size: 12px;
     }
     .alias-list .label-line {
-      color: var(--text2);
+      color: var(--text-2);
       font-weight: 600;
       margin-bottom: 4px;
     }
@@ -392,7 +380,7 @@
       align-items: center;
       gap: 6px;
       font-family: ui-monospace, Menlo, Consolas, monospace;
-      color: var(--muted);
+      color: var(--text-muted);
       padding: 1px 0;
     }
     .alias-list .alias-row .when { font-size: 10px; }
@@ -402,7 +390,7 @@
       border: 1px dashed var(--border);
       border-radius: 6px;
       padding: 12px;
-      background: var(--bg);
+      background: var(--page-bg);
     }
     .asset-uploader .row {
       display: flex;
@@ -413,13 +401,15 @@
       width: 90px;
       height: 50px;
       flex-shrink: 0;
+      /* stays #000 in both modes: this is the video letterbox matte behind
+         the frame, not a themed surface. */
       background: #000;
       border-radius: 4px;
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--muted);
+      color: var(--text-muted);
     }
     .asset-uploader .preview img,
     .asset-uploader .preview video {
@@ -437,7 +427,7 @@
       text-overflow: ellipsis;
     }
     .asset-uploader .info .meta {
-      color: var(--muted);
+      color: var(--text-muted);
       font-size: 11px;
       margin-top: 2px;
       word-break: break-all;
@@ -454,7 +444,7 @@
     .progress.active { display: block; }
     .progress-bar {
       height: 100%;
-      background: var(--blue);
+      background: var(--info);
       width: 0%;
       transition: width 0.2s;
     }
@@ -474,11 +464,11 @@
       background: var(--surface);
       border-radius: 4px;
       cursor: pointer;
-      color: var(--text2);
+      color: var(--text-2);
       font-size: 12px;
     }
-    .action-row .ctrl button:hover { background: var(--bg); }
-    .action-row .ctrl button.del:hover { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+    .action-row .ctrl button:hover { background: var(--page-bg); }
+    .action-row .ctrl button.del:hover { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
 
     /* ── Related videos picker ──────────────────────── */
     .related-row {
@@ -495,13 +485,13 @@
       width: 70px;
       height: 40px;
       flex-shrink: 0;
-      background: var(--bg);
+      background: var(--page-bg);
       border-radius: 3px;
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--muted);
+      color: var(--text-muted);
     }
     .related-row .rel-thumb img { width: 100%; height: 100%; object-fit: cover; }
     .related-row .rel-meta { flex: 1; min-width: 0; }
@@ -513,7 +503,7 @@
     }
     .related-row .rel-meta .rel-slug {
       font-size: 11px;
-      color: var(--muted);
+      color: var(--text-muted);
       font-family: ui-monospace, Menlo, Consolas, monospace;
       white-space: nowrap;
       overflow: hidden;
@@ -527,12 +517,12 @@
       background: var(--surface);
       border-radius: 4px;
       cursor: pointer;
-      color: var(--text2);
+      color: var(--text-2);
       font-size: 12px;
     }
-    .related-row .ctrl button:hover:not(:disabled) { background: var(--bg); }
+    .related-row .ctrl button:hover:not(:disabled) { background: var(--page-bg); }
     .related-row .ctrl button:disabled { opacity: 0.4; cursor: not-allowed; }
-    .related-row .ctrl button.del:hover { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+    .related-row .ctrl button.del:hover { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
 
     /* Picker modal results */
     .rel-picker-row {
@@ -543,15 +533,15 @@
       border-bottom: 1px solid var(--border);
       align-items: center;
     }
-    .rel-picker-row:hover { background: var(--bg); }
+    .rel-picker-row:hover { background: var(--page-bg); }
     .rel-picker-row.selected {
       background: rgba(79, 142, 247, 0.12);
-      border-left: 3px solid var(--blue);
+      border-left: 3px solid var(--info);
       padding-left: 7px;
     }
     .rel-picker-row .rel-thumb {
       width: 60px; height: 34px; flex-shrink: 0;
-      background: var(--bg); border-radius: 3px; overflow: hidden;
+      background: var(--page-bg); border-radius: 3px; overflow: hidden;
     }
     .rel-picker-row .rel-thumb img { width: 100%; height: 100%; object-fit: cover; }
     .rel-picker-row .rel-info { flex: 1; min-width: 0; text-align: left; }
@@ -560,7 +550,7 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .rel-picker-row .rel-info .s {
-      font-size: 11px; color: var(--muted);
+      font-size: 11px; color: var(--text-muted);
       font-family: ui-monospace, Menlo, Consolas, monospace;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       margin-top: 2px;
@@ -577,17 +567,17 @@
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      color: var(--text2);
+      color: var(--text-2);
       margin-bottom: 6px;
     }
     .copy-hint {
       font-size: 11px;
-      color: var(--muted);
+      color: var(--text-muted);
       margin-top: 8px;
       line-height: 1.4;
     }
     .copy-hint code {
-      background: var(--bg);
+      background: var(--page-bg);
       padding: 1px 4px;
       border-radius: 3px;
       font-size: 11px;
@@ -661,7 +651,9 @@ const PUBLIC_VIDEO_ORIGIN = 'https://4lsg.com';
 const P = window.parent;
 
 if (!P || !P.AUTH_STATE) {
-  document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ef4444;">'
+  // CSS-in-JS auth guard — invisible to a CSS grep, and the one place a
+  // reader only ever sees when something is already wrong.
+  document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">'
     + 'This page must be loaded inside the YisraCase admin app.</div>';
   throw new Error('No parent auth context');
 }
@@ -801,7 +793,7 @@ async function confirmDiscard(bodyText, confirmLabel) {
     showCancelButton:   true,
     confirmButtonText:  confirmLabel,
     cancelButtonText:   'Keep editing',
-    confirmButtonColor: '#ef4444',
+    confirmButtonColor: 'var(--danger-fill)',
   });
   return r.isConfirmed;
 }
@@ -815,7 +807,7 @@ async function loadList() {
     const res = await P.apiSend('/api/videos', 'GET');
     state.videos = res.videos || [];
   } catch (err) {
-    container.innerHTML = '<div class="empty-state" style="color:#ef4444">'
+    container.innerHTML = '<div class="empty-state" style="color:var(--danger)">'
       + '<i class="fa-solid fa-circle-exclamation"></i><br>'
       + 'Failed to load: ' + esc(err.message) + '</div>';
     return;
@@ -1120,7 +1112,7 @@ function renderEditor() {
          <div class="label-line"><i class="fa-solid fa-clock-rotate-left"></i> Old slugs (still resolve)</div>
          ${f._aliases.map(a =>
            '<div class="alias-row"><span>' + esc(a.slug) + '</span>'
-           + '<span class="when" style="color:var(--muted)">(archived ' + esc(fmtDate(a.archived_at)) + ')</span></div>'
+           + '<span class="when" style="color:var(--text-muted)">(archived ' + esc(fmtDate(a.archived_at)) + ')</span></div>'
          ).join('')}
        </div>`
     : '';
@@ -1391,7 +1383,7 @@ function renderUploader(kind, currentUrl, filename, duration) {
 
 function renderActionsList() {
   if (!state.form.actions.length) {
-    return '<div style="color:var(--muted); font-size:12px; padding:6px 0;">No actions yet.</div>';
+    return '<div style="color:var(--text-muted); font-size:12px; padding:6px 0;">No actions yet.</div>';
   }
   return state.form.actions.map((a, i) => `
     <div class="action-row">
@@ -1461,7 +1453,7 @@ function deleteAction(i) {
 function renderRelatedList() {
   const arr = state.form._relatedVideosResolved || [];
   if (!arr.length) {
-    return '<div style="color:var(--muted); font-size:12px; padding:6px 0;">'
+    return '<div style="color:var(--text-muted); font-size:12px; padding:6px 0;">'
       + 'No related videos picked. The landing page will auto-fill from videos sharing tags.'
       + '</div>';
   }
@@ -1557,7 +1549,7 @@ async function openRelatedPicker() {
       <div id="rel-results" style="
         max-height: 320px;
         overflow-y: auto;
-        border: 1px solid var(--border, #e2e8f0);
+        border: 1px solid var(--border);
         border-radius: 6px;
       "></div>
     `,
@@ -1578,7 +1570,7 @@ async function openRelatedPicker() {
           : candidates;
 
         if (!matched.length) {
-          results.innerHTML = '<div style="padding:18px; color:#94a3b8; '
+          results.innerHTML = '<div style="padding:18px; color:var(--text-muted); '
             + 'font-size:12px; text-align:center;">No matches.</div>';
           return;
         }
@@ -1880,7 +1872,7 @@ async function onDelete() {
     icon:  'warning',
     showCancelButton: true,
     confirmButtonText: 'Delete',
-    confirmButtonColor: '#ef4444',
+    confirmButtonColor: 'var(--danger-fill)',
   });
   if (!r.isConfirmed) return;
   try {
@@ -1925,7 +1917,7 @@ async function onResetAnalytics() {
     showCancelButton:   true,
     confirmButtonText:  'Reset analytics',
     cancelButtonText:   'Cancel',
-    confirmButtonColor: '#ef4444',
+    confirmButtonColor: 'var(--danger-fill)',
   });
   if (!r.isConfirmed) return;
 
@@ -2106,11 +2098,11 @@ async function copyAsImageLink(variant) {
       icon: 'info',
       title: 'Copy manually',
       html:
-        '<div style="text-align:left; font-size:12px; margin-bottom:8px; color:#475569;">'
+        '<div style="text-align:left; font-size:12px; margin-bottom:8px; color:var(--text-2);">'
         + 'Plain-text version:</div>'
         + '<textarea readonly style="width:100%; height:50px; font-family:monospace; '
         + 'font-size:11px;">' + esc(plain) + '</textarea>'
-        + '<div style="text-align:left; font-size:12px; margin:10px 0 8px; color:#475569;">'
+        + '<div style="text-align:left; font-size:12px; margin:10px 0 8px; color:var(--text-2);">'
         + 'HTML version (paste into a rich editor):</div>'
         + '<textarea readonly style="width:100%; height:80px; font-family:monospace; '
         + 'font-size:11px;">' + esc(html) + '</textarea>',
