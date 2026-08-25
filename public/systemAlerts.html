@@ -4,96 +4,98 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>System Alerts</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <style>
-  :root {
-    --bg: #0f1117;
-    --panel: #161a22;
-    --panel-2: #1d2230;
-    --border: #2a3040;
-    --text: #e6e9ef;
-    --muted: #8a93a6;
-    --accent: #6ea8fe;
-    --danger: #ff6b6b;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-  }
-  html, body { margin:0; padding:0; height:100%; background:var(--bg); color:var(--text);
+  html, body { margin:0; padding:0; height:100%; background:var(--page-bg); color:var(--text);
     font-family:-apple-system, Segoe UI, Roboto, sans-serif; font-size:13px; }
   .main { display:flex; flex-direction:column; height:100vh; min-width:0; }
 
   /* summary cards */
-  .cards { display:flex; gap:8px; padding:10px; flex-wrap:wrap; background:var(--panel); border-bottom:1px solid var(--border); }
-  .card { flex:1 1 110px; min-width:110px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px;
+  .cards { display:flex; gap:8px; padding:10px; flex-wrap:wrap; background:var(--surface); border-bottom:1px solid var(--border); }
+  .card { flex:1 1 110px; min-width:110px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
     padding:8px 12px; cursor:pointer; user-select:none; }
   .card:hover { border-color:var(--accent); }
   .card.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
   .card .n { font-size:22px; font-weight:700; line-height:1.1; }
-  .card .l { font-size:10px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-top:2px; }
+  .card .l { font-size:10px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-top:2px; }
   .card.crit .n { color:var(--danger); }
-  .card.err  .n { color:#ff9f6b; }
+  /* TOKEN-MAP GAP. This page runs a THREE-level severity scale — critical /
+     error / warning — and the sheet ships two status hues. #ff9f6b was a
+     dark-only orange: it measures 8.25:1 on the dark surface and 2.01:1 on
+     white, so it cannot survive as a literal on a page that is now light by
+     default. Folded into --danger rather than --warn because under-alerting
+     (an error reading as a warning) is the worse failure; critical vs error
+     stays carried by the badge text and by the separate summary cards.
+     Reversible in one line once a third status token exists. */
+  .card.err  .n { color:var(--danger); }
   .card.warn .n { color:var(--warn); }
   .card.ackd .n { color:var(--accent); }
   .card.resv .n { color:var(--ok); }
-  .card.undg .n { color:var(--muted); }
+  .card.undg .n { color:var(--text-muted); }
 
   /* toolbar */
-  .toolbar { display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--panel);
+  .toolbar { display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--surface);
     border-bottom:1px solid var(--border); flex-wrap:wrap; }
-  .toolbar select, .toolbar input[type="text"] { background:var(--panel-2); color:var(--text);
+  .toolbar select, .toolbar input[type="text"] { background:var(--surface-2); color:var(--text);
     border:1px solid var(--border); border-radius:4px; padding:6px 8px; font-size:12px; }
   .toolbar input[type="text"] { flex:1 1 160px; min-width:120px; }
-  .toolbar button { background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+  .toolbar button { background:var(--surface-2); color:var(--text); border:1px solid var(--border);
     border-radius:4px; padding:6px 10px; cursor:pointer; font-size:12px; }
   .toolbar button:hover:not(:disabled) { border-color:var(--accent); }
   .toolbar button:disabled { opacity:.4; cursor:not-allowed; }
+  /* #001 stays a literal. This is text ON --accent, and it is NOT a §3.1
+     status fill, so --accent-text does not apply: measured, near-black on
+     #07ADEF is 8.17:1 and --accent-text (white) is 2.55:1. The page's own
+     choice is the better one in both modes; --accent is mode-independent. */
   .toolbar button.primary { background:var(--accent); color:#001; border-color:var(--accent); font-weight:600; }
   .toolbar button.good { border-color:var(--ok); color:var(--ok); }
-  .toolbar button.good:hover:not(:disabled) { background:var(--ok); color:#001; }
+  .toolbar button.good:hover:not(:disabled) { background:var(--ok-fill); color:var(--accent-text); }
   .toolbar button.warnb { border-color:var(--warn); color:var(--warn); }
-  .toolbar button.warnb:hover:not(:disabled) { background:var(--warn); color:#001; }
+  .toolbar button.warnb:hover:not(:disabled) { background:var(--warn-fill); color:var(--warn-text); }
   .toolbar .sep { flex:1; }
-  .toolbar label.auto { color:var(--muted); font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+  .toolbar label.auto { color:var(--text-muted); font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer; }
 
-  .status { padding:5px 10px; font-size:11px; color:var(--muted); border-bottom:1px solid var(--border); background:var(--panel); }
+  .status { padding:5px 10px; font-size:11px; color:var(--text-muted); border-bottom:1px solid var(--border); background:var(--surface); }
   .status .ok { color:var(--ok); } .status .err { color:var(--danger); }
 
   /* table */
   .results { flex:1; overflow:auto; min-height:0; }
   table.r { border-collapse:collapse; width:100%; font-size:12px; }
   table.r th, table.r td { border-bottom:1px solid var(--border); padding:5px 8px; text-align:left; vertical-align:top; }
-  table.r th { background:var(--panel); position:sticky; top:0; white-space:nowrap; font-size:11px;
-    text-transform:uppercase; letter-spacing:.05em; color:var(--muted); z-index:1; }
+  table.r th { background:var(--surface); position:sticky; top:0; white-space:nowrap; font-size:11px;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); z-index:1; }
   table.r tbody tr.row { cursor:pointer; }
-  table.r tbody tr.row:hover { background:var(--panel-2); }
-  table.r tbody tr.row.sel { background:rgba(110,168,254,.08); }
+  table.r tbody tr.row:hover { background:var(--surface-2); }
+  table.r tbody tr.row.sel { background:var(--accent-soft); }
   td.mono, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
   td.title-cell { max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   td.nowrap { white-space:nowrap; }
   .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:10px; font-weight:700;
     text-transform:uppercase; letter-spacing:.05em; }
-  .badge.critical { background:rgba(255,107,107,.15); color:var(--danger); border:1px solid var(--danger); }
-  .badge.error    { background:rgba(255,159,107,.12); color:#ff9f6b; border:1px solid #ff9f6b; }
-  .badge.warning  { background:rgba(251,191,36,.12); color:var(--warn); border:1px solid var(--warn); }
+  .badge.critical { background:var(--danger-soft); color:var(--danger); border:1px solid var(--danger); }
+  .badge.error    { background:var(--danger-soft); color:var(--danger); border:1px solid var(--danger); }  /* same as .critical — see the gap note above */
+  .badge.warning  { background:var(--warn-soft); color:var(--warn); border:1px solid var(--warn); }
   .state { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
   .state.open { color:var(--danger); } .state.ackd { color:var(--accent); } .state.resv { color:var(--ok); }
-  .muted { color:var(--muted); }
+  .muted { color:var(--text-muted); }
 
   /* detail expansion */
-  tr.detail td { background:var(--panel); padding:10px 14px 12px; }
+  tr.detail td { background:var(--surface); padding:10px 14px 12px; }
   .detail-grid { display:grid; grid-template-columns:110px 1fr; gap:3px 12px; font-size:12px; margin-bottom:8px; }
-  .detail-grid .k { color:var(--muted); }
-  pre.blk { margin:6px 0 0; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px;
+  .detail-grid .k { color:var(--text-muted); }
+  pre.blk { margin:6px 0 0; padding:8px 10px; background:var(--page-bg); border:1px solid var(--border); border-radius:4px;
     font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; line-height:1.5;
     white-space:pre-wrap; word-break:break-word; max-height:300px; overflow:auto; }
   .row-actions { margin-top:8px; display:flex; gap:6px; }
-  .row-actions button { background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+  .row-actions button { background:var(--surface-2); color:var(--text); border:1px solid var(--border);
     border-radius:4px; padding:4px 10px; cursor:pointer; font-size:11px; }
   .row-actions button:hover { border-color:var(--accent); }
 
-  .empty { padding:30px; color:var(--muted); text-align:center; }
-  .pager { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--panel);
-    border-top:1px solid var(--border); font-size:11px; color:var(--muted); }
-  .pager button { background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:4px;
+  .empty { padding:30px; color:var(--text-muted); text-align:center; }
+  .pager { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--surface);
+    border-top:1px solid var(--border); font-size:11px; color:var(--text-muted); }
+  .pager button { background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:4px;
     padding:3px 10px; cursor:pointer; font-size:11px; }
   .pager button:disabled { opacity:.4; cursor:not-allowed; }
 </style>
@@ -168,12 +170,12 @@ let authed = false;
     if (!token) throw new Error("no token");
     const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
     if (payload.user_auth !== "authorized - SU") {
-      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Superuser access required.</div>';
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Superuser access required.</div>';
       return;
     }
     authed = true;
   } catch (e) {
-    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Not authenticated.</div>';
   }
 })();
 
