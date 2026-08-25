@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        PIPELINES SUB-PAGE — self-contained styles.
@@ -15,16 +17,10 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy: #1a1a2e; --blue: #4f8ef7; --blue2: #3a7de8;
-      --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --purple: #8b5cf6;
-      --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
-      --muted: #94a3b8; --text: #1e293b; --text2: #475569;
-    }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px; color: var(--text); background: var(--bg);
+      font-size: 14px; color: var(--text); background: var(--page-bg);
       display: flex; height: 100vh; overflow: hidden;
     }
 
@@ -34,11 +30,12 @@
       font-size: 12px; font-weight: 500; cursor: pointer;
       transition: all 0.15s; white-space: nowrap;
     }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: var(--blue2); }
-    .btn-danger  { background: var(--red); color: #fff; }
-    .btn-danger:hover { background: #dc2626; }
-    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--info-dark); }
+    .btn-danger  { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover { background: var(--danger-fill); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
     .btn-outline:hover { background: var(--border); }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -51,29 +48,29 @@
     .panel-left-head {
       padding: 10px 14px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
-      color: var(--text2);
+      color: var(--text-2);
     }
     #tpl-list { flex: 1; overflow-y: auto; }
 
     .tpl-item {
-      padding: 10px 14px; border-bottom: 1px solid var(--bg); cursor: pointer;
+      padding: 10px 14px; border-bottom: 1px solid var(--page-bg); cursor: pointer;
       transition: background 0.12s;
     }
-    .tpl-item:hover { background: #f8fafc; }
-    .tpl-item.active { background: #eff6ff; border-left: 3px solid var(--blue); padding-left: 11px; }
+    .tpl-item:hover { background: var(--surface-2); }
+    .tpl-item.active { background: var(--accent-soft); border-left: 3px solid var(--info); padding-left: 11px; }
     .tpl-item .name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-    .tpl-item .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-    .tpl-item.inactive .name { color: var(--muted); text-decoration: line-through; }
+    .tpl-item .meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .tpl-item.inactive .name { color: var(--text-muted); text-decoration: line-through; }
 
     .badge {
       font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
       text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;
     }
-    .badge-intake   { background: #ede9fe; color: var(--purple); }
-    .badge-case     { background: #dbeafe; color: var(--blue2); }
-    .badge-default  { background: #fef3c7; color: #b45309; }
-    .badge-inactive { background: #f1f5f9; color: var(--muted); }
-    .badge-stage    { background: #f1f5f9; color: var(--text2); text-transform: none; }
+    .badge-intake   { background: var(--surface-2); color: var(--cat-purple); }
+    .badge-case     { background: var(--accent-soft); color: var(--info-dark); }
+    .badge-default  { background: var(--warn-soft); color: var(--warn); }
+    .badge-inactive { background: var(--surface-2); color: var(--text-muted); }
+    .badge-stage    { background: var(--surface-2); color: var(--text-2); text-transform: none; }
 
     /* ── Right panel: editor ── */
     .panel-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -84,7 +81,7 @@
       flex-wrap: wrap;
     }
     .tpl-header .title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-    .tpl-header .sub { font-size: 12px; color: var(--muted); width: 100%; }
+    .tpl-header .sub { font-size: 12px; color: var(--text-muted); width: 100%; }
 
     #stage-wrap { flex: 1; overflow-y: auto; padding: 16px 18px; }
 
@@ -92,49 +89,50 @@
       border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     table.stages th {
       text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
-      color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
-      background: #f8fafc; white-space: nowrap;
+      color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
+      background: var(--surface-2); white-space: nowrap;
     }
-    table.stages td { padding: 8px 10px; border-bottom: 1px solid var(--bg); font-size: 12.5px; vertical-align: middle; }
+    table.stages td { padding: 8px 10px; border-bottom: 1px solid var(--page-bg); font-size: 12.5px; vertical-align: middle; }
     table.stages tr:last-child td { border-bottom: none; }
-    table.stages tr.inactive td { color: var(--muted); }
+    table.stages tr.inactive td { color: var(--text-muted); }
     table.stages tr.inactive .st-key, table.stages tr.inactive .st-label { text-decoration: line-through; }
 
-    .drag-handle { cursor: grab; color: var(--muted); padding: 0 4px; }
+    .drag-handle { cursor: grab; color: var(--text-muted); padding: 0 4px; }
     .drag-handle:active { cursor: grabbing; }
     .sortable-ghost { opacity: .4; }
     .sortable-drag  { opacity: .9; }
 
-    .st-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--text2);
+    .st-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--text-2);
       display: inline-flex; align-items: center; gap: 5px; }
-    .st-key .fa-lock { color: var(--amber); font-size: 10px; }
+    .st-key .fa-lock { color: var(--warn); font-size: 10px; }
     .st-label { font-weight: 600; }
-    .st-client { color: var(--text2); font-size: 12px; }
+    .st-client { color: var(--text-2); font-size: 12px; }
 
     .icon-btn {
       border: 1px solid var(--border); background: var(--surface);
       border-radius: 6px; width: 25px; height: 25px; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
-      color: var(--text2); font-size: 11px; transition: all 0.12s;
+      color: var(--text-2); font-size: 11px; transition: all 0.12s;
     }
-    .icon-btn:hover { background: var(--bg); }
-    .icon-btn.del:hover { background: #fee2e2; color: var(--red); border-color: #fecaca; }
+    .icon-btn:hover { background: var(--page-bg); }
+    .icon-btn.del:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
 
-    .flag-dot { color: var(--muted); font-size: 11px; margin-right: 5px; }
-    .flag-dot.on { color: var(--blue); }
+    .flag-dot { color: var(--text-muted); font-size: 11px; margin-right: 5px; }
+    .flag-dot.on { color: var(--info); }
 
     /* toggle switch (active) */
     .tgl { position: relative; display: inline-block; width: 30px; height: 17px; vertical-align: middle; }
     .tgl input { opacity: 0; width: 0; height: 0; }
-    .tgl .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 17px; transition: .15s; cursor: pointer; }
+    .tgl .slider { position: absolute; inset: 0; background: var(--border-strong); border-radius: 17px; transition: .15s; cursor: pointer; }
     .tgl .slider:before { content: ""; position: absolute; height: 13px; width: 13px; left: 2px; top: 2px;
-      background: #fff; border-radius: 50%; transition: .15s; }
-    .tgl input:checked + .slider { background: var(--green); }
+      /* knob rides ON the track: a fill label, not a surface */
+      background: var(--fill-text); border-radius: 50%; transition: .15s; }
+    .tgl input:checked + .slider { background: var(--ok); }
     .tgl input:checked + .slider:before { transform: translateX(13px); }
 
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; color: var(--muted);
+      justify-content: center; height: 100%; color: var(--text-muted);
       gap: 10px; text-align: center;
     }
     .empty-state i { font-size: 36px; opacity: 0.25; }
@@ -144,23 +142,23 @@
 
     /* Swal form bits */
     .cc-form { text-align: left; font-size: 13px; }
-    .cc-form label { display: block; font-size: 11px; font-weight: 600; color: var(--text2);
+    .cc-form label { display: block; font-size: 11px; font-weight: 600; color: var(--text-2);
       margin: 10px 0 3px; text-transform: uppercase; letter-spacing: 0.03em; }
     .cc-form input[type=text], .cc-form select, .cc-form textarea {
       width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
       font-size: 13px; outline: none; font-family: inherit;
     }
-    .cc-form input[type=text]:focus, .cc-form select:focus, .cc-form textarea:focus { border-color: var(--blue); }
+    .cc-form input[type=text]:focus, .cc-form select:focus, .cc-form textarea:focus { border-color: var(--info); }
     .cc-form textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
     .cc-form .row2 { display: flex; gap: 12px; }
     .cc-form .row2 > div { flex: 1; min-width: 0; }
     .cc-form .checks { display: flex; gap: 16px; margin-top: 10px; flex-wrap: wrap; }
     .cc-form .checks label { display: inline-flex; align-items: center; gap: 6px; margin: 0;
       text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 500; cursor: pointer; }
-    .cc-form .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
-    .cc-form .counter { font-size: 11px; color: var(--muted); text-align: right; margin-top: 2px; }
-    .cc-form .counter.over { color: var(--red); font-weight: 700; }
-    .cc-form .locked-note { font-size: 11px; color: #b45309; background: #fef3c7;
+    .cc-form .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .cc-form .counter { font-size: 11px; color: var(--text-muted); text-align: right; margin-top: 2px; }
+    .cc-form .counter.over { color: var(--danger); font-weight: 700; }
+    .cc-form .locked-note { font-size: 11px; color: var(--warn); background: var(--warn-soft);
       border-radius: 6px; padding: 6px 8px; margin-top: 4px; }
 
     ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -375,8 +373,8 @@ function renderEditor() {
           </tr>`).join('')}
       </tbody>
     </table>
-    <div style="font-size:11px;color:var(--muted);margin-top:8px">
-      Drag rows (or use ↑↓) to reorder. Locked keys (<i class="fa-solid fa-lock" style="color:var(--amber)"></i>)
+    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
+      Drag rows (or use ↑↓) to reorder. Locked keys (<i class="fa-solid fa-lock" style="color:var(--warn)"></i>)
       are referenced by case history and can't change — edit the labels instead.
     </div>`;
 
@@ -539,7 +537,7 @@ async function deleteTemplate() {
     title: `Delete template "${activeTpl.name}"?`,
     html: `<div style="font-size:13px">Its stages are deleted with it. Only possible while no
            case history references it — otherwise you'll be offered deactivation.</div>`,
-    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444',
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: 'var(--danger-fill)',
   });
   if (!isConfirmed) return;
   try {
@@ -702,7 +700,7 @@ async function deleteStage(stageId) {
   const { isConfirmed } = await Swal.fire({
     icon: 'warning',
     title: `Delete stage "${s.stage_key}"?`,
-    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444',
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: 'var(--danger-fill)',
   });
   if (!isConfirmed) return;
   try {
