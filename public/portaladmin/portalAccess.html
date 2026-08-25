@@ -6,72 +6,69 @@
   <title>Portal Access</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* Shared tokens duplicated from the shell (house pattern). */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --navy: #1a1a2e; --blue: #4f8ef7; --blue2: #3a7de8;
-      --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
-      --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
-      --muted: #94a3b8; --text: #1e293b; --text2: #475569;
-    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px; color: var(--text); background: var(--bg);
+      font-size: 14px; color: var(--text); background: var(--page-bg);
       height: 100vh; overflow: hidden; display: flex; flex-direction: column;
     }
     .head {
       background: var(--surface); border-bottom: 1px solid var(--border);
       padding: 12px 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
     }
-    .head .hint { font-size: 12px; color: var(--muted); }
+    .head .hint { font-size: 12px; color: var(--text-muted); }
     .search { position: relative; flex: 1; min-width: 240px; max-width: 420px; }
     .search input {
       width: 100%; padding: 8px 10px 8px 32px; border: 1px solid var(--border);
       border-radius: 8px; font-size: 13px; outline: none;
     }
-    .search input:focus { border-color: var(--blue); }
-    .search i { position: absolute; left: 11px; top: 10px; color: var(--muted); font-size: 12px; }
+    .search input:focus { border-color: var(--info); }
+    .search i { position: absolute; left: 11px; top: 10px; color: var(--text-muted); font-size: 12px; }
 
     #list-wrap { flex: 1; overflow-y: auto; padding: 14px 18px; }
     table { width: 100%; border-collapse: collapse; background: var(--surface);
       border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     th {
       text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
-      color: var(--muted); background: #f8fafc; padding: 8px 12px;
+      color: var(--text-muted); background: var(--surface-2); padding: 8px 12px;
       border-bottom: 1px solid var(--border);
     }
-    td { padding: 9px 12px; border-bottom: 1px solid var(--bg); font-size: 13px; vertical-align: middle; }
+    td { padding: 9px 12px; border-bottom: 1px solid var(--page-bg); font-size: 13px; vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
-    tr.disabled td { color: var(--muted); }
-    td .sub { font-size: 11px; color: var(--muted); }
+    tr.disabled td { color: var(--text-muted); }
+    td .sub { font-size: 11px; color: var(--text-muted); }
     .pill {
       font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
       text-transform: uppercase; letter-spacing: 0.03em;
     }
-    .pill-on  { background: #dcfce7; color: #15803d; }
-    .pill-off { background: #fee2e2; color: #b91c1c; }
+    .pill-on  { background: var(--ok-soft);     color: var(--ok); }
+    .pill-off { background: var(--danger-soft); color: var(--danger); }
 
     .tgl { position: relative; display: inline-block; width: 32px; height: 18px; vertical-align: middle; }
     .tgl input { opacity: 0; width: 0; height: 0; }
-    .tgl .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 18px; transition: .15s; cursor: pointer; }
+    .tgl .slider { position: absolute; inset: 0; background: var(--border-strong); border-radius: 18px; transition: .15s; cursor: pointer; }
     .tgl .slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 2px; top: 2px;
-      background: #fff; border-radius: 50%; transition: .15s; }
-    .tgl input:checked + .slider { background: var(--green); }
+      /* the knob rides ON the slider track, so it is a fill, not a surface */
+      background: var(--fill-text); border-radius: 50%; transition: .15s; }
+    .tgl input:checked + .slider { background: var(--ok); }
     .tgl input:checked + .slider:before { transform: translateX(14px); }
 
     .btn {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border);
-      font-size: 11.5px; font-weight: 500; cursor: pointer; background: var(--bg);
-      color: var(--text2); transition: all 0.12s; white-space: nowrap;
+      font-size: 11.5px; font-weight: 500; cursor: pointer; background: var(--page-bg);
+      color: var(--text-2); transition: all 0.12s; white-space: nowrap;
     }
     .btn:hover { background: var(--border); }
-    .btn-warn:hover { background: #fef3c7; border-color: #fde68a; color: #b45309; }
+    .btn-warn:hover { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
 
     .empty-state {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 60px 20px; color: var(--muted); gap: 10px; text-align: center;
+      padding: 60px 20px; color: var(--text-muted); gap: 10px; text-align: center;
     }
     .empty-state i { font-size: 34px; opacity: 0.25; }
     .spin { animation: spin 0.8s linear infinite; display: inline-block; }
@@ -200,7 +197,7 @@ function render() {
       </tr>`).join('')}
     </tbody>
   </table>
-  <div style="font-size:11px;color:var(--muted);margin-top:8px">
+  <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
     Both levers act on the contact's <b>next portal request</b> — access is re-checked
     on every request, no token-expiry wait. Disabling does not delete anything;
     re-enable restores access as it was.
@@ -214,7 +211,9 @@ async function toggleEnabled(contactId, checkbox) {
       icon: 'warning',
       title: 'Disable portal access?',
       text: 'Their login stops working and any open session is rejected on its next request.',
-      showCancelButton: true, confirmButtonText: 'Disable', confirmButtonColor: '#ef4444',
+      // CSS-in-JS: a CSS grep does not see this one.
+      showCancelButton: true, confirmButtonText: 'Disable',
+      confirmButtonColor: 'var(--danger-fill)',
     });
     if (!isConfirmed) { checkbox.checked = true; return; }
   }
