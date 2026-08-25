@@ -109,9 +109,9 @@
     border: 1px solid var(--border);
   }
   .badge.type { background: var(--surface-2); color: var(--accent-2); }
-  .badge.status-pending  { background: var(--warn-soft);   color: var(--warn);       border-color: var(--warn); }
-  .badge.status-connected { background: var(--ok-soft);    color: var(--ok);         border-color: var(--ok); }
-  .badge.status-failed   { background: var(--danger-soft); color: var(--danger);     border-color: var(--danger); }
+  .badge.status-pending  { background: var(--warn-soft);   color: var(--warn-on-soft);       border-color: var(--warn); }
+  .badge.status-connected { background: var(--ok-soft);    color: var(--ok-on-soft);         border-color: var(--ok); }
+  .badge.status-failed   { background: var(--danger-soft); color: var(--danger-on-soft);     border-color: var(--danger); }
   .badge.status-revoked  { background: var(--surface-2);   color: var(--text-muted); border-color: var(--border); }
   .warn-icon {
     display: inline-block; margin-left: 6px; color: var(--warn);
@@ -249,7 +249,7 @@
   /* Inline error banner inside editor */
   .inline-error {
     background: var(--danger-soft); border: 1px solid var(--danger);
-    color: var(--danger); padding: 8px 10px; border-radius: 4px;
+    color: var(--danger-on-soft); padding: 8px 10px; border-radius: 4px;
     font-size: 12px; margin-bottom: 10px;
   }
 

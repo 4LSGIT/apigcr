@@ -48,8 +48,8 @@
     display: inline-block; padding: 1px 6px; border-radius: 3px;
     font-size: 10px; font-weight: 500;
   }
-  .badge.active  { background: var(--ok-soft); color: var(--ok); }
-  .badge.revoked { background: var(--danger-soft); color: var(--danger); }
+  .badge.active  { background: var(--ok-soft); color: var(--ok-on-soft); }
+  .badge.revoked { background: var(--danger-soft); color: var(--danger-on-soft); }
   /* The one place a plaintext key is ever shown. #1d2230 here was the generic
      family-B second-level panel tone, not a deliberate "this is sensitive" dark
      box — the amber border is what does that signalling, and it survives. Left
@@ -94,7 +94,7 @@
   details.log-more[open] > summary::before { content: "▾ "; }
   .banner {
     border: 1px solid var(--warn); background: var(--warn-soft);
-    color: var(--warn); border-radius: 4px; padding: 6px 8px;
+    color: var(--warn-on-soft); border-radius: 4px; padding: 6px 8px;
     font-size: 11px; line-height: 1.5; margin-bottom: 8px;
   }
 </style>

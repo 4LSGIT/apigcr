@@ -67,10 +67,10 @@
     display: inline-block; padding: 1px 6px; border-radius: 3px;
     font-size: 10px; font-weight: 500; white-space: nowrap;
   }
-  .badge.link  { background: var(--accent-soft); color: var(--accent); }
-  .badge.pub   { background: var(--ok-soft);     color: var(--ok); }
-  .badge.draft { background: var(--warn-soft);   color: var(--warn); }
-  .badge.vis   { background: var(--danger-soft); color: var(--danger); margin-left: 6px; text-transform: uppercase; }
+  .badge.link  { background: var(--accent-soft); color: var(--accent-on-soft); }
+  .badge.pub   { background: var(--ok-soft);     color: var(--ok-on-soft); }
+  .badge.draft { background: var(--warn-soft);   color: var(--warn-on-soft); }
+  .badge.vis   { background: var(--danger-soft); color: var(--danger-on-soft); margin-left: 6px; text-transform: uppercase; }
   /* X1 visibility select (EXTERNAL_FORMS_DESIGN §3) — badge-sized control */
   #visSelect { width: auto; font-size: 11px; padding: 2px 4px; }
   #visSelect.exposed { border-color: var(--danger); color: var(--danger); font-weight: 600; }
@@ -175,8 +175,8 @@
   .cv-sec-title { font-weight: 600; font-size: 13px; }
   .cv-sec-sub { color: var(--text-muted); font-size: 11px; margin-left: 2px; }
   .badge.rep { background: var(--surface-2); color: var(--cat-purple); }  /* no --cat-*-soft in the sheet */
-  .badge.sw  { background: var(--warn-soft);   color: var(--warn); }
-  .badge.col { background: var(--ok-soft);     color: var(--ok); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .badge.sw  { background: var(--warn-soft);   color: var(--warn-on-soft); }
+  .badge.col { background: var(--ok-soft);     color: var(--ok-on-soft); font-family: ui-monospace, Menlo, Consolas, monospace; }
   .cv-rows { padding: 8px; min-height: 20px; }
   .cv-rows:empty::after {
     content: 'no rows — click "+ row" below, or drop a row here';
@@ -264,8 +264,8 @@
   .hist-table td.acts { white-space: nowrap; text-align: right; }
   .hist-table td.acts button { margin-left: 4px; }
   .badge.nochange { background: var(--surface-2); color: var(--text-muted); }
-  .badge.sub  { background: var(--ok-soft);    color: var(--ok); }
-  .badge.drft { background: var(--warn-soft);  color: var(--warn); }
+  .badge.sub  { background: var(--ok-soft);    color: var(--ok-on-soft); }
+  .badge.drft { background: var(--warn-soft);  color: var(--warn-on-soft); }
   #histSubFilters { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
   #histSubFilters input, #histSubFilters select { width: auto; }
   #histDetail { display: none; flex: 1; min-height: 0; flex-direction: column; }
