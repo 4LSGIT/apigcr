@@ -36,6 +36,22 @@
  *   - Setting is_default=1 transactionally clears is_default on the other
  *     templates of the same case_type (single-default invariant —
  *     resolveTemplate branch 3 assumes at most one).
+ *   - (R1) THE BOOTSTRAP INVARIANT: a stage_key may not be ACTIVE on a
+ *     role='intake' template and ACTIVE on a role='case' template at the same
+ *     time → 409, with NO force override. Enforced from createStage,
+ *     updateStage (activation or key change while active) and updateTemplate
+ *     (role flip). Full reasoning at assertNoCrossRoleActiveKey — briefly:
+ *     _resolveTarget searches the phase-resolved template FIRST, so a key
+ *     live on both sides makes every advance-by-that-key land on intake, and
+ *     the case never leaves the funnel. Nothing errors. The Intake template's
+ *     INACTIVE `retained` row is legal and load-bearing — that inactive flag
+ *     is what makes retention work.
+ *   - (R1) pipeline_stages.lane ('main' | 'offramp') validated against a JS
+ *     whitelist and defaulted to 'main' when absent/blank. lane decides
+ *     whether getPipeline projects a stage as UPCOMING; it never affects
+ *     where a case is. Defaulting to 'main' is the recoverable direction —
+ *     an unclassified stage shows up where someone will notice it, rather
+ *     than vanishing from every case's next-steps list.
  *   - pipeline_stages.config: accepts an object or null. Objects are
  *     JSON.stringify'd before binding to the `?` placeholder (mysql2
  *     landmine: raw objects expand to `key`=val pairs). Blank/empty → NULL.
@@ -71,6 +87,11 @@ const MAX_DEFAULT_REC  = 128;  // pipeline_stages.default_rec varchar(128)
 
 const ROLES       = new Set(['intake', 'case']);
 const CASE_STAGES = new Set(['Open', 'Pending', 'Filed', 'Concluded', 'Closed']);
+// R1 — pipeline_stages.lane. Validated in JS like every other enum here: the
+// session lacks STRICT_TRANS_TABLES, so a bad value would write '' silently
+// and the stage would read as main-lane (pipelineService.isMainLane's safe
+// default) with no sign anything was rejected.
+const LANES       = new Set(['main', 'offramp']);
 
 // Same shape as form_key (formTemplateService FORM_KEY_RE). Every seeded key
 // matches. Keys are permanent machine identifiers — keep them boring.
@@ -149,6 +170,162 @@ async function countStageLogRefs(conn, stage) {
     [stage.id, stage.template_id, stage.stage_key]
   );
   return Number(row.n);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE BOOTSTRAP INVARIANT (R1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A stage_key may not be ACTIVE on a role='intake' template and ACTIVE on a
+ * role='case' template at the same time.
+ *
+ * ── WHY THIS IS NOT A STYLE RULE ─────────────────────────────────────────
+ * pipelineService._resolveTarget's cross-phase key search orders the
+ * PHASE-RESOLVED template FIRST:
+ *
+ *     ORDER BY (template_id = ?) DESC, template_id ASC   -- phase tpl first
+ *
+ * A case in pipeline_phase 'intake' resolves to the Intake template, so an
+ * advance to `retained` looks there first. The ONLY reason it doesn't stop
+ * there — and the entire reason retention works — is that the Intake
+ * template's `retained` row is active=0, which pushes the search onto the
+ * case's MATTER template. Entering that template's stage is what makes
+ * advanceStage write pipeline_phase='case', which is what makes every later
+ * read resolve directly. The bootstrap is one-time and self-healing.
+ *
+ * Activate `retained` on the Intake template while it is also active on a
+ * chapter template and the intake row wins the ORDER BY forever. The advance
+ * succeeds, logs against template 1, and writes phase 'intake'. The case is
+ * now permanently stranded on the Intake template: every subsequent advance
+ * re-resolves to intake, the chapter pipeline is unreachable, and NOTHING
+ * ERRORS. Retention silently stops being recorded for that case.
+ *
+ * Two clicks in the Case Config UI could produce that state, and nothing in
+ * this service checked. Now it does.
+ *
+ * ── NO force OVERRIDE ────────────────────────────────────────────────────
+ * Unlike the duplicate-active TEMPLATE guard (which protects determinism
+ * among choices that are all valid, and so has a legitimate stage-and-swap
+ * escape hatch), this invariant has no correct violation. There is no
+ * scenario in which the same key should be live on both sides of the
+ * lifecycle boundary. So: no force parameter, deliberately.
+ *
+ * ── SCOPE: STAGE-ACTIVE, NOT TEMPLATE-ACTIVE ─────────────────────────────
+ * The predicate keys on pipeline_stages.active and IGNORES
+ * pipeline_templates.active. That is the rule as stated, and it fails closed:
+ * were it template-scoped, an archived intake template holding active stages
+ * would be legal right up until someone reactivated the template — and
+ * reactivation goes through updateTemplate's `active` flag, which this
+ * invariant does not police. Stage-scoped, there is no such window.
+ *
+ * The cost is that a key cannot be reused on a case template while an
+ * ARCHIVED opposite-role template still has it active. Speculative today (zero
+ * live violations, and no archived templates exist at all), and the escape is
+ * cheap and obvious from the 409: deactivate or rename the old stage.
+ * Loosening later is a one-predicate change; tightening after a collision has
+ * already shipped is not.
+ *
+ * ── COLLATION ────────────────────────────────────────────────────────────
+ * Both sides of the key comparison are pipeline_stages.stage_key — the SAME
+ * column of the SAME table (utf8mb4_general_ci). No COLLATE clause is needed
+ * or wanted; the general_ci comparison is also the right semantics, since
+ * STAGE_KEY_RE forbids uppercase anyway.
+ *
+ * @param {object} conn   transaction connection (checked and written atomically)
+ * @param {string} stageKey the key that would end up active
+ * @param {string} role   the role of the template it would be active on
+ * @param {number} excludeStageId  skip this stage row (self, on update)
+ * @throws 409 naming the colliding template, the key, and why it matters
+ */
+async function assertNoCrossRoleActiveKey(conn, stageKey, role, excludeStageId = 0) {
+  // Only the intake↔case boundary matters. A key shared by two CASE templates
+  // is normal and correct — `retained`, `filed` and `closed` live on all four
+  // chapter templates and must keep doing so.
+  //
+  // A role that is neither value is only reachable via a silent enum coercion
+  // (non-strict sql_mode writes garbage as ''), and such a template is invisible
+  // to resolveTemplate — every branch tests role === 'intake' or role === 'case'
+  // explicitly — so it cannot hijack a resolution and there is nothing to
+  // protect. Written as an explicit null rather than falling out of a ternary,
+  // so the no-check path is a stated decision instead of an accident.
+  const otherRole = role === 'intake' ? 'case'
+                  : role === 'case'   ? 'intake'
+                  : null;
+  if (otherRole === null) return;
+
+  const [rows] = await conn.query(
+    `SELECT s.id, s.template_id, t.name, t.role
+       FROM pipeline_stages s
+       JOIN pipeline_templates t ON t.id = s.template_id
+      WHERE s.stage_key = ? AND s.active = 1 AND t.role = ? AND s.id != ?
+      ORDER BY s.id ASC
+      LIMIT 1`,
+    [stageKey, otherRole, excludeStageId]
+  );
+  if (!rows.length) return;
+
+  const hit = rows[0];
+  throw conflict(
+    `stage_key "${stageKey}" is already active on the ${otherRole} template ` +
+    `"${hit.name}" (id ${hit.template_id}), and cannot also be active on ` +
+    `a ${role} template. A key live on BOTH sides of the intake/case boundary ` +
+    `hijacks the retention bootstrap: advance-by-key resolves to the intake ` +
+    `template first, so the case would log against intake, keep ` +
+    `pipeline_phase='intake', and never reach its case pipeline — with no ` +
+    `error to notice. Deactivate or rename one of the two stages.`
+  );
+}
+
+/** Role of a template id, or null when the row is gone. Used by the stage
+ *  writers, which know their template only by id. */
+async function templateRole(conn, templateId) {
+  const [[row]] = await conn.query(
+    `SELECT role FROM pipeline_templates WHERE id = ?`, [templateId]
+  );
+  return row ? row.role : null;
+}
+
+/**
+ * The same invariant, approached from the TEMPLATE side: flipping a
+ * template's role reclassifies every one of its active stages at once, so a
+ * flip can create dozens of collisions in a single UPDATE.
+ *
+ * Concretely: flipping "Bankruptcy — Chapter 7" to role='intake' would make
+ * its active `retained` / `docs` / `filed` / … collide with the identical
+ * active keys on Chapter 13, Adversary and Litigation — and `retained` is the
+ * exact key the bootstrap turns on. One checkbox, retention broken firm-wide.
+ *
+ * One query, LIMIT 1: the first collision is enough to refuse, and naming one
+ * is more actionable than listing twenty.
+ *
+ * @throws 409 naming the key and the colliding template
+ */
+async function assertRoleFlipKeepsKeysDistinct(conn, templateId, nextRole) {
+  const otherRole = nextRole === 'intake' ? 'case' : 'intake';
+  const [rows] = await conn.query(
+    `SELECT s.stage_key, o.template_id AS other_id, t.name AS other_name
+       FROM pipeline_stages s
+       JOIN pipeline_stages o
+         ON o.stage_key = s.stage_key AND o.active = 1 AND o.template_id != s.template_id
+       JOIN pipeline_templates t ON t.id = o.template_id AND t.role = ?
+      WHERE s.template_id = ? AND s.active = 1
+      ORDER BY s.stage_number ASC, s.id ASC
+      LIMIT 1`,
+    [otherRole, templateId]
+  );
+  if (!rows.length) return;
+
+  const hit = rows[0];
+  throw conflict(
+    `Cannot change this template's role to "${nextRole}": its active stage ` +
+    `"${hit.stage_key}" is also active on the ${otherRole} template ` +
+    `"${hit.other_name}" (id ${hit.other_id}). A stage_key live on both sides ` +
+    `of the intake/case boundary hijacks the retention bootstrap — advances ` +
+    `by that key would resolve to the intake template and the case would never ` +
+    `reach its case pipeline, with no error to notice. Deactivate or rename ` +
+    `the colliding stages first.`
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -288,6 +465,13 @@ async function updateTemplate(db, id, body = {}) {
     validateTemplateFields(next);
 
     await assertNoActiveDupe(conn, next, force, cur.id);
+    // R1 bootstrap invariant, template side. Only a ROLE CHANGE can move this
+    // template's whole active stage set across the intake/case boundary; every
+    // other field is irrelevant to it. NO force override — see
+    // assertNoCrossRoleActiveKey.
+    if (next.role !== cur.role) {
+      await assertRoleFlipKeepsKeysDistinct(conn, cur.id, next.role);
+    }
     if (next.is_default) await clearOtherDefaults(conn, next.case_type, cur.id);
 
     await conn.query(
@@ -387,6 +571,12 @@ function validateStageFields(next, { checkKey }) {
       `(lax sql_mode would store an invalid enum value as '' silently)`
     );
   }
+  if (!LANES.has(next.lane)) {
+    throw badRequest(
+      `lane "${next.lane}" must be one of: main, offramp ` +
+      `(lax sql_mode would store an invalid enum value as '' silently)`
+    );
+  }
   if (next.client_label != null) vStr('client_label', next.client_label, MAX_CLIENT_LABEL);
   vStr('default_rec', next.default_rec == null ? '' : next.default_rec, MAX_DEFAULT_REC);
 }
@@ -406,6 +596,10 @@ async function createStage(db, templateId, body = {}) {
     case_stage:     body.case_stage,
     client_visible: vBool(body.client_visible, 1),
     is_terminal:    vBool(body.is_terminal, 0),
+    // Defaults to the happy path: a stage nobody classified is one that gets
+    // projected, which is the recoverable direction (a visible wrong label
+    // beats a stage silently missing from every case's upcoming list).
+    lane:           body.lane == null || body.lane === '' ? 'main' : body.lane,
     default_rec:    body.default_rec == null ? '' : body.default_rec,
     active:         vBool(body.active, 1),
   };
@@ -413,10 +607,19 @@ async function createStage(db, templateId, body = {}) {
   const configJson = normalizeConfig(body.config);   // null or a STRING — never a raw object
 
   return withTransaction(db, async (conn) => {
+    // `role` rides along on the existing lookup — the bootstrap invariant
+    // needs it and this costs no extra round trip.
     const [[tpl]] = await conn.query(
-      `SELECT id FROM pipeline_templates WHERE id = ?`, [templateId]
+      `SELECT id, role FROM pipeline_templates WHERE id = ?`, [templateId]
     );
     if (!tpl) throw notFound(`Template ${templateId} not found`);
+
+    // R1 bootstrap invariant. Only an ACTIVE stage can hijack resolution, so
+    // creating an inactive one is free (and is exactly how the Intake
+    // `retained` row legally coexists with the chapter templates').
+    if (next.active) {
+      await assertNoCrossRoleActiveKey(conn, next.stage_key, tpl.role);
+    }
 
     let stageNumber = body.stage_number;
     if (stageNumber == null || !Number.isInteger(Number(stageNumber))) {
@@ -435,11 +638,11 @@ async function createStage(db, templateId, body = {}) {
       [ins] = await conn.query(
         `INSERT INTO pipeline_stages
            (template_id, stage_number, stage_key, internal_label, client_label,
-            case_stage, client_visible, is_terminal, default_rec, config, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            case_stage, client_visible, is_terminal, lane, default_rec, config, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [tpl.id, stageNumber, next.stage_key, next.internal_label, next.client_label,
-         next.case_stage, next.client_visible, next.is_terminal, next.default_rec,
-         configJson, next.active]
+         next.case_stage, next.client_visible, next.is_terminal, next.lane,
+         next.default_rec, configJson, next.active]
       );
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
@@ -492,10 +695,31 @@ async function updateStage(db, stageId, body = {}) {
       case_stage:     'case_stage'     in body ? body.case_stage : cur.case_stage,
       client_visible: 'client_visible' in body ? vBool(body.client_visible, 1) : (cur.client_visible ? 1 : 0),
       is_terminal:    'is_terminal'    in body ? vBool(body.is_terminal, 0)    : (cur.is_terminal ? 1 : 0),
+      lane:           'lane'           in body
+                        ? (body.lane == null || body.lane === '' ? 'main' : body.lane)
+                        : (cur.lane == null ? 'main' : cur.lane),
       default_rec:    'default_rec'    in body ? (body.default_rec == null ? '' : body.default_rec) : cur.default_rec,
       active:         'active'         in body ? vBool(body.active, 1) : (cur.active ? 1 : 0),
     };
     validateStageFields(next, { checkKey: keyChanging });
+
+    // R1 bootstrap invariant — checked only when this write could CREATE a
+    // collision, i.e. when the row ends up active AND either it is being
+    // switched on (0→1) or its key is changing while already on. A row that
+    // was already active under an unchanged key was legal before this call
+    // and is unaffected by it; re-checking it would 409 on an unrelated label
+    // edit. Going inactive can only ever REMOVE a collision.
+    const willBeActive = next.active === 1;
+    const turningOn    = willBeActive && !cur.active;
+    if (willBeActive && (turningOn || keyChanging)) {
+      const role = await templateRole(conn, cur.template_id);
+      // A stage whose template row is gone cannot be resolved to by anything
+      // (resolveTemplate only ever returns real rows), so there is nothing to
+      // hijack — skip rather than invent a role.
+      if (role) {
+        await assertNoCrossRoleActiveKey(conn, next.stage_key, role, cur.id);
+      }
+    }
 
     // config: only touched when the key is present in the body. mysql2 hands
     // JSON columns back as parsed objects, so an untouched pass-through must
@@ -508,12 +732,12 @@ async function updateStage(db, stageId, body = {}) {
       await conn.query(
         `UPDATE pipeline_stages
             SET stage_number = ?, stage_key = ?, internal_label = ?, client_label = ?,
-                case_stage = ?, client_visible = ?, is_terminal = ?, default_rec = ?,
-                config = ?, active = ?
+                case_stage = ?, client_visible = ?, is_terminal = ?, lane = ?,
+                default_rec = ?, config = ?, active = ?
           WHERE id = ?`,
         [next.stage_number, next.stage_key, next.internal_label, next.client_label,
-         next.case_stage, next.client_visible, next.is_terminal, next.default_rec,
-         configJson, next.active, cur.id]
+         next.case_stage, next.client_visible, next.is_terminal, next.lane,
+         next.default_rec, configJson, next.active, cur.id]
       );
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
@@ -731,7 +955,7 @@ async function getBoard(db, templateId, { includeClosed = false } = {}) {
   // client_visible (board contract).
   const [stages] = await db.query(
     `SELECT id AS stage_id, stage_key, stage_number, internal_label,
-            client_label, client_visible, case_stage, is_terminal, default_rec
+            client_label, client_visible, case_stage, is_terminal, lane, default_rec
        FROM pipeline_stages
       WHERE template_id = ? AND active = 1
       ORDER BY stage_number ASC, id ASC`,

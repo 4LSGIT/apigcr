@@ -20,6 +20,11 @@
 //   - config: object → JSON.stringify'd STRING at the placeholder;
 //     ''/null → SQL NULL; array/bad JSON → 400.
 //   - reorderStages: id-set mismatch → 400; happy path rewrites 1..N.
+//   - (R1) the BOOTSTRAP INVARIANT: a stage_key may not be ACTIVE on a
+//     role='intake' template and a role='case' template at once → 409, no
+//     force. Enforced on create, on activation, on key rename, and on a
+//     template role flip. The INACTIVE Intake `retained` row stays legal —
+//     that inactive flag is what makes retention work at all.
 //
 // Run:
 //   npx jest tests/pipelineAdminService.test.js
@@ -101,7 +106,7 @@ const TPL = { id: 2, name: 'Bankruptcy — Chapter 7', case_type: 'Bankruptcy', 
 const STAGE = {
   id: 7, template_id: 2, stage_number: 3, stage_key: 'meeting_341',
   internal_label: '341 Meeting', client_label: 'Meeting of creditors',
-  case_stage: 'Filed', client_visible: 1, is_terminal: 0,
+  case_stage: 'Filed', client_visible: 1, is_terminal: 0, lane: 'main',
   default_rec: 'Attend 341; provide requested docs', config: null, active: 1,
 };
 const LONG_51 = 'x'.repeat(51);
@@ -121,7 +126,8 @@ describe('internal_label 50-char cap', () => {
 
   test('createStage accepts exactly 50 chars', async () => {
     const db = stubTxDb([
-      [{ id: 2 }],                    // template exists
+      [{ id: 2, role: 'case' }],      // template exists (role: R1 invariant)
+      [],                             // R1: no cross-role active key
       [{ next_num: 6 }],              // max+1
       { insertId: 99 },               // INSERT
       [{ ...STAGE, id: 99, internal_label: OK_50 }],
@@ -159,7 +165,8 @@ describe('field validation', () => {
 
   test('duplicate key in template: ER_DUP_ENTRY mapped to 409', async () => {
     const db = stubTxDb([
-      [{ id: 2 }],
+      [{ id: 2, role: 'case' }],
+      [],                             // R1: no cross-role active key
       [{ next_num: 6 }],
       () => { throw dupErr(); },      // INSERT hits uq_template_key
     ]);
@@ -189,6 +196,8 @@ describe('stage_key immutability once referenced', () => {
     const db = stubTxDb([
       [STAGE],
       [{ n: 0 }],                                   // ref count
+      [{ role: 'case' }],                           // R1: owning template role
+      [],                                           // R1: no cross-role active key
       {},                                           // UPDATE
       [{ ...STAGE, stage_key: 'renamed_key' }],     // re-SELECT
     ]);
@@ -312,28 +321,30 @@ describe('config column', () => {
   test('object config is stringified at the INSERT placeholder', async () => {
     const cfg = { stamp: 'filed_date' };
     const db = stubTxDb([
-      [{ id: 2 }],
+      [{ id: 2, role: 'case' }],
+      [],                             // R1: no cross-role active key
       [{ next_num: 6 }],
       { insertId: 20 },
       [{ ...STAGE, id: 20, config: cfg }],
     ]);
     await svc.createStage(db, 2, { stage_key: 'k1', internal_label: 'X', case_stage: 'Open', config: cfg });
     const ins = db.connCalls.find(c => c.sql.startsWith('INSERT'));
-    const cfgParam = ins.params[9];   // 10th column in the INSERT
+    const cfgParam = ins.params[10];  // 11th column in the INSERT (lane added at 9)
     expect(typeof cfgParam).toBe('string');
     expect(JSON.parse(cfgParam)).toEqual(cfg);
   });
 
   test('blank string config → NULL', async () => {
     const db = stubTxDb([
-      [{ id: 2 }],
+      [{ id: 2, role: 'case' }],
+      [],                             // R1: no cross-role active key
       [{ next_num: 6 }],
       { insertId: 21 },
       [{ ...STAGE, id: 21 }],
     ]);
     await svc.createStage(db, 2, { stage_key: 'k2', internal_label: 'X', case_stage: 'Open', config: '' });
     const ins = db.connCalls.find(c => c.sql.startsWith('INSERT'));
-    expect(ins.params[9]).toBeNull();
+    expect(ins.params[10]).toBeNull();
   });
 
   test('array config → 400', async () => {
@@ -352,7 +363,7 @@ describe('config column', () => {
     ]);
     await svc.updateStage(db, 7, { internal_label: 'Y' });
     const upd = db.connCalls.find(c => c.sql.startsWith('UPDATE'));
-    const cfgParam = upd.params[8];     // config is the 9th SET column
+    const cfgParam = upd.params[9];     // config is the 10th SET column (lane added at 8)
     expect(typeof cfgParam).toBe('string');
     expect(JSON.parse(cfgParam)).toEqual(cfg);
   });
@@ -399,6 +410,254 @@ describe('reorderStages', () => {
   test('duplicate ids → 400 before any query', async () => {
     const db = stubTxDb([]);
     await expect(svc.reorderStages(db, 2, [5, 5, 6])).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 — the bootstrap invariant
+//
+// WHY THIS IS A TEST AND NOT A LINT RULE. pipelineService._resolveTarget
+// searches the PHASE-RESOLVED template first. A phase-'intake' case advancing
+// to `retained` therefore looks at the Intake template before its chapter
+// template, and the ONLY reason it doesn't stop there is that the Intake
+// `retained` row is active=0. Activate it while `retained` is also active on a
+// chapter template and every retention in the firm logs against intake, keeps
+// pipeline_phase='intake', and strands the case in the funnel — with NO error.
+//
+// The colliding-stage probe SQL is `... AND t.role = ? AND s.id != ?`, so a
+// scripted [] means "no collision" and a scripted row means "collision".
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('R1 bootstrap invariant (cross-role active stage_key)', () => {
+  const INTAKE_TPL = { id: 1, name: 'Intake', case_type: '', case_subtype: '', role: 'intake', is_default: 0, description: null, active: 1 };
+  const HIT_CASE   = [{ id: 23, template_id: 2, name: 'Bankruptcy — Chapter 7', role: 'case' }];
+  const HIT_INTAKE = [{ id: 10, template_id: 1, name: 'Intake', role: 'intake' }];
+
+  test('THE LIVE FOOTGUN: activating Intake `retained` while it is active on a chapter template → 409', async () => {
+    // Two clicks in Case Config used to be enough. This is the exact toggle
+    // (pipelines.html toggleStageActive → PUT {active:1}).
+    const INACTIVE_RETAINED = {
+      id: 10, template_id: 1, stage_number: 10, stage_key: 'retained',
+      internal_label: 'Retained', client_label: 'Retained', case_stage: 'Pending',
+      client_visible: 1, is_terminal: 0, lane: 'main', default_rec: '', config: null, active: 0,
+    };
+    const db = stubTxDb([
+      [INACTIVE_RETAINED],       // SELECT current
+      [{ role: 'intake' }],      // owning template role
+      HIT_CASE,                  // collision on a role='case' template
+    ]);
+    await expect(svc.updateStage(db, 10, { active: 1 })).rejects.toMatchObject({ status: 409 });
+    expect(db.connCalls.some(c => c.sql.startsWith('UPDATE'))).toBe(false);
+  });
+
+  test('the 409 names the colliding template, the key, and why it matters', async () => {
+    const INACTIVE_RETAINED = { ...STAGE, id: 10, template_id: 1, stage_key: 'retained', active: 0 };
+    const db = stubTxDb([[INACTIVE_RETAINED], [{ role: 'intake' }], HIT_CASE]);
+    let msg = '';
+    try { await svc.updateStage(db, 10, { active: 1 }); } catch (e) { msg = e.message; }
+    expect(msg).toContain('retained');
+    expect(msg).toContain('Bankruptcy — Chapter 7');
+    expect(msg).toMatch(/bootstrap/i);
+    // NO force escape hatch — unlike the duplicate-active TEMPLATE guard,
+    // this invariant has no legitimate exception.
+    expect(msg).not.toMatch(/force/i);
+  });
+
+  test('createStage with active=1 and a key already active on the opposite role → 409, no INSERT', async () => {
+    const db = stubTxDb([
+      [{ id: 1, role: 'intake' }],   // creating on the INTAKE template
+      HIT_CASE,                      // `retained` already active on a case template
+    ]);
+    await expect(
+      svc.createStage(db, 1, { stage_key: 'retained', internal_label: 'Retained', case_stage: 'Pending' })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(db.connCalls.some(c => c.sql.startsWith('INSERT'))).toBe(false);
+  });
+
+  test('the mirror direction is refused too: a case-template key already active on intake → 409', async () => {
+    // Stated symmetrically on purpose — the hijack is a property of the PAIR,
+    // not of which side you happen to be editing.
+    const db = stubTxDb([
+      [{ id: 2, role: 'case' }],
+      HIT_INTAKE,
+    ]);
+    await expect(
+      svc.createStage(db, 2, { stage_key: 'lead', internal_label: 'Lead', case_stage: 'Open' })
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  test('creating the stage INACTIVE stays legal — that is how the live Intake `retained` row exists', async () => {
+    const db = stubTxDb([
+      [{ id: 1, role: 'intake' }],
+      [{ next_num: 10 }],            // straight to max+1: no invariant probe ran
+      { insertId: 40 },
+      [{ ...STAGE, id: 40, stage_key: 'retained', active: 0 }],
+    ]);
+    const row = await svc.createStage(db, 1, {
+      stage_key: 'retained', internal_label: 'Retained', case_stage: 'Pending', active: 0,
+    });
+    expect(row.id).toBe(40);
+    expect(db.connCalls.some(c => /t\.role = \?/.test(c.sql))).toBe(false);
+  });
+
+  test('renaming a key ONTO a colliding active key → 409, no UPDATE', async () => {
+    const db = stubTxDb([
+      [{ ...STAGE, template_id: 1, stage_key: 'old_key', active: 1 }],
+      [{ n: 0 }],                    // key is renameable (no log refs)
+      [{ role: 'intake' }],
+      HIT_CASE,                      // …but the NEW key collides
+    ]);
+    await expect(
+      svc.updateStage(db, 7, { stage_key: 'retained' })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(db.connCalls.some(c => c.sql.startsWith('UPDATE'))).toBe(false);
+  });
+
+  test('renaming a key while INACTIVE skips the check entirely', async () => {
+    const db = stubTxDb([
+      [{ ...STAGE, stage_key: 'old_key', active: 0 }],
+      [{ n: 0 }],
+      {},                            // straight to UPDATE
+      [{ ...STAGE, stage_key: 'retained', active: 0 }],
+    ]);
+    await svc.updateStage(db, 7, { stage_key: 'retained' });
+    expect(db.connCalls.some(c => /t\.role = \?/.test(c.sql))).toBe(false);
+  });
+
+  test('an already-active row edited WITHOUT activating or renaming is not re-checked', async () => {
+    // It was legal before this call and this call cannot change that. Re-checking
+    // would 409 on an unrelated label edit.
+    const db = stubTxDb([
+      [STAGE],                       // active: 1
+      {},                            // UPDATE
+      [{ ...STAGE, internal_label: 'New' }],
+    ]);
+    await svc.updateStage(db, 7, { internal_label: 'New' });
+    expect(db.connCalls.some(c => /t\.role = \?/.test(c.sql))).toBe(false);
+  });
+
+  test('DEACTIVATING is always allowed — it can only ever REMOVE a collision', async () => {
+    const db = stubTxDb([
+      [STAGE],
+      {},
+      [{ ...STAGE, active: 0 }],
+    ]);
+    await svc.updateStage(db, 7, { active: 0 });
+    expect(db.connCalls.some(c => /t\.role = \?/.test(c.sql))).toBe(false);
+  });
+
+  test('activation with NO collision proceeds normally', async () => {
+    const db = stubTxDb([
+      [{ ...STAGE, active: 0 }],
+      [{ role: 'case' }],
+      [],                            // no cross-role hit
+      {},                            // UPDATE
+      [{ ...STAGE, active: 1 }],
+    ]);
+    const row = await svc.updateStage(db, 7, { active: 1 });
+    expect(row.active).toBe(1);
+  });
+
+  test('a template ROLE FLIP that would collide → 409, no UPDATE', async () => {
+    // Flipping Ch7 to role='intake' would make its active `retained` collide
+    // with Ch13's — one checkbox, retention broken firm-wide.
+    const db = stubTxDb([
+      [TPL],                         // SELECT current (role 'case')
+      [],                            // assertNoActiveDupe — clean
+      [{ stage_key: 'retained', other_id: 3, other_name: 'Bankruptcy — Chapter 13' }],
+    ]);
+    await expect(svc.updateTemplate(db, 2, { role: 'intake' })).rejects.toMatchObject({ status: 409 });
+    expect(db.connCalls.some(c => c.sql.startsWith('UPDATE'))).toBe(false);
+  });
+
+  test('the role-flip 409 names the key and the colliding template', async () => {
+    const db = stubTxDb([
+      [TPL], [],
+      [{ stage_key: 'retained', other_id: 3, other_name: 'Bankruptcy — Chapter 13' }],
+    ]);
+    let msg = '';
+    try { await svc.updateTemplate(db, 2, { role: 'intake' }); } catch (e) { msg = e.message; }
+    expect(msg).toContain('retained');
+    expect(msg).toContain('Bankruptcy — Chapter 13');
+    expect(msg).toContain('intake');
+  });
+
+  test('a role flip with no collision proceeds', async () => {
+    const db = stubTxDb([
+      [INTAKE_TPL],                  // current role 'intake'
+      [],                            // dupe check
+      [],                            // no colliding keys
+      {},                            // UPDATE
+      [{ ...INTAKE_TPL, role: 'case' }],
+    ]);
+    const row = await svc.updateTemplate(db, 1, { role: 'case' });
+    expect(row.role).toBe('case');
+  });
+
+  test('a template edit that does NOT change role never runs the flip check', async () => {
+    const db = stubTxDb([
+      [TPL],
+      [],                            // dupe check
+      {},                            // UPDATE
+      [{ ...TPL, name: 'Renamed' }],
+    ]);
+    await svc.updateTemplate(db, 2, { name: 'Renamed' });
+    expect(db.connCalls.some(c => /JOIN pipeline_stages o/.test(c.sql))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 — lane column
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('lane validation and defaulting', () => {
+  test('lane defaults to "main" when absent — the recoverable direction', async () => {
+    // An unclassified stage shows up where someone will notice it, rather than
+    // vanishing from every case's upcoming list.
+    const db = stubTxDb([
+      [{ id: 2, role: 'case' }], [], [{ next_num: 6 }],
+      { insertId: 50 }, [{ ...STAGE, id: 50 }],
+    ]);
+    await svc.createStage(db, 2, { stage_key: 'k9', internal_label: 'X', case_stage: 'Open' });
+    const ins = db.connCalls.find(c => c.sql.startsWith('INSERT'));
+    expect(ins.sql).toContain('lane');
+    expect(ins.params[8]).toBe('main');
+  });
+
+  test('lane "offramp" is stored verbatim', async () => {
+    const db = stubTxDb([
+      [{ id: 2, role: 'case' }], [], [{ next_num: 7 }],
+      { insertId: 51 }, [{ ...STAGE, id: 51, lane: 'offramp' }],
+    ]);
+    await svc.createStage(db, 2, {
+      stage_key: 'dismissed', internal_label: 'Dismissed', case_stage: 'Closed', lane: 'offramp',
+    });
+    expect(db.connCalls.find(c => c.sql.startsWith('INSERT')).params[8]).toBe('offramp');
+  });
+
+  test('an invalid lane → 400 before any query (lax sql_mode would store "")', async () => {
+    const db = stubTxDb([]);
+    await expect(
+      svc.createStage(db, 2, { stage_key: 'k1', internal_label: 'X', case_stage: 'Open', lane: 'sidetrack' })
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  test('updateStage without a lane key preserves the stored value', async () => {
+    const db = stubTxDb([
+      [{ ...STAGE, lane: 'offramp' }],
+      {},
+      [{ ...STAGE, lane: 'offramp' }],
+    ]);
+    await svc.updateStage(db, 7, { internal_label: 'Y' });
+    expect(db.connCalls.find(c => c.sql.startsWith('UPDATE')).params[7]).toBe('offramp');
+  });
+
+  test('a lane-less stored row (pre-migration) updates as "main", not as ""', async () => {
+    const { lane, ...NO_LANE } = STAGE;
+    const db = stubTxDb([[NO_LANE], {}, [NO_LANE]]);
+    await svc.updateStage(db, 7, { internal_label: 'Y' });
+    expect(db.connCalls.find(c => c.sql.startsWith('UPDATE')).params[7]).toBe('main');
   });
 });
 

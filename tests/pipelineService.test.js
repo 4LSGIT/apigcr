@@ -12,6 +12,12 @@
 //     matching mirroring utf8mb4_general_ci).
 //   - getPipeline upcoming computation, including the branched-from-intake
 //     case (current stage_key not in the resolved template → ALL stages).
+//   - (R1) the lane filter: upcoming is MAIN-lane only, `stages` keeps both,
+//     a case sitting ON an off-ramp keeps its position, and a lane-less row
+//     (pre-migration payload) reads as main.
+//   - (R1) the forwardOnly verdict matrix — one test per row of the table in
+//     advanceStage's docblock, plus noop-beats-backward precedence, guard
+//     combination, and the non-boolean 400.
 //   - advanceStage idempotency no-op (no INSERT/UPDATE; lock still released;
 //     payload carries noop:true).
 //   - case_status truncation at 50 on a real advance (log keeps the ≤100
@@ -112,11 +118,27 @@ const TPL_BK_DEFAULT = { id: 4, name: 'Bankruptcy — Default', case_type: 'Bank
 const ALL_TPLS = [TPL_INTAKE, TPL_CH7, TPL_CH13];
 
 const CH7_STAGES = [
-  { stage_id: 21, stage_key: 'docs',        stage_number: 1, internal_label: 'Documents & Prep', client_label: 'Preparing your case', case_stage: 'Pending',   is_terminal: 0, default_rec: 'Complete schedules & matrix', client_visible: 1 },
-  { stage_id: 22, stage_key: 'filed',       stage_number: 2, internal_label: 'Filed',            client_label: 'Your case is filed',  case_stage: 'Filed',     is_terminal: 0, default_rec: 'Sign post-petition contract (if appl.); 2nd course', client_visible: 1 },
-  { stage_id: 23, stage_key: 'meeting_341', stage_number: 3, internal_label: '341 Meeting',      client_label: 'Meeting of creditors', case_stage: 'Filed',    is_terminal: 0, default_rec: 'Attend 341; provide requested docs', client_visible: 1 },
-  { stage_id: 24, stage_key: 'discharge',   stage_number: 4, internal_label: 'Discharge',        client_label: 'Discharge entered',   case_stage: 'Concluded', is_terminal: 0, default_rec: 'Await closing', client_visible: 1 },
-  { stage_id: 25, stage_key: 'closed',      stage_number: 5, internal_label: 'Closed',           client_label: 'Case closed',         case_stage: 'Closed',    is_terminal: 1, default_rec: '', client_visible: 0 },
+  { stage_id: 21, stage_key: 'docs',        stage_number: 1, internal_label: 'Documents & Prep', client_label: 'Preparing your case', case_stage: 'Pending',   is_terminal: 0, lane: 'main', default_rec: 'Complete schedules & matrix', client_visible: 1 },
+  { stage_id: 22, stage_key: 'filed',       stage_number: 2, internal_label: 'Filed',            client_label: 'Your case is filed',  case_stage: 'Filed',     is_terminal: 0, lane: 'main', default_rec: 'Sign post-petition contract (if appl.); 2nd course', client_visible: 1 },
+  { stage_id: 23, stage_key: 'meeting_341', stage_number: 3, internal_label: '341 Meeting',      client_label: 'Meeting of creditors', case_stage: 'Filed',    is_terminal: 0, lane: 'main', default_rec: 'Attend 341; provide requested docs', client_visible: 1 },
+  { stage_id: 24, stage_key: 'discharge',   stage_number: 4, internal_label: 'Discharge',        client_label: 'Discharge entered',   case_stage: 'Concluded', is_terminal: 0, lane: 'main', default_rec: 'Await closing', client_visible: 1 },
+  { stage_id: 25, stage_key: 'closed',      stage_number: 5, internal_label: 'Closed',           client_label: 'Case closed',         case_stage: 'Closed',    is_terminal: 1, lane: 'main', default_rec: '', client_visible: 0 },
+];
+
+// R1 — the live Ch7 shape: the happy path above plus a single off-ramp
+// carrying the HIGHEST stage_number, which is exactly the arrangement that
+// made `dismissed` show up as "upcoming" for every case on the template.
+const CH7_DISMISSED = { stage_id: 26, stage_key: 'dismissed', stage_number: 6, internal_label: 'Dismissed', client_label: 'Case dismissed', case_stage: 'Closed', is_terminal: 1, lane: 'offramp', default_rec: '', client_visible: 0 };
+const CH7_WITH_OFFRAMP = () => [...CH7_STAGES.map(s => ({ ...s })), { ...CH7_DISMISSED }];
+
+// The adversary shape: an off-ramp SITTING IN THE MIDDLE of the numbering
+// (appeal #8, before closed #9). A case at `appeal` must keep `appeal` as its
+// position while projecting the main stages numerically after it.
+const ADV_STAGES = () => [
+  { stage_id: 41, stage_key: 'trial',    stage_number: 6, internal_label: 'Trial',    client_label: 'Trial',    case_stage: 'Filed',     is_terminal: 0, lane: 'main',    default_rec: '', client_visible: 1 },
+  { stage_id: 42, stage_key: 'judgment', stage_number: 7, internal_label: 'Judgment', client_label: 'Judgment', case_stage: 'Concluded', is_terminal: 0, lane: 'main',    default_rec: '', client_visible: 1 },
+  { stage_id: 43, stage_key: 'appeal',   stage_number: 8, internal_label: 'On Appeal', client_label: 'On appeal', case_stage: 'Filed',   is_terminal: 0, lane: 'offramp', default_rec: '', client_visible: 1 },
+  { stage_id: 44, stage_key: 'closed',   stage_number: 9, internal_label: 'Closed',   client_label: 'Closed',   case_stage: 'Closed',    is_terminal: 1, lane: 'main',    default_rec: '', client_visible: 0 },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -287,6 +309,75 @@ describe('getPipeline', () => {
     const p = await svc.getPipeline(db, 'C1');
     expect(p.current.stage_key).toBe('retained');            // history survives the branch
     expect(p.template.id).toBe(TPL_CH7.id);                  // but the template re-resolved
+    expect(p.upcoming.map(s => s.stage_key)).toEqual(['docs', 'filed', 'meeting_341', 'discharge', 'closed']);
+  });
+
+  // ── R1 — the lane filter ────────────────────────────────────────────────
+  test('R1: upcoming excludes off-ramps; stages keeps BOTH lanes', async () => {
+    // The bug this closes: `dismissed` carries the highest stage_number purely
+    // because it was appended last, so every case below it was told Dismissed
+    // was coming next.
+    const db = stubDb([
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
+      ALL_TPLS.slice(),
+      [
+        { stage_id: 21, stage_key: 'docs',  case_stage: 'Pending', status_label: 'Documents & Prep', entered_at: 't1', entered_by: 6, source: 'manual', note: null },
+        { stage_id: 22, stage_key: 'filed', case_stage: 'Filed',   status_label: 'Filed',            entered_at: 't2', entered_by: 6, source: 'manual', note: null },
+      ],
+      CH7_WITH_OFFRAMP(),
+    ]);
+    const p = await svc.getPipeline(db, 'C1');
+    expect(p.upcoming.map(s => s.stage_key)).toEqual(['meeting_341', 'discharge', 'closed']);
+    expect(p.upcoming.some(s => s.stage_key === 'dismissed')).toBe(false);
+    // C1 contract: `stages` is BOTH lanes. The board needs the off-ramp
+    // column, the advance picker needs to be able to select it, and a history
+    // row sitting on it needs its client_label.
+    expect(p.stages.map(s => s.stage_key)).toEqual(
+      ['docs', 'filed', 'meeting_341', 'discharge', 'closed', 'dismissed']);
+    expect(p.stages.find(s => s.stage_key === 'dismissed').lane).toBe('offramp');
+  });
+
+  test('R1: no history → upcoming = all MAIN stages (off-ramps still excluded)', async () => {
+    const db = stubDb([
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
+      ALL_TPLS.slice(),
+      [],
+      CH7_WITH_OFFRAMP(),
+    ]);
+    const p = await svc.getPipeline(db, 'C1');
+    expect(p.upcoming.map(s => s.stage_key)).toEqual(['docs', 'filed', 'meeting_341', 'discharge', 'closed']);
+  });
+
+  test('R1: a case sitting ON an off-ramp keeps its position; upcoming = main stages after it', async () => {
+    // `appeal` is #8, between judgment (#7) and closed (#9). lane governs
+    // PROJECTION, never position — history and current are lane-agnostic, and
+    // this is what lets the portal keep rendering "On appeal" as where the
+    // case actually is.
+    const db = stubDb([
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Adversary Proceeding', pipeline_phase: 'case' }],
+      [TPL_INTAKE, { id: 4, name: 'Bankruptcy — Adversary Proceeding', case_type: 'Bankruptcy', case_subtype: 'Adversary Proceeding', role: 'case', is_default: 0, active: 1 }],
+      [
+        { stage_id: 42, stage_key: 'judgment', case_stage: 'Concluded', status_label: 'Judgment',  entered_at: 't1', entered_by: 6, source: 'manual', note: null },
+        { stage_id: 43, stage_key: 'appeal',   case_stage: 'Filed',     status_label: 'On Appeal', entered_at: 't2', entered_by: 6, source: 'manual', note: null },
+      ],
+      ADV_STAGES(),
+    ]);
+    const p = await svc.getPipeline(db, 'C1');
+    expect(p.current.stage_key).toBe('appeal');                       // position intact
+    expect(p.history.map(h => h.stage_key)).toEqual(['judgment', 'appeal']);
+    expect(p.upcoming.map(s => s.stage_key)).toEqual(['closed']);     // main, numerically after #8
+  });
+
+  test('R1: a lane-less stage row (pre-migration payload) reads as MAIN', async () => {
+    // The safe default, deliberately: an unclassified stage keeps being
+    // projected rather than silently vanishing from every case's next steps.
+    const db = stubDb([
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
+      ALL_TPLS.slice(),
+      [],
+      CH7_STAGES.map(({ lane, ...rest }) => rest),   // lane column absent entirely
+    ]);
+    const p = await svc.getPipeline(db, 'C1');
     expect(p.upcoming.map(s => s.stage_key)).toEqual(['docs', 'filed', 'meeting_341', 'discharge', 'closed']);
   });
 
@@ -751,6 +842,407 @@ describe('advanceStage guards (Slice E1)', () => {
     const p = await svc.advanceStage(db, 'C1', 'docs', { onlyFrom: null, onlyFromRole: undefined, source: 'system' });
     expect(p.skipped).toBe(false);
     expect(p.noop).toBe(false);
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// advanceStage — forwardOnly (R1)
+//
+// One test per row of the verdict table in advanceStage's docblock. Read that
+// table alongside this block; the two are meant to be checked against each
+// other.
+//
+// QUERY BUDGET (scriptGuard fails on drift in BOTH directions, so these counts
+// are part of the contract):
+//   forwardOnly absent ............ +0 conn queries
+//   armed, no latest log row ...... +0  (nothing to regress from)
+//   armed, same template .......... +1  (latest's stage row)
+//   armed, cross-template ......... +2  (latest's stage row, then BOTH roles
+//                                        in one IN(?,?) query)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('advanceStage forwardOnly (R1)', () => {
+  const LOCK_OK  = [{ lockAcquired: 1 }];
+  const RELEASED = [{ 'RELEASE_LOCK(?)': 1 }];
+  const CASE_CH7 = [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }];
+  const LEAD_CH7 = [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'intake' }];
+
+  // Stage rows as _resolveTarget returns them (SELECT * → lane included).
+  const T2 = (key, num, lane = 'main') => ({
+    id: 100 + num, template_id: 2, stage_key: key, stage_number: num,
+    internal_label: key, case_stage: 'Pending', default_rec: '', lane, active: 1,
+  });
+  const DOCS      = T2('docs', 2);
+  const FILED     = T2('filed', 3);
+  const DISMISSED = T2('dismissed', 7, 'offramp');
+  const RETAINED_T2 = T2('retained', 1);
+  const CONTRACT_SENT_T1 = {
+    id: 5, template_id: 1, stage_key: 'contract_sent', stage_number: 5,
+    internal_label: 'Contract Sent', case_stage: 'Open', default_rec: '', lane: 'main', active: 1,
+  };
+
+  const POOL_PIPELINE = () => [   // post-tx getPipeline: case → templates → log → stages
+    CASE_CH7.slice(),
+    ALL_TPLS.slice(),
+    [{ stage_id: 103, stage_key: 'filed', case_stage: 'Filed', status_label: 'Filed', entered_at: 't', entered_by: null, source: 'system', note: null }],
+    CH7_WITH_OFFRAMP(),
+  ];
+
+  // ── PASS rows ────────────────────────────────────────────────────────────
+
+  test('no latest log row → PASS (and costs no extra query)', async () => {
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [],                        // no latest
+        ALL_TPLS.slice(),
+        [RETAINED_T2],
+        [{ insertId: 1 }],
+        [{ role: 'case' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'retained', { forwardOnly: true, source: 'system' });
+    expect(p.skipped).toBe(false);
+    expect(p.noop).toBe(false);
+    // Nothing to compare against, so the comparison is skipped entirely.
+    expect(db.connCalls.some(c => /stage_number, lane FROM pipeline_stages/.test(c.sql))).toBe(false);
+  });
+
+  test('same template, main → main, forward → PASS', async () => {
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 900, template_id: 2, stage_key: 'docs' }],
+        ALL_TPLS.slice(),
+        [FILED],                   // target #3
+        [{ stage_number: 2, lane: 'main' }],   // latest `docs` #2
+        [{ insertId: 1 }],
+        [{ role: 'case' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'filed', { forwardOnly: true, source: 'system' });
+    expect(p.skipped).toBe(false);
+    expect(db.connCalls.some(c => c.sql.startsWith('INSERT INTO case_stage_log'))).toBe(true);
+  });
+
+  test('same template, entering an OFF-RAMP from mid-pipeline → PASS', async () => {
+    // dismissed is #7 and forward here anyway, but the point is that it would
+    // pass even if it were numbered FIRST: an off-ramp is reachable from
+    // anywhere, and the lane check short-circuits before any number is read.
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 901, template_id: 2, stage_key: 'meeting_341' }],
+        ALL_TPLS.slice(),
+        [{ ...DISMISSED, stage_number: 1 }],   // deliberately BEFORE the latest
+        [{ stage_number: 4, lane: 'main' }],
+        [{ insertId: 1 }],
+        [{ role: 'case' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'dismissed', { forwardOnly: true, source: 'system' });
+    expect(p.skipped).toBe(false);
+  });
+
+  test('same template, OFF-RAMP → OFF-RAMP → PASS (no_show → dead_lead)', async () => {
+    // DECIDED: the no-show sequence genuinely ends no_show → dead_lead, so an
+    // off-ramp target passes even when the case is already on one.
+    const DEAD_LEAD = { id: 9, template_id: 1, stage_key: 'dead_lead', stage_number: 9, internal_label: 'Dead Lead', case_stage: 'Closed', default_rec: '', lane: 'offramp', active: 1 };
+    const db = stubTxDb(
+      [
+        LOCK_OK, LEAD_CH7.slice(),
+        [{ id: 902, template_id: 1, stage_key: 'no_show' }],
+        ALL_TPLS.slice(),
+        [DEAD_LEAD],
+        [{ stage_number: 6, lane: 'offramp' }],   // latest `no_show`
+        [{ insertId: 1 }],
+        [{ role: 'intake' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      [
+        LEAD_CH7.slice(), ALL_TPLS.slice(),
+        [{ stage_id: 9, stage_key: 'dead_lead', case_stage: 'Closed', status_label: 'Dead Lead', entered_at: 't', entered_by: null, source: 'system', note: null }],
+        [],
+      ]
+    );
+    const p = await svc.advanceStage(db, 'C1', 'dead_lead', { forwardOnly: true, source: 'system' });
+    expect(p.skipped).toBe(false);
+  });
+
+  test('cross-template intake → case → PASS (the retention bootstrap)', async () => {
+    // forwardOnly must NEVER be the thing that blocks retention. Two role
+    // rows come back from ONE IN(?,?) query.
+    const db = stubTxDb(
+      [
+        LOCK_OK, LEAD_CH7.slice(),
+        [{ id: 903, template_id: 1, stage_key: 'contract_sent' }],
+        ALL_TPLS.slice(),
+        [RETAINED_T2],                              // resolved on the MATTER template
+        [{ stage_number: 5, lane: 'main' }],        // latest, on t1
+        [{ id: 1, role: 'intake' }, { id: 2, role: 'case' }],
+        [{ insertId: 1 }],
+        [{ role: 'case' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'retained', { forwardOnly: true, source: 'system' });
+    expect(p.skipped).toBe(false);
+    const roleQ = db.connCalls.find(c => /FROM pipeline_templates WHERE id IN/.test(c.sql));
+    expect(roleQ.params).toEqual([1, 2]);           // ONE query, both roles
+  });
+
+  test('cross-template case → case (matter-type change) → PASS, numbers never compared', async () => {
+    // DECIDED: stage_numbers are per-template ordinals. Ch7 #3 and Ch13 #3 are
+    // not the same milestone, so a lower target number across templates is not
+    // evidence of a regression.
+    const CH13_DOCS = { id: 302, template_id: 3, stage_key: 'docs', stage_number: 2, internal_label: 'Docs', case_stage: 'Pending', default_rec: '', lane: 'main', active: 1 };
+    const db = stubTxDb(
+      [
+        LOCK_OK,
+        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 13', pipeline_phase: 'case' }],
+        [{ id: 904, template_id: 2, stage_key: 'meeting_341' }],   // was on Ch7 #4
+        ALL_TPLS.slice(),
+        [CH13_DOCS],                                               // now Ch13 #2 — LOWER
+        [{ stage_number: 4, lane: 'main' }],
+        [{ id: 2, role: 'case' }, { id: 3, role: 'case' }],
+        [{ insertId: 1 }],
+        [{ role: 'case' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      [
+        [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 13', pipeline_phase: 'case' }],
+        ALL_TPLS.slice(),
+        [{ stage_id: 302, stage_key: 'docs', case_stage: 'Pending', status_label: 'Docs', entered_at: 't', entered_by: null, source: 'system', note: null }],
+        [],
+      ]
+    );
+    const p = await svc.advanceStage(db, 'C1', 'docs', { forwardOnly: true, source: 'system' });
+    expect(p.skipped).toBe(false);
+  });
+
+  test('cross-template, latest template row MISSING → PASS (unreachable state must not disarm retention)', async () => {
+    // Hard-deleting a template requires ZERO case_stage_log references, and
+    // `latest` IS one — so this cannot happen. Passing keeps an impossible
+    // state from silently blocking an advance if it ever becomes possible.
+    const db = stubTxDb(
+      [
+        LOCK_OK, LEAD_CH7.slice(),
+        [{ id: 905, template_id: 77, stage_key: 'contract_sent' }],
+        ALL_TPLS.slice(),
+        [RETAINED_T2],
+        [{ stage_number: 5, lane: 'main' }],
+        [{ id: 2, role: 'case' }],          // only the TARGET template came back
+        [{ insertId: 1 }],
+        [{ role: 'case' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'retained', { forwardOnly: true, source: 'system' });
+    expect(p.skipped).toBe(false);
+  });
+
+  // ── SKIP rows ────────────────────────────────────────────────────────────
+
+  test('same template, main → main, BACKWARD → skipped "backward"', async () => {
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 906, template_id: 2, stage_key: 'meeting_341' }],
+        ALL_TPLS.slice(),
+        [DOCS],                                  // #2
+        [{ stage_number: 4, lane: 'main' }],     // latest #4
+        RELEASED,
+      ],
+      []   // NO pool queries — a skip spends no getPipeline re-read
+    );
+    const p = await svc.advanceStage(db, 'C1', 'docs', { forwardOnly: true, source: 'system' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'meeting_341', reason: 'backward' });
+    const sqls = db.connCalls.map(c => c.sql);
+    expect(sqls.some(s => s.startsWith('INSERT INTO case_stage_log'))).toBe(false);
+    expect(sqls.some(s => s.startsWith('UPDATE cases'))).toBe(false);
+    expect(sqls.some(s => s.includes('RELEASE_LOCK'))).toBe(true);
+    expect(domainEvents.emit).not.toHaveBeenCalled();
+    expect(db.poolCalls).toHaveLength(0);
+  });
+
+  test('same template, EQUAL stage_numbers on different stages → skipped "backward"', async () => {
+    // Not the same stage (that is the noop above), so not forward either.
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 907, template_id: 2, stage_key: 'meeting_341' }],
+        ALL_TPLS.slice(),
+        [T2('discharge', 4)],
+        [{ stage_number: 4, lane: 'main' }],
+        RELEASED,
+      ],
+      []
+    );
+    const p = await svc.advanceStage(db, 'C1', 'discharge', { forwardOnly: true, source: 'system' });
+    expect(p.reason).toBe('backward');
+  });
+
+  test('same template, OFF-RAMP → main (recovery) → skipped "backward"', async () => {
+    // Recovery onto the happy path is real, but deliberate — explicit-guard or
+    // unguarded territory, not something a monotonic automation does alone.
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 908, template_id: 2, stage_key: 'dismissed' }],
+        ALL_TPLS.slice(),
+        [T2('closed', 9)],                          // main, and NUMERICALLY HIGHER
+        [{ stage_number: 7, lane: 'offramp' }],
+        RELEASED,
+      ],
+      []
+    );
+    const p = await svc.advanceStage(db, 'C1', 'closed', { forwardOnly: true, source: 'system' });
+    // Forward by number, backward by lane — lane wins.
+    expect(p).toEqual({ skipped: true, noop: false, from: 'dismissed', reason: 'backward' });
+  });
+
+  test('cross-template case → intake → skipped "backward"', async () => {
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 909, template_id: 2, stage_key: 'filed' }],
+        ALL_TPLS.slice(),
+        [CONTRACT_SENT_T1],                              // an INTAKE-template stage
+        [{ stage_number: 3, lane: 'main' }],
+        [{ id: 1, role: 'intake' }, { id: 2, role: 'case' }],
+        RELEASED,
+      ],
+      []
+    );
+    const p = await svc.advanceStage(db, 'C1', 'contract_sent', { forwardOnly: true, source: 'system' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'filed', reason: 'backward' });
+  });
+
+  test("latest's stage row not found (key renamed / stage deleted) → skipped 'unresolved' + warn", async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 910, template_id: 2, stage_key: 'gone_key' }],
+        ALL_TPLS.slice(),
+        [FILED],
+        [],                                  // latest's stage row: NOT FOUND
+        RELEASED,
+      ],
+      []
+    );
+    const p = await svc.advanceStage(db, 'C1', 'filed', { forwardOnly: true, source: 'system' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'gone_key', reason: 'unresolved' });
+    // Loud: an unresolvable comparison is either a real template edit or a bug,
+    // and skipping forever in silence is the failure mode to avoid.
+    expect(warn).toHaveBeenCalled();
+    expect(String(warn.mock.calls[0][0])).toMatch(/forwardOnly unresolved/);
+    warn.mockRestore();
+  });
+
+  // ── Precedence + plumbing ────────────────────────────────────────────────
+
+  test('NOOP BEATS BACKWARD: repeating the current stage is still a plain no-op', async () => {
+    // Load-bearing ordering. If the comparison ran first, every idempotent
+    // re-fire of a forwardOnly automation would start reporting a refusal
+    // instead of "nothing to do" — two different answers to two different
+    // questions, and callers branch on both.
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 911, template_id: 2, stage_key: 'filed' }],   // latest === target
+        ALL_TPLS.slice(),
+        [FILED],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'filed', { forwardOnly: true, source: 'system' });
+    expect(p.noop).toBe(true);
+    expect(p.skipped).toBe(false);
+    // The comparison never ran — no latest-stage lookup was issued.
+    expect(db.connCalls.some(c => /stage_number, lane FROM pipeline_stages/.test(c.sql))).toBe(false);
+  });
+
+  test('forwardOnly ALONE counts as guarded: soft resolution + the bare skip shape', async () => {
+    // An unknown key under forwardOnly must skip, not 400 — same contract the
+    // onlyFrom callers get.
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 912, template_id: 2, stage_key: 'filed' }],
+        ALL_TPLS.slice(),
+        [],                                  // key does not resolve
+        RELEASED,
+      ],
+      []
+    );
+    const p = await svc.advanceStage(db, 'C1', 'not_a_stage', { forwardOnly: true, source: 'system' });
+    expect(p).toEqual({ skipped: true, noop: false, from: 'filed', reason: 'unresolved' });
+  });
+
+  test('guards COMBINE: onlyFrom passes but forwardOnly refuses → skipped "backward"', async () => {
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 913, template_id: 2, stage_key: 'meeting_341' }],
+        ALL_TPLS.slice(),
+        [DOCS],
+        [{ stage_number: 4, lane: 'main' }],
+        RELEASED,
+      ],
+      []
+    );
+    const p = await svc.advanceStage(db, 'C1', 'docs', {
+      onlyFrom: ['meeting_341'], forwardOnly: true, source: 'system',
+    });
+    expect(p.reason).toBe('backward');
+  });
+
+  test('forwardOnly:false is identical to absent — no extra query, no guarding', async () => {
+    const db = stubTxDb(
+      [
+        LOCK_OK, CASE_CH7.slice(),
+        [{ id: 914, template_id: 2, stage_key: 'meeting_341' }],
+        ALL_TPLS.slice(),
+        [DOCS],                              // a BACKWARD move, allowed unguarded
+        [{ insertId: 1 }],
+        [{ role: 'case' }],
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      POOL_PIPELINE()
+    );
+    const p = await svc.advanceStage(db, 'C1', 'docs', { forwardOnly: false, source: 'system' });
+    expect(p.skipped).toBe(false);
+    expect(db.connCalls.some(c => /stage_number, lane FROM pipeline_stages/.test(c.sql))).toBe(false);
+  });
+
+  test('non-boolean forwardOnly → 400 up front, no connection touched', async () => {
+    // A string must not silently read as "guard off". The automation-facing
+    // string parse lives in lib/internal_functions/pipeline.js.
+    const db = stubTxDb([], []);
+    await expect(svc.advanceStage(db, 'C1', 'docs', { forwardOnly: 'true' }))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(svc.advanceStage(db, 'C1', 'docs', { forwardOnly: 1 }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(db.connCalls).toHaveLength(0);
   });
 });
 

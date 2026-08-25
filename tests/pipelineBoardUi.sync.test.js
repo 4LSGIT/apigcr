@@ -82,8 +82,13 @@ function boardPayload() {
  * @param {object}  o
  * @param {boolean} o.noTemplates  server returns no active templates
  * @param {object}  o.advance      body the advance endpoint returns
+ * @param {object}  o.payload      board payload override. Defaults to
+ *   boardPayload(), whose stages carry NO `lane` field — that is deliberate
+ *   and is the back-compat fixture: it proves a pre-migration server response
+ *   still renders exactly as it did before R1. The lane-bearing payload lives
+ *   in its own test below rather than being retrofitted here.
  */
-async function boot({ noTemplates = false, advance = null } = {}) {
+async function boot({ noTemplates = false, advance = null, payload = null } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
     url: 'https://app.4lsg.com/pipelineBoard.html',
     runScripts: 'dangerously',
@@ -107,7 +112,7 @@ async function boot({ noTemplates = false, advance = null } = {}) {
     if (url === '/api/pipeline-admin/templates') {
       data = { templates: noTemplates ? [] : [{ id: 1, name: 'Intake', active: 1 }] };
     } else if (url === '/api/pipeline-board') {
-      data = boardPayload();
+      data = payload || boardPayload();
     } else if (/\/pipeline\/advance$/.test(url)) {
       data = advance || { status: 'success', noop: false,
                           changes: { case_stage: 'Retained', pipeline_phase: 'case' } };
@@ -532,5 +537,123 @@ describe('column scroll preservation', () => {
     await tick(window, 400);
     expect(errors).toEqual([]);
     expect(byStage(window, 'unstaged').scrollTop).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 — lane grouping
+//
+// The board's column ORDER is the whole feature: off-ramps carry high
+// stage_numbers only because they were appended last, so left-to-right they
+// used to interleave with the happy path and break its reading. Grouping them
+// behind a divider is what makes the pipeline scan as a pipeline.
+//
+// The default fixture above deliberately has NO `lane` field, and every other
+// test in this file still uses it — that is the back-compat proof. This block
+// supplies its own lane-bearing payload rather than retrofitting the old one,
+// so the two properties stay independently falsifiable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function lanedPayload() {
+  return {
+    template: { id: 2, name: 'Bankruptcy — Chapter 7', role: 'case' },
+    // Deliberately NOT in lane order — the server sorts by stage_number, and
+    // the off-ramps carry the HIGHEST numbers, which is exactly the live shape.
+    stages: [
+      { stage_key: 'docs',      stage_number: 1, internal_label: 'Docs',      client_label: 'Preparing',  lane: 'main' },
+      { stage_key: 'filed',     stage_number: 2, internal_label: 'Filed',     client_label: 'Filed',      lane: 'main' },
+      { stage_key: 'closed',    stage_number: 3, internal_label: 'Closed',    client_label: 'Closed',     lane: 'main' },
+      { stage_key: 'dismissed', stage_number: 4, internal_label: 'Dismissed', client_label: 'Dismissed',  lane: 'offramp' },
+      { stage_key: 'appeal',    stage_number: 5, internal_label: 'On Appeal', client_label: 'On appeal',  lane: 'offramp' },
+    ],
+    columns: {
+      unstaged:  [],
+      docs:      [{ case_id: 'AAAA', case_display: '24-1', primary_contact_name: 'Ann',
+                    case_open_date: new Date().toISOString(), days_in_stage: 1 }],
+      filed:     [],
+      closed:    [],
+      dismissed: [{ case_id: 'CCCC', case_display: '24-3', primary_contact_name: 'Cyd',
+                    case_open_date: new Date().toISOString(), days_in_stage: 9 }],
+      appeal:    [],
+    },
+  };
+}
+
+/** Column keys in DOM order, with the divider marked so order is asserted
+ *  against the RENDERED sequence rather than against two filtered lists. */
+function domSequence(window) {
+  return [...window.document.querySelectorAll('#pb-board > *')].map(el =>
+    el.classList.contains('pb-lane-split') ? '|DIVIDER|' : el.dataset.stageKey);
+}
+
+describe('pipelineBoard lane grouping (R1)', () => {
+  test('columns run unstaged → main (by stage_number) → divider → off-ramps', async () => {
+    const { window, errors } = await boot({ payload: lanedPayload() });
+    expect(errors).toEqual([]);
+    expect(domSequence(window)).toEqual([
+      'unstaged', 'docs', 'filed', 'closed', '|DIVIDER|', 'dismissed', 'appeal',
+    ]);
+  });
+
+  test('exactly one divider, and it sits between the lanes', async () => {
+    const { window } = await boot({ payload: lanedPayload() });
+    const seq = domSequence(window);
+    expect(seq.filter(k => k === '|DIVIDER|')).toHaveLength(1);
+    expect(seq.indexOf('|DIVIDER|')).toBe(seq.indexOf('dismissed') - 1);
+  });
+
+  test('off-ramp columns are marked, main columns are not', async () => {
+    const { window } = await boot({ payload: lanedPayload() });
+    const laneOf = (key) => window.document
+      .querySelector(`.pb-col[data-stage-key="${key}"]`).classList.contains('pb-offramp');
+    expect(laneOf('docs')).toBe(false);
+    expect(laneOf('closed')).toBe(false);
+    expect(laneOf('dismissed')).toBe(true);
+    expect(laneOf('appeal')).toBe(true);
+  });
+
+  test('off-ramps stay REAL columns: cards render and the drop target is live', async () => {
+    // lane governs projection, not position. Moving a case onto an off-ramp is
+    // a normal operation, so the column must keep its body and its Sortable.
+    const { window } = await boot({ payload: lanedPayload() });
+    const body = window.document.querySelector('.pb-col[data-stage-key="dismissed"] .pb-col-body');
+    expect(body).toBeTruthy();
+    expect(body.querySelectorAll('.pb-card')).toHaveLength(1);
+    // Every column body — both lanes — got hooked for drag/drop.
+    const hooked = window.__sortableOpts.map(o => o.el.dataset.stageKey);
+    expect(hooked).toContain('dismissed');
+    expect(hooked).toContain('appeal');
+  });
+
+  test('the divider carries no data-stage-key, so scroll restore cannot target it', async () => {
+    // render() keys scroll preservation on data-stage-key. A divider with one
+    // would let a column's position be poured into a non-scrolling element.
+    const { window } = await boot({ payload: lanedPayload() });
+    const split = window.document.querySelector('.pb-lane-split');
+    expect(split).toBeTruthy();
+    expect(split.dataset.stageKey).toBeUndefined();
+  });
+
+  test('no off-ramps in the payload → no divider at all', async () => {
+    const mainOnly = lanedPayload();
+    mainOnly.stages = mainOnly.stages.filter(s => s.lane === 'main');
+    const { window, errors } = await boot({ payload: mainOnly });
+    expect(errors).toEqual([]);
+    expect(window.document.querySelectorAll('.pb-lane-split')).toHaveLength(0);
+    expect(domSequence(window)).toEqual(['unstaged', 'docs', 'filed', 'closed']);
+  });
+
+  test('a lane-less payload renders as all-main — the pre-migration server response', async () => {
+    // Same assertion as the default-fixture tests, stated explicitly here so
+    // the back-compat rule is visible next to the feature it protects.
+    const noLane = lanedPayload();
+    noLane.stages = noLane.stages.map(({ lane, ...rest }) => rest);
+    const { window, errors } = await boot({ payload: noLane });
+    expect(errors).toEqual([]);
+    expect(window.document.querySelectorAll('.pb-lane-split')).toHaveLength(0);
+    expect(window.document.querySelectorAll('.pb-col.pb-offramp')).toHaveLength(0);
+    expect(domSequence(window)).toEqual([
+      'unstaged', 'docs', 'filed', 'closed', 'dismissed', 'appeal',
+    ]);
   });
 });

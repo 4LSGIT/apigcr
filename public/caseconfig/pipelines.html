@@ -71,6 +71,11 @@
     .badge-default  { background: var(--warn-soft); color: var(--warn); }
     .badge-inactive { background: var(--surface-2); color: var(--text-muted); }
     .badge-stage    { background: var(--surface-2); color: var(--text-2); text-transform: none; }
+    /* Off-ramp rows read as a side branch, not an error — --warn-soft, not
+       --danger-soft. An off-ramp is a legitimate destination; it is simply
+       never PROJECTED as the next step. */
+    .badge-offramp  { background: var(--warn-soft); color: var(--warn-on-soft); }
+    table.stages tr.offramp .st-label { font-style: italic; }
 
     /* ── Right panel: editor ── */
     .panel-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -215,6 +220,14 @@
 //     surfaces as a confirm that retries with force:true.
 //   - config edits go through a validated raw-JSON textarea
 //     (blank = none; must parse to a plain object).
+//   - (R1) `lane` picks whether a stage is projected as UPCOMING. main =
+//     the ordered happy path; offramp = reachable from anywhere, never shown
+//     as "next". Off-ramps still appear in the board, the case timeline and
+//     the advance picker — lane governs projection, never position.
+//   - (R1) activating a stage whose key is already ACTIVE on a template of
+//     the opposite role (intake vs case) 409s with no force option: such a
+//     key hijacks the retention bootstrap. The message explains why; it
+//     surfaces through the same Toast as every other server error.
 //
 // Shell protocol: P.apiSend relay; onShow/onRefresh/onNew hooks;
 // topbar buttons via P.setTopbarButtons.
@@ -230,6 +243,14 @@ function esc(s) {
 }
 
 const CASE_STAGES = ['Open', 'Pending', 'Filed', 'Concluded', 'Closed'];
+const LANES = [
+  ['main',    'main — part of the ordered happy path (shown as upcoming)'],
+  ['offramp', 'off-ramp — reachable from anywhere, never shown as next'],
+];
+/* Mirrors pipelineService.isMainLane: anything that is not exactly 'offramp'
+   reads as main, so a stage served by a pre-migration backend (lane absent)
+   renders on the happy path rather than silently looking like a dead end. */
+const isOfframp = (s) => String(s && s.lane != null ? s.lane : '').trim().toLowerCase() === 'offramp';
 const KEY_RE = /^[a-z0-9_]{1,50}$/;
 const MAX_INTERNAL = 50;
 
@@ -343,12 +364,13 @@ function renderEditor() {
       <thead><tr>
         <th style="width:26px"></th><th style="width:28px">#</th>
         <th>Key</th><th>Internal label</th><th>Client label</th>
-        <th>Bucket</th><th style="width:56px" title="client_visible / is_terminal">Flags</th>
+        <th>Bucket</th><th style="width:74px" title="main = happy path (shown as upcoming); offramp = reachable from anywhere, never projected as next">Lane</th>
+        <th style="width:56px" title="client_visible / is_terminal">Flags</th>
         <th style="width:44px">Active</th><th style="width:150px"></th>
       </tr></thead>
       <tbody id="stage-tbody">
         ${stages.map((s, i) => `
-          <tr data-stage-id="${s.id}" class="${s.active ? '' : 'inactive'}">
+          <tr data-stage-id="${s.id}" class="${s.active ? '' : 'inactive'}${isOfframp(s) ? ' offramp' : ''}">
             <td><span class="drag-handle" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span></td>
             <td>${s.stage_number}</td>
             <td><span class="st-key">${esc(s.stage_key)}${Number(s.log_count) > 0
@@ -356,6 +378,9 @@ function renderEditor() {
             <td class="st-label">${esc(s.internal_label)}</td>
             <td class="st-client">${esc(s.client_label || '')}</td>
             <td><span class="badge badge-stage">${esc(s.case_stage)}</span></td>
+            <td>${isOfframp(s)
+                  ? '<span class="badge badge-offramp" title="Off-ramp — never shown as the next step">off-ramp</span>'
+                  : '<span style="color:var(--text-muted);font-size:11px">main</span>'}</td>
             <td>
               <i class="fa-solid fa-eye flag-dot ${s.client_visible ? 'on' : ''}" title="client_visible: ${s.client_visible ? 'yes' : 'no'}"></i>
               <i class="fa-solid fa-flag-checkered flag-dot ${s.is_terminal ? 'on' : ''}" title="is_terminal: ${s.is_terminal ? 'yes' : 'no'}"></i>
@@ -376,6 +401,9 @@ function renderEditor() {
     <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
       Drag rows (or use ↑↓) to reorder. Locked keys (<i class="fa-solid fa-lock" style="color:var(--warn)"></i>)
       are referenced by case history and can't change — edit the labels instead.
+      <span class="badge badge-offramp">off-ramp</span> stages are reachable from anywhere and are never
+      shown as a case's next step; only <b>main</b> stages are projected as upcoming. Ordering off-ramps
+      has no effect on projection.
     </div>`;
 
   // SortableJS hookup — guarded like formBuilder.html so a failed CDN load
@@ -599,6 +627,15 @@ function stageFormHtml(s) {
       <div><label>Default rec (suggested next action)</label>
         <input type="text" id="sf-rec" value="${esc(s.default_rec || '')}" maxlength="128"></div>
     </div>
+    <label>Lane</label>
+    <select id="sf-lane">
+      ${LANES.map(([v, label]) =>
+        `<option value="${v}" ${isOfframp(s) === (v === 'offramp') ? 'selected' : ''}>${esc(label)}</option>`
+      ).join('')}
+    </select>
+    <div class="hint">Off-ramps (no show, dead lead, dismissed, on appeal, …) are legitimate destinations
+      that can be entered from anywhere — they are simply never projected as a case's NEXT step. A case
+      sitting on one still shows it as its current position, in the portal too.</div>
     <div class="checks">
       <label><input type="checkbox" id="sf-visible" ${s.client_visible == null || s.client_visible ? 'checked' : ''}> Client visible</label>
       <label><input type="checkbox" id="sf-terminal" ${s.is_terminal ? 'checked' : ''}> Terminal stage</label>
@@ -642,6 +679,7 @@ function gatherStageForm(locked) {
     internal_label: internal,
     client_label:   E('sf-client').value,
     case_stage:     E('sf-bucket').value,
+    lane:           E('sf-lane').value,
     default_rec:    E('sf-rec').value,
     client_visible: E('sf-visible').checked ? 1 : 0,
     is_terminal:    E('sf-terminal').checked ? 1 : 0,

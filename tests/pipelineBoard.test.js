@@ -61,8 +61,15 @@ const TPL_CH13   = { id: 3, name: 'Bankruptcy — Chapter 13', case_type: 'Bankr
 const TPL_BK_DEF = { id: 4, name: 'Bankruptcy — Default',    case_type: 'Bankruptcy', case_subtype: '',           role: 'case', is_default: 1, active: 1 };
 
 const CH7_STAGES = [
-  { stage_id: 5, stage_key: 'docs',  stage_number: 1, internal_label: 'Documents & Prep', client_label: 'Preparing your case', client_visible: 1, case_stage: 'Pending', is_terminal: 0, default_rec: '' },
-  { stage_id: 6, stage_key: 'filed', stage_number: 2, internal_label: 'Filed',            client_label: 'Your case is filed',  client_visible: 1, case_stage: 'Filed',   is_terminal: 0, default_rec: '' },
+  { stage_id: 5, stage_key: 'docs',  stage_number: 1, internal_label: 'Documents & Prep', client_label: 'Preparing your case', client_visible: 1, case_stage: 'Pending', is_terminal: 0, lane: 'main', default_rec: '' },
+  { stage_id: 6, stage_key: 'filed', stage_number: 2, internal_label: 'Filed',            client_label: 'Your case is filed',  client_visible: 1, case_stage: 'Filed',   is_terminal: 0, lane: 'main', default_rec: '' },
+];
+// R1 — the live shape: an off-ramp appended LAST, so it carries the highest
+// stage_number. getBoard must still bucket cases into it (lane governs
+// projection, not membership) and must SELECT `lane` so the board can group.
+const CH7_WITH_OFFRAMP = () => [
+  ...CH7_STAGES.map(x => ({ ...x })),
+  { stage_id: 7, stage_key: 'dismissed', stage_number: 3, internal_label: 'Dismissed', client_label: 'Case dismissed', client_visible: 0, case_stage: 'Closed', is_terminal: 1, lane: 'offramp', default_rec: '' },
 ];
 const INTAKE_STAGES = [
   { stage_id: 1, stage_key: 'lead',     stage_number: 1, internal_label: 'Lead',     client_label: 'Inquiry received',  client_visible: 1, case_stage: 'Open',    is_terminal: 0, default_rec: '' },
@@ -280,5 +287,43 @@ describe('getBoard placement', () => {
     expect(gm).toContain('l2.entered_at > l.entered_at');
     expect(gm).toContain('l2.entered_at = l.entered_at AND l2.id > l.id');
     expect(gm).toContain('l2.id IS NULL');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 — lane
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('getBoard lane projection (R1)', () => {
+  test('the stage SELECT enumerates lane — the board cannot group without it', async () => {
+    const db = stubDb([
+      [TPL_CH7], CH7_WITH_OFFRAMP(), [TPL_INTAKE, TPL_CH7, TPL_CH13], [], [],
+    ]);
+    const out = await svc.getBoard(db, 2);
+    // getBoard names its columns explicitly (not SELECT *), so `lane` had to
+    // be added by hand; a silent omission would strand the divider forever.
+    expect(db.calls[1].sql).toContain('lane');
+    expect(out.stages.map(s => s.lane)).toEqual(['main', 'main', 'offramp']);
+  });
+
+  test('BOTH lanes get columns, and an off-ramp still receives its cases', async () => {
+    // The board is a position view. A case that IS dismissed belongs in the
+    // Dismissed column — lane changes where the column sits, not whether the
+    // case lands in it.
+    const db = stubDb([
+      [TPL_CH7], CH7_WITH_OFFRAMP(), [TPL_INTAKE, TPL_CH7, TPL_CH13],
+      [CARD('AAAA'), CARD('BBBB')],
+      [
+        { case_id: 'AAAA', stage_key: 'docs',      entered_at: '2026-08-01', note: null, days_in_stage: 3 },
+        { case_id: 'BBBB', stage_key: 'dismissed', entered_at: '2026-08-02', note: null, days_in_stage: 1 },
+      ],
+    ]);
+    const out = await svc.getBoard(db, 2);
+    expect(Object.keys(out.columns).sort()).toEqual(
+      ['dismissed', 'docs', 'filed', 'unstaged'].sort());
+    expect(out.columns.dismissed.map(c => c.case_id)).toEqual(['BBBB']);
+    expect(out.columns.docs.map(c => c.case_id)).toEqual(['AAAA']);
+    // NOT unstaged — an off-ramp is a real position, not a fallback bucket.
+    expect(out.columns.unstaged).toEqual([]);
   });
 });

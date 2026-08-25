@@ -130,3 +130,88 @@ describe('advance_stage guard parsing — pre-existing all-empty rejection still
     expect(pipelineService.advanceStage).not.toHaveBeenCalled();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// forward_only (R1) — _boolGuard
+//
+// The token set is copied verbatim from lib/internal_functions/events.js's
+// _bool (the house boolean-param parser). The GARBAGE BRANCH deliberately
+// differs: _bool falls back to the caller's default, which is safe there
+// because its guard (`dedupe`) DEFAULTS TRUE — the fallback lands on the armed
+// side. forward_only defaults FALSE, so an identical fallback would land on
+// the DISARMED side and let a typo silently permit the backward advances the
+// author wrote the guard to stop. Same shape as the rule-12 postmortem, same
+// answer as _csvGuard's quote rejection: throw.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('advance_stage forward_only parsing (R1)', () => {
+  test('absent / blank / whitespace degrades to undefined — the guard is simply off', async () => {
+    await fns.advance_stage({ ...BASE }, DB);
+    expect(lastOpts().forwardOnly).toBeUndefined();
+
+    // A {{placeholder}} that resolved to '' must behave identically. Same
+    // degrade contract as the CSV guards — an unset workflow variable is not
+    // an authoring error.
+    await fns.advance_stage({ ...BASE, forward_only: '' }, DB);
+    expect(lastOpts().forwardOnly).toBeUndefined();
+    await fns.advance_stage({ ...BASE, forward_only: '   ' }, DB);
+    expect(lastOpts().forwardOnly).toBeUndefined();
+  });
+
+  test('truthy tokens arm the guard, trimmed and case-insensitively', async () => {
+    for (const raw of ['true', 'TRUE', ' True ', '1', 'yes', 'YES', true, 1]) {
+      await fns.advance_stage({ ...BASE, forward_only: raw }, DB);
+      expect(lastOpts().forwardOnly).toBe(true);
+    }
+  });
+
+  test('falsy tokens turn it off explicitly — NOT an error', async () => {
+    // Writing 'false' is a legitimate way to say "off". Only UNRECOGNIZED
+    // values are rejected.
+    for (const raw of ['false', 'FALSE', ' False ', '0', 'no', 'NO', false, 0]) {
+      await fns.advance_stage({ ...BASE, forward_only: raw }, DB);
+      expect(lastOpts().forwardOnly).toBeUndefined();
+    }
+  });
+
+  test('an unrecognized value THROWS rather than silently disarming', async () => {
+    await expect(
+      fns.advance_stage({ ...BASE, forward_only: 'ture' }, DB)
+    ).rejects.toThrow(/forward_only must be true\/1\/yes or false\/0\/no/);
+    expect(pipelineService.advanceStage).not.toHaveBeenCalled();
+  });
+
+  test('the error names the value and explains why "off" is not the fallback', async () => {
+    let msg = '';
+    try { await fns.advance_stage({ ...BASE, forward_only: 'maybe' }, DB); }
+    catch (err) { msg = err.message; }
+    expect(msg).toContain('"maybe"');
+    expect(msg).toMatch(/silently|disarmed|no error/i);
+  });
+
+  test('rejection happens BEFORE pipelineService is called — nothing is written', async () => {
+    await expect(
+      fns.advance_stage({ ...BASE, forward_only: 'on' }, DB)   // plausible, unsupported
+    ).rejects.toThrow();
+    expect(pipelineService.advanceStage).not.toHaveBeenCalled();
+  });
+
+  test('combines with the CSV guards — all three ride together', async () => {
+    await fns.advance_stage(
+      { ...BASE, only_from: 'retained,none', only_from_role: 'case', forward_only: 'true' }, DB);
+    const o = lastOpts();
+    expect(o.onlyFrom).toEqual(['retained', null]);
+    expect(o.onlyFromRole).toEqual(['case']);
+    expect(o.forwardOnly).toBe(true);
+  });
+
+  test('__meta declares forward_only as a string param (placeholders resolve to strings)', async () => {
+    const p = fns.advance_stage.__meta.params.find(x => x.name === 'forward_only');
+    expect(p).toBeTruthy();
+    expect(p.type).toBe('string');
+    expect(p.required).toBe(false);
+    expect(p.placeholderAllowed).toBe(true);
+    // The reason vocabulary grew — automations branch on it.
+    expect(fns.advance_stage.__meta.description).toContain('backward');
+  });
+});

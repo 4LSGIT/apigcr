@@ -1,0 +1,219 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-08-25 — Pipeline R1: pipeline_stages.lane (happy path vs off-ramp)
+--
+-- WHY
+--   pipeline_stages is a FLAT ordered list per template. Sad-path stages carry
+--   high stage_numbers purely because they were appended last, and
+--   getPipeline's `upcoming` is defined as "active stages with stage_number
+--   greater than the current one". The two facts collide:
+--
+--     · a lead sitting at `consult_booked` (#2) is shown No Show (#6),
+--       Not Eligible Yet (#7), Not Interested (#8) and Dead Lead (#9) as
+--       things that are going to HAPPEN NEXT;
+--     · an adversary proceeding at `judgment` (#7) is shown "On Appeal" (#8)
+--       as its upcoming step — and `appeal` is client_visible=1, so the
+--       CLIENT PORTAL renders it too (portalCaseService.buildClientTimeline
+--       filters getPipeline's upcoming to the visible stages). We tell a
+--       client who just won that an appeal is coming.
+--
+--   Ordering cannot fix this: an off-ramp is reachable from anywhere, so it
+--   has no correct position on a single numeric axis. The axis is the wrong
+--   shape. `lane` adds the missing second axis:
+--
+--     main    — the happy path. Ordered; this is what `upcoming` projects.
+--     offramp — reachable from anywhere in the template, never "next".
+--
+--   R1's read-model change is one clause: upcoming filters lane='main'.
+--   `stages` (the C1 contract feeding the board, the widget's stage list and
+--   the advance picker) keeps BOTH lanes — off-ramps must remain selectable.
+--   `history` / `current` stay lane-agnostic by design (see below).
+--
+-- ── WHAT ─────────────────────────────────────────────────────────────────────
+-- ONE column and ONE backfill. No pipeline_stages row is added, deleted or
+-- renumbered; no case_stage_log row is written, re-pointed or deleted; no
+-- template row is touched. That is what makes "no existing history is
+-- orphaned or reinterpreted" provable rather than argued.
+--
+-- ── BACKFILL ────────────────────────────────────────────────────────────────
+-- Deliberately global-by-stage_key rather than scoped per template_id. These
+-- six keys exist ONLY on the templates intended below — verified against live
+-- data 2026-08-25, all 47 stage rows across all 5 templates inspected:
+--
+--   no_show           template 1 (Intake), stage_number 6 ..............  1
+--   not_eligible_yet  template 1 (Intake), stage_number 7 ..............  1
+--   not_interested    template 1 (Intake), stage_number 8 ..............  1
+--   dead_lead         template 1 (Intake), stage_number 9 ..............  1
+--   dismissed         templates 2, 3, 4, 5 (#7, #9, #10, #11) ..........  4
+--   appeal            templates 4, 5 (#8, #9) .........................   2
+--                                                       EXPECTED TOTAL = 10
+--
+-- If the UPDATE reports anything other than 10 rows matched, STOP: a stage
+-- key has been reused on a template this migration did not anticipate.
+-- Re-measure before running (VERIFY 0 below) — the predicate is what matters,
+-- but the count is the assertion that the predicate still means what it meant.
+--
+-- ── THE TWO ROWS PEOPLE WILL WANT TO "FIX" ──────────────────────────────────
+--
+-- 1. Intake template's `retained` row (template 1, stage_number 10, active=0)
+--    STAYS lane='main'. No UPDATE below touches it, on purpose. It is not an
+--    off-ramp — it is the future generic PROJECTION TAIL (R2.5): the marker
+--    for "and then the case template takes over". Flipping it to 'offramp'
+--    would delete it from the projection the moment that projection exists.
+--    Its active=0 is separately load-bearing — see the invariant note below.
+--
+-- 2. `appeal` is the FIRST client_visible=1 off-ramp, and that is correct.
+--    lane governs PROJECTION ONLY, never position. A case that is AT `appeal`
+--    still reads as being at `appeal` — history and current are lane-agnostic,
+--    and the portal will still render it, because it is a true statement about
+--    where the case is. What lane removes is the claim that an appeal is
+--    COMING for a case that is not in one. Off-ramps vanish from `upcoming`;
+--    they never vanish from the record.
+--
+-- ── RELATED INVARIANT (code, not schema — R1 ships it alongside) ────────────
+-- services/pipelineAdminService now refuses to let a stage_key be ACTIVE on a
+-- role='intake' template and a role='case' template simultaneously (409, no
+-- force override). That is what protects the intake→case bootstrap:
+-- _resolveTarget's cross-phase search orders the phase-resolved template
+-- FIRST, so the Intake `retained` row being active=0 is precisely what forces
+-- a `retained` advance on a phase-intake case to resolve into the chapter
+-- template — whose role='case' is what flips cases.pipeline_phase. Activate
+-- that row while `retained` is active on a chapter template and the intake row
+-- wins resolution forever: the phase never flips and the case strands on the
+-- Intake template. Live data satisfies the invariant today (zero violations,
+-- verified 2026-08-25); the guard exists because two clicks in the admin UI
+-- could previously create the state with nothing to stop them.
+--
+-- ── ENUM / sql_mode SAFETY ──────────────────────────────────────────────────
+-- The session lacks STRICT_TRANS_TABLES, so an invalid ENUM write lands as ''
+-- SILENTLY. Nothing here writes lane as a free string: the column is NOT NULL
+-- DEFAULT 'main', the backfill writes a literal, and the admin service
+-- validates against a JS whitelist before binding (the pipelineAdminService
+-- convention for case_stage and role). Readers treat anything that is not
+-- exactly 'offramp' as main — same safe-default idiom as
+-- pipelineService.isCasePhase. A coerced garbage value therefore parks a stage
+-- on the happy path; it never silently deletes one from the projection.
+--
+-- Do NOT change the table's charset/collation. pipeline_stages is
+-- utf8mb4_general_ci and joins case_stage_log on that basis; an ALTER that
+-- omits COLLATE on MySQL 8 yields 0900_ai_ci and breaks those joins. The
+-- statement below touches one column and specifies no charset.
+--
+-- ── ORDER OF OPERATIONS ─────────────────────────────────────────────────────
+-- Both statements are standalone: no session variables, no LAST_INSERT_ID, no
+-- cross-statement transaction. Each may run on its own pooled connection
+-- (DB-console convention).
+--
+--   1. Statement 1, then statement 2, in that order (2 reads the column 1
+--      creates).
+--   2. Deploy the BACKEND after both complete.
+--   3. Deploy the FRONTEND last.
+--
+-- The ordering is not optional in either direction. Deploying the backend
+-- first means getPipeline/getBoard SELECT a column that does not exist —
+-- every pipeline read 500s. Running statement 1 without statement 2 leaves
+-- all 47 stage rows at the 'main' default, i.e. exactly today's (wrong)
+-- behavior — harmless, but the slice has not landed until 2 runs.
+--
+-- ── IDEMPOTENT ──────────────────────────────────────────────────────────────
+-- Statement 2 IS idempotent (it sets a value to itself on a re-run).
+--
+-- Statement 1 is NOT, and cannot be: MySQL 8.4 has no
+-- "ALTER TABLE … ADD COLUMN IF NOT EXISTS". This is the house convention for
+-- every column-adding migration in ref/ (2026-08-11_form_templates_visibility,
+-- 2026-08-13_form_submissions_linkage, 2026-08-19_pipeline_phase,
+-- migration_trigger_R4) — a plain ALTER plus this note. A re-run fails with
+-- ER_DUP_FIELDNAME ("Duplicate column name 'lane'"), which MEANS the migration
+-- is already applied. Harmless, nothing partial, no cleanup needed.
+--
+-- After running: regenerate the schema snapshot via
+-- POST /admin/db/schema/save-to-ref (ref/database.sql is auto-generated —
+-- do not hand-edit it).
+--
+-- ── ROLLBACK ────────────────────────────────────────────────────────────────
+-- Redeploy the previous backend + frontend first (the new code SELECTs `lane`
+-- by name), then:
+--   ALTER TABLE pipeline_stages DROP COLUMN lane;
+-- Nothing else was written, so there is nothing else to undo.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+
+-- VERIFY 0 — run BEFORE statement 2. Expect exactly 10 rows, matching the
+-- table in the BACKFILL section above:
+--   SELECT s.template_id, t.name, t.role, s.stage_number, s.stage_key, s.active
+--     FROM pipeline_stages s
+--     JOIN pipeline_templates t ON t.id = s.template_id
+--    WHERE s.stage_key IN ('no_show','not_eligible_yet','not_interested',
+--                          'dead_lead','dismissed','appeal')
+--    ORDER BY s.template_id, s.stage_number;
+
+
+-- 1 of 2 — the column ---------------------------------------------------
+-- Defaults every existing row to 'main'; statement 2 demotes the 10 off-ramps.
+ALTER TABLE pipeline_stages
+  ADD COLUMN lane ENUM('main','offramp') NOT NULL DEFAULT 'main'
+    COMMENT 'R1 projection axis: main = happy path (feeds getPipeline.upcoming); offramp = reachable from anywhere, never projected as next. Position/history are lane-agnostic.'
+    AFTER is_terminal;
+
+
+-- 2 of 2 — the backfill (needs statement 1) -----------------------------
+-- Global by stage_key, deliberately. See BACKFILL above: these six keys exist
+-- ONLY on the intended templates. EXPECT EXACTLY 10 ROWS MATCHED. Anything
+-- else means a key was reused somewhere this migration did not account for —
+-- stop and re-derive rather than proceeding.
+--
+-- The Intake `retained` row (template 1, #10, active=0) is NOT in this list
+-- and must not be added to it — it is the R2.5 projection tail, not an
+-- off-ramp.
+UPDATE pipeline_stages
+   SET lane = 'offramp'
+ WHERE stage_key IN ('no_show',
+                     'not_eligible_yet',
+                     'not_interested',
+                     'dead_lead',
+                     'dismissed',
+                     'appeal');
+
+
+-- VERIFY 1 — the lane split. Expect offramp=10, main=37 (total 47 at
+-- 2026-08-25; the totals will drift as templates are edited, the offramp
+-- membership should not):
+--   SELECT lane, COUNT(*) n FROM pipeline_stages GROUP BY lane;
+--
+-- VERIFY 2 — BLOCKING. The Intake `retained` row must still be lane='main'
+-- AND active=0. Expect exactly one row, ('main', 0):
+--   SELECT lane, active FROM pipeline_stages
+--    WHERE template_id = 1 AND stage_key = 'retained';
+--
+-- VERIFY 3 — BLOCKING. No template may be left with ZERO active main-lane
+-- stages: `upcoming` would be permanently empty for every case on it, and a
+-- case with no history would see no path at all. Expect ZERO rows:
+--   SELECT t.id, t.name
+--     FROM pipeline_templates t
+--    WHERE t.active = 1
+--      AND NOT EXISTS (SELECT 1 FROM pipeline_stages s
+--                       WHERE s.template_id = t.id
+--                         AND s.active = 1 AND s.lane = 'main');
+--
+-- VERIFY 4 — BLOCKING (the invariant the admin guard now enforces). No
+-- stage_key may be ACTIVE on a role='intake' template and a role='case'
+-- template at once. Expect ZERO rows — verified zero on 2026-08-25:
+--   SELECT si.stage_key, ti.name AS intake_tpl, tc.name AS case_tpl
+--     FROM pipeline_stages si
+--     JOIN pipeline_templates ti ON ti.id = si.template_id AND ti.role = 'intake'
+--     JOIN pipeline_stages sc ON sc.stage_key = si.stage_key AND sc.active = 1
+--     JOIN pipeline_templates tc ON tc.id = sc.template_id AND tc.role = 'case'
+--    WHERE si.active = 1;
+--
+-- VERIFY 5 — for the record: which cases currently SIT on an off-ramp. These
+-- keep their position (lane governs projection, not position) and their
+-- upcoming becomes the main-lane stages numerically after them:
+--   SELECT s.stage_key, COUNT(*) n
+--     FROM cases c
+--     JOIN case_stage_log l
+--       ON l.id = (SELECT l2.id FROM case_stage_log l2
+--                   WHERE l2.case_id = c.case_id
+--                   ORDER BY l2.entered_at DESC, l2.id DESC LIMIT 1)
+--     JOIN pipeline_stages s
+--       ON s.template_id = l.template_id AND s.stage_key = l.stage_key
+--    WHERE s.lane = 'offramp'
+--    GROUP BY s.stage_key ORDER BY n DESC;

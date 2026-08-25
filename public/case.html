@@ -263,6 +263,12 @@
                  padding:3px 8px; margin-top:3px; border-radius:3px; white-space:pre-wrap; }
       .pw-badge { display:inline-block; font-size:0.65em; font-weight:bold; color:var(--fill-text); background:var(--cat-indigo-fill);
                   border-radius:3px; padding:1px 5px; margin-left:6px; vertical-align:middle; text-transform:uppercase; }
+      /* Off-ramp rows in the timeline (a case can BE on one). Amber, not red:
+         an off-ramp is a legitimate position, just never a projected next
+         step. Matches the Case Config lane badge and the board's off-ramp
+         columns so all three surfaces share one vocabulary. */
+      .pw-offramp .pw-dot { background:var(--warn); border-color:var(--warn); }
+      .pw-current.pw-offramp .pw-internal { color:var(--warn-on-soft); }
       #pwAdvanceRow { border-top:1px solid var(--border); padding-top:10px; margin-top:4px; text-align:center; }
       #pwAdvanceRow .pw-toggle { font-size:0.8em; color:var(--text-2); margin-left:8px; white-space:nowrap; }
       #pwNoteInput { width:60%; margin-top:6px; }
@@ -1709,6 +1715,15 @@ window.addEventListener('message', (e) => {
 // matches the resolved template (template edits, branch from intake) degrade
 // to the snapshot alone — the correct record. `stages` also feeds the
 // "show all stages" toggle (corrections / backwards moves).
+//
+// R1 — LANES. `upcoming` is filtered SERVER-SIDE to main-lane stages, so the
+// timeline needs no change: off-ramps simply stop being listed as things that
+// are going to happen. This widget renders upcoming straight from
+// payload.upcoming and does NOT re-derive it from payload.stages — that is
+// what makes the server filter the single source of truth. `stages` still
+// carries BOTH lanes (C1 contract) because the picker must be able to select
+// an off-ramp and history rows must be able to find their client_label; the
+// picker therefore groups off-ramps under their own <optgroup>.
 
 let pwData = null;      // latest pipeline payload (GET or advance response)
 let pwShowAll = false;  // advance select: false = upcoming only, true = every active stage
@@ -1759,15 +1774,22 @@ function renderPipeline() {
   const byKey = {};
   (p.stages || []).forEach(s => { byKey[s.stage_key] = s; });
   const clientLabel = (key) => (byKey[key] ? byKey[key].client_label : '');
+  // A history row whose key is not in the resolved template has no lane to
+  // read — it degrades to main, i.e. unstyled, same as it degrades to the
+  // bare snapshot for its label.
+  const laneClass = (key) => (pwIsOfframp(byKey[key]) ? 'pw-offramp' : '');
 
   const rows = [];
 
   // Past = history minus current (history is ascending; current is its last row).
   const past = p.current ? p.history.slice(0, -1) : [];
-  for (const h of past) rows.push(pwLogRow(h, clientLabel(h.stage_key), 'past'));
+  for (const h of past) {
+    rows.push(pwLogRow(h, clientLabel(h.stage_key), 'past', laneClass(h.stage_key)));
+  }
 
   if (p.current) {
-    rows.push(pwLogRow(p.current, clientLabel(p.current.stage_key), 'current'));
+    rows.push(pwLogRow(p.current, clientLabel(p.current.stage_key),
+                       'current', laneClass(p.current.stage_key)));
   } else {
     rows.push('<div class="pw-msg">No pipeline history yet</div>');
   }
@@ -1787,13 +1809,13 @@ function renderPipeline() {
   E('pwAdvanceRow').style.display = '';
 }
 
-function pwLogRow(h, cLabel, kind) {
+function pwLogRow(h, cLabel, kind, laneCls = '') {
   const badge = (h.source && h.source !== 'manual')
     ? '<span class="pw-badge">auto</span>' : '';
   const note = h.note
     ? `<div class="pw-note">${escText(h.note)}</div>` : '';
   return `
-    <div class="pw-row pw-${kind}">
+    <div class="pw-row pw-${kind}${laneCls ? ' ' + laneCls : ''}">
       <span class="pw-dot"></span>
       <span class="pw-internal">${escText(h.status_label)}</span>${badge}
       <span class="pw-when">${escText(pwDate(h.entered_at))}</span>
@@ -1802,8 +1824,19 @@ function pwLogRow(h, cLabel, kind) {
     </div>`;
 }
 
+/* Mirrors pipelineService.isMainLane: only an exact 'offramp' counts. A stage
+   with no lane (pre-migration payload) is main, so the picker degrades to a
+   flat list — exactly today's control. */
+function pwIsOfframp(s) {
+  return String(s && s.lane != null ? s.lane : '').trim().toLowerCase() === 'offramp';
+}
+
 function renderPwSelect() {
   const p = pwData;
+  // upcoming is ALREADY main-lane-only (server-side, R1) — deliberately not
+  // re-filtered here. `stages` is both lanes, so the show-all list is where
+  // off-ramps become selectable, which is the point: staff need to be able to
+  // mark a case No Show / Dismissed / On Appeal.
   const list = pwShowAll ? (p.stages || []) : (p.upcoming || []);
   const curKey = p.current ? p.current.stage_key : null;
   const sel = E('pwStageSelect');
@@ -1811,12 +1844,17 @@ function renderPwSelect() {
     sel.innerHTML = `<option value="" selected disabled>${
       pwShowAll ? 'No stages in template' : 'No further stages'}</option>`;
   } else {
+    const opt = (s) =>
+      `<option value="${escAttr(s.stage_key)}">${escAttr(s.internal_label)}${
+        s.stage_key === curKey ? ' (current)' : ''}</option>`;
+    const main    = list.filter(s => !pwIsOfframp(s));
+    const offramp = list.filter(pwIsOfframp);
     sel.innerHTML =
       '<option value="" selected disabled>Select a stage</option>' +
-      list.map(s =>
-        `<option value="${escAttr(s.stage_key)}">${escAttr(s.internal_label)}${
-          s.stage_key === curKey ? ' (current)' : ''}</option>`
-      ).join('');
+      main.map(opt).join('') +
+      (offramp.length
+        ? `<optgroup label="— off-ramps —">${offramp.map(opt).join('')}</optgroup>`
+        : '');
   }
   E('pwShowAll').checked = pwShowAll;
 }

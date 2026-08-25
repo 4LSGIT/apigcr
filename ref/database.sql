@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-25T12:17:15.250Z
+-- Generated: 2026-08-25T21:29:55.136Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:ede641d550f60413c3a73904161fff3d
+-- Fingerprint: sha256:7fa3fffa9b2735ae59c8612af070b9e6
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2042,6 +2042,7 @@ CREATE TABLE `pipeline_stages` (
   `case_stage` enum('Open','Pending','Filed','Concluded','Closed') COLLATE utf8mb4_general_ci NOT NULL,
   `client_visible` tinyint(1) NOT NULL DEFAULT '1',
   `is_terminal` tinyint(1) NOT NULL DEFAULT '0',
+  `lane` enum('main','offramp') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'main' COMMENT 'R1 projection axis: main = happy path (feeds getPipeline.upcoming); offramp = reachable from anywhere, never projected as next. Position/history are lane-agnostic.',
   `default_rec` varchar(128) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `config` json DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',

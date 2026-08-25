@@ -44,6 +44,23 @@
        pairs with --fill-text at 6.99 in both modes. White on --text-muted was
        6.10 light but 3.02 dark, already under AA for an 11px label. */
     .pb-col.pb-unstaged .pb-col-count { background: var(--neutral-fill); color: var(--fill-text); }
+    /* Off-ramp columns: a side branch, not a failure. --warn-soft matches the
+       Case Config lane badge so the two surfaces read as one vocabulary. */
+    .pb-col.pb-offramp .pb-col-count { background: var(--warn); color: var(--fill-text); }
+    .pb-col.pb-offramp .pb-col-title { font-style: italic; }
+    /* Zero-width rule between the last main column and the first off-ramp.
+       flex:0 0 auto so it never eats column width; the label is vertical so it
+       costs ~18px rather than a full column. */
+    .pb-lane-split {
+      flex: 0 0 auto; width: 0; border-left: 2px dashed var(--border-strong);
+      margin: 0 9px; position: relative; align-self: stretch;
+    }
+    .pb-lane-split span {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%) rotate(180deg);
+      writing-mode: vertical-rl; font-size: 10px; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--text-muted); white-space: nowrap;
+      background: var(--page-bg); padding: 4px 1px;
+    }
     .pb-col-client { font-size: 11px; color: var(--text-muted); font-style: italic; min-height: 13px; }
     .pb-col-body { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
 
@@ -79,9 +96,17 @@
   Data: GET /api/pipeline-board?template_id=N[&include_closed=1] — membership
   mirrors resolveTemplate (see pipelineAdminService.getBoard). Columns:
   Unstaged first (no log rows, or latest stage_key outside this template —
-  branched-from-intake), then active stages in stage_number order. Column
-  headers show internal_label + count with the muted client_label beneath —
-  the SS-vocabulary convention from the case.html widget.
+  branched-from-intake), then active MAIN-lane stages in stage_number order,
+  a dashed divider, then active OFF-RAMP stages in stage_number order (R1).
+  Off-ramps (no_show, dead_lead, dismissed, appeal, …) are reachable from
+  anywhere in a template and are never a case's "next" step, so grouping them
+  after the happy path stops them from breaking up the left-to-right reading
+  of the pipeline. They remain full, droppable columns — lane governs
+  PROJECTION, not position, and moving a case onto an off-ramp is a normal
+  operation. A payload with no `lane` field (pre-migration backend) renders
+  every stage as main, i.e. exactly today's board. Column headers show
+  internal_label + count with the muted client_label beneath — the
+  SS-vocabulary convention from the case.html widget.
 
   Drag (SortableJS, guarded): drop on a stage column → Swal confirm with an
   optional note → POST /api/cases/:id/pipeline/advance {stage, note}.
@@ -227,7 +252,9 @@ function render() {
   host.style.display = '';
   host.innerHTML = '';
 
-  // Unstaged first, then active stages in stage_number order.
+  // Unstaged first, then main-lane stages in stage_number order, then (behind
+  // a divider) the off-ramps, also in stage_number order. The server already
+  // sorts by stage_number, so a stable partition preserves it within each lane.
   host.appendChild(buildColumn({
     key: 'unstaged',
     title: 'Unstaged',
@@ -235,14 +262,29 @@ function render() {
     cards: board.columns.unstaged || [],
     isUnstaged: true,
   }));
-  for (const s of (board.stages || [])) {
-    host.appendChild(buildColumn({
-      key: s.stage_key,
-      title: s.internal_label,
-      clientLabel: s.client_label || '',
-      cards: board.columns[s.stage_key] || [],
-      isUnstaged: false,
-    }));
+
+  const allStages = board.stages || [];
+  const mainStages    = allStages.filter(s => !isOfframp(s));
+  const offrampStages = allStages.filter(isOfframp);
+
+  const addStageColumn = (s) => host.appendChild(buildColumn({
+    key: s.stage_key,
+    title: s.internal_label,
+    clientLabel: s.client_label || '',
+    cards: board.columns[s.stage_key] || [],
+    isUnstaged: false,
+    isOfframp: isOfframp(s),
+  }));
+
+  for (const s of mainStages) addStageColumn(s);
+  if (offrampStages.length) {
+    const split = document.createElement('div');
+    split.className = 'pb-lane-split';
+    // No data-stage-key: the scroll-preservation pass keys on that attribute
+    // and must not try to restore a position onto a divider.
+    split.innerHTML = '<span>off-ramps</span>';
+    host.appendChild(split);
+    for (const s of offrampStages) addStageColumn(s);
   }
 
   // Restore after the rebuild, before the filter pass — applyFilter only
@@ -256,9 +298,9 @@ function render() {
   applyFilter();
 }
 
-function buildColumn({ key, title, clientLabel, cards, isUnstaged }) {
+function buildColumn({ key, title, clientLabel, cards, isUnstaged, isOfframp: offramp }) {
   const col = document.createElement('div');
-  col.className = 'pb-col' + (isUnstaged ? ' pb-unstaged' : '');
+  col.className = 'pb-col' + (isUnstaged ? ' pb-unstaged' : '') + (offramp ? ' pb-offramp' : '');
   col.dataset.stageKey = key;
   col.innerHTML =
     `<div class="pb-col-head">
@@ -345,6 +387,13 @@ function openCase(c) {
 }
 
 // ── Drag ──
+/* Mirrors pipelineService.isMainLane: only an exact 'offramp' is an off-ramp.
+   A stage with no lane at all (pre-migration payload) is main — the board then
+   renders exactly as it did before R1, divider included (i.e. absent). */
+function isOfframp(s) {
+  return String(s && s.lane != null ? s.lane : '').trim().toLowerCase() === 'offramp';
+}
+
 function hookSortables() {
   if (!window.Sortable) return;   // fallback buttons already rendered
   document.querySelectorAll('.pb-col-body').forEach(body => {
@@ -385,8 +434,15 @@ function handleDrop(evt) {
 // ── Fallback path: per-card "Move…" select when SortableJS didn't load. ──
 async function movePrompt(e, caseId) {
   e.stopPropagation();
+  // Swal renders a nested object as an <optgroup>, so off-ramps get the same
+  // visual separation here as the columns get on the board.
   const options = {};
-  for (const s of (board.stages || [])) options[s.stage_key] = s.internal_label;
+  const offramps = {};
+  for (const s of (board.stages || [])) {
+    if (isOfframp(s)) offramps[s.stage_key] = s.internal_label;
+    else options[s.stage_key] = s.internal_label;
+  }
+  if (Object.keys(offramps).length) options['— off-ramps —'] = offramps;
   const r = await Swal.fire({
     title: 'Move to stage',
     input: 'select',

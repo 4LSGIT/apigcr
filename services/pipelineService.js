@@ -23,7 +23,19 @@
  *     stage config (config JSON stays unread in v1).
  *
  * Schema: pipeline_templates / pipeline_stages / case_stage_log —
- * ref/2026-08-02_pipeline_engine_slice_a.sql (Slice A, shipped 2026-08-02).
+ * ref/2026-08-02_pipeline_engine_slice_a.sql (Slice A, shipped 2026-08-02);
+ * pipeline_stages.lane — ref/2026-08-25_pipeline_lane.sql (R1).
+ *
+ * R1 — THE LANE AXIS. pipeline_stages is a flat ordered list, so an off-ramp
+ * (no_show, dead_lead, dismissed, appeal, …) can only be given a
+ * stage_number, and whatever number it gets makes it "upcoming" for every
+ * case below it. `lane` separates the two questions: `main` is the ordered
+ * happy path and is the ONLY thing getPipeline projects as upcoming;
+ * `offramp` is reachable from anywhere and is never projected as next.
+ * PROJECTION ONLY — history and current are lane-agnostic, because a case
+ * that is at `appeal` is at `appeal`. Off-ramps also stay in the `stages`
+ * list (C1 contract), because the board, the timeline and the advance picker
+ * all need them. advanceStage's forwardOnly guard reads the same axis.
  *
  * Concurrency (advanceStage): per-case MySQL named lock
  * (GET_LOCK('pipeline_case_<id>', 5)) acquired INSIDE the withTransaction
@@ -92,6 +104,24 @@ function isCasePhase(caseRow) {
   return String(caseRow && caseRow.pipeline_phase != null ? caseRow.pipeline_phase : '')
     .trim().toLowerCase() === 'case';
 }
+
+/**
+ * R1 — the PROJECTION axis. True unless the stage is explicitly an off-ramp.
+ *
+ * Deliberately "not exactly 'offramp'" rather than "=== 'main'", mirroring
+ * isCasePhase above and for the same reason: the session lacks
+ * STRICT_TRANS_TABLES, so an invalid ENUM write lands as '' silently, and a
+ * pre-migration row (or a stub fixture) carries undefined. Every one of those
+ * reads as MAIN — a stage stays on the happy path and stays projected. The
+ * opposite default would let a coerced value silently delete a stage from
+ * every case's upcoming list, which is exactly the failure lane exists to
+ * prevent.
+ */
+function isMainLane(stage) {
+  return String(stage && stage.lane != null ? stage.lane : '')
+    .trim().toLowerCase() !== 'offramp';
+}
+const isOfframp = (stage) => !isMainLane(stage);
 
 /** Defensive truncate (session lacks strict mode — DB would clip silently). */
 function clip(s, max) {
@@ -224,19 +254,43 @@ function projectLogRow(r) {
  *   current  — latest case_stage_log row (entered_at DESC, id DESC), projected;
  *              null when the case has no log rows (the universal day-one state).
  *   history  — ALL log rows ascending (oldest first), same projection.
- *   upcoming — active stages of the resolved template with stage_number greater
- *              than the current stage's. Current is matched to the template by
- *              stage_key, NOT stage_id — history survives template edits by
- *              design. When current is null OR its stage_key is not in the
- *              resolved template (case just branched from intake), upcoming is
- *              ALL of the template's active stages.
- *   stages   — ALL active stages of the resolved template (same projection as
- *              upcoming), regardless of position. Always present ([] when
- *              template is null). UI uses it for full-timeline rendering
- *              (client_label on past/current rows) and the show-all-stages
- *              advance control; C1 contract as of 2026-08-02. Projection
- *              includes client_visible (portal filters on it; staff surfaces
- *              may ignore it).
+ *   upcoming — active MAIN-LANE stages of the resolved template with
+ *              stage_number greater than the current stage's. Current is
+ *              matched to the template by stage_key, NOT stage_id — history
+ *              survives template edits by design. When current is null OR its
+ *              stage_key is not in the resolved template (case just branched
+ *              from intake), upcoming is ALL of the template's active
+ *              main-lane stages.
+ *
+ *              R1 — THE LANE FILTER. Off-ramps (no_show, dead_lead,
+ *              dismissed, appeal, …) are reachable from anywhere in a
+ *              template, so they have no correct position on the single
+ *              numeric axis stage_number provides. They carry high
+ *              stage_numbers only because they were appended last, which made
+ *              them "upcoming" for every case below them: a lead at
+ *              consult_booked was told Dead Lead was next, and an adversary
+ *              proceeding at judgment was told On Appeal was next — the
+ *              latter through the CLIENT PORTAL, since `appeal` is
+ *              client_visible=1. lane='offramp' removes them from the
+ *              PROJECTION only. See `history`/`current` below.
+ *   stages   — ALL active stages of the resolved template, BOTH LANES (same
+ *              projection as upcoming), regardless of position. Always present
+ *              ([] when template is null). UI uses it for full-timeline
+ *              rendering (client_label on past/current rows) and the
+ *              show-all-stages advance control; C1 contract as of 2026-08-02.
+ *              Both lanes is part of that contract and R1 does not narrow it:
+ *              the board needs off-ramp columns, the widget needs off-ramp
+ *              labels for history rows, and the advance picker must be able to
+ *              SELECT an off-ramp. Projection includes client_visible (portal
+ *              filters on it; staff surfaces may ignore it) and, as of R1,
+ *              `lane` (surfaces that group or divide by it).
+ *   history  — see above. LANE-AGNOSTIC, by design, as is `current`: a case
+ *              that is AT `appeal` is at `appeal`, and saying so is a true
+ *              statement about its position. lane governs what we project as
+ *              NEXT, never where a case is. portalCaseService
+ *              .buildClientTimeline keys its visible-stage map off `stages`
+ *              (both lanes) and its upcoming off `upcoming` (main only), so it
+ *              inherits exactly this split with no portal code change.
  * @throws 404 when the case does not exist.
  */
 async function getPipeline(db, caseId) {
@@ -266,19 +320,24 @@ async function getPipeline(db, caseId) {
   if (template) {
     const [stageRows] = await db.query(
       `SELECT id AS stage_id, stage_key, stage_number, internal_label,
-              client_label, case_stage, is_terminal, default_rec, client_visible
+              client_label, case_stage, is_terminal, lane, default_rec, client_visible
          FROM pipeline_stages
         WHERE template_id = ? AND active = 1
         ORDER BY stage_number ASC, id ASC`,
       [template.id]
     );
-    stages = stageRows;
+    stages = stageRows;              // BOTH lanes — C1 contract, see docblock
+    const mainOnly = stageRows.filter(isMainLane);
     const matched = current
       ? stageRows.find(s => s.stage_key === current.stage_key)
       : null;
+    // Matching is against BOTH lanes (a case sitting on an off-ramp still has
+    // a position), but the projection is main-lane only. A case at `appeal`
+    // (#8) therefore keeps `appeal` as its current and gets the main stages
+    // numerically after it as upcoming.
     upcoming = matched
-      ? stageRows.filter(s => s.stage_number > matched.stage_number)
-      : stageRows;   // no history yet, or branched from another template
+      ? mainOnly.filter(s => s.stage_number > matched.stage_number)
+      : mainOnly;   // no history yet, or branched from another template
   }
 
   return {
@@ -436,12 +495,15 @@ async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey =
  * stage_key AND template_id as the resolved target, nothing is written and
  * the returned payload carries noop:true.
  *
- * Guards (Slice E1) — both optional, both consulted BEFORE target resolution
- * (inside the same lock + transaction, so the read-then-write window is
- * race-free). When any guard fails to match, the advance is SKIPPED: no
- * INSERT, no UPDATE, no throw — the return is
- * { skipped: true, noop: false, from: <current stage_key or null> } and the
- * lock still releases (finally). When BOTH guards are given, both must match.
+ * Guards (Slice E1; forwardOnly added R1) — all optional. onlyFrom /
+ * onlyFromRole are consulted BEFORE target resolution (inside the same lock +
+ * transaction, so the read-then-write window is race-free); forwardOnly is
+ * consulted AFTER resolution, because it is a comparison between two stage
+ * ROWS and cannot be evaluated until the target is one. When any guard fails
+ * to match, the advance is SKIPPED: no INSERT, no UPDATE, no throw — the
+ * return is { skipped: true, noop: false, from: <current stage_key or null>,
+ * reason } and the lock still releases (finally). When SEVERAL guards are
+ * given, ALL must pass.
  *
  *   onlyFrom     array of stage_key strings the case's latest log row must
  *                carry for the advance to proceed. A `null` MEMBER means
@@ -453,11 +515,62 @@ async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey =
  *                template) still counts as "coming from intake" until a
  *                case-template stage is actually logged. A `null` member
  *                means "case has no log rows yet", same as onlyFrom.
+ *   forwardOnly  boolean. "Advance, but never regress." Lets an automation
+ *                express monotonicity WITHOUT enumerating every legal
+ *                from-state in an onlyFrom list — the list an author has to
+ *                remember to extend every time a stage is added, and whose
+ *                omission is invisible (a stale list just skips forever).
+ *
+ * ── forwardOnly: THE COMPARISON ──────────────────────────────────────────
+ * Runs AFTER the idempotency check, never before: a repeat of the case's
+ * current stage is a NOOP, exactly as it is unguarded. It is never
+ * reinterpreted as a backward skip — the two answers differ (noop:true vs
+ * skipped:true) and callers branch on both.
+ *
+ * The comparison needs the LATEST log row's STAGE ROW, fetched by
+ * (latest.template_id, latest.stage_key) — key-based matching, consistent
+ * with the rest of the engine, since history survives template edits.
+ *
+ *   no latest log row .......................... PASS (nothing to regress from)
+ *   latest's stage row not found ............... SKIP 'unresolved' + warn
+ *       (key renamed, or the stage was deleted out from under the log row —
+ *       the same class of condition _resolveTarget's soft miss warns about,
+ *       and warned about for the same reason: it is either a real template
+ *       edit or a bug, and neither should skip forever in silence)
+ *   CROSS-TEMPLATE (target.template_id !== latest.template_id)
+ *     intake → case ............................ PASS — this IS the bootstrap
+ *       (_resolveTarget's cross-phase search exists to make it happen; a
+ *       forwardOnly guard must not be the thing that blocks retention)
+ *     case → intake ............................ SKIP 'backward'
+ *     same role (matter-type change) ........... PASS
+ *       DECIDED, do not "improve": stage_numbers are per-template ordinals.
+ *       Ch7 #3 and Ch13 #3 are not the same milestone, so comparing them is
+ *       meaningless, not merely imprecise.
+ *     either template row missing .............. PASS
+ *       Unreachable in practice: pipelineAdminService hard-deletes a template
+ *       only at ZERO case_stage_log references, and `latest` IS such a
+ *       reference. Passing (rather than skipping) keeps an impossible state
+ *       from silently disarming retention if it ever becomes possible.
+ *   SAME TEMPLATE
+ *     target lane 'offramp' .................... PASS
+ *       Entering an off-ramp is legal from anywhere in the template,
+ *       INCLUDING offramp → offramp: the no-show sequence genuinely ends
+ *       no_show → dead_lead. DECIDED.
+ *     latest lane 'offramp', target 'main' ..... SKIP 'backward'
+ *       Recovery from an off-ramp back onto the happy path is a real
+ *       operation, but it is a deliberate one — explicit-guard or unguarded
+ *       territory, not something a monotonic automation should do by itself.
+ *     main → main .............................. PASS iff
+ *                                                target.stage_number >
+ *                                                latest.stage_number,
+ *                                                else SKIP 'backward'
  *
  * Guarded advances also resolve the target SOFTLY: a stage_key that doesn't
  * exist in the case's currently-resolved template (or a case with no template
- * at all) is a skip, not a 400 — see _resolveTarget's soft mode. Unguarded
- * calls keep today's throwing behavior exactly.
+ * at all) is a skip, not a 400 — see _resolveTarget's soft mode. forwardOnly
+ * COUNTS AS GUARDED for this purpose, so a forwardOnly-only caller gets soft
+ * resolution and the bare skip shape like every other guarded caller.
+ * Unguarded calls keep today's throwing behavior exactly.
  *
  * ── RETURN IS POLYMORPHIC ────────────────────────────────────────────────
  * Two shapes, keyed by `skipped`:
@@ -473,8 +586,14 @@ async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey =
  *                           'unresolved' — guards passed but the stage_key
  *                                          doesn't exist in the case's
  *                                          current template (template moved,
- *                                          or a TYPO — console.warn fires)
- * Callers MUST branch on `skipped` before touching pipeline fields.
+ *                                          or a TYPO — console.warn fires);
+ *                                          also the forwardOnly case where the
+ *                                          LATEST row's stage has vanished
+ *                           'backward'   — (R1) guards passed and the target
+ *                                          resolved, but forwardOnly judged
+ *                                          the move a regression
+ * Callers MUST branch on `skipped` before touching pipeline fields, and
+ * MUST NOT assume the reason set is closed — it has grown once already.
  *
  * @param {object} db       mysql2 pool
  * @param {string} caseId   cases.case_id
@@ -485,13 +604,14 @@ async function _resolveTarget(conn, caseRow, target, { soft = false, latestKey =
  * @param {string} [opts.source='manual']  'manual' | 'system' | 'import'
  * @param {?Array<string|null>} [opts.onlyFrom]     see Guards above
  * @param {?Array<string|null>} [opts.onlyFromRole] see Guards above
+ * @param {?boolean} [opts.forwardOnly=false]       see Guards above
  * @returns see RETURN IS POLYMORPHIC above
  * @throws 400 unknown target / bad source / malformed guard; 404 unknown
  *         case; 409 lock timeout (retryable).
  */
 async function advanceStage(db, caseId, target, {
   userId = null, note = null, source = 'manual',
-  onlyFrom = undefined, onlyFromRole = undefined,
+  onlyFrom = undefined, onlyFromRole = undefined, forwardOnly = false,
 } = {}) {
   if (!SOURCES.has(source)) {
     throw badRequest(`Invalid source "${source}" (manual | system | import)`);
@@ -510,7 +630,24 @@ async function advanceStage(db, caseId, target, {
       );
     }
   }
-  const guarded = onlyFrom != null || onlyFromRole != null;
+  // forwardOnly is a BOOLEAN, and only the boolean arms it. A caller that
+  // hands over a string ('true', 'false', '0') gets a 400 rather than a
+  // silent disarm: `forwardOnly === true` would read every one of those as
+  // "guard absent", and a safety guard that quietly stops being applied is
+  // the failure mode this codebase treats as fatal (the rule-12 postmortem
+  // that produced _csvGuard's quote rejection). null/undefined stay absent,
+  // matching the array guards above. The string→boolean parse lives ONE
+  // layer up, in lib/internal_functions/pipeline.js, where the automation
+  // vocabulary ('true'/'1'/'yes') is defined and documented.
+  if (forwardOnly != null && typeof forwardOnly !== 'boolean') {
+    throw badRequest(
+      `forwardOnly must be a boolean when provided (got ${typeof forwardOnly}) — ` +
+      `parse automation strings before calling, so a typo cannot silently ` +
+      `disarm the guard`
+    );
+  }
+  const forward = forwardOnly === true;
+  const guarded = onlyFrom != null || onlyFromRole != null || forward;
 
   const outcome = await withTransaction(db, async (conn) => {
     // Per-case cross-instance mutex. MUST be on the transaction's connection
@@ -588,10 +725,98 @@ async function advanceStage(db, caseId, target, {
       }
 
       // Idempotency guard: same stage in the same template → no-op.
+      //
+      // DELIBERATELY BEFORE the forwardOnly comparison. A repeat is a NOOP,
+      // never a backward skip: the two outcomes are different answers to
+      // different questions ("nothing to do" vs "I refused"), and callers
+      // branch on both. Reversing the order would turn every idempotent
+      // re-fire of a forwardOnly automation into a skip — the same event
+      // arriving twice would start reporting a refusal.
       if (latest &&
           latest.stage_key === stage.stage_key &&
           latest.template_id === stage.template_id) {
         return { noop: true };
+      }
+
+      // ── forwardOnly (R1) ───────────────────────────────────────────────
+      // "Advance, never regress", without enumerating from-states. Full
+      // verdict table in the docblock. No latest row → nothing to regress
+      // from → pass, with zero extra queries.
+      if (forward && latest) {
+        // Latest's STAGE ROW by (template_id, stage_key) — key-based, like
+        // every other history↔template match in the engine. No active filter:
+        // a case can legitimately be sitting on a stage that was since
+        // deactivated, and that is still its position.
+        const [[latestStage]] = await conn.query(
+          `SELECT stage_number, lane FROM pipeline_stages
+            WHERE template_id = ? AND stage_key = ? LIMIT 1`,
+          [latest.template_id, latest.stage_key]
+        );
+
+        if (!latestStage) {
+          // The log row points at a stage that no longer exists under that
+          // key — renamed, or deleted. We cannot compare, and guessing in
+          // either direction is worse than saying so. Warned for the same
+          // reason _resolveTarget warns on a soft miss: silence here would
+          // make a real template edit indistinguishable from a working guard.
+          console.warn(
+            `[pipeline] forwardOnly unresolved: case=${caseId} ` +
+            `target="${stage.stage_key}" from="${latest.stage_key}" ` +
+            `(template ${latest.template_id}) — latest stage row not found, skipped`
+          );
+          return { noop: false, skipped: true, reason: 'unresolved',
+                   from: latest.stage_key };
+        }
+
+        if (stage.template_id !== latest.template_id) {
+          // CROSS-TEMPLATE. stage_numbers are per-template ordinals and are
+          // NOT comparable across templates, so the only judgement available
+          // is the lifecycle one: role. Both roles in ONE query — the ids may
+          // be equal-by-accident nowhere here (we're inside the !== branch),
+          // so IN(?,?) always asks for two distinct rows.
+          const [roleRows] = await conn.query(
+            `SELECT id, role FROM pipeline_templates WHERE id IN (?, ?)`,
+            [latest.template_id, stage.template_id]
+          );
+          const roleOf = (id) => {
+            const r = roleRows.find(x => Number(x.id) === Number(id));
+            return r ? r.role : null;
+          };
+          const latestRole = roleOf(latest.template_id);
+          const targetRole = roleOf(stage.template_id);
+
+          // The ONLY cross-template regression is falling out of the case
+          // phase back into the funnel. Everything else passes:
+          //   intake → case  the retention bootstrap (must never be blocked)
+          //   case   → case  a matter-type change; incomparable, so allowed
+          //   either role unknown  a missing template row — unreachable while
+          //                        `latest` references it; pass rather than
+          //                        let an impossible state disarm retention.
+          if (latestRole === 'case' && targetRole === 'intake') {
+            return { noop: false, skipped: true, reason: 'backward',
+                     from: latest.stage_key };
+          }
+          // pass — fall through to the write
+        } else if (isMainLane(stage)) {
+          // SAME TEMPLATE, entering the MAIN lane. (Entering an off-ramp is
+          // legal from anywhere in the template — including from another
+          // off-ramp, which is how the no-show sequence ends
+          // no_show → dead_lead — so the offramp target case is the `if`
+          // this else-branch excludes, and needs no code.)
+          if (isOfframp(latestStage)) {
+            // Off-ramp → main is RECOVERY. Real, but a deliberate act; not
+            // something a monotonic automation gets to do on its own.
+            return { noop: false, skipped: true, reason: 'backward',
+                     from: latest.stage_key };
+          }
+          if (!(Number(stage.stage_number) > Number(latestStage.stage_number))) {
+            // Equal numbers land here too: the SAME stage was already
+            // returned as a noop above, so equality means two DIFFERENT
+            // stages share an ordinal — not forward, so not allowed.
+            return { noop: false, skipped: true, reason: 'backward',
+                     from: latest.stage_key };
+          }
+        }
       }
 
       await conn.query(
