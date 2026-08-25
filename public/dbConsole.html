@@ -4,107 +4,99 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DB Console</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-  :root {
-    --bg: #0f1117;
-    --panel: #161a22;
-    --panel-2: #1d2230;
-    --border: #2a3040;
-    --text: #e6e9ef;
-    --muted: #8a93a6;
-    --accent: #6ea8fe;
-    --danger: #ff6b6b;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-  }
-  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--page-bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px; }
   .app { display: grid; grid-template-columns: 260px 1fr; height: 100vh; transition: grid-template-columns 0.15s ease; }
   .app.sidebar-collapsed { grid-template-columns: 0 1fr; }
   .app.sidebar-collapsed .sidebar { overflow: hidden; }
-  .sidebar { border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
-  .sidebar h3 { margin: 0; padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-  .sidebar h3 button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+  .sidebar { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+  .sidebar h3 { margin: 0; padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .sidebar h3 button { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
   .sidebar h3 button:hover { color: var(--text); border-color: var(--accent); }
   .sidebar .section { flex: 1; overflow-y: auto; min-height: 0; }
   .sidebar .section.collapsed { flex: 0 0 auto; max-height: 32px; overflow: hidden; }
   .table-list { padding: 4px 0; }
   .table-row { padding: 4px 10px 4px 20px; cursor: pointer; border-left: 2px solid transparent; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  .table-row:hover { background: var(--panel-2); border-left-color: var(--accent); }
-  .table-row .count { float: right; color: var(--muted); font-size: 10px; }
+  .table-row:hover { background: var(--surface-2); border-left-color: var(--accent); }
+  .table-row .count { float: right; color: var(--text-muted); font-size: 10px; }
   .cols { padding: 2px 0 6px 28px; display: none; }
   .cols.open { display: block; }
-  .col { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); padding: 1px 6px; cursor: pointer; }
+  .col { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-muted); padding: 1px 6px; cursor: pointer; }
   .col:hover { color: var(--text); }
   .col .k { color: var(--warn); }
-  .col .t { color: #82c0ff; margin-left: 6px; }
+  .col .t { color: var(--accent-2); margin-left: 6px; }
   .saved-list { padding: 4px 0; }
   .saved-item { padding: 4px 10px 4px 12px; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; border-left: 2px solid transparent; }
-  .saved-item:hover { background: var(--panel-2); border-left-color: var(--ok); }
-  .saved-item .x { color: var(--muted); font-size: 11px; padding: 0 4px; }
+  .saved-item:hover { background: var(--surface-2); border-left-color: var(--ok); }
+  .saved-item .x { color: var(--text-muted); font-size: 11px; padding: 0 4px; }
   .saved-item .x:hover { color: var(--danger); }
 
   .main { display: flex; flex-direction: column; min-width: 0; }
-  .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  .toolbar button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .toolbar button { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
   .toolbar button:hover { border-color: var(--accent); }
+  /* #001 stays a literal: text ON --accent, not a §3.1 status fill.
+     Measured, near-black on #07ADEF is 8.17:1 and --accent-text is 2.55:1. */
   .toolbar button.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
   .toolbar button.primary:hover { filter: brightness(1.08); }
   .toolbar button.danger-toggle { border-color: var(--danger); color: var(--danger); }
-  .toolbar button.danger-toggle.active { background: var(--danger); color: #fff; }
-  .toolbar button.warn-toggle.active { background: var(--warn); color: #201800; border-color: var(--warn); font-weight: 600; }
+  .toolbar button.danger-toggle.active { background: var(--danger-fill); color: var(--accent-text); }
+  .toolbar button.warn-toggle.active { background: var(--warn-fill); color: var(--warn-text); border-color: var(--warn-fill); font-weight: 600; }
   .toolbar .sep { flex: 1; }
-  .toolbar .hint { color: var(--muted); font-size: 11px; }
+  .toolbar .hint { color: var(--text-muted); font-size: 11px; }
 
   .editor-wrap { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
-  #editor { width: 100%; min-height: 100px; height: 120px; max-height: 40vh; resize: vertical; background: var(--panel); color: var(--text); border: none; outline: none; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5; box-sizing: border-box; }
+  #editor { width: 100%; min-height: 100px; height: 120px; max-height: 40vh; resize: vertical; background: var(--surface); color: var(--text); border: none; outline: none; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5; box-sizing: border-box; }
 
-  .status { padding: 6px 10px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--panel); }
+  .status { padding: 6px 10px; font-size: 11px; color: var(--text-muted); border-bottom: 1px solid var(--border); background: var(--surface); }
   .status .ok { color: var(--ok); }
   .status .err { color: var(--danger); }
 
   .results { flex: 1; overflow: auto; min-height: 0; }
   pre.report { margin: 0; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; color: var(--text); white-space: pre-wrap; word-wrap: break-word; }
-  pre.report .qcount { color: var(--muted); }
+  pre.report .qcount { color: var(--text-muted); }
   table.r { border-collapse: collapse; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   table.r th, table.r td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
   /* default: one-line cells with ellipsis — readable, user hovers for full value */
-  table.r th { background: var(--panel); position: sticky; top: 0; cursor: pointer; user-select: none; white-space: nowrap; }
+  table.r th { background: var(--surface); position: sticky; top: 0; cursor: pointer; user-select: none; white-space: nowrap; }
   table.r td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
   /* "Wrap" toggle — multi-line, break only at word boundaries */
   table.r.wrap td { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 480px; text-overflow: clip; }
   table.r th:hover { color: var(--accent); }
-  table.r tbody tr:nth-child(odd) { background: rgba(255,255,255,0.02); }
-  table.r td.null { color: var(--muted); font-style: italic; }
-  .empty { padding: 20px; color: var(--muted); text-align: center; }
+  table.r tbody tr:nth-child(odd) { background: var(--surface-2); }
+  table.r td.null { color: var(--text-muted); font-style: italic; }
+  .empty { padding: 20px; color: var(--text-muted); text-align: center; }
 
   /* result-actions: thin bar under the results pane, always visible */
-  .result-actions { padding: 5px 10px; background: var(--panel); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-  .result-actions button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
+  .result-actions { padding: 5px 10px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  .result-actions button { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
   .result-actions button:hover:not(:disabled) { border-color: var(--accent); }
   .result-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .result-actions .hint { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .result-actions .hint { color: var(--text-muted); font-size: 11px; margin-left: auto; }
   .result-actions .hint.ok { color: var(--ok); }
   .result-actions .hint.err { color: var(--danger); }
 
   /* history drawer */
-  .history { border-top: 1px solid var(--border); background: var(--panel); max-height: 30%; overflow: auto; display: none; }
+  .history { border-top: 1px solid var(--border); background: var(--surface); max-height: 30%; overflow: auto; display: none; }
   .history.open { display: block; }
-  .history .h { padding: 6px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-  .history .h button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+  .history .h { padding: 6px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .history .h button { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
   .hist-item { padding: 4px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; cursor: pointer; border-bottom: 1px dotted var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .hist-item:hover { background: var(--panel-2); color: var(--accent); }
+  .hist-item:hover { background: var(--surface-2); color: var(--accent); }
 
-  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 14px; min-width: 340px; }
-  dialog input, dialog select { width: 100%; padding: 6px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; box-sizing: border-box; }
+  dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 14px; min-width: 340px; }
+  dialog input, dialog select { width: 100%; padding: 6px 8px; background: var(--page-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; box-sizing: border-box; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
-  dialog button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+  dialog button { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
 
   /* schema editor */
   #schemaDialog { width: min(1100px, 96vw); max-height: 90vh; overflow: auto; }
   #schemaDialog .title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   #schemaDialog .title h3 { margin: 0; font-size: 14px; }
-  #schemaDialog .title .muted { color: var(--muted); font-size: 11px; }
+  #schemaDialog .title .muted { color: var(--text-muted); font-size: 11px; }
   #schemaDialog .name-row { display: grid; grid-template-columns: 100px 1fr; gap: 8px; align-items: center; margin-bottom: 10px; }
   #schemaDialog .grid-head, #schemaDialog .grid-row {
     display: grid;
@@ -113,30 +105,33 @@
     align-items: center;
     font-size: 11px;
   }
-  #schemaDialog .grid-head { color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 2px; border-bottom: 1px solid var(--border); }
+  #schemaDialog .grid-head { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 2px; border-bottom: 1px solid var(--border); }
   #schemaDialog .grid-row { padding: 3px 2px; border-bottom: 1px dotted var(--border); }
   #schemaDialog .grid-row.removed { opacity: 0.35; text-decoration: line-through; }
-  #schemaDialog .grid-row.added { background: rgba(74, 222, 128, 0.05); }
-  #schemaDialog .grid-row.changed { background: rgba(251, 191, 36, 0.05); }
-  #schemaDialog .handle { color: var(--muted); text-align: center; font-size: 10px; }
+  #schemaDialog .grid-row.added { background: var(--ok-soft); }
+  #schemaDialog .grid-row.changed { background: var(--warn-soft); }
+  #schemaDialog .handle { color: var(--text-muted); text-align: center; font-size: 10px; }
   #schemaDialog .chk { display: flex; justify-content: center; }
   #schemaDialog .chk input { width: auto; }
-  #schemaDialog .remove-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0; }
+  #schemaDialog .remove-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; padding: 0; }
   #schemaDialog .remove-btn:hover { color: var(--danger); }
-  #schemaDialog .add-col { margin-top: 6px; background: var(--panel-2); border: 1px dashed var(--border); color: var(--muted); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%; }
+  #schemaDialog .add-col { margin-top: 6px; background: var(--surface-2); border: 1px dashed var(--border); color: var(--text-muted); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%; }
   #schemaDialog .add-col:hover { color: var(--accent); border-color: var(--accent); }
   #schemaDialog .warn { color: var(--warn); font-size: 11px; padding: 6px 0; }
 
-  .table-row .edit-table { opacity: 0; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 4px; float: right; }
+  .table-row .edit-table { opacity: 0; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 0 4px; float: right; }
   .table-row:hover .edit-table { opacity: 1; }
   .table-row .edit-table:hover { color: var(--accent); }
 
-  /* SweetAlert — same pattern as index.html/reports.html, but unconditional:
-     this console has no light mode, so there's no body.dark to key off. */
-  .swal2-popup { background: var(--panel) !important; color: var(--text) !important; font-size: 13px !important; }
+  /* SweetAlert — same pattern as index.html/reports.html, and still
+     unconditional, but for a different reason now: the tokens themselves
+     carry both modes, so these rules never need a theme selector. (This
+     comment used to say the console has no light mode. It has one as of
+     this commit.) */
+  .swal2-popup { background: var(--surface) !important; color: var(--text) !important; font-size: 13px !important; }
   .swal2-title, .swal2-html-container { color: var(--text) !important; }
   .swal2-input, .swal2-textarea, .swal2-select {
-    background: var(--bg) !important; color: var(--text) !important; border-color: var(--border) !important;
+    background: var(--page-bg) !important; color: var(--text) !important; border-color: var(--border) !important;
   }
   .swal2-html-container code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--warn); }
   .swal2-html-container .sw-left { text-align: left; line-height: 1.55; }
@@ -215,7 +210,7 @@
     <span class="muted">Generates SQL into the editor — nothing runs until you hit Run.</span>
   </div>
   <div class="name-row">
-    <label style="font-size:12px; color:var(--muted);">Table name</label>
+    <label style="font-size:12px; color:var(--text-muted);">Table name</label>
     <input id="schemaTableName" maxlength="64" placeholder="my_table">
   </div>
   <div id="schemaWarn" class="warn"></div>
@@ -281,13 +276,13 @@ let authed = false;
     if (!token) throw new Error("no token");
     const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
     if (payload.user_auth !== "authorized - SU") {
-      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Superuser access required.</div>';
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Superuser access required.</div>';
       return;
     }
     userHint.textContent = `${payload.username || payload.sub} · SU`;
     authed = true;
   } catch (e) {
-    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Not authenticated.</div>';
   }
 })();
 
@@ -333,7 +328,7 @@ btnWrite.addEventListener("click", async () => {
           "</div>",
         showCancelButton: true,
         confirmButtonText: "Enable writes",
-        confirmButtonColor: "#ff6b6b",
+        confirmButtonColor: "var(--danger-fill)",
         cancelButtonText: "Cancel",
         //focusCancel: true,
       }));
@@ -709,7 +704,7 @@ function setCopyHint(text, kind) {
 function renderResults(rows, fields) {
   if (!Array.isArray(rows)) {
     // write result: {affectedRows, insertId, ...}
-    results.innerHTML = `<pre style="padding:12px; margin:0; color:var(--muted);">${escapeHtml(JSON.stringify(rows, null, 2))}</pre>`;
+    results.innerHTML = `<pre style="padding:12px; margin:0; color:var(--text-muted);">${escapeHtml(JSON.stringify(rows, null, 2))}</pre>`;
     return;
   }
   if (rows.length === 0) {
@@ -1235,7 +1230,7 @@ async function loadSaved() {
           text: row ? row.name : undefined,
           showCancelButton: true,
           confirmButtonText: "Delete",
-          confirmButtonColor: "#ff6b6b",
+          confirmButtonColor: "var(--danger-fill)",
           cancelButtonText: "Cancel",
           focusCancel: true,
         });
@@ -1270,7 +1265,7 @@ document.getElementById("btnSaveQuery").addEventListener("click", async () => {
     inputAttributes: { maxlength: 120, autocapitalize: "off", autocorrect: "off" },
     showCancelButton: true,
     confirmButtonText: "Save",
-    confirmButtonColor: "#6ea8fe",
+    confirmButtonColor: "var(--accent)",
     cancelButtonText: "Cancel",
     showLoaderOnConfirm: true,
     allowOutsideClick: () => !Swal.isLoading(),
@@ -1301,7 +1296,7 @@ document.getElementById("btnClearHistory").addEventListener("click", async () =>
     text: "This browser only — saved queries are untouched.",
     showCancelButton: true,
     confirmButtonText: "Clear",
-    confirmButtonColor: "#ff6b6b",
+    confirmButtonColor: "var(--danger-fill)",
     cancelButtonText: "Cancel",
     focusCancel: true,
   });
