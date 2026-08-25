@@ -1187,7 +1187,7 @@
       scan();
       var d = document.createElement('div');
       d.style.cssText = 'position:fixed;pointer-events:none;z-index:' + (CFG.Z + 1) +
-        ';border:2px dashed #07ADEF;background:rgba(7,173,239,.06);' +
+        ';border:2px dashed var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);' +
         'left:' + bounds.left + 'px;top:' + bounds.top + 'px;' +
         'width:' + (bounds.right - bounds.left) + 'px;height:' + (bounds.bottom - bounds.top) + 'px';
       document.body.appendChild(d);
@@ -1257,6 +1257,13 @@
   // ── The sprite ───────────────────────────────────────────────────────────────
   // 36×28, side view, facing right, feet on the bottom edge of the box. Parts are
   // grouped so the CSS below can pose them per state.
+  //
+  // The fills below stay literal, and the theme arc left them alone on purpose.
+  // This is ARTWORK, not chrome: a ginger cat has to read as a ginger cat in
+  // both modes, and there is no token for "cat". Dark mode is handled the way
+  // artwork should be -- .yc-cat lifts to brightness(1.08) and a deeper
+  // drop-shadow -- not by repainting the sprite. The two pieces of this widget
+  // that ARE app UI, the speech bubble and the sleep z's, are tokenised below.
   var SVG =
     '<svg class="m-svg" viewBox="0 0 36 28" width="36" height="28" aria-hidden="true" focusable="false">' +
     // The balloon lives ABOVE the viewBox, which works because the svg is
@@ -1317,11 +1324,13 @@
     'filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.30));}',
     '.yc-cat.yc-grabbed{cursor:grabbing}',
     '.yc-say{position:absolute;left:0;top:0;max-width:250px;padding:8px 12px;border-radius:13px;',
-    'background:#fff;color:#1f2430;border:1px solid #d8dde3;box-shadow:0 4px 14px rgba(0,0,0,.16);',
+    // The bubble is a small panel of app UI, so it takes app tokens and the
+    // hand-picked dark override collapses into them -- the family-C pattern.
+    // Was #fff/#1f2430/#d8dde3 light and #2b3039/#e9ecf1/#3b424c dark.
+    'background:var(--surface);color:var(--text);border:1px solid var(--border);box-shadow:0 4px 14px rgba(0,0,0,.16);',
     'font:500 12.5px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;',
     'pointer-events:none;opacity:0;transition:opacity .45s ease;will-change:transform}',
     '.yc-say.show{opacity:1}',
-    'html[data-theme="dark"] .yc-say{background:#2b3039;color:#e9ecf1;border-color:#3b424c}',
     'html[data-theme="dark"] .yc-cat{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.08)}',
     '.yc-cat svg{display:block;overflow:visible}',
     '.yc-cat g,.yc-cat path,.yc-cat rect,.yc-cat text{transform-box:view-box}',
@@ -1456,9 +1465,10 @@
     '[data-act="sleep"] .m-eye{opacity:0;animation:none}',
     '[data-act="sleep"] .m-tail{transform:rotate(24deg)}',
     '.m-zzz{opacity:0}',
-    '.m-zzz text{font:italic 700 7px/1 Georgia,serif;fill:#8a8f98;',
+    // Same collapse: the z's are muted text over the page. Was #8a8f98 light
+    // (2.90 on --page-bg) and #c8ced8 dark; --text-muted is 5.69 / 5.93.
+    '.m-zzz text{font:italic 700 7px/1 Georgia,serif;fill:var(--text-muted);',
     'transform-box:fill-box;transform-origin:50% 50%}',   /* each z scales about itself */
-    'html[data-theme="dark"] .m-zzz text{fill:#c8ced8}',
     '@keyframes ycm-z{0%{opacity:0;transform:translate(0,0) scale(.7)}25%{opacity:.9}100%{opacity:0;transform:translate(4px,-9px) scale(1.1)}}',
     '[data-act="sleep"] .m-zzz{opacity:1}',
     '[data-act="sleep"] .m-z1{animation:ycm-z 2.6s ease-out infinite}',
