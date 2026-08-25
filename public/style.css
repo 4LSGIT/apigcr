@@ -313,16 +313,33 @@ body.swal2-shown > [aria-hidden="true"] {
    Without that, html[data-theme="dark"] button:not(...) (0,4,1) would
    outrank .tab (0,1,0) and undo their tokens.
 
-   The swal2 rules stay in index.html: SweetAlert is a third-party overlay
-   the shell owns, not a style.css component. */
+   .swal2-styled is excluded for the same reason, and it is the reason this
+   paragraph exists at all. Unscoping this rule from .tab-main (slice 9c)
+   made it reach SweetAlert for the first time -- a Swal renders at document
+   root, outside .tab-main, so the old scoping had excluded it by accident.
+   SweetAlert2 v11 paints its action buttons from
 
-html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button) {
+     div:where(.swal2-container) button:where(.swal2-styled):where(.swal2-confirm)
+
+   which is specificity 0,0,2 -- :where() contributes nothing, so only the two
+   element names count -- and applies confirmButtonColor as an INLINE CUSTOM
+   PROPERTY (--swal2-confirm-button-background-color), not an inline
+   background. An inline custom property does not win a cascade fight; the
+   declaration that consumes it does, and that declaration is 0,0,2. This rule
+   is 0,6,2 even before the exclusion, so it won, and every destructive red
+   confirm rendered as a neutral --surface button in dark. Measured on
+   checklistView.html: rgb(26,30,42) where --danger-fill is #a52f23.
+
+   The exclusion, not a specificity bump, is the fix: swal2's own rules are
+   already correct in both modes once nothing outranks them. */
+
+html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):not(.swal2-styled) {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
 }
-html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):hover:not(:disabled) {
+html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):not(.swal2-styled):hover:not(:disabled) {
   background: var(--hover);
 }
 html[data-theme="dark"] button:disabled {
