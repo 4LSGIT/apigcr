@@ -56,6 +56,25 @@
     return window.parent && window.parent.apiSend;
   }
 
+  // ── Popup theming ──────────────────────────────────────────────────────────
+  // SweetAlert2 paints .swal2-popup white with #545454 text in both modes, and
+  // no consumer page overrides it (only the shell does, for its own document).
+  // The dialog markup below is tokenised, so without this the widget would be
+  // themed content on an unthemed white card. Scoped via customClass so it
+  // themes THIS module's dialogs only.
+  var STYLE_ID = 'yvi-styles';
+  function ensureStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    var el = document.createElement('style');
+    el.id = STYLE_ID;
+    el.textContent =
+      '.yvi-popup{background:var(--surface);color:var(--text);}' +
+      '.yvi-popup .swal2-title{color:var(--text);}' +
+      '.yvi-popup .swal2-html-container{color:var(--text);}';
+    document.head.appendChild(el);
+  }
+  var YVI_POPUP = { popup: 'yvi-popup' };
+
   // Public host for /v/ landing links (2026-08-17 origin-separation slice).
   // Staff run this UI on app.4lsg.com, but the links it mints go to CLIENTS,
   // and the public video surface now lives on the landing host. Hard-coded —
@@ -175,7 +194,9 @@
    */
   async function pickVideo(Swal, videos) {
     if (!videos.length) {
+      ensureStyles();
       await Swal.fire({
+        customClass: YVI_POPUP,
         icon:  'info',
         title: 'No published videos',
         html:  'Add some in <strong>More → Video Manager</strong>, then try again.',
@@ -187,18 +208,18 @@
     const renderRow = (v) => {
       const thumb = v.gcs_poster_url
         ? '<img src="' + esc(v.gcs_poster_url) + '" alt=""'
-          + ' style="width:60px;height:34px;object-fit:cover;border-radius:3px;background:#eee;flex-shrink:0;">'
+          + ' style="width:60px;height:34px;object-fit:cover;border-radius:3px;background:var(--surface-2);flex-shrink:0;">'
         : '<div style="width:60px;height:34px;display:flex;align-items:center;justify-content:center;'
-          + 'background:#eee;border-radius:3px;color:#aaa;flex-shrink:0;font-size:18px;">▶</div>';
+          + 'background:var(--surface-2);border-radius:3px;color:var(--text-muted);flex-shrink:0;font-size:18px;">▶</div>';
       return '<div class="yvi-row" data-video-id="' + esc(v.id) + '"'
-        + ' style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #e5e7eb;'
-        + 'border-radius:4px;margin-bottom:6px;cursor:pointer;background:#fff;">'
+        + ' style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);'
+        + 'border-radius:4px;margin-bottom:6px;cursor:pointer;background:var(--surface);color:var(--text);">'
         + thumb
         + '<div style="flex:1;min-width:0;text-align:left;overflow:hidden;">'
-        +   '<div style="font-weight:600;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+        +   '<div style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
         +     esc(v.title || '(untitled)')
         +   '</div>'
-        +   '<div style="font-size:12px;color:#666;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/v/'
+        +   '<div style="font-size:12px;color:var(--text-muted);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/v/'
         +     esc(v.slug || '')
         +   '</div>'
         + '</div>'
@@ -208,12 +229,15 @@
     let selectedVideo = null;
     let debounceTimer = null;
 
+    ensureStyles();
     const result = await Swal.fire({
+      customClass: YVI_POPUP,
       title: 'Insert Video Link',
       html:
         '<div style="text-align:left;">'
         +   '<input type="text" id="yvi-search" placeholder="Search by title or slug…"'
-        +     ' style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;font-size:14px;margin-bottom:10px;">'
+        +     ' style="width:100%;padding:8px 10px;border:1px solid var(--border-strong);border-radius:4px;font-size:14px;margin-bottom:10px;'
+        +     'background:var(--surface);color:var(--text);">'
         +   '<div id="yvi-list" style="max-height:340px;overflow-y:auto;text-align:left;padding-right:4px;">'
         +     videos.map(renderRow).join('')
         +   '</div>'
@@ -235,7 +259,7 @@
             || ((v.slug || '').toLowerCase().includes(qq))
           );
           if (!filtered.length) {
-            listEl.innerHTML = '<div style="color:#888;text-align:center;padding:20px;">No matches.</div>';
+            listEl.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">No matches.</div>';
           } else {
             listEl.innerHTML = filtered.map(renderRow).join('');
           }
@@ -244,8 +268,8 @@
 
         const attachRowHandlers = () => {
           listEl.querySelectorAll('.yvi-row').forEach(row => {
-            row.addEventListener('mouseenter', () => { row.style.background = '#f0f9ff'; });
-            row.addEventListener('mouseleave', () => { row.style.background = '#fff'; });
+            row.addEventListener('mouseenter', () => { row.style.background = 'var(--hover)'; });
+            row.addEventListener('mouseleave', () => { row.style.background = 'var(--surface)'; });
             row.addEventListener('click', () => {
               const id = row.getAttribute('data-video-id');
               selectedVideo = videos.find(x => String(x.id) === String(id)) || null;
@@ -305,18 +329,20 @@
     let chosen = null;
     const html =
       '<div style="text-align:left;">'
-      +   '<div style="font-size:13px;color:#666;margin-bottom:10px;">Selected: <strong>' + esc(video.title || '(untitled)') + '</strong></div>'
+      +   '<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Selected: <strong>' + esc(video.title || '(untitled)') + '</strong></div>'
       +   variants.map(v =>
             '<button type="button" class="yvi-variant-btn" data-key="' + esc(v.key) + '"'
             + ' style="display:block;width:100%;padding:10px 12px;margin-bottom:6px;text-align:left;'
-            + 'background:#fff;border:1px solid #d1d5db;border-radius:4px;cursor:pointer;font-size:14px;">'
-            +   '<div style="font-weight:600;color:#111;">' + esc(v.label) + '</div>'
-            +   (v.hint ? '<div style="font-size:12px;color:#666;margin-top:2px;">' + esc(v.hint) + '</div>' : '')
+            + 'background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:4px;cursor:pointer;font-size:14px;">'
+            +   '<div style="font-weight:600;color:var(--text);">' + esc(v.label) + '</div>'
+            +   (v.hint ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">' + esc(v.hint) + '</div>' : '')
             + '</button>'
           ).join('')
       + '</div>';
 
+    ensureStyles();
     await Swal.fire({
+      customClass: YVI_POPUP,
       title: 'Choose insertion style',
       html,
       width: 480,
@@ -326,8 +352,8 @@
       didOpen: () => {
         const popup = Swal.getPopup();
         popup.querySelectorAll('.yvi-variant-btn').forEach(btn => {
-          btn.addEventListener('mouseenter', () => { btn.style.background = '#f0f9ff'; btn.style.borderColor = '#3b82f6'; });
-          btn.addEventListener('mouseleave', () => { btn.style.background = '#fff';    btn.style.borderColor = '#d1d5db'; });
+          btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--hover)'; btn.style.borderColor = 'var(--accent)'; });
+          btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--surface)'; btn.style.borderColor = 'var(--border-strong)'; });
           btn.addEventListener('click', () => {
             chosen = btn.getAttribute('data-key');
             Swal.close();
@@ -385,7 +411,8 @@
     // Stage 0 — fetch list (with a tiny loading state if it's the first load)
     let videos;
     if (videosCache === null) {
-      Swal.fire({ title: 'Loading videos…', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+      ensureStyles();
+      Swal.fire({ customClass: YVI_POPUP, title: 'Loading videos…', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
       videos = await loadVideos();
       Swal.close();
     } else {
