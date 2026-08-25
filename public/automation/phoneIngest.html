@@ -116,6 +116,7 @@
     .panel-left {
       width: 280px; min-width: 280px;
       background: var(--code-bg-2);
+      color: var(--code-fg);   /* children inherit the rail, not --text */
       display: flex; flex-direction: column;
       border-right: 1px solid var(--border-strong);
       transition: width 0.15s, min-width 0.15s;

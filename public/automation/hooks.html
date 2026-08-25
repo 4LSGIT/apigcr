@@ -8,6 +8,8 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/automation/fnPicker.js"></script>
   <script src="/automation/paramsMapping.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        HOOKS SUB-PAGE — self-contained styles.
@@ -17,28 +19,12 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy:    #1a1a2e;
-      --navy2:   #16213e;
-      --blue:    #4f8ef7;
-      --blue2:   #3a7de8;
-      --green:   #22c55e;
-      --red:     #ef4444;
-      --amber:   #f59e0b;
-      --purple:  #8b5cf6;
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --border:  #e2e8f0;
-      --muted:   #94a3b8;
-      --text:    #1e293b;
-      --text2:   #475569;
-    }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 14px;
       color: var(--text);
-      background: var(--bg);
+      background: var(--page-bg);
       display: flex;
       height: 100vh;
       overflow: hidden;
@@ -51,14 +37,15 @@
       font-size: 12px; font-weight: 500; cursor: pointer;
       transition: all 0.15s; white-space: nowrap;
     }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: var(--blue2); }
-    .btn-ghost { background: rgba(255,255,255,0.1); color: #fff; }
-    .btn-ghost:hover { background: rgba(255,255,255,0.18); }
-    .btn-danger { background: var(--red); color: #fff; }
-    .btn-danger:hover { background: #dc2626; }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--info-dark); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--hover); }
+    .btn-danger { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover { background: var(--danger-fill); }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
-    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
     .btn-outline:hover { background: var(--border); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -68,11 +55,16 @@
     /* ── Three-panel layout ── */
     .three-panel { flex: 1; overflow: hidden; display: flex; }
 
+    /* .panel-left is a --code-bg-2 rail: dark in BOTH modes by design. Its
+       text derives from --code-fg so it tracks the rail, and the few
+       rgba(255,255,255,.05-.1) tints below are hover/field washes ON that
+       fixed-dark surface — mode-independent for the same reason the rail is. */
     .panel-left {
       width: 220px; min-width: 220px;
-      background: var(--navy2);
+      background: var(--code-bg-2);
+      color: var(--code-fg);   /* children inherit the rail, not --text */
       display: flex; flex-direction: column;
-      border-right: 1px solid rgba(255,255,255,0.06);
+      border-right: 1px solid var(--border-strong);
       transition: width 0.15s, min-width 0.15s;
     }
     .panel-left.collapsed { width: 40px; min-width: 40px; }
@@ -82,31 +74,31 @@
     .panel-left.collapsed .panel-left-head { justify-content: center; }
 
     .panel-collapse-btn {
-      background: none; border: none; color: rgba(255,255,255,0.4);
+      background: none; border: none; color: var(--code-fg); opacity: .6;
       cursor: pointer; padding: 2px 4px; font-size: 12px; flex-shrink: 0;
       transition: color 0.12s;
     }
-    .panel-collapse-btn:hover { color: #fff; }
+    .panel-collapse-btn:hover { color: var(--code-fg); opacity: 1; }
 
     .panel-left-head {
       padding: 10px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid var(--border-strong);
       display: flex; align-items: center; gap: 6px;
     }
     .panel-left-search {
       flex: 1; background: rgba(255,255,255,0.08);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 5px; padding: 5px 9px;
-      color: #fff; font-size: 12px; outline: none;
+      color: var(--code-fg); font-size: 12px; outline: none;
     }
-    .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
-    .panel-left-search:focus { border-color: var(--blue); }
+    .panel-left-search::placeholder { color: var(--code-fg); opacity: .55; }
+    .panel-left-search:focus { border-color: var(--info); }
 
     /* "Show inactive" toggle row beneath the search box */
     .panel-left-filter {
       display: flex; align-items: center; gap: 6px;
       padding: 7px 12px 0;
-      font-size: 11px; color: rgba(255,255,255,0.45);
+      font-size: 11px; color: var(--code-fg); opacity: .6;
       user-select: none;
     }
     .panel-left-filter label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -119,34 +111,34 @@
       padding: 9px 12px; cursor: pointer;
       border-left: 3px solid transparent;
       transition: all 0.12s;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-strong);
     }
     .left-item:hover { background: rgba(255,255,255,0.05); }
-    .left-item.active { border-left-color: var(--blue); background: rgba(79,142,247,0.1); }
+    .left-item.active { border-left-color: var(--info); background: var(--accent-soft); }
 
     .left-item-name {
-      color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 500;
+      color: var(--code-fg); font-size: 13px; font-weight: 500;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .left-item.active .left-item-name { color: #fff; }
+    .left-item.active .left-item-name { color: var(--code-fg); }
 
     .left-item-meta {
-      color: rgba(255,255,255,0.35); font-size: 11px; margin-top: 2px;
+      color: var(--code-fg); opacity: .55; font-size: 11px; margin-top: 2px;
       display: flex; gap: 8px; align-items: center;
     }
 
     .left-item-badge {
       font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600;
     }
-    .badge-active   { background: rgba(34,197,94,0.15); color: #4ade80; }
-    .badge-inactive { background: rgba(239,68,68,0.15); color: #f87171; }
+    .badge-active   { background: var(--ok-soft); color: var(--ok); }
+    .badge-inactive { background: var(--danger-soft); color: var(--danger); }
 
-    .panel-left-foot { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+    .panel-left-foot { padding: 10px 12px; border-top: 1px solid var(--border-strong); }
 
     /* ── Editor area ── */
     .hook-editor-area {
       flex: 1; display: flex; flex-direction: column;
-      background: var(--bg); overflow: hidden; min-width: 0;
+      background: var(--page-bg); overflow: hidden; min-width: 0;
     }
 
     .hook-editor-head {
@@ -167,10 +159,10 @@
       padding: 12px 14px;
       white-space: nowrap;
       border: none; background: none;
-      font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer;
+      font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer;
       border-bottom: 2px solid transparent; transition: all 0.12s;
     }
-    .editor-tab.hook-editor-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .editor-tab.hook-editor-tab.active { color: var(--info); border-bottom-color: var(--info); }
     .editor-tab.hook-editor-tab:hover:not(.active) { color: var(--text); }
 
     .hook-editor-body {
@@ -185,7 +177,7 @@
     .fg { margin-bottom: 16px; }
     .fg label {
       display: block; font-size: 12px; font-weight: 600;
-      color: var(--text2); margin-bottom: 5px;
+      color: var(--text-2); margin-bottom: 5px;
       text-transform: uppercase; letter-spacing: 0.5px;
     }
     .fg input,
@@ -194,20 +186,20 @@
       width: 100%; padding: 8px 10px;
       border: 1px solid var(--border); border-radius: 6px;
       font-size: 13px; font-family: inherit;
-      background: #fff; color: var(--text);
+      background: var(--surface); color: var(--text);
     }
     .fg input:focus,
     .fg select:focus,
     .fg textarea:focus {
-      outline: none; border-color: var(--blue);
-      box-shadow: 0 0 0 3px rgba(79,142,247,0.1);
+      outline: none; border-color: var(--info);
+      box-shadow: 0 0 0 3px var(--accent-soft);
     }
     .fg textarea {
       resize: vertical; min-height: 80px;
       font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
       font-size: 12px;
     }
-    .fg .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .fg .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
     .fg-row { display: flex; gap: 12px; }
     .fg-row .fg { flex: 1; }
     .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
@@ -217,7 +209,7 @@
 
     /* Cards (targets, rules) */
     .card {
-      background: #fff; border: 1px solid var(--border);
+      background: var(--surface); border: 1px solid var(--border);
       border-radius: 8px; padding: 14px; margin-bottom: 10px;
     }
     .card-head {
@@ -229,20 +221,20 @@
     .card-actions button {
       background: none; border: 1px solid var(--border); border-radius: 4px;
       padding: 3px 8px; font-size: 11px; cursor: pointer;
-      color: var(--text2); transition: all 0.1s;
+      color: var(--text-2); transition: all 0.1s;
     }
-    .card-actions button:hover { background: var(--bg); }
-    .card-actions .danger:hover { background: #fef2f2; color: var(--red); border-color: var(--red); }
+    .card-actions button:hover { background: var(--page-bg); }
+    .card-actions .danger:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
 
     .add-btn {
       display: flex; align-items: center; gap: 6px;
       padding: 8px 14px; border: 1px dashed var(--border);
       border-radius: 8px; background: none; cursor: pointer;
-      font-size: 12px; color: var(--muted); width: 100%;
+      font-size: 12px; color: var(--text-muted); width: 100%;
       justify-content: center; transition: all 0.12s; margin-top: 8px;
     }
     .add-btn:hover {
-      border-color: var(--blue); color: var(--blue); background: rgba(79,142,247,0.04);
+      border-color: var(--info); color: var(--info); background: var(--accent-soft);
     }
 
     /* Rule builder (mapper rules) */
@@ -267,20 +259,20 @@
     .rule-transforms {
       display: block; width: 100%; padding: 6px 8px; font-size: 12px;
       border: 1px solid var(--border); border-radius: 4px;
-      background: #fff; color: var(--text); line-height: 1.5;
+      background: var(--surface); color: var(--text); line-height: 1.5;
       min-height: 44px; resize: vertical; white-space: pre; overflow-x: auto;
     }
-    .rule-transforms:focus { outline: none; border-color: var(--blue); }
+    .rule-transforms:focus { outline: none; border-color: var(--info); }
     .rule-remove {
-      background: none; border: none; color: var(--muted);
+      background: none; border: none; color: var(--text-muted);
       cursor: pointer; padding: 6px; font-size: 13px;
     }
-    .rule-remove:hover { color: var(--red); }
+    .rule-remove:hover { color: var(--danger); }
 
     /* Condition builder (filter tab) */
     .cond-group {
       border: 1px solid var(--border); border-radius: 6px;
-      padding: 10px; margin-bottom: 8px; background: #fafbfc;
+      padding: 10px; margin-bottom: 8px; background: var(--surface-2);
     }
     .cond-group-head {
       display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
@@ -305,32 +297,32 @@
     .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .log-table th {
       text-align: left; padding: 8px 10px;
-      background: var(--bg); font-weight: 600; color: var(--text2);
+      background: var(--page-bg); font-weight: 600; color: var(--text-2);
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
       border-bottom: 1px solid var(--border);
     }
     .log-table td {
       padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top;
     }
-    .log-table tr:hover { background: #f8fafc; }
+    .log-table tr:hover { background: var(--surface-2); }
 
     /* Hook status badges */
     .hook-status-badge {
       display: inline-block; padding: 2px 8px; border-radius: 10px;
       font-size: 10px; font-weight: 600; text-transform: uppercase;
     }
-    .hook-status-delivered  { background: #dcfce7; color: #166534; }
-    .hook-status-filtered   { background: #f1f5f9; color: #475569; }
-    .hook-status-failed     { background: #fef2f2; color: #991b1b; }
-    .hook-status-partial    { background: #fef9c3; color: #854d0e; }
-    .hook-status-received   { background: #dbeafe; color: #1e40af; }
-    .hook-status-processing { background: #e0e7ff; color: #3730a3; }
-    .hook-status-queued     { background: #e0e7ff; color: #3730a3; }
-    .hook-status-success    { background: #dcfce7; color: #166534; }
+    .hook-status-delivered  { background: var(--ok-soft); color: var(--ok); }
+    .hook-status-filtered   { background: var(--surface-2); color: var(--text-2); }
+    .hook-status-failed     { background: var(--danger-soft); color: var(--danger); }
+    .hook-status-partial    { background: var(--warn-soft); color: var(--warn); }
+    .hook-status-received   { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .hook-status-processing { background: var(--accent-soft); color: var(--cat-indigo); }
+    .hook-status-queued     { background: var(--accent-soft); color: var(--cat-indigo); }
+    .hook-status-success    { background: var(--ok-soft); color: var(--ok); }
 
     /* Utilities */
     .mono { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
-    .text-muted { color: var(--muted); }
+    .text-muted { color: var(--text-muted); }
     .text-sm { font-size: 12px; }
     .mb-0 { margin-bottom: 0; }
     .mt-8 { margin-top: 8px; }
@@ -341,7 +333,7 @@
     #hook-no-selection {
       display: flex; flex: 1; flex-direction: column;
       align-items: center; justify-content: center;
-      color: var(--muted); gap: 4px; text-align: center;
+      color: var(--text-muted); gap: 4px; text-align: center;
     }
     #hook-no-selection i { font-size: 42px; opacity: 0.2; }
 
@@ -365,7 +357,7 @@
       <label><input type="checkbox" id="hook-show-inactive" onchange="window.hookToggleInactive && window.hookToggleInactive(this.checked)"> Show inactive</label>
     </div>
     <div class="panel-left-list" id="hook-list">
-      <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
+      <div style="padding:16px;color:var(--code-fg);opacity:.55;font-size:12px">Loading…</div>
     </div>
     <div class="panel-left-foot">
       <button class="btn btn-primary" style="width:100%;font-size:12px" onclick="window.hooksNew && window.hooksNew()">
@@ -424,7 +416,7 @@
           <div id="hook-meta" class="text-sm text-muted mt-12" style="display:none"></div>
 
           <!-- ══ Capture next event (slice 2.2) ══ -->
-          <div id="capture-section" style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;background:#f8fafc">
+          <div id="capture-section" style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
               <div style="flex:1;min-width:200px">
                 <label style="font-weight:600;font-size:13px;display:block">Capture next event</label>
@@ -440,15 +432,15 @@
               </button>
             </div>
 
-            <div id="f-capture-waiting" style="display:none;margin-top:10px;font-size:12px;color:#92400e;padding:6px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px">
+            <div id="f-capture-waiting" style="display:none;margin-top:10px;font-size:12px;color:var(--warn);padding:6px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:4px">
               <i class="fa-solid fa-spinner fa-pulse"></i>
               Waiting for next event on <span class="mono">/hooks/<span id="f-capture-waiting-slug">?</span></span>…
             </div>
 
-            <div id="f-capture-sample" style="display:none;margin-top:10px;font-size:12px;color:var(--text2)">
-              <i class="fa-solid fa-circle-check" style="color:var(--green)"></i>
+            <div id="f-capture-sample" style="display:none;margin-top:10px;font-size:12px;color:var(--text-2)">
+              <i class="fa-solid fa-circle-check" style="color:var(--ok)"></i>
               Captured sample from <span id="f-capture-relative">—</span>
-              <span style="color:var(--muted)">(<span id="f-capture-absolute">—</span>)</span>
+              <span style="color:var(--text-muted)">(<span id="f-capture-absolute">—</span>)</span>
               &nbsp;•&nbsp;
               <a href="#" onclick="window.hookViewCapturedSample && window.hookViewCapturedSample();return false">View</a>
               &nbsp;•&nbsp;
@@ -457,7 +449,7 @@
           </div>
 
           <!-- ══ Duplicate (saved hooks only; toggled in populateEditor) ══ -->
-          <div id="f-duplicate-section" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;background:#f8fafc">
+          <div id="f-duplicate-section" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
               <div style="flex:1;min-width:200px">
                 <label style="font-weight:600;font-size:13px;display:block">Duplicate hook</label>
@@ -565,7 +557,7 @@
           <div class="fg" style="margin-top:12px">
             <button type="button" class="btn btn-outline" onclick="window.hookTestTransform()"><i class="fa-solid fa-vial"></i> Test Transform</button>
             <div class="hint">Runs the transform above (unsaved edits included) against the Test tab input — or the captured sample if the Test tab is empty. Nothing is saved or delivered.</div>
-            <pre id="transform-test-result" class="hidden mono" style="background:var(--navy);color:#e2e8f0;padding:12px;border-radius:6px;font-size:11px;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:8px"></pre>
+            <pre id="transform-test-result" class="hidden mono" style="background:var(--code-bg);color:var(--code-fg);padding:12px;border-radius:6px;font-size:11px;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:8px"></pre>
           </div>
         </div>
 
@@ -600,7 +592,7 @@
           </div>
           <div class="fg mb-0">
             <label>Result</label>
-            <pre id="test-result" style="background:var(--navy);color:#e2e8f0;padding:14px;border-radius:6px;font-size:12px;min-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-word">Run a test to see results…</pre>
+            <pre id="test-result" style="background:var(--code-bg);color:var(--code-fg);padding:14px;border-radius:6px;font-size:12px;min-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-word">Run a test to see results…</pre>
           </div>
         </div>
 
@@ -758,7 +750,7 @@ window.togglePanelLeft = togglePanelLeft;
       sequenceTypesList = stData.types || [];
       renderHookList();
     } catch (e) {
-      E('hook-list').innerHTML = `<div style="padding:16px;color:#f87171;font-size:12px">${esc(e.message)}</div>`;
+      E('hook-list').innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px">${esc(e.message)}</div>`;
       hooksLoaded = false;
     }
   }
@@ -774,7 +766,7 @@ window.togglePanelLeft = togglePanelLeft;
   function renderHookList() {
     const el = E('hook-list');
     if (!filtered.length) {
-      el.innerHTML = '<div style="padding:20px 12px;color:rgba(255,255,255,0.3);font-size:12px;text-align:center">No hooks yet.</div>';
+      el.innerHTML = '<div style="padding:20px 12px;color:var(--code-fg);opacity:.55;font-size:12px;text-align:center">No hooks yet.</div>';
       return;
     }
     el.innerHTML = filtered.map(h => `
@@ -1125,7 +1117,7 @@ window.togglePanelLeft = togglePanelLeft;
           <input class="rule-from" placeholder="${r.template !== undefined ? '{{path|transform}} text' : r.value !== undefined ? 'static value' : 'body.payload.name'}"
                  value="${esc(r.from ?? r.template ?? (r.value !== undefined ? String(r.value) : ''))}"
                  data-field="${r.from !== undefined ? 'from' : r.template !== undefined ? 'template' : 'value'}">
-          <span style="color:var(--muted);font-size:16px;padding:4px">→</span>
+          <span style="color:var(--text-muted);font-size:16px;padding:4px">→</span>
           <input class="rule-to" placeholder="contact_name" value="${esc(r.to || '')}">
           <button class="rule-remove" onclick="removeMapperRule(${i})" title="Remove"><i class="fa-solid fa-times"></i></button>
         </div>
@@ -1217,10 +1209,10 @@ window.togglePanelLeft = togglePanelLeft;
   // ══════════════════════════════════════════════════════════════════
 
   const TARGET_TYPE_LABELS = {
-    http:              { label: 'HTTP',              icon: 'fa-globe',           color: 'var(--blue)' },
-    workflow:          { label: 'Workflow',          icon: 'fa-diagram-project', color: '#8b5cf6'      },
-    sequence:          { label: 'Sequence',          icon: 'fa-list-ol',         color: '#f97316'      },
-    internal_function: { label: 'Function',          icon: 'fa-code',            color: '#10b981'      },
+    http:              { label: 'HTTP',              icon: 'fa-globe',           color: 'var(--info)' },
+    workflow:          { label: 'Workflow',          icon: 'fa-diagram-project', color: 'var(--cat-purple)'      },
+    sequence:          { label: 'Sequence',          icon: 'fa-list-ol',         color: 'var(--warn)'      },
+    internal_function: { label: 'Function',          icon: 'fa-code',            color: 'var(--ok)'      },
   };
 
   function renderTargets() {
@@ -1238,21 +1230,21 @@ window.togglePanelLeft = togglePanelLeft;
         <div class="card-head">
           <div class="card-title">
             <i class="fa-solid ${info.icon}" style="color:${info.color};margin-right:6px"></i>${esc(t.name || 'Unnamed target')}
-            <span style="font-size:10px;font-weight:600;background:#f1f5f9;color:#475569;padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase">${info.label}</span>
+            <span style="font-size:10px;font-weight:600;background:var(--surface-2);color:var(--text-2);padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase">${info.label}</span>
           </div>
           <div class="card-actions">
             <button onclick="editTarget(${i})" title="Edit"><i class="fa-solid fa-pen"></i></button>
             <button class="danger" onclick="removeTarget(${i})" title="Delete"><i class="fa-solid fa-trash"></i></button>
           </div>
         </div>
-        <div class="text-sm mono" style="color:var(--muted)">${esc(summary)}</div>
+        <div class="text-sm mono" style="color:var(--text-muted)">${esc(summary)}</div>
         <div class="text-sm text-muted" style="margin-top:4px">
           ${type === 'http'
             ? (t.credential_id ? `<i class="fa-solid fa-lock" style="margin-right:4px"></i>Credential #${t.credential_id}` : '<i class="fa-solid fa-lock-open" style="margin-right:4px"></i>No auth')
             : '<i class="fa-solid fa-bolt" style="margin-right:4px"></i>Internal (no HTTP)'}
           ${t.conditions ? ' • <i class="fa-solid fa-filter"></i> Conditional' : ''}
           ${t.transform_mode && t.transform_mode !== 'passthrough' ? ' • <i class="fa-solid fa-shuffle"></i> Custom transform' : ''}
-          • ${t.active ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--red)">Inactive</span>'}
+          • ${t.active ? '<span style="color:var(--ok)">Active</span>' : '<span style="color:var(--danger)">Inactive</span>'}
         </div>
       </div>`;
     }).join('');
@@ -1336,7 +1328,7 @@ window.togglePanelLeft = togglePanelLeft;
   }
 
   async function removeTarget(i) {
-    const { isConfirmed } = await Swal.fire({ title: 'Delete target?', text: targets[i].name, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444' });
+    const { isConfirmed } = await Swal.fire({ title: 'Delete target?', text: targets[i].name, icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)' });
     if (!isConfirmed) return;
     if (targets[i].id) {
       try {
@@ -1459,8 +1451,8 @@ window.togglePanelLeft = togglePanelLeft;
   // in place when the user flips back.)
   // ═══════════════════════════════════════════════════════════════
 
-  const HOOK_PANEL_INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
-  const HOOK_PANEL_AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+  const HOOK_PANEL_INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;color:var(--accent-on-soft);font-size:11px;line-height:1.5';
+  const HOOK_PANEL_AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px;line-height:1.5';
 
   // Shown under any trigger_data diff. ENGINE-VERIFIED: deliverSequence skips a
   // configured field whose value is `undefined` in the transform output
@@ -1940,7 +1932,7 @@ window.togglePanelLeft = togglePanelLeft;
             <option value="sequence" ${type==='sequence'?'selected':''}>Sequence — enroll contact</option>
             <option value="internal_function" ${type==='internal_function'?'selected':''}>Internal Function — call directly</option>
           </select>
-          <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Internal targets skip the HTTP round-trip and call the engine directly.</div>
+          <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:3px">Internal targets skip the HTTP round-trip and call the engine directly.</div>
         </div>
 
         <!-- ═══ HTTP section ═══ -->
@@ -1962,7 +1954,7 @@ window.togglePanelLeft = togglePanelLeft;
             <select id="swal-t-cred" class="swal2-select" style="margin:0;width:100%" onchange="window.hookUpdateCredWarning && window.hookUpdateCredWarning()">
               <option value="">None</option>${credOpts}
             </select>
-            <div id="swal-t-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div>
+            <div id="swal-t-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px;line-height:1.4"></div>
           </div>
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Mode</label>
@@ -1976,7 +1968,7 @@ window.togglePanelLeft = togglePanelLeft;
             <textarea id="swal-t-template" class="swal2-textarea"
               style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px"
               placeholder='{"text": "New lead: {{contact_name}}", "email": "{{contact_email}}"}'>${esc(t.body_template || '')}</textarea>
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:3px">
               Use <code>{{field_name}}</code> to reference fields from the transform output. Example above.
             </div>
           </div>
@@ -1990,7 +1982,7 @@ window.togglePanelLeft = togglePanelLeft;
               <option value="">— select a workflow —</option>
               ${wfOrphan}${wfOpts}
             </select>
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:3px">
               The full transform output becomes <code>init_data</code> AND the initial variables.
               Advance runs in the background — hook delivery does not wait.
             </div>
@@ -2008,7 +2000,7 @@ window.togglePanelLeft = togglePanelLeft;
               <option value="type" ${seqModeInit==='type'?'selected':''}>By type (cascade match)</option>
               <option value="id"   ${seqModeInit==='id'  ?'selected':''}>By specific template</option>
             </select>
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:3px">
               <strong>By type</strong> picks the most-specific active template matching the type (+ optional appt filters).
               <strong>By specific template</strong> targets one template directly — no filters, no cascade.
             </div>
@@ -2021,7 +2013,7 @@ window.togglePanelLeft = togglePanelLeft;
                 <option value="">— select a template type —</option>
                 ${seqOpts}
               </select>
-              ${seqTypes.length === 0 ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No sequence templates loaded. Check /sequences/templates.</div>' : ''}
+              ${seqTypes.length === 0 ? '<div class="hint" style="color:var(--danger);font-size:11px;margin-top:3px">No sequence templates loaded. Check /sequences/templates.</div>' : ''}
             </div>
           </div>
 
@@ -2032,15 +2024,15 @@ window.togglePanelLeft = togglePanelLeft;
                 <option value="">— select a template —</option>
                 ${seqIdOrphan}${seqIdOpts}
               </select>
-              ${seqIdOpts === '' ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No active sequence templates loaded. Check /sequences/templates.</div>' : ''}
-              <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Only active templates shown. Name is followed by the template&rsquo;s type in parens.</div>
+              ${seqIdOpts === '' ? '<div class="hint" style="color:var(--danger);font-size:11px;margin-top:3px">No active sequence templates loaded. Check /sequences/templates.</div>' : ''}
+              <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:3px">Only active templates shown. Name is followed by the template&rsquo;s type in parens.</div>
             </div>
           </div>
 
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">contact_id field name</label>
             <input id="swal-t-seq-cid" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.contact_id_field || 'contact_id')}" placeholder="contact_id">
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:3px">
               Name of the field in the transform output containing the contact ID.
               Dot-paths supported for nested/passthrough shapes — e.g. <code>body.contactId</code>.
             </div>
@@ -2051,7 +2043,7 @@ window.togglePanelLeft = togglePanelLeft;
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">trigger_data fields (comma-separated)</label>
             <input id="swal-t-seq-td" class="swal2-input mono" style="margin:0;width:100%" value="${esc((cfg.trigger_data_fields || []).join(', '))}" placeholder="appt_id, appt_time, case_id">
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:3px">
               Transform fields to pass through as <code>trigger_data</code> to the sequence.
               Dot-paths supported — <code>body.appt_id</code> is stored as <code>appt_id</code>.
             </div>
@@ -2072,11 +2064,11 @@ window.togglePanelLeft = togglePanelLeft;
           </div>
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Params Mapping</label>
-            <div id="swal-t-fn-params" style="border:1px solid var(--border);border-radius:6px;padding:8px;background:#f8fafc"></div>
+            <div id="swal-t-fn-params" style="border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--surface-2)"></div>
             <button type="button" id="swal-t-fn-add" class="btn btn-outline" style="margin-top:6px;padding:4px 10px;font-size:12px">
               <i class="fa-solid fa-plus"></i> Add param
             </button>
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:4px">
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">
               Map function params to transform output fields. Supports dot-paths
               (e.g. <code>contact.id</code>). Wrap literal strings in single quotes:
               <code>'SMS'</code>. Numbers and booleans go as-is.
@@ -2084,26 +2076,26 @@ window.togglePanelLeft = togglePanelLeft;
             <button type="button" id="swal-t-fn-preview" class="btn btn-outline" style="margin-top:8px;padding:4px 10px;font-size:12px">
               <i class="fa-solid fa-vial"></i> Preview resolved params
             </button>
-            <pre id="swal-t-fn-preview-out" class="mono" style="display:none;background:var(--navy);color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:6px;text-align:left"></pre>
+            <pre id="swal-t-fn-preview-out" class="mono" style="display:none;background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:6px;text-align:left"></pre>
           </div>
         </div>
 
         <!-- ═══ Conditions section (per-target gating, all types) ═══ -->
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
           <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick="window.hookToggleTargetConditions()">
-            <i id="swal-t-cond-chevron" class="fa-solid fa-chevron-right" style="font-size:11px;width:10px;color:var(--muted)"></i>
-            <strong style="font-size:13px">Conditions <span style="font-weight:400;color:var(--muted);font-size:11px">— optional, gates this target</span></strong>
-            <span id="swal-t-cond-active-badge" style="display:none;font-size:10px;font-weight:600;background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px">ACTIVE</span>
+            <i id="swal-t-cond-chevron" class="fa-solid fa-chevron-right" style="font-size:11px;width:10px;color:var(--text-muted)"></i>
+            <strong style="font-size:13px">Conditions <span style="font-weight:400;color:var(--text-muted);font-size:11px">— optional, gates this target</span></strong>
+            <span id="swal-t-cond-active-badge" style="display:none;font-size:10px;font-weight:600;background:var(--accent-soft);color:var(--accent-on-soft);padding:2px 6px;border-radius:4px">ACTIVE</span>
           </div>
           <div id="swal-t-cond-wrap" style="display:none;margin-top:10px">
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-bottom:6px">
+            <div class="hint" style="font-size:11px;color:var(--text-muted);margin-bottom:6px">
               Evaluated against the <strong>transform output</strong> (after the hook-level transform, before any target-level transform).
               If conditions don&rsquo;t pass, this target is skipped and logged as <code>condition not met</code>.
             </div>
             <div id="swal-t-cond-root"></div>
             <div style="display:flex;gap:6px;margin-top:6px">
               <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:12px" onclick="window.hookAddTargetCondition()"><i class="fa-solid fa-plus"></i> Condition</button>
-              <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:12px;color:#ef4444;border-color:#ef4444" onclick="window.hookClearTargetConditions()"><i class="fa-solid fa-trash"></i> Clear all</button>
+              <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger)" onclick="window.hookClearTargetConditions()"><i class="fa-solid fa-trash"></i> Clear all</button>
             </div>
           </div>
         </div>
@@ -2176,9 +2168,9 @@ window.togglePanelLeft = togglePanelLeft;
       const reg = sequenceTypesList.find(r => r.type === tt);
       if (!reg) {
         cascadeHintEl.style.display = '';
-        cascadeHintEl.style.background = '#fef3c7';
-        cascadeHintEl.style.borderColor = '#fde68a';
-        cascadeHintEl.style.color = '#78350f';
+        cascadeHintEl.style.background = 'var(--warn-soft)';
+        cascadeHintEl.style.borderColor = 'var(--warn)';
+        cascadeHintEl.style.color = 'var(--warn)';
         cascadeHintEl.innerHTML = `⚠️ Type <code>${esc(tt)}</code> is not registered. Enrollment will fail at delivery time unless this type is created first.`;
         return;
       }
@@ -2189,17 +2181,17 @@ window.togglePanelLeft = togglePanelLeft;
       // active: !!r.active on every row.
       if (!reg.active) {
         cascadeHintEl.style.display = '';
-        cascadeHintEl.style.background = '#fef3c7';
-        cascadeHintEl.style.borderColor = '#fde68a';
-        cascadeHintEl.style.color = '#78350f';
+        cascadeHintEl.style.background = 'var(--warn-soft)';
+        cascadeHintEl.style.borderColor = 'var(--warn)';
+        cascadeHintEl.style.color = 'var(--warn)';
         cascadeHintEl.innerHTML = `⚠️ Type <code>${esc(tt)}</code> is registered but <strong>inactive</strong>. Enrollment will fail at delivery time until the type is re-activated.`;
         return;
       }
       const pf = Array.isArray(reg.priority_fields) ? reg.priority_fields : [];
       cascadeHintEl.style.display = '';
-      cascadeHintEl.style.background = '#eff6ff';
-      cascadeHintEl.style.borderColor = '#bfdbfe';
-      cascadeHintEl.style.color = '#1e3a8a';
+      cascadeHintEl.style.background = 'var(--accent-soft)';
+      cascadeHintEl.style.borderColor = 'var(--accent)';
+      cascadeHintEl.style.color = 'var(--accent-on-soft)';
       if (pf.length === 0) {
         cascadeHintEl.innerHTML =
           `💡 Type <code>${esc(tt)}</code> has no cascade fields. ` +
@@ -2577,12 +2569,12 @@ window.togglePanelLeft = togglePanelLeft;
   async function loadExecutions() {
     if (!activeHookId) return;
     const tbody = E('log-tbody');
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
     try {
       const data = await api(`/api/hooks/${activeHookId}/executions?limit=50`);
       E('log-count').textContent = `${data.total} total execution${data.total !== 1 ? 's' : ''}`;
       if (!data.executions.length) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">No executions yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">No executions yet.</td></tr>';
         return;
       }
       tbody.innerHTML = data.executions.map(ex => `
@@ -2595,7 +2587,7 @@ window.togglePanelLeft = togglePanelLeft;
         </tr>
       `).join('');
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="5" style="color:var(--red);padding:12px">${esc(e.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger);padding:12px">${esc(e.message)}</td></tr>`;
     }
   }
 
@@ -2610,12 +2602,12 @@ window.togglePanelLeft = togglePanelLeft;
           <div style="text-align:left;font-size:12px;max-height:60vh;overflow:auto">
             <p><b>Status:</b> <span class="hook-status-badge hook-status-${ex.status}">${ex.status}</span></p>
             <p style="margin-top:8px"><b>Filter passed:</b> ${ex.filter_passed === null ? '—' : ex.filter_passed ? 'Yes' : 'No'}</p>
-            ${ex.error ? `<p style="margin-top:8px;color:var(--red)"><b>Error:</b> ${esc(ex.error)}</p>` : ''}
+            ${ex.error ? `<p style="margin-top:8px;color:var(--danger)"><b>Error:</b> ${esc(ex.error)}</p>` : ''}
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Raw Input</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.raw_input), null, 2))}</pre>
+              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.raw_input), null, 2))}</pre>
             </details>
             <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Transform Output</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.transform_output), null, 2))}</pre>
+              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.transform_output), null, 2))}</pre>
             </details>
             ${(ex.delivery_logs || []).length ? `
               <h4 style="margin-top:14px;font-size:13px">Delivery Logs</h4>
@@ -2625,12 +2617,12 @@ window.togglePanelLeft = togglePanelLeft;
                 return `
                 <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px">
                   <div><b>${esc(dl.target_name || 'Target #' + dl.target_id)}</b>
-                    <span style="font-size:10px;font-weight:600;background:#f1f5f9;color:#475569;padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase">${esc(dlType)}</span>
+                    <span style="font-size:10px;font-weight:600;background:var(--surface-2);color:var(--text-2);padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase">${esc(dlType)}</span>
                     <span class="hook-status-badge hook-status-${dl.status === 'success' ? 'delivered' : dl.status === 'queued' ? 'queued' : 'failed'}" style="margin-left:6px">${dl.status}</span>
-                    ${dl.response_status ? `<span style="margin-left:8px;color:var(--muted)">${isInternal ? 'result' : 'HTTP'} ${dl.response_status}</span>` : ''}
+                    ${dl.response_status ? `<span style="margin-left:8px;color:var(--text-muted)">${isInternal ? 'result' : 'HTTP'} ${dl.response_status}</span>` : ''}
                   </div>
-                  <div class="mono text-sm" style="margin-top:4px;color:var(--muted)">${esc(dl.request_method)} ${esc(dl.request_url)}</div>
-                  ${dl.error ? `<div style="color:var(--red);margin-top:4px;font-size:12px">${esc(dl.error)}</div>` : ''}
+                  <div class="mono text-sm" style="margin-top:4px;color:var(--text-muted)">${esc(dl.request_method)} ${esc(dl.request_url)}</div>
+                  ${dl.error ? `<div style="color:var(--danger);margin-top:4px;font-size:12px">${esc(dl.error)}</div>` : ''}
                 </div>`;
               }).join('')}
             ` : ''}
@@ -2878,7 +2870,7 @@ async function runLiveTest() {
           <div class="text-sm text-muted" style="margin-bottom:8px">
             Captured ${esc(activeHook.captured_at ? new Date(activeHook.captured_at).toLocaleString() : '—')}
           </div>
-          <pre style="background:var(--navy);color:#e2e8f0;padding:12px;border-radius:6px;font-size:11px;max-height:60vh;overflow:auto;text-align:left;white-space:pre-wrap;word-break:break-word">${esc(capturedSamplePretty())}</pre>
+          <pre style="background:var(--code-bg);color:var(--code-fg);padding:12px;border-radius:6px;font-size:11px;max-height:60vh;overflow:auto;text-align:left;white-space:pre-wrap;word-break:break-word">${esc(capturedSamplePretty())}</pre>
         </div>
       `,
       width: 720,
@@ -2998,7 +2990,7 @@ async function runLiveTest() {
       text: `"${activeHook?.name}" and all its targets will be permanently deleted.`,
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: '#ef4444',
+      confirmButtonColor: 'var(--danger-fill)',
       confirmButtonText: 'Delete',
     });
     if (!isConfirmed) return;
