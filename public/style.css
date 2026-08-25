@@ -91,10 +91,53 @@ body{font-family: var(--ui)}
    Horizontal padding goes UP, 10px -> 12px, so a 200px border-box control
    loses 4px of content width. Inputs scroll, so nothing is lost there. A
    <select> clips instead -- but the longest real option already overflowed by
-   161px before this change, so the clipping widens, it does not appear. */
+   161px before this change, so the clipping widens, it does not appear.
+
+   D5 adds font-size, and SIZE IS NOT WHY. A control took the UA's 13.333px
+   while the .logTable cell beside it inherited the page's 16px, so two
+   adjacent elements on the same 14 pages disagreed by 2.7px with nothing in
+   the repo setting either. --fs on both is what makes them equal; the height
+   it buys is almost nothing. Measured in Chromium, 1280 and 390, light and
+   dark:
+
+     input   31 -> 30      select  33 -> 32      cell/header  31 -> 27
+
+   ONE DECLARATION, TWO CASCADE OUTCOMES, because specificity is per selector
+   in a list and not per rule:
+
+     input:not([type=radio]):not([type=checkbox])   0,2,1
+     select                                         0,0,1
+     .input-ta / .input                             0,1,0   (both dead)
+
+   So the input half outranks nearly every page rule and the select half loses
+   to all of them. Enumerated over the 14 consumers with a block parser, from
+   the DOM side as well as the selector side -- a class-only rule like
+   formInbox's `.fx-filter { font-size: 13px }` never names an element and a
+   selector grep cannot see it. Eight declarations move, all of them inputs:
+   .ck-add / .ck-newlist / .ck-btn 14px, .cx-search 14px, .fx-appt-input 13px,
+   swal2's .swal2-input 20.25px, and sendForm's two touch rules. Every <select>
+   override survives untouched -- .fx-filter, .cx-newfor, .pb-top, .sf-row,
+   .swal2-select all keep their size. index.html's two id-scoped searches
+   (1,1,1) and pipelineBoard's .pb-top input[type=text] (0,2,1, tie broken by
+   source order) are preserved too.
+
+   KNOWN COST, and it is a real one: esign/sendForm.html:66 pins .sf-row and
+   .sf-recip inputs to 16px under @media (any-pointer: coarse) -- an iOS
+   zoom-on-focus guard. A media query carries no specificity, so 0,2,1 beats
+   its 0,1,1 and those inputs drop to 12.5px on touch, while the <select> in
+   the same row keeps 16px. Verified with a touch-emulated viewport, not
+   assumed. The tap target does not move (min-height:40px is a different
+   property and still wins). The fix belongs in sendForm.html, which is not
+   this slice's file.
+
+   <textarea>, checkbox and radio are not in this selector and keep the UA's
+   13.333px. .big-button and .file-button are <button>s outside it and keep
+   13.333px too, so a primary button now reads 0.83px larger than the input
+   beside it -- below the threshold that made this worth doing. */
 input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   width: 200px;
   box-sizing: border-box;
+  font-size: var(--fs);
   padding: var(--pad-btn);
   border: 1px solid var(--border-strong);
   border-radius: 3px;
@@ -200,9 +243,26 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
    page's 16px -- unlike the controls above -- so the row box is padding plus a
    19.2px line, and the padding is the only lever this slice is allowed to
    pull. 8px -> --pad-cell takes a 20-row table with single-line cells from
-   736px to 652px -- 4px off each of the 21 row boxes, header included. */
+   736px to 652px -- 4px off each of the 21 row boxes, header included.
+
+   D5 adds font-size here for the same reason as on the controls above, and
+   this is the half anyone will actually see: a cell was the ONLY element in
+   this pair that inherited the page's 16px. 16 -> 12.5 takes the row box 31 ->
+   27, and the same 20-row table 652px -> 568px, a further -12.9% on top of
+   D3's -11.4%. It also narrows the table, which REDUCES existing overflow
+   rather than adding any: esign/dashboard at 390 went from 332px of horizontal
+   scroll to 211px.
+
+   Blast radius zero, unlike the control rule. Nothing else in the 14 consumers
+   sets font-size on a .logTable cell, on the table, or inline on a <td> --
+   checked with a multi-line block parser, not a same-line grep. tasks.html's
+   `<table style="font-size:13px">` at :818 is a Swal detail table that carries
+   no .logTable class, so it is out of reach. The <button>s that real rows put
+   in their last cell stay on the UA's 13.333px, which now sits 0.83px off the
+   cell around them instead of 2.7px. */
 .logTable td, .logTable th {
   border: 1px solid var(--border);
+  font-size: var(--fs);
   padding: var(--pad-cell);
 }
 .logTable th {
