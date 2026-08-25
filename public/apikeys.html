@@ -23,11 +23,12 @@
   }
   button:hover { opacity: 0.85; }
   button:disabled { opacity: 0.4; cursor: default; }
-  button.danger { background: var(--danger); }
-  /* #1a1a1a stays a literal: it is text ON --warn, the amber counterpart of
-     --accent-text, and the sheet has no --warn-text. Measured 5.5:1 in light
-     and 8.9:1 in dark, so both modes pass; --surface would drop light to 3.0. */
-  button.warn { background: var(--warn); color: #1a1a1a; }
+  button.danger { background: var(--danger-fill); color: var(--fill-text); }
+  /* The sheet has --warn-text now; it is #1a1a1a, the same value this had
+     hardcoded, so the colour does not move. --warn-fill is mode-independent,
+     which keeps the label at 5.46 in both modes instead of drifting with
+     --warn. White on amber is 3.19 and is why the label is not white. */
+  button.warn { background: var(--warn-fill); color: var(--warn-text); }
   button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
   input {
     background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
