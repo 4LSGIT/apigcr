@@ -77,8 +77,10 @@
        own. To pull the debut out early or clean it up,
        see the DEBUT_UNTIL block near the top of public/js/mascot.js. -->
   <script defer src="/js/mascot.js"></script>
-  <!-- Token sheet loads immediately BEFORE style.css: style.css must keep
-       winning the body font-family (Arial stays this arc — charter §0.1/§7). -->
+  <!-- Token sheet loads immediately BEFORE style.css. style.css still wins
+       the body font-family, but as of the density arc (D2/1) it sets
+       var(--ui) — the same stack theme.css puts on body — so the ordering no
+       longer decides which typeface renders, only which rule declares it. -->
   <link rel="stylesheet" href="/theme.css">
   <link rel="stylesheet" type="text/css" href="style.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -4466,9 +4468,34 @@ async function initAuth() {
          unselected chip  #fff bg, #374151 text         a light island
 
        Cheat-sheet trap #2, exactly: a hardcoded colour whose background moved
-       out from under it. NOT fixed here — slice 10b is scoped to the SweetAlert
-       cascade, and repainting this dialog is a content change with its own
-       review. Tokenise it before trusting anything below. -->
+       out from under it.
+
+       FIXED in the density arc (D2b). Two corrections to the account above:
+
+       · The break is slice 9c, not slice 4. git blame puts
+         `html[data-theme="dark"] input, select, textarea { background:
+         var(--surface); color: var(--text) }` at style.css:348-353 in d53812b
+         — 9c. Before that the textarea was UA-white with dark text: a light
+         island, ugly but readable. 9c unscoped the rule from .tab-main, and
+         because this dialog sets no Swal `target:` the popup renders under
+         <body>, outside .tab-main, so the rule reached it for the first time
+         and put #111827 on --surface.
+       · The selected chip was missing from the tally. Measured with the
+         rgba composited onto the popup rather than read raw: #0b6f96 on
+         --accent-soft over #1a1e2a is 2.54:1, a worse AA failure than the
+         hint text. It now takes --accent-on-soft.
+
+       Measured on the live dialog, opened for real in both modes, with the
+       chip's rgba composited onto the popup rather than read raw:
+
+                        dark before   dark after   light after
+         textarea            1.07        13.04         21.00
+         chip, unselected   10.31 *      13.04         10.98
+         chip, selected      2.54         5.71          6.31
+         hint text           3.44         5.51          6.10
+
+         * readable, but a white island on a dark card -- the reason it was
+           worth changing even though it never failed contrast. -->
   <script>
     (function () {
       const DRAFT_KEY = 'yc.issueDraft';
@@ -4625,22 +4652,37 @@ async function initAuth() {
       // ── dialog ───────────────────────────────────────────────────────────
       const ACCENT = '#07ADEF';
 
+      /* paintKinds() re-applies all three of these as inline .style on every
+         repaint, and an inline declaration outranks any non-important sheet
+         rule -- so a CSS-only fix here is overwritten on the first click. The
+         tokens have to live in the JS. One table, used by the initial markup
+         and the repaint, so the two states cannot drift apart again.
+
+         The ON text is --accent-on-soft, not --accent-2: that token exists
+         precisely for text on --accent-soft and is measured at 6.31 light /
+         5.71 dark, where dark --accent-2 (#6ea8fe) is tuned for --surface. */
+      const CHIP = {
+        off: { border: 'var(--border)', bg: 'var(--surface)',     fg: 'var(--text)',           weight: '400' },
+        on:  { border: ACCENT,          bg: 'var(--accent-soft)', fg: 'var(--accent-on-soft)', weight: '600' }
+      };
+
       function kindButtonHtml(k) {
         return '<button type="button" class="ri-kind" data-kind="' + k.v + '" '
           + 'style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;'
           + 'padding:10px 4px;border-radius:8px;cursor:pointer;font-size:12px;line-height:1.25;'
-          + 'border:1px solid #e5e7eb;background:#fff;color:#374151">'
+          + 'border:1px solid ' + CHIP.off.border + ';background:' + CHIP.off.bg + ';'
+          + 'color:' + CHIP.off.fg + '">'
           + '<i class="fa-solid ' + k.icon + '" style="font-size:16px"></i>'
           + k.label + '</button>';
       }
 
       function paintKinds(popup, kind) {
         popup.querySelectorAll('.ri-kind').forEach(b => {
-          const on = b.dataset.kind === kind;
-          b.style.borderColor = on ? ACCENT : '#e5e7eb';
-          b.style.background  = on ? 'rgba(7,173,239,0.10)' : '#fff';
-          b.style.color       = on ? '#0b6f96' : '#374151';
-          b.style.fontWeight  = on ? '600' : '400';
+          const c = b.dataset.kind === kind ? CHIP.on : CHIP.off;
+          b.style.borderColor = c.border;
+          b.style.background  = c.bg;
+          b.style.color       = c.fg;
+          b.style.fontWeight  = c.weight;
         });
         const ta = popup.querySelector('#riNote');
         if (ta) ta.placeholder = PLACEHOLDER[kind] || '';
@@ -4665,9 +4707,9 @@ async function initAuth() {
             + '</div>'
             + '<textarea id="riNote" rows="6" '
             + 'style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e5e7eb;'
-            + 'border-radius:6px;font-family:inherit;font-size:14px;line-height:1.5;color:#111827;'
+            + 'border-radius:6px;font-family:inherit;font-size:14px;line-height:1.5;'
             + 'resize:vertical;outline:none"></textarea>'
-            + '<div style="margin-top:10px;font-size:12px;color:#6b7280;line-height:1.45">'
+            + '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.45">'
             + '<i class="fa-solid fa-circle-info" style="margin-right:5px"></i>'
             + 'Just say what happened in your own words \u2014 no need to explain where you '
             + 'were or what you clicked. That gets sent along automatically.'
@@ -4742,7 +4784,7 @@ async function initAuth() {
             html: (tooMany
                     ? 'That\u2019s a lot of reports in a short window. Try again in a few minutes.'
                     : ((err && err.message) ? String(err.message) : 'Something went wrong.'))
-                  + '<div style="margin-top:12px;font-size:12px;color:#6b7280">'
+                  + '<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">'
                   + 'Your message has been kept \u2014 reopen Help & Support and it will '
                   + 'still be there.</div>',
             confirmButtonColor: ACCENT
