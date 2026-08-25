@@ -586,11 +586,31 @@ of them:
 | in scope, blocked on this | `apptform2`, `eventform`, `forms/casedetails`, `forms/contact-form`, `forms/issn`, `sendingform` |
 | out of arc scope | `forms/341notes.html` |
 | deferred (dual-use) | `forms/render.html` |
-| backups | `forms/casedetails-bk.html`, `sendingform-bk.html` |
+| **NOT backups — live primary files** | `forms/casedetails-bk.html`, `sendingform-bk.html` |
 
 `formBuilderSimple.html` appears in a `grep -l` for the filename but only
 mentions it in a comment at :451. It does not load it. (Sixth instance of a
 grep matching prose about a pattern rather than the pattern.)
+
+### The `-bk` files are not backups. Do not skip or delete them.
+
+An earlier version of this section called them backups on the strength of the
+suffix. That was wrong and it was the most dangerous error in this document.
+`case.html:1424` reads:
+
+```js
+if (type === "Bankruptcy") {
+  E("SendingForm").src = `sendingform-bk.html?case_id=${c.case_id}`;
+  E("caseForm").src    = `forms/casedetails-bk.html?case_id=${c.case_id}`;
+```
+
+The non-`-bk` files are the **fallback** branch for case types that do not have
+their own. This is a bankruptcy firm, so `-bk` is what staff open every day.
+`ref/ORIGIN_SEPARATION_ROLLOUT.md:455` already said so. Both were fully
+converted in slice 9.
+
+The general lesson, and it generalises past this file: **a filename is not
+evidence.** Check what loads a file before deciding what it is.
 
 ## 6.1 `style.css` has a hard prerequisite
 
