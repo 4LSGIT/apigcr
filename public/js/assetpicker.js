@@ -37,7 +37,6 @@
 
   var STYLE_ID = 'assetpicker-styles';
   var LIMIT    = 24;
-  var ACCENT   = '#07ADEF';
 
   // ── Private HTML escaper (do NOT rely on any host-page helper) ──
   function esc(s) {
@@ -75,39 +74,56 @@
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     var css =
+      // The picker lives in a SweetAlert2 popup, and SweetAlert2 paints that
+      // popup white with #545454 text regardless of theme. No consumer page
+      // themes .swal2-popup (only the shell does, for its own document), so
+      // tokenising the widget without also theming its own popup would put
+      // --surface panels and --text labels on a white card. Scoped through
+      // customClass so only THIS dialog is themed, never the host page's.
+      '.ap-popup{background:var(--surface);color:var(--text);}' +
+      '.ap-popup .swal2-title{color:var(--text);}' +
+      '.ap-popup .swal2-html-container{color:var(--text);}' +
+
       '.ap-controls{display:flex;gap:8px;align-items:center;margin-bottom:10px;}' +
-      '.ap-text{box-sizing:border-box;padding:7px 9px;border:1px solid #ccc;border-radius:6px;font-size:13px;background:#fff;}' +
+      // Declares its own background, so it MUST declare its own colour: the
+      // consumer pages set `input{color:var(--text)}`, and the hardcoded #fff
+      // this replaces left near-white text on a white box at 1.28:1 in dark.
+      '.ap-text{box-sizing:border-box;padding:7px 9px;border:1px solid var(--border-strong);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text);}' +
       '.ap-search{flex:1;min-width:0;}' +
       '.ap-select{flex:0 0 auto;width:auto;max-width:45%;}' +
       '.ap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;max-height:400px;overflow-y:auto;padding:4px;}' +
-      '.ap-cell{position:relative;border:2px solid transparent;border-radius:6px;cursor:pointer;transition:border-color .15s;background:#fff;}' +
-      '.ap-cell:hover{border-color:' + ACCENT + ';}' +
-      '.ap-thumb{width:100%;height:90px;object-fit:cover;border-radius:4px;display:block;background:#f4f4f4;}' +
-      '.ap-fileicon{width:100%;height:90px;display:flex;align-items:center;justify-content:center;background:#f4f4f4;border-radius:4px;}' +
-      '.ap-fileicon i{font-size:30px;color:#777;}' +
-      '.ap-label{font-size:10px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 4px;}' +
-      '.ap-del{position:absolute;top:2px;right:2px;background:rgba(220,53,69,.85);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:20px;padding:0;}' +
-      '.ap-del:hover{background:rgba(220,53,69,1);}' +
-      '.ap-state{grid-column:1/-1;text-align:center;color:#999;font-size:13px;padding:24px 8px;}' +
-      '.ap-footer{display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:12px;color:#666;min-height:20px;}' +
-      '.ap-more{background:none;border:1px solid ' + ACCENT + ';color:' + ACCENT + ';border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;}' +
-      '.ap-more:hover{background:' + ACCENT + ';color:#fff;}' +
+      '.ap-cell{position:relative;border:2px solid transparent;border-radius:6px;cursor:pointer;transition:border-color .15s;background:var(--surface);color:var(--text);}' +
+      '.ap-cell:hover{border-color:var(--accent);}' +
+      '.ap-thumb{width:100%;height:90px;object-fit:cover;border-radius:4px;display:block;background:var(--surface-2);}' +
+      '.ap-fileicon{width:100%;height:90px;display:flex;align-items:center;justify-content:center;background:var(--surface-2);border-radius:4px;}' +
+      '.ap-fileicon i{font-size:30px;color:var(--text-muted);}' +
+      '.ap-label{font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 4px;}' +
+      // The 85% keeps the softening this had over a thumbnail; color-mix
+      // tracks the token through both modes where a baked rgba() cannot.
+      '.ap-del{position:absolute;top:2px;right:2px;background:color-mix(in srgb,var(--danger-fill) 85%,transparent);color:var(--fill-text);border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:20px;padding:0;}' +
+      '.ap-del:hover{background:var(--danger-fill);}' +
+      '.ap-state{grid-column:1/-1;text-align:center;color:var(--text-muted);font-size:13px;padding:24px 8px;}' +
+      '.ap-footer{display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-muted);min-height:20px;}' +
+      // Border takes --accent (decoration); the LABEL takes --accent-2 —
+      // --accent as text measures 2.55 on white. TOKEN-MAP §3.1.
+      '.ap-more{background:none;border:1px solid var(--accent);color:var(--accent-2);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;}' +
+      '.ap-more:hover{background:var(--accent);color:var(--accent-text);}' +
       '.ap-msg{margin-top:8px;font-size:12px;border-radius:4px;padding:6px 8px;display:none;text-align:left;}' +
-      '.ap-msg.error{background:#fdecea;color:#b71c1c;}' +
-      '.ap-msg.success{background:#e8f5e9;color:#1b5e20;}' +
-      '.ap-msg.info{background:#e3f2fd;color:#0d47a1;}' +
-      '.ap-up{margin-top:10px;border:1px solid #eee;border-radius:6px;}' +
-      '.ap-up>summary{cursor:pointer;padding:8px 10px;font-size:13px;font-weight:600;color:#444;list-style:none;}' +
+      '.ap-msg.error{background:var(--danger-soft);color:var(--danger);}' +
+      '.ap-msg.success{background:var(--ok-soft);color:var(--ok);}' +
+      '.ap-msg.info{background:var(--info-soft);color:var(--info);}' +
+      '.ap-up{margin-top:10px;border:1px solid var(--border);border-radius:6px;}' +
+      '.ap-up>summary{cursor:pointer;padding:8px 10px;font-size:13px;font-weight:600;color:var(--text);list-style:none;}' +
       '.ap-up>summary::-webkit-details-marker{display:none;}' +
-      '.ap-up>summary::before{content:"\\25B8\\00A0";color:#999;}' +
+      '.ap-up>summary::before{content:"\\25B8\\00A0";color:var(--text-muted);}' +
       '.ap-up[open]>summary::before{content:"\\25BE\\00A0";}' +
       '.ap-up-body{padding:0 10px 10px;display:flex;flex-direction:column;gap:8px;}' +
       '.ap-up-body input[type=text],.ap-up-body input[type=file]{font-size:13px;}' +
-      '.ap-check{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;color:#444;}' +
-      '.ap-btn{background:' + ACCENT + ';color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap;}' +
+      '.ap-check{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;color:var(--text);}' +
+      '.ap-btn{background:var(--accent);color:var(--accent-text);border:none;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap;}' +
       '.ap-btn:hover{filter:brightness(.95);}' +
       '.ap-btn:disabled{opacity:.6;cursor:default;}' +
-      '.ap-divider{border:none;border-top:1px solid #eee;margin:10px 0 0;}' +
+      '.ap-divider{border:none;border-top:1px solid var(--border);margin:10px 0 0;}' +
       '.ap-url{display:flex;gap:8px;margin-top:10px;align-items:center;}' +
       '.ap-url input{flex:1;min-width:0;}';
     var el = document.createElement('style');
@@ -435,6 +451,8 @@
         title: titleText,
         html: html,
         width: 640,
+        // Scopes the .ap-popup rules above to this dialog only.
+        customClass: { popup: 'ap-popup' },
         showConfirmButton: false,
         showCancelButton: true,
         cancelButtonText: 'Cancel',
