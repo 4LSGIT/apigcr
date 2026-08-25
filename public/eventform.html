@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Event Details</title>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
@@ -27,11 +29,11 @@
     /* ── Loading ── */
     #efLoading {
       display: flex; align-items: center; justify-content: center;
-      gap: 10px; padding: 60px 20px; color: #6c757d; font-size: 0.9rem;
+      gap: 10px; padding: 60px 20px; color: var(--text-muted); font-size: 0.9rem;
     }
     #efLoading::before {
       content: ''; width: 20px; height: 20px;
-      border: 2.5px solid #dee2e6; border-top-color: #0d6efd;
+      border: 2.5px solid var(--border); border-top-color: var(--accent);
       border-radius: 50%; animation: efspin 0.7s linear infinite;
     }
     @keyframes efspin { to { transform: rotate(360deg); } }
@@ -40,70 +42,84 @@
     .ef-header {
       display: flex; justify-content: space-between; align-items: center;
       gap: 12px; padding-bottom: 14px; margin-bottom: 16px;
-      border-bottom: 2px solid #e9ecef;
+      border-bottom: 2px solid var(--border);
     }
-    .ef-title { font-size: 1.15rem; font-weight: 700; color: #1a1a2e; letter-spacing: -0.01em; }
-    .ef-title span { color: #495057; font-weight: 500; }
+    .ef-title { font-size: 1.15rem; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+    .ef-title span { color: var(--text-2); font-weight: 500; }
 
     /* ── Status badge ── */
     .ef-status {
       display: inline-flex; align-items: center; gap: 5px;
       padding: 5px 14px; border-radius: 20px; white-space: nowrap;
       font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em;
-      text-transform: uppercase; color: #fff;
+      text-transform: uppercase; color: var(--fill-text);
     }
-    .ef-status-Scheduled { background: linear-gradient(135deg, #28a745, #20c040); }
-    .ef-status-Completed { background: linear-gradient(135deg, #0d6efd, #4990ff); }
-    .ef-status-Canceled  { background: linear-gradient(135deg, #6c757d, #8a939c); }
+    /* Each pill keeps its gradient, derived from its own fill token with
+       color-mix (TOKEN-MAP "derived tints"). The second stop always moves AWAY
+       from the label — darker under a white label, lighter under a near-black
+       one — so the whole sweep is at least as legible as the token's own
+       documented pairing. The originals ran fill → LIGHTER under a white
+       label, which is why white on #20c040 measured 2.4.
+       Measured, stop1 / stop2:
+         Scheduled  --fill-text on --ok-fill        6.52 / 8.81
+         Completed  --accent-text on --accent       7.57 / 8.95
+         Canceled   --fill-text on --neutral-fill   6.99 / 9.23 */
+    .ef-status-Scheduled { background: linear-gradient(135deg, var(--ok-fill), color-mix(in srgb, var(--ok-fill) 80%, black)); }
+    /* --accent takes the NEAR-BLACK label, not white: white on #07ADEF is 2.55. */
+    .ef-status-Completed { background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 80%, white)); color: var(--accent-text); }
+    .ef-status-Canceled  { background: linear-gradient(135deg, var(--neutral-fill), color-mix(in srgb, var(--neutral-fill) 80%, black)); }
 
     /* ── Info grid (read-only facts) ── */
     .ef-grid {
       display: grid; grid-template-columns: 1fr 1fr 1fr;
-      gap: 1px; background: #e9ecef; border-radius: 8px; overflow: hidden;
+      gap: 1px; background: var(--border); border-radius: 8px; overflow: hidden;
       margin-bottom: 16px;
     }
-    .ef-cell { background: #fff; padding: 10px 14px; min-width: 0; }
+    .ef-cell { background: var(--surface); padding: 10px 14px; min-width: 0; }
     .ef-cell label {
       display: block; font-size: 0.7rem; font-weight: 600;
       text-transform: uppercase; letter-spacing: 0.05em;
-      color: #8a939c; margin-bottom: 3px;
+      color: var(--text-muted); margin-bottom: 3px;
     }
-    .ef-cell span { font-size: 0.88rem; font-weight: 500; color: #212529; word-break: break-word; }
-    .ef-cell a { color: #0d6efd; text-decoration: none; font-weight: 600; }
+    .ef-cell span { font-size: 0.88rem; font-weight: 500; color: var(--text); word-break: break-word; }
+    .ef-cell a { color: var(--accent-2); text-decoration: none; font-weight: 600; }
     .ef-cell a:hover { text-decoration: underline; }
-    .ef-muted { color: #6c757d; font-weight: 400 !important; }
+    .ef-muted { color: var(--text-muted); font-weight: 400 !important; }
 
     /* ── Action bar ── */
     .ef-actions {
       display: flex; gap: 8px; flex-wrap: wrap;
-      padding: 14px 0; border-bottom: 1px solid #e9ecef;
+      padding: 14px 0; border-bottom: 1px solid var(--border);
     }
     .ef-actions button {
       display: inline-flex; align-items: center; gap: 7px;
       padding: 9px 16px; border: none; border-radius: 8px;
       font-size: 0.84rem; font-weight: 600; cursor: pointer;
-      transition: all 0.15s ease; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      transition: all 0.15s ease; box-shadow: var(--shadow);
     }
+        /* hover shadow literal KEPT: the sheet has one shadow token and it is the
+       resting elevation. Inventing an --shadow-lg is forbidden (charter §9),
+       and rgba(0,0,0,α) is mode-neutral — it carries no text. */
     .ef-actions button:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.12); }
     .ef-actions button:active { transform: translateY(0); }
-    .ef-btn-complete { background: #0d6efd; color: #fff; }
-    .ef-btn-cancel   { background: #6c757d; color: #fff; }
+    .ef-btn-complete { background: var(--accent); color: var(--accent-text); }
+    .ef-btn-cancel   { background: var(--neutral-fill); color: var(--fill-text); }
 
     /* ── Sections ── */
-    .ef-section { padding-top: 16px; margin-top: 16px; border-top: 1px solid #e9ecef; }
+    .ef-section { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--border); }
     .ef-section-title {
-      font-weight: 700; font-size: 0.82rem; color: #495057;
+      font-weight: 700; font-size: 0.82rem; color: var(--text-2);
       text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;
     }
-    .ef-hint { font-size: 0.8rem; color: #6c757d; margin: -4px 0 12px; }
+    .ef-hint { font-size: 0.8rem; color: var(--text-muted); margin: -4px 0 12px; }
 
     /* ── Save bar ── */
     .ef-savebar { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
-    .ef-flag { font-size: 0.8rem; color: #a06800; }
-    .ef-flag.saved { color: #1a7f37; }
+    .ef-flag { font-size: 0.8rem; color: var(--warn); }
+    .ef-flag.saved { color: var(--ok); }
 
-    .ef-allday { display: flex; align-items: center; gap: 7px; font-size: 0.9rem; color: #495057; margin-bottom: 12px; }
-    .ef-allday input { width: 15px; height: 15px; accent-color: #0d6efd; cursor: pointer; }
+    .ef-allday { display: flex; align-items: center; gap: 7px; font-size: 0.9rem; color: var(--text-2); margin-bottom: 12px; }
+    .ef-allday input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 
     /* ── Notes & Lists frame ── */
     #efNotesFrame { width: 100%; border: none; min-height: 150px; display: block; }
@@ -345,7 +361,7 @@ async function efLoad() {
     efMountNotes();
   } catch (err) {
     E('efLoading').innerHTML =
-      '<span style="color:#dc3545;">Failed to load event: '
+      '<span style="color:var(--danger);">Failed to load event: '
       + escAttr(err && err.message || 'unknown error') + '</span>';
   }
 }
@@ -736,7 +752,7 @@ E('efTypeSelect').addEventListener('change', () => {
    rather than calling efLoad() bare — checklistView.html's boot block is the
    reference implementation of the same wait. */
 if (!efEventId) {
-  E('efLoading').innerHTML = '<span style="color:#dc3545;">Missing event ID.</span>';
+  E('efLoading').innerHTML = '<span style="color:var(--danger);">Missing event ID.</span>';
 } else {
   (function efWaitForShell() {
     try {
