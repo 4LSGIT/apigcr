@@ -9,6 +9,8 @@
   <script src="/automation/fnPicker.js"></script>
   <script src="/automation/esignTplPanel.js"></script>
   <script src="/automation/paramWidgets.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        WORKFLOWS SUB-PAGE — self-contained styles.
@@ -16,28 +18,12 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy:    #1a1a2e;
-      --navy2:   #16213e;
-      --blue:    #4f8ef7;
-      --blue2:   #3a7de8;
-      --green:   #22c55e;
-      --red:     #ef4444;
-      --amber:   #f59e0b;
-      --purple:  #8b5cf6;
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --border:  #e2e8f0;
-      --muted:   #94a3b8;
-      --text:    #1e293b;
-      --text2:   #475569;
-    }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 14px;
       color: var(--text);
-      background: var(--bg);
+      background: var(--page-bg);
       display: flex;
       height: 100vh;
       overflow: hidden;
@@ -50,14 +36,15 @@
       font-size: 12px; font-weight: 500; cursor: pointer;
       transition: all 0.15s; white-space: nowrap;
     }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: var(--blue2); }
-    .btn-ghost { background: rgba(255,255,255,0.1); color: #fff; }
-    .btn-ghost:hover { background: rgba(255,255,255,0.18); }
-    .btn-danger { background: var(--red); color: #fff; }
-    .btn-danger:hover { background: #dc2626; }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--info-dark); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--hover); }
+    .btn-danger { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover { background: var(--danger-fill); }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
-    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
     .btn-outline:hover { background: var(--border); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -72,9 +59,10 @@
 
     .panel-left {
       width: 220px; min-width: 220px;
-      background: var(--navy2);
+      background: var(--code-bg-2);
+      color: var(--code-fg);   /* children inherit the rail, not --text */
       display: flex; flex-direction: column;
-      border-right: 1px solid rgba(255,255,255,0.06);
+      border-right: 1px solid var(--border-strong);
       transition: width 0.15s, min-width 0.15s;
     }
     .panel-left.collapsed { width: 40px; min-width: 40px; }
@@ -84,15 +72,15 @@
     .panel-left.collapsed .panel-left-head { justify-content: center; }
 
     .panel-collapse-btn {
-      background: none; border: none; color: rgba(255,255,255,0.4);
+      background: none; border: none; color: var(--code-fg); opacity: .6;
       cursor: pointer; padding: 2px 4px; font-size: 12px; flex-shrink: 0;
       transition: color 0.12s;
     }
-    .panel-collapse-btn:hover { color: #fff; }
+    .panel-collapse-btn:hover { color: var(--code-fg); opacity: 1; }
 
     .panel-left-head {
       padding: 10px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid var(--border-strong);
       display: flex; align-items: center; gap: 6px;
     }
 
@@ -100,16 +88,16 @@
       flex: 1; background: rgba(255,255,255,0.08);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 5px; padding: 5px 9px;
-      color: #fff; font-size: 12px; outline: none;
+      color: var(--code-fg); font-size: 12px; outline: none;
     }
-    .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
-    .panel-left-search:focus { border-color: var(--blue); }
+    .panel-left-search::placeholder { color: var(--code-fg); opacity: .55; }
+    .panel-left-search:focus { border-color: var(--info); }
 
     /* "Show inactive" toggle row beneath the search box */
     .panel-left-filter {
       display: flex; align-items: center; gap: 6px;
       padding: 7px 12px 0;
-      font-size: 11px; color: rgba(255,255,255,0.45);
+      font-size: 11px; color: var(--code-fg); opacity: .6;
       user-select: none;
     }
     .panel-left-filter label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -122,34 +110,34 @@
       padding: 9px 12px; cursor: pointer;
       border-left: 3px solid transparent;
       transition: all 0.12s;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-strong);
     }
     .left-item:hover { background: rgba(255,255,255,0.05); }
-    .left-item.active { border-left-color: var(--blue); background: rgba(79,142,247,0.1); }
+    .left-item.active { border-left-color: var(--info); background: var(--accent-soft); }
 
     .left-item-name {
-      color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 500;
+      color: var(--code-fg); font-size: 13px; font-weight: 500;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .left-item.active .left-item-name { color: #fff; }
-    .left-item-meta { color: rgba(255,255,255,0.35); font-size: 11px; margin-top: 2px; }
+    .left-item.active .left-item-name { color: var(--code-fg); }
+    .left-item-meta { color: var(--code-fg); opacity: .55; font-size: 11px; margin-top: 2px; }
 
     .left-item-actions { display: none; gap: 4px; margin-top: 5px; }
     .left-item.active .left-item-actions { display: flex; }
 
     .left-act {
       background: rgba(255,255,255,0.08); border: none;
-      color: rgba(255,255,255,0.6); border-radius: 4px;
+      color: var(--code-fg); opacity: .7; border-radius: 4px;
       padding: 3px 7px; font-size: 11px; cursor: pointer; transition: all 0.12s;
     }
-    .left-act:hover { background: rgba(255,255,255,0.15); color: #fff; }
-    .left-act.danger:hover { background: rgba(239,68,68,0.3); color: #fca5a5; }
+    .left-act:hover { background: rgba(255,255,255,0.15); color: var(--code-fg); }
+    .left-act.danger:hover { background: var(--danger-soft); color: var(--danger); }
 
-    .panel-left-foot { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+    .panel-left-foot { padding: 10px 12px; border-top: 1px solid var(--border-strong); }
 
     .panel-mid {
       flex: 1; display: flex; flex-direction: column;
-      overflow: hidden; background: var(--bg);
+      overflow: hidden; background: var(--page-bg);
     }
 
     .canvas-head {
@@ -160,7 +148,7 @@
       font-size: 15px; font-weight: 700; color: var(--text);
       flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .canvas-title.placeholder { color: var(--muted); font-weight: 400; }
+    .canvas-title.placeholder { color: var(--text-muted); font-weight: 400; }
 
     .canvas-body { flex: 1; overflow-y: auto; padding: 20px; }
 
@@ -176,16 +164,16 @@
       cursor: col-resize; z-index: 10;
     }
     .panel-resize-handle:hover, .panel-resize-handle.dragging {
-      background: var(--blue); opacity: 0.3;
+      background: var(--info); opacity: 0.3;
     }
 
     .editor-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
     .editor-tab {
       flex: 1; padding: 11px; border: none; background: none;
-      font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer;
+      font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer;
       border-bottom: 2px solid transparent; transition: all 0.12s;
     }
-    .editor-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .editor-tab.active { color: var(--info); border-bottom-color: var(--info); }
     .editor-tab:hover:not(.active) { color: var(--text); }
 
     .editor-body { flex: 1; overflow-y: auto; padding: 16px; }
@@ -198,14 +186,14 @@
     /* ── Empty / loading states ── */
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; color: var(--muted);
+      justify-content: center; height: 100%; color: var(--text-muted);
       gap: 10px; text-align: center;
     }
     .empty-state i { font-size: 36px; opacity: 0.25; }
 
     .editor-placeholder {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; color: var(--muted); gap: 8px; text-align: center;
+      justify-content: center; height: 100%; color: var(--text-muted); gap: 8px; text-align: center;
     }
     .editor-placeholder i { font-size: 28px; opacity: 0.2; }
 
@@ -216,7 +204,7 @@
 
     .step-connector {
       padding: 0 0 0 28px; height: 22px;
-      color: var(--muted); font-size: 16px; display: flex; align-items: center;
+      color: var(--text-muted); font-size: 16px; display: flex; align-items: center;
     }
 
     .step-card {
@@ -224,95 +212,95 @@
       border-radius: 10px; padding: 11px 13px;
       cursor: pointer; transition: all 0.15s; position: relative;
     }
-    .step-card:hover { border-color: var(--blue); box-shadow: 0 2px 12px rgba(79,142,247,0.12); }
-    .step-card.active { border-color: var(--blue); box-shadow: 0 2px 16px rgba(79,142,247,0.2); }
+    .step-card:hover { border-color: var(--info); box-shadow: var(--shadow); }
+    .step-card.active { border-color: var(--info); box-shadow: var(--shadow); }
 
     .step-card-head { display: flex; align-items: center; gap: 9px; }
 
     .step-num {
       width: 26px; height: 26px; border-radius: 50%;
-      background: var(--navy); color: #fff;
+      background: var(--code-bg); color: var(--code-fg);
       font-size: 11px; font-weight: 700;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-    .step-card.active .step-num { background: var(--blue); }
+    .step-card.active .step-num { background: var(--info); }
 
     .step-type-icon {
       width: 26px; height: 26px; border-radius: 6px;
       display: flex; align-items: center; justify-content: center;
       font-size: 12px; flex-shrink: 0;
     }
-    .type-webhook           { background: #eff6ff; color: #3b82f6; }
-    .type-internal_function { background: #f0fdf4; color: #16a34a; }
-    .type-custom_code       { background: #faf5ff; color: #9333ea; }
-    .type-sms   { background: #f0fdf4; color: #16a34a; }
-    .type-email { background: #eff6ff; color: #3b82f6; }
-    .type-task  { background: #fefce8; color: #ca8a04; }
+    .type-webhook           { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .type-internal_function { background: var(--ok-soft); color: var(--ok); }
+    .type-custom_code       { background: var(--surface-2); color: var(--cat-purple); }
+    .type-sms   { background: var(--ok-soft); color: var(--ok); }
+    .type-email { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .type-task  { background: var(--warn-soft); color: var(--warn); }
 
     .step-label { flex: 1; min-width: 0; }
     .step-label-main { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .step-label-sub  { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .step-label-sub  { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 
     .step-badges { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
     .badge { font-size: 10px; font-weight: 600; padding: 2px 5px; border-radius: 4px; white-space: nowrap; }
-    .badge-abort  { background: #fee2e2; color: #991b1b; }
-    .badge-retry  { background: #fef3c7; color: #92400e; }
-    .badge-ignore { background: #f1f5f9; color: #64748b; }
-    .badge-branch { background: #ede9fe; color: #6d28d9; }
-    .badge-delay  { background: #ecfdf5; color: #065f46; }
+    .badge-abort  { background: var(--danger-soft); color: var(--danger); }
+    .badge-retry  { background: var(--warn-soft); color: var(--warn); }
+    .badge-ignore { background: var(--surface-2); color: var(--text-2); }
+    .badge-branch { background: var(--surface-2); color: var(--cat-purple); }
+    .badge-delay  { background: var(--ok-soft); color: var(--ok); }
 
     .step-card-actions { display: none; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
     .step-card.active .step-card-actions { display: flex; }
 
     .step-id-tag {
-      font-size: 10px; color: var(--muted); opacity: 0.7;
+      font-size: 10px; color: var(--text-muted); opacity: 0.7;
       font-family: ui-monospace, Menlo, monospace;
       white-space: nowrap; flex-shrink: 0;
       align-self: flex-start;
     }
 
     .step-act {
-      background: var(--bg); border: 1px solid var(--border); color: var(--text2);
+      background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2);
       border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer;
       transition: all 0.12s; display: flex; align-items: center; gap: 4px;
     }
     .step-act:hover { background: var(--border); }
-    .step-act.danger:hover { background: #fee2e2; border-color: #fca5a5; color: var(--red); }
+    .step-act.danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
     .step-act:disabled { opacity: 0.3; cursor: not-allowed; }
-    .step-act:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+    .step-act:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
 
     /* ── Reorder controls ── */
     .step-pos-wrap {
       display: flex; align-items: center; gap: 4px; margin-left: 4px;
-      font-size: 11px; color: var(--muted); white-space: nowrap;
+      font-size: 11px; color: var(--text-muted); white-space: nowrap;
     }
     .step-pos-input {
       width: 48px; padding: 2px 4px; font-size: 11px; text-align: center;
       border: 1px solid var(--border); border-radius: 4px;
       background: var(--surface); color: var(--text);
     }
-    .step-pos-input:focus { outline: none; border-color: var(--blue); }
+    .step-pos-input:focus { outline: none; border-color: var(--info); }
 
     .reorder-pending {
       align-self: flex-start; display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: #b45309; background: #fffbeb;
-      border: 1px solid #fde68a; border-radius: 6px;
+      font-size: 11px; color: var(--warn); background: var(--warn-soft);
+      border: 1px solid var(--warn); border-radius: 6px;
       padding: 4px 9px; margin-bottom: 8px;
     }
 
     .add-step-btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
       padding: 10px; border: 2px dashed var(--border); border-radius: 10px;
-      color: var(--muted); cursor: pointer; font-size: 13px; transition: all 0.15s;
+      color: var(--text-muted); cursor: pointer; font-size: 13px; transition: all 0.15s;
       background: none; width: 100%;
     }
-    .add-step-btn:hover { border-color: var(--blue); color: var(--blue); background: #eff6ff; }
+    .add-step-btn:hover { border-color: var(--info); color: var(--info); background: var(--accent-soft); }
 
     /* ── Form elements ── */
     .field { margin-bottom: 13px; }
     .field label {
       display: block; font-size: 11px; font-weight: 600;
-      color: var(--text2); text-transform: uppercase;
+      color: var(--text-2); text-transform: uppercase;
       letter-spacing: 0.05em; margin-bottom: 4px;
     }
     .field input, .field select, .field textarea {
@@ -322,21 +310,21 @@
       outline: none; transition: border-color 0.12s; font-family: inherit;
     }
     .field input:focus, .field select:focus, .field textarea:focus {
-      border-color: var(--blue); box-shadow: 0 0 0 3px rgba(79,142,247,0.1);
+      border-color: var(--info); box-shadow: 0 0 0 3px var(--accent-soft);
     }
     .field textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; }
     .field-row { display: flex; gap: 8px; }
     .field-row .field { flex: 1; margin-bottom: 0; }
 
     .section-divider {
-      font-size: 11px; font-weight: 700; color: var(--muted);
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
       text-transform: uppercase; letter-spacing: 0.08em;
       padding: 6px 0 8px; border-top: 1px solid var(--border); margin: 8px 0 12px;
     }
 
     .json-toggle {
       display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: var(--blue); cursor: pointer;
+      font-size: 11px; color: var(--info); cursor: pointer;
       margin-bottom: 6px; user-select: none;
     }
     .json-toggle:hover { text-decoration: underline; }
@@ -344,27 +332,27 @@
     /* ── Tester ── */
     .var-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
     .var-row input { flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; outline: none; }
-    .var-row input:focus { border-color: var(--blue); }
-    .var-row button { background: none; border: none; color: var(--muted); cursor: pointer; padding: 4px; }
-    .var-row button:hover { color: var(--red); }
+    .var-row input:focus { border-color: var(--info); }
+    .var-row button { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
+    .var-row button:hover { color: var(--danger); }
     .add-var-btn {
-      background: none; border: 1px dashed var(--border); color: var(--muted);
+      background: none; border: 1px dashed var(--border); color: var(--text-muted);
       border-radius: 5px; padding: 5px 10px; font-size: 12px; cursor: pointer; width: 100%; transition: all 0.12s;
     }
-    .add-var-btn:hover { border-color: var(--blue); color: var(--blue); }
+    .add-var-btn:hover { border-color: var(--info); color: var(--info); }
 
     .test-result { margin-top: 14px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
     .test-result-head {
       padding: 8px 12px; font-size: 12px; font-weight: 600;
       display: flex; align-items: center; gap: 6px;
     }
-    .test-result-head.success { background: #f0fdf4; color: #166534; border-bottom: 1px solid #bbf7d0; }
-    .test-result-head.error   { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #fecaca; }
-    .test-result-head.preview { background: #eff6ff; color: #1e40af; border-bottom: 1px solid #bfdbfe; }
-    .test-result-body { background: var(--navy); padding: 12px; overflow-x: auto; }
-    .test-result-body pre { color: #e2e8f8; font-family: 'SF Mono','Fira Code',monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
-    .test-section { margin-bottom: 6px; border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.06); }
-    .test-section-label { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.5); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 10px; }
+    .test-result-head.success { background: var(--ok-soft); color: var(--ok); border-bottom: 1px solid var(--ok); }
+    .test-result-head.error   { background: var(--danger-soft); color: var(--danger); border-bottom: 1px solid var(--danger); }
+    .test-result-head.preview { background: var(--accent-soft); color: var(--accent-on-soft); border-bottom: 1px solid var(--accent); }
+    .test-result-body { background: var(--code-bg); padding: 12px; overflow-x: auto; }
+    .test-result-body pre { color: var(--code-fg); font-family: 'SF Mono','Fira Code',monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+    .test-section { margin-bottom: 6px; border-radius: 5px; overflow: hidden; border: 1px solid var(--border-strong); }
+    .test-section-label { background: rgba(255,255,255,0.07); color: var(--code-fg); opacity: .75; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 10px; }
 
     /* ══════════════════════════════════════════════
        EXECUTIONS TAB
@@ -374,45 +362,45 @@
       font-size: 10px; font-weight: 600; text-transform: uppercase;
       white-space: nowrap;
     }
-    .exec-status-pending               { background: #fef3c7; color: #92400e; }
-    .exec-status-active                { background: #dbeafe; color: #1e40af; }
-    .exec-status-processing            { background: #e0e7ff; color: #3730a3; }
-    .exec-status-delayed               { background: #fef9c3; color: #854d0e; }
-    .exec-status-held                  { background: #fde68a; color: #92400e; }
-    .exec-status-completed             { background: #dcfce7; color: #166534; }
-    .exec-status-completed_with_errors { background: #fed7aa; color: #9a3412; }
-    .exec-status-failed                { background: #fee2e2; color: #991b1b; }
-    .exec-status-cancelled             { background: #e2e8f0; color: #475569; }
+    .exec-status-pending               { background: var(--warn-soft); color: var(--warn); }
+    .exec-status-active                { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .exec-status-processing            { background: var(--accent-soft); color: var(--cat-indigo); }
+    .exec-status-delayed               { background: var(--warn-soft); color: var(--warn); }
+    .exec-status-held                  { background: var(--warn-fill); color: var(--warn); }
+    .exec-status-completed             { background: var(--ok-soft); color: var(--ok); }
+    .exec-status-completed_with_errors { background: var(--warn-soft); color: var(--warn); }
+    .exec-status-failed                { background: var(--danger-soft); color: var(--danger); }
+    .exec-status-cancelled             { background: var(--border); color: var(--text-2); }
 
     .wf-exec-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .wf-exec-table th {
       text-align: left; padding: 8px 10px;
-      background: var(--bg); font-weight: 600; color: var(--text2);
+      background: var(--page-bg); font-weight: 600; color: var(--text-2);
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
       border-bottom: 1px solid var(--border);
     }
     .wf-exec-table td {
       padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top;
     }
-    .wf-exec-table tr:hover { background: #f8fafc; }
+    .wf-exec-table tr:hover { background: var(--surface-2); }
 
     .wf-step-history-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
     .wf-step-history-table th {
-      text-align: left; padding: 6px 8px; background: #f1f5f9;
-      font-weight: 600; color: #475569; font-size: 10px;
+      text-align: left; padding: 6px 8px; background: var(--surface-2);
+      font-weight: 600; color: var(--text-2); font-size: 10px;
       text-transform: uppercase; letter-spacing: 0.4px;
-      border-bottom: 1px solid #cbd5e1;
+      border-bottom: 1px solid var(--border-strong);
     }
     .wf-step-history-table td {
-      padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;
+      padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
     }
     .wf-step-history-table .step-error-cell {
-      color: #991b1b; font-size: 11px; max-width: 280px; overflow-wrap: break-word;
+      color: var(--danger); font-size: 11px; max-width: 280px; overflow-wrap: break-word;
     }
 
     /* Utilities */
     .mono { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
-    .text-muted { color: var(--muted); }
+    .text-muted { color: var(--text-muted); }
     .text-sm { font-size: 12px; }
 
     /* Scrollbar */
@@ -435,7 +423,7 @@
       <label><input type="checkbox" id="wf-show-inactive" onchange="wfToggleInactive(this.checked)"> Show inactive</label>
     </div>
     <div class="panel-left-list" id="wf-list">
-      <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
+      <div style="padding:16px;color:var(--code-fg);opacity:.55;font-size:12px">Loading…</div>
     </div>
     <div class="panel-left-foot">
       <button class="btn btn-primary" style="width:100%;font-size:12px" onclick="wfNew()">
@@ -450,7 +438,7 @@
       <div class="canvas-title placeholder" id="wf-canvas-title">← Select a workflow</div>
       <div id="wf-canvas-actions" style="display:none;gap:8px">
         <button class="btn btn-primary btn-sm" id="wf-run-btn" onclick="wfRunWorkflow()"><i class="fa-solid fa-play"></i> Run</button>
-        <button class="btn btn-sm" id="wf-publish-btn" style="display:none;background:#d97706;border:1px solid #d97706;color:#fff" onclick="wfPublishModal()"><i class="fa-solid fa-upload"></i> Publish</button>
+        <button class="btn btn-sm" id="wf-publish-btn" style="display:none;background:var(--warn-fill);border:1px solid var(--warn);color:var(--warn-text)" onclick="wfPublishModal()"><i class="fa-solid fa-upload"></i> Publish</button>
         <button class="btn btn-outline btn-sm" id="wf-discard-btn" style="display:none" onclick="wfDiscardDraft()" title="Discard the draft — the published version stays live"><i class="fa-solid fa-rotate-left"></i></button>
         <button class="btn btn-outline btn-sm" id="wf-capture-btn" onclick="wfCaptureModal()"><i class="fa-solid fa-satellite-dish"></i> Capture</button>
         <button class="btn btn-outline btn-sm" onclick="wfShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
@@ -460,7 +448,7 @@
       </div>
     </div>
     <div id="wf-version-strip" style="display:none;padding:6px 20px 0;font-size:12px;line-height:1.5"></div>
-    <div id="wf-canvas-desc" style="display:none;padding:6px 20px 0;font-size:12px;color:var(--muted);line-height:1.5;white-space:pre-wrap"></div>
+    <div id="wf-canvas-desc" style="display:none;padding:6px 20px 0;font-size:12px;color:var(--text-muted);line-height:1.5;white-space:pre-wrap"></div>
     <div class="canvas-body" id="wf-canvas-body">
       <div class="empty-state">
         <i class="fa-solid fa-diagram-project"></i>
@@ -506,7 +494,7 @@
         </thead>
         <tbody id="wf-exec-tbody"></tbody>
       </table>
-      <div id="wf-exec-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--muted)"></div>
+      <div id="wf-exec-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--text-muted)"></div>
     </div>
     <div class="editor-foot" id="wf-editor-foot" style="display:none">
       <button class="btn btn-primary" style="flex:1" onclick="wfStepSave()">
@@ -886,8 +874,8 @@ async function wfRenderTargetPanel() {
   const raw = (document.getElementById('e-pf-workflow_id')?.value || '').trim();
   if (!raw) return hide();
 
-  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
-  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;color:var(--accent-on-soft);font-size:11px;line-height:1.5';
+  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px;line-height:1.5';
 
   if (raw.includes('{{')) {
     panel.style.cssText = INFO;
@@ -1118,8 +1106,8 @@ async function wfRenderEnrollSequencePanel() {
 
   if (document.getElementById('e-fn')?.value !== 'enroll_sequence') return hide();
 
-  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
-  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;color:var(--accent-on-soft);font-size:11px;line-height:1.5';
+  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px;line-height:1.5';
 
   const mode = document.getElementById('e-fn-body-inner')?.dataset.mode || '';
 
@@ -1296,7 +1284,7 @@ async function loadWorkflows() {
     renderWfList();
   } catch (e) {
     document.getElementById('wf-list').innerHTML =
-      `<div style="padding:16px;color:#f87171;font-size:12px">${esc(e.message)}</div>`;
+      `<div style="padding:16px;color:var(--danger);font-size:12px">${esc(e.message)}</div>`;
   }
 }
 
@@ -1308,13 +1296,13 @@ function wfToggleInactive(checked) {
 function renderWfList() {
   const el = document.getElementById('wf-list');
   if (!WF.filtered.length) {
-    el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">No workflows.</div>';
+    el.innerHTML = '<div style="padding:16px;color:var(--code-fg);opacity:.55;font-size:12px">No workflows.</div>';
     return;
   }
   el.innerHTML = WF.filtered.map(wf => `
     <div class="left-item${wf.id === WF.activeWfId ? ' active' : ''}" onclick="selectWorkflow(${wf.id})">
       <div class="left-item-name">${esc(wf.name)}</div>
-      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}${wf.active ? '' : ' · <span style="color:#f87171">inactive</span>'}${wf.draft_version != null ? ' · <span style="color:#fbbf24">draft</span>' : (!wf.current_version ? ' · <span style="color:#94a3b8">unpublished</span>' : '')}</div>
+      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}${wf.active ? '' : ' · <span style="color:var(--danger)">inactive</span>'}${wf.draft_version != null ? ' · <span style="color:var(--warn)">draft</span>' : (!wf.current_version ? ' · <span style="color:var(--text-muted)">unpublished</span>' : '')}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();wfEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();wfDuplicate()"><i class="fa-regular fa-copy"></i></button>
@@ -1410,7 +1398,7 @@ async function _loadWfSteps(id, silent) {
     wfSyncActiveStep();
     wfRenderCanvasKeepFocus();
   } catch (e) {
-    document.getElementById('wf-canvas-body').innerHTML = `<div class="empty-state"><p style="color:var(--red)">${esc(e.message)}</p></div>`;
+    document.getElementById('wf-canvas-body').innerHTML = `<div class="empty-state"><p style="color:var(--danger)">${esc(e.message)}</p></div>`;
   }
 }
 
@@ -1564,11 +1552,11 @@ function wfRenderEditor(step) {
   const strategies = ['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort'];
   document.getElementById('wf-editor-body').innerHTML = `
     <div class="field">
-      <label>Label <span style="font-weight:400;color:var(--muted)">— optional, shown on the step card</span></label>
+      <label>Label <span style="font-weight:400;color:var(--text-muted)">— optional, shown on the step card</span></label>
       <input id="e-label" maxlength="100" value="${esc(step.label || '')}" placeholder="e.g. Match contact by Clio ID">
     </div>
     <div class="field">
-      <label>Note <span style="font-weight:400;color:var(--muted)">— optional, why this step exists</span></label>
+      <label>Note <span style="font-weight:400;color:var(--text-muted)">— optional, why this step exists</span></label>
       <textarea id="e-note" rows="2" placeholder="Free-text note for future you">${esc(step.note || '')}</textarea>
     </div>
     <div class="field">
@@ -1616,11 +1604,11 @@ function wfRenderConfigFields(type, cfg) {
     <div class="field"><label>URL</label><input id="e-url" value="${esc(cfg.url || '')}" oninput="wfUpdateCredWarning()"></div>
     <div class="field"><label>Method</label><select id="e-method">${['GET','POST','PUT','PATCH','DELETE'].map(m => `<option ${cfg.method === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
     <div class="field"><label>Credential</label><select id="e-cred" onchange="wfUpdateCredWarning()">${credOpts}</select>
-      <div id="e-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div>
+      <div id="e-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px;line-height:1.4"></div>
     </div>
     <div class="field"><label>Body (JSON)</label><textarea id="e-body">${cfg.body ? JSON.stringify(cfg.body, null, 2) : ''}</textarea></div>
     <div class="field"><label>Headers (JSON)</label><textarea id="e-headers" rows="3">${cfg.headers ? JSON.stringify(cfg.headers, null, 2) : ''}</textarea></div>
-    <div class="field"><label>Timeout (ms)</label><input id="e-timeout" type="number" min="1" max="120000" value="${cfg.timeout_ms || 30000}"><div style="font-size:11px;color:var(--muted);margin-top:3px">Default 30000, max 120000</div></div>
+    <div class="field"><label>Timeout (ms)</label><input id="e-timeout" type="number" min="1" max="120000" value="${cfg.timeout_ms || 30000}"><div style="font-size:11px;color:var(--text-muted);margin-top:3px">Default 30000, max 120000</div></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
   }
   if (type === 'internal_function') {
@@ -1705,12 +1693,12 @@ function wfRenderInternalFnBody(fnName, params) {
   }
 
   const desc = meta.description
-    ? `<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5">${esc(meta.description)}</p>`
+    ? `<p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;line-height:1.5">${esc(meta.description)}</p>`
     : '';
 
   if (!meta.params.length) {
     // Functions with no params (noop, set_test_var)
-    return `${desc}<p style="font-size:12px;color:var(--muted);margin:0 0 10px">No parameters required.</p>`;
+    return `${desc}<p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">No parameters required.</p>`;
   }
 
   const { modes, current } = _wfDetectMode(meta, params);
@@ -1719,7 +1707,7 @@ function wfRenderInternalFnBody(fnName, params) {
     ? `<div class="field">
          <label>Mode</label>
          <div style="display:flex;gap:6px">
-           ${modes.map(m => `<button type="button" class="mode-btn" data-mode="${m}" onclick="wfOnModeChange('${m}')" style="padding:6px 12px;border:1px solid ${m === current ? 'var(--brand)' : 'var(--border)'};background:${m === current ? 'rgba(99,102,241,0.15)' : 'transparent'};color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">${esc(_wfHumanizeMode(m))}</button>`).join('')}
+           ${modes.map(m => `<button type="button" class="mode-btn" data-mode="${m}" onclick="wfOnModeChange('${m}')" style="padding:6px 12px;border:1px solid ${m === current ? 'var(--accent)' : 'var(--border)'};background:${m === current ? 'var(--accent-soft)' : 'transparent'};color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">${esc(_wfHumanizeMode(m))}</button>`).join('')}
          </div>
        </div>`
     : '';
@@ -1767,7 +1755,7 @@ function wfRenderParamField(spec, value, visible) {
   // rather than throwing mid-render.
   const usePw = typeof window.pwHandles === 'function' && window.pwHandles(spec);
   const togHtml = usePw ? window.pwToggleHtml(id, value) : '';
-  const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:#ef4444">*</span>' : ''}${togHtml}</label>`;
+  const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:var(--danger)">*</span>' : ''}${togHtml}</label>`;
   // nullTerminates params accept a blank field as an explicit null ("end the
   // workflow") — gather writes the null rather than deleting the key. Say so,
   // or a blank required field reads as an unfinished step. Typing `end` does
@@ -1775,10 +1763,10 @@ function wfRenderParamField(spec, value, visible) {
   // deliberate choice next to `cancel`/`fail`, and it is the only form a
   // {{placeholder}} can resolve to (workflow_engine.normalizeNextStep).
   const nullHint = spec.nullTerminates
-    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4"><b>Type <code>end</code> (or leave blank) to end the workflow.</b></p>`
+    ? `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;line-height:1.4"><b>Type <code>end</code> (or leave blank) to end the workflow.</b></p>`
     : '';
   const helpHtml = (spec.description
-    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
+    ? `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
     : '') + nullHint;
   const wrapperStyle = visible ? '' : 'display:none';
   const wrapperAttrs = `class="field" id="e-pfw-${spec.name}" data-mode-group="${spec.modeGroup || ''}" style="${wrapperStyle}"`;
@@ -1908,8 +1896,8 @@ function wfOnModeChange(mode) {
   // Update mode button styling
   inner.querySelectorAll('.mode-btn').forEach(btn => {
     const isActive = btn.dataset.mode === mode;
-    btn.style.borderColor = isActive ? 'var(--brand)' : 'var(--border)';
-    btn.style.background  = isActive ? 'rgba(99,102,241,0.15)' : 'transparent';
+    btn.style.borderColor = isActive ? 'var(--accent)' : 'var(--border)';
+    btn.style.background  = isActive ? 'var(--accent-soft)' : 'transparent';
   });
   wfRenderEnrollSequencePanel(); // Slice CP-1 — self-guards on #e-fn === 'enroll_sequence'; no-op for every other function
 }
@@ -2261,10 +2249,10 @@ function wfRenderWfMeta() {
   // the transient capture-armed state.
   const capMode = wf ? wf.capture_mode : 'off';
   if (capMode === 'capturing') {
-    d.innerHTML = `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-satellite-dish"></i> Capturing next run's init_data (tap — the run still executes)…</span>`;
+    d.innerHTML = `<span style="color:var(--warn);font-weight:600"><i class="fa-solid fa-satellite-dish"></i> Capturing next run's init_data (tap — the run still executes)…</span>`;
     d.style.display = 'block';
   } else if (capMode === 'intercept') {
-    d.innerHTML = `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-hand"></i> Intercepting next run — it will be recorded and HELD before step 1…</span>`;
+    d.innerHTML = `<span style="color:var(--warn);font-weight:600"><i class="fa-solid fa-hand"></i> Intercepting next run — it will be recorded and HELD before step 1…</span>`;
     d.style.display = 'block';
   } else {
     d.style.display = 'none';
@@ -2292,14 +2280,14 @@ function wfRenderWfMeta() {
     const neverPublished = wf && !wf.current_version;
     if (hasDraft) {
       vs.innerHTML = neverPublished
-        ? `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Draft v${wf.draft_version} — never published.</span> <span style="color:#64748b">Triggers and other automations cannot run this workflow until you publish.</span>`
-        : `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Unpublished draft (v${wf.draft_version}).</span> <span style="color:#64748b">Live runs still use v${wf.current_version} — publish to make these changes take effect.</span>`;
+        ? `<span style="color:var(--warn);font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Draft v${wf.draft_version} — never published.</span> <span style="color:var(--text-2)">Triggers and other automations cannot run this workflow until you publish.</span>`
+        : `<span style="color:var(--warn);font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Unpublished draft (v${wf.draft_version}).</span> <span style="color:var(--text-2)">Live runs still use v${wf.current_version} — publish to make these changes take effect.</span>`;
       vs.style.display = 'block';
       pubBtn.style.display = '';
       discBtn.style.display = '';
       if (runBtn) runBtn.innerHTML = '<i class="fa-solid fa-play"></i> Run draft';
     } else if (neverPublished) {
-      vs.innerHTML = `<span style="color:#64748b"><i class="fa-regular fa-circle"></i> Never published — add steps, then Publish to make it runnable.</span>`;
+      vs.innerHTML = `<span style="color:var(--text-2)"><i class="fa-regular fa-circle"></i> Never published — add steps, then Publish to make it runnable.</span>`;
       vs.style.display = 'block';
       pubBtn.style.display = 'none';
       discBtn.style.display = 'none';
@@ -2341,15 +2329,15 @@ async function wfCaptureModal() {
   const when = cap.captured_at ? new Date(cap.captured_at).toLocaleString() : null;
 
   const statusLine = mode === 'capturing'
-    ? '<span style="color:#b45309;font-weight:600">armed — tap</span> <span style="color:#64748b">(next run recorded; it still executes)</span>'
+    ? '<span style="color:var(--warn);font-weight:600">armed — tap</span> <span style="color:var(--text-2)">(next run recorded; it still executes)</span>'
     : mode === 'intercept'
-      ? '<span style="color:#b45309;font-weight:600">armed — intercept</span> <span style="color:#64748b">(next run recorded and held before step 1)</span>'
-      : '<span style="color:#64748b">off</span>';
+      ? '<span style="color:var(--warn);font-weight:600">armed — intercept</span> <span style="color:var(--text-2)">(next run recorded and held before step 1)</span>'
+      : '<span style="color:var(--text-2)">off</span>';
 
   const heldHtml = held ? `
-    <div style="border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;padding:10px 12px;margin:0 0 12px">
-      <div style="font-weight:600;color:#92400e;margin-bottom:6px"><i class="fa-solid fa-hand"></i>
-        Execution #${held.id} is held before step 1 <span style="font-weight:400;color:#a16207">(${esc(new Date(held.created_at).toLocaleString())})</span></div>
+    <div style="border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;padding:10px 12px;margin:0 0 12px">
+      <div style="font-weight:600;color:var(--warn);margin-bottom:6px"><i class="fa-solid fa-hand"></i>
+        Execution #${held.id} is held before step 1 <span style="font-weight:400;color:var(--warn)">(${esc(new Date(held.created_at).toLocaleString())})</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary btn-sm" onclick="wfCapRunHeld()"><i class="fa-solid fa-play"></i> Run it now</button>
         <button class="btn btn-outline btn-sm" onclick="wfCapRunHeldEdited()"><i class="fa-solid fa-pen"></i> Run with edited data…</button>
@@ -2359,14 +2347,14 @@ async function wfCaptureModal() {
 
   const sampleHtml = sampleJson != null ? `
     <div style="font-weight:600;margin-bottom:4px">Last captured${when ? ` — ${esc(when)}` : ''}</div>
-    <pre style="max-height:220px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0 0 8px">${esc(sampleJson)}</pre>
+    <pre style="max-height:220px;overflow:auto;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0 0 8px">${esc(sampleJson)}</pre>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <button class="btn btn-outline btn-sm" onclick="wfCapRunSample()"><i class="fa-solid fa-play"></i> Start new run with sample</button>
       <button class="btn btn-outline btn-sm" onclick="wfCapSaveSample()"><i class="fa-regular fa-floppy-disk"></i> Save as Test Input</button>
-    </div>` : `<div style="color:#94a3b8;margin-bottom:12px">No sample captured yet.</div>`;
+    </div>` : `<div style="color:var(--text-muted);margin-bottom:12px">No sample captured yet.</div>`;
 
   const armHtml = mode === 'off' ? `
-    <div style="border-top:1px solid #e2e8f0;padding-top:10px">
+    <div style="border-top:1px solid var(--border);padding-top:10px">
       <div style="font-weight:600;margin-bottom:6px">Arm capture</div>
       <label style="display:block;margin-bottom:4px;cursor:pointer">
         <input type="radio" name="wf-cap-mode" value="tap" checked>
@@ -2378,7 +2366,7 @@ async function wfCaptureModal() {
       </label>
       <button class="btn btn-primary btn-sm" onclick="wfCapArm()"><i class="fa-solid fa-satellite-dish"></i> Arm</button>
     </div>` : `
-    <div style="border-top:1px solid #e2e8f0;padding-top:10px">
+    <div style="border-top:1px solid var(--border);padding-top:10px">
       <button class="btn btn-outline btn-sm" onclick="wfCapDisarm()"><i class="fa-solid fa-ban"></i> Disarm</button>
     </div>`;
 
@@ -2445,7 +2433,7 @@ async function wfCapRunHeldEdited() {
       <div style="text-align:left;font-size:13px">
         <label style="display:block;font-weight:600;margin-bottom:4px">Variables (JSON object — full replace)</label>
         <textarea id="wf-cap-edit-json" rows="14" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box">${esc(seed)}</textarea>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">Seeded from the captured init_data. The stored init_data is untouched.</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Seeded from the captured init_data. The stored init_data is untouched.</div>
       </div>`,
     showCancelButton: true,
     confirmButtonText: 'Run',
@@ -2472,7 +2460,7 @@ async function wfCapDiscardHeld() {
   const id = WF._capHeldId;
   if (!id) return;
   Swal.close();
-  const r = await Swal.fire({ title: `Discard held execution #${id}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Discard' });
+  const r = await Swal.fire({ title: `Discard held execution #${id}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)', confirmButtonText: 'Discard' });
   if (!r.isConfirmed) return;
   try {
     await api(`/executions/${id}/cancel`, 'POST', { reason: 'Discarded held capture' });
@@ -2505,7 +2493,7 @@ async function wfStepDelete(idx) {
   const step = WF.steps[i];
   if (!step) return;
   if (!(await wfConfirmDraftRenumber('delete'))) return;
-  const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
+  const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
     const r = await api(`/workflows/${WF.activeWfId}/steps/${step.step_number}`, 'DELETE');
@@ -2569,12 +2557,12 @@ async function wfConfirmDraftRenumber(verb) {
       and drafts are edited in place.</p>
       <p style="margin-top:8px">${verb === 'delete' ? 'Deleting a step' : 'This move'} renumbers the draft,
       and a parked run resumes by <b>step number</b> — it can wake up on a different step than intended.</p>
-      <p style="margin-top:8px;color:var(--muted)">Let the test-run finish (or cancel it in the Executions tab) if you want to be safe.</p>
+      <p style="margin-top:8px;color:var(--text-muted)">Let the test-run finish (or cancel it in the Executions tab) if you want to be safe.</p>
     </div>`,
     width: 560,
     showCancelButton: true,
     confirmButtonText: verb === 'delete' ? 'Delete anyway' : 'Move anyway',
-    confirmButtonColor: '#f59e0b',
+    confirmButtonColor: 'var(--warn-fill)',
   });
   if (!r.isConfirmed) return false;
   WF.draftRenumberWarned[wf.id] = true;
@@ -2759,15 +2747,15 @@ async function wfNew() {
     html: `
       <input id="swal-wf-name" class="swal2-input" placeholder="Name…" style="margin-bottom:6px">
       <textarea id="swal-wf-desc" placeholder="Description — what this workflow does, what fires it…"
-                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:64px;resize:vertical"></textarea>
-      <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-size:13px;min-height:64px;resize:vertical"></textarea>
+      <div style="text-align:left;font-size:12px;color:var(--text-2);margin:10px .875em 4px">
         <strong>Test Input (JSON)</strong>
-        <span style="color:#94a3b8">— optional</span>
+        <span style="color:var(--text-muted)">— optional</span>
       </div>
       <textarea id="swal-wf-testinput"
                 placeholder='{ "contact_id": 123, "source": "web" }'
-                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:120px;resize:vertical"></textarea>
-      <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:120px;resize:vertical"></textarea>
+      <div style="text-align:left;font-size:11px;color:var(--text-2);margin:6px .875em 0">
         Document what init_data this workflow expects. The Test tab pre-fills
         from this value; you can still edit test data at test time without
         affecting this field.
@@ -2825,18 +2813,18 @@ async function wfEdit() {
     html: `
       <input id="swal-wf-name" class="swal2-input" placeholder="Name" value="${esc(WF.activeWf.name || '')}" style="margin-bottom:6px">
       <textarea id="swal-wf-desc" placeholder="Description — what this workflow does, what fires it…"
-                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:64px;resize:vertical">${esc(WF.activeWf.description || '')}</textarea>
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-size:13px;min-height:64px;resize:vertical">${esc(WF.activeWf.description || '')}</textarea>
       <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:14px">
         <input type="checkbox" id="swal-wf-active" ${WF.activeWf.active ? 'checked' : ''}> Active
       </label>
-      <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+      <div style="text-align:left;font-size:12px;color:var(--text-2);margin:10px .875em 4px">
         <strong>Test Input (JSON)</strong>
-        <span style="color:#94a3b8">— optional, leave blank to clear</span>
+        <span style="color:var(--text-muted)">— optional, leave blank to clear</span>
       </div>
       <textarea id="swal-wf-testinput"
                 placeholder='{ "contact_id": 123, "source": "web" }'
-                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:140px;resize:vertical">${esc(tiText)}</textarea>
-      <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:140px;resize:vertical">${esc(tiText)}</textarea>
+      <div style="text-align:left;font-size:11px;color:var(--text-2);margin:6px .875em 0">
         Document what init_data this workflow expects. The Test tab pre-fills
         from this value; you can still edit test data at test time without
         affecting this field.
@@ -2933,49 +2921,49 @@ async function wfPublishModal() {
   }).join('');
 
   const clsBadge = identical
-    ? '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">no changes</span>'
+    ? '<span style="background:var(--border);color:var(--text-2);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">no changes</span>'
     : contentOnly
-      ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">content-only</span>'
-      : '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">structural</span>';
+      ? '<span style="background:var(--ok-soft);color:var(--ok);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">content-only</span>'
+      : '<span style="background:var(--warn-soft);color:var(--warn);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">structural</span>';
 
   let migrateHtml = '';
   if (inFlightN > 0 && !identical) {
     const runsList = (diff.in_flight.executions || []).slice(0, 8).map(x =>
-      `<li style="margin:1px 0;color:#64748b">#${x.id} — ${esc(x.status)}, step ${x.current_step_number}</li>`).join('');
+      `<li style="margin:1px 0;color:var(--text-2)">#${x.id} — ${esc(x.status)}, step ${x.current_step_number}</li>`).join('');
     if (contentOnly) {
       migrateHtml = `
-        <div style="margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;text-align:left">
+        <div style="margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:8px;text-align:left">
           <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
             <input type="checkbox" id="wf-pub-migrate" style="margin-top:2px">
             <span><b>Also apply to the ${inFlightN} run${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b><br>
-            <span style="font-size:12px;color:#64748b">Content-only change — step numbering is unchanged, so live runs can move to the new wording safely.</span></span>
+            <span style="font-size:12px;color:var(--text-2)">Content-only change — step numbering is unchanged, so live runs can move to the new wording safely.</span></span>
           </label>
           <ul style="list-style:none;margin:6px 0 0;padding:0;font-size:12px">${runsList}</ul>
         </div>`;
     } else {
       migrateHtml = `
-        <div style="margin-top:12px;padding:10px;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;text-align:left;font-size:12px">
+        <div style="margin-top:12px;padding:10px;border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;text-align:left;font-size:12px">
           <label style="display:flex;gap:8px;align-items:flex-start;opacity:0.55;cursor:not-allowed">
             <input type="checkbox" disabled style="margin-top:2px">
             <span><b>Also apply to the ${inFlightN} run${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b></span>
           </label>
-          <div style="color:#92400e;margin-top:4px">Structural changes can't migrate live runs — their step pointers only survive content-only publishes. They finish on v${diff.current_version}.</div>
-          <ul style="list-style:none;margin:6px 0 0;padding:0;color:#92400e">${li(diff.structural_reasons || [], '#92400e', 'fa-triangle-exclamation')}</ul>
+          <div style="color:var(--warn);margin-top:4px">Structural changes can't migrate live runs — their step pointers only survive content-only publishes. They finish on v${diff.current_version}.</div>
+          <ul style="list-style:none;margin:6px 0 0;padding:0;color:var(--warn)">${li(diff.structural_reasons || [], 'var(--warn)', 'fa-triangle-exclamation')}</ul>
         </div>`;
     }
   } else if (!identical && (diff.structural_reasons || []).length) {
-    migrateHtml = `<ul style="list-style:none;margin:10px 0 0;padding:0;text-align:left;font-size:12px">${li(diff.structural_reasons, '#92400e', 'fa-triangle-exclamation')}</ul>`;
+    migrateHtml = `<ul style="list-style:none;margin:10px 0 0;padding:0;text-align:left;font-size:12px">${li(diff.structural_reasons, 'var(--warn)', 'fa-triangle-exclamation')}</ul>`;
   }
 
   const html = `
     <div style="text-align:left;font-size:13px">
       <div style="margin-bottom:8px">v${diff.current_version || '—'} → <b>v${diff.draft_version}</b> &nbsp;${clsBadge}</div>
-      ${changeLines ? `<ul style="list-style:none;margin:0;padding:0">${changeLines}</ul>` : '<div style="color:#64748b">No step changes (metadata-only publish).</div>'}
-      ${v.errors.length ? `<div style="margin-top:10px;font-weight:600;color:#b91c1c">Publish blocked:</div><ul style="list-style:none;margin:4px 0 0;padding:0">${li(v.errors, '#b91c1c', 'fa-circle-xmark')}</ul>` : ''}
-      ${v.warnings.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.warnings, '#b45309', 'fa-triangle-exclamation')}</ul>` : ''}
-      ${v.info.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.info, '#64748b', 'fa-circle-info')}</ul>` : ''}
+      ${changeLines ? `<ul style="list-style:none;margin:0;padding:0">${changeLines}</ul>` : '<div style="color:var(--text-2)">No step changes (metadata-only publish).</div>'}
+      ${v.errors.length ? `<div style="margin-top:10px;font-weight:600;color:var(--danger)">Publish blocked:</div><ul style="list-style:none;margin:4px 0 0;padding:0">${li(v.errors, 'var(--danger)', 'fa-circle-xmark')}</ul>` : ''}
+      ${v.warnings.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.warnings, 'var(--warn)', 'fa-triangle-exclamation')}</ul>` : ''}
+      ${v.info.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.info, 'var(--text-2)', 'fa-circle-info')}</ul>` : ''}
       ${migrateHtml}
-      ${(diff.stranded_versions || []).length ? `<div style="margin-top:8px;font-size:12px;color:#64748b"><i class="fa-solid fa-circle-info"></i> Also running, not migratable: ${diff.stranded_versions.map(sv => `${sv.n} on v${sv.workflow_version}`).join(', ')} — they finish on their pinned versions.</div>` : ''}
+      ${(diff.stranded_versions || []).length ? `<div style="margin-top:8px;font-size:12px;color:var(--text-2)"><i class="fa-solid fa-circle-info"></i> Also running, not migratable: ${diff.stranded_versions.map(sv => `${sv.n} on v${sv.workflow_version}`).join(', ')} — they finish on their pinned versions.</div>` : ''}
     </div>`;
 
   const res = await Swal.fire({
@@ -2984,7 +2972,7 @@ async function wfPublishModal() {
     width: 560,
     showCancelButton: true,
     confirmButtonText: blocked ? 'Fix the errors first' : 'Publish',
-    confirmButtonColor: '#d97706',
+    confirmButtonColor: 'var(--warn-fill)',
     showConfirmButton: true,
     preConfirm: async () => {
       if (blocked) { Swal.showValidationMessage('Resolve the blocking errors above, then publish.'); return false; }
@@ -3014,9 +3002,9 @@ async function wfDiscardDraft() {
   const r = await Swal.fire({
     title: `Discard draft v${WF.activeWf.draft_version}?`,
     html: cur
-      ? `The published version <b>v${cur}</b> stays live and unchanged.<br><span style="font-size:12px;color:#64748b">The draft is retired, not deleted — any draft test-run history stays viewable.</span>`
-      : `<span style="font-size:12px;color:#64748b">This workflow has never been published; discarding leaves it with no editable steps until you add new ones.</span>`,
-    icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Discard draft',
+      ? `The published version <b>v${cur}</b> stays live and unchanged.<br><span style="font-size:12px;color:var(--text-2)">The draft is retired, not deleted — any draft test-run history stays viewable.</span>`
+      : `<span style="font-size:12px;color:var(--text-2)">This workflow has never been published; discarding leaves it with no editable steps until you add new ones.</span>`,
+    icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)', confirmButtonText: 'Discard draft',
   });
   if (!r.isConfirmed) return;
   try {
@@ -3045,7 +3033,7 @@ async function wfDuplicate() {
 
 async function wfDelete() {
   if (!WF.activeWf) return;
-  const r = await Swal.fire({ title: `Delete "${WF.activeWf.name}"?`, text: 'All steps will be deleted.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
+  const r = await Swal.fire({ title: `Delete "${WF.activeWf.name}"?`, text: 'All steps will be deleted.', icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
     await api(`/workflows/${WF.activeWfId}`, 'DELETE');
@@ -3132,7 +3120,7 @@ function wfRenderTester(step) {
 
   const varRowsHtml = rows.map(r => wfVarRowHTML(r.key, r.value)).join('');
   document.getElementById('wf-editor-body').innerHTML = `
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Testing: <strong style="color:var(--text)">${esc(step.label || cfg.function_name || cfg.url || step.type)}</strong></div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Testing: <strong style="color:var(--text)">${esc(step.label || cfg.function_name || cfg.url || step.type)}</strong></div>
     <div class="section-divider">Variables</div>
     <div id="wf-var-rows">${varRowsHtml}</div>
     <button class="add-var-btn" onclick="wfAddVarRow()"><i class="fa-solid fa-plus"></i> Add variable</button>
@@ -3219,7 +3207,7 @@ async function wfRunPreview() {
   const step = WF.steps[WF.activeStepIdx];
   const variables = wfGatherTestVars();
   const res_el = document.getElementById('wf-test-result');
-  res_el.innerHTML = `<div style="margin-top:14px;color:var(--muted);font-size:13px"><i class="fa-solid fa-spinner spin"></i> Resolving…</div>`;
+  res_el.innerHTML = `<div style="margin-top:14px;color:var(--text-muted);font-size:13px"><i class="fa-solid fa-spinner spin"></i> Resolving…</div>`;
   try {
     const res = await api('/workflows/test-step', 'POST', {
       step: { type: step.type, config: step.config, error_policy: step.error_policy },
@@ -3227,15 +3215,15 @@ async function wfRunPreview() {
       dry_run: true,
     });
     const sections = [];
-    sections.push({ label: 'RESOLVED CONFIG', content: res.resolved_config, color: '#e2e8f8' });
+    sections.push({ label: 'RESOLVED CONFIG', content: res.resolved_config, color: 'var(--code-fg)' });
     if (res.unresolved_placeholders && res.unresolved_placeholders.length) {
-      sections.push({ label: 'UNRESOLVED PLACEHOLDERS', content: res.unresolved_placeholders.join('\n'), color: 'var(--amber)' });
+      sections.push({ label: 'UNRESOLVED PLACEHOLDERS', content: res.unresolved_placeholders.join('\n'), color: 'var(--warn)' });
     }
     if (res.validation_error) {
-      sections.push({ label: 'VALIDATION', content: res.validation_error, color: '#fca5a5' });
+      sections.push({ label: 'VALIDATION', content: res.validation_error, color: 'var(--danger)' });
     }
     const html = sections.map(s => `<div class="test-section"><div class="test-section-label">${s.label}</div><pre style="padding:8px 10px;font-size:11px;color:${s.color}">${esc(typeof s.content === 'object' ? JSON.stringify(s.content, null, 2) : String(s.content))}</pre></div>`).join('')
-      + (res.credential_note ? `<div style="margin-top:4px;font-size:11px;color:var(--muted)"><i class="fa-solid fa-lock"></i> ${esc(res.credential_note)}</div>` : '');
+      + (res.credential_note ? `<div style="margin-top:4px;font-size:11px;color:var(--text-muted)"><i class="fa-solid fa-lock"></i> ${esc(res.credential_note)}</div>` : '');
     res_el.innerHTML = `<div class="test-result" style="margin-top:14px"><div class="test-result-head preview"><i class="fa-regular fa-eye"></i> Preview — not executed</div><div class="test-result-body">${html}</div></div>`;
   } catch (e) {
     res_el.innerHTML = `<div class="test-result" style="margin-top:14px"><div class="test-result-head error"><i class="fa-solid fa-circle-xmark"></i> Request failed</div><div class="test-result-body"><pre>${esc(e.message)}</pre></div></div>`;
@@ -3247,7 +3235,7 @@ async function wfRunTest() {
   const step = WF.steps[WF.activeStepIdx];
   const variables = wfGatherTestVars();
   const res_el = document.getElementById('wf-test-result');
-  res_el.innerHTML = `<div style="margin-top:14px;color:var(--muted);font-size:13px"><i class="fa-solid fa-spinner spin"></i> Running…</div>`;
+  res_el.innerHTML = `<div style="margin-top:14px;color:var(--text-muted);font-size:13px"><i class="fa-solid fa-spinner spin"></i> Running…</div>`;
   try {
     const res = await api('/workflows/test-step', 'POST', {
       step: { type: step.type, config: step.config, error_policy: step.error_policy },
@@ -3265,7 +3253,7 @@ async function wfRunTest() {
       if (res.delayed_until) sections.push({ label: 'DELAY UNTIL', content: res.delayed_until });
       if (res.resolved_config) sections.push({ label: 'RESOLVED CONFIG', content: res.resolved_config });
     }
-    const html = sections.map(s => `<div class="test-section"><div class="test-section-label">${s.label}</div><pre style="padding:8px 10px;font-size:11px;color:#e2e8f8">${esc(typeof s.content === 'object' ? JSON.stringify(s.content, null, 2) : String(s.content))}</pre></div>`).join('');
+    const html = sections.map(s => `<div class="test-section"><div class="test-section-label">${s.label}</div><pre style="padding:8px 10px;font-size:11px;color:var(--code-fg)">${esc(typeof s.content === 'object' ? JSON.stringify(s.content, null, 2) : String(s.content))}</pre></div>`).join('');
     res_el.innerHTML = `<div class="test-result" style="margin-top:14px"><div class="test-result-head ${ok ? 'success' : 'error'}"><i class="fa-solid ${ok ? 'fa-circle-check' : 'fa-circle-xmark'}"></i> ${ok ? 'Success' : 'Failed'} · ${res.duration_ms}ms${res.attempts > 1 ? ` · ${res.attempts} attempts` : ''}${res.retries_skipped ? ' · retries skipped in test' : ''}</div><div class="test-result-body">${html}</div></div>`;
   } catch (e) {
     res_el.innerHTML = `<div class="test-result" style="margin-top:14px"><div class="test-result-head error"><i class="fa-solid fa-circle-xmark"></i> Request failed</div><div class="test-result-body"><pre>${esc(e.message)}</pre></div></div>`;
@@ -3338,7 +3326,7 @@ async function wfRunWorkflow(prefill) {
       <div style="text-align:left;font-size:13px">
         <label style="display:block;font-weight:600;margin-bottom:4px">Init data (JSON object)</label>
         <textarea id="wf-run-initdata" rows="12" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box">${esc(seedJson)}</textarea>
-        ${seedHint ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(seedHint)}</div>` : ''}
+        ${seedHint ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(seedHint)}</div>` : ''}
         <label style="display:block;font-weight:600;margin:10px 0 4px">Contact ID (optional)</label>
         <input type="number" min="1" id="wf-run-contactid" value="${esc(seedContact)}" style="width:100%;box-sizing:border-box;font-size:12px;padding:6px 8px">
       </div>
@@ -3407,7 +3395,7 @@ async function loadWorkflowExecutions() {
   const count = document.getElementById('wf-exec-count');
   const pager = document.getElementById('wf-exec-pagination');
 
-  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
 
   try {
     const url  = `/workflows/${wfIdAtCall}/executions?limit=${WFEX.limit}&offset=${WFEX.offset}`;
@@ -3422,7 +3410,7 @@ async function loadWorkflowExecutions() {
     count.textContent = `${WFEX.total} total execution${WFEX.total === 1 ? '' : 's'}`;
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No executions yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No executions yet.</td></tr>';
       pager.innerHTML = '';
       stopWfExecPolling();
       return;
@@ -3436,7 +3424,7 @@ async function loadWorkflowExecutions() {
     if (anyActive) startWfExecPolling();
     else           stopWfExecPolling();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:12px">${esc(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:12px">${esc(e.message)}</td></tr>`;
     pager.innerHTML = '';
     stopWfExecPolling();
   }
@@ -3511,8 +3499,8 @@ async function viewWorkflowExecution(id) {
       // Detail column: error text (if any) + collapsible resolved-config and
       // output disclosures. Pattern mirrors sequences.html action_config_resolved.
       const disclosure = (label, obj) => `
-              <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:#64748b">${label}</summary>
-                <pre style="background:#1e293b;color:#e2e8f0;padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(JSON.stringify(obj, null, 2))}</pre>
+              <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:var(--text-2)">${label}</summary>
+                <pre style="background:var(--text);color:var(--code-fg);padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(JSON.stringify(obj, null, 2))}</pre>
               </details>`;
       const isNonEmptyObj = (v) => v != null && typeof v === 'object' && Object.keys(v).length > 0;
       // output_data may also be a primitive (executeJob can return strings/
@@ -3543,11 +3531,11 @@ async function viewWorkflowExecution(id) {
           <td>${detailCell}</td>
         </tr>
       `;
-    }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--muted);text-align:center">No steps executed.</td></tr>';
+    }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--text-muted);text-align:center">No steps executed.</td></tr>';
 
     // Cancel-reason surface for cancelled executions (parity with contact)
     const cancelReasonBlock = (rawStatus === 'cancelled' && ex.cancel_reason)
-      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+      ? `<div style="margin-top:10px;padding:8px 10px;background:var(--danger-soft);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px">
            <b>Cancel reason:</b> ${esc(ex.cancel_reason)}
          </div>`
       : '';
@@ -3583,13 +3571,13 @@ async function viewWorkflowExecution(id) {
 
           ${initDataObj ? `
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Init Data</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(initDataObj, null, 2))}</pre>
+              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(initDataObj, null, 2))}</pre>
             </details>
           ` : ''}
 
           ${variablesObj ? `
             <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Variables</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(variablesObj, null, 2))}</pre>
+              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(variablesObj, null, 2))}</pre>
             </details>
           ` : ''}
 
@@ -3613,10 +3601,10 @@ async function viewWorkflowExecution(id) {
       cancelButtonText:  'Close',
       showConfirmButton: isCancellable,
       confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel execution',
-      confirmButtonColor: '#dc2626',
+      confirmButtonColor: 'var(--danger-fill)',
       showDenyButton: true,
       denyButtonText: '<i class="fa-solid fa-rotate-right"></i> Re-run',
-      denyButtonColor: '#4f8ef7',
+      denyButtonColor: 'var(--accent)',
       reverseButtons: true,   // [Re-run] [Cancel execution] [Close]
     });
 
@@ -3653,7 +3641,7 @@ async function cancelWorkflowExecution(executionId, workflowName) {
   const result = await Swal.fire({
     title: `Cancel execution #${executionId}?`,
     html: workflowName
-      ? `<div style="color:#64748b;margin-bottom:4px">Workflow: <b>${esc(workflowName)}</b></div>`
+      ? `<div style="color:var(--text-2);margin-bottom:4px">Workflow: <b>${esc(workflowName)}</b></div>`
       : '',
     input: 'text',
     inputLabel: 'Reason (required, min 3 characters)',
@@ -3663,7 +3651,7 @@ async function cancelWorkflowExecution(executionId, workflowName) {
     },
     showCancelButton: true,
     confirmButtonText: 'Confirm Cancel',
-    confirmButtonColor: '#dc2626',
+    confirmButtonColor: 'var(--danger-fill)',
     reverseButtons: true,
     showLoaderOnConfirm: true,
     preConfirm: async (reason) => {
@@ -3751,9 +3739,9 @@ async function wfResumeExecution(id) {
 
           <label style="display:block;font-weight:600;margin:10px 0 4px">Variables (JSON object)</label>
           <textarea id="wf-resume-vars" rows="10" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box">${esc(varsJson)}</textarea>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">Full replace. Leave empty to keep as-is.</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Full replace. Leave empty to keep as-is.</div>
 
-          <div style="margin-top:10px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:11px">
+          <div style="margin-top:10px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px">
             <i class="fa-solid fa-triangle-exclamation"></i>
             Side effects of previously-run steps are not undone. In resume mode, every step from the chosen point re-executes.
           </div>
@@ -3860,7 +3848,7 @@ function startWfExecPolling() {
 
       count.textContent = `${WFEX.total} total execution${WFEX.total === 1 ? '' : 's'}`;
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No executions yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No executions yet.</td></tr>';
         pager.innerHTML = '';
         stopWfExecPolling();
         return;
@@ -4130,7 +4118,7 @@ function wfExplain(workflow, steps) {
   const stepBlocks = sorted.map(step => `
     <div class="ex-step" id="ex-step-${step.step_number}">
       <div class="ex-step-num">${step.step_number}</div>
-      <div class="ex-step-body">${step.label ? `<div style="font-weight:700;margin-bottom:2px">${_wfEsc(step.label)}</div>` : ''}${step.note ? `<div style="font-size:12px;color:#64748b;margin-bottom:6px">${_wfEsc(step.note)}</div>` : ''}${_wfExplainStep(step)}</div>
+      <div class="ex-step-body">${step.label ? `<div style="font-weight:700;margin-bottom:2px">${_wfEsc(step.label)}</div>` : ''}${step.note ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:6px">${_wfEsc(step.note)}</div>` : ''}${_wfExplainStep(step)}</div>
     </div>
   `).join('');
   return `
@@ -4148,25 +4136,25 @@ function wfExplain(workflow, steps) {
 // no reliance on iframe-specific CSS vars (so this lifts to a
 // standalone page unchanged).
 const _WF_EXPLAIN_CSS = `
-  .ex-doc { font-size: 13px; line-height: 1.55; color: #1f2937; text-align: left; }
-  .ex-header { padding: 0 4px 14px; border-bottom: 1px solid #e5e7eb; margin-bottom: 14px; }
+  .ex-doc { font-size: 13px; line-height: 1.55; color: var(--text); text-align: left; }
+  .ex-header { padding: 0 4px 14px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
   .ex-title { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
-  .ex-desc  { margin: 0; color: #6b7280; font-size: 12px; }
+  .ex-desc  { margin: 0; color: var(--text-muted); font-size: 12px; }
   .ex-steps { display: flex; flex-direction: column; gap: 10px; }
-  .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; scroll-margin-top: 12px; }
-  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #6366f1; color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; scroll-margin-top: 12px; }
+  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--cat-indigo); color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
   .ex-step-body { flex: 1; min-width: 0; }
   .ex-line   { margin-bottom: 4px; }
-  .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: #374151; }
-  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-  .ex-code { margin: 6px 0 0; padding: 8px; background: #1f2937; color: #f9fafb; border-radius: 6px; font-size: 11.5px; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; max-height: 200px; overflow: auto; }
-  .ex-muted { color: #9ca3af; font-size: 11.5px; }
-  .ex-policy { color: #b45309; }
+  .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: var(--text-2); }
+  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .ex-code { margin: 6px 0 0; padding: 8px; background: var(--code-bg); color: var(--code-fg); border-radius: 6px; font-size: 11.5px; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; max-height: 200px; overflow: auto; }
+  .ex-muted { color: var(--text-muted); font-size: 11.5px; }
+  .ex-policy { color: var(--warn); }
   .ex-list { margin: 4px 0 0; padding-left: 18px; }
   .ex-list li { margin: 2px 0; }
-  .ex-step-link { color: #4f46e5; text-decoration: underline; cursor: pointer; }
-  .ex-step-link:hover { color: #3730a3; background: #eef2ff; padding: 0 3px; border-radius: 3px; }
-  .ex-doc code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: #3730a3; word-break: break-word; }
+  .ex-step-link { color: var(--cat-indigo); text-decoration: underline; cursor: pointer; }
+  .ex-step-link:hover { color: var(--cat-indigo); background: var(--accent-soft); padding: 0 3px; border-radius: 3px; }
+  .ex-doc code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--cat-indigo); word-break: break-word; }
 `;
 
 // Editor-side handler. Opens the modal, wires step-jump links to
