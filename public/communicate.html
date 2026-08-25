@@ -10,6 +10,8 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -23,27 +25,27 @@
     .comm-tabs {
       display: flex;
       gap: 0;
-      border-bottom: 2px solid #07ADEF;
+      border-bottom: 2px solid var(--accent);
       margin-bottom: 16px;
     }
     .comm-tab {
       padding: 10px 24px;
-      background: #f2f2f2;
-      border: 1px solid #ccc;
+      background: var(--surface-2);
+      border: 1px solid var(--border-strong);
       border-bottom: none;
       cursor: pointer;
       font-weight: bold;
       font-size: 14px;
       border-radius: 6px 6px 0 0;
       margin-right: 2px;
-      color: #333;
+      color: var(--text);
       transition: background .15s;
     }
-    .comm-tab:hover { background: #e0e0e0; }
+    .comm-tab:hover { background: var(--hover); }
     .comm-tab.active {
-      background: #07ADEF;
-      color: #fff;
-      border-color: #07ADEF;
+      background: var(--accent);
+      color: var(--accent-text);
+      border-color: var(--accent);
     }
     .comm-tab i { margin-right: 6px; }
 
@@ -73,14 +75,14 @@
     .comm-row input[type="email"] {
       flex: 1;
       padding: 8px 10px;
-      border: 1px solid #ccc;
+      border: 1px solid var(--border-strong);
       border-radius: 4px;
       font-size: 14px;
     }
     .comm-row textarea {
       flex: 1;
       padding: 8px 10px;
-      border: 1px solid #ccc;
+      border: 1px solid var(--border-strong);
       border-radius: 4px;
       font-size: 14px;
       font-family: Arial, Helvetica, sans-serif;
@@ -88,7 +90,7 @@
     }
     .char-count {
       font-size: 12px;
-      color: #888;
+      color: var(--text-muted);
       text-align: right;
       margin-top: -6px;
       margin-bottom: 8px;
@@ -111,46 +113,55 @@
       transition: background .15s;
     }
     .btn-send {
-      background: #28a745;
-      color: #fff;
+      background: var(--ok-fill);
+      color: var(--fill-text);
     }
-    .btn-send:hover { background: #218838; }
+    /* No --*-fill-hover role exists in theme.css. filter is mode-independent,
+       like the fill itself, and keeps the hover visible in both modes; a token
+       swap here would have made the hover LIGHTER than --ok-fill in light and
+       identical to it in dark. See the slice report. */
+    .btn-send:hover { filter: brightness(1.25); }
+    /* KEPT AS LITERALS: a neutral/secondary solid fill has no token in
+       theme.css — the sheet ships --ok/--warn/--danger/--cat-*-fill and
+       --accent, none of which mean "neutral". These are mode-independent by
+       the same rule that makes the other fills mode-independent, so a literal
+       is not a theming defect here. White on #6c757d measures 4.68. */
     .btn-log {
       background: #6c757d;
-      color: #fff;
+      color: var(--fill-text);
     }
     .btn-log:hover { background: #5a6268; }
     .btn-outline {
-      background: #fff;
-      color: #333;
-      border: 1px solid #ccc;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border-strong);
       padding: 6px 14px;
       font-size: 13px;
     }
-    .btn-outline:hover { background: #f2f2f2; }
+    .btn-outline:hover { background: var(--hover); }
     .btn-danger-sm {
-      background: #dc3545;
-      color: #fff;
+      background: var(--danger-fill);
+      color: var(--fill-text);
       border: none;
       border-radius: 4px;
       padding: 4px 10px;
       cursor: pointer;
       font-size: 13px;
     }
-    .btn-danger-sm:hover { background: #c82333; }
+    .btn-danger-sm:hover { filter: brightness(1.25); }
 
     /* ── Quill ────────────────────────────────────────────── */
     #quill-wrap {
       margin-bottom: 10px;
     }
     #quill-wrap .ql-toolbar {
-      border: 1px solid #ccc;
+      border: 1px solid var(--border-strong);
       border-bottom: none;
       border-radius: 4px 4px 0 0;
-      background: #f9f9f9;
+      background: var(--surface-2);
     }
     #quill-wrap .ql-container {
-      border: 1px solid #ccc;
+      border: 1px solid var(--border-strong);
       border-radius: 0 0 4px 4px;
       min-height: 180px;
       font-family: Arial, Helvetica, sans-serif;
@@ -165,8 +176,8 @@
       margin-top: 8px;
       font-size: 13px;
       padding: 6px 10px;
-      background: #f8f9fa;
-      border: 1px solid #e0e0e0;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
       border-radius: 4px;
     }
     .attach-preview.visible {
@@ -176,12 +187,12 @@
       max-width: 80px;
       max-height: 60px;
       border-radius: 4px;
-      border: 1px solid #ddd;
+      border: 1px solid var(--border);
     }
 
     /* ── MMS section ──────────────────────────────────────── */
     #mms-section { margin-top: 10px; }
-    .text-muted { color: #888; font-size: 13px; }
+    .text-muted { color: var(--text-muted); font-size: 13px; }
 
     /* ── Subject hint ─────────────────────────────────────── */
     #subject-hint {
@@ -288,7 +299,7 @@
         <span id="email-sig-note" class="text-muted" style="margin-left:6px;"></span>
       </label>
       <div id="email-sig-block" contenteditable="true" spellcheck="false"
-           style="border:1px dashed #bbb;border-radius:4px;padding:8px;margin-top:4px;background:#fafafa;overflow:auto;"></div>
+           style="border:1px dashed var(--border-strong);border-radius:4px;padding:8px;margin-top:4px;background:var(--surface-2);overflow:auto;"></div>
     </div>
 
     <!-- Email attachment -->
@@ -401,7 +412,7 @@ async function init() {
   const firmData = P.firmData;
 
   if (!contact || !firmData) {
-    document.body.innerHTML = '<p style="color:red;text-align:center;margin-top:40px;">Missing parent data. Please reload the page.</p>';
+    document.body.innerHTML = '<p style="color:var(--danger);text-align:center;margin-top:40px;">Missing parent data. Please reload the page.</p>';
     return;
   }
 
@@ -740,9 +751,9 @@ function updateSubjectHint() {
   const len = E('email-subject').value.length;
   const hint = E('subject-hint');
   if (len === 0) { hint.textContent = ''; return; }
-  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'green'; }
-  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'orange'; }
-  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'red'; }
+  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'var(--ok)'; }
+  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'var(--warn)'; }
+  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'var(--danger)'; }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -752,7 +763,7 @@ function updateSubjectHint() {
 function processing() {
   Swal.fire({
     title: 'Processing...',
-    html: '<div style="text-align:center; padding:20px;"><i class="fa-solid fa-spinner fa-spin-pulse fa-5x" style="color:#07ADEF;"></i></div>',
+    html: '<div style="text-align:center; padding:20px;"><i class="fa-solid fa-spinner fa-spin-pulse fa-5x" style="color:var(--accent);"></i></div>',
     showConfirmButton: false,
     allowOutsideClick: false,
     allowEscapeKey: false
