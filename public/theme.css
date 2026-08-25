@@ -33,7 +33,7 @@
          8px below here, not the symmetric 6/6 a bare image would get. */
   --header-h: 52px;
 
-  --accent: #07ADEF;
+  --accent: #4ea6e2; /*#07ADEF;*/
   --accent-dark: #0590c8;
   --accent-soft: rgba(7, 173, 239, 0.12);
 
@@ -213,7 +213,7 @@
   --ctl-h-lg: 32px;  /* toolbar / primary buttons */
 
   --pad-cell: 6px 8px;    /* table cells — 33 uses */
-  --pad-btn: 7px 12px;    /* buttons — 15 uses */
+  --pad-btn: 12px 12px;/*7px 12px; */   /* buttons — 15 uses */
   --pad-card: 13px;       /* card interiors — 6 uses */
   --pad-panel: 18px 20px; /* outer panels — 4 uses */
 
