@@ -11,9 +11,11 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <style>
-    body { margin: 0; padding: 12px; background: #fff; }
+    body { margin: 0; padding: 12px; background: var(--page-bg); }
     /* .cx- prefix scopes this page; .ck- belongs to checklistView.html. */
     .cx-wrap { max-width: 860px; margin: 0 auto; }
 
@@ -21,23 +23,23 @@
       display: flex; align-items: center; gap: 10px;
       padding: 4px 0 14px; flex-wrap: wrap;
     }
-    .cx-scope { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+    .cx-scope { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
     .cx-scope button {
-      background: #fff; border: none; padding: 6px 14px;
-      font-size: 13px; cursor: pointer; color: #334155; font-family: inherit;
+      background: var(--surface); border: none; padding: 6px 14px;
+      font-size: 13px; cursor: pointer; color: var(--text-2); font-family: inherit;
     }
-    .cx-scope button.active { background: #2563eb; color: #fff; }
-    .cx-scope button:not(.active):hover { background: #f1f5f9; }
+    .cx-scope button.active { background: var(--accent); color: var(--accent-text); }
+    .cx-scope button:not(.active):hover { background: var(--hover); }
 
     .cx-search {
       flex: 1; min-width: 160px; font-size: 14px; padding: 6px 8px;
-      border: 1px solid #cbd5e1; border-radius: 6px; font-family: inherit;
+      border: 1px solid var(--border-strong); border-radius: 6px; font-family: inherit;
     }
-    .cx-search:focus { outline: none; border-color: #2563eb; }
+    .cx-search:focus { outline: none; border-color: var(--accent); }
 
     .cx-newfor {
-      font-size: 13px; padding: 6px 8px; border: 1px solid #cbd5e1;
-      border-radius: 6px; font-family: inherit; color: #334155; background: #fff;
+      font-size: 13px; padding: 6px 8px; border: 1px solid var(--border-strong);
+      border-radius: 6px; font-family: inherit; color: var(--text-2); background: var(--surface);
     }
 
     /* Mine / Unlinked delegate to checklistView.html, which already renders
@@ -47,47 +49,47 @@
     /* Browse = a compact index across every list. */
     .cx-row {
       display: flex; align-items: center; gap: 10px;
-      padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px;
-      margin-bottom: 7px; cursor: pointer; background: #fff;
+      padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 7px; cursor: pointer; background: var(--surface);
     }
-    .cx-row:hover { background: #f8fafc; border-color: #cbd5e1; }
-    .cx-row-title { font-size: 14px; font-weight: 600; color: #0f172a; }
+    .cx-row:hover { background: var(--hover); border-color: var(--border-strong); }
+    .cx-row-title { font-size: 14px; font-weight: 600; color: var(--text); }
     .cx-row-scope {
-      font-size: 12px; color: #64748b; white-space: nowrap;
+      font-size: 12px; color: var(--text-muted); white-space: nowrap;
     }
-    .cx-row-scope a { color: #2563eb; text-decoration: none; }
+    .cx-row-scope a { color: var(--accent-2); text-decoration: none; }
     .cx-row-scope a:hover { text-decoration: underline; }
     .cx-tag {
       font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
-      color: #1e40af; background: #dbeafe; border: 1px solid #bfdbfe;
+      color: var(--info); background: var(--info-soft); border: 1px solid var(--info);
       border-radius: 4px; padding: 1px 5px;
     }
     /* Kind glyph (S2). Browse is the one place notes and lists sit adjacent in
        a flat list, so the shape needs to be readable before the title is. */
-    .cx-kind { color: #94a3b8; font-size: 13px; width: 14px; text-align: center; flex: none; }
-    .cx-kind.note { color: #d97706; }
+    .cx-kind { color: var(--text-muted); font-size: 13px; width: 14px; text-align: center; flex: none; }
+    .cx-kind.note { color: var(--warn); }
     .cx-prog {
       margin-left: auto; font-size: 13px; font-weight: 600;
-      color: #475569; white-space: nowrap;
+      color: var(--text-2); white-space: nowrap;
     }
-    .cx-prog.done { color: #15803d; }
+    .cx-prog.done { color: var(--ok); }
 
     .cx-back {
-      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
       padding: 5px 12px; font-size: 13px; cursor: pointer;
-      color: #334155; font-family: inherit; margin-bottom: 10px;
+      color: var(--text-2); font-family: inherit; margin-bottom: 10px;
     }
-    .cx-back:hover { background: #f1f5f9; }
+    .cx-back:hover { background: var(--hover); }
 
-    .cx-note { color: #64748b; font-size: 13px; padding: 14px 2px; }
+    .cx-note { color: var(--text-muted); font-size: 13px; padding: 14px 2px; }
     .cx-more {
-      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
       padding: 6px 14px; font-size: 13px; cursor: pointer;
-      color: #334155; font-family: inherit; margin-top: 4px;
+      color: var(--text-2); font-family: inherit; margin-top: 4px;
     }
-    .cx-more:hover { background: #f1f5f9; }
+    .cx-more:hover { background: var(--hover); }
     .cx-error {
-      color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca;
+      color: var(--danger); background: var(--danger-soft); border: 1px solid var(--danger);
       border-radius: 6px; padding: 10px 12px; font-size: 14px;
     }
   </style>
