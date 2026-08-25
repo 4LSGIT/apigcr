@@ -6,6 +6,8 @@
   <title>Portal Cards</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        PORTAL CARDS SUB-PAGE — self-contained styles.
@@ -15,16 +17,10 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy: #1a1a2e; --blue: #4f8ef7; --blue2: #3a7de8;
-      --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --purple: #8b5cf6;
-      --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
-      --muted: #94a3b8; --text: #1e293b; --text2: #475569;
-    }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px; color: var(--text); background: var(--bg);
+      font-size: 14px; color: var(--text); background: var(--page-bg);
       display: flex; height: 100vh; overflow: hidden;
     }
 
@@ -34,11 +30,12 @@
       font-size: 12px; font-weight: 500; cursor: pointer;
       transition: all 0.15s; white-space: nowrap;
     }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: var(--blue2); }
-    .btn-danger  { background: var(--red); color: #fff; }
-    .btn-danger:hover { background: #dc2626; }
-    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--info-dark); }
+    .btn-danger  { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover { filter: brightness(1.12); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
     .btn-outline:hover { background: var(--border); }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -51,40 +48,41 @@
     .panel-left-head {
       padding: 10px 14px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
-      color: var(--text2);
+      color: var(--text-2);
     }
     #card-list { flex: 1; overflow-y: auto; }
 
     .card-item {
-      padding: 10px 14px; border-bottom: 1px solid var(--bg); cursor: pointer;
+      padding: 10px 14px; border-bottom: 1px solid var(--page-bg); cursor: pointer;
       transition: background 0.12s;
     }
-    .card-item:hover { background: #f8fafc; }
-    .card-item.active { background: #eff6ff; border-left: 3px solid var(--blue); padding-left: 11px; }
+    .card-item:hover { background: var(--hover); }
+    .card-item.active { background: var(--accent-soft); border-left: 3px solid var(--accent); padding-left: 11px; }
     .card-item .name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-    .card-item .meta { font-size: 11px; color: var(--muted); margin-top: 2px;
+    .card-item .meta { font-size: 11px; color: var(--text-muted); margin-top: 2px;
       display: flex; align-items: center; gap: 6px; }
-    .card-item.inactive .name { color: var(--muted); text-decoration: line-through; }
+    .card-item.inactive .name { color: var(--text-muted); text-decoration: line-through; }
 
     .badge {
       font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
       text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;
     }
-    .badge-template { background: #dbeafe; color: var(--blue2); }
-    .badge-coded    { background: #ede9fe; color: var(--purple); }
-    .badge-top      { background: #fef3c7; color: #b45309; text-transform: none; }
-    .badge-case     { background: #f1f5f9; color: var(--text2); text-transform: none; }
-    .badge-home     { background: #dcfce7; color: #15803d; text-transform: none; }
-    .badge-inactive { background: #f1f5f9; color: var(--muted); }
-    .badge-unsaved  { background: #fee2e2; color: var(--red); }
+    .badge-template { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .badge-coded    { background: var(--surface-2);  color: var(--cat-purple); }
+    .badge-top      { background: var(--warn-soft); color: var(--warn); text-transform: none; }
+    .badge-case     { background: var(--surface-2); color: var(--text-2); text-transform: none; }
+    .badge-home     { background: var(--ok-soft); color: var(--ok); text-transform: none; }
+    .badge-inactive { background: var(--surface-2); color: var(--text-muted); }
+    .badge-unsaved  { background: var(--danger-soft); color: var(--danger); }
 
     /* list-inline active toggle */
     .tgl { position: relative; display: inline-block; width: 30px; height: 17px; vertical-align: middle; flex-shrink: 0; }
     .tgl input { opacity: 0; width: 0; height: 0; }
-    .tgl .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 17px; transition: .15s; cursor: pointer; }
+    .tgl .slider { position: absolute; inset: 0; background: var(--border-strong); border-radius: 17px; transition: .15s; cursor: pointer; }
     .tgl .slider:before { content: ""; position: absolute; height: 13px; width: 13px; left: 2px; top: 2px;
-      background: #fff; border-radius: 50%; transition: .15s; }
-    .tgl input:checked + .slider { background: var(--green); }
+      /* knob rides ON the track: a fill label, not a surface */
+      background: var(--fill-text); border-radius: 50%; transition: .15s; }
+    .tgl input:checked + .slider { background: var(--ok); }
     .tgl input:checked + .slider:before { transform: translateX(13px); }
 
     /* ── Right panel ── */
@@ -108,54 +106,54 @@
     }
     .box h3 {
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
-      color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+      color: var(--text-muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
     }
     .box h3 .spacer { flex: 1; }
 
-    .fld label { display: block; font-size: 11px; font-weight: 600; color: var(--text2);
+    .fld label { display: block; font-size: 11px; font-weight: 600; color: var(--text-2);
       margin: 10px 0 3px; text-transform: uppercase; letter-spacing: 0.03em; }
     .fld label:first-child { margin-top: 0; }
     .fld input[type=text], .fld input[type=number], .fld select, .fld textarea {
       width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
       font-size: 13px; outline: none; font-family: inherit; background: var(--surface); color: var(--text);
     }
-    .fld input:focus, .fld select:focus, .fld textarea:focus { border-color: var(--blue); }
+    .fld input:focus, .fld select:focus, .fld textarea:focus { border-color: var(--info); }
     .fld textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
       resize: vertical; }
-    .fld input:disabled, .fld select:disabled { background: var(--bg); color: var(--muted); cursor: not-allowed; }
+    .fld input:disabled, .fld select:disabled { background: var(--page-bg); color: var(--text-muted); cursor: not-allowed; }
     .row2 { display: flex; gap: 12px; }
     .row2 > div { flex: 1; min-width: 0; }
     .row3 { display: flex; gap: 12px; align-items: flex-end; }
     .row3 > div { min-width: 0; }
-    .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
-    .locked-note { font-size: 11px; color: #b45309; background: #fef3c7;
+    .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .locked-note { font-size: 11px; color: var(--warn); background: var(--warn-soft);
       border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
-    .warn-note { font-size: 11px; color: #b91c1c; background: #fee2e2;
+    .warn-note { font-size: 11px; color: var(--danger); background: var(--danger-soft);
       border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
 
     /* whitelist reference chips */
     .wl-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
     .wl-chip {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
-      background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
-      padding: 2px 7px; cursor: pointer; color: var(--text2);
+      background: var(--page-bg); border: 1px solid var(--border); border-radius: 5px;
+      padding: 2px 7px; cursor: pointer; color: var(--text-2);
     }
-    .wl-chip:hover { border-color: var(--blue); color: var(--blue); }
+    .wl-chip:hover { border-color: var(--info); color: var(--info); }
 
     /* conditions builder */
     .cond-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
     .cond-tab {
       padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
-      background: var(--bg); color: var(--text2); font-size: 11.5px; font-weight: 600; cursor: pointer;
+      background: var(--page-bg); color: var(--text-2); font-size: 11.5px; font-weight: 600; cursor: pointer;
     }
-    .cond-tab.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .cond-tab.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 
     .rule-group {
-      border: 1px solid var(--border); border-left: 3px solid var(--blue);
-      border-radius: 8px; padding: 10px; margin-top: 8px; background: #fbfdff;
+      border: 1px solid var(--border); border-left: 3px solid var(--info);
+      border-radius: 8px; padding: 10px; margin-top: 8px; background: var(--surface-2);
     }
     .rule-group .rg-head { display: flex; align-items: center; gap: 8px; font-size: 11.5px;
-      color: var(--text2); margin-bottom: 6px; flex-wrap: wrap; }
+      color: var(--text-2); margin-bottom: 6px; flex-wrap: wrap; }
     .rule-group .rg-head select { width: auto; padding: 3px 6px; font-size: 11.5px;
       border: 1px solid var(--border); border-radius: 5px; }
     .rule-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
@@ -171,23 +169,23 @@
       border: 1px solid var(--border); background: var(--surface);
       border-radius: 6px; width: 24px; height: 24px; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
-      color: var(--text2); font-size: 10.5px; transition: all 0.12s; flex-shrink: 0;
+      color: var(--text-2); font-size: 10.5px; transition: all 0.12s; flex-shrink: 0;
     }
-    .icon-btn:hover { background: var(--bg); }
-    .icon-btn.del:hover { background: #fee2e2; color: var(--red); border-color: #fecaca; }
+    .icon-btn:hover { background: var(--page-bg); }
+    .icon-btn.del:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
 
     /* preview */
     .pv-picker { position: relative; }
     .pv-results {
       position: absolute; left: 0; right: 0; top: 100%; z-index: 5;
       background: var(--surface); border: 1px solid var(--border); border-radius: 0 0 8px 8px;
-      max-height: 220px; overflow-y: auto; box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+      max-height: 220px; overflow-y: auto; box-shadow: var(--shadow);
     }
-    .pv-result { padding: 7px 10px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--bg); }
-    .pv-result:hover { background: #f8fafc; }
-    .pv-result .sub { font-size: 10.5px; color: var(--muted); }
+    .pv-result { padding: 7px 10px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--page-bg); }
+    .pv-result:hover { background: var(--hover); }
+    .pv-result .sub { font-size: 10.5px; color: var(--text-muted); }
 
-    .pv-chosen { font-size: 12px; color: var(--text2); margin-top: 6px; }
+    .pv-chosen { font-size: 12px; color: var(--text-2); margin-top: 6px; }
     .pv-chosen b { color: var(--text); }
 
     .cond-chip {
@@ -195,12 +193,19 @@
       font-size: 11px; border-radius: 6px; padding: 3px 8px; margin: 3px 4px 0 0;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    .cond-chip.pass { background: #dcfce7; color: #15803d; }
-    .cond-chip.fail { background: #fee2e2; color: #b91c1c; }
+    .cond-chip.pass { background: var(--ok-soft); color: var(--ok); }
+    .cond-chip.fail { background: var(--danger-soft); color: var(--danger); }
 
     /* portal-look preview card (mirrors public/portal/case.html shells) */
-    .pv-stage { background: #ffffff; border: 1px dashed var(--border); border-radius: 10px;
+    .pv-stage { background: var(--surface); border: 1px dashed var(--border); border-radius: 10px;
       padding: 14px; margin-top: 10px; }
+    /* .pv-card and its children are a byte-exact replica of portal/case.html's
+       palette (--accent #2563eb, --panel #f9fafb, --border #e5e7eb, --text
+       #1f2937, --muted #6b7280). portal/* is OUT of scope per charter §1 and
+       keeps its own :root, so these literals must NOT follow the admin theme —
+       the whole point of the preview is to show what the CLIENT sees. Same
+       call slice 6 made for pageManager's .preview-frame. Only the stage
+       around it, and the admin annotations below, are themed. */
     .pv-card {
       background: #f9fafb; border: 1px solid #e5e7eb;
       border-radius: 10px; padding: 16px;
@@ -219,20 +224,20 @@
       pointer-events: none;
     }
     .pv-card .pv-note { font-size: 12.5px; color: #6b7280; margin: 10px 0 0; text-align: center; }
-    .pv-coded-note { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 6px; }
+    .pv-coded-note { font-size: 12px; color: var(--text-muted); font-style: italic; margin-top: 6px; }
     .pv-hidden {
-      border: 1px dashed #fecaca; background: #fef2f2; color: #b91c1c;
+      border: 1px dashed var(--danger); background: var(--danger-soft); color: var(--danger);
       border-radius: 10px; padding: 12px; font-size: 12.5px; margin-top: 10px;
     }
     .pv-errors {
-      border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c;
+      border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger);
       border-radius: 10px; padding: 10px 12px; font-size: 12px; margin-top: 10px;
     }
     .pv-errors li { margin-left: 16px; margin-top: 3px; }
 
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; color: var(--muted);
+      justify-content: center; height: 100%; color: var(--text-muted);
       gap: 10px; text-align: center; padding: 20px;
     }
     .empty-state i { font-size: 36px; opacity: 0.25; }
@@ -763,7 +768,7 @@ function renderCondBody() {
 
   // rules builder
   host.innerHTML = `
-    <div class="rg-head" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)">
+    <div class="rg-head" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2)">
       Show this card when
       <select onchange="condModel.match=this.value">
         <option value="all" ${condModel.match !== 'any' ? 'selected' : ''}>ALL</option>
@@ -966,7 +971,7 @@ async function deleteCard() {
     icon: 'warning',
     title: `Delete card "${working.card_key}"?`,
     text: 'It disappears from every client portal immediately.',
-    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444',
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: 'var(--danger-fill)',
   });
   if (!isConfirmed) return;
   try {
@@ -1012,7 +1017,7 @@ function onPreviewSearch(q) {
       const data = await api('/api/cases/search', 'GET', { q: q.trim(), limit: 8 });
       const rows = data.cases || [];
       if (!rows.length) {
-        host.innerHTML = `<div class="pv-result" style="color:var(--muted)">No matches</div>`;
+        host.innerHTML = `<div class="pv-result" style="color:var(--text-muted)">No matches</div>`;
       } else {
         host.innerHTML = rows.map(c => {
           const docket = c.case_number_full || c.case_number || c.case_id;
@@ -1054,7 +1059,7 @@ function onPreviewContactSearch(q) {
       const data = await api('/api/contacts', 'GET', { q: q.trim(), limit: 8 });
       const rows = (data && data.contacts) || [];
       if (!rows.length) {
-        host.innerHTML = `<div class="pv-result" style="color:var(--muted)">No matches</div>`;
+        host.innerHTML = `<div class="pv-result" style="color:var(--text-muted)">No matches</div>`;
       } else {
         host.innerHTML = rows.map(c => {
           const label = `${c.contact_name || '(unnamed)'} · #${c.contact_id}`;
