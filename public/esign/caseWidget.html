@@ -11,14 +11,16 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <script src="/esign/esignActions.js"></script>
   <style>
-    body { margin: 0; padding: 12px; background: #fff; }
+    body { margin: 0; padding: 12px; background: var(--page-bg); }
     .cw-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
     .cw-top h3 { margin: 0; }
-    .cw-empty { color: #999; padding: 14px 4px; text-align: center; }
-    .cw-days { color: #b45309; font-size: 12px; white-space: nowrap; }
+    .cw-empty { color: var(--text-muted); padding: 14px 4px; text-align: center; }
+    .cw-days { color: var(--warn); font-size: 12px; white-space: nowrap; }
     #cw-table td { cursor: pointer; }
     #cw-table .cw-doc { text-align: left; max-width: 22em; overflow-wrap: anywhere; }
   </style>
@@ -101,7 +103,7 @@ function render() {
     tr.innerHTML =
       `<td>${esignChipHtml(r.status)}</td>` +
       `<td class="cw-doc">${esignEsc(r.document_name || '')}` +
-      `<div style="font-size:11px;color:#888">${esignEsc(r.kind || '')} · sent ${esignEsc(esignFmtDate(r.sent_at)) || '—'}</div></td>` +
+      `<div style="font-size:11px;color:var(--text-muted)">${esignEsc(r.kind || '')} · sent ${esignEsc(esignFmtDate(r.sent_at)) || '—'}</div></td>` +
       `<td>${esignRecipientsHtml(r.recipients)}</td>` +
       `<td>${pending}</td>` +
       `<td><button onclick="event.stopPropagation();esignOpenActions(rows[${i}], refresh)">` +
