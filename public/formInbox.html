@@ -11,9 +11,11 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <style>
-    body { margin: 0; padding: 12px; background: #fff; }
+    body { margin: 0; padding: 12px; background: var(--page-bg); }
     /* .fx- prefix scopes this page (formInbox). */
     .fx-wrap { max-width: 980px; margin: 0 auto; }
 
@@ -21,103 +23,103 @@
       display: flex; align-items: center; gap: 10px;
       padding: 4px 0 14px; flex-wrap: wrap;
     }
-    .fx-title { font-size: 17px; font-weight: 700; color: #0f172a; margin: 0; }
+    .fx-title { font-size: 17px; font-weight: 700; color: var(--text); margin: 0; }
     .fx-count {
-      font-size: 12px; font-weight: 700; color: #1e40af; background: #dbeafe;
-      border: 1px solid #bfdbfe; border-radius: 10px; padding: 1px 8px;
+      font-size: 12px; font-weight: 700; color: var(--info); background: var(--info-soft);
+      border: 1px solid var(--info); border-radius: 10px; padding: 1px 8px;
     }
     .fx-spacer { flex: 1; }
     .fx-filter {
-      font-size: 13px; padding: 6px 8px; border: 1px solid #cbd5e1;
-      border-radius: 6px; font-family: inherit; color: #334155; background: #fff;
+      font-size: 13px; padding: 6px 8px; border: 1px solid var(--border-strong);
+      border-radius: 6px; font-family: inherit; color: var(--text-2); background: var(--surface);
     }
     .fx-refresh {
-      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
-      padding: 6px 12px; font-size: 13px; cursor: pointer; color: #334155;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
+      padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--text-2);
     }
-    .fx-refresh:hover { background: #f1f5f9; }
+    .fx-refresh:hover { background: var(--hover); }
 
     .fx-note {
-      font-size: 12.5px; color: #64748b; margin: 0 0 12px;
+      font-size: 12.5px; color: var(--text-muted); margin: 0 0 12px;
     }
 
     .fx-row {
       display: flex; align-items: center; gap: 12px;
-      padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px;
-      margin-bottom: 8px; background: #fff;
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 8px; background: var(--surface);
     }
     .fx-row-main { flex: 1; min-width: 0; }
     .fx-row-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-    .fx-row-form { font-size: 14px; font-weight: 600; color: #0f172a; }
-    .fx-row-id   { font-size: 11.5px; color: #94a3b8; }
-    .fx-row-when { font-size: 12px; color: #64748b; white-space: nowrap; }
+    .fx-row-form { font-size: 14px; font-weight: 600; color: var(--text); }
+    .fx-row-id   { font-size: 11.5px; color: var(--text-muted); }
+    .fx-row-when { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
     .fx-row-who {
-      font-size: 12.5px; color: #334155; margin-top: 3px;
+      font-size: 12.5px; color: var(--text-2); margin-top: 3px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .fx-row-who i { color: #94a3b8; margin-right: 3px; }
+    .fx-row-who i { color: var(--text-muted); margin-right: 3px; }
     .fx-row-who span + span { margin-left: 10px; }
-    .fx-row-target { font-size: 12px; color: #475569; margin-top: 3px; }
-    .fx-row-target i { color: #94a3b8; margin-right: 5px; }
+    .fx-row-target { font-size: 12px; color: var(--text-2); margin-top: 3px; }
+    .fx-row-target i { color: var(--text-muted); margin-right: 5px; }
     .fx-badge {
       font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
-      color: #1e40af; background: #dbeafe; border: 1px solid #bfdbfe;
+      color: var(--info); background: var(--info-soft); border: 1px solid var(--info);
       border-radius: 4px; padding: 1px 5px; margin-left: 6px;
     }
 
     .fx-btn {
-      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
-      padding: 6px 12px; font-size: 13px; cursor: pointer; color: #334155;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
+      padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--text-2);
       white-space: nowrap;
     }
-    .fx-btn:hover { background: #f1f5f9; }
-    .fx-btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
-    .fx-btn-primary:hover { background: #1d4ed8; }
+    .fx-btn:hover { background: var(--hover); }
+    .fx-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    .fx-btn-primary:hover { background: var(--accent-dark); }
 
     .fx-empty {
-      padding: 34px 12px; text-align: center; color: #64748b; font-size: 14px;
-      border: 1px dashed #cbd5e1; border-radius: 8px;
+      padding: 34px 12px; text-align: center; color: var(--text-muted); font-size: 14px;
+      border: 1px dashed var(--border-strong); border-radius: 8px;
     }
-    .fx-error { color: #b91c1c; padding: 14px 0; font-size: 13.5px; }
+    .fx-error { color: var(--danger); padding: 14px 0; font-size: 13.5px; }
 
     /* View modal iframe */
     .fx-view-frame { width: 100%; height: 72vh; border: 0; }
 
     /* Adopt dialog internals (mirrors oad-/cad- conventions) */
     .fx-dlg-header { text-align: left; margin-bottom: 8px; }
-    .fx-dlg-form { font-weight: 700; font-size: 15px; color: #0f172a; }
-    .fx-dlg-meta { font-size: 12.5px; color: #64748b; margin-top: 2px; }
-    .fx-dlg-who  { font-size: 13px; color: #334155; margin-top: 6px; line-height: 1.5; }
+    .fx-dlg-form { font-weight: 700; font-size: 15px; color: var(--text); }
+    .fx-dlg-meta { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+    .fx-dlg-who  { font-size: 13px; color: var(--text-2); margin-top: 6px; line-height: 1.5; }
     .fx-dlg-section-label {
       text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .02em;
-      text-transform: uppercase; color: #64748b; margin: 12px 0 6px;
+      text-transform: uppercase; color: var(--text-muted); margin: 12px 0 6px;
     }
     .fx-dlg-create-row { margin: 10px 0 2px; text-align: left; }
     .fx-dlg-create-btn {
-      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
-      padding: 6px 12px; font-size: 13px; cursor: pointer; color: #334155;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
+      padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--text-2);
     }
-    .fx-dlg-create-btn:hover { background: #f1f5f9; }
+    .fx-dlg-create-btn:hover { background: var(--hover); }
     .fx-appt-input {
       width: 160px; font-size: 13px; padding: 6px 8px;
-      border: 1px solid #cbd5e1; border-radius: 6px;
+      border: 1px solid var(--border-strong); border-radius: 6px;
     }
     /* Selected-target confirmation (replaces the search box once a row is
        picked, since CasePicker leaves the typed query in place). */
     .fx-picked {
       display: flex; align-items: center; gap: 10px; text-align: left;
-      border: 1px solid #86efac; background: #f0fdf4;
+      border: 1px solid var(--ok); background: var(--ok-soft);
       border-radius: 6px; padding: 8px 10px;
     }
-    .fx-picked > i { color: #16a34a; font-size: 15px; }
+    .fx-picked > i { color: var(--ok); font-size: 15px; }
     .fx-picked-main { flex: 1; min-width: 0; }
-    .fx-picked-label { font-size: 13.5px; font-weight: 600; color: #14532d; }
-    .fx-picked-sub { font-size: 12px; color: #4d7c0f; margin-top: 1px; }
+    .fx-picked-label { font-size: 13.5px; font-weight: 600; color: var(--ok); }
+    .fx-picked-sub { font-size: 12px; color: var(--text-2); margin-top: 1px; }
     .fx-change {
-      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
-      padding: 4px 10px; font-size: 12.5px; cursor: pointer; color: #334155;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px;
+      padding: 4px 10px; font-size: 12.5px; cursor: pointer; color: var(--text-2);
     }
-    .fx-change:hover { background: #f1f5f9; }
+    .fx-change:hover { background: var(--hover); }
     /* Let picker dropdowns escape the swal container (oad-html precedent). */
     .fx-dlg-html { overflow: visible !important; }
     /* style.css pins inputs to 200px at higher specificity than .cp-input's
