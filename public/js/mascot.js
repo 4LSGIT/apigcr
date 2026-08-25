@@ -133,9 +133,17 @@
     //
     // So the clearance is whatever is left before the crown reaches y 0, and the
     // balloon bursting against the top of the window is the nicer beat anyway.
-    // With --header-h at 56px that leaves 4, which clears POP_MIN. Shrink the
-    // header below ~55 and the top ledge quietly stops being a target again.
-    POP_MIN: 3,            // least clearance still worth calling a landing
+    //
+    // POP_MIN is 0 because the number it used to hold was a trap. The only ledge
+    // that can ever score under 3 is this one: everything collectTops() returns
+    // is floored at `view.top + 8`, so every ledge in the open page clears 8 or
+    // more, and the floor clears the full POP_CLEAR. A non-zero POP_MIN gated
+    // exactly one ledge, and gated it on the header height — at --header-h 56px
+    // the top ledge scored 4 and passed, at 52 it scores 0 and quietly stopped
+    // being a target, which is the failure this comment used to predict. Zero
+    // keeps the test that still matters: a clearance below zero means the crown
+    // would be pushed out of the top of the window, and that is still rejected.
+    POP_MIN: 0,            // least clearance still worth calling a landing
     FLY_LIFT: 150,         // px/s² the balloon pulls with, so it takes up the slack
     FLY_MAX_VY: 95,        // px/s ceiling on the rise. A balloon is not a rocket.
     FLY_SWAY: 9,           // px of side-to-side drift, about the launch column
