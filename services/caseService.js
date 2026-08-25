@@ -315,7 +315,8 @@ async function getCase(db, caseId, include = '', {
     const [log] = await db.query(
       `SELECT
          l.log_id, l.log_type, l.log_date, l.log_link, l.log_extra,
-         l.log_link_type, l.log_link_id, l.log_by, l.log_data,
+         l.log_link_type, l.log_link_id, l.log_about_type, l.log_about_id,
+         l.log_by, l.log_data,
          l.log_from, l.log_to, l.log_subject, l.log_direction,
          u.user_name AS by_name,
          DATE_FORMAT(l.log_date, '%M %e, %Y at %h:%i %p') AS formatted_date,
@@ -1134,6 +1135,15 @@ async function listCaseWorkflows(db, caseId, {
  *   log              — log_link_id + log_link WHERE log_link_type='case'
  *                      AND log_link_id = loser case_id
  *                      (docket-form rows follow the docket — no touch)
+ *   log_about        — log_about_id WHERE log_about_type='case' AND
+ *                      log_about_id = loser case_id (About-link S2). Same
+ *                      docket rule as the primary link above: an about-link
+ *                      written against a docket STRING follows the adopted
+ *                      docket automatically, so only the case_id form needs
+ *                      repointing. Without this the row keeps pointing at a
+ *                      deleted case and silently vanishes from BOTH case
+ *                      views — the loser is gone and the survivor's
+ *                      identifier IN-list never contained the loser's id.
  *   form_submissions — link_id       WHERE link_type='case'
  *   signing_requests — linkable_id   WHERE linkable_type='case'
  *   sequences        — seq_case
@@ -1322,6 +1332,12 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     ['log',
       `SELECT COUNT(*) AS c FROM log WHERE log_link_type = 'case' AND log_link_id = ?`,
       `UPDATE log SET log_link_id = ?, log_link = ? WHERE log_link_type = 'case' AND log_link_id = ?`],
+    // About-link S2. Label is deliberately NOT 'log' — the repoint loop
+    // special-cases that label to bind three params (log_link_id + log_link).
+    // This entry takes the standard two, [survivorId, loserId].
+    ['log_about',
+      `SELECT COUNT(*) AS c FROM log WHERE log_about_type = 'case' AND log_about_id = ?`,
+      `UPDATE log SET log_about_id = ? WHERE log_about_type = 'case' AND log_about_id = ?`],
     ['form_submissions',
       `SELECT COUNT(*) AS c FROM form_submissions WHERE link_type = 'case' AND link_id = ?`,
       `UPDATE form_submissions SET link_id = ? WHERE link_type = 'case' AND link_id = ?`],

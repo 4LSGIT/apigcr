@@ -716,7 +716,13 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
       });
       logId = r.log_id;
     } catch (logErr) {
-      if (logErr.code === 'INVALID_LOG_LINK_ID') {
+      // About-link S2.5: widened to the about validation codes for symmetry
+      // with phoneIngestService. Likely unreachable today (this path builds
+      // its own create params and never sets about_*), but the two ingest
+      // catches are documented mirrors and must not drift.
+      if (logErr.code === 'INVALID_LOG_LINK_ID'
+          || logErr.code === 'INVALID_LOG_ABOUT_TYPE'
+          || logErr.code === 'INVALID_LOG_ABOUT_ID') {
         // Bad email shape on the "other party" side — happens for outbound
         // emails to address lists, malformed inbound senders, etc. The
         // email_log row above is the forensic trail; record 'error' status
@@ -731,7 +737,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
           source_id:    source.id,
           message_id:   messageId,
           status:       'error',
-          error:        `createLogEntry INVALID_LOG_LINK_ID: ${logErr.message}`,
+          error:        `createLogEntry ${logErr.code}: ${logErr.message}`,
           email_log_id: emailLogId,
           metadata:     _buildMetadata(suppression, automation, isTest),
           raw_input:    rawInputForLog,

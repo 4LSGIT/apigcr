@@ -493,12 +493,18 @@ async function ingestPhoneEvent(db, event) {
   try {
     result = await logService.createLogEntry(db, p);
   } catch (logErr) {
-    if (logErr && logErr.code === 'INVALID_LOG_LINK_ID') {
+    // About-link S2.5: widened from INVALID_LOG_LINK_ID alone. phone_log's
+    // meta now advertises about_type/about_id, so the workflow editor lets a
+    // step configure a bad about pair — that must produce an 'error'
+    // executions row like a bad link_id does, not a rethrow that loses the
+    // forensic trail entirely.
+    const VALIDATION_CODES = ['INVALID_LOG_LINK_ID', 'INVALID_LOG_ABOUT_TYPE', 'INVALID_LOG_ABOUT_ID'];
+    if (logErr && VALIDATION_CODES.includes(logErr.code)) {
       await _writeExecution(db, {
         event_log_id: eventLogId,
         status:       'error',
         log_id:       null,
-        error:        `createLogEntry INVALID_LOG_LINK_ID: ${logErr.message}`,
+        error:        `createLogEntry ${logErr.code}: ${logErr.message}`,
         metadata:     _buildMetadata(suppression, automation),
         raw_input:    rawInputForLog,
       });
