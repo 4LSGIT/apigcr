@@ -4,27 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Availability</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
   /* Palette matches bookingviewsmanager.html / redirects.html / pageManager.html —
      staff feature pages share this. */
-  :root {
-    --bg: #0f1117;
-    --panel: #161a22;
-    --panel-2: #1d2230;
-    --border: #2a3040;
-    --text: #e6e9ef;
-    --muted: #8a93a6;
-    --accent: #6ea8fe;
-    --accent-2: #82c0ff;
-    --danger: #ff6b6b;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-  }
   *, *::before, *::after { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; height: 100%;
-    background: var(--bg); color: var(--text);
+    background: var(--page-bg); color: var(--text);
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
   }
@@ -35,7 +24,7 @@
 
   /* ── Section cards ─────────────────────────────────────────── */
   .section {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
     padding: 12px 14px; margin-bottom: 16px;
   }
   .section-header {
@@ -44,10 +33,10 @@
   }
   .section-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
   .section-header .right { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .section-note { font-size: 11.5px; color: var(--muted); margin: 0 0 10px; line-height: 1.45; }
+  .section-note { font-size: 11.5px; color: var(--text-muted); margin: 0 0 10px; line-height: 1.45; }
 
   select.ctl, input.ctl {
-    background: var(--panel-2); color: var(--text);
+    background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 6px 9px; font-size: 12.5px;
   }
   select.ctl:focus, input.ctl:focus { outline: none; border-color: var(--accent); }
@@ -55,35 +44,37 @@
   /* ── Tables ────────────────────────────────────────────────── */
   table.list {
     width: 100%; border-collapse: collapse; font-size: 12px;
-    border: 1px solid var(--border); background: var(--panel);
+    border: 1px solid var(--border); background: var(--surface);
   }
   table.list th, table.list td {
     border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left;
     vertical-align: middle;
   }
   table.list th {
-    background: var(--panel-2); color: var(--muted);
+    background: var(--surface-2); color: var(--text-muted);
     text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
   }
   table.list .actions-cell { white-space: nowrap; text-align: right; }
   table.list .actions-cell button {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-left: 4px;
   }
   table.list .actions-cell button:hover { border-color: var(--accent); }
   table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
-  .empty-row td { color: var(--muted); padding: 14px; text-align: center; font-style: italic; }
+  .empty-row td { color: var(--text-muted); padding: 14px; text-align: center; font-style: italic; }
   tr.inactive td { opacity: 0.55; }
-  .muted { color: var(--muted); }
+  .muted { color: var(--text-muted); }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
   /* ── Buttons / badges ──────────────────────────────────────── */
   .btn {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
     transition: border-color 0.12s, background 0.12s;
   }
   .btn:hover { border-color: var(--accent); }
+  /* #001 stays a literal: text ON --accent, not a §3.1 status fill.
+     Measured, near-black on #07ADEF is 8.17:1 and --accent-text is 2.55:1. */
   .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
   .btn.primary:hover { filter: brightness(1.08); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -95,23 +86,23 @@
     text-transform: uppercase; letter-spacing: 0.04em;
     border: 1px solid var(--border);
   }
-  .badge.on      { background: rgba(74, 222, 128, 0.15);  color: var(--ok);     border-color: rgba(74,222,128,0.4); }
-  .badge.off     { background: rgba(138, 147, 166, 0.15); color: var(--muted);  border-color: var(--border); }
-  .badge.shabbos { background: rgba(110, 168, 254, 0.15); color: var(--accent-2); border-color: rgba(110,168,254,0.4); }
-  .badge.yom_tov { background: rgba(251, 191, 36, 0.15);  color: var(--warn);   border-color: rgba(251,191,36,0.4); }
-  .badge.manual  { background: rgba(74, 222, 128, 0.15);  color: var(--ok);     border-color: rgba(74,222,128,0.4); }
+  .badge.on      { background: var(--ok-soft);      color: var(--ok);         border-color: var(--ok); }
+  .badge.off     { background: var(--surface-2);   color: var(--text-muted); border-color: var(--border); }
+  .badge.shabbos { background: var(--accent-soft); color: var(--accent-2);   border-color: var(--accent); }
+  .badge.yom_tov { background: var(--warn-soft);   color: var(--warn);       border-color: var(--warn); }
+  .badge.manual  { background: var(--ok-soft);      color: var(--ok);         border-color: var(--ok); }
 
-  .toggle-all { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+  .toggle-all { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-muted); cursor: pointer; }
 
   /* ── Modals ────────────────────────────────────────────────── */
   .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    position: fixed; inset: 0; background: var(--backdrop);
     display: none; align-items: flex-start; justify-content: center;
     z-index: 100; padding: 30px 16px; overflow: auto;
   }
   .modal-backdrop.open { display: flex; }
   .modal {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
     width: 100%; max-width: 460px; padding: 20px;
   }
   .modal h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
@@ -119,34 +110,34 @@
   @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
 
   .field { margin-bottom: 12px; }
-  .field label { display: block; font-size: 11px; color: var(--muted);
+  .field label { display: block; font-size: 11px; color: var(--text-muted);
     text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; }
   .field input, .field select {
-    width: 100%; background: var(--panel-2); color: var(--text);
+    width: 100%; background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; font-size: 13px;
     font-family: inherit;
   }
   .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
-  .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .field .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
   /* dark-theme native pickers */
   input[type="time"], input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
 
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .modal-err {
-    background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    background: var(--danger-soft); border: 1px solid var(--danger);
     color: var(--danger); border-radius: 4px; padding: 8px 10px; font-size: 12px;
     margin-bottom: 14px; display: none;
   }
   .modal-err.show { display: block; }
 
   .inline-error {
-    background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    background: var(--danger-soft); border: 1px solid var(--danger);
     color: var(--danger); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px;
   }
 
   .toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: var(--panel-2); border: 1px solid var(--accent); color: var(--text);
+    background: var(--surface-2); border: 1px solid var(--accent); color: var(--text);
     padding: 8px 16px; border-radius: 6px; font-size: 12px; z-index: 200;
     opacity: 0; transition: opacity 0.2s; pointer-events: none;
   }
@@ -351,10 +342,17 @@ async function confirmSwal({ title, html, confirmText = 'OK', danger = false }) 
     showCancelButton: true,
     confirmButtonText: confirmText,
     cancelButtonText: 'Cancel',
-    background: '#161a22',
-    color: '#e6e9ef',
-    iconColor: danger ? '#ff6b6b' : '#fbbf24',
-    confirmButtonColor: danger ? '#ff6b6b' : '#6ea8fe',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    // The icon is a graphic ON the popup surface, so it takes the TEXT
+    // tokens; the confirm button is a solid fill, so it takes --danger-fill
+    // (TOKEN-MAP §3.1). SweetAlert paints both button labels white itself.
+    iconColor: danger ? 'var(--danger)' : 'var(--warn)',
+    confirmButtonColor: danger ? 'var(--danger-fill)' : 'var(--accent)',
+    // #1d2230 stays a literal. This is a solid fill whose label SweetAlert
+    // paints #fff, so it has to be dark enough for white in BOTH modes —
+    // exactly the property the --*-fill tokens have, and the sheet ships no
+    // neutral fill. --surface-2 would put white on #f1f3f6 in light mode.
     cancelButtonColor: '#1d2230',
     reverseButtons: true,
     focusCancel: danger,
@@ -519,7 +517,7 @@ async function deleteUA(id) {
     title: 'Delete hours?',
     html: `<b>${WEEKDAYS[r.weekday]} ${fmtTime12(r.start_time)} – ${fmtTime12(r.end_time)}</b> ` +
           `for ${esc(providerName(E('ua-provider').value))}<br>` +
-          `<span style="color:#8a93a6;font-size:12px">This cannot be undone — use Deactivate to keep the row.</span>`,
+          `<span style="color:var(--text-muted);font-size:12px">This cannot be undone — use Deactivate to keep the row.</span>`,
     confirmText: 'Delete',
     danger: true,
   });
@@ -642,7 +640,7 @@ async function deleteAB(id) {
     html: `<b>${fmtDT(r.block_start)} → ${fmtDT(r.block_end)}</b>` +
           `${r.reason ? ` (${esc(r.reason)})` : ''} ` +
           `for ${esc(providerName(E('ab-provider').value))}<br>` +
-          `<span style="color:#8a93a6;font-size:12px">This cannot be undone — use Deactivate to keep the row.</span>`,
+          `<span style="color:var(--text-muted);font-size:12px">This cannot be undone — use Deactivate to keep the row.</span>`,
     confirmText: 'Delete',
     danger: true,
   });
@@ -751,7 +749,7 @@ async function toggleFB(id) {
     const ok = await confirmSwal({
       title: `Deactivate ${r.source.replace('_', ' ')} closure?`,
       html: `<b>${esc(r.label || '')}</b><br>${fmtDT(r.block_start)} → ${fmtDT(r.block_end)}<br>` +
-            `<span style="color:#8a93a6;font-size:12px">The booking engine will offer slots during it. ` +
+            `<span style="color:var(--text-muted);font-size:12px">The booking engine will offer slots during it. ` +
             `The setting survives Hebcal regeneration.</span>`,
       confirmText: 'Deactivate',
     });
