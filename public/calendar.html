@@ -18,12 +18,14 @@
        stylesheet exists for v6 (the old index.global.min.css link 404'd). -->
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
 
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     body {
       margin: 0;
       padding: 8px 10px;
       font-family: Arial, sans-serif;
-      background: #fff;
+      background: var(--page-bg);
       font-size: 14px;
     }
 
@@ -45,8 +47,8 @@
       margin-right: 3px;
       vertical-align: -1px;
     }
-    .cal-group-label { color: #666; font-size: 0.92em; }
-    #calNote { color: #92400e; font-size: 0.9em; }
+    .cal-group-label { color: var(--text-muted); font-size: 0.92em; }
+    #calNote { color: var(--warn); font-size: 0.9em; }
     #calNote:empty { display: none; }
 
     /* ── FullCalendar overrides — keep the app's plain Arial/white/blue look ── */
@@ -54,18 +56,18 @@
     .fc { font-size: 0.88em; }
     .fc .fc-toolbar-title { font-size: 1.15rem; }
     .fc .fc-button {
-      background: #fff; color: #2563eb;
-      border: 1px solid #2563eb;
+      background: var(--surface); color: var(--accent-2);
+      border: 1px solid var(--accent-2);
       box-shadow: none !important;
       text-transform: capitalize;
       padding: 0.25em 0.6em;
     }
-    .fc .fc-button:hover { background: #eff6ff; color: #2563eb; }
+    .fc .fc-button:hover { background: var(--accent-soft); color: var(--accent-2); }
     .fc .fc-button-primary:not(:disabled).fc-button-active,
     .fc .fc-button-primary:not(:disabled):active {
-      background: #2563eb; color: #fff; border-color: #2563eb;
+      background: var(--accent); color: var(--accent-text); border-color: var(--accent);
     }
-    .fc .fc-button:disabled { background: #fff; color: #93c5fd; border-color: #93c5fd; }
+    .fc .fc-button:disabled { background: var(--surface); color: var(--text-muted); border-color: var(--border); }
     .fc .fc-timegrid-slot { height: 1.6em; }
     .fc-event { cursor: pointer; }
     .fc-bg-event { opacity: 0.28; }
@@ -79,8 +81,14 @@
 
 <div id="calBar">
   <span class="cal-group-label">Providers:</span>
-  <span id="calProviders"><span style="color:#999">loading…</span></span>
+  <span id="calProviders"><span style="color:var(--text-muted)">loading…</span></span>
   <span class="cal-group-label">Show:</span>
+  <!-- The three swatch hexes below are NOT tokenisable. They are the legend for
+       colours the SERVER paints onto the feed — EVENT_COLOR / BLOCK_COLOR /
+       FREE_COLOR at routes/api.calendarFeed.js:81-83. Swapping them for theme
+       tokens would make the legend disagree with the calendar it describes.
+       They move only when the server constants move. Same for the per-provider
+       swatch at :132, which reads p.color straight off the feed. -->
   <label><input type="checkbox" id="tglTaken" checked> Taken</label>
   <label><input type="checkbox" id="tglEvents" checked> <span class="cal-swatch" style="background:#64748b"></span>Events</label>
   <label><input type="checkbox" id="tglBlocked" checked> <span class="cal-swatch" style="background:#9ca3af"></span>Blocked</label>
