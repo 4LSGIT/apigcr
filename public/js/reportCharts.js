@@ -34,8 +34,21 @@
   const NUMERIC_TYPES = new Set([0, 1, 2, 3, 4, 5, 8, 9, 13, 16, 246]);
   const TEMPORAL_TYPES = new Set([7, 10, 11, 12, 14]);
 
-  // Tailwind 500-weight hues: chosen because they stay legible on both a white
-  // and a dark panel, which a single palette otherwise struggles to do.
+  // Tailwind 500-weight hues, kept as literals by the theme arc (slice 10) on
+  // purpose. A ten-hue categorical series palette has no expression in
+  // theme.css: the sheet ships four --cat-* hues with an explicit ceiling of
+  // four, and TOKEN-MAP has no mapping for chart series at all -- so this is a
+  // design task, not a conversion, and TOKEN-MAP's own rule is "do not invent
+  // a mapping mid-conversion".
+  //
+  // The line this comment replaces claimed these "stay legible on both a white
+  // and a dark panel". Measured against --page-bg, that is only half true, in
+  // the same direction as everything else the arc re-measured: all ten clear
+  // 4.23-9.06 on the dark page, but six fall under SC 1.4.11's 3:1 on the
+  // light one -- #f59e0b 2.00, #84cc16 1.84, #06b6d4 2.26, #14b8a6 2.32,
+  // #10b981 2.37, #f97316 2.61. Left as-is and reported rather than
+  // hand-retuned here; picking ten hues that carry on both grounds is its own
+  // piece of work.
   const PALETTE = [
     "#3b82f6", "#f59e0b", "#10b981", "#f43f5e", "#8b5cf6",
     "#06b6d4", "#84cc16", "#f97316", "#ec4899", "#14b8a6",
@@ -44,6 +57,14 @@
   // Category labels with an obvious meaning get a matching colour, so a chart
   // of appointment outcomes reads correctly at a glance instead of assigning
   // "No Show" a cheerful green. Matched case-insensitively on the whole label.
+  //
+  // Also left as literals, for two reasons beyond the palette's. These are
+  // chart FILLS, so section 3.1 would send them to --ok-fill / --danger-fill /
+  // --neutral-fill rather than the text tokens their names suggest; and
+  // withAlpha() below parses its argument with a /^#rrggbb$/ regex, so a
+  // var() string would fail the match and silently return unchanged, breaking
+  // every area and line fill. Same light-side measurements as PALETTE:
+  // #10b981 2.37, #94a3b8 2.39, #f59e0b 2.00, #06b6d4 2.26.
   const SEMANTIC_COLORS = {
     // good
     attended: "#10b981", completed: "#10b981", complete: "#10b981",
@@ -287,7 +308,7 @@
    *           {kind:'none', reason:string}}
    */
   function buildChartConfig(viz, rows, profile, theme) {
-    theme = theme || { text: "#6c757d", grid: "#e1e4e8", bg: "#f6f7f9", dark: false };
+    theme = theme || { text: "#5a636e", grid: "#e1e4e8", bg: "#f6f7f9", dark: false };
     if (!viz) return { kind: "none", reason: "no chart for this shape" };
     if (viz.type === "table") return { kind: "none", reason: "table only" };
     if (!rows || !rows.length) return { kind: "none", reason: "no rows" };
@@ -490,18 +511,24 @@
     };
   }
 
-  /** Read theme colours off the live stylesheet so charts match the app. */
+  /** Read theme colours off the live stylesheet so charts match the app.
+   *
+   * The fallbacks are the LIGHT values of the tokens they stand in for, and
+   * only fire where there is no document at all (the node-only jest path into
+   * buildChartConfig). --text-muted was retuned from #6c757d to #5a636e for AA
+   * during the theme arc; these fallbacks kept the old value and are corrected
+   * here so a fallback render matches a real one. */
   function currentTheme() {
     try {
       const cs = getComputedStyle(document.body);
       return {
-        text: cs.getPropertyValue("--text-muted").trim() || "#6c757d",
+        text: cs.getPropertyValue("--text-muted").trim() || "#5a636e",
         grid: cs.getPropertyValue("--border").trim() || "#e1e4e8",
         bg: cs.getPropertyValue("--page-bg").trim() || "#f6f7f9",
         dark: document.documentElement.getAttribute("data-theme") === "dark",
       };
     } catch (_) {
-      return { text: "#6c757d", grid: "#e1e4e8", bg: "#f6f7f9", dark: false };
+      return { text: "#5a636e", grid: "#e1e4e8", bg: "#f6f7f9", dark: false };
     }
   }
 
