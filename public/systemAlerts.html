@@ -25,9 +25,11 @@
      dark-only orange: it measures 8.25:1 on the dark surface and 2.01:1 on
      white, so it cannot survive as a literal on a page that is now light by
      default. Folded into --danger rather than --warn because under-alerting
-     (an error reading as a warning) is the worse failure; critical vs error
-     stays carried by the badge text and by the separate summary cards.
-     Reversible in one line once a third status token exists. */
+     (an error reading as a warning) is the worse failure.
+     These two CARDS are still identical; the badges are not — they separate
+     critical from error via the fill/soft split (see .badge.critical below).
+     A card is bare text on a surface, so it has no fill/soft role to borrow
+     and still needs a third hue. Reversible in one line once one exists. */
   .card.err  .n { color:var(--danger); }
   .card.warn .n { color:var(--warn); }
   .card.ackd .n { color:var(--accent); }
@@ -72,8 +74,13 @@
   td.nowrap { white-space:nowrap; }
   .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:10px; font-weight:700;
     text-transform:uppercase; letter-spacing:.05em; }
-  .badge.critical { background:var(--danger-soft); color:var(--danger-on-soft); border:1px solid var(--danger); }
-  .badge.error    { background:var(--danger-soft); color:var(--danger-on-soft); border:1px solid var(--danger); }  /* same as .critical — see the gap note above */
+  /* Three severities, two status hues. Slice 6 folded .error into --danger,
+     which made it byte-identical to .critical — a real loss in an alerting UI.
+     The fill/soft split carries the hierarchy instead of a third hue: critical
+     is a solid fill with a white label, error and warning are tinted with a
+     coloured label. Solid vs tinted separates more strongly than two reds. */
+  .badge.critical { background:var(--danger-fill); color:var(--fill-text); border:1px solid var(--danger-fill); }
+  .badge.error    { background:var(--danger-soft); color:var(--danger-on-soft); border:1px solid var(--danger); }
   .badge.warning  { background:var(--warn-soft); color:var(--warn-on-soft); border:1px solid var(--warn); }
   .state { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
   .state.open { color:var(--danger); } .state.ackd { color:var(--accent); } .state.resv { color:var(--ok); }
