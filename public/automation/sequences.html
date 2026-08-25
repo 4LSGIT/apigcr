@@ -9,6 +9,8 @@
   <script src="/automation/fnPicker.js"></script>
   <script src="/automation/esignTplPanel.js"></script>
   <script src="/automation/paramWidgets.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        SEQUENCES SUB-PAGE — self-contained styles.
@@ -16,28 +18,12 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy:    #1a1a2e;
-      --navy2:   #16213e;
-      --blue:    #4f8ef7;
-      --blue2:   #3a7de8;
-      --green:   #22c55e;
-      --red:     #ef4444;
-      --amber:   #f59e0b;
-      --purple:  #8b5cf6;
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --border:  #e2e8f0;
-      --muted:   #94a3b8;
-      --text:    #1e293b;
-      --text2:   #475569;
-    }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 14px;
       color: var(--text);
-      background: var(--bg);
+      background: var(--page-bg);
       display: flex;
       height: 100vh;
       overflow: hidden;
@@ -50,14 +36,15 @@
       font-size: 12px; font-weight: 500; cursor: pointer;
       transition: all 0.15s; white-space: nowrap;
     }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: var(--blue2); }
-    .btn-ghost { background: rgba(255,255,255,0.1); color: #fff; }
-    .btn-ghost:hover { background: rgba(255,255,255,0.18); }
-    .btn-danger { background: var(--red); color: #fff; }
-    .btn-danger:hover { background: #dc2626; }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--info-dark); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--hover); }
+    .btn-danger { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover { background: var(--danger-fill); }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
-    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
     .btn-outline:hover { background: var(--border); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -72,9 +59,10 @@
 
     .panel-left {
       width: 220px; min-width: 220px;
-      background: var(--navy2);
+      background: var(--code-bg-2);
+      color: var(--code-fg);   /* children inherit the rail, not --text */
       display: flex; flex-direction: column;
-      border-right: 1px solid rgba(255,255,255,0.06);
+      border-right: 1px solid var(--border-strong);
       transition: width 0.15s, min-width 0.15s;
     }
     .panel-left.collapsed { width: 40px; min-width: 40px; }
@@ -84,15 +72,15 @@
     .panel-left.collapsed .panel-left-head { justify-content: center; }
 
     .panel-collapse-btn {
-      background: none; border: none; color: rgba(255,255,255,0.4);
+      background: none; border: none; color: var(--code-fg); opacity: .6;
       cursor: pointer; padding: 2px 4px; font-size: 12px; flex-shrink: 0;
       transition: color 0.12s;
     }
-    .panel-collapse-btn:hover { color: #fff; }
+    .panel-collapse-btn:hover { color: var(--code-fg); opacity: 1; }
 
     .panel-left-head {
       padding: 10px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid var(--border-strong);
       display: flex; align-items: center; gap: 6px;
     }
 
@@ -100,16 +88,16 @@
       flex: 1; background: rgba(255,255,255,0.08);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 5px; padding: 5px 9px;
-      color: #fff; font-size: 12px; outline: none;
+      color: var(--code-fg); font-size: 12px; outline: none;
     }
-    .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
-    .panel-left-search:focus { border-color: var(--blue); }
+    .panel-left-search::placeholder { color: var(--code-fg); opacity: .55; }
+    .panel-left-search:focus { border-color: var(--info); }
 
     /* "Show inactive" toggle row beneath the search box */
     .panel-left-filter {
       display: flex; align-items: center; gap: 6px;
       padding: 7px 12px 0;
-      font-size: 11px; color: rgba(255,255,255,0.45);
+      font-size: 11px; color: var(--code-fg); opacity: .6;
       user-select: none;
     }
     .panel-left-filter label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -122,34 +110,34 @@
       padding: 9px 12px; cursor: pointer;
       border-left: 3px solid transparent;
       transition: all 0.12s;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-strong);
     }
     .left-item:hover { background: rgba(255,255,255,0.05); }
-    .left-item.active { border-left-color: var(--blue); background: rgba(79,142,247,0.1); }
+    .left-item.active { border-left-color: var(--info); background: var(--accent-soft); }
 
     .left-item-name {
-      color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 500;
+      color: var(--code-fg); font-size: 13px; font-weight: 500;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .left-item.active .left-item-name { color: #fff; }
-    .left-item-meta { color: rgba(255,255,255,0.35); font-size: 11px; margin-top: 2px; }
+    .left-item.active .left-item-name { color: var(--code-fg); }
+    .left-item-meta { color: var(--code-fg); opacity: .55; font-size: 11px; margin-top: 2px; }
 
     .left-item-actions { display: none; gap: 4px; margin-top: 5px; }
     .left-item.active .left-item-actions { display: flex; }
 
     .left-act {
       background: rgba(255,255,255,0.08); border: none;
-      color: rgba(255,255,255,0.6); border-radius: 4px;
+      color: var(--code-fg); opacity: .7; border-radius: 4px;
       padding: 3px 7px; font-size: 11px; cursor: pointer; transition: all 0.12s;
     }
-    .left-act:hover { background: rgba(255,255,255,0.15); color: #fff; }
-    .left-act.danger:hover { background: rgba(239,68,68,0.3); color: #fca5a5; }
+    .left-act:hover { background: rgba(255,255,255,0.15); color: var(--code-fg); }
+    .left-act.danger:hover { background: var(--danger-soft); color: var(--danger); }
 
-    .panel-left-foot { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+    .panel-left-foot { padding: 10px 12px; border-top: 1px solid var(--border-strong); }
 
     .panel-mid {
       flex: 1; display: flex; flex-direction: column;
-      overflow: hidden; background: var(--bg);
+      overflow: hidden; background: var(--page-bg);
     }
 
     .canvas-head {
@@ -160,7 +148,7 @@
       font-size: 15px; font-weight: 700; color: var(--text);
       flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .canvas-title.placeholder { color: var(--muted); font-weight: 400; }
+    .canvas-title.placeholder { color: var(--text-muted); font-weight: 400; }
 
     .canvas-body { flex: 1; overflow-y: auto; padding: 20px; }
 
@@ -176,16 +164,16 @@
       cursor: col-resize; z-index: 10;
     }
     .panel-resize-handle:hover, .panel-resize-handle.dragging {
-      background: var(--blue); opacity: 0.3;
+      background: var(--info); opacity: 0.3;
     }
 
     .editor-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
     .editor-tab {
       flex: 1; padding: 11px; border: none; background: none;
-      font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer;
+      font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer;
       border-bottom: 2px solid transparent; transition: all 0.12s;
     }
-    .editor-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .editor-tab.active { color: var(--info); border-bottom-color: var(--info); }
     .editor-tab:hover:not(.active) { color: var(--text); }
 
     .editor-body { flex: 1; overflow-y: auto; padding: 16px; }
@@ -198,14 +186,14 @@
     /* ── Empty / loading states ── */
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; color: var(--muted);
+      justify-content: center; height: 100%; color: var(--text-muted);
       gap: 10px; text-align: center;
     }
     .empty-state i { font-size: 36px; opacity: 0.25; }
 
     .editor-placeholder {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; color: var(--muted); gap: 8px; text-align: center;
+      justify-content: center; height: 100%; color: var(--text-muted); gap: 8px; text-align: center;
     }
     .editor-placeholder i { font-size: 28px; opacity: 0.2; }
 
@@ -216,7 +204,7 @@
 
     .step-connector {
       padding: 0 0 0 28px; height: 22px;
-      color: var(--muted); font-size: 16px; display: flex; align-items: center;
+      color: var(--text-muted); font-size: 16px; display: flex; align-items: center;
     }
 
     .step-card {
@@ -224,96 +212,96 @@
       border-radius: 10px; padding: 11px 13px;
       cursor: pointer; transition: all 0.15s; position: relative;
     }
-    .step-card:hover { border-color: var(--blue); box-shadow: 0 2px 12px rgba(79,142,247,0.12); }
-    .step-card.active { border-color: var(--blue); box-shadow: 0 2px 16px rgba(79,142,247,0.2); }
+    .step-card:hover { border-color: var(--info); box-shadow: var(--shadow); }
+    .step-card.active { border-color: var(--info); box-shadow: var(--shadow); }
 
     .step-card-head { display: flex; align-items: center; gap: 9px; }
 
     .step-num {
       width: 26px; height: 26px; border-radius: 50%;
-      background: var(--navy); color: #fff;
+      background: var(--code-bg); color: var(--code-fg);
       font-size: 11px; font-weight: 700;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-    .step-card.active .step-num { background: var(--blue); }
+    .step-card.active .step-num { background: var(--info); }
 
     .step-type-icon {
       width: 26px; height: 26px; border-radius: 6px;
       display: flex; align-items: center; justify-content: center;
       font-size: 12px; flex-shrink: 0;
     }
-    .type-webhook           { background: #eff6ff; color: #3b82f6; }
-    .type-internal_function { background: #f0fdf4; color: #16a34a; }
-    .type-custom_code       { background: #faf5ff; color: #9333ea; }
-    .type-sms   { background: #f0fdf4; color: #16a34a; }
-    .type-email { background: #eff6ff; color: #3b82f6; }
-    .type-task  { background: #fefce8; color: #ca8a04; }
+    .type-webhook           { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .type-internal_function { background: var(--ok-soft); color: var(--ok); }
+    .type-custom_code       { background: var(--surface-2); color: var(--cat-purple); }
+    .type-sms   { background: var(--ok-soft); color: var(--ok); }
+    .type-email { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .type-task  { background: var(--warn-soft); color: var(--warn); }
 
     .step-label { flex: 1; min-width: 0; }
     .step-label-main { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .step-label-sub  { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .step-label-sub  { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 
     .step-badges { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
     .badge { font-size: 10px; font-weight: 600; padding: 2px 5px; border-radius: 4px; white-space: nowrap; }
-    .badge-abort  { background: #fee2e2; color: #991b1b; }
-    .badge-retry  { background: #fef3c7; color: #92400e; }
-    .badge-ignore { background: #f1f5f9; color: #64748b; }
-    .badge-delay  { background: #ecfdf5; color: #065f46; }
-    .badge-cond   { background: #fdf4ff; color: #7e22ce; }
-    .badge-guard  { background: #fff7ed; color: #c2410c; }
+    .badge-abort  { background: var(--danger-soft); color: var(--danger); }
+    .badge-retry  { background: var(--warn-soft); color: var(--warn); }
+    .badge-ignore { background: var(--surface-2); color: var(--text-2); }
+    .badge-delay  { background: var(--ok-soft); color: var(--ok); }
+    .badge-cond   { background: var(--surface-2); color: var(--cat-purple); }
+    .badge-guard  { background: var(--warn-soft); color: var(--warn); }
 
     .step-card-actions { display: none; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
     .step-card.active .step-card-actions { display: flex; }
 
     .step-id-tag {
-      font-size: 10px; color: var(--muted); opacity: 0.7;
+      font-size: 10px; color: var(--text-muted); opacity: 0.7;
       font-family: ui-monospace, Menlo, monospace;
       white-space: nowrap; flex-shrink: 0;
       align-self: flex-start;
     }
 
     .step-act {
-      background: var(--bg); border: 1px solid var(--border); color: var(--text2);
+      background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2);
       border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer;
       transition: all 0.12s; display: flex; align-items: center; gap: 4px;
     }
     .step-act:hover { background: var(--border); }
-    .step-act.danger:hover { background: #fee2e2; border-color: #fca5a5; color: var(--red); }
+    .step-act.danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
     .step-act:disabled { opacity: 0.3; cursor: not-allowed; }
-    .step-act:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+    .step-act:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
 
     /* ── Reorder controls ── */
     .step-pos-wrap {
       display: flex; align-items: center; gap: 4px; margin-left: 4px;
-      font-size: 11px; color: var(--muted); white-space: nowrap;
+      font-size: 11px; color: var(--text-muted); white-space: nowrap;
     }
     .step-pos-input {
       width: 48px; padding: 2px 4px; font-size: 11px; text-align: center;
       border: 1px solid var(--border); border-radius: 4px;
       background: var(--surface); color: var(--text);
     }
-    .step-pos-input:focus { outline: none; border-color: var(--blue); }
+    .step-pos-input:focus { outline: none; border-color: var(--info); }
 
     .reorder-pending {
       align-self: flex-start; display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: #b45309; background: #fffbeb;
-      border: 1px solid #fde68a; border-radius: 6px;
+      font-size: 11px; color: var(--warn); background: var(--warn-soft);
+      border: 1px solid var(--warn); border-radius: 6px;
       padding: 4px 9px; margin-bottom: 8px;
     }
 
     .add-step-btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
       padding: 10px; border: 2px dashed var(--border); border-radius: 10px;
-      color: var(--muted); cursor: pointer; font-size: 13px; transition: all 0.15s;
+      color: var(--text-muted); cursor: pointer; font-size: 13px; transition: all 0.15s;
       background: none; width: 100%;
     }
-    .add-step-btn:hover { border-color: var(--blue); color: var(--blue); background: #eff6ff; }
+    .add-step-btn:hover { border-color: var(--info); color: var(--info); background: var(--accent-soft); }
 
     /* ── Form elements ── */
     .field { margin-bottom: 13px; }
     .field label {
       display: block; font-size: 11px; font-weight: 600;
-      color: var(--text2); text-transform: uppercase;
+      color: var(--text-2); text-transform: uppercase;
       letter-spacing: 0.05em; margin-bottom: 4px;
     }
     .field input, .field select, .field textarea {
@@ -323,21 +311,21 @@
       outline: none; transition: border-color 0.12s; font-family: inherit;
     }
     .field input:focus, .field select:focus, .field textarea:focus {
-      border-color: var(--blue); box-shadow: 0 0 0 3px rgba(79,142,247,0.1);
+      border-color: var(--info); box-shadow: 0 0 0 3px var(--accent-soft);
     }
     .field textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; }
     .field-row { display: flex; gap: 8px; }
     .field-row .field { flex: 1; margin-bottom: 0; }
 
     .section-divider {
-      font-size: 11px; font-weight: 700; color: var(--muted);
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
       text-transform: uppercase; letter-spacing: 0.08em;
       padding: 6px 0 8px; border-top: 1px solid var(--border); margin: 8px 0 12px;
     }
 
     .json-toggle {
       display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: var(--blue); cursor: pointer;
+      font-size: 11px; color: var(--info); cursor: pointer;
       margin-bottom: 6px; user-select: none;
     }
     .json-toggle:hover { text-decoration: underline; }
@@ -350,39 +338,39 @@
     .action-tools > .json-toggle { margin-bottom: 0; }
     .ph-help-btn {
       display: inline-flex; align-items: center; gap: 6px;
-      font-size: 11px; color: var(--blue); cursor: pointer;
+      font-size: 11px; color: var(--info); cursor: pointer;
       user-select: none;
     }
     .ph-help-btn:hover { text-decoration: underline; }
 
     /* ── Placeholder Reference popup ── */
-    .phr-doc { font-size: 12.5px; line-height: 1.55; color: #1f2937; text-align: left; }
-    .phr-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
+    .phr-doc { font-size: 12.5px; line-height: 1.55; color: var(--text); text-align: left; }
+    .phr-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
     .phr-section:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .phr-h {
       font-size: 11px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.06em; color: #475569; margin: 0 0 8px;
+      letter-spacing: 0.06em; color: var(--text-2); margin: 0 0 8px;
     }
     .phr-doc p { margin: 0 0 6px; }
     .phr-doc code {
-      background: #eef2ff; padding: 1px 5px; border-radius: 4px;
+      background: var(--accent-soft); padding: 1px 5px; border-radius: 4px;
       font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
-      color: #3730a3; word-break: break-word;
+      color: var(--cat-indigo); word-break: break-word;
     }
     .phr-doc table { width: 100%; border-collapse: collapse; margin-top: 4px; }
     .phr-doc th, .phr-doc td {
-      text-align: left; padding: 5px 8px; border-bottom: 1px solid #f1f5f9;
+      text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border);
       font-size: 12px; vertical-align: top;
     }
     .phr-doc th {
-      font-size: 10.5px; font-weight: 600; color: #64748b;
+      font-size: 10.5px; font-weight: 600; color: var(--text-2);
       text-transform: uppercase; letter-spacing: 0.04em;
-      background: #f8fafc;
+      background: var(--surface-2);
     }
-    .phr-muted { color: #9ca3af; font-size: 11.5px; }
-    .phr-bad { color: #dc2626; }
+    .phr-muted { color: var(--text-muted); font-size: 11.5px; }
+    .phr-bad { color: var(--danger); }
     .phr-ctx {
-      padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0;
+      padding: 10px 12px; background: var(--ok-soft); border: 1px solid var(--ok);
       border-radius: 6px; margin-bottom: 14px;
     }
     .phr-ctx-head { font-size: 13px; margin-bottom: 8px; }
@@ -390,16 +378,16 @@
       font-size: 12px; margin: 6px 0;
       display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start;
     }
-    .phr-label { font-weight: 600; color: #475569; min-width: 210px; }
+    .phr-label { font-weight: 600; color: var(--text-2); min-width: 210px; }
     .phr-pf {
-      display: inline-block; padding: 2px 7px; background: #eef2ff;
-      color: #3730a3; border-radius: 10px; font-size: 11px;
+      display: inline-block; padding: 2px 7px; background: var(--accent-soft);
+      color: var(--cat-indigo); border-radius: 10px; font-size: 11px;
       font-family: ui-monospace, Menlo, monospace; margin-right: 4px;
     }
-    .phr-pf b { color: #6366f1; font-weight: 700; }
+    .phr-pf b { color: var(--cat-indigo); font-weight: 700; }
     .phr-ti {
       flex: 1 1 100%; margin: 0; padding: 8px 10px; background: white;
-      border: 1px solid #e5e7eb; border-radius: 4px; font-size: 11.5px;
+      border: 1px solid var(--border); border-radius: 4px; font-size: 11.5px;
       font-family: ui-monospace, Menlo, monospace;
       max-height: 180px; overflow: auto; white-space: pre-wrap;
     }
@@ -412,61 +400,64 @@
       font-size: 10px; font-weight: 600; text-transform: uppercase;
       white-space: nowrap;
     }
-    .exec-status-active    { background: #dbeafe; color: #1e40af; }
-    .exec-status-completed { background: #dcfce7; color: #166534; }
-    .exec-status-cancelled { background: #e2e8f0; color: #475569; }
+    .exec-status-active    { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .exec-status-completed { background: var(--ok-soft); color: var(--ok); }
+    .exec-status-cancelled { background: var(--border); color: var(--text-2); }
 
     .seq-enroll-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .seq-enroll-table th {
       text-align: left; padding: 8px 10px;
-      background: var(--bg); font-weight: 600; color: var(--text2);
+      background: var(--page-bg); font-weight: 600; color: var(--text-2);
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
       border-bottom: 1px solid var(--border);
     }
     .seq-enroll-table td {
       padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top;
     }
-    .seq-enroll-table tr:hover { background: #f8fafc; }
+    .seq-enroll-table tr:hover { background: var(--surface-2); }
 
     .seq-step-history-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
     .seq-step-history-table th {
-      text-align: left; padding: 6px 8px; background: #f1f5f9;
-      font-weight: 600; color: #475569; font-size: 10px;
+      text-align: left; padding: 6px 8px; background: var(--surface-2);
+      font-weight: 600; color: var(--text-2); font-size: 10px;
       text-transform: uppercase; letter-spacing: 0.4px;
-      border-bottom: 1px solid #cbd5e1;
+      border-bottom: 1px solid var(--border-strong);
     }
     .seq-step-history-table td {
-      padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;
+      padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
     }
     .seq-step-history-table .step-error-cell {
-      color: #991b1b; font-size: 11px; max-width: 240px; overflow-wrap: break-word;
+      color: var(--danger); font-size: 11px; max-width: 240px; overflow-wrap: break-word;
     }
-    .seq-step-history-table tr.row-muted td { color: #94a3b8; }
-    .seq-step-history-table tr.row-muted td.step-error-cell { color: #cbd5e1; }
+    .seq-step-history-table tr.row-muted td { color: var(--text-muted); }
+    /* was #cbd5e1 — a de-emphasised error cell, i.e. TEXT, not a border. It
+       measured 1.66 on white and was never readable. The sheet has no tier
+       fainter than --text-muted, so it lands there rather than inventing one. */
+    .seq-step-history-table tr.row-muted td.step-error-cell { color: var(--text-muted); }
 
     .job-status-badge {
       display: inline-block; padding: 1px 6px; border-radius: 8px;
       font-size: 9px; font-weight: 600; text-transform: uppercase;
       white-space: nowrap;
     }
-    .job-status-pending   { background: #fef3c7; color: #92400e; }
-    .job-status-running   { background: #dbeafe; color: #1e40af; }
-    .job-status-completed { background: #dcfce7; color: #166534; }
-    .job-status-failed    { background: #fee2e2; color: #991b1b; }
-    .job-status-cancelled { background: #e5e7eb; color: #6b7280; }
+    .job-status-pending   { background: var(--warn-soft); color: var(--warn); }
+    .job-status-running   { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .job-status-completed { background: var(--ok-soft); color: var(--ok); }
+    .job-status-failed    { background: var(--danger-soft); color: var(--danger); }
+    .job-status-cancelled { background: var(--border); color: var(--text-muted); }
 
     .log-status-badge {
       display: inline-block; padding: 1px 6px; border-radius: 8px;
       font-size: 9px; font-weight: 600; text-transform: uppercase;
       white-space: nowrap;
     }
-    .log-status-sent    { background: #dcfce7; color: #166534; }
-    .log-status-skipped { background: #e2e8f0; color: #475569; }
-    .log-status-failed  { background: #fee2e2; color: #991b1b; }
+    .log-status-sent    { background: var(--ok-soft); color: var(--ok); }
+    .log-status-skipped { background: var(--border); color: var(--text-2); }
+    .log-status-failed  { background: var(--danger-soft); color: var(--danger); }
 
     /* Utilities */
     .mono { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
-    .text-muted { color: var(--muted); }
+    .text-muted { color: var(--text-muted); }
     .text-sm { font-size: 12px; }
 
     /* Scrollbar */
@@ -478,28 +469,28 @@
        SEQUENCE TYPES MANAGER (modal contents)
        ══════════════════════════════════════════════ */
     .stm-list { display: flex; flex-direction: column; gap: 8px; text-align: left; }
-    .stm-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 13px; }
+    .stm-empty { padding: 24px 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
     .stm-row {
       display: flex; align-items: flex-start; gap: 10px;
       padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
       background: var(--surface);
     }
-    .stm-row.inactive { opacity: 0.55; background: #fafafa; }
+    .stm-row.inactive { opacity: 0.55; background: var(--surface-2); }
     .stm-row-body { flex: 1; min-width: 0; }
     .stm-row-name { font-weight: 600; font-size: 13px; color: var(--text); }
-    .stm-row-desc { font-size: 12px; color: var(--text2); margin-top: 2px; }
+    .stm-row-desc { font-size: 12px; color: var(--text-2); margin-top: 2px; }
     .stm-row-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .stm-chip-pf {
       display: inline-flex; align-items: center; gap: 4px;
-      padding: 2px 7px; background: #eef2ff; color: #3730a3;
+      padding: 2px 7px; background: var(--accent-soft); color: var(--cat-indigo);
       border-radius: 10px; font-size: 11px; font-family: 'SF Mono','Consolas',monospace;
     }
-    .stm-chip-pf-idx { color: #6366f1; font-weight: 700; }
+    .stm-chip-pf-idx { color: var(--cat-indigo); font-weight: 700; }
     .stm-row-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
     .stm-row-actions .btn { padding: 4px 9px; font-size: 11px; }
     .stm-row-toggle {
       display: inline-flex; align-items: center; gap: 5px;
-      font-size: 11px; color: var(--text2); user-select: none; cursor: pointer;
+      font-size: 11px; color: var(--text-2); user-select: none; cursor: pointer;
     }
 
     /* Priority fields editor (inside type editor modal) */
@@ -513,27 +504,27 @@
       font-size: 13px; font-family: 'SF Mono','Consolas',monospace;
       outline: none;
     }
-    .pfe-row input[type="text"]:focus { border-color: var(--blue); }
-    .pfe-row input[type="text"].invalid { border-color: var(--red); background: #fef2f2; }
+    .pfe-row input[type="text"]:focus { border-color: var(--info); }
+    .pfe-row input[type="text"].invalid { border-color: var(--danger); background: var(--danger-soft); }
     .pfe-btn {
       width: 26px; height: 26px;
       border: 1px solid var(--border); border-radius: 4px;
-      background: var(--bg); color: var(--text2); cursor: pointer;
+      background: var(--page-bg); color: var(--text-2); cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; flex-shrink: 0;
     }
     .pfe-btn:hover { background: var(--border); }
     .pfe-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    .pfe-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; color: var(--red); }
+    .pfe-btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
     .pfe-add {
       align-self: flex-start; margin-top: 6px;
       padding: 5px 11px; font-size: 11px;
-      background: var(--bg); border: 1px dashed var(--border); border-radius: 5px;
-      color: var(--text2); cursor: pointer;
+      background: var(--page-bg); border: 1px dashed var(--border); border-radius: 5px;
+      color: var(--text-2); cursor: pointer;
     }
     .pfe-add:hover { background: var(--border); color: var(--text); }
     .pfe-hint {
-      font-size: 11px; color: var(--muted); margin-top: 4px;
+      font-size: 11px; color: var(--text-muted); margin-top: 4px;
       font-family: 'SF Mono','Consolas',monospace;
     }
 
@@ -541,13 +532,13 @@
     .tfe-container { text-align: left; margin: 8px .875em 0; }
     .tfe-label {
       display: block; font-size: 11px; font-weight: 600;
-      color: var(--text2); text-transform: uppercase;
+      color: var(--text-2); text-transform: uppercase;
       letter-spacing: 0.05em; margin-bottom: 6px;
     }
     .tfe-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
     .tfe-row-label {
       width: 130px; flex-shrink: 0;
-      font-size: 12px; color: var(--text2);
+      font-size: 12px; color: var(--text-2);
       font-family: 'SF Mono','Consolas',monospace;
     }
     .tfe-row input {
@@ -555,19 +546,19 @@
       border: 1px solid var(--border); border-radius: 5px;
       font-size: 13px; outline: none;
     }
-    .tfe-row input:focus { border-color: var(--blue); }
+    .tfe-row input:focus { border-color: var(--info); }
     .tfe-empty {
-      font-size: 12px; color: var(--muted); font-style: italic;
+      font-size: 12px; color: var(--text-muted); font-style: italic;
       padding: 6px 0;
     }
     .tfe-notice {
-      font-size: 11px; color: #c2410c;
-      background: #fff7ed; border: 1px solid #fed7aa;
+      font-size: 11px; color: var(--warn);
+      background: var(--warn-soft); border: 1px solid var(--warn);
       padding: 6px 9px; border-radius: 5px; margin-top: 6px;
     }
     .tfe-notice-info {
-      font-size: 11px; color: #3730a3;
-      background: #eef2ff; border: 1px solid #c7d2fe;
+      font-size: 11px; color: var(--cat-indigo);
+      background: var(--accent-soft); border: 1px solid var(--accent);
       padding: 6px 9px; border-radius: 5px; margin-bottom: 8px;
     }
 
@@ -575,78 +566,78 @@
     .seq-pv-wrap { text-align: left; }
     .seq-pv-tplname { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 10px; }
     .seq-pv-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
-    .seq-pv-label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--text2); }
+    .seq-pv-label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--text-2); }
     .seq-pv-input, .seq-pv-textarea {
-      width: 100%; padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 5px;
+      width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px;
       font-size: 13px; font-weight: 400; color: var(--text); box-sizing: border-box;
     }
     .seq-pv-textarea { font-family: 'SF Mono','Consolas',monospace; resize: vertical; min-height: 62px; }
-    .seq-pv-hint { font-size: 11px; font-weight: 400; color: var(--muted); }
+    .seq-pv-hint { font-size: 11px; font-weight: 400; color: var(--text-muted); }
     .seq-pv-actions { display: flex; justify-content: flex-end; }
     .seq-pv-results { max-height: 52vh; overflow: auto; }
-    .seq-pv-loading, .seq-pv-empty { text-align: center; padding: 18px; color: var(--muted); font-size: 13px; }
+    .seq-pv-loading, .seq-pv-empty { text-align: center; padding: 18px; color: var(--text-muted); font-size: 13px; }
 
     .seq-pv-head { margin-bottom: 10px; }
     .seq-pv-tpl { font-size: 14px; font-weight: 700; color: var(--text); }
-    .seq-pv-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+    .seq-pv-sub { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
 
     .seq-pv-banner {
       display: flex; align-items: flex-start; gap: 7px; font-size: 12px; line-height: 1.4;
       padding: 8px 10px; border-radius: 6px; margin-bottom: 12px;
     }
-    .seq-pv-amber { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .seq-pv-amber { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
 
     .seq-pv-step { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--surface); }
     .seq-pv-step-head { display: flex; align-items: baseline; gap: 8px; }
-    .seq-pv-step-num { font-family: 'SF Mono','Consolas',monospace; font-weight: 700; font-size: 12px; color: var(--blue); flex-shrink: 0; }
+    .seq-pv-step-num { font-family: 'SF Mono','Consolas',monospace; font-weight: 700; font-size: 12px; color: var(--info); flex-shrink: 0; }
     .seq-pv-step-sum { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .seq-pv-step-time { flex-shrink: 0; }
-    .seq-pv-time { font-size: 11px; color: var(--text2); white-space: nowrap; }
-    .seq-pv-time.seq-pv-muted { color: var(--muted); }
-    .seq-pv-time-err { font-size: 11px; color: var(--red); white-space: normal; }
+    .seq-pv-time { font-size: 11px; color: var(--text-2); white-space: nowrap; }
+    .seq-pv-time.seq-pv-muted { color: var(--text-muted); }
+    .seq-pv-time-err { font-size: 11px; color: var(--danger); white-space: normal; }
     .seq-pv-step-badges { margin-top: 6px; }
     .seq-pv-skip {
       display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
-      background: #fffbeb; color: #b45309; border: 1px solid #fde68a;
+      background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn);
     }
 
-    .seq-pv-k { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+    .seq-pv-k { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
     .seq-pv-msg { margin-top: 8px; }
     .seq-pv-msg-body {
       margin-top: 3px; font-size: 12px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere;
-      background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
     }
-    .seq-pv-msg-empty .seq-pv-msg-body { color: var(--muted); font-style: italic; }
+    .seq-pv-msg-empty .seq-pv-msg-body { color: var(--text-muted); font-style: italic; }
     .seq-pv-subj { margin-top: 8px; font-size: 12px; color: var(--text); }
     .seq-pv-subj .seq-pv-k { margin-right: 6px; }
-    .seq-pv-note { margin-top: 4px; font-size: 11px; color: var(--muted); }
-    .seq-pv-attach { margin-top: 6px; font-size: 11px; color: var(--text2); overflow-wrap: anywhere; }
-    .seq-pv-attach i { color: var(--muted); margin-right: 4px; }
+    .seq-pv-note { margin-top: 4px; font-size: 11px; color: var(--text-muted); }
+    .seq-pv-attach { margin-top: 6px; font-size: 11px; color: var(--text-2); overflow-wrap: anywhere; }
+    .seq-pv-attach i { color: var(--text-muted); margin-right: 4px; }
 
     .seq-pv-unres {
-      margin-top: 8px; font-size: 11px; line-height: 1.4; color: #92400e;
-      background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere;
+      margin-top: 8px; font-size: 11px; line-height: 1.4; color: var(--warn);
+      background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere;
     }
     .seq-pv-unres i { margin-right: 4px; }
     .seq-pv-reserr {
-      margin-top: 8px; font-size: 11px; line-height: 1.4; color: #991b1b;
-      background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere;
+      margin-top: 8px; font-size: 11px; line-height: 1.4; color: var(--danger);
+      background: var(--danger-soft); border: 1px solid var(--danger); border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere;
     }
     .seq-pv-reserr i { margin-right: 4px; }
 
     .seq-pv-details { margin-top: 8px; }
-    .seq-pv-details > summary { font-size: 11px; color: var(--text2); cursor: pointer; user-select: none; }
+    .seq-pv-details > summary { font-size: 11px; color: var(--text-2); cursor: pointer; user-select: none; }
     .seq-pv-pre {
       margin-top: 6px; font-family: 'SF Mono','Consolas',monospace; font-size: 11px; line-height: 1.45;
       white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text);
-      background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
     }
 
-    .seq-pv-foot { margin-top: 6px; font-size: 11px; color: var(--muted); font-style: italic; }
+    .seq-pv-foot { margin-top: 6px; font-size: 11px; color: var(--text-muted); font-style: italic; }
 
     .seq-pv-error {
-      font-size: 12px; line-height: 1.4; color: #991b1b;
-      background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px 12px;
+      font-size: 12px; line-height: 1.4; color: var(--danger);
+      background: var(--danger-soft); border: 1px solid var(--danger); border-radius: 6px; padding: 10px 12px;
     }
     .seq-pv-error i { margin-right: 5px; }
     .seq-pv-error-actions { margin-top: 8px; }
@@ -666,10 +657,10 @@
       <label><input type="checkbox" id="seq-show-inactive" onchange="seqToggleInactive(this.checked)"> Show inactive</label>
     </div>
     <div class="panel-left-list" id="seq-list">
-      <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
+      <div style="padding:16px;color:var(--code-fg);opacity:.55;font-size:12px">Loading…</div>
     </div>
     <div class="panel-left-foot">
-      <button class="btn btn-outline" style="width:100%;font-size:12px;background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.75)" onclick="seqOpenTypesManager()" title="Manage Sequence Types">
+      <button class="btn btn-outline" style="width:100%;font-size:12px;background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.1);color:var(--code-fg);opacity:.8" onclick="seqOpenTypesManager()" title="Manage Sequence Types">
         <i class="fa-solid fa-gear"></i> Manage Types
       </button>
     </div>
@@ -680,7 +671,7 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="seq-canvas-title">← Select a sequence template</div>
       <div id="seq-canvas-actions" style="display:none;gap:8px">
-        <button class="btn btn-sm" id="seq-publish-btn" style="display:none;background:#d97706;border:1px solid #d97706;color:#fff" onclick="seqPublishModal()"><i class="fa-solid fa-upload"></i> Publish</button>
+        <button class="btn btn-sm" id="seq-publish-btn" style="display:none;background:var(--warn-fill);border:1px solid var(--warn);color:var(--warn-text)" onclick="seqPublishModal()"><i class="fa-solid fa-upload"></i> Publish</button>
         <button class="btn btn-outline btn-sm" id="seq-discard-btn" style="display:none" onclick="seqDiscardDraft()" title="Discard the draft — the published version stays live"><i class="fa-solid fa-rotate-left"></i></button>
         <button class="btn btn-outline btn-sm" id="seq-capture-btn" onclick="seqCaptureModal()"><i class="fa-solid fa-satellite-dish"></i> Capture</button>
         <button class="btn btn-outline btn-sm" onclick="seqShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
@@ -740,7 +731,7 @@
         <tbody id="seq-enroll-tbody"></tbody>
       </table>
       <div id="seq-enroll-pagination"
-           style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--muted)"></div>
+           style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--text-muted)"></div>
     </div>
     <div class="editor-foot" id="seq-editor-foot" style="display:none">
       <button class="btn btn-primary" style="flex:1" onclick="seqStepSave()">
@@ -1055,7 +1046,7 @@ async function loadSequences() {
       : SEQ.templates;
     renderSeqList();
   } catch (e) {
-    document.getElementById('seq-list').innerHTML = `<div style="padding:16px;color:#f87171;font-size:12px">${esc(e.message)}</div>`;
+    document.getElementById('seq-list').innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px">${esc(e.message)}</div>`;
   }
 }
 
@@ -1067,7 +1058,7 @@ function seqToggleInactive(checked) {
 function renderSeqList() {
   const el = document.getElementById('seq-list');
   if (!SEQ.filtered.length) {
-    el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">No templates.</div>';
+    el.innerHTML = '<div style="padding:16px;color:var(--code-fg);opacity:.55;font-size:12px">No templates.</div>';
     return;
   }
   el.innerHTML = SEQ.filtered.map(t => {
@@ -1075,7 +1066,7 @@ function renderSeqList() {
     return `
     <div class="left-item${t.id === SEQ.activeTemplateId ? ' active' : ''}" onclick="selectSeqTemplate(${t.id})">
       <div class="left-item-name">${esc(t.name)}</div>
-      <div class="left-item-meta">id: ${t.id} · ${typeDisplay} · ${t.step_count || 0} step${t.step_count !== 1 ? 's' : ''}${_seqFilterChipsList(t.filters)}${t.active ? '' : ' · <span style="color:#f87171">inactive</span>'}${t.draft_version != null ? ' · <span style="color:#fbbf24">draft</span>' : (!t.current_version ? ' · <span style="color:#94a3b8">unpublished</span>' : '')}</div>
+      <div class="left-item-meta">id: ${t.id} · ${typeDisplay} · ${t.step_count || 0} step${t.step_count !== 1 ? 's' : ''}${_seqFilterChipsList(t.filters)}${t.active ? '' : ' · <span style="color:var(--danger)">inactive</span>'}${t.draft_version != null ? ' · <span style="color:var(--warn)">draft</span>' : (!t.current_version ? ' · <span style="color:var(--text-muted)">unpublished</span>' : '')}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();seqEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();seqDuplicate()"><i class="fa-regular fa-copy"></i></button>
@@ -1094,7 +1085,7 @@ function _seqFilterChipsList(filters) {
   const entries = Object.entries(obj).filter(([, v]) => v !== null && v !== '' && v !== undefined);
   if (!entries.length) return '';
   return entries.map(([k, v]) =>
-    ` · <span style="color:#60a5fa">${esc(k)}:${esc(v)}</span>`
+    ` · <span style="color:var(--accent-on-soft)">${esc(k)}:${esc(v)}</span>`
   ).join('');
 }
 
@@ -1131,24 +1122,24 @@ async function seqCaptureModal() {
     width: 640,
     html: `
       <div style="text-align:left;font-size:13px">
-        <p style="margin:0 0 10px;color:#475569">Arms a one-shot capture: the next enrollment into this template —
+        <p style="margin:0 0 10px;color:var(--text-2)">Arms a one-shot capture: the next enrollment into this template —
         from any source (appt hooks, ingest rules, e-sign, manual enroll) — records its trigger_data here, then disarms itself.</p>
-        <p style="margin:0 0 10px;color:#475569"><b>The enrollment still proceeds normally</b> — this capture observes without
+        <p style="margin:0 0 10px;color:var(--text-2)"><b>The enrollment still proceeds normally</b> — this capture observes without
         holding it. (Hook capture is the opposite: it intercepts and halts delivery.)</p>
         <p style="margin:0 0 10px"><b>Status:</b> ${capturing
-          ? '<span style="color:#b45309;font-weight:600">armed — waiting for next enrollment</span>'
-          : '<span style="color:#64748b">off</span>'}</p>
+          ? '<span style="color:var(--warn);font-weight:600">armed — waiting for next enrollment</span>'
+          : '<span style="color:var(--text-2)">off</span>'}</p>
         ${sampleJson != null ? `
           <div style="font-weight:600;margin-bottom:4px">Last captured${when ? ` — ${esc(when)}` : ''}</div>
-          <pre style="max-height:260px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0">${esc(sampleJson)}</pre>
-        ` : `<div style="color:#94a3b8">No sample captured yet.</div>`}
+          <pre style="max-height:260px;overflow:auto;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0">${esc(sampleJson)}</pre>
+        ` : `<div style="color:var(--text-muted)">No sample captured yet.</div>`}
       </div>`,
     showCancelButton: true,
     cancelButtonText: 'Close',
     confirmButtonText: capturing ? 'Disarm' : 'Arm capture',
     showDenyButton: sampleJson != null,
     denyButtonText: 'Save as Test Input',
-    denyButtonColor: '#0f4c81',
+    denyButtonColor: 'var(--accent-dark)',
   });
 
   try {
@@ -1202,13 +1193,13 @@ function seqRenderVersionStrip() {
   const neverPublished = t && !t.current_version;
   if (hasDraft) {
     vs.innerHTML = neverPublished
-      ? `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Draft v${t.draft_version} — never published.</span> <span style="color:#64748b">Contacts cannot enroll until you publish.</span>`
-      : `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Unpublished draft (v${t.draft_version}).</span> <span style="color:#64748b">New enrollments still use v${t.current_version} — publish to make these changes take effect.</span>`;
+      ? `<span style="color:var(--warn);font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Draft v${t.draft_version} — never published.</span> <span style="color:var(--text-2)">Contacts cannot enroll until you publish.</span>`
+      : `<span style="color:var(--warn);font-weight:600"><i class="fa-solid fa-pen-ruler"></i> Unpublished draft (v${t.draft_version}).</span> <span style="color:var(--text-2)">New enrollments still use v${t.current_version} — publish to make these changes take effect.</span>`;
     vs.style.display = 'block';
     pubBtn.style.display = '';
     discBtn.style.display = '';
   } else if (neverPublished) {
-    vs.innerHTML = `<span style="color:#64748b"><i class="fa-regular fa-circle"></i> Never published — add steps, then Publish to allow enrollment.</span>`;
+    vs.innerHTML = `<span style="color:var(--text-2)"><i class="fa-regular fa-circle"></i> Never published — add steps, then Publish to allow enrollment.</span>`;
     vs.style.display = 'block';
     pubBtn.style.display = 'none';
     discBtn.style.display = 'none';
@@ -1295,7 +1286,7 @@ async function _loadSeqSteps(id, silent) {
     seqSyncActiveStep();
     seqRenderCanvasKeepFocus();
   } catch (e) {
-    document.getElementById('seq-canvas-body').innerHTML = `<div class="empty-state"><p style="color:var(--red)">${esc(e.message)}</p></div>`;
+    document.getElementById('seq-canvas-body').innerHTML = `<div class="empty-state"><p style="color:var(--danger)">${esc(e.message)}</p></div>`;
   }
 }
 
@@ -1507,7 +1498,7 @@ function seqRenderActionConfig(type, cfg) {
     <div class="field">
       <label>Attachments (optional)</label>
       <textarea id="se-attach" rows="4" placeholder='[]'>${esc(attachJson)}</textarea>
-      <p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">
+      <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;line-height:1.4">
         JSON array. Examples:<br>
         &nbsp;&nbsp;<code>["https://.../file.pdf"]</code><br>
         &nbsp;&nbsp;<code>[{"url":"https://...","name":"Fee Agreement.pdf"}]</code><br>
@@ -1543,7 +1534,7 @@ function seqRenderActionConfig(type, cfg) {
       </div>
       <div class="field"><label>Credential</label>
         <select id="se-wh-cred" onchange="seqUpdateCredWarning()">${credOpts}</select>
-        <div id="se-wh-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div>
+        <div id="se-wh-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px;line-height:1.4"></div>
       </div>
       <div class="field"><label>Headers (JSON)</label>
         <textarea id="se-wh-headers" rows="2">${esc(headersText)}</textarea>
@@ -1554,7 +1545,7 @@ function seqRenderActionConfig(type, cfg) {
       <div class="field"><label>Timeout (ms)</label>
         <input id="se-wh-timeout" type="number" min="1" max="120000" value="${cfg.timeout_ms || 30000}">
       </div>
-      <p style="font-size:11px;color:var(--muted);margin:-4px 0 8px">Not retry-idempotent — receiver must tolerate duplicate delivery on retry.</p>`;
+      <p style="font-size:11px;color:var(--text-muted);margin:-4px 0 8px">Not retry-idempotent — receiver must tolerate duplicate delivery on retry.</p>`;
   }
   // ── Slice 3.3: start_workflow step ──
   // Retry-safe: on retry, if a prior 'sent' log row has a workflow_execution_id
@@ -1591,7 +1582,7 @@ function seqRenderActionConfig(type, cfg) {
       <div class="field"><label>init_data (JSON)</label>
         <textarea id="se-sw-initdata" rows="6">${esc(initDataText)}</textarea>
         ${datalistHtml}
-        <p style="font-size:11px;color:var(--muted);margin:4px 0 0">Placeholders like <code>{{trigger_data.contact_id}}</code> resolve at step execution time.</p>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Placeholders like <code>{{trigger_data.contact_id}}</code> resolve at step execution time.</p>
       </div>
       <div class="field" style="flex-direction:row;align-items:center;gap:8px">
         <input type="checkbox" id="se-sw-tie" ${tieChecked ? 'checked' : ''} onchange="seqOnStartWorkflowTieChange()">
@@ -1600,7 +1591,7 @@ function seqRenderActionConfig(type, cfg) {
       <div class="field" id="se-sw-override-wrap" style="display:${tieChecked ? 'none' : ''}">
         <label>Contact ID Override</label>
         <input id="se-sw-override" value="${esc(overrideVal)}" placeholder="123 or {{trigger_data.spouse_contact_id}}">
-        <p style="font-size:11px;color:var(--muted);margin:4px 0 0">Contact ID or <code>{{placeholder}}</code>. Empty means rely on workflow template default.</p>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Contact ID or <code>{{placeholder}}</code>. Empty means rely on workflow template default.</p>
       </div>`;
   }
   // ── internal_function — metadata-driven form. Falls back to JSON params
@@ -1798,8 +1789,8 @@ async function seqRenderStartWorkflowPanel() {
   if (!/^\d+$/.test(raw)) return hide();  // non-numeric — see the placeholder note above
   const targetId = parseInt(raw, 10);
 
-  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
-  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;color:var(--accent-on-soft);font-size:11px;line-height:1.5';
+  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:var(--warn-soft);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-size:11px;line-height:1.5';
 
   const res = await seqResolveTargetWorkflow(targetId);
 
@@ -1928,7 +1919,7 @@ function seqRenderInternalFnBody(fnName, params) {
   }
 
   const desc = meta.description
-    ? `<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5">${esc(meta.description)}</p>`
+    ? `<p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;line-height:1.5">${esc(meta.description)}</p>`
     : '';
 
   // Filter out workflow-only params for the sequence renderer. SEQ_HIDDEN_PARAMS
@@ -1937,7 +1928,7 @@ function seqRenderInternalFnBody(fnName, params) {
 
   if (!visibleParams.length) {
     // Functions with no (visible) params (noop, etc.)
-    return `${desc}<p style="font-size:12px;color:var(--muted);margin:0 0 10px">No parameters required.</p>`;
+    return `${desc}<p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">No parameters required.</p>`;
   }
 
   const { modes, current } = _seqDetectMode({ params: visibleParams }, params);
@@ -1946,7 +1937,7 @@ function seqRenderInternalFnBody(fnName, params) {
     ? `<div class="field">
          <label>Mode</label>
          <div style="display:flex;gap:6px">
-           ${modes.map(m => `<button type="button" class="mode-btn" data-mode="${m}" onclick="seqOnModeChange('${m}')" style="padding:6px 12px;border:1px solid ${m === current ? 'var(--blue)' : 'var(--border)'};background:${m === current ? 'rgba(79,142,247,0.15)' : 'transparent'};color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">${esc(_seqHumanizeMode(m))}</button>`).join('')}
+           ${modes.map(m => `<button type="button" class="mode-btn" data-mode="${m}" onclick="seqOnModeChange('${m}')" style="padding:6px 12px;border:1px solid ${m === current ? 'var(--info)' : 'var(--border)'};background:${m === current ? 'var(--accent-soft)' : 'transparent'};color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">${esc(_seqHumanizeMode(m))}</button>`).join('')}
          </div>
        </div>`
     : '';
@@ -1988,9 +1979,9 @@ function seqRenderParamField(spec, value, visible) {
   // rather than throwing mid-render.
   const usePw = typeof window.pwHandles === 'function' && window.pwHandles(spec);
   const togHtml = usePw ? window.pwToggleHtml(id, value) : '';
-  const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:#ef4444">*</span>' : ''}${togHtml}</label>`;
+  const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:var(--danger)">*</span>' : ''}${togHtml}</label>`;
   const helpHtml = spec.description
-    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
+    ? `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
     : '';
   const wrapperStyle = visible ? '' : 'display:none';
   const wrapperAttrs = `class="field" id="se-pfw-${spec.name}" data-mode-group="${spec.modeGroup || ''}" style="${wrapperStyle}"`;
@@ -2115,8 +2106,8 @@ function seqOnModeChange(mode) {
   // Update mode button styling
   inner.querySelectorAll('.mode-btn').forEach(btn => {
     const isActive = btn.dataset.mode === mode;
-    btn.style.borderColor = isActive ? 'var(--blue)' : 'var(--border)';
-    btn.style.background  = isActive ? 'rgba(79,142,247,0.15)' : 'transparent';
+    btn.style.borderColor = isActive ? 'var(--info)' : 'var(--border)';
+    btn.style.background  = isActive ? 'var(--accent-soft)' : 'transparent';
   });
 }
 
@@ -2157,7 +2148,7 @@ function seqRenderTimingTab(step) {
 }
 
 function seqTimingFields(t) {
-  if (t.type === 'immediate') return `<p style="font-size:12px;color:var(--muted);padding:8px 0">Fires immediately (~5 seconds after enrollment or previous step).</p>`;
+  if (t.type === 'immediate') return `<p style="font-size:12px;color:var(--text-muted);padding:8px 0">Fires immediately (~5 seconds after enrollment or previous step).</p>`;
   if (t.type === 'delay') {
     const isAbsolute = typeof t.at === 'string';
     const mode = isAbsolute ? 'absolute' : 'relative';
@@ -2173,7 +2164,7 @@ function seqTimingFields(t) {
       <div class="field">
         <label>Randomize ± Minutes</label>
         <input id="st-rand" type="number" min="0" max="1440" value="${t.randomizeMinutes || 0}">
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">Symmetric jitter — fires within ±N minutes of the computed time.</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Symmetric jitter — fires within ±N minutes of the computed time.</div>
       </div>`;
   }
   if (t.type === 'next_business_day' || t.type === 'business_days') return `
@@ -2195,7 +2186,7 @@ function seqDelayModeFields(mode, t) {
       <div class="field">
         <label>At (datetime)</label>
         <input id="st-at" value="${esc(t.at || '')}" placeholder="2026-05-01T14:30:00 or {{trigger_data.target_iso}}">
-        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.5">
           <strong>Accepted formats:</strong><br>
           • <code>2026-05-01T14:30:00Z</code> &mdash; explicit UTC<br>
           • <code>2026-05-01T14:30:00-04:00</code> &mdash; explicit offset<br>
@@ -2228,7 +2219,7 @@ function seqRenderConditionsTab(step) {
   const cond = step.condition || {}, guard = step.fire_guard || {};
   document.getElementById('seq-editor-body').innerHTML = `
     <div class="section-divider" style="border-top:none;padding-top:0">Step Condition (skip if fails)</div>
-    <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Only this step is skipped. Enrollment continues.</p>
+    <p style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Only this step is skipped. Enrollment continues.</p>
     <div class="field"><label>Condition Query (SQL SELECT)</label>
       <textarea id="sc-query" rows="3" placeholder="SELECT case_intake FROM cases WHERE case_id = :case_id">${esc(cond.query || '')}</textarea>
     </div>
@@ -2245,7 +2236,7 @@ function seqRenderConditionsTab(step) {
       </select>
     </div>
     <div class="section-divider">Fire Guard (time-based skip)</div>
-    <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Requires <code>trigger_data.appt_time</code>.</p>
+    <p style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Requires <code>trigger_data.appt_time</code>.</p>
     <div class="field"><label>Min Hours Before Appointment</label>
       <input id="sg-minhours" type="number" min="0" step="0.5" placeholder="e.g. 24" value="${guard.min_hours_before_appt || ''}">
     </div>`;
@@ -2621,7 +2612,7 @@ async function seqStepDelete(idx) {
   const step = SEQ.steps[i];
   if (!step) return;
   // Delete renumbers every step above it — same live-pointer exposure as a move.
-  const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
+  const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
     await api(`/sequences/templates/${SEQ.activeTemplateId}/steps/${step.step_number}`, 'DELETE');
@@ -2897,7 +2888,7 @@ function _seqRenderFilterFields(typeName, currentFilters, droppedKeys) {
     ? `<div class="tfe-notice-info">Filter${orphans.length > 1 ? 's' : ''} for ${orphans.map(esc).join(', ')} — no longer in this type's priority list. Will be cleared on save.</div>`
     : '';
   el.innerHTML = `
-    <div class="tfe-label">Filters <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(blank = match anything · separate multiple values with | )</span></div>
+    <div class="tfe-label">Filters <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">(blank = match anything · separate multiple values with | )</span></div>
     ${orphanHtml}
     ${pf.map(field => `
       <div class="tfe-row">
@@ -2993,13 +2984,13 @@ function _seqRenderTypesList() {
     const pf = _seqPriorityFieldsOf(t);
     const chips = pf.length
       ? pf.map((f, i) => `<span class="stm-chip-pf"><span class="stm-chip-pf-idx">${i + 1}.</span>${esc(f)}</span>`).join('')
-      : `<span style="color:var(--muted);font-style:italic;font-size:11px">no priority fields</span>`;
+      : `<span style="color:var(--text-muted);font-style:italic;font-size:11px">no priority fields</span>`;
     const desc = (t.description || '').trim();
     const descShort = desc.length > 120 ? desc.slice(0, 117) + '…' : desc;
     return `
       <div class="stm-row${isActive ? '' : ' inactive'}" data-type="${esc(t.type)}">
         <div class="stm-row-body">
-          <div class="stm-row-name">${esc(t.type)}${isActive ? '' : ' <span style="color:var(--muted);font-weight:400;font-size:11px">(inactive)</span>'}</div>
+          <div class="stm-row-name">${esc(t.type)}${isActive ? '' : ' <span style="color:var(--text-muted);font-weight:400;font-size:11px">(inactive)</span>'}</div>
           ${descShort ? `<div class="stm-row-desc">${esc(descShort)}</div>` : ''}
           <div class="stm-row-chips">${chips}</div>
         </div>
@@ -3043,7 +3034,7 @@ function _seqWireTypesList() {
         text: 'This cannot be undone. Deletion will fail if any templates currently use this type.',
         icon: 'warning',
         showCancelButton: true,
-        confirmButtonColor: '#ef4444',
+        confirmButtonColor: 'var(--danger-fill)',
         confirmButtonText: 'Delete'
       });
       if (!r.isConfirmed) {
@@ -3065,7 +3056,7 @@ function _seqWireTypesList() {
         try { body = e.response || (e.body ? JSON.parse(e.body) : null); } catch {}
         const count = body && Number.isInteger(body.template_count) ? body.template_count : null;
         const countLine = count != null
-          ? `<div style="margin-top:8px;font-size:12px;color:#64748b">${count} template${count === 1 ? '' : 's'} reference this type.</div>`
+          ? `<div style="margin-top:8px;font-size:12px;color:var(--text-2)">${count} template${count === 1 ? '' : 's'} reference this type.</div>`
           : '';
         await Swal.fire({
           icon: 'error',
@@ -3121,24 +3112,24 @@ async function seqOpenTypeEditor(existingType) {
   const html = `
     <div style="text-align:left;display:flex;flex-direction:column;gap:10px;padding:0 .25em">
       <div>
-        <label style="display:block;font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Type Name</label>
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Type Name</label>
         <input id="ste-type" type="text" value="${esc(initial.type)}" ${isEdit ? 'disabled' : ''}
                placeholder="e.g. no_show, lead_drip"
-               style="width:100%;padding:7px 9px;border:1px solid #d1d5db;border-radius:5px;font-size:13px;font-family:'SF Mono','Consolas',monospace${isEdit ? ';background:#f1f5f9;color:#64748b' : ''}">
-        ${isEdit ? '<div style="font-size:11px;color:#94a3b8;margin-top:3px">Type name is the primary key and cannot be changed.</div>' : '<div style="font-size:11px;color:#94a3b8;margin-top:3px">Lowercase letters, digits, underscores. Must start with a letter.</div>'}
+               style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:5px;font-size:13px;font-family:'SF Mono','Consolas',monospace${isEdit ? ';background:var(--surface-2);color:var(--text-2)' : ''}">
+        ${isEdit ? '<div style="font-size:11px;color:var(--text-muted);margin-top:3px">Type name is the primary key and cannot be changed.</div>' : '<div style="font-size:11px;color:var(--text-muted);margin-top:3px">Lowercase letters, digits, underscores. Must start with a letter.</div>'}
       </div>
       <div>
-        <label style="display:block;font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Description</label>
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Description</label>
         <textarea id="ste-desc" placeholder="What this type is used for"
-                  style="width:100%;min-height:60px;padding:7px 9px;border:1px solid #d1d5db;border-radius:5px;font-size:13px;resize:vertical">${esc(initial.description)}</textarea>
+                  style="width:100%;min-height:60px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;font-size:13px;resize:vertical">${esc(initial.description)}</textarea>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#475569">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)">
         <input id="ste-active" type="checkbox" ${initial.active ? 'checked' : ''}>
         Active
       </label>
       <div>
-        <label style="display:block;font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Priority Fields (ordered)</label>
-        <div style="font-size:11px;color:#64748b;margin-bottom:6px">Cascade ranks templates by these fields in this order. Most-specific first.</div>
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Priority Fields (ordered)</label>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Cascade ranks templates by these fields in this order. Most-specific first.</div>
         <div id="ste-pf-list" class="pfe-list"></div>
         <button type="button" id="ste-pf-add" class="pfe-add">
           <i class="fa-solid fa-plus"></i> Add field
@@ -3268,7 +3259,7 @@ function _steRenderPfRows(arr) {
   if (!list) return;
   arr = arr || [];
   if (!arr.length) {
-    list.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0">No priority fields. Click "Add field" to add one.</div>`;
+    list.innerHTML = `<div style="font-size:12px;color:var(--text-muted);font-style:italic;padding:4px 0">No priority fields. Click "Add field" to add one.</div>`;
     return;
   }
   list.innerHTML = arr.map((v, i) => `
@@ -3343,7 +3334,7 @@ async function seqNew() {
     title: 'New Sequence Template',
     width: 600,
     html: `<input id="swal-name" class="swal2-input" placeholder="Name">
-          <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
+          <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:var(--text-2)">
             <input type="checkbox" id="swal-idonly">
             ID-only template (cannot be cascade-matched by type)
           </label>
@@ -3356,50 +3347,50 @@ async function seqNew() {
           </div>
           <div id="seq-no-types" class="tfe-notice" style="display:${hasTypes ? 'none' : ''};margin:8px .875em">
             No sequence types registered.
-            <a href="javascript:void(0)" id="seq-no-types-link" style="color:#3b82f6;font-weight:600">Create one now →</a>
+            <a href="javascript:void(0)" id="seq-no-types-link" style="color:var(--accent-on-soft);font-weight:600">Create one now →</a>
             Or check "ID-only template" above to skip type matching.
           </div>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:14px .875em 4px">
             <strong>Test Input (JSON)</strong>
-            <span style="color:#94a3b8">— optional</span>
+            <span style="color:var(--text-muted)">— optional</span>
           </div>
           <textarea id="swal-testinput"
                     placeholder='{ "appt_id": 42, "contact_id": 123, "appt_time": "2026-05-01T10:00:00Z" }'
-                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical"></textarea>
-          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical"></textarea>
+          <div style="text-align:left;font-size:11px;color:var(--text-2);margin:6px .875em 0">
             Document what trigger_data this sequence expects when enrolled.
           </div>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:14px .875em 4px">
             <strong>Description</strong>
-            <span style="color:#94a3b8">— optional, shown in explainer</span>
+            <span style="color:var(--text-muted)">— optional, shown in explainer</span>
           </div>
           <textarea id="swal-description"
                     placeholder="What this template does, when it fires, who it's for…"
-                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:70px;resize:vertical"></textarea>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-size:13px;min-height:70px;resize:vertical"></textarea>
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:14px .875em 4px">
             <strong>Enrollment Condition</strong>
-            <span style="color:#94a3b8">— optional, cancels enrollment if check fails</span>
+            <span style="color:var(--text-muted)">— optional, cancels enrollment if check fails</span>
           </div>
           <textarea id="swal-cond-query"
                     placeholder="SELECT appt_status FROM appts WHERE appt_id = :appt_id"
                     rows="3"
-                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:60px;resize:vertical"></textarea>
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:60px;resize:vertical"></textarea>
           <textarea id="swal-cond-params"
                     placeholder='{ "appt_id": "trigger_data.appt_id" }'
                     rows="2"
-                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical"></textarea>
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical"></textarea>
           <textarea id="swal-cond-assert"
                     placeholder='{ "appt_status": "No Show" }'
                     rows="2"
-                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical"></textarea>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:8px .875em 0">
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical"></textarea>
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:8px .875em 0">
             Match mode:
-            <select id="swal-cond-mode" style="margin-left:6px;padding:3px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:white">
+            <select id="swal-cond-mode" style="margin-left:6px;padding:3px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:white">
               <option value="all" selected>All assertions must pass (AND)</option>
               <option value="any">Any one assertion passes (OR)</option>
             </select>
           </div>
-          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+          <div style="text-align:left;font-size:11px;color:var(--text-2);margin:6px .875em 0">
             If set, the engine re-checks this before every step. Failure cancels the enrollment.
           </div>`,
     didOpen: () => {
@@ -3575,7 +3566,7 @@ async function seqEdit() {
     title: 'Edit Template',
     width: 600,
     html: `<input id="swal-name" class="swal2-input" placeholder="Name" value="${esc(SEQ.activeTemplate.name)}">
-          <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
+          <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:var(--text-2)">
             <input type="checkbox" id="swal-idonly" ${isIdOnly ? 'checked' : ''}>
             ID-only template (cannot be cascade-matched by type)
           </label>
@@ -3588,52 +3579,52 @@ async function seqEdit() {
           </div>
           <div id="seq-no-types" class="tfe-notice" style="display:${(!isIdOnly && !hasTypes) ? '' : 'none'};margin:8px .875em">
             No active sequence types registered.
-            <a href="javascript:void(0)" id="seq-no-types-link" style="color:#3b82f6;font-weight:600">Manage types →</a>
+            <a href="javascript:void(0)" id="seq-no-types-link" style="color:var(--accent-on-soft);font-weight:600">Manage types →</a>
           </div>
           <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:14px">
             <input type="checkbox" id="swal-active" ${SEQ.activeTemplate.active ? 'checked' : ''}> Active
           </label>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:14px .875em 4px">
             <strong>Test Input (JSON)</strong>
-            <span style="color:#94a3b8">— optional, leave blank to clear</span>
+            <span style="color:var(--text-muted)">— optional, leave blank to clear</span>
           </div>
           <textarea id="swal-testinput"
                     placeholder='{ "appt_id": 42, "contact_id": 123, "appt_time": "2026-05-01T10:00:00Z" }'
-                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical">${esc(tiText)}</textarea>
-          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical">${esc(tiText)}</textarea>
+          <div style="text-align:left;font-size:11px;color:var(--text-2);margin:6px .875em 0">
             Document what trigger_data this sequence expects when enrolled.
           </div>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:14px .875em 4px">
             <strong>Description</strong>
-            <span style="color:#94a3b8">— optional, shown in explainer</span>
+            <span style="color:var(--text-muted)">— optional, shown in explainer</span>
           </div>
           <textarea id="swal-description"
                     placeholder="What this template does, when it fires, who it's for…"
-                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:70px;resize:vertical">${esc(descText)}</textarea>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-size:13px;min-height:70px;resize:vertical">${esc(descText)}</textarea>
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:14px .875em 4px">
             <strong>Enrollment Condition</strong>
-            <span style="color:#94a3b8">— optional, cancels enrollment if check fails</span>
+            <span style="color:var(--text-muted)">— optional, cancels enrollment if check fails</span>
           </div>
           <textarea id="swal-cond-query"
                     placeholder="SELECT appt_status FROM appts WHERE appt_id = :appt_id"
                     rows="3"
-                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:60px;resize:vertical">${esc(condQueryText)}</textarea>
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:60px;resize:vertical">${esc(condQueryText)}</textarea>
           <textarea id="swal-cond-params"
                     placeholder='{ "appt_id": "trigger_data.appt_id" }'
                     rows="2"
-                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical">${esc(condParamsText)}</textarea>
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical">${esc(condParamsText)}</textarea>
           <textarea id="swal-cond-assert"
                     placeholder='{ "appt_status": "No Show" }'
                     rows="2"
-                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical">${esc(condAssertText)}</textarea>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:8px .875em 0">
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid var(--border);border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical">${esc(condAssertText)}</textarea>
+          <div style="text-align:left;font-size:12px;color:var(--text-2);margin:8px .875em 0">
             Match mode:
-            <select id="swal-cond-mode" style="margin-left:6px;padding:3px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:white">
+            <select id="swal-cond-mode" style="margin-left:6px;padding:3px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:white">
               <option value="all"${condMode === 'any' ? '' : ' selected'}>All assertions must pass (AND)</option>
               <option value="any"${condMode === 'any' ? ' selected' : ''}>Any one assertion passes (OR)</option>
             </select>
           </div>
-          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+          <div style="text-align:left;font-size:11px;color:var(--text-2);margin:6px .875em 0">
             If set, the engine re-checks this before every step. Failure cancels the enrollment.
           </div>`,
     didOpen: () => {
@@ -3796,49 +3787,49 @@ async function seqPublishModal() {
   }).join('');
 
   const clsBadge = identical
-    ? '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">no changes</span>'
+    ? '<span style="background:var(--border);color:var(--text-2);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">no changes</span>'
     : contentOnly
-      ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">content-only</span>'
-      : '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">structural</span>';
+      ? '<span style="background:var(--ok-soft);color:var(--ok);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">content-only</span>'
+      : '<span style="background:var(--warn-soft);color:var(--warn);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">structural</span>';
 
   let migrateHtml = '';
   if (inFlightN > 0 && !identical) {
     const runsList = (diff.in_flight.enrollments || []).slice(0, 8).map(x =>
-      `<li style="margin:1px 0;color:#64748b">#${x.id} — contact ${x.contact_id}, step ${x.current_step}</li>`).join('');
+      `<li style="margin:1px 0;color:var(--text-2)">#${x.id} — contact ${x.contact_id}, step ${x.current_step}</li>`).join('');
     if (contentOnly) {
       migrateHtml = `
-        <div style="margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;text-align:left">
+        <div style="margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:8px;text-align:left">
           <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
             <input type="checkbox" id="seq-pub-migrate" style="margin-top:2px">
             <span><b>Also apply to the ${inFlightN} active enrollment${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b><br>
-            <span style="font-size:12px;color:#64748b">Content-only change — step numbering and timing are unchanged, so live enrollments (and their queued steps) can move to the new wording safely.</span></span>
+            <span style="font-size:12px;color:var(--text-2)">Content-only change — step numbering and timing are unchanged, so live enrollments (and their queued steps) can move to the new wording safely.</span></span>
           </label>
           <ul style="list-style:none;margin:6px 0 0;padding:0;font-size:12px">${runsList}</ul>
         </div>`;
     } else {
       migrateHtml = `
-        <div style="margin-top:12px;padding:10px;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;text-align:left;font-size:12px">
+        <div style="margin-top:12px;padding:10px;border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;text-align:left;font-size:12px">
           <label style="display:flex;gap:8px;align-items:flex-start;opacity:0.55;cursor:not-allowed">
             <input type="checkbox" disabled style="margin-top:2px">
             <span><b>Also apply to the ${inFlightN} active enrollment${inFlightN === 1 ? '' : 's'} on v${diff.current_version}</b></span>
           </label>
-          <div style="color:#92400e;margin-top:4px">Structural changes can't migrate live enrollments — their step pointers and queued jobs only survive content-only publishes. They finish on v${diff.current_version}.</div>
-          <ul style="list-style:none;margin:6px 0 0;padding:0;color:#92400e">${li(diff.structural_reasons || [], '#92400e', 'fa-triangle-exclamation')}</ul>
+          <div style="color:var(--warn);margin-top:4px">Structural changes can't migrate live enrollments — their step pointers and queued jobs only survive content-only publishes. They finish on v${diff.current_version}.</div>
+          <ul style="list-style:none;margin:6px 0 0;padding:0;color:var(--warn)">${li(diff.structural_reasons || [], 'var(--warn)', 'fa-triangle-exclamation')}</ul>
         </div>`;
     }
   } else if (!identical && (diff.structural_reasons || []).length) {
-    migrateHtml = `<ul style="list-style:none;margin:10px 0 0;padding:0;text-align:left;font-size:12px">${li(diff.structural_reasons, '#92400e', 'fa-triangle-exclamation')}</ul>`;
+    migrateHtml = `<ul style="list-style:none;margin:10px 0 0;padding:0;text-align:left;font-size:12px">${li(diff.structural_reasons, 'var(--warn)', 'fa-triangle-exclamation')}</ul>`;
   }
 
   const html = `
     <div style="text-align:left;font-size:13px">
       <div style="margin-bottom:8px">v${diff.current_version || '—'} → <b>v${diff.draft_version}</b> &nbsp;${clsBadge}</div>
-      ${changeLines ? `<ul style="list-style:none;margin:0;padding:0">${changeLines}</ul>` : '<div style="color:#64748b">No step changes (metadata-only publish).</div>'}
-      ${v.errors.length ? `<div style="margin-top:10px;font-weight:600;color:#b91c1c">Publish blocked:</div><ul style="list-style:none;margin:4px 0 0;padding:0">${li(v.errors, '#b91c1c', 'fa-circle-xmark')}</ul>` : ''}
-      ${v.warnings.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.warnings, '#b45309', 'fa-triangle-exclamation')}</ul>` : ''}
-      ${v.info.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.info, '#64748b', 'fa-circle-info')}</ul>` : ''}
+      ${changeLines ? `<ul style="list-style:none;margin:0;padding:0">${changeLines}</ul>` : '<div style="color:var(--text-2)">No step changes (metadata-only publish).</div>'}
+      ${v.errors.length ? `<div style="margin-top:10px;font-weight:600;color:var(--danger)">Publish blocked:</div><ul style="list-style:none;margin:4px 0 0;padding:0">${li(v.errors, 'var(--danger)', 'fa-circle-xmark')}</ul>` : ''}
+      ${v.warnings.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.warnings, 'var(--warn)', 'fa-triangle-exclamation')}</ul>` : ''}
+      ${v.info.length ? `<ul style="list-style:none;margin:10px 0 0;padding:0">${li(v.info, 'var(--text-2)', 'fa-circle-info')}</ul>` : ''}
       ${migrateHtml}
-      ${(diff.stranded_versions || []).length ? `<div style="margin-top:8px;font-size:12px;color:#64748b"><i class="fa-solid fa-circle-info"></i> Also active, not migratable: ${diff.stranded_versions.map(sv => `${sv.n} on v${sv.template_version}`).join(', ')} — they finish on their pinned versions.</div>` : ''}
+      ${(diff.stranded_versions || []).length ? `<div style="margin-top:8px;font-size:12px;color:var(--text-2)"><i class="fa-solid fa-circle-info"></i> Also active, not migratable: ${diff.stranded_versions.map(sv => `${sv.n} on v${sv.template_version}`).join(', ')} — they finish on their pinned versions.</div>` : ''}
     </div>`;
 
   const res = await Swal.fire({
@@ -3847,7 +3838,7 @@ async function seqPublishModal() {
     width: 560,
     showCancelButton: true,
     confirmButtonText: blocked ? 'Fix the errors first' : 'Publish',
-    confirmButtonColor: '#d97706',
+    confirmButtonColor: 'var(--warn-fill)',
     preConfirm: async () => {
       if (blocked) { Swal.showValidationMessage('Resolve the blocking errors above, then publish.'); return false; }
       const migrate = !!document.getElementById('seq-pub-migrate')?.checked;
@@ -3876,9 +3867,9 @@ async function seqDiscardDraft() {
   const r = await Swal.fire({
     title: `Discard draft v${SEQ.activeTemplate.draft_version}?`,
     html: cur
-      ? `The published version <b>v${cur}</b> stays live and unchanged.<br><span style="font-size:12px;color:#64748b">The draft is retired, not deleted — enrollment history stays viewable.</span>`
-      : `<span style="font-size:12px;color:#64748b">This template has never been published; discarding leaves it with no editable steps until you add new ones.</span>`,
-    icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Discard draft',
+      ? `The published version <b>v${cur}</b> stays live and unchanged.<br><span style="font-size:12px;color:var(--text-2)">The draft is retired, not deleted — enrollment history stays viewable.</span>`
+      : `<span style="font-size:12px;color:var(--text-2)">This template has never been published; discarding leaves it with no editable steps until you add new ones.</span>`,
+    icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)', confirmButtonText: 'Discard draft',
   });
   if (!r.isConfirmed) return;
   try {
@@ -3911,7 +3902,7 @@ async function seqDelete() {
   // against a template the user is about to delete.
   stopSeqEnrollPolling();
 
-  const r = await Swal.fire({ title: `Delete "${SEQ.activeTemplate.name}"?`, text: 'All steps will be deleted.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
+  const r = await Swal.fire({ title: `Delete "${SEQ.activeTemplate.name}"?`, text: 'All steps will be deleted.', icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--danger-fill)', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
     await api(`/sequences/templates/${SEQ.activeTemplateId}`, 'DELETE');
@@ -3983,7 +3974,7 @@ async function loadSequenceEnrollments() {
   const count = document.getElementById('seq-enroll-count');
   const pager = document.getElementById('seq-enroll-pagination');
 
-  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
 
   try {
     const url  = `/sequences/templates/${templateIdAtCall}/enrollments?limit=${SEQENROLL.limit}&offset=${SEQENROLL.offset}`;
@@ -3998,7 +3989,7 @@ async function loadSequenceEnrollments() {
     count.textContent = `${SEQENROLL.total} total enrollment${SEQENROLL.total === 1 ? '' : 's'}`;
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No enrollments yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No enrollments yet.</td></tr>';
       pager.innerHTML = '';
       stopSeqEnrollPolling();
       return;
@@ -4012,7 +4003,7 @@ async function loadSequenceEnrollments() {
     if (anyActive) startSeqEnrollPolling();
     else           stopSeqEnrollPolling();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:12px">${esc(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:12px">${esc(e.message)}</td></tr>`;
     pager.innerHTML = '';
     stopSeqEnrollPolling();
   }
@@ -4396,8 +4387,8 @@ async function viewSequenceEnrollment(id) {
             const cfgJson = JSON.stringify(h.action_config_resolved, null, 2);
             const prefix = (detailCell === '—') ? '' : detailCell;
             detailCell = prefix + `
-              <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:#64748b">resolved config</summary>
-                <pre style="background:#1e293b;color:#e2e8f0;padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(cfgJson)}</pre>
+              <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:var(--text-2)">resolved config</summary>
+                <pre style="background:var(--text);color:var(--code-fg);padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(cfgJson)}</pre>
               </details>`;
           }
 
@@ -4413,10 +4404,10 @@ async function viewSequenceEnrollment(id) {
               <td class="step-error-cell">${detailCell}</td>
             </tr>`;
         }).join('')
-      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:#94a3b8">No step history.</td></tr>';
+      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:var(--text-muted)">No step history.</td></tr>';
 
     const cancelReasonBlock = (en.status === 'cancelled' && en.cancel_reason)
-      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+      ? `<div style="margin-top:10px;padding:8px 10px;background:var(--danger-soft);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px">
            <b>Cancel reason:</b> ${esc(en.cancel_reason)}
          </div>`
       : '';
@@ -4448,7 +4439,7 @@ async function viewSequenceEnrollment(id) {
 
           ${triggerObj ? `
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Trigger Data</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(triggerObj, null, 2))}</pre>
+              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(triggerObj, null, 2))}</pre>
             </details>
           ` : ''}
 
@@ -4474,10 +4465,10 @@ async function viewSequenceEnrollment(id) {
       cancelButtonText:   'Close',
       showConfirmButton:  isActive,
       confirmButtonText:  '<i class="fa-solid fa-ban"></i> Cancel enrollment',
-      confirmButtonColor: '#dc2626',
+      confirmButtonColor: 'var(--danger-fill)',
       showDenyButton:     showRecoverBtn,
       denyButtonText:     '<i class="fa-solid fa-wand-magic-sparkles"></i> Recover stuck enrollment',
-      denyButtonColor:    '#4f8ef7',
+      denyButtonColor:    'var(--accent)',
       reverseButtons:     true,   // [Cancel enrollment] [Recover] [Close]
       didOpen: (popup) => {
         popup.querySelectorAll('.fire-now-btn').forEach(btn => {
@@ -4511,7 +4502,7 @@ async function handleSequenceCancel(enrollmentId, templateName) {
   const result = await Swal.fire({
     title: `Cancel enrollment #${enrollmentId}?`,
     html: templateName
-      ? `<div style="color:#64748b;margin-bottom:4px">Template: <b>${esc(templateName)}</b></div>`
+      ? `<div style="color:var(--text-2);margin-bottom:4px">Template: <b>${esc(templateName)}</b></div>`
       : '',
     input: 'text',
     inputLabel: 'Reason (required, min 3 characters)',
@@ -4521,7 +4512,7 @@ async function handleSequenceCancel(enrollmentId, templateName) {
     },
     showCancelButton: true,
     confirmButtonText: 'Confirm Cancel',
-    confirmButtonColor: '#dc2626',
+    confirmButtonColor: 'var(--danger-fill)',
     reverseButtons: true,
     showLoaderOnConfirm: true,
     preConfirm: async (reason) => {
@@ -4582,14 +4573,14 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
         <p><b>Job:</b> #${esc(String(jobId))}</p>
         <p style="margin-top:6px"><b>Original scheduled:</b> ${seqEnrollFmtDate(scheduledRaw)}</p>
         <p style="margin-top:10px">This reschedules the job to <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
-        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
+        <p style="margin-top:8px;color:var(--text-2);font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
       </div>
     `,
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: 'Fire now',
     cancelButtonText: 'Cancel',
-    confirmButtonColor: '#4f8ef7',
+    confirmButtonColor: 'var(--accent)',
   });
   if (!result.isConfirmed) return;
 
@@ -4627,14 +4618,14 @@ async function handleSequenceRecover(enrollmentId) {
       <div style="text-align:left;font-size:13px;line-height:1.5">
         <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
         <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
-        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+        <p style="margin-top:8px;color:var(--text-2);font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
       </div>
     `,
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: 'Recover',
     cancelButtonText: 'Cancel',
-    confirmButtonColor: '#4f8ef7',
+    confirmButtonColor: 'var(--accent)',
   });
   if (!result.isConfirmed) return;
 
@@ -4695,7 +4686,7 @@ function startSeqEnrollPolling() {
 
       count.textContent = `${SEQENROLL.total} total enrollment${SEQENROLL.total === 1 ? '' : 's'}`;
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No enrollments yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No enrollments yet.</td></tr>';
         pager.innerHTML = '';
         stopSeqEnrollPolling();
         return;
@@ -4974,28 +4965,28 @@ function seqExplain(template, steps) {
 // viewer page later. Mirrors the workflow explainer's CSS with a
 // few sequence-specific additions (.ex-timing, .ex-cond, .ex-chip).
 const _SEQ_EXPLAIN_CSS = `
-  .ex-doc { font-size: 13px; line-height: 1.55; color: #1f2937; text-align: left; }
-  .ex-header { padding: 0 4px 14px; border-bottom: 1px solid #e5e7eb; margin-bottom: 14px; }
+  .ex-doc { font-size: 13px; line-height: 1.55; color: var(--text); text-align: left; }
+  .ex-header { padding: 0 4px 14px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
   .ex-title { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
-  .ex-desc  { margin: 8px 0 0; color: #6b7280; font-size: 12px; }
+  .ex-desc  { margin: 8px 0 0; color: var(--text-muted); font-size: 12px; }
   .ex-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .ex-chip  { display: inline-block; padding: 2px 8px; background: #eef2ff; color: #3730a3; border-radius: 10px; font-size: 11px; }
+  .ex-chip  { display: inline-block; padding: 2px 8px; background: var(--accent-soft); color: var(--cat-indigo); border-radius: 10px; font-size: 11px; }
   .ex-steps { display: flex; flex-direction: column; gap: 10px; }
-  .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
-  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #6366f1; color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; }
+  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--cat-indigo); color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
   .ex-step-body { flex: 1; min-width: 0; }
-  .ex-timing { padding: 5px 9px; background: #ecfdf5; border-radius: 5px; font-size: 12px; color: #065f46; margin-bottom: 8px; }
-  .ex-cond   { padding: 5px 9px; background: #fef3c7; border-radius: 5px; color: #92400e; margin: 4px 0; font-size: 12px; }
+  .ex-timing { padding: 5px 9px; background: var(--ok-soft); border-radius: 5px; font-size: 12px; color: var(--ok); margin-bottom: 8px; }
+  .ex-cond   { padding: 5px 9px; background: var(--warn-soft); border-radius: 5px; color: var(--warn); margin: 4px 0; font-size: 12px; }
   .ex-action { margin-top: 4px; }
   .ex-line   { margin-bottom: 4px; }
-  .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: #374151; }
-  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-  .ex-muted  { color: #9ca3af; font-size: 11.5px; }
-  .ex-policy { color: #b45309; }
+  .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: var(--text-2); }
+  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .ex-muted  { color: var(--text-muted); font-size: 11.5px; }
+  .ex-policy { color: var(--warn); }
   .ex-jump   { margin-top: 6px; }
-  .ex-step-link { color: #4f46e5; text-decoration: underline; cursor: pointer; }
-  .ex-step-link:hover { color: #3730a3; background: #eef2ff; padding: 0 3px; border-radius: 3px; }
-  .ex-doc code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: #3730a3; word-break: break-word; }
+  .ex-step-link { color: var(--cat-indigo); text-decoration: underline; cursor: pointer; }
+  .ex-step-link:hover { color: var(--cat-indigo); background: var(--accent-soft); padding: 0 3px; border-radius: 3px; }
+  .ex-doc code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--cat-indigo); word-break: break-word; }
 `;
 
 function seqShowExplain() {
@@ -5144,7 +5135,7 @@ function seqShowPlaceholderRef() {
             <tr><td><code>A</code></td><td>PM</td><td>AM/PM uppercase (no lowercase <code>a</code> variant)</td></tr>
           </tbody>
         </table>
-        <p style="margin-top:6px;font-size:11.5px;color:#64748b">Putting it together — <code>{{appts.appt_date|date:dddd, MMMM Do at h:mm&nbsp;A}}</code> → <code>Friday, March 20th at 2:05&nbsp;PM</code></p>
+        <p style="margin-top:6px;font-size:11.5px;color:var(--text-2)">Putting it together — <code>{{appts.appt_date|date:dddd, MMMM Do at h:mm&nbsp;A}}</code> → <code>Friday, March 20th at 2:05&nbsp;PM</code></p>
       </div>
 
       <div class="phr-section">
