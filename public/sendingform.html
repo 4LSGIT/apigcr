@@ -43,7 +43,7 @@
        repairing the selectors would restore a border-radius and a min-height,
        which is a metric change (charter §0.1). */
     #otherEmailEditor .ql-toolbar { border: 1px solid var(--border-strong); border-bottom: none; border-radius: 4px 4px 0 0; background: var(--surface-2); }
-    #otherEmailEditor .ql-container { border: 1px solid var(--border-strong); border-radius: 0 0 4px 4px; min-height: 150px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+    #otherEmailEditor .ql-container { border: 1px solid var(--border-strong); border-radius: 0 0 4px 4px; min-height: 150px; font-family: var(--ui); font-size: 14px; }
 
     /* ── Quill (snow) ────────────────────────────────────────────────────
        The editor sits on .sf-form, which now themes. Quill's stylesheet
@@ -77,7 +77,7 @@
     .sf-toggle-switch input:checked + .sf-toggle-slider { background-color: var(--ok-fill); }
     .sf-toggle-switch input:checked + .sf-toggle-slider:before { transform: translateX(20px); }
     .sf-preview { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin: 16px 0; white-space: pre-wrap; font-size: 0.88rem; font-family: monospace; max-height: 400px; overflow-y: auto; display: none; }
-    .sf-preview h4 { font-family: Arial, sans-serif; font-size: 0.95rem; font-weight: 700; margin: 0 0 8px 0; }
+    .sf-preview h4 { font-family: var(--ui); font-size: 0.95rem; font-weight: 700; margin: 0 0 8px 0; }
     .sf-actions { display: flex; gap: 10px; margin-top: 16px; }
     .sf-actions button { flex: 1; }
     .sf-disabled { opacity: 0.4; pointer-events: none; }
@@ -89,7 +89,7 @@
     }
   </style>
 </head>
-<body style="font-family: Arial, sans-serif; background: var(--page-bg); color: var(--text); padding: 16px; margin: 0;">
+<body style="font-family: var(--ui); background: var(--page-bg); color: var(--text); padding: 16px; margin: 0;">
 
 <div class="sf-form" id="sendingForm">
 
