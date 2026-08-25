@@ -11,10 +11,12 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <style>
     /* Widget chrome (esign/caseWidget + automationsWidget idiom). */
-    body { margin: 0; padding: 12px; background: #fff; }
+    body { margin: 0; padding: 12px; background: var(--page-bg); }
 
     /* All classes prefixed .ck- for scoping — this file is iframed into
        case.html and the shell, both of which have their own global CSS. */
@@ -22,7 +24,7 @@
     .ck-wrap { max-width: 760px; margin: 0 auto; }
 
     .ck-empty {
-      color: #64748b;
+      color: var(--text-muted);
       font-size: 14px;
       padding: 18px 4px;
     }
@@ -34,17 +36,17 @@
        would otherwise stack on one screen. */
     .ck-kinds {
       display: inline-flex;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--border-strong);
       border-radius: 6px;
       overflow: hidden;
       margin-bottom: 10px;
     }
     .ck-kinds button {
-      background: #fff; border: none; padding: 5px 12px;
-      font-size: 13px; cursor: pointer; color: #334155; font-family: inherit;
+      background: var(--surface); border: none; padding: 5px 12px;
+      font-size: 13px; cursor: pointer; color: var(--text-2); font-family: inherit;
     }
-    .ck-kinds button.active { background: #2563eb; color: #fff; }
-    .ck-kinds button:not(.active):hover { background: #f1f5f9; }
+    .ck-kinds button.active { background: var(--accent); color: var(--accent-text); }
+    .ck-kinds button:not(.active):hover { background: var(--hover); }
 
     /* ── The card stack (S2) ──
        A GRID, not CSS `columns:`. `columns:` reflows reading order
@@ -69,35 +71,35 @@
 
     /* ── One card ── */
     .ck-card {
-      border: 1px solid #e2e8f0;
+      border: 1px solid var(--border);
       border-radius: 8px;
-      background: #fff;
+      background: var(--surface);
     }
     .ck-card-head {
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 6px 10px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid var(--border);
       flex-wrap: wrap;
     }
     .ck-title {
       font-size: 14px;
       font-weight: 700;
-      color: #0f172a;
+      color: var(--text);
       cursor: text;
       padding: 2px 4px;
       border-radius: 4px;
       border: 1px solid transparent;
     }
-    .ck-title:hover { background: #f8fafc; border-color: #e2e8f0; }
+    .ck-title:hover { background: var(--hover); border-color: var(--border); }
     .ck-title-input {
       /* Must match .ck-title's font-size or the swap-to-edit jumps. */
       font-size: 14px;
       font-weight: 700;
-      color: #0f172a;
+      color: var(--text);
       padding: 2px 4px;
-      border: 1px solid #2563eb;
+      border: 1px solid var(--accent);
       border-radius: 4px;
       font-family: inherit;
       min-width: 180px;
@@ -111,9 +113,9 @@
       font-weight: 700;
       letter-spacing: .02em;
       text-transform: uppercase;
-      color: #1e40af;
-      background: #dbeafe;
-      border: 1px solid #bfdbfe;
+      color: var(--info);
+      background: var(--info-soft);
+      border: 1px solid var(--info);
       border-radius: 4px;
       padding: 2px 6px;
       cursor: default;
@@ -121,9 +123,9 @@
     /* Superuser only — the badge becomes an edit affordance. Staff never see
        this class, and the backend rejects them anyway (mayWriteTag). */
     .ck-tag.ck-tag-su { cursor: pointer; }
-    .ck-tag.ck-tag-su:hover { background: #bfdbfe; }
+    .ck-tag.ck-tag-su:hover { filter: brightness(1.25); }
     .ck-tag.ck-tag-empty {
-      color: #94a3b8; background: #f8fafc; border-color: #e2e8f0;
+      color: var(--text-muted); background: var(--surface-2); border-color: var(--border);
       font-weight: 600; text-transform: none;
     }
 
@@ -131,33 +133,33 @@
       margin-left: auto;
       font-size: 13px;
       font-weight: 600;
-      color: #475569;
+      color: var(--text-2);
       white-space: nowrap;
     }
-    .ck-progress.done { color: #15803d; }
+    .ck-progress.done { color: var(--ok); }
 
     .ck-icon-btn {
-      background: #fff;
-      border: 1px solid #cbd5e1;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
       border-radius: 6px;
       padding: 4px 8px;
       font-size: 13px;
       cursor: pointer;
-      color: #334155;
+      color: var(--text-2);
       line-height: 1;
     }
-    .ck-icon-btn:hover { background: #f1f5f9; }
-    .ck-icon-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+    .ck-icon-btn:hover { background: var(--hover); }
+    .ck-icon-btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 
     /* ── Note card (S2) ──
        The distinguishing cue is a left border tint plus a warm background: a
        user must be able to tell a note from a list at a glance, before
        reading either. */
     .ck-card.ck-note {
-      border-left: 3px solid #f59e0b;
-      background: #fffdf7;
+      border-left: 3px solid var(--warn);
+      background: color-mix(in srgb, var(--warn) 7%, transparent);
     }
-    .ck-card.ck-note .ck-card-head { border-bottom-color: #fdf0d5; }
+    .ck-card.ck-note .ck-card-head { border-bottom-color: color-mix(in srgb, var(--warn) 25%, transparent); }
 
     /* ── Native (pinned) note card (S5) ──
        Synthesized from a column on the ENTITY (cases.case_notes and friends),
@@ -166,11 +168,11 @@
        trash can must be able to see before they hunt that this card is a
        different animal. Three classes, so it outranks .ck-card.ck-note. */
     .ck-card.ck-note.ck-native {
-      border-left-color: #6366f1;
-      background: #f8f9ff;
+      border-left-color: var(--cat-indigo);
+      background: color-mix(in srgb, var(--cat-indigo) 7%, transparent);
     }
-    .ck-card.ck-native .ck-card-head { border-bottom-color: #e0e7ff; }
-    .ck-pin { color: #6366f1; font-size: 12px; }
+    .ck-card.ck-native .ck-card-head { border-bottom-color: color-mix(in srgb, var(--cat-indigo) 25%, transparent); }
+    .ck-pin { color: var(--cat-indigo); font-size: 12px; }
     /* Title comes from the adapter, not the database — kill the rename
        affordance rather than leaving a hover state that does nothing. */
     .ck-title.ck-title-fixed { cursor: default; }
@@ -183,9 +185,9 @@
       font-weight: 700;
       letter-spacing: .02em;
       text-transform: uppercase;
-      color: #4338ca;
-      background: #eef2ff;
-      border: 1px solid #c7d2fe;
+      color: var(--cat-indigo);
+      background: color-mix(in srgb, var(--cat-indigo) 12%, transparent);
+      border: 1px solid var(--cat-indigo);
       border-radius: 4px;
       padding: 2px 6px;
       cursor: default;
@@ -207,10 +209,10 @@
     .ck-card.ck-foreign,
     .ck-card.ck-note.ck-foreign,
     .ck-card.ck-note.ck-native.ck-foreign {
-      border-left: 3px solid #0d9488;
-      background: #f4fefc;
+      border-left: 3px solid var(--cat-teal);
+      background: color-mix(in srgb, var(--cat-teal) 7%, transparent);
     }
-    .ck-card.ck-foreign .ck-card-head { border-bottom-color: #ccfbf1; }
+    .ck-card.ck-foreign .ck-card-head { border-bottom-color: color-mix(in srgb, var(--cat-teal) 25%, transparent); }
 
     /* The group heading. One per related contact, above that contact's cards. */
     .ck-group {
@@ -220,23 +222,23 @@
       flex-wrap: wrap;
       margin: 20px 0 8px;
       padding: 7px 10px;
-      border-left: 3px solid #0d9488;
-      background: #f0fdfa;
+      border-left: 3px solid var(--cat-teal);
+      background: color-mix(in srgb, var(--cat-teal) 12%, transparent);
       border-radius: 0 6px 6px 0;
     }
     .ck-group-name {
-      font-size: 14px; font-weight: 700; color: #0f766e;
+      font-size: 14px; font-weight: 700; color: var(--cat-teal);
       text-decoration: none; cursor: pointer;
     }
     .ck-group-name:hover { text-decoration: underline; }
-    .ck-group-rel { font-size: 12px; color: #0f766e; opacity: .75; }
+    .ck-group-rel { font-size: 12px; color: var(--cat-teal); opacity: .75; }
     /* The multi-case disclosure. AMBER, not teal — it is a warning about the
        blast radius of an edit, not more scope chrome. */
     .ck-group-warn {
       margin-left: auto;
       font-size: 11px; font-weight: 700; letter-spacing: .02em;
-      color: #b45309; background: #fffbeb;
-      border: 1px solid #fcd34d; border-radius: 4px;
+      color: var(--warn); background: var(--warn-soft);
+      border: 1px solid var(--warn); border-radius: 4px;
       padding: 2px 7px; white-space: nowrap; cursor: help;
     }
     .ck-group-warn i { margin-right: 4px; }
@@ -246,7 +248,7 @@
        tell it apart from, and a lone "This case" heading would be noise. */
     .ck-own-head {
       font-size: 12px; font-weight: 700; letter-spacing: .04em;
-      text-transform: uppercase; color: #64748b;
+      text-transform: uppercase; color: var(--text-muted);
       margin: 2px 0 8px; padding: 0 2px;
     }
 
@@ -254,8 +256,8 @@
        place rather than vanishing — the case's own board is unaffected either
        way. */
     .ck-group-note {
-      font-size: 13px; color: #b45309;
-      background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px;
+      font-size: 13px; color: var(--warn);
+      background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 6px;
       padding: 7px 10px; margin-bottom: 8px;
     }
 
@@ -273,7 +275,7 @@
       font-family: inherit;
       font-size: 14px;
       line-height: 1.45;
-      color: #0f172a;
+      color: var(--text);
       resize: none;
       /* ~3 rows floor; 300px ceiling then scroll, so one long note cannot
          dominate the column. The 300 MUST agree with resizeTextarea() in
@@ -282,11 +284,11 @@
       max-height: 300px;
       overflow-y: auto;
     }
-    .ck-note-body:focus { outline: none; background: #fff; }
-    .ck-note-body::placeholder { color: #94a3b8; }
+    .ck-note-body:focus { outline: none; background: var(--surface); }
+    .ck-note-body::placeholder { color: var(--text-muted); }
     /* Only a NATIVE card whose entity read failed (S5) — editing it would
        save an empty string over whatever the column actually holds. */
-    .ck-note-body:disabled { background: #f8fafc; color: #64748b; cursor: not-allowed; }
+    .ck-note-body:disabled { background: var(--surface-2); color: var(--text-muted); cursor: not-allowed; }
 
     /* Manual completion for a note. Labelled so it does not read as an item
        checkbox — a note has no items, and its status is set by hand (S1). */
@@ -299,9 +301,9 @@
       font-weight: 700;
       letter-spacing: .02em;
       text-transform: uppercase;
-      color: #475569;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
+      color: var(--text-2);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
       border-radius: 999px;
       padding: 2px 9px 2px 6px;
       cursor: pointer;
@@ -309,23 +311,23 @@
       user-select: none;
     }
     .ck-done input { margin: 0; cursor: pointer; }
-    .ck-done.done { color: #15803d; background: #f0fdf4; border-color: #bbf7d0; }
+    .ck-done.done { color: var(--ok); background: var(--ok-soft); border-color: var(--ok); }
 
     /* Save state for a note body. Empty by default and collapsed, so a saved
        note costs no vertical space. */
-    .ck-saveflag { font-size: 11px; color: #94a3b8; padding: 0 10px 8px; }
+    .ck-saveflag { font-size: 11px; color: var(--text-muted); padding: 0 10px 8px; }
     .ck-saveflag:empty { display: none; }
-    .ck-saveflag.err { color: #b91c1c; font-weight: 600; }
+    .ck-saveflag.err { color: var(--danger); font-weight: 600; }
 
     /* Character counter (S5). Stays EMPTY — and so collapsed, reserving no
        space — while a body is shorter than COUNT_SHOW_AT. See the counter
        visibility block near NOTE_MAX_CHARS for the threshold options. */
     .ck-count {
-      font-size: 11px; color: #94a3b8;
+      font-size: 11px; color: var(--text-muted);
       padding: 0 10px 8px; text-align: right;
     }
     .ck-count:empty { display: none; }
-    .ck-count.over { color: #b91c1c; font-weight: 600; }
+    .ck-count.over { color: var(--danger); font-weight: 600; }
 
     /* ── Items ── */
     .ck-items { padding: 4px 10px 2px; }
@@ -334,7 +336,7 @@
       align-items: flex-start;
       gap: 8px;
       padding: 2px 0;
-      border-bottom: 1px solid #f8fafc;
+      border-bottom: 1px solid var(--border);
     }
     .ck-row:last-child { border-bottom: none; }
     .ck-box {
@@ -346,36 +348,36 @@
     .ck-name {
       flex: 1;
       font-size: 14px;
-      color: #0f172a;
+      color: var(--text);
       cursor: text;
       padding: 2px 4px;
       border-radius: 4px;
       border: 1px solid transparent;
       word-break: break-word;
     }
-    .ck-name:hover { background: #f8fafc; border-color: #e2e8f0; }
-    .ck-row.complete .ck-name { text-decoration: line-through; color: #94a3b8; }
+    .ck-name:hover { background: var(--hover); border-color: var(--border); }
+    .ck-row.complete .ck-name { text-decoration: line-through; color: var(--text-muted); }
     .ck-name-input {
       flex: 1;
       /* Must match .ck-name or the swap-to-edit jumps. */
       font-size: 14px;
       padding: 2px 4px;
-      border: 1px solid #2563eb;
+      border: 1px solid var(--accent);
       border-radius: 4px;
       font-family: inherit;
     }
     .ck-row-del {
       background: none;
       border: none;
-      color: #cbd5e1;
+      color: var(--border-strong);
       cursor: pointer;
       font-size: 14px;
       padding: 2px 6px;
       line-height: 1;
       flex: none;
     }
-    .ck-row:hover .ck-row-del { color: #94a3b8; }
-    .ck-row-del:hover { color: #b91c1c; }
+    .ck-row:hover .ck-row-del { color: var(--text-muted); }
+    .ck-row-del:hover { color: var(--danger); }
 
     /* ── Add-item row: an always-present input, not a prompt() ── */
     .ck-add {
@@ -387,15 +389,15 @@
       flex: 1;
       font-size: 14px;
       padding: 6px 8px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--border-strong);
       border-radius: 6px;
       font-family: inherit;
     }
-    .ck-add input:focus { outline: none; border-color: #2563eb; }
+    .ck-add input:focus { outline: none; border-color: var(--accent); }
 
     .ck-btn {
-      background: #2563eb;
-      color: #fff;
+      background: var(--accent);
+      color: var(--accent-text);
       border: none;
       border-radius: 6px;
       padding: 6px 14px;
@@ -403,21 +405,21 @@
       font-weight: 600;
       cursor: pointer;
     }
-    .ck-btn:hover { background: #1d4ed8; }
-    .ck-btn:disabled { background: #cbd5e1; cursor: default; }
+    .ck-btn:hover { background: var(--accent-dark); }
+    .ck-btn:disabled { background: var(--border-strong); color: var(--text-muted); cursor: default; }
     /* Secondary action in the footer — New Note sits beside New List and
        should not compete with it for the primary affordance. */
     .ck-btn.ck-btn-alt {
-      background: #fff; color: #b45309; border: 1px solid #fcd34d;
+      background: var(--surface); color: var(--warn); border: 1px solid var(--warn);
     }
-    .ck-btn.ck-btn-alt:hover { background: #fffbeb; }
+    .ck-btn.ck-btn-alt:hover { background: var(--warn-soft); }
 
     /* ── New-card footer ── */
     .ck-newlist {
       display: flex;
       gap: 8px;
       padding: 12px 0 4px;
-      border-top: 1px solid #e2e8f0;
+      border-top: 1px solid var(--border);
       margin-top: 6px;
       flex-wrap: wrap;
     }
@@ -426,17 +428,17 @@
       min-width: 140px;
       font-size: 14px;
       padding: 6px 8px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--border-strong);
       border-radius: 6px;
       font-family: inherit;
     }
-    .ck-newlist input:focus { outline: none; border-color: #2563eb; }
+    .ck-newlist input:focus { outline: none; border-color: var(--accent); }
 
-    .ck-loading { color: #64748b; font-size: 14px; padding: 18px 4px; }
+    .ck-loading { color: var(--text-muted); font-size: 14px; padding: 18px 4px; }
     .ck-error {
-      color: #b91c1c;
-      background: #fef2f2;
-      border: 1px solid #fecaca;
+      color: var(--danger);
+      background: var(--danger-soft);
+      border: 1px solid var(--danger);
       border-radius: 6px;
       padding: 10px 12px;
       font-size: 14px;
@@ -805,8 +807,8 @@ async function confirmDialog(o) {
     showCancelButton: true,
     confirmButtonText: o.confirmText || 'OK',
     cancelButtonText: 'Cancel',
-    confirmButtonColor: o.danger ? '#b91c1c' : '#2563eb',
-    cancelButtonColor: '#64748b',
+    confirmButtonColor: o.danger ? 'var(--danger-fill)' : 'var(--accent)',
+    cancelButtonColor: 'var(--text-muted)',
     reverseButtons: true,
     focusCancel: !!o.danger,
     // Cross-frame: this dialog lives in the shell but the thing that should
@@ -1696,11 +1698,11 @@ async function editTag(cl, el) {
   const body = current
     ? `<p style="text-align:left">The tag <code>${esc(current)}</code> is how automation finds this ${what}.</p>`
       + (current === 'docs_needed'
-          ? '<p style="text-align:left;color:#b91c1c"><b>This is the list the client portal '
+          ? '<p style="text-align:left;color: var(--danger)"><b>This is the list the client portal '
             + 'and document requests read.</b> Renaming or clearing it makes both go blank '
             + 'for this case &mdash; silently, with no error.</p>'
           : `<p style="text-align:left">Changing it detaches this ${what} from whatever matches that tag.</p>`)
-      + '<p style="text-align:left;color:#64748b">Clear the box to remove the tag entirely.</p>'
+      + '<p style="text-align:left;color: var(--text-muted)">Clear the box to remove the tag entirely.</p>'
     : '<p style="text-align:left">Tags are matched by automation and never shown to clients. '
       + 'Only set one if you know what reads it.</p>';
 
@@ -2073,7 +2075,7 @@ async function deleteList(cl) {
   const n       = (cl.items || []).length;
   const hasBody = !!String(cl.body || '').trim();
   const warn = cl.tag
-    ? `<p style="text-align:left;color:#b91c1c"><b>This is a system `
+    ? `<p style="text-align:left;color: var(--danger)"><b>This is a system `
       + `${isNote ? 'note' : 'list'} (<code>${esc(cl.tag)}</code>).</b> Deleting it removes `
       + `it from the client portal and document requests until it is recreated.</p>`
     : '';
@@ -2083,7 +2085,7 @@ async function deleteList(cl) {
      it is irreversible. */
   const g = cl.ownerKey ? groupFor(cl.ownerKey) : null;
   const foreignWarn = g
-    ? `<p style="text-align:left;color:#b45309"><b>This ${isNote ? 'note' : 'list'} `
+    ? `<p style="text-align:left;color: var(--warn)"><b>This ${isNote ? 'note' : 'list'} `
       + `belongs to ${esc(g.name)}, not to this case.</b> Deleting it removes it `
       + `from that contact everywhere`
       + (g.otherCases > 0
@@ -2092,8 +2094,8 @@ async function deleteList(cl) {
       + `.</p>`
     : '';
   const detail = isNote
-    ? (hasBody ? ' <span style="color:#64748b">&mdash; its text will be deleted too.</span>' : '')
-    : (n ? ` <span style="color:#64748b">&mdash; ${n} item${n === 1 ? '' : 's'} `
+    ? (hasBody ? ' <span style="color: var(--text-muted)">&mdash; its text will be deleted too.</span>' : '')
+    : (n ? ` <span style="color: var(--text-muted)">&mdash; ${n} item${n === 1 ? '' : 's'} `
          + `will be deleted too.</span>` : '');
   const ok = await confirmDialog({
     title: isNote ? 'Delete note?' : 'Delete list?',
