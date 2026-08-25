@@ -424,22 +424,10 @@
       margin-left: auto !important;
     }
 
-    /* SweetAlert in dark mode */
-    html[data-theme="dark"] .swal2-popup {
-      background: var(--surface) !important;
-      color: var(--text) !important;
-    }
-    html[data-theme="dark"] .swal2-title,
-    html[data-theme="dark"] .swal2-html-container {
-      color: var(--text) !important;
-    }
-    html[data-theme="dark"] .swal2-input,
-    html[data-theme="dark"] .swal2-textarea,
-    html[data-theme="dark"] .swal2-select {
-      background: var(--sidebar-bg) !important;
-      color: var(--text) !important;
-      border-color: var(--border) !important;
-    }
+    /* SweetAlert dark rules moved to theme.css (slice 10b commit 2). They
+       have to live in the sheet EVERY frame links, because a Swal renders
+       into the document that fired it -- the shell's copy never reached a
+       dialog opened by a framed page. */
 
     /* Print */
     @media print {

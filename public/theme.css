@@ -297,3 +297,48 @@ a:hover { text-decoration: underline; }
    against content-box. A global reset would break them all at once, in a way
    that is hard to attribute back to this change. If we want it, it is its own
    slice with its own verification pass. */
+
+/* ── SweetAlert2 (third-party overlay) ───────────────────────────────────
+   Moved here from index.html (slice 10b commit 2). Slice 9c left these in
+   the shell on the reasoning that SweetAlert is an overlay the shell owns.
+   That reasoning was sound for a shell-level dialog and wrong for every
+   other one: A SWAL RENDERS INTO THE DOCUMENT THAT FIRED IT. A dialog fired
+   from a framed page is a child of that frame's <body>, not the shell's, so
+   the shell's rules never reached it -- which is why slice 10 had to theme
+   five family-E modules' dialogs one at a time via customClass.
+
+   NOT style.css, which is where the handoff sent them. style.css is linked
+   by 14 HTML pages; theme.css by 69. Of the 42 pages that fire a Swal,
+   style.css reaches 11 and theme.css reaches 40 -- so style.css would have
+   left 29 framed pages with a white popup in dark and failed the very
+   acceptance test the move exists to pass. The two Swal pages theme.css
+   does not reach, caseerror.html and docReq.html, link neither sheet: they
+   are externally served and out of the arc's scope, and they correctly keep
+   swal2's own light defaults.
+
+   Unscoped and dark-only, so light mode keeps swal2's defaults untouched.
+   !important is carried over from the shell copy verbatim -- swal2 ships its
+   own :where()-wrapped rules at 0,0,2, but a page's local <style> can beat
+   0,2,1 without it.
+
+   --sidebar-bg on the inputs is also carried over verbatim rather than
+   corrected. In dark it resolves to #1a1e2a, the same value as --surface, so
+   a swal2 input has no fill contrast against the popup it sits in and the
+   border does all the work. That is the shell's current appearance and
+   changing it is a visual change, not a move. Flagged, not taken. */
+
+html[data-theme="dark"] .swal2-popup {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+}
+html[data-theme="dark"] .swal2-title,
+html[data-theme="dark"] .swal2-html-container {
+  color: var(--text) !important;
+}
+html[data-theme="dark"] .swal2-input,
+html[data-theme="dark"] .swal2-textarea,
+html[data-theme="dark"] .swal2-select {
+  background: var(--sidebar-bg) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
