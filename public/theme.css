@@ -16,11 +16,22 @@
 :root {
   /* ── CORE (from the mockup — do not retune) ─────────────────────────── */
   --sidebar-w: 220px;
-  /* 56px is the SHELL'S CURRENT VALUE, held deliberately. The mockup says
-     52px and that is where this lands — but in the density pass, not here.
-     Changing it in the colour arc would make the shell shift in the one commit
-     whose entire value is being a visual no-op. See charter §8. */
-  --header-h: 56px;
+  /* The mockup's value, landed in the density arc (D1) after the colour arc
+     held it at 56 to keep that arc a visual no-op.
+
+     Everything that depends on it derives from it — #appHeader height, body
+     padding-top, #appSidebar/backdrop top, and the tab iframe's
+     calc(100vh - var(--header-h)) — so the shell tracks this token and nothing
+     re-states 56. Measured at both 56 and 52, desktop and narrow: every header
+     child stays vertically centred and nothing clips or newly overflows.
+
+     Two things this does NOT fix, both pre-existing and unchanged in size:
+       · #appHeader renders 1px taller than the token (border-bottom, content-box),
+         so the first 1px of page content sits under that border.
+       · .hdr-logo is wrapped in an inline <a>, whose line box is ~44px tall for
+         a 40px image, so the logo sits 2px above optical centre — 4px above /
+         8px below here, not the symmetric 6/6 a bare image would get. */
+  --header-h: 52px;
 
   --accent: #07ADEF;
   --accent-dark: #0590c8;
