@@ -55,12 +55,24 @@ function mockDb(caseRow, relateIds = []) {
   };
 }
 
-/** Pull the two case-scope clauses out of the fragment, in order. */
+/** Pull the primary case-scope clauses out of the fragment, in order.
+ *  (About-link S1: the about=case clause is asserted separately via
+ *  aboutCaseClauses — this helper deliberately keeps matching only the
+ *  two PRIMARY-link clauses so the original placeholder-count
+ *  assertions stay meaningful.) */
 function caseScopeClauses(fragment) {
   return fragment
     .split(/\bOR\b/)
     .map(s => s.trim())
     .filter(s => /log_link_type = 'case'|log_link_type IS NULL/.test(s));
+}
+
+/** Pull the about=case clause(s) out of the fragment (About-link S1). */
+function aboutCaseClauses(fragment) {
+  return fragment
+    .split(/\bOR\b/)
+    .map(t => t.trim())
+    .filter(t => /log_about_type = 'case'/.test(t));
 }
 
 /** Count '?' placeholders in a string. */
@@ -82,8 +94,13 @@ describe('_buildCaseLogWhere — blank case identifiers are filtered, not substi
     expect(countPlaceholders(clauses[0])).toBe(1);   // log_link_id IN (?)
     expect(countPlaceholders(clauses[1])).toBe(1);   // log_link    IN (?)
 
-    // Two clauses × one identifier = two params, both the case_id.
-    expect(params).toEqual(['0B4lYSQV', '0B4lYSQV']);
+    // About-link S1: the about=case clause reuses the same list.
+    const about = aboutCaseClauses(whereFragment);
+    expect(about).toHaveLength(1);
+    expect(countPlaceholders(about[0])).toBe(1);
+
+    // Three clauses × one identifier = three params, all the case_id.
+    expect(params).toEqual(['0B4lYSQV', '0B4lYSQV', '0B4lYSQV']);
 
     // The regression that mattered: no blank may reach the IN-list.
     expect(params).not.toContain('');
@@ -102,7 +119,8 @@ describe('_buildCaseLogWhere — blank case identifiers are filtered, not substi
     const clauses = caseScopeClauses(whereFragment);
     expect(countPlaceholders(clauses[0])).toBe(1);
     expect(countPlaceholders(clauses[1])).toBe(1);
-    expect(params).toEqual(['aB3dEf7h', 'aB3dEf7h']);
+    expect(countPlaceholders(aboutCaseClauses(whereFragment)[0])).toBe(1);
+    expect(params).toEqual(['aB3dEf7h', 'aB3dEf7h', 'aB3dEf7h']);
     expect(params).not.toContain('');
   });
 
@@ -118,7 +136,12 @@ describe('_buildCaseLogWhere — blank case identifiers are filtered, not substi
     const clauses = caseScopeClauses(whereFragment);
     expect(countPlaceholders(clauses[0])).toBe(2);
     expect(countPlaceholders(clauses[1])).toBe(2);
-    expect(params).toEqual(['zZ9yX8w7', '24-48600', 'zZ9yX8w7', '24-48600']);
+    expect(countPlaceholders(aboutCaseClauses(whereFragment)[0])).toBe(2);
+    expect(params).toEqual([
+      'zZ9yX8w7', '24-48600',
+      'zZ9yX8w7', '24-48600',
+      'zZ9yX8w7', '24-48600'
+    ]);
     expect(params).not.toContain('');
   });
 
@@ -136,9 +159,12 @@ describe('_buildCaseLogWhere — blank case identifiers are filtered, not substi
     expect(countPlaceholders(clauses[0])).toBe(3);
     expect(countPlaceholders(clauses[1])).toBe(3);
 
+    expect(countPlaceholders(aboutCaseClauses(whereFragment)[0])).toBe(3);
+
     expect(params).toEqual([
       'cM8YEx2y', '24-48600', '24-48600-tjt',   // log_link_id clause
-      'cM8YEx2y', '24-48600', '24-48600-tjt'    // log_link clause
+      'cM8YEx2y', '24-48600', '24-48600-tjt',   // log_link clause
+      'cM8YEx2y', '24-48600', '24-48600-tjt'    // log_about_id clause (S1)
     ]);
   });
 
@@ -151,7 +177,11 @@ describe('_buildCaseLogWhere — blank case identifiers are filtered, not substi
 
     const { params } = await _buildCaseLogWhere(db, 'nUm3r1c0', { relateFilter: 'none' });
 
-    expect(params).toEqual(['nUm3r1c0', '2448600', 'nUm3r1c0', '2448600']);
+    expect(params).toEqual([
+      'nUm3r1c0', '2448600',
+      'nUm3r1c0', '2448600',
+      'nUm3r1c0', '2448600'
+    ]);
     expect(params.every(p => typeof p === 'string')).toBe(true);
   });
 
@@ -171,7 +201,8 @@ describe('_buildCaseLogWhere — not-found fallback', () => {
 
     expect(whereFragment).toContain(`l.log_link_type = 'case' AND l.log_link_id = ?`);
     expect(whereFragment).toContain(`l.log_link_type IS NULL  AND l.log_link    = ?`);
-    expect(params).toEqual(['nOsUcH01', 'nOsUcH01']);
+    expect(whereFragment).toContain(`l.log_about_type = 'case' AND l.log_about_id = ?`);
+    expect(params).toEqual(['nOsUcH01', 'nOsUcH01', 'nOsUcH01']);
   });
 
   test("case not found + '' caseId → (1 = 0), empty params", async () => {
@@ -182,8 +213,9 @@ describe('_buildCaseLogWhere — not-found fallback', () => {
     expect(whereFragment).toBe('(1 = 0)');
     expect(params).toEqual([]);
     // Must NOT fall through to `log_link = ''`, which matches every
-    // unlinked log row.
+    // unlinked log row. Same guard covers the about clause.
     expect(whereFragment).not.toContain('log_link');
+    expect(whereFragment).not.toContain('log_about');
   });
 
   test('case not found + null caseId → (1 = 0), empty params', async () => {
@@ -217,9 +249,10 @@ describe('_buildCaseLogWhere — related-contact merge gating (regression guard)
     expect(whereFragment).not.toContain(`log_link_type = 'email'`);
     expect(whereFragment).not.toContain('contact_phones');
     expect(whereFragment).not.toContain('contact_emails');
+    expect(whereFragment).not.toContain(`log_about_type = 'contact'`);
 
-    // Case-scope only: 2 clauses × 3 identifiers.
-    expect(params).toHaveLength(6);
+    // Case-scope only: 3 clauses × 3 identifiers (S1 adds about=case).
+    expect(params).toHaveLength(9);
 
     // And it must not even ask case_relate.
     expect(db.calls.some(c => /case_relate/i.test(c.sql))).toBe(false);
@@ -240,11 +273,11 @@ describe('_buildCaseLogWhere — related-contact merge gating (regression guard)
     const relateCall = db.calls.find(c => /case_relate/i.test(c.sql));
     expect(relateCall.sql).toContain(`case_relate_type IN ('Primary','Secondary','Other')`);
 
-    // 2 case-scope params (case_id twice, blanks filtered)
-    // + 4 per related contact.
+    // 3 case-scope params (case_id three times, blanks filtered)
+    // + 5 per related contact (S1 adds about=contact).
     expect(params).toEqual([
-      'cM8YEx2y', 'cM8YEx2y',
-      '101', '101', 101, 101
+      'cM8YEx2y', 'cM8YEx2y', 'cM8YEx2y',
+      '101', '101', 101, 101, '101'
     ]);
     expect(params).not.toContain('');
   });
@@ -278,5 +311,38 @@ describe('_buildCaseLogWhere — caller contract unchanged', () => {
       // Placeholder count must equal param count, or mysql2 throws at bind.
       expect(countPlaceholders(out.whereFragment)).toBe(out.params.length);
     }
+  });
+});
+describe('_buildCaseLogWhere — about-link arms (About-link S1)', () => {
+
+  test('per-related-contact about=contact arm appears once per contact, stringified', async () => {
+    const db = mockDb(
+      { case_id: 'cM8YEx2y', case_number: null, case_number_full: null },
+      [101, 202]
+    );
+
+    const { whereFragment, params } = await _buildCaseLogWhere(db, 'cM8YEx2y');
+
+    const aboutContactArms = whereFragment
+      .split(/\bOR\b/)
+      .filter(t => /log_about_type = 'contact'/.test(t));
+    expect(aboutContactArms).toHaveLength(2);
+
+    // 3 case-scope + 5 per contact × 2 contacts = 13, with the about
+    // param stringified and LAST within each contact's block.
+    expect(params).toEqual([
+      'cM8YEx2y', 'cM8YEx2y', 'cM8YEx2y',
+      '101', '101', 101, 101, '101',
+      '202', '202', 202, 202, '202'
+    ]);
+  });
+
+  test('placeholder count still equals param count with about arms present', async () => {
+    const db = mockDb(
+      { case_id: 'cM8YEx2y', case_number: '24-48600', case_number_full: '24-48600-tjt' },
+      [101]
+    );
+    const { whereFragment, params } = await _buildCaseLogWhere(db, 'cM8YEx2y');
+    expect(countPlaceholders(whereFragment)).toBe(params.length);
   });
 });

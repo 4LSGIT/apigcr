@@ -65,6 +65,33 @@
  *     case_relate_filter ('default' = Primary/Secondary/Other; 'all' = no
  *     type filter; 'none' = case-only, no related-contact merge).
  *
+ * About-link (S1 — read path):
+ *   - New columns log_about_type / log_about_id carry an optional SECONDARY
+ *     "what it's about" attribution, independent of the primary identity
+ *     link (log_link_type / log_link_id). Motivating case: an email with
+ *     outside counsel about a client's case — identity stays with the
+ *     counsel's address (thread continuity, future contact adoption),
+ *     while the about-link surfaces it on the case view.
+ *   - Reader arms: _buildContactLogWhere gains about=contact;
+ *     _buildCaseLogWhere gains about=case (blank-filtered IN-list) plus
+ *     about=contact per related contact; listLog's generic branch gains a
+ *     literal about arm for the remaining types. Storage stays one about
+ *     link per row — 1-many VISIBILITY comes from read-time fan-out, not
+ *     from 1-many storage.
+ *   - Write path (setLogAbout, createLogEntry about params) lands in S2.
+ *
+ * About-link (S2 — write path):
+ *   - setLogAbout(db, { log_id, about_type, about_id }) sets or clears the
+ *     about-link on an existing row. Unlike updateLogLink, an unlink path
+ *     exists (about_type null/''/'none' clears both columns) — the
+ *     about-link is a secondary annotation, safe to clear.
+ *   - createLogEntry accepts optional about_type / about_id.
+ *   - Both paths validate/normalize via the shared _normalizeAbout helper
+ *     (phone → 10 digits, email → trim+lowercase, same helpers as the
+ *     primary-link paths; target existence deliberately not validated).
+ *   - ABOUT_TYPES is the FULL log_link_type enum (incl. task/event) —
+ *     see the constant's comment for why it is wider than RELINKABLE_TYPES.
+ *
  * Re-linking (params-mapping Slice):
  *   - updateLogLink(db, { log_id, link_type, link_id }) re-points an existing
  *     row at a different entity. RE-LINK ONLY: it writes the three link
@@ -107,6 +134,89 @@ function _normalizePhone(phone) {
 function _normalizeEmail(email) {
   if (!email && email !== 0) return '';
   return String(email).trim().toLowerCase();
+}
+
+/**
+ * The about-link target types (About-link S2). Deliberately the FULL
+ * log_link_type enum — unlike RELINKABLE_TYPES, which excludes
+ * 'task'/'event' because primary re-linking is a user action and those
+ * rows are machine-written. The about-link is a topical annotation;
+ * about=task/event are legitimate ("this email is about task 42") and
+ * cost nothing to accept (they surface via listLog's generic arm).
+ */
+const ABOUT_TYPES = ['contact', 'case', 'appt', 'bill', 'phone', 'email', 'task', 'event'];
+
+/**
+ * Validate + normalize an about-link pair (About-link S2).
+ *
+ * Shared by setLogAbout and createLogEntry so the two write paths can
+ * never drift. Normalization for phone/email is IDENTICAL to the
+ * primary-link paths (createLogEntry / updateLogLink), via the same
+ * _normalizePhone / _normalizeEmail helpers:
+ *   phone → exactly 10 digits (leading +1 stripped)
+ *   email → trimmed + lowercased, must contain '@'
+ *   everything else → String(about_id)
+ *
+ * Existence of the target is deliberately NOT validated — consistent
+ * with updateLogLink; entity IDs are opaque.
+ *
+ * Throws with err.code:
+ *   INVALID_LOG_ABOUT_TYPE - about_type outside ABOUT_TYPES
+ *   INVALID_LOG_ABOUT_ID   - about_id blank, or unusable phone/email
+ *
+ * The unlink decision (null/''/'none' about_type → clear) is the
+ * CALLER's job — this helper only handles the set path.
+ *
+ * @param {string} about_type - one of ABOUT_TYPES
+ * @param {string|number} about_id
+ * @returns {string} the normalized about_id to store
+ */
+function _normalizeAbout(about_type, about_id) {
+  if (!ABOUT_TYPES.includes(about_type)) {
+    const err = new Error(
+      `Invalid about_type: ${JSON.stringify(about_type)}. ` +
+      `Must be one of: ${ABOUT_TYPES.join(', ')}.`
+    );
+    err.code = 'INVALID_LOG_ABOUT_TYPE';
+    throw err;
+  }
+
+  if (about_id === null || about_id === undefined || String(about_id).trim() === '') {
+    const err = new Error(
+      `about_id is required and must be non-blank when about_type is set ` +
+      `(got ${JSON.stringify(about_id)}).`
+    );
+    err.code = 'INVALID_LOG_ABOUT_ID';
+    throw err;
+  }
+
+  let normalized = String(about_id);
+
+  if (about_type === 'phone') {
+    const norm = _normalizePhone(normalized);
+    if (!norm || norm.length !== 10) {
+      const err = new Error(
+        `Invalid phone for log_about_id: ${JSON.stringify(about_id)}. ` +
+        `Must normalize to exactly 10 digits.`
+      );
+      err.code = 'INVALID_LOG_ABOUT_ID';
+      throw err;
+    }
+    normalized = norm;
+  } else if (about_type === 'email') {
+    const norm = _normalizeEmail(normalized);
+    if (!norm || !norm.includes('@')) {
+      const err = new Error(
+        `Invalid email for log_about_id: ${JSON.stringify(about_id)}. ` +
+        `Must be non-empty and contain '@'.`
+      );
+      err.code = 'INVALID_LOG_ABOUT_ID';
+      throw err;
+    }
+    normalized = norm;
+  }
+
+  return normalized;
 }
 
 /**
@@ -169,13 +279,21 @@ function _normalizeDirection(d) {
 
 /**
  * Build a WHERE fragment matching all log rows attributable to a
- * single contact. Four sources:
+ * single contact. Five sources:
  *   1. log_link_type = 'contact' AND log_link_id = contactId
  *   2. Legacy NULL-typed rows where log_link = contactId
  *   3. log_link_type = 'phone' rows whose log_link_id (a 10-digit
  *      phone) was owned by this contact at the time the log was
  *      written (per contact_phones date window).
  *   4. log_link_type = 'email' rows, same pattern via contact_emails.
+ *   5. About-link (S1): log_about_type = 'contact' AND
+ *      log_about_id = contactId. The about-link is the SECONDARY
+ *      "what it's about" attribution — independent of the primary
+ *      identity link. Deliberately NOT resolved here:
+ *      about_type='email'/'phone' values via the contact_emails /
+ *      contact_phones date windows. Anyone intending a contact sets
+ *      about_type='contact' directly; window resolution is an
+ *      identity-attribution mechanism, not a topical one.
  *
  * Date-window math: cp.start_date <= DATE(log_date)
  *   AND (cp.end_date IS NULL OR cp.end_date >= DATE(log_date)).
@@ -209,10 +327,11 @@ function _buildContactLogWhere(contactId) {
              AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
              AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
        ))
+    OR (l.log_about_type = 'contact' AND l.log_about_id = ?)
   )`;
   return {
     whereFragment,
-    params: [String(contactId), String(contactId), contactId, contactId]
+    params: [String(contactId), String(contactId), contactId, contactId, String(contactId)]
   };
 }
 
@@ -231,9 +350,24 @@ function _buildContactLogWhere(contactId) {
  *
  * Related-contact merge:
  *   - For each related contact (resolved via case_relate, filtered by
- *     `relateFilter`), OR in the four-source contact fragment so the
+ *     `relateFilter`), OR in the contact-source fragment so the
  *     case view also surfaces those contacts' logs (including
  *     phone/email-typed rows attributed by date window).
+ *
+ * About-link (S1):
+ *   - Case-scope gains a third clause: log_about_type = 'case' AND
+ *     log_about_id IN (<same non-blank identifier list>). The
+ *     about-link is the SECONDARY "what it's about" attribution,
+ *     independent of the primary identity link — e.g. an email with
+ *     outside counsel (log_link_type='email') about-linked to this
+ *     case surfaces here without losing its identity attribution.
+ *   - The per-related-contact merge gains a fifth clause:
+ *     log_about_type = 'contact' AND log_about_id = <cid>, so a row
+ *     about-linked to a related contact surfaces on the case too
+ *     (same read-time fan-out philosophy as the existing merge).
+ *   - Deliberately NOT resolved: about_type='email'/'phone' values
+ *     via contact_emails/contact_phones date windows (see
+ *     _buildContactLogWhere's docstring).
  *
  * Blank identifiers are FILTERED OUT of the IN-list, never substituted.
  * An earlier version of this helper substituted '' for NULL
@@ -291,10 +425,11 @@ async function _buildCaseLogWhere(db, caseId, { relateFilter = 'default' } = {})
     const whereFragment = `(
          (l.log_link_type = 'case' AND l.log_link_id = ?)
       OR (l.log_link_type IS NULL  AND l.log_link    = ?)
+      OR (l.log_about_type = 'case' AND l.log_about_id = ?)
     )`;
     return {
       whereFragment,
-      params: [String(caseId), String(caseId)]
+      params: [String(caseId), String(caseId), String(caseId)]
     };
   }
 
@@ -330,13 +465,17 @@ async function _buildCaseLogWhere(db, caseId, { relateFilter = 'default' } = {})
   const orParts = [];
   const params = [];
 
-  // 3a. Case-scope: two clauses, one param per non-blank case identifier.
+  // 3a. Case-scope: three clauses, one param per non-blank case identifier
+  //     each. The about-clause reuses the same blank-filtered IN-list —
+  //     never substitute '' here either (same phantom-match hazard).
   orParts.push(`(l.log_link_type = 'case' AND l.log_link_id IN (${ph}))`);
   params.push(...caseIdsForIn);
   orParts.push(`(l.log_link_type IS NULL  AND l.log_link    IN (${ph}))`);
   params.push(...caseIdsForIn);
+  orParts.push(`(l.log_about_type = 'case' AND l.log_about_id IN (${ph}))`);
+  params.push(...caseIdsForIn);
 
-  // 3b. Per-related-contact: four clauses, four params each (mirrors
+  // 3b. Per-related-contact: five clauses, five params each (mirrors
   //     _buildContactLogWhere). Inlined rather than calling the helper
   //     so the OR-list is flat — one parens-deep, easier to read in
   //     EXPLAIN.
@@ -364,6 +503,9 @@ async function _buildCaseLogWhere(db, caseId, { relateFilter = 'default' } = {})
            AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
       ))`);
     params.push(cid);
+
+    orParts.push(`(l.log_about_type = 'contact' AND l.log_about_id = ?)`);
+    params.push(String(cid));
   }
 
   const whereFragment = `(\n    ${orParts.join('\n    OR ')}\n  )`;
@@ -440,12 +582,15 @@ async function listLog(db, {
       params.push(...caseParams);
     } else {
       // Literal match preserved for appt/bill/phone/email/task and any
-      // future enum value.
+      // future enum value. About-link (S1): rows about-linked to this
+      // type/value surface here too — this is the ONLY reader arm for
+      // about types other than contact/case.
       where.push(`(
         (l.log_link_type = ? AND l.log_link_id = ?)
         OR (l.log_link_type IS NULL AND l.log_link = ?)
+        OR (l.log_about_type = ? AND l.log_about_id = ?)
       )`);
-      params.push(link_type, String(link_id), String(link_id));
+      params.push(link_type, String(link_id), String(link_id), link_type, String(link_id));
     }
   }
 
@@ -516,7 +661,8 @@ async function listLog(db, {
   const [entries] = await db.query(
     `SELECT
      l.log_id, l.log_type, l.log_date, l.log_link, l.log_extra,
-     l.log_link_type, l.log_link_id, l.log_by, l.log_data,
+     l.log_link_type, l.log_link_id, l.log_about_type, l.log_about_id,
+     l.log_by, l.log_data,
      l.log_from, l.log_to, l.log_subject, l.log_direction,
      u.user_name AS by_name,
      DATE_FORMAT(l.log_date, '%M %e, %Y at %h:%i %p') AS formatted_date,
@@ -633,6 +779,12 @@ async function getLogEntry(db, logId) {
  * @param {string}  [opts.link_id]   - the linked entity ID, or phone/email value
  * @param {number}  [opts.by=0]      - user ID (0 = system/automation)
  * @param {string|object} [opts.data=''] - log_data (JSON string or object, auto-stringified)
+ * @param {string} [opts.about_type]     - About-link S2: optional SECONDARY
+ *   "what it's about" attribution. One of ABOUT_TYPES (the full
+ *   log_link_type enum). null/''/'none' → both about columns written NULL.
+ * @param {string|number} [opts.about_id] - required non-blank when about_type
+ *   is set; normalized via _normalizeAbout (phone→10 digits,
+ *   email→trim+lowercase, others→String).
  * @param {object|string} [opts.extra]   - log_extra (JSON object or JSON-string-of-object).
  *                                         Null/empty/non-object → SQL NULL.
  * @param {string}  [opts.from]      - log_from + folded into log_data.from
@@ -647,6 +799,8 @@ async function createLogEntry(db, {
   type,
   link_type  = null,
   link_id    = null,
+  about_type = null,
+  about_id   = null,
   by         = 0,
   data       = '',
   extra      = null,
@@ -792,22 +946,37 @@ async function createLogEntry(db, {
     }
   }
 
+  // About-link S2: optional secondary attribution. null/''/'none' → both
+  // columns NULL (no about-link). Validation/normalization shared with
+  // setLogAbout via _normalizeAbout so the two write paths cannot drift.
+  let aboutType = null;
+  let aboutId   = null;
+  if (about_type != null && about_type !== '' && about_type !== 'none') {
+    aboutId   = _normalizeAbout(about_type, about_id);
+    aboutType = about_type;
+  }
+
   console.log(
     `[CREATE_LOG] type=${type} link=${link_type}:${link_id} by=${by} ` +
-    `direction=${direction}\u2192${normalizedDirection} extra=${logExtra ? 'set' : 'null'}`
+    `direction=${direction}\u2192${normalizedDirection} extra=${logExtra ? 'set' : 'null'}` +
+    (aboutType ? ` about=${aboutType}:${aboutId}` : '')
   );
 
   const [result] = await db.query(
     `INSERT INTO log
        (log_type, log_date, log_link, log_link_type, log_link_id,
+        log_about_type, log_about_id,
         log_by, log_data, log_extra, log_from, log_to, log_subject, log_message, log_direction)
      VALUES (?, CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT'), ?, ?, ?,
+             ?, ?,
              ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       type,
       logLink,
       link_type,
       normalizedLinkId,
+      aboutType,
+      aboutId,
       by,
       logData,
       logExtra,
@@ -1011,16 +1180,123 @@ async function updateLogLink(db, { log_id, link_type, link_id } = {}) {
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// setLogAbout (About-link S2)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Set or clear the about-link on an existing log entry.
+ *
+ * The about-link (log_about_type / log_about_id) is the SECONDARY "what
+ * it's about" attribution — independent of the primary identity link.
+ * This writes those two columns and NOTHING else. Deliberately absent:
+ *   - no primary-link edits — log_link_type / log_link_id / log_link are
+ *     untouched (updateLogLink owns those);
+ *   - no content edits — a log row's content is a historical record;
+ *   - no create-on-missing — a log_id with no row throws LOG_NOT_FOUND.
+ *
+ * Unlike updateLogLink, an UNLINK PATH EXISTS: about_type of null,
+ * undefined, '' or the string 'none' clears both columns (about_id is
+ * ignored). This asymmetry is intentional — the about-link is a
+ * secondary annotation, safe to clear; the primary link is not.
+ *
+ * Validation/normalization is shared with createLogEntry's about params
+ * via _normalizeAbout (phone → 10 digits, email → trim+lowercase,
+ * others → String; target existence NOT validated).
+ *
+ * Error codes (set on `err.code` so routes can map them):
+ *   LOG_ID_REQUIRED         - log_id missing / not a positive integer
+ *   LOG_NOT_FOUND           - no log row with that id
+ *   INVALID_LOG_ABOUT_TYPE  - about_type outside ABOUT_TYPES (set path)
+ *   INVALID_LOG_ABOUT_ID    - about_id blank, or unusable phone/email
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {number|string} opts.log_id     - the log row (required)
+ * @param {string|null}   opts.about_type - one of ABOUT_TYPES, or
+ *                                          null/''/'none' to clear
+ * @param {string|number} [opts.about_id] - required non-blank when setting
+ * @returns {Promise<{ log_id: number, about_type: string|null, about_id: string|null }>}
+ *          about_id is the NORMALIZED value that was actually stored
+ *          (null on unlink).
+ */
+async function setLogAbout(db, { log_id, about_type, about_id } = {}) {
+  // ── log_id ──
+  // Coerced rather than type-checked: callers include workflow steps
+  // resolving {{logId}}, which arrives as the string "58197".
+  const logId = Number(log_id);
+  if (log_id === null || log_id === undefined || log_id === ''
+      || !Number.isInteger(logId) || logId <= 0) {
+    const err = new Error(
+      `setLogAbout requires a positive integer log_id (got ${JSON.stringify(log_id)}).`
+    );
+    err.code = 'LOG_ID_REQUIRED';
+    throw err;
+  }
+
+  // ── row must exist ──
+  // Checked BEFORE about validation so a bad log_id reports as
+  // LOG_NOT_FOUND rather than being masked by an about_type complaint
+  // (same ordering rationale as updateLogLink).
+  const existing = await getLogEntry(db, logId);
+  if (!existing) {
+    const err = new Error(`Log entry ${logId} not found.`);
+    err.code = 'LOG_NOT_FOUND';
+    throw err;
+  }
+
+  // ── unlink path ──
+  const isUnlink = about_type === null || about_type === undefined
+      || about_type === '' || about_type === 'none';
+
+  if (isUnlink) {
+    console.log(
+      `[LOG_ABOUT] log_id=${logId} about=${existing.log_about_type}:${existing.log_about_id} ` +
+      `\u2192 none`
+    );
+    await db.query(
+      `UPDATE log
+          SET log_about_type = NULL, log_about_id = NULL
+        WHERE log_id = ?`,
+      [logId]
+    );
+    return { log_id: logId, about_type: null, about_id: null };
+  }
+
+  // ── set path ──
+  const normalizedAboutId = _normalizeAbout(about_type, about_id);
+
+  console.log(
+    `[LOG_ABOUT] log_id=${logId} about=${existing.log_about_type}:${existing.log_about_id} ` +
+    `\u2192 ${about_type}:${normalizedAboutId}`
+  );
+
+  await db.query(
+    `UPDATE log
+        SET log_about_type = ?, log_about_id = ?
+      WHERE log_id = ?`,
+    [about_type, normalizedAboutId, logId]
+  );
+
+  return { log_id: logId, about_type, about_id: normalizedAboutId };
+}
+
+
 module.exports = {
   listLog,
   getLogEntry,
   createLogEntry,
   updateLogLink,
+  setLogAbout,
   getOrphanEarliestDate,
   RELINKABLE_TYPES,
+  ABOUT_TYPES,
   // Slice 1 semantic unification: exposed for contactService.getContact
   // and caseService.getCase. Underscore-prefixed = "internal but
   // cross-service usable" — please don't call from frontend or routes.
   _buildContactLogWhere,
-  _buildCaseLogWhere
+  _buildCaseLogWhere,
+  // About-link S2: exposed for tests; shared by setLogAbout and
+  // createLogEntry so the two write paths cannot drift.
+  _normalizeAbout
 };

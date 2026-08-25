@@ -4,9 +4,10 @@
  * Log API
  * routes/api.log.js
  *
- * GET  /api/log       list with filters
- * GET  /api/log/:id   single entry
- * POST /api/log       create manual entry (note, call log, etc.)
+ * GET  /api/log            list with filters
+ * GET  /api/log/:id        single entry
+ * POST /api/log            create manual entry (note, call log, etc.)
+ * PUT  /api/log/:id/about  set or clear the about-link (About-link S2)
  *
  * Phase 3 Slice 1: POST accepts optional `extra` (JSON object) for IT-facing
  * fields kept separate from the user-facing log_data blob.
@@ -188,24 +189,56 @@ router.get('/api/log/:id', jwtOrApiKey, async (req, res) => {
 
 // ─── CREATE ───
 router.post('/api/log', jwtOrApiKey, async (req, res) => {
-  const { type, link_type, link_id, data, extra,
+  const { type, link_type, link_id, about_type, about_id, data, extra,
           from, to, subject, message, direction } = req.body;
 
   if (!type) return res.status(400).json({ status: 'error', message: 'type is required' });
 
   try {
     const result = await logService.createLogEntry(req.db, {
-      type, link_type, link_id,
+      type, link_type, link_id, about_type, about_id,
       by: req.auth?.userId || 0,
       data, extra, from, to, subject, message, direction
     });
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('POST /api/log error:', err);
-    if (err.code === 'INVALID_LOG_LINK_ID') {
+    if (err.code === 'INVALID_LOG_LINK_ID'
+        || err.code === 'INVALID_LOG_ABOUT_TYPE'
+        || err.code === 'INVALID_LOG_ABOUT_ID') {
       return res.status(400).json({ status: 'error', message: err.message });
     }
     res.status(500).json({ status: 'error', message: 'Failed to create log entry' });
+  }
+});
+
+// ─── ABOUT-LINK (About-link S2) ───
+// Set or clear the SECONDARY "what it's about" attribution on a log row.
+// Never touches the primary identity link or the log content.
+// Body: { about_type, about_id }. about_type null/''/'none' clears the
+// about-link (about_id ignored) — unlike the primary link, unlink is
+// deliberately supported here.
+router.put('/api/log/:id/about', jwtOrApiKey, async (req, res) => {
+  const { about_type, about_id } = req.body || {};
+
+  try {
+    const result = await logService.setLogAbout(req.db, {
+      log_id: req.params.id,
+      about_type,
+      about_id
+    });
+    res.json({ status: 'success', ...result });
+  } catch (err) {
+    if (err.code === 'LOG_NOT_FOUND') {
+      return res.status(404).json({ status: 'error', message: err.message });
+    }
+    if (err.code === 'LOG_ID_REQUIRED'
+        || err.code === 'INVALID_LOG_ABOUT_TYPE'
+        || err.code === 'INVALID_LOG_ABOUT_ID') {
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+    console.error('PUT /api/log/:id/about error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to set log about-link' });
   }
 });
 
