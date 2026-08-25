@@ -129,6 +129,64 @@ Different from the colour arc: contrast is settled, layout is not.
   and 25 files carry their own media queries.
 - Confirm no horizontal scrollbar appears where there was none.
 
+## 3.1 The theme.css boundary — do NOT consolidate element rules there
+
+The tempting move in this arc is to lift `input` / `select` / `textarea` /
+`button` / `table` rules out of `style.css` and into `theme.css`, because
+`theme.css` reaches 69 pages and `style.css` reaches 14. **Do not.**
+
+- The 45 pages that load neither element layer are **already at 11–13px**.
+  They need nothing. Applying control density to them is unbounded change for
+  no measured benefit.
+- `theme.css` is a token sheet. Its only non-token rules are `body`, `a`, and
+  the class-scoped `.swal2-*` block. Element-level rules change its contract.
+- It would detonate a known landmine, and probably others not yet found:
+
+  `automation/sequences.html:3388` and `:3622` —
+  ```html
+  <select id="swal-cond-mode" style="…;border:1px solid var(--border);background:white">
+  ```
+  Unclassed, inside a Swal, `background` hardcoded and `color` unset. Safe
+  today **only** because that page links `theme.css` and not `style.css`. Add
+  `select { color: var(--text) }` to `theme.css` and it becomes `#e1e4e8` on
+  white — **1.28:1, twice.**
+
+  Fix that `background:white` regardless — it is a light island in dark today.
+
+The colour arc's most expensive lesson was that widening a rule's reach has a
+blast radius you must enumerate first. Slice 9c unscoped one selector and
+caused two regressions.
+
+## 3.2 Swal-injected DOM, and the rule that actually finds it
+
+SweetAlert attaches its container to `<body>`. Element-level rules reach it;
+page-scoped ones do not. That is why 9c's verification — which sampled
+`#appHeader` and `#appSidebar` — declared unscoping safe and shipped two
+regressions into dialogs.
+
+"Open every dialog" is too blunt to act on. The precise rule, derived by
+measuring all four sites in the repo:
+
+> A control inside a Swal `html:` block breaks when it is **unclassed** *and*
+> its inline style sets **only one** of `background` / `color`.
+
+| site | classed | inline sets | dark |
+|---|---|---|---|
+| `#riNote` `index.html:4666` | no | `color` only | **1.07** |
+| `.ri-kind` `index.html:4630` | no | both | island, 10.31 |
+| `#clioCheckNow` `index.html:2535` | no | both | island, readable |
+| `#suElevUser` `index.html:3370` | `.swal2-input` | `background` only | `theme.css` `!important` wins |
+
+Classed controls are already protected — `theme.css` guards
+`.swal2-input`/`-textarea`/`-select` with `!important`, and `style.css`
+excludes `.swal2-styled`. Both halves set means a self-contained island: ugly,
+readable, survivable. **Unclassed with one half set is the whole defect
+class**, and it is greppable.
+
+**Grep it with a multi-line window.** These styles are built by string
+concatenation across several lines, so a same-line grep returns zero — which
+is how `#riNote` stayed unfound. Use `grep -A6` or read the block.
+
 ## 4. Standing rules
 
 - **Repo beats this document.** Both of the previous charter's core assumptions
@@ -138,8 +196,13 @@ Different from the colour arc: contrast is settled, layout is not.
   mirror of §0.1, for the same bisectability reason.
 - **One file or one page per commit.**
 - **Construct greps carefully, not just read them carefully.** `grep -l
-  "style.css"` matched `el.style.cssText` and produced a wrong blast radius in
-  slice 10b. Eight instances of this class across the colour arc.
+  "style.css"` matches `el.style.cssText`; the real count is **14 `<link>`
+  consumers, not 19.** That miscount is baked into slice 9c's own commit
+  message ("19 pages load style.css … the other 16 had no dark support" —
+  really 14 and 13), so **any blast radius quoted from that commit inherits
+  it.** Nine instances of this class across the colour arc, twice by the
+  manager after writing the rule down.
+- **A same-line grep misses string-concatenated styles.** Use a window.
 
 ## 5. Colour items carried, not blocking
 

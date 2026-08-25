@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-24T08:59:21.701Z
+-- Generated: 2026-08-25T12:17:15.250Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:255f3797333ab46aa78e183e69129a32
+-- Fingerprint: sha256:ede641d550f60413c3a73904161fff3d
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1783,6 +1783,8 @@ CREATE TABLE `log` (
   `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_link_type` enum('contact','case','appt','bill','phone','email','task','event') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_link_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `log_about_type` enum('contact','case','appt','bill','phone','email','task','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `log_about_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_by` tinyint unsigned NOT NULL,
   `log_data` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_extra` json DEFAULT NULL,
@@ -3768,7 +3770,8 @@ ALTER TABLE `log`
   ADD KEY `idx_log_link` (`log_link`),
   ADD KEY `idx_log_date` (`log_date`),
   ADD KEY `idx_log_type` (`log_type`),
-  ADD KEY `idx_log_link_type_id` (`log_link_type`,`log_link_id`);
+  ADD KEY `idx_log_link_type_id` (`log_link_type`,`log_link_id`),
+  ADD KEY `idx_log_about` (`log_about_type`,`log_about_id`);
 
 --
 -- Indexes for table `pages`
