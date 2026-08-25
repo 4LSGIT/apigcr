@@ -135,9 +135,20 @@
   var LOOP_WINDOW_MS = 5 * 60 * 1000;
   var LOOP_MAX = 2;
 
-  var AMBER = "#b54708";
-  var RED = "#c0392b";
-  var BLUE = "#07ADEF";
+  // Colours are tokens, split by ROLE rather than by hue: TOKEN-MAP §3.1 gives
+  // every status colour a text/icon/border value AND a separate solid-fill
+  // value, and reaching for the wrong one is the arc's most common mistake.
+  // Only index.html loads this module, and it links theme.css, so these always
+  // resolve — no fallbacks needed.
+  var WARN = "var(--warn)"; //            text, icon, card accent border
+  var WARN_FILL = "var(--warn-fill)"; //  solid banner / button background
+  var ON_WARN_FILL = "var(--warn-text)"; // its label — white on amber is 3.19
+  var DANGER = "var(--danger)";
+  var DANGER_FILL = "var(--danger-fill)";
+  var ON_DANGER_FILL = "var(--fill-text)";
+  var ACCENT = "var(--accent)"; //        fills and the card's accent border
+  var ACCENT_ICON = "var(--accent-2)"; // --accent as a glyph colour is 2.55
+  var ON_ACCENT = "var(--accent-text)"; // near-black; white on accent is 2.55
 
   // ── State ───────────────────────────────────────────────────────────────────
   var bootBuild = null;
@@ -565,9 +576,13 @@
     return [
       "pointer-events:auto",
       "max-width:300px",
-      "background:var(--surface-bg,#fff)",
-      "color:var(--text,#2c3e50)",
-      "border:1px solid var(--border,#e1e4e8)",
+      // --surface-bg was an orphan: theme.css never defined it and index.html
+      // remapped its own copy to --surface in slice 9c, so this fell back to
+      // #fff in BOTH modes while --text went near-white — the pill was
+      // white-on-white in dark. Arc rule 1, one more time.
+      "background:var(--surface)",
+      "color:var(--text)",
+      "border:1px solid var(--border)",
       "border-left:4px solid " + accent,
       "border-radius:8px",
       "padding:9px 12px",
@@ -612,7 +627,7 @@
     var note = noteFor();
     if (el.textContent === note.t) return;
     el.textContent = note.t;
-    el.style.color = note.warn ? AMBER : "var(--text-muted,#6c757d)";
+    el.style.color = note.warn ? WARN : "var(--text-muted)";
   }
 
   function showSoftPill() {
@@ -623,18 +638,18 @@
     var pill = document.createElement("div");
     pill.id = "vgPill";
     pill.setAttribute("role", "status");
-    pill.style.cssText = cardStyle(BLUE);
+    pill.style.cssText = cardStyle(ACCENT);
     pill.innerHTML =
       "<div>" +
       '<div style="font-weight:700;white-space:nowrap">' +
       '<i class="fa-solid fa-arrows-rotate" style="color:' +
-      BLUE +
+      ACCENT_ICON +
       ';margin-right:6px"></i>Update available</div>' +
       '<div id="vgNote" style="font-size:12px;margin-top:2px"></div>' +
       "</div>" +
       '<button id="vgReload" style="background:' +
-      BLUE +
-      ";color:#fff;border:0;border-radius:5px;font:inherit;font-weight:600;" +
+      ACCENT +
+      ";color:" + ON_ACCENT + ";border:0;border-radius:5px;font:inherit;font-weight:600;" +
       'cursor:pointer;padding:6px 12px;white-space:nowrap;margin-left:auto">Reload</button>';
     host.appendChild(pill);
     updateSoftPill();
@@ -680,21 +695,21 @@
     var card = document.createElement("div");
     card.id = "vgRecover";
     card.setAttribute("role", "status");
-    card.style.cssText = cardStyle(AMBER);
+    card.style.cssText = cardStyle(WARN);
     card.innerHTML =
       "<div>" +
       '<div style="font-weight:700"><i class="fa-solid fa-life-ring" style="color:' +
-      AMBER +
+      WARN +
       ';margin-right:6px"></i>Unsaved changes kept</div>' +
-      '<div style="font-size:12px;margin-top:2px;color:var(--text-muted,#6c757d)">' +
+      '<div style="font-size:12px;margin-top:2px;color:var(--text-muted)">' +
       n +
       " form" +
       (n === 1 ? "" : "s") +
       " had unsaved edits when the app updated.</div>" +
       "</div>" +
       '<button id="vgRecoverView" style="background:' +
-      AMBER +
-      ";color:#fff;border:0;border-radius:5px;font:inherit;font-weight:600;" +
+      WARN_FILL +
+      ";color:" + ON_WARN_FILL + ";border:0;border-radius:5px;font:inherit;font-weight:600;" +
       'cursor:pointer;padding:6px 12px;white-space:nowrap;margin-left:auto">View</button>';
     host.appendChild(card);
 
@@ -711,18 +726,25 @@
           icon: "info",
           title: "Unsaved changes from before the update",
           html:
-            '<p style="margin:0 0 8px;text-align:left;font-size:.9em;color:#6c757d">' +
+            '<p style="margin:0 0 8px;text-align:left;font-size:.9em;color:var(--text-muted)">' +
             "These were <b>not</b> submitted — they're a copy of what was on screen. " +
             "Re-enter anything you still need." +
             "</p>" +
-            '<pre style="text-align:left;max-height:45vh;overflow:auto;background:#f6f8fa;' +
-            "border:1px solid #e1e4e8;border-radius:6px;padding:10px;font-size:12px;" +
+            '<pre style="text-align:left;max-height:45vh;overflow:auto;background:var(--surface-2);' +
+            "color:var(--text);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;" +
             'white-space:pre-wrap;word-break:break-word">' +
             esc(text) +
             "</pre>",
           width: "42rem",
           confirmButtonText: "Copy",
-          confirmButtonColor: BLUE,
+          confirmButtonColor: ACCENT,
+          // confirmButtonColor only sets the background; SweetAlert2's own
+          // sheet keeps the label white, which on --accent is 2.55. Setting it
+          // inline here is the whole fix — --accent-text measures 7.57.
+          didOpen: function () {
+            var c = Swal.getConfirmButton();
+            if (c) c.style.color = ON_ACCENT;
+          },
           showDenyButton: true,
           denyButtonText: "Discard",
           showCancelButton: true,
@@ -760,8 +782,8 @@
       "left:0",
       "right:0",
       "z-index:" + Z_BANNER,
-      "background:" + AMBER,
-      "color:#fff",
+      "background:" + WARN_FILL,
+      "color:" + ON_WARN_FILL,
       "padding:9px 14px",
       "font:600 13.5px/1.35 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
       "display:flex",
@@ -774,7 +796,7 @@
     ].join(";");
     bar.innerHTML =
       '<span id="vgBannerMsg"></span>' +
-      '<button id="vgReloadNow" style="background:#fff;border:0;border-radius:5px;' +
+      '<button id="vgReloadNow" style="background:var(--surface);border:0;border-radius:5px;' +
       'padding:5px 12px;font:inherit;font-weight:700;cursor:pointer"></button>';
     document.body.appendChild(bar);
 
@@ -803,8 +825,12 @@
     if (!bar || !msg || !btn) return;
 
     var isFinal = phase === "final";
-    bar.style.background = isFinal ? RED : AMBER;
-    btn.style.color = isFinal ? RED : AMBER;
+    bar.style.background = isFinal ? DANGER_FILL : WARN_FILL;
+    // The label has to travel with the fill: --danger-fill takes white,
+    // --warn-fill takes near-black. Repainting one without the other is how
+    // white-on-amber (3.19) gets shipped.
+    bar.style.color = isFinal ? ON_DANGER_FILL : ON_WARN_FILL;
+    btn.style.color = isFinal ? DANGER : WARN;
     btn.textContent = "Reload now";
 
     if (isFinal) {
