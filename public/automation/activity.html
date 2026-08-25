@@ -6,6 +6,8 @@
   <title>Activity</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        ACTIVITY SUB-PAGE — self-contained styles.
@@ -15,31 +17,12 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy:    #1a1a2e;
-      --navy2:   #16213e;
-      --blue:    #4f8ef7;
-      --blue2:   #3a7de8;
-      --green:   #22c55e;
-      --red:     #ef4444;
-      --amber:   #f59e0b;
-      --purple:  #8b5cf6;
-      --pink:    #ec4899;
-      --teal:    #14b8a6;
-      --indigo:  #6366f1;
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --border:  #e2e8f0;
-      --muted:   #94a3b8;
-      --text:    #1e293b;
-      --text2:   #475569;
-    }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 14px;
       color: var(--text);
-      background: var(--bg);
+      background: var(--page-bg);
       display: flex;
       flex-direction: column;
       height: 100vh;
@@ -53,10 +36,11 @@
       font-size: 12px; font-weight: 500; cursor: pointer;
       transition: all 0.15s; white-space: nowrap;
     }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: var(--blue2); }
+    /* --accent, not --info: a fill. --info has no fill partner; white on it is 3.21. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--info-dark); }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
-    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
     .btn-outline:hover { background: var(--border); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -66,7 +50,7 @@
     /* ── Empty state (shared) ── */
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; color: var(--muted);
+      justify-content: center; height: 100%; color: var(--text-muted);
       gap: 10px; text-align: center;
     }
     .empty-state i { font-size: 36px; opacity: 0.25; }
@@ -84,16 +68,16 @@
     /* Segmented control (type filter + mode toggle) */
     .act-seg {
       display: inline-flex; border: 1px solid var(--border);
-      border-radius: 6px; overflow: hidden; background: var(--bg);
+      border-radius: 6px; overflow: hidden; background: var(--page-bg);
     }
     .act-seg button {
       border: none; background: none; padding: 6px 12px;
-      font-size: 12px; font-weight: 500; color: var(--text2);
+      font-size: 12px; font-weight: 500; color: var(--text-2);
       cursor: pointer; transition: all 0.12s; white-space: nowrap;
     }
     .act-seg button:not(:last-child) { border-right: 1px solid var(--border); }
-    .act-seg button:hover { background: rgba(0,0,0,0.04); }
-    .act-seg button.active { background: var(--blue); color: #fff; }
+    .act-seg button:hover { background: var(--hover); }
+    .act-seg button.active { background: var(--accent); color: var(--accent-text); }
 
     .act-select {
       padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
@@ -103,11 +87,11 @@
 
     /* Status multi-select (T7 Part C) */
     .act-status-wrap { position: relative; }
-    .act-status-btn.act-filtering { border-color: var(--blue); color: var(--blue); font-weight: 600; }
+    .act-status-btn.act-filtering { border-color: var(--info); color: var(--info); font-weight: 600; }
     .act-status-menu {
       position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,0.14);
+      border-radius: 8px; box-shadow: var(--shadow-drawer);
       padding: 8px; min-width: 240px; max-height: 340px; overflow-y: auto;
     }
     .act-status-menu.hidden { display: none; }
@@ -116,28 +100,28 @@
       padding: 4px 6px; border-radius: 5px; font-size: 12px;
       cursor: pointer; color: var(--text); white-space: nowrap;
     }
-    .act-status-menu label:hover { background: var(--bg); }
-    .act-status-menu input { accent-color: var(--blue); }
-    .act-status-src { margin-left: auto; font-size: 10px; color: var(--muted); }
+    .act-status-menu label:hover { background: var(--page-bg); }
+    .act-status-menu input { accent-color: var(--info); }
+    .act-status-src { margin-left: auto; font-size: 10px; color: var(--text-muted); }
     .act-status-clear {
       display: block; width: 100%; margin-top: 6px; padding: 5px;
       border: none; border-top: 1px solid var(--border); background: none;
-      font-size: 11px; color: var(--blue); cursor: pointer; text-align: center;
+      font-size: 11px; color: var(--info); cursor: pointer; text-align: center;
     }
 
     /* Footer paging controls (T7 Part B) */
     #act-foot .act-foot-spacer { flex: 1; }
-    #act-foot .act-foot-paused { color: var(--amber); font-weight: 600; white-space: nowrap; }
-    #act-foot .act-foot-done   { color: var(--muted); white-space: nowrap; }
+    #act-foot .act-foot-paused { color: var(--warn); font-weight: 600; white-space: nowrap; }
+    #act-foot .act-foot-done   { color: var(--text-muted); white-space: nowrap; }
 
     .act-toolbar .act-updated {
-      margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap;
+      margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap;
     }
 
     /* Per-source error strip */
     #act-errors { flex-shrink: 0; }
     .act-error-note {
-      background: #fef2f2; border-bottom: 1px solid #fecaca; color: #991b1b;
+      background: var(--danger-soft); border-bottom: 1px solid var(--danger); color: var(--danger);
       font-size: 12px; padding: 6px 16px;
       display: flex; align-items: center; gap: 8px;
     }
@@ -148,9 +132,9 @@
     .act-table { width: 100%; border-collapse: collapse; background: var(--surface); }
     .act-table th {
       position: sticky; top: 0; z-index: 1;
-      background: var(--bg); text-align: left; padding: 8px 12px;
+      background: var(--page-bg); text-align: left; padding: 8px 12px;
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
-      color: var(--text2); border-bottom: 1px solid var(--border);
+      color: var(--text-2); border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
     .act-table td {
@@ -158,20 +142,20 @@
       vertical-align: top; font-size: 13px;
     }
     .act-table tr.act-row { cursor: pointer; }
-    .act-table tr.act-row:hover { background: #f8fafc; }
+    .act-table tr.act-row:hover { background: var(--hover); }
 
     .act-type {
       display: inline-flex; align-items: center; gap: 6px;
       font-size: 12px; font-weight: 600; white-space: nowrap;
     }
     .act-type i { width: 14px; text-align: center; }
-    .act-type-workflow i { color: var(--blue); }
-    .act-type-job      i { color: var(--amber); }
-    .act-type-hook     i { color: var(--purple); }
-    .act-type-sequence i { color: var(--green); }
-    .act-type-trigger  i { color: var(--pink); }
-    .act-type-emailIngest i { color: var(--teal); }
-    .act-type-phoneIngest i { color: var(--indigo); }
+    .act-type-workflow i { color: var(--info); }
+    .act-type-job      i { color: var(--warn); }
+    .act-type-hook     i { color: var(--cat-purple); }
+    .act-type-sequence i { color: var(--ok); }
+    .act-type-trigger  i { color: var(--cat-pink); }
+    .act-type-emailIngest i { color: var(--cat-teal); }
+    .act-type-phoneIngest i { color: var(--cat-indigo); }
 
     /* Degraded marker — a green-status row whose rule ACTION failed. The
        status chip stays truthful (the ingest succeeded); this flags the
@@ -179,7 +163,7 @@
     .act-degraded {
       display: inline-block; margin-left: 6px; padding: 2px 6px;
       border-radius: 10px; font-size: 10px; font-weight: 600;
-      background: #fef2f2; color: #991b1b; white-space: nowrap;
+      background: var(--danger-soft); color: var(--danger); white-space: nowrap;
     }
 
     .act-name {
@@ -187,7 +171,7 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .act-detail {
-      color: var(--text2); font-size: 12px; max-width: 420px;
+      color: var(--text-2); font-size: 12px; max-width: 420px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
 
@@ -197,33 +181,33 @@
       font-size: 10px; font-weight: 600; text-transform: uppercase;
       white-space: nowrap;
     }
-    .act-chip-good    { background: #dcfce7; color: #166534; }
-    .act-chip-bad     { background: #fef2f2; color: #991b1b; }
-    .act-chip-warn    { background: #fef9c3; color: #854d0e; }
-    .act-chip-active  { background: #dbeafe; color: #1e40af; }
-    .act-chip-neutral { background: #f1f5f9; color: #475569; }
+    .act-chip-good    { background: var(--ok-soft);     color: var(--ok); }
+    .act-chip-bad     { background: var(--danger-soft); color: var(--danger); }
+    .act-chip-warn    { background: var(--warn-soft);   color: var(--warn); }
+    .act-chip-active  { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .act-chip-neutral { background: var(--surface-2);   color: var(--text-2); }
 
-    .act-when { white-space: nowrap; color: var(--text2); font-size: 12px; }
+    .act-when { white-space: nowrap; color: var(--text-2); font-size: 12px; }
 
     .act-json-btn {
       border: 1px solid var(--border); background: var(--surface);
       border-radius: 6px; padding: 3px 8px; font-size: 11px;
-      color: var(--text2); cursor: pointer;
+      color: var(--text-2); cursor: pointer;
     }
-    .act-json-btn:hover { background: var(--bg); }
+    .act-json-btn:hover { background: var(--page-bg); }
 
     /* Row-count / per-type-cap footer. Hidden when there is nothing to say. */
     #act-foot {
       flex-shrink: 0; background: var(--surface);
       border-top: 1px solid var(--border);
-      padding: 6px 16px; font-size: 11px; color: var(--muted);
+      padding: 6px 16px; font-size: 11px; color: var(--text-muted);
       display: flex; align-items: center; gap: 8px;
     }
     #act-foot.hidden { display: none; }
-    #act-foot .act-foot-cap { color: var(--amber); font-weight: 600; }
+    #act-foot .act-foot-cap { color: var(--warn); font-weight: 600; }
 
     .act-swal-pre {
-      text-align: left; background: #0f172a; color: #e2e8f0;
+      text-align: left; background: var(--code-bg); color: var(--code-fg);
       border-radius: 8px; padding: 12px; font-size: 11px;
       max-height: 55vh; overflow: auto; white-space: pre-wrap;
       word-break: break-word;
