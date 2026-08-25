@@ -45,6 +45,23 @@ body{font-family: Arial, Helvetica, sans-serif}
 .active {
   background-color: var(--surface-2);
 }
+/* The selected tab. `.active` alone is not tab-specific — .editor-tab.active,
+   .left-item.active, .step-card.active, .tab-content.active, .cseq-scope-btn,
+   .tg-tab, .crel-scope-btn and .filter-btn all inherit it across eight pages
+   that load this sheet — so it stays on --surface-2 and the tab strip takes a
+   more specific rule instead.
+
+   Background is a tab's ONLY state affordance, so what matters is separation
+   from an inactive .tab (--sidebar-bg), not the label's contrast. --surface-2
+   gives 1.05:1 light / 1.10:1 dark — the selected tab effectively disappears.
+   --accent gives 2.40 light / 6.52 dark, with the label at 7.57 in both.
+   Better than the pre-token #aaaaaa (2.19) but still short of SC 1.4.11's
+   3:1 in light; closing that needs a fill notably darker than the brand blue,
+   which is a design decision, not a conversion one. */
+.tab.active {
+  background-color: var(--accent);
+  color: var(--accent-text);
+}
 .tab-main {
   display: none;
   text-align: center;
