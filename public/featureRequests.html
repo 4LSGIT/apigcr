@@ -6,29 +6,15 @@
 <title>Feature Requests</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <style>
-  :root {
-    --bg:        #f4f6f9;
-    --card:      #ffffff;
-    --border:    #e2e8f0;
-    --accent:    #0071e3;
-    --accent2:   #5856d6;
-    --text:      #1a202c;
-    --muted:     #718096;
-    --admin-bg:  #fff8e1;
-    --admin-bdr: #f6cc2f;
-    --tag-bug:   #fff0f0;
-    --tag-bug-c: #c53030;
-    --tag-feat:  #f0f7ff;
-    --tag-feat-c:#2b6cb0;
-    --radius:    10px;
-  }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
     font-family: "Segoe UI", system-ui, sans-serif;
-    background: var(--bg);
+    background: var(--page-bg);
     color: var(--text);
     padding: 1.5rem;
     min-height: 100vh;
@@ -63,15 +49,15 @@
     padding: .35rem .85rem;
     border: 1px solid var(--border);
     border-radius: 20px;
-    background: var(--card);
+    background: var(--surface);
     font-size: .8rem;
     cursor: pointer;
     transition: all .15s;
-    color: var(--muted);
+    color: var(--text-muted);
   }
   .filter-btn.active, .filter-btn:hover {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
     border-color: var(--accent);
   }
 
@@ -79,7 +65,7 @@
   #requestList { display: flex; flex-direction: column; gap: .85rem; }
 
   .req-card {
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 1rem 1.1rem;
@@ -89,7 +75,7 @@
     align-items: start;
     transition: box-shadow .15s;
   }
-  .req-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+  .req-card:hover { box-shadow: var(--shadow); }
 
   /* Vote column */
   .vote-col {
@@ -107,20 +93,20 @@
     height: 36px;
     cursor: pointer;
     font-size: 1rem;
-    color: var(--muted);
+    color: var(--text-muted);
     transition: all .15s;
     display: flex; align-items: center; justify-content: center;
   }
   .vote-btn.voted {
-    background: #fff3cd;
-    border-color: #f6cc2f;
-    color: #b7791f;
+    background: var(--warn-soft);
+    border-color: var(--warn);
+    color: var(--warn);
   }
   .vote-btn:hover:not(.voted) {
     border-color: var(--accent);
     color: var(--accent);
   }
-  .vote-count { font-size: .8rem; font-weight: 600; color: var(--muted); }
+  .vote-count { font-size: .8rem; font-weight: 600; color: var(--text-muted); }
 
   /* Main content */
   .req-main { min-width: 0; }
@@ -145,8 +131,8 @@
     text-transform: uppercase;
     letter-spacing: .04em;
   }
-  .tag-bug     { background: var(--tag-bug);  color: var(--tag-bug-c); }
-  .tag-feature { background: var(--tag-feat); color: var(--tag-feat-c); }
+  .tag-bug     { background: var(--danger-soft);  color: var(--danger); }
+  .tag-feature { background: var(--accent-soft); color: var(--accent); }
 
   .stage-badge {
     font-size: .7rem;
@@ -155,16 +141,22 @@
     font-weight: 600;
     white-space: nowrap;
   }
-  .stage-considering  { background:#e9ecef; color:#495057; }
-  .stage-planning     { background:#d0ebff; color:#1864ab; }
-  .stage-working_on_it{ background:#d3f9d8; color:#2b8a3e; }
-  .stage-implemented  { background:#b2f2bb; color:#1b5e20; }
-  .stage-future_thought{ background:#fff0f6; color:#862e9c; }
-  .stage-rejected     { background:#ffe3e3; color:#c92a2a; }
+  /* Six stages, and the sheet ships four usable hues. working_on_it and
+     implemented are both green; they are separated by tint-vs-fill the same
+     way systemAlerts separates error from critical, rather than by finding a
+     sixth hue. future_thought keeps --cat-purple even though it measures 3.81
+     in light: a fill can be one mode-independent literal, but TEXT cannot —
+     #6d28d9 would read 6.39 light and 2.13 dark. That one needs the sheet. */
+  .stage-considering  { background:var(--surface-2);   color:var(--text-2); }
+  .stage-planning     { background:var(--accent-soft); color:var(--accent-on-soft); }
+  .stage-working_on_it{ background:var(--ok-soft);     color:var(--ok); }
+  .stage-implemented  { background:var(--ok-fill);     color:var(--fill-text); }
+  .stage-future_thought{ background:var(--surface-2);  color:var(--cat-purple); }
+  .stage-rejected     { background:var(--danger-soft); color:var(--danger); }
 
   .req-desc {
     font-size: .875rem;
-    color: #4a5568;
+    color: var(--text-2);
     line-height: 1.5;
     margin-bottom: .5rem;
   }
@@ -185,22 +177,22 @@
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    background: linear-gradient(90deg, var(--accent), var(--cat-indigo));
     border-radius: 4px;
     transition: width .4s ease;
   }
-  .progress-label { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+  .progress-label { font-size: .75rem; color: var(--text-muted); white-space: nowrap; }
 
   .status-note {
     font-size: .78rem;
-    color: var(--muted);
+    color: var(--text-muted);
     font-style: italic;
     margin-bottom: .4rem;
   }
 
   .req-meta {
     font-size: .75rem;
-    color: var(--muted);
+    color: var(--text-muted);
     display: flex;
     gap: .85rem;
     flex-wrap: wrap;
@@ -225,7 +217,7 @@
     padding: .3rem .6rem;
     font-size: .75rem;
     cursor: pointer;
-    color: var(--muted);
+    color: var(--text-muted);
     white-space: nowrap;
     transition: all .15s;
   }
@@ -241,7 +233,7 @@
   .comments-section.open { display: block; }
 
   .comment-item {
-    background: #f8fafc;
+    background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: .65rem .85rem;
@@ -249,8 +241,8 @@
     font-size: .85rem;
   }
   .comment-item.is-admin {
-    background: var(--admin-bg);
-    border-color: var(--admin-bdr);
+    background: var(--warn-soft);
+    border-color: var(--warn);
   }
   .comment-item.is-reply { margin-left: 1.5rem; }
   .comment-header {
@@ -261,8 +253,8 @@
   }
   .comment-author { font-weight: 600; font-size: .78rem; }
   .comment-author .admin-tag {
-    background: #f6cc2f;
-    color: #7a5700;
+    background: var(--warn-fill);
+    color: var(--warn-text);
     font-size: .65rem;
     padding: .1rem .4rem;
     border-radius: 4px;
@@ -270,8 +262,8 @@
     font-weight: 700;
     text-transform: uppercase;
   }
-  .comment-date { font-size: .72rem; color: var(--muted); }
-  .comment-text { color: #2d3748; line-height: 1.5; }
+  .comment-date { font-size: .72rem; color: var(--text-muted); }
+  .comment-text { color: var(--text); line-height: 1.5; }
   .reply-btn {
     background: none; border: none; color: var(--accent);
     font-size: .72rem; cursor: pointer; padding: .2rem 0 0 0;
@@ -299,18 +291,18 @@
   .comment-form button {
     padding: .55rem 1rem;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
     border: none;
     border-radius: 8px;
     cursor: pointer;
     font-size: .85rem;
     white-space: nowrap;
   }
-  .comment-form button:hover { background: #0056b3; }
+  .comment-form button:hover { background: var(--accent-dark); }
 
   /* ── SUBMIT FORM ── */
   .submit-card {
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 1.25rem;
@@ -334,7 +326,7 @@
   .submit-btn {
     padding: .6rem 1.4rem;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
     border: none;
     border-radius: 8px;
     cursor: pointer;
@@ -342,10 +334,10 @@
     font-weight: 600;
     transition: background .15s;
   }
-  .submit-btn:hover { background: #0056b3; }
+  .submit-btn:hover { background: var(--accent-dark); }
 
   /* ── EMPTY ── */
-  .empty { text-align: center; color: var(--muted); padding: 3rem 1rem; }
+  .empty { text-align: center; color: var(--text-muted); padding: 3rem 1rem; }
   .empty i { font-size: 2rem; margin-bottom: .75rem; display: block; }
 
   /* ── HIDDEN ADMIN ONLY ── */
@@ -356,8 +348,8 @@
 
   .hidden-badge {
     font-size: .68rem;
-    background: #e2e8f0;
-    color: #718096;
+    background: var(--border);
+    color: var(--text-muted);
     padding: .1rem .4rem;
     border-radius: 4px;
   }
@@ -388,7 +380,7 @@
   <button class="submit-btn" onclick="submitRequest()">
     <i class="fa-solid fa-paper-plane"></i> Submit
   </button>
-  <button class="submit-btn" style="background:#6c757d;margin-left:.5rem" onclick="toggleSubmitForm()">
+  <button class="submit-btn" style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);margin-left:.5rem" onclick="toggleSubmitForm()">
     Cancel
   </button>
 </div>
@@ -531,7 +523,7 @@ function renderCard(r) {
 
       <!-- Comments section -->
       <div class="comments-section" id="comments-${r.id}">
-        <div id="commentsList-${r.id}"><em style="font-size:.8rem;color:var(--muted)">Loading…</em></div>
+        <div id="commentsList-${r.id}"><em style="font-size:.8rem;color:var(--text-muted)">Loading…</em></div>
         <div class="comment-form" id="replyTarget-${r.id}">
           <textarea id="commentText-${r.id}" placeholder="Add a comment…"></textarea>
           <button onclick="submitComment(${r.id})"><i class="fa-solid fa-paper-plane"></i></button>
@@ -578,7 +570,7 @@ async function loadComments(requestId) {
     const comments = res.data || [];
 
     if (!comments.length) {
-      container.innerHTML = `<p style="font-size:.8rem;color:var(--muted)">No comments yet.</p>`;
+      container.innerHTML = `<p style="font-size:.8rem;color:var(--text-muted)">No comments yet.</p>`;
       return;
     }
 
@@ -621,7 +613,7 @@ function setReplyTarget(requestId, parentId) {
     const btn = document.createElement('button');
     btn.textContent = '✕';
     btn.className = 'cancel-reply';
-    btn.style.cssText = 'background:#6c757d;padding:.55rem .7rem';
+    btn.style.cssText = 'background:var(--surface-2);color:var(--text);border:1px solid var(--border);padding:.55rem .7rem';
     btn.onclick = () => cancelReply(requestId);
     form.appendChild(btn);
   }
@@ -696,16 +688,16 @@ async function adminEdit(e, id) {
     html: `
       <div style="text-align:left">
         <label style="display:block;margin-bottom:.4rem;font-weight:600;font-size:.85rem">Stage</label>
-        <select id="swalStage" style="width:100%;padding:.5rem;border:1px solid #ccc;border-radius:6px;margin-bottom:.85rem">
+        <select id="swalStage" style="width:100%;padding:.5rem;border:1px solid var(--border);border-radius:6px;margin-bottom:.85rem">
           ${['considering','planning','working_on_it','implemented','future_thought','rejected'].map(s =>
             `<option value="${s}" ${r.stage===s?'selected':''}>${STAGE_LABELS[s]}</option>`
           ).join('')}
         </select>
 
-        <label style="display:block;margin-bottom:.4rem;font-weight:600;font-size:.85rem">Status note <span style="font-weight:400;color:#718096">(max 64 chars)</span></label>
+        <label style="display:block;margin-bottom:.4rem;font-weight:600;font-size:.85rem">Status note <span style="font-weight:400;color:var(--text-muted)">(max 64 chars)</span></label>
         <input id="swalNote" type="text" maxlength="64"
                value="${escHtml(r.status_note || '')}"
-               style="width:100%;padding:.5rem;border:1px solid #ccc;border-radius:6px;margin-bottom:.85rem">
+               style="width:100%;padding:.5rem;border:1px solid var(--border);border-radius:6px;margin-bottom:.85rem">
 
         <label style="display:block;margin-bottom:.4rem;font-weight:600;font-size:.85rem">Progress: <span id="swalProgLabel">${r.progress}%</span></label>
         <input id="swalProg" type="range" min="0" max="100" value="${r.progress}"
