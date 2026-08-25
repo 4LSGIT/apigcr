@@ -87,9 +87,23 @@ Every semantic colour has **three** roles, not two. The mockup modelled one.
 
 | role | token | why |
 |---|---|---|
-| text or icon on a plain surface | `--ok` / `--warn` / `--danger` / `--accent` | lightens in dark so it stays readable on a dark surface |
+| text or icon on a plain surface | `--ok` / `--warn` / `--danger` / `--info` / `--cat-*` / **`--accent-2`** | lightens in dark so it stays readable on a dark surface |
 | solid button / chip background | `--ok-fill` / `--warn-fill` / `--danger-fill` | mode-independent — a fill needs the same contrast against its label in both modes |
 | text on that colour's own `-soft` tint | `--accent-on-soft` only | see below |
+
+**`--accent` is NOT in that first row, and that is the point.** It measures
+2.29–2.55 as text on light surfaces. `#07ADEF` is the brand and cannot be
+retuned, so the role boundary does the work instead: `--accent` is for fills
+and large decoration; **`--accent-2` is the token for accent-coloured text.**
+An earlier version of this table listed `--accent` under role 1 and was wrong.
+
+**Every light value inherited from the mockup failed as text**, measured on
+`--surface-2`: `--ok` 2.96, `--warn` 2.87, `--danger` 3.56, `--info` 2.89,
+`--text-muted` 4.22, all four `--cat-*` 2.24–4.47. The mockup was designed
+against its own dark preview. All are retuned; dark values were always fine and
+are unchanged. If you are converting a page and a colour looks right in dark and
+washed out in light, this is the shape of it — report it rather than patching
+the page.
 
 **The third role is deprecated for ok/warn/danger.** It existed because the
 light values of those three were too pale to read on their own tint. Slice 6b
@@ -122,6 +136,13 @@ label stays `--danger`. `background: var(--danger)` on a button becomes
 
 `--accent-2` is text-only — 13 sites, all `color:`, zero fills — so it has no
 fill or soft partner.
+
+**Categorical hues have fill partners:** `--cat-purple-fill`, `--cat-teal-fill`,
+`--cat-indigo-fill`, `--cat-pink-fill`, label `--fill-text`. They are
+mode-independent and identical to the light hues, because a fill's label
+travels with it and so needs no per-mode value — whereas text sits on a surface
+that changes, and does. `--info` has no fill partner: nine sites that needed one
+took `--accent` + `--accent-text`, which is the correct resolution.
 
 There are 17 such fill sites across 14 files. Every one is a `background` or
 `background-color` declaration; `grep -nE "background(-color)?:\s*var\(--(danger|warn|ok)\)"`

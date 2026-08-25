@@ -47,7 +47,7 @@
 
   --text: #2c3e50;
   --text-2: #5a6b7c;
-  --text-muted: #6c757d;
+  --text-muted: #5a636e;   /* RETUNED from #6c757d — 4.22 on --surface-2 */
 
   /* RETUNED from the mockup's #16a34a / #d97706 / #d9534f. Those measured
      2.87–3.96 as text on every light surface (--surface, --page-bg,
@@ -55,11 +55,19 @@
      a border label. The mockup's values were chosen against its dark preview;
      the light direction was never checked. These pass on all three light
      surfaces (5.86–6.93) AND on their own -soft tint (5.70–5.95), which is
-     what makes the -on-soft role below redundant for these three. */
+     what makes the -on-soft role below redundant for these three.
+
+     This turned out not to be three tokens but a PATTERN. Every light value
+     inherited from the mockup failed as text, measured on --surface-2 (the
+     worst of the three light surfaces): --info 2.89, --text-muted 4.22, all
+     four --cat-* 2.24–4.47, --accent 2.29. The mockup was designed against
+     its own dark preview and the light direction was never checked in any of
+     them. All are now retuned except --accent, which is the brand and cannot
+     move — see the --accent-2 note below. */
   --ok: #136c34;
   --warn: #96450a;
   --danger: #a52f23;
-  --info: #4f8ef7;
+  --info: #1d5fd0;   /* RETUNED from #4f8ef7 — 2.89 on --surface-2 */
   --ok-soft: rgba(22, 163, 74, .12);
   --warn-soft: rgba(217, 119, 6, .12);
   --danger-soft: rgba(217, 83, 79, .12);
@@ -135,6 +143,10 @@
      1.92:1 on white: pale-blue-on-white, effectively unreadable. #0d6f94 is
      5.65 on --surface and 5.08 on --surface-2. The dark block keeps the light
      blue, which is correct there. */
+  /* --accent-2 is ALSO THE TOKEN FOR ACCENT-COLOURED TEXT. --accent itself
+     measures 2.29–2.55 on light surfaces: it is a fill and large-decoration
+     colour only and must not carry body-sized text. That is a role boundary,
+     not a defect to fix — #07ADEF is the brand. */
   --accent-2: #0d6f94;
   --info-dark: #3a7de8;
   --info-soft: rgba(79, 142, 247, .12);
@@ -154,10 +166,22 @@
      needs distinct hues that carry no status meaning. Mapping these onto
      ok/warn/danger would make unrelated rows read as errors. Keep the set
      small — four is the ceiling; do not grow it to cover one-off badges. */
-  --cat-purple: #8b5cf6;
-  --cat-teal: #14b8a6;
-  --cat-indigo: #6366f1;
-  --cat-pink: #ec4899;
+  /* RETUNED from #8b5cf6 / #14b8a6 / #6366f1 / #ec4899 — all four failed AA
+     as light text (2.24–4.47 on --surface-2). Dark values below unchanged;
+     they were always fine. */
+  --cat-purple: #6d28d9;
+  --cat-teal: #0f766e;
+  --cat-indigo: #4338ca;
+  --cat-pink: #be185d;
+
+  /* Categorical FILLS. Mode-INDEPENDENT, and deliberately identical to the
+     light hues above — those are already dark enough to carry a white label
+     (5.47–7.90). The dark hues are not (white on #a78bfa is 2.72), which is
+     why a fill cannot simply reuse --cat-*. Label: --fill-text. */
+  --cat-purple-fill: #6d28d9;
+  --cat-teal-fill: #0f766e;
+  --cat-indigo-fill: #4338ca;
+  --cat-pink-fill: #be185d;
 
   /* ── ADDED: density scale (measured off the mockup) ──────────────────
      Optional in the colour pass, mandatory in the density pass. These are
