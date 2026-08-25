@@ -3,46 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <title>Form Builder</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script src="/js/assetpicker.js"></script>
 <style>
   /* Admin-page conventions (users.html palette). Page-local only — no shared CSS touched. */
-  :root {
-    --bg: #0f1117;
-    --panel: #161a23;
-    --panel2: #1b2030;
-    --border: #2a3040;
-    --fg: #d8dde6;
-    --muted: #8a93a3;
-    --accent: #07ADEF;
-    --danger: #d94c4c;
-    --ok: #4ad28b;
-    --warn: #e0b341;
-    --repeat: #9a6ff0;
-  }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; height: 100%;
-    background: var(--bg); color: var(--fg);
+    background: var(--page-bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 13px;
   }
   body { padding: 10px; display: flex; flex-direction: column; }
   h2 { margin: 0 0 8px; font-size: 16px; }
-  .muted { color: var(--muted); font-size: 11px; }
+  .muted { color: var(--text-muted); font-size: 11px; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   button {
-    background: var(--accent); color: white; border: none;
+    background: var(--accent); color: var(--accent-text); border: none;
     padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
   }
   button:hover { opacity: 0.85; }
-  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--border); }
-  button.danger { background: var(--danger); }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--danger-fill); }
   button.small { font-size: 11px; padding: 2px 6px; }
   button[disabled] { opacity: .5; cursor: not-allowed; }
   input, select, textarea {
-    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
     padding: 5px 8px; border-radius: 4px; font-size: 12px;
     font-family: inherit; width: 100%;
   }
@@ -51,7 +40,7 @@
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   input.bad, textarea.bad { border-color: var(--danger); }
   .panel {
-    background: var(--panel); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: 6px; padding: 12px;
   }
   .err { color: var(--danger); font-size: 12px; }
@@ -60,7 +49,7 @@
   /* ── Flash (transient status, e.g. blocked repeater drop) ── */
   #flash {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-    background: var(--panel2); border: 1px solid var(--warn); color: var(--warn);
+    background: var(--surface-2); border: 1px solid var(--warn); color: var(--warn);
     padding: 6px 14px; border-radius: 4px; font-size: 12px; z-index: 50;
     display: none; max-width: 70vw;
   }
@@ -68,7 +57,7 @@
   /* ── Top bar ─────────────────────────────────────────────── */
   #topbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    background: var(--panel); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;
   }
   #topbar input#titleInput { width: 260px; font-size: 13px; font-weight: 600; }
@@ -78,17 +67,21 @@
     display: inline-block; padding: 1px 6px; border-radius: 3px;
     font-size: 10px; font-weight: 500; white-space: nowrap;
   }
-  .badge.link  { background: rgba(7,173,239,.15);  color: var(--accent); }
-  .badge.pub   { background: rgba(74,210,139,.15); color: var(--ok); }
-  .badge.draft { background: rgba(224,179,65,.15); color: var(--warn); }
-  .badge.vis   { background: rgba(240,111,111,.15); color: var(--danger); margin-left: 6px; text-transform: uppercase; }
+  .badge.link  { background: var(--accent-soft); color: var(--accent); }
+  .badge.pub   { background: var(--ok-soft);     color: var(--ok); }
+  .badge.draft { background: var(--warn-soft);   color: var(--warn); }
+  .badge.vis   { background: var(--danger-soft); color: var(--danger); margin-left: 6px; text-transform: uppercase; }
   /* X1 visibility select (EXTERNAL_FORMS_DESIGN §3) — badge-sized control */
   #visSelect { width: auto; font-size: 11px; padding: 2px 4px; }
   #visSelect.exposed { border-color: var(--danger); color: var(--danger); font-weight: 600; }
   /* Standing "runs in clients' browsers" notice (published def carries
      code/css/hooks/embed while visibility is portal/public). Persistent,
      unlike the transient publish-time notice in errBar. */
-  #extDarkBadge { background: var(--danger); color: #fff; cursor: help; }
+  #extDarkBadge { background: var(--danger-fill); color: var(--accent-text); cursor: help; }
+  /* NOT a §3.1 fill despite matching the grep: this is a bare 8px dot with no
+     label on it — an icon, which §3.1 puts on the TEXT token. Measured,
+     --warn is 3.19:1 light / 8.47:1 dark against the surface it sits on and
+     --warn-fill is 3.19 / 4.62, so the text token wins or ties in both. */
   #dirtyDot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); display: none; }
   #topSpacer { flex: 1; }
   #errBar { max-width: 420px; }
@@ -98,7 +91,7 @@
   #palette   { width: 170px; flex: none; overflow-y: auto; }
   #canvasCol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   #tabStrip  { display: flex; gap: 4px; margin-bottom: 6px; }
-  #tabStrip button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #tabStrip button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   #workArea  { display: flex; gap: 8px; flex: 1; min-height: 0; }
   #canvas    { flex: 1; min-width: 0; overflow-y: auto; padding: 10px; }
   #jsonPane  { flex: 1; min-width: 0; display: none; flex-direction: column; padding: 10px; }
@@ -108,6 +101,9 @@
   #previewPane.show { display: flex; }
   #prevBar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   #prevBar input { width: auto; }
+  /* #fff stays a literal on both preview frames. They render the PUBLIC form
+     as a respondent sees it, so the white is that document's canvas, not
+     builder chrome. Only the border around them follows the theme. */
   #previewFrame {
     flex: 1; border: 1px solid var(--border); border-radius: 4px;
     background: #fff; width: 100%;
@@ -138,17 +134,17 @@
   #settingsPane .ins-group,
   #settingsPane .ins-group:first-of-type {
     border: 1px solid var(--border); border-radius: 6px;
-    background: var(--panel2); margin-top: 0; padding: 10px;
+    background: var(--surface-2); margin-top: 0; padding: 10px;
   }
   /* Groups that need the width: long URLs, code/CSS textareas, rule rows. */
   #settingsPane .ins-group.wide { grid-column: 1 / -1; }
-  #insHint { color: var(--muted); font-size: 11px; font-style: italic; line-height: 1.5; }
+  #insHint { color: var(--text-muted); font-size: 11px; font-style: italic; line-height: 1.5; }
   .pane {
-    background: var(--panel); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: 6px; padding: 10px;
   }
   .pane h3 {
-    margin: 0 0 8px; font-size: 12px; color: var(--muted);
+    margin: 0 0 8px; font-size: 12px; color: var(--text-muted);
     text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
   }
 
@@ -156,7 +152,7 @@
   .pal-item {
     border: 1px solid var(--border); border-radius: 4px;
     padding: 5px 8px; margin-bottom: 5px; font-size: 12px;
-    background: var(--panel2); cursor: grab; user-select: none;
+    background: var(--surface-2); cursor: grab; user-select: none;
   }
   .pal-item:hover { border-color: var(--accent); }
   .pal-sep { margin: 10px 0 6px; }
@@ -164,27 +160,27 @@
   /* ── Canvas ──────────────────────────────────────────────── */
   #canvas:empty::after {
     content: 'No sections — drag one in from the palette, or click "Section".';
-    color: var(--muted); font-size: 11px; font-style: italic; display: block; padding: 8px;
+    color: var(--text-muted); font-size: 11px; font-style: italic; display: block; padding: 8px;
   }
   .cv-section {
     border: 1px solid var(--border); border-radius: 6px;
-    background: var(--panel2); margin-bottom: 10px; overflow: hidden;
+    background: var(--surface-2); margin-bottom: 10px; overflow: hidden;
   }
-  .cv-section.repeater { border-color: var(--repeat); }
+  .cv-section.repeater { border-color: var(--cat-purple); }
   .cv-sec-head {
     padding: 7px 10px; cursor: grab; display: flex; align-items: center; gap: 8px;
     border-bottom: 1px solid var(--border); user-select: none;
   }
-  .cv-sec-head:hover { background: rgba(255,255,255,.03); }
+  .cv-sec-head:hover { background: var(--hover); }
   .cv-sec-title { font-weight: 600; font-size: 13px; }
-  .cv-sec-sub { color: var(--muted); font-size: 11px; margin-left: 2px; }
-  .badge.rep { background: rgba(154,111,240,.18); color: var(--repeat); }
-  .badge.sw  { background: rgba(224,179,65,.15);  color: var(--warn); }
-  .badge.col { background: rgba(74,210,139,.15);  color: var(--ok); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .cv-sec-sub { color: var(--text-muted); font-size: 11px; margin-left: 2px; }
+  .badge.rep { background: var(--surface-2); color: var(--cat-purple); }  /* no --cat-*-soft in the sheet */
+  .badge.sw  { background: var(--warn-soft);   color: var(--warn); }
+  .badge.col { background: var(--ok-soft);     color: var(--ok); font-family: ui-monospace, Menlo, Consolas, monospace; }
   .cv-rows { padding: 8px; min-height: 20px; }
   .cv-rows:empty::after {
     content: 'no rows — click "+ row" below, or drop a row here';
-    color: var(--muted); font-size: 11px; font-style: italic; display: block; padding: 4px;
+    color: var(--text-muted); font-size: 11px; font-style: italic; display: block; padding: 4px;
   }
   .cv-sec-foot { padding: 0 8px 8px; }
   .cv-row {
@@ -192,7 +188,7 @@
   }
   .cv-row-handle {
     flex: none; width: 46px; border-radius: 4px; border: 1px dashed var(--border);
-    color: var(--muted); font-size: 9px; cursor: grab; user-select: none;
+    color: var(--text-muted); font-size: 9px; cursor: grab; user-select: none;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   }
   .cv-row-handle:hover { border-color: var(--accent); color: var(--accent); }
@@ -202,18 +198,18 @@
   }
   .cv-row-fields:empty { border: 1px dashed var(--border); }
   .cv-row-fields:empty::after {
-    content: 'drop fields here'; color: var(--muted); font-size: 11px;
+    content: 'drop fields here'; color: var(--text-muted); font-size: 11px;
     font-style: italic; padding: 8px; align-self: center;
   }
   .cv-rep-body { padding: 8px; }
   .cv-field {
-    border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 4px; background: var(--page-bg);
     padding: 5px 8px; cursor: grab; min-width: 120px; user-select: none;
   }
   .cv-field:hover { border-color: var(--accent); }
   .cv-field .fname { font-size: 11px; }
   .cv-field .flabel { font-size: 12px; margin-top: 1px; }
-  .badge.ftype { background: rgba(138,147,163,.15); color: var(--muted); }
+  .badge.ftype { background: var(--surface-2); color: var(--text-muted); }
   .selected { outline: 2px solid var(--accent); outline-offset: -1px; }
   .cv-sec-head.selected { outline-offset: -2px; }
   .req-star { color: var(--danger); }
@@ -226,16 +222,16 @@
   .ins-group { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; }
   .ins-group:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
   .ins-group > .gtitle {
-    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    font-size: 11px; color: var(--text-muted); text-transform: uppercase;
     letter-spacing: .04em; margin-bottom: 6px; font-weight: 600;
   }
   .prop { margin-bottom: 8px; }
-  .prop > label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-  .prop .help { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+  .prop > label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+  .prop .help { font-size: 10px; color: var(--text-muted); margin-top: 3px; line-height: 1.35; }
   .prop .perr { font-size: 11px; color: var(--danger); margin-top: 3px; display: none; }
   .prop .perr.show { display: block; }
   .prop.inline { display: flex; align-items: center; gap: 6px; }
-  .prop.inline > label { margin: 0; font-size: 12px; color: var(--fg); cursor: pointer; }
+  .prop.inline > label { margin: 0; font-size: 12px; color: var(--text); cursor: pointer; }
   .prop.inline input[type=checkbox] { margin: 0; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -251,8 +247,8 @@
   #opSearch { flex: 1; }
   table.op-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .op-table th, .op-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  .op-table th { color: var(--muted); font-weight: 500; }
-  .op-table tr.op-row:hover td { background: rgba(255,255,255,.03); }
+  .op-table th { color: var(--text-muted); font-weight: 500; }
+  .op-table tr.op-row:hover td { background: var(--hover); }
   .op-table td.acts { white-space: nowrap; text-align: right; }
   .op-table td.acts button { margin-left: 4px; }
 
@@ -264,12 +260,12 @@
   .hist-scroll { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
   table.hist-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .hist-table th, .hist-table td { text-align: left; padding: 5px 7px; border-bottom: 1px solid var(--border); }
-  .hist-table th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+  .hist-table th { color: var(--text-muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
   .hist-table td.acts { white-space: nowrap; text-align: right; }
   .hist-table td.acts button { margin-left: 4px; }
-  .badge.nochange { background: rgba(138,147,163,.15); color: var(--muted); }
-  .badge.sub  { background: rgba(74,210,139,.15); color: var(--ok); }
-  .badge.drft { background: rgba(224,179,65,.15); color: var(--warn); }
+  .badge.nochange { background: var(--surface-2); color: var(--text-muted); }
+  .badge.sub  { background: var(--ok-soft);    color: var(--ok); }
+  .badge.drft { background: var(--warn-soft);  color: var(--warn); }
   #histSubFilters { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
   #histSubFilters input, #histSubFilters select { width: auto; }
   #histDetail { display: none; flex: 1; min-height: 0; flex-direction: column; }
@@ -278,18 +274,22 @@
   #histDetailTa { flex: 1; min-height: 200px; }
 /* ── Tabbed layout (2.6) ── */
 #canvas .cv-tabstrip { display:flex; align-items:center; gap:4px; flex-wrap:wrap;
-  padding:6px 4px; border-bottom:2px solid var(--line, #d8d8e0); margin-bottom:10px; }
-#canvas .cv-tab { border:1px solid var(--line, #d8d8e0); border-bottom:none;
-  border-radius:6px 6px 0 0; background:#f2f2f6; padding:5px 14px; cursor:pointer;
-  font-size:.85rem; color:#555; }
-#canvas .cv-tab.active { background:#fff; color:#111; font-weight:600;
-  border-color:#888; position:relative; top:2px; }
+  padding:6px 4px; border-bottom:2px solid var(--border); margin-bottom:10px; }
+/* This block was a light palette hardcoded inside a dark page — #f2f2f6 chips
+   with #555 text on the dark canvas, and a #fff active tab. It is builder
+   chrome, not a fidelity preview (that is #previewFrame), so it tokenises.
+   Left alone the active tab would have been #fff on --page-bg #f6f7f9. */
+#canvas .cv-tab { border:1px solid var(--border); border-bottom:none;
+  border-radius:6px 6px 0 0; background:var(--surface-2); padding:5px 14px; cursor:pointer;
+  font-size:.85rem; color:var(--text-2); }
+#canvas .cv-tab.active { background:var(--surface); color:var(--text); font-weight:600;
+  border-color:var(--border-strong); position:relative; top:2px; }
 #canvas .cv-tabctl { margin-left:auto; display:inline-flex; gap:3px; }
 #canvas .cv-region { margin-bottom:10px; }
-#canvas .cv-region.sticky { border:1px dashed #b9b9c6; border-radius:8px;
-  padding:6px 8px 8px; background:rgba(120,120,150,.04); }
+#canvas .cv-region.sticky { border:1px dashed var(--border-strong); border-radius:8px;
+  padding:6px 8px 8px; background:var(--surface-2); }
 #canvas .cv-region-label { font-size:.72rem; text-transform:uppercase;
-  letter-spacing:.05em; color:#888; margin-bottom:6px; }
+  letter-spacing:.05em; color:var(--text-muted); margin-bottom:6px; }
 #canvas .cv-region-hint { font-size:.8rem; padding:8px 4px; }
 #canvas .cv-moveto { margin-left:auto; flex:none; }
 </style>
@@ -399,7 +399,7 @@
       <div id="historyPane" class="pane">
         <div id="histLists">
           <div class="hist-col">
-            <h3 style="margin:0 0 6px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;">Published versions</h3>
+            <h3 style="margin:0 0 6px; font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em;">Published versions</h3>
             <div class="hist-scroll">
               <table class="hist-table">
                 <thead><tr><th>v</th><th>Published</th><th>By</th><th></th></tr></thead>
@@ -409,7 +409,7 @@
             <div id="histVerErr" class="err" style="margin-top:4px;"></div>
           </div>
           <div class="hist-col">
-            <h3 style="margin:0 0 6px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;">Submissions</h3>
+            <h3 style="margin:0 0 6px; font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em;">Submissions</h3>
             <div id="histSubFilters">
               <select id="histSubStatus">
                 <option value="">any status</option>
@@ -744,7 +744,7 @@ function flash(msg) {
     // no-innerHTML rule for any model strings inside the message.
     Swal.fire({ toast: true, position: 'top', icon: 'warning', text: msg,
       timer: 2600, showConfirmButton: false,
-      background: 'var(--panel2)', color: 'var(--warn)' });
+      background: 'var(--surface-2)', color: 'var(--warn)' });
     return;
   }
   const f = E('flash');
@@ -771,7 +771,7 @@ function ycConfirm(message, opts) {
     confirmButtonText: opts.confirmText || 'OK',
     cancelButtonText: 'Cancel',
     confirmButtonColor: opts.danger ? 'var(--danger)' : 'var(--accent)',
-    background: 'var(--panel)', color: 'var(--fg)',
+    background: 'var(--surface)', color: 'var(--text)',
     width: 480, reverseButtons: true, focusCancel: !!opts.danger,
   }).then(r => !!r.isConfirmed);
 }
@@ -933,7 +933,7 @@ async function newTemplateDialog() {
     confirmButtonText: 'Create & open',
     cancelButtonText: 'Cancel',
     confirmButtonColor: 'var(--accent)',
-    background: 'var(--panel)', color: 'var(--fg)',
+    background: 'var(--surface)', color: 'var(--text)',
     width: 520, reverseButtons: true,
     didOpen: () => keyIn.focus(),
     showLoaderOnConfirm: true,
