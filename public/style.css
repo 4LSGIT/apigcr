@@ -71,10 +71,31 @@ body{font-family: var(--ui)}
   padding: 20px;
   text-align:center;
 }
+/* The selector stays as it is. It weighs 0,2,1 -- see the note below on
+   ContactPicker -- and that weight is load-bearing. Rewriting the guards as
+   :where() would drop it to 0,1,1 and hand the cascade to page rules that
+   currently lose; C12 shipped :where() for the opposite reason, to make a
+   theme.css BACKSTOP stop outranking page rules. Different rule, different
+   job, opposite fix.
+
+   `.input-ta` and `.input` are dead -- no markup anywhere in the repo. Left in
+   the selector rather than removed: deleting them changes nothing rendered and
+   this slice is about density, not selector archaeology.
+
+   padding 10px -> --pad-btn. Measured, and it does not match the plan's table:
+   an <input> takes the UA's 13.333px font, not the inherited 16px, so the box
+   was 37px and not 41.2px. It lands at 31px, which is 3px over --ctl-h. The
+   remainder is the UA content box for that font; closing it needs a font-size
+   or line-height, and both are out of scope here (plan D5).
+
+   Horizontal padding goes UP, 10px -> 12px, so a 200px border-box control
+   loses 4px of content width. Inputs scroll, so nothing is lost there. A
+   <select> clips instead -- but the longest real option already overflowed by
+   161px before this change, so the clipping widens, it does not appear. */
 input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   width: 200px;
   box-sizing: border-box;
-  padding: 10px;
+  padding: var(--pad-btn);
   border: 1px solid var(--border-strong);
   border-radius: 3px;
 }
@@ -114,9 +135,22 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   display: inline-block;
   font-size: 12px;
 }
+/* --pad-btn, not --pad-cell, and the measurement does not decide it -- both
+   fit and they land either side of the target. The widest real label is
+   "Create Dropbox Folder" at 135.6px; a <button> takes the UA's 2px border, so
+   the 170px border-box holds 166px, and the label gets:
+
+     old  10px 20px  ->  126px content, margin -9.6  -> WRAPS, box 54px
+     --pad-cell      ->  150px content, margin +14.4 -> 1 line, box 31px
+     --pad-btn       ->  142px content, margin  +6.4 -> 1 line, box 33px
+
+   --ctl-h-lg is 32px, so --pad-cell is 1px under it and --pad-btn 1px over.
+   The tie goes to role: --pad-btn is the button token, and --pad-cell on a
+   primary button would leave nothing distinguishing it from a table cell. The
+   two labels that wrapped to two lines at 126px both unwrap either way. */
 .big-button {
   display: inline-block;
-  padding: 10px 20px;
+  padding: var(--pad-btn);
   background-color: var(--accent);
   color: var(--accent-text);
   text-decoration: none;
@@ -140,14 +174,19 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
 .pop-button:hover {
   background-color: var(--accent-dark);
 }
+/* DEAD -- zero references repo-wide outside this file (confirmed in D2 and
+   re-confirmed here). Tidied, not redesigned, and it has no render surface to
+   risk: `padding: opx` was the letter o, so invalid and dropped by the parser;
+   `height: 50px` and `font-size: 14pt` (18.7px, the only point unit in the
+   repo) both go, leaving the button to size from its padding and inherit its
+   font like every other control here. Dropping a font-size is not setting one,
+   which is the rule this slice is under. */
 .switch-button {
   width: 150px;
-  height: 50px;
   border: none;
-  font-size: 14pt;
   color: var(--accent-text);
   background-color: var(--accent);
-  padding: opx;
+  padding: var(--pad-btn);
   margin: -3px;
 }
 .logTable {
@@ -157,9 +196,14 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   border-collapse: collapse;
   width: 100%;
 }
+/* The one change in this slice anyone will notice. Cells DO inherit the
+   page's 16px -- unlike the controls above -- so the row box is padding plus a
+   19.2px line, and the padding is the only lever this slice is allowed to
+   pull. 8px -> --pad-cell takes a 20-row table with single-line cells from
+   736px to 652px -- 4px off each of the 21 row boxes, header included. */
 .logTable td, .logTable th {
   border: 1px solid var(--border);
-  padding: 8px;
+  padding: var(--pad-cell);
 }
 .logTable th {
   background-color: var(--accent-dark);
