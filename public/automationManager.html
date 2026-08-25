@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Automation Manager</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        SHELL — owns topbar + tab switcher + iframe container only.
@@ -13,28 +15,11 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --navy:    #1a1a2e;
-      --navy2:   #16213e;
-      --blue:    #4f8ef7;
-      --blue2:   #3a7de8;
-      --green:   #22c55e;
-      --red:     #ef4444;
-      --amber:   #f59e0b;
-      --purple:  #8b5cf6;
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --border:  #e2e8f0;
-      --muted:   #94a3b8;
-      --text:    #1e293b;
-      --text2:   #475569;
-    }
-
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 14px;
       color: var(--text);
-      background: var(--bg);
+      background: var(--page-bg);
       display: flex;
       flex-direction: column;
       height: 100vh;
@@ -43,8 +28,8 @@
 
     /* ── Topbar ── */
     #topbar {
-      background: var(--navy);
-      color: #fff;
+      background: var(--surface);
+      color: var(--text);
       min-height: 48px;          /* was: height: 48px — allow growth when tabs wrap */
       display: flex;
       flex-wrap: wrap;           /* NEW — wrap tabs/actions to a second row when narrow */
@@ -52,7 +37,7 @@
       padding: 0 16px;
       gap: 0;
       flex-shrink: 0;
-      border-bottom: 2px solid var(--blue);
+      border-bottom: 2px solid var(--accent);
     }
 
     #topbar .title {
@@ -62,7 +47,10 @@
       margin-right: 24px;
       white-space: nowrap;
     }
-    #topbar .title span { color: var(--blue); }
+    /* --accent-2, not --accent: this is accent-as-TEXT, and --accent measures
+       2.55 on --surface in light. --accent-2 is the sheet's text-only accent
+       (TOKEN-MAP §2) and is 5.65 light / 6.88 dark. */
+    #topbar .title span { color: var(--accent-2); }
 
     .tab-nav {
       display: flex;
@@ -77,7 +65,7 @@
       padding: 0 10px;
       border: none;
       background: none;
-      color: rgba(255,255,255,0.55);
+      color: var(--text-muted);
       font-size: 12px;
       font-weight: 500;
       cursor: pointer;
@@ -88,8 +76,8 @@
       gap: 6px;
       white-space: nowrap;
     }
-    .tab-nav-btn:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.05); }
-    .tab-nav-btn.active { color: #fff; border-bottom-color: var(--blue); /*font-size: 14px;*/ }
+    .tab-nav-btn:hover { color: var(--text); background: var(--hover); }
+    .tab-nav-btn.active { color: var(--text); border-bottom-color: var(--accent); }
 
     .topbar-actions { display: flex; gap: 8px; margin-left: auto; }
 
@@ -99,12 +87,14 @@
       font-size: 12px; font-weight: 500; cursor: pointer;
       transition: all 0.15s; white-space: nowrap;
     }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: var(--blue2); }
-    .btn-ghost { background: rgba(255,255,255,0.1); color: #fff; }
-    .btn-ghost:hover { background: rgba(255,255,255,0.18); }
-    .btn-danger { background: var(--red); color: #fff; }
-    .btn-danger:hover { background: #dc2626; }
+    /* --accent, not --info: this is a solid fill and --info has no fill
+       partner in the sheet. White on --info is 3.21; --accent-text is 7.57. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--hover); }
+    .btn-danger { background: var(--danger-fill); color: var(--fill-text); }
+    .btn-danger:hover { filter: brightness(1.12); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* ── Iframe container ── */
@@ -262,7 +252,7 @@ function _fdHybridLineWidget(id, currentValue, kind) {
     <span class="fd-line-inner" style="flex:1;min-width:0">${inner}</span>
     <button type="button" class="fd-line-toggle" title="${title}"
       onclick="parent.fdToggleLineWidget(this)"
-      style="padding:4px 10px;border:1px solid #d1d5db;background:transparent;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0">
+      style="padding:4px 10px;border:1px solid var(--border);background:transparent;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0">
       <i class="fa-solid ${iconClass}"></i>
     </button>
   </span>`;
