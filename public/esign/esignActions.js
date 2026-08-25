@@ -56,7 +56,19 @@
 /** Request-status → chip meta. Colors per 2C spec:
     sent/viewed amber, signed green, declined/bounced/expired red,
     recalled/satisfied_external gray. draft (rare on these surfaces — only a
-    failed provider send leaves one) renders indigo like a pending task. */
+    failed provider send leaves one) renders indigo like a pending task.
+
+    DELIBERATELY NOT TOKENISED by the theme arc (slice 10). Every entry is a
+    solid fill WITH its own explicit label colour, which is the shape
+    TOKEN-MAP §3.1 prescribes for a fill: mode-independent, so it renders
+    identically in light and dark and has no theming defect to fix. Beyond
+    that, these ten values ARE the 2C colour spec and tests/esignActionsUi
+    .test.js asserts them literally, so repointing them is a design change
+    plus a test change, not a conversion.
+
+    Three do fail AA as 11px bold labels and are worth a separate look:
+    partially_signed 2.77, signed 3.77, bounced 3.76. The other seven are
+    4.83–6.47. */
 var ESIGN_STATUS_META = {
   draft:              { label: 'Draft',              fg: '#ffffff', bg: '#4f46e5' },
   sent:               { label: 'Sent',               fg: '#7c4a03', bg: '#fde68a' },
@@ -332,25 +344,33 @@ if (typeof window !== 'undefined') (function () {
       '.es-chip { display:inline-block; padding:2px 9px; border-radius:10px;',
       '  font-size:11px; font-weight:bold; white-space:nowrap; }',
       '.es-recips { display:inline-flex; gap:6px; flex-wrap:wrap; }',
+      // Declares a background, so it declares a colour (arc rule 1).
       '.es-recip { display:inline-flex; align-items:center; gap:3px;',
-      '  font-size:11px; padding:1px 6px; border-radius:9px; background:#f2f2f2;',
-      '  border:1px solid #ddd; white-space:nowrap; }',
-      '.esr-green { color:#059669; } .esr-amber { color:#b45309; }',
-      '.esr-red { color:#dc2626; }  .esr-gray { color:#6b7280; }',
+      '  font-size:11px; padding:1px 6px; border-radius:9px; background:var(--surface-2);',
+      '  color:var(--text); border:1px solid var(--border); white-space:nowrap; }',
+      '.esr-green { color:var(--ok); } .esr-amber { color:var(--warn); }',
+      '.esr-red { color:var(--danger); }  .esr-gray { color:var(--text-muted); }',
       '.es-events { text-align:left; max-height:45vh; overflow:auto;',
-      '  font-size:13px; border:1px solid #eee; border-radius:4px; padding:8px 10px; }',
-      '.es-event { padding:4px 0; border-bottom:1px solid #f2f2f2; }',
+      '  font-size:13px; border:1px solid var(--border); border-radius:4px; padding:8px 10px; }',
+      '.es-event { padding:4px 0; border-bottom:1px solid var(--border); }',
       '.es-event:last-child { border-bottom:none; }',
-      '.es-event .es-when { color:#888; font-size:11px; }',
-      '.es-event pre { text-align:left; font-size:11px; background:#f8f8f8;',
-      '  padding:6px; border-radius:3px; overflow:auto; max-height:12em; margin:4px 0 0; }',
-      '.es-payload-toggle { color:#07adef; cursor:pointer; font-size:11px; margin-left:6px; }',
+      '.es-event .es-when { color:var(--text-muted); font-size:11px; }',
+      '.es-event pre { text-align:left; font-size:11px; background:var(--surface-2);',
+      '  color:var(--text); padding:6px; border-radius:3px; overflow:auto; max-height:12em; margin:4px 0 0; }',
+      // 11px text, so --accent-2 rather than --accent (2.55 on a light card).
+      '.es-payload-toggle { color:var(--accent-2); cursor:pointer; font-size:11px; margin-left:6px; }',
       '.es-meta { font-size:13px; border-collapse:collapse; text-align:left; }',
       '.es-meta td { padding:3px 10px 3px 0; vertical-align:top; }',
-      '.es-meta td:first-child { color:#6b7280; white-space:nowrap; }',
-      '.es-dialog-note { font-size:12px; color:#666; text-align:left; margin:6px 0; }',
-      '.es-counter { font-size:11px; color:#888; text-align:right; }',
+      '.es-meta td:first-child { color:var(--text-muted); white-space:nowrap; }',
+      '.es-dialog-note { font-size:12px; color:var(--text-muted); text-align:left; margin:6px 0; }',
+      '.es-counter { font-size:11px; color:var(--text-muted); text-align:right; }',
       '.es-recip-edit input { width:45%; margin:2px 1%; padding:6px; }',
+      // SweetAlert2's card is white with #545454 text in both modes and none of
+      // the four consumer pages override .swal2-popup, so the dialog bodies
+      // above would be themed content on an unthemed card. Scoped through
+      // customClass (ES_POPUP) so only this module's dialogs are touched.
+      '.es-popup { background:var(--surface); color:var(--text); }',
+      '.es-popup .swal2-title, .es-popup .swal2-html-container { color:var(--text); }',
     ].join('\n');
     document.head.appendChild(style);
   })();
@@ -364,13 +384,16 @@ if (typeof window !== 'undefined') (function () {
 
   function esignRecipientsHtml(recipients) {
     var items = esignRecipientsSummary(recipients);
-    if (!items.length) return '<span style="color:#999">—</span>';
+    if (!items.length) return '<span style="color:var(--text-muted)">—</span>';
     return '<span class="es-recips">' + items.map(function (it) {
       return '<span class="es-recip" title="' + esignEsc(it.title).replace(/"/g, '&quot;') + '">' +
         esignEsc(it.initials) +
         ' <i class="fa-solid ' + it.icon + ' ' + it.cls + '"></i></span>';
     }).join('') + '</span>';
   }
+
+  // Scopes the .es-popup rules to this module's own dialogs.
+  var ES_POPUP = { popup: 'es-popup' };
 
   function _swal() {
     // Each page loads sweetalert2 itself (repo convention); this is just a
@@ -380,7 +403,7 @@ if (typeof window !== 'undefined') (function () {
   }
   function _toast(icon, title, text) {
     if (typeof Toast !== 'undefined') return Toast.fire({ icon: icon, title: title, text: text || undefined });
-    _swal().fire({ icon: icon, title: title, text: text || undefined, timer: 2500, showConfirmButton: false });
+    _swal().fire({ customClass: ES_POPUP, icon: icon, title: title, text: text || undefined, timer: 2500, showConfirmButton: false });
   }
 
   // ── DETAIL dialog ──────────────────────────────────────────
@@ -422,12 +445,13 @@ if (typeof window !== 'undefined') (function () {
       : '<div class="es-dialog-note">No events recorded.</div>';
 
     _swal().fire({
+      customClass: ES_POPUP,
       title: '<span style="font-size:18px">' + esignEsc(r.document_name || ('Request #' + id)) + '</span>',
       html:
         '<div style="text-align:left">' +
         '<div style="margin:0 0 10px">' + esignChipHtml(r.status) +
         (r.days_pending != null && !esignIsTerminal(r.status)
-          ? ' <span style="font-size:12px;color:#888">' + r.days_pending + ' day' + (r.days_pending === 1 ? '' : 's') + ' pending</span>' : '') +
+          ? ' <span style="font-size:12px;color:var(--text-muted)">' + r.days_pending + ' day' + (r.days_pending === 1 ? '' : 's') + ' pending</span>' : '') +
         '</div>' +
         '<table class="es-meta">' +
         meta('Tracking id', '<span onclick="copy && copy(this.innerText)" style="cursor:pointer">' + esignEsc(r.tracking_id || '') + '</span>') +
@@ -475,6 +499,7 @@ if (typeof window !== 'undefined') (function () {
   // ── NUDGE (remind) ─────────────────────────────────────────
   function esignRemindDialog(row, onChange) {
     _swal().fire({
+      customClass: ES_POPUP,
       title: 'Send a reminder?',
       html: '<div class="es-dialog-note" style="text-align:center">This reminds ' +
         '<b>ALL pending recipients</b> — Zoho has no per-recipient reminder.</div>',
@@ -502,6 +527,7 @@ if (typeof window !== 'undefined') (function () {
   // ── RECALL ─────────────────────────────────────────────────
   function esignRecallDialog(row, onChange) {
     _swal().fire({
+      customClass: ES_POPUP,
       title: 'Recall this request',
       html:
         '<div class="es-dialog-note">The signing link the client has stops working. ' +
@@ -518,7 +544,18 @@ if (typeof window !== 'undefined') (function () {
           : ''),
       showCancelButton: true,
       confirmButtonText: 'Recall',
-      confirmButtonColor: '#b91c1c',
+      // A solid fill, so --danger-fill, not --danger. SweetAlert2's white
+      // label measures 6.93 on it.
+      //
+      // Correct here, but only actually painted in LIGHT on the two consumers
+      // that also load style.css. SweetAlert2 11.26 applies confirmButtonColor
+      // as an inline CUSTOM PROPERTY and declares the background in its own
+      // sheet at .swal2-styled.swal2-confirm (0,2,0) — which style.css's
+      // `html[data-theme="dark"] button:not(...)` rule (0,6,2) outranks, so in
+      // dark every SweetAlert action button on a style.css page is repainted
+      // to --surface/--text. Pre-existing, repo-wide, and not this module's to
+      // fix; reported with slice 10.
+      confirmButtonColor: 'var(--danger-fill)',
       showLoaderOnConfirm: true,
       allowOutsideClick: function () { return !_swal().isLoading(); },
       preConfirm: async function () {
@@ -576,7 +613,7 @@ if (typeof window !== 'undefined') (function () {
     // duplicating with a hand upload is the wrong tool. Offer the link, plus
     // the manual path for completeness.
     var templateNote = (mode === 'duplicate' && row.template_id != null && row.linkable_type === 'case')
-      ? '<div class="es-dialog-note" style="border-left:3px solid #07adef;padding-left:8px">' +
+      ? '<div class="es-dialog-note" style="border-left:3px solid var(--accent);padding-left:8px">' +
         'This document was made from a template. The better path is to ' +
         '<a href="' + _sendFormUrl(row) + '">send it again from the template</a> ' +
         '(prefilled) — the PDF is re-manufactured with current case data.</div>'
@@ -590,6 +627,7 @@ if (typeof window !== 'undefined') (function () {
     }).join('');
 
     _swal().fire({
+      customClass: ES_POPUP,
       title: mode === 'bounced' ? 'Re-send after bounce' : 'Duplicate as a new request',
       html:
         '<div style="text-align:left">' +
@@ -602,10 +640,10 @@ if (typeof window !== 'undefined') (function () {
         '<div style="font-weight:bold;margin:6px 0 2px">Recipients (signing order top to bottom)</div>' +
         recipRows +
         (row.has_source
-          ? '<div style="font-weight:bold;margin:10px 0 2px">Document PDF <span style="font-weight:normal;color:#6b7280">(optional)</span></div>' +
+          ? '<div style="font-weight:bold;margin:10px 0 2px">Document PDF <span style="font-weight:normal;color:var(--text-muted)">(optional)</span></div>' +
             '<div class="es-dialog-note">The document we sent is stored — leave this empty to re-send it, ' +
             'or attach a replacement.</div>'
-          : '<div style="font-weight:bold;margin:10px 0 2px">Document PDF <span style="color:#dc2626">*</span></div>' +
+          : '<div style="font-weight:bold;margin:10px 0 2px">Document PDF <span style="color:var(--danger)">*</span></div>' +
             '<div class="es-dialog-note">No stored copy exists for this request (it predates source storage) — ' +
             're-attach the PDF here.</div>') +
         '<input type="file" id="es-rs-file" accept="application/pdf" style="width:100%">' +
@@ -649,6 +687,7 @@ if (typeof window !== 'undefined') (function () {
   // ── MARK SATISFIED EXTERNALLY ──────────────────────────────
   function esignSatisfiedDialog(row, onChange) {
     _swal().fire({
+      customClass: ES_POPUP,
       title: 'Mark satisfied outside e-sign',
       html:
         '<div style="text-align:left">' +
@@ -714,10 +753,13 @@ if (typeof window !== 'undefined') (function () {
 
     window.__esignMenuActions = buttons.map(function (b) { return b.fn; });
     _swal().fire({
+      customClass: ES_POPUP,
       title: '<span style="font-size:16px">' + esignEsc(row.document_name || ('Request #' + row.id)) + '</span>',
       html: '<div style="margin-bottom:8px">' + esignChipHtml(row.status) + '</div>' +
         buttons.map(function (b, i) {
-          return '<button class="swal2-styled" style="display:block;width:100%;margin:4px 0;background:#4a5568" ' +
+          // A grey solid button: --neutral-fill is the token for that, and a
+          // <button> does not inherit colour, so the label is explicit.
+          return '<button class="swal2-styled" style="display:block;width:100%;margin:4px 0;background:var(--neutral-fill);color:var(--fill-text)" ' +
             'onclick="Swal.close();window.__esignMenuActions[' + i + ']()">' +
             '<i class="fa-solid ' + b.icon + '"></i> ' + esignEsc(b.label) + '</button>';
         }).join(''),
