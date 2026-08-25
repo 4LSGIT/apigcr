@@ -11,23 +11,25 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <script src="/esign/esignActions.js"></script>
   <style>
-    body { margin: 0; padding: 16px; background: #fff; }
+    body { margin: 0; padding: 16px; background: var(--page-bg); }
     .db-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
     .db-top h2 { margin: 0; }
     .db-top .spacer2 { flex: 1; }
-    .db-refreshed { font-size: 11px; color: #999; }
+    .db-refreshed { font-size: 11px; color: var(--text-muted); }
     #db-table th { cursor: default; white-space: nowrap; }
     #db-table th.sortable { cursor: pointer; }
     #db-table td { text-align: left; }
-    .db-link { color: #07adef; cursor: pointer; }
-    .db-days-hot { color: #dc2626; font-weight: bold; }
-    .db-empty { color: #999; padding: 20px; text-align: center; }
-    .db-toggle { display: inline-flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
-    .db-toggle button { border: none; background: #f2f2f2; padding: 7px 14px; cursor: pointer; }
-    .db-toggle button.on { background: #26abe2; color: #fff; }
+    .db-link { color: var(--accent-2); cursor: pointer; }
+    .db-days-hot { color: var(--danger); font-weight: bold; }
+    .db-empty { color: var(--text-muted); padding: 20px; text-align: center; }
+    .db-toggle { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 4px; overflow: hidden; }
+    .db-toggle button { border: none; background: var(--surface-2); color: var(--text); padding: 7px 14px; cursor: pointer; }
+    .db-toggle button.on { background: var(--accent); color: var(--accent-text); }
   </style>
 </head>
 <body>
