@@ -11,10 +11,12 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
   <style>
     /* Widget chrome (esign/caseWidget idiom). */
-    body { margin: 0; padding: 12px; background: #fff; }
+    body { margin: 0; padding: 12px; background: var(--page-bg); }
 
   /* ── Sequences + Workflows tab (slice 4.3) — all classes prefixed
          .cauto- (shared), .cseq- (sequence-specific),
@@ -37,69 +39,69 @@
   align-items: baseline;
   gap: 10px;
   padding: 10px 4px 6px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
 }
 .cauto-section-head:first-of-type { border-top: none; }
 .cauto-section-title {
   font-size: 14px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--text);
   margin: 0;
 }
 .cauto-section-count {
   font-size: 13px;
   font-weight: 600;
-  color: #475569;
+  color: var(--text-2);
 }
 
 /* Divider between sections. */
 .cauto-divider {
   border: none;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
   margin: 18px 0 6px;
 }
 
 /* Scope toggle — shared across both sections. */
 .cseq-scope-toggle {
   display: inline-flex;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   overflow: hidden;
 }
 .cseq-scope-btn {
-  background: #fff;
+  background: var(--surface);
   border: none;
   padding: 5px 12px;
   font-size: 13px;
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
 }
-.cseq-scope-btn.active { background: #2563eb; color: #fff; }
-.cseq-scope-btn:not(.active):hover { background: #f1f5f9; }
+.cseq-scope-btn.active { background: var(--accent); color: var(--accent-text); }
+.cseq-scope-btn:not(.active):hover { background: var(--hover); }
 
 /* Refresh button — shared header. */
 .cseq-refresh-btn {
-  background: #fff;
-  border: 1px solid #cbd5e1;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 5px 10px;
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
 }
-.cseq-refresh-btn:hover { background: #f1f5f9; }
+.cseq-refresh-btn:hover { background: var(--hover); }
 
 /* Tables — sequences + workflows share the same layout treatment. */
 .cseq-table th, .cseq-table td,
 .cwf-table  th, .cwf-table  td { text-align: left; padding: 6px 8px; vertical-align: top; }
 .cseq-template-name,
-.cwf-workflow-name { font-weight: 600; color: #0f172a; }
-.cseq-template-type { font-size: 11px; color: #64748b; }
+.cwf-workflow-name { font-weight: 600; color: var(--text); }
+.cseq-template-type { font-size: 11px; color: var(--text-muted); }
 .cseq-id,
-.cwf-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #475569; }
+.cwf-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-2); }
 
 .cseq-empty,
 .cwf-empty {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-weight: 400;
   padding: 18px;
   text-align: center;
@@ -114,17 +116,17 @@
   gap: 10px;
   padding: 8px 0 4px;
   font-size: 12px;
-  color: #475569;
+  color: var(--text-2);
 }
 .cseq-pagination button,
 .cwf-pagination button {
   padding: 3px 10px;
   font-size: 11px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: #fff;
+  background: var(--surface);
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
 }
 .cseq-pagination button:disabled,
 .cwf-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -138,9 +140,9 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cseq-status-active    { background: #dbeafe; color: #1e40af; }
-.cseq-status-completed { background: #dcfce7; color: #166534; }
-.cseq-status-cancelled { background: #fee2e2; color: #991b1b; }
+.cseq-status-active    { background: var(--accent-soft); color: var(--accent-on-soft); }
+.cseq-status-completed { background: var(--ok-soft); color: var(--ok); }
+.cseq-status-cancelled { background: var(--border); color: var(--text-2); }
 
 /* Status badges — workflow_executions.status enum (superset; kept distinct
    from sequence badges because the enums don't line up even where names
@@ -154,14 +156,14 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cwf-status-pending               { background: #fef3c7; color: #92400e; }
-.cwf-status-active                { background: #dbeafe; color: #1e40af; }
-.cwf-status-processing            { background: #e0e7ff; color: #3730a3; }
-.cwf-status-delayed               { background: #fef9c3; color: #854d0e; }
-.cwf-status-completed             { background: #dcfce7; color: #166534; }
-.cwf-status-completed_with_errors { background: #fed7aa; color: #9a3412; }
-.cwf-status-failed                { background: #fee2e2; color: #991b1b; }
-.cwf-status-cancelled             { background: #e2e8f0; color: #475569; }
+.cwf-status-pending               { background: var(--warn-soft); color: var(--warn); }
+.cwf-status-active                { background: var(--accent-soft); color: var(--accent-on-soft); }
+.cwf-status-processing            { background: var(--accent-soft); color: var(--cat-indigo); }
+.cwf-status-delayed               { background: var(--warn-soft); color: var(--warn); }
+.cwf-status-completed             { background: var(--ok-soft); color: var(--ok); }
+.cwf-status-completed_with_errors { background: var(--warn-soft); color: var(--warn); }
+.cwf-status-failed                { background: var(--danger-soft); color: var(--danger); }
+.cwf-status-cancelled             { background: var(--border); color: var(--text-2); }
 
 /* Step-history badges (drill-down modal) — sequence variant. */
 .cseq-job-badge, .cseq-log-badge {
@@ -172,13 +174,13 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cseq-job-pending    { background: #fef3c7; color: #92400e; }
-.cseq-job-running    { background: #dbeafe; color: #1e40af; }
-.cseq-job-completed  { background: #dcfce7; color: #166534; }
-.cseq-job-failed     { background: #fee2e2; color: #991b1b; }
-.cseq-log-sent       { background: #dcfce7; color: #166534; }
-.cseq-log-skipped    { background: #e5e7eb; color: #374151; }
-.cseq-log-failed     { background: #fee2e2; color: #991b1b; }
+.cseq-job-pending    { background: var(--warn-soft); color: var(--warn); }
+.cseq-job-running    { background: var(--accent-soft); color: var(--accent-on-soft); }
+.cseq-job-completed  { background: var(--ok-soft); color: var(--ok); }
+.cseq-job-failed     { background: var(--danger-soft); color: var(--danger); }
+.cseq-log-sent       { background: var(--ok-soft); color: var(--ok); }
+.cseq-log-skipped    { background: var(--border); color: var(--text-2); }
+.cseq-log-failed     { background: var(--danger-soft); color: var(--danger); }
 
 /* Step-history badges (drill-down modal) — workflow variant, uses
    workflow_execution_steps.status enum (success | failed, engine-written). */
@@ -190,10 +192,10 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cwf-step-success { background: #dcfce7; color: #166534; }
-.cwf-step-failed  { background: #fee2e2; color: #991b1b; }
-.cwf-step-skipped { background: #e5e7eb; color: #374151; }
-.cwf-step-delayed { background: #fef9c3; color: #854d0e; }
+.cwf-step-success { background: var(--ok-soft); color: var(--ok); }
+.cwf-step-failed  { background: var(--danger-soft); color: var(--danger); }
+.cwf-step-skipped { background: var(--border); color: var(--text-2); }
+.cwf-step-delayed { background: var(--warn-soft); color: var(--warn); }
 
 /* Row buttons — shared between sections. */
 .cseq-view-btn, .cseq-cancel-btn,
@@ -205,17 +207,17 @@
   margin-right: 4px;
 }
 .cseq-view-btn, .cwf-view-btn {
-  background: #fff;
-  color: #334155;
-  border: 1px solid #cbd5e1;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
 }
-.cseq-view-btn:hover, .cwf-view-btn:hover { background: #f1f5f9; }
+.cseq-view-btn:hover, .cwf-view-btn:hover { background: var(--hover); }
 .cseq-cancel-btn, .cwf-cancel-btn {
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fca5a5;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
 }
-.cseq-cancel-btn:hover, .cwf-cancel-btn:hover { background: #fecaca; }
+.cseq-cancel-btn:hover, .cwf-cancel-btn:hover { filter: brightness(1.25); }
 
 /* Drill-down step-history tables (rendered inside a Swal modal; styles
    are global because Swal renders into document.body, not a shadow DOM). */
@@ -230,20 +232,20 @@
 .cseq-history-table td,
 .cwf-history-table th,
 .cwf-history-table td {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   padding: 4px 6px;
   text-align: left;
   vertical-align: top;
 }
 .cseq-history-table th,
-.cwf-history-table th { background: #f1f5f9; font-weight: 600; }
+.cwf-history-table th { background: var(--surface-2); font-weight: 600; }
 .cseq-history-table tr.cseq-row-muted td,
-.cwf-history-table  tr.cwf-row-muted  td { color: #94a3b8; background: #f8fafc; }
+.cwf-history-table  tr.cwf-row-muted  td { color: var(--text-muted); background: var(--surface-2); }
 .cseq-history-table .cseq-error-cell,
 .cwf-history-table  .cwf-error-cell {
   max-width: 260px;
   word-break: break-word;
-  color: #991b1b;
+  color: var(--danger);
 }
 
 
@@ -254,14 +256,14 @@
     body.mode-case .wcase-note {
       display: block;
       font-size: 12px;
-      color: #64748b;
+      color: var(--text-muted);
       padding: 0 4px 10px;
     }
 
     /* Contact column — case mode only. Hidden wholesale in contact mode
        (single-contact view; the column would repeat one name). */
     body.mode-contact .wcol-contact { display: none; }
-    .wcol-contact a { color: #07ADEF; text-decoration: none; font-weight: 500; }
+    .wcol-contact a { color: var(--accent-2); text-decoration: none; font-weight: 500; }
     .wcol-contact a:hover { text-decoration: underline; }
   </style>
 </head>
@@ -571,7 +573,7 @@ async function loadSequences() {
   if (!tbody || !empty || !table || !count || !pager) return;
 
   // Inline spinner; the widget is already visible so the row swap is fine.
-  tbody.innerHTML = `<tr><td colspan="${SEQ_COLSPAN}" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="${SEQ_COLSPAN}" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>`;
   table.style.display = '';
   empty.style.display = 'none';
 
@@ -615,7 +617,7 @@ async function loadSequences() {
     if (anySeqActive) startAutomationPolling();
     else              maybeStopAutomationPolling();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="${SEQ_COLSPAN}" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${SEQ_COLSPAN}" style="color:var(--danger);padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
     pager.innerHTML = '';
     // Transient fetch errors don't force a polling stop — they're often
     // recoverable and the tick will retry on its own.
@@ -644,7 +646,7 @@ function renderSequenceRows(rows) {
          </button>`
       : '';
     const cancelReasonLine = r.cancel_reason
-      ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
+      ? `<div style="font-size:10px;color:var(--danger);margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
       : '';
     return `
       <tr>
@@ -720,7 +722,7 @@ async function loadWorkflows() {
   const pager = E('cwf-pagination');
   if (!tbody || !empty || !table || !count || !pager) return;
 
-  tbody.innerHTML = `<tr><td colspan="${WF_COLSPAN}" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="${WF_COLSPAN}" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>`;
   table.style.display = '';
   empty.style.display = 'none';
 
@@ -759,7 +761,7 @@ async function loadWorkflows() {
     if (anyWfActive) startAutomationPolling();
     else             maybeStopAutomationPolling();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="${WF_COLSPAN}" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${WF_COLSPAN}" style="color:var(--danger);padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
     pager.innerHTML = '';
   }
 }
@@ -778,7 +780,7 @@ function renderWorkflowRows(rows) {
          </button>`
       : '';
     const cancelReasonLine = r.cancel_reason
-      ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
+      ? `<div style="font-size:10px;color:var(--danger);margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
       : '';
     return `
       <tr>
@@ -855,7 +857,7 @@ async function viewEnrollment(id) {
           // job_id null = this step never got a scheduled_jobs row (skipped at
           // scheduling time, not at execution time).
           const secondary = hasLog
-            ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">${
+            ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${
                  h.job_id == null
                    ? 'never scheduled'
                    : `job: ${cseqEsc(h.job_status || '—')}`
@@ -879,10 +881,10 @@ async function viewEnrollment(id) {
               <td class="cseq-error-cell">${detail}</td>
             </tr>`;
         }).join('')
-      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:#94a3b8">No step history.</td></tr>';
+      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:var(--text-muted)">No step history.</td></tr>';
 
     const cancelReasonBlock = (String(en.status).toLowerCase() === 'cancelled' && en.cancel_reason)
-      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+      ? `<div style="margin-top:10px;padding:8px 10px;background:var(--danger-soft);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px">
            <b>Cancel reason:</b> ${cseqEsc(en.cancel_reason)}
          </div>`
       : '';
@@ -912,7 +914,7 @@ async function viewEnrollment(id) {
           <p><b>Status:</b> ${cseqStatusBadge(en.status)}</p>
           <p style="margin-top:6px"><b>Template:</b>
              ${cseqEsc(en.template_name || '—')}
-             <span style="color:#64748b">(${typeLabel})</span>
+             <span style="color:var(--text-muted)">(${typeLabel})</span>
           </p>
           <p style="margin-top:6px"><b>Enrolled:</b> ${cseqFmtDate(en.enrolled_at)}</p>
           <p style="margin-top:6px"><b>Completed:</b> ${cseqFmtDate(en.completed_at)}</p>
@@ -922,7 +924,7 @@ async function viewEnrollment(id) {
           ${trig ? `
             <details style="margin-top:12px">
               <summary style="cursor:pointer;font-weight:600">Trigger Data</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(trig, null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(trig, null, 2))}</pre>
             </details>` : ''}
 
           <h4 style="margin-top:14px;font-size:13px">Step History</h4>
@@ -941,10 +943,10 @@ async function viewEnrollment(id) {
       cancelButtonText:  'Close',
       showConfirmButton: isActive,
       confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel enrollment',
-      confirmButtonColor: '#dc2626',
+      confirmButtonColor: 'var(--danger-fill)',
       showDenyButton:    showRecoverBtn,
       denyButtonText:    '<i class="fa-solid fa-wand-magic-sparkles"></i> Recover stuck enrollment',
-      denyButtonColor:   '#4f8ef7',
+      denyButtonColor:   'var(--accent)',
       reverseButtons: true,   // [Cancel enrollment] [Recover] [Close]
       didOpen: (popup) => {
         popup.querySelectorAll('.cseq-fire-now-btn').forEach(btn => {
@@ -994,7 +996,7 @@ function cseqFireNowBtnHtml(en, h) {
             data-scheduled-raw="${cseqEsc(h.scheduled_time || '')}"
             title="Reschedule this step to fire on the next process-jobs tick"
             style="margin-left:8px;padding:2px 8px;font-size:10px;
-                   background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer">
+                   background:var(--accent);color:var(--accent-text);border:none;border-radius:4px;cursor:pointer">
       <i class="fa-solid fa-play"></i> Fire Now
     </button>`;
 }
@@ -1011,14 +1013,14 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
         <p><b>Job:</b> #${cseqEsc(String(jobId))}</p>
         <p style="margin-top:6px"><b>Original scheduled:</b> ${cseqFmtDate(scheduledRaw)}</p>
         <p style="margin-top:10px">This reschedules the job to <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
-        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
+        <p style="margin-top:8px;color:var(--text-muted);font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
       </div>
     `,
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: 'Fire now',
     cancelButtonText: 'Cancel',
-    confirmButtonColor: '#2563eb',
+    confirmButtonColor: 'var(--accent)',
   });
   if (!result.isConfirmed) {
     // User backed out — re-open the enrollment-detail modal.
@@ -1058,14 +1060,14 @@ async function handleSequenceRecover(enrollmentId) {
       <div style="text-align:left;font-size:13px;line-height:1.5">
         <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
         <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
-        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+        <p style="margin-top:8px;color:var(--text-muted);font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
       </div>
     `,
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: 'Recover',
     cancelButtonText: 'Cancel',
-    confirmButtonColor: '#4f8ef7',
+    confirmButtonColor: 'var(--accent)',
   });
   if (!result.isConfirmed) {
     viewEnrollment(enrollmentId);
@@ -1105,7 +1107,7 @@ async function cancelEnrollment(enrollmentId, templateNameOverride) {
   const result = await Swal.fire({
     title: `Cancel enrollment #${enrollmentId}?`,
     html: templateName
-      ? `<div style="color:#64748b;margin-bottom:4px">Template: <b>${cseqEsc(templateName)}</b></div>`
+      ? `<div style="color:var(--text-muted);margin-bottom:4px">Template: <b>${cseqEsc(templateName)}</b></div>`
       : '',
     input: 'text',
     inputLabel: 'Reason (required, min 3 characters)',
@@ -1115,7 +1117,7 @@ async function cancelEnrollment(enrollmentId, templateNameOverride) {
     },
     showCancelButton: true,
     confirmButtonText: 'Confirm Cancel',
-    confirmButtonColor: '#dc2626',
+    confirmButtonColor: 'var(--danger-fill)',
     reverseButtons: true,
     showLoaderOnConfirm: true,
     preConfirm: async (reason) => {
@@ -1179,10 +1181,10 @@ async function viewWorkflow(id) {
           <td>${errorCell}</td>
         </tr>`;
     }).join('')
-      : '<tr><td colspan="6" style="text-align:center;padding:12px;color:#94a3b8">No steps executed.</td></tr>';
+      : '<tr><td colspan="6" style="text-align:center;padding:12px;color:var(--text-muted)">No steps executed.</td></tr>';
 
     const cancelReasonBlock = (rawStatus === 'cancelled' && ex.cancel_reason)
-      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+      ? `<div style="margin-top:10px;padding:8px 10px;background:var(--danger-soft);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px">
            <b>Cancel reason:</b> ${cseqEsc(ex.cancel_reason)}
          </div>`
       : '';
@@ -1196,7 +1198,7 @@ async function viewWorkflow(id) {
         <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
           <p><b>Workflow:</b>
              ${cseqEsc(ex.workflow_name || '—')}
-             <span style="color:#64748b">(wf #${cseqEsc(ex.workflow_id)})</span>
+             <span style="color:var(--text-muted)">(wf #${cseqEsc(ex.workflow_id)})</span>
           </p>
           <p style="margin-top:6px"><b>Status:</b> ${cwfStatusBadge(displayStatus)}</p>
           <p style="margin-top:6px"><b>Started:</b> ${cseqFmtDate(ex.created_at)}</p>
@@ -1209,13 +1211,13 @@ async function viewWorkflow(id) {
           ${initDataObj ? `
             <details style="margin-top:12px">
               <summary style="cursor:pointer;font-weight:600">Init Data</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(initDataObj, null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(initDataObj, null, 2))}</pre>
             </details>` : ''}
 
           ${variablesObj ? `
             <details style="margin-top:8px">
               <summary style="cursor:pointer;font-weight:600">Variables</summary>
-              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(variablesObj, null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(variablesObj, null, 2))}</pre>
             </details>` : ''}
 
           <h4 style="margin-top:14px;font-size:13px">Step History</h4>
@@ -1233,7 +1235,7 @@ async function viewWorkflow(id) {
       cancelButtonText:  'Close',
       showConfirmButton: isCancellable,
       confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel execution',
-      confirmButtonColor: '#dc2626',
+      confirmButtonColor: 'var(--danger-fill)',
       reverseButtons: true,   // [Cancel execution] [Close]
     });
 
@@ -1260,7 +1262,7 @@ async function cancelWorkflow(executionId, workflowNameOverride) {
   const result = await Swal.fire({
     title: `Cancel execution #${executionId}?`,
     html: workflowName
-      ? `<div style="color:#64748b;margin-bottom:4px">Workflow: <b>${cseqEsc(workflowName)}</b></div>`
+      ? `<div style="color:var(--text-muted);margin-bottom:4px">Workflow: <b>${cseqEsc(workflowName)}</b></div>`
       : '',
     input: 'text',
     inputLabel: 'Reason (required, min 3 characters)',
@@ -1270,7 +1272,7 @@ async function cancelWorkflow(executionId, workflowNameOverride) {
     },
     showCancelButton: true,
     confirmButtonText: 'Confirm Cancel',
-    confirmButtonColor: '#dc2626',
+    confirmButtonColor: 'var(--danger-fill)',
     reverseButtons: true,
     showLoaderOnConfirm: true,
     preConfirm: async (reason) => {
