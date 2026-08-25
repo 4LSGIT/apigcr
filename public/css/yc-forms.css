@@ -22,8 +22,8 @@
  * --text onto white at 1.28:1. Tokenising is what makes the ordering stop
  * mattering; theme.css above is now correct again (charter §4, §6.0).
  *
- * font-family: Arial on body stays. It is a metric, not a colour, and moves in
- * the density arc (charter §0.1) — same hold as style.css.
+ * font-family on body is var(--ui) as of the density arc (D2), which is what
+ * lifted the Arial hold this comment used to describe.
  */
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -60,7 +60,7 @@ a:hover { text-decoration: underline; }
 }
 
 body {
-  font-family: Arial, sans-serif;
+  font-family: var(--ui);
   background: var(--page-bg);
   color: var(--text);
   padding: 16px;
