@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sending Form</title>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <link href="/css/yc-forms.css" rel="stylesheet">
@@ -14,57 +16,89 @@
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
   <style>
-    .sf-form { max-width: 950px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .sf-form { max-width: 950px; margin: 0 auto; background: var(--surface); color: var(--text); padding: 20px; border-radius: 8px; box-shadow: var(--shadow); }
     .sf-contact-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
-    .sf-contact-card { flex: 1; min-width: 280px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 16px; }
-    .sf-contact-card h4 { font-size: 0.95rem; font-weight: 700; color: #495057; margin: 0 0 8px 0; }
-    .sf-contact-card .sf-name { font-weight: 600; font-size: 0.92rem; margin-bottom: 6px; color: #212529; }
+    .sf-contact-card { flex: 1; min-width: 280px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; }
+    .sf-contact-card h4 { font-size: 0.95rem; font-weight: 700; color: var(--text); margin: 0 0 8px 0; }
+    .sf-contact-card .sf-name { font-weight: 600; font-size: 0.92rem; margin-bottom: 6px; color: var(--text); }
     .sf-contact-card .sf-edit-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 0.85rem; }
     .sf-contact-card .sf-edit-row span { width: 20px; text-align: center; flex-shrink: 0; }
-    .sf-contact-card .sf-edit-row input { flex: 1; padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85rem; }
-    .sf-send-settings { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 12px 16px; background: #f1f3f5; border-radius: 6px; margin-bottom: 16px; font-size: 0.9rem; }
+    .sf-contact-card .sf-edit-row input { flex: 1; padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; background: var(--surface); color: var(--text); }
+    .sf-send-settings { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 12px 16px; background: var(--surface-2); border-radius: 6px; margin-bottom: 16px; font-size: 0.9rem; }
     .sf-send-settings label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
-    .sf-send-settings select { padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85rem; }
-    .sf-section { border: 1px solid #e9ecef; border-radius: 6px; padding: 14px 16px; margin-bottom: 12px; }
-    .sf-section-title { font-weight: 700; font-size: 0.95rem; color: #495057; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .sf-send-settings select { padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; background: var(--surface); color: var(--text); }
+    .sf-section { border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 12px; }
+    .sf-section-title { font-weight: 700; font-size: 0.95rem; color: var(--text); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
     .sf-section-title input[type="checkbox"] { width: 1.1em; height: 1.1em; }
     .sf-sub { padding-left: 28px; margin-top: 8px; }
     .sf-sub-item { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px; font-size: 0.88rem; }
     .sf-sub-item input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
-    .sf-sub-selector { margin-left: 28px; margin-top: 4px; margin-bottom: 8px; padding: 8px 12px; background: #f8f9fa; border-radius: 4px; font-size: 0.85rem; }
-    .sf-sub-selector select { padding: 3px 6px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85rem; }
-    .sf-sub-selector input[type="text"] { padding: 3px 6px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85rem; }
+    .sf-sub-selector { margin-left: 28px; margin-top: 4px; margin-bottom: 8px; padding: 8px 12px; background: var(--surface-2); border-radius: 4px; font-size: 0.85rem; }
+    .sf-sub-selector select { padding: 3px 6px; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; background: var(--surface); color: var(--text); }
+    .sf-sub-selector input[type="text"] { padding: 3px 6px; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; background: var(--surface); color: var(--text); }
     .sf-tax-grid { display: grid; grid-template-columns: auto repeat(5, 1fr); gap: 4px; align-items: center; margin: 6px 0; }
-    .sf-tax-grid .sf-tax-label { font-weight: 600; font-size: 0.82rem; color: #495057; }
-    .sf-tax-grid .sf-tax-year { text-align: center; font-weight: 600; font-size: 0.82rem; color: #6c757d; }
+    .sf-tax-grid .sf-tax-label { font-weight: 600; font-size: 0.82rem; color: var(--text); }
+    .sf-tax-grid .sf-tax-year { text-align: center; font-weight: 600; font-size: 0.82rem; color: var(--text-muted); }
     .sf-tax-grid input[type="checkbox"] { justify-self: center; }
     .sf-bank-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 12px; margin: 6px 0; }
     .sf-bank-grid label { display: flex; align-items: center; gap: 5px; font-size: 0.84rem; }
     .sf-irs-grid { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0; }
     .sf-irs-grid label { display: flex; align-items: center; gap: 4px; font-size: 0.84rem; }
-    .sf-docs-instruction { margin-top: 10px; padding-top: 10px; border-top: 1px solid #dee2e6; }
+    .sf-docs-instruction { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
     .sf-docs-instruction label { display: block; font-size: 0.88rem; margin: 4px 0; cursor: pointer; }
     .sf-other-area { margin-top: 8px; padding-left: 28px; }
     .sf-other-area label { font-size: 0.85rem; font-weight: 600; display: block; margin-top: 8px; }
-    .sf-other-area textarea { width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.88rem; resize: vertical; }
-    .sf-other-area input[type="text"] { width: 100%; padding: 6px 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.88rem; margin-bottom: 6px; }
+    .sf-other-area textarea { width: 100%; padding: 8px; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.88rem; resize: vertical; background: var(--surface); color: var(--text); }
+    .sf-other-area input[type="text"] { width: 100%; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.88rem; margin-bottom: 6px; background: var(--surface); color: var(--text); }
     #otherEmailEditor { height: 120px; }
-    #otherEmailEditor .ql-toolbar { border: 1px solid #ced4da; border-bottom: none; border-radius: 4px 4px 0 0; background: #f9f9f9; }
-    #otherEmailEditor .ql-container { border: 1px solid #ced4da; border-radius: 0 0 4px 4px; min-height: 150px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+    /* NOTE: these two selectors match NOTHING and did so before this commit.
+       Quill turns #otherEmailEditor itself into .ql-container.ql-snow and
+       inserts .ql-toolbar as its PREVIOUS SIBLING, so neither is a descendant.
+       Verified in a browser: querySelectorAll length 0 for both. Tokenised
+       for consistency, not restructured — the live rules are below, and
+       repairing the selectors would restore a border-radius and a min-height,
+       which is a metric change (charter §0.1). */
+    #otherEmailEditor .ql-toolbar { border: 1px solid var(--border-strong); border-bottom: none; border-radius: 4px 4px 0 0; background: var(--surface-2); }
+    #otherEmailEditor .ql-container { border: 1px solid var(--border-strong); border-radius: 0 0 4px 4px; min-height: 150px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+
+    /* ── Quill (snow) ────────────────────────────────────────────────────
+       The editor sits on .sf-form, which now themes. Quill's stylesheet
+       hardcodes #ccc frames and #444 icon strokes: on the dark --surface the
+       icons measure ~1.5:1 and the toolbar is unusable. Same shape as the
+       SweetAlert override — a third-party widget whose light-only colours
+       need a dark counterpart once the surface under them moves. Light mode
+       is left alone apart from the frame, where #ccc → --border-strong
+       (#cfd4da) is imperceptible. */
+    .ql-toolbar.ql-snow, .ql-container.ql-snow { border-color: var(--border-strong); }
+    html[data-theme="dark"] .ql-snow .ql-stroke,
+    html[data-theme="dark"] .ql-snow .ql-stroke-miter { stroke: var(--text); }
+    html[data-theme="dark"] .ql-snow .ql-fill,
+    html[data-theme="dark"] .ql-snow .ql-stroke.ql-fill { fill: var(--text); }
+    html[data-theme="dark"] .ql-snow .ql-picker { color: var(--text); }
+    html[data-theme="dark"] .ql-snow .ql-picker-options {
+      background: var(--surface-2); border-color: var(--border);
+    }
+    html[data-theme="dark"] .ql-snow .ql-editor.ql-blank::before { color: var(--text-muted); }
+    html[data-theme="dark"] .ql-snow.ql-toolbar button:hover .ql-stroke,
+    html[data-theme="dark"] .ql-snow.ql-toolbar button.ql-active .ql-stroke,
+    html[data-theme="dark"] .ql-snow .ql-picker-label:hover,
+    html[data-theme="dark"] .ql-snow .ql-picker-label.ql-active { stroke: var(--accent); color: var(--accent); }
+    html[data-theme="dark"] .ql-snow.ql-toolbar button:hover .ql-fill,
+    html[data-theme="dark"] .ql-snow.ql-toolbar button.ql-active .ql-fill { fill: var(--accent); }
     /* ── Toggle switch ─── */
     .sf-toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
     .sf-toggle-switch input { opacity: 0; width: 0; height: 0; }
-    .sf-toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #07ADEF; transition: .3s; border-radius: 24px; }
-    .sf-toggle-slider:before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
-    .sf-toggle-switch input:checked + .sf-toggle-slider { background-color: #28a745; }
+    .sf-toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--accent); transition: .3s; border-radius: 24px; }
+    .sf-toggle-slider:before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: var(--fill-text); transition: .3s; border-radius: 50%; }
+    .sf-toggle-switch input:checked + .sf-toggle-slider { background-color: var(--ok-fill); }
     .sf-toggle-switch input:checked + .sf-toggle-slider:before { transform: translateX(20px); }
-    .sf-preview { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 16px; margin: 16px 0; white-space: pre-wrap; font-size: 0.88rem; font-family: monospace; max-height: 400px; overflow-y: auto; display: none; }
+    .sf-preview { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin: 16px 0; white-space: pre-wrap; font-size: 0.88rem; font-family: monospace; max-height: 400px; overflow-y: auto; display: none; }
     .sf-preview h4 { font-family: Arial, sans-serif; font-size: 0.95rem; font-weight: 700; margin: 0 0 8px 0; }
     .sf-actions { display: flex; gap: 10px; margin-top: 16px; }
     .sf-actions button { flex: 1; }
     .sf-disabled { opacity: 0.4; pointer-events: none; }
     .sf-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-    .sf-badge-future { background: #e9ecef; color: #6c757d; }
+    .sf-badge-future { background: var(--surface-2); color: var(--text-muted); }
     @media (max-width: 600px) {
       .sf-bank-grid { grid-template-columns: 1fr 1fr; }
       .sf-tax-grid { grid-template-columns: auto repeat(3, 1fr); }
@@ -73,7 +107,7 @@
     }
   </style>
 </head>
-<body style="font-family: Arial, sans-serif; background: #f8f9fa; padding: 16px; margin: 0;">
+<body style="font-family: Arial, sans-serif; background: var(--page-bg); color: var(--text); padding: 16px; margin: 0;">
 
 <div class="sf-form" id="sendingForm">
 
@@ -112,11 +146,11 @@
   <div class="sf-section">
     <div class="sf-section-title"><input type="checkbox" id="chkContracts"> Contracts (E-Sign)</div>
     <div class="sf-sub" id="contractsSection" style="display:none;">
-      <div id="contractsList" style="font-size:0.88rem; color:#6c757d;">Loading contracts…</div>
+      <div id="contractsList" style="font-size:0.88rem; color:var(--text-muted);">Loading contracts…</div>
       <div class="sf-docs-instruction" id="contractsFooter" style="display:none;">
         <label><input type="checkbox" id="chkContractHeadsUp">
           Also text a heads-up ("we emailed you a document to sign — check your inbox/spam")</label>
-        <div style="font-size:0.8rem; color:#6c757d; margin-top:4px;">
+        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">
           Signing invitations are emailed by Zoho Sign to the addresses in the contact cards above.
           With two signers they sign IN ORDER: signer 2's email goes out only after signer 1
           finishes. Reminders and follow-up tasks run automatically until signed or expired (14 days).
@@ -220,13 +254,13 @@
     <div class="sf-other-area" id="otherSection" style="display:none;">
 
       <!-- SMS / Email toggle -->
-      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:8px 0; border-bottom:1px solid #e0e0e0;">
-        <span id="otherToggleSmsLabel" style="font-weight:bold; color:#07ADEF;">SMS</span>
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:8px 0; border-bottom:1px solid var(--border);">
+        <span id="otherToggleSmsLabel" style="font-weight:bold; color:var(--accent-2);">SMS</span>
         <label class="sf-toggle-switch">
           <input type="checkbox" id="otherModeToggle" onchange="toggleOtherMode()">
           <span class="sf-toggle-slider"></span>
         </label>
-        <span id="otherToggleEmailLabel" style="font-weight:normal; color:#888;">Email</span>
+        <span id="otherToggleEmailLabel" style="font-weight:normal; color:var(--text-muted);">Email</span>
       </div>
 
       <!-- SMS fields -->
@@ -234,18 +268,18 @@
         <label>Message:</label>
         <textarea id="otherSms" rows="4" maxlength="1000" placeholder="Free text SMS message"
                   oninput="document.getElementById('otherSmsChars').textContent = this.value.length + '/1000'"></textarea>
-        <div style="font-size:12px; color:#888; text-align:right; margin-top:-4px; margin-bottom:6px;" id="otherSmsChars">0/1000</div>
+        <div style="font-size:12px; color:var(--text-muted); text-align:right; margin-top:-4px; margin-bottom:6px;" id="otherSmsChars">0/1000</div>
 
         <!-- MMS attachment (RC lines only) -->
         <div id="otherMmsSection" style="display:none; margin-bottom:8px;">
           <button class="yc-btn yc-btn-secondary" onclick="otherAttachMmsImage()" style="padding:6px 14px; font-size:13px;">
             <i class="fa-solid fa-image"></i> Attach Image (MMS)
           </button>
-          <span style="color:#888; font-size:13px;" id="otherMmsHint"></span>
-          <div id="otherMmsPreview" style="display:none; margin-top:8px; align-items:center; gap:8px; font-size:13px; padding:6px 10px; background:#f8f9fa; border:1px solid #e0e0e0; border-radius:4px;">
-            <img id="otherMmsPreviewImg" src="" style="max-width:80px; max-height:60px; border-radius:4px; border:1px solid #ddd;">
+          <span style="color:var(--text-muted); font-size:13px;" id="otherMmsHint"></span>
+          <div id="otherMmsPreview" style="display:none; margin-top:8px; align-items:center; gap:8px; font-size:13px; padding:6px 10px; background:var(--surface-2); border:1px solid var(--border); border-radius:4px;">
+            <img id="otherMmsPreviewImg" src="" style="max-width:80px; max-height:60px; border-radius:4px; border:1px solid var(--border);">
             <span id="otherMmsPreviewName"></span>
-            <button onclick="otherRemoveMmsAttachment()" style="background:#dc3545; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:13px;">&times;</button>
+            <button onclick="otherRemoveMmsAttachment()" style="background:var(--danger-fill); color:var(--fill-text); border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:13px;">&times;</button>
           </div>
         </div>
 
@@ -274,12 +308,12 @@
           <button class="yc-btn yc-btn-secondary" onclick="otherInsertVideoEmail()" style="padding:6px 14px; font-size:13px; margin-left:6px;">
             <i class="fa-solid fa-video"></i> Insert Video Link
           </button>
-          <span style="color:#888; font-size:13px; margin-left:8px;">File will be sent as an email attachment</span>
+          <span style="color:var(--text-muted); font-size:13px; margin-left:8px;">File will be sent as an email attachment</span>
         </div>
-        <div id="otherEmailAttachPreview" style="display:none; margin-top:8px; align-items:center; gap:8px; font-size:13px; padding:6px 10px; background:#f8f9fa; border:1px solid #e0e0e0; border-radius:4px;">
+        <div id="otherEmailAttachPreview" style="display:none; margin-top:8px; align-items:center; gap:8px; font-size:13px; padding:6px 10px; background:var(--surface-2); border:1px solid var(--border); border-radius:4px;">
           <i class="fa-solid fa-file"></i>
           <span id="otherEmailAttachName"></span>
-          <button onclick="otherRemoveEmailAttachment()" style="background:#dc3545; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:13px;">&times;</button>
+          <button onclick="otherRemoveEmailAttachment()" style="background:var(--danger-fill); color:var(--fill-text); border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:13px;">&times;</button>
         </div>
       </div>
 
@@ -305,7 +339,7 @@ const params = new URLSearchParams(location.search);
 const caseId = params.get('case_id');
 
 if (!caseId) {
-  document.body.innerHTML = '<p style="color:red;padding:20px;">Missing case_id parameter.</p>';
+  document.body.innerHTML = '<p style="color:var(--danger);padding:20px;">Missing case_id parameter.</p>';
 } else {
   (function waitForParent() {
     if (P.apiSend && P.firmData?.phoneLines) return initSendingForm();
@@ -434,7 +468,7 @@ async function initSendingForm() {
   } catch (err) {
     console.error('Sending form init error:', err);
     document.getElementById('sendingForm').innerHTML =
-      `<p style="color:red;padding:20px;">Failed to load: ${err.message}</p>`;
+      `<p style="color:var(--danger);padding:20px;">Failed to load: ${err.message}</p>`;
   }
 }
 
@@ -564,7 +598,7 @@ function buildDynamicGrids() {
   ).join('') +
   `<label style="grid-column:1/-1; margin-top:4px; display:flex; align-items:center; gap:6px;">
     <input type="checkbox" class="bank-cb" value="__other"> Other:
-    <input type="text" id="bankOther" placeholder="card/bank name" style="flex:1; max-width:250px; padding:3px 6px; border:1px solid #ced4da; border-radius:4px; font-size:0.84rem;">
+    <input type="text" id="bankOther" placeholder="card/bank name" style="flex:1; max-width:250px; padding:3px 6px; border:1px solid var(--border-strong); border-radius:4px; font-size:0.84rem; background:var(--surface); color:var(--text);">
   </label>`;
 }
 
@@ -669,7 +703,7 @@ async function loadContractTemplates() {
     const out = await P.apiSend('/api/esign/templates', 'GET');
     esignTemplates = (out.templates || []).filter(t => t.active && t.kind === 'contract');
   } catch (err) {
-    list.innerHTML = `<span style="color:#dc3545;">Failed to load contracts: ${escHtml(err.message)}</span>`;
+    list.innerHTML = `<span style="color:var(--danger);">Failed to load contracts: ${escHtml(err.message)}</span>`;
     esignTemplates = null; // retryable on next toggle
     return;
   }
@@ -768,20 +802,20 @@ async function toggleContract(tid, checked) {
         }
       }
     } catch (err) {
-      box.innerHTML = `<span style="color:#dc3545;">Failed to load values: ${escHtml(err.message)}</span>`;
+      box.innerHTML = `<span style="color:var(--danger);">Failed to load values: ${escHtml(err.message)}</span>`;
       return;
     }
   }
 
   const { schema, values } = contractPrefills[tid];
   if (!schema.length) {
-    box.innerHTML = '<span style="color:#6c757d;">No fill-in values — signer completes everything on the document.</span>';
+    box.innerHTML = '<span style="color:var(--text-muted);">No fill-in values — signer completes everything on the document.</span>';
     box.dataset.rendered = '1';
     return;
   }
 
   box.innerHTML = schema.map(f => {
-    const req = f.required ? ' <span style="color:#dc3545;">*</span>' : '';
+    const req = f.required ? ' <span style="color:var(--danger);">*</span>' : '';
 
     // options rows are LIST-valued (they feed a dropdown on the document —
     // e.g. the valid first-payment dates computed from the case). One option
@@ -790,27 +824,29 @@ async function toggleContract(tid, checked) {
     if (f.type === 'options') {
       const list    = Array.isArray(values[f.key]) ? values[f.key] : [];
       const isEmpty = list.length === 0;
-      const warn    = (f.required && isEmpty) ? 'border-color:#dc3545;' : '';
+      const warn    = (f.required && isEmpty) ? 'border-color:var(--danger);' : '';
       return `<div style="display:flex; align-items:flex-start; gap:8px; margin:4px 0;">
         <label style="min-width:180px; font-weight:600; padding-top:4px;">${escHtml(f.label || f.key)}${req}</label>
         <div style="flex:1; max-width:320px;">
           <textarea class="contract-val" data-tid="${tid}" data-key="${escHtml(f.key)}"
                     rows="${Math.min(8, Math.max(3, list.length))}"
-                    style="width:100%; padding:3px 6px; ${warn} border:1px solid #ced4da;
-                    border-radius:4px; font-size:0.85rem; font-family:inherit;">${escHtml(list.join('\n'))}</textarea>
-          <div style="font-size:0.75rem; color:#6c757d;">One choice per line — these become the dropdown the client picks from.</div>
+                    style="width:100%; padding:3px 6px; ${warn} border:1px solid var(--border-strong);
+                    border-radius:4px; font-size:0.85rem; font-family:inherit;
+                    background:var(--surface); color:var(--text);">${escHtml(list.join('\n'))}</textarea>
+          <div style="font-size:0.75rem; color:var(--text-muted);">One choice per line — these become the dropdown the client picks from.</div>
         </div>
       </div>`;
     }
 
     const val     = values[f.key] != null ? values[f.key] : (f.default != null ? f.default : '');
     const isEmpty = String(val).trim() === '';
-    const warn    = (f.required && isEmpty) ? 'border-color:#dc3545;' : '';
+    const warn    = (f.required && isEmpty) ? 'border-color:var(--danger);' : '';
     return `<div style="display:flex; align-items:center; gap:8px; margin:4px 0;">
       <label style="min-width:180px; font-weight:600;">${escHtml(f.label || f.key)}${req}</label>
       <input type="text" class="contract-val" data-tid="${tid}" data-key="${escHtml(f.key)}"
              value="${escHtml(val)}" style="flex:1; max-width:320px; padding:3px 6px; ${warn}
-             border:1px solid #ced4da; border-radius:4px; font-size:0.85rem;">
+             border:1px solid var(--border-strong); border-radius:4px; font-size:0.85rem;
+             background:var(--surface); color:var(--text);">
     </div>`;
   }).join('');
   box.dataset.rendered = '1';
@@ -1431,18 +1467,18 @@ function toggleOtherMode() {
   document.getElementById('otherSmsFields').style.display = isEmail ? 'none' : '';
   document.getElementById('otherEmailFields').style.display = isEmail ? '' : 'none';
   document.getElementById('otherToggleSmsLabel').style.fontWeight = isEmail ? 'normal' : 'bold';
-  document.getElementById('otherToggleSmsLabel').style.color = isEmail ? '#888' : '#07ADEF';
+  document.getElementById('otherToggleSmsLabel').style.color = isEmail ? 'var(--text-muted)' : 'var(--accent-2)';
   document.getElementById('otherToggleEmailLabel').style.fontWeight = isEmail ? 'bold' : 'normal';
-  document.getElementById('otherToggleEmailLabel').style.color = isEmail ? '#28a745' : '#888';
+  document.getElementById('otherToggleEmailLabel').style.color = isEmail ? 'var(--ok)' : 'var(--text-muted)';
 }
 
 function otherUpdateSubjectHint() {
   const len = document.getElementById('otherEmailSubject').value.length;
   const hint = document.getElementById('otherSubjectHint');
   if (len === 0) { hint.textContent = ''; return; }
-  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'green'; }
-  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'orange'; }
-  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'red'; }
+  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'var(--ok)'; }
+  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'var(--warn)'; }
+  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'var(--danger)'; }
 }
 
 // ── Quill image handler ──
