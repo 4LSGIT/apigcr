@@ -15,21 +15,29 @@
   .cards { display:flex; gap:8px; padding:10px; flex-wrap:wrap; background:var(--surface); border-bottom:1px solid var(--border); }
   .card { flex:1 1 110px; min-width:110px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
     padding:8px 12px; cursor:pointer; user-select:none; }
+  /* Critical is outlined, not recoloured — the card's own border, previously
+     unused, is what separates it from .err (both numbers stay on --danger).
+     Measures 6.23 light / 5.82 dark against the card, and 5.49 / 5.01 against
+     the --border it replaces, so the outline reads as deliberate.
+     Placed BEFORE :hover and .active on purpose. All three selectors are
+     specificity 0,2,0, so source order alone decides: this way hover and
+     active still win and keep their accent feedback on the card users click
+     most. Move this below them and a critical card stops responding to hover. */
+  .card.crit { border-color:var(--danger); }
   .card:hover { border-color:var(--accent); }
   .card.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
   .card .n { font-size:22px; font-weight:700; line-height:1.1; }
   .card .l { font-size:10px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-top:2px; }
   .card.crit .n { color:var(--danger); }
-  /* TOKEN-MAP GAP. This page runs a THREE-level severity scale — critical /
-     error / warning — and the sheet ships two status hues. #ff9f6b was a
-     dark-only orange: it measures 8.25:1 on the dark surface and 2.01:1 on
-     white, so it cannot survive as a literal on a page that is now light by
-     default. Folded into --danger rather than --warn because under-alerting
-     (an error reading as a warning) is the worse failure.
-     These two CARDS are still identical; the badges are not — they separate
-     critical from error via the fill/soft split (see .badge.critical below).
-     A card is bare text on a surface, so it has no fill/soft role to borrow
-     and still needs a third hue. Reversible in one line once one exists. */
+  /* This page runs a THREE-level severity scale — critical / error / warning
+     — and the sheet ships two status hues. #ff9f6b was a dark-only orange:
+     8.25:1 on the dark surface, 2.01:1 on white, so it could not survive as a
+     literal once the page defaulted to light. Folded into --danger rather
+     than --warn because under-alerting is the worse failure.
+     Both .n numbers stay on --danger deliberately. Critical is separated by
+     the card's BORDER (see .card.crit above), the same way the badges are
+     separated by fill-vs-tint. Slice 6b's report claimed a card had no role
+     left to borrow and needed a third hue; it had an unused border. */
   .card.err  .n { color:var(--danger); }
   .card.warn .n { color:var(--warn); }
   .card.ackd .n { color:var(--accent); }
