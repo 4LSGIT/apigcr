@@ -597,13 +597,24 @@ function logExtrasIcon(entry) {
                     precedent on the global feed: per-row fix-up affordance.
 
    refreshExpr is a JS EXPRESSION STRING embedded verbatim in the onclick
-   (e.g. "() => tabLogGet(0)"); it must contain no quote characters. Only
-   entry.log_id (coerced to Number) is interpolated from row data into the
-   handler — every displayed string goes through escText/escAttr, same rule
-   as buildLogDataCell (about labels are attacker-reachable via the API). */
-function logAboutBadge(entry, refreshExpr) {
+   (e.g. "() => tabLogGet(0)"); it must contain no quote characters —
+   enforced below by failing loudly (empty badge + console.error) rather
+   than silently emitting a broken attribute. Only entry.log_id (coerced to
+   Number) is interpolated from row data into the handler — every displayed
+   string goes through escText/escAttr, same rule as buildLogDataCell
+   (about labels are attacker-reachable via the API).
+
+   hasPrimaryLink: whether the cell already rendered a primary entity link.
+   When false (exactly the orphan rows this feature exists for), the set-
+   state badge renders inline after the type icon instead of opening with a
+   dangling <br>. */
+function logAboutBadge(entry, refreshExpr, hasPrimaryLink = true) {
   const rid = Number(entry.log_id);
   if (!Number.isInteger(rid) || rid <= 0) return '';
+  if (/["']/.test(String(refreshExpr))) {
+    console.error('logAboutBadge: refreshExpr must not contain quotes:', refreshExpr);
+    return '';
+  }
   const open = `LogAboutDialog(${rid}, ${refreshExpr});return false`;
 
   if (entry.log_about_type) {
@@ -615,9 +626,9 @@ function logAboutBadge(entry, refreshExpr) {
     } else {
       label = entry.log_about_type + ': ' + entry.log_about_id;
     }
-    return `<br><a href="#" class="log-about-badge" onclick="${open}"
-       title="About: ${escAttr(label)} \u2014 click to change or remove">` +
-       `<i class="fa-solid fa-link"></i> ${escText(label)}</a>`;
+    const lead = hasPrimaryLink ? '<br>' : ' ';
+    return `${lead}<a href="#" class="log-about-badge" onclick="${open}"
+       title="About: ${escAttr(label)} \u2014 click to change or remove"><i class="fa-solid fa-link"></i> ${escText(label)}</a>`;
   }
   return ` <a href="#" class="log-about-add" onclick="${open}"
        title="Link to a case or contact\u2026"><i class="fa-solid fa-link"></i></a>`;
@@ -760,6 +771,14 @@ async function showLogDetails(logId) {
         id:     e.log_link_id || null,
         legacy: e.log_link || null,
       },
+      // About-link S3.1: secondary attribution, hydrated by getLogEntry's
+      // PK-gated joins. Mirrors the badge so the inspector never omits a
+      // field the row shows. null (not an empty block) when unset.
+      about: e.log_about_type ? {
+        type:  e.log_about_type,
+        id:    e.log_about_id,
+        label: e.about_case_number || e.about_contact_name || null,
+      } : null,
       message: e.log_message || null,
       data:    decodedData,
       extra:   e.log_extra || null,
@@ -3930,11 +3949,14 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
    open. Remove is a deny-button, writes happen in preConfirm/preDeny with
    Swal.showValidationMessage on failure, Toasts fire only after close.
 
-   Sync: emits {yc_refetch:1} to the NEW target address and (when different)
-   the OLD one, so open case/contact surfaces that subscribe can refetch.
-   Guarded on window.YCSync — scripts.js does not require the bus. Log feeds
-   themselves don't subscribe (no log write broadcasts today; consistent),
-   the local feed refreshes via onDone. */
+   Sync: DELIBERATELY SILENT on the bus (review fix S3-1). An about-link
+   write changes a LOG row, not a cases/contacts column — but every current
+   `case:X` / `contact:X` yc_refetch subscriber refetches ENTITY data (full
+   case GET, cases-list reload, Kanban reload), so an emit here would wake
+   three unrelated surfaces to guaranteed no-ops while the one surface that
+   did change (the log feed) has no subscription. The local feed refreshes
+   via onDone. When log feeds grow a bus subscription, add the emit WITH the
+   reader, not before it. */
 async function LogAboutDialog(logId, onDone = null) {
   let entry;
   try {
@@ -3952,14 +3974,6 @@ async function LogAboutDialog(logId, onDone = null) {
 
   let picker = null;      // active Case/Contact picker instance
   let sel    = null;      // { type, id, label } — the user's pick
-
-  function emitRefetch(t, id) {
-    if (!window.YCSync) return;
-    if (t !== 'case' && t !== 'contact') return;
-    if (id == null || id === '') return;
-    try { YCSync.emit(t + ':' + id, { yc_refetch: 1 }, 'LogAboutDialog'); }
-    catch (e) { console.warn('[LogAboutDialog] emit failed:', e); }
-  }
 
   function setChosen() {
     const el = E('lab-chosen');
@@ -4063,12 +4077,9 @@ async function LogAboutDialog(logId, onDone = null) {
 
   if (result.isConfirmed && result.value) {
     Toast.fire({ icon: 'success', title: 'Linked' });
-    emitRefetch(sel.type, sel.id);
-    if (cur && (cur.type !== sel.type || cur.id !== sel.id)) emitRefetch(cur.type, cur.id);
     if (onDone) onDone();
   } else if (result.isDenied && result.value) {
     Toast.fire({ icon: 'success', title: 'Link removed' });
-    if (cur) emitRefetch(cur.type, cur.id);
     if (onDone) onDone();
   }
 }

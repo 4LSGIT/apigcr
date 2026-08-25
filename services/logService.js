@@ -731,12 +731,24 @@ async function listLog(db, {
  * @returns {object|null}
  */
 async function getLogEntry(db, logId) {
+  // About-link S3 (review fix S3-2): hydrate the about target so consumers
+  // (LogAboutDialog's "currently linked" line, the extras inspector) show the
+  // same label the feed badge shows. Joins copied verbatim from listLog —
+  // gated on log_about_type in the ON clause, PK-only probes, proven eq_ref.
   const [[entry]] = await db.query(
     `SELECT
        l.*,
-       u.user_name AS by_name
+       u.user_name AS by_name,
+       ab_ca.case_id AS about_case_id,
+       COALESCE(ab_ca.case_number_full, ab_ca.case_number) AS about_case_number,
+       ab_ct.contact_id AS about_contact_id,
+       ab_ct.contact_name AS about_contact_name
      FROM log l
      LEFT JOIN users u ON l.log_by = u.user
+     LEFT JOIN cases    ab_ca ON l.log_about_type = 'case'
+                             AND ab_ca.case_id    = l.log_about_id
+     LEFT JOIN contacts ab_ct ON l.log_about_type = 'contact'
+                             AND ab_ct.contact_id = l.log_about_id
      WHERE l.log_id = ?`,
     [logId]
   );

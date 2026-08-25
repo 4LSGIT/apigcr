@@ -2119,7 +2119,7 @@
             const typeIcon = logEntryIcon(entry);
             const extrasIcon = logExtrasIcon(entry);
             // About-link S3: badge / add-link affordance (shared helper in scripts.js).
-            const aboutBadge = logAboutBadge(entry, "() => tabLogGet(offsets.logs)");
+            const aboutBadge = logAboutBadge(entry, "() => tabLogGet(offsets.logs)", !!link);
 
             row.innerHTML = `
               <td>${entry.log_id}</td>
