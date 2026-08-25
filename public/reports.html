@@ -46,14 +46,17 @@
   .muted { color: var(--text-muted); }
   .small { font-size: 12px; }
   button {
-    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    background: var(--accent); color: var(--accent-text); border: none; border-radius: 6px;
     padding: 7px 13px; cursor: pointer; font-size: 13px; font-family: inherit;
   }
   button:hover { background: var(--accent-dark); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
   button.ghost:hover { background: var(--border); }
-  button.danger { background: var(--danger); }
+  /* --danger-fill, not --danger: the two are the same #a52f23 in light, but
+     --danger lightens to #ff7670 in dark, where a white label drops to 2.60.
+     The fill is mode-independent and holds 6.93 in both. */
+  button.danger { background: var(--danger-fill); color: var(--fill-text); }
   input, select, textarea {
     background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 9px; font-size: 13px; font-family: inherit;
@@ -133,7 +136,7 @@
     border-radius: 5px; padding: 3px 8px; font-size: 12px;
   }
   button.mini:hover { background: var(--border); color: var(--text); }
-  button.mini.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.mini.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   .stat-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 10px; margin: 4px 0 12px;
