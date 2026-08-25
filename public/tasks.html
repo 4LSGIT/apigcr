@@ -16,31 +16,7 @@
   <link rel="stylesheet" type="text/css" href="/style.css">
   <style>
     body { margin: 0; padding: 12px; background: var(--page-bg); color: var(--text); }
-    a { color: var(--accent); }
 
-    /* Dark-mode overrides for style.css's light-only logTable + form controls
-       (mirrors index.html's body.dark .tab-main rules — those don't reach
-       inside an iframe). Selector only: these are style rules, not token
-       definitions, so the :root/body.dark deletion does not cover them, and
-       with the page's own observer gone body.dark never matches. Declarations
-       are untouched — the literals here are family-C hexes, not this slice. */
-    html[data-theme="dark"] input,
-    html[data-theme="dark"] select,
-    html[data-theme="dark"] textarea {
-      background: var(--surface-2); color: var(--text);
-      border: 1px solid var(--border) !important;
-    }
-    html[data-theme="dark"] button {
-      background: var(--surface-2); color: var(--text);
-      border: 1px solid var(--border); border-radius: 4px;
-    }
-    html[data-theme="dark"] .logTable,
-    html[data-theme="dark"] .logTable td { background: var(--surface-2); border-color: var(--border); color: var(--text); }
-    html[data-theme="dark"] .logTable th { background: #1a3d52; color: #fff; border-color: var(--border); }
-    html[data-theme="dark"] .logTable tr:nth-child(even),
-    html[data-theme="dark"] .logTable tr:nth-child(even) td { background: #1a1f2b; }
-    html[data-theme="dark"] .logTable tr:hover,
-    html[data-theme="dark"] .logTable tr:hover td { background: #2a313d !important; }
 
     /* ── Toolbar ─────────────────────────────────────────────────────────── */
     /* Shell mode: 3-column grid (1fr auto 1fr) so the banner h1 sits dead
