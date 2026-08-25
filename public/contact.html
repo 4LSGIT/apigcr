@@ -5,6 +5,8 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css">
 <style>
   /* ── Sequences + Workflows tab (slice 4.3) — all classes prefixed
@@ -28,69 +30,69 @@
   align-items: baseline;
   gap: 10px;
   padding: 10px 4px 6px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
 }
 .cauto-section-head:first-of-type { border-top: none; }
 .cauto-section-title {
   font-size: 14px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--text);
   margin: 0;
 }
 .cauto-section-count {
   font-size: 13px;
   font-weight: 600;
-  color: #475569;
+  color: var(--text-2);
 }
 
 /* Divider between sections. */
 .cauto-divider {
   border: none;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
   margin: 18px 0 6px;
 }
 
 /* Scope toggle — shared across both sections. */
 .cseq-scope-toggle {
   display: inline-flex;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   overflow: hidden;
 }
 .cseq-scope-btn {
-  background: #fff;
+  background: var(--surface);
   border: none;
   padding: 5px 12px;
   font-size: 13px;
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
 }
-.cseq-scope-btn.active { background: #2563eb; color: #fff; }
-.cseq-scope-btn:not(.active):hover { background: #f1f5f9; }
+.cseq-scope-btn.active { background: var(--accent); color: var(--accent-text); }
+.cseq-scope-btn:not(.active):hover { background: var(--hover); }
 
 /* Refresh button — shared header. */
 .cseq-refresh-btn {
-  background: #fff;
-  border: 1px solid #cbd5e1;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 5px 10px;
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
 }
-.cseq-refresh-btn:hover { background: #f1f5f9; }
+.cseq-refresh-btn:hover { background: var(--hover); }
 
 /* Tables — sequences + workflows share the same layout treatment. */
 .cseq-table th, .cseq-table td,
 .cwf-table  th, .cwf-table  td { text-align: left; padding: 6px 8px; vertical-align: top; }
 .cseq-template-name,
-.cwf-workflow-name { font-weight: 600; color: #0f172a; }
-.cseq-template-type { font-size: 11px; color: #64748b; }
+.cwf-workflow-name { font-weight: 600; color: var(--text); }
+.cseq-template-type { font-size: 11px; color: var(--text-muted); }
 .cseq-id,
-.cwf-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #475569; }
+.cwf-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-2); }
 
 .cseq-empty,
 .cwf-empty {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-weight: 400;
   padding: 18px;
   text-align: center;
@@ -105,17 +107,17 @@
   gap: 10px;
   padding: 8px 0 4px;
   font-size: 12px;
-  color: #475569;
+  color: var(--text-2);
 }
 .cseq-pagination button,
 .cwf-pagination button {
   padding: 3px 10px;
   font-size: 11px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: #fff;
+  background: var(--surface);
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
 }
 .cseq-pagination button:disabled,
 .cwf-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -129,9 +131,9 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cseq-status-active    { background: #dbeafe; color: #1e40af; }
-.cseq-status-completed { background: #dcfce7; color: #166534; }
-.cseq-status-cancelled { background: #fee2e2; color: #991b1b; }
+.cseq-status-active    { background: var(--accent-soft); color: var(--accent-on-soft); }
+.cseq-status-completed { background: var(--ok-soft); color: var(--ok); }
+.cseq-status-cancelled { background: var(--danger-soft); color: var(--danger); }
 
 /* Status badges — workflow_executions.status enum (superset; kept distinct
    from sequence badges because the enums don't line up even where names
@@ -145,14 +147,14 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cwf-status-pending               { background: #fef3c7; color: #92400e; }
-.cwf-status-active                { background: #dbeafe; color: #1e40af; }
-.cwf-status-processing            { background: #e0e7ff; color: #3730a3; }
-.cwf-status-delayed               { background: #fef9c3; color: #854d0e; }
-.cwf-status-completed             { background: #dcfce7; color: #166534; }
-.cwf-status-completed_with_errors { background: #fed7aa; color: #9a3412; }
-.cwf-status-failed                { background: #fee2e2; color: #991b1b; }
-.cwf-status-cancelled             { background: #e2e8f0; color: #475569; }
+.cwf-status-pending               { background: var(--warn-soft); color: var(--warn); }
+.cwf-status-active                { background: var(--accent-soft); color: var(--accent-on-soft); }
+.cwf-status-processing            { background: var(--accent-soft); color: var(--cat-indigo); }
+.cwf-status-delayed               { background: var(--warn-soft); color: var(--warn); }
+.cwf-status-completed             { background: var(--ok-soft); color: var(--ok); }
+.cwf-status-completed_with_errors { background: var(--warn-soft); color: var(--warn); }
+.cwf-status-failed                { background: var(--danger-soft); color: var(--danger); }
+.cwf-status-cancelled             { background: var(--border); color: var(--text-2); }
 
 /* Step-history badges (drill-down modal) — sequence variant. */
 .cseq-job-badge, .cseq-log-badge {
@@ -163,13 +165,13 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cseq-job-pending    { background: #fef3c7; color: #92400e; }
-.cseq-job-running    { background: #dbeafe; color: #1e40af; }
-.cseq-job-completed  { background: #dcfce7; color: #166534; }
-.cseq-job-failed     { background: #fee2e2; color: #991b1b; }
-.cseq-log-sent       { background: #dcfce7; color: #166534; }
-.cseq-log-skipped    { background: #e5e7eb; color: #374151; }
-.cseq-log-failed     { background: #fee2e2; color: #991b1b; }
+.cseq-job-pending    { background: var(--warn-soft); color: var(--warn); }
+.cseq-job-running    { background: var(--accent-soft); color: var(--accent-on-soft); }
+.cseq-job-completed  { background: var(--ok-soft); color: var(--ok); }
+.cseq-job-failed     { background: var(--danger-soft); color: var(--danger); }
+.cseq-log-sent       { background: var(--ok-soft); color: var(--ok); }
+.cseq-log-skipped    { background: var(--border); color: var(--text-2); }
+.cseq-log-failed     { background: var(--danger-soft); color: var(--danger); }
 
 /* Step-history badges (drill-down modal) — workflow variant, uses
    workflow_execution_steps.status enum (success | failed, engine-written). */
@@ -181,10 +183,10 @@
   font-weight: 600;
   text-transform: capitalize;
 }
-.cwf-step-success { background: #dcfce7; color: #166534; }
-.cwf-step-failed  { background: #fee2e2; color: #991b1b; }
-.cwf-step-skipped { background: #e5e7eb; color: #374151; }
-.cwf-step-delayed { background: #fef9c3; color: #854d0e; }
+.cwf-step-success { background: var(--ok-soft); color: var(--ok); }
+.cwf-step-failed  { background: var(--danger-soft); color: var(--danger); }
+.cwf-step-skipped { background: var(--border); color: var(--text-2); }
+.cwf-step-delayed { background: var(--warn-soft); color: var(--warn); }
 
 /* Row buttons — shared between sections. */
 .cseq-view-btn, .cseq-cancel-btn,
@@ -196,17 +198,17 @@
   margin-right: 4px;
 }
 .cseq-view-btn, .cwf-view-btn {
-  background: #fff;
-  color: #334155;
-  border: 1px solid #cbd5e1;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
 }
-.cseq-view-btn:hover, .cwf-view-btn:hover { background: #f1f5f9; }
+.cseq-view-btn:hover, .cwf-view-btn:hover { background: var(--hover); }
 .cseq-cancel-btn, .cwf-cancel-btn {
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fca5a5;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
 }
-.cseq-cancel-btn:hover, .cwf-cancel-btn:hover { background: #fecaca; }
+.cseq-cancel-btn:hover, .cwf-cancel-btn:hover { background: var(--danger-soft); }
 
 /* Drill-down step-history tables (rendered inside a Swal modal; styles
    are global because Swal renders into document.body, not a shadow DOM). */
@@ -221,61 +223,61 @@
 .cseq-history-table td,
 .cwf-history-table th,
 .cwf-history-table td {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   padding: 4px 6px;
   text-align: left;
   vertical-align: top;
 }
 .cseq-history-table th,
-.cwf-history-table th { background: #f1f5f9; font-weight: 600; }
+.cwf-history-table th { background: var(--hover); font-weight: 600; }
 .cseq-history-table tr.cseq-row-muted td,
-.cwf-history-table  tr.cwf-row-muted  td { color: #94a3b8; background: #f8fafc; }
+.cwf-history-table  tr.cwf-row-muted  td { color: var(--text-muted); background: var(--surface-2); }
 .cseq-history-table .cseq-error-cell,
 .cwf-history-table  .cwf-error-cell {
   max-width: 260px;
   word-break: break-word;
-  color: #991b1b;
+  color: var(--danger);
 }
 
 /* ── Relationships tab (Slice 3) — all classes prefixed .crel-* ── */
 .crel-scope-toggle {
   display: inline-flex;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   overflow: hidden;
 }
 .crel-scope-btn {
-  background: #fff;
+  background: var(--surface);
   border: none;
   padding: 5px 12px;
   font-size: 13px;
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
 }
-.crel-scope-btn.active { background: #2563eb; color: #fff; }
-.crel-scope-btn:not(.active):hover { background: #f1f5f9; }
+.crel-scope-btn.active { background: var(--accent); color: var(--accent-text); }
+.crel-scope-btn:not(.active):hover { background: var(--hover); }
 
 .crel-refresh-btn {
-  background: #fff;
-  border: 1px solid #cbd5e1;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 5px 10px;
   cursor: pointer;
-  color: #334155;
+  color: var(--text-2);
   font-size: 13px;
 }
-.crel-refresh-btn:hover { background: #f1f5f9; }
+.crel-refresh-btn:hover { background: var(--hover); }
 
 .crel-add-btn {
-  background: #2563eb;
-  color: #fff;
-  border: 1px solid #2563eb;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
   border-radius: 6px;
   padding: 5px 12px;
   cursor: pointer;
   font-size: 13px;
 }
-.crel-add-btn:hover { background: #1d4ed8; }
+.crel-add-btn:hover { background: var(--accent-dark); }
 
 .crel-table th, .crel-table td { text-align: left; padding: 6px 8px; vertical-align: top; }
 
@@ -286,8 +288,8 @@
   font-size: 11px;
   font-weight: 600;
 }
-.crel-status-active   { background: #dcfce7; color: #166534; }
-.crel-status-inactive { background: #e2e8f0; color: #475569; }
+.crel-status-active   { background: var(--ok-soft); color: var(--ok); }
+.crel-status-inactive { background: var(--border); color: var(--text-2); }
 
 .crel-edit-btn, .crel-delete-btn {
   padding: 3px 10px;
@@ -297,30 +299,30 @@
   margin-right: 4px;
 }
 .crel-edit-btn {
-  background: #fff;
-  color: #334155;
-  border: 1px solid #cbd5e1;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
 }
-.crel-edit-btn:hover { background: #f1f5f9; }
+.crel-edit-btn:hover { background: var(--hover); }
 .crel-delete-btn {
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fca5a5;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
 }
-.crel-delete-btn:hover { background: #fecaca; }
+.crel-delete-btn:hover { filter: brightness(1.25); }
 
 .crel-empty {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-weight: 400;
   padding: 18px;
   text-align: center;
   margin: 6px 0;
 }
 
-.crel-result-row:hover { background: #f0f9ff; }
+.crel-result-row:hover { background: var(--hover); }
 
 .crel-other-link {
-  color: #07ADEF;
+  color: var(--accent-2);
   text-decoration: none;
   font-weight: 500;
 }
@@ -365,12 +367,12 @@
       <button class="tab" onclick="openTab(this, 'tabSeq'); if (!E('tabSeqIframe').src) E('tabSeqIframe').src = `automation/automationsWidget.html?contact_id=${clientID}`; else E('tabSeqIframe').contentWindow?.reloadAutomations?.();"><i class="fa-solid fa-robot"></i> Automations</button>
       <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Log</button>
     </div>
-    <h3 style="color:#000;">Client Name:
+    <h3 style="color:var(--text);">Client Name:
       <span onclick="copy(this.innerText)">
-      <span id="fname" style="color:#07ADEF;">John</span>
-      <span id="lname" style="color:#07ADEF;">Doe</span></span>
+      <span id="fname" style="color:var(--accent-2);">John</span>
+      <span id="lname" style="color:var(--accent-2);">Doe</span></span>
       Phone: <span id="phone" onclick="copy(this.innerText)"
-                   style="color:#07ADEF;">000-000-0000</span>
+                   style="color:var(--accent-2);">000-000-0000</span>
     </h3>
   </div>
   <div id="tabInfo" class="tab-content">
@@ -592,9 +594,9 @@ async function tabLogGet(offset) {
         let dirIcon = "";
         const isComm = ['sms','email','call','court email'].includes(entry.log_type);
         if (isComm && entry.log_direction === 'outgoing') {
-          dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:#888"></i>`;
+          dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:var(--text-muted)"></i>`;
         } else if (isComm && entry.log_direction === 'incoming') {
-          dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
+          dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:var(--text-muted)"></i>`;
         }
         // Slice B.3: leading link-type icon + trailing extras-inspector icon
         const typeIcon = logEntryIcon(entry);
@@ -1231,7 +1233,7 @@ async function loadContactRelations() {
   if (!tbody || !empty || !table || !count) { CREL.loading = false; return; }
 
   // Inline spinner — tab already visible
-  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color: var(--text-muted)"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
   table.style.display = '';
   empty.style.display = 'none';
   count.textContent   = '…';
@@ -1260,7 +1262,7 @@ async function loadContactRelations() {
 
     tbody.innerHTML = renderContactRelationRows(rows);
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" style="color:#991b1b;padding:12px">Error: ${crelEsc(err.message || String(err))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="color: var(--danger);padding:12px">Error: ${crelEsc(err.message || String(err))}</td></tr>`;
     count.textContent = '!';
   } finally {
     CREL.loading = false;
@@ -1289,10 +1291,10 @@ function renderContactRelationRows(rows) {
       ? `<span class="crel-status-badge crel-status-active">Active</span>`
       : `<span class="crel-status-badge crel-status-inactive">Inactive</span>`;
     const statusLine = r.status
-      ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${crelEsc(r.status)}</div>`
+      ? `<div style="font-size:11px;color: var(--text-muted);margin-top:2px">${crelEsc(r.status)}</div>`
       : '';
     const endLine = r.end_reason
-      ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${crelEsc(r.end_reason)}${r.end_date ? ' on ' + crelEsc(crelFmtDate(r.end_date)) : ''}</div>`
+      ? `<div style="font-size:11px;color: var(--text-muted);margin-top:2px">${crelEsc(r.end_reason)}${r.end_date ? ' on ' + crelEsc(crelFmtDate(r.end_date)) : ''}</div>`
       : '';
 
     const notesText  = r.notes || '';
@@ -1407,43 +1409,43 @@ async function openAddRelationModal() {
   const html = `
     <div style="text-align:left">
       <div style="margin-bottom:10px">
-        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Type</label>
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Type</label>
         <select id="crelm-type" style="width:100%;padding:6px">
           ${buildRelationTypeOptions(types)}
         </select>
       </div>
       <div style="margin-bottom:10px">
-        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Other Contact</label>
-        <div id="crelm-picked" style="display:none;padding:6px 10px;background:#dbeafe;border:1px solid #93c5fd;border-radius:6px;margin-bottom:6px;font-size:13px"></div>
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Other Contact</label>
+        <div id="crelm-picked" style="display:none;padding:6px 10px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;margin-bottom:6px;font-size:13px"></div>
         <input id="crelm-search" placeholder="Type to search contacts..." style="width:100%;padding:6px" autocomplete="off">
-        <div id="crelm-results" style="max-height:160px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;margin-top:4px;display:none;background:#fff"></div>
+        <div id="crelm-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;margin-top:4px;display:none;background:var(--surface)"></div>
       </div>
       <div id="crelm-status-wrap" style="margin-bottom:10px;display:none">
-        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Status</label>
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Status</label>
         <select id="crelm-status" style="width:100%;padding:6px"></select>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Start Date</label>
+          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Start Date</label>
           <input type="date" id="crelm-start" style="width:100%;padding:6px">
         </div>
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Date</label>
+          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Date</label>
           <input type="date" id="crelm-end" style="width:100%;padding:6px">
         </div>
       </div>
       <div id="crelm-endreason-wrap" style="margin-bottom:10px;display:none">
-        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Reason</label>
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Reason</label>
         <select id="crelm-endreason" style="width:100%;padding:6px"></select>
       </div>
       <div style="margin-bottom:10px">
-        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#334155">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color: var(--text-2)">
           <input type="checkbox" id="crelm-active" checked style="width:auto">
           Active
         </label>
       </div>
       <div style="margin-bottom:6px">
-        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Notes</label>
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Notes</label>
         <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000"></textarea>
       </div>
     </div>
@@ -1506,7 +1508,7 @@ async function openAddRelationModal() {
             const list = data.contacts || [];
             if (!list.length) {
               resultsBox.innerHTML =
-                '<div style="padding:8px;color:#94a3b8;font-size:12px">No matches.</div>';
+                '<div style="padding:8px;color: var(--text-muted);font-size:12px">No matches.</div>';
               resultsBox.style.display = '';
               return;
             }
@@ -1521,9 +1523,9 @@ async function openAddRelationModal() {
               const em = c.contact_email || '';
               const sub = [ph, em].filter(Boolean).join(' · ');
               return `<div class="crel-result-row" data-id="${id}" data-name="${crelEsc(nm)}"
-                           style="padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px">
+                           style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px">
                         <b>${crelEsc(nm)}</b>
-                        <span style="color:#64748b;font-size:11px;margin-left:6px">#${id}${sub ? ' · ' + crelEsc(sub) : ''}</span>
+                        <span style="color: var(--text-muted);font-size:11px;margin-left:6px">#${id}${sub ? ' · ' + crelEsc(sub) : ''}</span>
                       </div>`;
             }).join('');
             resultsBox.style.display = '';
@@ -1542,7 +1544,7 @@ async function openAddRelationModal() {
           } catch (err) {
             if (mySeq !== searchSeq) return;
             resultsBox.innerHTML =
-              `<div style="padding:8px;color:#991b1b;font-size:12px">Error: ${crelEsc(err.message)}</div>`;
+              `<div style="padding:8px;color: var(--danger);font-size:12px">Error: ${crelEsc(err.message)}</div>`;
             resultsBox.style.display = '';
           }
         }, 300);
@@ -1636,38 +1638,38 @@ async function openEditRelationModal(id) {
 
   const html = `
     <div style="text-align:left">
-      <div style="margin-bottom:10px;padding:8px 10px;background:#f1f5f9;border-radius:6px;font-size:13px;color:#334155">
+      <div style="margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:6px;font-size:13px;color:var(--text-2)">
         <div><b>${crelEsc(typeLabelDisplay)}</b></div>
-        <div style="font-size:11px;color:#64748b">Type and other contact cannot be changed.</div>
+        <div style="font-size:11px;color: var(--text-muted)">Type and other contact cannot be changed.</div>
       </div>
       <div style="margin-bottom:10px">
-        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#334155">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color: var(--text-2)">
           <input type="checkbox" id="crelm-active" ${row.active ? 'checked' : ''} style="width:auto">
           Active
         </label>
       </div>
       ${statusOpts ? `
         <div style="margin-bottom:10px">
-          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Status</label>
+          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Status</label>
           <select id="crelm-status" style="width:100%;padding:6px">${statusOpts}</select>
         </div>` : ''}
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Start Date</label>
+          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Start Date</label>
           <input type="date" id="crelm-start" value="${crelEsc(startYmd)}" style="width:100%;padding:6px">
         </div>
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Date</label>
+          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Date</label>
           <input type="date" id="crelm-end" value="${crelEsc(endYmd)}" style="width:100%;padding:6px">
         </div>
       </div>
       ${endrOpts ? `
         <div style="margin-bottom:10px">
-          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Reason</label>
+          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Reason</label>
           <select id="crelm-endreason" style="width:100%;padding:6px">${endrOpts}</select>
         </div>` : ''}
       <div style="margin-bottom:6px">
-        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Notes</label>
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Notes</label>
         <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000">${crelEsc(row.notes || '')}</textarea>
       </div>
     </div>
@@ -1732,7 +1734,7 @@ async function deleteContactRelation(id) {
     icon: 'warning',
     showCancelButton: true,
     confirmButtonText: 'Delete',
-    confirmButtonColor: '#dc2626',
+    confirmButtonColor: 'var(--danger-fill)',
     reverseButtons: true,
     showLoaderOnConfirm: true,
     preConfirm: async () => {
