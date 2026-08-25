@@ -4,12 +4,13 @@ body{font-family: Arial, Helvetica, sans-serif}
   display: inline-block;
   margin-bottom: 3px;
   padding: 10px 10px;
-  background-color: #f2f2f2;
+  background-color: var(--sidebar-bg);
+  color: var(--text);
   cursor: pointer;
 }
 
 .tab:hover {
-  background-color: #dddddd;
+  background-color: var(--hover);
 }
 /* One line of a multi-row tab strip (case.html). The tabs divide the full
    width of the row between them, so the strip reads as one filled toolbar
@@ -42,7 +43,7 @@ body{font-family: Arial, Helvetica, sans-serif}
   text-align: center;
 }
 .active {
-  background-color: #aaaaaa;
+  background-color: var(--surface-2);
 }
 .tab-main {
   display: none;
@@ -57,7 +58,7 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   width: 200px;
   box-sizing: border-box;
   padding: 10px;
-  border: 1px solid #cccccc;
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
 }
 /* The global rule above (specificity 0,2,1) outranks ContactPicker's own
@@ -99,36 +100,36 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
 .big-button {
   display: inline-block;
   padding: 10px 20px;
-  background-color: #007bff;
-  color: #ffffff;
+  background-color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
   border-radius: 3px;
   transition: background-color 0.3s ease;
   width: 170px;
 }
 .big-button:hover {
-  background-color: #0056b3;
+  background-color: var(--accent-dark);
 }
 .pop-button {
   display: inline-block;
   padding: 10px 0px;
-  background-color: #007bff;
-  color: #ffffff;
+  background-color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
   border-radius: 3px;
   transition: background-color 0.3s ease;
   width: 75px;
 }
 .pop-button:hover {
-  background-color: #0056b3;
+  background-color: var(--accent-dark);
 }
 .switch-button {
   width: 150px;
   height: 50px;
   border: none;
   font-size: 14pt;
-  color: #ffffff;
-  background-color: #007bff;
+  color: var(--accent-text);
+  background-color: var(--accent);
   padding: opx;
   margin: -3px;
 }
@@ -138,18 +139,18 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   width: 100%;
 }
 .logTable td, .logTable th {
-  border: 1px solid #dddddd;
+  border: 1px solid var(--border);
   padding: 8px;
 }
 .logTable th {
-  background-color:#26abe2/*#04AA6D*/;
-  color: white;
+  background-color: var(--accent-dark);
+  color: var(--accent-text);
 }
 .logTable tr:nth-child(even) {
-  background-color: #f2f2f2;
+  background-color: var(--surface-2);
 }
 .logTable tr:hover {
-  background-color: #dddddd;
+  background-color: var(--hover);
 }
 iframe {
   width: 100%;
@@ -163,16 +164,16 @@ body.swal2-shown > [aria-hidden="true"] {
 .file-button, .file-type-button {
   display: inline-block;
   padding: 5px;
-  background-color: #f0f0f0;
-  color: #333333;
+  background-color: var(--surface-2);
+  color: var(--text);
   cursor: pointer;
-  border: 1px solid #cccccc;
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   margin: 5px 2px;
 }
 
   .appointment-box {
-    border: 1px solid #020202;
+    border: 1px solid var(--border-strong);
     padding: 5px;
     border-radius: 5px;
     line-height: .2;
@@ -189,12 +190,12 @@ body.swal2-shown > [aria-hidden="true"] {
   }
 
 .file-button:hover {
-  background-color: #e0e0e0;
+  background-color: var(--hover);
 }
 
 .file-close {
   display: inline-block;
-  color: #ff0000;
+  color: var(--danger);
   cursor: default;
   margin-left: 20px;
 }
@@ -213,21 +214,22 @@ body.swal2-shown > [aria-hidden="true"] {
     }
     .campaign-tab-button {
       padding: 10px 20px;
-      background-color: #f2f2f2;
-      border: 1px solid #cccccc;
+      background-color: var(--sidebar-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
       border-bottom: none;
       cursor: pointer;
       font-weight: bold;
     }
     .campaign-tab-button.active {
-      background-color: #ffffff;
-      border-bottom: 2px solid #007bff;
+      background-color: var(--surface);
+      border-bottom: 2px solid var(--accent);
     }
     .campaign-tab-main {
       display: none;
       padding: 20px;
-      border: 1px solid #cccccc;
-      background-color: #ffffff;
+      border: 1px solid var(--border);
+      background-color: var(--surface);
     }
     .campaign-tab-main.active {
       display: block;
@@ -244,7 +246,7 @@ body.swal2-shown > [aria-hidden="true"] {
     .campaign-form input, .campaign-form textarea {
       width: 100%;
       padding: 8px;
-      border: 1px solid #cccccc;
+      border: 1px solid var(--border-strong);
       border-radius: 3px;
       box-sizing: border-box;
     }
