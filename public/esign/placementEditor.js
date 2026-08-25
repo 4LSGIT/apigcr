@@ -1,6 +1,26 @@
 // public/esign/placementEditor.js
 //
 // ─────────────────────────────────────────────────────────────
+// NOT TOKENISED BY THE THEME ARC (slice 10) — ON PURPOSE.
+//
+// Family E converted the other seven JS modules that inject their own CSS.
+// This one was checked and skipped, per the arc's own rule: convert a module
+// only if every page that loads it is in scope, otherwise report it.
+//
+// Its ONLY two consumers, esign/sendForm.html and esign/templateAdmin.html,
+// are both on the charter's explicit OUT list (§1). Slice 9c gave them a
+// theme.css link — but only as the prerequisite for tokenising style.css, not
+// as a conversion: neither loads themeSync.js, so neither has a dark mode and
+// neither can follow the shell. Tokenising these ~77 literals would therefore
+// buy no theming at all, while repainting a live editor — and PE_SIGNER_COLORS
+// is signer IDENTITY, not decoration: blue is signer 1 and green is signer 2
+// throughout the UI, so folding those onto --accent/--ok would break the one
+// thing the colour is carrying.
+//
+// If those two pages are ever brought into the arc (theme.css + themeSync.js
+// + their own conversion), this file becomes convertible in the same slice —
+// and not before.
+// ─────────────────────────────────────────────────────────────
 // PLACEMENT EDITOR — visual signature-field authoring (Phase 2D).
 //
 // Loaded like esignActions.js: a plain <script src> on non-module pages
