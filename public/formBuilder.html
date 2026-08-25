@@ -27,7 +27,9 @@
   }
   button:hover { opacity: 0.85; }
   button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
-  button.danger { background: var(--danger-fill); }
+  /* --fill-text explicitly: the base `button` rule sets --accent-text, which
+     is near-black and measures 2.79 on --danger-fill. Inherited, not typed. */
+  button.danger { background: var(--danger-fill); color: var(--fill-text); }
   button.small { font-size: 11px; padding: 2px 6px; }
   button[disabled] { opacity: .5; cursor: not-allowed; }
   input, select, textarea {
@@ -77,7 +79,7 @@
   /* Standing "runs in clients' browsers" notice (published def carries
      code/css/hooks/embed while visibility is portal/public). Persistent,
      unlike the transient publish-time notice in errBar. */
-  #extDarkBadge { background: var(--danger-fill); color: var(--accent-text); cursor: help; }
+  #extDarkBadge { background: var(--danger-fill); color: var(--fill-text); cursor: help; }
   /* NOT a §3.1 fill despite matching the grep: this is a bare 8px dot with no
      label on it — an icon, which §3.1 puts on the TEXT token. Measured,
      --warn is 3.19:1 light / 8.47:1 dark against the surface it sits on and
