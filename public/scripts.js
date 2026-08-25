@@ -230,6 +230,7 @@ function whenDate(date) {
 }
 
 window.Toast = Swal.mixin({
+  customClass: { popup: 'yc-popup' },
   toast: true,
   position: "top",
   showConfirmButton: true,
@@ -248,6 +249,7 @@ function copy(text) {
 
 function showProcessingSwal() {
   Swal.fire({
+    customClass: { popup: 'yc-popup' },
     title: "Processing...",
     html: '<div style="display: flex; align-items: center; justify-content: center; height: 150px; overflow: hidden; display: block"><i class="fa-solid fa-spinner fa-spin-pulse fa-6x"></i><br><p><div>please wait</p>',
     showConfirmButton: false,
@@ -377,8 +379,10 @@ function sortSelect(element) {
       padding: 0.6em 0;
       font-size: 0.95em;
     }
+    /* A glyph acting as a rule, so it takes a border colour rather than a
+       text one -- --text-muted would read as another list item. */
     #logTableFoot .sep {
-      color: #ccc;
+      color: var(--border-strong);
       margin: 0 0.15em;
       user-select: none;
     }
@@ -393,17 +397,18 @@ function sortSelect(element) {
       border-radius: 3px;
     }
     #logTableFoot .log-pagination a:hover {
-      background: #eef;
+      background: var(--hover);
       text-decoration: underline;
     }
     #logTableFoot .log-pagination strong {
       padding: 0.15em 0.5em;
-      background: #f0f0f0;
+      background: var(--surface-2);
+      color: var(--text);
       border-radius: 3px;
       font-weight: bold;
     }
     #logTableFoot .log-pagination-ellipsis {
-      color: #888;
+      color: var(--text-muted);
       padding: 0 0.1em;
     }
     #logTableFoot .logPageInput {
@@ -411,7 +416,9 @@ function sortSelect(element) {
       text-align: center;
       font-weight: bold;
       padding: 0.15em 0.3em;
-      border: 1px solid #bbb;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text);
       border-radius: 3px;
       -moz-appearance: textfield;
     }
@@ -448,7 +455,14 @@ function sortSelect(element) {
       position: absolute;
       cursor: pointer;
       inset: 0;
-      background-color: #ccc;
+      /* Track, OFF. --border-strong keeps the light look and lifts the dark
+         one; the knob below stays literal white on purpose -- it has to read
+         against the track in BOTH modes, so it is mode-independent by design,
+         exactly like --fill-text but for a shape rather than a label.
+         The knob measures 1.35 on this track in light (it was 1.44 on #ccc)
+         and 8.94 in dark; the light figure is under SC 1.4.11 and was before
+         this change too. Reported, not silently retuned. */
+      background-color: var(--border-strong);
       transition: background-color 0.15s;
       border-radius: 18px;
     }
@@ -464,14 +478,18 @@ function sortSelect(element) {
       border-radius: 50%;
       box-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
+    /* Track, ON. --accent is the fill token; the white knob measures 2.55 on
+       it (it was 2.90 on #4a90e2). Reaching 3:1 would mean giving this one
+       switch a different blue from every other primary control, which is the
+       inconsistency the arc exists to remove. Reported. */
     .log-switch input:checked + .log-switch-slider {
-      background-color: #4a90e2;
+      background-color: var(--accent);
     }
     .log-switch input:checked + .log-switch-slider::before {
       transform: translateX(14px);
     }
     .log-switch input:focus-visible + .log-switch-slider {
-      box-shadow: 0 0 0 2px #a5c7ee;
+      box-shadow: 0 0 0 2px var(--accent);
     }
     #logTableFoot button {
       padding: 0.2em 0.7em;
@@ -500,7 +518,7 @@ function sortSelect(element) {
       cursor: pointer;
     }
     .export-csv-dialog .hint {
-      color: #888;
+      color: var(--text-muted);
       font-size: 0.9em;
     }
   `;
@@ -521,7 +539,7 @@ const LOG_LINK_TYPE_ICONS = {
 function logLinkTypeIcon(linkType) {
   const m = LOG_LINK_TYPE_ICONS[linkType];
   return m
-    ? `<i class="fa-solid ${m[0]}" title="${m[1]}" style="color:#888;margin-right:4px;font-size:0.85em"></i>`
+    ? `<i class="fa-solid ${m[0]}" title="${m[1]}" style="color:var(--text-muted);margin-right:4px;font-size:0.85em"></i>`
     : '';
 }
 
@@ -562,7 +580,7 @@ function logHasExtras(extra) {
 function logExtrasIcon(entry) {
   if (!logHasExtras(entry.log_extra)) return '';
   return ` <i class="fa-solid fa-circle-info" title="View details"
-              style="color:#888;cursor:pointer;font-size:0.85em"
+              style="color:var(--text-muted);cursor:pointer;font-size:0.85em"
               onclick="showLogDetails(${entry.log_id});return false"></i>`;
 }
 
@@ -687,6 +705,7 @@ async function showLogDetails(logId) {
       .replace(/>/g, '&gt;');
 
     Swal.fire({
+      customClass: { popup: 'yc-popup' },
       title: `Log #${e.log_id || logId}`,
       html: `<pre style="text-align:left;max-height:60vh;overflow:auto;
                           font-size:0.85em;white-space:pre-wrap;
@@ -925,6 +944,7 @@ async function exportLogCsv(getFilterParams, filenamePrefix) {
   const totalStr = total.toLocaleString();
 
   const result = await Swal.fire({
+    customClass: { popup: 'yc-popup' },
     title: 'Export to CSV',
     html: `
       <div class="export-csv-dialog" style="text-align:left;font-size:0.95em">
@@ -944,7 +964,7 @@ async function exportLogCsv(getFilterParams, filenamePrefix) {
           <input type="radio" name="exp_mode" value="all">
           <span>Export all ${totalStr} rows${
             showLargeWarning
-              ? '<span style="color:#c00;font-size:0.88em;margin-left:0.4em">— large, may be slow or fail</span>'
+              ? '<span style="color:var(--danger);font-size:0.88em;margin-left:0.4em">— large, may be slow or fail</span>'
               : ''
           }</span>
         </label>
@@ -1114,8 +1134,9 @@ function _resolveAddFile() {
        clipping and pointer trap. The dialog simply grows taller; the popup
        scrolls if needed. */
     .cp-dropdown {
-      background: #ffffff;
-      border: 1px solid #bbb;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border-strong);
       border-top: none;
       border-radius: 0 0 4px 4px;
       max-height: 16em;
@@ -1127,19 +1148,22 @@ function _resolveAddFile() {
     .cp-row {
       padding: 0.4em 0.6em;
       cursor: pointer;
-      background: #ffffff;
-      border-bottom: 1px solid #eee;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
     }
     .cp-row:last-child { border-bottom: none; }
-    .cp-row:hover, .cp-row.cp-active { background: #eef4fb; }
+    .cp-row:hover, .cp-row.cp-active { background: var(--hover); }
     .cp-row .cp-name { font-weight: bold; }
-    .cp-row .cp-sub { font-size: 0.85em; color: #777; }
-    .cp-empty { padding: 0.4em 0.6em; color: #999; font-size: 0.9em; background: #fff; }
+    /* --text-2, not --text-muted: on the hovered/active row (--hover) muted
+       measures 4.43 in dark. --text-2 is 4.55 light / 6.97 dark there, and
+       "secondary text" is the role this line actually is. */
+    .cp-row .cp-sub { font-size: 0.85em; color: var(--text-2); }
+    .cp-empty { padding: 0.4em 0.6em; color: var(--text-muted); font-size: 0.9em; background: var(--surface); }
 
     /* ── Header / value ── */
     .oad-header { margin-bottom: 0.4em; }
     .oad-value { font-size: 1.15em; font-weight: bold; }
-    .oad-earliest { font-size: 0.8em; color: #999; }
+    .oad-earliest { font-size: 0.8em; color: var(--text-muted); }
 
     /* ── De-emphasized top half (the start-date is rarely touched) ──
        Muted, smaller, set apart by a hairline below it so the eye drops
@@ -1147,27 +1171,27 @@ function _resolveAddFile() {
     .oad-startdate-row {
       margin: 0.3em 0 0.7em;
       padding-bottom: 0.7em;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--border);
       text-align: center;
-      color: #888;
+      color: var(--text-muted);
       font-size: 0.85em;
     }
     .oad-startdate-row input[type="date"] {
       font-size: 0.85em;
       padding: 0.15em 0.3em;
-      color: #555;
+      color: var(--text-2);
     }
 
     /* ── Primary area: matches, create, search ── */
     .oad-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
     .oad-match {
       display: flex; align-items: center; justify-content: space-between;
-      gap: 0.5em; padding: 0.4em 0.5em; border: 1px solid #e0e0e0;
+      gap: 0.5em; padding: 0.4em 0.5em; border: 1px solid var(--border);
       border-radius: 4px; margin-bottom: 0.3em; text-align: left;
     }
-    .oad-match.oad-selected { border-color: #4a90e2; background: #eef4fb; }
+    .oad-match.oad-selected { border-color: var(--accent); background: var(--accent-soft); }
     .oad-match .oad-match-name { font-weight: bold; }
-    .oad-match .oad-match-src { font-size: 0.8em; color: #888; }
+    .oad-match .oad-match-src { font-size: 0.8em; color: var(--text-2); }
 
     /* Create-new button — bolder than a plain SWAL secondary so it reads as
        a real alternative to attaching. Outlined accent style. */
@@ -1175,14 +1199,17 @@ function _resolveAddFile() {
       font-weight: bold;
       font-size: 0.95em;
       padding: 0.45em 1.1em;
-      color: #2563eb;
-      background: #fff;
-      border: 2px solid #2563eb;
+      /* Outlined accent button: the LABEL is --accent-2 (--accent as text is
+         2.55), the border is --accent, and the filled hover flips to
+         --accent + --accent-text. #2563eb was a fourth blue. */
+      color: var(--accent-2);
+      background: var(--surface);
+      border: 2px solid var(--accent);
       border-radius: 5px;
       cursor: pointer;
       transition: background 0.12s, color 0.12s;
     }
-    .oad-create-btn:hover { background: #2563eb; color: #fff; }
+    .oad-create-btn:hover { background: var(--accent); color: var(--accent-text); }
 
     /* Let the ContactPicker dropdown spill out of SWAL's html container
        instead of being clipped by its overflow:auto / max-height. The
@@ -1193,7 +1220,7 @@ function _resolveAddFile() {
     .oad-html .cp-dropdown { max-height: 12em; }
     /* ── CasePicker rows (Phase 3) ── */
     .cp-case-row .cp-case-num { font-weight: bold; font-size: 1.05em; }
-    .cp-case-row .cp-sub { font-size: 0.85em; color: #777; }
+    .cp-case-row .cp-sub { font-size: 0.85em; color: var(--text-2); }
 
     /* ── CaseAdoptDialog (Phase 4.1) ── */
     /* Same dropdown-spill fix as oad-html: let the CasePicker dropdown escape
@@ -1202,17 +1229,17 @@ function _resolveAddFile() {
     .cad-html .cp-dropdown { max-height: 12em; }
     .cad-fields { display: flex; gap: 0.6em; margin: 0.3em 0 0.6em; text-align: left; }
     .cad-field { flex: 1; }
-    .cad-field label { display: block; font-size: 0.8em; color: #666; margin-bottom: 0.15em; }
+    .cad-field label { display: block; font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.15em; }
     .cad-field input { width: 100%; box-sizing: border-box; }
-    .cad-hint { font-size: 0.82em; color: #b58105; margin: 0 0 0.5em; text-align: left; }
+    .cad-hint { font-size: 0.82em; color: var(--warn); margin: 0 0 0.5em; text-align: left; }
     .cad-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
     .cad-preview {
       margin-top: 0.6em; padding: 0.45em 0.6em; text-align: left;
-      font-size: 0.88em; color: #555; background: #f6f8fa;
-      border: 1px solid #e3e7ea; border-radius: 4px; min-height: 1.2em;
+      font-size: 0.88em; color: var(--text-2); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 4px; min-height: 1.2em;
     }
     .cad-preview:empty { display: none; }
-    .cad-preview .cad-count { font-weight: bold; color: #1f2d3d; }
+    .cad-preview .cad-count { font-weight: bold; color: var(--text); }
 
     /* ── NewCaseForm (Phase 4.2) ── */
     /* Same dropdown-spill fix as oad-html / cad-html: let the embedded
@@ -1220,7 +1247,7 @@ function _resolveAddFile() {
     .swal2-html-container.ncf-html { overflow: visible; }
     .ncf-html .cp-dropdown { max-height: 12em; }
     .ncf-field { margin: 0 0 0.6em; text-align: left; }
-    .ncf-field label { display: block; font-size: 0.8em; color: #666; margin-bottom: 0.15em; }
+    .ncf-field label { display: block; font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.15em; }
     .ncf-field input, .ncf-field select { width: 100%; box-sizing: border-box; }
     .ncf-docket-row { display: flex; gap: 0.6em; }
     .ncf-docket-row .ncf-field { flex: 1; }
@@ -1230,14 +1257,14 @@ function _resolveAddFile() {
       font-weight: bold;
       font-size: 0.95em;
       padding: 0.45em 1.1em;
-      color: #2563eb;
-      background: #fff;
-      border: 2px solid #2563eb;
+      color: var(--accent-2);
+      background: var(--surface);
+      border: 2px solid var(--accent);
       border-radius: 5px;
       cursor: pointer;
       transition: background 0.12s, color 0.12s;
     }
-    .cad-create-btn:hover { background: #2563eb; color: #fff; }
+    .cad-create-btn:hover { background: var(--accent); color: var(--accent-text); }
     .cad-create-row { margin: 0.6em 0 0.2em; text-align: left; }
 
     /* ── newApptDialog (shared appt creator) ── */
@@ -1246,25 +1273,25 @@ function _resolveAddFile() {
     .swal2-html-container.na-html { overflow: visible; }
     .na-html .cp-dropdown { max-height: 12em; }
     .na-field { margin: 0 0 0.5em; text-align: left; }
-    .na-field > label { display: block; font-size: 0.8em; color: #666; margin-bottom: 0.15em; }
+    .na-field > label { display: block; font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.15em; }
     .na-fixed { text-align: left; margin: 0 0 0.5em; font-size: 0.95em; }
     .na-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
-    .na-chosen { font-size: 0.85em; color: #555; margin-top: 0.25em; text-align: left; }
+    .na-chosen { font-size: 0.85em; color: var(--text-2); margin-top: 0.25em; text-align: left; }
     .na-chosen:empty { display: none; }
-    .na-change { font-size: 0.82em; margin-left: 0.5em; color: #2563eb; }
+    .na-change { font-size: 0.82em; margin-left: 0.5em; color: var(--accent-2); }
     /* slot picker (scheduler slice 4) */
     .na-slot-row { display: flex; align-items: center; gap: 0.5em; margin: 0.5em 0 0.2em; text-align: left; }
     .na-slot-row > label { font-size: 0.9em; }
     .na-slots { display: flex; flex-wrap: wrap; gap: 0.35em; margin: 0.4em 0 0.2em;
       text-align: left; max-height: 9.5em; overflow-y: auto; }
-    .na-slot { font-size: 0.85em; padding: 0.3em 0.6em; border: 1px solid #2563eb;
-      border-radius: 4px; background: #fff; color: #2563eb; cursor: pointer;
+    .na-slot { font-size: 0.85em; padding: 0.3em 0.6em; border: 1px solid var(--accent);
+      border-radius: 4px; background: var(--surface); color: var(--accent-2); cursor: pointer;
       transition: background 0.12s, color 0.12s; }
-    .na-slot:hover { background: #eff6ff; }
-    .na-slot.na-slot-sel { background: #2563eb; color: #fff; }
-    .na-slot-msg { font-size: 0.85em; color: #666; text-align: left; margin: 0.3em 0; }
+    .na-slot:hover { background: var(--accent-soft); }
+    .na-slot.na-slot-sel { background: var(--accent); color: var(--accent-text); }
+    .na-slot-msg { font-size: 0.85em; color: var(--text-muted); text-align: left; margin: 0.3em 0; }
     .na-slot-msg:empty { display: none; }
-    .na-manual-toggle { font-size: 0.82em; color: #2563eb; display: inline-block; margin: 0.2em 0 0.4em; }
+    .na-manual-toggle { font-size: 0.82em; color: var(--accent-2); display: inline-block; margin: 0.2em 0 0.4em; }
 
     /* ── newEventDialog (shared event creator/editor) ── */
     .ne-form { text-align: left; max-width: 460px; margin: 0 auto; }
@@ -1272,7 +1299,7 @@ function _resolveAddFile() {
     .ne-row  { display: flex; flex-direction: column; }
     .ne-row.ne-full { grid-column: 1 / -1; }
     .ne-row > label {
-      font-size: 0.75em; font-weight: 600; color: #555;
+      font-size: 0.75em; font-weight: 600; color: var(--text-muted);
       text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.15em;
     }
     .ne-form input:not([type=checkbox]),
@@ -1283,14 +1310,37 @@ function _resolveAddFile() {
     }
     .ne-form textarea { height: 56px; resize: vertical; }
     .ne-allday { flex-direction: row; align-items: center; gap: 0.4em; }
-    .ne-allday > label { font-size: 0.9em; font-weight: 500; color: #333;
+    .ne-allday > label { font-size: 0.9em; font-weight: 500; color: var(--text);
       text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4em; margin: 0; }
     .ne-allday input[type=checkbox] { width: auto; }
     .ne-section { grid-column: 1 / -1; font-weight: 700; font-size: 0.8em;
-      color: #374151; text-transform: uppercase; letter-spacing: 0.04em;
-      margin: 0.5em 0 -0.1em; border-top: 1px solid #eee; padding-top: 0.6em; }
+      color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em;
+      margin: 0.5em 0 -0.1em; border-top: 1px solid var(--border); padding-top: 0.6em; }
     .ne-form .na-fixed { font-size: 0.92em; margin: 0; }
     .na-html.ne-html .cp-dropdown { max-height: 11em; }
+
+    /* ── The dialogs' own card ──────────────────────────────────────────
+       Everything above is tokenised, and SweetAlert2 paints .swal2-popup
+       white with #545454 text in BOTH modes. Of the twenty pages that load
+       this file, exactly two override that (index.html for the shell,
+       videoManager.html for itself), so without this the picker rows, the
+       adopt dialog and the name-slot widget would be themed content sitting
+       on an unthemed white card — near-white --text on white in dark.
+
+       Scoped through customClass to the dialogs THIS file fires, not to
+       .swal2-popup globally: making every SweetAlert on all twenty pages
+       follow the theme is the right end state and is a much bigger change
+       than a literal conversion. Reported with slice 10.
+
+       The three rules are the same ones index.html:428-442 already ships. */
+    .yc-popup { background: var(--surface); color: var(--text); }
+    .yc-popup .swal2-title,
+    .yc-popup .swal2-html-container { color: var(--text); }
+    .yc-popup input:not([type=radio]):not([type=checkbox]),
+    .yc-popup select,
+    .yc-popup textarea {
+      background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    }
   `;
   document.head.appendChild(style);
 })();
@@ -1630,9 +1680,9 @@ function newContact(prefill = {}, onSuccess = null) {
   const apptBlockHtml = `
     <label class="input-label">Appt:</label>
     <label class="sub-label" style="text-align:left; width:auto;">
-      <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule first appointment <i style="color:#888;">(optional)</i>
+      <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule first appointment <i style="color:var(--text-muted);">(optional)</i>
     </label><br>
-    <div id="NCApptBox" style="display:none; border:1px solid #e3e7ea; border-radius:5px; padding:8px; margin:4px 0; text-align:center;">
+    <div id="NCApptBox" style="display:none; border:1px solid var(--border); border-radius:5px; padding:8px; margin:4px 0; text-align:center;">
       <form onchange="newContact._recompute && newContact._recompute()">
       <select id="NCApptWith" style="width:280px;">${withOptions}</select><br>
       <select id="NCApptTypeSel" style="width:280px; margin-top:6px;"
@@ -1683,6 +1733,7 @@ function newContact(prefill = {}, onSuccess = null) {
   // the Other span. The preset options set their .value via the select.
 
   Swal.fire({
+    customClass: { popup: 'yc-popup' },
     title: "Add New Client:",
     html: `<label class="input-label">Name:</label>
          <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
@@ -1709,7 +1760,8 @@ function newContact(prefill = {}, onSuccess = null) {
     showCloseButton: true,
     showDenyButton: true,
     denyButtonText: "Add & Open Case",
-    denyButtonColor: "#26abe2",
+    // The app's third blue (charter section 7 maps #26abe2 -> --accent).
+    denyButtonColor: "var(--accent)",
     showLoaderOnConfirm: true,
     showLoaderOnDeny: true,
 
@@ -2331,7 +2383,7 @@ function newApptDialog(opts = {}) {
 
   Swal.fire({
     title: 'Schedule Appointment',
-    customClass: { htmlContainer: 'na-html' },
+    customClass: { popup: 'yc-popup', htmlContainer: 'na-html' },
     html: `
       <div id="naContactHost" class="na-field"></div>
       <div id="naCaseHost" class="na-field"></div>
@@ -2648,7 +2700,7 @@ function newEventDialog(opts = {}) {
     if (isEdit) {
       const L = editLinkLine();
       host.innerHTML = `<div class="na-fixed"><b>${L.noun}:</b> ${escAttr(L.label)}`
-        + ` <span style="color:#6c757d;font-size:0.85em;">(set at creation)</span></div>`;
+        + ` <span style="color:var(--text-muted);font-size:0.85em;">(set at creation)</span></div>`;
       return;
     }
 
@@ -2762,7 +2814,7 @@ function newEventDialog(opts = {}) {
 
   Swal.fire({
     title: isEdit ? 'Edit Event' : 'New Event',
-    customClass: { htmlContainer: 'na-html ne-html' },
+    customClass: { popup: 'yc-popup', htmlContainer: 'na-html ne-html' },
     width: 560,
     html: `
       <div class="ne-form">
@@ -3015,6 +3067,7 @@ function newEventDialog(opts = {}) {
    ────────────────────────────────────────────────────────────────────────── */
 function eventComplete(id, onDone) {
   Swal.fire({
+    customClass: { popup: 'yc-popup' },
     title: 'Mark this event complete?',
     icon: 'question',
     showCancelButton: true,
@@ -3039,6 +3092,7 @@ function eventComplete(id, onDone) {
 
 function eventCancel(id, onDone) {
   Swal.fire({
+    customClass: { popup: 'yc-popup' },
     title: 'Cancel this event?',
     text: 'This also removes it from the calendar.',
     icon: 'warning',
@@ -3148,7 +3202,7 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
     html: `
       <div class="ncf-section-label">Primary contact</div>
       <div class="ncf-field"><div id="ncf-picker-mount"></div></div>
-      <div id="ncf-dup-warn" style="display:none;margin:8px 0;padding:8px;border:1px solid #f0ad4e;background:#fff8e6;color:#7a5300;border-radius:6px;text-align:left;font-size:0.88em"></div>
+      <div id="ncf-dup-warn" style="display:none;margin:8px 0;padding:8px;border:1px solid var(--warn);background:var(--warn-soft);color:var(--warn);border-radius:6px;text-align:left;font-size:0.88em"></div>
 
       <div class="ncf-field">
         <label for="ncf-type">Case type</label>
@@ -3182,7 +3236,7 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
     cancelButtonText: 'Cancel',
     showCloseButton: true,
     showLoaderOnConfirm: true,
-    customClass: { htmlContainer: 'ncf-html' },
+    customClass: { popup: 'yc-popup', htmlContainer: 'ncf-html' },
     allowOutsideClick: () => !Swal.isLoading(),
 
     didOpen: () => {
@@ -3471,7 +3525,7 @@ async function CaseAdoptDialog(value, onDone = null) {
     confirmButtonText: 'Adopt',
     cancelButtonText: 'Cancel',
     showCloseButton: true,
-    customClass: { htmlContainer: 'cad-html' },
+    customClass: { popup: 'yc-popup', htmlContainer: 'cad-html' },
     allowOutsideClick: true,
 
     didOpen: () => {
@@ -3659,7 +3713,7 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
     confirmButtonText: 'Attach',
     cancelButtonText: 'Cancel',
     showCloseButton: true,
-    customClass: { htmlContainer: 'oad-html' },
+    customClass: { popup: 'yc-popup', htmlContainer: 'oad-html' },
 
     didOpen: () => {
       const confirmBtn = Swal.getConfirmButton();
@@ -3761,6 +3815,7 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
     const donorName = (conflict && conflict.contact_name) ? conflict.contact_name : 'another contact';
     const recipientName = selected.contact_name || ('contact ' + selected.contact_id);
     const confirmForce = await Swal.fire({
+      customClass: { popup: 'yc-popup' },
       title: 'Already in use',
       html: `This ${isPhone ? 'phone' : 'email'} is active on <b>${escAttr(donorName)}</b>.<br>` +
             `Force-transfer it to <b>${escAttr(recipientName)}</b>? ` +
