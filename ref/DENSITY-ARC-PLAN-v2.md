@@ -129,7 +129,22 @@ Different from the colour arc: contrast is settled, layout is not.
   and 25 files carry their own media queries.
 - Confirm no horizontal scrollbar appears where there was none.
 
-## 3.1 The theme.css boundary — do NOT consolidate element rules there
+## 3.1 The theme.css boundary — DENSITY out, COLOUR in
+
+**Refined after C12.** The original wording said no element rules in
+`theme.css` at all. That was too broad and it hid a live bug: 25 pages have
+controls with no colour rule anywhere, so the UA renders them white in dark
+mode. Only `style.css:350` paints controls dark, and only 14 pages load it.
+
+The boundary that actually holds:
+
+| | in `theme.css`? | why |
+|---|---|---|
+| **colour** baseline on `input`/`select`/`textarea` | **yes** | consistent with `body` and `a`, which it already sets. Nothing else supplies it on 25 pages |
+| **density** — padding, height, font-size | **no** | the 45 pages loading no element layer are already at 11–13px and need nothing |
+
+Density rules stay in `style.css` and `css/yc-forms.css`. The rest of this
+section is about density and still stands.
 
 The tempting move in this arc is to lift `input` / `select` / `textarea` /
 `button` / `table` rules out of `style.css` and into `theme.css`, because
@@ -155,7 +170,8 @@ The tempting move in this arc is to lift `input` / `select` / `textarea` /
 
 The colour arc's most expensive lesson was that widening a rule's reach has a
 blast radius you must enumerate first. Slice 9c unscoped one selector and
-caused two regressions.
+caused two regressions. That is why the colour baseline above ships only after
+a landmine sweep, not before.
 
 ## 3.2 Swal-injected DOM, and the rule that actually finds it
 
@@ -183,6 +199,21 @@ excludes `.swal2-styled`. Both halves set means a self-contained island: ugly,
 readable, survivable. **Unclassed with one half set is the whole defect
 class**, and it is greppable.
 
+### The form every audit in the colour arc missed
+
+Eleven slices of auditing grepped `#[0-9a-fA-F]`. **CSS colour keywords were
+invisible to all of it.** Five in-scope sites, every one broken in dark:
+
+- `.phr-ti` and `.ex-message` (×3): `background: white`, tokenised border, **no
+  colour partner** — §3.2's defect class in a container. `--text` inherits to
+  near-white on white: **1.23:1**.
+- `.ex-step-num` (×2): `background: var(--cat-indigo); color: white` — both
+  halves set, but `--cat-indigo` is a *text* token that lightens in dark, so
+  white lands on `#8ea2ff` at ≈2.2. The `--cat-*-fill` case.
+
+`rgb()` is 2 sites (one a comment), `hsl()` zero. **Sweep for keywords, not
+just hexes**, and remember `white`/`black`/`gray` are the common ones.
+
 **Grep it with a multi-line window.** These styles are built by string
 concatenation across several lines, so a same-line grep returns zero — which
 is how `#riNote` stayed unfound. Use `grep -A6` or read the block.
@@ -203,6 +234,12 @@ is how `#riNote` stayed unfound. Use `grep -A6` or read the block.
   it.** Nine instances of this class across the colour arc, twice by the
   manager after writing the rule down.
 - **A same-line grep misses string-concatenated styles.** Use a window.
+- **A `#hex` grep misses colour keywords.** `background: white` is the same
+  defect as `background: #fff` and eleven slices of auditing never looked for
+  it. Tenth instance of this class.
+- **An element with no rule anywhere is invisible to a per-page conversion.**
+  The colour arc tokenised what each page declared and never asked what each
+  page *omitted*. That is how 25 pages ended up with white inputs in dark.
 
 ## 5. Colour items carried, not blocking
 
