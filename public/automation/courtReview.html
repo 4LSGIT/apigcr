@@ -12,17 +12,13 @@
        diag.js declares nothing at top level. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --navy:#1a1a2e; --navy2:#16213e; --blue:#4f8ef7; --blue2:#3a7de8;
-      --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --purple:#8b5cf6;
-      --bg:#f1f5f9; --surface:#fff; --border:#e2e8f0; --muted:#94a3b8;
-      --text:#1e293b; --text2:#475569;
-    }
     body {
       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-      font-size:14px; color:var(--text); background:var(--bg);
+      font-size:14px; color:var(--text); background:var(--page-bg);
       display:flex; flex-direction:column; height:100vh; overflow:hidden;
     }
     .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
@@ -31,11 +27,16 @@
       border-radius:6px; border:none; font-size:12px; font-weight:500;
       cursor:pointer; transition:all .15s; white-space:nowrap;
     }
-    .btn-primary{background:var(--blue);color:#fff;} .btn-primary:hover{background:var(--blue2);}
-    .btn-green{background:var(--green);color:#fff;} .btn-green:hover{background:#16a34a;}
-    .btn-danger{background:var(--red);color:#fff;} .btn-danger:hover{background:#dc2626;}
-    .btn-amber{background:var(--amber);color:#fff;} .btn-amber:hover{background:#d97706;}
-    .btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--text2);}
+    /* All four action buttons are FILLS. The plain --ok/--warn/--danger/--info
+       tokens are tuned as TEXT and lighten in dark, where a white label lands
+       at 1.93-1.96. The -fill tokens are mode-independent; --warn-fill takes
+       --warn-text (near-black) because white on amber is 3.19. --info has no
+       fill partner at all, so the primary button uses --accent. */
+    .btn-primary{background:var(--accent);color:var(--accent-text);} .btn-primary:hover{background:var(--accent-dark);}
+    .btn-green{background:var(--ok-fill);color:var(--fill-text);} .btn-green:hover{filter:brightness(1.12);}
+    .btn-danger{background:var(--danger-fill);color:var(--fill-text);} .btn-danger:hover{filter:brightness(1.12);}
+    .btn-amber{background:var(--warn-fill);color:var(--warn-text);} .btn-amber:hover{filter:brightness(1.12);}
+    .btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--text-2);}
     .btn-outline:hover{background:var(--border);}
     .btn-sm{padding:4px 9px;font-size:11px;}
     .btn:disabled{opacity:.4;cursor:not-allowed;}
@@ -45,14 +46,14 @@
     /* ── Top filter bar ── */
     .topbar {
       display:flex; align-items:center; gap:10px; padding:8px 14px;
-      background:var(--navy2); color:#fff; flex-shrink:0;
+      background:var(--code-bg-2); color:var(--code-fg); flex-shrink:0;
     }
     .topbar h1 { font-size:14px; font-weight:600; margin-right:auto; display:flex; align-items:center; gap:8px; }
     .topbar select {
       background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12);
-      color:#fff; border-radius:5px; padding:5px 9px; font-size:12px; outline:none;
+      color:var(--code-fg); border-radius:5px; padding:5px 9px; font-size:12px; outline:none;
     }
-    .topbar select option { color:#111; }
+    .topbar select option { color:var(--text); background:var(--surface); }
     .pill { font-size:11px; background:rgba(255,255,255,.1); padding:3px 8px; border-radius:10px; }
 
     /* ── Two-pane body ── */
@@ -64,57 +65,57 @@
     .group { border-bottom:1px solid var(--border); }
     .group-head {
       display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer;
-      background:#f8fafc; font-weight:600; font-size:12.5px;
+      background:var(--surface-2); font-weight:600; font-size:12.5px;
       position:sticky; top:0; z-index:1;
     }
-    .group-head:hover { background:#eef4fb; }
-    .group-head .gh-count { color:var(--muted); font-weight:500; }
+    .group-head:hover { background:var(--hover); }
+    .group-head .gh-count { color:var(--text-muted); font-weight:500; }
     .group-head .gh-actions { margin-left:auto; display:flex; gap:6px; }
-    .group-head .caret { width:12px; color:var(--muted); transition:transform .12s; }
+    .group-head .caret { width:12px; color:var(--text-muted); transition:transform .12s; }
     .group.collapsed .caret { transform:rotate(-90deg); }
     .group.collapsed .group-rows { display:none; }
 
     .qrow {
-      padding:8px 12px 8px 26px; cursor:pointer; border-bottom:1px solid #f1f5f9;
+      padding:8px 12px 8px 26px; cursor:pointer; border-bottom:1px solid var(--border);
       transition:background .1s;
     }
-    .qrow:hover { background:#f8fafc; }
-    .qrow.active { background:#eef4fb; border-left:3px solid var(--blue); padding-left:23px; }
+    .qrow:hover { background:var(--surface-2); }
+    .qrow.active { background:var(--accent-soft); border-left:3px solid var(--accent); padding-left:23px; }
     .qrow .qr-top { display:flex; align-items:center; gap:6px; }
     .qrow .qr-subj { font-size:12.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .qrow .qr-meta { font-size:10.5px; color:var(--muted); margin-top:2px; display:flex; gap:8px; flex-wrap:wrap; }
+    .qrow .qr-meta { font-size:10.5px; color:var(--text-muted); margin-top:2px; display:flex; gap:8px; flex-wrap:wrap; }
     .reason-chip {
       font-size:9.5px; font-weight:600; padding:1px 6px; border-radius:8px; text-transform:uppercase;
       letter-spacing:.02em; white-space:nowrap;
     }
-    .reason-case_not_found { background:#fef3c7; color:#92400e; }
-    .reason-citation_miss { background:#fee2e2; color:#991b1b; }
-    .reason-extract_failed { background:#ede9fe; color:#5b21b6; }
-    .reason-model_flagged { background:#dbeafe; color:#1e40af; }
+    .reason-case_not_found { background:var(--warn-soft); color:var(--warn); }
+    .reason-citation_miss { background:var(--danger-soft); color:var(--danger); }
+    .reason-extract_failed { background:var(--surface-2); color:var(--cat-purple); }
+    .reason-model_flagged { background:var(--accent-soft); color:var(--accent-on-soft); }
 
     /* ── Detail pane ── */
-    .empty-detail { color:var(--muted); text-align:center; margin-top:60px; font-size:13px; }
+    .empty-detail { color:var(--text-muted); text-align:center; margin-top:60px; font-size:13px; }
     .d-head { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
     .d-head .d-subj { font-size:15px; font-weight:600; flex:1; }
     .d-actions-bar { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
     .resolve-box { padding:8px 12px; border-radius:7px; font-size:12.5px; margin:8px 0; }
-    .resolve-ok { background:#dcfce7; color:#166534; }
-    .resolve-no { background:#fef3c7; color:#92400e; }
+    .resolve-ok { background:var(--ok-soft); color:var(--ok); }
+    .resolve-no { background:var(--warn-soft); color:var(--warn); }
     .sec-label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
-                 color:var(--muted); margin:14px 0 6px; }
+                 color:var(--text-muted); margin:14px 0 6px; }
     .email-body {
       background:var(--surface); border:1px solid var(--border); border-radius:7px;
       padding:10px 12px; font-size:12px; white-space:pre-wrap; word-break:break-word;
-      max-height:260px; overflow-y:auto; color:var(--text2);
+      max-height:260px; overflow-y:auto; color:var(--text-2);
     }
     .action-card { border:1px solid var(--border); border-radius:7px; padding:9px 11px; margin-bottom:8px; background:var(--surface); }
-    .action-type { font-size:11px; font-weight:700; color:var(--blue2); text-transform:uppercase; letter-spacing:.03em; }
+    .action-type { font-size:11px; font-weight:700; color:var(--info-dark); text-transform:uppercase; letter-spacing:.03em; }
     .kv { display:flex; gap:6px; font-size:12px; margin-top:3px; }
-    .kv .k { color:var(--muted); min-width:120px; }
+    .kv .k { color:var(--text-muted); min-width:120px; }
     .kv .v { color:var(--text); word-break:break-word; }
-    .cite { font-size:11px; color:var(--muted); font-style:italic; margin-top:2px; padding-left:120px; }
-    .meta-row { font-size:11.5px; color:var(--muted); margin-top:4px; }
-    .meta-row code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
+    .cite { font-size:11px; color:var(--text-muted); font-style:italic; margin-top:2px; padding-left:120px; }
+    .meta-row { font-size:11.5px; color:var(--text-muted); margin-top:4px; }
+    .meta-row code { background:var(--surface-2); padding:1px 5px; border-radius:4px; }
   </style>
 </head>
 <body>
@@ -130,7 +131,7 @@
         <option value="extract_failed">Extract failed</option>
       </select>
     </label>
-    <button class="btn btn-outline btn-sm" style="background:rgba(255,255,255,.08);color:#fff;border-color:rgba(255,255,255,.15)" onclick="window.crReload()">
+    <button class="btn btn-outline btn-sm" style="background:rgba(255,255,255,.08);color:var(--code-fg);border-color:rgba(255,255,255,.15)" onclick="window.crReload()">
       <i class="fa-solid fa-rotate"></i> Refresh
     </button>
   </div>
@@ -190,11 +191,11 @@ function reasonLabel(cat){
   // ── Load + render queue ──────────────────────────────────────
   async function load(){
     const reason = E('cr-reason').value || '';
-    E('cr-list').innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px">Loading…</div>';
+    E('cr-list').innerHTML = '<div style="padding:20px;color:var(--text-muted);font-size:12px">Loading…</div>';
     try {
       queue = await api('/api/court-review/queue', 'GET', { reason });
     } catch (e) {
-      E('cr-list').innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">${esc(e.message)}</div>`;
+      E('cr-list').innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px">${esc(e.message)}</div>`;
       return;
     }
     E('cr-count').textContent = queue.rows.length;
@@ -208,7 +209,7 @@ function reasonLabel(cat){
   function renderList(){
     const el = E('cr-list');
     if (!queue.rows.length){
-      el.innerHTML = '<div style="padding:24px 14px;color:var(--muted);font-size:12.5px;text-align:center">Queue is empty 🎉</div>';
+      el.innerHTML = '<div style="padding:24px 14px;color:var(--text-muted);font-size:12.5px;text-align:center">Queue is empty 🎉</div>';
       return;
     }
     el.innerHTML = queue.groups.map(g => {
@@ -241,7 +242,7 @@ function reasonLabel(cat){
               <button class="btn btn-green btn-sm" onclick="event.stopPropagation();window.crGroupAdopt('${esc(key).replace(/'/g,"\\'")}')" title="Adopt this docket onto a case, then re-run every row in the group">
                 <i class="fa-solid fa-folder-plus"></i> Adopt all
               </button>
-              <button class="btn btn-sm" style="background:#0e7490;color:#fff" onclick="event.stopPropagation();window.crGroupCreate('${esc(key).replace(/'/g,"\\'")}')" title="Create a NEW case with this docket (shell New Case form), then adopt &amp; re-run every row in the group">
+              <button class="btn btn-sm" style="background:#0e7490;color:#fff" data-fill-note="page-local action fill; sheet has no --cat-teal-fill; white on it is 5.36 and mode-independent" onclick="event.stopPropagation();window.crGroupCreate('${esc(key).replace(/'/g,"\\'")}')" title="Create a NEW case with this docket (shell New Case form), then adopt &amp; re-run every row in the group">
                 <i class="fa-solid fa-folder-open"></i> Create + adopt all
               </button>
             </span>
@@ -259,13 +260,13 @@ function reasonLabel(cat){
     d.innerHTML = '<div class="empty-detail">Loading…</div>';
     let item;
     try { item = await api('/api/court-review/item/' + id, 'GET'); }
-    catch (e) { d.innerHTML = `<div class="empty-detail" style="color:var(--red)">${esc(e.message)}</div>`; return; }
+    catch (e) { d.innerHTML = `<div class="empty-detail" style="color:var(--danger)">${esc(e.message)}</div>`; return; }
     renderDetail(item);
   }
 
   function renderActions(payload){
     const actions = (payload && Array.isArray(payload.actions)) ? payload.actions : [];
-    if (!actions.length) return '<div style="color:var(--muted);font-size:12px">No actions in payload.</div>';
+    if (!actions.length) return '<div style="color:var(--text-muted);font-size:12px">No actions in payload.</div>';
     return actions.map(a => {
       const fields = a.fields || {};
       const cites = a.citations || {};
@@ -311,7 +312,7 @@ function reasonLabel(cat){
     // case_not_found (the model was fine — Adopt+replay) nor extract_failed
     // (its Re-run already runs a fresh extract; a second button would duplicate).
     const reextractBtn = (cat === 'citation_miss' || cat === 'model_flagged')
-      ? `<button class="btn btn-sm" style="background:var(--purple);color:#fff" onclick="window.crReextract(${r.id})" title="Discard the stored extraction and run a FRESH AI pass over the original email. Use when the model's OUTPUT was wrong (bad citation, wrong hearing matched). Spends an AI call.">
+      ? `<button class="btn btn-sm" style="background:#6d28d9;color:#fff" data-fill-note="page-local action fill; --cat-purple as a fill is 4.23 light / 2.72 dark with a white label and fails both; #6d28d9 is 7.10 and mode-independent" onclick="window.crReextract(${r.id})" title="Discard the stored extraction and run a FRESH AI pass over the original email. Use when the model's OUTPUT was wrong (bad citation, wrong hearing matched). Spends an AI call.">
            <i class="fa-solid fa-robot"></i> Re-extract
          </button>`
       : '';
@@ -359,7 +360,7 @@ function reasonLabel(cat){
         <button class="btn btn-green btn-sm" onclick="window.crAdopt(${r.id})" ${docket==='(no docket)'?'disabled':''}>
           <i class="fa-solid fa-folder-plus"></i> Adopt → case…
         </button>
-        <button class="btn btn-sm" style="background:#0e7490;color:#fff" onclick="window.crCreateCase(${r.id})" ${docket==='(no docket)'?'disabled':''} title="Create a NEW case with this docket (shell New Case form), then adopt & re-run this row">
+        <button class="btn btn-sm" style="background:#0e7490;color:#fff" data-fill-note="page-local action fill; sheet has no --cat-teal-fill; white on it is 5.36 and mode-independent" onclick="window.crCreateCase(${r.id})" ${docket==='(no docket)'?'disabled':''} title="Create a NEW case with this docket (shell New Case form), then adopt & re-run this row">
           <i class="fa-solid fa-folder-open"></i> Create case…
         </button>
         <button class="btn btn-danger btn-sm" onclick="window.crDismiss(${r.id})">
@@ -405,13 +406,13 @@ function reasonLabel(cat){
     const acts    = (item.payload && Array.isArray(item.payload.actions)) ? item.payload.actions : [];
     const hasAppt = acts.some(a => a && a.type === 'create_appointment');
     const liveWarn = hasAppt
-      ? `<div style="margin-top:10px;color:#991b1b;font-weight:600;text-align:left">⚠ This runs the actions live. A 341 appointment is involved — the client will be scheduled/rescheduled AND notified by SMS.</div>`
-      : `<div style="margin-top:10px;color:#92400e;font-weight:600;text-align:left">⚠ This runs the actions live.</div>`;
+      ? `<div style="margin-top:10px;color:var(--danger);font-weight:600;text-align:left">⚠ This runs the actions live. A 341 appointment is involved — the client will be scheduled/rescheduled AND notified by SMS.</div>`
+      : `<div style="margin-top:10px;color:var(--warn);font-weight:600;text-align:left">⚠ This runs the actions live.</div>`;
 
     const { isConfirmed } = await Swal.fire({
       title: 'Approve & run',
       html: `
-        <div style="font-size:12.5px;color:#475569;text-align:left">
+        <div style="font-size:12.5px;color:var(--text-2);text-align:left">
           Overrides the model's needs-review flag and applies the actions below. The executor's
           structural checks (citations, duplicate guard, single-match) still apply — an uncited or
           ambiguous action simply re-queues.
@@ -421,7 +422,7 @@ function reasonLabel(cat){
       width: 560,
       showCancelButton: true,
       confirmButtonText: 'Approve & run',
-      confirmButtonColor: '#f59e0b',
+      confirmButtonColor: 'var(--warn-fill)',
       showCloseButton: true,
     });
     if (!isConfirmed) return;
@@ -463,7 +464,7 @@ function reasonLabel(cat){
       ? item.row.citations.misses : [];
     const missHtml = misses.length
       ? `<div style="text-align:left;margin-top:10px">
-           <div style="font-size:11px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.04em">Unverified citation${misses.length>1?'s':''}</div>
+           <div style="font-size:11px;font-weight:700;color:var(--danger);text-transform:uppercase;letter-spacing:.04em">Unverified citation${misses.length>1?'s':''}</div>
            ${misses.map(m => `<div class="cite" style="margin-top:4px"><b>${esc(m.field)}</b>: ${m.value == null ? '<i>(no citation given)</i>' : '\u201c'+esc(m.value)+'\u201d'}</div>`).join('')}
          </div>`
       : '';
@@ -471,13 +472,13 @@ function reasonLabel(cat){
     const acts    = (item.payload && Array.isArray(item.payload.actions)) ? item.payload.actions : [];
     const hasAppt = acts.some(a => a && a.type === 'create_appointment');
     const liveWarn = hasAppt
-      ? `<div style="margin-top:10px;color:#991b1b;font-weight:600;text-align:left">⚠ This runs the actions live, bypassing citation verification. A 341 appointment is involved — the client will be scheduled/rescheduled AND notified by SMS.</div>`
-      : `<div style="margin-top:10px;color:#991b1b;font-weight:600;text-align:left">⚠ This runs the actions live, bypassing citation verification.</div>`;
+      ? `<div style="margin-top:10px;color:var(--danger);font-weight:600;text-align:left">⚠ This runs the actions live, bypassing citation verification. A 341 appointment is involved — the client will be scheduled/rescheduled AND notified by SMS.</div>`
+      : `<div style="margin-top:10px;color:var(--danger);font-weight:600;text-align:left">⚠ This runs the actions live, bypassing citation verification.</div>`;
 
     const { isConfirmed } = await Swal.fire({
       title: 'Force apply',
       html: `
-        <div style="font-size:12.5px;color:#475569;text-align:left">
+        <div style="font-size:12.5px;color:var(--text-2);text-align:left">
           The quote(s) below could not be verified as literal text of this email. By continuing you
           are vouching — having read the email yourself — that the planned values are correct. The
           override is recorded on the log row with your user id. The duplicate guard, single-match
@@ -489,7 +490,7 @@ function reasonLabel(cat){
       width: 560,
       showCancelButton: true,
       confirmButtonText: 'Force apply',
-      confirmButtonColor: '#ef4444',
+      confirmButtonColor: 'var(--danger-fill)',
       showCloseButton: true,
     });
     if (!isConfirmed) return;
@@ -524,16 +525,16 @@ function reasonLabel(cat){
     const { isConfirmed } = await Swal.fire({
       title: 'Re-extract (fresh AI pass)',
       html: `
-        <div style="font-size:12.5px;color:#475569;text-align:left">
+        <div style="font-size:12.5px;color:var(--text-2);text-align:left">
           Discards the stored extraction and runs the AI extractor again over the original email.
           Use when the model's <b>output</b> was the problem (bad citation, wrong hearing matched) —
           replaying the stored actions can't fix that.
-          <div style="margin-top:10px;color:#7c3aed;font-weight:600">⚠ This spends a fresh AI call.</div>
+          <div style="margin-top:10px;color:var(--cat-purple);font-weight:600">⚠ This spends a fresh AI call.</div>
         </div>`,
       width: 520,
       showCancelButton: true,
       confirmButtonText: 'Re-extract',
-      confirmButtonColor: '#8b5cf6',
+      confirmButtonColor: '#6d28d9',
       showCloseButton: true,
     });
     if (!isConfirmed) return;
@@ -564,9 +565,9 @@ function reasonLabel(cat){
     let chosen = null, picker = null;
     return top.Swal.fire({
       title: 'Adopt docket onto case',
-      html: `<div style="font-size:12.5px;color:#475569;margin-bottom:8px">Docket to write: <b class="mono">${esc(docket)}</b></div>
+      html: `<div style="font-size:12.5px;color:var(--text-2);margin-bottom:8px">Docket to write: <b class="mono">${esc(docket)}</b></div>
              <div id="cr-cad-mount"></div>
-             <div id="cr-cad-info" style="font-size:12px;color:#16a34a;margin-top:8px;min-height:18px"></div>`,
+             <div id="cr-cad-info" style="font-size:12px;color:var(--ok);margin-top:8px;min-height:18px"></div>`,
       showCancelButton: true, confirmButtonText: 'Adopt & re-run', showCloseButton: true,
       didOpen: () => {
         const cb = top.Swal.getConfirmButton(); if (cb) cb.disabled = true;
@@ -689,7 +690,7 @@ function reasonLabel(cat){
   async function dismiss(id){
     const { value: note, isConfirmed } = await Swal.fire({
       title:'Dismiss item', input:'text', inputPlaceholder:'Reason / note (optional)',
-      showCancelButton:true, confirmButtonText:'Dismiss', confirmButtonColor:'#ef4444',
+      showCancelButton:true, confirmButtonText:'Dismiss', confirmButtonColor:'var(--danger-fill)',
     });
     if (!isConfirmed) return;
     try {
