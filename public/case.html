@@ -21,6 +21,8 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+    <link rel="stylesheet" href="/theme.css">
+    <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
 </head>
 <div
@@ -139,31 +141,31 @@
     </div>
     <!-- Caption line — hidden unless cases.case_caption is set (adversary
          proceedings, creditor-side cases, litigation). updateHeader toggles. -->
-    <h4 id="captionLine" style="color: #000; display: none">
+    <h4 id="captionLine" style="color: var(--text); display: none">
       Caption:
-      <span id="caption" onclick="copy(this.innerText)" style="color: #07adef"></span>
+      <span id="caption" onclick="copy(this.innerText)" style="color: var(--accent-2)"></span>
     </h4>
-    <h4 style="color: #000">
+    <h4 style="color: var(--text)">
       Primary Client Name:
       <span onclick="copy(this.innerText)">
-        <span id="clientName" style="color: #07adef">John Doe</span></span
+        <span id="clientName" style="color: var(--accent-2)">John Doe</span></span
       >
       Phone:
-      <span id="phone" onclick="copy(this.innerText)" style="color: #07adef"
+      <span id="phone" onclick="copy(this.innerText)" style="color: var(--accent-2)"
         >000-000-0000</span
       >
     </h4>
-    <h4 id="caseLine" style="color: #000">
+    <h4 id="caseLine" style="color: var(--text)">
       Lead ID:
-      <span id="leadID" onclick="copy(this.innerText)" style="color: #07adef"
+      <span id="leadID" onclick="copy(this.innerText)" style="color: var(--accent-2)"
         >abc123</span
       >
       Case Number:
-      <span id="case" onclick="copy(this.innerText)" style="color: #07adef"
+      <span id="case" onclick="copy(this.innerText)" style="color: var(--accent-2)"
         >Not Filed</span
       >
       Type:
-      <span id="type" onclick="copy(this.innerText)" style="color: #07adef"
+      <span id="type" onclick="copy(this.innerText)" style="color: var(--accent-2)"
         >N/A</span
       >
     </h4>
@@ -171,7 +173,7 @@
 
   <!-- Standard case tabs -->
   <div id="tabOverview" class="tab-content">
-    <div style="margin: 0 auto; max-width: 650px; border: 3px solid black">
+    <div style="margin: 0 auto; max-width: 650px; border: 3px solid var(--border)">
       <br /><label class="input-label">Case Type:</label>
       <!-- Options populated from fe-case_types (syncCaseTypeSelects below);
            subtype select hidden when the chosen type has no subtypes. -->
@@ -241,28 +243,28 @@
       /* pw- = pipeline widget. The page otherwise styles inline / via
          style.css; the timeline connector + row states genuinely need a
          rule block, so this is the page's first (scoped by prefix). */
-      #pipelinePanel { margin:0 auto; max-width:650px; border:3px solid black; text-align:left; padding:2px 18px 14px; box-sizing:border-box; }
+      #pipelinePanel { margin:0 auto; max-width:650px; border:3px solid var(--border); text-align:left; padding:2px 18px 14px; box-sizing:border-box; }
       #pipelinePanel h3 { text-align:center; }
-      .pw-subtitle { display:block; text-align:center; font-weight:normal; font-size:0.72em; color:#555; margin-top:2px; }
-      .pw-msg { color:#777; font-style:italic; margin:6px 0 10px; text-align:center; }
+      .pw-subtitle { display:block; text-align:center; font-weight:normal; font-size:0.72em; color:var(--text-2); margin-top:2px; }
+      .pw-msg { color:var(--text-muted); font-style:italic; margin:6px 0 10px; text-align:center; }
       .pw-row { position:relative; padding:0 0 12px 24px; }
-      .pw-row::before { content:""; position:absolute; left:6px; top:16px; bottom:-2px; width:2px; background:#ccc; }
+      .pw-row::before { content:""; position:absolute; left:6px; top:16px; bottom:-2px; width:2px; background:var(--border-strong); }
       .pw-row:last-child::before { display:none; }
       .pw-dot { position:absolute; left:0; top:3px; width:14px; height:14px; border-radius:50%;
-                background:#fff; border:2px solid #999; box-sizing:border-box; }
-      .pw-past .pw-dot { background:#999; }
-      .pw-current .pw-dot { background:#07adef; border-color:#07adef; }
+                background:var(--surface); border:2px solid var(--border-strong); box-sizing:border-box; }
+      .pw-past .pw-dot { background:var(--text-muted); }
+      .pw-current .pw-dot { background:var(--accent); border-color:var(--accent); }
       .pw-internal { font-weight:600; }
-      .pw-current .pw-internal { color:#07adef; font-weight:bold; }
-      .pw-upcoming .pw-internal, .pw-upcoming .pw-client { color:#aaa; }
-      .pw-when { font-size:0.8em; color:#888; margin-left:8px; }
-      .pw-client { display:block; font-size:0.8em; color:#999; font-style:italic; }
-      .pw-note { font-size:0.85em; color:#555; background:#f5f5f5; border-left:3px solid #ccc;
+      .pw-current .pw-internal { color:var(--accent-2); font-weight:bold; }
+      .pw-upcoming .pw-internal, .pw-upcoming .pw-client { color:var(--text-muted); }
+      .pw-when { font-size:0.8em; color:var(--text-muted); margin-left:8px; }
+      .pw-client { display:block; font-size:0.8em; color:var(--text-muted); font-style:italic; }
+      .pw-note { font-size:0.85em; color:var(--text-2); background:var(--surface-2); border-left:3px solid var(--border-strong);
                  padding:3px 8px; margin-top:3px; border-radius:3px; white-space:pre-wrap; }
-      .pw-badge { display:inline-block; font-size:0.65em; font-weight:bold; color:#fff; background:#888;
+      .pw-badge { display:inline-block; font-size:0.65em; font-weight:bold; color:var(--fill-text); background:var(--cat-indigo-fill);
                   border-radius:3px; padding:1px 5px; margin-left:6px; vertical-align:middle; text-transform:uppercase; }
-      #pwAdvanceRow { border-top:1px solid #ddd; padding-top:10px; margin-top:4px; text-align:center; }
-      #pwAdvanceRow .pw-toggle { font-size:0.8em; color:#555; margin-left:8px; white-space:nowrap; }
+      #pwAdvanceRow { border-top:1px solid var(--border); padding-top:10px; margin-top:4px; text-align:center; }
+      #pwAdvanceRow .pw-toggle { font-size:0.8em; color:var(--text-2); margin-left:8px; white-space:nowrap; }
       #pwNoteInput { width:60%; margin-top:6px; }
     </style>
     <div id="pipelinePanel" style="display:none">
@@ -277,13 +279,13 @@
       </div>
     </div>
     <br />
-    <div style="margin:0 auto;max-width:650px;border:3px solid black;">
-      <h3 style="color: red">Alerts:</h3>
+    <div style="margin:0 auto;max-width:650px;border:3px solid var(--border);">
+      <h3 style="color: var(--danger)">Alerts:</h3>
       <div id="alertsDiv">No Alerts</div>
       <br />
     </div>
     <br />
-    <div style="margin:0 auto; max-width:650px; border:3px solid black;">
+    <div style="margin:0 auto; max-width:650px; border:3px solid var(--border);">
       <h3>Case Notes:</h3>
       <textarea
         id="overviewCaseNotes"
@@ -304,21 +306,21 @@
                                               html: `<p>Are you sure you want to delete case ${caseID}?</p><p>There is no way to restore the data!</p><p>also, this doesnt work yet!</p>`,
                                               icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, Delete!',cancelButtonText: 'No, cancel',
                                               preConfirm: () => { document.write(`<h1 style='text-align:center'>Case Deleted! You may close the tab.</h1>`);}});"
-          style="background-color: red"
+          style="background-color: var(--danger-fill)"
         >
           Delete Lead
         </button>
         <button
           class="big-button"
           onclick="mergeCaseDialog()"
-          style="background-color: blue"
+          style="background-color: var(--accent); color: var(--accent-text)"
         >
           Merge Case&hellip;
         </button>
         <button
           class="big-button"
           onclick="alert('Which words?')"
-          style="background-color: green"
+          style="background-color: var(--ok-fill)"
         >
           Words Go Here
         </button>
@@ -408,7 +410,7 @@
         .join(', ') || 'nothing to move';
       const conflicts = plan.fields.conflicts || [];
       const conflictHtml = conflicts.length
-        ? `<div style="margin-top:8px;padding:8px;border:1px solid #d9534f;background:#fdecea;border-radius:6px">
+        ? `<div style="margin-top:8px;padding:8px;border:1px solid var(--danger);background:var(--danger-soft);border-radius:6px">
              <b>Conflicting fields</b> (survivor keeps its value; absorbed value is preserved in the snapshot):
              <ul style="margin:6px 0 0;padding-left:18px">
                ${conflicts.map(c => `<li><code>${esc(c.column)}</code>: keep "${esc(c.survivor)}", drop "${esc(c.loser)}"</li>`).join('')}
@@ -419,7 +421,7 @@
            </div>`
         : '';
       const winsHtml = (plan.fields.survivor_wins || []).length
-        ? `<div style="font-size:0.85em;color:#666;margin-top:6px">Lifecycle fields kept from survivor: ${plan.fields.survivor_wins.map(w => esc(w.column)).join(', ')}</div>`
+        ? `<div style="font-size:0.85em;color:var(--text-muted);margin-top:6px">Lifecycle fields kept from survivor: ${plan.fields.survivor_wins.map(w => esc(w.column)).join(', ')}</div>`
         : '';
 
       const step2 = await Swal.fire({
@@ -439,7 +441,7 @@
           </div>`,
         showCancelButton: true,
         confirmButtonText: 'Merge now',
-        confirmButtonColor: '#d9534f',
+        confirmButtonColor: 'var(--danger-fill)',
         showLoaderOnConfirm: true,
         allowOutsideClick: () => !Swal.isLoading(),
         preConfirm: async () => {
@@ -667,7 +669,7 @@
     </div>
 
     <div id="tabDB" class="tab-content">
-      <div id="noDB" style="text-align: center; color: red">
+      <div id="noDB" style="text-align: center; color: var(--danger)">
         <p>No Dropbox folder associated with this account!</p>
         <button class="big-button" onclick="newDB()">
           Create Dropbox Folder
@@ -828,9 +830,9 @@
               let dirIcon = "";
               const isComm = ['sms','email','call','court email'].includes(entry.log_type);
               if (isComm && entry.log_direction === 'outgoing') {
-                dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:#888"></i>`;
+                dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:var(--text-muted)"></i>`;
               } else if (isComm && entry.log_direction === 'incoming') {
-                dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
+                dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:var(--text-muted)"></i>`;
               }
               // Slice B.3: leading link-type icon + trailing extras-inspector icon
               const typeIcon = logEntryIcon(entry);
@@ -1115,13 +1117,13 @@
          here" below. -->
 
     <div id="tabInfo" class="tab-content"> <!-- BK only -->
-      <p style="text-align: center; color: red">
+      <p style="text-align: center; color: var(--danger)">
         You must submit the form below to update the clients file!
       </p>
       <iframe id="ISSNinfo"></iframe>
       <button
         onclick="E('ISSNinfo').src = `forms/issn.html?case_id=${window.entityData.case.case_id}`"
-        style="background-color: red; color: white; font-weight: bold"
+        style="background-color: var(--danger-fill); color: var(--fill-text); font-weight: bold"
       >
         Clear Form
       </button>
@@ -1832,7 +1834,7 @@ async function pwAdvance() {
   const ok = await Swal.fire({
     title: 'Advance pipeline',
     html: `<p>Move this case to <b>${escText(label)}</b>?</p>` +
-          (note ? `<p style="font-size:0.9em;color:#555">Note: ${escText(note)}</p>` : ''),
+          (note ? `<p style="font-size:0.9em;color:var(--text-2)">Note: ${escText(note)}</p>` : ''),
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: 'Yes, advance',
