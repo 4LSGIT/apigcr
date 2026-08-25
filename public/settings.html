@@ -4,29 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Settings</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <!-- Font Awesome: the icon grid / preview in "My Custom Tab" render fa-solid
      glyphs. The kit loaded by index.html lives in window.top and does not
      reach this iframe, so the sheet has to be linked here too. -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <style>
-  /* Palette matches redirects.html / connections.html / dbConsole.html */
-  :root {
-    --bg: #0f1117;
-    --panel: #161a22;
-    --panel-2: #1d2230;
-    --border: #2a3040;
-    --text: #e6e9ef;
-    --muted: #8a93a6;
-    --accent: #6ea8fe;
-    --accent-2: #82c0ff;
-    --danger: #ff6b6b;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-  }
+  /* Palette comes from /theme.css, shared with redirects.html /
+     connections.html / dbConsole.html as before. */
   *, *::before, *::after { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0;
-    background: var(--bg); color: var(--text);
+    background: var(--page-bg); color: var(--text);
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
   }
@@ -48,7 +38,7 @@
   }
   .icon-grid button:hover { border-color: var(--border); }
   .icon-grid button.sel {
-    border-color: #2563eb; background: rgba(37, 99, 235, .12); color: #2563eb;
+    border-color: var(--accent); background: var(--accent-soft); color: var(--accent);
   }
   .ctab-preview {
     display: inline-flex; align-items: center; gap: 10px;
@@ -57,26 +47,26 @@
   }
   .ctab-preview .ph { opacity: .55; font-style: italic; }
   .section {
-    background: var(--panel); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: 8px; margin-bottom: 16px; overflow: hidden;
   }
   .section > .sec-head {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px; background: var(--panel-2);
+    padding: 10px 14px; background: var(--surface-2);
     border-bottom: 1px solid var(--border);
   }
   .sec-head { cursor: pointer; user-select: none; }
   .sec-head h2 { margin: 0; font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
-  .sec-head .hint { color: var(--muted); font-size: 11.5px; }
-  .chev { display: inline-block; color: var(--muted); font-size: 11px; transition: transform .12s; }
+  .sec-head .hint { color: var(--text-muted); font-size: 11.5px; }
+  .chev { display: inline-block; color: var(--text-muted); font-size: 11px; transition: transform .12s; }
   .section:not(.collapsed) .chev { transform: rotate(90deg); }
   .section.collapsed .sec-body { display: none; }
   .section.collapsed > .sec-head { border-bottom: none; }
   .sec-body { padding: 14px; }
 
-  label.fld { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 3px; text-transform: uppercase; letter-spacing: .05em; }
+  label.fld { display: block; color: var(--text-muted); font-size: 11px; margin: 8px 0 3px; text-transform: uppercase; letter-spacing: .05em; }
   input[type=text], input[type=password], input[type=email] {
-    width: 100%; background: var(--bg); color: var(--text);
+    width: 100%; background: var(--page-bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 5px;
     padding: 7px 9px; font-size: 13px; outline: none;
   }
@@ -94,11 +84,13 @@
   .radios { display: flex; gap: 16px; margin-top: 4px; }
 
   .btn {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
     transition: border-color .12s, background .12s;
   }
   .btn:hover { border-color: var(--accent); }
+  /* #001 stays a literal: text ON --accent, not a §3.1 status fill.
+     Measured, near-black on #07ADEF is 8.17:1 and --accent-text is 2.55:1. */
   .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
   .btn.primary:hover { filter: brightness(1.08); }
   .btn.primary:disabled { opacity: .45; cursor: default; filter: none; }
@@ -110,13 +102,13 @@
   .status.ok { color: var(--ok); }
   .status.err { color: var(--danger); }
 
-  .note { color: var(--muted); font-size: 11.5px; margin: 0 0 10px; }
+  .note { color: var(--text-muted); font-size: 11.5px; margin: 0 0 10px; }
   .note.warn { color: var(--warn); }
 
   /* ── Type editor ── */
   .type-card {
     border: 1px solid var(--border); border-radius: 6px;
-    background: var(--bg); padding: 10px; margin-bottom: 8px;
+    background: var(--page-bg); padding: 10px; margin-bottom: 8px;
   }
   .type-head { display: flex; align-items: center; gap: 6px; }
   .type-head input { flex: 1; }
@@ -124,7 +116,7 @@
   .sub-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
   .sub-row input { flex: 1; }
   .icon-btn {
-    background: none; border: 1px solid var(--border); color: var(--muted);
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
     border-radius: 4px; width: 24px; height: 24px; cursor: pointer;
     font-size: 12px; line-height: 1; flex: none;
   }
@@ -138,9 +130,9 @@
   }
   .scalar-row:last-child { border-bottom: none; }
   .scalar-row .lbl { font-size: 12.5px; }
-  .scalar-row .lbl .sub { display: block; color: var(--muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
-  .lbl .sub { display: block; color: var(--muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
-  .lbl .desc { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .scalar-row .lbl .sub { display: block; color: var(--text-muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+  .lbl .sub { display: block; color: var(--text-muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+  .lbl .desc { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
   .toggle-row { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; }
   .toggle-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
   .toggle-lbl { color: var(--text); }
@@ -150,12 +142,12 @@
   .ws-badge.show { display: block; }
   @media (max-width: 560px) { .scalar-row { grid-template-columns: 1fr; } }
 
-  .loading { color: var(--muted); padding: 30px; text-align: center; }
+  .loading { color: var(--text-muted); padding: 30px; text-align: center; }
 
   /* ── Dropbox template editor ── */
   .tpl-stage {
     border: 1px solid var(--border); border-radius: 6px;
-    background: var(--bg); padding: 10px; margin-bottom: 10px;
+    background: var(--page-bg); padding: 10px; margin-bottom: 10px;
   }
   .tpl-stage h3 {
     margin: 0 0 8px; font-size: 12px; font-weight: 600;
@@ -163,12 +155,12 @@
   }
   .space-preview {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px; color: var(--muted); margin: 3px 0 0 2px;
+    font-size: 11px; color: var(--text-muted); margin: 3px 0 0 2px;
     white-space: pre; overflow-x: auto;
   }
   .space-preview .dot { color: var(--warn); }
   textarea.raw {
-    width: 100%; min-height: 180px; background: var(--bg); color: var(--text);
+    width: 100%; min-height: 180px; background: var(--page-bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
     outline: none; resize: vertical; white-space: pre;
@@ -307,6 +299,10 @@
           <label class="fld" style="margin-top:8px">Signature (plain text)</label>
           <textarea id="sigText" class="raw" style="min-height:100px" spellcheck="false"></textarea>
           <label class="fld" style="margin-top:8px">Preview</label>
+          <!-- #fff stays a literal here. This frame renders the signature as an
+               EMAIL RECIPIENT sees it, so the white is the mail client's canvas,
+               not admin chrome, and must not follow the theme. Only the border
+               around it does. -->
           <iframe id="sigPreview" title="Signature preview"
             style="width:100%;height:170px;border:1px solid var(--border);border-radius:4px;background:#fff;"></iframe>
           <p class="note">Rendered in isolation — a broken image here is broken for recipients. This signature is offered on sends from the address above (Communicate, Sending Forms, Campaigns).</p>
@@ -558,6 +554,10 @@ function _sigPaint() {
   const body = E('sigHtml').value.trim();
   E('sigPreview').srcdoc = body
     ? '<!doctype html><meta charset="utf-8"><body style="margin:8px;font-family:Calibri,Arial,sans-serif;">' + body + '</body>'
+    // #888 stays a literal and must: this string is a SEPARATE document
+    // injected via srcdoc, so it does not inherit this page's :root and
+    // var(--text-muted) would resolve to nothing inside it. 3.54:1 on the
+    // frame's own white, which is the only background it can ever have.
     : '<!doctype html><meta charset="utf-8"><body style="margin:8px;font:13px system-ui;color:#888;">No signature set.</body>';
 }
 function _sigShowRow(r) {
