@@ -4,25 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Connections</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
 <style>
   /* Palette matches dbConsole.html — admin tools loaded into a.html share this. */
-  :root {
-    --bg: #0f1117;
-    --panel: #161a22;
-    --panel-2: #1d2230;
-    --border: #2a3040;
-    --text: #e6e9ef;
-    --muted: #8a93a6;
-    --accent: #6ea8fe;
-    --accent-2: #82c0ff;
-    --danger: #ff6b6b;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-  }
   *, *::before, *::after { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; height: 100%;
-    background: var(--bg); color: var(--text);
+    background: var(--page-bg); color: var(--text);
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
   }
@@ -32,14 +21,14 @@
   .tabs {
     display: flex;
     gap: 0;
-    background: var(--panel);
+    background: var(--surface);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
   .tab {
     background: none;
     border: none;
-    color: var(--muted);
+    color: var(--text-muted);
     padding: 10px 18px;
     font-size: 13px;
     font-weight: 500;
@@ -53,7 +42,7 @@
   .tab-refresh {
     margin-left: auto; align-self: center;
     background: none; border: 1px solid var(--border); border-radius: 4px;
-    color: var(--muted); cursor: pointer;
+    color: var(--text-muted); cursor: pointer;
     padding: 3px 9px; margin-right: 10px;
     font-size: 14px; line-height: 1;
     transition: color 0.12s, border-color 0.12s, transform 0.6s ease-out;
@@ -76,38 +65,40 @@
 
   table.list {
     width: 100%; border-collapse: collapse; font-size: 12px;
-    border: 1px solid var(--border); background: var(--panel);
+    border: 1px solid var(--border); background: var(--surface);
   }
   table.list th, table.list td {
     border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left;
     vertical-align: middle;
   }
   table.list th {
-    background: var(--panel-2); color: var(--muted);
+    background: var(--surface-2); color: var(--text-muted);
     text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
   }
   table.list tbody tr { cursor: pointer; }
-  table.list tbody tr:hover { background: var(--panel-2); }
+  table.list tbody tr:hover { background: var(--surface-2); }
   table.list .actions-cell { white-space: nowrap; }
   table.list .actions-cell button {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-right: 4px;
   }
   table.list .actions-cell button:hover { border-color: var(--accent); }
   table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
-  .empty-row td { color: var(--muted); padding: 16px; text-align: center; font-style: italic; }
+  .empty-row td { color: var(--text-muted); padding: 16px; text-align: center; font-style: italic; }
 
   /* ── Buttons ───────────────────────────────────────────────── */
   .btn {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
     transition: border-color 0.12s, background 0.12s;
   }
   .btn:hover { border-color: var(--accent); }
+  /* #001 stays a literal: text ON --accent, not a §3.1 status fill.
+     Measured, near-black on #07ADEF is 8.17:1 and --accent-text is 2.55:1. */
   .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
   .btn.primary:hover { filter: brightness(1.08); }
   .btn.danger { border-color: var(--danger); color: var(--danger); }
-  .btn.danger:hover { background: var(--danger); color: #fff; }
+  .btn.danger:hover { background: var(--danger-fill); color: var(--accent-text); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* ── Badges ────────────────────────────────────────────────── */
@@ -117,11 +108,11 @@
     text-transform: uppercase; letter-spacing: 0.04em;
     border: 1px solid var(--border);
   }
-  .badge.type { background: var(--panel-2); color: var(--accent-2); }
-  .badge.status-pending  { background: rgba(251, 191, 36, 0.15); color: var(--warn);   border-color: rgba(251,191,36,0.4); }
-  .badge.status-connected { background: rgba(74, 222, 128, 0.15); color: var(--ok);    border-color: rgba(74,222,128,0.4); }
-  .badge.status-failed   { background: rgba(255, 107, 107, 0.15); color: var(--danger); border-color: rgba(255,107,107,0.4); }
-  .badge.status-revoked  { background: rgba(138, 147, 166, 0.15); color: var(--muted); border-color: rgba(138,147,166,0.4); }
+  .badge.type { background: var(--surface-2); color: var(--accent-2); }
+  .badge.status-pending  { background: var(--warn-soft);   color: var(--warn);       border-color: var(--warn); }
+  .badge.status-connected { background: var(--ok-soft);    color: var(--ok);         border-color: var(--ok); }
+  .badge.status-failed   { background: var(--danger-soft); color: var(--danger);     border-color: var(--danger); }
+  .badge.status-revoked  { background: var(--surface-2);   color: var(--text-muted); border-color: var(--border); }
   .warn-icon {
     display: inline-block; margin-left: 6px; color: var(--warn);
     cursor: help; font-size: 13px;
@@ -129,7 +120,7 @@
 
   /* ── Editor ────────────────────────────────────────────────── */
   .editor {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
     padding: 16px; max-width: 900px;
   }
   .editor-toolbar {
@@ -142,13 +133,13 @@
   .field { margin-bottom: 12px; }
   .field-row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: start; }
   .field label {
-    display: block; color: var(--muted); font-size: 11.5px; font-weight: 500;
+    display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 500;
     padding-top: 6px;
   }
   .field input[type=text], .field input[type=password], .field input[type=number],
   .field textarea, .field select {
     width: 100%; padding: 6px 8px;
-    background: var(--bg); color: var(--text);
+    background: var(--page-bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px;
     font-size: 12px; font-family: inherit;
   }
@@ -162,7 +153,7 @@
   .field .checkbox-line { display: flex; align-items: center; gap: 8px; padding-top: 6px; }
   .field .checkbox-line input { width: auto; }
   .field .helper {
-    font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic;
+    font-size: 11px; color: var(--text-muted); margin-top: 4px; font-style: italic;
   }
   .field-error { color: var(--danger); font-size: 11.5px; margin-top: 4px; }
 
@@ -173,7 +164,7 @@
   .pw-row input {
   width: 100%;
   padding: 6px 8px;
-  background: var(--bg);
+  background: var(--page-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -181,7 +172,7 @@
   font-family: inherit;
 }
 .pw-row input:focus { outline: none; border-color: var(--accent); }
-.pw-row input[readonly] { background: var(--panel-2); cursor: default; }
+.pw-row input[readonly] { background: var(--surface-2); cursor: default; }
 
   /* Type-specific subsection */
   .subsection {
@@ -193,11 +184,11 @@
     color: var(--accent-2); text-transform: uppercase; letter-spacing: 0.05em;
   }
   .subsection .note {
-    color: var(--muted); font-size: 11.5px; font-style: italic; padding: 4px 0;
+    color: var(--text-muted); font-size: 11.5px; font-style: italic; padding: 4px 0;
   }
   .redirect-uri-row {
     display: flex; gap: 6px; align-items: center;
-    padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px 10px; background: var(--page-bg); border: 1px solid var(--border); border-radius: 4px;
     margin-top: 6px;
   }
   .redirect-uri-row code {
@@ -208,25 +199,25 @@
 
   /* Status card (oauth2 connection status) */
   .status-card {
-    background: var(--bg); border: 1px solid var(--border);
+    background: var(--page-bg); border: 1px solid var(--border);
     border-radius: 4px; padding: 12px; margin-top: 8px;
   }
   .status-card .row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
-  .status-card .row .k { color: var(--muted); }
+  .status-card .row .k { color: var(--text-muted); }
   .status-card .row .v { color: var(--text); }
   .status-card .actions { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: wrap; }
 
   /* Dialogs */
   dialog {
-    background: var(--panel); color: var(--text);
+    background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: 6px;
     padding: 16px; min-width: 360px;
   }
-  dialog::backdrop { background: rgba(0,0,0,0.5); }
+  dialog::backdrop { background: var(--backdrop); }
   dialog h3 { margin: 0 0 10px 0; font-size: 14px; }
   dialog input {
     width: 100%; padding: 6px 8px; box-sizing: border-box;
-    background: var(--bg); color: var(--text);
+    background: var(--page-bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; font-size: 12px;
   }
   dialog .actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
@@ -241,10 +232,10 @@
     pointer-events: none;
   }
   .toast {
-    background: var(--panel-2); color: var(--text);
+    background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-left: 3px solid var(--ok);
     border-radius: 4px; padding: 8px 12px; font-size: 12px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);  /* not --shadow: different geometry, see charter §0.1 */
     animation: slideIn 0.2s ease;
     pointer-events: auto;
   }
@@ -257,13 +248,13 @@
 
   /* Inline error banner inside editor */
   .inline-error {
-    background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.4);
+    background: var(--danger-soft); border: 1px solid var(--danger);
     color: var(--danger); padding: 8px 10px; border-radius: 4px;
     font-size: 12px; margin-bottom: 10px;
   }
 
   /* "Loading..." inline label */
-  .saving-hint { color: var(--muted); font-size: 11.5px; margin-left: 8px; font-style: italic; }
+  .saving-hint { color: var(--text-muted); font-size: 11.5px; margin-left: 8px; font-style: italic; }
 </style>
 </head>
 <body>
@@ -282,10 +273,10 @@
 
 <dialog id="testEmailDialog">
   <h3>Send test email</h3>
-  <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">
+  <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">
     From: <span id="testEmailFromLabel" style="color:var(--text);"></span>
   </div>
-  <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">To:</div>
+  <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">To:</div>
   <input id="testEmailTo" type="text" placeholder="recipient@example.com">
   <div class="result" id="testEmailResult"></div>
   <div class="actions">
@@ -344,14 +335,14 @@
     <label>MMS capable</label>
     <div class="checkbox-line">
       <input id="phone-mms-capable" type="checkbox">
-      <span style="color:var(--muted); font-size:11.5px;">Default mirrors the adapter's MMS capability; override per-line.</span>
+      <span style="color:var(--text-muted); font-size:11.5px;">Default mirrors the adapter's MMS capability; override per-line.</span>
     </div>
   </div>
   <div class="field field-row">
     <label>Active</label>
     <div class="checkbox-line">
       <input id="phone-active" type="checkbox" checked>
-      <span style="color:var(--muted); font-size:11.5px;">Inactive lines are skipped by phoneService.</span>
+      <span style="color:var(--text-muted); font-size:11.5px;">Inactive lines are skipped by phoneService.</span>
     </div>
   </div>
   <div class="actions">
@@ -362,13 +353,13 @@
 
 <dialog id="phoneTestSmsDialog" style="min-width:480px; max-width:560px;">
   <h3>Send test SMS</h3>
-  <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">
+  <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">
     From: <span id="phoneTestSmsFromLabel" style="color:var(--text);"></span>
   </div>
-  <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">To:</div>
+  <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">To:</div>
   <input id="phoneTestSmsTo" type="text" placeholder="2485551234 or +12485551234">
-  <div style="font-size:12px; color:var(--muted); margin: 8px 0 4px 0;">Message:</div>
-  <textarea id="phoneTestSmsMessage" style="width:100%; min-height:60px; box-sizing:border-box; padding:6px 8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:inherit;">Test from YisraCase admin connections page.</textarea>
+  <div style="font-size:12px; color:var(--text-muted); margin: 8px 0 4px 0;">Message:</div>
+  <textarea id="phoneTestSmsMessage" style="width:100%; min-height:60px; box-sizing:border-box; padding:6px 8px; background:var(--page-bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:inherit;">Test from YisraCase admin connections page.</textarea>
   <div class="result" id="phoneTestSmsResult"></div>
   <div class="actions">
     <button class="btn" id="phoneTestSmsCancel">Cancel</button>
@@ -402,11 +393,11 @@ const P = window.parent;
     }
 
     document.body.innerHTML =
-      '<div style="padding:40px; text-align:center; color:#ff6b6b;">Admin only — superuser access required.</div>';
+      '<div style="padding:40px; text-align:center; color:var(--danger);">Admin only — superuser access required.</div>';
     throw new Error('not SU');
   } catch (e) {
     if (e.message !== 'not SU') {
-      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Not authenticated.</div>';
     }
   }
 })();
@@ -571,16 +562,16 @@ function renderCredsList(host) {
 
 function credListRow(r) {
   const isOauth = r.type === 'oauth2';
-  const status = isOauth ? statusBadge(r.oauth_status) : '<span style="color:var(--muted);">—</span>';
+  const status = isOauth ? statusBadge(r.oauth_status) : '<span style="color:var(--text-muted);">—</span>';
   const warn = (isOauth && r.refresh_failure_count >= 1 && r.oauth_status === 'connected')
     ? `<span class="warn-icon" title="${esc(r.refresh_failure_count)} refresh failure(s) recently — investigate. Last error: ${esc(r.oauth_last_error || 'unknown')}">⚠</span>`
     : '';
   const expiry = isOauth && r.oauth_status === 'connected'
     ? esc(expiryStr(r.access_token_expires_at))
-    : '<span style="color:var(--muted);">—</span>';
+    : '<span style="color:var(--text-muted);">—</span>';
   const refreshed = isOauth && r.last_refreshed_at
     ? esc(relTime(r.last_refreshed_at))
-    : '<span style="color:var(--muted);">—</span>';
+    : '<span style="color:var(--text-muted);">—</span>';
 
   return `
     <tr data-id="${r.id}" data-name="${esc(r.name)}">
@@ -605,7 +596,7 @@ function statusBadge(status) {
     revoked:         ['status-revoked',   'Revoked'],
   };
   const [cls, label] = map[status] || ['', status || '—'];
-  if (!status) return '<span style="color:var(--muted);">—</span>';
+  if (!status) return '<span style="color:var(--text-muted);">—</span>';
   return `<span class="badge ${cls}">${esc(label)}</span>`;
 }
 
@@ -690,7 +681,7 @@ function renderCredsEditor(host) {
         <label>Verbose</label>
         <div class="checkbox-line">
           <input id="cred-verbose" type="checkbox" ${e.verbose ? 'checked' : ''}>
-          <span style="color:var(--muted); font-size:11.5px;">Log full request/response payloads (debug only — sensitive data is logged)</span>
+          <span style="color:var(--text-muted); font-size:11.5px;">Log full request/response payloads (debug only — sensitive data is logged)</span>
         </div>
       </div>
       <div id="cred-type-section"></div>
@@ -1372,7 +1363,7 @@ function emailListRow(r) {
           ? `<span style="color:var(--warn);">credential #${esc(r.credential_id)} (missing)</span>`
           : `<span style="color:var(--danger);">no credential linked</span>`);
   } else {
-    detail = '<span style="color:var(--muted);">—</span>';
+    detail = '<span style="color:var(--text-muted);">—</span>';
   }
   const verifyBtn = r.provider === 'gmail'
     ? '<button data-action="verify">Verify aliases</button>'
@@ -1474,7 +1465,7 @@ function renderEmailEditor(host) {
         <label>Owner</label>
         <div>
           <select id="email-owner" data-current="${esc(e.owner_user ?? '')}"><option value="">Loading…</option></select>
-          <div style="color:var(--muted);font-size:11px;margin-top:4px;">
+          <div style="color:var(--text-muted);font-size:11px;margin-top:4px;">
             The owner can edit this sender's signature themselves in
             Settings → Email Signature. Leave unassigned to keep the
             signature editable here only. Does not affect who can send
@@ -1498,7 +1489,7 @@ function renderEmailEditor(host) {
 
       <div class="field field-row" style="margin-top:18px;align-items:center;">
         <label style="font-weight:600;">Signature</label>
-        <div style="color:var(--muted);font-size:12px;">
+        <div style="color:var(--text-muted);font-size:12px;">
           Appended to outgoing mail from this address, when the sending screen
           asks for it. Leave blank for automated senders.
         </div>
@@ -1518,9 +1509,12 @@ function renderEmailEditor(host) {
       <div class="field field-row">
         <label>Preview</label>
         <div>
+          <!-- #fff stays a literal: this frame renders the signature as an
+               EMAIL RECIPIENT sees it, so the white is the mail client's
+               canvas, not admin chrome. Only the border follows the theme. -->
           <iframe id="email-sig-preview" title="Signature preview"
             style="width:100%;height:200px;border:1px solid var(--border);border-radius:4px;background:#fff;"></iframe>
-          <div style="color:var(--muted);font-size:11px;margin-top:4px;">
+          <div style="color:var(--text-muted);font-size:11px;margin-top:4px;">
             Rendered in isolation, so page styling can't distort it. Images load
             from their live URLs — a broken image here is broken for recipients.
           </div>
@@ -1613,6 +1607,9 @@ function wireSignaturePreview() {
     frame.srcdoc = body
       ? `<!doctype html><meta charset="utf-8">` +
         `<body style="margin:8px;font-family:Calibri,Arial,sans-serif;">${body}</body>`
+      // #888 stays a literal and must: srcdoc builds a SEPARATE document
+      // that does not inherit this page's :root, so var(--text-muted) would
+      // resolve to nothing inside it. 3.54:1 on the frame's own white.
       : `<!doctype html><meta charset="utf-8">` +
         `<body style="margin:8px;font:13px system-ui;color:#888;">No signature set.</body>`;
   };
@@ -1716,7 +1713,7 @@ function renderEmailSmtpSection() {
         <label>SMTP Secure (TLS)</label>
         <div class="checkbox-line">
           <input id="email-smtp-secure" type="checkbox" ${e.smtp_secure ? 'checked' : ''}>
-          <span style="color:var(--muted); font-size:11.5px;">Checked = TLS-from-handshake (port 465). Unchecked = STARTTLS upgrade (port 587).</span>
+          <span style="color:var(--text-muted); font-size:11.5px;">Checked = TLS-from-handshake (port 465). Unchecked = STARTTLS upgrade (port 587).</span>
         </div>
       </div>
     </div>
@@ -2046,7 +2043,7 @@ function showAliasResultDialog(opts) {
 
   if (opts.kind === 'loading') {
     titleEl.textContent = 'Checking aliases…';
-    bodyEl.innerHTML = `<div style="color:var(--muted);">Probing Gmail for ${esc(opts.rowEmail)}…</div>`;
+    bodyEl.innerHTML = `<div style="color:var(--text-muted);">Probing Gmail for ${esc(opts.rowEmail)}…</div>`;
     if (!dlg.open) dlg.showModal();
     return;
   }
@@ -2058,7 +2055,7 @@ function showAliasResultDialog(opts) {
         Could not retrieve the alias list for <strong>${esc(opts.rowEmail)}</strong>.
       </div>
       <div class="inline-error">${esc(opts.error)}</div>
-      <div style="margin-top:10px; color:var(--muted); font-size:11.5px;">
+      <div style="margin-top:10px; color:var(--text-muted); font-size:11.5px;">
         Common causes: the credential's <code>oauth_status</code> is no longer
         <em>connected</em>, the access token can't be refreshed, or the credential
         is missing the <code>gmail.settings.basic</code> scope (re-authorize from
@@ -2098,10 +2095,10 @@ function showAliasResultDialog(opts) {
            ${aliases.map(a => `<li>
              <code>${esc(a.sendAsEmail || '?')}</code>
              ${a.isPrimary ? ' <span class="badge type">primary</span>' : ''}
-             <span style="color:var(--muted); font-size:11px;"> — ${esc(a.verificationStatus || 'unknown')}</span>
+             <span style="color:var(--text-muted); font-size:11px;"> — ${esc(a.verificationStatus || 'unknown')}</span>
            </li>`).join('')}
          </ul>`
-      : '<div style="color:var(--muted); margin-top:6px;">No aliases returned.</div>';
+      : '<div style="color:var(--text-muted); margin-top:6px;">No aliases returned.</div>';
     const primary = aliases.find(a => a.isPrimary);
     const primaryNote = primary
       ? `Sends from this row will silently arrive from <strong>${esc(primary.sendAsEmail)}</strong>.`
@@ -2112,12 +2109,12 @@ function showAliasResultDialog(opts) {
         <strong>${esc(opts.rowEmail)}</strong> is <strong>not</strong> a verified Send-as
         alias on this credential's Google account. ${primaryNote}
       </div>
-      <div style="margin-top:10px; color:var(--muted); font-size:12px;">
+      <div style="margin-top:10px; color:var(--text-muted); font-size:12px;">
         To fix: open <em>Gmail Settings → Accounts → Send mail as</em> and verify
         the alias, then click <em>Verify aliases</em> again here.
       </div>
       <div style="margin-top:10px;">
-        <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
+        <div style="font-size:11.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
           Available verified aliases on this credential
         </div>
         ${aliasList}
