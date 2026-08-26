@@ -78,6 +78,7 @@ lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/taskQueue.js
 lib/unplacehold.js
+lib/unrefPoolIdleSweeper.js
 lib/versionDiff.js
 lib/webhookExecutor.js
 lib/withTransaction.js
@@ -626,6 +627,7 @@ tests/control.flow.test.js
 tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
+tests/dbPoolIdleRecycling.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
 tests/esignActionsUi.test.js

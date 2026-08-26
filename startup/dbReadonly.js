@@ -45,11 +45,30 @@ const pool = mysql.createPool({
   supportBigNumbers: true,
   bigNumberStrings: true,
 
+  // TCP keepalive guards NAT / firewall idle drops only — it does NOT stop
+  // MySQL's wait_timeout, which counts idle time at the protocol layer.
   enableKeepAlive: true,
   keepAliveInitialDelay: 10_000,
-  maxIdle: 3,
-  idleTimeout: 60_000,
+
+  // maxIdle MUST be < connectionLimit or mysql2 never arms its idle recycler
+  // and idleTimeout is inert — see the long note in startup/db.js. SiteGround
+  // runs wait_timeout = 60s, so idleTimeout has to sit well under that.
+  maxIdle: 2,
+  idleTimeout: 30_000,
 });
+
+// Same guard as startup/db.js — the sweeper is armed once, in the constructor.
+try {
+  if (!pool._removeIdleTimeoutConnectionsTimer) {
+    console.error(
+      "[dbReadonly] idle-connection sweeper NOT armed (maxIdle must be < connectionLimit)."
+    );
+  }
+} catch (_) { /* upstream shape changed; not worth failing boot */ }
+
+// Keep the sweeper's self-rearming timer from holding test/script processes
+// open — see lib/unrefPoolIdleSweeper.js.
+require("../lib/unrefPoolIdleSweeper").unrefPoolIdleSweeper(pool);
 
 pool.on("error", err => {
   console.error("MySQL RO pool error:", err);
