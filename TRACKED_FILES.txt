@@ -333,6 +333,7 @@ ref/2026-08-20_issue_reports.sql
 ref/2026-08-22_ingest_matched_rules_index.sql
 ref/2026-08-25_pipeline_lane.sql
 ref/2026-08-26_pipeline_r15_rules.sql
+ref/2026-08-26_pipeline_r2_requirements.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -597,6 +598,8 @@ services/portalDocsService.js
 services/quoService.js
 services/reportAuthorService.js
 services/reportService.js
+services/requirementDetectors.js
+services/requirementService.js
 services/resolverService.js
 services/ringcentralService.js
 services/searchService.js
@@ -734,6 +737,7 @@ tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/processJobs.targeted.test.js
 tests/refreshonmiss.k3.test.js
+tests/requirementService.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.doorbell.test.js
 tests/schemaConventions.test.js

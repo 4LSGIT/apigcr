@@ -14,6 +14,13 @@
  * DELETE /api/pipeline-admin/stages/:id                    — hard delete (zero log refs only → else 409)
  * POST   /api/pipeline-admin/templates/:id/stages/reorder  — { stage_ids: [...] } → rewrites stage_number 1..N
  * GET    /api/pipeline-admin/usage?case_type=&case_subtype= — { cases, templates } reference counts
+ * (R2)
+ * GET    /api/pipeline-admin/detectors                     — detector registry metadata { key, label, config_hint }
+ * GET    /api/pipeline-admin/stages/:id/requirements       — { stage, requirements[] } (requirements carry override_count)
+ * POST   /api/pipeline-admin/stages/:id/requirements       — create requirement (detector + config validated at write time)
+ * PUT    /api/pipeline-admin/requirements/:id              — partial update (requirement_key immutable once overrides bind → 409)
+ * DELETE /api/pipeline-admin/requirements/:id              — hard delete (always allowed; overrides go inert)
+ * POST   /api/pipeline-admin/stages/:id/requirements/reorder — { requirement_ids: [...] } → rewrites sort_order 1..N
  *
  * Auto-mounted from routes/ (server.js readdir loop). Distinct /api/pipeline-admin
  * prefix — no collision with routes/api.pipeline.js (the frozen Slice B
@@ -131,6 +138,68 @@ router.delete('/api/pipeline-admin/stages/:id', jwtOrApiKey, async (req, res) =>
     res.json({ status: 'success', ...result });
   } catch (err) {
     fail(res, 'deleteStage', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REQUIREMENTS (R2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const requirementDetectors = require('../services/requirementDetectors');
+
+// Registry metadata for the admin UI's detector picker. Static — no DB.
+router.get('/api/pipeline-admin/detectors', jwtOrApiKey, async (_req, res) => {
+  try {
+    res.json({ status: 'success', detectors: requirementDetectors.listDetectors() });
+  } catch (err) {
+    fail(res, 'listDetectors', err);
+  }
+});
+
+router.get('/api/pipeline-admin/stages/:id/requirements', jwtOrApiKey, async (req, res) => {
+  try {
+    const payload = await svc.listRequirements(req.db, req.params.id);
+    res.json({ status: 'success', ...payload });
+  } catch (err) {
+    fail(res, 'listRequirements', err);
+  }
+});
+
+router.post('/api/pipeline-admin/stages/:id/requirements', jwtOrApiKey, async (req, res) => {
+  try {
+    const requirement = await svc.createRequirement(req.db, req.params.id, req.body || {});
+    res.status(201).json({ status: 'success', requirement });
+  } catch (err) {
+    fail(res, 'createRequirement', err);
+  }
+});
+
+router.post('/api/pipeline-admin/stages/:id/requirements/reorder', jwtOrApiKey, async (req, res) => {
+  try {
+    const { requirement_ids } = req.body || {};
+    const payload = await svc.reorderRequirements(req.db, req.params.id, requirement_ids);
+    res.json({ status: 'success', ...payload });
+  } catch (err) {
+    fail(res, 'reorderRequirements', err);
+  }
+});
+
+router.put('/api/pipeline-admin/requirements/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const requirement = await svc.updateRequirement(req.db, req.params.id, req.body || {});
+    res.json({ status: 'success', requirement });
+  } catch (err) {
+    fail(res, 'updateRequirement', err);
+  }
+});
+
+router.delete('/api/pipeline-admin/requirements/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await svc.deleteRequirement(req.db, req.params.id);
+    res.json({ status: 'success', ...result });
+  } catch (err) {
+    fail(res, 'deleteRequirement', err);
   }
 });
 

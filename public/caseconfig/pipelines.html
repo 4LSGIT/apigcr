@@ -166,6 +166,29 @@
     .cc-form .locked-note { font-size: 11px; color: var(--warn); background: var(--warn-soft);
       border-radius: 6px; padding: 6px 8px; margin-top: 4px; }
 
+    /* ── (R2) Requirements sub-editor ── */
+    tr.req-sub > td { background: var(--surface-2); padding: 10px 14px 12px 40px; }
+    .req-head { display: flex; align-items: center; gap: 8px; font-size: 11px;
+      font-weight: 700; color: var(--text-2); text-transform: uppercase;
+      letter-spacing: 0.04em; margin-bottom: 6px; }
+    table.reqs { width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    table.reqs th { text-align: left; font-size: 9.5px; text-transform: uppercase;
+      letter-spacing: 0.04em; color: var(--text-muted); padding: 6px 8px;
+      border-bottom: 1px solid var(--border); background: var(--surface-2); white-space: nowrap; }
+    table.reqs td { padding: 6px 8px; border-bottom: 1px solid var(--page-bg);
+      font-size: 12px; vertical-align: middle; }
+    table.reqs tr:last-child td { border-bottom: none; }
+    table.reqs tr.inactive td { color: var(--text-muted); }
+    table.reqs tr.inactive .rq-key, table.reqs tr.inactive .rq-label { text-decoration: line-through; }
+    .rq-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+      color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; }
+    .rq-key .fa-lock { color: var(--warn); font-size: 10px; }
+    .badge-detector { background: var(--surface-2); color: var(--text-2); text-transform: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .req-count-badge { font-size: 9px; font-weight: 700; padding: 0 5px; border-radius: 8px;
+      background: var(--accent-soft); color: var(--info-dark); margin-left: 3px; }
+
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -228,6 +251,16 @@
 //     the opposite role (intake vs case) 409s with no force option: such a
 //     key hijacks the retention bootstrap. The message explains why; it
 //     surfaces through the same Toast as every other server error.
+//   - (R2) per-stage REQUIREMENTS sub-editor: a list-check button on each
+//     stage row expands a nested table (list / create / edit / delete /
+//     reorder / active toggle) over /api/pipeline-admin/stages/:id/
+//     requirements. requirement_key locks (same lock icon + disabled input
+//     as stage keys) once override_count > 0 — overrides bind by key.
+//     detector picked from GET /api/pipeline-admin/detectors; the config
+//     textarea shows the picked detector's config_hint and the server
+//     validates the config against the detector at write time (400s
+//     surface through the Toast). Stage deletion 409s while requirements
+//     exist — the dialog says to delete them first.
 //
 // Shell protocol: P.apiSend relay; onShow/onRefresh/onNew hooks;
 // topbar buttons via P.setTopbarButtons.
@@ -262,6 +295,10 @@ let stages = [];           // listStages rows (+ log_count)
 let typesMap = {};         // fe-case_types blob for datalists (best-effort)
 let sortable = null;
 let loaded = false;
+// (R2) requirements sub-editor state
+let detectorList = [];     // [{key,label,config_hint}] from /detectors (best-effort)
+let reqCache = {};         // stageId -> requirements[] (listRequirements rows)
+let openReqStageId = null; // which stage's sub-row is expanded (null = none)
 
 // ── Loads ──────────────────────────────────────────────────────
 
@@ -278,7 +315,23 @@ async function loadStages(tplId) {
   const data = await api(`/api/pipeline-admin/templates/${tplId}/stages`);
   activeTpl = data.template;
   stages = data.stages || [];
+  // (R2) collapse the sub-editor when it points at a stage no longer here.
+  if (openReqStageId && !stages.some(s => s.id === openReqStageId)) openReqStageId = null;
   renderEditor();
+}
+
+// (R2) detector registry — best-effort like loadTypesMap; the config
+// textarea hints just stay generic if it fails.
+async function loadDetectors() {
+  try {
+    const data = await api('/api/pipeline-admin/detectors');
+    detectorList = data.detectors || [];
+  } catch (_) { detectorList = []; }
+}
+
+async function loadRequirements(stageId) {
+  const data = await api(`/api/pipeline-admin/stages/${stageId}/requirements`);
+  reqCache[stageId] = data.requirements || [];
 }
 
 async function loadTypesMap() {
@@ -390,12 +443,13 @@ function renderEditor() {
                 onchange="toggleStageActive(${s.id}, this)"><span class="slider"></span></label>
             </td>
             <td style="white-space:nowrap;text-align:right">
+              <button class="icon-btn" title="Requirements (${Number(s.req_count) || 0})" onclick="toggleReqs(${s.id})"><i class="fa-solid fa-list-check"></i>${Number(s.req_count) > 0 ? `<span class="req-count-badge">${s.req_count}</span>` : ''}</button>
               <button class="icon-btn" title="Move up"   onclick="nudgeStage(${i},-1)"><i class="fa-solid fa-arrow-up"></i></button>
               <button class="icon-btn" title="Move down" onclick="nudgeStage(${i},1)"><i class="fa-solid fa-arrow-down"></i></button>
               <button class="icon-btn" title="Edit"      onclick="stageDialog(${s.id})"><i class="fa-solid fa-pen"></i></button>
               <button class="icon-btn del" title="Delete" onclick="deleteStage(${s.id})"><i class="fa-solid fa-xmark"></i></button>
             </td>
-          </tr>`).join('')}
+          </tr>${openReqStageId === s.id ? reqSubRowHtml(s) : ''}`).join('')}
       </tbody>
     </table>
     <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
@@ -412,8 +466,13 @@ function renderEditor() {
   if (window.Sortable) {
     sortable = new Sortable(E('stage-tbody'), {
       handle: '.drag-handle', animation: 150,
+      // (R2) the expanded requirements sub-row lives in the same tbody; it
+      // must be neither draggable nor counted, or the reorder POST would
+      // carry a NaN id and 400.
+      draggable: 'tr[data-stage-id]',
       onEnd: () => {
-        const ids = [...E('stage-tbody').querySelectorAll('tr')].map(tr => Number(tr.dataset.stageId));
+        const ids = [...E('stage-tbody').querySelectorAll('tr[data-stage-id]')]
+          .map(tr => Number(tr.dataset.stageId));
         commitOrder(ids);
       },
     });
@@ -747,6 +806,17 @@ async function deleteStage(stageId) {
     await loadStages(activeTplId);
     loadTemplates();
   } catch (e) {
+    if (e.status === 409 && /requirement\(s\) attached/.test(e.message || '')) {
+      // (R2) requirements guard — deleting them is a click away; offer it.
+      const { isConfirmed: openReqs } = await Swal.fire({
+        icon: 'info',
+        title: 'Requirements attached to this stage',
+        html: `<div style="font-size:13px;text-align:left">${esc(e.message)}</div>`,
+        showCancelButton: true, confirmButtonText: 'Open requirements',
+      });
+      if (openReqs && openReqStageId !== stageId) toggleReqs(stageId);
+      return;
+    }
     if (e.status === 409) {
       const { isConfirmed: deact } = await Swal.fire({
         icon: 'info',
@@ -771,11 +841,285 @@ async function toggleStageActiveById(stageId) {
   } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
 }
 
+// ── (R2) Requirements sub-editor ───────────────────────────────
+
+const REQ_KEY_RE = /^[a-z0-9_]{1,60}$/;
+const REQ_OWNERS = ['client', 'staff', 'system'];
+const REQ_KINDS  = ['task', 'event'];
+
+function reqSubRowHtml(stage) {
+  const reqs = reqCache[stage.id];
+  let body;
+  if (!reqs) {
+    body = `<div style="color:var(--text-muted);font-size:12px"><i class="fa-solid fa-spinner spin"></i> Loading…</div>`;
+  } else if (!reqs.length) {
+    body = `<div style="color:var(--text-muted);font-size:12px">No requirements on this stage yet.</div>`;
+  } else {
+    body = `
+      <table class="reqs">
+        <thead><tr>
+          <th style="width:24px">#</th><th>Key</th><th>Internal label</th><th>Client label</th>
+          <th>Owner</th><th>Detector</th>
+          <th style="width:64px" title="client_visible / required">Flags</th>
+          <th style="width:40px">Active</th><th style="width:118px"></th>
+        </tr></thead>
+        <tbody>
+          ${reqs.map((r, i) => `
+            <tr class="${r.active ? '' : 'inactive'}">
+              <td>${r.sort_order}</td>
+              <td><span class="rq-key">${esc(r.requirement_key)}${Number(r.override_count) > 0
+                    ? `<i class="fa-solid fa-lock" title="Key locked — ${r.override_count} case override(s) bind to it"></i>` : ''}</span></td>
+              <td class="rq-label">${esc(r.internal_label)}${r.group_label ? ` <span class="badge badge-stage" title="group_label">${esc(r.group_label)}</span>` : ''}</td>
+              <td style="color:var(--text-2)">${esc(r.client_label || '')}</td>
+              <td><span class="badge badge-stage">${esc(r.owner)}</span></td>
+              <td><span class="badge badge-detector" title="${esc(typeof r.detector_config === 'string' ? r.detector_config : (r.detector_config ? JSON.stringify(r.detector_config) : ''))}">${esc(r.detector)}</span></td>
+              <td>
+                <i class="fa-solid fa-eye flag-dot ${r.client_visible ? 'on' : ''}" title="client_visible: ${r.client_visible ? 'yes' : 'no'}"></i>
+                <i class="fa-solid fa-asterisk flag-dot ${r.required ? 'on' : ''}" title="required: ${r.required ? 'yes' : 'no'}"></i>
+              </td>
+              <td>
+                <label class="tgl"><input type="checkbox" ${r.active ? 'checked' : ''}
+                  onchange="toggleReqActive(${stage.id}, ${r.id}, this)"><span class="slider"></span></label>
+              </td>
+              <td style="white-space:nowrap;text-align:right">
+                <button class="icon-btn" title="Move up"   onclick="nudgeReq(${stage.id}, ${i}, -1)"><i class="fa-solid fa-arrow-up"></i></button>
+                <button class="icon-btn" title="Move down" onclick="nudgeReq(${stage.id}, ${i}, 1)"><i class="fa-solid fa-arrow-down"></i></button>
+                <button class="icon-btn" title="Edit"      onclick="reqDialog(${stage.id}, ${r.id})"><i class="fa-solid fa-pen"></i></button>
+                <button class="icon-btn del" title="Delete" onclick="deleteReq(${stage.id}, ${r.id})"><i class="fa-solid fa-xmark"></i></button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+  return `
+    <tr class="req-sub"><td colspan="10">
+      <div class="req-head">
+        <i class="fa-solid fa-list-check"></i> Requirements — ${esc(stage.internal_label)}
+        <span style="flex:1"></span>
+        <button class="btn btn-primary btn-sm" onclick="reqDialog(${stage.id}, null)"><i class="fa-solid fa-plus"></i> Requirement</button>
+      </div>
+      ${body}
+      <div style="font-size:10.5px;color:var(--text-muted);margin-top:6px">
+        Requirements are the parallel work items within this stage; done-ness derives from the
+        detector's source object (e-sign, checklist, form, appointment) — nobody marks anything.
+        Locked keys (<i class="fa-solid fa-lock" style="color:var(--warn)"></i>) have per-case
+        overrides bound to them and can't be renamed.
+      </div>
+    </td></tr>`;
+}
+
+async function toggleReqs(stageId) {
+  if (openReqStageId === stageId) { openReqStageId = null; renderEditor(); return; }
+  openReqStageId = stageId;
+  renderEditor();                       // shows the loading sub-row immediately
+  try {
+    await loadRequirements(stageId);
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+    reqCache[stageId] = [];
+  }
+  if (openReqStageId === stageId) renderEditor();
+}
+window.toggleReqs = toggleReqs;
+
+/** Refresh one stage's requirements + the stage table (req_count badge). */
+async function refreshReqs(stageId) {
+  try { await loadRequirements(stageId); } catch (_) {}
+  await loadStages(activeTplId);
+}
+
+function detectorOptionsHtml(selected) {
+  const list = detectorList.length ? detectorList
+    : [{ key: selected || 'manual', label: selected || 'manual', config_hint: '' }];
+  return list.map(d =>
+    `<option value="${esc(d.key)}" data-hint="${esc(d.config_hint || '')}" ${d.key === selected ? 'selected' : ''}>${esc(d.key)} — ${esc(d.label)}</option>`
+  ).join('');
+}
+
+function reqFormHtml(r) {
+  const locked = r.id && Number(r.override_count) > 0;
+  const cfg = r.detector_config
+    ? (typeof r.detector_config === 'string' ? r.detector_config : JSON.stringify(r.detector_config, null, 2))
+    : '';
+  return `<div class="cc-form">
+    <label>Requirement key</label>
+    <input type="text" id="rf-key" value="${esc(r.requirement_key || '')}" maxlength="60"
+           ${locked ? 'disabled' : ''} placeholder="e.g. retainer_signed"
+           style="font-family:ui-monospace,Menlo,monospace">
+    ${locked
+      ? `<div class="locked-note"><i class="fa-solid fa-lock"></i> Key locked — ${r.override_count} case
+         override(s) bind to it. Overrides reference keys, not ids; renaming would silently detach them.
+         The labels below stay fully editable.</div>`
+      : `<div class="hint">Stable machine id. Share the SAME key across templates when it is the same work
+         item — per-case overrides bind to it and survive template switches. Lowercase letters, digits, underscores.</div>`}
+    <label>Internal label <span style="text-transform:none;letter-spacing:0">(staff-facing)</span></label>
+    <input type="text" id="rf-internal" value="${esc(r.internal_label || '')}" maxlength="120">
+    <label>Client label <span style="text-transform:none;letter-spacing:0">(portal-facing; blank = internal label not shown to clients)</span></label>
+    <input type="text" id="rf-client" value="${esc(r.client_label || '')}" maxlength="120">
+    <div class="row2">
+      <div><label>Owner</label>
+        <select id="rf-owner">
+          ${REQ_OWNERS.map(o => `<option value="${o}" ${(r.owner || 'client') === o ? 'selected' : ''}>${o}</option>`).join('')}
+        </select></div>
+      <div><label>Kind</label>
+        <select id="rf-kind">
+          ${REQ_KINDS.map(k => `<option value="${k}" ${(r.kind || 'task') === k ? 'selected' : ''}>${k}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="row2">
+      <div><label>Hint <span style="text-transform:none;letter-spacing:0">(static subtitle)</span></label>
+        <input type="text" id="rf-hint" value="${esc(r.hint || '')}" maxlength="255" placeholder="Last 60 days · 4 files"></div>
+      <div><label>Effort</label>
+        <input type="text" id="rf-effort" value="${esc(r.effort || '')}" maxlength="30" placeholder="~25 min"></div>
+    </div>
+    <label>Group label <span style="text-transform:none;letter-spacing:0">(staff-side grouping; render only)</span></label>
+    <input type="text" id="rf-group" value="${esc(r.group_label || '')}" maxlength="60">
+    <label>Detector</label>
+    <select id="rf-detector" onchange="rfDetectorHint(this)">
+      ${detectorOptionsHtml(r.detector || 'manual')}
+    </select>
+    <label>Detector config (JSON)</label>
+    <textarea id="rf-config" rows="3" placeholder="{}">${esc(cfg)}</textarea>
+    <div class="hint" id="rf-config-hint"></div>
+    <div class="checks">
+      <label><input type="checkbox" id="rf-visible" ${r.client_visible == null || r.client_visible ? 'checked' : ''}> Client visible</label>
+      <label><input type="checkbox" id="rf-required" ${r.required == null || r.required ? 'checked' : ''}> Required</label>
+      <label><input type="checkbox" id="rf-active" ${r.active == null || r.active ? 'checked' : ''}> Active</label>
+    </div>
+  </div>`;
+}
+
+function rfDetectorHint(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  const hint = opt ? opt.getAttribute('data-hint') : '';
+  const el = E('rf-config-hint');
+  if (el) el.textContent = hint ? `Example: ${hint}` : '';
+}
+window.rfDetectorHint = rfDetectorHint;
+
+function gatherReqForm(locked) {
+  const key = E('rf-key').value;
+  if (!locked && !REQ_KEY_RE.test(key)) {
+    Swal.showValidationMessage('requirement_key must match ^[a-z0-9_]{1,60}$');
+    return false;
+  }
+  const internal = E('rf-internal').value;
+  if (!internal.trim()) { Swal.showValidationMessage('Internal label is required'); return false; }
+  let config = null;
+  const rawCfg = E('rf-config').value;
+  if (rawCfg.trim() !== '') {
+    try { config = JSON.parse(rawCfg); }
+    catch (e) { Swal.showValidationMessage('Detector config is not valid JSON — ' + e.message); return false; }
+    if (typeof config !== 'object' || Array.isArray(config) || config === null) {
+      Swal.showValidationMessage('Detector config must be a JSON object (or blank)');
+      return false;
+    }
+  }
+  const body = {
+    internal_label:  internal,
+    client_label:    E('rf-client').value,
+    owner:           E('rf-owner').value,
+    kind:            E('rf-kind').value,
+    hint:            E('rf-hint').value,
+    effort:          E('rf-effort').value,
+    group_label:     E('rf-group').value,
+    detector:        E('rf-detector').value,
+    detector_config: config,
+    client_visible:  E('rf-visible').checked ? 1 : 0,
+    required:        E('rf-required').checked ? 1 : 0,
+    active:          E('rf-active').checked ? 1 : 0,
+  };
+  if (!locked) body.requirement_key = key;   // locked → never send it; server would 409
+  return body;
+}
+
+async function reqDialog(stageId, reqId) {
+  const r = reqId ? (reqCache[stageId] || []).find(x => x.id === reqId) : {};
+  if (reqId && !r) return;
+  const locked = !!(reqId && Number(r.override_count) > 0);
+
+  const { isConfirmed, value } = await Swal.fire({
+    title: reqId ? `Edit requirement "${r.requirement_key}"` : 'New requirement',
+    html: reqFormHtml(r || {}),
+    width: 620, showCancelButton: true,
+    confirmButtonText: reqId ? 'Save' : 'Create',
+    focusConfirm: false,
+    didOpen: () => rfDetectorHint(E('rf-detector')),
+    preConfirm: () => gatherReqForm(locked),
+  });
+  if (!isConfirmed || !value) return;
+
+  try {
+    if (reqId) {
+      await api(`/api/pipeline-admin/requirements/${reqId}`, 'PUT', value);
+      Toast.fire({ icon: 'success', title: 'Requirement saved' });
+    } else {
+      await api(`/api/pipeline-admin/stages/${stageId}/requirements`, 'POST', value);
+      Toast.fire({ icon: 'success', title: 'Requirement created' });
+    }
+    await refreshReqs(stageId);
+  } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+}
+window.reqDialog = reqDialog;
+
+async function toggleReqActive(stageId, reqId, checkbox) {
+  try {
+    await api(`/api/pipeline-admin/requirements/${reqId}`, 'PUT', { active: checkbox.checked ? 1 : 0 });
+    Toast.fire({ icon: 'success', title: checkbox.checked ? 'Requirement activated' : 'Requirement deactivated' });
+    await refreshReqs(stageId);
+  } catch (e) {
+    checkbox.checked = !checkbox.checked;
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.toggleReqActive = toggleReqActive;
+
+async function deleteReq(stageId, reqId) {
+  const r = (reqCache[stageId] || []).find(x => x.id === reqId);
+  if (!r) return;
+  const hasOv = Number(r.override_count) > 0;
+  const { isConfirmed } = await Swal.fire({
+    icon: 'warning',
+    title: `Delete requirement "${r.requirement_key}"?`,
+    html: `<div style="font-size:13px">${hasOv
+      ? `${r.override_count} case override(s) bind to this key — they become inert (nothing breaks), ` +
+        `but the recorded N/A / done marks stop applying if the key is re-added later.`
+      : `This removes the work item from every case's resolved list.`}</div>`,
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: 'var(--danger-fill)',
+  });
+  if (!isConfirmed) return;
+  try {
+    await api(`/api/pipeline-admin/requirements/${reqId}`, 'DELETE');
+    Toast.fire({ icon: 'success', title: 'Requirement deleted' });
+    await refreshReqs(stageId);
+  } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+}
+window.deleteReq = deleteReq;
+
+async function nudgeReq(stageId, i, dir) {
+  const reqs = reqCache[stageId] || [];
+  const j = i + dir;
+  if (j < 0 || j >= reqs.length) return;
+  const ids = reqs.map(r => r.id);
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  try {
+    const data = await api(`/api/pipeline-admin/stages/${stageId}/requirements/reorder`, 'POST', { requirement_ids: ids });
+    reqCache[stageId] = data.requirements || [];
+    renderEditor();
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+    try { await loadRequirements(stageId); } catch (_) {}
+    renderEditor();
+  }
+}
+window.nudgeReq = nudgeReq;
+
 // ── Lifecycle ──────────────────────────────────────────────────
 
 async function init() {
   P.setTopbarButtons({ new: true, refresh: true });
   loadTypesMap();   // fire-and-forget — datalists only
+  loadDetectors();  // fire-and-forget — detector picker + config hints (R2)
   try { await loadTemplates(); loaded = true; }
   catch (e) {
     E('tpl-list').innerHTML = `<div class="empty-state" style="height:auto;padding:40px 12px">
@@ -788,7 +1132,16 @@ function onShow() {
   if (loaded) { loadTemplates(); if (activeTplId) loadStages(activeTplId); }
 }
 function onHide()    {}
-function onRefresh() { loadTemplates(); if (activeTplId) loadStages(activeTplId); loadTypesMap(); }
+function onRefresh() {
+  loadTemplates(); loadTypesMap(); loadDetectors();
+  reqCache = {};
+  if (activeTplId) {
+    (async () => {
+      if (openReqStageId) { try { await loadRequirements(openReqStageId); } catch (_) {} }
+      loadStages(activeTplId);
+    })();
+  }
+}
 function onNew()     { newTemplate(); }
 
 window.onShow = onShow;

@@ -291,9 +291,25 @@ function projectLogRow(r) {
  *              .buildClientTimeline keys its visible-stage map off `stages`
  *              (both lanes) and its upcoming off `upcoming` (main only), so it
  *              inherits exactly this split with no portal code change.
+ *
+ * (R2) opts.requirements — OPT-IN ONLY. When true, each stage row in
+ * `stages` gains `requirements: [...]` (requirementService
+ * .resolveRequirements output filtered to that stage_id) and the payload
+ * gains NOTHING else. Resolved requirements whose stage is NOT in `stages`
+ * (the intake template's, for a phase='case' case) are deliberately absent
+ * from THIS payload — its shape is stage-anchored; R3 consumes
+ * resolveRequirements directly for the cross-template picture. The DEFAULT
+ * payload is byte-identical to pre-R2 (C1 contract — asserted in tests):
+ * no opt, no extra queries, not even the require (lazy, the
+ * internal_functions circular-dep-safety convention — requirementService
+ * requires this file for _pickTemplate).
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.requirements=false] attach resolved requirements
+ *        per stage (see above).
  * @throws 404 when the case does not exist.
  */
-async function getPipeline(db, caseId) {
+async function getPipeline(db, caseId, { requirements = false } = {}) {
   const [[caseRow]] = await db.query(
     `SELECT case_id, case_type, case_subtype, pipeline_phase
        FROM cases WHERE case_id = ?`,
@@ -338,6 +354,16 @@ async function getPipeline(db, caseId) {
     upcoming = matched
       ? mainOnly.filter(s => s.stage_number > matched.stage_number)
       : mainOnly;   // no history yet, or branched from another template
+  }
+
+  if (requirements) {
+    // Lazy require — see the opts.requirements docblock note.
+    const { resolveRequirements } = require('./requirementService');
+    const byCase = await resolveRequirements(db, [caseId]);
+    const resolved = byCase.get(String(caseId)) || [];
+    for (const s of stages) {
+      s.requirements = resolved.filter((r) => Number(r.stage_id) === Number(s.stage_id));
+    }
   }
 
   return {
@@ -1005,4 +1031,9 @@ module.exports = {
   getPipeline,
   advanceStage,
   resolveStageField,
+  // (R2) internal handle — requirementService reuses the EXACT template
+  // resolution getPipeline performs rather than re-deriving it. Pure
+  // function over an already-loaded template list; underscore-prefixed by
+  // the esignService internal-handle convention.
+  _pickTemplate,
 };

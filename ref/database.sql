@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-25T21:29:55.136Z
+-- Generated: 2026-08-26T11:04:01.202Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7fa3fffa9b2735ae59c8612af070b9e6
+-- Fingerprint: sha256:9fa42bc117b0343bf6273a887bdb9ba5
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -411,6 +411,24 @@ CREATE TRIGGER `trg_prevent_duplicate_update` BEFORE UPDATE ON `case_relate` FOR
 END
 $$
 DELIMITER ;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `case_requirement_overrides`
+--
+
+DROP TABLE IF EXISTS `case_requirement_overrides`;
+CREATE TABLE `case_requirement_overrides` (
+  `id` int unsigned NOT NULL,
+  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `requirement_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('na','done') COLLATE utf8mb4_general_ci NOT NULL,
+  `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `set_by` int NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -2028,6 +2046,34 @@ CREATE TABLE `phone_log_suppressions` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `pipeline_stage_requirements`
+--
+
+DROP TABLE IF EXISTS `pipeline_stage_requirements`;
+CREATE TABLE `pipeline_stage_requirements` (
+  `id` int unsigned NOT NULL,
+  `stage_id` int unsigned NOT NULL,
+  `requirement_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `internal_label` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
+  `client_label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `client_visible` tinyint(1) NOT NULL DEFAULT '1',
+  `required` tinyint(1) NOT NULL DEFAULT '1',
+  `owner` enum('client','staff','system') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'client',
+  `kind` enum('task','event') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'task',
+  `hint` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `effort` varchar(30) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `group_label` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `detector` varchar(30) COLLATE utf8mb4_general_ci NOT NULL,
+  `detector_config` json DEFAULT NULL,
+  `sort_order` int NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `pipeline_stages`
 --
 
@@ -3385,6 +3431,13 @@ ALTER TABLE `case_relate`
   ADD KEY `idx_case_relate_client` (`case_relate_client_id`,`case_relate_case_id`);
 
 --
+-- Indexes for table `case_requirement_overrides`
+--
+ALTER TABLE `case_requirement_overrides`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_case_reqkey` (`case_id`,`requirement_key`);
+
+--
 -- Indexes for table `case_stage_aged_emitted`
 --
 ALTER TABLE `case_stage_aged_emitted`
@@ -3841,6 +3894,14 @@ ALTER TABLE `phone_lines`
 ALTER TABLE `phone_log_suppressions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_active` (`active`);
+
+--
+-- Indexes for table `pipeline_stage_requirements`
+--
+ALTER TABLE `pipeline_stage_requirements`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_stage_reqkey` (`stage_id`,`requirement_key`),
+  ADD KEY `idx_req_stage` (`stage_id`);
 
 --
 -- Indexes for table `pipeline_stages`
@@ -4337,6 +4398,12 @@ ALTER TABLE `case_relate`
   MODIFY `case_relate_id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `case_requirement_overrides`
+--
+ALTER TABLE `case_requirement_overrides`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `case_stage_aged_emitted`
 --
 ALTER TABLE `case_stage_aged_emitted`
@@ -4652,6 +4719,12 @@ ALTER TABLE `phone_lines`
 -- AUTO_INCREMENT for table `phone_log_suppressions`
 --
 ALTER TABLE `phone_log_suppressions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `pipeline_stage_requirements`
+--
+ALTER TABLE `pipeline_stage_requirements`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --

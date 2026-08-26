@@ -55,6 +55,22 @@
  *   - pipeline_stages.config: accepts an object or null. Objects are
  *     JSON.stringify'd before binding to the `?` placeholder (mysql2
  *     landmine: raw objects expand to `key`=val pairs). Blank/empty → NULL.
+ *   - (R2) pipeline_stage_requirements CRUD (list/create/update/delete/
+ *     reorder, per stage) with WRITE-TIME detector validation: `detector`
+ *     must exist in services/requirementDetectors.js and `detector_config`
+ *     must pass that detector's validateConfig → 400 otherwise (the
+ *     trigger-rules __validateParamsMapping philosophy: a config that can
+ *     only fail at read time is a booby trap). requirement_key format
+ *     ^[a-z0-9_]{1,60}$; IMMUTABLE once any case_requirement_overrides row
+ *     references it (overrides bind by KEY — renaming out from under one
+ *     silently detaches an 'na'/'done' a human recorded) → 409. DELETE is
+ *     always allowed (a deleted requirement leaves its overrides inert,
+ *     which mis-states nothing). deleteStage now 409s while the stage has
+ *     requirement rows (delete them first — same fail-closed direction as
+ *     the log-ref guard); deleteTemplate cascade-deletes its stages'
+ *     requirements alongside the stages themselves (a template hard-delete
+ *     is "discard the whole configuration", and it is only reachable at
+ *     zero history anyway).
  *
  * Conventions (match services/pipelineService.js / formTemplateService.js):
  *   - Every function takes the mysql2 pool (req.db) as its first argument.
@@ -72,6 +88,7 @@
 'use strict';
 
 const { withTransaction } = require('../lib/withTransaction');
+const requirementDetectors = require('./requirementDetectors');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS / HELPERS
@@ -96,6 +113,18 @@ const LANES       = new Set(['main', 'offramp']);
 // Same shape as form_key (formTemplateService FORM_KEY_RE). Every seeded key
 // matches. Keys are permanent machine identifiers — keep them boring.
 const STAGE_KEY_RE = /^[a-z0-9_]{1,50}$/;
+
+// (R2) pipeline_stage_requirements widths + enums
+// (ref/2026-08-26_pipeline_r2_requirements.sql). Validated in JS with 400s —
+// the session's lax sql_mode would clip strings and coerce bad enums to ''
+// silently.
+const REQ_KEY_RE        = /^[a-z0-9_]{1,60}$/;
+const MAX_REQ_LABEL     = 120;  // internal_label / client_label varchar(120)
+const MAX_REQ_HINT      = 255;  // hint varchar(255)
+const MAX_REQ_EFFORT    = 30;   // effort varchar(30)
+const MAX_REQ_GROUP     = 60;   // group_label varchar(60)
+const REQ_OWNERS        = new Set(['client', 'staff', 'system']);
+const REQ_KINDS         = new Set(['task', 'event']);
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -516,6 +545,16 @@ async function deleteTemplate(db, id) {
       );
     }
 
+    // (R2) requirements cascade WITH the stages: a template hard-delete —
+    // only reachable at zero history — means "discard this configuration",
+    // and the stages it already cascade-deletes are the same class of
+    // authored config. (Individual stage deletes 409 on attached
+    // requirements instead; there the intent is narrower.)
+    await conn.query(
+      `DELETE FROM pipeline_stage_requirements
+        WHERE stage_id IN (SELECT s.id FROM pipeline_stages s WHERE s.template_id = ?)`,
+      [cur.id]
+    );
     await conn.query(`DELETE FROM pipeline_stages WHERE template_id = ?`, [cur.id]);
     await conn.query(`DELETE FROM pipeline_templates WHERE id = ?`, [cur.id]);
     return { deleted: true, id: cur.id };
@@ -546,7 +585,10 @@ async function listStages(db, templateId) {
             (SELECT COUNT(*) FROM case_stage_log l
               WHERE l.stage_id = s.id
                  OR (l.template_id = s.template_id AND l.stage_key = s.stage_key)
-            ) AS log_count
+            ) AS log_count,
+            (SELECT COUNT(*) FROM pipeline_stage_requirements r
+              WHERE r.stage_id = s.id
+            ) AS req_count
        FROM pipeline_stages s
       WHERE s.template_id = ?
       ORDER BY s.stage_number ASC, s.id ASC`,
@@ -774,6 +816,21 @@ async function deleteStage(db, stageId) {
       );
     }
 
+    // (R2) fail-closed like the log-ref guard: requirements are authored
+    // config someone typed in — a stage delete must not sweep them away
+    // silently. Delete (or move) the requirements first.
+    const [[reqRef]] = await conn.query(
+      `SELECT COUNT(*) AS n FROM pipeline_stage_requirements WHERE stage_id = ?`,
+      [cur.id]
+    );
+    if (Number(reqRef.n) > 0) {
+      throw conflict(
+        `Stage "${cur.stage_key}" has ${reqRef.n} requirement(s) attached and ` +
+        `cannot be deleted. Delete its requirements first (or deactivate the ` +
+        `stage instead).`
+      );
+    }
+
     await conn.query(`DELETE FROM pipeline_stages WHERE id = ?`, [cur.id]);
     return { deleted: true, id: cur.id };
   });
@@ -830,6 +887,319 @@ async function reorderStages(db, templateId, orderedStageIds) {
   });
 
   return listStages(db, templateId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REQUIREMENTS (R2 — per-stage work items)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Overrides referencing a requirement KEY — the reference that locks the key
+ *  (case_requirement_overrides binds by key, deliberately: overrides survive
+ *  requirement edits and template switches). Global by key, not scoped to the
+ *  stage: a key shared across templates means the same work item, so an
+ *  override anywhere is a reference to the key everywhere. */
+async function countOverrideRefs(conn, requirementKey) {
+  const [[row]] = await conn.query(
+    `SELECT COUNT(*) AS n FROM case_requirement_overrides WHERE requirement_key = ?`,
+    [requirementKey]
+  );
+  return Number(row.n);
+}
+
+/**
+ * List ALL requirements of a stage (active and inactive), ordered, each with
+ * `override_count` — the number of case_requirement_overrides rows carrying
+ * the requirement's key. override_count > 0 is exactly the condition that
+ * locks requirement_key, so the UI reads it directly (the stage editor's
+ * log_count pattern).
+ *
+ * @returns {{ stage: object, requirements: object[] }}
+ * @throws 404 unknown stage
+ */
+async function listRequirements(db, stageId) {
+  const [[stage]] = await db.query(
+    `SELECT * FROM pipeline_stages WHERE id = ?`, [stageId]
+  );
+  if (!stage) throw notFound(`Stage ${stageId} not found`);
+
+  const [requirements] = await db.query(
+    `SELECT r.*,
+            (SELECT COUNT(*) FROM case_requirement_overrides o
+              WHERE o.requirement_key = r.requirement_key) AS override_count
+       FROM pipeline_stage_requirements r
+      WHERE r.stage_id = ?
+      ORDER BY r.sort_order ASC, r.id ASC`,
+    [stageId]
+  );
+  return { stage, requirements };
+}
+
+/** Shared requirement field validation on a merged candidate. Throws 400.
+ *  Detector + config are ALWAYS validated together at write time —
+ *  services/requirementDetectors.validateDetectorConfig rejects unknown
+ *  detectors, unknown config keys, and per-detector shape errors (including
+ *  the event detector's source:'event'/'any', "not yet supported;
+ *  unified-events E1 pending"), so no stored config can dangle. */
+function validateRequirementFields(next, { checkKey }) {
+  if (checkKey && !REQ_KEY_RE.test(String(next.requirement_key || ''))) {
+    throw badRequest(
+      `requirement_key "${next.requirement_key}" is invalid — lowercase letters, ` +
+      `digits and underscores only, 1–60 chars (^[a-z0-9_]{1,60}$)`
+    );
+  }
+  vStr('internal_label', next.internal_label, MAX_REQ_LABEL, { required: true });
+  if (next.client_label != null) vStr('client_label', next.client_label, MAX_REQ_LABEL);
+  if (!REQ_OWNERS.has(next.owner)) {
+    throw badRequest(
+      `owner "${next.owner}" must be one of: client, staff, system ` +
+      `(lax sql_mode would store an invalid enum value as '' silently)`
+    );
+  }
+  if (!REQ_KINDS.has(next.kind)) {
+    throw badRequest(
+      `kind "${next.kind}" must be one of: task, event ` +
+      `(lax sql_mode would store an invalid enum value as '' silently)`
+    );
+  }
+  if (next.hint != null) vStr('hint', next.hint, MAX_REQ_HINT);
+  if (next.effort != null) vStr('effort', next.effort, MAX_REQ_EFFORT);
+  if (next.group_label != null) vStr('group_label', next.group_label, MAX_REQ_GROUP);
+
+  // Write-time detector validation. next.detector_config here is a PARSED
+  // object or null (normalizeConfig has already run).
+  const cfgObj = next.detector_config == null ? null : JSON.parse(next.detector_config);
+  const cfgErr = requirementDetectors.validateDetectorConfig(next.detector, cfgObj);
+  if (cfgErr) throw badRequest(`detector_config: ${cfgErr}`);
+}
+
+/**
+ * Create a requirement on a stage. sort_order defaults to (current max + 1).
+ * Duplicate requirement_key within the stage → 409 (uq_stage_reqkey).
+ *
+ * @throws 400 validation (incl. detector/config); 404 unknown stage;
+ *         409 duplicate key
+ */
+async function createRequirement(db, stageId, body = {}) {
+  const next = {
+    requirement_key: body.requirement_key,
+    internal_label:  body.internal_label,
+    client_label:    body.client_label == null || body.client_label === '' ? null : body.client_label,
+    client_visible:  vBool(body.client_visible, 1),
+    required:        vBool(body.required, 1),
+    owner:           body.owner == null || body.owner === '' ? 'client' : body.owner,
+    kind:            body.kind  == null || body.kind  === '' ? 'task'   : body.kind,
+    hint:            body.hint        == null || body.hint        === '' ? null : body.hint,
+    effort:          body.effort      == null || body.effort      === '' ? null : body.effort,
+    group_label:     body.group_label == null || body.group_label === '' ? null : body.group_label,
+    detector:        body.detector == null ? '' : String(body.detector),
+    detector_config: normalizeConfig(body.detector_config),   // null or STRING
+    active:          vBool(body.active, 1),
+  };
+  validateRequirementFields(next, { checkKey: true });
+
+  return withTransaction(db, async (conn) => {
+    const [[stage]] = await conn.query(
+      `SELECT id FROM pipeline_stages WHERE id = ?`, [stageId]
+    );
+    if (!stage) throw notFound(`Stage ${stageId} not found`);
+
+    let sortOrder = body.sort_order;
+    if (sortOrder == null || !Number.isInteger(Number(sortOrder))) {
+      const [[mx]] = await conn.query(
+        `SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_num
+           FROM pipeline_stage_requirements WHERE stage_id = ?`,
+        [stageId]
+      );
+      sortOrder = Number(mx.next_num);
+    } else {
+      sortOrder = Number(sortOrder);
+    }
+
+    let ins;
+    try {
+      [ins] = await conn.query(
+        `INSERT INTO pipeline_stage_requirements
+           (stage_id, requirement_key, internal_label, client_label, client_visible,
+            required, owner, kind, hint, effort, group_label, detector,
+            detector_config, sort_order, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stage.id, next.requirement_key, next.internal_label, next.client_label,
+         next.client_visible, next.required, next.owner, next.kind, next.hint,
+         next.effort, next.group_label, next.detector, next.detector_config,
+         sortOrder, next.active]
+      );
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        throw conflict(`requirement_key "${next.requirement_key}" already exists on this stage`);
+      }
+      throw err;
+    }
+    const [[row]] = await conn.query(
+      `SELECT * FROM pipeline_stage_requirements WHERE id = ?`, [ins.insertId]
+    );
+    return row;
+  });
+}
+
+/**
+ * Update a requirement (partial body). requirement_key changes are refused
+ * with 409 once ANY case_requirement_overrides row carries the key — the key
+ * is what overrides bind to, so renaming it out from under one silently
+ * detaches an 'na'/'done' a human recorded (the requirement would flip back
+ * to derived state with no signal). Everything else stays freely editable;
+ * detector/config are re-validated together on every write.
+ *
+ * @throws 400 validation; 404 unknown requirement; 409 locked/duplicate key
+ */
+async function updateRequirement(db, reqId, body = {}) {
+  return withTransaction(db, async (conn) => {
+    const [[cur]] = await conn.query(
+      `SELECT * FROM pipeline_stage_requirements WHERE id = ?`, [reqId]
+    );
+    if (!cur) throw notFound(`Requirement ${reqId} not found`);
+
+    const keyChanging = 'requirement_key' in body && body.requirement_key !== cur.requirement_key;
+    if (keyChanging) {
+      const n = await countOverrideRefs(conn, cur.requirement_key);
+      if (n > 0) {
+        throw conflict(
+          `requirement_key "${cur.requirement_key}" is locked — ${n} case ` +
+          `override(s) bind to it. Overrides reference keys, not ids; renaming ` +
+          `would silently detach them. Edit the labels instead, or add a new ` +
+          `requirement.`
+        );
+      }
+    }
+
+    const next = {
+      requirement_key: keyChanging ? body.requirement_key : cur.requirement_key,
+      internal_label:  'internal_label' in body ? body.internal_label : cur.internal_label,
+      client_label:    'client_label'   in body
+                         ? (body.client_label == null || body.client_label === '' ? null : body.client_label)
+                         : cur.client_label,
+      client_visible:  'client_visible' in body ? vBool(body.client_visible, 1) : (cur.client_visible ? 1 : 0),
+      required:        'required'       in body ? vBool(body.required, 1)       : (cur.required ? 1 : 0),
+      owner:           'owner'          in body
+                         ? (body.owner == null || body.owner === '' ? 'client' : body.owner)
+                         : cur.owner,
+      kind:            'kind'           in body
+                         ? (body.kind == null || body.kind === '' ? 'task' : body.kind)
+                         : cur.kind,
+      hint:            'hint'           in body
+                         ? (body.hint == null || body.hint === '' ? null : body.hint)
+                         : cur.hint,
+      effort:          'effort'         in body
+                         ? (body.effort == null || body.effort === '' ? null : body.effort)
+                         : cur.effort,
+      group_label:     'group_label'    in body
+                         ? (body.group_label == null || body.group_label === '' ? null : body.group_label)
+                         : cur.group_label,
+      detector:        'detector'       in body ? String(body.detector == null ? '' : body.detector) : cur.detector,
+      // config: only touched when present in the body; an untouched
+      // pass-through re-stringifies (mysql2 hands JSON columns back parsed).
+      detector_config: 'detector_config' in body
+                         ? normalizeConfig(body.detector_config)
+                         : normalizeConfig(cur.detector_config),
+      sort_order:      'sort_order'     in body && Number.isInteger(Number(body.sort_order))
+                         ? Number(body.sort_order) : cur.sort_order,
+      active:          'active'         in body ? vBool(body.active, 1) : (cur.active ? 1 : 0),
+    };
+    validateRequirementFields(next, { checkKey: keyChanging });
+
+    try {
+      await conn.query(
+        `UPDATE pipeline_stage_requirements
+            SET requirement_key = ?, internal_label = ?, client_label = ?,
+                client_visible = ?, required = ?, owner = ?, kind = ?,
+                hint = ?, effort = ?, group_label = ?, detector = ?,
+                detector_config = ?, sort_order = ?, active = ?
+          WHERE id = ?`,
+        [next.requirement_key, next.internal_label, next.client_label,
+         next.client_visible, next.required, next.owner, next.kind,
+         next.hint, next.effort, next.group_label, next.detector,
+         next.detector_config, next.sort_order, next.active, cur.id]
+      );
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        throw conflict(`requirement_key "${next.requirement_key}" already exists on this stage`);
+      }
+      throw err;
+    }
+    const [[row]] = await conn.query(
+      `SELECT * FROM pipeline_stage_requirements WHERE id = ?`, [cur.id]
+    );
+    return row;
+  });
+}
+
+/**
+ * Hard-delete a requirement. Always allowed — overrides bind by KEY and a
+ * key with no requirement simply never surfaces (inert sparse rows, nothing
+ * mis-stated), unlike a RENAME, which would leave the requirement present
+ * but detached from its overrides. Deliberate asymmetry with stage deletion.
+ *
+ * @throws 404 unknown requirement
+ */
+async function deleteRequirement(db, reqId) {
+  const [[cur]] = await db.query(
+    `SELECT id FROM pipeline_stage_requirements WHERE id = ?`, [reqId]
+  );
+  if (!cur) throw notFound(`Requirement ${reqId} not found`);
+  await db.query(`DELETE FROM pipeline_stage_requirements WHERE id = ?`, [cur.id]);
+  return { deleted: true, id: cur.id };
+}
+
+/**
+ * Rewrite sort_order for a stage transactionally — the reorderStages
+ * contract, verbatim: orderedReqIds must be EXACTLY the stage's requirement
+ * ids (every row, active or not, exactly once) → else 400 naming the
+ * mismatch. Numbers rewritten 1..N.
+ *
+ * @returns fresh { stage, requirements } (listRequirements shape)
+ * @throws 400 bad/mismatched id list; 404 unknown stage
+ */
+async function reorderRequirements(db, stageId, orderedReqIds) {
+  if (!Array.isArray(orderedReqIds) || orderedReqIds.length === 0) {
+    throw badRequest('requirement_ids must be a non-empty array of requirement ids');
+  }
+  const ids = orderedReqIds.map(Number);
+  if (ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+    throw badRequest('requirement_ids must all be positive integers');
+  }
+  if (new Set(ids).size !== ids.length) {
+    throw badRequest('requirement_ids contains duplicates');
+  }
+
+  await withTransaction(db, async (conn) => {
+    const [[stage]] = await conn.query(
+      `SELECT id FROM pipeline_stages WHERE id = ?`, [stageId]
+    );
+    if (!stage) throw notFound(`Stage ${stageId} not found`);
+
+    const [rows] = await conn.query(
+      `SELECT id FROM pipeline_stage_requirements WHERE stage_id = ?`, [stageId]
+    );
+    const existing = new Set(rows.map((r) => Number(r.id)));
+    const given    = new Set(ids);
+    const missing  = [...existing].filter((x) => !given.has(x));
+    const extra    = [...given].filter((x) => !existing.has(x));
+    if (missing.length || extra.length) {
+      throw badRequest(
+        `requirement_ids must list every requirement of stage ${stageId} exactly once` +
+        (missing.length ? ` — missing: ${missing.join(', ')}` : '') +
+        (extra.length   ? ` — not on stage: ${extra.join(', ')}` : '')
+      );
+    }
+
+    for (let i = 0; i < ids.length; i++) {
+      await conn.query(
+        `UPDATE pipeline_stage_requirements SET sort_order = ? WHERE id = ? AND stage_id = ?`,
+        [i + 1, ids[i], stageId]
+      );
+    }
+  });
+
+  return listRequirements(db, stageId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1158,6 +1528,12 @@ module.exports = {
   updateStage,
   deleteStage,
   reorderStages,
+  // (R2) requirements
+  listRequirements,
+  createRequirement,
+  updateRequirement,
+  deleteRequirement,
+  reorderRequirements,
   usageCounts,
   getBoard,
 };

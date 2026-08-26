@@ -229,10 +229,18 @@ describe('delete guards', () => {
   });
 
   test('deleteStage with zero refs hard-deletes', async () => {
-    const db = stubTxDb([[STAGE], [{ n: 0 }], {}]);
+    // R2 inserts a requirements-count check between the log-ref guard and
+    // the DELETE — zero requirements here, so the delete proceeds.
+    const db = stubTxDb([[STAGE], [{ n: 0 }], [{ n: 0 }], {}]);
     const out = await svc.deleteStage(db, 7);
     expect(out).toEqual({ deleted: true, id: 7 });
     expect(db.connCalls.filter(c => c.sql.startsWith('DELETE')).length).toBe(1);
+  });
+
+  test('(R2) deleteStage with attached requirements → 409, delete them first', async () => {
+    const db = stubTxDb([[STAGE], [{ n: 0 }], [{ n: 2 }]]);
+    await expect(svc.deleteStage(db, 7)).rejects.toMatchObject({ status: 409 });
+    expect(db.connCalls.some(c => c.sql.startsWith('DELETE'))).toBe(false);
   });
 
   test('deleteTemplate with refs → 409', async () => {
@@ -241,14 +249,17 @@ describe('delete guards', () => {
     expect(db.connCalls.some(c => c.sql.startsWith('DELETE'))).toBe(false);
   });
 
-  test('deleteTemplate with zero refs deletes stages then template', async () => {
-    const db = stubTxDb([[{ id: 2, name: TPL.name }], [{ n: 0 }], {}, {}]);
+  test('deleteTemplate with zero refs deletes requirements, stages, then template', async () => {
+    // R2: requirements cascade WITH the stages (a template hard-delete is
+    // "discard the whole configuration"; reachable only at zero history).
+    const db = stubTxDb([[{ id: 2, name: TPL.name }], [{ n: 0 }], {}, {}, {}]);
     const out = await svc.deleteTemplate(db, 2);
     expect(out).toEqual({ deleted: true, id: 2 });
     const dels = db.connCalls.filter(c => c.sql.startsWith('DELETE'));
-    expect(dels.length).toBe(2);
-    expect(dels[0].sql).toContain('pipeline_stages');
-    expect(dels[1].sql).toContain('pipeline_templates');
+    expect(dels.length).toBe(3);
+    expect(dels[0].sql).toContain('pipeline_stage_requirements');
+    expect(dels[1].sql).toContain('pipeline_stages');
+    expect(dels[2].sql).toContain('pipeline_templates');
   });
 });
 
@@ -684,5 +695,158 @@ describe('usageCounts', () => {
   test('blank case_type → 400', async () => {
     const db = stubDb([]);
     await expect(svc.usageCounts(db, '  ')).rejects.toMatchObject({ status: 400 });
+  });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// (R2) requirements CRUD — write-time detector validation, key lock, reorder
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('R2 requirements CRUD', () => {
+  const REQ = {
+    id: 50, stage_id: 7, requirement_key: 'retainer_signed',
+    internal_label: 'Retainer signed', client_label: 'Sign your retainer',
+    client_visible: 1, required: 1, owner: 'client', kind: 'task',
+    hint: null, effort: null, group_label: null,
+    detector: 'esign', detector_config: { kind: 'contract' },
+    sort_order: 1, active: 1,
+  };
+  const GOOD_BODY = {
+    requirement_key: 'retainer_signed', internal_label: 'Retainer signed',
+    detector: 'esign', detector_config: { kind: 'contract' },
+  };
+
+  test('requirement_key format guard → 400, before any query', async () => {
+    const db = stubTxDb([]);
+    await expect(svc.createRequirement(db, 7, { ...GOOD_BODY, requirement_key: 'Bad-Key' }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(db.connCalls.length).toBe(0);
+  });
+
+  test('unknown detector → 400 naming the registry', async () => {
+    const db = stubTxDb([]);
+    await expect(svc.createRequirement(db, 7, { ...GOOD_BODY, detector: 'nope' }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining('unknown detector') });
+  });
+
+  test('detector_config rejected at WRITE time — esign without kind', async () => {
+    const db = stubTxDb([]);
+    await expect(svc.createRequirement(db, 7, { ...GOOD_BODY, detector_config: {} }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining('kind') });
+  });
+
+  test('detector_config rejected at WRITE time — event source "event" (E1 pending)', async () => {
+    const db = stubTxDb([]);
+    await expect(svc.createRequirement(db, 7, {
+      ...GOOD_BODY, detector: 'event',
+      detector_config: { source: 'event', kind_or_type: '341 Meeting' },
+    })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('E1') });
+  });
+
+  test('detector_config unknown key rejected (typo guard)', async () => {
+    const db = stubTxDb([]);
+    await expect(svc.createRequirement(db, 7, {
+      ...GOOD_BODY, detector_config: { kinds: 'contract' },
+    })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('unknown config key') });
+  });
+
+  test('create happy path: sort_order defaults to max+1, config stringified', async () => {
+    const db = stubTxDb([
+      [{ id: 7 }],                       // stage lookup
+      [{ next_num: 3 }],                 // max sort_order
+      { insertId: 50 },                  // INSERT
+      [REQ],                             // fresh row
+    ]);
+    const row = await svc.createRequirement(db, 7, GOOD_BODY);
+    expect(row.id).toBe(50);
+    const ins = db.connCalls.find(c => c.sql.startsWith('INSERT'));
+    expect(ins.params[1]).toBe('retainer_signed');
+    expect(typeof ins.params[12]).toBe('string');           // detector_config bound as STRING
+    expect(JSON.parse(ins.params[12])).toEqual({ kind: 'contract' });
+    expect(ins.params[13]).toBe(3);                         // defaulted sort_order
+  });
+
+  test('duplicate requirement_key on the stage → ER_DUP_ENTRY mapped to 409', async () => {
+    const db = stubTxDb([
+      [{ id: 7 }],
+      [{ next_num: 1 }],
+      () => { const e = new Error('dup'); e.code = 'ER_DUP_ENTRY'; throw e; },
+    ]);
+    await expect(svc.createRequirement(db, 7, GOOD_BODY))
+      .rejects.toMatchObject({ status: 409 });
+  });
+
+  test('requirement_key IMMUTABLE once overrides bind to it → 409', async () => {
+    const db = stubTxDb([
+      [REQ],                             // current row
+      [{ n: 3 }],                        // override refs on the key
+    ]);
+    await expect(svc.updateRequirement(db, 50, { requirement_key: 'renamed' }))
+      .rejects.toMatchObject({ status: 409, message: expect.stringContaining('locked') });
+    expect(db.connCalls.some(c => c.sql.startsWith('UPDATE'))).toBe(false);
+  });
+
+  test('update revalidates detector+config together — switching detector under a stale config → 400', async () => {
+    const db = stubTxDb([
+      [REQ],                             // current row (esign config {kind})
+    ]);
+    // checklist rejects {kind: ...} — unknown key for that detector.
+    await expect(svc.updateRequirement(db, 50, { detector: 'checklist' }))
+      .rejects.toMatchObject({ status: 400 });
+  });
+
+  test('update happy path: label edit passes stored config through re-stringified', async () => {
+    const db = stubTxDb([
+      [REQ],
+      {},                                // UPDATE
+      [{ ...REQ, internal_label: 'Retainer executed' }],
+    ]);
+    const row = await svc.updateRequirement(db, 50, { internal_label: 'Retainer executed' });
+    expect(row.internal_label).toBe('Retainer executed');
+    const upd = db.connCalls.find(c => c.sql.startsWith('UPDATE'));
+    expect(typeof upd.params[11]).toBe('string');           // config re-stringified
+  });
+
+  test('deleteRequirement is always allowed (overrides go inert)', async () => {
+    const db = stubDb([[{ id: 50 }], {}]);
+    const out = await svc.deleteRequirement(db, 50);
+    expect(out).toEqual({ deleted: true, id: 50 });
+  });
+
+  test('reorderRequirements: id-set mismatch → 400', async () => {
+    const db = stubTxDb([
+      [{ id: 7 }],
+      [{ id: 50 }, { id: 51 }],
+    ]);
+    await expect(svc.reorderRequirements(db, 7, [50, 99]))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining('99') });
+  });
+
+  test('reorderRequirements happy path rewrites 1..N and returns listRequirements', async () => {
+    const db = stubTxDb(
+      [
+        [{ id: 7 }],
+        [{ id: 50 }, { id: 51 }],
+        {}, {},                          // two sort_order UPDATEs
+      ],
+      [
+        [STAGE],                         // listRequirements: stage
+        [{ ...REQ, sort_order: 1, override_count: 0 },
+         { ...REQ, id: 51, requirement_key: 'other', sort_order: 2, override_count: 0 }],
+      ]
+    );
+    const out = await svc.reorderRequirements(db, 7, [51, 50]);
+    expect(out.requirements.length).toBe(2);
+    const upds = db.connCalls.filter(c => c.sql.includes('SET sort_order'));
+    expect(upds.map(c => c.params)).toEqual([[1, 51, 7], [2, 50, 7]]);
+  });
+
+  test('listRequirements carries override_count (the key-lock signal for the UI)', async () => {
+    const db = stubDb([
+      [STAGE],
+      [{ ...REQ, override_count: 4 }],
+    ]);
+    const out = await svc.listRequirements(db, 7);
+    expect(Number(out.requirements[0].override_count)).toBe(4);
+    expect(db.calls[1].sql).toContain('case_requirement_overrides');
   });
 });
