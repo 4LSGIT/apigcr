@@ -124,6 +124,22 @@ const DEFAULT_MAX_PAGES = 25;
  */
 const DEFAULT_MAX_RUNTIME_MS = 8 * 60 * 1000;
 
+/**
+ * Wall-clock bound for ONE refreshCaseFolderCache run.
+ *
+ * Each case is a sequential sharing/get_shared_link_metadata call. The S2
+ * docblock estimated ~150ms; production measured closer to 1s, making the
+ * default limit of 300 a FIVE-MINUTE call — held open inside a poll tick, and
+ * inside the HTTP request when hand-run through /workflows/test-step.
+ *
+ * A COUNT bound cannot fix that, because the thing that varies is latency, not
+ * cardinality. 4 minutes keeps one run comfortably inside process_jobs'
+ * 15-minute stuck-job recovery no matter how slow Dropbox gets. Stopping early
+ * loses nothing: the scan is oldest-resolved-first, so the next run picks up
+ * exactly the cases this one did not reach.
+ */
+const DEFAULT_CACHE_RUNTIME_MS = 4 * 60 * 1000;
+
 /** case_folder_cache.resolve_error is VARCHAR(255); no STRICT_TRANS_TABLES here. */
 const RESOLVE_ERROR_MAX = 255;
 
@@ -258,14 +274,18 @@ function _alert(db, opts) {
  * It is returned, not persisted: this runs as an internal function and
  * job_results IS the report surface.
  *
+ * BOUNDED BY WALL CLOCK as well as by count — see DEFAULT_CACHE_RUNTIME_MS.
+ * Hitting the bound is a normal outcome, reported as timed_out, not an error.
+ *
  * @param {object} db
- * @param {object} [opts] — { limit=300, credentialId? }
+ * @param {object} [opts] — { limit=300, maxRuntimeMs=240000, credentialId? }
  * @returns {Promise<{resolved:number, failed:number, out_of_root:string[], ...}>}
  */
 async function refreshCaseFolderCache(db, opts = {}) {
   const limit = Math.min(_int(opts.limit, 300), 2000);
   const credentialId = opts.credentialId ?? null;
   const startedAt = Date.now();
+  const deadline = startedAt + _int(opts.maxRuntimeMs, DEFAULT_CACHE_RUNTIME_MS);
 
   // Oldest-first; rows absent from the cache sort ahead of every resolved one.
   const [cases] = await db.query(
@@ -281,10 +301,16 @@ async function refreshCaseFolderCache(db, opts = {}) {
 
   let resolved = 0;
   let failed   = 0;
+  let timedOut = false;
   const outOfRoot = [];
   const failures  = [];
 
   for (const c of cases) {
+    // Checked BEFORE the API call, so the bound is never overshot by a full
+    // Dropbox round trip. Oldest-first ordering means the unreached tail is
+    // exactly what the next run picks up.
+    if (Date.now() >= deadline) { timedOut = true; break; }
+
     let meta = null;
     try {
       meta = await dropbox.getSharedLinkMetadata(db, {
@@ -356,8 +382,10 @@ async function refreshCaseFolderCache(db, opts = {}) {
     resolved,
     failed,
     out_of_root: outOfRoot,
-    scanned: cases.length,
+    scanned: resolved + failed,
+    candidates: cases.length,
     limit,
+    timed_out: timedOut,
     elapsed_ms: Date.now() - startedAt,
     ...(failures.length ? { failures } : {}),
   };
@@ -731,28 +759,65 @@ async function syncAll(db, opts = {}) {
  * EVENT-SEMANTICS GAP note in the file header: this silence is a known,
  * accepted limitation, not an omission.
  *
+ * ── WHY IT SWEEPS ON A WATERMARK AND NOT JUST `LIMIT n` ───────────────────
+ * A bare `… AND dl.id IS NULL LIMIT 5000` STARVES, and it starves silently.
+ * Observed on the first production run: scanned 5000, linked 152. The other
+ * 4,848 rows are documents that legitimately match no case — files under the
+ * "Unsorted …" roots, loose firm documents, cases with no Dropbox folder —
+ * and because the query has no ordering key that advances, the NEXT run
+ * returns the same 4,848 rows plus a handful more. That head of permanently
+ * unmatchable rows crowds out every document behind it, forever. With 150k
+ * documents and 1,009 case folders that arrive over hours, the sweep would
+ * have re-tested the same first 5,000 rows until the end of time and never
+ * once looked at row 60,000.
+ *
+ * So the scan advances a WATERMARK (app_settings, one integer) over
+ * documents.id and wraps to 0 when it reaches the end. Each run tests a fresh
+ * window; the whole table is covered over successive runs; permanently
+ * unmatchable rows cost one visit per lap instead of every run. The wrap is
+ * what keeps it correct rather than merely cheap — the cache keeps growing,
+ * so a row that matched nothing on lap 1 may well match on lap 3.
+ *
  * ── THE STEADY-STATE COST ─────────────────────────────────────────────────
- * The anti-join re-tests every genuinely case-less document on every run —
- * files under the "Unsorted …" roots, loose firm documents, anything whose
- * case has no Dropbox folder. That set does not shrink, so this query's cost
- * is a floor, not a decaying tail. It is bounded by `limit` and driven by
- * uq_doc_target (document_id, link_type, link_id) as the join index.
- * REVISIT THRESHOLD: if the permanently-unlinked population passes ~20k, or
- * this query starts showing up in slow logs, add a `case_link_checked_at`
- * column (or a negative-cache table) so a document is only re-tested after
- * the cache actually changes. Do not just raise the limit.
+ * One `limit`-sized window per run, driven by the PRIMARY KEY range and
+ * uq_doc_target (document_id, link_type, link_id) as the join index. A full
+ * lap over 150k documents at 5,000/run is 30 runs — five hours at the
+ * 10-minute cadence, which is the right order of magnitude for "a case folder
+ * got cached late". REVISIT THRESHOLD: if a lap needs to be faster than that,
+ * add a `case_link_checked_at` column so a document is only re-tested after
+ * the cache actually changes — do not just raise the limit, which buys a
+ * bigger window and the same lap count.
  *
  * @param {object} db
- * @param {object} [opts] — { limit=5000 }
- * @returns {Promise<{scanned:number, linked:number, limit:number, elapsed_ms:number}>}
+ * @param {object} [opts] — { limit=5000, watermark:false to disable }
+ * @returns {Promise<{scanned, linked, from_id, next_id, wrapped, ...}>}
  */
+const SWEEP_WATERMARK_KEY = 'documents_sweep_watermark';
+
 async function attributeUnlinked(db, opts = {}) {
   const limit = Math.min(_int(opts.limit, 5000), 50000);
   const startedAt = Date.now();
 
   const cache = opts.cache || await _loadCaseFolderCache(db);
-  if (!cache.size) return { scanned: 0, linked: 0, limit, elapsed_ms: Date.now() - startedAt };
+  if (!cache.size) {
+    return { scanned: 0, linked: 0, limit, elapsed_ms: Date.now() - startedAt };
+  }
 
+  // Where the last run stopped. A missing/garbage row is a valid starting
+  // state (0), not an error — this is a position hint, never a correctness
+  // dependency: losing it re-walks the table, which is merely slower.
+  let fromId = 0;
+  if (opts.watermark !== false) {
+    const [[wm]] = await db.query(
+      'SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1', [SWEEP_WATERMARK_KEY],
+    );
+    const n = Number(wm && wm.value);
+    if (Number.isFinite(n) && n > 0) fromId = Math.floor(n);
+  }
+
+  // ORDER BY d.id is load-bearing, not cosmetic: it is what makes the window
+  // advance. Without it MySQL is free to return the same head every time and
+  // the sweep starves (see the docblock).
   const [rows] = await db.query(
     `SELECT d.id, d.path_lower
        FROM documents d
@@ -761,7 +826,10 @@ async function attributeUnlinked(db, opts = {}) {
       WHERE d.status = 'active'
         AND d.path_lower IS NOT NULL
         AND dl.id IS NULL
+        AND d.id > ?
+      ORDER BY d.id
       LIMIT ${limit}`,
+    [fromId],
   );
 
   const links = [];
@@ -772,7 +840,25 @@ async function attributeUnlinked(db, opts = {}) {
 
   if (links.length) await documents.bulkLink(db, links);
 
-  return { scanned: rows.length, linked: links.length, limit, elapsed_ms: Date.now() - startedAt };
+  // A short page means we reached the end of the table: wrap to 0 so the next
+  // run starts a fresh lap. The cache grows between laps, so re-testing a row
+  // that matched nothing last lap is the POINT, not waste.
+  const wrapped = rows.length < limit;
+  const nextId = wrapped ? 0 : rows[rows.length - 1].id;
+
+  if (opts.watermark !== false) {
+    await db.query(
+      'INSERT INTO app_settings (`key`, `value`, is_secret, is_editable) ' +
+      'VALUES (?, ?, 0, 0) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)',
+      [SWEEP_WATERMARK_KEY, String(nextId)],
+    );
+  }
+
+  return {
+    scanned: rows.length, linked: links.length, limit,
+    from_id: fromId, next_id: nextId, wrapped,
+    elapsed_ms: Date.now() - startedAt,
+  };
 }
 
 module.exports = {
@@ -787,4 +873,6 @@ module.exports = {
   CLAIM_STALE_MIN,
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_RUNTIME_MS,
+  DEFAULT_CACHE_RUNTIME_MS,
+  SWEEP_WATERMARK_KEY,
 };

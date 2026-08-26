@@ -642,6 +642,7 @@ tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
 tests/dbPoolIdleRecycling.test.js
+tests/dbTransientRetry.test.js
 tests/documentService.test.js
 tests/documentSourceService.test.js
 tests/documentSyncService.test.js

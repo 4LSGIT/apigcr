@@ -89,6 +89,39 @@ const TRANSIENT = new Set([
   "PROTOCOL_CONNECTION_LOST", "PROTOCOL_SEQUENCE_TIMEOUT",
 ]);
 
+/**
+ * The set above is keyed on err.code — and ONE of mysql2's dead-socket errors
+ * does not have one.
+ *
+ * When the pool hands out a connection whose socket the server already tore
+ * down, mysql2 routes the query into Connection._addCommandClosedState
+ * (lib/base/connection.js), which throws a BARE Error:
+ *
+ *     const err = new Error("Can't add new command when connection is in closed state");
+ *     err.fatal = true;                      // ← and NO err.code
+ *
+ * so `TRANSIENT.has(err.code)` is `TRANSIENT.has(undefined)` — false — and the
+ * retry above silently does not apply. Observed 2026-08-26 killing a
+ * documents_sync job after 132s: the first workload in this app that leaves
+ * the pool idle across long external API calls, which is exactly the shape
+ * that walks into SiteGround's 60s wait_timeout.
+ *
+ * RETRYING THIS IS UNAMBIGUOUSLY SAFE — safer than the codeless-socket cases
+ * already in the set. _addCommandClosedState fires when the connection is
+ * ALREADY closed, so the command was never written to a socket and the server
+ * never saw it. There is no "did it half-apply?" question. (ECONNRESET, by
+ * contrast, can strike after a write, and we already retry that.)
+ *
+ * Matched on `fatal === true` AND the message, not the message alone, so an
+ * application error that happens to contain the phrase cannot smuggle itself
+ * into the retry path.
+ */
+function isTransient(err) {
+  if (!err) return false;
+  if (TRANSIENT.has(err.code)) return true;
+  return err.fatal === true && /closed state/.test(String(err.message || ""));
+}
+
 const promisePool = pool.promise();
 const rawQuery   = promisePool.query.bind(promisePool);
 const rawExecute = promisePool.execute.bind(promisePool);
@@ -97,8 +130,8 @@ promisePool.query = async function (...args) {
   try {
     return await rawQuery(...args);
   } catch (err) {
-    if (TRANSIENT.has(err && err.code)) {
-      console.warn(`[db] transient ${err.code} — retrying once`);
+    if (isTransient(err)) {
+      console.warn(`[db] transient ${err.code || "closed-state"} — retrying once`);
       return await rawQuery(...args);
     }
     throw err;
@@ -109,8 +142,8 @@ promisePool.execute = async function (...args) {
   try {
     return await rawExecute(...args);
   } catch (err) {
-    if (TRANSIENT.has(err && err.code)) {
-      console.warn(`[db] transient ${err.code} — retrying once`);
+    if (isTransient(err)) {
+      console.warn(`[db] transient ${err.code || "closed-state"} — retrying once`);
       return await rawExecute(...args);
     }
     throw err;

@@ -166,10 +166,14 @@ function makeDb({
       if (/^INSERT INTO document_links/.test(flat)) return [{ affectedRows: 1 }];
       if (/^SELECT \* FROM document_links/.test(flat)) return [[]];
 
-      // ── app_settings (kill switch) ─────────────────────────────────────
+      // ── app_settings (kill switch + sweep watermark) ───────────────────
       if (/FROM app_settings WHERE `key` = \?/.test(flat)) {
         const v = settings[params[0]];
         return [v === undefined ? [] : [{ value: v }]];
+      }
+      if (/^INSERT INTO app_settings/.test(flat)) {
+        settings[params[0]] = params[1];
+        return [{ affectedRows: 1 }];
       }
 
       throw new Error('stubDb: unhandled SQL: ' + flat.slice(0, 120));
@@ -797,6 +801,79 @@ describe('attributeUnlinked', () => {
     await sync.attributeUnlinked(db2, { limit: 'DROP TABLE documents' });
     expect(db2.find('SELECT d.id, d.path_lower').sql).toContain('LIMIT 5000');
   });
+
+  // ── THE STARVATION BUG ───────────────────────────────────────────────
+  // First production run: scanned 5000, linked 152. The other 4,848 match no
+  // case and never will (Unsorted roots, loose firm files). With no advancing
+  // key the next run returns the same head, so the sweep re-tests those 4,848
+  // forever and never reaches row 60,000. These tests are the regression.
+
+  test('the scan ADVANCES: ordered by id, windowed above a watermark', async () => {
+    const db = makeDb({ cache: cacheRows, unlinked: [], settings: {} });
+    await sync.attributeUnlinked(db);
+
+    const q = db.find('SELECT d.id, d.path_lower');
+    expect(q.sql).toContain('AND d.id > ?');
+    expect(q.sql).toContain('ORDER BY d.id');
+  });
+
+  test('a FULL page advances the watermark to the last id scanned', async () => {
+    // Nothing matched — and that must STILL move the window forward, which is
+    // the entire fix. A run that links nothing but re-tests the same rows is
+    // the starvation.
+    const unlinked = Array.from({ length: 3 }, (_, i) =>
+      ({ id: 100 + i, path_lower: `/r/  loose/${i}.pdf` }));
+    const db = makeDb({ cache: cacheRows, unlinked, settings: {} });
+
+    const out = await sync.attributeUnlinked(db, { limit: 3 });
+
+    expect(out.linked).toBe(0);
+    expect(out.wrapped).toBe(false);
+    expect(out.next_id).toBe(102);
+    expect(db.find('INSERT INTO app_settings').params).toEqual([sync.SWEEP_WATERMARK_KEY, '102']);
+  });
+
+  test('the NEXT run resumes above the watermark instead of re-reading the head', async () => {
+    const db = makeDb({
+      cache: cacheRows, unlinked: [],
+      settings: { [sync.SWEEP_WATERMARK_KEY]: '4848' },
+    });
+    await sync.attributeUnlinked(db);
+    expect(db.find('SELECT d.id, d.path_lower').params).toEqual([4848]);
+  });
+
+  test('a SHORT page means end-of-table: wrap to 0 and start a fresh lap', async () => {
+    // The cache keeps growing, so re-testing a row that matched nothing on
+    // lap 1 is the point — it may match on lap 3.
+    const db = makeDb({
+      cache: cacheRows,
+      unlinked: [{ id: 900, path_lower: '/r/  case a/x.pdf' }],
+      settings: { [sync.SWEEP_WATERMARK_KEY]: '800' },
+    });
+
+    const out = await sync.attributeUnlinked(db, { limit: 5000 });
+
+    expect(out).toMatchObject({ from_id: 800, wrapped: true, next_id: 0, linked: 1 });
+    expect(db.find('INSERT INTO app_settings').params[1]).toBe('0');
+  });
+
+  test('a missing or garbage watermark starts at 0 rather than throwing', async () => {
+    // It is a position HINT, never a correctness dependency: losing it
+    // re-walks the table, which is merely slower.
+    for (const v of [undefined, '', 'nonsense', '-5']) {
+      const settings = v === undefined ? {} : { [sync.SWEEP_WATERMARK_KEY]: v };
+      const db = makeDb({ cache: cacheRows, unlinked: [], settings });
+      await sync.attributeUnlinked(db);
+      expect(db.find('SELECT d.id, d.path_lower').params).toEqual([0]);
+    }
+  });
+
+  test('watermark:false disables both the read and the write', async () => {
+    const db = makeDb({ cache: cacheRows, unlinked: [], settings: {} });
+    await sync.attributeUnlinked(db, { watermark: false });
+    expect(db.all('INSERT INTO app_settings').length).toBe(0);
+    expect(db.find('SELECT d.id, d.path_lower').params).toEqual([0]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -894,6 +971,41 @@ describe('refreshCaseFolderCache', () => {
 
     const out = await sync.refreshCaseFolderCache(db);
     expect(out.out_of_root).toEqual(['X']);
+  });
+
+  test('the WALL-CLOCK bound stops mid-batch, before the next API call', async () => {
+    // Measured at ~1s per case in production, so limit:300 is a five-minute
+    // call held open inside a poll tick. A count bound cannot fix that — what
+    // varies is latency, not cardinality.
+    const db = cacheDb(Array.from({ length: 50 }, (_, i) =>
+      ({ case_id: `C${i}`, case_dropbox: `https://db.com/scl/fo/${i}` })));
+
+    let now = 1_000_000;
+    const spy = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    dropbox.getSharedLinkMetadata.mockImplementation(async () => {
+      now += 1000;                                    // each call "costs" 1s
+      return { id: 'id:x', path_lower: '/r/  x', path_display: 'X' };
+    });
+
+    const out = await sync.refreshCaseFolderCache(db, { maxRuntimeMs: 5000 });
+    spy.mockRestore();
+
+    expect(out.timed_out).toBe(true);
+    expect(out.resolved).toBe(5);                     // not all 50
+    expect(out.candidates).toBe(50);
+    // The check runs BEFORE the call, so the bound is never overshot by a
+    // full Dropbox round trip.
+    expect(dropbox.getSharedLinkMetadata).toHaveBeenCalledTimes(5);
+  });
+
+  test('finishing inside the bound reports timed_out false', async () => {
+    const db = cacheDb([{ case_id: 'C1', case_dropbox: 'https://db.com/scl/fo/1' }]);
+    dropbox.getSharedLinkMetadata.mockResolvedValue({
+      id: 'id:x', path_lower: '/  law office/   cases/  active cases/  x', path_display: 'X',
+    });
+    const out = await sync.refreshCaseFolderCache(db);
+    expect(out.timed_out).toBe(false);
+    expect(out.scanned).toBe(1);
   });
 
   test('limit is clamped and inlined as a validated integer', async () => {
