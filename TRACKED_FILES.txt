@@ -757,6 +757,7 @@ tests/refreshonmiss.k3.test.js
 tests/requirementService.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.doorbell.test.js
+tests/schemaCollationBin.test.js
 tests/schemaConventions.test.js
 tests/scriptGuard.setup.js
 tests/scriptGuardCoverage.test.js
