@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-26T11:04:01.202Z
+-- Generated: 2026-08-26T11:06:19.660Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:9fa42bc117b0343bf6273a887bdb9ba5
+-- Fingerprint: sha256:f7c8feb4e8b4468287b55d61824e9802
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -251,7 +251,8 @@ CREATE TABLE `appts` (
   `appt_gcal_user` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-calendar event id',
   `appt_source` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'booking view source_tag',
   `appt_manage_token` char(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'client manage-link token',
-  `appt_view_id` int unsigned DEFAULT NULL COMMENT 'booking_views.id this appt was booked/rebooked through'
+  `appt_view_id` int unsigned DEFAULT NULL COMMENT 'booking_views.id this appt was booked/rebooked through',
+  `rescheduled_from_appt_id` int DEFAULT NULL COMMENT 'E0a atom: the appt this row replaced (reschedule or manage-page rebook). NULL = original booking, or pre-2026-08-27 row (not backfilled). No FK by convention (appts carries none).'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1404,6 +1405,7 @@ DROP TABLE IF EXISTS `events`;
 CREATE TABLE `events` (
   `event_id` int unsigned NOT NULL,
   `event_type` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `kind` enum('hearing','meeting','deadline','conference','other') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'E0a atom: what the event IS, independent of event_type free text. NULL = unclassified. Populated by E0b (judgment-gated), not here.',
   `event_link_type` enum('case','contact','case_number') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_link_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
@@ -1420,7 +1422,9 @@ CREATE TABLE `events` (
   `event_create_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `event_created_by` tinyint DEFAULT NULL,
   `event_updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  `event_with` tinyint DEFAULT NULL COMMENT 'provider scope: users.user; NULL = firm-wide block'
+  `event_with` tinyint DEFAULT NULL COMMENT 'provider scope: users.user; NULL = firm-wide block',
+  `superseded_by_event_id` int unsigned DEFAULT NULL COMMENT 'E0a atom: the event that replaced this one. NULL = this row is not superseded. No FK by convention (events carries none).',
+  `supersede_reason` enum('rescheduled','duplicate') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'E0a atom: why this row was superseded. rescheduled = the court moved it; duplicate = tombstoned dedup artifact. NULL iff superseded_by_event_id IS NULL.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3385,7 +3389,8 @@ ALTER TABLE `appts`
   ADD PRIMARY KEY (`appt_id`),
   ADD UNIQUE KEY `uq_appts_manage_token` (`appt_manage_token`),
   ADD KEY `lead_id` (`appt_case_id`),
-  ADD KEY `date` (`appt_date`);
+  ADD KEY `date` (`appt_date`),
+  ADD KEY `idx_appts_rescheduled_from` (`rescheduled_from_appt_id`);
 
 --
 -- Indexes for table `availability_blocks`
@@ -3682,7 +3687,8 @@ ALTER TABLE `events`
   ADD PRIMARY KEY (`event_id`),
   ADD KEY `idx_events_link` (`event_link_type`,`event_link_id`),
   ADD KEY `idx_events_date` (`event_date`),
-  ADD KEY `idx_events_status_date` (`event_status`,`event_date`);
+  ADD KEY `idx_events_status_date` (`event_status`,`event_date`),
+  ADD KEY `idx_events_superseded_by` (`superseded_by_event_id`);
 
 --
 -- Indexes for table `feature_request_comments`

@@ -423,6 +423,11 @@ async function fetchApptWithContact(db, apptId) {
 // markAttended / markNoShow deliberately do NOT fire — these hooks describe
 // slot lifecycle for the booking-page owner, not outcome tracking.
 //
+// E0a: the `rescheduled_from` value on the two successor events is ALSO
+// persisted on the successor row as appts.rescheduled_from_appt_id (written
+// by createAppt's INSERT). The hook payload is unchanged — this note exists so
+// nobody assumes the payload is still the only place that id lands.
+//
 // Centralized HERE (not in routes/booking.js, which previously fired the
 // create event itself) so staff-initiated reschedules/cancels and the
 // future portal all notify identically. Fire-and-forget; failures alert.
@@ -829,7 +834,8 @@ async function enrollApptReminderSequences(db, {
  * Create a new appointment.
  *
  * Immediate side effects (transaction):
- *   - INSERT into appts (with appt_date_utc computed from local appt_date)
+ *   - INSERT into appts (with appt_date_utc computed from local appt_date, and
+ *     rescheduled_from_appt_id when hook_rescheduled_from names a predecessor)
  *   - Log entry
  *   - If 341 Meeting: supersede prior 341 (mark Rescheduled) + UPDATE cases.case_341_current
  *
@@ -871,6 +877,11 @@ async function createAppt(db, {
   // internal callers). hook_event/hook_rescheduled_from let rescheduleAppt
   // and the manage-page rebook tag the view hook correctly; defaults give
   // plain bookings a 'created' event.
+  //
+  // E0a: hook_rescheduled_from is no longer hook-only — it is ALSO persisted
+  // to the successor row's appts.rescheduled_from_appt_id (see the INSERT).
+  // The name is kept for caller compatibility; both existing callers already
+  // pass the true predecessor id.
   appt_view_id    = null,
   hook_event      = 'created',
   hook_rescheduled_from = null
@@ -909,6 +920,34 @@ async function createAppt(db, {
     .toFormat('yyyy-MM-dd HH:mm:ss');
 
   // ────────────────────────────────────────────────────────────
+  // E0a — RESCHEDULE LINEAGE (unified events design §3.4)
+  //
+  // Until now the predecessor id existed only in transient places: the
+  // fire-and-forget view-hook payload (step 7b) and the appt.created trigger
+  // envelope's `extra` (step 9). Neither survives on the row, so "which appt
+  // replaced which" was unreconstructable from the DB.
+  //
+  // Persisted HERE rather than as a post-insert UPDATE in rescheduleAppt
+  // because BOTH successor-creation sites already funnel through this
+  // function with hook_rescheduled_from set:
+  //
+  //   rescheduleAppt (below)      → hook_event 'rescheduled'
+  //   routes/manage.js rebook     → hook_event 'rebooked'
+  //
+  // One write covers both, lands inside the existing transaction (no window
+  // where a successor exists without its lineage), and costs no extra
+  // round-trip. rescheduleLater tears a slot down with no successor and so
+  // never reaches this code.
+  //
+  // Coerced exactly like appt_view_id below: a non-integer / non-positive
+  // caller value stores NULL, never 0. (appts.rescheduled_from_appt_id is INT
+  // signed, matching appts.appt_id — NOT unsigned like events.event_id.)
+  const rescheduledFromApptId =
+    Number.isInteger(Number(hook_rescheduled_from)) && Number(hook_rescheduled_from) > 0
+      ? Number(hook_rescheduled_from)
+      : null;
+
+  // ────────────────────────────────────────────────────────────
   // Atomic core writes (transaction): INSERT appt + log + 341 supersession + pointer.
   // If any of these fail, we don't want the appt to exist.
   // Post-commit side effects (sequences, GCal, etc.) are fire-and-forget.
@@ -927,8 +966,8 @@ async function createAppt(db, {
          (appt_client_id, appt_case_id, appt_type, appt_length,
           appt_platform, appt_date, appt_date_utc, appt_status, appt_with,
           appt_note, appt_source, appt_ref_id, appt_manage_token, appt_view_id,
-          appt_create_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, ?, ?, NOW())`,
+          rescheduled_from_appt_id, appt_create_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [contact_id, case_id, appt_type, appt_length,
        appt_platform, appt_date, apptDateUTC, appt_with, note,
        appt_source,
@@ -937,7 +976,10 @@ async function createAppt(db, {
        String(appt_ref_id ?? '').slice(0, 100),
        manageToken,
        Number.isInteger(Number(appt_view_id)) && Number(appt_view_id) > 0
-         ? Number(appt_view_id) : null]
+         ? Number(appt_view_id) : null,
+       // E0a — predecessor id, or NULL for an original booking. See the
+       // coercion block above.
+       rescheduledFromApptId]
     );
     apptId = result.insertId;
 
