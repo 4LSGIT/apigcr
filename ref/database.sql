@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-26T14:43:37.501Z
+-- Generated: 2026-08-26T18:28:32.065Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d6e23ea967447f39c1b58a8f9070f816
+-- Fingerprint: sha256:6ae338480297372e4b6d23911ac2fc92
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -363,6 +363,22 @@ CREATE TABLE `campaigns` (
   `result_summary` json DEFAULT NULL,
   `contact_count` int unsigned NOT NULL DEFAULT '0',
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `case_folder_cache`
+--
+
+DROP TABLE IF EXISTS `case_folder_cache`;
+CREATE TABLE `case_folder_cache` (
+  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `folder_external_id` varchar(191) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `path_lower` text COLLATE utf8mb4_general_ci,
+  `path_display` text COLLATE utf8mb4_general_ci,
+  `resolve_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `resolved_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1261,9 +1277,11 @@ CREATE TABLE `document_sync_roots` (
   `path` varchar(512) COLLATE utf8mb4_general_ci NOT NULL,
   `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `syncing_since` datetime DEFAULT NULL,
   `sync_cursor` text COLLATE utf8mb4_general_ci,
   `last_sync_at` datetime DEFAULT NULL,
   `last_error` text COLLATE utf8mb4_general_ci,
+  `stats` json DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3492,6 +3510,13 @@ ALTER TABLE `campaign_results`
 --
 ALTER TABLE `campaigns`
   ADD PRIMARY KEY (`campaign_id`);
+
+--
+-- Indexes for table `case_folder_cache`
+--
+ALTER TABLE `case_folder_cache`
+  ADD PRIMARY KEY (`case_id`),
+  ADD KEY `idx_cfc_ext` (`folder_external_id`);
 
 --
 -- Indexes for table `case_relate`

@@ -37,6 +37,9 @@
  *
  * Exports:
  *   upsertFromEntry(db, source, entry, opts) -> { row, created }
+ *   bulkUpsertEntries(db, source, entries)   -> { rows }   BACKFILL ONLY, no events
+ *   bulkLink(db, links)                      -> { rows }   BACKFILL ONLY, no events
+ *   mapExternalIds(db, source, externalIds)  -> Map
  *   getById(db, id)                          -> row|null
  *   getByExternal(db, source, externalId)    -> row|null
  *   list(db, opts)                           -> { documents, total, limit, offset }
@@ -241,6 +244,89 @@ async function getByExternal(db, source, externalId) {
 const MEANINGFUL_KEYS = ['rev', 'path_lower', 'name', 'status'];
 
 /**
+ * Provider entry → the exact column values that reach SQL.
+ *
+ * ── WHY THIS IS A SEPARATE FUNCTION ───────────────────────────────────────
+ * TWO write paths reach the `documents` table with the same semantics:
+ * upsertFromEntry (one row, reads-then-writes, emits) and bulkUpsertEntries
+ * (many rows, no reads, never emits). If each derived its own columns they
+ * would drift — someone fixes a clamp in one and the backfill keeps writing
+ * the old shape, silently, on a schema with no STRICT_TRANS_TABLES. Both
+ * call THIS, so "identical column semantics" is structural rather than a
+ * promise in a comment (tests/documentService.test.js asserts it anyway).
+ *
+ * Validation lives here too, and it THROWS rather than skipping: a registry
+ * that silently drops a file it could not parse is worse than one that stops
+ * loudly. The sync engine's per-page error handling turns a throw into a
+ * recorded last_error + alert with the cursor un-advanced.
+ *
+ * @param {string} source
+ * @param {object} entry  Dropbox FileMetadata-shaped
+ * @returns {{src: string, extId: string, next: object}}
+ */
+function _entryColumns(source, entry) {
+  if (!entry || typeof entry !== 'object') {
+    throw new Error('documentService: entry is required');
+  }
+  if (!entry.id)   throw new Error('documentService: entry.id is required');
+  if (!entry.name) throw new Error('documentService: entry.name is required');
+
+  const src       = _col('source', source || 'dropbox');
+  const extId     = _col('external_id', entry.id);
+  const pathDisp  = entry.path_display != null ? String(entry.path_display) : null;
+  const pathLower = entry.path_lower   != null ? String(entry.path_lower)   : null;
+
+  return {
+    src,
+    extId,
+    next: {
+      name:            _col('name', entry.name),
+      path:            pathDisp,
+      path_lower:      pathLower,
+      path_hash:       pathLower ? _sha1(pathLower) : null,
+      ext:             _col('ext', _extOf(entry.name)),
+      mime:            _col('mime', entry.mime ?? null),
+      size:            entry.size == null ? null : _toIntOrNull(entry.size),
+      content_hash:    _clamp(entry.content_hash ?? null, 64),
+      rev:             _col('rev', entry.rev ?? null),
+      server_modified: _toMysqlDT(entry.server_modified),
+      status:          'active',
+    },
+  };
+}
+
+/** Positional parameter tuple for the documents upsert — ONE definition, both paths. */
+function _entryParams(src, extId, next) {
+  return [
+    src, extId, next.name, next.path, next.path_lower, next.path_hash,
+    next.ext, next.mime, next.size, next.content_hash, next.rev,
+    next.server_modified, next.status,
+  ];
+}
+
+const DOC_UPSERT_COLUMNS =
+  '(source, external_id, name, path, path_lower, path_hash, ext, mime, ' +
+  'size, content_hash, rev, server_modified, status)';
+
+// The ON DUPLICATE KEY UPDATE clause, shared verbatim. Row-alias form
+// (MySQL 8.0.19+; this DB is 8.4) so the table stays referenceable by name —
+// which is how `mime` preserves an existing value when the entry has none.
+// HUMAN/AI-owned columns (title, doc_type, tags, ai_meta, shared_link) are
+// ABSENT on purpose: a re-sync must never wipe a staffer's classification.
+const DOC_UPSERT_ON_DUP = `
+       name            = new.name,
+       path            = new.path,
+       path_lower      = new.path_lower,
+       path_hash       = new.path_hash,
+       ext             = new.ext,
+       mime            = COALESCE(new.mime, documents.mime),
+       size            = new.size,
+       content_hash    = new.content_hash,
+       rev             = new.rev,
+       server_modified = new.server_modified,
+       status          = new.status`;
+
+/**
  * Insert-or-update one document row from a provider listing/stat entry.
  *
  * `entry` is Dropbox FileMetadata-SHAPED — { id, name, path_display,
@@ -282,64 +368,19 @@ const MEANINGFUL_KEYS = ['rev', 'path_lower', 'name', 'status'];
 async function upsertFromEntry(db, source, entry, opts = {}) {
   const { emit = true } = opts;
 
-  if (!entry || typeof entry !== 'object') {
-    throw new Error('documentService.upsertFromEntry: entry is required');
-  }
-  const externalId = entry.id;
-  if (!externalId) throw new Error('documentService.upsertFromEntry: entry.id is required');
-  if (!entry.name) throw new Error('documentService.upsertFromEntry: entry.name is required');
-
-  const src        = _col('source', source || 'dropbox');
-  const extId      = _col('external_id', externalId);
-  const name       = _col('name', entry.name);
-  const pathDisp   = entry.path_display != null ? String(entry.path_display) : null;
-  const pathLower  = entry.path_lower   != null ? String(entry.path_lower)   : null;
-  const pathHash   = pathLower ? _sha1(pathLower) : null;
-
-  const next = {
-    name,
-    path:            pathDisp,
-    path_lower:      pathLower,
-    path_hash:       pathHash,
-    ext:             _col('ext', _extOf(entry.name)),
-    mime:            _col('mime', entry.mime ?? null),
-    size:            entry.size == null ? null : _toIntOrNull(entry.size),
-    content_hash:    _clamp(entry.content_hash ?? null, 64),
-    rev:             _col('rev', entry.rev ?? null),
-    server_modified: _toMysqlDT(entry.server_modified),
-    status:          'active',
-  };
+  const { src, extId, next } = _entryColumns(source, entry);
 
   // Prior row drives BOTH the created/updated decision and the changes map.
   // affectedRows on an upsert (0/1/2) cannot tell "inserted" from "updated
   // with a change" reliably enough to hang an event on, and carries no diff.
   const prior = await getByExternal(db, src, extId);
 
-  // Row-alias upsert form (MySQL 8.0.19+; this DB is 8.4). The table stays
-  // referenceable by name inside ON DUPLICATE KEY UPDATE, which is how mime
-  // preserves an existing value when the entry has none.
   await db.query(
     `INSERT INTO documents
-       (source, external_id, name, path, path_lower, path_hash, ext, mime,
-        size, content_hash, rev, server_modified, status)
+       ${DOC_UPSERT_COLUMNS}
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
-     ON DUPLICATE KEY UPDATE
-       name            = new.name,
-       path            = new.path,
-       path_lower      = new.path_lower,
-       path_hash       = new.path_hash,
-       ext             = new.ext,
-       mime            = COALESCE(new.mime, documents.mime),
-       size            = new.size,
-       content_hash    = new.content_hash,
-       rev             = new.rev,
-       server_modified = new.server_modified,
-       status          = new.status`,
-    [
-      src, extId, next.name, next.path, next.path_lower, next.path_hash,
-      next.ext, next.mime, next.size, next.content_hash, next.rev,
-      next.server_modified, next.status,
-    ],
+     ON DUPLICATE KEY UPDATE${DOC_UPSERT_ON_DUP}`,
+    _entryParams(src, extId, next),
   );
 
   const row     = await getByExternal(db, src, extId);
@@ -367,6 +408,179 @@ async function upsertFromEntry(db, source, entry, opts = {}) {
   }
 
   return { row, created };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Bulk paths — BACKFILL ONLY (Documents S2)
+//
+// These exist for exactly one reason: upsertFromEntry costs THREE queries
+// per row (prior read, upsert, post read) and the estate is ~150k files.
+// 450,000 round trips inside a job runner's poll ticks is not a slow
+// backfill, it is a permanently busy database. The bulk paths trade away
+// the two reads — and with them, everything the reads were buying.
+//
+// WHAT YOU LOSE BY USING THESE, deliberately and irrecoverably:
+//   - created-vs-updated detection (there is no prior row to compare)
+//   - the changes map
+//   - ALL EMISSIONS
+// They therefore CANNOT serve the incremental path, whose whole job is to
+// emit. See each function's docblock; the split is not an optimization
+// waiting to be unified, it is a semantic fork.
+// ─────────────────────────────────────────────────────────────
+
+/** Rows per multi-VALUES statement. 500 × 13 params = 6,500 placeholders. */
+const BULK_BATCH = 500;
+
+/**
+ * Upsert MANY document rows in multi-VALUES batches. No reads, NO EVENTS.
+ *
+ * Column semantics are IDENTICAL to upsertFromEntry — not "equivalent",
+ * identical: both build their parameters with _entryColumns/_entryParams and
+ * share DOC_UPSERT_COLUMNS / DOC_UPSERT_ON_DUP verbatim. Same clamps, same
+ * _toMysqlDT, same _extOf, same path_hash, same mime COALESCE, same
+ * untouched human/AI columns, same forced status 'active'.
+ *
+ * ── DO NOT USE THIS FOR INCREMENTAL SYNC ──────────────────────────────────
+ * It cannot emit. A delta feed that ran through here would register real
+ * new files and fire NOTHING — no document.created, no rule, no downstream
+ * automation, and no error to say so. The incremental path calls
+ * upsertFromEntry per entry and pays the three queries, because at delta
+ * volumes (a handful of files per tick) three queries is nothing and the
+ * event is the entire point.
+ *
+ * DUPLICATE ids WITHIN one call: last wins, exactly as N sequential
+ * upsertFromEntry calls would resolve them. Batches execute in array order,
+ * so a duplicate split across two batches resolves the same way. No dedupe
+ * pass — it would be a behavioral difference from the per-row path.
+ *
+ * A malformed entry THROWS (via _entryColumns) and aborts the call; rows
+ * from already-executed batches stay written. The caller must not advance
+ * its cursor on a throw — re-running is safe (upserts are idempotent).
+ *
+ * @param {object} db
+ * @param {string} source
+ * @param {object[]} entries   provider metadata, Dropbox FileMetadata-shaped
+ * @returns {Promise<{rows: number}>} entries submitted (NOT rows changed —
+ *          affectedRows is uninterpretable here; see link()'s FOUND_ROWS note)
+ */
+async function bulkUpsertEntries(db, source, entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (!list.length) return { rows: 0 };
+
+  let written = 0;
+  for (let i = 0; i < list.length; i += BULK_BATCH) {
+    const slice = list.slice(i, i + BULK_BATCH);
+    const params = [];
+    for (const e of slice) {
+      const { src, extId, next } = _entryColumns(source, e);
+      params.push(..._entryParams(src, extId, next));
+    }
+    const tuples = slice.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+
+    await db.query(
+      `INSERT INTO documents
+         ${DOC_UPSERT_COLUMNS}
+       VALUES ${tuples} AS new
+       ON DUPLICATE KEY UPDATE${DOC_UPSERT_ON_DUP}`,
+      params,
+    );
+    written += slice.length;
+  }
+
+  return { rows: written };
+}
+
+/**
+ * Write MANY link rows in batches. Idempotent, NO EVENTS.
+ *
+ * ── WHY PLAIN `ON DUPLICATE KEY UPDATE id = id` IS FINE HERE, AND IS NOT
+ *    FINE IN link() ─────────────────────────────────────────────────────
+ * link() had to catch ER_DUP_ENTRY instead, and the long comment on that
+ * function explains why: mysql2's defaultFlags include CLIENT_FOUND_ROWS and
+ * this pool sets no override, so an upsert reports affectedRows 1 on BOTH
+ * the insert and the duplicate branch — indistinguishable. link() needs the
+ * distinction because it EMITS document.linked only for genuinely new rows,
+ * and a duplicate emission is a re-fired rule.
+ *
+ * This function emits nothing at all. Nothing downstream asks "was it new?",
+ * so the distinction it cannot make is a distinction it does not need, and
+ * the cheaper statement is correct. That is the ONLY difference between the
+ * two, and it is exactly why they must not be "simplified" into each other:
+ * merging them either re-fires events or costs an exception per existing
+ * link across ~100k backfill rows.
+ *
+ * @param {object} db
+ * @param {Array<{document_id:number, link_type:string, link_id:string|number,
+ *                relation?:string, created_by?:number}>} links
+ * @returns {Promise<{rows: number}>} links submitted (see above re affectedRows)
+ */
+async function bulkLink(db, links) {
+  const list = Array.isArray(links) ? links : [];
+  if (!list.length) return { rows: 0 };
+
+  let written = 0;
+  for (let i = 0; i < list.length; i += BULK_BATCH) {
+    const slice = list.slice(i, i + BULK_BATCH);
+    const params = [];
+    for (const l of slice) {
+      if (!l || !l.document_id) throw new Error('documentService.bulkLink: document_id is required');
+      if (!l.link_type)         throw new Error('documentService.bulkLink: link_type is required');
+      if (l.link_id == null || l.link_id === '') {
+        throw new Error('documentService.bulkLink: link_id is required');
+      }
+      params.push(
+        l.document_id,
+        _col('link_type', l.link_type),
+        _col('link_id', String(l.link_id)),
+        _col('relation', l.relation ?? null),
+        _toIntOrNull(l.created_by ?? null),
+      );
+    }
+    const tuples = slice.map(() => '(?, ?, ?, ?, ?)').join(', ');
+
+    await db.query(
+      `INSERT INTO document_links (document_id, link_type, link_id, relation, created_by)
+       VALUES ${tuples}
+       ON DUPLICATE KEY UPDATE id = id`,
+      params,
+    );
+    written += slice.length;
+  }
+
+  return { rows: written };
+}
+
+/**
+ * Resolve (source, external_id) pairs to row ids — the one read the bulk
+ * backfill genuinely cannot avoid.
+ *
+ * A multi-row INSERT gives back no per-row ids (LAST_INSERT_ID is the first
+ * of a run and says nothing about the duplicate branch), so attribution
+ * after a bulk upsert needs one lookup to learn what to link. ONE query per
+ * page against uq_source_ext, not one per row.
+ *
+ * @param {object} db
+ * @param {string} source
+ * @param {string[]} externalIds
+ * @returns {Promise<Map<string, {id:number, path_lower:string|null}>>}
+ */
+async function mapExternalIds(db, source, externalIds) {
+  const out = new Map();
+  const ids = [...new Set((externalIds || []).filter(Boolean).map(String))];
+  if (!ids.length) return out;
+
+  const src = _col('source', source);
+  for (let i = 0; i < ids.length; i += BULK_BATCH) {
+    const slice = ids.slice(i, i + BULK_BATCH);
+    const [rows] = await db.query(
+      `SELECT id, external_id, path_lower
+         FROM documents
+        WHERE source = ? AND external_id IN (?)`,
+      [src, slice],
+    );
+    for (const r of rows) out.set(r.external_id, { id: r.id, path_lower: r.path_lower });
+  }
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -807,6 +1021,9 @@ async function markDeletedByPath(db, source, pathLower) {
 
 module.exports = {
   upsertFromEntry,
+  bulkUpsertEntries,
+  bulkLink,
+  mapExternalIds,
   getById,
   getByExternal,
   list,

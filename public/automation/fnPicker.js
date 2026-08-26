@@ -51,7 +51,7 @@
 // ─────────────────────────────────────────────────────────────
 
 const FN_CATEGORY_ORDER = ['communication','contacts','users','cases','appointments','events','tasks','log',
-  'sequences','calendar','dropbox','ai','general','control','timing',
+  'sequences','calendar','dropbox','documents','ai','general','control','timing',
   'variables','connections','system','dev','other'];
 
 window.buildFnOptions = function buildFnOptions(fnList, metaMap, currentFn, opts) {

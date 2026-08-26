@@ -45,6 +45,7 @@ lib/internal_functions/court.js
 lib/internal_functions/db.js
 lib/internal_functions/decisions.js
 lib/internal_functions/dev.js
+lib/internal_functions/documents.js
 lib/internal_functions/dropbox.js
 lib/internal_functions/esign.js
 lib/internal_functions/events.js
@@ -357,6 +358,7 @@ ref/X2_DESIGN_AMENDMENTS.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
 ref/database.sql
 ref/documents_s1.sql
+ref/documents_s2.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
@@ -546,6 +548,7 @@ services/courtExecutor.js
 services/courtRerun.js
 services/documentService.js
 services/documentSourceService.js
+services/documentSyncService.js
 services/dropboxService.js
 services/dropboxServiceLegacy.js
 services/emailIngestExecutionsService.js
@@ -641,6 +644,7 @@ tests/courtexecutor.update.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/documentService.test.js
 tests/documentSourceService.test.js
+tests/documentSyncService.test.js
 tests/dropboxService.normalizePath.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js

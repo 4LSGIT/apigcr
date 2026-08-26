@@ -751,3 +751,207 @@ describe('list', () => {
     expect((await ran({ offset: -5 })).sql).toContain('OFFSET 0');
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Bulk paths (Documents S2) — the backfill contract
+//
+// These exist because upsertFromEntry costs 3 queries/row and the estate is
+// ~150k files. Two properties have to hold or the backfill is a liability:
+//
+//   1. IDENTICAL COLUMNS. If the bulk path writes even one column
+//      differently, half the registry is subtly wrong and — with no
+//      STRICT_TRANS_TABLES on this schema — nothing errors to say so. Both
+//      paths derive parameters through _entryColumns/_entryParams; these
+//      tests prove the wiring rather than trusting the comment.
+//   2. NO EMISSIONS, EVER. A bulk path that leaked events would fire the
+//      trigger engine 150,000 times on files that have been sitting in
+//      Dropbox since 2019.
+// ─────────────────────────────────────────────────────────────
+
+/** A db stub for the bulk paths — records SQL, returns nothing interesting. */
+function makeBulkDb({ rows = [] } = {}) {
+  const calls = [];
+  return {
+    calls,
+    find: (needle) => calls.find((c) => c.sql.includes(needle)),
+    all:  (needle) => calls.filter((c) => c.sql.includes(needle)),
+    query: async (sql, params) => {
+      const flat = String(sql).replace(/\s+/g, ' ').trim();
+      calls.push({ sql: flat, params: params || [] });
+      if (/^SELECT id, external_id/.test(flat)) return [rows];
+      return [{ affectedRows: 1 }];
+    },
+  };
+}
+
+describe('bulkUpsertEntries — identical to upsertFromEntry, minus the reads', () => {
+  /**
+   * PROPERTY TEST: for a spread of entry shapes, the parameter tuple the
+   * bulk path submits must equal the one the per-row path submits. Shapes
+   * are chosen to exercise every derivation branch — clamping, null paths,
+   * missing ext, mime COALESCE, timestamp normalization, codepoint slicing.
+   */
+  const SHAPES = [
+    ['plain file',            entry()],
+    ['no extension',          entry({ name: 'Docket Sheet' })],
+    ['dotfile (ext -> null)', entry({ name: '.gitignore' })],
+    ['junk ext (-> null)',    entry({ name: 'report.final version' })],
+    ['null paths',            entry({ path_display: null, path_lower: null })],
+    ['mime supplied',         entry({ mime: 'application/pdf' })],
+    ['size null',             entry({ size: null })],
+    ['over-long name',        entry({ name: 'ä'.repeat(600) + '.pdf' })],
+    ['astral-plane name',     entry({ name: '📄'.repeat(400) + '.pdf' })],
+    ['bare date stamp',       entry({ server_modified: '2024-08-14 20:57:32' })],
+    ['Date object stamp',     entry({ server_modified: new Date('2024-08-14T20:57:32Z') })],
+    ['junk stamp (-> null)',  entry({ server_modified: 'not a date' })],
+    ['over-long rev',         entry({ rev: 'r'.repeat(200) })],
+    ['leading-space path',    entry({ path_lower: '/  law office/   cases/  x/  a.pdf' })],
+  ];
+
+  test.each(SHAPES)('%s writes the same params through both paths', async (_label, e) => {
+    const singleDb = makeDb({ row: null, after: docRow() });
+    await documentSvc.upsertFromEntry(singleDb, 'dropbox', e, { emit: false });
+    const singleParams = singleDb.find('INSERT INTO documents').params;
+
+    const bulkDb = makeBulkDb();
+    await documentSvc.bulkUpsertEntries(bulkDb, 'dropbox', [e]);
+    const bulkParams = bulkDb.find('INSERT INTO documents').params;
+
+    expect(bulkParams).toEqual(singleParams);
+  });
+
+  test('the two statements share one ON DUPLICATE clause, mime COALESCE and all', async () => {
+    const singleDb = makeDb({ row: null, after: docRow() });
+    await documentSvc.upsertFromEntry(singleDb, 'dropbox', entry(), { emit: false });
+    const singleSql = singleDb.find('INSERT INTO documents').sql;
+
+    const bulkDb = makeBulkDb();
+    await documentSvc.bulkUpsertEntries(bulkDb, 'dropbox', [entry()]);
+    const bulkSql = bulkDb.find('INSERT INTO documents').sql;
+
+    for (const clause of [
+      'mime = COALESCE(new.mime, documents.mime)',
+      'path_hash = new.path_hash',
+      'status = new.status',
+    ]) {
+      expect(singleSql).toContain(clause);
+      expect(bulkSql).toContain(clause);
+    }
+    // Human/AI-owned columns must be absent from BOTH — a re-sync must never
+    // wipe a staffer's classification.
+    for (const col of ['title =', 'doc_type =', 'tags =', 'ai_meta =', 'shared_link =']) {
+      expect(singleSql).not.toContain(col);
+      expect(bulkSql).not.toContain(col);
+    }
+  });
+
+  test('EMITS NOTHING — the whole reason it exists', async () => {
+    const db = makeBulkDb();
+    await documentSvc.bulkUpsertEntries(db, 'dropbox', [
+      entry(), entry({ id: 'id:B', name: 'b.pdf' }), entry({ id: 'id:C', name: 'c.pdf' }),
+    ]);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  test('batches at 500 rows — one statement per batch, all rows submitted', async () => {
+    const many = Array.from({ length: 1201 }, (_, i) =>
+      entry({ id: `id:bulk${i}`, name: `f${i}.pdf` }));
+
+    const db = makeBulkDb();
+    const out = await documentSvc.bulkUpsertEntries(db, 'dropbox', many);
+
+    const stmts = db.all('INSERT INTO documents');
+    expect(stmts.length).toBe(3);                    // 500 + 500 + 201
+    expect(stmts[0].params.length).toBe(500 * 13);
+    expect(stmts[2].params.length).toBe(201 * 13);
+    expect(out).toEqual({ rows: 1201 });
+  });
+
+  test('an empty list is a no-op, not an empty INSERT', async () => {
+    const db = makeBulkDb();
+    expect(await documentSvc.bulkUpsertEntries(db, 'dropbox', [])).toEqual({ rows: 0 });
+    expect(db.calls.length).toBe(0);
+  });
+
+  test('a malformed entry THROWS rather than being silently skipped', async () => {
+    // A registry that quietly drops a file it could not parse is worse than
+    // one that stops loudly: the sync leaves its cursor un-advanced, records
+    // last_error, and alerts. Silence would lose the file forever.
+    const db = makeBulkDb();
+    await expect(documentSvc.bulkUpsertEntries(db, 'dropbox', [entry(), { name: 'no id' }]))
+      .rejects.toThrow(/entry\.id is required/);
+  });
+});
+
+describe('bulkLink — idempotent, silent', () => {
+  test('uses plain ON DUPLICATE KEY UPDATE (legal here precisely because it never emits)', async () => {
+    // link() must catch ER_DUP_ENTRY instead: CLIENT_FOUND_ROWS makes
+    // affectedRows 1 on BOTH branches, and link() needs the distinction
+    // because it emits document.linked only for genuinely new rows. This
+    // function emits nothing, so the distinction it cannot make is one it
+    // does not need.
+    const db = makeBulkDb();
+    await documentSvc.bulkLink(db, [{ document_id: 7, link_type: 'case', link_id: 'aB3xY9' }]);
+
+    const sql = db.find('INSERT INTO document_links').sql;
+    expect(sql).toContain('ON DUPLICATE KEY UPDATE id = id');
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  test('clamps link_type / link_id / relation and coerces created_by', async () => {
+    const db = makeBulkDb();
+    await documentSvc.bulkLink(db, [{
+      document_id: 7,
+      link_type: 'c'.repeat(80),      // limit 32
+      link_id:   'i'.repeat(200),     // limit 64
+      relation:  'r'.repeat(80),      // limit 32
+      created_by: '22',
+    }]);
+    const p = db.find('INSERT INTO document_links').params;
+    expect(p[1].length).toBe(32);
+    expect(p[2].length).toBe(64);
+    expect(p[3].length).toBe(32);
+    expect(p[4]).toBe(22);
+  });
+
+  test('batches at 500 and reports the count', async () => {
+    const links = Array.from({ length: 1100 }, (_, i) =>
+      ({ document_id: i + 1, link_type: 'case', link_id: 'aB3xY9' }));
+    const db = makeBulkDb();
+    const out = await documentSvc.bulkLink(db, links);
+
+    expect(db.all('INSERT INTO document_links').length).toBe(3);
+    expect(out).toEqual({ rows: 1100 });
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  test('an empty list writes nothing', async () => {
+    const db = makeBulkDb();
+    expect(await documentSvc.bulkLink(db, [])).toEqual({ rows: 0 });
+    expect(db.calls.length).toBe(0);
+  });
+});
+
+describe('mapExternalIds', () => {
+  test('resolves external ids to row ids in one query per batch', async () => {
+    const db = makeBulkDb({
+      rows: [
+        { id: 7,  external_id: 'id:A', path_lower: '/a.pdf' },
+        { id: 11, external_id: 'id:B', path_lower: '/b.pdf' },
+      ],
+    });
+    const map = await documentSvc.mapExternalIds(db, 'dropbox', ['id:A', 'id:B', 'id:A']);
+
+    expect(db.all('SELECT id, external_id').length).toBe(1);
+    // Deduped before it reaches SQL.
+    expect(db.calls[0].params[1]).toEqual(['id:A', 'id:B']);
+    expect(map.get('id:A')).toEqual({ id: 7, path_lower: '/a.pdf' });
+    expect(map.size).toBe(2);
+  });
+
+  test('an empty id list makes no query', async () => {
+    const db = makeBulkDb();
+    expect((await documentSvc.mapExternalIds(db, 'dropbox', [])).size).toBe(0);
+    expect(db.calls.length).toBe(0);
+  });
+});

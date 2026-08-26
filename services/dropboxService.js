@@ -505,6 +505,106 @@ async function listFolder(db, opts = {}) {
   return { entries: entries.slice(0, maxEntries), count: Math.min(entries.length, maxEntries), truncated };
 }
 
+/**
+ * ONE page of files/list_folder, WITH the cursor.
+ *
+ * listFolder() above swallows the cursor: it loops list_folder/continue
+ * internally and returns only the accumulated entries, so the caller can
+ * never resume. That is right for "show me this folder" and useless for a
+ * resumable sync — which is why this exists alongside it rather than
+ * replacing it.
+ *
+ * The returned cursor is the DELTA cursor for this subtree: replayed through
+ * listFolderContinue after has_more goes false, it yields only what CHANGED
+ * since. That single property is what lets the documents sync engine run one
+ * backfill and then live off deltas forever.
+ *
+ * NOTE the asymmetry with listFolder: no maxEntries, no auto-pagination, no
+ * `truncated` flag. One call, one page. Pagination is the caller's business
+ * because only the caller knows its page budget and where to persist the
+ * cursor between ticks.
+ *
+ * @param {object} opts — { path? | sharedLink?, recursive?, limit?, credentialId? }
+ *   path '' or '/' = root. limit is a HINT to Dropbox (server caps ~2000 and
+ *   may return fewer); never treat a short page as "the end" — trust has_more.
+ * @returns {Promise<{entries:object[], cursor:string, has_more:boolean}>}
+ */
+async function listFolderPage(db, opts = {}) {
+  const credentialId = await _resolveCredential(db, opts);
+
+  let path;
+  if (opts.sharedLink) {
+    path = await resolveLocation(db, credentialId, { sharedLink: opts.sharedLink, expectFolder: true });
+  } else {
+    path = normalizePath(opts.path ?? '');
+  }
+
+  const limit = Number(opts.limit) > 0 ? Math.min(Number(opts.limit), 2000) : 2000;
+
+  const result = await _rpc(db, credentialId, 'files/list_folder', {
+    path,
+    recursive: opts.recursive === true,
+    limit,
+  });
+
+  return {
+    entries:  result.entries || [],
+    cursor:   result.cursor,
+    has_more: Boolean(result.has_more),
+  };
+}
+
+/**
+ * Continue (or replay) a list_folder cursor — one page.
+ *
+ * ── THE 409 reset ─────────────────────────────────────────────────────────
+ * Dropbox invalidates a cursor when it can no longer express the delta (the
+ * subtree was moved, an account was migrated, the cursor aged out). It
+ * answers 409 with error `{".tag":"reset"}`. That is NOT a transient error
+ * and retrying the same cursor NEVER succeeds — the only recovery is to drop
+ * the cursor and re-list from scratch. Callers must branch on it explicitly;
+ * this function deliberately does not swallow or retry it.
+ *
+ * @param {object} opts — { cursor (required), credentialId? }
+ * @returns {Promise<{entries:object[], cursor:string, has_more:boolean}>}
+ */
+async function listFolderContinue(db, opts = {}) {
+  const credentialId = await _resolveCredential(db, opts);
+  if (!opts.cursor) throw new Error('dropbox listFolderContinue requires cursor');
+
+  const result = await _rpc(db, credentialId, 'files/list_folder/continue', {
+    cursor: opts.cursor,
+  });
+
+  return {
+    entries:  result.entries || [],
+    cursor:   result.cursor,
+    has_more: Boolean(result.has_more),
+  };
+}
+
+/**
+ * True when an error is Dropbox's "this cursor is dead, re-list" signal.
+ * Exported so callers branch on ONE definition of the shape rather than each
+ * re-deriving it from error_summary string prefixes.
+ */
+function isCursorResetError(err) {
+  if (!err || err.status !== 409) return false;
+  if (err.dropboxError && err.dropboxError['.tag'] === 'reset') return true;
+  return String(err.errorSummary || '').startsWith('reset');
+}
+
+/**
+ * True when an error is Dropbox's "nothing here" signal (409 path/not_found).
+ * For a SYNC ROOT that means an EMPTY root, not a failure: the firm's three
+ * "Unsorted …" folders are created lazily by the upload / e-sign / forms
+ * ladders and do not exist until something lands in them.
+ */
+function isPathNotFoundError(err) {
+  if (!err || err.status !== 409) return false;
+  return String(err.errorSummary || '').startsWith('path/not_found');
+}
+
 // ─────────────────────────────────────────────────────────────
 // Move / rename / delete
 // ─────────────────────────────────────────────────────────────
@@ -783,6 +883,10 @@ module.exports = {
   getMetadata,
   // listing
   listFolder,
+  listFolderPage,
+  listFolderContinue,
+  isCursorResetError,
+  isPathNotFoundError,
   // move/rename/delete
   movePath,
   renamePath,
