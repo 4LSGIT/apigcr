@@ -1767,10 +1767,19 @@ function newContact(prefill = {}, onSuccess = null) {
     <label class="sub-label" style="text-align:left; width:auto;">
       <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule first appointment <i style="color:var(--text-muted);">(optional)</i>
     </label><br>
+    <!-- The controls in this box are one 320px stack. It was 280px until
+         style.css got a 320px min-width floor on datetime-local inside a
+         swal2 popup (the type's UA shadow content clips below that); the
+         floor would have pushed #NCApptDate 40px wider than everything
+         around it, so the stack moved with it. #NCApptType is 240 rather
+         than 320 because it shares its row with #NCApptLen (60px) and a
+         collapsed whitespace gap -- the pair lands ~16px short of the
+         stack, exactly as it did at 200+60 against 280. The box is inside a
+         32em popup with ~442px of content width, so 320 clears it. -->
     <div id="NCApptBox" style="display:none; border:1px solid var(--border); border-radius:5px; padding:8px; margin:4px 0; text-align:center;">
       <form onchange="newContact._recompute && newContact._recompute()">
-      <select id="NCApptWith" style="width:280px;">${withOptions}</select><br>
-      <select id="NCApptTypeSel" style="width:280px; margin-top:6px;"
+      <select id="NCApptWith" style="width:320px;">${withOptions}</select><br>
+      <select id="NCApptTypeSel" style="width:320px; margin-top:6px;"
         onchange="[E('NCApptType').value,E('NCApptLen').value]=this.value.split(',');E('NCApptOtherSpan').style.display=this.value==','?'':'none'">
         <option disabled selected>Appointment Type:</option>
         <!-- "Initial Strategy Session" is deliberately ONLY offered here, in the
@@ -1794,7 +1803,7 @@ function newContact(prefill = {}, onSuccess = null) {
         <option value=",">Other</option>
       </select><br>
       <span id="NCApptOtherSpan" style="display:none;">
-        <input id="NCApptType" style="width:200px;" placeholder="Other type">
+        <input id="NCApptType" style="width:240px;" placeholder="Other type">
         <input id="NCApptLen" style="width:60px;" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="min">
       </span><br>
       <span style="font-size:0.85em;">Method:
@@ -1802,14 +1811,14 @@ function newContact(prefill = {}, onSuccess = null) {
         <input type="radio" name="NCApptPlatform" id="NCApptZoom" value="Zoom" style="width:auto;"><label for="NCApptZoom">Zoom</label>
         <input type="radio" name="NCApptPlatform" id="NCApptIP" value="in-person" style="width:auto;"><label for="NCApptIP">In-person</label>
       </span><br>
-      <input type="datetime-local" id="NCApptDate" style="width:280px; margin-top:6px;"><br>
-      <textarea id="NCApptNote" placeholder="Appointment notes (optional)" style="width:280px; height:48px; margin-top:6px;"></textarea><br>
+      <input type="datetime-local" id="NCApptDate" style="width:320px; margin-top:6px;"><br>
+      <textarea id="NCApptNote" placeholder="Appointment notes (optional)" style="width:320px; height:48px; margin-top:6px;"></textarea><br>
       <span style="font-size:0.85em;">Confirmation:
         <input type="checkbox" id="NCApptSMS" style="width:auto;"><label for="NCApptSMS">SMS</label>
         <input type="checkbox" id="NCApptEmail" style="width:auto;"><label for="NCApptEmail">Email</label>
       </span><br>
       </form>
-      <textarea id="NCApptConfirmMsg" style="display:none; width:280px; height:54px; margin-top:4px; resize:none;"></textarea>
+      <textarea id="NCApptConfirmMsg" style="display:none; width:320px; height:54px; margin-top:4px; resize:none;"></textarea>
     </div>`;
 
   // Hidden mirror inputs (NCApptType/NCApptLen live in the Other span; the
