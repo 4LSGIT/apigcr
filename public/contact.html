@@ -364,6 +364,15 @@
       <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();"><i class="fa-solid fa-calendar-day"></i>&nbsp;&nbsp;Events</button>
       <button class="tab" onclick="openTab(this, 'tabCases')"><i class="fa-solid fa-landmark"></i> Cases</button>
       <button class="tab" onclick="openTab(this, 'tabBills')"><i class="fa-solid fa-file-invoice-dollar"></i> Bills</button>
+      <!-- Documents (S3) — public/documents.html in scoped mode. Same lazy-src
+           / reload-on-re-entry idiom as tasksButton and notesButton above.
+           NOTE the param is `link_id`, matching the registry's list API (and
+           tasks.html); `checklistView.html` next door takes `link` instead
+           because it reads the checklists COLUMN name. Do not copy that one.
+           The id follows the ?Button convention for symmetry with case.html —
+           contact.html has no ?tab= restore today (it boots straight to
+           tabInfo), so nothing reads it yet. -->
+      <button class="tab" id="documentsButton" onclick="openTab(this, 'tabDocuments'); if (!E('documentsFrame').src) E('documentsFrame').src = `documents.html?link_type=contact&link_id=${clientID}`; else E('documentsFrame').contentWindow?.reloadDocuments?.();"><i class="fa-solid fa-folder-open"></i> Documents</button>
       <button class="tab" onclick="openTab(this, 'tabSeq'); if (!E('tabSeqIframe').src) E('tabSeqIframe').src = `automation/automationsWidget.html?contact_id=${clientID}`; else E('tabSeqIframe').contentWindow?.reloadAutomations?.();"><i class="fa-solid fa-robot"></i> Automations</button>
       <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Log</button>
     </div>
@@ -674,6 +683,12 @@ async function addLog() {
      it. src set lazily by the tab button. -->
 <div id="tabNotes" class="tab-content">
   <iframe id="notesFrame"></iframe>
+</div>
+
+<!-- Documents widget (S3) — public/documents.html in scoped mode. src set
+     lazily by the tab button. -->
+<div id="tabDocuments" class="tab-content">
+  <iframe id="documentsFrame"></iframe>
 </div>
 
 </div>

@@ -84,6 +84,17 @@
         <button class="tab" onclick="openTab(this, 'tabDB')">
           <i class="fa-brands fa-dropbox"></i> Dropbox
         </button>
+        <!-- Documents (S3). Sits immediately after Dropbox because they are
+             two views of the same shelf: that tab embeds the raw Dropbox
+             folder chooser, this one is the indexed registry — searchable,
+             taggable, and linked to the case rather than to a path. Standard
+             tab, not a bkButtons one: every case type has files.
+             Lazy src (esignButton idiom); re-entry pushes a reload so the
+             list is fresh (reloadTasks / reloadChecklists pattern).
+             id follows the ?Button URL-restore convention (?tab=documents). -->
+        <button class="tab" id="documentsButton" onclick="openTab(this, 'tabDocuments'); if (!E('documentsFrame').src) E('documentsFrame').src = `documents.html?link_type=case&link_id=${caseID}`; else E('documentsFrame').contentWindow?.reloadDocuments?.();">
+          <i class="fa-solid fa-folder-open"></i> Documents
+        </button>
         <!-- Form submissions (X4). STANDARD tab, not a bkButtons one: any case
              type can receive a form, and an adopted intake most often lands on
              a non-BK case (the anonymous ones arrive before the type is set).
@@ -672,6 +683,12 @@
     <!-- Form submissions widget (X4). src set lazily by the tab button. -->
     <div id="tabForms" class="tab-content">
       <iframe id="formsFrame"></iframe>
+    </div>
+
+    <!-- Documents widget (S3) — public/documents.html in scoped mode. src set
+         lazily by the tab button. -->
+    <div id="tabDocuments" class="tab-content">
+      <iframe id="documentsFrame"></iframe>
     </div>
 
     <div id="tabDB" class="tab-content">

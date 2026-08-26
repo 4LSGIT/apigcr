@@ -65,6 +65,8 @@
  *
  *   'case:AAAAAAAA'  'contact:1001'  'appt:55'  'event:12'
  *   'setting:fe-case_types'   ← Slice 2: an app_settings row, not an entity
+ *   'document:412'            ← Documents S3: one `documents` row
+ *   'doclink:case:AAAAAAAA'   ← Documents S3: the SET of documents on a target
  *
  * Subscribe to a specific entity, or to `'case:*'` for every case (the Cases
  * tab's "something, somewhere, changed" subscription). The wildcard is a
@@ -84,6 +86,29 @@
  * as app_settings holds it (JSON-stringified for structured settings).
  * Consumers parse; the bus does not. See applyFeSetting in scripts.js, which
  * mirrors /api/firm-data's fe-* semantics for the frontend settings map.
+ *
+ * ── TWO DOCUMENT TYPES, AND THE SPLIT IS THE POINT (Documents S3) ──────────
+ *
+ * `document:<id>` is a `documents` ROW: its title, doc_type, tags, status, or
+ * a freshly-minted shared_link. Real values — the PATCH and /share responses
+ * both carry the written value — so a view holding that row merges and
+ * repaints with NO fetch at all.
+ *
+ * `doclink:<link_type>:<link_id>` is a TARGET'S LINK SET: "which documents
+ * hang off case AAAA". Linking a document to a case writes a `document_links`
+ * row and does not touch `documents` at all, so announcing it as a change to
+ * the document would be a lie, and announcing it as `case:AAAA` would cost
+ * every open case file a full-payload refetch for a table it does not read.
+ * The address names the thing that actually changed. `{yc_refetch:1}`, because
+ * a link set has no `{column: value}` form.
+ *
+ * The practical consequence, and the reason this is worth two types: the
+ * GLOBAL documents page subscribes to `document:*` only, so a link change
+ * anywhere costs it nothing; a case's Documents widget also subscribes to its
+ * own exact `doclink:case:AAAA` and refetches on that alone.
+ *
+ * The type wildcard is a prefix match on everything before the FIRST colon, so
+ * `doclink:*` matches `doclink:case:AAAA` and `document:*` never does.
  *
  * ── WHAT THE SNIFF CANNOT SEE (the carve-out list, v2.5) ────────────────────
  *
@@ -850,6 +875,78 @@
        here: apiSend throws on a non-ok response before the sniff hook runs. */
     [/^\/api\/intake\/contact$/, 'contact', intakeGetter('contact'), ['POST']],
     [/^\/api\/intake\/case$/,    'case',    intakeGetter('case'),    ['POST']],
+
+    /* ── DOCUMENTS (S3) ───────────────────────────────────────────────────
+       Readers: public/documents.html, in both of its modes — the global page
+       and the per-case / per-contact widget iframed into case.html and
+       contact.html. Two of them are typically open at once (a case tab and
+       the More panel), which is exactly the coherence problem the bus exists
+       for: retagging a document in the case widget must not leave the global
+       list showing the old tags.
+
+       ── PATCH CARRIES VALUES. It is one of the few writes on this bus that
+       honestly can: `PATCH /api/documents/:id` responds with the WHOLE fresh
+       row (routes/api.documents.js → `{status, document}`), so the four
+       human-owned columns are right there. A view holding the row merges them
+       and repaints with no round-trip — §3.1's values-not-invalidations, paid
+       out. Deliberately NOT the whole row: `path`, `rev`, `content_hash` and
+       friends are the SYNC's business and no S3 surface renders them, so
+       carrying them would put churn on the bus that nothing reads.
+
+       `status` is in the set and that is load-bearing rather than cosmetic —
+       a PATCH to 'deleted' is how a row leaves the default (active-only)
+       listing, and a reader that merged the other three but not this one
+       would keep a deleted document on screen looking perfectly normal.
+
+       STATE, NOT A DIFF, unlike the case/contact matchers: documentService's
+       update() returns the row rather than a `changes` object, so a PATCH that
+       wrote nothing new still announces the current values. Idempotent — a
+       subscriber merges what it already holds and repaints one row, with no
+       fetch — and the alternative (teaching the service to build a diff purely
+       for the bus) buys nothing a reader can tell apart.
+
+       ── /share CARRIES ITS VALUE TOO. `shared_link` IS the column and the
+       response IS the stored string (the route returns what setSharedLink
+       persisted, post-clamp, not what Dropbox handed back). Get-or-create, so
+       a second call on an already-shared row announces the same value again —
+       harmless by idempotence, `emit` drops an unchanged diff. Fails closed on
+       a non-string: the field feeds a "public link exists" marker, and
+       announcing `undefined` would clear that marker on every open view.
+
+       ── LINKS ANNOUNCE THE TARGET, NOT THE DOCUMENT, and both verbs go
+       through ONE matcher and ONE getter because they have identical
+       consequences: the set of documents on that case/contact changed.
+
+       DELETE IS WHY THE ROUTE ECHOES. The sniff sees the response body and
+       never the request body, and `DELETE /:id/links` used to answer
+       `{status, removed:true}` — a detach with no address. The route now
+       echoes `{link_type, link_id}` on BOTH verbs (POST's `links` array lists
+       every target and marks none of them as the one just touched, so it
+       cannot serve either). Same move routes/api.appts.js made for
+       POST /api/appts/cancel; see bodyIdGetter.
+
+       No matcher for `POST /api/documents/register`: its only callers are
+       admin/debug and the S2 smoke test, it announces a row nothing has open
+       yet, and the id it would address is one no current view is holding.
+       Add one the day a UI registers a document a user is looking at. */
+    [/^\/api\/documents\/(\d+)$/, 'document', function (r) {
+      var d = r && r.document;
+      if (!d || typeof d !== 'object') return null;
+      return {
+        title:    d.title,
+        doc_type: d.doc_type,
+        tags:     d.tags,
+        status:   d.status,
+      };
+    }, ['PATCH']],
+
+    [/^\/api\/documents\/(\d+)\/share$/, 'document', function (r) {
+      return (r && typeof r.shared_link === 'string' && r.shared_link)
+        ? { shared_link: r.shared_link } : null;
+    }, ['POST']],
+
+    [/^\/api\/documents\/(\d+)\/links$/, 'document', docLinkGetter,
+      ['POST', 'DELETE']],
   ];
 
   /**
@@ -1007,6 +1104,33 @@
       if (id == null || id === '') return null;
       return [{ addr: type + ':' + id, fields: { yc_refetch: 1 } }];
     };
+  }
+
+  /**
+   * Document link / unlink — announce the TARGET whose set changed.
+   *
+   * Array return (getter contract v2), and not because the URL lacks an id:
+   * it has one (`/api/documents/:id/links`) and this getter deliberately does
+   * NOT use it. The document row is untouched by a link write — only
+   * `document_links` changes — so `document:<id>` would be the wrong address
+   * and would make the global documents page refetch for a change it cannot
+   * see. The entity that changed is the target's link set.
+   *
+   * Reads the ECHOED `link_type` / `link_id`, which both verbs now return.
+   * Fails closed on either being missing: an address built from `undefined`
+   * reaches no subscriber and buries a real contract change in a log nobody
+   * reads. The route pins the echo on its side.
+   *
+   * @param   {object} r `{status, ..., link_type, link_id}`
+   * @returns {Array|null}
+   */
+  function docLinkGetter(r) {
+    if (!r || typeof r !== 'object') return null;
+    var t = r.link_type;
+    var i = r.link_id;
+    if (typeof t !== 'string' || !t) return null;
+    if (i == null || i === '') return null;
+    return [{ addr: 'doclink:' + t + ':' + i, fields: { yc_refetch: 1 } }];
   }
 
   /**

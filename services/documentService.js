@@ -92,11 +92,33 @@ const STATUSES = new Set(['active', 'deleted', 'missing']);
 // meaningless until natural churn — if the UI wants true file recency, add a
 // 'modified' key on server_modified (and an index for it) rather than
 // repointing these.
+//
+// S3 TOOK THAT ADVICE, AND DID NOT REPOINT ANYTHING. `modified` is the new key
+// and it is what the S3 UI defaults to; `newest`/`oldest` still mean "when the
+// REGISTRY last touched this row" and are still the right sort for anyone
+// asking that question (a sync audit, say). The two are genuinely different
+// facts and collapsing them would lose one:
+//
+//   updated_at       when WE last wrote the row     — post-backfill, one value
+//                                                     shared by ~150k rows
+//   server_modified  when DROPBOX last wrote the    — the file's own recency,
+//                    file                             which is what staff mean
+//
+// NULLS LAST, explicitly. MySQL sorts NULL low, so a bare `DESC` would put
+// every server_modified-less row (a provider that did not report one) at the
+// TOP of a newest-first list — the loudest possible position for the least
+// informative rows. `(x IS NULL) ASC` is the same idiom `size` already uses.
+// `d.id DESC` is the tiebreak: without it, rows sharing a timestamp have no
+// stable order and page 2 can repeat a row from page 1.
+//
+// Needs idx_docs_modified (server_modified) or this is a filesort over the
+// whole table — see the S3 DDL.
 const SORT_MAP = {
-  newest: 'd.updated_at DESC, d.id DESC',
-  oldest: 'd.updated_at ASC, d.id ASC',
-  name:   'd.name ASC, d.id ASC',
-  size:   '(d.size IS NULL) ASC, d.size DESC, d.id DESC',
+  newest:   'd.updated_at DESC, d.id DESC',
+  oldest:   'd.updated_at ASC, d.id ASC',
+  name:     'd.name ASC, d.id ASC',
+  size:     '(d.size IS NULL) ASC, d.size DESC, d.id DESC',
+  modified: '(d.server_modified IS NULL) ASC, d.server_modified DESC, d.id DESC',
 };
 
 // MySQL's innodb_ft_min_token_size on this server is 3 (verified 2026-08-26),
@@ -639,7 +661,8 @@ function _qPredicate(q) {
  * @param {string} [opts.source]      exact match
  * @param {string} [opts.link_type]   with link_id: restrict to documents linked to that target
  * @param {string} [opts.link_id]
- * @param {string} [opts.sort='newest']
+ * @param {string} [opts.sort='newest']  SORT_MAP key — newest | oldest | name |
+ *                                      size | modified. Unknown → newest.
  * @param {number} [opts.limit=50]    clamped to [1,200]
  * @param {number} [opts.offset=0]
  * @returns {Promise<{documents: object[], total: number, limit: number, offset: number}>}

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-26T20:46:02.137Z
+-- Generated: 2026-08-26T21:33:38.206Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:2af14a709f513c97e357668a25dbe4a5
+-- Fingerprint: sha256:c26ee54986890f165c8250f92378b9dc
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3732,6 +3732,7 @@ ALTER TABLE `documents`
   ADD KEY `idx_docs_type` (`doc_type`),
   ADD KEY `idx_docs_status` (`status`),
   ADD KEY `idx_docs_updated` (`updated_at`),
+  ADD KEY `idx_docs_modified` (`server_modified`),
   ADD FULLTEXT KEY `ft_docs` (`name`,`title`,`tags`);
 
 --

@@ -1635,7 +1635,8 @@ describe('_sniff — every matcher in the table, no shadowing', () => {
     // under `/api/contacts/:id`, which is anchored and must not swallow it.
     const w = mkWindow();
     const seen = [];
-    ['case:*', 'contact:*', 'setting:*', 'appt:*', 'event:*'].forEach(a =>
+    ['case:*', 'contact:*', 'setting:*', 'appt:*', 'event:*',
+     'document:*', 'doclink:*'].forEach(a =>
       w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
 
     w.YC._sniff('PATCH', '/api/cases/AAAA',                  { data: { changes: { case_stage: 'Filed' } } });
@@ -1662,6 +1663,13 @@ describe('_sniff — every matcher in the table, no shadowing', () => {
     w.YC._sniff('PATCH',  '/api/cases/AAAA/contacts/1001',   { status: 'success' });
     w.YC._sniff('DELETE', '/api/cases/AAAA/contacts/1001',   { status: 'success' });
     w.YC._sniff('POST',   '/api/contacts/1001/booking-link', { success: true, token: 'abc123' });
+    // Documents S3. The three matchers sit under a shared `/api/documents/:id`
+    // prefix and the bare one is anchored ($), so it must not swallow /share
+    // or /links.
+    w.YC._sniff('PATCH',  '/api/documents/412',       { document: { id: 412, title: 'Petition', doc_type: null, tags: 'court', status: 'active' } });
+    w.YC._sniff('POST',   '/api/documents/412/share', { shared_link: 'https://www.dropbox.com/s/abc' });
+    w.YC._sniff('POST',   '/api/documents/412/links', { links: [], link_type: 'case', link_id: 'AAAA' });
+    w.YC._sniff('DELETE', '/api/documents/412/links', { removed: true, link_type: 'contact', link_id: '22' });
 
     expect(seen).toEqual([
       'case:AAAA', 'contact:5', 'case:AAAA', 'case:AAAA', 'case:AAAA',
@@ -1671,6 +1679,8 @@ describe('_sniff — every matcher in the table, no shadowing', () => {
       'event:12', 'event:12', 'event:13',
       'contact:1002', 'case:CCCC',
       'case:AAAA', 'case:AAAA', 'case:AAAA', 'contact:1001',
+      'document:412', 'document:412',
+      'doclink:case:AAAA', 'doclink:contact:22',
     ]);
   });
 
@@ -1685,6 +1695,274 @@ describe('_sniff — every matcher in the table, no shadowing', () => {
     w.YC._sniff('GET',    '/api/cases/AAAA/merge',  { status: 'success', data: { dry_run: false, survivor_id: 'AAAA' } });
     w.YC._sniff('DELETE', '/api/intake/contact',    { status: 'success', action: 'created', id: 1 });
     expect(seen).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — documents (Documents S3)
+//
+// TWO address types, and the split is the whole design:
+//
+//   document:<id>              a `documents` ROW — title/doc_type/tags/status,
+//                              or a freshly minted shared_link. REAL VALUES,
+//                              so a view holding the row repaints with NO
+//                              fetch.
+//   doclink:<type>:<id>        a TARGET'S LINK SET. Linking writes a
+//                              `document_links` row and does not touch
+//                              `documents` at all, so announcing it on the
+//                              document would be a lie — and announcing it as
+//                              `case:AAAA` would cost every open case file a
+//                              full-payload refetch for a table it does not
+//                              read.
+//
+// The practical payoff: the GLOBAL documents page subscribes to `document:*`
+// only, so a link change anywhere costs it nothing, while a case's Documents
+// widget also holds its own exact `doclink:case:AAAA`.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — documents matchers', () => {
+  function spy(w, addr) {
+    const seen = [];
+    w.YC.on(addr, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  test('PATCH carries the four human-owned columns as VALUES, not a marker', () => {
+    // The payoff of values-not-invalidations: two open views, one PATCH, zero
+    // extra GETs.
+    const w = mkWindow();
+    const seen = spy(w, 'document:412');
+    w.YC._sniff('PATCH', '/api/documents/412', {
+      status: 'success',
+      document: {
+        id: 412, name: 'Petition.pdf', title: 'Petition',
+        doc_type: 'court-notice', tags: 'court,filed', status: 'active',
+        path: '/x/y', rev: 'abc', content_hash: 'deadbeef',
+      },
+    });
+    expect(seen.length).toBe(1);
+    expect(seen[0].fields).toEqual({
+      title: 'Petition', doc_type: 'court-notice', tags: 'court,filed', status: 'active',
+    });
+    expect(seen[0].origin).toBe('auto:PATCH /api/documents/412');
+  });
+
+  test('PATCH does NOT put sync-owned churn on the bus', () => {
+    // path / rev / content_hash / server_modified change on every re-sync and
+    // no S3 surface renders them. Carrying them would make the bus noisy for
+    // subscribers that would then have to ignore them.
+    const w = mkWindow();
+    const seen = spy(w, 'document:412');
+    w.YC._sniff('PATCH', '/api/documents/412', {
+      document: { id: 412, title: 't', doc_type: null, tags: null, status: 'active',
+                  path: '/p', path_lower: '/p', rev: 'r', content_hash: 'c',
+                  size: 1, server_modified: 'x', external_id: 'id:1' },
+    });
+    expect(Object.keys(seen[0].fields).sort())
+      .toEqual(['doc_type', 'status', 'tags', 'title']);
+  });
+
+  test('status rides along — it is how a row LEAVES an active-only list', () => {
+    // A reader that merged the other three but not this one would keep a
+    // deleted document on screen looking perfectly normal.
+    const w = mkWindow();
+    const seen = spy(w, 'document:412');
+    w.YC._sniff('PATCH', '/api/documents/412', {
+      document: { id: 412, title: null, doc_type: null, tags: null, status: 'deleted' },
+    });
+    expect(seen[0].fields.status).toBe('deleted');
+  });
+
+  test('PATCH announces STATE, so an all-null row still emits (nulls are values)', () => {
+    // documentService.update returns the row, not a `changes` diff, so a PATCH
+    // that cleared every field must still announce — otherwise clearing a
+    // title is the one edit that never propagates. `emit`'s empty-guard drops
+    // an empty OBJECT, not an object of nulls.
+    const w = mkWindow();
+    const seen = spy(w, 'document:412');
+    w.YC._sniff('PATCH', '/api/documents/412', {
+      document: { id: 412, title: null, doc_type: null, tags: null, status: 'active' },
+    });
+    expect(seen.length).toBe(1);
+    expect(seen[0].fields).toEqual({
+      title: null, doc_type: null, tags: null, status: 'active',
+    });
+  });
+
+  test('PATCH fails closed on a body with no document', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'document:*');
+    w.YC._sniff('PATCH', '/api/documents/412', { status: 'success' });
+    w.YC._sniff('PATCH', '/api/documents/412', { document: null });
+    w.YC._sniff('PATCH', '/api/documents/412', null);
+    w.YC._sniff('PATCH', '/api/documents/412', { document: 'nope' });
+    expect(seen).toEqual([]);
+  });
+
+  test('/share carries the stored shared_link as a value', () => {
+    // shared_link IS the column and the response IS what setSharedLink
+    // persisted (post-clamp), so the "public link exists" marker lights up in
+    // every open view with no fetch.
+    const w = mkWindow();
+    const seen = spy(w, 'document:412');
+    w.YC._sniff('POST', '/api/documents/412/share',
+                { status: 'success', shared_link: 'https://www.dropbox.com/s/abc' });
+    expect(seen.length).toBe(1);
+    expect(seen[0].fields).toEqual({ shared_link: 'https://www.dropbox.com/s/abc' });
+  });
+
+  test('/share fails closed on a non-string or empty link', () => {
+    // Announcing undefined would CLEAR the public-link marker on every open
+    // view — worse than saying nothing.
+    const w = mkWindow();
+    const seen = spy(w, 'document:*');
+    w.YC._sniff('POST', '/api/documents/412/share', { shared_link: null });
+    w.YC._sniff('POST', '/api/documents/412/share', { shared_link: '' });
+    w.YC._sniff('POST', '/api/documents/412/share', { shared_link: { url: 'x' } });
+    w.YC._sniff('POST', '/api/documents/412/share', {});
+    expect(seen).toEqual([]);
+  });
+
+  test('link/unlink address the TARGET, never the document', () => {
+    // THE central assertion of this block. A link write does not change the
+    // `documents` row, so `document:412` would be the wrong address and would
+    // make the global page refetch for a change it cannot see.
+    const w = mkWindow();
+    const docSeen  = spy(w, 'document:*');
+    const linkSeen = spy(w, 'doclink:*');
+
+    w.YC._sniff('POST', '/api/documents/412/links',
+                { status: 'success', created: true, links: [], link_type: 'case', link_id: 'aB3xY9' });
+    w.YC._sniff('DELETE', '/api/documents/412/links',
+                { status: 'success', removed: true, link_type: 'contact', link_id: '22' });
+
+    expect(docSeen).toEqual([]);
+    expect(linkSeen.map(s => s.addr))
+      .toEqual(['doclink:case:aB3xY9', 'doclink:contact:22']);
+    expect(linkSeen[0].fields).toEqual({ yc_refetch: 1 });
+    expect(linkSeen[1].fields).toEqual({ yc_refetch: 1 });
+  });
+
+  test('DELETE reaches the matcher — the gate admits it and the 4th element lists it', () => {
+    // The detach is the destructive half and the half a stale widget renders
+    // most wrongly (a removed document keeps showing).
+    const w = mkWindow();
+    const seen = spy(w, 'doclink:case:AAAA');
+    w.YC._sniff('DELETE', '/api/documents/9/links',
+                { removed: true, link_type: 'case', link_id: 'AAAA' });
+    expect(seen.length).toBe(1);
+    expect(seen[0].origin).toBe('auto:DELETE /api/documents/9/links');
+  });
+
+  test('the link getter fails closed on a missing echo', () => {
+    // This is the shape the route used to return. An address built from
+    // `undefined` reaches no subscriber and buries a contract change in a log
+    // nobody reads — so say nothing instead, and let the route test catch it.
+    const w = mkWindow();
+    const seen = spy(w, 'doclink:*');
+    w.YC._sniff('DELETE', '/api/documents/9/links', { status: 'success', removed: true });
+    w.YC._sniff('DELETE', '/api/documents/9/links', { removed: true, link_type: 'case' });
+    w.YC._sniff('DELETE', '/api/documents/9/links', { removed: true, link_id: 'AAAA' });
+    w.YC._sniff('DELETE', '/api/documents/9/links', { removed: true, link_type: '', link_id: 'AAAA' });
+    w.YC._sniff('DELETE', '/api/documents/9/links', { removed: true, link_type: 'case', link_id: '' });
+    w.YC._sniff('POST',   '/api/documents/9/links', { links: [] });
+    expect(seen).toEqual([]);
+  });
+
+  test('a numeric echoed link_id addresses the same place as a string one', () => {
+    // The address is built by concatenation; 22 and '22' must not become two
+    // addresses for one contact.
+    const w = mkWindow();
+    const seen = spy(w, 'doclink:contact:22');
+    w.YC._sniff('DELETE', '/api/documents/9/links',
+                { removed: true, link_type: 'contact', link_id: 22 });
+    expect(seen.length).toBe(1);
+  });
+
+  test('doclink:* is a PREFIX match on the type — document:* never sees it', () => {
+    // typeOf() splits on the FIRST colon, so 'doclink:case:AAAA' has type
+    // 'doclink' and the second colon is just part of the id.
+    const w = mkWindow();
+    const docWild  = spy(w, 'document:*');
+    const linkWild = spy(w, 'doclink:*');
+    const exact    = spy(w, 'doclink:case:AAAA');
+    w.YC._sniff('POST', '/api/documents/1/links',
+                { links: [], link_type: 'case', link_id: 'AAAA' });
+    expect(docWild).toEqual([]);
+    expect(linkWild.length).toBe(1);
+    expect(exact.length).toBe(1);
+  });
+
+  test('a scoped widget on ANOTHER target hears nothing', () => {
+    // The whole point of addressing the target: case BBBB's widget must not
+    // refetch because case AAAA gained a document.
+    const w = mkWindow();
+    const mine   = spy(w, 'doclink:case:AAAA');
+    const theirs = spy(w, 'doclink:case:BBBB');
+    w.YC._sniff('POST', '/api/documents/1/links',
+                { links: [], link_type: 'case', link_id: 'AAAA' });
+    expect(mine.length).toBe(1);
+    expect(theirs).toEqual([]);
+  });
+
+  test('the bare /api/documents/:id matcher is anchored — /share and /links escape it', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'document:*');
+    // These two are handled by their own matchers, asserted above. What is
+    // under test here is that neither produced a `document:412` VALUES emit
+    // from the bare pattern.
+    w.YC._sniff('POST', '/api/documents/412/links',
+                { document: { id: 412, title: 'x', doc_type: null, tags: null, status: 'active' },
+                  link_type: 'case', link_id: 'AAAA' });
+    expect(seen).toEqual([]);
+  });
+
+  test('POST /api/documents/register announces nothing', () => {
+    // Deliberate: its callers are admin/debug and the S2 smoke test, and the
+    // row it creates is one no open view is holding.
+    const w = mkWindow();
+    const seen = [];
+    ['document:*', 'doclink:*', 'case:*', 'contact:*'].forEach(a =>
+      w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    w.YC._sniff('POST', '/api/documents/register',
+                { status: 'success', created: true, document: { id: 9, title: null, doc_type: null, tags: null, status: 'active' } });
+    expect(seen).toEqual([]);
+  });
+
+  test('GET on any documents path is dropped by the gate', () => {
+    // Load-bearing: every documents subscriber answers with a GET, so a GET
+    // that could announce would be a loop.
+    const w = mkWindow();
+    const seen = [];
+    ['document:*', 'doclink:*'].forEach(a => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    w.YC._sniff('GET', '/api/documents/412', { document: { id: 412, title: 't', doc_type: null, tags: null, status: 'active' } });
+    w.YC._sniff('GET', '/api/documents/412/links', { link_type: 'case', link_id: 'AAAA' });
+    w.YC._sniff('GET', '/api/documents', { documents: [], total: 0 });
+    expect(seen).toEqual([]);
+  });
+
+  test('the wrong verb on the right path announces nothing', () => {
+    // Each matcher names its own verbs, so a future route on one of these
+    // paths cannot inherit an emit by accident.
+    const w = mkWindow();
+    const seen = [];
+    ['document:*', 'doclink:*'].forEach(a => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    w.YC._sniff('POST',   '/api/documents/412',       { document: { id: 412, title: 't', doc_type: null, tags: null, status: 'active' } });
+    w.YC._sniff('PUT',    '/api/documents/412',       { document: { id: 412, title: 't', doc_type: null, tags: null, status: 'active' } });
+    w.YC._sniff('DELETE', '/api/documents/412',       { document: { id: 412, title: 't', doc_type: null, tags: null, status: 'active' } });
+    w.YC._sniff('PATCH',  '/api/documents/412/share', { shared_link: 'https://x' });
+    w.YC._sniff('DELETE', '/api/documents/412/share', { shared_link: 'https://x' });
+    w.YC._sniff('PATCH',  '/api/documents/412/links', { link_type: 'case', link_id: 'AAAA' });
+    expect(seen).toEqual([]);
+  });
+
+  test('a query string on a documents write is stripped before matching', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'document:412');
+    w.YC._sniff('PATCH', '/api/documents/412?x=1',
+                { document: { id: 412, title: 't', doc_type: null, tags: null, status: 'active' } });
+    expect(seen.length).toBe(1);
+    expect(seen[0].origin).toBe('auto:PATCH /api/documents/412?x=1');
   });
 });
 

@@ -2215,7 +2215,11 @@
   <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s; --fa-animation-direction:reverse"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
   <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.5; --fa-animation-duration:2s"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
   <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
-  <button class="big-button" data-placeholder aria-disabled="true" tabindex="-1" data-hover-anim="fa-beat" style="--fa-beat-scale:1.2; --fa-animation-duration:1.5s"><i class="fa-solid fa-puzzle-piece fa-2xl"></i><br><br>Coming Soon</button>
+  <!-- Documents (S3). This tile REPLACES row 3's data-placeholder rather than
+       starting a seventh row — the placeholders exist for exactly this, see
+       the layout note above. It belongs in "the file you keep": the registry
+       over the firm's Dropbox estate, searchable and linkable to cases. -->
+  <button class="big-button" data-target="documentsDiv"       data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.8s"><i class="fa-solid fa-folder-open fa-2xl"></i><br><br>Documents</button>
   <br><br>
   <!-- How a case is shaped: its fields, the steps on it, what runs on it by
        itself, and the saved views you read it back through. -->
@@ -2280,6 +2284,12 @@
   </div>
   <div id="videoManagerDiv"    class="more-panel" style="display:none">
     <iframe data-src="/videoManager.html"></iframe>
+  </div>
+  <!-- Documents (S3). NO query string: documents.html reads link_type/link_id
+       from its URL and, finding none, boots in GLOBAL mode. The same file with
+       ?link_type=case&link_id=… is the widget in case.html's Documents tab. -->
+  <div id="documentsDiv"       class="more-panel" style="display:none">
+    <iframe data-src="/documents.html"></iframe>
   </div>
 
   <!-- How a case is shaped -->

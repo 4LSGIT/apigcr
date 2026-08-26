@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documents</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- Diagnostics ring buffer. Loaded BEFORE anything that can throw. -->
+  <script src="/js/diag.js"></script>
+  <script src="/js/yc-sync.js"></script>
+  <!-- theme.css + themeSync MUST be blocking and MUST precede this page's own
+       <style> block (ref/THEME-HANDOFF-v2.md). themeSync sets
+       html[data-theme] pre-paint and follows window.top live at any depth, so
+       the scoped widget (depth 2, under case.html) tracks the shell toggle
+       with no plumbing here. -->
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-family: var(--ui);
+      font-size: var(--fs);
+      color: var(--text);
+      background: var(--page-bg);
+    }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Topbar — GLOBAL mode only. The scoped widget is a panel inside a tab
+       that already has a heading; a second title bar there is chrome for
+       nothing. ────────────────────────────────────────────────── */
+    #topbar {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: var(--gap);
+      padding: 0 14px;
+      flex-shrink: 0;
+      border-bottom: 2px solid var(--info);
+    }
+    #topbar .title { font-weight: 700; letter-spacing: 0.02em; }
+    #topbar .title span { color: var(--info); }
+    #topbar .spacer { flex: 1; }
+    #topbar .count { color: var(--code-fg); opacity: .65; font-size: var(--fs-sm); }
+    body.scoped #topbar { display: none; }
+
+    /* ── Scoped header — one compact line, no panel chrome. ─────────── */
+    #scopedHead {
+      display: none;
+      align-items: center;
+      gap: var(--gap);
+      padding: 10px 12px 0;
+      flex-shrink: 0;
+    }
+    body.scoped #scopedHead { display: flex; }
+    #scopedHead h3 { font-size: var(--fs-lg); font-weight: 700; }
+    #scopedHead h3 i { color: var(--text-muted); margin-right: 5px; }
+    #scopedHead .spacer { flex: 1; }
+    #scopedHead .count { color: var(--text-muted); font-size: var(--fs-sm); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: var(--pad-btn);
+      height: var(--ctl-h);
+      border-radius: var(--radius);
+      border: none;
+      font-size: var(--fs-sm); font-weight: 500; cursor: pointer;
+      white-space: nowrap; font-family: inherit;
+      transition: background .15s, filter .15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* --accent, not --info: a fill. --info has no fill partner. */
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover:not(:disabled) { background: var(--info-dark); }
+    .btn-ghost { background: transparent; color: var(--code-fg); border: 1px solid var(--border-strong); }
+    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+    .btn-outline {
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover:not(:disabled) { background: var(--page-bg); }
+    .btn-outline.ok { color: var(--ok); border-color: var(--ok); }
+    .btn-sm { padding: 3px 8px; height: auto; font-size: var(--fs-xs); }
+
+    /* ── Scroll container ───────────────────────────── */
+    #scroll { flex: 1; overflow-y: auto; padding: 14px 16px 26px; }
+    body.scoped #scroll { padding: 10px 12px 20px; }
+    #inner { max-width: 1280px; margin: 0 auto; }
+    body.scoped #inner { max-width: none; }
+
+    /* ── Toolbar ────────────────────────────────────── */
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: var(--gap); align-items: center;
+      margin-bottom: var(--gap-lg);
+    }
+    .toolbar .search { position: relative; flex: 1; min-width: 190px; }
+    .toolbar .search i {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      color: var(--text-muted); font-size: var(--fs-sm); pointer-events: none;
+    }
+    .toolbar .search input { padding-left: 28px; }
+    .toolbar .ctl { display: flex; align-items: center; gap: var(--gap-sm); }
+    .toolbar .ctl label {
+      font-size: var(--fs-xs); font-weight: 600; color: var(--text-2);
+      text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .toolbar select, .toolbar input[type="text"] { width: auto; min-width: 110px; }
+
+    input[type="text"], select {
+      width: 100%;
+      height: var(--ctl-h);
+      padding: 0 9px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: var(--fs);
+      font-family: inherit;
+      color: var(--text);
+      background: var(--surface);
+    }
+    input[type="text"]:focus, select:focus {
+      outline: none;
+      border-color: var(--info);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+
+    /* ── Table ──────────────────────────────────────── */
+    #docTable {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    #docTable th {
+      text-align: left;
+      padding: var(--pad-cell);
+      font-size: var(--fs-xs);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-2);
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    #docTable td {
+      padding: var(--pad-cell);
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+    }
+    #docTable tr.doc-row:hover td { background: var(--hover); }
+    /* Deleted rows stay VISIBLE and obviously dead — they only appear when
+       the status filter asked for them, and the whole point of asking is to
+       see them. Muted, not hidden. */
+    #docTable tr.is-gone td { opacity: .55; }
+
+    .d-name { font-weight: 600; overflow-wrap: anywhere; }
+    .d-sub {
+      font-size: var(--fs-sm); color: var(--text-muted);
+      margin-top: 2px; overflow-wrap: anywhere;
+    }
+    .d-icon { color: var(--text-muted); margin-right: 6px; }
+    .chip {
+      display: inline-block;
+      background: var(--accent-soft); color: var(--accent-on-soft);
+      padding: 1px 6px; border-radius: 3px;
+      font-weight: 600; font-size: var(--fs-xs);
+      margin: 1px 3px 1px 0; white-space: nowrap;
+    }
+    .chip.type { background: var(--info-soft); color: var(--info); }
+    .chip.gone { background: var(--danger-soft); color: var(--danger); }
+    .chip.pub  { background: var(--warn-soft);  color: var(--warn); }
+    .nowrap { white-space: nowrap; }
+    .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .acts { white-space: nowrap; text-align: right; }
+    .acts .icon-btn {
+      width: 28px; height: 26px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      color: var(--text-2);
+      font-size: var(--fs-sm);
+      display: inline-flex; align-items: center; justify-content: center;
+      margin-left: 3px;
+    }
+    .acts .icon-btn:hover { background: var(--page-bg); color: var(--text); }
+    .acts .icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* Columns the compact widget drops. */
+    body.scoped .wide-only { display: none; }
+
+    /* ── States ─────────────────────────────────────── */
+    .state {
+      padding: 40px 22px; text-align: center; color: var(--text-muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    body.scoped .state { padding: 24px 16px; }
+    .state i { font-size: 30px; display: block; margin-bottom: 10px; opacity: 0.5; }
+    .state.err { color: var(--danger); }
+    .state .sub { font-size: var(--fs-sm); margin-top: 6px; }
+
+    /* ── Pagination ─────────────────────────────────── */
+    #pager {
+      margin-top: var(--gap-lg);
+      display: flex; align-items: center; justify-content: center;
+      gap: var(--gap-sm); flex-wrap: wrap;
+    }
+    #pager .range { color: var(--text-muted); font-size: var(--fs-sm); margin-right: 6px; }
+    #pager .page-btn {
+      min-width: 28px; height: 28px; padding: 0 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      cursor: pointer; color: var(--text-2);
+      font-size: var(--fs-sm); font-family: inherit;
+    }
+    #pager .page-btn:hover:not(:disabled) { background: var(--page-bg); }
+    #pager .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    #pager .page-btn.active {
+      background: var(--accent); color: var(--accent-text);
+      border-color: var(--accent); font-weight: 600;
+    }
+    #pager .ellipsis { color: var(--text-muted); padding: 0 2px; }
+
+    /* ── Viewer overlay ─────────────────────────────────────────────────
+       Hand-rolled rather than a Swal: a PDF needs a full-height <iframe>,
+       and Swal's popup sizes to its content. Fixed to THIS frame's
+       viewport — the scoped widget is a tab panel, so the overlay covers
+       the panel and not the whole app, which is the correct scope for a
+       modal owned by this document. */
+    #viewer {
+      position: fixed; inset: 0; z-index: 900;
+      background: var(--backdrop);
+      display: none; flex-direction: column;
+      padding: 18px;
+    }
+    #viewer.open { display: flex; }
+    #viewer .vw-box {
+      flex: 1; display: flex; flex-direction: column;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      min-height: 0;
+    }
+    #viewer .vw-head {
+      display: flex; align-items: center; gap: var(--gap);
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
+      flex-shrink: 0;
+    }
+    #viewer .vw-title {
+      font-weight: 600; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; flex: 1;
+    }
+    #viewer .vw-body {
+      flex: 1; min-height: 0;
+      background: var(--surface-sunken);
+      display: flex; align-items: center; justify-content: center;
+      overflow: auto;
+    }
+    #viewer .vw-body iframe { width: 100%; height: 100%; border: 0; }
+    #viewer .vw-body img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+    .swal2-popup { font-size: var(--fs) !important; }
+    .swal-lbl { font-weight: 600; font-size: var(--fs-sm); color: var(--text-2); display: block; }
+    .swal-note { font-size: var(--fs-sm); color: var(--text-muted); }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════════════════
+  documents.html — the staff-facing documents surface (Documents S3).
+
+  ONE FILE, TWO MODES, keyed on the URL:
+
+    ?link_type=case&link_id=AAAA   SCOPED  — a compact widget, iframed into
+                                             case.html / contact.html. The
+                                             list is pre-filtered by the
+                                             registry's own link_type/link_id
+                                             params; no page chrome.
+    (no params)                    GLOBAL  — the full page, opened from the
+                                             shell's More grid. Search,
+                                             facets, sort, paging.
+
+  One file rather than two because every row affordance (view, download,
+  share, edit, links) is identical in both and a second copy would drift.
+  Everything mode-specific is `body.scoped` in CSS or `SCOPED` in JS.
+
+  ── HOW THE BYTES GET HERE, AND WHY IT LOOKS ROUNDABOUT ──────────────────
+  There is no auth cookie in this app — the JWT lives in localStorage and
+  rides an Authorization header — so an <img src> or <iframe src> pointing at
+  an authed API route sends no credentials and gets a 401. And the /view
+  URL cannot be pointed at either: Dropbox serves it Content-Disposition:
+  attachment, with no CORS and a CSP sandbox, so it can be downloaded but
+  never rendered in-page.
+
+  So: fetch GET /api/documents/:id/raw through the shell's apiSend with
+  responseType:'blob', URL.createObjectURL the result, render THAT. This is
+  public/formInbox.html's downloadPdf pattern; the object URLs are revoked on
+  close and again on a safety timer.
+
+  ── DEFAULT SORT IS `modified`, DELIBERATELY ─────────────────────────────
+  Post-backfill every row shares one `updated_at`, so the registry's `newest`
+  sort is meaningless on real data. `modified` sorts on the file's own
+  server_modified, which is what staff mean by "recent".
+═══════════════════════════════════════════════════════════════════════════ -->
+
+<div id="topbar">
+  <div class="title">Docu<span>ments</span></div>
+  <div class="spacer"></div>
+  <span class="count" id="topCount"></span>
+  <button class="btn btn-ghost btn-sm" onclick="onRefresh()" title="Re-fetch the list">
+    <i class="fa-solid fa-arrows-rotate"></i> Refresh
+  </button>
+</div>
+
+<div id="scopedHead">
+  <h3><i class="fa-solid fa-folder-open"></i> Documents</h3>
+  <div class="spacer"></div>
+  <span class="count" id="scopedCount"></span>
+  <button class="btn btn-outline btn-sm" onclick="onRefresh()" title="Re-fetch the list">
+    <i class="fa-solid fa-arrows-rotate"></i> Refresh
+  </button>
+</div>
+
+<div id="scroll">
+  <div id="inner">
+
+    <!-- ── Toolbar — GLOBAL only (hidden by body.scoped rules below) ── -->
+    <div class="toolbar" id="toolbar">
+      <div class="search">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="tb-search" placeholder="Search name, title, tags…"
+          oninput="onSearchInput(this.value)">
+      </div>
+      <div class="ctl">
+        <label for="tb-doctype">Type</label>
+        <input type="text" id="tb-doctype" list="dl-doctype" placeholder="any"
+          maxlength="64" onchange="onDocTypeChange(this.value)">
+        <datalist id="dl-doctype"></datalist>
+      </div>
+      <div class="ctl">
+        <label for="tb-tag">Tag</label>
+        <input type="text" id="tb-tag" list="dl-tag" placeholder="any"
+          maxlength="64" onchange="onTagChange(this.value)">
+        <datalist id="dl-tag"></datalist>
+      </div>
+      <div class="ctl">
+        <label for="tb-status">Status</label>
+        <select id="tb-status" onchange="onStatusChange(this.value)">
+          <option value="" selected>Active</option>
+          <option value="all">All</option>
+          <option value="deleted">Deleted</option>
+          <option value="missing">Missing</option>
+        </select>
+      </div>
+      <div class="ctl">
+        <label for="tb-sort">Sort</label>
+        <select id="tb-sort" onchange="onSortChange(this.value)">
+          <option value="modified" selected>File modified</option>
+          <option value="name">Name</option>
+          <option value="size">Size</option>
+          <option value="newest">Registry — newest</option>
+          <option value="oldest">Registry — oldest</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="listWrap">
+      <div class="state"><i class="fa-solid fa-spinner fa-spin"></i>Loading…</div>
+    </div>
+
+    <div id="pager"></div>
+
+  </div>
+</div>
+
+<!-- Viewer overlay (see the CSS note). Empty until openViewer fills it. -->
+<div id="viewer" onclick="if (event.target === this) closeViewer()">
+  <div class="vw-box">
+    <div class="vw-head">
+      <span class="vw-title" id="vwTitle"></span>
+      <button class="btn btn-outline btn-sm" id="vwTab" onclick="viewerOpenTab()">
+        <i class="fa-solid fa-arrow-up-right-from-square"></i> Open in tab
+      </button>
+      <button class="btn btn-outline btn-sm" id="vwDl" onclick="viewerDownload()">
+        <i class="fa-solid fa-download"></i> Download
+      </button>
+      <button class="btn btn-outline btn-sm" onclick="closeViewer()">
+        <i class="fa-solid fa-xmark"></i> Close
+      </button>
+    </div>
+    <div class="vw-body" id="vwBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+// ════════════════════════════════════════════════════════════════════════════
+// Mode
+// ════════════════════════════════════════════════════════════════════════════
+var Q         = new URLSearchParams(location.search);
+var LINK_TYPE = (Q.get('link_type') || '').trim();
+var LINK_ID   = (Q.get('link_id')   || '').trim();
+var SCOPED    = !!(LINK_TYPE && LINK_ID);
+
+// A human name for the scope, used in confirm text and the unlink button.
+var SCOPE_WORD = LINK_TYPE === 'case' ? 'case'
+               : LINK_TYPE === 'contact' ? 'contact'
+               : (LINK_TYPE || 'record');
+
+if (SCOPED) document.body.classList.add('scoped');
+document.getElementById('toolbar').style.display = SCOPED ? 'none' : '';
+
+// ════════════════════════════════════════════════════════════════════════════
+// Transport
+//
+// window.top, not window.parent: this page runs at depth 1 (the shell's More
+// panel) AND at depth 2 (case.html / contact.html tab). window.top reaches the
+// shell's apiSend from either without a relay — the esign/caseWidget.html
+// precedent. window.parent is kept as a fallback for the depth-1 case if a
+// future host stops being the top window.
+//
+// Everything goes through this: apiSend owns the JWT, the 401-relogin retry,
+// the VersionGuard check and — critically — the sync-bus sniff. A bare fetch
+// here would be invisible to every other open frame.
+// ════════════════════════════════════════════════════════════════════════════
+function shellRealm() {
+  try {
+    if (window.top && window.top !== window && typeof window.top.apiSend === 'function') {
+      return window.top;
+    }
+  } catch (_) { /* cross-origin top */ }
+  try {
+    var p = window.parent;
+    if (p && p !== window && typeof p.apiSend === 'function') return p;
+  } catch (_) { /* noop */ }
+  return null;
+}
+function api() {
+  var realm = shellRealm();
+  if (!realm) {
+    return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+  }
+  return realm.apiSend.apply(realm, arguments);
+}
+
+var Toast = Swal.mixin({
+  toast: true, position: 'top-end', timer: 2500,
+  showConfirmButton: false, timerProgressBar: true,
+});
+
+function E(id) { return document.getElementById(id); }
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════════
+var state = {
+  docs:     [],
+  total:    0,
+  page:     1,                       // 1-indexed
+  pageSize: SCOPED ? 25 : 30,
+  q:        '',
+  doc_type: '',
+  tag:      '',
+  status:   '',                      // '' → the API default (active only)
+  sort:     'modified',
+  loading:  false,
+};
+
+/* ECHO FENCE for the doclink subscriber. A link/unlink WE performed already
+   refetches on its own continuation; the bus then announces that same write
+   back to us over BroadcastChannel (a macrotask, so it always lands after).
+   Without the stamp every link action here costs two identical list GETs.
+   Same shape as case.html's apptsLastRefresh. */
+var linksLastRefresh = 0;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Formatters
+// ════════════════════════════════════════════════════════════════════════════
+function fmtSize(bytes) {
+  var n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n === 0) return '0 B';
+  var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  if (i === 0) return v + ' B';
+  return (v < 10 ? v.toFixed(1) : Math.round(v)) + ' ' + units[i];
+}
+
+function fmtDate(v) {
+  if (!v) return '—';
+  try {
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleDateString();
+  } catch (_) { return String(v); }
+}
+
+function iconForExt(ext) {
+  var e = String(ext || '').toLowerCase();
+  if (e === 'pdf') return 'fa-file-pdf';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'tif', 'tiff', 'bmp', 'svg'].indexOf(e) !== -1) return 'fa-file-image';
+  if (['doc', 'docx', 'rtf', 'odt'].indexOf(e) !== -1) return 'fa-file-word';
+  if (['xls', 'xlsx', 'ods'].indexOf(e) !== -1) return 'fa-file-excel';
+  if (['ppt', 'pptx'].indexOf(e) !== -1) return 'fa-file-powerpoint';
+  if (e === 'csv') return 'fa-file-csv';
+  if (['txt', 'md', 'log'].indexOf(e) !== -1) return 'fa-file-lines';
+  if (['zip', 'rar', '7z', 'gz'].indexOf(e) !== -1) return 'fa-file-zipper';
+  if (['mp3', 'wav', 'm4a'].indexOf(e) !== -1) return 'fa-file-audio';
+  if (['mp4', 'mov', 'avi', 'mkv'].indexOf(e) !== -1) return 'fa-file-video';
+  return 'fa-file';
+}
+
+function docTitle(d) {
+  return d.title || d.name || ('#' + d.id);
+}
+
+/* The extensions /raw will serve inline. MUST stay in step with
+   RAW_INLINE_MIME in routes/api.documents.js — this copy exists so a
+   non-viewable document never spends a round-trip discovering that. A drift
+   is not dangerous (the server's list is the one that decides; ours only
+   decides whether to ask), but it is a wasted 413 or a missing View button. */
+var INLINE_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp'];
+function isInlineExt(ext) {
+  return INLINE_EXT.indexOf(String(ext || '').toLowerCase()) !== -1;
+}
+
+function tagList(tags) {
+  return String(tags || '').split(',').map(function (t) { return t.trim(); })
+    .filter(Boolean);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// List fetch + render
+// ════════════════════════════════════════════════════════════════════════════
+function buildListParams() {
+  // Only non-empty keys: URLSearchParams stringifies undefined as the literal
+  // "undefined", so an empty facet must be omitted entirely, not sent blank.
+  var p = {
+    sort:   state.sort,
+    limit:  state.pageSize,
+    offset: (state.page - 1) * state.pageSize,
+  };
+  if (state.q)        p.q        = state.q;
+  if (state.doc_type) p.doc_type = state.doc_type;
+  if (state.tag)      p.tag      = state.tag;
+  if (state.status)   p.status   = state.status;
+  if (SCOPED) {
+    p.link_type = LINK_TYPE;
+    p.link_id   = LINK_ID;
+  }
+  return p;
+}
+
+function renderState(html, cls) {
+  E('listWrap').innerHTML =
+    '<div class="state' + (cls ? ' ' + cls : '') + '">' + html + '</div>';
+}
+
+async function fetchDocs() {
+  state.loading = true;
+  renderState('<i class="fa-solid fa-spinner fa-spin"></i>Loading…');
+
+  var data;
+  try {
+    data = await api('/api/documents', 'GET', buildListParams());
+  } catch (err) {
+    state.loading = false;
+    renderState(
+      '<i class="fa-solid fa-circle-exclamation"></i>Failed to load documents.'
+      + '<div class="sub">' + esc(err && err.message || err) + '</div>'
+      + '<div style="margin-top:12px;"><button class="btn btn-outline btn-sm" onclick="fetchDocs()">'
+      + '<i class="fa-solid fa-arrows-rotate"></i> Retry</button></div>',
+      'err'
+    );
+    E('pager').innerHTML = '';
+    setCount('');
+    return;
+  }
+
+  state.loading = false;
+  state.docs  = Array.isArray(data.documents) ? data.documents : [];
+  state.total = Number(data.total) || 0;
+
+  // Clamp if we ran past the end (a filter change, or rows leaving the
+  // status window) and re-fetch once.
+  var maxPage = Math.max(1, Math.ceil(state.total / state.pageSize));
+  if (state.page > maxPage) {
+    state.page = maxPage;
+    return fetchDocs();
+  }
+
+  renderList();
+  renderPagination();
+  renderFacetHints();
+  setCount(state.total
+    ? state.total + ' document' + (state.total === 1 ? '' : 's')
+    : '');
+}
+window.fetchDocs = fetchDocs;   // referenced by the Retry button's onclick
+
+function setCount(text) {
+  E('topCount').textContent    = text;
+  E('scopedCount').textContent = text;
+}
+
+function emptyStateHtml() {
+  var filtered = state.q || state.doc_type || state.tag || state.status;
+  if (filtered) {
+    return '<i class="fa-solid fa-filter-circle-xmark"></i>'
+         + 'No documents match your filters.'
+         + '<div class="sub">Try clearing the search or filters.</div>';
+  }
+  if (SCOPED) {
+    /* THIS WORDING MATTERS THIS WEEK. The S2 backfill is still walking the
+       tree while S3 ships, so a case whose folder has not been reached yet
+       has a genuinely empty registry — and "No documents" next to a case
+       everyone knows has forty files in Dropbox reads as a broken widget. */
+    return '<i class="fa-solid fa-folder-open"></i>'
+         + 'No documents synced yet.'
+         + '<div class="sub">Files are indexed from Dropbox in the background. '
+         + 'Nothing has been linked to this ' + esc(SCOPE_WORD) + ' yet.</div>';
+  }
+  return '<i class="fa-solid fa-folder-open"></i>'
+       + 'No documents in the registry yet.'
+       + '<div class="sub">Files are indexed from Dropbox in the background.</div>';
+}
+
+function rowHtml(d) {
+  var gone   = d.status && d.status !== 'active';
+  var inline = isInlineExt(d.ext);
+  var tags   = tagList(d.tags);
+
+  var chips = '';
+  if (d.doc_type) chips += '<span class="chip type">' + esc(d.doc_type) + '</span>';
+  chips += tags.map(function (t) {
+    return '<span class="chip">' + esc(t) + '</span>';
+  }).join('');
+  if (d.shared_link) {
+    chips += '<span class="chip pub" title="A permanent public link exists for this document">'
+           + '<i class="fa-solid fa-globe"></i> public</span>';
+  }
+  if (gone) chips += '<span class="chip gone">' + esc(d.status) + '</span>';
+
+  // The title (human) is the headline when set; the file name is then the
+  // subtitle. Untitled rows show the file name as the headline and the path
+  // as the subtitle — the path is how staff recognise a case folder.
+  var head = esc(docTitle(d));
+  var sub  = d.title ? esc(d.name) : esc(d.path || '');
+
+  return ''
+    + '<tr class="doc-row' + (gone ? ' is-gone' : '') + '" data-row-id="' + d.id + '">'
+    +   '<td>'
+    +     '<div class="d-name"><i class="fa-solid ' + iconForExt(d.ext) + ' d-icon"></i>' + head + '</div>'
+    +     (sub ? '<div class="d-sub">' + sub + '</div>' : '')
+    +     (chips ? '<div style="margin-top:3px">' + chips + '</div>' : '')
+    +   '</td>'
+    +   '<td class="num wide-only">' + esc(fmtSize(d.size)) + '</td>'
+    +   '<td class="nowrap">' + esc(fmtDate(d.server_modified)) + '</td>'
+    +   '<td class="acts">'
+    +     '<button class="icon-btn" title="' + (inline ? 'View' : 'Not viewable inline — downloads instead') + '" '
+    +       'onclick="onView(' + d.id + ')"><i class="fa-solid fa-eye"></i></button>'
+    +     '<button class="icon-btn" title="Download" onclick="onDownload(' + d.id + ')">'
+    +       '<i class="fa-solid fa-download"></i></button>'
+    +     '<button class="icon-btn" title="Copy public link" onclick="onCopyLink(' + d.id + ', this)">'
+    +       '<i class="fa-solid fa-link"></i></button>'
+    +     '<button class="icon-btn" title="Edit title, type and tags" onclick="onEdit(' + d.id + ')">'
+    +       '<i class="fa-solid fa-pen"></i></button>'
+    +     '<button class="icon-btn" title="Links" onclick="onLinks(' + d.id + ')">'
+    +       '<i class="fa-solid fa-diagram-project"></i></button>'
+    +   '</td>'
+    + '</tr>';
+}
+
+function renderList() {
+  if (!state.docs.length) {
+    renderState(emptyStateHtml());
+    return;
+  }
+  E('listWrap').innerHTML =
+    '<table id="docTable">'
+    + '<thead><tr>'
+    +   '<th>Document</th>'
+    +   '<th class="num wide-only">Size</th>'
+    +   '<th>Modified</th>'
+    +   '<th></th>'
+    + '</tr></thead>'
+    + '<tbody>' + state.docs.map(rowHtml).join('') + '</tbody>'
+    + '</table>';
+}
+
+/** Repaint ONE row in place — used by the bus's value path, which must not
+ *  cost a fetch. */
+function replaceRow(d) {
+  var el = document.querySelector('[data-row-id="' + d.id + '"]');
+  if (el) el.outerHTML = rowHtml(d);
+}
+
+/* Datalist hints for the two free-text facets. The registry has no facet
+   endpoint (no /api/documents/doc-types, no /api/documents/tags), so these
+   are built from the CURRENT PAGE only — which is why they are a <datalist>
+   on a text input and not a <select>: a hint that may be incomplete is fine,
+   a dropdown that silently cannot offer a value that exists is not. */
+function renderFacetHints() {
+  if (SCOPED) return;
+  var types = {}, tags = {};
+  state.docs.forEach(function (d) {
+    if (d.doc_type) types[d.doc_type] = 1;
+    tagList(d.tags).forEach(function (t) { tags[t] = 1; });
+  });
+  E('dl-doctype').innerHTML = Object.keys(types).sort().map(function (t) {
+    return '<option value="' + esc(t) + '">';
+  }).join('');
+  E('dl-tag').innerHTML = Object.keys(tags).sort().map(function (t) {
+    return '<option value="' + esc(t) + '">';
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Pagination
+// ════════════════════════════════════════════════════════════════════════════
+function renderPagination() {
+  var pager = E('pager');
+  var total = state.total;
+  if (!total) { pager.innerHTML = ''; return; }
+
+  var maxPage = Math.max(1, Math.ceil(total / state.pageSize));
+  if (maxPage === 1) { pager.innerHTML = ''; return; }
+
+  var cur   = state.page;
+  var start = (cur - 1) * state.pageSize + 1;
+  var end   = Math.min(cur * state.pageSize, total);
+
+  var nums = [1, maxPage, cur, cur - 1, cur - 2, cur + 1, cur + 2]
+    .filter(function (n, i, a) { return n >= 1 && n <= maxPage && a.indexOf(n) === i; })
+    .sort(function (a, b) { return a - b; });
+
+  var html = '<span class="range">' + start + '–' + end + ' of ' + total + '</span>';
+  html += '<button class="page-btn" ' + (cur <= 1 ? 'disabled' : '')
+        + ' onclick="gotoPage(' + (cur - 1) + ')"><i class="fa-solid fa-chevron-left"></i></button>';
+
+  var prev = 0;
+  nums.forEach(function (n) {
+    if (n - prev > 1) html += '<span class="ellipsis">…</span>';
+    html += '<button class="page-btn ' + (n === cur ? 'active' : '') + '" '
+          + 'onclick="gotoPage(' + n + ')">' + n + '</button>';
+    prev = n;
+  });
+
+  html += '<button class="page-btn" ' + (cur >= maxPage ? 'disabled' : '')
+        + ' onclick="gotoPage(' + (cur + 1) + ')"><i class="fa-solid fa-chevron-right"></i></button>';
+
+  pager.innerHTML = html;
+}
+
+window.gotoPage = function (n) {
+  var maxPage = Math.max(1, Math.ceil(state.total / state.pageSize));
+  var target  = Math.min(Math.max(1, n), maxPage);
+  if (target === state.page) return;
+  state.page = target;
+  fetchDocs();
+  E('scroll').scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Toolbar handlers
+// ════════════════════════════════════════════════════════════════════════════
+var searchTimer = null;
+window.onSearchInput = function (v) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(function () {
+    state.q = (v || '').trim();
+    state.page = 1;
+    fetchDocs();
+  }, 280);
+};
+window.onDocTypeChange = function (v) { state.doc_type = (v || '').trim(); state.page = 1; fetchDocs(); };
+window.onTagChange     = function (v) { state.tag      = (v || '').trim(); state.page = 1; fetchDocs(); };
+window.onStatusChange  = function (v) { state.status   = v || '';          state.page = 1; fetchDocs(); };
+window.onSortChange    = function (v) { state.sort     = v || 'modified';  state.page = 1; fetchDocs(); };
+
+window.onRefresh = async function () {
+  await fetchDocs();
+  Toast.fire({ icon: 'success', title: 'Refreshed' });
+};
+
+/** Parent hook — mirrors reloadTasks / reloadChecklists / refreshEsign, so a
+ *  host tab can push a reload on re-entry without knowing anything else. */
+window.reloadDocuments = fetchDocs;
+
+function findDoc(id) {
+  for (var i = 0; i < state.docs.length; i++) {
+    if (String(state.docs[i].id) === String(id)) return state.docs[i];
+  }
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Viewer
+// ════════════════════════════════════════════════════════════════════════════
+var viewer = { url: null, timer: null, doc: null };
+
+function revokeViewerUrl() {
+  if (viewer.timer) { clearTimeout(viewer.timer); viewer.timer = null; }
+  if (viewer.url) {
+    try { URL.revokeObjectURL(viewer.url); } catch (_) { /* noop */ }
+    viewer.url = null;
+  }
+}
+
+window.closeViewer = function () {
+  E('viewer').classList.remove('open');
+  E('vwBody').innerHTML = '';
+  viewer.doc = null;
+  revokeViewerUrl();
+};
+
+window.viewerOpenTab = function () {
+  if (!viewer.url) return;
+  // A blob URL in a tab needs no auth and gets the browser's native PDF /
+  // image viewer, with print and save. Same move as formInbox's shift-click.
+  var w = window.open(viewer.url, '_blank');
+  if (!w) Toast.fire({ icon: 'warning', title: 'Popup blocked' });
+};
+
+window.viewerDownload = function () {
+  if (viewer.doc) onDownload(viewer.doc.id);
+};
+
+/**
+ * View a document.
+ *
+ * Three outcomes, and every one of them ends with the user holding the file:
+ *   inline-capable ext  → /raw as a blob → in-page modal
+ *   413 (too big / size unknown) → silently degrade to the /view download
+ *   non-inline ext      → skip /raw entirely and go straight to /view
+ */
+window.onView = async function (id) {
+  var d = findDoc(id);
+  if (!d) return;
+
+  if (!isInlineExt(d.ext)) return onDownload(id);
+
+  var btn = document.querySelector('[data-row-id="' + id + '"] .icon-btn');
+  if (btn) btn.disabled = true;
+
+  var blob;
+  try {
+    blob = await api('/api/documents/' + id + '/raw', 'GET', null, {},
+                     { responseType: 'blob' });
+  } catch (err) {
+    if (btn) btn.disabled = false;
+    if (err && err.status === 413) {
+      // The degrade path the size gate exists to produce. Not an error the
+      // user has to act on — just tell them what is happening and do it.
+      Toast.fire({ icon: 'info', title: 'Too large to preview — downloading instead' });
+      return onDownload(id);
+    }
+    if (err && err.status === 410) {
+      Toast.fire({ icon: 'error', title: 'This document was deleted from storage' });
+      return;
+    }
+    Toast.fire({ icon: 'error', title: 'View failed: ' + (err && err.message || err) });
+    return;
+  }
+  if (btn) btn.disabled = false;
+
+  revokeViewerUrl();
+  viewer.url = URL.createObjectURL(blob);
+  viewer.doc = d;
+
+  var ext = String(d.ext || '').toLowerCase();
+  E('vwTitle').textContent = docTitle(d);
+  E('vwBody').innerHTML = ext === 'pdf'
+    ? '<iframe src="' + viewer.url + '" title="' + esc(docTitle(d)) + '"></iframe>'
+    : '<img src="' + viewer.url + '" alt="' + esc(docTitle(d)) + '">';
+  E('viewer').classList.add('open');
+
+  // Safety revoke. The close handler is the real one; this catches a frame
+  // that gets navigated or torn down with the viewer still open.
+  viewer.timer = setTimeout(revokeViewerUrl, 300000);
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Download — always the EXPIRING /view URL, never a minted share link
+// ════════════════════════════════════════════════════════════════════════════
+window.onDownload = async function (id) {
+  try {
+    var res = await api('/api/documents/' + id + '/view', 'GET');
+    if (!res || !res.url) throw new Error('No download URL returned');
+    var w = window.open(res.url, '_blank');
+    if (!w) {
+      // Popup blockers fire on a window.open that follows an await. Hand the
+      // URL over rather than swallowing the action.
+      Swal.fire({
+        icon: 'info',
+        title: 'Open the download',
+        html: '<a href="' + esc(res.url) + '" target="_blank" rel="noopener">'
+            + 'Click here to download</a>'
+            + '<div class="swal-note" style="margin-top:8px">'
+            + 'Your browser blocked the automatic download.</div>',
+      });
+    }
+  } catch (err) {
+    if (err && err.status === 410) {
+      Toast.fire({ icon: 'error', title: 'This document was deleted from storage' });
+      return;
+    }
+    Toast.fire({ icon: 'error', title: 'Download failed: ' + (err && err.message || err) });
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Share — the ONLY place a permanent public URL is minted
+// ════════════════════════════════════════════════════════════════════════════
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) {
+      var orig = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+      setTimeout(function () { btn.innerHTML = orig; }, 1400);
+    } else {
+      Toast.fire({ icon: 'success', title: 'Link copied' });
+    }
+    return true;
+  } catch (_) {
+    // The Clipboard API is blocked in some iframe / permission contexts.
+    Swal.fire({
+      icon: 'info', title: 'Copy manually',
+      html: '<textarea readonly style="width:100%;height:64px;font-family:var(--mono);'
+          + 'font-size:11px;">' + esc(text) + '</textarea>',
+    });
+    return false;
+  }
+}
+
+window.onCopyLink = async function (id, btn) {
+  var d = findDoc(id);
+  if (!d) return;
+
+  // Already shared → nothing to mint, nothing to confirm. Just copy.
+  if (d.shared_link) return void copyText(d.shared_link, btn);
+
+  /* FIRST MINT IS A CONSENT STEP, and the wording is not decoration. /share
+     creates a PERMANENT, PUBLIC, UNAUTHENTICATED Dropbox URL: anyone holding
+     it can read the file forever, with no login and no audit trail, and this
+     UI is the only thing standing between "copy a link" and that. Say what it
+     is, in those words, before the first one exists. */
+  var r = await Swal.fire({
+    icon: 'warning',
+    title: 'Create a public link?',
+    html: '<div style="text-align:left">'
+        + '<p>This creates a <b>permanent, public link</b> to '
+        + '“' + esc(docTitle(d)) + '”.</p>'
+        + '<p class="swal-note" style="margin-top:8px">'
+        + 'Anyone with the link can open the document — no login required — and '
+        + 'the link does not expire. Use it for sending a document to a client, '
+        + 'not for viewing it yourself.</p></div>',
+    showCancelButton: true,
+    confirmButtonText: 'Create public link',
+    confirmButtonColor: 'var(--warn-fill)',
+  });
+  if (!r.isConfirmed) return;
+
+  try {
+    var res = await api('/api/documents/' + id + '/share', 'POST');
+    if (!res || !res.shared_link) throw new Error('No link returned');
+    d.shared_link = res.shared_link;
+    replaceRow(d);
+    await copyText(res.shared_link, null);
+  } catch (err) {
+    Swal.fire('Could not create link', (err && err.message) || String(err), 'error');
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Edit — title / doc_type / tags
+// ════════════════════════════════════════════════════════════════════════════
+window.onEdit = async function (id) {
+  var d = findDoc(id);
+  if (!d) return;
+
+  var r = await Swal.fire({
+    title: 'Edit document',
+    width: 500,
+    html:
+      '<div style="text-align:left">'
+      +   '<div class="swal-note" style="margin-bottom:10px;overflow-wrap:anywhere">'
+      +     esc(d.name) + '</div>'
+      +   '<label class="swal-lbl">Title</label>'
+      +   '<input id="ed-title" class="swal2-input" style="width:100%;margin:4px 0 12px" '
+      +     'maxlength="255" value="' + esc(d.title || '') + '">'
+      +   '<label class="swal-lbl">Type</label>'
+      +   '<input id="ed-type" class="swal2-input" style="width:100%;margin:4px 0 12px" '
+      +     'maxlength="64" value="' + esc(d.doc_type || '') + '">'
+      +   '<label class="swal-lbl">Tags '
+      +     '<span class="swal-note">(comma-separated)</span></label>'
+      +   '<input id="ed-tags" class="swal2-input" style="width:100%;margin:4px 0 0" '
+      +     'value="' + esc(d.tags || '') + '">'
+      + '</div>',
+    showCancelButton: true,
+    confirmButtonText: 'Save',
+    focusConfirm: false,
+    preConfirm: function () {
+      return {
+        title:    document.getElementById('ed-title').value,
+        doc_type: document.getElementById('ed-type').value,
+        tags:     document.getElementById('ed-tags').value,
+      };
+    },
+  });
+  if (!r.isConfirmed || !r.value) return;
+
+  try {
+    var res = await api('/api/documents/' + id, 'PATCH', r.value);
+    if (res && res.document) {
+      // The response is the whole fresh row; merge rather than replace so any
+      // join-only field a future list query adds survives.
+      var idx = state.docs.indexOf(d);
+      var merged = Object.assign({}, d, res.document);
+      if (idx !== -1) state.docs[idx] = merged;
+      replaceRow(merged);
+      renderFacetHints();
+    }
+    Toast.fire({ icon: 'success', title: 'Saved' });
+  } catch (err) {
+    Swal.fire('Save failed', (err && err.message) || String(err), 'error');
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Links — which cases / contacts this document hangs off
+// ════════════════════════════════════════════════════════════════════════════
+function linksHtml(links) {
+  if (!links.length) {
+    return '<div class="swal-note">Not linked to anything yet.</div>';
+  }
+  return '<table style="width:100%;border-collapse:collapse">'
+    + links.map(function (l) {
+        var mine = SCOPED && l.link_type === LINK_TYPE && String(l.link_id) === String(LINK_ID);
+        return '<tr>'
+          + '<td style="padding:4px 6px;border-top:1px solid var(--border)">'
+          +   '<span class="chip type">' + esc(l.link_type) + '</span> '
+          +   esc(l.link_id)
+          +   (l.relation ? ' <span class="swal-note">(' + esc(l.relation) + ')</span>' : '')
+          +   (mine ? ' <span class="swal-note">— this ' + esc(SCOPE_WORD) + '</span>' : '')
+          + '</td>'
+          + '<td style="padding:4px 6px;border-top:1px solid var(--border);text-align:right">'
+          +   '<button class="btn btn-outline btn-sm" data-unlink-type="' + esc(l.link_type) + '" '
+          +     'data-unlink-id="' + esc(l.link_id) + '">'
+          +     '<i class="fa-solid fa-link-slash"></i> '
+          +     (mine ? 'Unlink from this ' + esc(SCOPE_WORD) : 'Unlink')
+          +   '</button>'
+          + '</td></tr>';
+      }).join('')
+    + '</table>';
+}
+
+window.onLinks = async function (id) {
+  var d = findDoc(id);
+  if (!d) return;
+
+  var links = [];
+  try {
+    var res = await api('/api/documents/' + id, 'GET');
+    links = Array.isArray(res && res.links) ? res.links : [];
+  } catch (err) {
+    Swal.fire('Could not load links', (err && err.message) || String(err), 'error');
+    return;
+  }
+
+  var changed = false;
+
+  await Swal.fire({
+    title: 'Links',
+    width: 560,
+    html:
+      '<div style="text-align:left">'
+      +   '<div class="swal-note" style="margin-bottom:10px;overflow-wrap:anywhere">'
+      +     esc(docTitle(d)) + '</div>'
+      +   '<div id="lk-list">' + linksHtml(links) + '</div>'
+      +   '<hr style="margin:12px 0;border:0;border-top:1px solid var(--border)">'
+      +   '<label class="swal-lbl">Add a link</label>'
+      +   '<div style="display:flex;gap:6px;margin-top:6px">'
+      +     '<select id="lk-type" class="swal2-input" style="flex:0 0 120px;margin:0">'
+      +       '<option value="case"' + (LINK_TYPE === 'case' ? ' selected' : '') + '>case</option>'
+      +       '<option value="contact"' + (LINK_TYPE === 'contact' ? ' selected' : '') + '>contact</option>'
+      +     '</select>'
+      +     '<input id="lk-id" class="swal2-input" style="flex:1;margin:0" '
+      +       'maxlength="64" placeholder="id" value="' + esc(SCOPED ? LINK_ID : '') + '">'
+      +     '<button id="lk-add" class="btn btn-primary btn-sm">'
+      +       '<i class="fa-solid fa-plus"></i> Link</button>'
+      +   '</div>'
+      + '</div>',
+    showConfirmButton: false,
+    showCloseButton: true,
+    didOpen: function () {
+      var listEl = document.getElementById('lk-list');
+
+      function repaint() { listEl.innerHTML = linksHtml(links); }
+
+      listEl.addEventListener('click', async function (ev) {
+        var btn = ev.target.closest('[data-unlink-type]');
+        if (!btn) return;
+        btn.disabled = true;
+        var t = btn.getAttribute('data-unlink-type');
+        var i = btn.getAttribute('data-unlink-id');
+        try {
+          await api('/api/documents/' + id + '/links', 'DELETE',
+                    { link_type: t, link_id: i });
+          links = links.filter(function (l) {
+            return !(l.link_type === t && String(l.link_id) === String(i));
+          });
+          changed = true;
+          repaint();
+        } catch (err) {
+          btn.disabled = false;
+          Toast.fire({ icon: 'error', title: (err && err.message) || 'Unlink failed' });
+        }
+      });
+
+      document.getElementById('lk-add').addEventListener('click', async function () {
+        var t = document.getElementById('lk-type').value;
+        var i = (document.getElementById('lk-id').value || '').trim();
+        if (!i) { Toast.fire({ icon: 'warning', title: 'Enter an id' }); return; }
+        this.disabled = true;
+        try {
+          var res = await api('/api/documents/' + id + '/links', 'POST',
+                              { link_type: t, link_id: i });
+          links = Array.isArray(res && res.links) ? res.links : links;
+          changed = true;
+          repaint();
+        } catch (err) {
+          Toast.fire({ icon: 'error', title: (err && err.message) || 'Link failed' });
+        }
+        this.disabled = false;
+      });
+    },
+  });
+
+  if (changed) {
+    // A scoped list may have gained or lost this row; a global list has not
+    // changed at all, but its Links state has. Refetch either way — and stamp
+    // the fence first, so our own bus echo does not buy a second identical GET.
+    linksLastRefresh = Date.now();
+    fetchDocs();
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sync bus (public/js/yc-sync.js)
+//
+// §3.6: a handler triggered by a bus message MUST NEVER EMIT. Everything below
+// reads, merges, paints, or issues a GET — and a GET can never announce (the
+// sniff's method gate drops it), so this is structurally safe.
+// ════════════════════════════════════════════════════════════════════════════
+var refetchTimer = null;
+function scheduleRefetch() {
+  clearTimeout(refetchTimer);
+  refetchTimer = setTimeout(function () { fetchDocs(); }, 250);
+}
+
+if (window.YC) {
+  /* ONE `documents` row changed. PATCH and /share both carry REAL VALUES, so
+     the common case costs no fetch at all: merge and repaint one row.
+
+     A message about a row we are not currently listing is IGNORED. That is
+     right for the values we carry (nothing on screen references it) and it
+     accepts one narrow miss: a document whose status flips back to 'active'
+     elsewhere does not appear in an active-only list until the next load.
+     Announcing an id is not enough to place a row correctly in a sorted,
+     paged, filtered window anyway — that needs the list query. */
+  window.YC.on('document:*', '*', function (fields, msg) {
+    if (Object.prototype.hasOwnProperty.call(fields, 'yc_refetch')) {
+      scheduleRefetch();
+      return;
+    }
+    var id = String(msg.addr).slice('document:'.length);
+    var d  = findDoc(id);
+    if (!d) return;
+
+    Object.assign(d, fields);
+
+    // A status change can move the row OUT of the current window, and the
+    // total would then be a lie. That one needs the query.
+    if (Object.prototype.hasOwnProperty.call(fields, 'status')) {
+      var wanted = state.status || 'active';
+      if (wanted !== 'all' && d.status !== wanted) { scheduleRefetch(); return; }
+    }
+    replaceRow(d);
+  });
+
+  /* The TARGET'S LINK SET changed — a document was attached to or detached
+     from this case/contact. Only a scoped widget cares, and only about its
+     own target: an unscoped global list shows the same rows either way, and
+     subscribing it to `doclink:*` would make every link action anywhere cost
+     it a pointless refetch. */
+  if (SCOPED) {
+    window.YC.on('doclink:' + LINK_TYPE + ':' + LINK_ID, '*', function () {
+      // Echo fence — see linksLastRefresh.
+      if (Date.now() - linksLastRefresh < 1500) return;
+      scheduleRefetch();
+    });
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Boot — wait for the shell's transport (the caseWidget idiom).
+// ════════════════════════════════════════════════════════════════════════════
+(function waitForShell() {
+  if (shellRealm()) { fetchDocs(); return; }
+  setTimeout(waitForShell, 100);
+})();
+
+})();
+</script>
+</body>
+</html>

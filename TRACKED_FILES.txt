@@ -212,6 +212,7 @@ public/customView.html
 public/dbConsole.html
 public/docReq.html
 public/docs.html
+public/documents.html
 public/esign/caseWidget.html
 public/esign/dashboard.html
 public/esign/esignActions.js
@@ -647,6 +648,7 @@ tests/dbTransientRetry.test.js
 tests/documentService.test.js
 tests/documentSourceService.test.js
 tests/documentSyncService.test.js
+tests/documentsRoutes.test.js
 tests/dropboxService.normalizePath.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js

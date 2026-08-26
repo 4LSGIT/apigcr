@@ -750,6 +750,83 @@ describe('list', () => {
     expect((await ran({ limit: 'junk' })).sql).toContain('LIMIT 50');
     expect((await ran({ offset: -5 })).sql).toContain('OFFSET 0');
   });
+
+  // ── S3: the `modified` sort ────────────────────────────────────────────
+  //
+  // The S3 UI's DEFAULT sort, and the only one that means anything on real
+  // post-backfill data: every row shares one `updated_at` after the bulk
+  // pass, so `newest` orders ~150k rows by their tiebreak alone.
+
+  test("sort 'modified' orders by server_modified, NULLS LAST, id-tiebroken", async () => {
+    const { sql } = await ran({ sort: 'modified' });
+    expect(sql).toContain(
+      'ORDER BY (d.server_modified IS NULL) ASC, d.server_modified DESC, d.id DESC');
+  });
+
+  test("'modified' puts NULLs LAST — MySQL sorts NULL low, so a bare DESC inverts it", async () => {
+    // REGRESSION GUARD. Without the `(x IS NULL) ASC` leader, every row whose
+    // provider reported no server_modified lands at the TOP of a newest-first
+    // list: the loudest position in the UI for the least informative rows.
+    const { sql } = await ran({ sort: 'modified' });
+    const order = sql.slice(sql.indexOf('ORDER BY'));
+    expect(order.indexOf('(d.server_modified IS NULL) ASC'))
+      .toBeLessThan(order.indexOf('d.server_modified DESC'));
+  });
+
+  test("'modified' does NOT repoint newest/oldest — they still mean updated_at", async () => {
+    // The two are different facts: `updated_at` is when the REGISTRY last
+    // wrote the row (a sync audit wants that), `server_modified` is when
+    // Dropbox last wrote the file (staff want that). Collapsing them loses one.
+    expect((await ran({ sort: 'newest' })).sql).toContain('ORDER BY d.updated_at DESC');
+    expect((await ran({ sort: 'oldest' })).sql).toContain('ORDER BY d.updated_at ASC');
+    expect((await ran({ sort: 'newest' })).sql).not.toContain('server_modified');
+  });
+
+  test('sort is an EXACT map lookup — near-misses fall back, they do not fuzzy-match', async () => {
+    // `SORT_MAP[sort]` is exact. A caller sending 'Modified' or ' modified'
+    // must land on the newest fallback rather than on something that happens
+    // to look close, and no spelling of the input may reach SQL as text.
+    for (const junk of ['Modified', ' modified', 'modified ', 'MODIFIED',
+                        'modified;--', 'server_modified', '']) {
+      const { sql } = await ran({ sort: junk });
+      expect(sql).toContain('ORDER BY d.updated_at DESC, d.id DESC');
+      expect(sql).not.toContain('server_modified');
+      expect(sql).not.toContain(';');
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// SORT_MAP as a table (S3)
+//
+// Read through list()'s generated SQL rather than by exporting the map: the
+// map is private on purpose, and what actually ships is the ORDER BY.
+// ─────────────────────────────────────────────────────────────
+
+describe('SORT_MAP shape', () => {
+  async function orderFor(sort) {
+    const db = makeDb({ rows: [] });
+    await documentSvc.list(db, { sort });
+    const sql = db.sqlAt(0);
+    return sql.slice(sql.indexOf('ORDER BY'), sql.indexOf('LIMIT')).trim();
+  }
+
+  test('all five keys resolve, and each ends in a deterministic id tiebreak', async () => {
+    const map = {};
+    for (const k of ['newest', 'oldest', 'name', 'size', 'modified']) {
+      map[k] = await orderFor(k);
+    }
+    expect(map).toEqual({
+      newest:   'ORDER BY d.updated_at DESC, d.id DESC',
+      oldest:   'ORDER BY d.updated_at ASC, d.id ASC',
+      name:     'ORDER BY d.name ASC, d.id ASC',
+      size:     'ORDER BY (d.size IS NULL) ASC, d.size DESC, d.id DESC',
+      modified: 'ORDER BY (d.server_modified IS NULL) ASC, d.server_modified DESC, d.id DESC',
+    });
+    // No tiebreak → rows sharing a timestamp have no stable order and page 2
+    // can repeat a row from page 1. Every key must end on the primary key.
+    Object.values(map).forEach((o) => expect(o).toMatch(/d\.id (ASC|DESC)$/));
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
