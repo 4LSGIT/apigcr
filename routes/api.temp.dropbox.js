@@ -21,7 +21,9 @@
 //      `Dropbox-API-Arg` header — pass it via `headers`; non-ASCII chars in
 //      that header must be \uXXXX-escaped (see dropboxService.httpHeaderSafeJson).
 //      Responses are capped at 5 MB (body_truncated flags it) — this route is
-//      for exploration, not bulk transfer.
+//      for exploration, not bulk transfer. To pull actual file BYTES, set
+//      response_base64:true — the default utf8 decode corrupts binary data
+//      irrecoverably (status 200, error null, garbage body).
 //
 // REMOVAL: delete this file (auto-mount handles the rest) and revoke the key.
 //
@@ -36,6 +38,10 @@
 //     body?:        <string or object>,                // objects JSON.stringify'd
 //     body_base64?: "<base64 bytes>",                  // wins over `body`
 //     timeout_ms?: number,                             // default 30000, max 60000
+//     response_base64?: true,                          // REQUIRED for binary downloads:
+//                                                      // body returned base64-encoded.
+//                                                      // Without it, non-UTF-8 bytes are
+//                                                      // destroyed by utf8 decoding.
 //   }
 //   Returns: { status, status_text, headers, body, body_json, rate_limit,
 //              duration_ms, error, ... }
@@ -67,7 +73,7 @@ const MAX_TIMEOUT_MS     = 60_000;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;   // 5 MB
 const STRIPPED_USER_HEADERS = new Set(['host', 'content-length', 'authorization']);
 
-const RATE_LIMIT_HEADER_RE = /^(x-dropbox-|retry-after$)/i;
+const RATE_LIMIT_HEADER_RE = /^retry-after$/i;  // Dropbox's 429 signal; x-dropbox-* is request-id noise
 
 function sanitizeUserHeaders(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
@@ -97,7 +103,7 @@ function pickRateLimit(headerObj) {
 }
 
 async function readBodyCapped(res, cap = MAX_RESPONSE_BYTES) {
-  if (!res.body) return { body: '', truncated: false, size: 0 };
+  if (!res.body) return { buffer: Buffer.alloc(0), truncated: false, size: 0 };
   const chunks = [];
   let total = 0;
   let truncated = false;
@@ -117,7 +123,7 @@ async function readBodyCapped(res, cap = MAX_RESPONSE_BYTES) {
   } catch (_) {
     truncated = true;
   }
-  return { body: Buffer.concat(chunks).toString('utf8'), truncated, size: total };
+  return { buffer: Buffer.concat(chunks), truncated, size: total };
 }
 
 /**
@@ -276,14 +282,18 @@ async function dispatch(req, res, body) {
     });
   }
 
-  const { body: respBody, truncated: bodyTruncated, size: respSize } =
+  const { buffer: respBuffer, truncated: bodyTruncated, size: respSize } =
     await readBodyCapped(fetchResponse);
 
   const respHeaders = headersToObject(fetchResponse.headers);
 
+  // Binary-safe path: base64 the raw bytes, skip JSON parsing.
+  const wantBase64 = body.response_base64 === true;
+  const respBody = respBuffer.toString(wantBase64 ? 'base64' : 'utf8');
+
   // Auto-parse JSON so callers don't have to double-decode. Never throws.
   let bodyJson = null;
-  if (!bodyTruncated && /json/i.test(respHeaders['content-type'] || '')) {
+  if (!wantBase64 && !bodyTruncated && /json/i.test(respHeaders['content-type'] || '')) {
     try { bodyJson = JSON.parse(respBody); } catch (_) { bodyJson = null; }
   }
 
@@ -295,6 +305,7 @@ async function dispatch(req, res, body) {
     headers: respHeaders,
     rate_limit: pickRateLimit(respHeaders),
     body: respBody,
+    body_encoding: wantBase64 ? 'base64' : 'utf8',
     body_json: bodyJson,
     body_truncated: bodyTruncated,
     body_size: respSize,
