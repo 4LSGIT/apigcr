@@ -108,6 +108,14 @@ Different from the colour arc — contrast is settled, layout is not.
   families.
 - **A grep for a pattern also matches prose about that pattern.** Six instances
   in the colour arc, including two that changed a page's classification.
+- **Wiring a density token has a second file.** Twelve of the scale's fourteen
+  tokens are defined and referenced by nothing (all but `--pad-cell` and
+  `--pad-btn`), so the Theme page
+  (`public/themeCustom.html`, see THEME-HANDOFF-v2 §10) lists them in a
+  collapsed `UNUSED` group — a knob that moves nothing is worse than no knob.
+  The first slice to put a real `var()` on one takes it out of that list in the
+  same commit, or it stays hidden after it starts working. The regenerating
+  command is in a comment beside the list.
 
 ## 7. Open colour items, carried
 

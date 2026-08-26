@@ -338,6 +338,15 @@ This must be inline, not `themeSync.js`. The shell is the source of truth —
 it sets the attribute that every frame observes, so it cannot be waiting on a
 network fetch to do it.
 
+**Amended by §10.** The shell now *also* carries `<script src="/themeSync.js">`,
+immediately after the `theme.css` link. The inline script above stays exactly as
+written and still runs first — the tag is there for the other half of
+`themeSync.js`, applying the user's `yc-theme-vars` token overrides. Without it
+the header, sidebar and tab chrome are the only surfaces in the app that ignore
+the user's own theme. At top level `themeSync.js` re-reads the already-migrated
+`yc-theme`, sets the same value, and returns, so it cannot fight the inline
+script.
+
 ### 3.2 `applyTheme` with a legacy bridge
 
 ```js
@@ -535,6 +544,14 @@ Run all five before committing:
 4. Family B only: confirm light mode is actually legible. These pages have
    never rendered light; contrast was never checked against a white surface.
 5. No new console errors.
+6. If the page reads a token in JavaScript (step 1b found something), confirm it
+   redraws on `yc-theme-vars`, not only on `yc-theme` — see §10. A user changing
+   `--text` from the Theme page fires the first and not the second.
+
+Recovery, when a page renders unreadably and you are not sure whether it is your
+change or a token override: open it with `?notheme=1`. That disables user
+overrides for the whole browser tab and leaves stock `theme.css` standing, which
+tells you which of the two you are looking at. `?notheme=0` restores.
 
 ---
 
@@ -726,3 +743,88 @@ impossible to bisect.
   Filter comments before trusting a count — including the counts in this file.
 - **CSS greps do not see JavaScript.** Before declaring a page done, check the
   shared modules it loads for `getPropertyValue` and `classList.contains('dark')`.
+- **A theme flip is no longer the only way a colour changes.** Since §10, a user
+  can move any token at runtime without the mode changing. Any page that bakes a
+  computed token in at construction must listen for **both** `yc-theme` and
+  `yc-theme-vars`. `reports.html` is the precedent; it is currently the only
+  page that needs either.
+- **New tokens go in `:root` or the bare `html[data-theme="dark"]` block.** Any
+  other selector is invisible to the Theme page (§10) and therefore not
+  user-editable. This is on top of the `TOKEN-MAP.md` rule above, not instead of
+  it.
+- **Adding or wiring a token is a two-file job.** `public/themeCustom.html`
+  carries two hardcoded lists that cannot derive themselves: `UNUSED` (tokens
+  with no `var()` reference anywhere — a new token belongs in it, and a
+  newly-wired one comes out) and `PAIRS` (foreground/background pairs that get a
+  live contrast reading — add the pairing whenever you add a colour that
+  something sits on). Both carry their regeneration command in a comment beside
+  them. After touching `PAIRS`, or any colour in `theme.css`, run
+  `node scripts/checkThemePresets.js`.
+
+---
+
+## 10. User token overrides — the Theme page
+
+Landed after the colour arc. Each user can set their own value for any token in
+`theme.css`, per mode, stored in their browser. Reached from the More Features
+grid; the page is `public/themeCustom.html`.
+
+**Storage.** `localStorage['yc-theme-vars']`, next to `yc-theme`:
+
+```json
+{ "v":1, "preset":"warm-paper",
+  "light": { "--accent":"#b5651d" }, "dark": { "--surface":"#101018" } }
+```
+
+Only overridden tokens appear. Absent means inherit `theme.css`. `preset` is
+advisory — the two maps are what apply.
+
+**Application** lives in `themeSync.js`, and only there: it is the one script
+already running pre-paint in every in-arc page, at any depth. Values are applied
+with `documentElement.style.setProperty()`, deliberately **not** by injecting a
+`<style>`. An injected sheet means building CSS text out of user input, where one
+unescaped `}` writes arbitrary rules into every page in the app with no in-app
+way back; `setProperty` hands the value to the parser *as a value*, which
+validates it and cannot escape into a rule.
+
+The cost of inline style is that it is mode-blind, so the set is swapped on a
+`data-theme` change by a MutationObserver on the page's own `documentElement` —
+**not** by listening for `yc-theme`. §3.2's `applyTheme` sets the attribute
+without dispatching anything, and only the framed path in `themeSync.js`
+dispatches; watching the attribute covers the shell, every frame, and any future
+setter.
+
+**Propagation** is the `storage` event, which fires in every *other* same-origin
+document — the shell plus every open frame, at any depth, with no postMessage
+relay. The writing document gets no event of its own, so the Theme page
+re-applies itself through the exported `window.ycApplyThemeVars`.
+
+**Kill switch.** `?notheme=1` writes a `sessionStorage` flag rather than reading
+the query string directly, because the shell's frames are `data-src="/x.html"`
+with no query string of their own — a URL-only check would recover the header and
+sidebar and leave the actual app on the broken palette. `sessionStorage` is
+shared across same-origin frames in the same tab, so one param on the shell URL
+reaches every depth, including frames opened afterwards. `?notheme=0` clears it.
+
+**Token list.** Read live from the CSSOM, never hardcoded: the page walks
+`document.styleSheets` for rules whose `selectorText` is exactly `:root` or
+exactly `html[data-theme="dark"]`. Text-parsing that second block is wrong —
+`theme.css` opens **four** `html[data-theme="dark"]` blocks (the token block,
+C12's control baseline, and two SweetAlert blocks) and a regex welds them
+together. This is why §9 requires new tokens to live in those two blocks: a token
+declared anywhere else is simply not editable.
+
+**Contrast.** The Advanced tab measures every pair `theme.css` documents (grep
+`Pairing:`) as the user edits, badges each AA/AAA/fail, and counts the failures
+in the toolbar. Nothing is blocked — it is their browser — but it is never
+silent. The point is narrow and worth stating plainly: the tokens are not
+independent knobs, and a free-form colour picker over all 71 of them is a
+one-click way to rebuild the exact defect §9's retuning note describes. The
+Presets tab exists so that most users never touch the raw tokens at all; every
+preset is measured at AA or better in both modes by
+`scripts/checkThemePresets.js`, which reads `PAIRS` and `PRESETS` out of the page
+rather than duplicating them and exits non-zero on a failure.
+
+**Out of scope**, and correctly so: the §1 out-list. `portal/*`, `book.html`,
+`manage.html`, `esign/*` and `forms/341notes.html` load neither `theme.css` nor
+`themeSync.js`, so a user's theme does not follow them onto client-facing pages.
