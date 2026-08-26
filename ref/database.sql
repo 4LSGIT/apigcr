@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-26T18:28:32.065Z
+-- Generated: 2026-08-26T20:46:02.137Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:6ae338480297372e4b6d23911ac2fc92
+-- Fingerprint: sha256:2af14a709f513c97e357668a25dbe4a5
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1279,6 +1279,7 @@ CREATE TABLE `document_sync_roots` (
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
   `syncing_since` datetime DEFAULT NULL,
   `sync_cursor` text COLLATE utf8mb4_general_ci,
+  `backfill_done` tinyint(1) NOT NULL DEFAULT '0',
   `last_sync_at` datetime DEFAULT NULL,
   `last_error` text COLLATE utf8mb4_general_ci,
   `stats` json DEFAULT NULL,
