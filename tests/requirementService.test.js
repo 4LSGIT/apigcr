@@ -40,6 +40,14 @@ const reqSvc = require('../services/requirementService');
 const pipelineSvc = require('../services/pipelineService');
 const { scriptGuard } = require('./helpers/scriptGuard');
 
+// (R2.6) The report detector lazy-requires reportService; mock it so no test
+// here touches the report execution stack. Nothing else in this file uses it.
+jest.mock('../services/reportService', () => ({
+  getReport: jest.fn(),
+  runReport: jest.fn(),
+}));
+const reportService = require('../services/reportService');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -647,5 +655,242 @@ describe('overrides', () => {
     const upsert = db.calls[2];
     expect(upsert.params[3].length).toBe(255);
     expect(upsert.params[4]).toBe(0);                       // created_by-style 0 = system
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// case_field detector (R2.6 Tier 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('case_field detector', () => {
+  test('validateConfig: unknown key / non-whitelist field / non-object rejected; happy null', () => {
+    expect(detectors.validateDetectorConfig('case_field', { fields: 'x' }))
+      .toMatch(/unknown config key/);
+    const bad = detectors.validateDetectorConfig('case_field', { field: 'case_caption' });
+    expect(bad).toMatch(/field must be one of/);
+    expect(bad).toContain('case_open_date');          // message lists the whitelist
+    expect(detectors.validateDetectorConfig('case_field', [1])).toMatch(/object/);
+    expect(detectors.validateDetectorConfig('case_field', { field: 'case_discharge_date' }))
+      .toBeNull();
+  });
+
+  test('BATCHED: 2 cases × 2 field-requirements = ONE query with the union column list', async () => {
+    const db = stubDb([[
+      { case_id: 'A', case_file_date: '2026-01-15', docs_due: null },
+      { case_id: 'B', case_file_date: null, docs_due: new Date(2026, 4, 9) },
+    ]]);
+    const out = await detectors.DETECTORS.case_field.batchResolve(db, ['A', 'B'], [
+      req('filed', 'case_field', { field: 'case_file_date' }),
+      req('docs_deadline_set', 'case_field', { field: 'docs_due' }),
+    ]);
+    expect(db.calls.length).toBe(1);                            // the batching proof
+    expect(db.calls[0].sql).toContain('case_file_date, docs_due');
+    expect(db.calls[0].params).toEqual([['A', 'B']]);
+
+    const a = out.get('A').get('filed');
+    expect(a.satisfied_at).toBe('2026-01-15');                  // raw column value
+    expect(a.detail).toBe('2026-01-15');
+    expect(a.progress).toBeNull();
+    expect(out.get('A').has('docs_deadline_set')).toBe(false);  // NULL → unsatisfied
+    expect(out.get('B').has('filed')).toBe(false);
+    // Date objects format from LOCAL parts (a local-midnight DATE must not
+    // shift to the previous UTC day).
+    expect(out.get('B').get('docs_deadline_set').detail).toBe('2026-05-09');
+  });
+
+  test('same-key dedup: first config wins; single-column query', async () => {
+    const db = stubDb([[{ case_id: 'A', case_file_date: '2026-01-15' }]]);
+    const out = await detectors.DETECTORS.case_field.batchResolve(db, ['A'], [
+      req('dup', 'case_field', { field: 'case_file_date' }),
+      req('dup', 'case_field', { field: 'docs_due' }),
+    ]);
+    expect(db.calls[0].sql).toContain('case_file_date');
+    expect(db.calls[0].sql).not.toContain('docs_due');
+    expect(out.get('A').get('dup').satisfied_at).toBe('2026-01-15');
+  });
+
+  test('empty caseIds / empty reqs short-circuit with ZERO queries', async () => {
+    const db = stubDb([]);
+    expect((await detectors.DETECTORS.case_field.batchResolve(db, [], [
+      req('filed', 'case_field', { field: 'case_file_date' }),
+    ])).size).toBe(0);
+    expect((await detectors.DETECTORS.case_field.batchResolve(db, ['A'], [])).size).toBe(0);
+    expect(db.calls.length).toBe(0);
+  });
+
+  test('read-time guard: stored non-whitelist field warns, resolves unsatisfied, never reaches SQL', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = stubDb([]);
+      const out = await detectors.DETECTORS.case_field.batchResolve(db, ['A'], [
+        req('sneaky', 'case_field', { field: 'case_caption; DROP TABLE cases' }),
+      ]);
+      expect(out.size).toBe(0);
+      expect(db.calls.length).toBe(0);                          // filtered before the query
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('sneaky'));
+    } finally { warn.mockRestore(); }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// report detector (R2.6 Tier 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('report detector', () => {
+  beforeEach(() => {
+    reportService.getReport.mockReset();
+    reportService.runReport.mockReset();
+  });
+
+  test('validateConfig (sync shape): unknown key / blank / overlong rejected; happy null', () => {
+    expect(detectors.validateDetectorConfig('report', { key: 'x' }))
+      .toMatch(/unknown config key/);
+    expect(detectors.validateDetectorConfig('report', { report_key: '' }))
+      .toMatch(/non-empty string/);
+    expect(detectors.validateDetectorConfig('report', { report_key: 'a'.repeat(61) }))
+      .toMatch(/60/);
+    expect(detectors.validateDetectorConfig('report', { report_key: 'req_tax_returns' }))
+      .toBeNull();
+  });
+
+  describe('validateConfigDb', () => {
+    const vdb = (db, cfg) => detectors.DETECTORS.report.validateConfigDb(db, cfg);
+
+    test('missing report → error naming the key; getReport never called', async () => {
+      const db = stubDb([[]]);
+      expect(await vdb(db, { report_key: 'ghost' })).toMatch(/no report with report_key "ghost"/);
+      expect(reportService.getReport).not.toHaveBeenCalled();
+    });
+
+    test('inactive report → error', async () => {
+      const db = stubDb([[{ id: 9 }]]);
+      reportService.getReport.mockResolvedValue({ is_active: 0, params: [] });
+      expect(await vdb(db, { report_key: 'req_x' })).toMatch(/inactive/);
+      expect(reportService.runReport).not.toHaveBeenCalled();
+    });
+
+    test('report with params → error (zero-params contract)', async () => {
+      const db = stubDb([[{ id: 9 }]]);
+      reportService.getReport.mockResolvedValue({ is_active: 1, params: [{ name: 'x' }] });
+      expect(await vdb(db, { report_key: 'req_x' })).toMatch(/zero/);
+    });
+
+    test('runReport throw surfaces as the error message', async () => {
+      const db = stubDb([[{ id: 9 }]]);
+      reportService.getReport.mockResolvedValue({ is_active: 1, params: [] });
+      reportService.runReport.mockRejectedValue(new Error('EXPLAIN refused: full scan'));
+      expect(await vdb(db, { report_key: 'req_x' }))
+        .toMatch(/failed to run: EXPLAIN refused/);
+    });
+
+    test('missing required columns → error naming them (zero rows is fine — fields carry names)', async () => {
+      const db = stubDb([[{ id: 9 }]]);
+      reportService.getReport.mockResolvedValue({ is_active: 1, params: [] });
+      reportService.runReport.mockResolvedValue({ rows: [], fields: [{ name: 'case_id' }] });
+      expect(await vdb(db, { report_key: 'req_x' })).toMatch(/satisfied_at/);
+    });
+
+    test('happy path: runs the report exactly once as userId 0', async () => {
+      const db = stubDb([[{ id: 9 }]]);
+      reportService.getReport.mockResolvedValue({ is_active: 1, params: [] });
+      reportService.runReport.mockResolvedValue({
+        rows: [], fields: [{ name: 'case_id' }, { name: 'satisfied_at' }],
+      });
+      expect(await vdb(db, { report_key: 'req_x' })).toBeNull();
+      expect(reportService.runReport).toHaveBeenCalledTimes(1);
+      expect(reportService.runReport).toHaveBeenCalledWith(db, 9, {}, 0);
+    });
+  });
+
+  describe('batchResolve', () => {
+    test('ONE key→id lookup + one runReport per unique key; hits mapped with String() normalization', async () => {
+      const db = stubDb([[{ id: 9, report_key: 'req_x' }]]);
+      reportService.runReport.mockResolvedValue({
+        rows: [
+          { case_id: 12, satisfied_at: '2026-03-01', detail: 'Received' },
+          { case_id: 'B', satisfied_at: null, detail: '2 of 5', progress: '2/5' },
+        ],
+        fields: [{ name: 'case_id' }, { name: 'satisfied_at' }],
+      });
+      const out = await detectors.DETECTORS.report.batchResolve(db, [12, 'B', 'C'], [
+        req('tax_returns', 'report', { report_key: 'req_x' }),
+        req('tax_returns_again', 'report', { report_key: 'req_x' }),   // same key: still 1 run
+      ]);
+      expect(db.calls.length).toBe(1);                              // the ONLY direct query
+      expect(db.calls[0].params).toEqual([['req_x']]);
+      expect(reportService.runReport).toHaveBeenCalledTimes(1);
+      expect(reportService.runReport).toHaveBeenCalledWith(db, 9, {}, 0);
+
+      expect(out.get('12').get('tax_returns').satisfied_at).toBe('2026-03-01');
+      expect(out.get('12').get('tax_returns_again').satisfied_at).toBe('2026-03-01');
+      // NULL satisfied_at row = unsatisfied hit that still carries progress
+      const b = out.get('B').get('tax_returns');
+      expect(b.satisfied_at).toBeNull();
+      expect(b.progress).toBe('2/5');
+      expect(out.has('C')).toBe(false);
+    });
+
+    test('two distinct keys → two runReport calls, one lookup', async () => {
+      const db = stubDb([[{ id: 9, report_key: 'req_x' }, { id: 11, report_key: 'req_y' }]]);
+      reportService.runReport.mockResolvedValue({ rows: [], fields: [] });
+      await detectors.DETECTORS.report.batchResolve(db, ['A'], [
+        req('one', 'report', { report_key: 'req_x' }),
+        req('two', 'report', { report_key: 'req_y' }),
+      ]);
+      expect(db.calls.length).toBe(1);
+      expect(reportService.runReport).toHaveBeenCalledTimes(2);
+    });
+
+    test('FAIL-SOFT: runReport throw → warn naming requirement + key, all unsatisfied, no throw', async () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const db = stubDb([[{ id: 9, report_key: 'req_x' }]]);
+        reportService.runReport.mockRejectedValue(new Error('manifest retired table'));
+        const out = await detectors.DETECTORS.report.batchResolve(db, ['A'], [
+          req('tax_returns', 'report', { report_key: 'req_x' }),
+        ]);
+        expect(out.size).toBe(0);
+        expect(warn).toHaveBeenCalledWith(expect.stringMatching(/tax_returns[\s\S]*req_x[\s\S]*manifest retired/));
+      } finally { warn.mockRestore(); }
+    });
+
+    test('FAIL-SOFT: report_key not found → warn, unsatisfied, runReport never called', async () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const db = stubDb([[]]);
+        const out = await detectors.DETECTORS.report.batchResolve(db, ['A'], [
+          req('tax_returns', 'report', { report_key: 'ghost' }),
+        ]);
+        expect(out.size).toBe(0);
+        expect(reportService.runReport).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalled();
+      } finally { warn.mockRestore(); }
+    });
+
+    test('duplicate rows for one case: satisfied beats unsatisfied', async () => {
+      const db = stubDb([[{ id: 9, report_key: 'req_x' }]]);
+      reportService.runReport.mockResolvedValue({
+        rows: [
+          { case_id: 'A', satisfied_at: null, progress: '1/2' },
+          { case_id: 'A', satisfied_at: '2026-02-02' },
+        ],
+        fields: [],
+      });
+      const out = await detectors.DETECTORS.report.batchResolve(db, ['A'], [
+        req('r', 'report', { report_key: 'req_x' }),
+      ]);
+      expect(out.get('A').get('r').satisfied_at).toBe('2026-02-02');
+    });
+
+    test('empty caseIds / empty reqs short-circuit: zero queries, zero runs', async () => {
+      const db = stubDb([]);
+      expect((await detectors.DETECTORS.report.batchResolve(db, [], [
+        req('r', 'report', { report_key: 'req_x' }),
+      ])).size).toBe(0);
+      expect((await detectors.DETECTORS.report.batchResolve(db, ['A'], [])).size).toBe(0);
+      expect(db.calls.length).toBe(0);
+      expect(reportService.runReport).not.toHaveBeenCalled();
+    });
   });
 });

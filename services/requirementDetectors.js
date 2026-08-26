@@ -24,6 +24,15 @@
  *       trap. UNKNOWN KEYS ARE REJECTED (a typo'd key would otherwise
  *       silently fall back to a default and the requirement would test the
  *       wrong thing forever with no signal).
+ *   validateConfigDb(db, cfg) -> Promise<errorString | null>   [OPTIONAL]
+ *       (R2.6) Async write-time validation for detectors whose config
+ *       references LIVE DATA (report: does the report exist, is it active,
+ *       zero params, right columns). pipelineAdminService awaits it after
+ *       the sync validateConfig on every create/update — no
+ *       skip-on-unchanged; a save re-proves the config, same as R2's
+ *       revalidate-on-detector-switch rule. Detectors without it are
+ *       untouched. Same booby-trap philosophy, extended to state that only
+ *       the database can confirm.
  *   batchResolve(db, caseIds, reqs) ->
  *       Map<caseId, Map<requirement_key, hit>>
  *       hit = { satisfied_at: Date|null, detail: string|null,
@@ -45,7 +54,9 @@
  * auto-advance will run this over whole columns of cases; N×M query
  * fan-out is the failure mode this shape exists to prevent. Query counts
  * are asserted in tests (scriptGuard style):
- *     esign 1 · checklist 2 · form 1 · event 1 · manual 0.
+ *     esign 1 · checklist 2 · form 1 · event 1 · manual 0 · case_field 1 ·
+ *     report 1 (key→id lookup) + one reportService.runReport per unique
+ *     report_key (execution itself is the report stack's, not this file's).
  *
  * ── KEY IDENTITY ─────────────────────────────────────────────────────────
  * The inner map keys by requirement_key. A key shared across templates
@@ -513,6 +524,300 @@ const eventDetector = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// case_field — a whitelisted DATE/DATETIME column on `cases` is set. (R2.6
+// Tier 1: the typed, batched, everyday tier.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * THE WHITELIST IS A CODE MAP, and the map is the contract: stored configs
+ * hold FIELD_MAP keys, the map holds the physical column. Keys equal column
+ * names in v1 (identity mapping); a future column rename edits the map, not
+ * every stored config. The SQL column list is built ONLY from map values —
+ * never from config strings — so a config that somehow bypassed
+ * validateConfig still cannot name an arbitrary column (belt and
+ * suspenders; validateConfig is the belt).
+ *
+ * Entries verified against live information_schema 2026-08-26: all DATE,
+ * except show_cause and case_341_current (DATETIME).
+ *
+ * NO '0000-00-00' DEFENSIVE FILTERS — the reportSchema manifest records the
+ * 2026-07-29 zero-date purge; write paths normalize blank→NULL, and
+ * comparing a DATE column to that literal is a hard error under
+ * NO_ZERO_DATE. `IS NOT NULL` is the whole test.
+ *
+ * satisfied_at = the column value; detail = the date formatted short
+ * (YYYY-MM-DD, LOCAL date parts — toISOString would shift a local-midnight
+ * DATE to the previous UTC day); progress = null.
+ */
+const FIELD_MAP = Object.freeze({
+  case_open_date:               { column: 'case_open_date',               label: 'Open date' },
+  case_file_date:               { column: 'case_file_date',               label: 'File date' },
+  case_close_date:              { column: 'case_close_date',              label: 'Close date' },
+  case_discharge_date:          { column: 'case_discharge_date',          label: 'Discharge date' },
+  case_341_initial:             { column: 'case_341_initial',             label: '341 initial date' },
+  case_341_current:             { column: 'case_341_current',             label: '341 current date' },
+  docs_due:                     { column: 'docs_due',                     label: 'Docs due' },
+  show_cause:                   { column: 'show_cause',                   label: 'Show cause' },
+  schedules_due_original:       { column: 'schedules_due_original',       label: 'Schedules due (original)' },
+  schedules_due_proposed:       { column: 'schedules_due_proposed',       label: 'Schedules due (proposed)' },
+  matrix_date_original:         { column: 'matrix_date_original',         label: 'Matrix date (original)' },
+  matrix_date_proposed:         { column: 'matrix_date_proposed',         label: 'Matrix date (proposed)' },
+  filing_fee_extended_deadline: { column: 'filing_fee_extended_deadline', label: 'Filing fee extended deadline' },
+  final_installment:            { column: 'final_installment',            label: 'Final installment' },
+  case_objection:               { column: 'case_objection',               label: 'Objection deadline' },
+  case_180:                     { column: 'case_180',                     label: '180-day deadline' },
+  case_preference:              { column: 'case_preference',              label: 'Preference date' },
+});
+
+/** Short local-date format for hit.detail. Accepts Date or string. */
+function fmtDateShort(v) {
+  if (v instanceof Date) {
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${v.getFullYear()}-${p2(v.getMonth() + 1)}-${p2(v.getDate())}`;
+  }
+  return String(v).slice(0, 10);
+}
+
+const caseFieldDetector = {
+  key: 'case_field',
+  label: 'Case field set (date columns)',
+  config_hint: '{ "field": "case_discharge_date" }',
+
+  validateConfig(cfg) {
+    const o = asObject(cfg);
+    if (!o) return 'config must be a JSON object';
+    const bad = unknownKeys(o, ['field']);
+    if (bad) return bad;
+    if (!Object.prototype.hasOwnProperty.call(FIELD_MAP, o.field)) {
+      return `field must be one of: ${Object.keys(FIELD_MAP).join(', ')}`;
+    }
+    return null;
+  },
+
+  async batchResolve(db, caseIds, reqs) {
+    const out = emptyResult();
+    const ids = (caseIds || []).map(String);
+    const pairs = uniqueReqs(reqs).filter(([reqKey, cfg]) => {
+      if (Object.prototype.hasOwnProperty.call(FIELD_MAP, cfg.field)) return true;
+      // Read-time guard (event-detector pattern): a stored non-whitelist
+      // field should be impossible; if data was written around the
+      // validator it resolves UNSATISFIED, loudly — and, because the SQL
+      // column list below is built from FIELD_MAP values only, it can
+      // never reach the query.
+      console.warn(
+        `[requirementDetectors] case_field requirement "${reqKey}" has ` +
+        `field="${cfg.field}" — not in the whitelist; resolving unsatisfied`
+      );
+      return false;
+    });
+    const columns = [...new Set(pairs.map(([, cfg]) => FIELD_MAP[cfg.field].column))];
+    if (!ids.length || !columns.length) return out;
+
+    // ONE query for all cases and all field-requirements: the union of
+    // referenced columns. Column names come from the frozen map, never
+    // from stored strings.
+    const [rows] = await db.query(
+      `SELECT case_id, ${columns.join(', ')} FROM cases WHERE case_id IN (?)`,
+      [ids]
+    );
+
+    const byCase = new Map();
+    for (const r of rows) byCase.set(String(r.case_id), r);
+
+    for (const caseId of ids) {
+      const row = byCase.get(caseId);
+      if (!row) continue;
+      for (const [reqKey, cfg] of pairs) {
+        const v = row[FIELD_MAP[cfg.field].column];
+        if (v == null) continue;   // IS NOT NULL is the whole test
+        ensureCase(out, caseId).set(reqKey, {
+          satisfied_at: v,
+          detail: fmtDateShort(v),
+          progress: null,
+        });
+      }
+    }
+    return out;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// report — a saved report (report_definitions) says so. (R2.6 Tier 2: the
+// escape hatch for arbitrary lookups — any manifest-allowed table, joins —
+// reusing the existing report execution stack: RO MySQL user, manifest
+// validator, EXPLAIN gate, row caps, report_runs logging. Generic SQL in
+// detector_config was considered and REJECTED; this lane already exists and
+// already has the guardrails.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * CONTRACT FOR A BACKING REPORT:
+ *   - kind 'report' or 'view' (the only kinds report_definitions allows);
+ *   - ZERO params — the detector supplies none and validateConfigDb refuses
+ *     a definition that declares any;
+ *   - columns MUST include `case_id` and `satisfied_at`; `detail` and
+ *     `progress` are optional. A row with non-null satisfied_at = that case
+ *     satisfied. A row with NULL satisfied_at is an unsatisfied hit that
+ *     still carries detail/progress (the checklist detector's
+ *     "4 of 7 received" shape — the resolver already renders it).
+ *   - if the report emits multiple rows for one case, a satisfied row beats
+ *     an unsatisfied one; among rows of equal standing the first wins.
+ *     Author reports to emit at most one row per case.
+ *   - recommend is_locked=1 on backing reports (reportService already
+ *     enforces lock protection) — a casually edited report silently changes
+ *     what a requirement MEANS.
+ *
+ * Referenced by report_key, not id: keys are immutable after creation
+ * (enforced in reportService), survive definition restores, and read as
+ * intent in stored config — the lib/internal_functions/reports.js
+ * rationale, verbatim.
+ *
+ * KEY→ID LOOKUP DIVERGENCE (flagged per R2.6): reportService.runReport
+ * resolves by id ONLY (getReport(db, id); no key path exists). Both
+ * validateConfigDb and batchResolve therefore do a one-query
+ * report_definitions key→id lookup — the internal_functions precedent,
+ * verbatim — before handing execution to runReport. Resolution/lookup is
+ * not execution: caps, manifest, EXPLAIN gate and run logging all still
+ * belong to the report stack. batchResolve's lookup is ONE query for ALL
+ * keys (IN (?)); tests assert 1 db.query, not 0.
+ *
+ * READ-TIME FAIL-SOFT (event-detector philosophy): any runReport throw —
+ * report deleted, deactivated, manifest retired a table, EXPLAIN refusal —
+ * warns naming the requirement + report_key + error and resolves that key
+ * unsatisfied for all cases. A broken report must never 500 getPipeline or
+ * the board. A broad report runs fully even when resolving one case —
+ * bounded by row caps + the EXPLAIN gate; accepted.
+ *
+ * userId 0 on runs — the machine-caller convention (internal_functions
+ * precedent): report_runs rows are attributable to automation, and every
+ * guard still applies.
+ */
+const REPORT_KEY_MAX = 60;
+
+const reportDetector = {
+  key: 'report',
+  label: 'Saved report (advanced)',
+  config_hint: '{ "report_key": "req_tax_returns" }',
+
+  validateConfig(cfg) {
+    const o = asObject(cfg);
+    if (!o) return 'config must be a JSON object';
+    return unknownKeys(o, ['report_key']) || reqString(o, 'report_key', REPORT_KEY_MAX);
+  },
+
+  async validateConfigDb(db, cfg) {
+    // Lazy require — boot-safety by construction (internal_functions
+    // convention); this file must stay loadable with zero env.
+    const reportService = require('./reportService');
+    const key = String((cfg || {}).report_key || '').trim();
+
+    const [[found]] = await db.query(
+      `SELECT id FROM report_definitions WHERE report_key = ? LIMIT 1`,
+      [key]
+    );
+    if (!found) return `no report with report_key "${key}"`;
+
+    const report = await reportService.getReport(db, found.id);
+    if (!report.is_active) return `report "${key}" is inactive`;
+    const nParams = (report.params || []).length;
+    if (nParams > 0) {
+      return `report "${key}" declares ${nParams} param(s) — a backing report must take zero`;
+    }
+
+    // Run it ONCE at save time — the booby-trap philosophy applied: a
+    // report that cannot run or has the wrong shape must fail at
+    // authoring, not on the board.
+    let result;
+    try {
+      result = await reportService.runReport(db, found.id, {}, 0);
+    } catch (e) {
+      return `report "${key}" failed to run: ${e.message}`;
+    }
+    const names = (result.fields || []).map((f) => f.name);
+    const missing = ['case_id', 'satisfied_at'].filter((n) => !names.includes(n));
+    if (missing.length) {
+      return `report "${key}" is missing required column(s): ${missing.join(', ')} ` +
+             `(must select case_id and satisfied_at)`;
+    }
+    return null;
+  },
+
+  async batchResolve(db, caseIds, reqs) {
+    const out = emptyResult();
+    const reportService = require('./reportService');
+    const ids = (caseIds || []).map(String);
+    const pairs = uniqueReqs(reqs).filter(([reqKey, cfg]) => {
+      if (typeof cfg.report_key === 'string' && cfg.report_key.trim() !== '') return true;
+      console.warn(
+        `[requirementDetectors] report requirement "${reqKey}" has a blank ` +
+        `report_key; resolving unsatisfied`
+      );
+      return false;
+    });
+    const keys = [...new Set(pairs.map(([, cfg]) => String(cfg.report_key).trim()))];
+    if (!ids.length || !keys.length) return out;
+
+    // ONE lookup for all keys (see docblock divergence note).
+    const [defs] = await db.query(
+      `SELECT id, report_key FROM report_definitions WHERE report_key IN (?)`,
+      [keys]
+    );
+    const idByKey = new Map(defs.map((d) => [ciKey(d.report_key), d.id]));
+
+    // One runReport per unique key; fail-soft per key.
+    const hitsByKey = new Map();   // ciKey(report_key) -> Map(caseId -> hit)
+    for (const key of keys) {
+      const reqNames = pairs
+        .filter(([, cfg]) => ciKey(cfg.report_key) === ciKey(key))
+        .map(([k]) => k).join(', ');
+      const reportId = idByKey.get(ciKey(key));
+      if (!reportId) {
+        console.warn(
+          `[requirementDetectors] report requirement(s) ${reqNames}: no report ` +
+          `with report_key "${key}"; resolving unsatisfied`
+        );
+        continue;
+      }
+      let result;
+      try {
+        result = await reportService.runReport(db, reportId, {}, 0);
+      } catch (e) {
+        console.warn(
+          `[requirementDetectors] report requirement(s) ${reqNames}: report ` +
+          `"${key}" failed (${e.message}); resolving unsatisfied`
+        );
+        continue;
+      }
+      const hits = new Map();
+      for (const r of result.rows || []) {
+        if (r == null || r.case_id == null) continue;
+        const ck = String(r.case_id);
+        const hit = {
+          satisfied_at: r.satisfied_at == null ? null : r.satisfied_at,
+          detail: r.detail == null ? null : String(r.detail),
+          progress: r.progress == null ? null : String(r.progress),
+        };
+        const prev = hits.get(ck);
+        if (!prev || (hit.satisfied_at != null && prev.satisfied_at == null)) {
+          hits.set(ck, hit);
+        }
+      }
+      hitsByKey.set(ciKey(key), hits);
+    }
+
+    for (const caseId of ids) {
+      for (const [reqKey, cfg] of pairs) {
+        const hits = hitsByKey.get(ciKey(cfg.report_key));
+        if (!hits) continue;
+        const hit = hits.get(caseId);
+        if (hit) ensureCase(out, caseId).set(reqKey, hit);
+      }
+    }
+    return out;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // manual — never auto-satisfies; only an override completes it.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -544,6 +849,8 @@ const DETECTORS = Object.freeze({
   checklist: checklistDetector,
   form: formDetector,
   event: eventDetector,
+  case_field: caseFieldDetector,
+  report: reportDetector,
   manual: manualDetector,
 });
 

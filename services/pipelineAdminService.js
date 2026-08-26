@@ -972,6 +972,22 @@ function validateRequirementFields(next, { checkKey }) {
   if (cfgErr) throw badRequest(`detector_config: ${cfgErr}`);
 }
 
+/** (R2.6) Async write-time validation for detectors that declare
+ *  validateConfigDb (registry contract, optional) — config that references
+ *  live data (report: exists/active/zero-params/right-columns) must fail at
+ *  authoring, not on the board. Runs on EVERY create/update after the sync
+ *  validation — no skip-on-unchanged, same as the revalidate-on-
+ *  detector-switch rule. Takes the POOL, not the transaction conn: these
+ *  are reads (plus a report run that goes through the report stack's own
+ *  RO connection); nothing here belongs inside the write transaction. */
+async function validateRequirementFieldsDb(db, next) {
+  const det = requirementDetectors.getDetector(next.detector);
+  if (!det || typeof det.validateConfigDb !== 'function') return;
+  const cfgObj = next.detector_config == null ? {} : JSON.parse(next.detector_config);
+  const cfgErr = await det.validateConfigDb(db, cfgObj);
+  if (cfgErr) throw badRequest(`detector_config: ${cfgErr}`);
+}
+
 /**
  * Create a requirement on a stage. sort_order defaults to (current max + 1).
  * Duplicate requirement_key within the stage → 409 (uq_stage_reqkey).
@@ -996,6 +1012,7 @@ async function createRequirement(db, stageId, body = {}) {
     active:          vBool(body.active, 1),
   };
   validateRequirementFields(next, { checkKey: true });
+  await validateRequirementFieldsDb(db, next);
 
   return withTransaction(db, async (conn) => {
     const [[stage]] = await conn.query(
@@ -1105,6 +1122,7 @@ async function updateRequirement(db, reqId, body = {}) {
       active:          'active'         in body ? vBool(body.active, 1) : (cur.active ? 1 : 0),
     };
     validateRequirementFields(next, { checkKey: keyChanging });
+    await validateRequirementFieldsDb(db, next);
 
     try {
       await conn.query(

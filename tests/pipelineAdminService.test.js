@@ -37,6 +37,14 @@ const svc = require('../services/pipelineAdminService');
 // See tests/helpers/scriptGuard.js.
 const { scriptGuard } = require('./helpers/scriptGuard');
 
+// (R2.6) The report detector's validateConfigDb lazy-requires reportService;
+// mock it so requirement-CRUD tests never touch the report stack.
+jest.mock('../services/reportService', () => ({
+  getReport: jest.fn(),
+  runReport: jest.fn(),
+}));
+const reportService = require('../services/reportService');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs (same shapes as tests/pipelineService.test.js)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -848,5 +856,76 @@ describe('R2 requirements CRUD', () => {
     const out = await svc.listRequirements(db, 7);
     expect(Number(out.requirements[0].override_count)).toBe(4);
     expect(db.calls[1].sql).toContain('case_requirement_overrides');
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (R2.6) async write-time validation — validateConfigDb
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('R2.6 validateConfigDb wiring', () => {
+  const REPORT_BODY = {
+    requirement_key: 'tax_returns', internal_label: 'Tax returns received',
+    detector: 'report', detector_config: { report_key: 'req_tax_returns' },
+  };
+  const CUR = {
+    id: 50, stage_id: 7, requirement_key: 'retainer_signed',
+    internal_label: 'Retainer signed', client_label: null,
+    client_visible: 1, required: 1, owner: 'client', kind: 'task',
+    hint: null, effort: null, group_label: null,
+    detector: 'esign', detector_config: { kind: 'contract' },
+    sort_order: 1, active: 1,
+  };
+
+  beforeEach(() => {
+    reportService.getReport.mockReset();
+    reportService.runReport.mockReset();
+  });
+
+  test('create with detector "report": validateConfigDb error → 400, before any conn query', async () => {
+    // Pool script: the detector's key→id lookup finds nothing.
+    const db = stubTxDb([], [ [] ]);
+    await expect(svc.createRequirement(db, 7, REPORT_BODY))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining('no report with report_key') });
+    expect(db.connCalls.length).toBe(0);           // failed before the transaction
+    expect(db.poolCalls.length).toBe(1);           // exactly the lookup
+  });
+
+  test('create happy path: report resolves, runs once as userId 0, then the normal INSERT flow', async () => {
+    reportService.getReport.mockResolvedValue({ is_active: 1, params: [] });
+    reportService.runReport.mockResolvedValue({
+      rows: [], fields: [{ name: 'case_id' }, { name: 'satisfied_at' }],
+    });
+    const ROW = { ...CUR, id: 51, requirement_key: 'tax_returns', detector: 'report',
+                  detector_config: { report_key: 'req_tax_returns' } };
+    const db = stubTxDb(
+      [ [{ id: 7 }], [{ next_num: 2 }], { insertId: 51 }, [ROW] ],
+      [ [{ id: 9 }] ]                              // key→id lookup
+    );
+    const row = await svc.createRequirement(db, 7, REPORT_BODY);
+    expect(row.id).toBe(51);
+    expect(reportService.runReport).toHaveBeenCalledTimes(1);
+    expect(reportService.runReport).toHaveBeenCalledWith(db, 9, {}, 0);
+  });
+
+  test('update switching to detector "report": awaits validateConfigDb and 400s on its error', async () => {
+    const db = stubTxDb([ [CUR] ], [ [] ]);        // cur row; lookup misses
+    await expect(svc.updateRequirement(db, 50, {
+      detector: 'report', detector_config: { report_key: 'ghost' },
+    })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('ghost') });
+    expect(db.poolCalls.length).toBe(1);
+  });
+
+  test('detectors WITHOUT validateConfigDb are untouched: esign create issues zero pool queries', async () => {
+    const db = stubTxDb(
+      [ [{ id: 7 }], [{ next_num: 2 }], { insertId: 50 }, [CUR] ],
+      []                                           // any pool query would overrun the guard
+    );
+    await svc.createRequirement(db, 7, {
+      requirement_key: 'retainer_signed', internal_label: 'Retainer signed',
+      detector: 'esign', detector_config: { kind: 'contract' },
+    });
+    expect(db.poolCalls.length).toBe(0);
   });
 });
