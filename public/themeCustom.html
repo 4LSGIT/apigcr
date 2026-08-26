@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Theme</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<!-- Font Awesome: the preset cards and the reset controls render fa-solid
+     glyphs. The kit loaded by index.html lives in window.top and does not reach
+     this iframe, so the sheet has to be linked here too (same reason as
+     settings.html). -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+  /* Palette comes from /theme.css. This page in particular must not hard-code a
+     single colour: it restyles itself live as the user edits, and a literal
+     would be the one thing on screen that refuses to move. */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--page-bg); color: var(--text);
+    font-family: var(--ui);
+    font-size: 13px;
+  }
+  body { padding: 12px; }
+
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  .muted { color: var(--text-muted); font-size: 11px; }
+
+  button {
+    background: var(--accent); color: var(--accent-text); border: none;
+    padding: 6px 12px; border-radius: var(--radius); cursor: pointer;
+    font-size: 12px; font-family: inherit;
+  }
+  button:hover { opacity: .85; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button.small { font-size: 11px; padding: 3px 8px; }
+
+  /* ── tab strip ─────────────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+  .tabs button {
+    background: transparent; color: var(--text-2); border: 1px solid transparent;
+    border-bottom: none; border-radius: var(--radius) var(--radius) 0 0;
+    padding: 7px 14px; font-size: 13px; margin-bottom: -1px;
+  }
+  .tabs button.on {
+    background: var(--surface); color: var(--text);
+    border-color: var(--border); border-bottom-color: var(--surface);
+  }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin-bottom: 12px;
+  }
+
+  /* ── presets ───────────────────────────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  .card {
+    border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    cursor: pointer; background: var(--surface); text-align: left; padding: 0;
+    color: var(--text);
+  }
+  /* opacity:1 undoes the generic button:hover above — these are cards, and
+     fading the swatch is exactly the wrong feedback on a colour preview. */
+  .card:hover { border-color: var(--border-strong); opacity: 1; }
+  .card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  /* The swatch is the one place literals are correct: every colour in it comes
+     from the preset being previewed, not from the theme in force. */
+  .sw { height: 96px; position: relative; }
+  .sw-hd { height: 22px; }
+  .sw-body { position: absolute; inset: 22px 0 0 0; padding: 8px 9px; }
+  .sw-card { padding: 6px 7px; font-size: 9.5px; line-height: 1.4; }
+  .sw-btn { display: inline-block; padding: 2px 7px; font-size: 8.5px; margin-top: 5px; }
+  .card-ft { padding: 8px 10px; border-top: 1px solid var(--border); }
+  .card-ft b { display: block; font-size: 12px; margin-bottom: 2px; }
+  .card-ft span { font-size: 10px; color: var(--text-muted); }
+  .card-ft .active { color: var(--accent-on-soft); font-weight: 500; }
+
+  /* ── advanced ──────────────────────────────────────────────────────── */
+  .warn-banner {
+    background: var(--warn-fill); color: var(--warn-text);
+    border-radius: var(--radius); padding: 9px 12px; margin-bottom: 12px;
+    font-size: 12px; line-height: 1.5;
+  }
+  .warn-banner code {
+    font-family: var(--mono); background: rgba(0,0,0,.14);
+    padding: 1px 5px; border-radius: 3px;
+  }
+
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .bar input[type="search"] {
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
+    padding: 5px 8px; border-radius: var(--radius); font-size: 12px;
+    font-family: inherit; min-width: 180px;
+  }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .seg button { background: transparent; color: var(--text-2); border: none; border-radius: 0; padding: 5px 12px; }
+  .seg button.on { background: var(--accent-soft); color: var(--accent-on-soft); }
+  .grow { flex: 1; }
+  .fails { font-size: 11px; font-weight: 500; }
+  .fails.bad { color: var(--danger-on-soft); background: var(--danger-soft); padding: 3px 8px; border-radius: 3px; }
+  .fails.good { color: var(--ok-on-soft); }
+
+  .grp { margin-bottom: 14px; }
+  .grp > h3 {
+    margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border); padding-bottom: 4px;
+  }
+  .grp.fold > h3 { cursor: pointer; }
+  .grp.fold.shut > .rows { display: none; }
+
+  .row {
+    display: grid; grid-template-columns: 220px 1fr 108px 24px;
+    gap: 8px; align-items: center; padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .row:last-child { border-bottom: none; }
+  .nm { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+  .nm .flag {
+    font-family: var(--ui); font-size: 9px; color: var(--text-muted);
+    display: block; text-transform: none; letter-spacing: 0;
+  }
+  .ctl { display: flex; gap: 6px; align-items: center; }
+  .ctl input[type="text"], .ctl input[type="number"] {
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
+    padding: 4px 7px; border-radius: var(--radius); font-size: 11px;
+    font-family: var(--mono); width: 100%; min-width: 0; max-width: 300px;
+  }
+  .ctl input:focus { outline: none; border-color: var(--accent); }
+  .ctl input[type="color"] {
+    width: 30px; height: 24px; padding: 0; flex: none; cursor: pointer;
+    background: var(--page-bg); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .chip {
+    width: 24px; height: 24px; flex: none; border-radius: var(--radius);
+    border: 1px solid var(--border-strong);
+  }
+  .unit { font-size: 10px; color: var(--text-muted); flex: none; }
+  /* The stock value is only worth column space once it differs from what is in
+     the field — otherwise every row prints the same string twice. */
+  .stock { font-family: var(--mono); font-size: 10px; color: var(--text-muted); overflow-wrap: anywhere; visibility: hidden; }
+  .row.set .stock { visibility: visible; }
+  .row.set .nm { font-weight: 600; }
+  .row.set .stock::before { content: "was "; }
+  .x {
+    background: transparent; border: none; color: var(--text-muted);
+    padding: 2px; cursor: pointer; font-size: 11px; visibility: hidden;
+  }
+  .row.set .x { visibility: visible; }
+  .x:hover { color: var(--danger); }
+
+  .pairs { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; padding: 0 0 4px 220px; }
+  .pair {
+    font-size: 9.5px; padding: 1px 6px; border-radius: 3px;
+    background: var(--ok-soft); color: var(--ok-on-soft); white-space: nowrap;
+  }
+  .pair.mid  { background: var(--warn-soft);   color: var(--warn-on-soft); }
+  .pair.fail { background: var(--danger-soft); color: var(--danger-on-soft); }
+  .pair b { font-weight: 600; }
+
+  .err { color: var(--danger); font-size: 12px; }
+
+  @media (max-width: 720px) {
+    .row { grid-template-columns: 1fr 1fr; }
+    .pairs { padding-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <button id="tabBtnPresets" class="on" onclick="showTab('presets')">Presets</button>
+  <button id="tabBtnAdvanced" onclick="showTab('advanced')">Advanced</button>
+</div>
+
+<!-- ── PRESETS ─────────────────────────────────────────────────────────── -->
+<section id="tabPresets">
+  <div class="panel">
+    <h2>Theme</h2>
+    <div class="muted" style="margin-bottom:10px;">
+      Pick a look. It applies to this browser only — nobody else sees it, and it
+      follows you across every page of the app. Each preset carries a light and a
+      dark version, so the header toggle keeps working.
+    </div>
+    <div class="cards" id="cards"></div>
+  </div>
+</section>
+
+<!-- ── ADVANCED ────────────────────────────────────────────────────────── -->
+<section id="tabAdvanced" style="display:none;">
+  <div class="warn-banner">
+    <b>These are the raw design tokens.</b>
+    It is possible to make the app unreadable from here. If that happens, open
+    <code>/index.html?notheme=1</code> — that turns custom theming off for the
+    browser tab so you can get back to this page and reset.
+  </div>
+
+  <div class="panel">
+    <div class="bar">
+      <div class="seg" id="modeSeg">
+        <button id="modeLight" class="on" onclick="setMode('light')">Light</button>
+        <button id="modeDark" onclick="setMode('dark')">Dark</button>
+      </div>
+      <input type="search" id="filter" placeholder="Filter tokens…" oninput="render()">
+      <span class="grow"></span>
+      <span id="fails" class="fails"></span>
+      <button class="ghost small" onclick="resetMode()">Reset this mode</button>
+      <button class="ghost small" onclick="resetAll()">Reset all</button>
+    </div>
+    <div class="muted" style="margin-bottom:10px;">
+      Editing the <b id="modeWord">light</b> palette. Changes apply live to every
+      open page. Contrast badges show the WCAG ratio for pairs
+      <code style="font-family:var(--mono)">theme.css</code> documents — 4.5 is
+      the AA floor for body text.
+    </div>
+    <div id="groups"></div>
+  </div>
+</section>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Theme customization — user overrides for the tokens in /theme.css.
+
+   Storage lives in localStorage under `yc-theme-vars`; themeSync.js is what
+   actually applies it, in this page and in every other frame. See that file's
+   header for the mechanism (setProperty, not an injected stylesheet) and for
+   the ?notheme=1 escape hatch.
+
+   Two rules this file exists to keep:
+
+   1. The token list is NEVER hard-coded. It is read out of the live CSSOM, so
+      it cannot drift from theme.css as the density arc lands more tokens.
+   2. Contrast pairs are checked live. theme.css documents a measured ratio for
+      every colour in it because the colour arc spent eleven slices fixing
+      values that had been picked without checking what sat on top of them.
+      Handing users free-form colour pickers reopens exactly that hole, so the
+      Advanced tab measures every documented pair as it is edited.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const VARS_KEY = 'yc-theme-vars';
+
+/* ── reading the stock values ───────────────────────────────────────────
+   Via CSSOM, not by parsing text. theme.css has nine rule blocks and
+   html[data-theme="dark"] opens FOUR of them — the token block plus the
+   control baseline and two SweetAlert blocks — so any regex for "the dark
+   block" grabs the wrong one or welds several together. Matching
+   selectorText exactly cannot make that mistake, and gets values with no
+   comment-stripping and no fetch. */
+function readStock() {
+  const out = {};                              // '--accent' → {light, dark?}
+  for (const sheet of document.styleSheets) {
+    if (!/theme\.css/.test(sheet.href || '')) continue;
+    let rules;
+    try { rules = sheet.cssRules; } catch (_) { continue; }
+    for (const r of rules) {
+      if (!r.style || !r.selectorText) continue;
+      // Browsers differ on whether selectorText round-trips the quotes in
+      // [data-theme="dark"], so normalise them away before comparing.
+      const sel = r.selectorText.replace(/\s+/g, '').replace(/["']/g, '');
+      const slot = sel === ':root' ? 'light'
+                 : sel === 'html[data-theme=dark]' ? 'dark' : null;
+      if (!slot) continue;                     // the three element-rule blocks
+      for (let i = 0; i < r.style.length; i++) {
+        const n = r.style[i];
+        if (!n.startsWith('--')) continue;
+        (out[n] = out[n] || {})[slot] = r.style.getPropertyValue(n).trim();
+      }
+    }
+  }
+  return out;
+}
+
+const STOCK = readStock();
+const NAMES = Object.keys(STOCK).sort();
+
+/* ── grouping ───────────────────────────────────────────────────────────
+   Ordered, with a catch-all last: a token added to theme.css tomorrow lands
+   in "Other" rather than vanishing off the page. */
+const GROUPS = [
+  ['Layout',      /^--(sidebar-w|sidebar-skinny-w|header-h)$/],
+  ['Accent',      /^--accent/],
+  ['Surfaces',    /^--(page-bg|surface|surface-2|surface-sunken|sidebar-bg|sidebar-sublist-bg|hover)$/],
+  ['Text',        /^--(text|text-2|text-muted)$/],
+  ['Borders',     /^--border/],
+  ['Status',      /^--(ok|warn|danger|info|neutral-fill|fill-text)/],
+  ['Category',    /^--cat-/],
+  ['Code',        /^--code/],
+  ['Effects',     /^--(shadow|backdrop|radius)/],
+  ['Typography',  /^--(ui|mono)$/],
+  ['Density',     /^--(fs|ctl-h|pad|gap)/],
+  ['Other',       /./],
+];
+
+/* Defined in theme.css but not referenced by a single var() anywhere in the
+   repo, so editing them changes nothing on screen today. Shown, but in their
+   own collapsed group — mixing dead knobs in with live ones makes the page
+   look broken. The list shrinks as the density arc wires them up; regenerate
+   with:
+
+     for t in $(grep -oE '^\s*--[a-z0-9-]+\s*:' public/theme.css | tr -d ' :' | sort -u); do
+       [ "$(grep -rF "var($t)" public --include=*.html --include=*.css --include=*.js | wc -l)" -eq 0 ] && echo "$t"
+     done
+*/
+const UNUSED = new Set([
+  '--fs', '--fs-sm', '--fs-xs', '--fs-lg', '--fs-title',
+  '--ctl-h', '--ctl-h-lg',
+  '--gap', '--gap-sm', '--gap-lg',
+  '--pad-card', '--pad-panel',
+  '--radius-sm', '--mono',
+  '--cat-purple-fill', '--cat-teal-fill', '--cat-pink-fill',
+]);
+
+/* ── contrast pairs ─────────────────────────────────────────────────────
+   [foreground, background, compositeOver?]. theme.css states these pairings
+   in prose next to the values (grep 'Pairing:'), and CSSOM does not hand us
+   comments, so the table is authored here. The third entry is required
+   wherever the background is translucent: every --*-soft is an rgba(), and a
+   ratio taken against the raw rgba instead of its composite over the surface
+   beneath is a meaningless number. */
+const PAIRS = [
+  ['--accent-text', '--accent'],
+  ['--fill-text', '--neutral-fill'],
+  ['--fill-text', '--ok-fill'],
+  ['--fill-text', '--danger-fill'],
+  ['--fill-text', '--cat-purple-fill'],
+  ['--fill-text', '--cat-teal-fill'],
+  ['--fill-text', '--cat-indigo-fill'],
+  ['--fill-text', '--cat-pink-fill'],
+  ['--warn-text', '--warn-fill'],
+  ['--accent-on-soft', '--accent-soft', '--surface'],
+  ['--ok-on-soft', '--ok-soft', '--surface'],
+  ['--warn-on-soft', '--warn-soft', '--surface'],
+  ['--danger-on-soft', '--danger-soft', '--surface'],
+  ['--text', '--surface'], ['--text', '--surface-2'], ['--text', '--page-bg'],
+  ['--text-2', '--surface'], ['--text-2', '--surface-2'], ['--text-2', '--page-bg'],
+  ['--text-muted', '--surface'], ['--text-muted', '--surface-2'], ['--text-muted', '--page-bg'],
+  ['--accent-2', '--surface'], ['--accent-2', '--surface-2'], ['--accent-2', '--page-bg'],
+  ['--code-fg', '--code-bg'], ['--code-fg', '--code-bg-2'],
+];
+
+/* ── presets ────────────────────────────────────────────────────────────
+   Every pair in PAIRS was measured at AA or better in both modes before these
+   landed; scripts/checkThemePresets.js re-measures them from this file.
+
+   Nothing here touches the density scale: --fs* and friends are in UNUSED, so
+   a "Larger text" preset would be a button that does nothing. It becomes the
+   obvious fifth preset the moment the density arc wires them. */
+const PRESETS = {
+  'high-contrast': {
+    label: 'High contrast',
+    note: 'Darker text, firmer borders',
+    light: {
+      '--text': '#161c22', '--text-2': '#39434e', '--text-muted': '#4a545f',
+      '--border': '#c8ced5', '--border-strong': '#9aa4ae',
+      '--shadow': '0 1px 2px rgba(0, 0, 0, 0.18)',
+      '--accent-2': '#0a5a78', '--accent-on-soft': '#08475e',
+    },
+    dark: {
+      '--text': '#f4f7fa', '--text-2': '#c8d1dc', '--text-muted': '#a3aebc',
+      '--border': '#3d4553', '--border-strong': '#5a6474',
+      '--accent-2': '#8dbcff', '--accent-on-soft': '#66ccff',
+    },
+  },
+  'warm-paper': {
+    label: 'Warm paper',
+    note: 'Cream surfaces, amber accent',
+    light: {
+      '--page-bg': '#f2ece0', '--surface': '#fffcf5', '--surface-2': '#ece5d6',
+      '--surface-sunken': '#e6ddca', '--hover': '#e5dcc8',
+      '--sidebar-bg': '#f6f1e6', '--sidebar-sublist-bg': '#ebe4d5',
+      '--border': '#ddd4c1', '--border-strong': '#bfb49c',
+      // Stock --text-2 measures 4.37 on the cream --surface-2 — the retune the
+      // colour arc did for --text-muted, for the same reason.
+      '--text-2': '#4f5d6b',
+      '--accent': '#c9782f', '--accent-dark': '#a25e20',
+      '--accent-soft': 'rgba(201, 120, 47, 0.14)',
+      '--accent-2': '#8a4a12', '--accent-on-soft': '#7a4110',
+    },
+    dark: {
+      '--page-bg': '#1b1712', '--surface': '#241f18', '--surface-2': '#2e2820',
+      '--surface-sunken': '#131010', '--hover': '#3a3226',
+      '--sidebar-bg': '#241f18', '--sidebar-sublist-bg': '#1b1712',
+      '--border': '#3a3229', '--border-strong': '#4f4538',
+      '--accent': '#d98a45', '--accent-dark': '#b06c2c',
+      '--accent-soft': 'rgba(217, 138, 69, 0.22)',
+      '--accent-2': '#e8a86a', '--accent-on-soft': '#f0b478',
+    },
+  },
+  'muted': {
+    label: 'Muted',
+    note: 'Desaturated, lower glare',
+    light: {
+      '--accent': '#6e93a8', '--accent-dark': '#527689',
+      '--accent-soft': 'rgba(110, 147, 168, 0.16)',
+      '--accent-2': '#3d6072', '--accent-on-soft': '#365767',
+      '--ok': '#3f7a55', '--warn': '#8a6b2f', '--danger': '#96544c', '--info': '#4f6b87',
+      '--ok-soft': 'rgba(63, 122, 85, 0.14)',
+      '--warn-soft': 'rgba(138, 107, 47, 0.14)',
+      '--danger-soft': 'rgba(150, 84, 76, 0.14)',
+      // --*-on-soft alias --ok/--warn in :root, and desaturating those drops
+      // the text-on-tint reading below AA. Broken out here for the same reason
+      // theme.css breaks out --accent-on-soft rather than aliasing it.
+      '--ok-on-soft': '#2d6640', '--warn-on-soft': '#6a5222',
+      '--ok-fill': '#2f6042', '--warn-fill': '#a97c2c', '--danger-fill': '#8e4a42',
+    },
+    dark: {
+      '--accent': '#7fa5ba', '--accent-dark': '#5f8499',
+      '--accent-soft': 'rgba(127, 165, 186, 0.2)',
+      '--accent-2': '#9dc0d2', '--accent-on-soft': '#a9c9da',
+      '--ok': '#7fb994', '--warn': '#c4a468', '--danger': '#cf8f88', '--info': '#8fa9c4',
+      '--ok-soft': 'rgba(127, 185, 148, 0.15)',
+      '--warn-soft': 'rgba(196, 164, 104, 0.15)',
+      '--danger-soft': 'rgba(207, 143, 136, 0.15)',
+    },
+  },
+  'square': {
+    label: 'Square',
+    note: 'Flat corners, nothing else',
+    light: { '--radius': '2px', '--radius-sm': '2px' },
+    dark:  { '--radius': '2px', '--radius-sm': '2px' },
+  },
+};
+
+/* ── store ──────────────────────────────────────────────────────────── */
+function load() {
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(VARS_KEY) || 'null'); } catch (_) {}
+  if (!o || typeof o !== 'object') o = {};
+  return {
+    v: 1,
+    preset: typeof o.preset === 'string' ? o.preset : null,
+    light: (o.light && typeof o.light === 'object') ? o.light : {},
+    dark: (o.dark && typeof o.dark === 'object') ? o.dark : {},
+  };
+}
+
+let store = load();
+
+function save() {
+  try { localStorage.setItem(VARS_KEY, JSON.stringify(store)); } catch (_) {}
+  // The writer never receives its own storage event, so this document has to
+  // re-apply itself. Every OTHER frame — the shell included — picks the change
+  // up through the storage listener in themeSync.js.
+  if (window.ycApplyThemeVars) window.ycApplyThemeVars();
+  render();
+}
+
+/* Tokens theme.css does not restate under html[data-theme="dark"] are
+   mode-independent by design (grep 'NOT restated'). Keeping that property
+   means writing an override for one into BOTH sets — otherwise a --radius
+   edited in dark would silently give the app two different radii. */
+const isShared = n => !(STOCK[n] && STOCK[n].dark !== undefined);
+
+function setVar(n, v) {
+  const targets = isShared(n) ? ['light', 'dark'] : [mode];
+  for (const m of targets) {
+    if (v === null || v === '') delete store[m][n];
+    else store[m][n] = v;
+  }
+  store.preset = null;               // hand-edited — no longer any preset
+  save();
+}
+
+function applyPreset(key) {
+  key = key || null;
+  if (store.preset === key) key = null;   // clicking the card in use turns it off
+  store = load();
+  store.light = {}; store.dark = {};
+  if (key && PRESETS[key]) {
+    store.light = Object.assign({}, PRESETS[key].light);
+    store.dark = Object.assign({}, PRESETS[key].dark);
+  }
+  store.preset = key || null;
+  save();
+}
+
+function resetMode() { store[mode] = {}; store.preset = null; save(); }
+function resetAll()  { store = { v: 1, preset: null, light: {}, dark: {} }; save(); }
+
+/* ── values ─────────────────────────────────────────────────────────── */
+let mode = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+
+function stockOf(n, m) {
+  const s = STOCK[n] || {};
+  return (m === 'dark' && s.dark !== undefined) ? s.dark : s.light;
+}
+function effective(n, m) {
+  const o = store[m] || {};
+  return o[n] !== undefined ? o[n] : stockOf(n, m);
+}
+// --ok-on-soft and friends are declared as var(--ok); follow the chain so a
+// ratio is computed against a colour rather than the literal string "var(--ok)".
+function resolve(n, m, depth) {
+  const v = effective(n, m);
+  const alias = /^var\(\s*(--[\w-]+)\s*\)$/.exec(String(v || '').trim());
+  return (alias && (depth || 0) < 5) ? resolve(alias[1], m, (depth || 0) + 1) : v;
+}
+
+/* ── colour maths ───────────────────────────────────────────────────── */
+function parseColor(v) {
+  if (!v) return null;
+  v = String(v).trim();
+  let m = /^#([0-9a-f]+)$/i.exec(v);
+  if (m) {
+    const h = m[1];
+    const ex = c => parseInt(c.length === 1 ? c + c : c, 16);
+    if (h.length === 3 || h.length === 4)
+      return { r: ex(h[0]), g: ex(h[1]), b: ex(h[2]), a: h.length === 4 ? ex(h[3]) / 255 : 1 };
+    if (h.length === 6 || h.length === 8)
+      return { r: ex(h.slice(0, 2)), g: ex(h.slice(2, 4)), b: ex(h.slice(4, 6)),
+               a: h.length === 8 ? ex(h.slice(6, 8)) / 255 : 1 };
+    return null;
+  }
+  m = /^rgba?\(([^)]+)\)$/i.exec(v);
+  if (m) {
+    const p = m[1].split(/[,\/\s]+/).filter(Boolean).map(Number);
+    if (p.length < 3 || p.some(isNaN)) return null;
+    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  }
+  return null;
+}
+const over = (fg, bg) => fg.a >= 1 || !bg ? fg : {
+  r: fg.r * fg.a + bg.r * (1 - fg.a),
+  g: fg.g * fg.a + bg.g * (1 - fg.a),
+  b: fg.b * fg.a + bg.b * (1 - fg.a),
+  a: 1,
+};
+function luminance(c) {
+  const f = x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+}
+function ratio(a, b) {
+  const l1 = luminance(a), l2 = luminance(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+// One pair → {fg, bg, r} or null when either side is not a colour we can read.
+function measure(pair, m) {
+  const fg = parseColor(resolve(pair[0], m));
+  let bg = parseColor(resolve(pair[1], m));
+  if (!fg || !bg) return null;
+  if (bg.a < 1) {
+    const base = parseColor(resolve(pair[2] || '--surface', m));
+    if (!base) return null;
+    bg = over(bg, base);
+  }
+  return { fg: pair[0], bg: pair[1], r: ratio(over(fg, bg), bg) };
+}
+const pairsFor = n => PAIRS.filter(p => p[0] === n || p[1] === n);
+const grade = r => r >= 7 ? ['AAA', ''] : r >= 4.5 ? ['AA', ''] : r >= 3 ? ['AA large', 'mid'] : ['fail', 'fail'];
+
+/* ── control shape ──────────────────────────────────────────────────── */
+// Chosen from the shape of the STOCK value, not the current one, so a token
+// keeps its control after a user types something odd into it.
+function shapeOf(n) {
+  const s = String(stockOf(n, 'light') || '');
+  if (/^#[0-9a-f]{6}$/i.test(s)) return 'hex';
+  if (/^rgba?\(/i.test(s)) return 'rgba';
+  if (/^-?[\d.]+(px|rem|em|%)$/.test(s)) return 'len';
+  if (/^var\(/.test(s)) return 'alias';
+  return 'text';
+}
+
+/* ── render ─────────────────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+let shut = {};                            // collapsed groups, by title
+
+function render() {
+  renderCards();
+  renderRows();
+  renderFails();
+  $('modeWord').textContent = mode;
+  $('modeLight').classList.toggle('on', mode === 'light');
+  $('modeDark').classList.toggle('on', mode === 'dark');
+}
+
+function renderCards() {
+  const keys = ['', ...Object.keys(PRESETS)];
+  $('cards').innerHTML = keys.map(k => {
+    const p = PRESETS[k];
+    const on = (store.preset || '') === k;
+    const v = paletteOf(k, mode);
+    const g = t => esc(v[t] || '');
+    return `<button class="card ${on ? 'on' : ''}" onclick="applyPreset('${esc(k)}')">
+      <div class="sw" style="background:${g('--page-bg')}">
+        <div class="sw-hd" style="background:${g('--surface')};border-bottom:1px solid ${g('--border')}"></div>
+        <div class="sw-body">
+          <div class="sw-card" style="background:${g('--surface')};border:1px solid ${g('--border')};color:${g('--text')};border-radius:${g('--radius')}">
+            Case #24-1183
+            <div style="color:${g('--text-muted')}">Hearing 9:30 AM</div>
+            <span class="sw-btn" style="background:${g('--accent')};color:${g('--accent-text')};border-radius:${g('--radius')}">Open</span>
+          </div>
+        </div>
+      </div>
+      <div class="card-ft">
+        <b>${esc(k ? p.label : 'Stock')}</b>
+        <span class="${on ? 'active' : ''}">${on ? 'In use' : esc(k ? p.note : 'The default theme')}</span>
+      </div>
+    </button>`;
+  }).join('');
+}
+/* The palette a preset WOULD produce — built from theme.css plus that preset,
+   and deliberately blind to whatever is currently applied. Reading through
+   resolve()/effective() here instead meant every card previewed the theme in
+   force: pick Muted and all five swatches turned grey-blue, which is exactly
+   the comparison the cards exist to let you make.
+
+   Overlay first, dereference after: a preset that moves --ok has to move
+   --ok-on-soft with it, and that token is declared as var(--ok). */
+function paletteOf(key, m) {
+  const pal = {};
+  for (const n of NAMES) pal[n] = stockOf(n, m);
+  if (key && PRESETS[key]) Object.assign(pal, PRESETS[key][m]);
+  const deref = (n, d) => {
+    const alias = /^var\(\s*(--[\w-]+)\s*\)$/.exec(String(pal[n] || '').trim());
+    return (alias && d < 5) ? deref(alias[1], d + 1) : pal[n];
+  };
+  const out = {};
+  for (const n of NAMES) out[n] = deref(n, 0);
+  return out;
+}
+
+function renderRows() {
+  if (!NAMES.length) {
+    $('groups').innerHTML = '<div class="err">Could not read /theme.css through the CSSOM. '
+      + 'Nothing to edit — the stock theme is unaffected.</div>';
+    return;
+  }
+  const q = ($('filter').value || '').trim().toLowerCase();
+  const buckets = new Map(GROUPS.map(g => [g[0], []]));
+  buckets.set('Defined but not yet in use', []);
+
+  for (const n of NAMES) {
+    if (q && !(n.toLowerCase().includes(q) || String(effective(n, mode)).toLowerCase().includes(q))) continue;
+    if (UNUSED.has(n)) { buckets.get('Defined but not yet in use').push(n); continue; }
+    const g = GROUPS.find(g => g[1].test(n));
+    buckets.get(g[0]).push(n);
+  }
+
+  let html = '';
+  for (const [title, names] of buckets) {
+    if (!names.length) continue;
+    const fold = title.startsWith('Defined');
+    const isShutNow = fold && shut[title] !== false;
+    html += `<div class="grp ${fold ? 'fold' : ''} ${isShutNow ? 'shut' : ''}">
+      <h3 ${fold ? `onclick="toggleGroup('${esc(title)}')"` : ''}>`
+      + esc(title) + (fold ? ` (${names.length}) ${isShutNow ? '▸' : '▾'}` : '')
+      + `</h3><div class="rows">` + names.map(rowHtml).join('') + `</div></div>`;
+  }
+  $('groups').innerHTML = html || '<div class="muted">No token matches that filter.</div>';
+}
+
+function rowHtml(n) {
+  const cur = String(effective(n, mode) ?? '');
+  const stk = String(stockOf(n, mode) ?? '');
+  const set = store[mode][n] !== undefined;
+  const shape = shapeOf(n);
+  const shared = isShared(n);
+
+  let ctl;
+  if (shape === 'hex') {
+    ctl = `<input type="color" value="${esc(/^#[0-9a-f]{6}$/i.test(cur) ? cur : stk)}"
+             oninput="write('${n}', this.value)">
+           <input type="text" value="${esc(cur)}" spellcheck="false"
+             onchange="write('${n}', this.value)">`;
+  } else if (shape === 'len') {
+    const num = parseFloat(cur), unit = String(cur).replace(/^-?[\d.]+/, '') || 'px';
+    ctl = `<input type="number" step="0.5" value="${esc(isNaN(num) ? '' : num)}"
+             onchange="write('${n}', this.value === '' ? '' : this.value + '${esc(unit)}')">
+           <span class="unit">${esc(unit)}</span>`;
+  } else {
+    const c = parseColor(resolve(n, mode));
+    ctl = (c ? `<span class="chip" style="background:${esc(cur)}"></span>` : '')
+      + `<input type="text" value="${esc(cur)}" spellcheck="false"
+           onchange="write('${n}', this.value)">`;
+  }
+
+  const badges = pairsFor(n).map(p => {
+    const r = measure(p, mode);
+    if (!r) return '';
+    const [word, cls] = grade(r.r);
+    const other = p[0] === n ? p[1] : p[0];
+    return `<span class="pair ${cls}" title="${esc(p[0])} on ${esc(p[1])}">`
+      + `${esc(other.replace(/^--/, ''))} <b>${r.r.toFixed(2)}</b> ${word}</span>`;
+  }).join('');
+
+  return `<div class="row ${set ? 'set' : ''}">
+    <div class="nm">${esc(n)}${shared ? '<span class="flag">both modes</span>' : ''}</div>
+    <div class="ctl">${ctl}</div>
+    <div class="stock">${esc(stk)}</div>
+    <button class="x" title="Reset this token" onclick="write('${n}', '')">
+      <i class="fa-solid fa-rotate-left"></i></button>
+    ${badges ? `<div class="pairs">${badges}</div>` : ''}
+  </div>`;
+}
+
+function renderFails() {
+  const bad = PAIRS.map(p => measure(p, mode)).filter(r => r && r.r < 4.5);
+  const el = $('fails');
+  el.className = 'fails ' + (bad.length ? 'bad' : 'good');
+  el.textContent = bad.length
+    ? `${bad.length} pair${bad.length > 1 ? 's' : ''} below AA`
+    : 'All pairs pass AA';
+  el.title = bad.map(b => `${b.fg} on ${b.bg}: ${b.r.toFixed(2)}`).join('\n');
+}
+
+/* ── actions ────────────────────────────────────────────────────────── */
+function write(n, v) {
+  v = String(v || '').trim();
+  setVar(n, v === '' || v === String(stockOf(n, mode)) ? null : v);
+}
+function toggleGroup(t) { shut[t] = shut[t] === false; renderRows(); }
+
+function showTab(t) {
+  $('tabPresets').style.display = t === 'presets' ? '' : 'none';
+  $('tabAdvanced').style.display = t === 'advanced' ? '' : 'none';
+  $('tabBtnPresets').classList.toggle('on', t === 'presets');
+  $('tabBtnAdvanced').classList.toggle('on', t === 'advanced');
+}
+
+// Switching the edited mode also flips the whole app to it, so what is being
+// edited is what is on screen. Framed, that goes through the shell's own
+// applyTheme so every other frame follows; standalone, we set our own.
+function setMode(m) {
+  mode = (m === 'dark') ? 'dark' : 'light';
+  let viaShell = false;
+  try {
+    if (window.top !== window && typeof window.top.applyTheme === 'function') {
+      window.top.applyTheme(mode);
+      viaShell = true;
+    }
+  } catch (_) {}
+  if (!viaShell) {
+    document.documentElement.setAttribute('data-theme', mode);
+    try { localStorage.setItem('yc-theme', mode); } catch (_) {}
+  }
+  render();
+}
+
+// The header toggle can flip the mode out from under us; follow it so the rows
+// never describe a palette other than the one on screen.
+addEventListener('yc-theme', e => {
+  mode = (e.detail && e.detail.theme === 'dark') ? 'dark' : 'light';
+  render();
+});
+// Another tab edited the overrides.
+addEventListener('storage', e => { if (!e.key || e.key === VARS_KEY) { store = load(); render(); } });
+
+render();
+</script>
+</body>
+</html>

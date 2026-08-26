@@ -356,7 +356,10 @@ function init() {
   // themeSync.js owns the theme now. It still has to be told about the chart:
   // Chart.js bakes axis/label colours in at construction, so a theme flip needs
   // a redraw or the chart keeps the old palette on the new background.
+  // yc-theme-vars fires for the same reason: the theme page can change --text,
+  // --border or --accent under a chart without the mode ever flipping.
   addEventListener("yc-theme", () => { if (chartState) drawCurrent(); });
+  addEventListener("yc-theme-vars", () => { if (chartState) drawCurrent(); });
 
   // Authoring is open to every logged-in user (S3). isSU is kept purely as
   // the lock-BYPASS flag. The per-report Edit / Ask-AI / lock buttons live in
