@@ -370,6 +370,71 @@ const EVENT_TYPES = {
       { path: 'data.checklist_status', label: 'Checklist status after recompute' },
     ],
   },
+  // ── Documents (S1) ───────────────────────────────────────
+  //
+  // Shared data catalog. It is a PROJECTION of the documents row, not the row:
+  // shared_link (a permanent public URL to a client document) and ai_meta are
+  // deliberately withheld — envelopes persist into trigger_executions for
+  // 30–90 days, readable by any staff JWT/API key and the readonly SQL
+  // endpoint. Kept in sync with documentService._eventData.
+  'document.created': {
+    label: 'Document registered',
+    description: "Fires post-commit from documentService.upsertFromEntry when a file is registered for the FIRST time under (source, external_id) — manual POST /api/documents/register today, S2's sync feed later. contact_id and case_id are ALWAYS NULL on this event: at registration time nothing knows which case a file belongs to, and attribution arrives separately as document.linked. Rules that need an owner must key on document.linked, not this. S2's ~150k-row backfill passes { emit: false } and fires NOTHING — a backfilled file is not news. data.source is the STORAGE provider ('dropbox'), which is not the same thing as the envelope's `source`.",
+    fields: [
+      ...COMMON_FIELDS,
+      { path: 'data.id',          label: 'documents.id' },
+      { path: 'data.source',      label: "Storage provider ('dropbox')" },
+      { path: 'data.external_id', label: 'Provider handle — Dropbox "id:…", stable across move/rename' },
+      { path: 'data.name',        label: 'File name' },
+      { path: 'data.path',        label: 'Last-seen path (a cache, not identity — may be stale)' },
+      { path: 'data.doc_type',    label: 'Classification (null until set by a human or AI)' },
+      { path: 'data.tags',        label: 'Normalized CSV tags' },
+      { path: 'data.status',      label: "'active' | 'deleted' | 'missing'" },
+    ],
+  },
+  'document.updated': {
+    label: 'Document updated',
+    description: "Fires post-commit from documentService in TWO shapes, told apart by extra.via. via='sync': upsertFromEntry saw a real change on a file it already knew — and ONLY for rev, path_lower, name or status, so a re-sync that changes nothing (the overwhelming majority) is silent. A file that had been marked deleted/missing and re-appears comes back through here with changes.status. via='edit': documentService.update wrote title, doc_type, tags or status from a human/AI surface. contact_id / case_id are ALWAYS NULL (see document.created). S2's backfill suppresses emissions entirely. For ANY column in the catalog: changes.<column> (exists = changed), changes.<column>.from / .to via Custom path.",
+    fields: [
+      ...COMMON_FIELDS,
+      { path: 'data.id',          label: 'documents.id' },
+      { path: 'data.source',      label: "Storage provider ('dropbox')" },
+      { path: 'data.external_id', label: 'Provider handle' },
+      { path: 'data.name',        label: 'File name (post-update)' },
+      { path: 'data.path',        label: 'Last-seen path (post-update)' },
+      { path: 'data.doc_type',    label: 'Classification (post-update)' },
+      { path: 'data.tags',        label: 'Normalized CSV tags (post-update)' },
+      { path: 'data.status',      label: "'active' | 'deleted' | 'missing'" },
+      { path: 'changes.status',        label: 'Status changed (exists = yes)' },
+      { path: 'changes.status.to',     label: 'Status — new value' },
+      { path: 'changes.doc_type',      label: 'Classification changed (exists = yes)' },
+      { path: 'changes.doc_type.to',   label: 'Classification — new value' },
+      { path: 'changes.path_lower',    label: 'File moved or renamed (exists = yes)' },
+      { path: 'changes.path_lower.to', label: 'New path (lowercased)' },
+      { path: 'changes.rev',           label: 'File contents revised (exists = yes)' },
+      { path: 'changes.name',          label: 'File renamed (exists = yes)' },
+      { path: 'extra.via',             label: "'sync' (provider feed) | 'edit' (human/AI write)" },
+      { path: 'extra.updated_fields',  label: 'Changed field list' },
+    ],
+  },
+  'document.linked': {
+    label: 'Document linked to a case or contact',
+    description: "Fires post-commit from documentService.link ONLY when a genuinely new link row is written — the unique key (document_id, link_type, link_id) makes re-linking idempotent and silent, so a rule here is safe against retries. THIS is the event that gives a document an owner: case_id is promoted when extra.link_type='case', contact_id when it is 'contact', and BOTH are null for any other link type. document.created / document.updated never carry either, so anything case-scoped (file it, notify, advance a stage) belongs on this event. actor.user_id carries the acting JWT user when the caller threaded one; API-key callers leave actor absent.",
+    fields: [
+      ...COMMON_FIELDS,
+      { path: 'data.id',          label: 'documents.id' },
+      { path: 'data.source',      label: "Storage provider ('dropbox')" },
+      { path: 'data.external_id', label: 'Provider handle' },
+      { path: 'data.name',        label: 'File name' },
+      { path: 'data.path',        label: 'Last-seen path' },
+      { path: 'data.doc_type',    label: 'Classification' },
+      { path: 'data.tags',        label: 'Normalized CSV tags' },
+      { path: 'data.status',      label: "'active' | 'deleted' | 'missing'" },
+      { path: 'extra.link_type',  label: "'case' | 'contact' | … (drives which id is promoted)" },
+      { path: 'extra.link_id',    label: 'Target id (raw string — case_id is varchar, contact_id numeric)' },
+      { path: 'extra.relation',   label: 'Optional relation label (null when unset)' },
+    ],
+  },
   // ── Synthetic events (job-driven, not mutation-driven) ─────
   'case.stage_aged': {
     label: 'Case stage aged (nightly)',

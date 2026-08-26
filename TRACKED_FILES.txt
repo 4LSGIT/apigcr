@@ -356,6 +356,7 @@ ref/TOKEN-MAP.md
 ref/X2_DESIGN_AMENDMENTS.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
 ref/database.sql
+ref/documents_s1.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
@@ -393,6 +394,7 @@ routes/api.contactLookup.js
 routes/api.contactPhones.js
 routes/api.contactRelations.js
 routes/api.contacts.js
+routes/api.documents.js
 routes/api.dropbox.js
 routes/api.emailCredentials.js
 routes/api.emailIngest.js
@@ -542,6 +544,8 @@ services/contactRelationService.js
 services/contactService.js
 services/courtExecutor.js
 services/courtRerun.js
+services/documentService.js
+services/documentSourceService.js
 services/dropboxService.js
 services/dropboxServiceLegacy.js
 services/emailIngestExecutionsService.js
@@ -635,6 +639,9 @@ tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
 tests/dbPoolIdleRecycling.test.js
+tests/documentService.test.js
+tests/documentSourceService.test.js
+tests/dropboxService.normalizePath.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
 tests/esignActionsUi.test.js

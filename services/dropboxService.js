@@ -96,16 +96,36 @@ const SAVE_URL_TIMEOUT_MS = 25000;
 // ─────────────────────────────────────────────────────────────
 
 /**
+ * Dropbox's opaque location HANDLES. Dropbox accepts these anywhere a `path`
+ * argument goes ("id:abc", "rev:0123456789", "ns:12345[/sub]") and — for
+ * "id:" — the handle SURVIVES move and rename, which is the whole reason the
+ * documents registry keys on it (documents.external_id).
+ *
+ * They must never go through the slash logic below: "id:abc" → "/id:abc" is
+ * rejected by the API with path/not_found (verified live, 2026-08-26).
+ */
+const HANDLE_RE = /^(id:|rev:|ns:)/;
+
+/**
  * Normalize a Dropbox path:
+ *   - PASSTHROUGH: "id:…" / "rev:…" / "ns:…" handles return UNCHANGED (see
+ *     HANDLE_RE) — no leading slash, no collapsing, no trailing-slash strip.
  *   - ensure a leading slash
  *   - collapse runs of slashes ("//" → "/"; safe, "/" is illegal in names)
  *   - strip a single trailing slash
  *   - "/" (root) normalizes to "" — the Dropbox API's root convention
  * NEVER trims or alters whitespace (firm sort-by-spaces convention).
+ *
+ * NOTE: joinPath() is NOT meaningful for handles — Dropbox does not resolve
+ * "id:abc/Sub" (only "ns:" handles take a path suffix). It was already broken
+ * for them before the passthrough ("/id:abc/Sub"); it is still broken, just
+ * differently, and it still fails LOUDLY with path/not_found rather than
+ * touching the wrong file. Compose destinations from a resolved path_display.
  */
 function normalizePath(p) {
   if (p == null) return '';
   let s = String(p);
+  if (HANDLE_RE.test(s)) return s; // opaque handle — skip all slash logic
   if (!s.startsWith('/')) s = '/' + s;
   s = s.replace(/\/{2,}/g, '/');
   if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
@@ -619,6 +639,29 @@ async function getTemporaryLink(db, opts = {}) {
 }
 
 /**
+ * Metadata for a single file/folder (files/get_metadata). Thin wrapper —
+ * the location may be a literal path, a shared link, or (after the
+ * normalizePath handle passthrough) an "id:" handle, which is how the
+ * documents registry addresses everything it owns.
+ *
+ * include_deleted is pinned false: a deleted entry must surface as
+ * path/not_found (409) so callers can mark the row missing, not come back
+ * with a DeletedMetadata stub that has no size/rev/content_hash.
+ *
+ * @param {object} opts — { path? | sharedLink?, credentialId? }
+ * @returns {Promise<object>} FileMetadata | FolderMetadata
+ */
+async function getMetadata(db, opts = {}) {
+  const credentialId = await _resolveCredential(db, opts);
+  const path = await resolveLocation(db, credentialId, {
+    path: opts.path, sharedLink: opts.sharedLink,
+  });
+  if (!path) throw new Error('dropbox getMetadata requires a non-root path');
+
+  return _rpc(db, credentialId, 'files/get_metadata', { path, include_deleted: false });
+}
+
+/**
  * Pull a file FROM A URL into Dropbox via files/save_url. The transfer
  * runs on Dropbox's infrastructure — bytes never touch this instance,
  * which is the right shape for Cloud Run. The job is async; by default we
@@ -736,6 +779,8 @@ module.exports = {
   getOrCreateSharedLink,
   getSharedLinkMetadata,
   resolveLocation,
+  // metadata
+  getMetadata,
   // listing
   listFolder,
   // move/rename/delete

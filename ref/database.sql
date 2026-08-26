@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-26T11:06:19.660Z
+-- Generated: 2026-08-26T14:43:37.501Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:f7c8feb4e8b4468287b55d61824e9802
+-- Fingerprint: sha256:d6e23ea967447f39c1b58a8f9070f816
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1230,6 +1230,72 @@ DROP TABLE IF EXISTS `default`;
 CREATE TABLE `default` (
   `default_id` int NOT NULL,
   `default_response` enum('no results found') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `document_links`
+--
+
+DROP TABLE IF EXISTS `document_links`;
+CREATE TABLE `document_links` (
+  `id` bigint unsigned NOT NULL,
+  `document_id` bigint unsigned NOT NULL,
+  `link_type` varchar(32) COLLATE utf8mb4_general_ci NOT NULL,
+  `link_id` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `relation` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `document_sync_roots`
+--
+
+DROP TABLE IF EXISTS `document_sync_roots`;
+CREATE TABLE `document_sync_roots` (
+  `id` int unsigned NOT NULL,
+  `path` varchar(512) COLLATE utf8mb4_general_ci NOT NULL,
+  `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `sync_cursor` text COLLATE utf8mb4_general_ci,
+  `last_sync_at` datetime DEFAULT NULL,
+  `last_error` text COLLATE utf8mb4_general_ci,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `documents`
+--
+
+DROP TABLE IF EXISTS `documents`;
+CREATE TABLE `documents` (
+  `id` bigint unsigned NOT NULL,
+  `source` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'dropbox',
+  `external_id` varchar(191) COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(512) COLLATE utf8mb4_general_ci NOT NULL,
+  `path` text COLLATE utf8mb4_general_ci,
+  `path_lower` text COLLATE utf8mb4_general_ci,
+  `path_hash` char(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ext` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `mime` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `size` bigint unsigned DEFAULT NULL,
+  `content_hash` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `rev` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `server_modified` datetime DEFAULT NULL,
+  `shared_link` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `title` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `doc_type` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `tags` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ai_meta` json DEFAULT NULL,
+  `status` enum('active','deleted','missing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3617,6 +3683,32 @@ ALTER TABLE `default`
   ADD PRIMARY KEY (`default_id`);
 
 --
+-- Indexes for table `document_links`
+--
+ALTER TABLE `document_links`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_doc_target` (`document_id`,`link_type`,`link_id`),
+  ADD KEY `idx_dl_target` (`link_type`,`link_id`);
+
+--
+-- Indexes for table `document_sync_roots`
+--
+ALTER TABLE `document_sync_roots`
+  ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `documents`
+--
+ALTER TABLE `documents`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_source_ext` (`source`,`external_id`),
+  ADD KEY `idx_docs_path_hash` (`path_hash`),
+  ADD KEY `idx_docs_type` (`doc_type`),
+  ADD KEY `idx_docs_status` (`status`),
+  ADD KEY `idx_docs_updated` (`updated_at`),
+  ADD FULLTEXT KEY `ft_docs` (`name`,`title`,`tags`);
+
+--
 -- Indexes for table `email_credentials`
 --
 ALTER TABLE `email_credentials`
@@ -4510,6 +4602,24 @@ ALTER TABLE `decision_requests`
 --
 ALTER TABLE `default`
   MODIFY `default_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `document_links`
+--
+ALTER TABLE `document_links`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `document_sync_roots`
+--
+ALTER TABLE `document_sync_roots`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `documents`
+--
+ALTER TABLE `documents`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `email_credentials`
