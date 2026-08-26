@@ -337,6 +337,39 @@ const EVENT_TYPES = {
       { path: 'data.link_type',    label: 'Link type' },
     ],
   },
+  // ── R1.5 events (pipeline stage keys moved from code to data) ─────────────
+  'esign.sent': {
+    label: 'E-sign request sent',
+    description: "Fires from esignSendService once a signing request has actually gone out: the provider accepted the envelope and markSent committed the row. TWO emit sites, because there are two provider-send paths — sendPipeline (first sends, draft retries after a failed send, and terminal duplicates, which mint a fresh draft and come back through it) and resendPipeline's SAME-ROW bounce resend, which inlines its own provider call and never reaches sendPipeline. Between them that is every send path: template sends (sendFromTemplate), ad-hoc sends (POST /api/esign/send), workflow/sequence sends (esign_send_from_template), and both kinds of resend. Exactly one emission per send — no path emits twice. Tell the three shapes apart with extra: fresh send (resend=false, draft_reused=false), draft retry or terminal duplicate (resend=false, draft_reused=true), bounce same-row resend (resend=true, draft_reused=false). data.kind EQUALS 'contract' is the filter for retainer flows. Fires regardless of test mode — filter data.testing if a rule must exclude test-mode envelopes. OWNERSHIP: the contract_sent pipeline advance formerly hardcoded in sendFromTemplate is now carried by the named rule \"Contract sent → contract_sent stage\" (guards: data.kind=contract + case_id exists, only_from_role 'intake,none'). Do not re-hardcode it, and do not add a second rule that duplicates it.",
+    fields: [
+      ...COMMON_FIELDS,
+      { path: 'data.request_id',    label: 'signing_requests.id' },
+      { path: 'data.kind',          label: "Request kind (filter equals 'contract' for retainers)" },
+      { path: 'data.document_name', label: 'Document name (debtor-visible)' },
+      { path: 'data.template_id',   label: 'contract_templates.id (null on ad-hoc sends)' },
+      { path: 'data.provider',      label: 'Provider slug' },
+      { path: 'data.linkable_type', label: "'case' | 'contact'" },
+      { path: 'data.linkable_id',   label: 'Linked entity id (raw)' },
+      { path: 'data.tracking_id',   label: 'Tracking id stamped on the document' },
+      { path: 'data.testing',       label: "Provider reported a TEST-MODE envelope (bool). Not a column — signing_requests stores no test-mode flag; this is sendForSignature's own verdict." },
+      { path: 'extra.recipient_count', label: 'Recipients on the envelope' },
+      { path: 'extra.draft_reused', label: 'An existing draft row was sent — retry after a failed send, or a terminal-request duplicate (bool)' },
+      { path: 'extra.resend',       label: 'Same-row resend after a bounce (bool)' },
+    ],
+  },
+  'checklist.items_upserted': {
+    label: 'Checklist items upserted',
+    description: "Fires post-response from POST /checklists/upsert-items after the status recompute. The name is generic on purpose: the route only ever touches the case docs checklist today (found by tag='docs_needed'), so every live emission carries data.tag='docs_needed' — but the fact reported is \"items were upserted on a checklist\", and narrowing to docs is the RULE's job. A future upsert path emits this same event with its own tag. This is a BULK event, not per item: data.items_upserted is how many items this one call wrote. It fires repeatedly across a case's whole life (a doc request is re-sent whenever the list changes), so any rule on it must be idempotent or guarded. OWNERSHIP: the retained→docs pipeline advance formerly hardcoded in this route is now carried by the named rule \"Doc request sent → docs stage\" (guards: data.tag=docs_needed + case_id exists, only_from 'retained'). Do not re-hardcode it, and do not add a second rule that duplicates it.",
+    fields: [
+      ...COMMON_FIELDS,
+      { path: 'data.checklist_id',     label: 'Checklist id' },
+      { path: 'data.tag',              label: "Checklist tag (always 'docs_needed' from today's only caller)" },
+      { path: 'data.title',            label: 'Checklist title (staff-editable — filter on tag, not this)' },
+      { path: 'data.link_type',        label: "Link type (always 'case' from today's only caller)" },
+      { path: 'data.items_upserted',   label: 'Items written by this call' },
+      { path: 'data.checklist_status', label: 'Checklist status after recompute' },
+    ],
+  },
   // ── Synthetic events (job-driven, not mutation-driven) ─────
   'case.stage_aged': {
     label: 'Case stage aged (nightly)',

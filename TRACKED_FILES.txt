@@ -330,6 +330,7 @@ ref/2026-08-20_checklists_event_link_type.sql
 ref/2026-08-20_issue_reports.sql
 ref/2026-08-22_ingest_matched_rules_index.sql
 ref/2026-08-25_pipeline_lane.sql
+ref/2026-08-26_pipeline_r15_rules.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -642,6 +643,7 @@ tests/esignProvider.zoho.test.js
 tests/esignReconcile.test.js
 tests/esignReminders.test.js
 tests/esignSend.test.js
+tests/esignSentEmit.test.js
 tests/esignService.test.js
 tests/esignTemplates.test.js
 tests/esignWebhook.test.js
@@ -712,6 +714,7 @@ tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js
 tests/pipelineBoardUi.sync.test.js
 tests/pipelineInternalFn.guard.test.js
+tests/pipelineR15RuleSeeds.test.js
 tests/pipelineService.test.js
 tests/portalAccessAdmin.test.js
 tests/portalAuth.test.js

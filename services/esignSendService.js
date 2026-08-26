@@ -51,6 +51,10 @@ const esignFilingService = require('./esignFilingService');
 const { getProvider, recordCreditSpend } = require('./esign');
 const { validatePlacements } = require('./esign/placements');
 const { fillTextFields } = require('./esign/pdfFill');
+// Trigger R1.5. Safe top-level: lib/domainEvents pulls only async_hooks and
+// lazily reaches triggerService at emit time (same posture as
+// esignWebhookService.js, which requires it top-level for the same reason).
+const domainEvents = require('../lib/domainEvents');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -732,6 +736,87 @@ async function _tryEnrollReminders(db, row, reminderPolicy) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TRIGGER EMIT (R1.5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Emit `esign.sent` for a request that HAS just gone out the door.
+ *
+ * WHY A HELPER RATHER THAN ONE EMIT IN sendPipeline
+ * -------------------------------------------------
+ * There are TWO provider-send code paths in this file, not one:
+ *
+ *   · sendPipeline               — first sends, draft retries, and (via
+ *                                  resendPipeline branch (b)) terminal
+ *                                  duplicates, which mint a fresh draft and
+ *                                  come back through here.
+ *   · resendPipeline branch (a)  — the SAME-ROW bounce resend. It inlines its
+ *                                  own stamp → getProvider → sendForSignature
+ *                                  → markSent and NEVER calls sendPipeline.
+ *
+ * An emit placed only in sendPipeline would therefore be silent for every
+ * bounce resend — and a registry entry that has to carry an "except this one
+ * path" footnote is a rule-shaped bug waiting for an author. Both sites call
+ * this; branch (b) reaches sendPipeline and is the only overlap, so there is
+ * exactly one emission per send and no double-fire.
+ *
+ * The three shapes a rule author can tell apart from `extra`:
+ *   fresh send ................. resend=false, draft_reused=false
+ *   draft retry / terminal dup .. resend=false, draft_reused=true
+ *   bounce same-row resend ..... resend=true,  draft_reused=false
+ *
+ * FIRE-AND-FORGET. domainEvents.emit never throws and never rejects (see its
+ * CONTRACT block), so it is called bare, with no await and no .catch —
+ * matching esignWebhookService.js's "real transitions only" emit. The send has
+ * already happened by the time we get here; nothing about the trigger engine
+ * may alter this function's return value or its errors.
+ *
+ * case_id / contact_id are derived from the ROW, not from the caller's
+ * linkableType/linkableId arguments: on the draftId retry path those arguments
+ * are routinely null (the row's stored metadata wins there by design). There
+ * is no shared derivation helper in the repo — esignWebhookService.js does it
+ * inline, and this mirrors that inline form deliberately.
+ *
+ * @param {object} db
+ * @param {object} row               post-markSent signing_requests row
+ * @param {object} o
+ * @param {boolean} o.testing        provider reported a test-mode envelope
+ * @param {boolean} [o.draftReused]  an existing draft row was sent (retry/dup)
+ * @param {boolean} [o.resend=false] same-row resend after a bounce
+ */
+function _emitSent(db, row, { testing, draftReused = false, resend = false } = {}) {
+  let recipientCount = null;
+  try {
+    recipientCount = Array.isArray(row.recipients) ? row.recipients.length : null;
+  } catch (_) { /* shape surprise is not worth a thrown emit */ }
+
+  domainEvents.emit(db, 'esign.sent', {
+    case_id:    row.linkable_type === 'case'    ? String(row.linkable_id) : null,
+    contact_id: row.linkable_type === 'contact' ? (parseInt(row.linkable_id, 10) || null) : null,
+    source: 'system',
+    data: {
+      request_id:     row.id,
+      provider:       row.provider,
+      kind:           row.kind,
+      document_name:  row.document_name,
+      template_id:    row.template_id ?? null,
+      linkable_type:  row.linkable_type,
+      linkable_id:    row.linkable_id,
+      tracking_id:    row.tracking_id,
+      // NOT a column — signing_requests stores no test-mode flag. This is the
+      // provider's own `testing` verdict off sendForSignature's result, which
+      // is what this function's callers already return to THEIR callers.
+      testing:        testing === true,
+    },
+    extra: {
+      recipient_count: recipientCount,
+      draft_reused:    draftReused === true,
+      resend:          resend === true,
+    },
+  });
+}
+
 /**
  * Stamp → send → mark sent → spend a credit.
  *
@@ -948,6 +1033,17 @@ async function sendPipeline(db, {
     }
   }
 
+  // ── Trigger: esign.sent (R1.5) ────────────────────────────────────────────
+  // Placed on the LAST line before the return, i.e. at exactly the point this
+  // function's return value already represents: the provider accepted the
+  // envelope, markSent committed the row, and every best-effort tail (source
+  // storage, reminders, credits) has settled. Fire-and-forget — see _emitSent.
+  //
+  // This replaces the hardcoded contract_sent advance that used to live in
+  // sendFromTemplate; the advance is now carried by trigger rule
+  // "Contract sent → contract_sent stage". See the note at that former site.
+  _emitSent(db, updated, { testing: result.testing, draftReused: draftId != null });
+
   return { row: updated, testing: result.testing };
 }
 
@@ -1082,6 +1178,15 @@ async function resendPipeline(db, id, { recipients = null, pdfBuffer, createdBy 
     if (result.testing === false) {
       try { await recordCreditSpend(db); } catch (_) { /* see sendPipeline */ }
     }
+
+    // ── Trigger: esign.sent (R1.5) ──────────────────────────────────────────
+    // This branch NEVER reaches sendPipeline — it inlines its own provider
+    // send above — so it emits for itself. resend:true is what distinguishes
+    // it from a fresh send in the envelope; without it a same-row resend and a
+    // first send are indistinguishable (draft_reused is false for both: no
+    // draft row is involved here either). Branch (b) below does NOT emit — it
+    // routes through sendPipeline, which emits once on its behalf.
+    _emitSent(db, updated, { testing: result.testing, resend: true });
 
     return { row: updated, testing: result.testing, mode: 'same_row' };
   }
@@ -1737,52 +1842,13 @@ async function sendFromTemplate(db, {
     dropUnmatchedSigners,
   });
 
-  // ── Pipeline Slice E1 (Task 3): contract sent while still in intake ───────
-  // Fire-and-forget AFTER a successful send — never blocks or fails the send.
-  // Lives HERE (service level, not the route) deliberately: sendFromTemplate
-  // has THREE callers — POST /api/esign/send-from-template (sendForm.html AND
-  // sendingform-bk.html) and lib/internal_functions/esign.js
-  // esign_send_from_template (workflow/sequence sends, which never touch the
-  // route) — and all three must advance identically.
-  //
-  // Gates: linkable is a case + the template is a contract. The intake gate
-  // is advanceStage's onlyFromRole ['intake', null] — judged by the latest
-  // LOG ROW's template role (null = no pipeline history yet), which covers
-  // every intake lane at once (no_show, dead_lead resurrections, future t1
-  // stages) with zero maintenance, and structurally excludes the Ch7
-  // Post-Filing agreement: a mid-pipeline case's latest row is on a
-  // role='case' template → skip. A history-less case whose subtype is
-  // already set resolves to t2/t3 where contract_sent doesn't exist →
-  // advanceStage's soft resolution skips that too (no 400). Deliberately NOT
-  // gated on sent.testing — the completion-trigger side (esignService
-  // applyStatus) fires regardless of test mode, and the two ends of the
-  // retainer arc should agree.
-  if (linkableType === 'case' && template.kind === 'contract') {
-    const pipelineService = require('./pipelineService'); // lazy require (convention)
-    pipelineService.advanceStage(db, String(linkableId), 'contract_sent', {
-      onlyFromRole: ['intake', null],
-      source: 'system',
-      note: 'Contract sent for signature',
-    }).catch((err) => {
-      const { alert } = require('../lib/alerting'); // lazy — keeps esign load graph lean
-      alert(db, {
-        source: 'pipeline',
-        kind: 'contract_sent_advance_failed',
-        group_key: 'pipeline:contract_sent_advance',
-        severity: 'warning',
-        title: `contract_sent advance failed for case ${linkableId}`,
-        message: err.message,
-        // cases.case_id is an alphanumeric varchar — doesn't fit ref_id
-        // (bigint); it rides in context instead.
-        context: {
-          case_id: String(linkableId),
-          template_id: template.id,
-          signing_request_id: sent && sent.row ? sent.row.id : null,
-          status: err.status || null,
-        },
-      }).catch(() => {});
-    });
-  }
+  // ── The contract_sent advance USED to live here (Pipeline Slice E1) ───────
+  // It is now owned by trigger rule "Contract sent → contract_sent stage" on
+  // the `esign.sent` event (emitted by sendPipeline, which every send path
+  // reaches — see _emitSent). The rule carries the identical guards:
+  // data.kind equals 'contract' + case_id exists, only_from_role 'intake,none'.
+  // Do NOT re-add an advance here: it would double-advance (harmlessly, via
+  // advanceStage's no-op, but still wrong) and put a stage key back in code.
 
   return sent;
 }

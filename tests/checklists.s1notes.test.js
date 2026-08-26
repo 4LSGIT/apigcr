@@ -74,8 +74,9 @@ jest.mock('../lib/checklistStatus', () => ({
   computeAndSaveStatus: jest.fn(async () => ({ status: 'incomplete', transitioned: false })),
 }));
 jest.mock('../lib/domainEvents', () => ({ emit: jest.fn() }));
-jest.mock('../services/pipelineService', () => ({ advanceStage: jest.fn(async () => ({})) }));
-jest.mock('../lib/alerting', () => ({ alert: jest.fn(async () => {}) }));
+// R1.5: the ../services/pipelineService and ../lib/alerting mocks that used to
+// sit here are gone with the hardcoded retained→docs advance — the router no
+// longer requires either module. See the 3h block at the foot of this file.
 jest.mock('../services/emailService', () => ({ sendEmail: jest.fn(async () => {}) }));
 jest.mock('../services/logService', () => ({ createLogEntry: jest.fn(async () => {}) }));
 jest.mock('../services/uploadTargetService', () => ({
@@ -641,5 +642,126 @@ describe('POST /checklists/upsert-items — a note can never become the docs tar
     const insert = db.calls[1];
     expect(insert.sql).toContain('INSERT INTO checklists (title, kind,');
     expect(insert.sql).toContain("'Docs Needed', 'checklist'");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3h. upsert-items — checklist.items_upserted (R1.5)
+//
+// The retained→docs pipeline advance that used to run here as a hardcoded
+// advanceStage('docs', { onlyFrom: ['retained'] }) is now trigger rule
+// "Doc request sent → docs stage", fed by this event. What the route owes the
+// rule is a payload the rule's guards can read: data.tag (which narrows the
+// generic event to the docs list) and case_id (the exists condition).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('POST /checklists/upsert-items — emits checklist.items_upserted', () => {
+  test('emits exactly once, with the payload the seeded rule matches on', async () => {
+    db = stubDb([
+      [{ id: 30, tag: 'docs_needed' }],                          // FIND_DOCS_SQL
+      [],                                                        // existing items
+      ok(0, 1),                                                  // INSERT item 1
+      ok(0, 1),                                                  // INSERT item 2
+      [{ id: 30, kind: 'checklist', tag: 'docs_needed',          // re-read list
+         title: 'Docs Needed', link_type: 'case', link: 'C-1',
+         status: 'incomplete' }],
+      [{ id: 90, name: 'Paystubs' }, { id: 91, name: 'Tax return' }],
+    ]);
+
+    const res = await call('POST', '/checklists/upsert-items', {
+      case_id: 'C-1', items: ['Paystubs', 'Tax return'],
+    });
+
+    expect(res.status).toBe(200);
+    expect(domainEvents.emit).toHaveBeenCalledTimes(1);
+
+    const [, eventType, payload] = domainEvents.emit.mock.calls[0];
+    expect(eventType).toBe('checklist.items_upserted');
+    // case_id is what the rule's `exists` condition reads, and advance_stage's
+    // case_id param maps to it. String, never a number.
+    expect(payload.case_id).toBe('C-1');
+    // data.tag is the rule's `equals docs_needed` condition. If this ever
+    // stops being emitted the rule silently stops matching and cases quietly
+    // stop advancing — which is exactly the failure this assertion exists for.
+    expect(payload.data).toMatchObject({
+      checklist_id:     30,
+      tag:              'docs_needed',
+      title:            'Docs Needed',
+      link_type:        'case',
+      items_upserted:   2,
+      checklist_status: 'incomplete',
+    });
+  });
+
+  test('the emit is post-response — the client already has its 200', async () => {
+    // The respond-first house rule. Asserted by proving the response body is
+    // the real checklist (i.e. res.json ran) AND the emit happened: if the
+    // emit threw or blocked ahead of the response, one of the two would fail.
+    db = stubDb([
+      [{ id: 30, tag: 'docs_needed' }],
+      [],
+      ok(0, 1),
+      [{ id: 30, kind: 'checklist', tag: 'docs_needed', title: 'Docs Needed',
+         link_type: 'case', status: 'incomplete' }],
+      [{ id: 90, name: 'Paystubs' }],
+    ]);
+
+    const res = await call('POST', '/checklists/upsert-items', {
+      case_id: 'C-1', items: ['Paystubs'],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.checklist.id).toBe(30);
+    expect(domainEvents.emit).toHaveBeenCalledTimes(1);
+  });
+
+  test('an emit failure cannot turn a delivered 200 into a 500', async () => {
+    // The route's own catch would try to res.status(500) on an already-sent
+    // response (R3/S8). The emit therefore sits in its own try.
+    domainEvents.emit.mockImplementationOnce(() => { throw new Error('engine down'); });
+    db = stubDb([
+      [{ id: 30, tag: 'docs_needed' }],
+      [],
+      ok(0, 1),
+      [{ id: 30, kind: 'checklist', tag: 'docs_needed', title: 'Docs Needed',
+         link_type: 'case', status: 'incomplete' }],
+      [{ id: 90, name: 'Paystubs' }],
+    ]);
+
+    const res = await call('POST', '/checklists/upsert-items', {
+      case_id: 'C-1', items: ['Paystubs'],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('success');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3i. The hardcoded advance is GONE (R1.5)
+//
+// Source-level assertion, not behavioural: the thing being proven is an
+// ABSENCE, and a behavioural test for "advanceStage was not called" passes
+// just as happily when the router was never wired to it at all. Scanning the
+// file is the honest form. The behaviour that replaced it is asserted in 3h
+// (the emit) and in tests/pipelineR15RuleSeeds.test.js (the rule mappings).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('routes/api.checklists.js no longer advances the pipeline itself', () => {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'routes', 'api.checklists.js'), 'utf8'
+  );
+
+  test('does not call advanceStage', () => {
+    expect(src).not.toMatch(/advanceStage\s*\(/);
+  });
+
+  test('does not require pipelineService or lib/alerting', () => {
+    expect(src).not.toContain("require('../services/pipelineService')");
+    expect(src).not.toContain("require('../lib/alerting')");
+  });
+
+  test('the retired doc_request_advance_failed alert kind is gone', () => {
+    expect(src).not.toContain('doc_request_advance_failed');
   });
 });
