@@ -104,6 +104,35 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
    fix to this one dialog's mount so the input fills its 300px container without
    resizing pickers elsewhere. */
 #acc-picker-mount .cp-input { width: 100%; }
+
+/* ── datetime-local inside a SweetAlert2 popup ────────────────────────────
+   The global rule above (0,2,1) also outranks swal2's own
+   `div:where(.swal2-container) input:where(.swal2-input) { width:auto }`
+   (0,0,2 -- both :where() legs are free), so every datetime picker fired
+   from a style.css page is pinned to a 200px border-box: 174px of content
+   after --pad-btn's 12px sides and the 1px border.
+
+   That is not enough for this input type. Chrome renders it as UA shadow
+   content -- "mm/dd/yyyy --:-- --" plus the picker icon -- whose intrinsic
+   width is ~200px at the UA's 13.3px font, and swal2 sets font-size:1.125em
+   (18px) on .swal2-input, which scales the same string to ~270px. So the
+   field clips its own AM/PM and calendar icon, worst inside a dialog.
+
+   320px is the floor at the swal2 font size with headroom for Firefox and
+   Safari, which render the type wider. It fits: the popup is 32em (512px)
+   and .swal2-input carries `margin: 1em 2em` at its own 18px font, leaving
+   ~388px of usable width.
+
+   Scoped to .swal2-container -- the only datetime-local inputs reached by
+   this sheet are in dialogs (index.html's reschedule, scripts.js's new-case
+   appointment), and a bare 320px floor on the type would leak into any
+   future in-page form that wants a narrow one.
+
+   min-width, not width, so an inline width still wins when it is larger.
+   scripts.js #NCApptDate sets 280px and is raised to 320 by this floor,
+   which is intended -- it clips today for the same reason. */
+.swal2-container input[type="datetime-local"] { min-width: 320px; }
+
 .kselect {
   margin-left: -5px;
 }
