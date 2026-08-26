@@ -188,6 +188,7 @@ const root = (over = {}) => ({
   note: null,
   enabled: 1,
   sync_cursor: null,
+  backfill_done: 0,
   last_sync_at: null,
   last_error: null,
   syncing_since: null,
@@ -369,11 +370,56 @@ describe('syncRoot — mode is derived from cursor presence', () => {
     expect(db.all('INSERT INTO documents').length).toBe(1);
   });
 
+  // ── THE MODE-FLIP BUG ────────────────────────────────────────────────
+  // Deriving the WRITE POLICY from cursor presence looked right and was
+  // wrong: a backfill stopped by the page budget persists a cursor, so the
+  // next tick treated a root with ~100k unlisted files as "already
+  // backfilled" and started emitting document.created for each one, at ~47x
+  // the cost per page. Write policy now keys on backfill_done; only the API
+  // call keys on the cursor.
+
+  test('a BUDGET-STOPPED backfill stays backfill on the next tick', async () => {
+    const db = makeDb({ roots: [root()] });
+    dropbox.listFolderPage.mockResolvedValue(page([file('/a/1.pdf')], 'c1', true));
+
+    const first = await sync.syncRoot(db, root(), { maxPages: 1 });
+    expect(first.stop).toBe('page_cap');
+    expect(first.backfill_completed).toBeUndefined();
+    // The cursor now exists. Under the old rule that alone flipped the mode.
+    expect(db.all('SET sync_cursor = ?').length).toBe(1);
+    expect(db.find('last_sync_at = NOW()').sql).not.toContain('backfill_done = 1');
+
+    dropbox.listFolderContinue.mockResolvedValue(page([file('/a/2.pdf')], 'c2', true));
+    const second = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 0 }), { maxPages: 1 });
+
+    expect(second.mode).toBe('backfill');
+    expect(dropbox.listFolderContinue).toHaveBeenCalledWith(db, { cursor: 'c1' });  // API: cursor
+    expect(domainEvents.emit).not.toHaveBeenCalled();                                // policy: backfill_done
+  });
+
+  test('backfill_done flips ONLY when a page reports has_more = false', async () => {
+    const db = makeDb({ roots: [root()] });
+    dropbox.listFolderPage.mockResolvedValue(page([file('/a/1.pdf')], 'c1', false));
+
+    const out = await sync.syncRoot(db, root());
+
+    expect(out.backfill_completed).toBe(true);
+    expect(db.find('last_sync_at = NOW()').sql).toContain('backfill_done = 1');
+  });
+
+  test('an EMPTY root does NOT graduate — its first real walk must be a backfill', async () => {
+    const db = makeDb({ roots: [root({ id: 5 })] });
+    dropbox.listFolderPage.mockRejectedValue(dbxError(409, 'path/not_found/...'));
+
+    await sync.syncRoot(db, root({ id: 5 }));
+    expect(db.find('last_sync_at = NOW()').sql).not.toContain('backfill_done = 1');
+  });
+
   test('present cursor → incremental: continue, per-row write, EMISSIONS ON', async () => {
     const db = makeDb({ roots: [root()] });
     dropbox.listFolderContinue.mockResolvedValue(page([file('/a/1.pdf')], 'c2', false));
 
-    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1' }));
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
 
     expect(out.mode).toBe('incremental');
     expect(dropbox.listFolderContinue).toHaveBeenCalledWith(db, { cursor: 'c1' });
@@ -386,11 +432,11 @@ describe('syncRoot — mode is derived from cursor presence', () => {
     // Resumption after a crash re-reads a page. Silence is what makes that safe.
     const db = makeDb({ roots: [root()] });
     dropbox.listFolderContinue.mockResolvedValue(page([file('/a/1.pdf')], 'c2', false));
-    await sync.syncRoot(db, root({ sync_cursor: 'c1' }));
+    await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
     domainEvents.emit.mockClear();
 
     dropbox.listFolderContinue.mockResolvedValue(page([file('/a/1.pdf')], 'c3', false));
-    await sync.syncRoot(db, root({ sync_cursor: 'c2' }));
+    await sync.syncRoot(db, root({ sync_cursor: 'c2', backfill_done: 1 }));
 
     expect(domainEvents.emit).not.toHaveBeenCalled();
   });
@@ -429,7 +475,7 @@ describe('syncRoot — path/not_found on a root is an EMPTY ROOT', () => {
     const db = makeDb({ roots: [root()] });
     dropbox.listFolderContinue.mockRejectedValue(dbxError(409, 'path/not_found/...'));
 
-    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1' }));
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
     expect(out.error).toBeTruthy();
     expect(out.mode).toBe('incremental');
   });
@@ -460,7 +506,7 @@ describe('syncRoot — the cursor is persisted per page', () => {
     const db = makeDb({ roots: [root()] });
     dropbox.listFolderContinue.mockResolvedValue(page([file('/a/2.pdf')], 'cur-p2', false));
 
-    await sync.syncRoot(db, root({ sync_cursor: 'cur-p1' }));
+    await sync.syncRoot(db, root({ sync_cursor: 'cur-p1', backfill_done: 1 }));
 
     expect(dropbox.listFolderPage).not.toHaveBeenCalled();
     expect(dropbox.listFolderContinue).toHaveBeenCalledWith(db, { cursor: 'cur-p1' });
@@ -509,10 +555,13 @@ describe('syncRoot — 409 reset', () => {
     dropbox.listFolderContinue.mockRejectedValue(
       dbxError(409, 'reset/...', { '.tag': 'reset' }));
 
-    const out = await sync.syncRoot(db, root({ sync_cursor: 'dead-cursor' }));
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'dead-cursor', backfill_done: 1 }));
 
     expect(out.cursor_reset).toBe(true);
     const write = db.find('SET sync_cursor = NULL');
+    // BOTH halves. Clearing only the cursor would re-list the whole subtree
+    // with emissions ON — the mode-flip bug, one root at a time.
+    expect(write.sql).toContain('backfill_done = 0');
     expect(write.sql).toContain('last_error = ?');
     expect(write.sql).toContain('syncing_since = NULL');
     expect(alert).toHaveBeenCalledTimes(1);
@@ -528,12 +577,13 @@ describe('syncRoot — 409 reset', () => {
     const db = makeDb({ roots: [root()] });
     dropbox.listFolderContinue.mockRejectedValue(
       dbxError(409, 'reset/...', { '.tag': 'reset' }));
-    await sync.syncRoot(db, root({ sync_cursor: 'dead-cursor' }));
+    await sync.syncRoot(db, root({ sync_cursor: 'dead-cursor', backfill_done: 1 }));
 
-    // The DB now holds sync_cursor = NULL; that is what the next tick reads.
+    // The DB now holds sync_cursor = NULL AND backfill_done = 0; that pair is
+    // what the next tick reads.
     dropbox.listFolderPage.mockResolvedValue(
       page([file('/a/1.pdf'), file('/a/2.pdf')], 'fresh', false));
-    const out2 = await sync.syncRoot(db, root({ sync_cursor: null }));
+    const out2 = await sync.syncRoot(db, root({ sync_cursor: null, backfill_done: 0 }));
 
     expect(out2.mode).toBe('backfill');
     expect(domainEvents.emit).not.toHaveBeenCalled();
@@ -543,7 +593,7 @@ describe('syncRoot — 409 reset', () => {
     const db = makeDb({ roots: [root()] });
     dropbox.listFolderContinue.mockRejectedValue(dbxError(409, 'other/problem'));
 
-    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1' }));
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
 
     expect(out.cursor_reset).toBeUndefined();
     expect(out.error).toBeTruthy();
@@ -595,7 +645,7 @@ describe('syncRoot — inline attribution', () => {
     dropbox.listFolderContinue.mockResolvedValue(
       page([file('/r/  case a/new.pdf')], 'c2', false));
 
-    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1' }));
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
 
     expect(out.linked).toBe(1);
     expect(emittedTypes()).toEqual(['document.created', 'document.linked']);
@@ -609,7 +659,7 @@ describe('syncRoot — inline attribution', () => {
     dropbox.listFolderContinue.mockResolvedValue(
       page([file('/r/  loose/x.pdf')], 'c2', false));
 
-    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1' }));
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
 
     expect(out.files).toBe(1);
     expect(out.linked).toBe(0);
@@ -682,7 +732,7 @@ describe('syncRoot — deleted entries', () => {
     dropbox.listFolderContinue.mockResolvedValue(
       page([deleted('/r/  case a/gone.pdf'), deleted('/r/  case a/  subfolder')], 'c2', false));
 
-    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1' }));
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
 
     const updates = db.all("UPDATE documents SET status = 'deleted'");
     expect(updates.length).toBe(2);

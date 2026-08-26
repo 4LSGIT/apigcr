@@ -359,6 +359,7 @@ ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
 ref/database.sql
 ref/documents_s1.sql
 ref/documents_s2.sql
+ref/documents_s2_hotfix.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql

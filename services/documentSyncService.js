@@ -21,21 +21,41 @@
  * Eighty-odd pages of 2,000 entries become eighty-odd resumptions, and the
  * only state carried between them is `document_sync_roots.sync_cursor`.
  *
- * ── ONE CURSOR, TWO MODES ─────────────────────────────────────────────────
+ * ── ONE CURSOR, TWO QUESTIONS — DO NOT CONFLATE THEM ──────────────────────
  * Dropbox's list_folder cursor does double duty: paging THROUGH the initial
- * listing, and then delta-ing FROM it. This engine reads the mode off cursor
- * PRESENCE rather than storing a mode flag:
+ * listing, and then delta-ing FROM it. S2 originally derived the emission
+ * mode from cursor PRESENCE alone, and that was WRONG in a way that took
+ * production to expose:
  *
- *     sync_cursor IS NULL   →  BACKFILL     — emissions OFF, bulk writes
- *     sync_cursor IS NOT NULL → INCREMENTAL — emissions ON, per-row writes
+ *     a backfill stopped by the page budget PERSISTS A CURSOR.
  *
- * That is not a shortcut, it is the recovery mechanism. When Dropbox
- * invalidates a cursor (409 `reset`) the ONLY fix is to re-list the whole
- * subtree — which means re-walking 26,000 files through a path that must not
- * emit 26,000 events. Clearing the cursor puts the engine back in backfill
- * mode automatically, so a forced re-list cannot storm the trigger engine.
- * A stored mode flag would have to be reset in the same breath and would
- * eventually not be.
+ * On the next tick that cursor made the root look "already backfilled", so
+ * the engine flipped to per-row writes with emissions ON — while still
+ * paging through the INITIAL listing, with ~100,000 never-before-seen files
+ * left to walk. Measured 2026-08-26: root 1 did 25 pages / 12,332 files in
+ * 37s in backfill mode, then 7 pages in 495s in incremental mode (~47x
+ * slower per page) and began emitting document.created for files that had
+ * been sitting in Dropbox for years. Root 3 (Closed Cases) was ~50,000 files
+ * away from doing the same.
+ *
+ * The two questions are separate and are now answered separately:
+ *
+ *   WHICH API CALL?      cursor presence.
+ *                        NULL → files/list_folder, else → .../continue.
+ *   WHICH WRITE POLICY?  backfill_done.
+ *                        0 → bulk writes, emissions OFF.
+ *                        1 → per-row writes, emissions ON.
+ *
+ * `backfill_done` flips exactly once per root: when a page comes back with
+ * has_more = false while still in backfill. That is the only moment the
+ * initial listing is provably complete — and it is NOT the same moment a
+ * cursor first exists.
+ *
+ * The 409-`reset` recovery still works, and still for the original reason:
+ * a reset clears the cursor AND resets backfill_done to 0, so the forced
+ * re-walk of the whole subtree runs emissions-off. Both halves must move
+ * together; resetting only the cursor would re-introduce exactly the bug
+ * above, one root at a time.
  *
  * ── WHY THE BACKFILL EMITS NOTHING ────────────────────────────────────────
  * A file that has been sitting in Dropbox since 2019 is not news. Emitting
@@ -440,9 +460,12 @@ async function syncRoot(db, root, opts = {}) {
     return { root_id: root.id, path: root.path, skipped: true, reason: 'claimed_elsewhere' };
   }
 
-  const backfill = !root.sync_cursor;
+  // WRITE POLICY ← backfill_done.  API CALL ← cursor presence.  These are
+  // different questions; see the header for what conflating them cost.
+  const backfill = !root.backfill_done;
   const mode = backfill ? 'backfill' : 'incremental';
   let cursor = root.sync_cursor || null;
+  let backfillCompleted = false;
 
   const cache = opts.cache || await _loadCaseFolderCache(db);
 
@@ -469,6 +492,9 @@ async function syncRoot(db, root, opts = {}) {
         // Treating this as a failure would park three roots in a permanent
         // error state and hide real failures behind the noise.
         if (!cursor && dropbox.isPathNotFoundError(err)) {
+          // NOTE: backfill_done stays 0. The folder does not exist yet, so
+          // there is no listing to have completed — and when it IS created,
+          // the first real walk must run emissions-off like any other backfill.
           await db.query(
             `UPDATE document_sync_roots
                 SET last_sync_at = NOW(), last_error = NULL,
@@ -490,9 +516,13 @@ async function syncRoot(db, root, opts = {}) {
         // files cannot storm the trigger engine. That is the entire reason
         // mode is derived from cursor presence instead of stored.
         if (cursor && dropbox.isCursorResetError(err)) {
+          // BOTH halves, in one statement. Clearing the cursor without
+          // clearing backfill_done would re-list the entire subtree with
+          // emissions ON — the exact bug this column exists to prevent.
           await db.query(
             `UPDATE document_sync_roots
-                SET sync_cursor = NULL, last_error = ?, syncing_since = NULL
+                SET sync_cursor = NULL, backfill_done = 0,
+                    last_error = ?, syncing_since = NULL
               WHERE id = ?`,
             [_clamp(`cursor reset: ${err.message}`, 1000), root.id],
           );
@@ -639,7 +669,16 @@ async function syncRoot(db, root, opts = {}) {
         [cursor, root.id],
       );
 
-      if (!page.has_more) { stopReason = 'complete'; break; }
+      if (!page.has_more) {
+        stopReason = 'complete';
+        // THE one moment the initial listing is provably complete. Everything
+        // this cursor returns from here on is a genuine delta, so the root
+        // graduates to emissions-on. Written in the finish block below, in the
+        // same UPDATE as last_sync_at, so a crash before that leaves the root
+        // in backfill — safe, at worst one redundant emissions-off pass.
+        if (backfill) backfillCompleted = true;
+        break;
+      }
     }
   } catch (err) {
     // Root-level failure: record it, RELEASE THE CLAIM (so the next tick can
@@ -665,11 +704,13 @@ async function syncRoot(db, root, opts = {}) {
   await db.query(
     `UPDATE document_sync_roots
         SET last_sync_at = NOW(), last_error = NULL, stats = ?, syncing_since = NULL
+            ${backfillCompleted ? ', backfill_done = 1' : ''}
       WHERE id = ?`,
     [JSON.stringify(stats), root.id],
   );
 
-  return { root_id: root.id, path: root.path, ...stats };
+  return { root_id: root.id, path: root.path, ...stats,
+           ...(backfillCompleted ? { backfill_completed: true } : {}) };
 }
 
 // ─────────────────────────────────────────────────────────────
