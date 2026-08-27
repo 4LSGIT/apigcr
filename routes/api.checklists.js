@@ -1361,6 +1361,44 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
       );
     }
 
+    // ── REGISTER WHAT LANDED (Documents S4) ────────────────────────────────
+    //
+    // Without this the client's file is invisible to the documents registry
+    // until the next Dropbox delta, and — when it landed in the unsorted bin
+    // because this case has no working folder — it is invisible to the CASE
+    // forever, because no path under Unsorted supports a case link.
+    //
+    // Registration is an ADDITION here and nothing above it changes: the 200
+    // has already gone out, the email and the log are untouched, and a failure
+    // inside registerLandedInFolder is swallowed by the service rather than
+    // surfacing. That is deliberate — the bytes are in Dropbox either way, the
+    // sync's delta will find them, and a bookkeeping failure must not cost the
+    // client an error on an upload that actually worked.
+    //
+    // WHY BY FOLDER AND NOT BY THE REPORTED FILENAMES: this route receives
+    // names, never paths, and every upload link commits with autorename, so a
+    // second "statement.pdf" is on disk as "statement (1).pdf" and the name it
+    // reported matches nothing. See documentIngestService.registerLandedInFolder.
+    //
+    // `dest` is the SERVER's re-derivation of where the batch went (the same
+    // one the email wording uses), so no client input steers this.
+    if (dest) {
+      const ingest = require('../services/documentIngestService');
+      const target = dest.placement === 'unsorted'
+        ? { folderPath: dest.path }
+        : { sharedLink: dest.sharedLink, subfolder: 'Client Uploads' };
+      ingest.registerLandedInFolder(req.db, {
+        ...target,
+        links:       [{ type: 'case', id: case_id }],
+        createdBy:   null,              // a client acted; there is no user
+        eventSource: 'client_upload',
+      }).then(r => {
+        if (r.registered) {
+          console.log(`[UPLOAD] registered ${r.registered} document(s) for case ${case_id}`);
+        }
+      });
+    }
+
     // Unsorted placement is easy to lose in an inbox — raise a staff task
     // (best-effort, self-caught in the service) so the files get moved.
     if (dest && dest.placement === 'unsorted') {

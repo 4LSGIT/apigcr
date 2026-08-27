@@ -419,7 +419,7 @@ async function prepareCaseFolder(db, request) {
  * autorename:true means the requested name is a request, not a guarantee. The
  * response metadata is authoritative and is what gets persisted.
  */
-async function _upload(db, credentialId, folderPath, filename, content) {
+async function _upload(db, credentialId, folderPath, filename, content, request) {
   const requested = dropboxService.joinPath(folderPath, filename);
   const meta = await dropboxService.uploadFile(db, {
     credentialId,
@@ -435,6 +435,35 @@ async function _upload(db, credentialId, folderPath, filename, content) {
   if (actual !== requested) {
     console.log(`[ESIGN FILING] Dropbox autorenamed: "${requested}" → "${actual}"`);
   }
+
+  // ── REGISTER (Documents S4) ───────────────────────────────────────────────
+  //
+  // Hooked HERE rather than at the three call sites because this is already
+  // the one chokepoint every e-sign write goes through — signed documents,
+  // completion certificates, and externally-signed paper alike. A hook per
+  // caller would be three chances to add a fourth caller and forget.
+  //
+  // A signed retainer or petition is the single most consequential document
+  // this firm files, and on the unsorted rung its path says nothing about
+  // whose it is — so the write-time link is not a convenience here, it is the
+  // only attribution that will ever exist for those.
+  //
+  // `request.linkable_type` is 'case' for everything resolveTarget accepts;
+  // anything else produces no link and is still registered.
+  //
+  // Safe variant: the document IS filed by this point. The caller's contract
+  // is `out.filed` plus a warnings array, and a registry failure is neither.
+  const ingest = require('./documentIngestService');   // deferred (convention)
+  await ingest.registerWrittenSafe(db, {
+    entry:       meta,
+    links:       request && request.linkable_type === 'case' && request.linkable_id != null
+                   ? [{ type: 'case', id: request.linkable_id }]
+                   : [],
+    createdBy:   null,                 // the provider's webhook filed this, not a user
+    eventSource: 'esign',
+    credentialId,
+  });
+
   return { path: actual, renamed: actual !== requested, metadata: meta };
 }
 
@@ -525,7 +554,7 @@ async function fileExternalDocument(db, request, { buffer, suffix = 'signed - ex
       completedAt: completedAt || request.completed_at,
       documentName: request.document_name,
       suffix, ext,
-    }), buffer);
+    }), buffer, request);
     out.signedPdfPath = res.path;
     out.filed = true;
   } catch (err) {
@@ -640,7 +669,7 @@ async function fileSignedDocuments(db, request, { provider } = {}) {
     const res = await _upload(db, credentialId, folderPath, _nameFor(prep, {
       completedAt: request.completed_at, documentName: request.document_name,
       suffix: 'signed', ext,
-    }), signedBuf);
+    }), signedBuf, request);
     out.signedPdfPath = res.path;
     out.filed = true;
   } catch (err) {
@@ -658,7 +687,7 @@ async function fileSignedDocuments(db, request, { provider } = {}) {
     const res = await _upload(db, credentialId, folderPath, _nameFor(prep, {
       completedAt: request.completed_at, documentName: request.document_name,
       suffix: 'certificate', ext: certKind === 'zip' ? 'zip' : 'pdf',
-    }), certBuf);
+    }), certBuf, request);
     out.certPdfPath = res.path;
   } catch (err) {
     out.warnings.push(

@@ -928,7 +928,22 @@
        No matcher for `POST /api/documents/register`: its only callers are
        admin/debug and the S2 smoke test, it announces a row nothing has open
        yet, and the id it would address is one no current view is holding.
-       Add one the day a UI registers a document a user is looking at. */
+       Add one the day a UI registers a document a user is looking at.
+
+       ── THAT DAY ARRIVED (S4), AND IT IS STILL NOT `register`. ────────────
+       `POST /api/documents/upload-commit` is a UI registering a document a
+       user is looking at — a staffer uploading from a case tab — so it gets a
+       matcher. It reuses docLinkGetter UNCHANGED, and the reason is the same
+       one that getter was written for: the thing other frames must react to is
+       not the new row (nobody is holding an id that did not exist a second
+       ago) but the TARGET'S SET — the case whose document list is now one file
+       longer. The uploader's own frame does not need the bus at all; it has the
+       row in the commit response and inserts it optimistically.
+
+       A GLOBAL upload commits with no target and the route echoes no
+       link_type. docLinkGetter fails closed on that, which is exactly right:
+       an unattached file changed no target's set, so there is nothing to
+       announce and no frame that would act on it. */
     [/^\/api\/documents\/(\d+)$/, 'document', function (r) {
       var d = r && r.document;
       if (!d || typeof d !== 'object') return null;
@@ -947,6 +962,11 @@
 
     [/^\/api\/documents\/(\d+)\/links$/, 'document', docLinkGetter,
       ['POST', 'DELETE']],
+
+    // S4 — a staff upload landed and was linked. Announces the TARGET, not the
+    // new row; see the note above. No capture group, so the getter's array
+    // return is what addresses it (contract v2), as it is for the links pair.
+    [/^\/api\/documents\/upload-commit$/, 'document', docLinkGetter, ['POST']],
   ];
 
   /**

@@ -550,7 +550,46 @@ async function sendUploadNotifications(db, ctx) {
       })
     : Promise.resolve();
 
-  return Promise.all([emailP, logP, taskP]);
+  // ── REGISTER WHAT LANDED (Documents S4) ────────────────────────────────────
+  //
+  // Additive, self-catching, and post-200 like everything else in this
+  // function — the bytes are already in Dropbox, so a registration failure
+  // costs a delay (the delta finds the file) and must never cost the client an
+  // error or this batch its notification.
+  //
+  // TWO LINKS, and the second is the portal's advantage over the public flow:
+  // this upload was made by an AUTHENTICATED contact, so we know who uploaded
+  // it and not merely which case it concerns. The public route can only guess
+  // the Primary contact and correctly declines to. A spouse's upload therefore
+  // shows up on the spouse's contact record here.
+  //
+  // Both are relation 'upload' unless the file landed under the case's cached
+  // folder — documentIngestService decides that per file, per link; a contact
+  // link is never a 'path' link because contacts have no folder.
+  //
+  // By folder, not by the reported names: this service also receives names
+  // only, and autorename makes them unreliable. See registerLandedInFolder.
+  const ingest = require('./documentIngestService');   // deferred (convention)
+  const target = (dest && dest.placement === 'unsorted')
+    ? { folderPath: dest.path }
+    : { sharedLink: (dest && dest.sharedLink) || dropboxLink, subfolder: 'Client Uploads' };
+  const ingestP = (dest || dropboxLink)
+    ? ingest.registerLandedInFolder(db, {
+        ...target,
+        links: [
+          { type: 'case',    id: case_id },
+          { type: 'contact', id: contact_id },
+        ],
+        createdBy:   null,              // a client acted; log_by/created_by have no user
+        eventSource: 'portal_upload',
+      }).then(r => {
+        if (r.registered) {
+          console.log(`[portal] registered ${r.registered} document(s) for case ${case_id}`);
+        }
+      })
+    : Promise.resolve();
+
+  return Promise.all([emailP, logP, taskP, ingestP]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

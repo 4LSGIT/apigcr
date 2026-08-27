@@ -413,6 +413,50 @@
       margin-bottom: var(--gap); overflow-wrap: anywhere;
     }
 
+    /* ── Upload progress (S4) ──────────────────────────────────────────────
+       Per-file rows with a real progress bar, because the bytes go straight to
+       Dropbox and XMLHttpRequest's upload.onprogress gives genuine numbers —
+       the same reason public/docReq.html and public/portal/docs.html both use
+       XHR here rather than fetch. A spinner would be a worse lie on a 40 MB
+       scan than an honest 12%. */
+    #upPanel:empty { display: none; }
+    #upPanel {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 10px 12px; margin-bottom: var(--gap); background: var(--surface-2);
+    }
+    #upPanel .up-head {
+      display: flex; align-items: center; gap: 8px;
+      font-size: var(--fs-sm); font-weight: 600; margin-bottom: 8px;
+    }
+    #upPanel .up-head .spacer { flex: 1; }
+    #upPanel .up-note {
+      font-size: var(--fs-sm); color: var(--text-muted);
+      margin-bottom: 8px; overflow-wrap: anywhere;
+    }
+    .up-file { margin-bottom: 8px; }
+    .up-file:last-child { margin-bottom: 0; }
+    .up-file .row {
+      display: flex; justify-content: space-between; gap: 8px;
+      font-size: var(--fs-sm); margin-bottom: 3px;
+    }
+    .up-file .fname { overflow-wrap: anywhere; }
+    .up-file .pct { color: var(--text-muted); flex-shrink: 0; }
+    .up-file .track {
+      height: 5px; border-radius: 3px; background: var(--border); overflow: hidden;
+    }
+    .up-file .bar {
+      width: 0; height: 100%; background: var(--accent); transition: width .2s;
+    }
+    /* --ok-fill / --danger-fill, not --ok / --danger: theme.css tunes the
+       bare tokens as TEXT contrast and the -fill pair as block colour, and a
+       progress bar is a block. The FILENAME beside it takes the text tokens.
+       (There is no --success or --primary in this theme; --ok and --accent
+        are the names.) */
+    .up-file.ok  .bar { background: var(--ok-fill); }
+    .up-file.ok  .fname { color: var(--ok); }
+    .up-file.err .bar { background: var(--danger-fill); width: 100% !important; }
+    .up-file.err .fname { color: var(--danger); }
+
     .swal2-popup { font-size: var(--fs) !important; }
     .swal-lbl { font-weight: 600; font-size: var(--fs-sm); color: var(--text-2); display: block; }
     .swal-note { font-size: var(--fs-sm); color: var(--text-muted); }
@@ -480,6 +524,10 @@
           title="Dropbox sync roots, status and diagnostics">
     <i class="fa-solid fa-rotate"></i> Sync
   </button>
+  <button class="btn btn-ghost btn-sm" id="upBtnGlobal" onclick="onUploadClick()"
+          title="Upload a file to Dropbox and register it">
+    <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload
+  </button>
   <button class="btn btn-ghost btn-sm" onclick="onRefresh()" title="Re-fetch the list">
     <i class="fa-solid fa-arrows-rotate"></i> Refresh
   </button>
@@ -500,13 +548,33 @@
   </label>
   <div class="spacer"></div>
   <span class="count" id="scopedCount"></span>
+  <!-- PRIMARY here, ghost in the global topbar. On a case tab "put a document
+       on this case" is the action staff came for; on the global page it is one
+       verb among several and shouting would be wrong. -->
+  <button class="btn btn-primary btn-sm" id="upBtnScoped" onclick="onUploadClick()"
+          title="Upload a file to this record's Dropbox folder">
+    <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload
+  </button>
   <button class="btn btn-outline btn-sm" onclick="onRefresh()" title="Re-fetch the list">
     <i class="fa-solid fa-arrows-rotate"></i> Refresh
   </button>
 </div>
 
+<!-- ONE input, both modes. `multiple` because filing a batch of exhibits one
+     dialog at a time is the kind of friction that sends people back to the
+     Dropbox desktop app — which is exactly the habit this feature exists to
+     make unnecessary. -->
+<input type="file" id="upInput" multiple style="display:none"
+       onchange="onUploadPicked()">
+
 <div id="scroll">
   <div id="inner">
+
+    <!-- Progress. Hidden until an upload starts and left on screen afterwards:
+         the final line is the receipt ("3 of 3 uploaded"), and clearing it the
+         instant the last file finished would take the answer away at the exact
+         moment the user looks for it. -->
+    <div id="upPanel"></div>
 
     <!-- ── Toolbar — GLOBAL only (hidden by body.scoped rules below) ── -->
     <div class="toolbar" id="toolbar">
@@ -2524,6 +2592,195 @@ window.onRunDiagnostics = async function () {
   }
   sync.running = false;
   renderSyncPanel();
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Upload (S4) — link → browser→Dropbox → commit
+//
+// THREE HOPS, and the middle one does not touch this app's server. /upload-link
+// mints a Dropbox temporary upload link, the browser POSTs the bytes straight
+// to Dropbox, /upload-commit registers what landed. That shape is not an
+// optimisation, it is the only one that works: Cloud Run buffers a request body
+// in heap, and a 40 MB scan through this instance is the OOM the /raw size gate
+// exists to prevent, from the other direction.
+//
+// The mechanics are COPIED from public/docReq.html and public/portal/docs.html,
+// which have shipped this against real Dropbox for months — POST (not PUT),
+// `Content-Type: application/octet-stream`, XHR for genuine progress events.
+//
+// ── ONE THING THOSE TWO PAGES THROW AWAY AND THIS ONE DOES NOT ──────────────
+// Dropbox answers that POST with the new file's FileMetadata. Both client pages
+// ignore `xhr.responseText`, which is why the client-upload registration hooks
+// on the server have to go and LIST the destination folder to find out what
+// arrived. Here we read it, and `id` — the move-and-rename-stable handle the
+// whole registry is keyed on — goes to the commit. That matters because every
+// upload commits with autorename: a second "statement.pdf" lands as
+// "statement (1).pdf", so the path we ASKED for now names a different,
+// pre-existing file, and committing by path would register the wrong document.
+//
+// THE COMMIT IS WHAT CREATES THE ROW. A failed POST leaves nothing behind — no
+// phantom row to reconcile — because nothing is registered until Dropbox has
+// confirmed the bytes and the server has re-statted them.
+// ════════════════════════════════════════════════════════════════════════════
+
+/* Scope → the commit's context. The server signs this into the ticket; sending
+   it is a request, not an assertion, and the ticket is what makes it binding. */
+function uploadScope() {
+  if (!SCOPED) return {};
+  if (LINK_TYPE === 'case')    return { case_id: LINK_ID };
+  if (LINK_TYPE === 'contact') return { contact_id: LINK_ID };
+  return {};                        // an unknown scope uploads unattached
+}
+
+function upSetButtons(disabled) {
+  ['upBtnGlobal', 'upBtnScoped'].forEach(function (id) {
+    var b = E(id);
+    if (b) b.disabled = !!disabled;
+  });
+}
+
+window.onUploadClick = function () {
+  var inp = E('upInput');
+  if (!inp || inp.disabled) return;
+  inp.value = '';                   // re-picking the same file must re-fire change
+  inp.click();
+};
+
+/**
+ * POST bytes to a Dropbox temporary upload link.
+ *
+ * Resolves with the parsed FileMetadata when Dropbox returns one. A 200 with an
+ * unparseable body still RESOLVES (with null): the bytes are in Dropbox at that
+ * point, and the commit can fall back to the issued path. Treating a
+ * JSON-parse failure as an upload failure would report a lie to the user.
+ */
+function putToDropbox(url, file, onProgress) {
+  return new Promise(function (resolve, reject) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = function () {
+      if (xhr.status !== 200) return reject(new Error('Upload failed (' + xhr.status + ')'));
+      var meta = null;
+      try { meta = JSON.parse(xhr.responseText); } catch (_) { /* see docblock */ }
+      resolve(meta);
+    };
+    xhr.onerror = function () { reject(new Error('Network error')); };
+    xhr.send(file);
+  });
+}
+
+window.onUploadPicked = async function () {
+  var inp = E('upInput');
+  if (!inp || !inp.files || !inp.files.length) return;
+  var files = Array.prototype.slice.call(inp.files);
+  inp.value = '';
+
+  upSetButtons(true);
+  var scope = uploadScope();
+
+  E('upPanel').innerHTML =
+    '<div class="up-head"><i class="fa-solid fa-arrow-up-from-bracket"></i>'
+    + '<span id="upTitle">Uploading ' + files.length + ' file'
+    + (files.length === 1 ? '' : 's') + '…</span><span class="spacer"></span></div>'
+    + '<div class="up-note" id="upNote"></div>'
+    + files.map(function (f, i) {
+        return '<div class="up-file" id="upf-' + i + '">'
+          +   '<div class="row"><span class="fname">' + esc(f.name) + '</span>'
+          +   '<span class="pct" id="upp-' + i + '">0%</span></div>'
+          +   '<div class="track"><div class="bar" id="upb-' + i + '"></div></div>'
+          + '</div>';
+      }).join('');
+
+  var ok = 0;
+  var fresh = [];
+  var noteShown = false;
+
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    var wrap = E('upf-' + i), pct = E('upp-' + i), bar = E('upb-' + i);
+    try {
+      var issued = await api('/api/documents/upload-link', 'POST', {
+        case_id:    scope.case_id    || undefined,
+        contact_id: scope.contact_id || undefined,
+        filename:   file.name,
+      });
+      if (!issued || !issued.link || !issued.ticket) {
+        throw new Error('the server did not return an upload link');
+      }
+
+      // ONCE per batch. The placement note is a property of the DESTINATION,
+      // not of each file, and repeating it per file would bury the files.
+      if (issued.note && !noteShown) {
+        E('upNote').textContent = issued.note;
+        noteShown = true;
+      }
+
+      /* eslint-disable no-loop-func */
+      var meta = await putToDropbox(issued.link, file, function (p) {
+        bar.style.width = p + '%';
+        pct.textContent = p + '%';
+      });
+      /* eslint-enable no-loop-func */
+
+      var res = await api('/api/documents/upload-commit', 'POST', {
+        ticket:      issued.ticket,
+        // Dropbox's own answer to "what did you just create". Absent only when
+        // the response body did not parse; the server then falls back to the
+        // path it signed into the ticket.
+        external_id: (meta && meta.id) || undefined,
+      });
+
+      wrap.className = 'up-file ok';
+      bar.style.width = '100%';
+      pct.textContent = 'Done';
+      ok++;
+      if (res && res.document) fresh.push(res.document);
+
+    } catch (err) {
+      wrap.className = 'up-file err';
+      pct.textContent = 'Failed';
+      // The message goes on the ROW, not in a toast: with a batch of eight,
+      // eight toasts stack and the user cannot tell which file each names.
+      wrap.querySelector('.fname').textContent =
+        file.name + ' — ' + (err && err.message || 'upload failed');
+    }
+  }
+
+  upSetButtons(false);
+  E('upTitle').textContent = ok === files.length
+    ? ok + ' file' + (ok === 1 ? '' : 's') + ' uploaded'
+    : ok + ' of ' + files.length + ' uploaded';
+
+  /* OPTIMISTIC INSERT, and it is honest here rather than merely fast.
+     The default sort is `modified` DESC and a file uploaded four seconds ago
+     IS the most recently modified thing in the list, so the top is exactly
+     where a refetch would put it. Prepending costs no round trip and cannot
+     put the row somewhere the server would disagree with.
+
+     It is skipped when the user is not on page 1, or is sorted some other way,
+     or has a filter the new row may not match — in all of those the correct
+     position is a question only the list query can answer, so we ask it. */
+  if (!fresh.length) return;
+
+  var canPrepend = state.page === 1 && state.sort === 'modified'
+                && !state.q && !state.doc_type && !state.ext && !state.tag
+                && !state.unlinked;
+  if (!canPrepend) return fetchDocs();
+
+  // Stamp the echo fence BEFORE the bus can deliver our own commit back to us:
+  // /upload-commit announces `doclink:<scope>` and this frame subscribes to it,
+  // so without the stamp every upload costs one pointless extra list GET.
+  linksLastRefresh = Date.now();
+
+  state.docs  = fresh.slice().reverse().concat(state.docs);
+  state.total += fresh.length;
+  renderList();
+  renderPagination();
+  setCount(state.total + ' document' + (state.total === 1 ? '' : 's'));
 };
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -83,6 +83,41 @@ function coerceCredId(v) {
   return Number.isInteger(n) && n > 0 ? n : v;
 }
 
+/**
+ * Register a file this generic surface just wrote (Documents S4).
+ *
+ * REGISTERED, NEVER LINKED. These routes are a thin RPC mirror of the Dropbox
+ * API — a caller supplies a path or a shared link and nothing about WHY, so
+ * there is no context to attribute to and none to invent. What registration
+ * still buys is real: the file appears in the documents list within the same
+ * request instead of up to a delta interval later, and the path-based
+ * attribution sweep then links it to a case exactly as it would have anyway.
+ *
+ * Callers who DO know the owner have two better doors, both of which link:
+ * POST /api/documents/upload-link + /upload-commit (staff, from a case tab),
+ * and the dropbox_save_url automation step's case_id / contact_id params.
+ *
+ * ⚠️ POST /api/dropbox/upload-link CANNOT BE HOOKED, and is the one write path
+ * in the app that stays delta-only. It hands a temporary upload link to a
+ * caller who then POSTs bytes straight to Dropbox, and this surface has no
+ * completion route to learn that they did — by design, it is an RPC mirror,
+ * not a workflow. /api/documents/upload-commit is the completion half that
+ * does exist; it is on the documents surface because it needs a ticket and a
+ * context, which is precisely what this surface does not have.
+ *
+ * Never throws: the bytes are in Dropbox and the response is about the write.
+ */
+async function registerWrite(req, metadata) {
+  if (!metadata || metadata['.tag'] === 'folder') return;
+  const ingest = require('../services/documentIngestService');
+  await ingest.registerWrittenSafe(req.db, {
+    entry:       metadata,
+    links:       [],
+    createdBy:   (req.auth && req.auth.userId) != null ? Number(req.auth.userId) : null,
+    eventSource: 'manual',
+  });
+}
+
 // ─── CREATE FOLDER (+ subfolders, + shared link) ───
 // Body: { path, subfolders?, share_link?, credential_id? }
 router.post('/api/dropbox/create-folder', jwtOrApiKey, async (req, res) => {
@@ -247,6 +282,9 @@ router.post('/api/dropbox/save-url', jwtOrApiKey, async (req, res) => {
       ...(wait !== undefined && { wait: wait === true }),
       credentialId: coerceCredId(credential_id),
     });
+    if (result && result.status === 'complete' && result.metadata) {
+      await registerWrite(req, result.metadata);
+    }
     res.json({ status: 'success', ...result });
   } catch (err) {
     sendError(res, err);
@@ -293,6 +331,7 @@ router.post('/api/dropbox/upload', jwtOrApiKey, async (req, res) => {
       ...(autorename !== undefined && { autorename: autorename === true }),
       credentialId: coerceCredId(credential_id),
     });
+    await registerWrite(req, metadata);
     res.json({ status: 'success', metadata });
   } catch (err) {
     sendError(res, err);

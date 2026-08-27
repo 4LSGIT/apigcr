@@ -254,10 +254,15 @@ async function issueClientUploadLink(db, { caseId, filename }) {
   // ── rung 1 (possibly via rung 2): the case folder ─────────────────────────
   if (sharedLink) {
     try {
-      const { link } = await dropboxService.getTemporaryUploadLink(db, {
+      // `path` is returned on EVERY rung as of S4 (it always existed here and
+      // was simply dropped). The documents upload flow signs the issued
+      // destination into its commit ticket, and a rung that hid its path would
+      // be the one rung that could not be committed against. Existing callers
+      // destructure { link } and are unaffected.
+      const { link, path } = await dropboxService.getTemporaryUploadLink(db, {
         sharedLink, filename, subfolder: SUBFOLDER,
       });
-      return { case_id: cid, link, placement };
+      return { case_id: cid, link, placement, path };
     } catch (err) {
       ladderNote = `case folder link unusable (${err.message})`;
       console.warn(`[UPLOAD TARGET] ${cid}: ${ladderNote} — falling back to unsorted`);
@@ -342,6 +347,12 @@ module.exports = {
   inspectUploadDestination,
   raiseUnsortedUploadTask,
   unsortedCaseFolderPath,
+  // The BARE bin, no per-case subfolder. S4's staff upload uses it for the two
+  // destinations that have no case to make a subfolder for: a CONTACT-scoped
+  // upload (contacts have no folder convention at all) and a global one. Kept
+  // as a named export rather than letting callers re-read the setting, so the
+  // app_settings key and its leading-space handling stay in one place.
+  unsortedBasePath: _unsortedBasePath,
   UNSORTED_PATH_KEY,
   DEFAULT_UNSORTED_PATH,
   TASK_SOURCE,

@@ -80,6 +80,7 @@ lib/ssrfGuard.js
 lib/taskQueue.js
 lib/unplacehold.js
 lib/unrefPoolIdleSweeper.js
+lib/uploadTicket.js
 lib/versionDiff.js
 lib/webhookExecutor.js
 lib/withTransaction.js
@@ -553,6 +554,7 @@ services/contactRelationService.js
 services/contactService.js
 services/courtExecutor.js
 services/courtRerun.js
+services/documentIngestService.js
 services/documentService.js
 services/documentSourceService.js
 services/documentSyncService.js
@@ -650,6 +652,7 @@ tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js
+tests/documentIngest.s4.test.js
 tests/documentRelink.test.js
 tests/documentService.test.js
 tests/documentSourceService.test.js
@@ -657,6 +660,8 @@ tests/documentSyncService.test.js
 tests/documentsRoutes.test.js
 tests/documentsUi.related.test.js
 tests/documentsUi.syncPanel.test.js
+tests/documentsUi.upload.test.js
+tests/documentsUpload.routes.test.js
 tests/dropboxService.normalizePath.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js

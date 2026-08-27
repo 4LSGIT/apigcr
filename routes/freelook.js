@@ -98,6 +98,33 @@ async function fetchFreeLook(nefDocUrl) {
   }
 }
 
+/**
+ * Register a captured court document (Documents S4).
+ *
+ * Runs on BOTH storage paths, and the fallback one is the reason it exists:
+ * a free look is ONE-SHOT, so a document that lands in the unfiled bin can
+ * never be re-fetched, and its path there says nothing about which case it
+ * belongs to. Registering it with the case link we already resolved is the
+ * only attribution it will ever get.
+ *
+ * `caseId` is null when the case_number matched no row — the document is still
+ * registered (it exists and staff will want to find it), just unattached.
+ *
+ * Never throws: the PDF is stored, the response is about the storage, and this
+ * route's whole design is that a consumed look must not be lost to a later
+ * failure.
+ */
+async function registerCourtDoc(db, metadata, caseId) {
+  if (!metadata || metadata['.tag'] === 'folder') return;
+  const ingest = require('../services/documentIngestService');
+  await ingest.registerWrittenSafe(db, {
+    entry:       metadata,
+    links:       caseId ? [{ type: 'case', id: caseId }] : [],
+    createdBy:   null,               // an automation POSTs here, not a person
+    eventSource: 'court_freelook',
+  });
+}
+
 // ── Route ────────────────────────────────────────────────────────────────────
 // POST /api/court/free-look   { url, case_number, title }
 router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
@@ -116,15 +143,23 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
 
   // 2. Look up the case's Dropbox folder (cheap; before we consume the look)
   let caseDropbox = null;
+  let caseId = null;
   let fallbackReason = null;
   try {
+    // case_id comes back alongside the folder link for Documents S4: a court
+    // document that falls to the FALLBACK folder has a path that will never
+    // reveal whose case it is, so the registry link has to be made from what
+    // we knew here. Selecting it costs nothing — same row, same query.
     const [rows] = await db.query(
-      'SELECT case_dropbox FROM cases WHERE case_number = ? LIMIT 1',
+      'SELECT case_id, case_dropbox FROM cases WHERE case_number = ? LIMIT 1',
       [case_number]
     );
     if (!rows || rows.length === 0)  fallbackReason = 'no_case_row';
-    else if (!rows[0].case_dropbox)  fallbackReason = 'no_case_dropbox';
-    else                             caseDropbox = rows[0].case_dropbox;
+    else {
+      caseId = rows[0].case_id;
+      if (!rows[0].case_dropbox)     fallbackReason = 'no_case_dropbox';
+      else                           caseDropbox = rows[0].case_dropbox;
+    }
   } catch (e) {
     console.error('[free-look] case lookup failed:', e.message);
     fallbackReason = 'case_lookup_failed';
@@ -152,6 +187,7 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
         filename:   safeTitle,
         content:    buffer,
       });
+      await registerCourtDoc(db, meta, caseId);
       return res.json({
         status: 'success', target: 'case', case_number,
         dropbox_path: meta?.path_display || meta?.path_lower || null,
@@ -170,6 +206,7 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
       path:    `${FALLBACK_DIR.replace(/\/+$/, '')}/${fbFile}`,
       content: buffer,
     });
+    await registerCourtDoc(db, meta, caseId);
     return res.json({
       status: 'success', target: 'fallback', reason: fallbackReason || 'unknown', case_number,
       dropbox_path: meta?.path_display || meta?.path_lower || null,

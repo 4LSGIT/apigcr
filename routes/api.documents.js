@@ -16,6 +16,13 @@
  * POST   /api/documents/:id/share     get-or-create the PERMANENT shared link
  * POST   /api/documents/register      { source?, external_id } → stat → upsert
  *
+ * S4 — staff upload. Same declaration-order rule as the two blocks below.
+ * POST   /api/documents/upload-link   { case_id?|contact_id?, filename }
+ *                                     → { link, path, placement, ticket, note? }
+ * POST   /api/documents/upload-commit { ticket, external_id? } → register + link
+ * The browser POSTs the bytes to Dropbox itself between the two — they never
+ * transit this instance. See that block's header for the ticket's job.
+ *
  * S3.2 — the sync panel's ops surface. NOTE THE DECLARATION ORDER: these are
  * registered BEFORE the ':id' routes or Express hands "sync-roots" to :id.
  * GET    /api/documents/sync-roots          roots + the kill-switch value
@@ -281,6 +288,281 @@ router.post('/api/documents/register', jwtOrApiKey, async (req, res) => {
     });
 
     res.status(created ? 201 : 200).json({ status: 'success', created, document: row });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STAFF UPLOAD (S4) — two calls around a browser→Dropbox transfer
+//
+// ⚠️ DECLARED BEFORE THE ':id' ROUTES for the reason the sync-roots block
+// states at length: '/api/documents/upload-link' and '/api/documents/:id' are
+// both two segments after the prefix, and whichever is declared first wins.
+//
+// ── WHY TWO CALLS AND NOT ONE ───────────────────────────────────────────────
+// Because the bytes must not transit this instance. Cloud Run holds a request's
+// whole body in heap, /raw's RAW_INLINE_MAX_BYTES comment does the arithmetic
+// for why that is an OOM waiting to happen, and this app already has a proven
+// pattern that avoids it: mint a Dropbox temporary upload link, let the browser
+// POST straight to Dropbox, then tell the server what landed. public/docReq.html
+// and public/portal/docs.html have shipped exactly this for client uploads.
+//
+// So: /upload-link issues the destination, /upload-commit registers the result.
+//
+// ── THE GAP BETWEEN THEM IS CROSSED BY A SIGNED TICKET ──────────────────────
+// Nothing else travels between the two moments, and the commit LINKS THE FILE
+// TO A CASE — so an unauthenticated case id in the commit body would make this
+// a "register any file against any case" verb. lib/uploadTicket.js MACs the
+// issued destination and its context; the commit verifies the MAC and then
+// re-checks the file's real, statted parent folder against the issued one.
+// Both halves are needed: the ticket proves WE chose this destination, the
+// parent check proves the committed file is actually in it.
+//
+// (POST /api/documents/register remains the deliberate, visible way to register
+// an arbitrary file. This surface is not a second one wearing a disguise.)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Upload destinations, and the human sentence each one is owed. */
+const UPLOAD_PLACEMENT_NOTE = {
+  unsorted_contact:
+    'Contacts have no Dropbox folder convention, so this file goes to the ' +
+    'unsorted uploads folder and is linked to the contact here. Move it ' +
+    'wherever it belongs — the link follows the file.',
+  unsorted_global:
+    'No case or contact is selected, so this file goes to the unsorted ' +
+    'uploads folder unattached. Link it to a case from the documents list.',
+};
+
+/**
+ * Filename sanitizer for the STAFF surface.
+ *
+ * Same rules as the public docReq route (strip path separators and leading
+ * dots, cap the length): a filename becomes a Dropbox path segment, so a
+ * caller who can put '/' in it can steer the destination out of the folder the
+ * ticket signed. Staff are trusted with the app; they are not the only thing
+ * that reaches this route, and a path-traversal guard that only runs on the
+ * public copy is a guard that will eventually be missing from the one that
+ * matters.
+ *
+ * NO EXTENSION ALLOW-LIST, unlike the client surfaces. Those exist to stop a
+ * client sending us something unexpected; staff filing a .msg, a .zip of
+ * exhibits or a court's .txt docket are doing their job, and the estate is
+ * full of all three.
+ */
+function safeUploadFilename(raw) {
+  return String(raw == null ? '' : raw)
+    .replace(/[/\\]/g, '_')
+    .replace(/^\.+/, '')
+    .slice(0, 200) || 'upload.dat';
+}
+
+/** Parent folder of a Dropbox path, lowercased. '' for a root-level file. */
+function parentLower(p) {
+  const s = String(p == null ? '' : p).toLowerCase();
+  const i = s.lastIndexOf('/');
+  return i <= 0 ? '' : s.slice(0, i);
+}
+
+/**
+ * POST /api/documents/upload-link — { case_id? | contact_id?, filename }
+ *
+ * Resolves where this file should land, mints a Dropbox temporary upload link,
+ * and returns it with a ticket the commit will demand back.
+ *
+ * ── THE LADDER, AND HOW IT DIFFERS FROM THE CLIENT ONE ──────────────────────
+ *   case, folder linked  → the CASE FOLDER ROOT. Deliberately not the "Client
+ *                          Uploads" subfolder uploadTargetService uses: that
+ *                          subfolder means "a client sent this in and nobody
+ *                          has filed it yet", and a staffer filing a document
+ *                          from the case tab has already done the filing.
+ *   case, no folder      → uploadTargetService.issueClientUploadLink, the full
+ *                          shared ladder (auto-create the case folder + raise
+ *                          the merge-review task, else the per-case unsorted
+ *                          subfolder). Not reimplemented here — that ladder is
+ *                          the firm's actual policy for "this case has no
+ *                          folder" and forking it would let the two drift.
+ *   contact              → the unsorted bin. THERE IS NO CONTACT FOLDER
+ *                          CONVENTION in this firm's Dropbox; inventing one in
+ *                          an upload endpoint would be a filing-policy decision
+ *                          made by a side effect. The file gets an 'upload'
+ *                          link to the contact and the UI says where it went.
+ *   neither (global)     → the unsorted bin, unattached.
+ */
+router.post('/api/documents/upload-link', jwtOrApiKey, async (req, res) => {
+  try {
+    const dropbox     = require('../services/dropboxService');
+    const uploadTarget = require('../services/uploadTargetService');
+    const tickets     = require('../lib/uploadTicket');
+
+    const b = req.body || {};
+    const caseId    = b.case_id    == null || b.case_id    === '' ? null : String(b.case_id);
+    const contactId = b.contact_id == null || b.contact_id === '' ? null : String(b.contact_id);
+
+    if (caseId && contactId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'provide case_id OR contact_id, not both — one upload has one owner',
+      });
+    }
+    if (!b.filename) {
+      return res.status(400).json({ status: 'error', message: 'filename is required' });
+    }
+    const filename = safeUploadFilename(b.filename);
+
+    let link = null;
+    let path = null;
+    let placement = null;
+    let note = null;
+
+    if (caseId) {
+      const [[caseRow]] = await req.db.query(
+        'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId],
+      );
+      if (!caseRow) {
+        return res.status(404).json({ status: 'error', message: 'Case not found' });
+      }
+      const sharedLink = (caseRow.case_dropbox && String(caseRow.case_dropbox).trim()) || '';
+
+      if (sharedLink) {
+        try {
+          ({ link, path } = await dropbox.getTemporaryUploadLink(req.db, { sharedLink, filename }));
+          placement = 'case';
+        } catch (err) {
+          console.warn(`[api.documents] upload-link: case folder unusable for ${caseId} (${err.message}) — falling back to the shared ladder`);
+        }
+      }
+      if (!link) {
+        // The shared ladder. It may auto-create the folder (and raise the
+        // review task), or land in the per-case unsorted subfolder.
+        const out = await uploadTarget.issueClientUploadLink(req.db, { caseId, filename });
+        link = out.link;
+        path = out.path;
+        placement = out.placement === 'unsorted' ? 'unsorted_case' : out.placement;
+        if (out.placement === 'unsorted') {
+          note = 'This case has no working Dropbox folder, so the file goes to the ' +
+                 'unsorted uploads folder. It is still linked to the case here.';
+        }
+      }
+    } else {
+      // Contact-scoped and global both land in the bare bin.
+      const base = await uploadTarget.unsortedBasePath(req.db);
+      ({ link, path } = await dropbox.getTemporaryUploadLink(req.db, { path: base, filename }));
+      placement = contactId ? 'unsorted_contact' : 'unsorted_global';
+      note = UPLOAD_PLACEMENT_NOTE[placement];
+    }
+
+    if (!path) {
+      // Defensive: every rung above sets one, and a ticket without a path
+      // cannot be checked at commit time. Better a 502 than a ticket that
+      // waves everything through.
+      throw new Error('dropbox did not report an upload destination');
+    }
+
+    const ticket = tickets.sign({
+      path,
+      ...(caseId    ? { link_type: 'case',    link_id: caseId }    : {}),
+      ...(contactId ? { link_type: 'contact', link_id: contactId } : {}),
+    });
+
+    res.json({
+      status: 'success', link, path, placement, ticket,
+      ...(note ? { note } : {}),
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * POST /api/documents/upload-commit — { ticket, external_id?, path? }
+ *
+ * The browser has finished POSTing bytes to Dropbox. Register what landed and
+ * link it to the context the ticket carries.
+ *
+ * ── WHAT IS TRUSTED, AND WHAT IS CHECKED ────────────────────────────────────
+ * `external_id` is the "id:…" handle out of DROPBOX's own response to the
+ * upload POST — the authoritative answer to "what did you just create", and
+ * the reason to prefer it over the issued path: every upload commits with
+ * `autorename:true`, so a second "statement.pdf" lands as "statement (1).pdf"
+ * and the issued path now names a DIFFERENT, PRE-EXISTING FILE. Registering
+ * that one would attach the wrong document to the case, silently. The client
+ * is the only party holding the id, so it is read from the request — and then
+ * every claim it implies is re-derived from a stat.
+ *
+ * The check: the statted file's PARENT FOLDER must equal the parent of the
+ * path the ticket signed. Not path equality (autorename), not a prefix test
+ * (that would accept anything in a subtree). A valid ticket plus a file
+ * somewhere else is a rejection, which is what stops a ticket for one case
+ * being replayed against a file in another.
+ */
+router.post('/api/documents/upload-commit', jwtOrApiKey, async (req, res) => {
+  try {
+    const tickets = require('../lib/uploadTicket');
+    const ingest  = require('../services/documentIngestService');
+
+    const b = req.body || {};
+    const claim = tickets.verify(b.ticket);   // throws 400 on anything wrong
+
+    const source   = b.source || DEFAULT_SOURCE;
+    const provider = sources.get(source);
+    const locator  = (b.external_id && String(b.external_id)) || claim.path;
+
+    let entry;
+    try {
+      entry = await provider.stat(req.db, locator);
+    } catch (err) {
+      // The overwhelmingly common cause is a browser committing an upload that
+      // never actually completed. 404 rather than the provider's 409, so the
+      // UI can say something true instead of "Dropbox error".
+      const e = new Error(
+        'that file is not in Dropbox — the upload did not complete, so there is nothing to register');
+      e.status = 404;
+      console.warn(`[api.documents] upload-commit stat failed for ${locator}: ${err.message}`);
+      throw e;
+    }
+
+    if (entry && entry['.tag'] === 'folder') {
+      return res.status(400).json({
+        status: 'error', message: 'upload-commit targets files, not folders',
+      });
+    }
+
+    // THE ANTI-LAUNDERING CHECK. See the route docblock.
+    const landed = entry && (entry.path_lower || entry.path_display);
+    if (!landed || parentLower(landed) !== parentLower(claim.path)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'that file is not in the folder this upload was issued for',
+      });
+    }
+
+    const links = claim.link_type
+      ? [{ type: claim.link_type, id: claim.link_id }]
+      : [];
+
+    const out = await ingest.registerWritten(req.db, {
+      entry, source, links,
+      createdBy:   actingUserId(req),
+      eventSource: 'upload',
+    });
+
+    // ECHO THE TARGET, same contract and same reason as the /:id/links pair:
+    // the sync bus sniffs the RESPONSE and never the request, so without these
+    // two keys a staff upload is a write with no address and every other open
+    // view of that case keeps showing a list without the new file. A GLOBAL
+    // upload has no target and echoes none — yc-sync's docLinkGetter fails
+    // closed on that, which is correct: nothing's document set changed.
+    const linked = out.links[0] || null;
+    res.status(201).json({
+      status:   'success',
+      document: out.document,
+      ...(linked ? {
+        link_type: linked.link_type,
+        link_id:   linked.link_id,
+        relation:  linked.relation,
+      } : {}),
+    });
   } catch (err) {
     sendError(res, err);
   }

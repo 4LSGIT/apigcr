@@ -1869,6 +1869,72 @@ describe('_sniff — documents matchers', () => {
     expect(seen).toEqual([]);
   });
 
+  // ── S4: the staff upload commit ────────────────────────────────────────────
+
+  test('upload-commit announces the TARGET, not the brand-new row', () => {
+    // The row is new, so NOBODY is holding its id — announcing `document:78`
+    // would reach no subscriber by definition. What other frames must react to
+    // is that the CASE's document set is now one file longer. The uploader's
+    // own frame needs no message at all; it has the row in the response.
+    const w = mkWindow();
+    const docSeen  = spy(w, 'document:*');
+    const linkSeen = spy(w, 'doclink:*');
+
+    w.YC._sniff('POST', '/api/documents/upload-commit', {
+      status: 'success',
+      document: { id: 78, name: 'statement.pdf', status: 'active' },
+      link_type: 'case', link_id: 'aB3xY9', relation: 'path',
+    });
+
+    expect(docSeen).toEqual([]);
+    expect(linkSeen.map(s => s.addr)).toEqual(['doclink:case:aB3xY9']);
+    expect(linkSeen[0].fields).toEqual({ yc_refetch: 1 });
+    expect(linkSeen[0].origin).toBe('auto:POST /api/documents/upload-commit');
+  });
+
+  test('a CONTACT-scoped upload announces the contact', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'doclink:contact:1001');
+    w.YC._sniff('POST', '/api/documents/upload-commit', {
+      document: { id: 79 }, link_type: 'contact', link_id: '1001', relation: 'upload',
+    });
+    expect(seen.length).toBe(1);
+  });
+
+  test('a GLOBAL upload announces NOTHING — no target changed', () => {
+    // An unattached file changed no case's and no contact's document set, so
+    // there is no frame that would act on a message. docLinkGetter's
+    // fail-closed on a missing link_type is exactly the right behaviour here,
+    // not a degradation: the route deliberately echoes no target.
+    const w = mkWindow();
+    const seen = spy(w, '*');
+    w.YC._sniff('POST', '/api/documents/upload-commit', {
+      status: 'success', document: { id: 80, name: 'loose.pdf' },
+    });
+    expect(seen).toEqual([]);
+  });
+
+  test('only POST reaches the upload-commit matcher', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'doclink:*');
+    w.YC._sniff('GET', '/api/documents/upload-commit',
+                { document: { id: 78 }, link_type: 'case', link_id: 'AAAA' });
+    expect(seen).toEqual([]);
+  });
+
+  test('upload-LINK is not a matcher — issuing a link writes nothing', () => {
+    // /upload-link mints a Dropbox URL and a ticket. No row, no link, no
+    // change any view could render. Announcing it would make every file in a
+    // batch cost every open frame a refetch for a file not yet uploaded.
+    const w = mkWindow();
+    const seen = spy(w, '*');
+    w.YC._sniff('POST', '/api/documents/upload-link', {
+      status: 'success', link: 'https://content.dropboxapi.com/apitul/1/x',
+      path: '/cases/smith/x.pdf', placement: 'case', ticket: 'abc.def',
+    });
+    expect(seen).toEqual([]);
+  });
+
   test('a numeric echoed link_id addresses the same place as a string one', () => {
     // The address is built by concatenation; 22 and '22' must not become two
     // addresses for one contact.
