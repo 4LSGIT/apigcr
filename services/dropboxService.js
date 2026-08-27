@@ -384,11 +384,23 @@ async function createSubfolders(db, opts = {}) {
   const base = normalizePath(opts.path);
   if (!base) throw new Error('dropbox createSubfolders requires a non-root path');
 
+  const continueOnError = opts.continueOnError === true;
+
   const created = [];
   for (const sub of subfolders) {
     if (!sub || typeof sub !== 'string') continue;
-    const r = await createFolder(db, { credentialId, path: joinPath(base, sub) });
-    created.push({ path: r.path, existed: r.existed });
+    const subPath = joinPath(base, sub);
+    try {
+      const r = await createFolder(db, { credentialId, path: subPath });
+      created.push({ path: r.path, existed: r.existed });
+    } catch (err) {
+      // Default stays fail-fast for direct callers. createFolderWithOptions
+      // opts in: one bad subfolder name (or a transient 429 partway down the
+      // list) must not cost the caller the shared link it actually persists.
+      if (!continueOnError) throw err;
+      console.warn(`[dropbox] subfolder create failed, continuing: ${subPath} — ${err.message}`);
+      created.push({ path: subPath, existed: false, error: err.message });
+    }
   }
   return created;
 }
@@ -451,14 +463,34 @@ async function createFolderWithOptions(db, opts = {}) {
 
   const base = await createFolder(db, { credentialId, path });
 
-  let subfolders_created = [];
-  if (Array.isArray(subfolders) && subfolders.length) {
-    subfolders_created = await createSubfolders(db, { credentialId, path, subfolders });
-  }
-
+  // ORDER MATTERS — the share link comes BEFORE the subfolders.
+  //
+  // It used to come last, and the caller (caseService.ensureCaseDropboxFolder)
+  // writes cases.case_dropbox only after this function returns a link. So any
+  // throw inside createSubfolders killed the link step too, and the folder was
+  // left on disk with NOTHING in the database pointing at it — invisible to the
+  // app, and invisible to ensureCaseDropboxFolder's own idempotency guard (which
+  // tests the DB column, not Dropbox). The next caller happily built a second
+  // folder beside it.
+  //
+  // Observed 2026-07-15: 16 orphan folders created next to hand-made legacy
+  // folders holding 114-340 documents each. Every one had 0-3 of its 4 template
+  // subfolders and no shared link — i.e. every run died mid-loop in
+  // createSubfolders, exactly as this ordering predicts.
+  //
+  // The link is the only output the caller persists, so it is the step that must
+  // survive. Subfolders are cosmetic scaffolding and are now best-effort: a
+  // failure is reported per-subfolder instead of aborting the operation.
   let shared_link = null;
   if (shareLink === true) {
     shared_link = await getOrCreateSharedLink(db, { credentialId, path });
+  }
+
+  let subfolders_created = [];
+  if (Array.isArray(subfolders) && subfolders.length) {
+    subfolders_created = await createSubfolders(db, {
+      credentialId, path, subfolders, continueOnError: true,
+    });
   }
 
   return { path, existed: base.existed, subfolders_created, shared_link };

@@ -887,11 +887,41 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   const path       = _substituteTemplate(template, values);
   const subfolders = subTemplates.map((t) => _substituteTemplate(t, values));
 
-  const result = await dropboxService.createFolderWithOptions(db, {
-    path,
-    subfolders,
-    shareLink: true,
-  });
+  // ADOPT AN EXISTING FOLDER BEFORE CREATING ONE.
+  //
+  // The guard at the top of this function tests cases.case_dropbox — the DB
+  // column — not Dropbox. A case whose folder was made by hand under the firm's
+  // older naming convention therefore looks folderless, and we would build a
+  // second folder beside a full one. That happened on 2026-07-15 to 16 cases
+  // whose legacy folders held 114-340 documents apiece.
+  //
+  // getMetadata on the templated path is one cheap call and closes the common
+  // case: the folder is already there (created by an earlier run of this
+  // function that died before persisting, or by staff). Adopt it and take its
+  // link rather than autorename a duplicate. This does NOT catch a legacy
+  // folder under a DIFFERENT name — nothing here can, since the old convention
+  // is not derivable from the case row — but it does stop this function from
+  // being the thing that creates the duplicate.
+  let existingLink = null;
+  try {
+    const meta = await dropboxService.getMetadata(db, { path });
+    if (meta && (meta['.tag'] === 'folder' || meta.folderish || meta.id)) {
+      existingLink = await dropboxService.getOrCreateSharedLink(db, { path });
+      console.log(`[CASE_DROPBOX] adopted pre-existing folder for case ${caseId}: ${path}`);
+    }
+  } catch (err) {
+    if (!dropboxService.isPathNotFoundError || !dropboxService.isPathNotFoundError(err)) {
+      console.warn(`[CASE_DROPBOX] pre-existing folder probe failed for ${caseId}, creating: ${err.message}`);
+    }
+  }
+
+  const result = existingLink
+    ? { path, existed: true, subfolders_created: [], shared_link: existingLink }
+    : await dropboxService.createFolderWithOptions(db, {
+        path,
+        subfolders,
+        shareLink: true,
+      });
   if (!result.shared_link) {
     throw new Error(`ensureCaseDropboxFolder: folder created at "${result.path}" but no shared link returned`);
   }
