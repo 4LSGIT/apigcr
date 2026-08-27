@@ -114,6 +114,11 @@ const TPL_INTAKE = { id: 1, name: 'Intake', case_type: '', case_subtype: '', rol
 const TPL_CH7    = { id: 2, name: 'Bankruptcy — Chapter 7',  case_type: 'Bankruptcy', case_subtype: 'Chapter 7',  role: 'case', is_default: 0, active: 1 };
 const TPL_CH13   = { id: 3, name: 'Bankruptcy — Chapter 13', case_type: 'Bankruptcy', case_subtype: 'Chapter 13', role: 'case', is_default: 0, active: 1 };
 const TPL_BK_DEFAULT = { id: 4, name: 'Bankruptcy — Default', case_type: 'Bankruptcy', case_subtype: '', role: 'case', is_default: 1, active: 1 };
+// (R2.5) The live #5 — a role='case' template whose OWN case_subtype is blank
+// AND which is is_default. It is the reason the forward-projection selector
+// must short-circuit a blank subtype before matching: "subtype exact match"
+// alone would pair every blank-subtype lead (721 live) with this row.
+const TPL_CIVIL = { id: 5, name: 'Civil Litigation', case_type: 'Civil Litigation', case_subtype: '', role: 'case', is_default: 1, active: 1 };
 
 const ALL_TPLS = [TPL_INTAKE, TPL_CH7, TPL_CH13];
 
@@ -974,6 +979,11 @@ describe('advanceStage forwardOnly (R1)', () => {
         LEAD_CH7.slice(), ALL_TPLS.slice(),
         [{ stage_id: 9, stage_key: 'dead_lead', case_stage: 'Closed', status_label: 'Dead Lead', entered_at: 't', entered_by: null, source: 'system', note: null }],
         [],
+        // (R2.5) This case is phase 'intake', so the post-commit getPipeline
+        // resolves the INTAKE template and takes the forward-projection path:
+        // subtype 'Chapter 7' matches template 2, so its stages are read.
+        // Fixture re-derived, assertions unchanged.
+        CH7_STAGES.slice(),
       ]
     );
     const p = await svc.advanceStage(db, 'C1', 'dead_lead', { forwardOnly: true, source: 'system' });
@@ -1254,5 +1264,244 @@ describe('resolveStageField', () => {
   test('v1 identity passthrough', () => {
     expect(svc.resolveStageField('case_file_date')).toBe('case_file_date');
     expect(svc.resolveStageField('anything')).toBe('anything');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (R2.5) getPipeline `projected` — forward projection across the boundary
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Query budget, asserted below:
+//   role='case' read ......... 4  (case, templates, log, stages) — UNCHANGED
+//   role='intake', subtype ... 5  (+ the projected template's stages)
+//   role='intake', generic ... 5  (+ the Intake template's `retained` row)
+// The projected TEMPLATE costs nothing: getPipeline already loads the whole
+// active-template list for resolution, and _pickProjection is pure over it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('getPipeline projected (R2.5)', () => {
+  // The live Intake shape's tail: contract_sent is the last MAIN stage, and
+  // `retained` is #10, INACTIVE (verified live 2026-08-27 — pipeline_stages
+  // id 4, template 1, active=0, lane 'main'). It is display-only data; the
+  // generic projection READS it and must never activate it.
+  const INTAKE_STAGES = () => [
+    { stage_id: 1,  stage_key: 'lead',           stage_number: 1, internal_label: 'Lead',                         client_label: 'Inquiry received',            case_stage: 'Open', is_terminal: 0, lane: 'main',    default_rec: '', client_visible: 1 },
+    { stage_id: 2,  stage_key: 'consult_booked', stage_number: 2, internal_label: 'Booked — Intake Outstanding',  client_label: 'Consultation scheduled',      case_stage: 'Open', is_terminal: 0, lane: 'main',    default_rec: '', client_visible: 1 },
+    { stage_id: 18, stage_key: 'contract_sent',  stage_number: 5, internal_label: 'Contract Sent',                client_label: 'Agreement sent for signature', case_stage: 'Open', is_terminal: 0, lane: 'main',    default_rec: '', client_visible: 1 },
+    { stage_id: 19, stage_key: 'no_show',        stage_number: 6, internal_label: 'No Show',                      client_label: null,                          case_stage: 'Open', is_terminal: 0, lane: 'offramp', default_rec: '', client_visible: 0 },
+  ];
+  // Exactly the projection query's column list — no stage_id, deliberately.
+  const RETAINED_ROW = {
+    stage_key: 'retained', stage_number: 10, internal_label: 'Retained',
+    client_label: "You've retained us", client_visible: 1, lane: 'main',
+  };
+  const projShape = (s) => ({
+    stage_key: s.stage_key, stage_number: s.stage_number,
+    internal_label: s.internal_label, client_label: s.client_label,
+    client_visible: s.client_visible, lane: s.lane,
+  });
+
+  const LEAD = (over = {}) => [{
+    case_id: 'L1', case_type: 'Bankruptcy', case_subtype: '',
+    pipeline_phase: 'intake', ...over,
+  }];
+
+  test('intake-phase Ch7 lead → source subtype: chapter MAIN stages only, off-ramps absent', async () => {
+    const db = stubDb([
+      LEAD({ case_subtype: 'Chapter 7' }),
+      ALL_TPLS.slice(),
+      [{ stage_id: 2, stage_key: 'consult_booked', case_stage: 'Open', status_label: 'Booked', entered_at: 't1', entered_by: 6, source: 'manual', note: null }],
+      INTAKE_STAGES(),
+      CH7_WITH_OFFRAMP(),          // the projected template's stages
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+
+    expect(db.calls).toHaveLength(5);                       // 4 + exactly one
+    expect(p.projected.source).toBe('subtype');
+    expect(p.projected.template).toEqual({ id: TPL_CH7.id, name: TPL_CH7.name });
+    // `dismissed` is an off-ramp: a case that has not even retained yet must
+    // NOT be shown Dismissed as part of its future.
+    expect(p.projected.stages.map(s => s.stage_key))
+      .toEqual(['docs', 'filed', 'meeting_341', 'discharge', 'closed']);
+    // The projection query targets the CHAPTER template, active rows only.
+    expect(db.calls[4].params).toEqual([TPL_CH7.id]);
+    expect(db.calls[4].sql).toContain('active = 1');
+  });
+
+  test('projected stages carry the six documented keys and NO stage_id', async () => {
+    // Withholding stage_id is the guard against a consumer POSTing an advance
+    // at a stage the case has not entered.
+    const db = stubDb([
+      LEAD({ case_subtype: 'Chapter 7' }), ALL_TPLS.slice(), [],
+      INTAKE_STAGES(), CH7_STAGES.slice(),
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    for (const s of p.projected.stages) {
+      expect(Object.keys(s).sort()).toEqual(
+        ['client_label', 'client_visible', 'internal_label', 'lane', 'stage_key', 'stage_number']);
+    }
+    expect(p.projected.stages[0]).toEqual(projShape(CH7_STAGES[0]));
+  });
+
+  test('Bankruptcy/blank lead → source generic: the single `retained` row, template null', async () => {
+    // The 721-case majority shape. A blank subtype must NEVER fall through to
+    // a template whose own case_subtype is blank (live: #5 Civil Litigation) —
+    // that would tell every bankruptcy lead it was heading for litigation.
+    const db = stubDb([
+      LEAD(),
+      [...ALL_TPLS, TPL_CIVIL],
+      [],
+      INTAKE_STAGES(),
+      [RETAINED_ROW],
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+
+    expect(db.calls).toHaveLength(5);
+    expect(p.projected).toEqual({
+      source: 'generic',
+      template: null,
+      stages: [RETAINED_ROW],
+    });
+    // Reads the INTAKE template's row, by key — and does NOT filter on
+    // active, because that row is inactive by design.
+    expect(db.calls[4].params).toEqual([TPL_INTAKE.id, 'retained']);
+    expect(db.calls[4].sql).not.toContain('active');
+  });
+
+  test('blank case_type AND blank subtype → still generic (never matches a blank-subtype template)', async () => {
+    const db = stubDb([
+      LEAD({ case_type: '' }),
+      [...ALL_TPLS, TPL_CIVIL],
+      [], INTAKE_STAGES(), [RETAINED_ROW],
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    expect(p.projected.source).toBe('generic');
+    expect(p.projected.template).toBeNull();
+  });
+
+  test('unmatched subtype (Chapter 11) → generic, NOT the is_default template', async () => {
+    // The whole reason projection has its own selector: routing it through
+    // is_default would tell a Chapter 11 lead it is heading for someone
+    // else's pipeline, AND create pressure to set is_default on a chapter
+    // template — the footgun resolveTemplate's docblock forbids.
+    const db = stubDb([
+      LEAD({ case_subtype: 'Chapter 11' }),
+      [...ALL_TPLS, TPL_BK_DEFAULT],
+      [], INTAKE_STAGES(), [RETAINED_ROW],
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    expect(p.projected.source).toBe('generic');
+    expect(p.projected.template).toBeNull();
+  });
+
+  test('matched-but-INACTIVE chapter template → generic (inactive rows never reach the selector)', async () => {
+    const db = stubDb([
+      LEAD({ case_subtype: 'Chapter 7' }),
+      [TPL_INTAKE, TPL_CH13],        // TPL_SQL is active-only; Ch7 is absent
+      [], INTAKE_STAGES(), [RETAINED_ROW],
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    expect(p.projected.source).toBe('generic');
+  });
+
+  test('intake-resolved case with NO history still gets the projection', async () => {
+    const db = stubDb([
+      LEAD({ case_subtype: 'Chapter 13' }),
+      ALL_TPLS.slice(),
+      [],                            // day one — no log rows
+      INTAKE_STAGES(),
+      CH7_STAGES.slice(),
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    expect(p.current).toBeNull();
+    expect(p.projected.source).toBe('subtype');
+    expect(p.projected.template.id).toBe(TPL_CH13.id);
+  });
+
+  test('phase=case → key ABSENT (not null) and the query count is unchanged at 4', async () => {
+    // C1 contract: the default role='case' payload is byte-identical to
+    // pre-R2.5. Consumers feature-detect with `'projected' in payload`.
+    const db = stubDb([
+      [{ case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' }],
+      ALL_TPLS.slice(),
+      [],
+      CH7_STAGES.slice(),
+    ]);
+    const p = await svc.getPipeline(db, 'C1');
+    expect(db.calls).toHaveLength(4);
+    expect('projected' in p).toBe(false);
+    expect(Object.keys(p).sort()).toEqual(
+      ['current', 'history', 'stages', 'template', 'upcoming']);
+  });
+
+  test('branch-4 fallback (phase=case, no matching template → Intake) DOES project', async () => {
+    // The gate is the RESOLVED TEMPLATE'S ROLE, not pipeline_phase. Live: the
+    // single Chapter 11. Such a case IS displaying the intake pipeline, so
+    // the projection is consistent with the rest of its payload.
+    const db = stubDb([
+      [{ case_id: 'C11', case_type: 'Bankruptcy', case_subtype: 'Chapter 11', pipeline_phase: 'case' }],
+      ALL_TPLS.slice(),              // no Ch11 template, no is_default → intake
+      [], INTAKE_STAGES(), [RETAINED_ROW],
+    ]);
+    const p = await svc.getPipeline(db, 'C11');
+    expect(p.template.role).toBe('intake');
+    expect(p.projected.source).toBe('generic');
+  });
+
+  test('projected is NEVER merged into stages/upcoming, and carries no requirements', async () => {
+    const db = stubDb([
+      LEAD({ case_subtype: 'Chapter 7' }),
+      ALL_TPLS.slice(),
+      [{ stage_id: 2, stage_key: 'consult_booked', case_stage: 'Open', status_label: 'Booked', entered_at: 't1', entered_by: 6, source: 'manual', note: null }],
+      INTAKE_STAGES(),
+      CH7_STAGES.slice(),
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    // upcoming stops at the intake boundary, exactly as before R2.5.
+    expect(p.upcoming.map(s => s.stage_key)).toEqual(['contract_sent']);
+    expect(p.stages.map(s => s.stage_key))
+      .toEqual(['lead', 'consult_booked', 'contract_sent', 'no_show']);
+    for (const key of p.projected.stages.map(s => s.stage_key)) {
+      expect(p.stages.some(s => s.stage_key === key)).toBe(false);
+      expect(p.upcoming.some(s => s.stage_key === key)).toBe(false);
+    }
+    for (const s of p.projected.stages) expect('requirements' in s).toBe(false);
+  });
+
+  test('missing `retained` row → stages [] rather than a throw', async () => {
+    const db = stubDb([
+      LEAD(), ALL_TPLS.slice(), [], INTAKE_STAGES(),
+      [],                            // no such row
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    expect(p.projected).toEqual({ source: 'generic', template: null, stages: [] });
+  });
+
+  test('lane filtering is JS-side: a lane-less projected row reads as MAIN', async () => {
+    // isMainLane's R1 default. A SQL `lane <> 'offramp'` would drop NULL rows
+    // (pre-migration data), silently deleting stages from the forward view.
+    const db = stubDb([
+      LEAD({ case_subtype: 'Chapter 7' }),
+      ALL_TPLS.slice(), [], INTAKE_STAGES(),
+      [
+        { stage_key: 'docs',  stage_number: 1, internal_label: 'Docs',  client_label: 'Docs',  client_visible: 1, lane: null },
+        { stage_key: 'filed', stage_number: 2, internal_label: 'Filed', client_label: 'Filed', client_visible: 1, lane: '' },
+      ],
+    ]);
+    const p = await svc.getPipeline(db, 'L1');
+    expect(p.projected.stages.map(s => s.stage_key)).toEqual(['docs', 'filed']);
+    expect(db.calls[4].sql).not.toContain('offramp');
+  });
+
+  test('no template resolves at all → no projection, no extra query', async () => {
+    const db = stubDb([
+      [{ case_id: 'X1', case_type: 'Estate', case_subtype: 'Probate', pipeline_phase: 'case' }],
+      [TPL_CH7],                     // no intake template, no match → null
+      [],
+    ]);
+    const p = await svc.getPipeline(db, 'X1');
+    expect(p.template).toBeNull();
+    expect('projected' in p).toBe(false);
+    expect(db.calls).toHaveLength(3);
   });
 });

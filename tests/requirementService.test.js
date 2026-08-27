@@ -302,6 +302,174 @@ describe('event detector (appt)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// (F1) event detector — kind_or_type accepts a LIST of alias names
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Why a list and not a data migration: 'Strategy Session' (Feb 2024 → Jun
+// 2026) and 'Initial Strategy Session' (Jun 2024 → Jul 2026) OVERLAP. They
+// are two names in concurrent use for one activity, not a rename with a
+// cutover, so no normalization could collapse them without falsifying booked
+// history. Verified live 2026-08-27: the single-string config covered 285
+// cases, the four-name list covers 353 — 68 real strategy sessions the
+// requirement was calling unmet. trigger_rules #2 already matches on exactly
+// this list; the detector now agrees with the trigger instead of
+// contradicting it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('event detector — kind_or_type list (F1)', () => {
+  // Two names, deliberately interleaved in time so `which` ordering across
+  // the union is distinguishable from ordering within either name alone.
+  const MIXED = [
+    { appt_case_id: 'A', appt_type: 'Strategy Session',         appt_status: 'Attended',  appt_date: '2024-03-01 10:00:00' },
+    { appt_case_id: 'A', appt_type: 'Initial Strategy Session', appt_status: 'Attended',  appt_date: '2025-01-15 10:00:00' },
+    { appt_case_id: 'A', appt_type: 'Strategy Session',         appt_status: 'Attended',  appt_date: '2026-06-02 10:00:00' },
+    { appt_case_id: 'A', appt_type: 'Initial Strategy Session', appt_status: 'No Show',   appt_date: '2026-07-07 10:00:00' },
+    { appt_case_id: 'B', appt_type: 'Strategy Session',         appt_status: 'Attended',  appt_date: '2024-05-05 10:00:00' },
+  ];
+  // The exact live config requirement 3 (iss_held) is being moved to. The
+  // typo'd 'Intial Strategy Session' is DELIBERATE — it mirrors trigger rule
+  // 2 and matches real booked history. Do not correct it.
+  const ISS_LIST = ['Initial Strategy Session', 'Strategy Session', 'Consultation', 'Intial Strategy Session'];
+  const listCfg = (over = {}) => ({ source: 'appt', kind_or_type: ISS_LIST, want: 'held', which: 'latest', ...over });
+
+  // ── validateConfig ──────────────────────────────────────────────────────
+
+  test('WRITE-time: a non-empty array of non-empty strings is accepted', () => {
+    expect(detectors.validateDetectorConfig('event', listCfg())).toBeNull();
+    expect(detectors.validateDetectorConfig('event',
+      { source: 'appt', kind_or_type: ['341 Meeting'] })).toBeNull();
+  });
+
+  test('WRITE-time: empty array rejected (it would silently match nothing)', () => {
+    expect(detectors.validateDetectorConfig('event',
+      { source: 'appt', kind_or_type: [] })).toMatch(/non-empty/);
+  });
+
+  test('WRITE-time: a non-string or blank element is rejected, naming its index', () => {
+    expect(detectors.validateDetectorConfig('event',
+      { source: 'appt', kind_or_type: ['ok', 3] })).toMatch(/kind_or_type\[1\]/);
+    expect(detectors.validateDetectorConfig('event',
+      { source: 'appt', kind_or_type: ['ok', '   '] })).toMatch(/kind_or_type\[1\]/);
+    expect(detectors.validateDetectorConfig('event',
+      { source: 'appt', kind_or_type: ['ok', null] })).toMatch(/kind_or_type\[1\]/);
+  });
+
+  test('WRITE-time: an over-length element is rejected at the SAME 60 the scalar uses', () => {
+    const long = 'x'.repeat(61);
+    expect(detectors.validateDetectorConfig('event',
+      { source: 'appt', kind_or_type: ['ok', long] })).toMatch(/at most 60 characters/);
+    // The scalar form's ceiling is unchanged — the array cannot smuggle a
+    // value past a check the string form applies.
+    expect(detectors.validateDetectorConfig('event',
+      { source: 'appt', kind_or_type: long })).toMatch(/at most 60 characters/);
+  });
+
+  test('WRITE-time: the other rules are untouched (unknown key, source, want, which)', () => {
+    expect(detectors.validateDetectorConfig('event', listCfg({ nope: 1 }))).toMatch(/unknown config key/);
+    expect(detectors.validateDetectorConfig('event', listCfg({ source: 'event' }))).toMatch(/E1 pending/);
+    expect(detectors.validateDetectorConfig('event', listCfg({ source: 'any' }))).toMatch(/E1 pending/);
+    expect(detectors.validateDetectorConfig('event', listCfg({ want: 'happened' }))).toMatch(/want/);
+    expect(detectors.validateDetectorConfig('event', listCfg({ which: 'newest' }))).toMatch(/which/);
+  });
+
+  test('config_hint advertises the array form', () => {
+    expect(detectors.DETECTORS.event.config_hint).toContain('[');
+    expect(JSON.parse(detectors.DETECTORS.event.config_hint).kind_or_type).toEqual(
+      ['Initial Strategy Session', 'Strategy Session']);
+  });
+
+  // ── batchResolve ────────────────────────────────────────────────────────
+
+  test('QUERY COUNT UNCHANGED: every alias flattens into the ONE existing IN (?)', async () => {
+    const db = stubDb([MIXED]);
+    await detectors.DETECTORS.event.batchResolve(db, ['A', 'B'],
+      [req('iss_held', 'event', listCfg())]);
+    expect(db.calls.length).toBe(1);
+    expect(db.calls[0].params).toEqual([['A', 'B'], ISS_LIST]);
+    expect(db.calls[0].sql).toContain(`appt_status <> 'Rescheduled'`);
+  });
+
+  test('resolves across MIXED types — the 68-case gap closes', async () => {
+    const db = stubDb([MIXED]);
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A', 'B'],
+      [req('iss_held', 'event', listCfg())]);
+    // B has ONLY a 'Strategy Session' — invisible to the single-string config
+    // this replaces, and satisfied now.
+    expect(out.get('B').get('iss_held').satisfied_at).toBe('2024-05-05 10:00:00');
+    expect(out.get('B').get('iss_held').detail).toBe('Attended');
+  });
+
+  test('which latest picks the max across the UNION, not per name', async () => {
+    const db = stubDb([MIXED]);
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('iss_held', 'event', listCfg())]);
+    // 2026-06-02 is a 'Strategy Session'; the latest 'Initial Strategy
+    // Session' Attended is 2025-01-15. Picking per name would return the
+    // wrong row.
+    expect(out.get('A').get('iss_held').satisfied_at).toBe('2026-06-02 10:00:00');
+  });
+
+  test('which first picks the min across the UNION', async () => {
+    const db = stubDb([MIXED]);
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('iss_held', 'event', listCfg({ which: 'first' }))]);
+    expect(out.get('A').get('iss_held').satisfied_at).toBe('2024-03-01 10:00:00');
+  });
+
+  test('want still filters status across the union (No Show ignored under held)', async () => {
+    const db = stubDb([MIXED, MIXED]);
+    const held = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('iss_held', 'event', listCfg())]);
+    expect(held.get('A').get('iss_held').detail).toBe('Attended');
+    const missed = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('iss_missed', 'event', listCfg({ want: 'missed' }))]);
+    expect(missed.get('A').get('iss_missed').satisfied_at).toBe('2026-07-07 10:00:00');
+  });
+
+  test('BACKWARD COMPATIBLE: a single string behaves exactly as before', async () => {
+    const db = stubDb([MIXED, MIXED]);
+    const asString = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('iss_held', 'event', { source: 'appt', kind_or_type: 'Initial Strategy Session' })]);
+    expect(db.calls[0].params).toEqual([['A'], ['Initial Strategy Session']]);
+    // Only the ISS rows are considered: the 2026-06-02 'Strategy Session' is
+    // NOT picked, exactly as pre-F1.
+    expect(asString.get('A').get('iss_held').satisfied_at).toBe('2025-01-15 10:00:00');
+
+    // ... and a ONE-ELEMENT array is byte-identical to that string.
+    const asArray = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('iss_held', 'event', { source: 'appt', kind_or_type: ['Initial Strategy Session'] })]);
+    expect(db.calls[1].params).toEqual(db.calls[0].params);
+    expect(asArray.get('A').get('iss_held')).toEqual(asString.get('A').get('iss_held'));
+  });
+
+  test('configured names that collapse under the ci key do not double-count the bucket', async () => {
+    // 'Consultation' / 'consultation' bucket to the same ci key. Concatenating
+    // the bucket twice would not change WHICH row wins, but it would make the
+    // union quadratic on a hot path — and mask a real authoring mistake.
+    const ROWS = [
+      { appt_case_id: 'A', appt_type: 'Consultation', appt_status: 'Attended', appt_date: '2026-01-01 10:00:00' },
+    ];
+    const db = stubDb([ROWS]);
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('c', 'event', { source: 'appt', kind_or_type: ['Consultation', 'consultation'] })]);
+    expect(out.get('A').get('c').satisfied_at).toBe('2026-01-01 10:00:00');
+  });
+
+  test('two requirements with DIFFERENT lists share the one query and stay separate', async () => {
+    const db = stubDb([MIXED]);
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'], [
+      req('iss_held', 'event', listCfg()),
+      req('formal_only', 'event', { source: 'appt', kind_or_type: ['Initial Strategy Session'] }),
+    ]);
+    expect(db.calls.length).toBe(1);
+    // Union of both lists, deduped, in first-seen order.
+    expect(db.calls[0].params[1]).toEqual(ISS_LIST);
+    expect(out.get('A').get('iss_held').satisfied_at).toBe('2026-06-02 10:00:00');
+    expect(out.get('A').get('formal_only').satisfied_at).toBe('2025-01-15 10:00:00');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // manual detector
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -394,10 +394,31 @@ const formDetector = {
 // event — an appointment (v1) of the configured type in the wanted state.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** THE FROZEN SELECTOR (R2 spec):
- *    { source: 'appt'|'event'|'any', kind_or_type: <string>,
+/** THE FROZEN SELECTOR (R2 spec; kind_or_type widened to a list in F1):
+ *    { source: 'appt'|'event'|'any', kind_or_type: <string> | <string[]>,
  *      want: 'held'|'scheduled'|'missed'|'any',   default 'held'
  *      which: 'latest'|'first'|'any' }            default 'latest'
+ *
+ *  ── F1: kind_or_type IS A SET OF ALIASES, NOT A NAME ─────────────────────
+ *  A single string could only ever name ONE appt_type, and the live data has
+ *  no such thing as one name per activity. The Initial Strategy Session has
+ *  been booked under FOUR spellings — 'Initial Strategy Session',
+ *  'Strategy Session', 'Consultation', and the typo'd 'Intial Strategy
+ *  Session' — and, critically, 'Strategy Session' ran Feb 2024 → Jun 2026
+ *  OVERLAPPING 'Initial Strategy Session' (Jun 2024 → Jul 2026). That is not
+ *  a rename with a cutover date; it is two names in concurrent use, so there
+ *  is no migration that could collapse them without falsifying history.
+ *  Verified live 2026-08-27: single-string matching covered 285 cases,
+ *  the four-name list covers 353 — a 68-case gap, every one of them a real
+ *  strategy session the requirement was calling unmet. Fix the detector,
+ *  never the data. trigger_rules #2 ('Consult attended -> consult_held')
+ *  already matches on exactly this four-name list; the detector now agrees
+ *  with the trigger instead of contradicting it.
+ *
+ *  A string and a one-element array are EXACTLY equivalent. Existing stored
+ *  single-string configs keep behaving identically (asserted in tests), and
+ *  the query count is unchanged — every configured value across every
+ *  requirement flattens into the one existing `IN (?)` list.
  *
  *  v1 implements source:'appt' ONLY. validateConfig REJECTS 'event'/'any'
  *  at write time ("not yet supported; unified-events E1 pending") so no
@@ -408,9 +429,12 @@ const formDetector = {
  *
  *  Appt mapping (appts.appt_status ENUM('Attended','No Show','Rescheduled',
  *  'Canceled','Scheduled'), verified live):
- *    kind_or_type  = appt_type equality (utf8mb4_general_ci — live data has
- *                    'Pre-Filing Meeting' AND 'Pre-filing Meeting'; both
- *                    match, which is the collation working as intended)
+ *    kind_or_type  = appt_type equality against ANY configured value
+ *                    (utf8mb4_general_ci — live data has 'Pre-Filing Meeting'
+ *                    AND 'Pre-filing Meeting'; both match, which is the
+ *                    collation working as intended. The collation handles
+ *                    CASE variants; the list handles genuinely different
+ *                    names, which no collation can)
  *    want held     → 'Attended'
  *         scheduled→ 'Scheduled'
  *         missed   → 'No Show'
@@ -422,6 +446,9 @@ const formDetector = {
  *    want, in the SQL itself.
  *    which picks AMONG MATCHES by appt_date: 'latest' = max, 'first' = min,
  *    'any' = existence (satisfied_at reported from the latest match).
+ *    (F1) "matches" is the UNION across every configured name — the aliases
+ *    describe one activity, so 'first' means the first session under ANY of
+ *    its names, not the first under each.
  *    which never changes WHETHER the requirement is satisfied — a match
  *    existing is satisfaction; which only chooses the row that supplies
  *    satisfied_at/detail.
@@ -433,10 +460,20 @@ const EVENT_WANTS = ['held', 'scheduled', 'missed', 'any'];
 const EVENT_WHICH = ['latest', 'first', 'any'];
 const WANT_STATUS = { held: 'Attended', scheduled: 'Scheduled', missed: 'No Show' };
 
+const KIND_OR_TYPE_MAX = 60;
+
+/** (F1) kind_or_type accepts a bare string OR a non-empty array of them.
+ *  Normalized to an array so caller and validator share one shape; a
+ *  non-conforming value yields [] and the caller reports the error. */
+function kindList(v) {
+  if (typeof v === 'string') return [v];
+  return Array.isArray(v) ? v : [];
+}
+
 const eventDetector = {
   key: 'event',
   label: 'Appointment / event (appts — v1)',
-  config_hint: '{ "source": "appt", "kind_or_type": "341 Meeting", "want": "held", "which": "latest" }',
+  config_hint: '{ "source": "appt", "kind_or_type": ["Initial Strategy Session", "Strategy Session"], "want": "held", "which": "latest" }',
 
   validateConfig(cfg) {
     const o = asObject(cfg);
@@ -449,8 +486,27 @@ const eventDetector = {
     if (o.source !== 'appt') {
       return `source "${o.source}" is not yet supported; unified-events E1 pending — use source "appt"`;
     }
-    const ks = reqString(o, 'kind_or_type', 60);
-    if (ks) return ks;
+    // (F1) string | non-empty string[]. Each element goes through the SAME
+    // reqString check the single-string form has always used, so the string
+    // case is byte-identical and the array case cannot smuggle a blank or an
+    // over-length value past a check the scalar form applies.
+    if (Array.isArray(o.kind_or_type)) {
+      if (o.kind_or_type.length === 0) {
+        return 'kind_or_type must be a non-empty string or a non-empty array of non-empty strings';
+      }
+      for (let i = 0; i < o.kind_or_type.length; i++) {
+        const v = o.kind_or_type[i];
+        if (typeof v !== 'string' || v.trim() === '') {
+          return `kind_or_type[${i}] must be a non-empty string`;
+        }
+        if (v.length > KIND_OR_TYPE_MAX) {
+          return `kind_or_type[${i}] must be at most ${KIND_OR_TYPE_MAX} characters`;
+        }
+      }
+    } else {
+      const ks = reqString(o, 'kind_or_type', KIND_OR_TYPE_MAX);
+      if (ks) return ks;
+    }
     if (o.want !== undefined && !EVENT_WANTS.includes(o.want)) {
       return `want must be one of: ${EVENT_WANTS.join(', ')} (default held)`;
     }
@@ -475,8 +531,12 @@ const eventDetector = {
       );
       return false;
     });
-    const types = [...new Set(pairs.map(([, cfg]) => String(cfg.kind_or_type == null ? '' : cfg.kind_or_type)))]
-      .filter((t) => t !== '');
+    // (F1) Every configured value from EVERY requirement flattens into the
+    // one existing IN (?) list — the query count is unchanged, which is the
+    // point: aliases must not cost a query each.
+    const types = [...new Set(
+      pairs.flatMap(([, cfg]) => kindList(cfg.kind_or_type).map((t) => String(t)))
+    )].filter((t) => t !== '');
     if (!ids.length || !types.length) return out;
 
     const [rows] = await db.query(
@@ -501,7 +561,15 @@ const eventDetector = {
       for (const [reqKey, cfg] of pairs) {
         const want = cfg.want === undefined ? 'held' : cfg.want;
         const which = cfg.which === undefined ? 'latest' : cfg.which;
-        const bucket = buckets.get(`${caseId}\u0000${ciKey(cfg.kind_or_type)}`) || [];
+        // (F1) UNION across this requirement's configured names. A single
+        // string yields one bucket — byte-identical to pre-F1. Duplicate
+        // spellings that collapse under ciKey (e.g. 'Consultation' and
+        // 'consultation') would otherwise concat the same bucket twice, so
+        // the ci keys are deduped first.
+        const bucketKeys = [...new Set(
+          kindList(cfg.kind_or_type).map((t) => `${caseId}\u0000${ciKey(t)}`)
+        )];
+        const bucket = bucketKeys.flatMap((k) => buckets.get(k) || []);
         const matches = bucket.filter((r) =>
           want === 'any' ? true : r.appt_status === WANT_STATUS[want]
         );

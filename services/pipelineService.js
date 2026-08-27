@@ -9,7 +9,10 @@
  *     (NO pointer column on cases; template is always a function of the case
  *     ROW — as of T8 that row carries cases.pipeline_phase, the LIFECYCLE
  *     axis, alongside case_type/case_subtype, the MATTER axis).
- *   - getPipeline — { template, current, history, upcoming } read model.
+ *   - getPipeline — { template, current, history, upcoming, stages } read
+ *     model, plus (R2.5) `projected` on intake-resolved cases only — a
+ *     read-only look at the NEXT pipeline's stages, across the template
+ *     boundary `upcoming` cannot cross. See its docblock.
  *   - advanceStage — the ONLY writer of case_stage_log; also overwrites
  *     cases.case_stage / case_status / case_rec / pipeline_phase from the
  *     entered stage (overwrite-on-advance is the decided design).
@@ -214,6 +217,68 @@ async function resolveTemplate(db, caseRow) {
 }
 
 /**
+ * (R2.5) PURE — the FORWARD-PROJECTION selector. Deliberately NOT
+ * _pickMatter / resolveMatterTemplate.
+ *
+ * Those exist for ADVANCE resolution, where `is_default` is load-bearing
+ * correctness: a retained matter with no exact template still has to land
+ * somewhere. Projection has the opposite risk profile. It is a read-only
+ * "here is what probably comes next" shown to staff and (through the portal)
+ * to clients, and a default-driven guess is exactly the wrong thing to show:
+ * it would tell a Chapter 11 lead it is heading for a Chapter 7 pipeline.
+ * Worse, wiring projection through the default branch would create standing
+ * pressure to SET is_default on a chapter template to "improve" the forward
+ * view — the precise footgun resolveTemplate's docblock forbids (doing so
+ * files a Chapter 11 on a Chapter 7 pipeline for real, on the advance path).
+ * Projection therefore gets its own selector, and no flag is threaded
+ * through the advance path.
+ *
+ * MATCH = active + role 'case' + EXACT (case_type, case_subtype). Blank
+ * subtype never matches — it short-circuits to the generic projection —
+ * because a blank subtype would otherwise match every case template whose
+ * own case_subtype is blank (live: #5 Civil Litigation), and the 721
+ * Bankruptcy/blank leads would each be told they were heading for Civil
+ * Litigation.
+ *
+ * case_type is part of the predicate — see the DIVERGENCE note in
+ * getPipeline's `projected` docblock for why this is narrower than
+ * "subtype exact match" alone.
+ *
+ * @returns {object|null} pipeline_templates row, or null → caller projects
+ *          the generic (retained) shape.
+ */
+function _pickProjection(templates, caseRow) {
+  const subtype = String(caseRow.case_subtype == null ? '' : caseRow.case_subtype).trim();
+  if (subtype === '') return null;                 // → generic; see docblock
+  return (templates || []).find(t =>
+    t.role === 'case' &&
+    ciEq(t.case_type, caseRow.case_type) &&
+    ciEq(t.case_subtype, subtype)
+  ) || null;
+}
+
+/** Projected-stage shape (R2.5). NO stage_id, deliberately: these stages
+ *  belong to a template the case has not entered, and withholding the id
+ *  keeps a consumer from POSTing an advance at one. */
+function projectProjectedStage(s) {
+  return {
+    stage_key:      s.stage_key,
+    stage_number:   s.stage_number,
+    internal_label: s.internal_label,
+    client_label:   s.client_label,
+    client_visible: s.client_visible,
+    lane:           s.lane,
+  };
+}
+
+/** The Intake template's display-only post-retainer row — the generic
+ *  projection's entire content. INACTIVE by design (verified live
+ *  2026-08-27: pipeline_stages id 4, template 1, active=0, lane 'main'), so
+ *  it is invisible to every resolution path and cannot be advanced to. This
+ *  read must never be taken as licence to activate it. */
+const PROJECTION_GENERIC_STAGE_KEY = 'retained';
+
+/**
  * Resolve the template a case WOULD land on if its phase were 'case' — the
  * matter-axis answer, ignoring lifecycle. Used ONLY by _resolveTarget's
  * cross-phase search (see there); never by the read model.
@@ -292,6 +357,65 @@ function projectLogRow(r) {
  *              (both lanes) and its upcoming off `upcoming` (main only), so it
  *              inherits exactly this split with no portal code change.
  *
+ *   projected — (R2.5) FORWARD PROJECTION ACROSS THE PIPELINE BOUNDARY.
+ *              PRESENT ONLY when the RESOLVED template's role is 'intake';
+ *              ABSENT (not null) otherwise, so consumers feature-detect with
+ *              `'projected' in payload` and every pre-R2.5 consumer is
+ *              untouched.
+ *
+ *              An intake-phase case's `upcoming` ends at `contract_sent` —
+ *              the intake template's last main-lane stage — and says nothing
+ *              about what happens after retention, because the next pipeline
+ *              is a DIFFERENT TEMPLATE the case has not entered. The
+ *              client/staff forward view needs that continuation. `projected`
+ *              supplies it, READ-ONLY:
+ *
+ *                { source: 'subtype' | 'generic',
+ *                  template: { id, name } | null,     // null when generic
+ *                  stages: [ { stage_key, stage_number, internal_label,
+ *                              client_label, client_visible, lane } ] }
+ *
+ *              source 'subtype' — the case's subtype exactly matched an
+ *                active role='case' template (_pickProjection). stages = that
+ *                template's ACTIVE MAIN-LANE stages, ascending. Off-ramps are
+ *                excluded: a forward look at a case that has not even
+ *                retained yet must not advertise Dismissed.
+ *              source 'generic' — no subtype, an unmatched subtype, or a
+ *                matched-but-inactive template. template is null and stages is
+ *                the Intake template's inactive `retained` row alone: the one
+ *                thing that is true of EVERY lead's future regardless of
+ *                chapter. Degrades to [] if that row is missing.
+ *
+ *              projected stages carry NO requirements and are NEVER merged
+ *              into `stages` or `upcoming` — separate key, purely additive.
+ *              They also carry no stage_id (see projectProjectedStage).
+ *
+ *              GATE IS THE RESOLVED TEMPLATE'S ROLE, not pipeline_phase. The
+ *              two differ for one edge: a phase='case' case whose matter has
+ *              no template falls through resolveTemplate branch 4 to Intake
+ *              (live: the single Chapter 11, and Adversary/Litigation before
+ *              their templates existed). Such a case IS displaying the intake
+ *              pipeline, so it gets the projection too — consistent with what
+ *              the rest of the payload already says about it.
+ *
+ *              DIVERGENCE (R2.5 worker, reported): the spec worded the
+ *              selector as "case_subtype exact match" without case_type.
+ *              Implemented as exact (case_type, case_subtype) — identical to
+ *              resolveTemplate branch 2 minus the is_default fallback — so
+ *              every projection the read model shows is a template the
+ *              ADVANCE path would genuinely resolve. Subtype-only would emit
+ *              hits branch 2 rejects (e.g. case_type 'Appeal' + subtype
+ *              'Chapter 7' → the Ch7 pipeline), i.e. promise a pipeline the
+ *              case can never enter. Costs nothing live: every intake case
+ *              carrying a subtype also carries case_type 'Bankruptcy'
+ *              (verified 2026-08-27; 27 Ch7 + 5 Ch13). To widen, drop the
+ *              ciEq(case_type) term in _pickProjection.
+ *
+ *              QUERY BUDGET: +1, and ONLY on the intake path (the projected
+ *              template comes from the template list resolveTemplate already
+ *              loaded — no second lookup; the one added query is its stages,
+ *              or the `retained` row). Case-phase reads are unchanged at 4.
+ *
  * (R2) opts.requirements — OPT-IN ONLY. When true, each stage row in
  * `stages` gains `requirements: [...]` (requirementService
  * .resolveRequirements output filtered to that stage_id) and the payload
@@ -317,7 +441,13 @@ async function getPipeline(db, caseId, { requirements = false } = {}) {
   );
   if (!caseRow) throw notFound(`Case ${caseId} not found`);
 
-  const template = await resolveTemplate(db, caseRow);
+  // Inlined rather than `await resolveTemplate(db, caseRow)` — SAME single
+  // query, same SQL, same pick — so the R2.5 projection selector can reuse
+  // the already-loaded list instead of spending a second identical round
+  // trip on it. resolveTemplate stays exported and unchanged for everyone
+  // else.
+  const [templates] = await db.query(TPL_SQL);
+  const template = _pickTemplate(templates, caseRow);
 
   // One ascending query serves both history (whole list) and current (last).
   const [logRows] = await db.query(
@@ -356,6 +486,53 @@ async function getPipeline(db, caseId, { requirements = false } = {}) {
       : mainOnly;   // no history yet, or branched from another template
   }
 
+  // ── R2.5 — forward projection across the pipeline boundary ─────────────
+  // Intake-resolved cases only (see the `projected` docblock). Exactly one
+  // added query on this path; zero on every other.
+  let projected = null;
+  if (template && template.role === 'intake') {
+    const target = _pickProjection(templates, caseRow);
+    if (target) {
+      const [projRows] = await db.query(
+        `SELECT stage_key, stage_number, internal_label, client_label,
+                client_visible, lane
+           FROM pipeline_stages
+          WHERE template_id = ? AND active = 1
+          ORDER BY stage_number ASC, id ASC`,
+        [target.id]
+      );
+      projected = {
+        source: 'subtype',
+        template: { id: target.id, name: target.name },
+        // Lane filtered in JS, not SQL: isMainLane treats NULL/''/undefined
+        // as MAIN (the R1 default), and `lane <> 'offramp'` would silently
+        // drop exactly those rows.
+        stages: projRows.filter(isMainLane).map(projectProjectedStage),
+      };
+    } else {
+      // No active `retained` filter — this row is inactive BY DESIGN and we
+      // are reading it, not resolving it. Selecting it unconditionally means
+      // the projection keeps working if the row is ever (wrongly) activated,
+      // rather than silently emptying.
+      const [[genericRow]] = await db.query(
+        `SELECT stage_key, stage_number, internal_label, client_label,
+                client_visible, lane
+           FROM pipeline_stages
+          WHERE template_id = ? AND stage_key = ?
+          ORDER BY id ASC
+          LIMIT 1`,
+        [template.id, PROJECTION_GENERIC_STAGE_KEY]
+      );
+      projected = {
+        source: 'generic',
+        template: null,
+        stages: genericRow && isMainLane(genericRow)
+          ? [projectProjectedStage(genericRow)]
+          : [],
+      };
+    }
+  }
+
   if (requirements) {
     // Lazy require — see the opts.requirements docblock note.
     const { resolveRequirements } = require('./requirementService');
@@ -366,7 +543,7 @@ async function getPipeline(db, caseId, { requirements = false } = {}) {
     }
   }
 
-  return {
+  const payload = {
     template: template
       ? {
           id: template.id,
@@ -381,6 +558,11 @@ async function getPipeline(db, caseId, { requirements = false } = {}) {
     upcoming,
     stages,
   };
+  // ABSENT, not null, for non-intake payloads — `'projected' in payload` is
+  // the feature test, and the default role='case' payload stays byte-
+  // identical to pre-R2.5 (C1 contract, asserted in tests).
+  if (projected) payload.projected = projected;
+  return payload;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
