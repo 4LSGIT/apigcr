@@ -83,6 +83,18 @@ const COLUMN_LIMITS = {
 
 const STATUSES = new Set(['active', 'deleted', 'missing']);
 
+/**
+ * Link types `list({ unlinked })` will anti-join on (S3.2).
+ *
+ * A SET rather than a boolean because "unlinked" is not one question. Today the
+ * triage view asks about CASE ownership; "no contact link" is a different and
+ * equally reasonable question, and a boolean would have to be replaced rather
+ * than extended to ask it. An allow-list also keeps a caller-supplied string
+ * off the `link_type` predicate, which is the other half of why this is a Set
+ * and not a passthrough.
+ */
+const UNLINKED_KINDS = new Set(['case']);
+
 // All sortable columns are whitelisted; user-supplied `sort` only ever indexes
 // this map, never reaches SQL directly. (Model: assetService.SORT_MAP.)
 //
@@ -968,6 +980,13 @@ async function _attachVia(db, documents, targets, labels) {
  * @param {string} [opts.source]      exact match
  * @param {string} [opts.link_type]   with link_id: restrict to documents linked to that target
  * @param {string} [opts.link_id]
+ * @param {string} [opts.unlinked]    'case' → ONLY documents with no case link
+ *                                    at all. See UNLINKED_KINDS. IGNORED when
+ *                                    link_type + link_id are present — a scoped
+ *                                    list is "documents linked to X" and an
+ *                                    unlinked list is "documents linked to
+ *                                    nothing", so the two are contradictory by
+ *                                    construction and the scope wins.
  * @param {boolean}[opts.related]     expand the scope ONE HOP through case_relate
  *                                    and attach `via` to every row.
  *                                    ONLY HONORED WITH link_type + link_id —
@@ -988,7 +1007,7 @@ async function _attachVia(db, documents, targets, labels) {
  */
 async function list(db, opts = {}) {
   const {
-    q, doc_type, ext, tag, source, link_type, link_id, related,
+    q, doc_type, ext, tag, source, link_type, link_id, related, unlinked,
     status = 'active',
     sort   = 'newest',
     limit  = 50,
@@ -1002,6 +1021,17 @@ async function list(db, opts = {}) {
   // `related` without a scope is meaningless, not wrong — see the docblock.
   const wantRelated = hasTarget && !!related &&
     !(related === '0' || related === 'false');
+
+  // A SCOPE AND AN ANTI-SCOPE CANNOT BOTH HOLD. "Documents linked to case X"
+  // and "documents linked to no case" intersect at the empty set for every
+  // input, so honouring both would always return nothing — a silent empty list
+  // being the single worst way to report a contradiction. The scope wins and
+  // this is dropped, matching how `related` is dropped when it has no scope to
+  // expand. An unrecognised kind is likewise ignored rather than erroring, for
+  // the same reason `ext` drops junk tokens: a triage view that over-shows is
+  // recoverable, one that mysteriously shows nothing is not.
+  const unlinkedKind = !hasTarget && UNLINKED_KINDS.has(String(unlinked || ''))
+    ? String(unlinked) : null;
 
   let joinSql = '';
   let joinParams = [];
@@ -1032,6 +1062,33 @@ async function list(db, opts = {}) {
     // path — it is the hot one, and a temp table here would be pure cost.
     joinSql = 'JOIN document_links dl ON dl.document_id = d.id AND dl.link_type = ? AND dl.link_id = ?';
     joinParams = [_col('link_type', link_type), _col('link_id', link_id)];
+  } else if (unlinkedKind) {
+    // ── THE TRIAGE ANTI-JOIN (S3.2) ────────────────────────────────────────
+    // "No link of this type AT ALL" — any relation, any creator. NOT "no
+    // path-link", which is what attributeUnlinked's sweep means by unlinked
+    // and which is a different question: the sweep asks "does this file's
+    // LOCATION earn it a link", and a manually-filed document legitimately
+    // answers no while still being attributed. A human looking at this view
+    // asks "does anybody own this document", so a manual link takes a row OUT
+    // of it. Leaving `relation` out of the predicate is what makes those two
+    // readings different, and it is deliberate.
+    //
+    // Same LEFT JOIN + IS NULL shape as the sweep, and it keeps the plan the
+    // sweep documents — EXPLAIN against the live DB, 2026-08-27: dl is
+    // type=ref on uq_doc_target with `Not exists; Using index`, driven by
+    // (document_id, link_type). It KEEPS `Using index` where the sweep lost
+    // it, because there is no `relation` to fetch the row and test.
+    //
+    // Measured, 153k rows / 130k unlinked: page 436ms vs a 350ms baseline,
+    // COUNT(*) 316ms vs 98ms. The filesort is pre-existing (the unfiltered
+    // list does it too), not introduced here.
+    //
+    // Alias `ul`, not `dl`: this branch is mutually exclusive with both joins
+    // above so a collision is impossible today, and a distinct name keeps it
+    // impossible if that ever stops being true.
+    joinSql = 'LEFT JOIN document_links ul ON ul.document_id = d.id AND ul.link_type = ?';
+    joinParams = [_col('link_type', unlinkedKind)];
+    where.push('ul.id IS NULL');
   }
 
   if (status !== 'all') {
@@ -1158,6 +1215,11 @@ async function list(db, opts = {}) {
     documents, total, limit: lim, offset: off,
     ...(wantRelated ? { related: true, related_targets: relatedTargets } : {}),
     ...(relatedTruncated ? { related_truncated: true } : {}),
+    // ECHOED when it APPLIED, not when it was asked for. That distinction is
+    // the point: a caller that sent both a scope and `unlinked` had the latter
+    // dropped, and the absence of this key is how it finds out rather than
+    // wondering why the list looks scoped.
+    ...(unlinkedKind ? { unlinked: unlinkedKind } : {}),
   };
 }
 

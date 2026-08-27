@@ -73,6 +73,23 @@ jest.mock('../services/documentSourceService', () => ({
   get: jest.fn(),
 }));
 
+// The S3.2 ops routes are as thin as the rest of this file — every rule and
+// every statement lives in the service. What the ROUTE owns is the wiring:
+// declaration order, HTTP status mapping, and which body shape each outcome
+// produces. So the service is mocked and the substance is tested in
+// tests/documentSyncService.test.js.
+jest.mock('../services/documentSyncService', () => ({
+  listRoots:        jest.fn(),
+  getRoot:          jest.fn(),
+  getRootRaw:       jest.fn(),
+  addRoot:          jest.fn(),
+  setRootEnabled:   jest.fn(),
+  isSyncEnabled:    jest.fn(),
+  latestJobReports: jest.fn(),
+  attributionReport: jest.fn(),
+  syncRoot:         jest.fn(),
+}));
+
 // The factory may not close over a plain outer variable (jest hoists it), so
 // the counter lives on the mock itself and is read back through require().
 jest.mock('../lib/auth.jwtOrApiKey', () => jest.fn((req, res, next) => {
@@ -83,6 +100,7 @@ jest.mock('../lib/auth.jwtOrApiKey', () => jest.fn((req, res, next) => {
 const express     = require('express');
 const documents   = require('../services/documentService');
 const sources     = require('../services/documentSourceService');
+const syncSvc     = require('../services/documentSyncService');
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const router      = require('../routes/api.documents');
 
@@ -605,5 +623,382 @@ describe('GET /api/documents — list params', () => {
     expect(body.related).toBe(true);
     expect(body.related_truncated).toBe(true);
     expect(body.documents[0].via[0].label).toBe('Ross, Fred');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S3.2 — the sync-roots ops surface
+//
+// Everything below is about what the ROUTE owns. The validation itself (dupes,
+// nesting, path length, folder-vs-file) lives in documentSyncService and is
+// tested there against real inputs; here the service is a mock, and what is
+// asserted is that each outcome arrives as the right STATUS with the right
+// BODY SHAPE — because a 409 that renders as a 500, or a warning that renders
+// as an error, is a UI that tells a staffer the wrong thing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const rootRow = (over = {}) => ({
+  id: 1,
+  path: '/  Law Office/   Cases/  Active Cases',
+  note: 'template tree — active',
+  enabled: true,
+  backfill_done: true,
+  syncing_since: null,
+  last_sync_at: '2026-08-27T07:10:03Z',
+  last_error: null,
+  stats: { mode: 'incremental', files: 0, pages: 1 },
+  has_cursor: true,
+  ...over,
+});
+
+/** An error carrying .status, the shape the service throws for a conflict. */
+function statusError(message, status) {
+  const e = new Error(message);
+  e.status = status;
+  return e;
+}
+
+describe('route table — sync-roots must not be swallowed by /:id', () => {
+  test('GET /sync-roots reaches its own handler, NOT GET /:id', async () => {
+    // THE REGRESSION THIS FILE EXISTS FOR. Express matches in declaration
+    // order, and `/api/documents/sync-roots` and `/api/documents/:id` are both
+    // two segments — so if ':id' were declared first, "sync-roots" would
+    // arrive as an id, fail docId()'s integer parse, and 400 the entire panel
+    // with "Invalid id". Nothing about that failure would point at ordering.
+    syncSvc.listRoots.mockResolvedValue([rootRow()]);
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+
+    const res  = await fetch(`${base}/api/documents/sync-roots`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.roots[0].id).toBe(1);
+    expect(documents.getById).not.toHaveBeenCalled();     // that is GET /:id's job
+  });
+
+  test('GET /sync-diagnostics likewise', async () => {
+    syncSvc.latestJobReports.mockResolvedValue([]);
+    const res = await fetch(`${base}/api/documents/sync-diagnostics`);
+    expect(res.status).toBe(200);
+    expect(documents.getById).not.toHaveBeenCalled();
+  });
+
+  test('a NUMERIC id still reaches GET /:id — the new routes shadow nothing', async () => {
+    documents.getById.mockResolvedValue(docRow());
+    documents.listLinks.mockResolvedValue([]);
+    const body = await (await fetch(`${base}/api/documents/7`)).json();
+    expect(body.document.id).toBe(7);
+  });
+});
+
+describe('GET /api/documents/sync-roots', () => {
+  test('the kill switch rides in the SAME envelope as the roots', async () => {
+    // One request paints the whole panel. Two would be two chances to render a
+    // table of busy-looking roots above a banner that has not arrived yet.
+    syncSvc.listRoots.mockResolvedValue([rootRow()]);
+    syncSvc.isSyncEnabled.mockResolvedValue(false);
+
+    const body = await (await fetch(`${base}/api/documents/sync-roots`)).json();
+    expect(body.sync_enabled).toBe(false);
+    expect(body.roots).toHaveLength(1);
+  });
+});
+
+describe('POST /api/documents/sync-roots', () => {
+  const post = (body) => fetch(`${base}/api/documents/sync-roots`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  test('a create is 201 with the row', async () => {
+    syncSvc.addRoot.mockResolvedValue({ root: rootRow({ id: 8 }), warning: null });
+
+    const res  = await post({ path: '/  Law Office/  New', note: 'n' });
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.root.id).toBe(8);
+    expect(body.warning).toBeUndefined();
+    expect(syncSvc.addRoot).toHaveBeenCalledWith(DB, { path: '/  Law Office/  New', note: 'n' });
+  });
+
+  test('A NOT-YET-EXISTING FOLDER IS 201 + warning, NOT an error', async () => {
+    // The root was created, is enabled, and will start working on its own when
+    // the folder appears — three of the seeded roots live in exactly that
+    // state. A 4xx here would send someone hunting for a problem that is a
+    // scheduled outcome, so the status has to distinguish them.
+    syncSvc.addRoot.mockResolvedValue({
+      root: rootRow({ id: 9, backfill_done: false, has_cursor: false }),
+      warning: 'folder does not exist yet — will sync when created',
+    });
+
+    const res  = await post({ path: '/  Law Office/  Later' });
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.status).toBe('success');
+    expect(body.warning).toMatch(/does not exist yet/);
+    expect(body.root.id).toBe(9);
+  });
+
+  test('a DUPLICATE is 409, and the message names the existing root', async () => {
+    syncSvc.addRoot.mockRejectedValue(
+      statusError('that path is already a sync root (root 1)', 409));
+
+    const res  = await post({ path: '/dup' });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.message).toMatch(/root 1/);
+  });
+
+  test('NESTING is 409 in EITHER direction, naming the conflict', async () => {
+    for (const msg of [
+      'this path sits INSIDE root 1 ("/a"), which already walks it recursively',
+      'this path CONTAINS root 1 ("/a/b") — every file under that root would be synced twice',
+    ]) {
+      syncSvc.addRoot.mockRejectedValue(statusError(msg, 409));
+      const res  = await post({ path: '/x' });
+      const body = await res.json();
+      expect(res.status).toBe(409);
+      expect(body.message).toMatch(/root 1/);
+    }
+  });
+
+  test('a validation failure with no .status maps to 400 via the message', async () => {
+    syncSvc.addRoot.mockRejectedValue(new Error('path is required'));
+    expect((await post({})).status).toBe(400);
+  });
+
+  test('a PROVIDER failure is 502, not 400 — it is not the caller\'s fault', async () => {
+    syncSvc.addRoot.mockRejectedValue(new Error('dropbox not connected'));
+    expect((await post({ path: '/x' })).status).toBe(502);
+  });
+});
+
+describe('PATCH /api/documents/sync-roots/:id', () => {
+  const patch = (id, body) => fetch(`${base}/api/documents/sync-roots/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  test('{ enabled } flips the root', async () => {
+    syncSvc.setRootEnabled.mockResolvedValue(rootRow({ enabled: false }));
+
+    const res  = await patch(1, { enabled: false });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.root.enabled).toBe(false);
+    expect(syncSvc.setRootEnabled).toHaveBeenCalledWith(DB, 1, false);
+  });
+
+  test('ANY OTHER FIELD IS A 400 — not a silent no-op', async () => {
+    // A caller sending { path } believes it repointed the root. Ignoring that
+    // quietly leaves them with a root they think watches one folder while it
+    // watches another — and the 400's message has to say what to do instead,
+    // because "you cannot" without "do this" is where people start editing the
+    // database by hand.
+    const res  = await patch(1, { path: '/somewhere/else' });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.message).toMatch(/only "enabled"/);
+    expect(body.message).toMatch(/disable this root and add the correct one/i);
+    expect(syncSvc.setRootEnabled).not.toHaveBeenCalled();
+  });
+
+  test('a rejected field is named, even alongside a valid one', async () => {
+    const body = await (await patch(1, { enabled: true, note: 'x' })).json();
+    expect(body.message).toContain('note');
+    expect(syncSvc.setRootEnabled).not.toHaveBeenCalled();
+  });
+
+  test('an EMPTY body is 400 rather than an accidental disable', async () => {
+    const res = await patch(1, {});
+    expect(res.status).toBe(400);
+    expect(syncSvc.setRootEnabled).not.toHaveBeenCalled();
+  });
+
+  test('an unknown root is 404 and a junk id is 400', async () => {
+    syncSvc.setRootEnabled.mockResolvedValue(null);
+    expect((await patch(99, { enabled: true })).status).toBe(404);
+    expect((await patch('abc', { enabled: true })).status).toBe(400);
+  });
+
+  test('an enable that would nest is 409', async () => {
+    syncSvc.setRootEnabled.mockRejectedValue(
+      statusError('cannot enable: this root contains root 2 ("/a/b")', 409));
+    expect((await patch(1, { enabled: true })).status).toBe(409);
+  });
+
+  test('THERE IS NO DELETE VERB', async () => {
+    // A deleted root strands ~100k rows that no remaining root claims and no
+    // sync will ever revisit. Disable is the safe verb and the only one this
+    // surface offers; this asserts the absence so nobody adds one casually.
+    const res = await fetch(`${base}/api/documents/sync-roots/1`, { method: 'DELETE' });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/documents/sync-roots/:id/sync — the manual tick', () => {
+  const syncNow = (id = 1) =>
+    fetch(`${base}/api/documents/sync-roots/${id}/sync`, { method: 'POST' });
+
+  test('runs ONE root with a small page budget, using the FULL row', async () => {
+    // getRootRaw, not getRoot: syncRoot needs the cursor, and the panel-safe
+    // row deliberately does not carry it. A small budget because this is held
+    // open by an HTTP request — the 25-page budget belongs to the poll tick.
+    const full = { id: 1, path: '/a', sync_cursor: 'cur', backfill_done: 1 };
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    syncSvc.getRootRaw.mockResolvedValue(full);
+    syncSvc.getRoot.mockResolvedValue(rootRow());
+    syncSvc.syncRoot.mockResolvedValue({ root_id: 1, mode: 'incremental', files: 3, linked: 1 });
+
+    const body = await (await syncNow()).json();
+
+    expect(syncSvc.syncRoot).toHaveBeenCalledWith(DB, full, { maxPages: 2 });
+    expect(body.result.files).toBe(3);
+    // The refreshed row rides along so the panel repaints without a refetch.
+    expect(body.root.id).toBe(1);
+  });
+
+  test('A CLAIMED ROOT IS A 200 SKIP, NOT A 500', async () => {
+    // The recurring tick may be mid-walk on this very root. Reporting that as
+    // a failure teaches people to press the button again, which is the one
+    // thing that cannot help.
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    syncSvc.getRootRaw.mockResolvedValue({ id: 1, path: '/a' });
+    syncSvc.getRoot.mockResolvedValue(rootRow());
+    syncSvc.syncRoot.mockResolvedValue({
+      root_id: 1, path: '/a', skipped: true, reason: 'claimed_elsewhere',
+    });
+
+    const res  = await syncNow();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.result.skipped).toBe(true);
+    expect(body.result.reason).toBe('claimed_elsewhere');
+  });
+
+  test('THE KILL SWITCH IS NOT OVERRIDABLE by naming a root', async () => {
+    // Same rule the internal function enforces. A button that ignored the
+    // switch would be a second control surface — exactly what choosing
+    // settingsService over firmConfig's env fallback was avoiding.
+    syncSvc.isSyncEnabled.mockResolvedValue(false);
+
+    const res  = await syncNow();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.result.skipped).toBe(true);
+    expect(body.result.reason).toMatch(/documents_sync_enabled/);
+    expect(syncSvc.syncRoot).not.toHaveBeenCalled();
+    expect(syncSvc.getRootRaw).not.toHaveBeenCalled();    // nothing is even read
+  });
+
+  test('a DISABLED root still runs — naming one by hand IS the override', async () => {
+    // `enabled` keeps a root out of the automatic rotation; making it
+    // unreachable would remove the only way to test a fix before switching it
+    // back on. The route does not look at the flag at all.
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    syncSvc.getRootRaw.mockResolvedValue({ id: 3, path: '/r3', enabled: 0 });
+    syncSvc.getRoot.mockResolvedValue(rootRow({ id: 3, enabled: false }));
+    syncSvc.syncRoot.mockResolvedValue({ root_id: 3, mode: 'backfill', files: 2000 });
+
+    const body = await (await syncNow(3)).json();
+    expect(body.result.files).toBe(2000);
+  });
+
+  test('an unknown root is 404 and a junk id is 400', async () => {
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    syncSvc.getRootRaw.mockResolvedValue(null);
+    expect((await syncNow(99)).status).toBe(404);
+    expect((await syncNow('abc')).status).toBe(400);
+  });
+});
+
+describe('/api/documents/sync-diagnostics', () => {
+  test('GET returns the reports untouched — the route re-derives nothing', async () => {
+    // The SQL form of the zero-attribution question is a 986 × 153k correlated
+    // LIKE that times out; the report is computed in memory by the service and
+    // this endpoint only reads what a run already wrote.
+    const reports = [{
+      function_name: 'documents_refresh_case_cache',
+      consecutive_failures: 8,
+      last_run: { status: 'failed', error_message: 'connection is in closed state' },
+      last_report: { executed_at: '2026-08-26T20:00:00Z', report: { out_of_root: ['C1'] } },
+    }];
+    syncSvc.latestJobReports.mockResolvedValue(reports);
+
+    const body = await (await fetch(`${base}/api/documents/sync-diagnostics`)).json();
+    expect(body.reports[0].consecutive_failures).toBe(8);
+    expect(body.reports[0].last_report.report.out_of_root).toEqual(['C1']);
+  });
+
+  test('POST runs the report with a TIGHTER bound than the service default', async () => {
+    // The 3-minute default is sized for a background instrument. This one is
+    // held open by a browser request, so it is capped at something a person
+    // will actually wait through; hitting it yields verdict 'incomplete_scan',
+    // which the report already reports and which is not an error.
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    syncSvc.attributionReport.mockResolvedValue({
+      zero_attribution_cases: 418, cached_folders: 986, sample: [],
+    });
+
+    const res  = await fetch(`${base}/api/documents/sync-diagnostics`, { method: 'POST' });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(syncSvc.attributionReport).toHaveBeenCalledWith(DB, { maxRuntimeMs: 90000 });
+    expect(body.report.zero_attribution_cases).toBe(418);
+    expect(typeof body.ran_at).toBe('string');
+  });
+
+  test('POST is kill-switch gated too — a stale picture invites bad decisions', async () => {
+    syncSvc.isSyncEnabled.mockResolvedValue(false);
+
+    const body = await (await fetch(`${base}/api/documents/sync-diagnostics`,
+                                    { method: 'POST' })).json();
+
+    expect(body.report.skipped).toBe(true);
+    expect(syncSvc.attributionReport).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/documents — the unlinked param', () => {
+  async function optsFor(qs) {
+    documents.list.mockResolvedValue({ documents: [], total: 0, limit: 50, offset: 0 });
+    const res = await fetch(`${base}/api/documents${qs}`);
+    expect(res.status).toBe(200);
+    return documents.list.mock.calls[0][1];
+  }
+
+  test('reaches the service verbatim — the route owns no rule about it', async () => {
+    expect((await optsFor('?unlinked=case')).unlinked).toBe('case');
+  });
+
+  test('a contradictory pair is passed through for the SERVICE to resolve', async () => {
+    // One place decides that a scope beats an anti-scope, and it is next to
+    // the predicate it guards. A route that pre-dropped it would be a second
+    // copy of that rule, free to drift.
+    const opts = await optsFor('?unlinked=case&link_type=case&link_id=X');
+    expect(opts).toMatchObject({ unlinked: 'case', link_type: 'case', link_id: 'X' });
+  });
+
+  test('absent is undefined, not an empty string', async () => {
+    expect((await optsFor('')).unlinked).toBeUndefined();
+  });
+
+  test('the echoed kind rides back on the body', async () => {
+    documents.list.mockResolvedValue({
+      documents: [], total: 130338, limit: 50, offset: 0, unlinked: 'case',
+    });
+    const body = await (await fetch(`${base}/api/documents?unlinked=case`)).json();
+    expect(body.unlinked).toBe('case');
+    expect(body.total).toBe(130338);
   });
 });

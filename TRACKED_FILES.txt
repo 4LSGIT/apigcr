@@ -652,6 +652,7 @@ tests/documentSourceService.test.js
 tests/documentSyncService.test.js
 tests/documentsRoutes.test.js
 tests/documentsUi.related.test.js
+tests/documentsUi.syncPanel.test.js
 tests/dropboxService.normalizePath.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js

@@ -128,6 +128,18 @@
  *   syncRoot(db, root, opts)         -> per-root result
  *   syncAll(db, opts)                -> { roots: [...], ... }
  *   attributeUnlinked(db, opts)      -> { scanned, linked }
+ *   attributionReport(db, opts)      -> zero-attribution / residue diagnostic
+ *
+ * S3.2 — the ops surface behind public/documents.html's Sync panel. Root
+ * management lives here because this file already owns every write to
+ * document_sync_roots, and because the routes layer owns no SQL:
+ *   listRoots(db) / getRoot(db, id) -> panel-safe rows (NO cursor)
+ *   getRootRaw(db, id)              -> the full row, for syncRoot
+ *   addRoot(db, {path, note}, opts) -> { root, warning }
+ *   setRootEnabled(db, id, enabled) -> row|null    THE ONLY MUTABLE FIELD
+ *   isSyncEnabled(db)               -> the fail-closed kill switch, one reader
+ *   latestJobReports(db, names)     -> what the recurring reports last said
+ * There is NO deleteRoot, on purpose — see that section's header.
  */
 
 'use strict';
@@ -1187,20 +1199,482 @@ async function attributionReport(db, opts = {}) {
   };
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// SYNC ROOTS — admin surface (S3.2)
+//
+// The routes layer owns no SQL (see routes/api.documents.js's header), and this
+// file already owns every other write to document_sync_roots — the claim, the
+// cursor, the stats blob, last_error. Root management belongs here with them,
+// next to the invariants it has to protect.
+//
+// ── THERE IS NO DELETE, AND THAT IS THE DESIGN ────────────────────────────
+// A root's rows do not carry a root_id — attribution is by PATH, and the link
+// between a document and the root that walked it exists only in the prefix.
+// Deleting root 3 would therefore leave ~100,000 `documents` rows that no
+// remaining root claims, that no sync will ever revisit, and that nothing
+// marks as stale: they would simply sit in the registry asserting a truth
+// nobody is checking any more. DISABLE is the safe verb, and it is the only
+// one this module offers. `enabled = 0` stops the rotation, keeps the cursor,
+// and can be undone.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** document_sync_roots.path — VARCHAR(512). See _validateRootPath re: clamping. */
+const ROOT_PATH_MAX = 512;
+
+/** document_sync_roots.note — VARCHAR(255). Clamped; a shortened note is harmless. */
+const ROOT_NOTE_MAX = 255;
+
+/**
+ * Columns the admin panel reads.
+ *
+ * `sync_cursor` is DELIBERATELY NOT among them — it is an opaque multi-kilobyte
+ * Dropbox paging token, it means nothing to a human, and shipping it to a
+ * browser on every panel open is pure weight. What the UI actually needs from
+ * it is the boolean, so that is what it gets.
+ */
+const ROOT_COLUMNS = `
+  id, path, note, enabled, backfill_done, syncing_since,
+  last_sync_at, last_error, stats, created_at,
+  (sync_cursor IS NOT NULL) AS has_cursor`;
+
+/** Normalize a root row for the wire: MySQL's tinyints → real booleans. */
+function _rootOut(r) {
+  if (!r) return null;
+  return {
+    ...r,
+    enabled:       !!Number(r.enabled),
+    backfill_done: !!Number(r.backfill_done),
+    has_cursor:    !!Number(r.has_cursor),
+    // A JSON column comes back parsed; a TEXT one would not. Tolerate both
+    // rather than assuming, because this same shape is asserted in tests
+    // against a stub that has no column types at all.
+    stats: typeof r.stats === 'string' ? _safeJson(r.stats) : (r.stats || null),
+  };
+}
+
+function _safeJson(s) {
+  try { return JSON.parse(s); } catch (_) { return null; }
+}
+
+/**
+ * Validate and normalize a proposed root path. Throws on anything unusable.
+ *
+ * ── WHY AN OVER-LONG PATH IS REJECTED AND NOT CLAMPED ─────────────────────
+ * Every other string in this stack is clamped, because this DB has no
+ * STRICT_TRANS_TABLES and a silent truncation is worse than a visible one. A
+ * root path is the exception, and it is the exception for a reason that only
+ * applies here: a truncated path is not a shortened label, it is A DIFFERENT
+ * FOLDER. `/a/b/c/d` clamped to `/a/b/c` is very likely to exist — it is the
+ * parent — and the engine would then recursively walk a subtree far larger
+ * than the one anybody asked for, emissions and all. Clamping the note costs a
+ * few characters of prose; clamping the path costs a storm. So: reject, loudly,
+ * with the length in the message.
+ *
+ * Dropbox itself caps a path well under 512, so this is a typo/paste guard
+ * rather than a real constraint anyone will meet.
+ */
+function _validateRootPath(raw) {
+  const s = raw == null ? '' : String(raw);
+  if (!s.trim()) throw new Error('path is required');
+
+  // Handles ("id:…", "ns:…") are passthrough in normalizePath and are NOT a
+  // watchable subtree — list_folder against one behaves differently and
+  // nothing downstream (attribution is prefix-based) would work. Require a
+  // real path, said plainly.
+  if (!s.startsWith('/')) {
+    throw new Error('path must start with "/" (a full Dropbox folder path, not an id: handle)');
+  }
+  if (s.length > ROOT_PATH_MAX) {
+    throw new Error(
+      `path is ${s.length} characters; the limit is ${ROOT_PATH_MAX}. ` +
+      'It is rejected rather than shortened — a truncated path is a different folder.',
+    );
+  }
+
+  // Collapses "//", strips ONE trailing slash, and — critically — NEVER touches
+  // whitespace: this firm's folders are named "  Active Cases" and the leading
+  // spaces are load-bearing sort keys, not formatting.
+  const path = dropbox.normalizePath(s);
+  if (!path) {
+    // normalizePath maps "/" to "" — the account root. A root there would walk
+    // the entire Dropbox on every backfill.
+    throw new Error('the Dropbox account root cannot be a sync root — name a folder');
+  }
+  return path;
+}
+
+/**
+ * Reject a path that would nest with an existing ENABLED root, in EITHER
+ * direction, and return the conflicting row so the caller can name it.
+ *
+ * Nesting is not a style objection. Two roots where one contains the other
+ * means every file in the inner subtree is listed twice per lap, upserted
+ * twice, and (on the incremental path) emits twice — a doubled trigger-engine
+ * load for zero additional coverage, since the outer root already reaches
+ * every one of those files.
+ *
+ * `_underRoot` is reused rather than `startsWith` for the same reason
+ * attribution uses it: "/x/  case a" must not be considered inside
+ * "/x/  case" — only whole segments count.
+ *
+ * DISABLED roots are checked too, but only on the way IN to an enabled state
+ * (add, and enable). A disabled root is inert, so it cannot double-walk
+ * anything today; letting it sit is fine, letting it be switched on into a
+ * conflict is not.
+ */
+function _findNestingConflict(rows, path, selfId = null) {
+  const lower = path.toLowerCase();
+  for (const r of rows) {
+    if (selfId != null && String(r.id) === String(selfId)) continue;
+    if (!Number(r.enabled)) continue;
+    const other = String(r.path).toLowerCase();
+    if (other === lower) continue;                 // duplicate, handled separately
+    if (_underRoot(lower, other)) {
+      return { row: r, direction: 'inside' };      // the new path is inside r
+    }
+    if (_underRoot(other, lower)) {
+      return { row: r, direction: 'contains' };    // the new path contains r
+    }
+  }
+  return null;
+}
+
+/** All roots, newest state, for the admin panel. Includes DISABLED ones. */
+async function listRoots(db) {
+  const [rows] = await db.query(
+    `SELECT ${ROOT_COLUMNS} FROM document_sync_roots ORDER BY id ASC`,
+  );
+  return rows.map(_rootOut);
+}
+
+/** One root, or null. */
+async function getRoot(db, id) {
+  const [[row]] = await db.query(
+    `SELECT ${ROOT_COLUMNS} FROM document_sync_roots WHERE id = ? LIMIT 1`, [id],
+  );
+  return _rootOut(row) || null;
+}
+
+/**
+ * The FULL row (cursor included) — what syncRoot needs and the panel must not
+ * see. Kept separate from getRoot so the distinction is impossible to blur.
+ */
+async function getRootRaw(db, id) {
+  const [[row]] = await db.query(
+    'SELECT * FROM document_sync_roots WHERE id = ? LIMIT 1', [id],
+  );
+  return row || null;
+}
+
+/**
+ * Add a sync root.
+ *
+ * ── WHY AN ADD BUTTON IS SAFE TO EXPOSE AT ALL ────────────────────────────
+ * A new root starts `backfill_done = 0` with a NULL cursor, so its first walk
+ * runs in BACKFILL mode by construction — bulk writes, emissions OFF. Pointing
+ * a root at a folder holding 40,000 historical files therefore cannot storm
+ * the trigger engine, which is the only thing that would make this a dangerous
+ * button. (See the file header on why mode is derived rather than stored.)
+ *
+ * ── A FOLDER THAT DOES NOT EXIST YET IS A LEGITIMATE ROOT ─────────────────
+ * Three of the seeded roots are created lazily by the upload / e-sign / forms
+ * ladders and do not exist in Dropbox today. syncRoot already treats
+ * `path/not_found` as an EMPTY root rather than an error, precisely so those
+ * do not sit in a permanent failure state. So a stat miss here is a WARNING on
+ * a successful create, not a rejection — the root will simply start syncing on
+ * the tick after the folder appears.
+ *
+ * @param {object} db
+ * @param {object} input — { path, note? }
+ * @param {object} [opts] — { credentialId? }
+ * @returns {Promise<{root: object, warning: string|null}>}
+ */
+async function addRoot(db, input = {}, opts = {}) {
+  const path = _validateRootPath(input.path);
+  const note = _clamp(input.note, ROOT_NOTE_MAX);
+
+  const [existing] = await db.query('SELECT id, path, note, enabled FROM document_sync_roots');
+
+  // CASE-INSENSITIVE duplicate test. Two reasons, and the second is the real
+  // one: (1) the column collates utf8mb4_general_ci, so MySQL would consider
+  // them equal anyway; (2) Dropbox paths are case-INSENSITIVE and
+  // case-PRESERVING — "/Foo" and "/foo" are the same folder to the API — and
+  // this engine's entire attribution layer runs on `path_lower`. Two roots
+  // differing only in case are one folder walked twice.
+  const dupe = existing.find(r => String(r.path).toLowerCase() === path.toLowerCase());
+  if (dupe) {
+    const err = new Error(`that path is already a sync root (root ${dupe.id})`);
+    err.status = 409;
+    throw err;
+  }
+
+  const conflict = _findNestingConflict(existing, path);
+  if (conflict) {
+    const err = new Error(
+      conflict.direction === 'inside'
+        ? `this path sits INSIDE root ${conflict.row.id} ("${conflict.row.path}"), which already ` +
+          'walks it recursively — every file underneath would be synced twice'
+        : `this path CONTAINS root ${conflict.row.id} ("${conflict.row.path}") — every file under ` +
+          'that root would be synced twice. Disable it first, or pick a narrower path',
+    );
+    err.status = 409;
+    throw err;
+  }
+
+  // PROVIDER STAT, before the insert. Two things it settles: whether the
+  // folder exists (a miss is a warning, see above) and whether it is a FOLDER
+  // at all. A root pointing at a file would fail list_folder on every tick
+  // forever with an error nobody can act on from the message alone.
+  let warning = null;
+  try {
+    const meta = await dropbox.getMetadata(db, {
+      path,
+      ...(opts.credentialId != null ? { credentialId: opts.credentialId } : {}),
+    });
+    if (meta && meta['.tag'] === 'file') {
+      const err = new Error('that path is a file — a sync root must be a folder');
+      err.status = 400;
+      throw err;
+    }
+  } catch (err) {
+    if (dropbox.isPathNotFoundError(err)) {
+      warning = 'folder does not exist yet — will sync when created';
+    } else {
+      throw err;                       // 400 above, or a real provider failure
+    }
+  }
+
+  const [ins] = await db.query(
+    `INSERT INTO document_sync_roots (path, note, enabled, backfill_done, sync_cursor)
+     VALUES (?, ?, 1, 0, NULL)`,
+    [path, note],
+  );
+
+  return { root: await getRoot(db, ins.insertId), warning };
+}
+
+/**
+ * Flip `enabled`. THE ONLY MUTABLE FIELD ON A ROOT, and the restriction is
+ * deliberate rather than lazy.
+ *
+ * ── WHY `path` IS NOT EDITABLE ────────────────────────────────────────────
+ * A root's cursor is a Dropbox delta token FOR A SPECIFIC FOLDER. Repointing
+ * the path while keeping the cursor means the next tick asks Dropbox "what
+ * changed under the OLD folder since this token" and writes the answers as if
+ * they belonged to the new one. And the rows already registered under the old
+ * prefix keep their path-based case attribution, which nothing would ever
+ * revisit. A path edit is therefore not an edit — it is a different root that
+ * happens to reuse a primary key. If a path is wrong: disable it, add the
+ * right one.
+ *
+ * Enabling re-checks nesting for the same reason adding does: a conflict
+ * created by the back door doubles the walk exactly as much as one created by
+ * the front.
+ */
+async function setRootEnabled(db, id, enabled) {
+  const want = enabled ? 1 : 0;
+  const current = await getRoot(db, id);
+  if (!current) return null;
+
+  if (want === 1) {
+    const [existing] = await db.query('SELECT id, path, note, enabled FROM document_sync_roots');
+    const conflict = _findNestingConflict(existing, String(current.path), id);
+    if (conflict) {
+      const err = new Error(
+        `cannot enable: this root ${conflict.direction === 'inside' ? 'sits inside' : 'contains'} ` +
+        `root ${conflict.row.id} ("${conflict.row.path}") — every file underneath would be synced twice`,
+      );
+      err.status = 409;
+      throw err;
+    }
+  }
+
+  await db.query('UPDATE document_sync_roots SET enabled = ? WHERE id = ?', [want, id]);
+  return getRoot(db, id);
+}
+
+/**
+ * Kill-switch read, fail-closed. Absent, blank, or anything but the exact
+ * string '1' means DISABLED.
+ *
+ * Lives here so the engine and every caller that fronts it read the switch
+ * through ONE function. lib/internal_functions/documents.js delegates to this
+ * rather than keeping its own copy of the comparison — two readers of a kill
+ * switch is two chances for them to disagree about what '1 ' means, and the
+ * whole value of a fail-closed switch is that it has no second opinion.
+ * (See that file's header for why this is settingsService and not firmConfig.)
+ */
+async function isSyncEnabled(db) {
+  const { getSetting } = require('./settingsService'); // lazy require (convention)
+  return (await getSetting(db, 'documents_sync_enabled')) === '1';
+}
+
+// ─────────────────────────────────────────────────────────────
+// Diagnostics — what the recurring reports last said
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * The internal functions whose job_results carry a report worth surfacing.
+ * `documents_sync` is deliberately absent: its per-root outcome is already
+ * persisted on the root row itself (stats / last_error), which the panel reads
+ * directly and which is fresher than any job row.
+ */
+const DIAGNOSTIC_FUNCTIONS = [
+  'documents_refresh_case_cache',
+  'documents_attribution_report',
+];
+
+/**
+ * How many recent job_results rows to scan per job. Bounded because the point
+ * is "the latest run, and the latest USABLE one" — not history. At a 4-hourly
+ * cadence, 40 rows is nearly a week.
+ */
+const DIAG_SCAN_LIMIT = 40;
+
+/**
+ * Latest report per diagnostic function, read out of job_results.
+ *
+ * ── WHY THE LATEST RUN AND THE LATEST *USABLE* RUN ARE BOTH RETURNED ──────
+ * They are routinely not the same row, and the difference is the finding. Two
+ * ways a run produces no report:
+ *
+ *   failed   — the job threw. output_data is NULL.
+ *   skipped  — the kill switch was off, so the function returned
+ *              { skipped: true } and never looked at anything.
+ *
+ * A panel that showed only the newest row would render an empty diagnostics
+ * block on both, which reads exactly like "nothing to report" — the one
+ * meaning it does not have. So: `last_run` says what happened most recently,
+ * `last_report` is the most recent row that actually contains findings, and
+ * `consecutive_failures` counts the streak inside the scanned window. Verified
+ * against production 2026-08-27: the newest eight runs of
+ * documents_refresh_case_cache had all failed, and every successful row behind
+ * them was a kill-switch skip.
+ *
+ * READ-ONLY, and it re-derives nothing. The correlated-LIKE shape that would
+ * recompute zero-attribution in SQL is a 986 × 153k cross join that times out;
+ * attributionReport does that work in memory against a Set. This function only
+ * reads what a run already wrote.
+ *
+ * @param {object} db
+ * @param {string[]} [functionNames]
+ * @returns {Promise<object[]>} one entry per function, whether or not it has run
+ */
+async function latestJobReports(db, functionNames = DIAGNOSTIC_FUNCTIONS) {
+  const names = (functionNames || []).filter(Boolean);
+  if (!names.length) return [];
+
+  // scheduled_jobs.data is a JSON column holding { type:'internal_function',
+  // function_name, params } — see lib/job_executor.js. A function may have
+  // several jobs (or none), so this is a list, not a lookup.
+  const [jobs] = await db.query(
+    `SELECT id, name, status,
+            JSON_UNQUOTE(JSON_EXTRACT(data, '$.function_name')) AS function_name
+       FROM scheduled_jobs
+      WHERE JSON_UNQUOTE(JSON_EXTRACT(data, '$.function_name')) IN (?)`,
+    [names],
+  );
+
+  const byFn = new Map(names.map(n => [n, {
+    function_name: n, jobs: [], last_run: null, last_report: null,
+    consecutive_failures: 0, scanned: 0,
+  }]));
+
+  const jobIds = jobs.map(j => j.id);
+  for (const j of jobs) {
+    const slot = byFn.get(j.function_name);
+    if (slot) slot.jobs.push({ job_id: j.id, name: j.name, status: j.status });
+  }
+
+  if (jobIds.length) {
+    // One indexed range per job (idx_job on job_results.job_id), newest first,
+    // bounded. `id DESC` rather than executed_at: it is the primary key, it is
+    // monotonic, and two runs inside the same second would otherwise have no
+    // defined order.
+    const [rows] = await db.query(
+      `SELECT id, job_id, status, output_data, error_message, duration_ms, executed_at
+         FROM job_results
+        WHERE job_id IN (?)
+        ORDER BY id DESC
+        LIMIT ${DIAG_SCAN_LIMIT * jobIds.length}`,
+      [jobIds],
+    );
+
+    const fnOfJob = new Map(jobs.map(j => [String(j.id), j.function_name]));
+
+    for (const r of rows) {
+      const slot = byFn.get(fnOfJob.get(String(r.job_id)));
+      if (!slot) continue;
+      slot.scanned++;
+
+      // output_data is a JSON column (parsed by mysql2) holding the internal
+      // function's whole envelope: { success, output }. The report is the
+      // INNER object — reaching for output_data directly gets the envelope and
+      // silently finds no fields.
+      const envelope = typeof r.output_data === 'string'
+        ? _safeJson(r.output_data) : (r.output_data || null);
+      const report = envelope && envelope.output ? envelope.output : null;
+      const skipped = !!(report && report.skipped);
+
+      const entry = {
+        result_id:  r.id,
+        job_id:     r.job_id,
+        status:     r.status,
+        executed_at: r.executed_at,
+        duration_ms: r.duration_ms,
+        ...(r.error_message ? { error_message: _clamp(r.error_message, 500) } : {}),
+        ...(skipped ? { skipped: true, skip_reason: report.reason || null } : {}),
+      };
+
+      if (!slot.last_run) slot.last_run = entry;
+      if (!slot.last_report && r.status === 'success' && report && !skipped) {
+        slot.last_report = { ...entry, report };
+      }
+    }
+
+    // The streak, counted from the newest row backwards. Bounded by the scan
+    // window, so it is a floor ("at least N"), never an overstatement.
+    for (const slot of byFn.values()) {
+      let streak = 0;
+      for (const r of rows) {
+        if (fnOfJob.get(String(r.job_id)) !== slot.function_name) continue;
+        if (r.status !== 'failed') break;
+        streak++;
+      }
+      slot.consecutive_failures = streak;
+    }
+  }
+
+  return [...byFn.values()];
+}
+
 module.exports = {
   refreshCaseFolderCache,
   attributionReport,
   syncRoot,
   syncAll,
   attributeUnlinked,
+  // S3.2 — roots admin + diagnostics
+  listRoots,
+  getRoot,
+  getRootRaw,
+  addRoot,
+  setRootEnabled,
+  isSyncEnabled,
+  latestJobReports,
   // exported for tests / reuse
   _matchCase,
   _underRoot,
   _loadCaseFolderCache,
+  _validateRootPath,
+  _findNestingConflict,
   CLAIM_STALE_MIN,
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_RUNTIME_MS,
   DEFAULT_CACHE_RUNTIME_MS,
   DEFAULT_REPORT_RUNTIME_MS,
+  DIAGNOSTIC_FUNCTIONS,
+  ROOT_PATH_MAX,
+  ROOT_NOTE_MAX,
   SWEEP_WATERMARK_KEY,
 };

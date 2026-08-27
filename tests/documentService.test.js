@@ -920,7 +920,94 @@ describe('list', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// SORT_MAP as a table (S3)
+// list — the `unlinked` triage arm (S3.2)
+//
+// "Documents nobody owns." The view it backs is a work queue, not a defect
+// report: ~130,000 of the estate's ~153,000 documents have no case link and
+// most of them are CORRECTLY unlinked (the firm's Dropbox spans practice areas
+// and decades the `cases` table never covered). What matters here is that the
+// predicate means what a human reading that queue thinks it means.
+// ─────────────────────────────────────────────────────────────
+
+describe('list — unlinked', () => {
+  async function ran(opts) {
+    const db = makeDb({ rows: [] });
+    const out = await documentSvc.list(db, opts);
+    return { sql: db.sqlAt(0), params: db.paramsAt(0), db, out };
+  }
+
+  test('anti-joins document_links and keeps the rows with no match', async () => {
+    const { sql, params } = await ran({ unlinked: 'case' });
+    expect(sql).toContain('LEFT JOIN document_links ul ON ul.document_id = d.id AND ul.link_type = ?');
+    expect(sql).toContain('ul.id IS NULL');
+    expect(params).toContain('case');
+  });
+
+  test('THE PREDICATE IGNORES `relation` — this is not the sweep\'s question', async () => {
+    // attributeUnlinked means "has no PATH-link", because it asks whether a
+    // file's LOCATION earns it a link — and a manually-filed document
+    // legitimately answers no while still being attributed. A human reading a
+    // triage queue asks "does anybody own this", so a manual link must take
+    // the row OUT of the list. Leaving `relation` out of the ON clause is the
+    // entire difference between those two readings.
+    const { sql } = await ran({ unlinked: 'case' });
+    expect(sql).not.toContain('relation');
+  });
+
+  test('the COUNT mirrors the page — a pager that disagrees with its list lies', async () => {
+    const { db } = await ran({ unlinked: 'case' });
+    expect(db.sqlAt(1)).toContain('SELECT COUNT(*)');
+    expect(db.sqlAt(1)).toContain('LEFT JOIN document_links ul');
+    expect(db.paramsAt(1)).toEqual(db.paramsAt(0));
+  });
+
+  test('A SCOPE WINS — the two are contradictory and the empty set is the worst answer', async () => {
+    // "linked to case X" ∩ "linked to no case" is empty for every input, so
+    // honouring both would always return nothing — which is indistinguishable
+    // from a genuinely empty result. The scope is what the caller addressed,
+    // so the scope survives.
+    const { sql, out } = await ran({ link_type: 'case', link_id: 'aB3xY9', unlinked: 'case' });
+    expect(sql).toContain('JOIN document_links dl');
+    expect(sql).not.toContain('ul.id IS NULL');
+    expect(out.unlinked).toBeUndefined();
+  });
+
+  test('it composes with every other filter', async () => {
+    const { sql, params } = await ran({
+      unlinked: 'case', ext: 'pdf', status: 'all', q: 'petition', sort: 'modified',
+    });
+    expect(sql).toContain('ul.id IS NULL');
+    expect(sql).toContain('d.ext = ?');
+    expect(sql).toContain('MATCH(');
+    expect(sql).toContain('ORDER BY (d.server_modified IS NULL) ASC');
+    expect(params).toContain('pdf');
+  });
+
+  test('an UNKNOWN kind is ignored rather than reaching the predicate', async () => {
+    // Same rule as the all-junk `ext` arm: over-showing is recoverable, a
+    // mysteriously empty list is not. And an allow-list keeps a caller-supplied
+    // string off the link_type predicate.
+    for (const junk of ['contact', 'CASE', 'case ', '', 'x; DROP TABLE documents', null]) {
+      const { sql, out } = await ran({ unlinked: junk });
+      expect(sql).not.toContain('ul.id IS NULL');
+      expect(sql).not.toContain('DROP');
+      expect(out.unlinked).toBeUndefined();
+    }
+  });
+
+  test('the applied kind is ECHOED — absence is how a caller learns it was dropped', async () => {
+    expect((await ran({ unlinked: 'case' })).out.unlinked).toBe('case');
+    expect((await ran({})).out.unlinked).toBeUndefined();
+  });
+
+  test('no GROUP BY — the anti-join cannot fan out', async () => {
+    // uq_doc_target makes at most one row per (document, type, id), and a LEFT
+    // JOIN that keeps only the misses returns exactly one row per document. A
+    // GROUP BY here would buy a temp table for nothing.
+    const { sql } = await ran({ unlinked: 'case' });
+    expect(sql).not.toContain('GROUP BY');
+  });
+});
 //
 // Read through list()'s generated SQL rather than by exporting the map: the
 // map is private on purpose, and what actually ships is the ORDER BY.

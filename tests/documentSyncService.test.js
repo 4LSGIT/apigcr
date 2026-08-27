@@ -43,6 +43,13 @@ jest.mock('../services/dropboxService', () => ({
   listFolderPage:     jest.fn(),
   listFolderContinue: jest.fn(),
   getSharedLinkMetadata: jest.fn(),
+  // S3.2: addRoot stats the path before creating the root.
+  getMetadata:        jest.fn(),
+  // THE REAL normalizePath, not a stand-in. Root validation depends on its
+  // exact behaviour — specifically that it NEVER touches whitespace, because
+  // this firm's folders are named "  Active Cases" and a stub that trimmed
+  // would let a test pass against a path the engine could never open.
+  normalizePath: jest.requireActual('../services/dropboxService').normalizePath,
   // The real predicates are pure and worth exercising, not stubbing.
   isCursorResetError: (err) => !!err && err.status === 409 &&
     ((err.dropboxError && err.dropboxError['.tag'] === 'reset') ||
@@ -106,6 +113,14 @@ function makeDb({
       if (/^UPDATE document_sync_roots SET syncing_since = NOW\(\)/.test(flat)) {
         return [{ affectedRows: db.claimWins ? 1 : 0 }];
       }
+      // APPLIED, not merely acknowledged: setRootEnabled writes and then
+      // re-reads through getRoot, so a stub that returned affectedRows without
+      // moving the row would let a broken write assert as a successful one.
+      if (/^UPDATE document_sync_roots SET enabled = \?/.test(flat)) {
+        const hit = roots.find(r => String(r.id) === String(params[1]));
+        if (hit) hit.enabled = params[0];
+        return [{ affectedRows: hit ? 1 : 0 }];
+      }
       if (/^UPDATE document_sync_roots/.test(flat)) return [{ affectedRows: 1 }];
       if (/^SELECT \* FROM document_sync_roots WHERE id/.test(flat)) {
         return [roots.filter(r => String(r.id) === String(params[0]))];
@@ -116,6 +131,41 @@ function makeDb({
       if (/^SELECT id, path FROM document_sync_roots/.test(flat)) {
         return [roots.filter(r => r.enabled).map(r => ({ id: r.id, path: r.path }))];
       }
+
+      // ── S3.2 roots admin ───────────────────────────────────────────────
+      // NOTE the ordering against the two patterns above: listRoots selects
+      // named columns and must return DISABLED roots too (the panel manages
+      // them), where `SELECT *` returns only enabled ones for the rotation.
+      if (/^SELECT id, path, note, enabled, backfill_done/.test(flat)) {
+        const wanted = /WHERE id = \?/.test(flat)
+          ? roots.filter(r => String(r.id) === String(params[0]))
+          : roots;
+        return [wanted.map(r => ({
+          id: r.id, path: r.path, note: r.note, enabled: r.enabled,
+          backfill_done: r.backfill_done, syncing_since: r.syncing_since,
+          last_sync_at: r.last_sync_at, last_error: r.last_error, stats: r.stats,
+          created_at: r.created_at || null,
+          has_cursor: r.sync_cursor ? 1 : 0,
+        }))];
+      }
+      if (/^SELECT id, path, note, enabled FROM document_sync_roots/.test(flat)) {
+        return [roots.map(r => ({
+          id: r.id, path: r.path, note: r.note, enabled: r.enabled,
+        }))];
+      }
+      if (/^INSERT INTO document_sync_roots/.test(flat)) {
+        const id = Math.max(0, ...roots.map(r => r.id)) + 1;
+        roots.push({
+          id, path: params[0], note: params[1], enabled: 1, backfill_done: 0,
+          sync_cursor: null, last_sync_at: null, last_error: null,
+          syncing_since: null, stats: null,
+        });
+        return [{ insertId: id, affectedRows: 1 }];
+      }
+
+      // ── S3.2 diagnostics (job_results / scheduled_jobs) ────────────────
+      if (/FROM scheduled_jobs/.test(flat)) return [db.jobRows || []];
+      if (/FROM job_results/.test(flat))    return [db.resultRows || []];
 
       // ── attributionReport ──────────────────────────────────────────────
       if (/LEFT JOIN document_links dl ON dl\.link_type = 'case'/.test(flat)) {
@@ -1500,6 +1550,343 @@ describe('attributionReport', () => {
     const db = reportDb({ zero: [{ case_id: 'A', path_lower: '/x/  case a' }] });
     await sync.attributionReport(db);
     expect(db.find('SELECT d.id, d.path_lower').sql).toContain('GROUP BY d.id');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// S3.2 — the roots admin surface
+//
+// The validation lives in the SERVICE, not the route, because routes/
+// api.documents.js owns no SQL and every one of these rules needs to read the
+// existing roots to decide. So this is where the substance is tested; the route
+// suite asserts only that each failure arrives as the right HTTP status.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('addRoot — validation', () => {
+  const ACTIVE = '/  Law Office/   Cases/  Active Cases';
+
+  /** A db carrying one enabled root at ACTIVE unless told otherwise. */
+  const rootsDb = (rows = [root({ path: ACTIVE })]) => makeDb({ roots: rows });
+
+  test('a path that does not exist yet STILL CREATES the root, with a warning', async () => {
+    // Three of the seeded roots are created lazily by the upload / e-sign /
+    // forms ladders and do not exist in Dropbox today. syncRoot already treats
+    // path/not_found as an EMPTY root rather than an error; rejecting one here
+    // would make the two halves disagree about the same legitimate state.
+    const db = rootsDb();
+    dropbox.getMetadata.mockRejectedValue(dbxError(409, 'path/not_found/...'));
+
+    const out = await sync.addRoot(db, { path: '/  Law Office/   Cases/  Not Yet' });
+
+    expect(out.warning).toMatch(/does not exist yet/);
+    expect(out.root.path).toBe('/  Law Office/   Cases/  Not Yet');
+    expect(db.find('INSERT INTO document_sync_roots')).toBeTruthy();
+  });
+
+  test('a NEW root is enabled, un-backfilled and cursorless — emissions OFF by construction', async () => {
+    // This is what makes an add button safe to expose at all: the first walk
+    // of a 40,000-file folder cannot storm the trigger engine, because mode is
+    // derived from backfill_done and a new root has it at 0.
+    const db = rootsDb();
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder', id: 'id:x' });
+
+    const out = await sync.addRoot(db, { path: '/  Law Office/  Other' });
+
+    const ins = db.find('INSERT INTO document_sync_roots');
+    expect(ins.sql).toContain('enabled, backfill_done, sync_cursor');
+    expect(ins.sql).toContain('VALUES (?, ?, 1, 0, NULL)');
+    expect(out.root.backfill_done).toBe(false);
+    expect(out.root.has_cursor).toBe(false);
+  });
+
+  test('a DUPLICATE path is rejected — and case-insensitively, because Dropbox is', async () => {
+    // "/Foo" and "/foo" are the SAME FOLDER to the Dropbox API, and this
+    // engine attributes entirely on path_lower. Two roots differing only in
+    // case are one folder walked twice.
+    const db = rootsDb();
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder' });
+
+    await expect(sync.addRoot(db, { path: ACTIVE })).rejects.toThrow(/already a sync root/);
+    await expect(sync.addRoot(db, { path: ACTIVE.toUpperCase() }))
+      .rejects.toThrow(/already a sync root/);
+    expect(db.find('INSERT INTO document_sync_roots')).toBeUndefined();
+  });
+
+  test('NESTED INSIDE an existing root is rejected, naming the conflict', async () => {
+    const db = rootsDb();
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder' });
+
+    await expect(sync.addRoot(db, { path: ACTIVE + '/  Smith, John - 12345' }))
+      .rejects.toThrow(/sits INSIDE root 1/);
+    expect(db.find('INSERT INTO document_sync_roots')).toBeUndefined();
+  });
+
+  test('CONTAINING an existing root is rejected too — nesting is symmetric', async () => {
+    // The double-walk costs the same in either direction, so a check that only
+    // looked downward would leave half the hazard open.
+    const db = rootsDb();
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder' });
+
+    await expect(sync.addRoot(db, { path: '/  Law Office/   Cases' }))
+      .rejects.toThrow(/CONTAINS root 1/);
+  });
+
+  test('a SEGMENT-BOUNDARY lookalike is NOT nesting', async () => {
+    // "/x/  case a" does not contain "/x/  case ab". The nesting check reuses
+    // _underRoot for exactly the reason attribution does.
+    const db = makeDb({ roots: [root({ path: '/x/  case a' })] });
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder' });
+
+    const out = await sync.addRoot(db, { path: '/x/  case ab' });
+    expect(out.root.path).toBe('/x/  case ab');
+  });
+
+  test('a DISABLED root does not block — it is inert and cannot double-walk', async () => {
+    const db = makeDb({ roots: [root({ path: ACTIVE, enabled: 0 })] });
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder' });
+
+    const out = await sync.addRoot(db, { path: ACTIVE + '/  Sub' });
+    expect(out.root.path).toBe(ACTIVE + '/  Sub');
+  });
+
+  test('an OVER-LONG path is REJECTED, not clamped', async () => {
+    // The one place in this stack that does not clamp, and deliberately: a
+    // truncated path is not a shortened label, it is a DIFFERENT FOLDER —
+    // very likely the parent, which exists, and which would then be walked
+    // recursively. The clamp everywhere else prevents silent truncation; here
+    // silence is the truncation's whole danger.
+    const db = rootsDb();
+    await expect(sync.addRoot(db, { path: '/' + 'x'.repeat(sync.ROOT_PATH_MAX) }))
+      .rejects.toThrow(/rejected rather than shortened/);
+    expect(dropbox.getMetadata).not.toHaveBeenCalled();
+  });
+
+  test('a note IS clamped — a shortened note is harmless', async () => {
+    const db = rootsDb();
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder' });
+
+    await sync.addRoot(db, { path: '/  Law Office/  N', note: 'n'.repeat(400) });
+
+    const ins = db.find('INSERT INTO document_sync_roots');
+    expect(ins.params[1].length).toBe(sync.ROOT_NOTE_MAX);
+  });
+
+  test('a FILE is rejected — a root must be a folder', async () => {
+    // list_folder against a file fails on every tick forever, with a message
+    // nobody can act on without knowing this.
+    const db = rootsDb();
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'file', id: 'id:f' });
+
+    await expect(sync.addRoot(db, { path: '/  Law Office/  a.pdf' }))
+      .rejects.toThrow(/is a file/);
+    expect(db.find('INSERT INTO document_sync_roots')).toBeUndefined();
+  });
+
+  test('the account ROOT and an id: handle are both refused', async () => {
+    const db = rootsDb();
+    await expect(sync.addRoot(db, { path: '/' })).rejects.toThrow(/account root/);
+    await expect(sync.addRoot(db, { path: 'id:abc' })).rejects.toThrow(/must start with/);
+    await expect(sync.addRoot(db, { path: '   ' })).rejects.toThrow(/required/);
+  });
+
+  test('LEADING SPACES SURVIVE — they are this firm\'s sort keys, not formatting', async () => {
+    const db = makeDb({ roots: [] });
+    dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder' });
+
+    await sync.addRoot(db, { path: '/  Law Office/   Cases/  New/' });
+
+    // Trailing slash stripped, every leading space intact.
+    expect(db.find('INSERT INTO document_sync_roots').params[0])
+      .toBe('/  Law Office/   Cases/  New');
+  });
+
+  test('a REAL provider failure propagates — only path/not_found is a warning', async () => {
+    const db = rootsDb();
+    dropbox.getMetadata.mockRejectedValue(new Error('dropbox not connected'));
+
+    await expect(sync.addRoot(db, { path: '/  Law Office/  X' }))
+      .rejects.toThrow(/not connected/);
+    expect(db.find('INSERT INTO document_sync_roots')).toBeUndefined();
+  });
+});
+
+describe('setRootEnabled', () => {
+  test('flips enabled and reads the row back', async () => {
+    const db = makeDb({ roots: [root({ enabled: 1 })] });
+
+    const off = await sync.setRootEnabled(db, 1, false);
+    expect(off.enabled).toBe(false);
+
+    const on = await sync.setRootEnabled(db, 1, true);
+    expect(on.enabled).toBe(true);
+  });
+
+  test('an unknown id is null, not a throw', async () => {
+    expect(await sync.setRootEnabled(makeDb({ roots: [root()] }), 99, false)).toBeNull();
+  });
+
+  test('ENABLING re-checks nesting — the back door doubles the walk exactly as much', async () => {
+    // A conflict cannot be created by adding (that path is guarded), but it CAN
+    // be created by disabling the outer root, adding the inner one, then
+    // switching the outer back on.
+    const db = makeDb({ roots: [
+      root({ id: 1, path: '/  Law Office/   Cases', enabled: 0 }),
+      root({ id: 2, path: '/  Law Office/   Cases/  Active Cases', enabled: 1 }),
+    ] });
+
+    await expect(sync.setRootEnabled(db, 1, true)).rejects.toThrow(/cannot enable/);
+    // And the row did not move.
+    expect((await sync.getRoot(db, 1)).enabled).toBe(false);
+  });
+
+  test('DISABLING is never blocked — it is the safe direction', async () => {
+    const db = makeDb({ roots: [
+      root({ id: 1, path: '/  Law Office/   Cases', enabled: 1 }),
+      root({ id: 2, path: '/  Law Office/   Cases/  Active Cases', enabled: 1 }),
+    ] });
+    expect((await sync.setRootEnabled(db, 1, false)).enabled).toBe(false);
+  });
+});
+
+describe('listRoots / getRoot — what the panel is allowed to see', () => {
+  test('DISABLED roots are listed — the panel exists to manage them', async () => {
+    const db = makeDb({ roots: [root({ id: 1 }), root({ id: 2, enabled: 0, path: '/b' })] });
+    const rows = await sync.listRoots(db);
+    expect(rows.map(r => r.id)).toEqual([1, 2]);
+    expect(rows[1].enabled).toBe(false);
+  });
+
+  test('THE CURSOR NEVER LEAVES THE SERVER — only whether one exists', async () => {
+    // It is an opaque multi-kilobyte Dropbox paging token. It means nothing to
+    // a human and shipping it to a browser on every panel open is pure weight.
+    const db = makeDb({ roots: [root({ sync_cursor: 'AAEjfk...' })] });
+    const [r] = await sync.listRoots(db);
+
+    expect(r.has_cursor).toBe(true);
+    expect(r.sync_cursor).toBeUndefined();
+    expect(JSON.stringify(r)).not.toContain('AAEjfk');
+  });
+
+  test('tinyints come back as real booleans', async () => {
+    const db = makeDb({ roots: [root({ enabled: 1, backfill_done: 1 })] });
+    const [r] = await sync.listRoots(db);
+    expect(r.enabled).toBe(true);
+    expect(r.backfill_done).toBe(true);
+  });
+
+  test('getRootRaw DOES carry the cursor — syncRoot needs it', async () => {
+    const db = makeDb({ roots: [root({ sync_cursor: 'cur-1' })] });
+    expect((await sync.getRootRaw(db, 1)).sync_cursor).toBe('cur-1');
+  });
+});
+
+describe('isSyncEnabled — one reader for the kill switch', () => {
+  test.each([['1', true], ['0', false], ['', false], ['1 ', false], ['true', false]])(
+    '%p → %p', async (value, expected) => {
+      const db = makeDb({ roots: [], settings: { documents_sync_enabled: value } });
+      expect(await sync.isSyncEnabled(db)).toBe(expected);
+    });
+
+  test('ABSENT is disabled — fail-closed', async () => {
+    expect(await sync.isSyncEnabled(makeDb({ roots: [], settings: {} }))).toBe(false);
+  });
+});
+
+describe('latestJobReports — reading what the recurring reports last said', () => {
+  const JOBS = [
+    { id: 10, name: 'Documents Case Folder Cache', status: 'pending',
+      function_name: 'documents_refresh_case_cache' },
+  ];
+  const envelope = (output) => ({ success: true, output });
+
+  test('a FAILED newest run does not hide the last run that produced figures', async () => {
+    // Verified against production 2026-08-27: the newest eight runs of
+    // documents_refresh_case_cache had all failed. A panel showing only the
+    // newest row renders an empty diagnostics block, which reads as "nothing
+    // to report" — the one meaning it does not have.
+    const db = makeDb({ roots: [] });
+    db.jobRows = JOBS;
+    db.resultRows = [
+      { id: 3, job_id: 10, status: 'failed', output_data: null,
+        error_message: "Can't add new command when connection is in closed state",
+        duration_ms: 212058, executed_at: '2026-08-27T04:26:35Z' },
+      { id: 2, job_id: 10, status: 'failed', output_data: null,
+        error_message: 'same', duration_ms: 215447, executed_at: '2026-08-27T04:12:40Z' },
+      { id: 1, job_id: 10, status: 'success', duration_ms: 900,
+        executed_at: '2026-08-26T20:00:00Z',
+        output_data: envelope({ resolved: 300, failed: 0, out_of_root: ['C1', 'C2'] }) },
+    ];
+
+    const [slot] = await sync.latestJobReports(db, ['documents_refresh_case_cache']);
+
+    expect(slot.last_run.status).toBe('failed');
+    expect(slot.consecutive_failures).toBe(2);
+    expect(slot.last_report.report.out_of_root).toEqual(['C1', 'C2']);
+  });
+
+  test('a KILL-SWITCH SKIP is not a report — it looked at nothing', async () => {
+    // Every "successful" row in production before the failures was a skip.
+    // Treating one as findings would render "0 cases out of root" from a run
+    // that never opened the table.
+    const db = makeDb({ roots: [] });
+    db.jobRows = JOBS;
+    db.resultRows = [
+      { id: 1, job_id: 10, status: 'success', duration_ms: 77,
+        executed_at: '2026-08-26T20:02:09Z',
+        output_data: envelope({ skipped: true, reason: 'documents_sync_enabled is not "1"' }) },
+    ];
+
+    const [slot] = await sync.latestJobReports(db, ['documents_refresh_case_cache']);
+
+    expect(slot.last_run.skipped).toBe(true);
+    expect(slot.last_run.skip_reason).toMatch(/not "1"/);
+    expect(slot.last_report).toBeNull();
+  });
+
+  test('the report is the INNER object — output_data is the whole envelope', async () => {
+    const db = makeDb({ roots: [] });
+    db.jobRows = JOBS;
+    db.resultRows = [{
+      id: 1, job_id: 10, status: 'success', duration_ms: 10,
+      executed_at: '2026-08-27T00:00:00Z',
+      output_data: envelope({ resolved: 5, out_of_root: [] }),
+    }];
+
+    const [slot] = await sync.latestJobReports(db, ['documents_refresh_case_cache']);
+    expect(slot.last_report.report.resolved).toBe(5);
+    expect(slot.last_report.report.success).toBeUndefined();
+  });
+
+  test('a function with NO scheduled job still gets an entry', async () => {
+    // documents_attribution_report is deliberately unscheduled. An absent key
+    // would make the panel render nothing where it must render "never run".
+    const db = makeDb({ roots: [] });
+    db.jobRows = [];
+    db.resultRows = [];
+
+    const out = await sync.latestJobReports(db);
+    expect(out.map(s => s.function_name)).toEqual(sync.DIAGNOSTIC_FUNCTIONS);
+    expect(out.every(s => s.last_run === null && s.last_report === null)).toBe(true);
+  });
+
+  test('it reads only — no writes anywhere', async () => {
+    const db = makeDb({ roots: [] });
+    db.jobRows = JOBS;
+    db.resultRows = [];
+    await sync.latestJobReports(db);
+    expect(db.all('INSERT').length + db.all('UPDATE').length + db.all('DELETE').length).toBe(0);
+  });
+
+  test('output_data arriving as a STRING is tolerated, not assumed parsed', async () => {
+    const db = makeDb({ roots: [] });
+    db.jobRows = JOBS;
+    db.resultRows = [{
+      id: 1, job_id: 10, status: 'success', duration_ms: 10,
+      executed_at: '2026-08-27T00:00:00Z',
+      output_data: JSON.stringify(envelope({ resolved: 7, out_of_root: [] })),
+    }];
+    const [slot] = await sync.latestJobReports(db, ['documents_refresh_case_cache']);
+    expect(slot.last_report.report.resolved).toBe(7);
   });
 });
 

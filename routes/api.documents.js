@@ -16,6 +16,16 @@
  * POST   /api/documents/:id/share     get-or-create the PERMANENT shared link
  * POST   /api/documents/register      { source?, external_id } → stat → upsert
  *
+ * S3.2 — the sync panel's ops surface. NOTE THE DECLARATION ORDER: these are
+ * registered BEFORE the ':id' routes or Express hands "sync-roots" to :id.
+ * GET    /api/documents/sync-roots          roots + the kill-switch value
+ * POST   /api/documents/sync-roots          { path, note? } → 201 (+ warning)
+ * PATCH  /api/documents/sync-roots/:id      { enabled } — the only mutable field
+ * POST   /api/documents/sync-roots/:id/sync manual tick for ONE root
+ * GET    /api/documents/sync-diagnostics    latest out_of_root / zero-attribution
+ * POST   /api/documents/sync-diagnostics    run the attribution report now
+ * There is NO DELETE for a root — see the section header for why.
+ *
  * Thin wrapper. Rows live in services/documentService.js; bytes live behind
  * services/documentSourceService.js. This file does no SQL and knows no
  * Dropbox specifics beyond one folder guard on /register (see there).
@@ -80,6 +90,31 @@ const DEFAULT_SOURCE = 'dropbox';
  * at 2am to "fix" a view that is degrading correctly.
  */
 const RAW_INLINE_MAX_BYTES = 25 * 1024 * 1024;
+
+// ─────────────────────────────────────────────────────────────
+// Sync-panel limits (S3.2)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Page budget for a MANUAL per-root sync.
+ *
+ * Two pages, not the recurring job's 25. A hand-press answers "does this root
+ * move, and what does it say" — and each page is up to 2,000 entries, every one
+ * of them upserted inside this HTTP request. The backfill is the recurring
+ * job's work; it has a poll tick to live in and this does not.
+ */
+const MANUAL_SYNC_MAX_PAGES = 2;
+
+/**
+ * Wall-clock bound for an on-demand attribution report, tighter than the
+ * service's own 3-minute default.
+ *
+ * The default is sized for a background instrument that can afford to be slow.
+ * This one is held open by a browser request, so it is capped at something a
+ * person will actually wait through — and hitting it is a normal outcome the
+ * report already reports (verdict 'incomplete_scan'), not an error.
+ */
+const DIAGNOSTIC_RUN_MAX_MS = 90 * 1000;
 
 /**
  * ext → Content-Type, INLINE-SAFE TYPES ONLY. Anything absent is served as
@@ -244,6 +279,219 @@ router.post('/api/documents/register', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+// SYNC ROOTS — the ops surface (S3.2)
+//
+// ⚠️ DECLARED BEFORE THE ':id' ROUTES, AND THIS IS LOAD-BEARING, NOT TIDINESS.
+// Express matches in declaration order. `GET /api/documents/sync-roots` and
+// `GET /api/documents/:id` are both two segments, so whichever is declared
+// first wins — and if ':id' won, "sync-roots" would arrive as an id, fail
+// docId()'s integer parse and 404 the whole panel with "Invalid id". Same for
+// sync-diagnostics. The /register route's comment above warns about exactly
+// this class of shadowing; these are the routes that make it real.
+//
+// NO DELETE VERB EXISTS HERE. See documentSyncService's roots section: a
+// deleted root strands ~100k rows that no remaining root claims and no sync
+// will revisit. Disable is the safe verb and it is the only one offered.
+//
+// This file still does no SQL. Every statement below lives in the service.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/documents/sync-roots
+ *
+ * The kill switch rides in the SAME envelope rather than behind a second call.
+ * The panel has to render one banner ("sync is disabled") above the roots
+ * table, and two requests to paint one view is two chances to render a table
+ * of roots that look busy while the engine is off.
+ */
+router.get('/api/documents/sync-roots', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const [roots, enabled] = await Promise.all([
+      sync.listRoots(req.db),
+      sync.isSyncEnabled(req.db),
+    ]);
+    res.json({ status: 'success', roots, sync_enabled: enabled });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * POST /api/documents/sync-roots — { path, note? }
+ *
+ * 201 on create. A `warning` in the body means the folder does not exist in
+ * Dropbox yet — the root WAS created and will start syncing when it appears
+ * (three of the seeded roots live in exactly that state). That is a different
+ * outcome from an error and the client must be able to tell them apart, which
+ * is why it is a 201-with-warning and not a 4xx.
+ */
+router.post('/api/documents/sync-roots', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const { path, note } = req.body || {};
+    const { root, warning } = await sync.addRoot(req.db, { path, note });
+    res.status(201).json({
+      status: 'success', root, ...(warning ? { warning } : {}),
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * PATCH /api/documents/sync-roots/:id — { enabled }
+ *
+ * `enabled` IS THE ONLY ACCEPTED FIELD, and anything else in the body is a 400
+ * rather than a silent no-op. A caller sending { path } believes it repointed
+ * the root; ignoring it quietly would leave them with a root they think is
+ * watching one folder while it watches another. (Why path is immutable at all:
+ * see setRootEnabled — the cursor belongs to the old folder and the rows
+ * already registered keep the old prefix's attribution.)
+ */
+router.patch('/api/documents/sync-roots/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Invalid id' });
+    }
+
+    const body = req.body || {};
+    const extra = Object.keys(body).filter(k => k !== 'enabled');
+    if (extra.length) {
+      return res.status(400).json({
+        status: 'error',
+        message: `only "enabled" can be changed on a sync root (rejected: ${extra.join(', ')}). ` +
+                 'To change a path, disable this root and add the correct one.',
+      });
+    }
+    if (body.enabled === undefined) {
+      return res.status(400).json({ status: 'error', message: 'enabled is required' });
+    }
+
+    const root = await sync.setRootEnabled(req.db, id, !!body.enabled);
+    if (!root) return res.status(404).json({ status: 'error', message: 'Sync root not found' });
+    res.json({ status: 'success', root });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * POST /api/documents/sync-roots/:id/sync — one manual tick for ONE root.
+ *
+ * Reuses the path lib/internal_functions/documents.js's targeted run takes:
+ * load the FULL row (cursor included — syncRoot needs it), then syncRoot with
+ * a small page budget. Two rules inherited from there, both deliberate:
+ *
+ *   RUNS EVEN IF THE ROOT IS DISABLED. `enabled` keeps a root out of the
+ *   automatic rotation; naming one by hand is the override, and making a
+ *   disabled root unreachable would remove the only way to test a fix.
+ *
+ *   DOES NOT OVERRIDE THE KILL SWITCH. That switch means "this engine does not
+ *   run", and a button that ignored it would be a second control surface —
+ *   precisely what documents.js's rejection of firmConfig's env fallback was
+ *   avoiding. Skipped, not 500: nothing went wrong.
+ *
+ * The claim in syncRoot is what makes this safe to press while the cron tick
+ * is mid-walk — a loser gets { skipped: true, reason: 'claimed_elsewhere' }
+ * back, which is a 200 with a shape the UI reports, not a failure.
+ */
+router.post('/api/documents/sync-roots/:id/sync', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Invalid id' });
+    }
+
+    if (!await sync.isSyncEnabled(req.db)) {
+      return res.json({
+        status: 'success',
+        result: { root_id: id, skipped: true, reason: 'documents_sync_enabled is not "1"' },
+      });
+    }
+
+    const root = await sync.getRootRaw(req.db, id);
+    if (!root) return res.status(404).json({ status: 'error', message: 'Sync root not found' });
+
+    // Small budget. A hand-press is "show me this root moves", not "burn the
+    // backfill down inside an HTTP request" — the recurring job owns that, and
+    // 25 pages here would hold the connection open for minutes.
+    const result = await sync.syncRoot(req.db, root, { maxPages: MANUAL_SYNC_MAX_PAGES });
+    res.json({ status: 'success', result, root: await sync.getRoot(req.db, id) });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * GET /api/documents/sync-diagnostics — what the recurring reports last said.
+ *
+ * ── WHY THIS ROUTE EXISTS AT ALL ──────────────────────────────────────────
+ * job_results IS the report surface for these functions (they persist nothing
+ * else), and the only existing way to read one is GET /scheduled-jobs/:id,
+ * which needs the numeric job id up front and has no lookup by function name.
+ * documents_attribution_report has NO scheduled job at all, so that route can
+ * never return its findings. Hence one endpoint that resolves both by name.
+ *
+ * It re-derives NOTHING. The zero-attribution question in SQL is a 986 × 153k
+ * correlated LIKE that times out on the readonly endpoint; attributionReport
+ * answers it in memory against a Set, and this only reads what a run wrote.
+ */
+router.get('/api/documents/sync-diagnostics', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const reports = await sync.latestJobReports(req.db);
+    res.json({ status: 'success', reports });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * POST /api/documents/sync-diagnostics — run the attribution report NOW.
+ *
+ * ── WHY A RUN BUTTON, WHEN THE FUNCTION IS DELIBERATELY UNSCHEDULED ───────
+ * documents_attribution_report is a hand-run decision instrument and should
+ * stay one — but S3.2's whole job is to make the stale-intake-folder condition
+ * VISIBLE, and a diagnostics block that can only ever say "no report has been
+ * run" makes it visible to nobody. Something has to be able to produce the
+ * first run.
+ *
+ * The 3-minute default bound describes a worst case, not this workload:
+ * measured against production on 2026-08-27 the head query is 77ms over 986
+ * cached folders and the paged scan is ~16 pages at ~110-300ms, so a full run
+ * is a few seconds. It is read-only — no links, no cache rows, no events — and
+ * gated on the same kill switch as everything else here. The bound is tightened
+ * below anyway, because "measured at 3 seconds" is not a licence to let an HTTP
+ * request hang for three minutes when the estate grows.
+ *
+ * Deliberately NOT wired to a schedule by this slice: a whole-table scan on a
+ * timer needs a reason, and "the panel would look fresher" is not one.
+ */
+router.post('/api/documents/sync-diagnostics', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+
+    if (!await sync.isSyncEnabled(req.db)) {
+      return res.json({
+        status: 'success',
+        report: { skipped: true, reason: 'documents_sync_enabled is not "1"' },
+      });
+    }
+
+    const report = await sync.attributionReport(req.db, {
+      maxRuntimeMs: DIAGNOSTIC_RUN_MAX_MS,
+    });
+    res.json({ status: 'success', report, ran_at: new Date().toISOString() });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // GET /api/documents — list
 // ─────────────────────────────────────────────────────────────
@@ -263,6 +511,11 @@ router.get('/api/documents', jwtOrApiKey, async (req, res) => {
       // normalisation, because a query string has no booleans and every caller
       // would otherwise invent its own.
       related:   req.query.related,
+      // 'case' → the triage view: documents with NO case link at all. Ignored
+      // when a scope is present (contradictory) and when the value is not a
+      // known kind — both rules live in the service beside the predicate they
+      // guard, so this stays a passthrough like every other facet here.
+      unlinked:  req.query.unlinked,
       sort:      req.query.sort,
       limit:     req.query.limit,
       offset:    req.query.offset,

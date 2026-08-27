@@ -298,6 +298,79 @@
     #viewer .vw-body iframe { width: 100%; height: 100%; border: 0; }
     #viewer .vw-body img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
+    /* ── Sync panel (S3.2) — GLOBAL only, collapsed until asked for ─────
+       Not a Swal: it holds a table, a form and an expandable diagnostics
+       block, and it is a thing you keep open while pressing buttons in it —
+       a modal would fight that. Plain section, page tokens, no new chrome. */
+    #syncPanel {
+      display: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      margin-bottom: var(--gap-lg);
+    }
+    #syncPanel.open { display: block; }
+    body.scoped #syncPanel { display: none !important; }
+    #syncPanel h4 {
+      font-size: var(--fs-sm); font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em; color: var(--text-2); margin: 14px 0 6px;
+    }
+    #syncPanel h4:first-child { margin-top: 0; }
+    #syncPanel table { width: 100%; border-collapse: collapse; }
+    #syncPanel th {
+      text-align: left; padding: 5px 8px;
+      font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em; color: var(--text-2);
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    #syncPanel td {
+      padding: 6px 8px; border-top: 1px solid var(--border);
+      vertical-align: top; font-size: var(--fs-sm);
+    }
+    /* THE PATH IS DATA, NOT A LABEL. These folders are named "  Active Cases"
+       and the leading spaces are the firm's sort keys — a proportional font
+       collapses them visually and a staffer comparing two roots cannot see
+       the difference that matters. Monospace + pre-wrap preserves them. */
+    .root-path {
+      font-family: var(--mono); font-size: var(--fs-xs);
+      white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .banner {
+      border-radius: var(--radius-sm); padding: 8px 10px;
+      font-size: var(--fs-sm); margin-bottom: var(--gap);
+    }
+    .banner.warn { background: var(--warn-soft); color: var(--warn); }
+    .banner.err  { background: var(--danger-soft); color: var(--danger); }
+    .banner.ok   { background: var(--ok-soft, var(--accent-soft)); color: var(--ok); }
+    .banner.info { background: var(--info-soft); color: var(--info); }
+    .pill {
+      display: inline-block; padding: 1px 6px; border-radius: 3px;
+      font-size: var(--fs-xs); font-weight: 600; white-space: nowrap;
+    }
+    .pill.on   { background: var(--info-soft); color: var(--info); }
+    .pill.off  { background: var(--surface-2); color: var(--text-muted); }
+    .pill.bad  { background: var(--danger-soft); color: var(--danger); }
+    .pill.busy { background: var(--warn-soft); color: var(--warn); }
+    .err-cell {
+      color: var(--danger); font-size: var(--fs-xs);
+      cursor: pointer; overflow-wrap: anywhere;
+    }
+    .mini { font-size: var(--fs-xs); color: var(--text-muted); }
+    #syncPanel .addrow { display: flex; gap: var(--gap-sm); flex-wrap: wrap; align-items: center; }
+    #syncPanel .addrow input { flex: 1; min-width: 160px; }
+    #syncPanel .diag-cases {
+      max-height: 260px; overflow-y: auto;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      margin-top: 6px;
+    }
+
+    /* One muted line under the toolbar telling the truth about a big number. */
+    .scope-note {
+      font-size: var(--fs-sm); color: var(--text-muted);
+      margin-bottom: var(--gap); overflow-wrap: anywhere;
+    }
+
     .swal2-popup { font-size: var(--fs) !important; }
     .swal-lbl { font-weight: 600; font-size: var(--fs-sm); color: var(--text-2); display: block; }
     .swal-note { font-size: var(--fs-sm); color: var(--text-muted); }
@@ -356,6 +429,15 @@
   <div class="title">Docu<span>ments</span></div>
   <div class="spacer"></div>
   <span class="count" id="topCount"></span>
+  <!-- COLLAPSED BY DEFAULT, and it loads nothing until pressed. The roots
+       table, the kill switch and the diagnostics are ops questions asked
+       occasionally; paying for three requests on every page open to answer
+       them proactively would be a cost every staffer pays so one person can
+       occasionally look. -->
+  <button class="btn btn-ghost btn-sm" id="syncToggle" onclick="onToggleSyncPanel()"
+          title="Dropbox sync roots, status and diagnostics">
+    <i class="fa-solid fa-rotate"></i> Sync
+  </button>
   <button class="btn btn-ghost btn-sm" onclick="onRefresh()" title="Re-fetch the list">
     <i class="fa-solid fa-arrows-rotate"></i> Refresh
   </button>
@@ -449,9 +531,25 @@
           <option value="oldest">Registry — oldest</option>
         </select>
       </div>
+      <!-- TRIAGE SCOPE (S3.2). "Unlinked" is documents with no case link at
+           all — the pile a human might file. It is a SELECT beside the other
+           facets rather than a separate view, because it composes with every
+           one of them: unlinked PDFs modified this month is the query that
+           actually gets used, and a separate page would have to grow its own
+           copy of the toolbar to offer it. -->
+      <div class="ctl">
+        <label for="tb-scope">Scope</label>
+        <select id="tb-scope" onchange="onScopeChange(this.value)">
+          <option value="" selected>All</option>
+          <option value="case">Unlinked</option>
+        </select>
+      </div>
     </div>
 
+    <div id="syncPanel"></div>
+
     <div id="relNote"></div>
+    <div id="scopeNote"></div>
 
     <div id="listWrap">
       <div class="state"><i class="fa-solid fa-spinner fa-spin"></i>Loading…</div>
@@ -562,6 +660,10 @@ var state = {
   tag:      '',
   status:   '',                      // '' → the API default (active only)
   sort:     'modified',
+  // '' → every document; 'case' → only those with NO case link at all.
+  // GLOBAL only: the whole point of a scoped widget is that its documents are
+  // linked to something, so "unlinked" there is a guaranteed empty list.
+  unlinked: '',
   // ONE HOP through case_relate. Scoped mode only — a global list has no scope
   // to expand, and the API ignores the flag there anyway. Default ON; see the
   // checkbox's own comment for why.
@@ -654,6 +756,11 @@ function buildListParams() {
   if (state.ext)      p.ext      = state.ext;
   if (state.tag)      p.tag      = state.tag;
   if (state.status)   p.status   = state.status;
+  // Never sent alongside a scope. The server drops it there anyway (a scope
+  // and an anti-scope intersect at the empty set), but sending a param that
+  // is guaranteed to be ignored just to rely on being ignored is how a future
+  // change to that rule becomes a mystery.
+  if (!SCOPED && state.unlinked) p.unlinked = state.unlinked;
   if (SCOPED) {
     p.link_type = LINK_TYPE;
     p.link_id   = LINK_ID;
@@ -688,6 +795,7 @@ async function fetchDocs() {
     );
     E('pager').innerHTML = '';
     E('relNote').innerHTML = '';
+    E('scopeNote').innerHTML = '';
     setCount('');
     return;
   }
@@ -709,6 +817,7 @@ async function fetchDocs() {
   }
 
   renderRelNote();
+  renderScopeNote();
   renderList();
   renderPagination();
   renderFacetHints();
@@ -758,8 +867,42 @@ function renderRelNote() {
   el.innerHTML = parts.join('');
 }
 
+/* THE NUMBER IS NOT A DEFECT COUNT, AND WITHOUT THIS LINE IT READS AS ONE.
+ *
+ * Around 130,000 of the registry's ~153,000 documents have no case link, and
+ * MOST OF THEM ARE CORRECTLY UNLINKED: the firm's Dropbox spans practice areas
+ * and decades that the `cases` table never covered, so there is no case for
+ * those files to belong to and there never will be. A staffer opening this
+ * view and seeing six figures with no explanation concludes the sync is broken
+ * and escalates — the honest framing has to arrive with the number, not after
+ * someone asks about it.
+ *
+ * Sorting by file-modified is the other half of the same job: it puts the rows
+ * that plausibly SHOULD be filed (recent arrivals) on page one, ahead of the
+ * decades of correctly-unowned history behind them. */
+function renderScopeNote() {
+  var el = E('scopeNote');
+  if (!el) return;
+  if (SCOPED || !state.unlinked) { el.innerHTML = ''; return; }
+
+  el.innerHTML = '<div class="scope-note">'
+    + '<i class="fa-solid fa-circle-info"></i> '
+    + 'Documents with no case link. <b>Most of these are correct</b> — the firm’s '
+    + 'Dropbox covers work and years outside the case list, so a file here is not '
+    + 'necessarily misfiled. This is a triage surface, not an error count; recent '
+    + 'files sort first because they are the ones most likely to need filing.'
+    + '</div>';
+}
+
 function emptyStateHtml() {
   var filtered = state.q || state.doc_type || state.ext || state.tag || state.status;
+  if (!SCOPED && state.unlinked && !filtered) {
+    // Genuinely good news, and worth saying so rather than showing the generic
+    // "no documents in the registry" line, which would look like a failure.
+    return '<i class="fa-solid fa-circle-check"></i>'
+         + 'Every document has a case link.'
+         + '<div class="sub">Nothing is waiting to be filed.</div>';
+  }
   if (filtered) {
     return '<i class="fa-solid fa-filter-circle-xmark"></i>'
          + 'No documents match your filters.'
@@ -958,6 +1101,9 @@ window.onExtChange     = function (v) { state.ext      = (v || '').trim(); state
 window.onTagChange     = function (v) { state.tag      = (v || '').trim(); state.page = 1; fetchDocs(); };
 window.onStatusChange  = function (v) { state.status   = v || '';          state.page = 1; fetchDocs(); };
 window.onSortChange    = function (v) { state.sort     = v || 'modified';  state.page = 1; fetchDocs(); };
+/* Page 1, same reason as the related toggle: the result set changed size, and
+   page 6 of a list that just shrank is an empty page under a lying pager. */
+window.onScopeChange   = function (v) { state.unlinked = v || '';          state.page = 1; fetchDocs(); };
 
 /* Widening or narrowing the scope changes the RESULT SET, so page 1 — staying
    on page 6 of a list that just got shorter shows an empty page and a pager
@@ -1339,6 +1485,535 @@ window.onLinks = async function (id) {
     linksLastRefresh = Date.now();
     fetchDocs();
   }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sync panel (S3.2) — GLOBAL mode only
+//
+// Manage what the engine follows, see whether it is running, and surface the
+// two diagnostics that no amount of correct sync code can detect on its own:
+//
+//   out_of_root        cases whose Dropbox folder sits under NO enabled root.
+//                      Their documents will never be registered by anything.
+//   zero_attribution   cases whose folder resolves PERFECTLY and yet hold no
+//                      documents — the signature of a `cases.case_dropbox`
+//                      still pointing at the intake folder after the case was
+//                      filed and its contents moved to a new working folder.
+//                      Around 416 of the 843 Potential-resolving cached rows
+//                      are in this state. Making it visible is this slice's
+//                      job; the guided re-link is a later one.
+//
+// NO DELETE BUTTON EXISTS, and that is not an omission — a deleted root leaves
+// ~100k rows nothing claims and nothing revisits. Disable is the safe verb.
+//
+// The panel refetches its OWN data after each mutation rather than announcing
+// on the bus. Roots are ops state, not entity state: no other frame renders
+// them, so a bus address for them would be an address with no subscribers.
+// ════════════════════════════════════════════════════════════════════════════
+var sync = {
+  open:     false,
+  loaded:   false,
+  loading:  false,
+  roots:    [],
+  enabled:  null,     // null = not yet known
+  reports:  [],
+  fresh:    null,     // an attribution report run from this panel, this session
+  error:    null,
+  busy:     {},       // root id → true while its own action is in flight
+  running:  false,    // the diagnostics run
+};
+
+function fmtDateTime(v) {
+  if (!v) return '—';
+  try {
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleString();
+  } catch (_) { return String(v); }
+}
+
+function fmtMs(ms) {
+  var n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1000) return n + 'ms';
+  if (n < 60000) return (n / 1000).toFixed(1) + 's';
+  return Math.round(n / 60000) + 'm ' + Math.round((n % 60000) / 1000) + 's';
+}
+
+window.onToggleSyncPanel = function () {
+  if (SCOPED) return;
+  sync.open = !sync.open;
+  E('syncPanel').classList.toggle('open', sync.open);
+  var btn = E('syncToggle');
+  if (btn) btn.classList.toggle('ok', sync.open);
+  // LAZY. Nothing is fetched until the panel is opened for the first time —
+  // see the button's comment for why every page load should not pay for this.
+  if (sync.open && !sync.loaded && !sync.loading) loadSyncPanel();
+  else if (sync.open) renderSyncPanel();
+};
+
+async function loadSyncPanel() {
+  sync.loading = true;
+  sync.error = null;
+  renderSyncPanel();
+
+  try {
+    var res = await api('/api/documents/sync-roots', 'GET');
+    // The stub-shaped response (no roots key) must not throw — a panel that
+    // white-screens on an unexpected body is worse than one that shows none.
+    sync.roots   = Array.isArray(res && res.roots) ? res.roots : [];
+    sync.enabled = res && typeof res.sync_enabled === 'boolean' ? res.sync_enabled : null;
+    sync.loaded  = true;
+  } catch (err) {
+    sync.error = (err && err.message) || String(err);
+  }
+
+  // Diagnostics are a SEPARATE, non-fatal fetch: they read job_results, and a
+  // failure there must not take the roots table (the actionable half) down
+  // with it.
+  try {
+    var diag = await api('/api/documents/sync-diagnostics', 'GET');
+    sync.reports = Array.isArray(diag && diag.reports) ? diag.reports : [];
+  } catch (_) {
+    sync.reports = [];
+  }
+
+  sync.loading = false;
+  renderSyncPanel();
+}
+
+/** Which of the three states a root is in, said in words a human can act on. */
+function rootStateHtml(r) {
+  if (r.syncing_since) {
+    return '<span class="pill busy" title="A run has this root claimed">running</span>';
+  }
+  if (!r.enabled) return '<span class="pill off">disabled</span>';
+  if (r.backfill_done) return '<span class="pill on">incremental</span>';
+  var mode = r.stats && r.stats.mode;
+  if (mode === 'empty_root') {
+    return '<span class="pill off" title="path/not_found — the folder has not been '
+         + 'created in Dropbox yet. Not an error.">empty</span>';
+  }
+  return '<span class="pill busy" title="Still walking the initial listing — '
+       + 'emissions are OFF until it completes">backfilling</span>';
+}
+
+function rootStatsText(r) {
+  var s = r.stats;
+  if (!s || typeof s !== 'object') return '';
+  var bits = [];
+  if (s.files != null)   bits.push(s.files + ' files');
+  if (s.linked)          bits.push(s.linked + ' linked');
+  if (s.unlinked)        bits.push(s.unlinked + ' unlinked');
+  if (s.deleted)         bits.push(s.deleted + ' deleted');
+  if (s.folder_heals)    bits.push(s.folder_heals + ' heals');
+  if (s.pages != null)   bits.push(s.pages + 'p');
+  if (s.stop && s.stop !== 'complete') bits.push('stopped: ' + s.stop);
+  return bits.join(' · ');
+}
+
+function rootRowHtml(r) {
+  var busy = !!sync.busy[r.id];
+  var stats = rootStatsText(r);
+  var ms = r.stats && r.stats.ms ? fmtMs(r.stats.ms) : '';
+
+  return ''
+    + '<tr>'
+    +   '<td><div class="root-path">' + esc(r.path) + '</div>'
+    +     (r.note ? '<div class="mini">' + esc(r.note) + '</div>' : '')
+    +   '</td>'
+    +   '<td class="nowrap">' + rootStateHtml(r) + '</td>'
+    +   '<td>'
+    +     '<div class="mini">' + esc(fmtDateTime(r.last_sync_at)) + (ms ? ' · ' + ms : '') + '</div>'
+    +     (stats ? '<div class="mini">' + esc(stats) + '</div>' : '')
+    /* THE ERROR IS SHOWN, NOT HIDDEN BEHIND A HOVER. last_error is the only
+       record of why a root stopped moving, and a title attribute is invisible
+       on touch and unsearchable everywhere. Truncated inline, full on click. */
+    +     (r.last_error
+            ? '<div class="err-cell" data-root-err="' + r.id + '">'
+              + '<i class="fa-solid fa-triangle-exclamation"></i> '
+              + esc(String(r.last_error).slice(0, 90))
+              + (String(r.last_error).length > 90 ? '… (click for full)' : '')
+              + '</div>'
+            : '')
+    +   '</td>'
+    +   '<td class="acts nowrap">'
+    +     '<button class="btn btn-outline btn-sm" ' + (busy ? 'disabled' : '')
+    +       ' data-root-sync="' + r.id + '" title="Run one bounded tick against this root now">'
+    +       '<i class="fa-solid ' + (busy ? 'fa-spinner fa-spin' : 'fa-rotate') + '"></i> Sync now</button> '
+    +     '<button class="btn btn-outline btn-sm" ' + (busy ? 'disabled' : '')
+    +       ' data-root-toggle="' + r.id + '" data-root-want="' + (r.enabled ? '0' : '1') + '" '
+    +       'title="' + (r.enabled
+                  ? 'Stop including this root in the automatic rotation. Its cursor and its documents are kept.'
+                  : 'Put this root back into the automatic rotation.') + '">'
+    +       '<i class="fa-solid ' + (r.enabled ? 'fa-pause' : 'fa-play') + '"></i> '
+    +       (r.enabled ? 'Disable' : 'Enable') + '</button>'
+    +   '</td>'
+    + '</tr>';
+}
+
+/** The two reports, keyed by the internal function that produces them. */
+function reportFor(name) {
+  for (var i = 0; i < sync.reports.length; i++) {
+    if (sync.reports[i].function_name === name) return sync.reports[i];
+  }
+  return null;
+}
+
+/* A run that produced no findings still has to say WHICH kind of nothing it
+   was — never run, failed, or skipped by the kill switch all render as an
+   empty block otherwise, and only one of those means "nothing to report".
+
+   NEVER RUN is checked on `last_run`, not on the slot's existence: the server
+   returns an entry for every diagnostic function whether or not it has ever
+   executed (documents_attribution_report has no scheduled job at all), so a
+   slot is always present and only `last_run === null` distinguishes "has never
+   run" from "ran and found nothing to report". */
+function reportStatusHtml(slot, label) {
+  if (!slot || !slot.last_run) {
+    return '<div class="mini">No ' + esc(label) + ' has run.</div>';
+  }
+
+  var out = '';
+  if (slot.consecutive_failures > 1) {
+    out += '<div class="banner err"><i class="fa-solid fa-circle-exclamation"></i> '
+         + 'The last ' + slot.consecutive_failures + ' runs of <code>'
+         + esc(slot.function_name) + '</code> failed'
+         + (slot.last_run && slot.last_run.error_message
+              ? ': ' + esc(slot.last_run.error_message) : '')
+         + '. The figures below are from the last run that completed.</div>';
+  } else if (slot.last_run.status === 'failed') {
+    out += '<div class="banner warn"><i class="fa-solid fa-triangle-exclamation"></i> '
+         + 'The most recent run failed'
+         + (slot.last_run.error_message ? ': ' + esc(slot.last_run.error_message) : '')
+         + '.</div>';
+  } else if (slot.last_run.skipped) {
+    out += '<div class="banner info"><i class="fa-solid fa-circle-info"></i> '
+         + 'The most recent run was skipped — ' + esc(slot.last_run.skip_reason || 'sync disabled')
+         + '.</div>';
+  }
+  if (!slot.last_report) {
+    out += '<div class="mini">No completed run has produced figures yet.</div>';
+  }
+  return out;
+}
+
+function outOfRootHtml() {
+  var slot = reportFor('documents_refresh_case_cache');
+  var html = '<h4>Cases outside every sync root</h4>'
+           + reportStatusHtml(slot, 'case-folder refresh');
+
+  var rep = slot && slot.last_report && slot.last_report.report;
+  if (!rep) return html;
+
+  var list = Array.isArray(rep.out_of_root) ? rep.out_of_root : [];
+  html += '<div class="mini">Last completed ' + esc(fmtDateTime(slot.last_report.executed_at))
+        + ' · resolved ' + esc(String(rep.resolved != null ? rep.resolved : '—'))
+        + ' · failed ' + esc(String(rep.failed != null ? rep.failed : '—'))
+        + (rep.timed_out ? ' · <b>timed out</b>' : '') + '</div>';
+
+  if (!list.length) {
+    html += '<div class="mini">Every resolved case folder sits under a sync root.</div>';
+  } else {
+    html += '<div class="banner warn"><i class="fa-solid fa-triangle-exclamation"></i> '
+          + list.length + ' case' + (list.length === 1 ? '' : 's')
+          + ' have a Dropbox folder under no enabled root — their documents will '
+          + 'never be registered.</div>'
+          + '<div class="mini">' + list.map(esc).join(', ') + '</div>';
+  }
+  return html;
+}
+
+/* THE STALE-INTAKE-FOLDER SURFACE. This block is why S3.2 exists: the
+   condition is invisible to out_of_root by construction (the intake folder IS
+   watched — it is merely empty), so nothing else in the system reports it.
+   The counts come from documents_attribution_report and are NEVER re-derived
+   here: the SQL form of this question is a 986 × 153k correlated LIKE that
+   times out, which is exactly why the function does it in memory. */
+function zeroAttributionHtml() {
+  var slot = reportFor('documents_attribution_report');
+  var rep  = sync.fresh || (slot && slot.last_report && slot.last_report.report) || null;
+  var when = sync.fresh
+    ? 'just now'
+    : (slot && slot.last_report ? fmtDateTime(slot.last_report.executed_at) : null);
+
+  var html = '<h4>Cases with a folder but no documents</h4>';
+  html += '<div class="addrow" style="margin-bottom:8px">'
+        + '<button class="btn btn-outline btn-sm" id="diagRun" onclick="onRunDiagnostics()" '
+        + (sync.running ? 'disabled' : '') + '>'
+        + '<i class="fa-solid ' + (sync.running ? 'fa-spinner fa-spin' : 'fa-stethoscope') + '"></i> '
+        + (sync.running ? 'Scanning…' : 'Run report') + '</button>'
+        + '<span class="mini">Read-only. Scans the registry; takes a few seconds.</span>'
+        + '</div>';
+
+  if (!sync.fresh) html += reportStatusHtml(slot, 'attribution report');
+  if (!rep) return html;
+
+  if (rep.skipped) {
+    return html + '<div class="banner info">Sync is disabled, so the report did not run.</div>';
+  }
+
+  var n = Number(rep.zero_attribution_cases) || 0;
+  html += '<div class="mini">Last run ' + esc(when || '—')
+        + ' · ' + esc(String(rep.cached_folders || 0)) + ' cached folders'
+        + (rep.timed_out ? ' · <b>incomplete scan</b>' : '') + '</div>';
+
+  if (!n) {
+    html += '<div class="mini">Every case with a resolved folder holds at least one document.</div>';
+    return html;
+  }
+
+  html += '<div class="banner warn"><i class="fa-solid fa-triangle-exclamation"></i> '
+        + '<b>' + n + ' case' + (n === 1 ? '' : 's') + ' with a resolved folder and no documents.</b>'
+        + '</div>'
+        + '<div class="mini">These usually mean the case record still points at the intake '
+        + 'folder — re-linking ships in a later update.</div>';
+
+  var sample = Array.isArray(rep.sample) ? rep.sample : [];
+  if (sample.length) {
+    html += '<div class="diag-cases"><table>'
+          + '<thead><tr><th>Case</th><th>Cached folder</th><th class="num">Docs still there</th></tr></thead>'
+          + '<tbody>'
+          + sample.map(function (c) {
+              return '<tr>'
+                + '<td class="nowrap">' + esc(c.case_id) + '</td>'
+                + '<td><div class="root-path">' + esc(c.path_lower || '') + '</div></td>'
+                + '<td class="num">' + esc(String(c.total || 0))
+                + (c.deleted ? '<div class="mini">' + c.deleted + ' deleted</div>' : '')
+                + (c.active_linked_elsewhere
+                    ? '<div class="mini">' + c.active_linked_elsewhere + ' on another case</div>' : '')
+                + (c.active_unlinked
+                    ? '<div class="mini">' + c.active_unlinked + ' unlinked</div>' : '')
+                + '</td></tr>';
+            }).join('')
+          + '</tbody></table></div>';
+    if (rep.sample_truncated) {
+      html += '<div class="mini">Showing the worst ' + sample.length + ' of ' + n + '.</div>';
+    }
+    // Only the cases carrying RESIDUE appear in the sample; the rest are empty
+    // folders. Saying so stops the shorter list reading as a contradiction of
+    // the count above it.
+    html += '<div class="mini">Only cases with documents still under the cached path are '
+          + 'listed; the remainder are empty folders.</div>';
+  }
+  if (rep.verdict) html += '<div class="mini">Verdict: ' + esc(rep.verdict) + '</div>';
+  return html;
+}
+
+function renderSyncPanel() {
+  var el = E('syncPanel');
+  if (!el || SCOPED) return;
+
+  if (sync.loading && !sync.loaded) {
+    el.innerHTML = '<div class="mini"><i class="fa-solid fa-spinner fa-spin"></i> Loading sync status…</div>';
+    return;
+  }
+  if (sync.error) {
+    el.innerHTML = '<div class="banner err">Could not load sync status: ' + esc(sync.error) + '</div>'
+                 + '<button class="btn btn-outline btn-sm" onclick="reloadSyncPanel()">Retry</button>';
+    return;
+  }
+
+  var html = '';
+
+  // THE KILL SWITCH BANNER COMES FIRST. With the engine off, every "last sync"
+  // timestamp below is history — a roots table that looks orderly while
+  // nothing is running is the most misleading thing this panel could show.
+  if (sync.enabled === false) {
+    html += '<div class="banner err"><i class="fa-solid fa-ban"></i> '
+          + '<b>Sync is disabled</b> — <code>documents_sync_enabled</code> is not set to "1". '
+          + 'No root is being walked and no document is being registered.</div>';
+  }
+
+  html += '<h4>Sync roots</h4>';
+  html += sync.roots.length
+    ? '<table><thead><tr><th>Folder</th><th>State</th><th>Last sync</th><th></th></tr></thead>'
+      + '<tbody>' + sync.roots.map(rootRowHtml).join('') + '</tbody></table>'
+    : '<div class="mini">No sync roots configured — nothing is being watched.</div>';
+
+  html += '<h4>Add a root</h4>'
+        + '<div class="addrow">'
+        +   '<input type="text" id="rootPath" placeholder="/  Law Office/   Cases/  New Folder" '
+        +     'maxlength="512" spellcheck="false" style="font-family:var(--mono)">'
+        +   '<input type="text" id="rootNote" placeholder="note (optional)" maxlength="255">'
+        +   '<button class="btn btn-primary btn-sm" id="rootAdd" onclick="onAddRoot()">'
+        +     '<i class="fa-solid fa-plus"></i> Add</button>'
+        + '</div>'
+        // Leading spaces in these folder names are significant and are the
+        // single most common way a pasted path is silently wrong.
+        + '<div class="mini" style="margin-top:4px">Paste the full Dropbox path, including any '
+        + 'leading spaces. A folder that does not exist yet is fine — it will sync once created.</div>'
+        + '<div id="rootAddMsg"></div>';
+
+  html += outOfRootHtml();
+  html += zeroAttributionHtml();
+
+  el.innerHTML = html;
+}
+window.reloadSyncPanel = loadSyncPanel;
+
+/* Delegated, because the panel's innerHTML is rebuilt on every state change
+   and per-button listeners would be re-bound (or leak) each time. Registered
+   in GLOBAL mode only: the scoped widget has no panel, so a handler there
+   could only ever fail to match. */
+if (!SCOPED) document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || !t.closest) return;
+
+  var syncBtn = t.closest('[data-root-sync]');
+  if (syncBtn) return void onSyncRootNow(syncBtn.getAttribute('data-root-sync'));
+
+  var togBtn = t.closest('[data-root-toggle]');
+  if (togBtn) {
+    return void onToggleRoot(togBtn.getAttribute('data-root-toggle'),
+                             togBtn.getAttribute('data-root-want') === '1');
+  }
+
+  var errCell = t.closest('[data-root-err]');
+  if (errCell) {
+    var r = findRoot(errCell.getAttribute('data-root-err'));
+    if (r) {
+      Swal.fire({
+        icon: 'error', title: 'Last error', width: 620,
+        html: '<div class="root-path" style="text-align:left">' + esc(r.path) + '</div>'
+            + '<pre style="text-align:left;white-space:pre-wrap;font-size:11px;'
+            + 'margin-top:10px">' + esc(r.last_error) + '</pre>',
+      });
+    }
+  }
+});
+
+function findRoot(id) {
+  for (var i = 0; i < sync.roots.length; i++) {
+    if (String(sync.roots[i].id) === String(id)) return sync.roots[i];
+  }
+  return null;
+}
+
+/** Merge one root row back into the panel's state without a full refetch. */
+function mergeRoot(row) {
+  if (!row) return;
+  for (var i = 0; i < sync.roots.length; i++) {
+    if (String(sync.roots[i].id) === String(row.id)) { sync.roots[i] = row; return; }
+  }
+  sync.roots.push(row);
+}
+
+window.onAddRoot = async function () {
+  var pathEl = E('rootPath');
+  var noteEl = E('rootNote');
+  var msgEl  = E('rootAddMsg');
+  if (!pathEl) return;
+
+  var path = pathEl.value || '';
+  if (!path.trim()) {
+    msgEl.innerHTML = '<div class="banner err">Enter a folder path.</div>';
+    return;
+  }
+
+  var btn = E('rootAdd');
+  if (btn) btn.disabled = true;
+  msgEl.innerHTML = '<div class="mini"><i class="fa-solid fa-spinner fa-spin"></i> Checking the folder…</div>';
+
+  try {
+    var res = await api('/api/documents/sync-roots', 'POST',
+                        { path: path, note: (noteEl && noteEl.value) || null });
+    if (res && res.root) mergeRoot(res.root);
+    renderSyncPanel();
+    // THE WARNING IS NOT AN ERROR AND MUST NOT LOOK LIKE ONE. The root exists,
+    // it is enabled, and it will start working on its own — a red box here
+    // would send someone hunting for a problem that is a scheduled outcome.
+    E('rootAddMsg').innerHTML = res && res.warning
+      ? '<div class="banner warn"><i class="fa-solid fa-clock"></i> Root added — '
+        + esc(res.warning) + '</div>'
+      : '<div class="banner ok"><i class="fa-solid fa-check"></i> Root added.</div>';
+  } catch (err) {
+    renderSyncPanel();
+    E('rootAddMsg').innerHTML = '<div class="banner err">'
+      + esc((err && err.message) || String(err)) + '</div>';
+    var again = E('rootPath');
+    if (again) again.value = path;   // survives the repaint; do not retype it
+  }
+};
+
+window.onToggleRoot = async function (id, want) {
+  var r = findRoot(id);
+  if (!r) return;
+
+  // Disabling is the reversible half and needs no ceremony; ENABLING one that
+  // has never completed a backfill starts a walk, so say what will happen.
+  if (want && !r.backfill_done) {
+    var ok = await Swal.fire({
+      icon: 'question', title: 'Enable this root?',
+      html: '<div style="text-align:left"><div class="root-path">' + esc(r.path) + '</div>'
+          + '<p class="swal-note" style="margin-top:8px">It has not finished its first walk, '
+          + 'so it will run in backfill mode — bulk writes with automations switched off — '
+          + 'until the whole folder has been listed.</p></div>',
+      showCancelButton: true, confirmButtonText: 'Enable',
+    });
+    if (!ok.isConfirmed) return;
+  }
+
+  sync.busy[id] = true;
+  renderSyncPanel();
+  try {
+    var res = await api('/api/documents/sync-roots/' + id, 'PATCH', { enabled: !!want });
+    if (res && res.root) mergeRoot(res.root);
+    Toast.fire({ icon: 'success', title: want ? 'Root enabled' : 'Root disabled' });
+  } catch (err) {
+    Swal.fire('Could not change the root', (err && err.message) || String(err), 'error');
+  }
+  delete sync.busy[id];
+  renderSyncPanel();
+};
+
+window.onSyncRootNow = async function (id) {
+  sync.busy[id] = true;
+  renderSyncPanel();
+
+  try {
+    var res = await api('/api/documents/sync-roots/' + id + '/sync', 'POST');
+    var out = (res && res.result) || {};
+    if (res && res.root) mergeRoot(res.root);
+
+    // A LOSS OF THE CLAIM RACE IS A NORMAL OUTCOME. The recurring tick may be
+    // mid-walk on this very root; reporting that as a failure would teach
+    // people to press the button again, which is the one thing that cannot
+    // help.
+    if (out.skipped) {
+      Toast.fire({ icon: 'info', title: 'Skipped — ' + (out.reason || 'already running') });
+    } else if (out.error) {
+      Swal.fire('Sync failed', String(out.error), 'error');
+    } else {
+      Toast.fire({
+        icon: 'success',
+        title: (out.mode === 'empty_root'
+          ? 'Folder does not exist yet'
+          : (out.files || 0) + ' files · ' + (out.linked || 0) + ' linked'),
+      });
+    }
+  } catch (err) {
+    Swal.fire('Sync failed', (err && err.message) || String(err), 'error');
+  }
+
+  delete sync.busy[id];
+  renderSyncPanel();
+  // A manual tick can register or link documents, so the list behind the panel
+  // may now be stale. Refetch it — this is a GET and therefore cannot announce.
+  fetchDocs();
+};
+
+window.onRunDiagnostics = async function () {
+  sync.running = true;
+  renderSyncPanel();
+  try {
+    var res = await api('/api/documents/sync-diagnostics', 'POST');
+    sync.fresh = (res && res.report) || null;
+  } catch (err) {
+    Swal.fire('Report failed', (err && err.message) || String(err), 'error');
+  }
+  sync.running = false;
+  renderSyncPanel();
 };
 
 // ════════════════════════════════════════════════════════════════════════════
