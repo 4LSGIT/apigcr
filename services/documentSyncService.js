@@ -80,6 +80,28 @@
  *   attributeUnlinked()   — the reconcile sweep, SILENT ALWAYS, for files
  *                           ingested before their case folder was cached.
  *
+ * ── MACHINE LINKS TRACK THE FILESYSTEM; HUMAN LINKS EXPRESS INTENT (S3.1) ─
+ * Every link this engine writes — backfill, incremental, sweep — carries
+ * `relation = 'path'` and a NULL created_by. That pair is the discriminator:
+ * the engine has no user, and the UI's links always carry one from the JWT.
+ *
+ * It buys ONE behaviour, and the behaviour is the point: when a file's
+ * path_lower changes and its case-folder match changes with it, the engine
+ * RETRACTS its own now-false path-link and writes the true one. It never
+ * touches a link a person made.
+ *
+ * Without that, staff moving a file from case A's folder to case B's leaves A
+ * asserting ownership forever — and S3.1's related-documents view amplifies
+ * that: the stale link surfaces the document on case A AND on every contact
+ * related to case A, badged, indistinguishable from a correct one. A wrong
+ * answer delivered confidently is worse than no answer, which is why the
+ * hygiene rule ships in the same slice as the view that would expose it.
+ *
+ * Reconciliation runs on the INCREMENTAL path only. The backfill is a first
+ * walk — there is nothing stale to retract — and the sweep only ADDS where no
+ * path-link exists, deliberately declining to re-litigate a move it would be
+ * judging from a slower, staler cache than the delta feed had.
+ *
  * ⚠️ EVENT-SEMANTICS GAP, KNOWN AND ACCEPTED: document.linked fires from the
  * sync ONLY when attribution succeeds AT INGEST TIME. Stragglers linked by
  * the sweep are linked silently. The first sweep after the backfill links
@@ -470,6 +492,11 @@ async function syncRoot(db, root, opts = {}) {
   const cache = opts.cache || await _loadCaseFolderCache(db);
 
   let pages = 0, files = 0, linked = 0, deletedRows = 0, folderHeals = 0;
+  // Path-links retracted by move reconciliation (S3.1). Reported separately
+  // from `linked` on purpose: a healthy steady state has a few of each and a
+  // spike in this one alone means folders are being reorganised, which is
+  // worth being able to see in job_results.
+  let unlinked = 0;
   let stopReason = 'complete';
 
   try {
@@ -621,7 +648,16 @@ async function syncRoot(db, root, opts = {}) {
             const links = [];
             for (const m of matched) {
               const found = idMap.get(String(m.entry.id));
-              if (found) links.push({ document_id: found.id, link_type: 'case', link_id: m.case_id });
+              if (found) {
+                links.push({
+                  document_id: found.id, link_type: 'case', link_id: m.case_id,
+                  // S3.1: everything the ENGINE writes is a path-link, so the
+                  // reconciler can later tell it from a human's link and retract
+                  // it when the file moves. created_by stays null — the engine
+                  // has no user, and that is the other half of the discriminator.
+                  relation: documents.RELATION_PATH,
+                });
+              }
             }
             if (links.length) {
               await documents.bulkLink(db, links);
@@ -632,15 +668,40 @@ async function syncRoot(db, root, opts = {}) {
           // INCREMENTAL: per-entry, emissions ON. Three queries per row is
           // nothing at delta volumes, and the event is the entire point.
           for (const e of fileEntries) {
-            const { row } = await documents.upsertFromEntry(db, SOURCE, e, {
+            const { row, changes } = await documents.upsertFromEntry(db, SOURCE, e, {
               emit: true, eventSource: 'system',
             });
             const hit = _matchCase(cache.byPath, e.path_lower);
+
+            // ── MOVE RECONCILIATION (S3.1) ─────────────────────────────────
+            // A file dragged from case A's folder into case B's arrives here
+            // as a plain update with a new path_lower. Without this, A's link
+            // survives forever and the related view surfaces the document on
+            // A and every contact related to A — badged, and wrong.
+            //
+            // Gated on path_lower ACTUALLY having changed, which is why
+            // upsertFromEntry returns its changes map (S3.1). A re-walk of an
+            // unmoved file must not cost a DELETE per row.
+            //
+            // ONLY the engine's own path-links are in scope, and that is
+            // enforced in the DELETE's WHERE rather than filtered afterwards —
+            // see documentService.reconcilePathLinks.
+            if (row && changes &&
+                Object.prototype.hasOwnProperty.call(changes, 'path_lower')) {
+              const dropped = await documents.reconcilePathLinks(
+                db, row.id, hit ? hit.case_id : null,
+              );
+              if (dropped) unlinked += dropped;
+            }
+
             if (hit && row) {
               // link() emits document.linked for a genuinely NEW link only —
               // idempotent and silent on a repeat, which is exactly S1's
-              // contract and what makes re-processing a page safe.
+              // contract and what makes re-processing a page safe. A move INTO
+              // case B therefore fires document.linked for B, which is the
+              // correct signal: B has just acquired this document.
               const r = await documents.link(db, row.id, 'case', hit.case_id, {
+                relation:    documents.RELATION_PATH,
                 eventSource: 'system',
               });
               if (r.created) linked++;
@@ -699,6 +760,9 @@ async function syncRoot(db, root, opts = {}) {
   // ── 5. Finish ───────────────────────────────────────────────────────────
   const stats = {
     mode, pages, files, linked, deleted: deletedRows,
+    // Omitted when zero so the common stats blob stays the shape S2 readers
+    // already know, and a non-zero value stands out rather than blending in.
+    ...(unlinked ? { unlinked } : {}),
     folder_heals: folderHeals, stop: stopReason, ms: Date.now() - startedAt,
   };
   await db.query(
@@ -782,8 +846,12 @@ async function syncAll(db, opts = {}) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Link active documents that have NO case link but whose path now matches a
- * cached case folder. SILENT — always, unconditionally.
+ * Link active documents that have NO PATH-LINK to a case but whose path now
+ * matches a cached case folder. SILENT — always, unconditionally.
+ *
+ * "No path-link", not "no case link": see the anti-join's own comment. The
+ * distinction only exists from S3.1 onward and it matters in one direction —
+ * a manually-filed document still gains the path-link its location earns.
  *
  * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
  * Inline attribution can only use the cache as it stood when the file was
@@ -859,24 +927,51 @@ async function attributeUnlinked(db, opts = {}) {
   // ORDER BY d.id is load-bearing, not cosmetic: it is what makes the window
   // advance. Without it MySQL is free to return the same head every time and
   // the sweep starves (see the docblock).
+  //
+  // ── THE ANTI-JOIN IS KEYED ON PATH-LINKS, NOT ON CASE LINKS (S3.1) ──────
+  // It used to mean "has no case link at all", which under the hygiene rule is
+  // wrong in one direction: a document a staffer manually linked to case A,
+  // sitting in case B's folder, looked attributed and was skipped forever — so
+  // it never acquired B's path-link and never appeared in B's documents. The
+  // manual link says where a person filed it; the path-link says where the
+  // FILE is. Both are true at once and the sweep owns only the second.
+  //
+  // This ADDS ONLY. A document that already holds the right path-link is
+  // skipped by the join exactly as before, and one that holds a WRONG
+  // path-link (a move the incremental path saw) is skipped here too — the
+  // reconciler already retracted it, and re-deciding that from a watermark
+  // sweep with a stale cache would fight the engine that has the delta.
+  //
+  // PLAN (EXPLAIN against the live DB, 2026-08-27): dl stays type=ref on
+  // uq_doc_target with `Not exists`, driven by (document_id, link_type). It
+  // loses the old form's `Using index` — `relation` is not in the index, so
+  // the row is now fetched to test it — which costs one row read per candidate
+  // and is bounded by `limit` per run.
   const [rows] = await db.query(
     `SELECT d.id, d.path_lower
        FROM documents d
        LEFT JOIN document_links dl
-         ON dl.document_id = d.id AND dl.link_type = 'case'
+         ON dl.document_id = d.id
+        AND dl.link_type = 'case'
+        AND dl.relation = ?
       WHERE d.status = 'active'
         AND d.path_lower IS NOT NULL
         AND dl.id IS NULL
         AND d.id > ?
       ORDER BY d.id
       LIMIT ${limit}`,
-    [fromId],
+    [documents.RELATION_PATH, fromId],
   );
 
   const links = [];
   for (const r of rows) {
     const hit = _matchCase(cache.byPath, r.path_lower);
-    if (hit) links.push({ document_id: r.id, link_type: 'case', link_id: hit.case_id });
+    if (hit) {
+      links.push({
+        document_id: r.id, link_type: 'case', link_id: hit.case_id,
+        relation: documents.RELATION_PATH,
+      });
+    }
   }
 
   if (links.length) await documents.bulkLink(db, links);

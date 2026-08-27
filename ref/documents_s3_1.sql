@@ -1,0 +1,81 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- YisraCase — Documents feature, Slice S3.1
+-- Apply BEFORE deploying the backend. Deploy order: SQL → backend → frontend.
+--
+-- ONE STATEMENT. No DDL, no new tables, no new columns.
+--
+-- ── WHAT THIS IS FOR ─────────────────────────────────────────────────────
+-- S3.1 introduces one rule, and this backfill is the rule applied to history:
+--
+--     MACHINE LINKS TRACK THE FILESYSTEM.  HUMAN LINKS EXPRESS INTENT.
+--
+-- Every link the sync engine writes from now on carries relation = 'path',
+-- meaning "this document is in this case's Dropbox folder". When a file MOVES
+-- between case folders, the engine reconciles its OWN path-links — drops the
+-- one the new path no longer supports, adds the one it does — and never
+-- touches anything a human created.
+--
+-- Without that, the related-documents view amplifies stale links: a file
+-- dragged from case A's folder to case B's keeps A's link and then surfaces,
+-- badged and confident, on every contact related to case A.
+--
+-- The engine cannot reconcile links it cannot recognise, and today's 22,804
+-- machine-written rows all carry relation IS NULL. This statement stamps them.
+--
+-- ── WHY created_by IS THE DISCRIMINATOR ──────────────────────────────────
+-- The sync engine runs with no user: documentSyncService never passes
+-- createdBy, so every row it wrote has created_by IS NULL. UI-created links
+-- go through POST /api/documents/:id/links, which passes actingUserId(req)
+-- from the JWT. So `created_by IS NULL` is not a heuristic — it is the exact
+-- boundary between "the engine wrote this" and "a person did".
+--
+-- Verified on the live DB 2026-08-27, the full shape of document_links:
+--
+--   link_type  relation  created_by   rows
+--   ---------  --------  ----------   ------
+--   case       NULL      NULL         22,804   ← this statement's target
+--   case       'docket'  set               1   ← a human link; must not move
+--
+-- ── EXPECTED RESULT ──────────────────────────────────────────────────────
+--   Rows matched: 22,804 exactly.
+--
+-- If the number differs, STOP and do not deploy: either the sync has written
+-- more links since this file was measured (fine — a LARGER number is expected
+-- if the sweep has been running, re-check the count below and proceed), or
+-- something is writing case links with created_by set (not fine — that would
+-- mean human and machine links are no longer distinguishable and the
+-- reconciler cannot be trusted to leave intent alone).
+--
+-- Count first, then update:
+--
+--   SELECT COUNT(*) FROM document_links
+--    WHERE relation IS NULL AND link_type = 'case' AND created_by IS NULL;
+--
+-- ── ROLLBACK ─────────────────────────────────────────────────────────────
+-- Reversible in one statement, because the pre-state was uniform:
+--
+--   UPDATE document_links SET relation = NULL
+--    WHERE relation = 'path' AND link_type = 'case' AND created_by IS NULL;
+--
+-- That is safe to run even after the engine has written new path-links: those
+-- rows are machine rows too, and un-stamping them only returns the engine to
+-- its S3 behaviour (link, never reconcile).
+-- ─────────────────────────────────────────────────────────────────────────
+
+UPDATE document_links
+   SET relation = 'path'
+ WHERE relation IS NULL
+   AND link_type = 'case'
+   AND created_by IS NULL;
+
+-- ── Verify after applying ────────────────────────────────────────────────
+-- Expect: one row, link_type 'case', relation 'path', by_null 1, c = 22,804
+-- (plus the untouched single 'docket' row).
+--
+--   SELECT link_type, relation, (created_by IS NULL) AS by_null, COUNT(*) c
+--     FROM document_links
+--    GROUP BY link_type, relation, by_null
+--    ORDER BY c DESC;
+--
+-- Then regenerate the committed schema dump so the guard tests lint a
+-- current file:  npm run db:ref

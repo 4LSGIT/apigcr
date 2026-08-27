@@ -95,6 +95,8 @@ function makeDb({
     all:  (needle) => calls.filter(c => c.sql.includes(needle)),
     /** How many claim UPDATEs matched — scripted by the test via claimWins. */
     claimWins: true,
+    /** affectedRows the reconciler's DELETE reports (S3.1). */
+    pathLinksDropped: 0,
 
     query: async (sql, params = []) => {
       const flat = String(sql).replace(/\s+/g, ' ').trim();
@@ -165,6 +167,11 @@ function makeDb({
       // ── document_links ─────────────────────────────────────────────────
       if (/^INSERT INTO document_links/.test(flat)) return [{ affectedRows: 1 }];
       if (/^SELECT \* FROM document_links/.test(flat)) return [[]];
+      // S3.1 move reconciliation. `pathLinksDropped` is what the DELETE
+      // reports; tests set it to say "there WAS a stale path-link here".
+      if (/^DELETE FROM document_links/.test(flat)) {
+        return [{ affectedRows: db.pathLinksDropped || 0 }];
+      }
 
       // ── app_settings (kill switch + sweep watermark) ───────────────────
       if (/FROM app_settings WHERE `key` = \?/.test(flat)) {
@@ -665,6 +672,187 @@ describe('syncRoot — inline attribution', () => {
     expect(out.linked).toBe(0);
     expect(emittedTypes()).toEqual(['document.created']);
   });
+
+  // ── S3.1: MACHINE LINKS TRACK THE FILESYSTEM ──────────────────────────
+  //
+  // Every link the ENGINE writes carries relation='path' and a NULL
+  // created_by. That pair is the ONLY thing that lets the reconciler tell an
+  // engine link from a person's, so if any write site stops stamping it, the
+  // reconciler silently stops retracting stale links for those documents —
+  // and the related view starts amplifying them. Hence one test per site.
+
+  test('BACKFILL bulkLink stamps relation=path with no created_by', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows });
+    dropbox.listFolderPage.mockResolvedValue(
+      page([file('/r/  case a/1.pdf')], 'c1', false));
+
+    await sync.syncRoot(db, root());
+
+    // (document_id, link_type, link_id, relation, created_by)
+    const p = db.find('INSERT INTO document_links').params;
+    expect(p[3]).toBe('path');
+    expect(p[4]).toBeNull();
+  });
+
+  test('INCREMENTAL link() stamps relation=path', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows });
+    dropbox.listFolderContinue.mockResolvedValue(
+      page([file('/r/  case a/new.pdf')], 'c2', false));
+
+    await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+
+    const p = db.find('INSERT INTO document_links').params;
+    expect(p[3]).toBe('path');
+    expect(p[4]).toBeNull();
+    // And it rides into the envelope, so a rule author can see it.
+    const linked = domainEvents.emit.mock.calls.find(c => c[1] === 'document.linked')[2];
+    expect(linked.extra.relation).toBe('path');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// S3.1 — move reconciliation
+//
+// A file dragged from case A's folder into case B's arrives as a plain update
+// with a new path_lower. Without reconciliation A keeps asserting ownership
+// forever, and the related view then shows the document on case A AND on every
+// contact related to A — badged, and indistinguishable from a correct row. A
+// confident wrong answer, which is why this ships alongside the view.
+// ─────────────────────────────────────────────────────────────
+
+describe('syncRoot — move reconciliation (incremental only)', () => {
+  const cacheRows = [
+    { case_id: 'CASEA', folder_external_id: 'id:fA', path_lower: '/r/  case a' },
+    { case_id: 'CASEB', folder_external_id: 'id:fB', path_lower: '/r/  case b' },
+  ];
+
+  /** A doc already registered under case A, as the delta will find it. */
+  const priorDocs = () => new Map([['id:/r/  case a/f.pdf', {
+    id: 7, source: 'dropbox', external_id: 'id:/r/  case a/f.pdf',
+    name: 'f.pdf', path: '/r/  case a/f.pdf', path_lower: '/r/  case a/f.pdf',
+    path_hash: 'h', ext: 'pdf', mime: null, size: 100, content_hash: 'c'.repeat(64),
+    rev: 'rev1', server_modified: '2026-08-01 10:00:00', status: 'active',
+    title: null, doc_type: null, tags: null, ai_meta: null, shared_link: null,
+  }]]);
+
+  /** The same file, re-reported by Dropbox at its NEW path under case B. */
+  const moved = () => file('/r/  case b/f.pdf', {
+    id: 'id:/r/  case a/f.pdf',           // move-STABLE id — the whole design
+    name: 'f.pdf',
+  });
+
+  test('a MOVE between case folders retracts the old path-link and adds the new', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows, docs: priorDocs() });
+    db.pathLinksDropped = 1;
+    dropbox.listFolderContinue.mockResolvedValue(page([moved()], 'c2', false));
+
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+
+    const del = db.find('DELETE FROM document_links');
+    expect(del).toBeDefined();
+    // Keep CASEB (the new match), drop everything else the engine wrote.
+    expect(del.params).toEqual([7, 'path', 'CASEB']);
+    expect(out.unlinked).toBe(1);
+
+    const ins = db.find('INSERT INTO document_links');
+    expect(ins.params[2]).toBe('CASEB');
+    expect(ins.params[3]).toBe('path');
+  });
+
+  test('the move INTO case B fires document.linked for B — the correct signal', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows, docs: priorDocs() });
+    db.pathLinksDropped = 1;
+    dropbox.listFolderContinue.mockResolvedValue(page([moved()], 'c2', false));
+
+    await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+
+    const linked = domainEvents.emit.mock.calls.filter(c => c[1] === 'document.linked');
+    expect(linked.length).toBe(1);
+    expect(linked[0][2].case_id).toBe('CASEB');
+    // And NOTHING announces the retraction: there is no document.unlinked
+    // event type, and eventRegistryCoverage exists to keep it that way.
+    expect(emittedTypes()).not.toContain('document.unlinked');
+  });
+
+  test('MANUAL links survive: the DELETE cannot reach them, by construction', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows, docs: priorDocs() });
+    dropbox.listFolderContinue.mockResolvedValue(page([moved()], 'c2', false));
+
+    await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+
+    // Not "the test fixture happened to keep them" — the STATEMENT excludes
+    // them. A relation the engine did not write, or any created_by at all.
+    const del = db.find('DELETE FROM document_links').sql;
+    expect(del).toContain('AND relation = ?');
+    expect(del).toContain('AND created_by IS NULL');
+    expect(del).toContain("AND link_type = 'case'");
+  });
+
+  test('a file moved OUT of every case folder loses all its path-links', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows, docs: priorDocs() });
+    db.pathLinksDropped = 1;
+    dropbox.listFolderContinue.mockResolvedValue(page([
+      file('/r/  loose/f.pdf', { id: 'id:/r/  case a/f.pdf', name: 'f.pdf' }),
+    ], 'c2', false));
+
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+
+    const del = db.find('DELETE FROM document_links');
+    expect(del.params).toEqual([7, 'path']);      // no keep clause at all
+    expect(del.sql).not.toContain('link_id <>');
+    expect(out.unlinked).toBe(1);
+    expect(db.find('INSERT INTO document_links')).toBeUndefined();
+  });
+
+  test('a move WITHIN the same case reconciles but drops nothing and re-links nothing new', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows, docs: priorDocs() });
+    dropbox.listFolderContinue.mockResolvedValue(page([
+      file('/r/  case a/sub/f.pdf', { id: 'id:/r/  case a/f.pdf', name: 'f.pdf' }),
+    ], 'c2', false));
+
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+
+    // The keep clause names CASEA, so the existing correct link is untouched:
+    // the DELETE runs and matches nothing. `unlinked` is absent rather than 0
+    // — the stats blob omits it when nothing was retracted, so a non-zero
+    // value stands out in job_results instead of blending into a wall of 0s.
+    expect(db.find('DELETE FROM document_links').params).toEqual([7, 'path', 'CASEA']);
+    expect(out.unlinked).toBeUndefined();
+  });
+
+  test('an UNMOVED file costs no DELETE at all', async () => {
+    // The gate is changes.path_lower, not "run it every time". A re-walk of a
+    // quiet tree must not be a DELETE per row.
+    const db = makeDb({ roots: [root()], cache: cacheRows, docs: priorDocs() });
+    dropbox.listFolderContinue.mockResolvedValue(page([
+      file('/r/  case a/f.pdf', { id: 'id:/r/  case a/f.pdf', name: 'f.pdf' }),
+    ], 'c2', false));
+
+    const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+
+    expect(db.find('DELETE FROM document_links')).toBeUndefined();
+    expect(out.unlinked).toBeUndefined();
+  });
+
+  test('a NEW file never reconciles — there is no history to be stale', async () => {
+    const db = makeDb({ roots: [root()], cache: cacheRows });
+    dropbox.listFolderContinue.mockResolvedValue(
+      page([file('/r/  case a/brand-new.pdf')], 'c2', false));
+
+    await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
+    expect(db.find('DELETE FROM document_links')).toBeUndefined();
+  });
+
+  test('BACKFILL never reconciles — it is a first walk', async () => {
+    // And it must not: the bulk path has no prior row to diff against, and a
+    // DELETE per row across ~150k files is the storm emit:false exists to stop.
+    const db = makeDb({ roots: [root()], cache: cacheRows, docs: priorDocs() });
+    dropbox.listFolderPage.mockResolvedValue(page([moved()], 'c1', false));
+
+    await sync.syncRoot(db, root());        // backfill_done 0
+
+    expect(db.find('DELETE FROM document_links')).toBeUndefined();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -829,6 +1017,69 @@ describe('attributeUnlinked', () => {
     expect(domainEvents.emit).not.toHaveBeenCalled();
   });
 
+  // ── S3.1: the anti-join targets PATH-links, not case links ────────────
+  //
+  // It used to mean "has no case link at all", which under the hygiene rule is
+  // wrong in exactly one direction: a document a staffer manually filed under
+  // case A, sitting in case B's Dropbox folder, looked attributed and was
+  // skipped forever — so it never gained B's path-link and never showed up in
+  // B's documents. The manual link says where a PERSON filed it; the path-link
+  // says where the FILE is. Both are true at once, and the sweep owns only the
+  // second.
+
+  test('the anti-join is keyed on relation=path, not on any case link', async () => {
+    const db = makeDb({ cache: cacheRows, unlinked: [] });
+    await sync.attributeUnlinked(db);
+
+    const q = db.find('SELECT d.id, d.path_lower');
+    expect(q.sql).toContain("dl.link_type = 'case'");
+    expect(q.sql).toContain('AND dl.relation = ?');
+    expect(q.params[0]).toBe('path');
+    expect(q.sql).toContain('dl.id IS NULL');
+  });
+
+  test('a document holding ONLY a manual link still gains its path-link', async () => {
+    // The behaviour change the retarget exists for. The stub's anti-join
+    // returns it because it has no PATH-link — the manual one is invisible to
+    // this query, which is the point.
+    const db = makeDb({
+      cache: cacheRows,
+      unlinked: [{ id: 7, path_lower: '/r/  case a/filed-by-hand.pdf' }],
+    });
+
+    const out = await sync.attributeUnlinked(db);
+
+    expect(out).toMatchObject({ scanned: 1, linked: 1 });
+    const p = db.find('INSERT INTO document_links').params;
+    expect(p[2]).toBe('CASEA');
+    expect(p[3]).toBe('path');
+    expect(p[4]).toBeNull();
+  });
+
+  test('the sweep ONLY ADDS — it never deletes, and never reconciles a move', async () => {
+    // Re-deciding a move here would mean judging it from a slower, staler
+    // cache than the delta feed that already handled it. The incremental path
+    // owns retraction; this one owns filling gaps.
+    const db = makeDb({
+      cache: cacheRows,
+      unlinked: [{ id: 7, path_lower: '/r/  case a/1.pdf' }],
+    });
+    await sync.attributeUnlinked(db);
+    expect(db.all('DELETE FROM document_links').length).toBe(0);
+  });
+
+  test('the watermark mechanics are UNCHANGED by the retarget', async () => {
+    const db = makeDb({
+      cache: cacheRows, unlinked: [],
+      settings: { [sync.SWEEP_WATERMARK_KEY]: '4848' },
+    });
+    await sync.attributeUnlinked(db);
+    const q = db.find('SELECT d.id, d.path_lower');
+    expect(q.sql).toContain('AND d.id > ?');
+    expect(q.sql).toContain('ORDER BY d.id');
+    expect(q.params[q.params.length - 1]).toBe(4848);
+  });
+
   test('an empty cache short-circuits before scanning documents', async () => {
     const db = makeDb({ cache: [], unlinked: [{ id: 7, path_lower: '/r/  case a/1.pdf' }] });
     const out = await sync.attributeUnlinked(db);
@@ -889,7 +1140,10 @@ describe('attributeUnlinked', () => {
       settings: { [sync.SWEEP_WATERMARK_KEY]: '4848' },
     });
     await sync.attributeUnlinked(db);
-    expect(db.find('SELECT d.id, d.path_lower').params).toEqual([4848]);
+    // S3.1: the anti-join binds the path relation ahead of the watermark, so
+    // the constant has ONE definition (documentService.RELATION_PATH) rather
+    // than a second copy inlined in this query's text.
+    expect(db.find('SELECT d.id, d.path_lower').params).toEqual(['path', 4848]);
   });
 
   test('a SHORT page means end-of-table: wrap to 0 and start a fresh lap', async () => {
@@ -914,7 +1168,7 @@ describe('attributeUnlinked', () => {
       const settings = v === undefined ? {} : { [sync.SWEEP_WATERMARK_KEY]: v };
       const db = makeDb({ cache: cacheRows, unlinked: [], settings });
       await sync.attributeUnlinked(db);
-      expect(db.find('SELECT d.id, d.path_lower').params).toEqual([0]);
+      expect(db.find('SELECT d.id, d.path_lower').params).toEqual(['path', 0]);
     }
   });
 
@@ -922,7 +1176,7 @@ describe('attributeUnlinked', () => {
     const db = makeDb({ cache: cacheRows, unlinked: [], settings: {} });
     await sync.attributeUnlinked(db, { watermark: false });
     expect(db.all('INSERT INTO app_settings').length).toBe(0);
-    expect(db.find('SELECT d.id, d.path_lower').params).toEqual([0]);
+    expect(db.find('SELECT d.id, d.path_lower').params).toEqual(['path', 0]);
   });
 });
 

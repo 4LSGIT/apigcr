@@ -61,6 +61,22 @@
     #scopedHead h3 i { color: var(--text-muted); margin-right: 5px; }
     #scopedHead .spacer { flex: 1; }
     #scopedHead .count { color: var(--text-muted); font-size: var(--fs-sm); }
+    /* The Include-related toggle. A LABEL wrapping the input so the text is
+       part of the hit target — this widget lives in a cramped tab panel and a
+       12px checkbox on its own is a poor one. */
+    #scopedHead .toggle {
+      display: flex; align-items: center; gap: 5px;
+      font-size: var(--fs-sm); color: var(--text-2);
+      cursor: pointer; user-select: none; white-space: nowrap;
+    }
+    #scopedHead .toggle input { margin: 0; cursor: pointer; }
+
+    /* One muted line above the list saying WHOSE documents got mixed in. */
+    .rel-note {
+      font-size: var(--fs-sm); color: var(--text-muted);
+      margin-bottom: var(--gap); overflow-wrap: anywhere;
+    }
+    .rel-note.warn { color: var(--warn); }
 
     .btn {
       display: inline-flex; align-items: center; gap: 6px;
@@ -175,6 +191,16 @@
     .chip.type { background: var(--info-soft); color: var(--info); }
     .chip.gone { background: var(--danger-soft); color: var(--danger); }
     .chip.pub  { background: var(--warn-soft);  color: var(--warn); }
+    /* PROVENANCE, not content. A `via` badge says "this row is here because of
+       a RELATED record, not because it is on the thing you are looking at" —
+       so it is deliberately quieter than a tag or type chip. A dashed outline
+       rather than a fill reads as "borrowed" at a glance, which is exactly the
+       distinction that matters when the list mixes both. */
+    .chip.via {
+      background: transparent; color: var(--text-muted);
+      border: 1px dashed var(--border-strong);
+      font-weight: 500;
+    }
     .nowrap { white-space: nowrap; }
     .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .acts { white-space: nowrap; text-align: right; }
@@ -313,6 +339,17 @@
   Post-backfill every row shares one `updated_at`, so the registry's `newest`
   sort is meaningless on real data. `modified` sorts on the file's own
   server_modified, which is what staff mean by "recent".
+
+  ── SCOPED MODE SHOWS RELATED DOCUMENTS BY DEFAULT (S3.1) ────────────────
+  A case's documents mostly arrive filed against the CLIENT rather than the
+  matter, so the strictly-direct list a scope produces is usually the shorter
+  and less useful one. "Include related" expands the scope ONE HOP through
+  case_relate — a case also sees its related contacts' documents, a contact
+  also sees its related cases' — and every row that arrived that way is BADGED
+  with the record it came through. One hop, never two: a related contact's
+  OTHER cases are a different client matter and never appear here. The server
+  enforces that structurally (see documentService.resolveRelatedTargets); this
+  page only has to render it honestly, which means the badge.
 ═══════════════════════════════════════════════════════════════════════════ -->
 
 <div id="topbar">
@@ -326,6 +363,17 @@
 
 <div id="scopedHead">
   <h3><i class="fa-solid fa-folder-open"></i> Documents</h3>
+  <!-- DEFAULT ON. A case's documents mostly arrive filed against the CLIENT,
+       not the matter, so an off-by-default toggle would ship the feature and
+       hide it — staff would keep seeing the short list they already had and
+       never learn there was a longer one. Rows that came in this way are
+       badged, so "on" is never silently misleading. -->
+  <label class="toggle" for="tb-related"
+         title="Also show documents linked to the records related to this one">
+    <input type="checkbox" id="tb-related" checked
+           onchange="onRelatedChange(this.checked)">
+    Include related
+  </label>
   <div class="spacer"></div>
   <span class="count" id="scopedCount"></span>
   <button class="btn btn-outline btn-sm" onclick="onRefresh()" title="Re-fetch the list">
@@ -348,6 +396,33 @@
         <input type="text" id="tb-doctype" list="dl-doctype" placeholder="any"
           maxlength="64" onchange="onDocTypeChange(this.value)">
         <datalist id="dl-doctype"></datalist>
+      </div>
+      <!-- FILE KIND. A fixed <select>, unlike the two free-text facets beside
+           it: doc_type and tag are staff-authored and open-ended, but a file
+           extension is a closed set the registry derived itself, and the thing
+           staff actually mean is a CATEGORY ("a spreadsheet"), not an
+           extension. Each option is therefore a CSV the API expands to an IN
+           list. Values must stay inside _extOf's shape (lowercase
+           alphanumeric) or the service drops them as junk.
+
+           NO "Other" OPTION, deliberately: it would need a NOT IN over an
+           open-ended set — a different predicate with different (worse)
+           behaviour on an unindexed column, and one that silently changes
+           meaning every time a new file type enters the estate. An absent
+           option beats one that quietly means something else. -->
+      <div class="ctl">
+        <label for="tb-ext">File</label>
+        <select id="tb-ext" onchange="onExtChange(this.value)">
+          <option value="" selected>Any</option>
+          <option value="pdf">PDF</option>
+          <option value="png,jpg,jpeg,gif,webp,heic,tif,tiff,bmp">Images</option>
+          <option value="doc,docx,rtf,odt">Word</option>
+          <option value="xls,xlsx,ods,csv">Spreadsheets</option>
+          <option value="ppt,pptx,odp">Slides</option>
+          <option value="txt,md,log">Text</option>
+          <option value="eml,msg">Email</option>
+          <option value="zip,rar,7z,gz">Archives</option>
+        </select>
       </div>
       <div class="ctl">
         <label for="tb-tag">Tag</label>
@@ -375,6 +450,8 @@
         </select>
       </div>
     </div>
+
+    <div id="relNote"></div>
 
     <div id="listWrap">
       <div class="state"><i class="fa-solid fa-spinner fa-spin"></i>Loading…</div>
@@ -481,9 +558,19 @@ var state = {
   pageSize: SCOPED ? 25 : 30,
   q:        '',
   doc_type: '',
+  ext:      '',                      // '' or a CSV of extensions
   tag:      '',
   status:   '',                      // '' → the API default (active only)
   sort:     'modified',
+  // ONE HOP through case_relate. Scoped mode only — a global list has no scope
+  // to expand, and the API ignores the flag there anyway. Default ON; see the
+  // checkbox's own comment for why.
+  related:  SCOPED,
+  // The labelled target set the last related response actually used. This is
+  // the bus's address book — see the doclink subscriber — and it is the
+  // SERVER's answer, not something derived from what happened to be on screen.
+  relatedTargets:   [],
+  relatedTruncated: false,
   loading:  false,
 };
 
@@ -564,11 +651,16 @@ function buildListParams() {
   };
   if (state.q)        p.q        = state.q;
   if (state.doc_type) p.doc_type = state.doc_type;
+  if (state.ext)      p.ext      = state.ext;
   if (state.tag)      p.tag      = state.tag;
   if (state.status)   p.status   = state.status;
   if (SCOPED) {
     p.link_type = LINK_TYPE;
     p.link_id   = LINK_ID;
+    // OMITTED when off rather than sent as 0: '0' is a truthy STRING on the
+    // wire, and while the service normalises it, not sending it at all leaves
+    // no room for a future caller to get that wrong.
+    if (state.related) p.related = 1;
   }
   return p;
 }
@@ -595,6 +687,7 @@ async function fetchDocs() {
       'err'
     );
     E('pager').innerHTML = '';
+    E('relNote').innerHTML = '';
     setCount('');
     return;
   }
@@ -602,6 +695,10 @@ async function fetchDocs() {
   state.loading = false;
   state.docs  = Array.isArray(data.documents) ? data.documents : [];
   state.total = Number(data.total) || 0;
+  // Present only on a related response; reset either way so a toggle-off
+  // cannot leave a stale address book behind for the bus subscriber.
+  state.relatedTargets   = Array.isArray(data.related_targets) ? data.related_targets : [];
+  state.relatedTruncated = !!data.related_truncated;
 
   // Clamp if we ran past the end (a filter change, or rows leaving the
   // status window) and re-fetch once.
@@ -611,6 +708,7 @@ async function fetchDocs() {
     return fetchDocs();
   }
 
+  renderRelNote();
   renderList();
   renderPagination();
   renderFacetHints();
@@ -625,8 +723,43 @@ function setCount(text) {
   E('scopedCount').textContent = text;
 }
 
+/* One muted line naming WHOSE documents got mixed in.
+ *
+ * Without it, "Include related" is a checkbox whose effect the user has to
+ * reverse-engineer from the badges on individual rows — and on a page where
+ * every row happens to be direct, from nothing at all. Naming the related
+ * records up front makes the toggle's state legible even when it changed
+ * nothing on this particular page. */
+function renderRelNote() {
+  var el = E('relNote');
+  if (!el) return;
+
+  var parts = [];
+
+  if (state.relatedTruncated) {
+    // The cap fired. Loud-ish, because a silently shortened related list is
+    // indistinguishable from a complete one.
+    parts.push('<div class="rel-note warn">'
+      + '<i class="fa-solid fa-triangle-exclamation"></i> '
+      + 'This ' + esc(SCOPE_WORD) + ' has more related records than can be '
+      + 'included at once — some related documents are not shown.</div>');
+  }
+
+  var hops = (state.relatedTargets || []).filter(function (t) { return !t.direct; });
+  if (state.related && hops.length) {
+    parts.push('<div class="rel-note">Also showing documents linked to '
+      + hops.map(function (t) {
+          return '<b>' + esc(t.label) + '</b>'
+               + (t.relate_type ? ' <span>(' + esc(t.relate_type) + ')</span>' : '');
+        }).join(', ')
+      + '.</div>');
+  }
+
+  el.innerHTML = parts.join('');
+}
+
 function emptyStateHtml() {
-  var filtered = state.q || state.doc_type || state.tag || state.status;
+  var filtered = state.q || state.doc_type || state.ext || state.tag || state.status;
   if (filtered) {
     return '<i class="fa-solid fa-filter-circle-xmark"></i>'
          + 'No documents match your filters.'
@@ -640,7 +773,13 @@ function emptyStateHtml() {
     return '<i class="fa-solid fa-folder-open"></i>'
          + 'No documents synced yet.'
          + '<div class="sub">Files are indexed from Dropbox in the background. '
-         + 'Nothing has been linked to this ' + esc(SCOPE_WORD) + ' yet.</div>';
+         + 'Nothing has been linked to this ' + esc(SCOPE_WORD)
+         + (state.related ? ' or to its related records' : '')
+         + ' yet.'
+         // Only when the toggle is OFF and could actually widen the result —
+         // suggesting a checkbox that is already ticked is noise.
+         + (state.related ? '' : ' Try turning on “Include related”.')
+         + '</div>';
   }
   return '<i class="fa-solid fa-folder-open"></i>'
        + 'No documents in the registry yet.'
@@ -662,6 +801,25 @@ function rowHtml(d) {
            + '<i class="fa-solid fa-globe"></i> public</span>';
   }
   if (gone) chips += '<span class="chip gone">' + esc(d.status) + '</span>';
+
+  /* PROVENANCE BADGES (S3.1). `via` lists which of the scope's targets matched
+     this row, direct first.
+     A row that matched the scoped target DIRECTLY gets NO badge: it is this
+     case's/contact's own document and saying so would be noise on the majority
+     of rows. Everything else is here because of a RELATED record, and the user
+     needs to know WHICH one before acting on it — "why is another client's
+     file in this list" is the question the badge answers before it is asked. */
+  var via = Array.isArray(d.via) ? d.via : [];
+  var isDirect = via.some(function (v) { return v.direct; });
+  if (via.length && !isDirect) {
+    chips += via.map(function (v) {
+      return '<span class="chip via" title="Linked to a related '
+           + esc(v.link_type) + ', not to this ' + esc(SCOPE_WORD) + ' directly">'
+           + 'via ' + esc(v.link_type) + ': ' + esc(v.label)
+           + (v.relate_type ? ' (' + esc(v.relate_type) + ')' : '')
+           + '</span>';
+    }).join('');
+  }
 
   // The title (human) is the headline when set; the file name is then the
   // subtitle. Untitled rows show the file name as the headline and the path
@@ -796,9 +954,20 @@ window.onSearchInput = function (v) {
   }, 280);
 };
 window.onDocTypeChange = function (v) { state.doc_type = (v || '').trim(); state.page = 1; fetchDocs(); };
+window.onExtChange     = function (v) { state.ext      = (v || '').trim(); state.page = 1; fetchDocs(); };
 window.onTagChange     = function (v) { state.tag      = (v || '').trim(); state.page = 1; fetchDocs(); };
 window.onStatusChange  = function (v) { state.status   = v || '';          state.page = 1; fetchDocs(); };
 window.onSortChange    = function (v) { state.sort     = v || 'modified';  state.page = 1; fetchDocs(); };
+
+/* Widening or narrowing the scope changes the RESULT SET, so page 1 — staying
+   on page 6 of a list that just got shorter shows an empty page and a pager
+   that disagrees with it. (fetchDocs clamps too, but at the cost of a second
+   round trip.) */
+window.onRelatedChange = function (on) {
+  state.related = !!on;
+  state.page = 1;
+  fetchDocs();
+};
 
 window.onRefresh = async function () {
   await fetchDocs();
@@ -1036,8 +1205,11 @@ window.onEdit = async function (id) {
   try {
     var res = await api('/api/documents/' + id, 'PATCH', r.value);
     if (res && res.document) {
-      // The response is the whole fresh row; merge rather than replace so any
-      // join-only field a future list query adds survives.
+      // The response is the whole fresh row; merge rather than replace so
+      // join-only fields the list query added survive. `via` (S3.1) is exactly
+      // that: PATCH knows nothing about the scope this row was listed under,
+      // so replacing outright would strip the provenance badge off any related
+      // row the moment someone edited its title.
       var idx = state.docs.indexOf(d);
       var merged = Object.assign({}, d, res.document);
       if (idx !== -1) state.docs[idx] = merged;
@@ -1212,13 +1384,53 @@ if (window.YC) {
     replaceRow(d);
   });
 
-  /* The TARGET'S LINK SET changed — a document was attached to or detached
-     from this case/contact. Only a scoped widget cares, and only about its
-     own target: an unscoped global list shows the same rows either way, and
-     subscribing it to `doclink:*` would make every link action anywhere cost
-     it a pointless refetch. */
+  /* A TARGET'S LINK SET changed — a document was attached to or detached from
+     some case/contact. Only a scoped widget cares; an unscoped global list
+     shows the same rows either way, which is why this whole block is behind
+     SCOPED and the global page still subscribes to nothing.
+
+     ── WHY THIS WATCHES MORE THAN ITS OWN ADDRESS NOW (S3.1) ──────────────
+     S3 subscribed to the exact `doclink:<LINK_TYPE>:<LINK_ID>` and that was
+     complete, because the view showed exactly one target's documents. With
+     "Include related" on it does not: the list is the union over a TARGET SET,
+     and a change to any member of that set can add or remove a row here. The
+     bus addresses the target that changed, so under the old subscription:
+
+       · unlink a doc from the related contact  → our row stays, stale
+       · link a doc TO the related contact      → our row never appears
+
+     Both are exactly the staleness the bus exists to prevent, so this is a
+     real break rather than a theoretical one, and it is fixed rather than
+     documented.
+
+     THE ADDRESS BOOK IS THE SERVER'S, NOT THE PAGE'S. Deriving the watched
+     addresses from the `via` entries on screen would half-work — it catches a
+     row disappearing, because its target is on the page by definition, but not
+     a row appearing, because the target may have no row here yet. That is the
+     more important half: an empty case whose client just received a document
+     is precisely the view that must update. So the watched set is
+     `related_targets` from the last response.
+
+     STILL A WILDCARD SUBSCRIPTION WITH A JS-SIDE FILTER, not N exact ones: the
+     set changes on every fetch, and yc-sync has no unsubscribe — registering
+     per-target handlers would leak one per refetch, forever. The filter keeps
+     the ORIGINAL concern intact, which was never about message delivery but
+     about pointless refetches: a link action against an unrelated case reaches
+     this handler and is dropped on a lookup, costing nothing. */
   if (SCOPED) {
-    window.YC.on('doclink:' + LINK_TYPE + ':' + LINK_ID, '*', function () {
+    var SELF_ADDR = 'doclink:' + LINK_TYPE + ':' + LINK_ID;
+
+    window.YC.on('doclink:*', '*', function (fields, msg) {
+      var addr = String(msg.addr);
+
+      var watched = addr === SELF_ADDR;
+      if (!watched && state.related) {
+        watched = (state.relatedTargets || []).some(function (t) {
+          return 'doclink:' + t.link_type + ':' + t.link_id === addr;
+        });
+      }
+      if (!watched) return;
+
       // Echo fence — see linksLastRefresh.
       if (Date.now() - linksLastRefresh < 1500) return;
       scheduleRefetch();

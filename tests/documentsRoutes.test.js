@@ -542,3 +542,68 @@ describe('route table', () => {
     expect(body.links).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/documents — the S3.1 query params
+//
+// The route is a passthrough and the service owns every rule, so what this
+// covers is exactly that: the params ARRIVE, unmangled, and the route invents
+// nothing on their behalf. A silently-dropped `related` is a widget that looks
+// like it is working and shows the wrong set.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('GET /api/documents — list params', () => {
+  /** The opts object the route handed the service for a given query string. */
+  async function optsFor(qs) {
+    documents.list.mockResolvedValue({ documents: [], total: 0, limit: 50, offset: 0 });
+    const res = await fetch(`${base}/api/documents${qs}`);
+    expect(res.status).toBe(200);
+    return documents.list.mock.calls[0][1];
+  }
+
+  test('ext and related reach the service verbatim', async () => {
+    const opts = await optsFor('?ext=pdf&related=1&link_type=case&link_id=aB3xY9');
+    expect(opts).toMatchObject({
+      ext: 'pdf', related: '1', link_type: 'case', link_id: 'aB3xY9',
+    });
+  });
+
+  test('a CSV ext is NOT split by the route — the service owns normalisation', async () => {
+    // One definition of "what is a valid extension", next to the column limit.
+    expect((await optsFor('?ext=doc,docx,rtf')).ext).toBe('doc,docx,rtf');
+  });
+
+  test("related='0' is passed through, not coerced to truthy by the route", async () => {
+    // A query string has no booleans, and '0' is a TRUTHY JS string. If the
+    // route ever pre-coerced this, unchecking the toggle would silently keep
+    // the expansion on.
+    expect((await optsFor('?related=0&link_type=case&link_id=X')).related).toBe('0');
+  });
+
+  test('absent params are undefined, not empty strings', async () => {
+    const opts = await optsFor('');
+    expect(opts.ext).toBeUndefined();
+    expect(opts.related).toBeUndefined();
+  });
+
+  test('the pre-S3.1 params are unchanged', async () => {
+    const opts = await optsFor('?q=smith&doc_type=petition&tag=court&status=all&source=dropbox&sort=name&limit=10&offset=20');
+    expect(opts).toMatchObject({
+      q: 'smith', doc_type: 'petition', tag: 'court', status: 'all',
+      source: 'dropbox', sort: 'name', limit: '10', offset: '20',
+    });
+  });
+
+  test('the service response is spread onto the body, so related/via ride along', async () => {
+    documents.list.mockResolvedValue({
+      documents: [{ id: 7, via: [{ link_type: 'contact', link_id: '1001', label: 'Ross, Fred' }] }],
+      total: 1, limit: 50, offset: 0, related: true, related_truncated: true,
+    });
+    const res  = await fetch(`${base}/api/documents?related=1&link_type=case&link_id=X`);
+    const body = await res.json();
+
+    expect(body.related).toBe(true);
+    expect(body.related_truncated).toBe(true);
+    expect(body.documents[0].via[0].label).toBe('Ross, Fred');
+  });
+});

@@ -75,7 +75,16 @@ const payloadAt = (n = 0) => emit.mock.calls[n][2];
  * keeps "what the DB had" and "what the DB now has" visible side by side
  * instead of buried in a fake write path.
  */
-function makeDb({ row = null, after = undefined, insertResult, updateResult, deleteResult, rows, linkDuplicate = false } = {}) {
+function makeDb({
+  row = null, after = undefined, insertResult, updateResult, deleteResult, rows,
+  linkDuplicate = false,
+  // ── S3.1 related-scope fixtures (all default empty, so every pre-existing
+  //    test constructs the same stub it always did) ──────────────────────────
+  relate = [],      // case_relate rows: { rel_id, rel_type }
+  viaLinks = [],    // document_links rows: { document_id, link_type, link_id }
+  caseLabels = [],  // { case_id, label }
+  contactLabels = [], // { contact_id, label }
+} = {}) {
   const calls = [];
   let selectCount = 0;
 
@@ -85,9 +94,19 @@ function makeDb({ row = null, after = undefined, insertResult, updateResult, del
     sqlAt: (n) => calls[n].sql,
     paramsAt: (n) => calls[n].params,
     find: (needle) => calls.find((c) => c.sql.includes(needle)),
+    all:  (needle) => calls.filter((c) => c.sql.includes(needle)),
     query: async (sql, params) => {
       const flat = String(sql).replace(/\s+/g, ' ').trim();
       calls.push({ sql: flat, params: params || [] });
+
+      // ── S3.1 ────────────────────────────────────────────────────────────
+      // Declared BEFORE the generic document arms below: these shapes are
+      // more specific, and none of them starts with a prefix the older arms
+      // claim, so ordering here is belt-and-braces rather than load-bearing.
+      if (/FROM case_relate/.test(flat))          return [relate];
+      if (/^SELECT dl\.document_id/.test(flat))   return [viaLinks];
+      if (/FROM cases WHERE case_id IN/.test(flat))       return [caseLabels];
+      if (/FROM contacts WHERE contact_id IN/.test(flat)) return [contactLabels];
 
       if (/^SELECT \* FROM documents WHERE/.test(flat)) {
         // 1st read = prior state, 2nd = post-write state.
@@ -259,6 +278,53 @@ describe('upsertFromEntry — emission matrix', () => {
       after: docRow(),
     });
     await documentSvc.upsertFromEntry(db, 'dropbox', entry());
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  // ── S3.1: the changes map is RETURNED, not just emitted ──────────────
+  //
+  // documentSyncService's move reconciler reads changes.path_lower to decide
+  // whether a file MOVED. If this stops being returned — or starts being
+  // returned only when emitting — reconciliation silently stops running and
+  // stale path-links accumulate with nothing failing anywhere.
+
+  test('the changes map is RETURNED alongside row/created', async () => {
+    const db = makeDb({
+      row: docRow(),
+      after: docRow({ path_lower: '/moved/f.xlsx' }),
+    });
+    const out = await documentSvc.upsertFromEntry(db, 'dropbox', entry({
+      path_lower: '/moved/f.xlsx', path_display: '/Moved/f.xlsx',
+    }));
+
+    expect(out.changes).toHaveProperty('path_lower');
+    expect(out.changes.path_lower).toMatchObject({ to: '/moved/f.xlsx' });
+  });
+
+  test('changes is returned even with { emit: false }', async () => {
+    // The reconciler must work regardless of emission policy; coupling the two
+    // is how a future "quiet mode" would break it without a test failing.
+    const db = makeDb({ row: docRow(), after: docRow({ path_lower: '/moved/f.xlsx' }) });
+    const out = await documentSvc.upsertFromEntry(db, 'dropbox',
+      entry({ path_lower: '/moved/f.xlsx' }), { emit: false });
+
+    expect(emit).not.toHaveBeenCalled();
+    expect(out.changes).toHaveProperty('path_lower');
+  });
+
+  test('an INSERT returns an EMPTY changes map, not undefined', async () => {
+    // There is no prior state to have changed FROM. Callers test the map for a
+    // specific key, so `{}` reads correctly and `undefined` would throw.
+    const db = makeDb({ row: null, after: docRow() });
+    const out = await documentSvc.upsertFromEntry(db, 'dropbox', entry());
+    expect(out.created).toBe(true);
+    expect(out.changes).toEqual({});
+  });
+
+  test('a NO-OP returns an empty changes map', async () => {
+    const db = makeDb({ row: docRow() });
+    const out = await documentSvc.upsertFromEntry(db, 'dropbox', entry());
+    expect(out.changes).toEqual({});
     expect(emit).not.toHaveBeenCalled();
   });
 
@@ -738,6 +804,63 @@ describe('list', () => {
     expect(db.paramsAt(1)).toEqual(db.paramsAt(0));
   });
 
+  // ── S3.1: the `ext` arm ────────────────────────────────────────────────
+  //
+  // The UI facet is a CATEGORY ("Office documents"), which is several
+  // extensions — so the arm takes a CSV. The needle is normalized the same way
+  // _extOf normalized the haystack, exactly as `tag` normalizes through
+  // normalizeTags; anything that could not have been stored is dropped rather
+  // than sent to MySQL to match nothing.
+
+  test('a single ext is an exact match, lowercased', async () => {
+    const { sql, params } = await ran({ ext: 'PDF' });
+    expect(sql).toContain('d.ext = ?');
+    expect(params).toContain('pdf');
+  });
+
+  test('a leading dot is tolerated — staff type ".pdf"', async () => {
+    expect((await ran({ ext: '.pdf' })).params).toContain('pdf');
+  });
+
+  test('a CSV becomes an IN list, deduped and in order', async () => {
+    const { sql, params } = await ran({ ext: 'doc,DOCX, rtf ,doc' });
+    expect(sql).toContain('d.ext IN (?, ?, ?)');
+    expect(params.filter(p => ['doc', 'docx', 'rtf'].includes(p)))
+      .toEqual(['doc', 'docx', 'rtf']);
+  });
+
+  test('junk tokens are DROPPED, not passed through', async () => {
+    // _extOf can only ever have stored /^[a-z0-9]{1,20}$/, so a token outside
+    // that shape matches nothing by construction. Sending it anyway would be a
+    // guaranteed-empty predicate dressed up as a filter.
+    const { sql, params } = await ran({ ext: 'pdf, ../etc, a b, %' });
+    expect(sql).toContain('d.ext = ?');
+    expect(sql).not.toContain('IN (');
+    expect(params).toContain('pdf');
+    expect(params.some(p => typeof p === 'string' && /[^a-z0-9]/.test(p) && p !== 'active'))
+      .toBe(false);
+  });
+
+  test('an ALL-junk ext disables the filter rather than returning nothing', async () => {
+    // A filter that can only ever match zero rows is worse than no filter: the
+    // user sees an empty list and cannot tell it apart from an empty registry.
+    const { sql } = await ran({ ext: '../etc/passwd' });
+    expect(sql).not.toContain('d.ext');
+  });
+
+  test('an empty ext is absent from the WHERE entirely', async () => {
+    expect((await ran({ ext: '' })).sql).not.toContain('d.ext');
+    expect((await ran({})).sql).not.toContain('d.ext');
+  });
+
+  test('the ext arm is clamped and cannot reach SQL as text', async () => {
+    const { sql, params } = await ran({ ext: 'a'.repeat(40) });
+    // 40 'a's is outside _extOf's 1-20 shape, so it is junk and dropped —
+    // which is the safe direction. Nothing interpolates either way.
+    expect(sql).not.toContain('aaaa');
+    expect(params.every(p => typeof p !== 'string' || !/^a{21,}$/.test(p))).toBe(true);
+  });
+
   test('an unknown sort key falls back to newest instead of reaching SQL', async () => {
     const { sql } = await ran({ sort: 'd.id; DROP TABLE documents' });
     expect(sql).toContain('ORDER BY d.updated_at DESC');
@@ -1030,5 +1153,519 @@ describe('mapExternalIds', () => {
     const db = makeBulkDb();
     expect((await documentSvc.mapExternalIds(db, 'dropbox', [])).size).toBe(0);
     expect(db.calls.length).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// S3.1 — related-scope expansion
+//
+// WHAT MATTERS HERE
+//   - THE ONE-HOP BOUNDARY. A case view shows its own documents and its
+//     related contacts' documents. It must NEVER show a related contact's
+//     OTHER cases' documents — those belong to a different client matter, and
+//     surfacing them is a confidentiality problem, not a UX one. The boundary
+//     is enforced STRUCTURALLY (case_relate is resolved in its own query and
+//     never appears in the document query, so there is no edge left to
+//     traverse) and these tests pin the structure, not just the output.
+//   - THE COLLATION TRAP the structure avoids. Joining
+//     document_links.link_id (VARCHAR utf8mb4_general_ci) to
+//     case_relate.case_relate_client_id (INT) in SQL needs CAST(int AS CHAR),
+//     whose collation follows the CONNECTION (utf8mb4_unicode_ci on this
+//     server) with coercibility 2 — the same as a column, so neither side wins
+//     and MySQL refuses:
+//       Illegal mix of collations (utf8mb4_general_ci,IMPLICIT)
+//                             and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
+//     Verified against the live server. Resolving first deletes the cast, so
+//     the ids re-enter as BOUND LITERALS, which adopt the column's collation.
+//   - DEDUPE. The expansion CAN fan out (a document linked to both the case
+//     and one of its contacts matches twice), so the page needs GROUP BY and
+//     the count needs COUNT(DISTINCT) — and they must agree, or the pager lies.
+//   - `related` WITHOUT A SCOPE IS IGNORED. The UI leaves the toggle checked
+//     when it switches out of scoped mode; that must not expand anything.
+// ─────────────────────────────────────────────────────────────
+
+describe('resolveRelatedTargets — one hop, and only one', () => {
+  test('a CASE resolves to itself plus its related CONTACTS', async () => {
+    const db = makeDb({
+      rows: [],
+      relate: [
+        { rel_id: 1001, rel_type: 'Primary' },
+        { rel_id: 1139, rel_type: 'Secondary' },
+      ],
+    });
+    const { targets } = await documentSvc.resolveRelatedTargets(db, 'case', 'aB3xY9');
+
+    expect(targets).toEqual([
+      { link_type: 'case',    link_id: 'aB3xY9', direct: true },
+      { link_type: 'contact', link_id: '1001', relate_type: 'Primary' },
+      { link_type: 'contact', link_id: '1139', relate_type: 'Secondary' },
+    ]);
+  });
+
+  test('a CONTACT resolves to itself plus its related CASES', async () => {
+    const db = makeDb({
+      rows: [],
+      relate: [{ rel_id: 'hjSFMabb', rel_type: 'Primary' }],
+    });
+    const { targets } = await documentSvc.resolveRelatedTargets(db, 'contact', '1001');
+
+    expect(targets).toEqual([
+      { link_type: 'contact', link_id: '1001', direct: true },
+      { link_type: 'case', link_id: 'hjSFMabb', relate_type: 'Primary' },
+    ]);
+  });
+
+  test('contact ids are STRINGIFIED to match document_links.link_id', async () => {
+    // link_id is one polymorphic VARCHAR holding both a case's random string
+    // id and a contact's integer. A number here would never equal the stored
+    // text under a row-constructor IN.
+    const db = makeDb({ rows: [], relate: [{ rel_id: 1001, rel_type: 'Primary' }] });
+    const { targets } = await documentSvc.resolveRelatedTargets(db, 'case', 'X');
+    expect(targets[1].link_id).toBe('1001');
+    expect(typeof targets[1].link_id).toBe('string');
+  });
+
+  test('THE COLLATION TRAP: the contact hop binds an INT, and never casts', async () => {
+    const db = makeDb({ rows: [], relate: [] });
+    await documentSvc.resolveRelatedTargets(db, 'contact', '1001');
+
+    const q = db.find('FROM case_relate');
+    expect(q.sql).toContain('WHERE case_relate_client_id = ?');
+    // A NUMBER, so it hits idx_case_relate_client rather than forcing a
+    // string→int conversion on every row.
+    expect(q.params).toEqual([1001]);
+    // No CAST anywhere. If one ever appears it needs an explicit
+    // COLLATE utf8mb4_general_ci or the query dies — see the describe header.
+    expect(q.sql).not.toMatch(/CAST|CONVERT/i);
+  });
+
+  test('a non-numeric contact id has no related cases, and does not throw', async () => {
+    const db = makeDb({ rows: [], relate: [] });
+    const { targets } = await documentSvc.resolveRelatedTargets(db, 'contact', 'not-an-id');
+    expect(targets).toEqual([
+      { link_type: 'contact', link_id: 'not-an-id', direct: true },
+    ]);
+    expect(db.find('FROM case_relate')).toBeUndefined();
+  });
+
+  test('an unrecognised link_type expands to itself and queries nothing', async () => {
+    const db = makeDb({ rows: [], relate: [] });
+    const { targets } = await documentSvc.resolveRelatedTargets(db, 'matter', 'Z1');
+    expect(targets).toEqual([{ link_type: 'matter', link_id: 'Z1', direct: true }]);
+    expect(db.calls.length).toBe(0);
+  });
+
+  test('a hop that duplicates the direct target is dropped, not double-matched', async () => {
+    // A duplicate pair would fan the JOIN out again and inflate nothing but
+    // the work; the GROUP BY would hide it, which is exactly why it is caught
+    // here instead.
+    const db = makeDb({
+      rows: [],
+      relate: [{ rel_id: 1001, rel_type: 'Primary' }, { rel_id: 1001, rel_type: 'Other' }],
+    });
+    const { targets } = await documentSvc.resolveRelatedTargets(db, 'case', 'aB3xY9');
+    expect(targets.filter(t => t.link_id === '1001').length).toBe(1);
+  });
+
+  test('the target set is CAPPED, and says so rather than silently shortening', async () => {
+    const many = Array.from({ length: documentSvc.RELATED_TARGET_CAP + 50 },
+      (_, i) => ({ rel_id: 5000 + i, rel_type: 'Other' }));
+    const db = makeDb({ rows: [], relate: many });
+    const { targets, truncated } = await documentSvc.resolveRelatedTargets(db, 'case', 'aB3xY9');
+
+    expect(truncated).toBe(true);
+    expect(targets.length).toBe(documentSvc.RELATED_TARGET_CAP);
+    // The DIRECT target is element 0 and therefore can never be the one cut —
+    // a truncated related view must still be a correct direct view.
+    expect(targets[0]).toEqual({ link_type: 'case', link_id: 'aB3xY9', direct: true });
+  });
+
+  test('a normal-sized set is not flagged', async () => {
+    const db = makeDb({ rows: [], relate: [{ rel_id: 1001, rel_type: 'Primary' }] });
+    const { truncated } = await documentSvc.resolveRelatedTargets(db, 'case', 'aB3xY9');
+    expect(truncated).toBe(false);
+  });
+});
+
+describe('list — related expansion', () => {
+  /** A scoped related list over one page of documents. */
+  async function relList(opts, fixtures = {}) {
+    const db = makeDb({ rows: [], ...fixtures });
+    const out = await documentSvc.list(db, { related: 1, ...opts });
+    // 0 = case_relate resolve, 1 = page, 2 = count, 3+ = via/labels
+    return { db, out, page: db.find('SELECT d.*'), count: db.find('COUNT(') };
+  }
+
+  test('CASE scope matches the case OR any related contact, as a flat target set', async () => {
+    const { page } = await relList(
+      { link_type: 'case', link_id: 'aB3xY9' },
+      { relate: [{ rel_id: 1001, rel_type: 'Primary' }] },
+    );
+    expect(page.sql).toContain('(dl.link_type, dl.link_id) IN ((?, ?), (?, ?))');
+    expect(page.params.slice(0, 4)).toEqual(['case', 'aB3xY9', 'contact', '1001']);
+  });
+
+  test('CONTACT scope matches the contact OR any related case', async () => {
+    const { page } = await relList(
+      { link_type: 'contact', link_id: '1001' },
+      { relate: [{ rel_id: 'hjSFMabb', rel_type: 'Primary' }] },
+    );
+    expect(page.params.slice(0, 4)).toEqual(['contact', '1001', 'case', 'hjSFMabb']);
+  });
+
+  test('ONE HOP IS STRUCTURAL: case_relate never appears in the document query', async () => {
+    // THE test for the boundary. A contact's OTHER cases cannot appear on a
+    // case view, and a case's other contacts' other cases cannot appear on a
+    // contact view, because the document query holds a FLAT LIST OF TARGETS
+    // and has no join to traverse. Asserting the absence of the table is
+    // stronger than asserting the absence of a row: a shape that cannot reach
+    // stays unreachable when someone edits the predicate later.
+    const { db } = await relList(
+      { link_type: 'case', link_id: 'aB3xY9' },
+      { relate: [{ rel_id: 1001, rel_type: 'Primary' }] },
+    );
+    const docQueries = db.calls.filter(c => /FROM documents d/.test(c.sql));
+    expect(docQueries.length).toBe(2);                    // page + count
+    for (const q of docQueries) {
+      expect(q.sql).not.toMatch(/case_relate/);
+      expect(q.sql).not.toMatch(/SELECT[\s\S]*SELECT/);   // no subquery at all
+    }
+  });
+
+  test('the ROW CONSTRUCTOR form is used, not two independent IN lists', async () => {
+    // `link_type IN (…) AND link_id IN (…)` cross-multiplies: it would match a
+    // CASE id carried under link_type 'contact'. It also cannot drive a range
+    // scan on idx_dl_target(link_type, link_id).
+    const { page } = await relList(
+      { link_type: 'case', link_id: 'aB3xY9' },
+      { relate: [{ rel_id: 1001, rel_type: 'Primary' }] },
+    );
+    expect(page.sql).toContain('(dl.link_type, dl.link_id) IN (');
+    expect(page.sql).not.toMatch(/dl\.link_type IN \(/);
+    expect(page.sql).not.toMatch(/dl\.link_id IN \(/);
+  });
+
+  test('the page DEDUPES and the count agrees with it', async () => {
+    const { page, count } = await relList(
+      { link_type: 'case', link_id: 'aB3xY9' },
+      { relate: [{ rel_id: 1001, rel_type: 'Primary' }] },
+    );
+    expect(page.sql).toContain('GROUP BY d.id');
+    expect(count.sql).toContain('COUNT(DISTINCT d.id)');
+    // Same filters, same params — a count that drifts from the page is a lie.
+    expect(count.params).toEqual(page.params);
+  });
+
+  test('the NON-related scoped path is untouched: no GROUP BY, plain COUNT(*)', async () => {
+    // The hot path. The direct join rides a UNIQUE key and cannot fan out, so
+    // a temp table there would be pure cost.
+    const db = makeDb({ rows: [] });
+    await documentSvc.list(db, { link_type: 'case', link_id: 'aB3xY9' });
+
+    expect(db.sqlAt(0)).toContain('JOIN document_links dl ON dl.document_id = d.id AND dl.link_type = ?');
+    expect(db.sqlAt(0)).not.toContain('GROUP BY');
+    expect(db.sqlAt(1)).toContain('COUNT(*)');
+    expect(db.sqlAt(1)).not.toContain('DISTINCT');
+    expect(db.find('FROM case_relate')).toBeUndefined();
+  });
+
+  test('`related` WITHOUT a scope is IGNORED — it is not an error', async () => {
+    // The UI leaves the toggle checked when it moves out of scoped mode.
+    const db = makeDb({ rows: [] });
+    const out = await documentSvc.list(db, { related: 1 });
+
+    expect(db.find('FROM case_relate')).toBeUndefined();
+    expect(db.sqlAt(0)).not.toContain('document_links');
+    expect(out.related).toBeUndefined();
+  });
+
+  test("related='0' and 'false' are OFF — a query string has no booleans", async () => {
+    for (const v of ['0', 'false']) {
+      const db = makeDb({ rows: [] });
+      const out = await documentSvc.list(db, { link_type: 'case', link_id: 'X', related: v });
+      expect(out.related).toBeUndefined();
+      expect(db.find('FROM case_relate')).toBeUndefined();
+    }
+  });
+
+  test('the response flags related, and flags truncation only when it happened', async () => {
+    const { out } = await relList(
+      { link_type: 'case', link_id: 'aB3xY9' },
+      { relate: [{ rel_id: 1001, rel_type: 'Primary' }] },
+    );
+    expect(out.related).toBe(true);
+    expect(out.related_truncated).toBeUndefined();
+
+    const many = Array.from({ length: documentSvc.RELATED_TARGET_CAP + 5 },
+      (_, i) => ({ rel_id: 5000 + i, rel_type: 'Other' }));
+    const big = await relList({ link_type: 'case', link_id: 'aB3xY9' }, { relate: many });
+    expect(big.out.related_truncated).toBe(true);
+  });
+
+  test('other filters still apply on top of the expansion', async () => {
+    const { page } = await relList(
+      { link_type: 'case', link_id: 'aB3xY9', ext: 'pdf', status: 'all' },
+      { relate: [{ rel_id: 1001, rel_type: 'Primary' }] },
+    );
+    expect(page.sql).toContain('d.ext = ?');
+    expect(page.sql).not.toContain('d.status = ?');
+  });
+});
+
+describe('list — `via`', () => {
+  const doc = (id) => ({ id, name: `f${id}.pdf`, status: 'active' });
+
+  /** A related list whose page returns `docs`, with via/label fixtures. */
+  async function withVia(docs, fixtures) {
+    const db = makeDb({ rows: docs, ...fixtures });
+    const out = await documentSvc.list(db, {
+      link_type: 'case', link_id: 'aB3xY9', related: 1,
+    });
+    return { db, out };
+  }
+
+  test('a DIRECT match is flagged direct and carries no relate type', async () => {
+    const { out } = await withVia([doc(7)], {
+      relate:   [{ rel_id: 1001, rel_type: 'Primary' }],
+      viaLinks: [{ document_id: 7, link_type: 'case', link_id: 'aB3xY9' }],
+      caseLabels: [{ case_id: 'aB3xY9', label: '25-04172-prh' }],
+      contactLabels: [{ contact_id: 1001, label: 'Ross, Fred' }],
+    });
+    expect(out.documents[0].via).toEqual([
+      { link_type: 'case', link_id: 'aB3xY9', label: '25-04172-prh', direct: true },
+    ]);
+  });
+
+  test('a HOP match carries the label AND the case_relate_type that reached it', async () => {
+    const { out } = await withVia([doc(9)], {
+      relate:   [{ rel_id: 1001, rel_type: 'Secondary' }],
+      viaLinks: [{ document_id: 9, link_type: 'contact', link_id: '1001' }],
+      caseLabels: [{ case_id: 'aB3xY9', label: '25-04172-prh' }],
+      contactLabels: [{ contact_id: 1001, label: 'Ross, Fred' }],
+    });
+    expect(out.documents[0].via).toEqual([
+      { link_type: 'contact', link_id: '1001', label: 'Ross, Fred', relate_type: 'Secondary' },
+    ]);
+  });
+
+  test('a document matched BOTH ways lists both, DIRECT FIRST', async () => {
+    // A document the user owns outright should not be badged as if it arrived
+    // sideways, so the direct entry leads and the UI can stop reading there.
+    const { out } = await withVia([doc(7)], {
+      relate:   [{ rel_id: 1001, rel_type: 'Primary' }],
+      viaLinks: [
+        { document_id: 7, link_type: 'contact', link_id: '1001' },
+        { document_id: 7, link_type: 'case',    link_id: 'aB3xY9' },
+      ],
+      caseLabels: [{ case_id: 'aB3xY9', label: '25-04172-prh' }],
+      contactLabels: [{ contact_id: 1001, label: 'Ross, Fred' }],
+    });
+    const via = out.documents[0].via;
+    expect(via.length).toBe(2);
+    expect(via[0].direct).toBe(true);
+    expect(via[1]).toMatchObject({ link_type: 'contact', relate_type: 'Primary' });
+  });
+
+  test('the via query is bounded by BOTH the page ids and the target set', async () => {
+    const { db } = await withVia([doc(7), doc(9)], {
+      relate:   [{ rel_id: 1001, rel_type: 'Primary' }],
+      viaLinks: [],
+    });
+    const q = db.find('SELECT dl.document_id');
+    expect(q.sql).toContain('WHERE dl.document_id IN (?)');
+    expect(q.sql).toContain('(dl.link_type, dl.link_id) IN ((?, ?), (?, ?))');
+    expect(q.params[0]).toEqual([7, 9]);
+  });
+
+  test('GROUP_CONCAT is NOT used — group_concat_max_len truncates silently', async () => {
+    // 1024 bytes on this server, and no STRICT_TRANS_TABLES to turn the
+    // overflow into an error. A chopped pair parses as a plausible target that
+    // does not exist. Same silent-truncation class _clamp exists to keep out.
+    const { db } = await withVia([doc(7)], { relate: [], viaLinks: [] });
+    expect(db.calls.every(c => !/GROUP_CONCAT/i.test(c.sql))).toBe(true);
+  });
+
+  test('labels are resolved over the TARGET SET, not per row', async () => {
+    // The set is bounded by RELATED_TARGET_CAP and is single-digit in
+    // practice, so label cost is flat in page size: at most one query per type.
+    const { db } = await withVia([doc(1), doc(2), doc(3), doc(4)], {
+      relate:   [{ rel_id: 1001, rel_type: 'Primary' }],
+      viaLinks: [
+        { document_id: 1, link_type: 'contact', link_id: '1001' },
+        { document_id: 2, link_type: 'contact', link_id: '1001' },
+        { document_id: 3, link_type: 'case',    link_id: 'aB3xY9' },
+        { document_id: 4, link_type: 'case',    link_id: 'aB3xY9' },
+      ],
+      caseLabels: [{ case_id: 'aB3xY9', label: '25-04172-prh' }],
+      contactLabels: [{ contact_id: 1001, label: 'Ross, Fred' }],
+    });
+    expect(db.all('FROM cases WHERE case_id IN').length).toBe(1);
+    expect(db.all('FROM contacts WHERE contact_id IN').length).toBe(1);
+  });
+
+  test('an UNLABELLED target falls back to its raw id, never to nothing', async () => {
+    // A missing badge is a document whose provenance the user cannot see; an
+    // ugly badge is an ugly badge.
+    const { out } = await withVia([doc(7)], {
+      relate:   [{ rel_id: 1001, rel_type: 'Primary' }],
+      viaLinks: [{ document_id: 7, link_type: 'contact', link_id: '1001' }],
+      contactLabels: [],
+    });
+    expect(out.documents[0].via[0].label).toBe('1001');
+  });
+
+  test('every row gets a via array, even one that matched nothing resolvable', async () => {
+    const { out } = await withVia([doc(7)], { relate: [], viaLinks: [] });
+    expect(out.documents[0].via).toEqual([]);
+  });
+
+  test('a link OUTSIDE the target set cannot leak into via', async () => {
+    // Defensive: the query already scopes it, but a via entry naming a target
+    // the user never asked about would be a disclosure, not a display bug.
+    const { out } = await withVia([doc(7)], {
+      relate:   [{ rel_id: 1001, rel_type: 'Primary' }],
+      viaLinks: [{ document_id: 7, link_type: 'case', link_id: 'SOMEONE-ELSE' }],
+    });
+    expect(out.documents[0].via).toEqual([]);
+  });
+
+  test('NO via queries run when related is off', async () => {
+    const db = makeDb({ rows: [doc(7)] });
+    const out = await documentSvc.list(db, { link_type: 'case', link_id: 'aB3xY9' });
+    expect(db.find('SELECT dl.document_id')).toBeUndefined();
+    expect(out.documents[0].via).toBeUndefined();
+  });
+
+  test('an EMPTY page skips the via LINK query but still resolves labels', async () => {
+    // The link query is per-row work and there are no rows. The LABELS are
+    // not: they belong to the target set, which the client needs as
+    // `related_targets` regardless of whether anything is on screen — an empty
+    // case is exactly the view that must still hear "a document was linked to
+    // your client". Two tiny indexed lookups, once.
+    const db = makeDb({ rows: [], relate: [{ rel_id: 1001, rel_type: 'Primary' }] });
+    await documentSvc.list(db, { link_type: 'case', link_id: 'aB3xY9', related: 1 });
+
+    expect(db.find('SELECT dl.document_id')).toBeUndefined();
+    expect(db.all('FROM cases WHERE case_id IN').length).toBe(1);
+    expect(db.all('FROM contacts WHERE contact_id IN').length).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// S3.1 — reconcilePathLinks
+//
+// MACHINE LINKS TRACK THE FILESYSTEM; HUMAN LINKS EXPRESS INTENT. The scope of
+// the DELETE is the whole safety property, and it has to be STRUCTURAL: a rule
+// enforced by a filter someone applies afterwards is a rule someone can forget.
+// ─────────────────────────────────────────────────────────────
+
+describe('reconcilePathLinks', () => {
+  async function ran(id, keep) {
+    const db = makeDb({ deleteResult: { affectedRows: 1 } });
+    const n = await documentSvc.reconcilePathLinks(db, id, keep);
+    return { n, sql: db.sqlAt(0), params: db.paramsAt(0), db };
+  }
+
+  test('drops path-links OTHER than the new match, and keeps that one', async () => {
+    const { sql, params } = await ran(7, 'caseB');
+    expect(sql).toContain('DELETE FROM document_links');
+    expect(sql).toContain('AND link_id <> ?');
+    expect(params).toEqual([7, 'path', 'caseB']);
+  });
+
+  test('with NO new match, EVERY path-link goes', async () => {
+    // The file left the case-folder tree. A stale link is worse than none.
+    const { sql, params } = await ran(7, null);
+    expect(sql).not.toContain('link_id <>');
+    expect(params).toEqual([7, 'path']);
+  });
+
+  test('MANUAL links are out of scope IN THE STATEMENT, not filtered after', async () => {
+    const { sql } = await ran(7, 'caseB');
+    expect(sql).toContain("AND link_type = 'case'");
+    expect(sql).toContain('AND relation = ?');       // 'path' — the engine's mark
+    expect(sql).toContain('AND created_by IS NULL'); // the engine has no user
+  });
+
+  test('CONTACT links are never touched — path attribution is case attribution', async () => {
+    const { sql } = await ran(7, 'caseB');
+    expect(sql).not.toContain("link_type = 'contact'");
+    expect(sql).toContain("link_type = 'case'");
+  });
+
+  test('returns the number actually removed', async () => {
+    const db = makeDb({ deleteResult: { affectedRows: 3 } });
+    expect(await documentSvc.reconcilePathLinks(db, 7, null)).toBe(3);
+  });
+
+  test('emits NOTHING — there is no document.unlinked event type', async () => {
+    const db = makeDb({ deleteResult: { affectedRows: 2 } });
+    await documentSvc.reconcilePathLinks(db, 7, 'caseB');
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  test('a missing document id is a no-op, never a table-wide DELETE', async () => {
+    const db = makeDb({});
+    expect(await documentSvc.reconcilePathLinks(db, 0, null)).toBe(0);
+    expect(await documentSvc.reconcilePathLinks(db, null, null)).toBe(0);
+    expect(db.calls.length).toBe(0);
+  });
+
+  test('an empty-string keep is treated as NO match, not as a keep of ""', async () => {
+    const { sql } = await ran(7, '');
+    expect(sql).not.toContain('link_id <>');
+  });
+
+  test('the keep id is clamped on the way into SQL', async () => {
+    const { params } = await ran(7, 'x'.repeat(200));
+    expect(params[2].length).toBe(documentSvc.COLUMN_LIMITS.link_id);
+  });
+});
+
+describe('list — related_targets (the bus address set)', () => {
+  test('the labelled target set comes back, direct entry included and flagged', async () => {
+    const db = makeDb({
+      rows: [],
+      relate: [{ rel_id: 1001, rel_type: 'Primary' }],
+      caseLabels:    [{ case_id: 'aB3xY9', label: '25-04172-prh' }],
+      contactLabels: [{ contact_id: 1001, label: 'Ross, Fred' }],
+    });
+    const out = await documentSvc.list(db, {
+      link_type: 'case', link_id: 'aB3xY9', related: 1,
+    });
+
+    expect(out.related_targets).toEqual([
+      { link_type: 'case', link_id: 'aB3xY9', label: '25-04172-prh', direct: true },
+      { link_type: 'contact', link_id: '1001', label: 'Ross, Fred', relate_type: 'Primary' },
+    ]);
+  });
+
+  test('it is present even on an EMPTY page — that is when it matters most', async () => {
+    // A case with no documents yet is exactly the view that must still hear
+    // "a document was just linked to your client", or the row never appears.
+    const db = makeDb({
+      rows: [],
+      relate: [{ rel_id: 1001, rel_type: 'Primary' }],
+      contactLabels: [{ contact_id: 1001, label: 'Ross, Fred' }],
+    });
+    const out = await documentSvc.list(db, {
+      link_type: 'case', link_id: 'aB3xY9', related: 1,
+    });
+    expect(out.documents).toEqual([]);
+    expect(out.related_targets.length).toBe(2);
+  });
+
+  test('an unlabelled target still yields an address, falling back to its id', async () => {
+    const db = makeDb({ rows: [], relate: [{ rel_id: 1001, rel_type: 'Primary' }] });
+    const out = await documentSvc.list(db, {
+      link_type: 'case', link_id: 'aB3xY9', related: 1,
+    });
+    expect(out.related_targets.map(t => t.label)).toEqual(['aB3xY9', '1001']);
+  });
+
+  test('absent when related is off', async () => {
+    const db = makeDb({ rows: [] });
+    const out = await documentSvc.list(db, { link_type: 'case', link_id: 'aB3xY9' });
+    expect(out.related_targets).toBeUndefined();
   });
 });

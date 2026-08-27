@@ -336,6 +336,7 @@ ref/2026-08-22_ingest_matched_rules_index.sql
 ref/2026-08-25_pipeline_lane.sql
 ref/2026-08-26_pipeline_r15_rules.sql
 ref/2026-08-26_pipeline_r2_requirements.sql
+ref/2026-08-27_documents_external_id_bin.sql
 ref/2026-08-27_unified_events_e0a.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
@@ -361,6 +362,7 @@ ref/database.sql
 ref/documents_s1.sql
 ref/documents_s2.sql
 ref/documents_s2_hotfix.sql
+ref/documents_s3_1.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
@@ -649,6 +651,7 @@ tests/documentService.test.js
 tests/documentSourceService.test.js
 tests/documentSyncService.test.js
 tests/documentsRoutes.test.js
+tests/documentsUi.related.test.js
 tests/dropboxService.normalizePath.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js

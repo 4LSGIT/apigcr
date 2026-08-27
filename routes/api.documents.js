@@ -4,8 +4,9 @@
  * Documents API — registry surface
  * routes/api.documents.js
  *
- * GET    /api/documents               list (q, doc_type, tag, status, source,
- *                                     link_type+link_id, sort, limit, offset)
+ * GET    /api/documents               list (q, doc_type, ext, tag, status,
+ *                                     source, link_type+link_id, related,
+ *                                     sort, limit, offset)
  * GET    /api/documents/:id           one row
  * PATCH  /api/documents/:id           edit title / doc_type / tags / status
  * POST   /api/documents/:id/links     link to a case/contact  { link_type, link_id, relation? }
@@ -251,11 +252,17 @@ router.get('/api/documents', jwtOrApiKey, async (req, res) => {
     const out = await documents.list(req.db, {
       q:         req.query.q,
       doc_type:  req.query.doc_type,
+      ext:       req.query.ext,             // 'pdf' or a CSV; junk tokens dropped
       tag:       req.query.tag,
       status:    req.query.status,          // omit → 'active'; 'all' disables
       source:    req.query.source,
       link_type: req.query.link_type,
       link_id:   req.query.link_id,
+      // Truthy → expand the scope ONE HOP through case_relate. Ignored without
+      // link_type + link_id; the service owns that rule and the '0'/'false'
+      // normalisation, because a query string has no booleans and every caller
+      // would otherwise invent its own.
+      related:   req.query.related,
       sort:      req.query.sort,
       limit:     req.query.limit,
       offset:    req.query.offset,
