@@ -143,6 +143,7 @@ manual/05-Subsystems/04-feature-requests.md
 manual/05-Subsystems/05-document-requests.md
 manual/05-Subsystems/06-reports.md
 manual/05-Subsystems/07-YisraView.md
+manual/05-Subsystems/08-documents.md
 manual/05-Subsystems/README.md
 manual/06-Admin-Tools/01-db-console.md
 manual/06-Admin-Tools/02-readonly-keys.md
@@ -374,6 +375,7 @@ ref/pages/submitted.html
 ref/plans.md
 ref/review.md
 ref/routes.md
+ref/s3.3-relink.sql
 ref/s7_migration.sql
 routes/_aitest.js
 routes/_courtexec.js
@@ -647,6 +649,7 @@ tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js
+tests/documentRelink.test.js
 tests/documentService.test.js
 tests/documentSourceService.test.js
 tests/documentSyncService.test.js

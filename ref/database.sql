@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-26T22:56:38.100Z
+-- Generated: 2026-08-27T09:54:42.233Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7d48c7b3a316c73c703fca72bde92dfa
+-- Fingerprint: sha256:ae3ecaa148746e268944d4b8d4d19250
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -378,7 +378,9 @@ CREATE TABLE `case_folder_cache` (
   `path_lower` text COLLATE utf8mb4_general_ci,
   `path_display` text COLLATE utf8mb4_general_ci,
   `resolve_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `resolved_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `resolved_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `relink_dismissed_at` datetime DEFAULT NULL,
+  `relink_dismissed_by` tinyint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

@@ -341,15 +341,48 @@ async function refreshCaseFolderCache(db, opts = {}) {
   const startedAt = Date.now();
   const deadline = startedAt + _int(opts.maxRuntimeMs, DEFAULT_CACHE_RUNTIME_MS);
 
-  // Oldest-first; rows absent from the cache sort ahead of every resolved one.
-  const [cases] = await db.query(
-    `SELECT c.case_id, c.case_dropbox
-       FROM cases c
-       LEFT JOIN case_folder_cache f ON f.case_id = c.case_id
-      WHERE c.case_dropbox IS NOT NULL AND c.case_dropbox <> ''
-      ORDER BY (f.resolved_at IS NULL) DESC, f.resolved_at ASC
-      LIMIT ${limit}`,
-  );
+  // ── TARGETED MODE (S3.3) ────────────────────────────────────────────────
+  // `caseIds` names EXACTLY which cases to resolve, and when it is present the
+  // staleness ordering and the count limit are both irrelevant — the caller is
+  // not sampling the stale set, it is refreshing one case it just changed.
+  //
+  // It exists because the sweep laps the table in ~5 hours and staff open the
+  // case page SECONDS after confirming a re-link. Waiting for the recurring
+  // job would mean the confirm appears to have done nothing.
+  //
+  // The no-arg path below is byte-for-byte what it always was. Everything
+  // after this branch — the loop, the Dropbox call, the upsert, the failure
+  // handling, out_of_root — is shared, so the two modes cannot drift.
+  const caseIds = Array.isArray(opts.caseIds)
+    ? [...new Set(opts.caseIds.map(v => String(v)).filter(Boolean))]
+    : null;
+
+  let cases;
+  if (caseIds) {
+    if (!caseIds.length) {
+      return {
+        resolved: 0, failed: 0, out_of_root: [], scanned: 0, candidates: 0,
+        limit, targeted: true, timed_out: false, elapsed_ms: Date.now() - startedAt,
+      };
+    }
+    [cases] = await db.query(
+      `SELECT c.case_id, c.case_dropbox
+         FROM cases c
+        WHERE c.case_id IN (?)
+          AND c.case_dropbox IS NOT NULL AND c.case_dropbox <> ''`,
+      [caseIds],
+    );
+  } else {
+    // Oldest-first; rows absent from the cache sort ahead of every resolved one.
+    [cases] = await db.query(
+      `SELECT c.case_id, c.case_dropbox
+         FROM cases c
+         LEFT JOIN case_folder_cache f ON f.case_id = c.case_id
+        WHERE c.case_dropbox IS NOT NULL AND c.case_dropbox <> ''
+        ORDER BY (f.resolved_at IS NULL) DESC, f.resolved_at ASC
+        LIMIT ${limit}`,
+    );
+  }
 
   const rootPaths = await _loadEnabledRootPaths(db);
 
@@ -439,6 +472,7 @@ async function refreshCaseFolderCache(db, opts = {}) {
     scanned: resolved + failed,
     candidates: cases.length,
     limit,
+    ...(caseIds ? { targeted: true } : {}),
     timed_out: timedOut,
     elapsed_ms: Date.now() - startedAt,
     ...(failures.length ? { failures } : {}),
@@ -1648,6 +1682,1016 @@ async function latestJobReports(db, functionNames = DIAGNOSTIC_FUNCTIONS) {
   return [...byFn.values()];
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// GUIDED RE-LINK (S3.3)
+//
+// ── THE ONE RULE ──────────────────────────────────────────────────────────
+// NO LINK IS EVER CHANGED WITHOUT A HUMAN CONFIRMING THE SPECIFIC PAIRING.
+// Everything in this section generates SUGGESTIONS and validates a CHOICE.
+// Nothing here re-points a case on its own, and nothing here ever will: a
+// wrong link puts Client A's bankruptcy documents on Client B's case page,
+// in a view (S3.1's related-documents) that fans them out to every contact
+// related to that case as well. There is no "probably right" tier that is
+// safe to automate.
+//
+// ── WHAT THE QUEUE ACTUALLY CONTAINS, MEASURED ────────────────────────────
+// The charter for this slice said the 418 zero-attribution cases were filed
+// cases whose contents had been moved to a new working folder at filing. The
+// live data says otherwise, and the correction matters because it decides
+// what this UI is FOR:
+//
+//     pipeline_phase = 'intake'            410
+//     pipeline_phase = 'case'                8
+//     have a case_number_full                5
+//     cached folder holds >= 1 file           0
+//
+// 410 of 418 were never filed. There was no move. They are potential-case
+// intake folders that are empty because the client never sent a document —
+// the ordinary end state of a lead that did not convert. Ranking every one of
+// them against the estate finds a confident candidate for roughly 24.
+//
+// So this is not a bulk-repair tool. It is a careful instrument for the small
+// minority that IS repairable, plus an honest way to clear the rest off the
+// board (see setRelinkDismissed). A UI built on the original premise would
+// have presented 418 rows as if 418 repairs were waiting.
+//
+// ── WHY THE NAME LANE IS CONJUNCTIVE AND NOT RANKED-BY-OVERLAP ────────────
+// Overlap ranking was specified and was implemented literally and measured
+// before it was rejected. It produces a candidate for 323 of the 418, and the
+// TOP-RANKED one is routinely a different client:
+//
+//     Natasha MITCHELL   -> " mitchell, vinyanda - 21-4989..."   (surname)
+//     Juicey MCCOY       -> " 7 - mccoy, darwin..."              (surname)
+//     NORMAN Greenberg   -> " reedy, norman"                     (GIVEN name)
+//     BETHANY Gruebbs    -> " lobur, bethany 2"                  (GIVEN name)
+//
+// Each of those would have rendered with a confirm button next to it. The
+// structural argument is what settles it: the folder templates interpolate
+// {{lfm_name}}, so any folder this system ever created carries the full
+// "Surname, Given" string. A surname-only hit therefore essentially CANNOT be
+// the right folder — it is a different client with a common last name.
+//
+// So `name` requires EVERY token of a related contact's lfm_name to be present
+// in the candidate's own folder-name segment. Surname-only survives as `weak`,
+// is omitted from the response unless the caller asks for it, and carries its
+// own separate confirmation in the UI. 323 suggestions become 20.
+//
+// ── WHY THE FOLDER INVENTORY IS ONE GROUPED QUERY ─────────────────────────
+// attributionReport's docblock warns that "documents under this folder" cannot
+// be an indexed lookup (path_lower is TEXT with no index) and that the
+// correlated form — JOIN case_folder_cache ON d.path_lower LIKE CONCAT(f.path_lower,'/%')
+// — is a 986 x 153k cross join that times out. That warning is about the
+// CORRELATION, not about touching the table: one UNcorrelated GROUP BY over
+// the same rows collapses 153,149 documents into 8,423 directories in 800ms,
+// measured against production. The transitive roll-up then happens in memory,
+// where it is ~67k map operations.
+//
+// Copying the paged-scan idiom here instead would have cost 3-5 seconds on
+// every panel open for no benefit. The warning was worth reading; it was not
+// worth obeying past the case it describes.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Candidates returned per case. More than this is noise, not choice. */
+const RELINK_CANDIDATE_CAP = 10;
+
+/** Shortest name/docket token worth matching. Below this, initials collide. */
+const RELINK_TOKEN_MIN = 3;
+
+/**
+ * How long a built folder inventory may be reused within one process.
+ *
+ * Safe because the inventory is derived ENTIRELY from `documents.path_lower`,
+ * which only ever changes when the sync engine walks a root. A confirm writes
+ * `document_links` and `cases.case_dropbox` — neither of which the inventory
+ * reads — so no action taken through this surface can invalidate it. The
+ * window exists because the panel asks for the whole queue at once and then
+ * re-asks per case after each confirm.
+ */
+const RELINK_INVENTORY_TTL_MS = 60 * 1000;
+
+/** Rows the post-confirm targeted attribution will consider in one pass. */
+const RELINK_ATTRIBUTION_CAP = 20000;
+
+/** Cases one dismiss call may stamp. Bounds the IN() list, nothing more. */
+const RELINK_DISMISS_CAP = 500;
+
+/** Related contacts whose names feed the name lane, Primary first. */
+const RELINK_CONTACT_CAP = 6;
+
+/** Cases the batch candidate builder will rank in one request. */
+const RELINK_BATCH_CAP = 500;
+
+/**
+ * Distinct OTHER cases cached strictly beneath a folder before it is treated
+ * as a TYPE level rather than a case folder.
+ *
+ * Two, not one, and the difference is a real row: production has a closed case
+ * folder ("... 7 - stewart, david a. - ...") with a *potential* case's folder
+ * nested inside it. At a threshold of one, that legitimate case folder would
+ * be silently excluded from its own client's candidate list. A genuine type
+ * level ("  active - bankruptcy") holds hundreds.
+ */
+const TYPE_LEVEL_MIN_CASES = 2;
+
+/** cases.case_dropbox is VARCHAR(255). See the reject-don't-clamp note below. */
+const CASE_DROPBOX_MAX = 255;
+
+/**
+ * Dropped from name tokens. Deliberately tiny: an aggressive stop list turns a
+ * conjunctive match into a looser one, which is the exact direction this lane
+ * must never drift.
+ */
+const NAME_STOPWORDS = new Set([
+  'the', 'and', 'llc', 'inc', 'ltd', 'jr', 'sr', 'ii', 'iii', 'iv',
+  'mr', 'mrs', 'ms', 'dr', 'esq',
+]);
+
+/** Relate types whose contacts count as "this case's client names". */
+const RELINK_RELATE_TYPES = ['Primary', 'Secondary', 'Other'];
+
+/** Comparable timestamp, tolerant of Date | string | null (stubs pass strings). */
+function _ts(v) {
+  if (!v) return 0;
+  const n = v instanceof Date ? v.getTime() : Date.parse(String(v));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** LIKE-metacharacter escape. Paired with ESCAPE '|' at every call site. */
+function _likeEscape(s) {
+  return String(s).replace(/([|%_])/g, '|$1');
+}
+
+/** The directory part of a path, or '' for a root-level file. */
+function _dirOf(p) {
+  const i = String(p).lastIndexOf('/');
+  return i > 0 ? String(p).slice(0, i) : '';
+}
+
+/** The last segment of a path — the folder's own name. */
+function _segOf(p) {
+  return String(p).slice(String(p).lastIndexOf('/') + 1);
+}
+
+/**
+ * Name tokens: lowercased, non-alphanumeric split, short/stop words dropped.
+ * "Booker-Coker, Telicia" -> ['booker','coker','telicia'].
+ */
+function _nameTokens(s) {
+  const out = [];
+  for (const t of String(s == null ? '' : s).toLowerCase().split(/[^a-z0-9]+/)) {
+    if (t.length >= RELINK_TOKEN_MIN && !NAME_STOPWORDS.has(t)) out.push(t);
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * Every alphanumeric run in a folder's own name segment, as a Set.
+ *
+ * Deliberately NOT _nameTokens: nothing is dropped here. The name side is the
+ * conjunctive one; making the segment side as permissive as possible only ever
+ * helps a true match, while the matching RULE below is what keeps a false one
+ * out.
+ */
+function _segTokens(seg) {
+  return new Set(String(seg == null ? '' : seg).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+}
+
+/**
+ * Split an lfm_name ("Last, First Middle") into what a folder MUST carry to be
+ * this client's folder, and what merely helps.
+ *
+ * ── WHY WHOLE-TOKEN EQUALITY AND NOT SUBSTRING ────────────────────────────
+ * The first cut of this lane tested `segment.indexOf(token)`, and production
+ * data caught it immediately:
+ *
+ *     "Jones, TIA"        matched " williams-jones, TIAnna ..."
+ *     "Richardson, ANGEL" matched " richardson, ANGELa"
+ *     "Miller, PHILLIP"   matched "... phillips v miller ..."
+ *
+ * Every one is a different client, and every one passed a rule that was
+ * supposed to be the strict one. A given name is a whole word; testing it as
+ * a substring re-opens exactly the collision the conjunctive rule closed.
+ *
+ * Note the asymmetry with the DOCKET lane, which stays a raw substring on
+ * purpose: a docket is opaque and lives embedded inside longer folder names
+ * ("...- 26-44475-mar - chapter 13"), so tokenising it would be the very
+ * decomposition that is forbidden everywhere in this codebase. Names get
+ * tokenised; dockets never do.
+ *
+ * ── WHY MIDDLE NAMES ARE OPTIONAL ─────────────────────────────────────────
+ * Requiring EVERY token makes a middle name mandatory, so "Baker, Reginald"
+ * would fail to match a case recorded as "Baker, Reginald Lindsay". The pair
+ * that actually identifies a client is (surname, first given name) — it is
+ * what separates Natasha Mitchell from Vinyanda Mitchell — so that is the bar.
+ * Remaining tokens are still used, but only to rank.
+ *
+ * A name with no comma cannot be split, so every token is required: guessing
+ * which half is the surname would be worse than being strict.
+ */
+function _nameKey(lfm) {
+  const raw = String(lfm == null ? '' : lfm);
+  const all = _nameTokens(raw);
+  if (!all.length) return null;
+
+  const comma = raw.indexOf(',');
+  if (comma === -1) return { required: all, all, surname: all.slice(0, 1) };
+
+  const surname = _nameTokens(raw.slice(0, comma));
+  const given   = _nameTokens(raw.slice(comma + 1));
+  if (!surname.length) return { required: all, all, surname: all.slice(0, 1) };
+
+  const required = given.length ? [...surname, given[0]] : [...surname];
+  return { required: [...new Set(required)], all, surname };
+}
+
+let _inventoryCache = null;   // { at, inv }
+
+/** Test seam. The TTL is per-process, so a suite must be able to drop it. */
+function _clearInventoryCache() { _inventoryCache = null; }
+
+/**
+ * Every directory that holds registered files, with TRANSITIVE counts.
+ *
+ * Transitive is the operative word and it follows from _matchCase: attribution
+ * walks UP from a file, so linking a case to a PARENT folder attributes
+ * everything beneath it. A count that only reported a folder's own immediate
+ * files would understate what a confirm is about to surface — which is the one
+ * number the human is being asked to judge.
+ *
+ * @returns {Promise<{files: Map<string,number>, newest: Map<string,*>, dirs: string[]}>}
+ */
+async function _buildFolderInventory(db, opts = {}) {
+  const now = Date.now();
+  if (!opts.noCache && _inventoryCache &&
+      (now - _inventoryCache.at) < RELINK_INVENTORY_TTL_MS) {
+    return _inventoryCache.inv;
+  }
+
+  // MySQL does the collapse; see the section header for why this shape is fine
+  // where the correlated one is not.
+  const [rows] = await db.query(
+    `SELECT LEFT(path_lower,
+                 LENGTH(path_lower) - LENGTH(SUBSTRING_INDEX(path_lower, '/', -1)) - 1) AS dir,
+            COUNT(*)             AS files,
+            MAX(server_modified) AS newest
+       FROM documents
+      WHERE status = 'active'
+        AND path_lower IS NOT NULL
+        AND path_lower <> ''
+      GROUP BY dir`,
+  );
+
+  const files  = new Map();
+  const newest = new Map();
+  for (const r of rows) {
+    const n  = Number(r.files) || 0;
+    const nw = r.newest || null;
+    let p = r.dir ? String(r.dir) : '';
+    while (p && p.indexOf('/') !== -1) {
+      files.set(p, (files.get(p) || 0) + n);
+      if (nw && _ts(nw) > _ts(newest.get(p))) newest.set(p, nw);
+      p = p.slice(0, p.lastIndexOf('/'));
+    }
+  }
+
+  const inv = { files, newest, dirs: [...files.keys()], leaf_dirs: rows.length, built_at: now };
+  _inventoryCache = { at: now, inv };
+  return inv;
+}
+
+/**
+ * Who owns which cached folder, and which folders sit ABOVE somebody's case.
+ *
+ * `owners` backs the exclusion in §2.4 and the 409 on confirm — a folder that
+ * is already another case's is never offered with a confirm affordance and is
+ * refused server-side if one is sent anyway.
+ *
+ * `under` backs type-level detection AND the nesting warning: a candidate that
+ * has another case's folder inside it is not automatically wrong (attribution
+ * resolves to the innermost match, so the nested case keeps its own documents)
+ * but it is something the human confirming must be told.
+ */
+async function _loadFolderOwners(db) {
+  const [rows] = await db.query(
+    `SELECT case_id, path_lower
+       FROM case_folder_cache
+      WHERE path_lower IS NOT NULL AND path_lower <> ''`,
+  );
+
+  const owners = new Map();   // path  -> Set(case_id)
+  const under  = new Map();   // ancestor path -> Set(case_id) strictly beneath
+
+  for (const r of rows) {
+    const p  = String(r.path_lower);
+    const id = String(r.case_id);
+    if (!owners.has(p)) owners.set(p, new Set());
+    owners.get(p).add(id);
+
+    let q = p;
+    while (q && q.indexOf('/') !== -1) {
+      q = q.slice(0, q.lastIndexOf('/'));
+      if (!q) break;
+      if (!under.has(q)) under.set(q, new Set());
+      under.get(q).add(id);
+    }
+  }
+  return { owners, under, size: rows.length };
+}
+
+/**
+ * Is this folder a TYPE level (or a root) rather than a case folder?
+ *
+ * Derived from the data, not from a hardcoded depth — and it has to be, because
+ * cached case folders sit at four different depths in production (4, 5, 6 and
+ * 7 segments) depending on which tree they live in. Depth is not the signal;
+ * "how many cases live underneath me" is.
+ */
+function _isTypeLevel(pathLower, rootSet, under) {
+  if (rootSet.has(pathLower)) return true;
+  const s = under.get(pathLower);
+  return !!s && s.size >= TYPE_LEVEL_MIN_CASES;
+}
+
+/**
+ * The nearest ancestor of `pathLower` that is ANOTHER case's cached folder.
+ * Same upward walk as _matchCase, so it answers the question the attribution
+ * engine would answer: "whose folder is this sitting inside?"
+ */
+function _nearestOwnedAncestor(pathLower, owners, selfId) {
+  let p = String(pathLower);
+  while (p && p.indexOf('/') !== -1) {
+    p = p.slice(0, p.lastIndexOf('/'));
+    if (!p) break;
+    const hit = owners.get(p);
+    if (hit) {
+      const other = [...hit].filter(id => id !== String(selfId));
+      if (other.length) return other.sort()[0];
+    }
+  }
+  return null;
+}
+
+/**
+ * Walk up from `pathLower` and return the SHALLOWEST still-under-a-root
+ * directory whose own segment satisfies `test`, or null.
+ *
+ * This is what makes the lanes depth-agnostic. Given
+ *   ".../ 13 - armstrong, jordan - 26-44475-mar - chapter 13/docket - jordan armstrong/x.pdf"
+ * the token "armstrong" appears in TWO directory segments; the case folder is
+ * the shallower one, and picking it means a confirm attributes the subfolders
+ * too rather than just one of them.
+ */
+function _shallowestSegmentMatch(pathLower, rootLowers, test) {
+  let best = null;
+  let p = String(pathLower);
+  while (p && p.indexOf('/') !== -1) {
+    // Strictly BELOW a root: a root itself is never a candidate.
+    if (!rootLowers.some(r => p !== r && _underRoot(p, r))) break;
+    if (test(_segOf(p))) best = p;
+    p = p.slice(0, p.lastIndexOf('/'));
+  }
+  return best;
+}
+
+/**
+ * Everything the ranking needs that does not vary per case. Built ONCE per
+ * request and handed to every case in the batch.
+ */
+async function _relinkContext(db, opts = {}) {
+  const [inv, ownersIdx, rootLowers] = await Promise.all([
+    _buildFolderInventory(db, opts),
+    _loadFolderOwners(db),
+    _loadEnabledRootPaths(db),
+  ]);
+
+  // ── TOKENISE ONCE, INVERT ONCE ──────────────────────────────────────────
+  // The name lane needs a Set of tokens per folder segment. Building that
+  // inside the per-case loop meant 418 cases x 8,423 directories x one split()
+  // = ~3.5M tokenisations and a 3.1-second queue load, measured. Doing it here
+  // makes it 8,423 — the work does not depend on the case, so it does not
+  // belong in the case loop.
+  //
+  // The inverted index then removes the scan itself: a case looks up its
+  // surname and gets the handful of directories that could possibly match,
+  // instead of walking every directory in the estate. The DOCKET lane keeps
+  // its linear scan on purpose — it is a substring test, not a token test, so
+  // it cannot use a token index, and only a handful of cases carry a docket.
+  const segTokens = new Map();   // dir   -> Set(token)
+  const byToken   = new Map();   // token -> dir[]
+  for (const dir of inv.dirs) {
+    const toks = _segTokens(_segOf(dir));
+    segTokens.set(dir, toks);
+    for (const t of toks) {
+      let list = byToken.get(t);
+      if (!list) { list = []; byToken.set(t, list); }
+      list.push(dir);
+    }
+  }
+
+  return {
+    inv,
+    owners: ownersIdx.owners,
+    under: ownersIdx.under,
+    rootLowers,
+    rootSet: new Set(rootLowers),
+    segTokens,
+    byToken,
+  };
+}
+
+/**
+ * Rank candidate folders for ONE case against a prebuilt context.
+ *
+ * Lanes, in confidence order:
+ *
+ *   docket — the case's case_number_full / case_number appears in the folder's
+ *            own name segment as an OPAQUE case-insensitive substring. Not a
+ *            parse. Nothing anywhere in this file splits a docket into year,
+ *            judge or sequence, and the test suite asserts that it never does.
+ *   name   — EVERY token of a related contact's lfm_name appears in the
+ *            segment. See the section header for the measurement that made
+ *            this conjunctive rather than ranked-by-overlap.
+ *   weak   — the SURNAME appears but the given name does not. Withheld unless
+ *            the caller asks; the UI hides it behind a toggle and a second
+ *            checkbox. Included at all only because the pre-template legacy
+ *            trees ("  Closed Files") contain hand-made folders that a
+ *            conjunctive rule cannot reach.
+ */
+function _rankCandidates(ctx, caseRow, contacts, opts = {}) {
+  const includeWeak = !!opts.includeWeak;
+  const caseId = String(caseRow.case_id);
+  const { inv, owners, under, rootLowers, rootSet, segTokens, byToken } = ctx;
+  const tokensOf = dir => segTokens.get(dir) || _segTokens(_segOf(dir));
+
+  const found = new Map();   // path -> { confidence, matched_on }
+  const place = (path, confidence, matchedOn) => {
+    if (!path) return;
+    if (_isTypeLevel(path, rootSet, under)) return;
+    const prior = found.get(path);
+    const rank = c => (c === 'docket' ? 0 : c === 'name' ? 1 : 2);
+    if (!prior || rank(confidence) < rank(prior.confidence)) {
+      found.set(path, { confidence, matched_on: matchedOn });
+    }
+  };
+
+  // ── docket lane ─────────────────────────────────────────────────────────
+  const dockets = [];
+  for (const k of ['case_number_full', 'case_number']) {
+    const v = String(caseRow[k] == null ? '' : caseRow[k]).trim().toLowerCase();
+    if (v.length >= RELINK_TOKEN_MIN && !dockets.includes(v)) dockets.push(v);
+  }
+  for (const tok of dockets) {
+    for (const dir of inv.dirs) {
+      if (_segOf(dir).indexOf(tok) === -1) continue;
+      place(_shallowestSegmentMatch(dir, rootLowers, seg => seg.indexOf(tok) !== -1),
+            'docket', tok);
+    }
+  }
+
+  // ── name lanes ──────────────────────────────────────────────────────────
+  // WHOLE-TOKEN equality on both sides — see _nameKey for the production
+  // false positives that rule exists to stop.
+  for (const ct of contacts) {
+    const key = _nameKey(ct.contact_lfm_name);
+    if (!key) continue;
+    const hasAll = (set, toks) => toks.every(t => set.has(t));
+    const strong = key.required.length >= 2;
+
+    // Start from the rarest surname token's posting list rather than the whole
+    // estate; every candidate must contain ALL surname tokens anyway, so any
+    // one of them is a sound entry point.
+    const seed = key.surname
+      .map(t => byToken.get(t) || [])
+      .reduce((a, b) => (a && a.length <= b.length ? a : b), null) || [];
+
+    for (const dir of seed) {
+      const segSet = tokensOf(dir);
+      if (!hasAll(segSet, key.surname)) continue;
+
+      if (strong && hasAll(segSet, key.required)) {
+        place(_shallowestSegmentMatch(dir, rootLowers,
+                s => hasAll(_segTokens(s), key.required)),
+              'name', ct.contact_lfm_name);
+      } else if (includeWeak) {
+        place(_shallowestSegmentMatch(dir, rootLowers,
+                s => hasAll(_segTokens(s), key.surname)),
+              'weak', key.surname.join(' '));
+      }
+    }
+  }
+
+  const out = [];
+  for (const [path, meta] of found) {
+    const holders = [...(owners.get(path) || [])].filter(id => id !== caseId);
+    const nested  = [...(under.get(path)  || [])].filter(id => id !== caseId);
+    // The nearest ANCESTOR that is somebody else's case folder. Production
+    // shape: "... 7 - gardin, alicia - 25-41340 - chapter 7/ client docs -
+    // dennis gardin and alicia gardin" is a legitimate token match for Dennis
+    // Gardin AND a subfolder of Alicia Gardin's case. Joint debtors make that
+    // plausibly right, which is exactly why it must be DISCLOSED rather than
+    // silently ranked — the person confirming is the only one who knows.
+    const insideOf = _nearestOwnedAncestor(path, owners, caseId);
+    out.push({
+      path,
+      files: inv.files.get(path) || 0,
+      newest: inv.newest.get(path) || null,
+      confidence: meta.confidence,
+      matched_on: meta.matched_on,
+      inside_case_id: insideOf,
+      // §2.4: SURFACED, never confirmable. Seeing the collision is the useful
+      // part; being able to click through it is the confidentiality bug.
+      already_linked_to: holders.length ? holders.sort() : null,
+      // Not an error — attribution resolves innermost-first, so the nested
+      // case keeps its own files. It is disclosed because the human is being
+      // asked whether this pairing is right.
+      nested_case_ids: nested.length ? nested.sort() : null,
+    });
+  }
+
+  const rank = c => (c === 'docket' ? 0 : c === 'name' ? 1 : 2);
+  out.sort((a, b) =>
+    rank(a.confidence) - rank(b.confidence) ||
+    (a.already_linked_to ? 1 : 0) - (b.already_linked_to ? 1 : 0) ||
+    b.files - a.files ||
+    (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+  const truncated = out.length > RELINK_CANDIDATE_CAP;
+  return { candidates: out.slice(0, RELINK_CANDIDATE_CAP), candidates_truncated: truncated };
+}
+
+/**
+ * Rank candidates for MANY cases in one pass.
+ *
+ * Three batched reads plus one shared context, rather than three reads per
+ * case: the panel asks about the whole queue at once, and 418 cases through a
+ * per-case path would be 1,254 round trips.
+ */
+async function relinkCandidatesBatch(db, caseIds, opts = {}) {
+  const ids = [...new Set((caseIds || []).map(v => String(v)).filter(Boolean))]
+    .slice(0, RELINK_BATCH_CAP);
+  const out = new Map();
+  if (!ids.length) return out;
+
+  const [caseRows] = await db.query(
+    `SELECT case_id, case_number, case_number_full, case_dropbox,
+            case_stage, pipeline_phase, case_type, case_subtype
+       FROM cases
+      WHERE case_id IN (?)`,
+    [ids],
+  );
+
+  const [contactRows] = await db.query(
+    `SELECT cr.case_relate_case_id AS case_id,
+            ct.contact_name, ct.contact_lfm_name,
+            cr.case_relate_type    AS rel
+       FROM case_relate cr
+       JOIN contacts ct ON ct.contact_id = cr.case_relate_client_id
+      WHERE cr.case_relate_case_id IN (?)
+        AND cr.case_relate_type IN (?)
+      ORDER BY (cr.case_relate_type = 'Primary') DESC, cr.case_relate_client_id ASC`,
+    [ids, RELINK_RELATE_TYPES],
+  );
+
+  const [cacheRows] = await db.query(
+    `SELECT case_id, path_lower, path_display, resolved_at, resolve_error,
+            relink_dismissed_at, relink_dismissed_by
+       FROM case_folder_cache
+      WHERE case_id IN (?)`,
+    [ids],
+  );
+
+  const contactsByCase = new Map();
+  for (const r of contactRows) {
+    const k = String(r.case_id);
+    if (!contactsByCase.has(k)) contactsByCase.set(k, []);
+    const list = contactsByCase.get(k);
+    if (list.length < RELINK_CONTACT_CAP) list.push(r);
+  }
+  const cacheByCase = new Map(cacheRows.map(r => [String(r.case_id), r]));
+
+  const ctx = await _relinkContext(db, opts);
+
+  for (const row of caseRows) {
+    const k = String(row.case_id);
+    const cached = cacheByCase.get(k) || null;
+    const contacts = contactsByCase.get(k) || [];
+    const ranked = _rankCandidates(ctx, row, contacts, opts);
+    const actionable = ranked.candidates.some(c => !c.already_linked_to);
+
+    out.set(k, {
+      case_id: k,
+      case_number: row.case_number || null,
+      case_number_full: row.case_number_full || null,
+      case_stage: row.case_stage || null,
+      pipeline_phase: row.pipeline_phase || null,
+      // What staff are moving AWAY from. The stale intake link, said plainly.
+      current_path: cached ? (cached.path_lower || null) : null,
+      current_path_display: cached ? (cached.path_display || null) : null,
+      current_link: row.case_dropbox || null,
+      resolve_error: cached ? (cached.resolve_error || null) : null,
+      dismissed_at: cached ? (cached.relink_dismissed_at || null) : null,
+      dismissed_by: cached ? (cached.relink_dismissed_by ?? null) : null,
+      client_names: contacts.map(c => c.contact_lfm_name).filter(Boolean),
+      actionable,
+      ...ranked,
+    });
+  }
+  return out;
+}
+
+/** One case. Delegates, so the single and batch paths cannot disagree. */
+async function relinkCandidates(db, caseId, opts = {}) {
+  const map = await relinkCandidatesBatch(db, [caseId], opts);
+  return map.get(String(caseId)) || null;
+}
+
+/**
+ * The re-link queue: every case whose folder resolved cleanly and that holds
+ * NO attributed documents, with a label and its dismissal state.
+ *
+ * ── WHY THIS IS NOT READ OUT OF THE ATTRIBUTION REPORT ────────────────────
+ * The charter named documents_attribution_report as the queue source. It
+ * cannot be: that report's `sample` lists only cases carrying RESIDUE, and
+ * production residue for this population is exactly zero (all 418 intake
+ * folders are empty). The report therefore knows the COUNT and names none of
+ * the cases. This runs the report's own cheap head query — the one measured at
+ * 77ms over 986 cached folders against idx_dl_target — and returns the ids.
+ *
+ * Read-only. Writes nothing, resolves nothing, calls no provider.
+ */
+async function relinkQueue(db, opts = {}) {
+  const includeDismissed = !!opts.includeDismissed;
+
+  const [rows] = await db.query(
+    `SELECT f.case_id, f.path_lower, f.path_display, f.resolved_at,
+            f.relink_dismissed_at, f.relink_dismissed_by
+       FROM case_folder_cache f
+       LEFT JOIN document_links dl
+         ON dl.link_type = 'case' AND dl.link_id = f.case_id
+      WHERE f.path_lower IS NOT NULL AND f.path_lower <> ''
+        AND dl.id IS NULL`,
+  );
+
+  const visible = includeDismissed ? rows : rows.filter(r => !r.relink_dismissed_at);
+  const ids = visible.map(r => String(r.case_id));
+
+  const detail = opts.withCandidates === false
+    ? new Map()
+    : await relinkCandidatesBatch(db, ids, opts);
+
+  const cases = visible.map((r) => {
+    const d = detail.get(String(r.case_id));
+    return d || {
+      case_id: String(r.case_id),
+      current_path: r.path_lower || null,
+      current_path_display: r.path_display || null,
+      dismissed_at: r.relink_dismissed_at || null,
+      dismissed_by: r.relink_dismissed_by ?? null,
+      candidates: [], candidates_truncated: false, actionable: false,
+      client_names: [],
+    };
+  });
+
+  const actionable = cases.filter(c => c.actionable).length;
+  return {
+    total: rows.length,
+    dismissed: rows.filter(r => !!r.relink_dismissed_at).length,
+    shown: cases.length,
+    actionable,
+    no_candidate: cases.length - actionable,
+    truncated: ids.length > RELINK_BATCH_CAP,
+    cases,
+  };
+}
+
+/**
+ * Stamp (or clear) the dismissal columns.
+ *
+ * ── WHY BULK IS SAFE HERE AND NOWHERE ELSE IN THIS SECTION ────────────────
+ * Dismissal writes two columns on case_folder_cache. It changes no
+ * document_link, no cases row, and touches no provider — it is a note on the
+ * queue, not an assertion about a document. The ONE RULE governs LINK changes;
+ * this is not one. Given that ~394 of the 418 have no candidate to confirm,
+ * making each of them an individual click would not be caution, it would be
+ * make-work that guarantees the queue is never cleared and therefore never
+ * watched.
+ *
+ * A plain UPDATE, not an upsert: the queue is DERIVED from case_folder_cache,
+ * so the row always exists. Inserting one would mean inventing a cache row
+ * with no path and a fictional resolved_at.
+ */
+async function setRelinkDismissed(db, caseIds, opts = {}) {
+  const dismissed = opts.dismissed !== false;
+  const ids = [...new Set((caseIds || []).map(v => String(v)).filter(Boolean))]
+    .slice(0, RELINK_DISMISS_CAP);
+  if (!ids.length) return { updated: 0, case_ids: [], dismissed };
+
+  const [res] = await db.query(
+    `UPDATE case_folder_cache
+        SET relink_dismissed_at = ${dismissed ? 'NOW()' : 'NULL'},
+            relink_dismissed_by = ?
+      WHERE case_id IN (?)`,
+    [dismissed ? (opts.actorUserId ?? null) : null, ids],
+  );
+
+  return { updated: res ? res.affectedRows : 0, case_ids: ids, dismissed };
+}
+
+/**
+ * Attribute the documents under a just-confirmed folder to the case, NOW.
+ *
+ * ── ENGINE PARITY IS THE CORRECTNESS ARGUMENT ─────────────────────────────
+ * This does NOT link everything matching the prefix. It links what
+ * attributeUnlinked would have linked on its next lap: rows under the folder
+ * whose INNERMOST cached-folder match is this case, tested with the same
+ * _matchCase walk. The difference is not academic. If the confirmed folder
+ * happens to contain another case's cached folder, a naive prefix sweep would
+ * pull that case's documents onto this one — the exact leak this slice exists
+ * to prevent — while _matchCase resolves them to their own case and leaves
+ * them alone.
+ *
+ * ── SILENT, AND WHY THAT IS RIGHT RATHER THAN CONVENIENT ──────────────────
+ * This is backfill-shaped work, not event-shaped. One confirm can attribute
+ * several hundred documents (377 in the largest production candidate); firing
+ * document.linked for each would run the trigger engine hundreds of times for
+ * files that have been sitting in Dropbox for years. Same reasoning, same
+ * mechanism (documents.bulkLink), and the same accepted gap the file header
+ * already documents for the sweep.
+ *
+ * ADD-ONLY. The anti-join skips any row that already holds a path-link, so a
+ * document a person filed elsewhere, and a document the move reconciler
+ * already ruled on, are both left exactly as they are.
+ */
+async function _attributeUnderFolder(db, caseId, folderLower, cache) {
+  const [rows] = await db.query(
+    `SELECT d.id, d.path_lower
+       FROM documents d
+       LEFT JOIN document_links dl
+         ON dl.document_id = d.id
+        AND dl.link_type = 'case'
+        AND dl.relation = ?
+      WHERE d.status = 'active'
+        AND d.path_lower IS NOT NULL
+        AND d.path_lower LIKE ? ESCAPE '|'
+        AND dl.id IS NULL
+      ORDER BY d.id
+      LIMIT ${RELINK_ATTRIBUTION_CAP}`,
+    [documents.RELATION_PATH, _likeEscape(folderLower) + '/%'],
+  );
+
+  const links = [];
+  for (const r of rows) {
+    const hit = _matchCase(cache.byPath, r.path_lower);
+    if (hit && String(hit.case_id) === String(caseId)) {
+      links.push({
+        document_id: r.id, link_type: 'case', link_id: caseId,
+        relation: documents.RELATION_PATH,
+      });
+    }
+  }
+  if (links.length) await documents.bulkLink(db, links);
+
+  return {
+    scanned: rows.length,
+    linked: links.length,
+    truncated: rows.length >= RELINK_ATTRIBUTION_CAP,
+  };
+}
+
+/**
+ * THE CONFIRM. A human has chosen a specific folder for a specific case.
+ *
+ * Order is load-bearing:
+ *   1. re-run the cross-link guard SERVER-SIDE (the UI grey-out is not it)
+ *   2. prove the folder is real
+ *   3. mint the permanent shared link
+ *   4. rewrite cases.case_dropbox through caseService (house write path)
+ *   5. refresh THIS case's folder cache, targeted
+ *   6. attribute what is under it, silently, with engine parity
+ *   7. clear any dismissal, and write the audit entry
+ *
+ * Steps 4 and 5 cannot swap: the cache resolves the SHARED LINK, so it has to
+ * read the new one. Steps 5 and 6 cannot swap either: attribution matches
+ * against the cache, so it has to see the new path.
+ *
+ * @returns {Promise<object>} what changed, plus any warnings worth surfacing
+ */
+async function applyRelink(db, caseId, folderPath, opts = {}) {
+  const caseService = require('./caseService');   // lazy require (convention)
+  const logService  = require('./logService');    // lazy require (convention)
+
+  const actorUserId = opts.actorUserId ?? null;
+  const credOpt = opts.credentialId != null ? { credentialId: opts.credentialId } : {};
+  const startedAt = Date.now();
+  const warnings = [];
+
+  const raw = String(folderPath == null ? '' : folderPath);
+  if (!raw.trim()) {
+    const e = new Error('folder_path is required'); e.status = 400; throw e;
+  }
+  if (!raw.startsWith('/')) {
+    const e = new Error('folder_path must be a full Dropbox path starting with "/"');
+    e.status = 400; throw e;
+  }
+  const path  = dropbox.normalizePath(raw);
+  const lower = String(path).toLowerCase();
+  if (!lower) {
+    const e = new Error('the Dropbox account root cannot be a case folder');
+    e.status = 400; throw e;
+  }
+
+  const [[caseRow]] = await db.query(
+    'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId],
+  );
+  if (!caseRow) {
+    const e = new Error(`Case ${caseId} not found`); e.status = 404; throw e;
+  }
+
+  const [[priorCache]] = await db.query(
+    'SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1', [caseId],
+  );
+  const oldPath = priorCache ? (priorCache.path_lower || null) : null;
+
+  // A folder no root walks would leave the case looking repaired while its
+  // documents stayed unregistered forever — the failure out_of_root exists to
+  // report, arrived at deliberately.
+  const rootLowers = await _loadEnabledRootPaths(db);
+  if (!rootLowers.some(r => lower !== r && _underRoot(lower, r))) {
+    const e = new Error(
+      'that folder is not under any enabled sync root, so its documents would ' +
+      'never be registered — add a root for it first, or pick a folder inside one');
+    e.status = 400; throw e;
+  }
+
+  // ── 1. THE GUARD, RE-RUN HERE ───────────────────────────────────────────
+  // The greyed-out row in the panel is a courtesy; THIS is the control. Two
+  // staffers confirming the same folder for different cases within the same
+  // second is a TOCTOU window this re-check narrows but does not close — the
+  // second write would need a unique index on path_lower to be impossible, and
+  // that index cannot exist because two cases legitimately CAN share a folder
+  // in the legacy trees. Narrowing is the right amount of engineering here;
+  // the audit log names who did what if it ever happens.
+  const { owners, under } = await _loadFolderOwners(db);
+  const holders = [...(owners.get(lower) || [])].filter(id => id !== String(caseId));
+  if (holders.length) {
+    const e = new Error(
+      `that folder is already linked to case ${holders.join(', ')} — ` +
+      'linking it here as well would put both clients\' documents on both cases');
+    e.status = 409; throw e;
+  }
+
+  const nested = [...(under.get(lower) || [])].filter(id => id !== String(caseId));
+  if (nested.length) {
+    warnings.push(
+      `${nested.length} other case folder${nested.length === 1 ? '' : 's'} ` +
+      `(${nested.join(', ')}) sit inside this one; their documents stay on their own cases`);
+  }
+
+  // ── 2. IS IT REAL ───────────────────────────────────────────────────────
+  // Registered files are the cheap proof and cover every candidate the panel
+  // offers. The provider stat is the fallback for a folder a person typed in
+  // that legitimately has nothing in it yet.
+  const inv = await _buildFolderInventory(db, { noCache: true });
+  const knownFiles = inv.files.get(lower) || 0;
+  if (!knownFiles) {
+    let meta = null;
+    try {
+      meta = await dropbox.getMetadata(db, { path, ...credOpt });
+    } catch (err) {
+      if (dropbox.isPathNotFoundError(err)) {
+        const e = new Error(`no such folder in Dropbox: ${path}`); e.status = 404; throw e;
+      }
+      throw err;
+    }
+    if (meta && meta['.tag'] === 'file') {
+      const e = new Error('that path is a file — a case folder must be a folder');
+      e.status = 400; throw e;
+    }
+    warnings.push('that folder holds no registered documents yet');
+  }
+
+  // ── 3. MINT ─────────────────────────────────────────────────────────────
+  // The second sanctioned place a permanent shared link is created, and the
+  // only one that mints one for a FOLDER — /api/documents/:id/share mints them
+  // for documents. This mirrors exactly what intake minted originally, which
+  // is what makes the resulting case_dropbox indistinguishable from a
+  // correctly-created one to everything downstream.
+  const sharedLink = await dropbox.getOrCreateSharedLink(db, { path, ...credOpt });
+  if (!sharedLink) {
+    const e = new Error('Dropbox returned no shared link for that folder');
+    e.status = 502; throw e;
+  }
+  // REJECTED, NOT CLAMPED — the same rule _validateRootPath states for a root
+  // path, for the same reason: a truncated URL is not a shortened label, it is
+  // a link that resolves to nothing, and this DB has no STRICT_TRANS_TABLES to
+  // catch it.
+  if (String(sharedLink).length > CASE_DROPBOX_MAX) {
+    const e = new Error(
+      `the shared link is ${String(sharedLink).length} characters; ` +
+      `cases.case_dropbox holds ${CASE_DROPBOX_MAX}. Refusing to store a truncated link.`);
+    e.status = 500; throw e;
+  }
+
+  // ── 4. THE HOUSE WRITE PATH ─────────────────────────────────────────────
+  // Not a raw UPDATE from here: updateCase owns the blank-date normalisation,
+  // the note-length guard and the case.updated emission with a real actor.
+  // Re-pointing a case's Dropbox folder is exactly the kind of change a rule
+  // author may want to see.
+  await caseService.updateCase(db, caseId, { case_dropbox: sharedLink }, {
+    userId: actorUserId,
+    source: 'documents_relink',
+  });
+
+  // ── 5. TARGETED REFRESH ─────────────────────────────────────────────────
+  const cacheResult = await refreshCaseFolderCache(db, { caseIds: [caseId], ...credOpt });
+  const [[freshCache]] = await db.query(
+    'SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1', [caseId],
+  );
+  const resolved = freshCache && freshCache.path_lower ? String(freshCache.path_lower) : null;
+
+  if (!resolved || resolved !== lower) {
+    // Either the resolve failed (prior path survives, by design) or Dropbox
+    // reported a different path than the one asked for. Both are reportable
+    // rather than fatal: the link IS updated and the recurring cache job will
+    // settle it. Saying so beats a silent "0 documents linked".
+    warnings.push(resolved
+      ? `Dropbox resolved the new link to "${resolved}"`
+      : 'the folder cache did not refresh — documents will attach on the next cache run');
+  }
+
+  // ── 6. ATTRIBUTE ────────────────────────────────────────────────────────
+  let attribution = { scanned: 0, linked: 0, truncated: false };
+  if (resolved) {
+    const cache = await _loadCaseFolderCache(db);
+    attribution = await _attributeUnderFolder(db, caseId, resolved, cache);
+  }
+  if (attribution.truncated) {
+    warnings.push(
+      `only the first ${RELINK_ATTRIBUTION_CAP} documents under the folder were ` +
+      'considered; the recurring sweep will pick up the rest');
+  }
+
+  // ── 7. UNDISMISS + AUDIT ────────────────────────────────────────────────
+  await db.query(
+    `UPDATE case_folder_cache
+        SET relink_dismissed_at = NULL, relink_dismissed_by = NULL
+      WHERE case_id = ?`,
+    [caseId],
+  );
+
+  // House log conventions, matched to caseService.mergeCases: type 'update',
+  // link_type 'case', a one-line subject, a prose message, and the machine
+  // readable form in log_extra. This is the change that gets audited later —
+  // "who moved this case's folder, from where, to where, and what appeared".
+  try {
+    await logService.createLogEntry(db, {
+      type: 'update',
+      link_type: 'case',
+      link_id: caseId,
+      by: actorUserId ?? 0,
+      subject: 'Case Dropbox folder re-linked',
+      message:
+        `Re-linked the case's Dropbox folder from "${oldPath || '(none cached)'}" ` +
+        `to "${resolved || lower}". ${attribution.linked} document` +
+        `${attribution.linked === 1 ? '' : 's'} attributed.` +
+        (warnings.length ? ` Notes: ${warnings.join('; ')}.` : ''),
+      extra: {
+        relink: {
+          old_path: oldPath,
+          old_link: caseRow.case_dropbox || null,
+          new_path: resolved || lower,
+          requested_path: path,
+          new_link: sharedLink,
+          linked_docs: attribution.linked,
+          scanned_docs: attribution.scanned,
+          nested_case_ids: nested,
+          warnings,
+        },
+      },
+    });
+  } catch (err) {
+    // The link is already changed and the documents are already attributed.
+    // Losing the audit line is bad; unwinding a correct repair because the log
+    // write failed would be worse, and there is no transaction spanning a
+    // Dropbox call anyway.
+    console.error('[documents.relink] audit log write failed:', err.message);
+    warnings.push('the audit log entry could not be written');
+  }
+
+  return {
+    case_id: String(caseId),
+    old_path: oldPath,
+    new_path: resolved || lower,
+    requested_path: path,
+    shared_link: sharedLink,
+    linked_docs: attribution.linked,
+    scanned_docs: attribution.scanned,
+    cache: cacheResult,
+    warnings,
+    elapsed_ms: Date.now() - startedAt,
+  };
+}
+
 module.exports = {
   refreshCaseFolderCache,
   attributionReport,
@@ -1662,6 +2706,12 @@ module.exports = {
   setRootEnabled,
   isSyncEnabled,
   latestJobReports,
+  // S3.3 — guided re-link
+  relinkQueue,
+  relinkCandidates,
+  relinkCandidatesBatch,
+  applyRelink,
+  setRelinkDismissed,
   // exported for tests / reuse
   _matchCase,
   _underRoot,
@@ -1677,4 +2727,21 @@ module.exports = {
   ROOT_PATH_MAX,
   ROOT_NOTE_MAX,
   SWEEP_WATERMARK_KEY,
+  _buildFolderInventory,
+  _loadFolderOwners,
+  _clearInventoryCache,
+  _nameTokens,
+  _nameKey,
+  _segTokens,
+  _nearestOwnedAncestor,
+  _shallowestSegmentMatch,
+  _isTypeLevel,
+  _rankCandidates,
+  _likeEscape,
+  RELINK_CANDIDATE_CAP,
+  RELINK_DISMISS_CAP,
+  RELINK_BATCH_CAP,
+  RELINK_ATTRIBUTION_CAP,
+  TYPE_LEVEL_MIN_CASES,
+  CASE_DROPBOX_MAX,
 };

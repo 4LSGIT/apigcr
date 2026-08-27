@@ -965,3 +965,350 @@ test('an unexpected response body does not white-screen the panel', async () => 
   expect(errors).toEqual([]);
   expect(panelText(window)).toMatch(/No sync roots configured/);
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The guided re-link block (S3.3)
+//
+// The queue is ~418 rows of which ~24 can be acted on, and the two things this
+// block can get catastrophically wrong are both about that gap:
+//
+//   · PRESENTING 418 PENDING REPAIRS. There are not 418 repairs. 410 of those
+//     cases were never filed and the client never sent a document. A screen
+//     that showed them all as work would teach the person working it that the
+//     queue is noise — and the queue is the only place the ~24 real ones
+//     surface.
+//
+//   · A CONFIRM BUTTON NEXT TO SOMEBODY ELSE'S FOLDER. A candidate already
+//     linked to another case must render INERT — not disabled, absent. The
+//     server 409s it too, but a control that exists is a control that gets
+//     clicked, and the click is the confidentiality incident.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const QUEUE_EMPTY = { status: 'success', total: 0, dismissed: 0, shown: 0,
+  actionable: 0, no_candidate: 0, cases: [] };
+
+const cand = (over = {}) => ({
+  path: '/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - myers, sharon',
+  files: 164, newest: '2026-05-01T00:00:00Z', confidence: 'docket',
+  matched_on: '23-46646-lsg', already_linked_to: null, nested_case_ids: null,
+  inside_case_id: null, ...over,
+});
+
+const qCase = (over = {}) => ({
+  case_id: 'X5zg4hU4', case_number_full: '23-46646-lsg', pipeline_phase: 'case',
+  current_path: '/  Law Office/   Cases/  Potential Cases/ myers, sharon - x5zg4hu4',
+  client_names: ['Myers, Sharon'], dismissed_at: null,
+  candidates: [cand()], candidates_truncated: false, actionable: true, ...over,
+});
+
+const queueBody = (cases, over = {}) => ({
+  status: 'success',
+  total: cases.length, dismissed: 0, shown: cases.length,
+  actionable: cases.filter(c => c.actionable).length,
+  no_candidate: cases.filter(c => !c.actionable).length,
+  cases, ...over,
+});
+
+const relinkRoutes = (queue, extra = {}) => ({
+  'GET /api/documents/sync-roots': ROOTS_OK([syncRoot()]),
+  'GET /api/documents/sync-diagnostics': { status: 'success', reports: [] },
+  '/api/documents/relink/queue': queue,
+  ...extra,
+});
+
+async function openRelink(window, caseId = 'X5zg4hU4') {
+  const head = window.document.querySelector(`[data-relink-expand="${caseId}"]`);
+  head.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await tick(window, 30);
+}
+
+describe('the re-link block', () => {
+  test('THE FRAMING LINE ARRIVES WITH THE NUMBER', async () => {
+    const cases = [qCase(), qCase({ case_id: 'aaaaaaa1', actionable: false, candidates: [] })];
+    const { window } = await boot({
+      routes: relinkRoutes(queueBody(cases)),
+    });
+    await openPanel(window);
+    const txt = panelText(window);
+    // "1 of 2" — not "2 cases need re-linking".
+    expect(txt).toMatch(/1 of 2 cases have a folder we can suggest/);
+    expect(txt).toMatch(/client never sent a document/);
+  });
+
+  test('actionable rows render; no-candidate rows are behind a collapsed strip', async () => {
+    const cases = [qCase(), qCase({ case_id: 'aaaaaaa1', actionable: false, candidates: [] })];
+    const { window } = await boot({ routes: relinkRoutes(queueBody(cases)) });
+    await openPanel(window);
+
+    expect(window.document.querySelector('[data-relink-expand="X5zg4hU4"]')).toBeTruthy();
+    expect(window.document.querySelector('[data-relink-expand="aaaaaaa1"]')).toBeFalsy();
+    expect(panelText(window)).toMatch(/1 with no matching folder/);
+  });
+
+  test('DOCKET-FIRST: the strong lane sorts above a name match', async () => {
+    const nameCase = qCase({
+      case_id: 'bbbbbbb1', case_number_full: null,
+      candidates: [cand({ confidence: 'name', matched_on: 'Smith, John' })],
+    });
+    const { window } = await boot({
+      routes: relinkRoutes(queueBody([nameCase, qCase()])),
+    });
+    await openPanel(window);
+    const ids = [...window.document.querySelectorAll('[data-relink-expand]')]
+      .map(el => el.getAttribute('data-relink-expand'));
+    expect(ids[0]).toBe('X5zg4hU4');
+  });
+
+  test('THE PATHS KEEP THEIR LEADING SPACES', async () => {
+    const { window } = await boot({ routes: relinkRoutes(queueBody([qCase()])) });
+    await openPanel(window);
+    await openRelink(window);
+    const shown = [...window.document.querySelectorAll('#syncPanel .rl-row .root-path')]
+      .map(el => el.textContent);
+    // Asserted through the raw text, never panelText — that helper collapses
+    // whitespace, which is precisely the data these folder names carry.
+    expect(shown.some(p => p.includes('/  Law Office/   Cases/  Active Cases'))).toBe(true);
+    expect(shown.some(p => p.includes('/  Law Office/   Cases/  Potential Cases'))).toBe(true);
+  });
+
+  test('AN ALREADY-LINKED CANDIDATE HAS NO CONFIRM CONTROL IN THE DOM', async () => {
+    const taken = qCase({
+      actionable: false,
+      candidates: [cand({ already_linked_to: ['owner9'] })],
+    });
+    const { window } = await boot({
+      routes: relinkRoutes(queueBody([taken], { actionable: 0, no_candidate: 1 })),
+    });
+    await openPanel(window);
+    window.document.querySelector('[data-relink-toggle-nocand]')
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await tick(window, 20);
+    await openRelink(window);
+
+    expect(panelText(window)).toMatch(/already linked to case owner9/);
+    // Not disabled. Absent.
+    expect(window.document.querySelector('[data-relink-cand]')).toBeFalsy();
+  });
+
+  test('confirming posts the chosen folder and drops the row', async () => {
+    const posts = [];
+    const { window, calls } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([qCase()]), {
+        'POST /api/documents/relink': (p) => {
+          posts.push(p);
+          return { status: 'success', result: { linked_docs: 164, warnings: [] } };
+        },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].case_id).toBe('X5zg4hU4');
+    expect(posts[0].folder_path).toBe(cand().path);
+    expect(window.document.querySelector('[data-relink-expand="X5zg4hU4"]')).toBeFalsy();
+    // A confirm attributes documents, so the list behind the panel is stale.
+    expect(listCalls(calls).length).toBeGreaterThan(1);
+  });
+
+  test('cancelling the dialog posts NOTHING', async () => {
+    const posts = [];
+    const { window } = await boot({
+      swal: { confirm: false },
+      routes: relinkRoutes(queueBody([qCase()]), {
+        'POST /api/documents/relink': (p) => { posts.push(p); return { status: 'success' }; },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+    expect(posts).toHaveLength(0);
+  });
+
+  test('THE CONFIRM DIALOG SHOWS BOTH PATHS AND THE COUNT', async () => {
+    const { window, toasts } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([qCase()]), {
+        'POST /api/documents/relink': { status: 'success', result: { linked_docs: 164, warnings: [] } },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    const dlg = toasts.find(t => t.title === 'Re-link this case?');
+    expect(dlg).toBeTruthy();
+    expect(dlg.html).toContain('/  Law Office/   Cases/  Potential Cases/ myers, sharon');
+    expect(dlg.html).toContain('13 - myers, sharon');
+    expect(dlg.html).toMatch(/164 documents/);
+    expect(dlg.html).toMatch(/rewrites the case/);
+  });
+
+  test('a WEAK match needs a second tick, and an unticked box posts nothing', async () => {
+    const weakCase = qCase({
+      case_number_full: null,
+      candidates: [cand({ confidence: 'weak', matched_on: 'mitchell' })],
+    });
+    const posts = [];
+    const { window, toasts } = await boot({
+      // isConfirmed true, but the checkbox value is absent → treated as unticked.
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([weakCase]), {
+        'POST /api/documents/relink': (p) => { posts.push(p); return { status: 'success' }; },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    expect(posts).toHaveLength(0);
+    const dlg = toasts.find(t => t.title === 'Re-link this case?');
+    expect(dlg.input).toBe('checkbox');
+    expect(dlg.html).toMatch(/surname only/);
+  });
+
+  test('a SKIPPED confirm never paints as a success', async () => {
+    const { window, toasts } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([qCase()]), {
+        'POST /api/documents/relink':
+          { status: 'success', result: { skipped: true, reason: 'documents_sync_enabled is not "1"' } },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    expect(toasts.some(t => t.icon === 'success')).toBe(false);
+    expect(toasts.some(t => /Skipped/.test(String(t.title || '')))).toBe(true);
+    // Nothing changed, so the row must still be there.
+    expect(window.document.querySelector('[data-relink-expand="X5zg4hU4"]')).toBeTruthy();
+  });
+
+  test('a 409 from the guard is reported and the row stays', async () => {
+    const { window, toasts } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([qCase()]), {
+        'POST /api/documents/relink': () => {
+          throw new Error('that folder is already linked to case owner9');
+        },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    expect(toasts.some(t => /already linked to case owner9/.test(String(t.text || '')))).toBe(true);
+    expect(window.document.querySelector('[data-relink-expand="X5zg4hU4"]')).toBeTruthy();
+  });
+
+  test('nesting disclosures reach the dialog', async () => {
+    const cs = qCase({
+      candidates: [cand({ inside_case_id: 'alicia1', nested_case_ids: ['sub1', 'sub2'] })],
+    });
+    const { window, toasts } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([cs]), {
+        'POST /api/documents/relink': { status: 'success', result: { linked_docs: 1, warnings: [] } },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    const dlg = toasts.find(t => t.title === 'Re-link this case?');
+    expect(dlg.html).toMatch(/sits <b>inside case alicia1/);
+    expect(dlg.html).toMatch(/2 other case folders sit inside this one/);
+  });
+
+  test('BULK DISMISS says plainly that it changes nothing', async () => {
+    const cases = [qCase({ case_id: 'aaaaaaa1', actionable: false, candidates: [] }),
+                   qCase({ case_id: 'aaaaaaa2', actionable: false, candidates: [] })];
+    const posts = [];
+    const { window, toasts } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody(cases), {
+        'POST /api/documents/relink/dismiss': (p) => {
+          posts.push(p);
+          return { status: 'success', updated: p.case_ids.length };
+        },
+      }),
+    });
+    await openPanel(window);
+    clickIn(window, '[data-relink-dismiss-all]');
+    await tick(window, 40);
+
+    const dlg = toasts.find(t => /Dismiss 2 cases/.test(String(t.title || '')));
+    expect(dlg).toBeTruthy();
+    expect(dlg.html).toMatch(/changes no document, no case and nothing in Dropbox/);
+    expect(posts[0].case_ids).toEqual(['aaaaaaa1', 'aaaaaaa2']);
+  });
+
+  test('bulk dismiss NEVER includes an actionable case', async () => {
+    const cases = [qCase(), qCase({ case_id: 'aaaaaaa1', actionable: false, candidates: [] })];
+    const posts = [];
+    const { window } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody(cases), {
+        'POST /api/documents/relink/dismiss': (p) => { posts.push(p); return { status: 'success', updated: 1 }; },
+      }),
+    });
+    await openPanel(window);
+    clickIn(window, '[data-relink-dismiss-all]');
+    await tick(window, 40);
+    expect(posts[0].case_ids).toEqual(['aaaaaaa1']);
+  });
+
+  test('the weak toggle refetches THAT case with include_weak=1', async () => {
+    const { window, calls } = await boot({
+      routes: relinkRoutes(queueBody([qCase()]), {
+        '/api/documents/relink/X5zg4hU4/candidates':
+          { status: 'success', ...qCase(), candidates: [cand({ confidence: 'weak' })] },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-weak="X5zg4hU4"]');
+    await tick(window, 40);
+    expect(calls.some(c =>
+      c.url === '/api/documents/relink/X5zg4hU4/candidates?include_weak=1')).toBe(true);
+  });
+
+  test('a queue failure does NOT take the roots table down with it', async () => {
+    const { window } = await boot({
+      routes: {
+        'GET /api/documents/sync-roots': ROOTS_OK([syncRoot()]),
+        'GET /api/documents/sync-diagnostics': { status: 'success', reports: [] },
+        '/api/documents/relink/queue': () => { throw new Error('ranking blew up'); },
+      },
+    });
+    await openPanel(window);
+    expect(rootPaths(window)).toContain(ACTIVE_PATH);
+    expect(panelText(window)).toMatch(/Could not load the re-link queue/);
+  });
+
+  test('AND IT COSTS NOTHING UNTIL THE PANEL IS OPENED', async () => {
+    const { window, calls } = await boot({ routes: relinkRoutes(QUEUE_EMPTY) });
+    expect(calls.some(c => c.url.startsWith('/api/documents/relink'))).toBe(false);
+    await openPanel(window);
+    expect(calls.some(c => c.url.startsWith('/api/documents/relink'))).toBe(true);
+  });
+
+  test('the block is GLOBAL only — a scoped widget has no panel at all', async () => {
+    const { window, calls } = await boot({
+      query: '?link_type=case&link_id=X5zg4hU4',
+      routes: relinkRoutes(queueBody([qCase()])),
+    });
+    await tick(window, 30);
+    expect(calls.some(c => c.url.startsWith('/api/documents/relink'))).toBe(false);
+  });
+});

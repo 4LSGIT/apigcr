@@ -365,6 +365,48 @@
       margin-top: 6px;
     }
 
+    /* ── Re-link block (S3.3) ───────────────────────────────────────────
+       The queue is ~418 rows of which ~24 can be acted on, so the layout's
+       job is to put those 24 in front of a person and keep the other ~394
+       reachable without being in the way. Rows, not a table: a case expands
+       into its candidates and a table cannot hold that without colspan
+       gymnastics. */
+    #syncPanel .rl-row {
+      border-top: 1px solid var(--border); padding: 7px 4px;
+      display: flex; gap: var(--gap-sm); align-items: flex-start;
+    }
+    #syncPanel .rl-row:first-child { border-top: 0; }
+    #syncPanel .rl-main { flex: 1; min-width: 0; }
+    #syncPanel .rl-head {
+      display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap;
+      cursor: pointer;
+    }
+    #syncPanel .rl-id { font-family: var(--mono); font-size: var(--fs-xs); }
+    #syncPanel .rl-name { font-weight: 600; font-size: var(--fs-sm); }
+    #syncPanel .rl-cands {
+      margin: 6px 0 2px; border-left: 2px solid var(--border); padding-left: 8px;
+    }
+    #syncPanel .rl-cand { padding: 5px 0; border-top: 1px dashed var(--border); }
+    #syncPanel .rl-cand:first-child { border-top: 0; }
+    /* A candidate that belongs to another case renders inert: dimmed, and with
+       no confirm control in the DOM at all. Not disabled — absent. */
+    #syncPanel .rl-cand.taken { opacity: 0.55; }
+    #syncPanel .rl-strip {
+      margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+    }
+    #syncPanel .rl-list {
+      max-height: 300px; overflow-y: auto; margin-top: 6px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 0 8px;
+    }
+    /* Confidence must be readable at a glance and must NOT read as a gradient
+       of the same thing: docket is an opaque docket-number substring match,
+       name is a whole-token client-name match, weak is a surname collision
+       that is usually a different person. */
+    .pill.lane-docket { background: var(--info-soft); color: var(--info); }
+    .pill.lane-name   { background: var(--warn-soft); color: var(--warn); }
+    .pill.lane-weak   { background: var(--danger-soft); color: var(--danger); }
+
     /* One muted line under the toolbar telling the truth about a big number. */
     .scope-note {
       font-size: var(--fs-sm); color: var(--text-muted);
@@ -1521,6 +1563,21 @@ var sync = {
   error:    null,
   busy:     {},       // root id → true while its own action is in flight
   running:  false,    // the diagnostics run
+  // S3.3 — the re-link queue. Its own slot rather than fields on `sync`,
+  // because it is a second, independently-failing fetch with its own paging
+  // and its own busy set, and flattening the two made every read ambiguous
+  // about which "busy" was meant.
+  relink: {
+    loaded: false, loading: false, error: null,
+    cases: [], total: 0, dismissedN: 0, actionable: 0, noCandidate: 0,
+    truncated: false,
+    expanded: {},        // case_id → true
+    weak:     {},        // case_id → true (surname-only matches for this case)
+    busy:     {},        // case_id → true while its own action is in flight
+    busyAll:  false,
+    showNoCandidate: false,
+    showDismissed:   false,
+  },
 };
 
 function fmtDateTime(v) {
@@ -1577,6 +1634,11 @@ async function loadSyncPanel() {
   } catch (_) {
     sync.reports = [];
   }
+
+  // The re-link queue (S3.3), same non-fatal treatment and for the same
+  // reason: it ranks the whole estate and is the slowest of the three, so a
+  // failure or a slow day here must not take the roots table down with it.
+  await loadRelink();
 
   sync.loading = false;
   renderSyncPanel();
@@ -1800,6 +1862,404 @@ function zeroAttributionHtml() {
   return html;
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   THE GUIDED RE-LINK (S3.3)
+
+   S3.2 made the stale-intake-folder condition visible. This makes it fixable —
+   for the cases where it IS fixable, which is far fewer than the count suggests
+   and that is the single most important thing this block communicates.
+
+   ── WHAT THE QUEUE ACTUALLY IS ─────────────────────────────────────────────
+   418 cases resolve a folder cleanly and hold no documents. Measured against
+   production: 410 of them were never filed (pipeline_phase 'intake'), only 5
+   carry a docket, and NONE has a single registered file under its cached
+   folder. They are potential-case intake folders that are empty because the
+   client never sent anything — the ordinary end state of a lead that did not
+   convert. Ranking them all against the estate finds a confident candidate for
+   about 24.
+
+   So the default view is those 24, docket-first, and the rest live in a
+   collapsed strip with a bulk dismiss. A screen that presented 418 rows as 418
+   pending repairs would be lying about the work, and the person who worked
+   through it would learn the queue is noise.
+
+   ── THE CONFIRM IS THE CEREMONY ────────────────────────────────────────────
+   A wrong link puts one client's documents on another client's case page, and
+   S3.1's related-documents view then fans them out to every contact related to
+   that case. So: old path and new path side by side, the document count, the
+   disclosures (does this folder sit inside another case's folder, does it
+   contain one), and an explicit sentence saying the case's Dropbox link is
+   about to be rewritten. Surname-only matches need a second, separate tick.
+
+   ── NO BUS ─────────────────────────────────────────────────────────────────
+   Same rule as the rest of the panel (S3.2): this is ops state, no other frame
+   renders it, so it refetches its own data after an action rather than
+   announcing. The one exception is fetchDocs() after a confirm — that DID
+   change documents, and the list behind the panel is now stale.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function laneLabel(c) {
+  if (c === 'docket') return 'docket number';
+  if (c === 'name')   return 'client name';
+  return 'surname only';
+}
+
+function relinkCase(id) {
+  var list = sync.relink.cases || [];
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].case_id) === String(id)) return list[i];
+  }
+  return null;
+}
+
+async function loadRelink() {
+  sync.relink.loading = true;
+  sync.relink.error = null;
+  try {
+    var res = await api('/api/documents/relink/queue'
+      + (sync.relink.showDismissed ? '?include_dismissed=1' : ''), 'GET');
+    sync.relink.cases       = Array.isArray(res && res.cases) ? res.cases : [];
+    sync.relink.total       = Number(res && res.total) || 0;
+    sync.relink.dismissedN  = Number(res && res.dismissed) || 0;
+    sync.relink.actionable  = Number(res && res.actionable) || 0;
+    sync.relink.noCandidate = Number(res && res.no_candidate) || 0;
+    sync.relink.truncated   = !!(res && res.truncated);
+    sync.relink.loaded      = true;
+  } catch (err) {
+    sync.relink.error = (err && err.message) || String(err);
+  }
+  sync.relink.loading = false;
+}
+
+/** One candidate, rendered. `taken` entries carry NO confirm control at all. */
+function candidateHtml(c, idx, cs) {
+  var taken = !!c.already_linked_to;
+  var notes = [];
+  if (c.inside_case_id) {
+    notes.push('sits inside case ' + esc(c.inside_case_id) + '\u2019s folder');
+  }
+  if (c.nested_case_ids) {
+    notes.push('contains ' + c.nested_case_ids.length + ' other case folder'
+      + (c.nested_case_ids.length === 1 ? '' : 's'));
+  }
+
+  return '<div class="rl-cand' + (taken ? ' taken' : '') + '">'
+    + '<div>'
+    +   '<span class="pill lane-' + esc(c.confidence) + '">' + esc(laneLabel(c.confidence)) + '</span> '
+    +   '<span class="mini">matched ' + esc(String(c.matched_on || '')) + '</span>'
+    + '</div>'
+    + '<div class="root-path">' + esc(c.path) + '</div>'
+    + '<div class="mini">' + esc(String(c.files)) + ' document'
+    +   (Number(c.files) === 1 ? '' : 's')
+    +   (c.newest ? ' \u00b7 newest ' + esc(fmtDate(c.newest)) : '')
+    +   (notes.length ? ' \u00b7 ' + notes.join(' \u00b7 ') : '')
+    + '</div>'
+    + (taken
+        // SURFACED, NOT CONFIRMABLE. Seeing the collision tells a staffer where
+        // the documents actually went; being able to click it is the bug.
+        ? '<div class="mini" style="color:var(--danger)">already linked to case '
+          + esc(c.already_linked_to.join(', ')) + ' \u2014 cannot be used here</div>'
+        : '<button class="btn btn-outline btn-sm" style="margin-top:4px" '
+          + 'data-relink-cand="' + esc(cs.case_id) + '|' + idx + '"'
+          + (sync.relink.busy[cs.case_id] ? ' disabled' : '') + '>'
+          + '<i class="fa-solid fa-link"></i> Use this folder</button>')
+    + '</div>';
+}
+
+function relinkRowHtml(cs) {
+  var open = !!sync.relink.expanded[cs.case_id];
+  var cands = cs.candidates || [];
+  var free = cands.filter(function (c) { return !c.already_linked_to; });
+  var best = free.length ? free[0].confidence : null;
+
+  var html = '<div class="rl-row"><div class="rl-main">'
+    + '<div class="rl-head" data-relink-expand="' + esc(cs.case_id) + '">'
+    +   '<i class="fa-solid fa-chevron-' + (open ? 'down' : 'right') + ' mini"></i>'
+    +   '<span class="rl-name">' + esc((cs.client_names || [])[0] || '(no client)') + '</span>'
+    +   '<span class="rl-id">' + esc(cs.case_id) + '</span>'
+    +   (cs.case_number_full
+          ? '<span class="pill on">' + esc(cs.case_number_full) + '</span>' : '')
+    +   (cs.pipeline_phase
+          ? '<span class="pill off">' + esc(cs.pipeline_phase) + '</span>' : '')
+    +   (best ? '<span class="pill lane-' + esc(best) + '">' + free.length + ' candidate'
+            + (free.length === 1 ? '' : 's') + '</span>'
+          : '<span class="pill off">no candidate</span>')
+    +   (cs.dismissed_at ? '<span class="pill off">dismissed</span>' : '')
+    + '</div>'
+    // What they are moving AWAY from — the stale intake link, always visible.
+    + '<div class="root-path" style="color:var(--text-muted)">'
+    +   esc(cs.current_path || '(no cached path)') + '</div>';
+
+  if (open) {
+    html += '<div class="rl-cands">';
+    html += cands.length
+      ? cands.map(function (c, i) { return candidateHtml(c, i, cs); }).join('')
+      : '<div class="mini">Nothing in the registry matches this case\u2019s docket '
+        + 'or client name. That usually means the client never sent a document.</div>';
+    if (cs.candidates_truncated) {
+      html += '<div class="mini">More matches exist than are shown.</div>';
+    }
+    html += '<div style="margin-top:6px">'
+      + '<label class="mini" style="cursor:pointer">'
+      + '<input type="checkbox" data-relink-weak="' + esc(cs.case_id) + '"'
+      + (sync.relink.weak[cs.case_id] ? ' checked' : '') + '> '
+      // Said plainly, because the number is persuasive and the matches are not.
+      + 'Also show surname-only matches (usually a different client with the '
+      + 'same last name)</label></div>';
+    html += '</div>';
+  }
+
+  html += '</div><div style="flex:0 0 auto">'
+    + (cs.dismissed_at
+        ? '<button class="btn btn-ghost btn-sm" data-relink-undismiss="' + esc(cs.case_id) + '">'
+          + '<i class="fa-solid fa-rotate-left"></i> Undo</button>'
+        : '<button class="btn btn-ghost btn-sm" data-relink-dismiss="' + esc(cs.case_id) + '">'
+          + '<i class="fa-solid fa-check"></i> Dismiss</button>')
+    + '</div></div>';
+  return html;
+}
+
+function relinkHtml() {
+  var r = sync.relink;
+  var html = '<h4>Re-link a case to its real folder</h4>';
+
+  if (r.loading && !r.loaded) {
+    return html + '<div class="mini"><i class="fa-solid fa-spinner fa-spin"></i> '
+      + 'Ranking folders\u2026</div>';
+  }
+  if (r.error) {
+    return html + '<div class="banner err">Could not load the re-link queue: '
+      + esc(r.error) + '</div>'
+      + '<button class="btn btn-outline btn-sm" data-relink-reload="1">Retry</button>';
+  }
+  if (!r.loaded) return html;
+
+  var cases = r.cases || [];
+  var actionable = cases.filter(function (c) { return c.actionable && !c.dismissed_at; });
+  var none       = cases.filter(function (c) { return !c.actionable && !c.dismissed_at; });
+  var dismissed  = cases.filter(function (c) { return !!c.dismissed_at; });
+
+  // Docket-first, then by how much is behind the candidate.
+  var rank = function (c) {
+    var f = (c.candidates || []).filter(function (x) { return !x.already_linked_to; });
+    return f.length && f[0].confidence === 'docket' ? 0 : 1;
+  };
+  actionable.sort(function (a, b) { return rank(a) - rank(b); });
+
+  // THE FRAMING LINE. Same job as the Unlinked scope-note: a number this size
+  // with no context reads as a backlog of 418 repairs, and it is not one.
+  html += '<div class="banner info">'
+    + '<b>' + actionable.length + '</b> of ' + r.total + ' case'
+    + (r.total === 1 ? '' : 's') + ' have a folder we can suggest. '
+    + 'The rest have no matching folder anywhere in Dropbox \u2014 almost all are '
+    + 'potential cases where the client never sent a document.</div>';
+
+  html += actionable.length
+    ? '<div class="rl-list">' + actionable.map(relinkRowHtml).join('') + '</div>'
+    : '<div class="mini">Nothing to re-link right now.</div>';
+
+  // ── the "nothing to link" strip ─────────────────────────────────────────
+  if (none.length) {
+    html += '<div class="rl-strip">'
+      + '<button class="btn btn-ghost btn-sm" data-relink-toggle-nocand="1">'
+      +   '<i class="fa-solid fa-chevron-' + (r.showNoCandidate ? 'down' : 'right') + '"></i> '
+      +   none.length + ' with no matching folder</button> '
+      + '<button class="btn btn-outline btn-sm" data-relink-dismiss-all="1"'
+      +   (r.busyAll ? ' disabled' : '') + '>'
+      +   '<i class="fa-solid fa-check-double"></i> Dismiss all ' + none.length + '</button>'
+      + '<div class="mini" style="margin-top:4px">Dismissing only clears them from '
+      + 'this list. It changes no document and no case.</div>';
+    if (r.showNoCandidate) {
+      html += '<div class="rl-list">' + none.map(relinkRowHtml).join('') + '</div>';
+    }
+    html += '</div>';
+  }
+
+  // ── dismissed ───────────────────────────────────────────────────────────
+  html += '<div class="rl-strip">'
+    + '<label class="mini" style="cursor:pointer">'
+    + '<input type="checkbox" data-relink-show-dismissed="1"'
+    + (r.showDismissed ? ' checked' : '') + '> Show dismissed ('
+    + esc(String(r.dismissedN || 0)) + ')</label>';
+  if (r.showDismissed && dismissed.length) {
+    html += '<div class="rl-list">' + dismissed.map(relinkRowHtml).join('') + '</div>';
+  }
+  html += '</div>';
+
+  if (r.truncated) {
+    html += '<div class="mini">The queue is longer than one page of ranking; '
+      + 'dismiss some and reload to see the rest.</div>';
+  }
+  return html;
+}
+
+/** Repaint ONE case's candidates — used by the weak toggle and after a confirm. */
+async function reloadRelinkCase(caseId) {
+  try {
+    var res = await api('/api/documents/relink/' + encodeURIComponent(caseId) + '/candidates'
+      + (sync.relink.weak[caseId] ? '?include_weak=1' : ''), 'GET');
+    var list = sync.relink.cases;
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i].case_id) === String(caseId)) {
+        list[i] = { ...list[i], ...res };
+        delete list[i].status;
+        return;
+      }
+    }
+  } catch (err) {
+    Swal.fire('Could not reload that case', (err && err.message) || String(err), 'error');
+  }
+}
+
+window.onRelinkConfirm = async function (caseId, idx) {
+  var cs = relinkCase(caseId);
+  if (!cs) return;
+  var c = (cs.candidates || [])[Number(idx)];
+  // Belt and braces against a stale repaint: a taken candidate has no button,
+  // but if one ever reached this function it must not proceed to the POST.
+  if (!c || c.already_linked_to) return;
+
+  var weak = c.confidence === 'weak';
+  var notes = '';
+  if (c.inside_case_id) {
+    notes += '<p class="swal-note">This folder sits <b>inside case '
+      + esc(c.inside_case_id) + '\u2019s</b> folder. Documents already attributed '
+      + 'to that case stay with it.</p>';
+  }
+  if (c.nested_case_ids) {
+    notes += '<p class="swal-note">' + c.nested_case_ids.length
+      + ' other case folder' + (c.nested_case_ids.length === 1 ? '' : 's')
+      + ' sit inside this one (' + esc(c.nested_case_ids.join(', ')) + '). '
+      + 'Their documents stay on their own cases.</p>';
+  }
+
+  var r = await Swal.fire({
+    icon: weak ? 'warning' : 'question',
+    title: 'Re-link this case?',
+    width: 680,
+    html: '<div style="text-align:left">'
+      + '<span class="swal-lbl">Case</span>'
+      + '<div>' + esc((cs.client_names || [])[0] || '') + ' \u00b7 ' + esc(cs.case_id) + '</div>'
+      + '<span class="swal-lbl" style="margin-top:8px">From</span>'
+      + '<div class="root-path">' + esc(cs.current_path || '(no cached path)') + '</div>'
+      + '<span class="swal-lbl" style="margin-top:8px">To</span>'
+      + '<div class="root-path">' + esc(c.path) + '</div>'
+      + '<p class="swal-note" style="margin-top:8px">'
+      + '<b>' + esc(String(c.files)) + ' document' + (Number(c.files) === 1 ? '' : 's')
+      + '</b> will appear on this case. This rewrites the case\u2019s Dropbox link.</p>'
+      + notes
+      + (weak
+          ? '<div class="banner err" style="margin-top:8px">This matched on the '
+            + '<b>surname only</b>. A different client with the same last name is '
+            + 'the most likely explanation \u2014 check the folder in Dropbox first.</div>'
+          : '')
+      + '</div>',
+    showCancelButton: true,
+    confirmButtonText: 'Re-link',
+    // The second tick for a weak match. Not decoration: it is the difference
+    // between a deliberate override and a mis-click on a plausible wrong row.
+    ...(weak ? { input: 'checkbox', inputPlaceholder: 'I checked this folder in Dropbox' } : {}),
+  });
+  if (!r || !r.isConfirmed) return;
+  if (weak && !r.value) {
+    Toast.fire({ icon: 'info', title: 'Not re-linked \u2014 the box was not ticked' });
+    return;
+  }
+
+  sync.relink.busy[caseId] = true;
+  renderSyncPanel();
+  try {
+    var res = await api('/api/documents/relink', 'POST',
+                        { case_id: caseId, folder_path: c.path });
+    var out = (res && res.result) || {};
+    if (out.skipped) {
+      // A SKIP MUST NEVER PAINT AS A SUCCESS — same rule as the manual sync
+      // button. Nothing was changed.
+      Toast.fire({ icon: 'info', title: 'Skipped \u2014 ' + (out.reason || 'sync is disabled') });
+    } else {
+      Toast.fire({
+        icon: 'success',
+        title: out.linked_docs + ' document' + (out.linked_docs === 1 ? '' : 's') + ' linked',
+      });
+      if (out.warnings && out.warnings.length) {
+        Swal.fire({
+          icon: 'info', title: 'Re-linked, with notes', width: 620,
+          html: '<ul style="text-align:left">'
+            + out.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('')
+            + '</ul>',
+        });
+      }
+      // Optimistic: the row leaves the queue. The reload behind it is what
+      // makes that true rather than merely apparent.
+      sync.relink.cases = sync.relink.cases.filter(function (x) {
+        return String(x.case_id) !== String(caseId);
+      });
+      sync.relink.actionable = Math.max(0, sync.relink.actionable - 1);
+      sync.relink.total = Math.max(0, sync.relink.total - 1);
+    }
+  } catch (err) {
+    // 409 is the cross-link guard and deserves its own words, not "error".
+    Swal.fire({
+      icon: 'error', title: 'Could not re-link',
+      text: (err && err.message) || String(err),
+    });
+  }
+  delete sync.relink.busy[caseId];
+  renderSyncPanel();
+  // A confirm attributes documents, so the list behind the panel is stale.
+  fetchDocs();
+};
+
+window.onRelinkDismiss = async function (caseId, undo) {
+  sync.relink.busy[caseId] = true;
+  renderSyncPanel();
+  try {
+    await api('/api/documents/relink/dismiss', 'POST',
+              { case_id: caseId, ...(undo ? { undo: true } : {}) });
+    var cs = relinkCase(caseId);
+    if (cs) cs.dismissed_at = undo ? null : new Date().toISOString();
+    sync.relink.dismissedN = Math.max(0, (sync.relink.dismissedN || 0) + (undo ? -1 : 1));
+    if (!sync.relink.showDismissed && !undo) {
+      sync.relink.cases = sync.relink.cases.filter(function (x) {
+        return String(x.case_id) !== String(caseId);
+      });
+    }
+  } catch (err) {
+    Swal.fire('Could not dismiss', (err && err.message) || String(err), 'error');
+  }
+  delete sync.relink.busy[caseId];
+  renderSyncPanel();
+};
+
+window.onRelinkDismissAll = async function () {
+  var ids = (sync.relink.cases || [])
+    .filter(function (c) { return !c.actionable && !c.dismissed_at; })
+    .map(function (c) { return c.case_id; });
+  if (!ids.length) return;
+
+  var r = await Swal.fire({
+    icon: 'question', title: 'Dismiss ' + ids.length + ' cases?',
+    html: '<div style="text-align:left"><p class="swal-note">These have no matching '
+      + 'folder anywhere in Dropbox. Dismissing clears them from this list and '
+      + '<b>changes no document, no case and nothing in Dropbox</b> \u2014 it is a note '
+      + 'on the queue. You can undo it.</p></div>',
+    showCancelButton: true, confirmButtonText: 'Dismiss them',
+  });
+  if (!r || !r.isConfirmed) return;
+
+  sync.relink.busyAll = true;
+  renderSyncPanel();
+  try {
+    var res = await api('/api/documents/relink/dismiss', 'POST', { case_ids: ids });
+    Toast.fire({ icon: 'success', title: (res && res.updated) + ' dismissed' });
+    await loadRelink();
+  } catch (err) {
+    Swal.fire('Could not dismiss', (err && err.message) || String(err), 'error');
+  }
+  sync.relink.busyAll = false;
+  renderSyncPanel();
+};
+
 function renderSyncPanel() {
   var el = E('syncPanel');
   if (!el || SCOPED) return;
@@ -1847,6 +2307,7 @@ function renderSyncPanel() {
 
   html += outOfRootHtml();
   html += zeroAttributionHtml();
+  html += relinkHtml();
 
   el.innerHTML = html;
 }
@@ -1867,6 +2328,49 @@ if (!SCOPED) document.addEventListener('click', function (ev) {
   if (togBtn) {
     return void onToggleRoot(togBtn.getAttribute('data-root-toggle'),
                              togBtn.getAttribute('data-root-want') === '1');
+  }
+
+  // ── S3.3 re-link ──────────────────────────────────────────────────────
+  // Indices, not paths, in the data attribute: a folder name may contain a
+  // quote, and round-tripping one through an HTML attribute to identify WHICH
+  // FOLDER to link is not a risk worth taking for a shorter handler.
+  var cand = t.closest('[data-relink-cand]');
+  if (cand) {
+    var parts = cand.getAttribute('data-relink-cand').split('|');
+    return void onRelinkConfirm(parts[0], parts[1]);
+  }
+  var rlExp = t.closest('[data-relink-expand]');
+  if (rlExp) {
+    var eid = rlExp.getAttribute('data-relink-expand');
+    sync.relink.expanded[eid] = !sync.relink.expanded[eid];
+    return void renderSyncPanel();
+  }
+  var rlWeak = t.closest('[data-relink-weak]');
+  if (rlWeak) {
+    var wid = rlWeak.getAttribute('data-relink-weak');
+    sync.relink.weak[wid] = !sync.relink.weak[wid];
+    renderSyncPanel();
+    return void reloadRelinkCase(wid).then(renderSyncPanel);
+  }
+  var rlDis = t.closest('[data-relink-dismiss]');
+  if (rlDis) return void onRelinkDismiss(rlDis.getAttribute('data-relink-dismiss'), false);
+
+  var rlUn = t.closest('[data-relink-undismiss]');
+  if (rlUn) return void onRelinkDismiss(rlUn.getAttribute('data-relink-undismiss'), true);
+
+  if (t.closest('[data-relink-dismiss-all]')) return void onRelinkDismissAll();
+
+  if (t.closest('[data-relink-toggle-nocand]')) {
+    sync.relink.showNoCandidate = !sync.relink.showNoCandidate;
+    return void renderSyncPanel();
+  }
+  if (t.closest('[data-relink-show-dismissed]')) {
+    sync.relink.showDismissed = !sync.relink.showDismissed;
+    renderSyncPanel();
+    return void loadRelink().then(renderSyncPanel);
+  }
+  if (t.closest('[data-relink-reload]')) {
+    return void loadRelink().then(renderSyncPanel);
   }
 
   var errCell = t.closest('[data-root-err]');

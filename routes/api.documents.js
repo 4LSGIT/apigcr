@@ -26,6 +26,13 @@
  * POST   /api/documents/sync-diagnostics    run the attribution report now
  * There is NO DELETE for a root — see the section header for why.
  *
+ * S3.3 — the guided re-link. Same declaration-order rule.
+ * GET    /api/documents/relink/queue        zero-attribution cases + candidates
+ * GET    /api/documents/relink/:caseId/candidates
+ * POST   /api/documents/relink              { case_id, folder_path } — THE CONFIRM
+ * POST   /api/documents/relink/dismiss      { case_id | case_ids, undo? }
+ * There is NO BULK RE-LINK — see that section's header for why.
+ *
  * Thin wrapper. Rows live in services/documentService.js; bytes live behind
  * services/documentSourceService.js. This file does no SQL and knows no
  * Dropbox specifics beyond one folder guard on /register (see there).
@@ -492,6 +499,193 @@ router.post('/api/documents/sync-diagnostics', jwtOrApiKey, async (req, res) => 
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+// GUIDED RE-LINK (S3.3)
+//
+// ⚠️ DECLARED BEFORE THE ':id' ROUTES for the same reason sync-roots is: Express
+// matches in declaration order, and `POST /api/documents/relink` is two
+// segments. There is no POST '/api/documents/:id' today; if one is ever added
+// it must go below this block or it will swallow it.
+//
+// ── THE ONE RULE, RESTATED AT THE BOUNDARY ────────────────────────────────
+// No link changes without a human confirming the specific pairing. Two things
+// follow for this file specifically:
+//
+//   · THERE IS NO BULK RE-LINK VERB. Not "confirm all high-confidence", not
+//     "apply every docket match". The docket lane is the strong one and it
+//     still only covers 4 of 418 cases; a bulk verb would exist to save eight
+//     clicks and would be the single most dangerous button in the app.
+//   · THE UI'S GREY-OUT IS NOT THE GUARD. POST /relink re-runs the exclusion
+//     server-side (documentSyncService.applyRelink step 1) and 409s. A stale
+//     panel, a replayed request and a hand-rolled curl all hit the same check.
+//
+// Dismissal is the exception that proves it: setRelinkDismissed accepts an
+// array because it changes no link at all — see its docblock.
+//
+// This file still does no SQL.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** cases.case_id is VARCHAR(20); production is uniformly 8 URL-safe chars. */
+function relinkCaseId(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  return /^[A-Za-z0-9_-]{1,20}$/.test(s) ? s : null;
+}
+
+/**
+ * GET /api/documents/relink/queue
+ *   ?include_weak=1        surname-only suggestions (off by default — see below)
+ *   ?include_dismissed=1   show rows already dismissed
+ *
+ * ── WHY THE QUEUE IS NOT READ OUT OF THE ATTRIBUTION REPORT ───────────────
+ * It cannot be. That report's `sample` lists only cases carrying RESIDUE, and
+ * residue for this population is exactly zero — all 418 intake folders are
+ * empty in Dropbox. So the report knows the COUNT and names none of the cases.
+ * relinkQueue runs the report's own cheap head query (77ms over 986 cached
+ * folders, driven by idx_dl_target) and returns the ids with their candidates.
+ *
+ * ── WHY WEAK MATCHES ARE OPT-IN ───────────────────────────────────────────
+ * Surname-only matching produces a suggestion for most of the queue and is
+ * wrong nearly every time — measured, with the wrong-client examples recorded
+ * in documentSyncService's re-link section header. It is reachable because the
+ * pre-template legacy trees hold hand-made folders a conjunctive rule cannot
+ * find; it is off by default because a plausible wrong answer next to a
+ * confirm button is worse than no answer.
+ *
+ * READ-ONLY. Writes nothing, resolves nothing, calls no provider.
+ */
+router.get('/api/documents/relink/queue', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const out = await sync.relinkQueue(req.db, {
+      includeWeak:      req.query.include_weak === '1',
+      includeDismissed: req.query.include_dismissed === '1',
+    });
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * GET /api/documents/relink/:caseId/candidates
+ *
+ * One case. What the panel calls after an action to repaint a single row
+ * without re-ranking the whole queue.
+ */
+router.get('/api/documents/relink/:caseId/candidates', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const caseId = relinkCaseId(req.params.caseId);
+    if (!caseId) {
+      return res.status(400).json({ status: 'error', message: 'Invalid case id' });
+    }
+    const out = await sync.relinkCandidates(req.db, caseId, {
+      includeWeak: req.query.include_weak === '1',
+    });
+    if (!out) return res.status(404).json({ status: 'error', message: 'Case not found' });
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * POST /api/documents/relink — { case_id, folder_path }
+ *
+ * THE CONFIRM. A person has looked at a specific folder next to a specific
+ * case and said yes. Everything this does is in
+ * documentSyncService.applyRelink; the ordering constraints are documented
+ * there and they are not rearrangeable.
+ *
+ * Gated on the kill switch like every other mutating action on this surface,
+ * and for the same reason: `documents_sync_enabled` means "this engine does
+ * not run", and a second control surface that ignored it would be exactly the
+ * split-brain lib/internal_functions/documents.js refused to create. Reported
+ * as `skipped` rather than an error — nothing went wrong — and the panel
+ * branches on it explicitly so a skip can never paint as a success.
+ *
+ * 409 means the folder already belongs to another case. That is the guard, and
+ * it is re-run here rather than trusted from the UI.
+ */
+router.post('/api/documents/relink', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const { case_id, folder_path } = req.body || {};
+
+    const caseId = relinkCaseId(case_id);
+    if (!caseId) {
+      return res.status(400).json({ status: 'error', message: 'case_id is required' });
+    }
+    if (!folder_path) {
+      return res.status(400).json({ status: 'error', message: 'folder_path is required' });
+    }
+
+    if (!await sync.isSyncEnabled(req.db)) {
+      return res.json({
+        status: 'success',
+        result: { skipped: true, reason: 'documents_sync_enabled is not "1"' },
+      });
+    }
+
+    const result = await sync.applyRelink(req.db, caseId, folder_path, {
+      actorUserId: actingUserId(req),
+    });
+    res.json({ status: 'success', result });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * POST /api/documents/relink/dismiss — { case_id } | { case_ids: [...] }
+ *                                      + { undo: true } to un-dismiss
+ *
+ * ── WHY THIS ONE TAKES AN ARRAY WHEN /relink DELIBERATELY DOES NOT ────────
+ * Dismissal stamps two columns on case_folder_cache. It changes no
+ * document_link, no cases row, and touches no provider — it says "I looked at
+ * this and there is nothing to do", which is a note about the QUEUE, not an
+ * assertion about a document. The ONE RULE governs link changes; this is not
+ * one, so the bulk form carries none of the risk the bulk re-link would.
+ *
+ * And the queue's real shape makes it necessary rather than merely convenient:
+ * roughly 394 of the 418 have no candidate anywhere in the estate because the
+ * client never sent a document. Making each of those an individual click would
+ * guarantee the queue is never cleared, and a queue nobody clears is a queue
+ * nobody reads.
+ *
+ * `undo` exists because a dismissal is a judgement and judgements are revised.
+ */
+router.post('/api/documents/relink/dismiss', jwtOrApiKey, async (req, res) => {
+  try {
+    const sync = require('../services/documentSyncService');
+    const body = req.body || {};
+
+    const raw = Array.isArray(body.case_ids)
+      ? body.case_ids
+      : (body.case_id != null ? [body.case_id] : []);
+
+    const ids = raw.map(relinkCaseId).filter(Boolean);
+    if (!ids.length) {
+      return res.status(400).json({
+        status: 'error', message: 'case_id or case_ids is required',
+      });
+    }
+    if (ids.length !== raw.length) {
+      return res.status(400).json({
+        status: 'error', message: 'one or more case ids are malformed',
+      });
+    }
+
+    const out = await sync.setRelinkDismissed(req.db, ids, {
+      dismissed: !body.undo,
+      actorUserId: actingUserId(req),
+    });
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // GET /api/documents — list
 // ─────────────────────────────────────────────────────────────
@@ -743,8 +937,14 @@ router.get('/api/documents/:id/raw', jwtOrApiKey, async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // POST /api/documents/:id/share — permanent shared link
 // ─────────────────────────────────────────────────────────────
-// The ONLY place a permanent public link is minted. Get-or-create at the
-// provider, then cache it on the row so a second call is a no-op there too.
+// The only place a permanent public link is minted FOR A DOCUMENT. Get-or-create
+// at the provider, then cache it on the row so a second call is a no-op too.
+//
+// The one other sanctioned minting site is the S3.3 re-link confirm, and the
+// distinction is the object, not the permission: this mints a link to a FILE
+// and stores it on documents.shared_link; that one mints a link to a FOLDER and
+// stores it on cases.case_dropbox, mirroring exactly what intake minted when
+// the case was created. Neither is a general-purpose link factory.
 router.post('/api/documents/:id/share', jwtOrApiKey, async (req, res) => {
   try {
     const row = await loadOr404(req, res);

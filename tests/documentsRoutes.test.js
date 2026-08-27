@@ -88,6 +88,12 @@ jest.mock('../services/documentSyncService', () => ({
   latestJobReports: jest.fn(),
   attributionReport: jest.fn(),
   syncRoot:         jest.fn(),
+  // S3.3 — the guided re-link. Same split: the substance is in
+  // tests/documentRelink.test.js, the wiring is here.
+  relinkQueue:        jest.fn(),
+  relinkCandidates:   jest.fn(),
+  applyRelink:        jest.fn(),
+  setRelinkDismissed: jest.fn(),
 }));
 
 // The factory may not close over a plain outer variable (jest hoists it), so
@@ -1000,5 +1006,187 @@ describe('GET /api/documents — the unlinked param', () => {
     const body = await (await fetch(`${base}/api/documents?unlinked=case`)).json();
     expect(body.unlinked).toBe('case');
     expect(body.total).toBe(130338);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GUIDED RE-LINK (S3.3) — the wiring
+//
+// Everything that decides WHETHER a re-link is safe lives in the service and
+// is tested in tests/documentRelink.test.js. What the route owns, and what is
+// asserted here:
+//
+//   · declaration order — /relink/... must not be swallowed by /:id
+//   · the kill switch, and that a skip is not an error
+//   · that the 409 from the guard reaches the client AS a 409
+//   · that dismiss takes an array and re-link does NOT
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('S3.3 — re-link routes', () => {
+  test('GET /relink/queue passes the two flags through', async () => {
+    syncSvc.relinkQueue.mockResolvedValue({ total: 418, actionable: 24, cases: [] });
+    const r = await fetch(`${base}/api/documents/relink/queue?include_weak=1&include_dismissed=1`);
+    expect(r.status).toBe(200);
+    expect((await r.json()).actionable).toBe(24);
+    expect(syncSvc.relinkQueue).toHaveBeenCalledWith(
+      DB, { includeWeak: true, includeDismissed: true });
+  });
+
+  test('weak matches are OFF unless explicitly asked for', async () => {
+    syncSvc.relinkQueue.mockResolvedValue({ cases: [] });
+    await fetch(`${base}/api/documents/relink/queue`);
+    expect(syncSvc.relinkQueue).toHaveBeenCalledWith(
+      DB, { includeWeak: false, includeDismissed: false });
+  });
+
+  test('THE DECLARATION-ORDER FENCE: "relink" is not parsed as a document id', async () => {
+    // GET /api/documents/:id and GET /api/documents/relink/queue differ in
+    // segment count, but POST /api/documents/relink is two segments — exactly
+    // the shape that would be swallowed if a POST /:id were ever added above
+    // it. If this 400s with "Invalid id", the block has been moved.
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    syncSvc.applyRelink.mockResolvedValue({ linked_docs: 3 });
+    const r = await fetch(`${base}/api/documents/relink`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'abc12345', folder_path: '/  x/ y' }),
+    });
+    expect(r.status).toBe(200);
+    expect((await r.json()).result.linked_docs).toBe(3);
+    expect(documents.getById).not.toHaveBeenCalled();
+  });
+
+  test('the acting user comes from the JWT and is not invented', async () => {
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    syncSvc.applyRelink.mockResolvedValue({ linked_docs: 0 });
+    await fetch(`${base}/api/documents/relink`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'abc12345', folder_path: '/  x/ y' }),
+    });
+    expect(syncSvc.applyRelink).toHaveBeenCalledWith(
+      DB, 'abc12345', '/  x/ y', { actorUserId: 9 });
+  });
+
+  test('the kill switch SKIPS the confirm — 200, and nothing was called', async () => {
+    syncSvc.isSyncEnabled.mockResolvedValue(false);
+    const r = await fetch(`${base}/api/documents/relink`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'abc12345', folder_path: '/  x/ y' }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.result.skipped).toBe(true);
+    expect(syncSvc.applyRelink).not.toHaveBeenCalled();
+  });
+
+  test('THE 409 FROM THE GUARD REACHES THE CLIENT AS A 409', async () => {
+    // The client must be able to tell "that folder belongs to someone else"
+    // apart from a generic failure — it is the one error with a specific,
+    // actionable meaning.
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    const err = new Error('that folder is already linked to case owner9');
+    err.status = 409;
+    syncSvc.applyRelink.mockRejectedValue(err);
+    const r = await fetch(`${base}/api/documents/relink`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'abc12345', folder_path: '/  x/ y' }),
+    });
+    expect(r.status).toBe(409);
+    expect((await r.json()).message).toContain('owner9');
+  });
+
+  test('a missing folder_path is a 400 and never reaches the service', async () => {
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    const r = await fetch(`${base}/api/documents/relink`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'abc12345' }),
+    });
+    expect(r.status).toBe(400);
+    expect(syncSvc.applyRelink).not.toHaveBeenCalled();
+  });
+
+  test('THERE IS NO BULK RE-LINK: an array of case_ids is rejected', async () => {
+    // Not an oversight. The strong lane still only covers a handful of cases,
+    // and a verb that applied many at once would be the most dangerous button
+    // in the app.
+    syncSvc.isSyncEnabled.mockResolvedValue(true);
+    const r = await fetch(`${base}/api/documents/relink`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_ids: ['a1', 'b2'], folder_path: '/  x/ y' }),
+    });
+    expect(r.status).toBe(400);
+    expect(syncSvc.applyRelink).not.toHaveBeenCalled();
+  });
+
+  test('dismiss DOES take an array — it changes no link', async () => {
+    syncSvc.setRelinkDismissed.mockResolvedValue({ updated: 2, case_ids: ['a1234567', 'b1234567'] });
+    const r = await fetch(`${base}/api/documents/relink/dismiss`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_ids: ['a1234567', 'b1234567'] }),
+    });
+    expect(r.status).toBe(200);
+    expect((await r.json()).updated).toBe(2);
+    expect(syncSvc.setRelinkDismissed).toHaveBeenCalledWith(
+      DB, ['a1234567', 'b1234567'], { dismissed: true, actorUserId: 9 });
+  });
+
+  test('dismiss is NOT gated on the kill switch — it is a note, not an engine action', async () => {
+    syncSvc.isSyncEnabled.mockResolvedValue(false);
+    syncSvc.setRelinkDismissed.mockResolvedValue({ updated: 1 });
+    const r = await fetch(`${base}/api/documents/relink/dismiss`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'a1234567' }),
+    });
+    expect(r.status).toBe(200);
+    expect(syncSvc.setRelinkDismissed).toHaveBeenCalled();
+  });
+
+  test('undo flips the flag', async () => {
+    syncSvc.setRelinkDismissed.mockResolvedValue({ updated: 1 });
+    await fetch(`${base}/api/documents/relink/dismiss`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'a1234567', undo: true }),
+    });
+    expect(syncSvc.setRelinkDismissed).toHaveBeenCalledWith(
+      DB, ['a1234567'], { dismissed: false, actorUserId: 9 });
+  });
+
+  test('a malformed case id is rejected rather than silently dropped', async () => {
+    const r = await fetch(`${base}/api/documents/relink/dismiss`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_ids: ['a1234567', 'not/a/case id'] }),
+    });
+    expect(r.status).toBe(400);
+    expect(syncSvc.setRelinkDismissed).not.toHaveBeenCalled();
+  });
+
+  test('GET /relink/:caseId/candidates 404s an unknown case', async () => {
+    syncSvc.relinkCandidates.mockResolvedValue(null);
+    const r = await fetch(`${base}/api/documents/relink/zzzzzzzz/candidates`);
+    expect(r.status).toBe(404);
+  });
+
+  test('every re-link route is behind jwtOrApiKey', async () => {
+    syncSvc.relinkQueue.mockResolvedValue({ cases: [] });
+    syncSvc.relinkCandidates.mockResolvedValue({ case_id: 'a1234567', candidates: [] });
+    syncSvc.setRelinkDismissed.mockResolvedValue({ updated: 1 });
+    jwtOrApiKey.mockClear();
+    await fetch(`${base}/api/documents/relink/queue`);
+    await fetch(`${base}/api/documents/relink/a1234567/candidates`);
+    await fetch(`${base}/api/documents/relink/dismiss`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_id: 'a1234567' }),
+    });
+    expect(jwtOrApiKey).toHaveBeenCalledTimes(3);
   });
 });
