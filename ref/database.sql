@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-27T09:54:42.233Z
+-- Generated: 2026-08-27T12:47:09.199Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:ae3ecaa148746e268944d4b8d4d19250
+-- Fingerprint: sha256:947c02843c18992218639be6b766a327
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -536,7 +536,7 @@ CREATE TABLE `cases` (
   `case_341_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_source` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_source_ref` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_dropbox` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_dropbox` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_primary_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_judge` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_trustee` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,

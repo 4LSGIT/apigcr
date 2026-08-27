@@ -376,6 +376,7 @@ ref/plans.md
 ref/review.md
 ref/routes.md
 ref/s3.3-relink.sql
+ref/s3.3b-relink-polish.sql
 ref/s7_migration.sql
 routes/_aitest.js
 routes/_courtexec.js
