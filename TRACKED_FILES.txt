@@ -756,6 +756,7 @@ tests/portalCaseService.test.js
 tests/portalDocsRoutes.test.js
 tests/portalDocsService.test.js
 tests/portalHome.test.js
+tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/refreshonmiss.k3.test.js
 tests/requirementService.test.js
