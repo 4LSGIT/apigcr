@@ -505,20 +505,39 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
       // NORMAL JOB TYPES (webhook, internal_function, custom_code, campaign_send,
       // task_due_reminder, task_daily_digest)
       //
-      // executeJob runs the external side effect on the pool and is NOT idempotent,
-      // so this transaction uses { retries: 0 } — a transient pre-commit failure must
-      // not re-run the callback and re-fire it. (Behaviour matches the pre-migration
-      // code: on a record-time failure the job is failed and retried on a later poll.)
-      const completion = await db.withTransaction(async (conn) => {
-        const rawOutput = await executeJob(job, db);
-        // Edge cases where rawOutput can be undefined:
-        //   - custom_code where the script body has no trailing expression
-        //   - webhook with 204/empty response where axios returns undefined data
-        // JSON.stringify(undefined) returns undefined, which recordResult would
-        // store as NULL — indistinguishable from a failure row. Coerce so success
-        // rows always round-trip as valid JSON.
-        const output = rawOutput === undefined ? { success: true } : rawOutput;
+      // executeJob runs OUTSIDE the bookkeeping transaction — deliberately.
+      //
+      // It used to run INSIDE it. That looked atomic and never was: executeJob
+      // receives `db` (the pool), so the job's own writes were on other
+      // connections and were never part of this transaction. The only thing the
+      // wrapper actually covered was recordResult + the reschedule/complete
+      // write. What it bought instead was a pooled connection with BEGIN issued
+      // and then ZERO protocol traffic for the entire duration of the job.
+      // SiteGround's wait_timeout is 60s (see startup/db.js), so any job running
+      // longer than a minute returned to a socket the server had already torn
+      // down and died on recordResult with
+      //     "Can't add new command when connection is in closed state"
+      // AFTER its side effect had fully succeeded — a false failure, three
+      // attempts, and a digest email. Observed on Documents Sync (132s–21min,
+      // 2026-08-26) and Documents Case Folder Cache (~215s, every 4h from
+      // 2026-08-27, with case_folder_cache correctly written on every "failed"
+      // run). Neither retry path could see it: conn.query bypasses the pool
+      // wrapper in startup/db.js, and this call site was { retries: 0 }.
+      //
+      // Hoisting the call changes no semantics — the transaction body is now
+      // pure DB, which is also what makes the auto-retry safe here (the
+      // { retries: 0 } existed solely because the non-idempotent executeJob
+      // was inside the callback and a retry would re-fire it).
+      const rawOutput = await executeJob(job, db);
+      // Edge cases where rawOutput can be undefined:
+      //   - custom_code where the script body has no trailing expression
+      //   - webhook with 204/empty response where axios returns undefined data
+      // JSON.stringify(undefined) returns undefined, which recordResult would
+      // store as NULL — indistinguishable from a failure row. Coerce so success
+      // rows always round-trip as valid JSON.
+      const output = rawOutput === undefined ? { success: true } : rawOutput;
 
+      const completion = await db.withTransaction(async (conn) => {
         // Record successful attempt
         await recordResult(
           conn,
@@ -544,7 +563,7 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
         }
 
         return job.type === "recurring" ? "advanced" : "completed";
-      }, { retries: 0 });
+      }, { retries: 3 });
 
       results.push({
         id: job.id,
