@@ -997,8 +997,199 @@ async function attributeUnlinked(db, opts = {}) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────
+// attributionReport — DIAGNOSTIC ONLY, mutates nothing
+// ─────────────────────────────────────────────────────────────
+
+/** Documents per page in the residue scan. Bounded; see the docblock. */
+const REPORT_PAGE = 10000;
+
+/** Wall-clock bound for one report run. Same reasoning as everywhere else here. */
+const DEFAULT_REPORT_RUNTIME_MS = 3 * 60 * 1000;
+
+/** Cases listed individually in the output before it truncates. */
+const REPORT_SAMPLE = 50;
+
+/**
+ * Report cases whose folder resolved cleanly but hold NO attributed documents,
+ * and — for each — how many registered documents still sit under that cached
+ * path. READ-ONLY: no links written, no cache rows touched, no events.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ * `out_of_root` (refreshCaseFolderCache) answers "is this folder watched?".
+ * It cannot catch the failure that actually bit us: `cases.case_dropbox` still
+ * holds the shared link minted at INTAKE, staff later moved the case's
+ * contents into a NEW working folder, and nobody re-pointed the case record.
+ * The intake folder is watched perfectly — it is simply empty — so out_of_root
+ * reports clean while the case's real documents go unattributed. 843 of 986
+ * cached folders resolve into Potential Cases, and only 427 of those cases
+ * have any document at all; the ~416 remainder were invisible until a link
+ * deletion made them conspicuous.
+ *
+ * ── WHAT THE RESIDUE COUNT SETTLES ────────────────────────────────────────
+ * The single-folder ruling rests on an inference from ONE worked example:
+ * that intake contents are MOVED, leaving empty history not worth a schema
+ * change. Residue tests that inference across the whole estate before S3.3 is
+ * chartered. Empty-abandoned everywhere confirms it; meaningful residue
+ * re-opens multi-folder with data rather than a lifecycle theory.
+ *
+ * Residue is broken out by WHY a document is still there, because the
+ * categories mean different things:
+ *
+ *   deleted                 — files WERE here and were removed. Consistent
+ *                             with "moved out"; supports single-folder.
+ *   active_linked_elsewhere — a LIVE file under case A's folder attributed to
+ *                             case B. The interesting signal: either a real
+ *                             mis-link or a genuinely shared folder, and the
+ *                             one that would re-open the question.
+ *   active_unlinked         — should be structurally IMPOSSIBLE after a full
+ *                             sweep lap: attributeUnlinked links exactly this
+ *                             shape. A non-zero count is a SWEEP BUG, not a
+ *                             lifecycle finding. Surfaced separately so the
+ *                             two can never be confused.
+ *
+ * ── WHY A FULL SCAN, AND WHY IT IS ITS OWN FUNCTION ───────────────────────
+ * `documents.path_lower` is TEXT with no index (verified: documents carries
+ * PRIMARY, uq_source_ext, path_hash, type, status, updated, server_modified,
+ * ft_docs — nothing on path_lower). So "documents under this folder" cannot
+ * be an indexed lookup. The obvious SQL —
+ *     JOIN case_folder_cache f ON d.path_lower LIKE CONCAT(f.path_lower,'/%')
+ * — is a 986 × 153k cross join and TIMES OUT on the readonly endpoint. It is
+ * done here instead: one paged pass over documents, matched in memory against
+ * a Set holding only the zero-attribution paths, using the same segment-safe
+ * _matchCase walk as the sweep.
+ *
+ * That scan is why this is a SIBLING of refreshCaseFolderCache rather than
+ * bolted into it. That function is wall-clock bound at 4 minutes precisely
+ * because its sequential Dropbox calls are slow; hanging an unbounded table
+ * scan off it would make a bounded function unbounded again. Same report,
+ * none of the coupling.
+ *
+ * @param {object} db
+ * @param {object} [opts] — { maxRuntimeMs, sample }
+ * @returns {Promise<object>} counts + a truncated per-case sample
+ */
+async function attributionReport(db, opts = {}) {
+  const startedAt = Date.now();
+  const deadline = startedAt + _int(opts.maxRuntimeMs, DEFAULT_REPORT_RUNTIME_MS);
+  const sampleSize = Math.min(_int(opts.sample, REPORT_SAMPLE), 500);
+
+  // Cached folders with NO case link anywhere. Cheap: idx_dl_target is
+  // (link_type, link_id), which is exactly this join.
+  const [zeroRows] = await db.query(
+    `SELECT f.case_id, f.path_lower, f.resolved_at
+       FROM case_folder_cache f
+       LEFT JOIN document_links dl
+         ON dl.link_type = 'case' AND dl.link_id = f.case_id
+      WHERE f.path_lower IS NOT NULL AND f.path_lower <> ''
+        AND dl.id IS NULL`,
+  );
+
+  const [[totals]] = await db.query(
+    `SELECT COUNT(*) AS cached FROM case_folder_cache
+      WHERE path_lower IS NOT NULL AND path_lower <> ''`,
+  );
+
+  const base = {
+    cached_folders: totals ? totals.cached : 0,
+    zero_attribution_cases: zeroRows.length,
+  };
+
+  if (!zeroRows.length) {
+    return {
+      ...base, cases_with_residue: 0, residue_total: 0,
+      residue_deleted: 0, residue_active_linked_elsewhere: 0, residue_active_unlinked: 0,
+      verdict: 'no_zero_attribution_cases',
+      scanned_documents: 0, pages: 0, timed_out: false,
+      elapsed_ms: Date.now() - startedAt, sample: [],
+    };
+  }
+
+  // Only the zero-attribution paths go in the map — every other cached folder
+  // is irrelevant here and would just slow the walk.
+  const targets = new Map();
+  for (const r of zeroRows) {
+    targets.set(String(r.path_lower), {
+      case_id: r.case_id, path_lower: r.path_lower,
+      total: 0, deleted: 0, active_linked_elsewhere: 0, active_unlinked: 0,
+    });
+  }
+
+  let fromId = 0, pages = 0, scanned = 0, timedOut = false;
+  for (;;) {
+    if (Date.now() >= deadline) { timedOut = true; break; }
+
+    // GROUP BY d.id is load-bearing: a document with several case links would
+    // otherwise arrive once per link and be counted several times. (This
+    // schema runs without ONLY_FULL_GROUP_BY, so the bare columns are fine —
+    // same relaxation listCases depends on.)
+    const [rows] = await db.query(
+      `SELECT d.id, d.path_lower, d.status,
+              MAX(dl.id IS NOT NULL) AS has_case_link
+         FROM documents d
+         LEFT JOIN document_links dl
+           ON dl.document_id = d.id AND dl.link_type = 'case'
+        WHERE d.id > ? AND d.path_lower IS NOT NULL
+        GROUP BY d.id
+        ORDER BY d.id
+        LIMIT ${REPORT_PAGE}`,
+      [fromId],
+    );
+    if (!rows.length) break;
+
+    pages++;
+    scanned += rows.length;
+    for (const r of rows) {
+      const hit = _matchCase(targets, r.path_lower);
+      if (!hit) continue;
+      hit.total++;
+      if (r.status === 'deleted') hit.deleted++;
+      else if (Number(r.has_case_link)) hit.active_linked_elsewhere++;
+      else hit.active_unlinked++;
+    }
+
+    fromId = rows[rows.length - 1].id;
+    if (rows.length < REPORT_PAGE) break;
+  }
+
+  const withResidue = [...targets.values()]
+    .filter(t => t.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  const sum = k => withResidue.reduce((n, t) => n + t[k], 0);
+  const residueTotal = sum('total');
+  const activeElsewhere = sum('active_linked_elsewhere');
+  const activeUnlinked = sum('active_unlinked');
+
+  return {
+    ...base,
+    cases_with_residue: withResidue.length,
+    residue_total: residueTotal,
+    residue_deleted: sum('deleted'),
+    residue_active_linked_elsewhere: activeElsewhere,
+    residue_active_unlinked: activeUnlinked,
+    // The ruling's test, stated plainly. active_unlinked is deliberately NOT
+    // part of it — that count is a sweep bug, not a lifecycle finding.
+    verdict: timedOut
+      ? 'incomplete_scan'
+      : (activeElsewhere === 0
+          ? 'empty_abandoned — single-folder model holds'
+          : 'live_residue — re-open multi-folder'),
+    ...(activeUnlinked > 0
+      ? { WARNING: `${activeUnlinked} active unlinked documents sit under a zero-attribution ` +
+                   `folder. attributeUnlinked should have linked these — investigate the sweep, ` +
+                   `this is not a lifecycle signal.` }
+      : {}),
+    scanned_documents: scanned, pages, timed_out: timedOut,
+    elapsed_ms: Date.now() - startedAt,
+    sample: withResidue.slice(0, sampleSize),
+    sample_truncated: withResidue.length > sampleSize,
+  };
+}
+
 module.exports = {
   refreshCaseFolderCache,
+  attributionReport,
   syncRoot,
   syncAll,
   attributeUnlinked,
@@ -1010,5 +1201,6 @@ module.exports = {
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_RUNTIME_MS,
   DEFAULT_CACHE_RUNTIME_MS,
+  DEFAULT_REPORT_RUNTIME_MS,
   SWEEP_WATERMARK_KEY,
 };

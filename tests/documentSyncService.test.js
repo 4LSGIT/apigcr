@@ -117,6 +117,18 @@ function makeDb({
         return [roots.filter(r => r.enabled).map(r => ({ id: r.id, path: r.path }))];
       }
 
+      // ── attributionReport ──────────────────────────────────────────────
+      if (/LEFT JOIN document_links dl ON dl\.link_type = 'case'/.test(flat)) {
+        return [db.zeroAttribution || []];
+      }
+      if (/^SELECT COUNT\(\*\) AS cached FROM case_folder_cache/.test(flat)) {
+        return [[{ cached: (db.cacheRows || []).length }]];
+      }
+      if (/^SELECT d\.id, d\.path_lower, d\.status/.test(flat)) {
+        const after = params[0];
+        return [(db.scanRows || []).filter(r => r.id > after)];
+      }
+
       // ── case_folder_cache ──────────────────────────────────────────────
       if (/FROM case_folder_cache/.test(flat)) return [cache];
       if (/^INSERT INTO case_folder_cache/.test(flat)) return [{ affectedRows: 1 }];
@@ -1327,6 +1339,170 @@ describe('refreshCaseFolderCache', () => {
 // The internal functions
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// attributionReport — the S3.3 decision instrument
+// ─────────────────────────────────────────────────────────────
+
+describe('attributionReport', () => {
+  // A case whose folder resolves perfectly and holds nothing is the signature
+  // of a stale cases.case_dropbox: the shared link minted at INTAKE, never
+  // re-pointed after the case was filed and its contents moved. out_of_root
+  // cannot see this — an intake folder is watched perfectly, just empty.
+
+  const INTAKE = '/r/  potential/  myers, sharon denise - x5zg4hu4';
+
+  function reportDb({ zero = [], scan = [], cached = 10 } = {}) {
+    const db = makeDb({ cache: new Array(cached).fill({ case_id: 'x', path_lower: '/z' }) });
+    db.zeroAttribution = zero;
+    db.scanRows = scan;
+    return db;
+  }
+
+  test('MUTATES NOTHING — no links, no cache writes, no events', async () => {
+    const db = reportDb({
+      zero: [{ case_id: 'X5zg4hU4', path_lower: INTAKE }],
+      scan: [
+        { id: 1, path_lower: `${INTAKE}/old.pdf`, status: 'deleted', has_case_link: 0 },
+        { id: 2, path_lower: '/r/  active/  case a/live.pdf', status: 'active', has_case_link: 1 },
+      ],
+    });
+
+    await sync.attributionReport(db);
+
+    expect(db.all('INSERT').length).toBe(0);
+    expect(db.all('UPDATE').length).toBe(0);
+    expect(db.all('DELETE').length).toBe(0);
+    expect(domainEvents.emit).not.toHaveBeenCalled();
+  });
+
+  test('DELETED residue reads as empty-abandoned — the single-folder model holds', async () => {
+    // Files were here and were moved out. That is the lifecycle the ruling
+    // assumed, now measured rather than inferred from one example.
+    const db = reportDb({
+      zero: [{ case_id: 'X5zg4hU4', path_lower: INTAKE }],
+      scan: [
+        { id: 1, path_lower: `${INTAKE}/a.pdf`, status: 'deleted', has_case_link: 0 },
+        { id: 2, path_lower: `${INTAKE}/b.pdf`, status: 'deleted', has_case_link: 0 },
+      ],
+    });
+
+    const out = await sync.attributionReport(db);
+
+    expect(out.zero_attribution_cases).toBe(1);
+    expect(out.residue_total).toBe(2);
+    expect(out.residue_deleted).toBe(2);
+    expect(out.residue_active_linked_elsewhere).toBe(0);
+    expect(out.verdict).toMatch(/empty_abandoned/);
+  });
+
+  test('LIVE residue linked to another case re-opens multi-folder', async () => {
+    // A live file under case A's folder attributed to case B is either a
+    // mis-link or a genuinely shared folder — the finding that would overturn
+    // the ruling, so it must not be averaged away into a total.
+    const db = reportDb({
+      zero: [{ case_id: 'X5zg4hU4', path_lower: INTAKE }],
+      scan: [
+        { id: 1, path_lower: `${INTAKE}/gone.pdf`, status: 'deleted', has_case_link: 0 },
+        { id: 2, path_lower: `${INTAKE}/live.pdf`, status: 'active',  has_case_link: 1 },
+      ],
+    });
+
+    const out = await sync.attributionReport(db);
+
+    expect(out.residue_active_linked_elsewhere).toBe(1);
+    expect(out.residue_deleted).toBe(1);
+    expect(out.verdict).toMatch(/live_residue/);
+  });
+
+  test('ACTIVE UNLINKED residue is flagged as a SWEEP BUG, not a lifecycle signal', async () => {
+    // attributeUnlinked links exactly this shape, so after a full lap the
+    // count should be structurally zero. Non-zero means the sweep is broken —
+    // a completely different investigation, and it must never be mistaken for
+    // evidence about case folders.
+    const db = reportDb({
+      zero: [{ case_id: 'X5zg4hU4', path_lower: INTAKE }],
+      scan: [{ id: 1, path_lower: `${INTAKE}/orphan.pdf`, status: 'active', has_case_link: 0 }],
+    });
+
+    const out = await sync.attributionReport(db);
+
+    expect(out.residue_active_unlinked).toBe(1);
+    expect(out.WARNING).toMatch(/investigate the sweep/);
+    // Deliberately excluded from the verdict.
+    expect(out.verdict).toMatch(/empty_abandoned/);
+  });
+
+  test('attribution matching is segment-safe, same walk as the sweep', async () => {
+    const db = reportDb({
+      zero: [{ case_id: 'A', path_lower: '/x/  case a' }],
+      scan: [
+        { id: 1, path_lower: '/x/  case ab/f.pdf', status: 'deleted', has_case_link: 0 },
+        { id: 2, path_lower: '/x/  case a/f.pdf',  status: 'deleted', has_case_link: 0 },
+      ],
+    });
+
+    const out = await sync.attributionReport(db);
+
+    expect(out.residue_total).toBe(1);            // NOT 2
+    expect(out.sample[0].case_id).toBe('A');
+  });
+
+  test('no zero-attribution cases short-circuits without scanning documents', async () => {
+    const db = reportDb({ zero: [] });
+    const out = await sync.attributionReport(db);
+
+    expect(out.verdict).toBe('no_zero_attribution_cases');
+    expect(out.scanned_documents).toBe(0);
+    expect(db.all('SELECT d.id, d.path_lower').length).toBe(0);
+  });
+
+  test('the wall clock yields incomplete_scan rather than a wrong answer', async () => {
+    const db = reportDb({
+      zero: [{ case_id: 'X5zg4hU4', path_lower: INTAKE }],
+      scan: [{ id: 1, path_lower: `${INTAKE}/a.pdf`, status: 'deleted', has_case_link: 0 }],
+    });
+
+    // maxRuntimeMs must be a POSITIVE integer — _int rejects <= 0 and falls
+    // back to the default, so the clock has to be moved instead.
+    let now = 1_000_000;
+    const spy = jest.spyOn(Date, 'now').mockImplementation(() => { now += 1000; return now; });
+    const out = await sync.attributionReport(db, { maxRuntimeMs: 1 });
+    spy.mockRestore();
+
+    expect(out.timed_out).toBe(true);
+    expect(out.verdict).toBe('incomplete_scan');   // counts are a lower bound, not an answer
+  });
+
+  test('sample is worst-residue first and reports its own truncation', async () => {
+    const db = reportDb({
+      zero: [
+        { case_id: 'SMALL', path_lower: '/x/  small' },
+        { case_id: 'BIG',   path_lower: '/x/  big' },
+      ],
+      scan: [
+        { id: 1, path_lower: '/x/  small/a.pdf', status: 'deleted', has_case_link: 0 },
+        { id: 2, path_lower: '/x/  big/a.pdf',   status: 'deleted', has_case_link: 0 },
+        { id: 3, path_lower: '/x/  big/b.pdf',   status: 'deleted', has_case_link: 0 },
+      ],
+    });
+
+    const out = await sync.attributionReport(db, { sample: 1 });
+
+    expect(out.cases_with_residue).toBe(2);
+    expect(out.sample.length).toBe(1);
+    expect(out.sample[0].case_id).toBe('BIG');
+    expect(out.sample_truncated).toBe(true);
+  });
+
+  test('the scan dedupes documents carrying several case links', async () => {
+    // GROUP BY d.id in the query; asserted here so nobody removes it and
+    // silently multiplies residue by link count.
+    const db = reportDb({ zero: [{ case_id: 'A', path_lower: '/x/  case a' }] });
+    await sync.attributionReport(db);
+    expect(db.find('SELECT d.id, d.path_lower').sql).toContain('GROUP BY d.id');
+  });
+});
+
 describe('lib/internal_functions/documents.js', () => {
   const fns = require('../lib/internal_functions/documents');
 
@@ -1409,8 +1585,22 @@ describe('lib/internal_functions/documents.js', () => {
     expect(out.output.out_of_root).toEqual(['OUT']);
   });
 
-  test('both carry __meta in the documents category (index.js auto-scan + save-time validation)', () => {
-    for (const fn of [fns.documents_sync, fns.documents_refresh_case_cache]) {
+  test('documents_attribution_report is kill-switch gated and read-only', async () => {
+    const off = makeDb({ roots: [root()], settings: {} });
+    expect((await fns.documents_attribution_report({}, off)).output.skipped).toBe(true);
+
+    const on = makeDb({ roots: [root()], settings: { documents_sync_enabled: '1' } });
+    on.zeroAttribution = [];
+    on.scanRows = [];
+    const out = await fns.documents_attribution_report({}, on);
+    expect(out.success).toBe(true);
+    expect(out.output.verdict).toBe('no_zero_attribution_cases');
+    expect(on.all('INSERT').length + on.all('UPDATE').length + on.all('DELETE').length).toBe(0);
+  });
+
+  test('all three functions carry __meta in the documents category (index.js auto-scan + save-time validation)', () => {
+    for (const fn of [fns.documents_sync, fns.documents_refresh_case_cache,
+                      fns.documents_attribution_report]) {
       expect(fn.__meta.category).toBe('documents');
       expect(typeof fn.__meta.description).toBe('string');
       expect(Array.isArray(fn.__meta.params)).toBe(true);
