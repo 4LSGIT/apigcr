@@ -85,3 +85,86 @@ describe('schema conventions (ref/database.sql)', () => {
     // then re-run `npm run db:ref`. See ref/2026-08-17_collation_normalize.sql.
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// COLUMN-LEVEL: cases.case_dropbox
+//
+// The suite above lints TABLE collations. This block lints ONE COLUMN, and it
+// exists because of the specific shape of the change that widened it.
+//
+// `ALTER TABLE ... MODIFY` restates a column's ENTIRE definition. Every
+// attribute you do not repeat is dropped and re-derived from the table default:
+// charset, collation, nullability, default, comment. The obvious form —
+//
+//     ALTER TABLE cases MODIFY case_dropbox VARCHAR(512) NULL;
+//
+// happens to be harmless here only because `cases` defaults to utf8mb4 /
+// utf8mb4_general_ci, which is what the column already carried. Change the
+// table default one day, or copy that MODIFY to a table that never had one, and
+// the same statement silently re-collates the column — the exact failure this
+// file's header describes, arriving through a different door. So the shipped
+// ALTER names every attribute, and this test is the fence that keeps it that way.
+//
+// ⚠️ RED UNTIL THE DDL RUNS. This reads the committed dump, so it goes green
+// only after the ALTER is applied AND `npm run db:ref` regenerates
+// ref/database.sql. Deploy order is SQL first; regenerating the dump is part of
+// applying it.
+describe('cases.case_dropbox — the widened column keeps every other attribute', () => {
+  const sql = fs.readFileSync(DUMP, 'utf8');
+
+  /** The column's line out of the dump, verbatim. */
+  function columnLine(table, column) {
+    const start = sql.indexOf(`CREATE TABLE \`${table}\``);
+    if (start === -1) return null;
+    const end = sql.indexOf('\n) ENGINE=', start);
+    const body = sql.slice(start, end === -1 ? undefined : end);
+    for (const line of body.split('\n')) {
+      if (line.trim().startsWith(`\`${column}\``)) return line.trim().replace(/,$/, '');
+    }
+    return null;
+  }
+
+  const line = columnLine('cases', 'case_dropbox');
+
+  test('the column is present in the dump (guards this block from rotting)', () => {
+    expect(line).toBeTruthy();
+  });
+
+  test('it is VARCHAR(512) — widened so a valid link is never rejected as too long', () => {
+    // 255 was the original. The guard in documentSyncService rejects rather
+    // than clamps, so a column narrower than a real Dropbox link turns a
+    // correct confirm into a 500. Longest live value is 125; 512 is headroom.
+    expect(line).toMatch(/varchar\(512\)/i);
+  });
+
+  test('CHARACTER SET and COLLATE survived the MODIFY, spelled out', () => {
+    // Explicit, not inherited. `case_id` joins against this table constantly
+    // and a re-collated column is a join that fails months later.
+    expect(line).toMatch(/CHARACTER SET utf8mb4/i);
+    expect(line).toMatch(/COLLATE utf8mb4_general_ci/i);
+  });
+
+  test('it is still nullable with a NULL default', () => {
+    // 33 of 1,074 cases have no Dropbox folder. NOT NULL here would break case
+    // creation, which sets ~4 columns and leans on defaults for the rest.
+    expect(line).toMatch(/DEFAULT NULL/i);
+    expect(line).not.toMatch(/\bNOT NULL\b/i);
+  });
+
+  test('the application guard agrees with the column', () => {
+    // Two numbers that must not drift: the column width and the reject
+    // threshold. If they disagree, either valid links 500 or truncated ones
+    // reach the column silently (no STRICT_TRANS_TABLES to catch it).
+    const width = Number(/varchar\((\d+)\)/i.exec(line)[1]);
+    const sync = require('../services/documentSyncService');
+    expect(sync.CASE_DROPBOX_MAX).toBe(width);
+  });
+
+  test('the curated report manifest declares the same type', () => {
+    // manifest.js is prose the AI report author reads as fact. Nothing
+    // validates it against the schema, so it drifts silently unless something
+    // like this asks.
+    const { TABLES } = require('../lib/reportSchema/manifest');
+    expect(TABLES.cases.columns.case_dropbox.type).toBe('varchar(512)');
+  });
+});

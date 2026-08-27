@@ -106,9 +106,21 @@ const ROOTS = [
  * what the GROUP BY returns — so the transitive roll-up is exercised rather
  * than fed its own answer.
  */
+/**
+ * Undo documentService._escapeLike and strip the trailing '/%' so the stub can
+ * answer a prefix LIKE the way MySQL would. Keeps the fixtures honest about the
+ * escaping instead of letting a test pass against a pattern the DB would read
+ * differently.
+ */
+function likePrefix(pattern) {
+  return String(pattern)
+    .replace(/\/%$/, '')
+    .replace(/\\([%_\\])/g, '$1');
+}
+
 function makeDb({
   dirs = [], cases = [], contacts = [], cache = [], zero = null,
-  docsUnder = [], roots = ROOTS, settings = {},
+  docs = [], links = [], roots = ROOTS, settings = {},
 } = {}) {
   const calls = [];
   const db = {
@@ -117,6 +129,13 @@ function makeDb({
     find: (needle) => calls.find(c => c.sql.includes(needle)),
     all:  (needle) => calls.filter(c => c.sql.includes(needle)),
     linkInserts: [],
+    // A LIVE link table, not a canned response. The mis-click correction below
+    // is only a real test if the second confirm has to remove rows the first
+    // confirm actually wrote.
+    links,
+    docs,
+    linksFor: (caseId) => links.filter(
+      l => l.link_type === 'case' && String(l.link_id) === String(caseId)),
     query: async (sql, params = []) => {
       const flat = String(sql).replace(/\s+/g, ' ').trim();
       calls.push({ sql: flat, params });
@@ -186,10 +205,54 @@ function makeDb({
         return [cases.filter(c => c.case_dropbox)];
       }
 
-      if (/^SELECT d\.id, d\.path_lower FROM documents d/.test(flat)) return [docsUnder];
+      // The targeted-attribution scan. Filtered for real — status, the prefix,
+      // and the anti-join against existing path-links — so a document that
+      // already carries one is skipped here exactly as it would be in MySQL.
+      if (/^SELECT d\.id, d\.path_lower FROM documents d/.test(flat)) {
+        const prefix = likePrefix(params[1]);
+        return [docs.filter(d =>
+          (d.status || 'active') === 'active' &&
+          d.path_lower &&
+          d.path_lower.startsWith(prefix + '/') &&
+          !links.some(l => l.document_id === d.id && l.link_type === 'case' &&
+                           l.relation === 'path'))
+          .map(d => ({ id: d.id, path_lower: d.path_lower }))];
+      }
       if (/^INSERT INTO document_links/.test(flat)) {
         db.linkInserts.push(params);
+        // 5 params per row for both the single and the bulk statements.
+        for (let i = 0; i + 4 < params.length; i += 5) {
+          const row = {
+            document_id: params[i], link_type: params[i + 1], link_id: params[i + 2],
+            relation: params[i + 3], created_by: params[i + 4],
+          };
+          const dupe = links.find(l => l.document_id === row.document_id &&
+            l.link_type === row.link_type && String(l.link_id) === String(row.link_id));
+          if (!dupe) links.push(row);           // ON DUPLICATE KEY UPDATE id = id
+        }
         return [{ affectedRows: 1 }];
+      }
+      // reconcileCaseFolderLinks. APPLIED, not acknowledged: the predicate is
+      // evaluated against the live link and document sets, so a clause dropped
+      // from the real statement shows up here as a surviving row.
+      if (/^DELETE dl FROM document_links dl/.test(flat)) {
+        const [caseId, relation, pattern] = params;
+        const prefix = likePrefix(pattern);
+        const byId = new Map(docs.map(d => [d.id, d]));
+        let removed = 0;
+        for (let i = links.length - 1; i >= 0; i--) {
+          const l = links[i];
+          if (l.link_type !== 'case') continue;
+          if (String(l.link_id) !== String(caseId)) continue;
+          if (l.relation !== relation) continue;
+          if (l.created_by != null) continue;
+          const d = byId.get(l.document_id);
+          const under = d && d.path_lower && d.path_lower.startsWith(prefix + '/');
+          if (under) continue;
+          links.splice(i, 1);
+          removed++;
+        }
+        return [{ affectedRows: removed }];
       }
       if (/FROM app_settings WHERE `key` = \?/.test(flat)) {
         const v = settings[params[0]];
@@ -613,10 +676,11 @@ describe('applyRelink', () => {
       cases: [kase('c1', { case_dropbox: 'https://dbx/intake-link' })],
       contacts: [contact('c1', 'Myers, Sharon')],
       cache: [{ case_id: 'c1', path_lower: `${POTENTIAL}/ myers, sharon - c1 - 2024-01-01` }],
-      docsUnder: [
+      docs: [
         { id: 101, path_lower: `${TARGET}/a.pdf` },
         { id: 102, path_lower: `${TARGET}/ docket/b.pdf` },
       ],
+      links: [],
       ...over,
     });
   }
@@ -677,7 +741,7 @@ describe('applyRelink', () => {
         { case_id: 'c1', path_lower: `${POTENTIAL}/ old` },
         { case_id: 'other9', path_lower: nested },
       ],
-      docsUnder: [
+      docs: [
         { id: 101, path_lower: `${TARGET}/mine.pdf` },
         { id: 202, path_lower: `${nested}/theirs.pdf` },
       ],
@@ -726,18 +790,38 @@ describe('applyRelink', () => {
   test('an over-long shared link is REJECTED, never clamped', async () => {
     // A truncated URL is not a shortened label, it is a link that resolves to
     // nothing — and this schema has no STRICT_TRANS_TABLES to catch it.
-    dropbox.getOrCreateSharedLink.mockResolvedValue('https://dbx/' + 'x'.repeat(400));
+    //
+    // The threshold moved from 255 to 512 when the column was widened, so this
+    // pins the CURRENT column width rather than a literal — the two must not
+    // drift, and tests/schemaConventions.test.js asserts the same pair from the
+    // schema side.
+    dropbox.getOrCreateSharedLink.mockResolvedValue(
+      'https://dbx/' + 'x'.repeat(sync.CASE_DROPBOX_MAX));
     const db = confirmDb();
     await expect(sync.applyRelink(db, 'c1', TARGET, {}))
       .rejects.toMatchObject({ status: 500, message: expect.stringContaining('truncated') });
     expect(caseService.updateCase).not.toHaveBeenCalled();
   });
 
+  test('a link that fits is stored — the 412-char case 255 would have rejected', async () => {
+    // The reason the column was widened rather than the guard relaxed: a valid
+    // Dropbox link longer than 255 used to 500 a perfectly correct confirm.
+    const long = 'https://dbx/' + 'x'.repeat(400);
+    expect(long.length).toBeGreaterThan(255);
+    expect(long.length).toBeLessThanOrEqual(sync.CASE_DROPBOX_MAX);
+    dropbox.getOrCreateSharedLink.mockResolvedValue(long);
+    const db = confirmDb();
+    const out = await sync.applyRelink(db, 'c1', TARGET, { actorUserId: 9 });
+    expect(out.shared_link).toBe(long);
+    expect(caseService.updateCase).toHaveBeenCalledWith(
+      db, 'c1', { case_dropbox: long }, { userId: 9, source: 'documents_relink' });
+  });
+
   test('a folder with no registered files falls back to a provider stat', async () => {
     const empty = `${ACTIVE}/  active - bankruptcy/ brand new folder`;
     dropbox.getMetadata.mockResolvedValue({ '.tag': 'folder', path_lower: empty });
     dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: empty });
-    const db = confirmDb({ docsUnder: [] });
+    const db = confirmDb({ docs: [] });
     const out = await sync.applyRelink(db, 'c1', empty, {});
     expect(dropbox.getMetadata).toHaveBeenCalled();
     expect(out.warnings.join(' ')).toMatch(/no registered documents/);
@@ -745,7 +829,7 @@ describe('applyRelink', () => {
 
   test('a path that is a FILE is refused', async () => {
     dropbox.getMetadata.mockResolvedValue({ '.tag': 'file' });
-    const db = confirmDb({ docsUnder: [] });
+    const db = confirmDb({ docs: [] });
     await expect(sync.applyRelink(db, 'c1', `${ACTIVE}/  active - bankruptcy/ x.pdf`, {}))
       .rejects.toMatchObject({ status: 400 });
   });
@@ -787,6 +871,196 @@ describe('applyRelink', () => {
     // The link IS updated; the documents will attach on the next cache run.
     expect(caseService.updateCase).toHaveBeenCalled();
     expect(out.warnings.join(' ')).toMatch(/resolved the new link|did not refresh/);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CONFIRM-RECONCILE — a mis-click has to be correctable
+//
+// Before this, the sweep only ever ADDED. A staffer who confirmed the wrong
+// folder, saw the wrong client's documents land on the case, and corrected to
+// the right one would have kept BOTH sets forever — and the correction would
+// have looked like it worked. That is the worst available outcome: a
+// confidentiality failure that presents as a fix.
+//
+// The invariant these tests pin: after a confirm, the case's MACHINE links are
+// exactly the documents under its folder. Human links are outside the
+// invariant and are never touched.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('confirm-reconcile', () => {
+  const RIGHT = `${ACTIVE}/  active - bankruptcy/ 13 - myers, sharon - 23-46646-lsg - chapter 13`;
+  const WRONG = `${ACTIVE}/  active - bankruptcy/ 13 - myers, sharonda - 24-11111-abc - chapter 13`;
+
+  const machine = (id, caseId) =>
+    ({ document_id: id, link_type: 'case', link_id: caseId, relation: 'path', created_by: null });
+
+  function db2(over = {}) {
+    return makeDb({
+      dirs: [dir(RIGHT, 2), dir(WRONG, 2)],
+      cases: [kase('c1', { case_dropbox: 'https://dbx/old' })],
+      contacts: [contact('c1', 'Myers, Sharon')],
+      cache: [{ case_id: 'c1', path_lower: `${POTENTIAL}/ myers, sharon - c1` }],
+      docs: [
+        { id: 1, path_lower: `${RIGHT}/right-a.pdf` },
+        { id: 2, path_lower: `${RIGHT}/ sub/right-b.pdf` },
+        { id: 8, path_lower: `${WRONG}/wrong-a.pdf` },
+        { id: 9, path_lower: `${WRONG}/wrong-b.pdf` },
+      ],
+      ...over,
+    });
+  }
+
+  beforeEach(() => {
+    dropbox.getOrCreateSharedLink.mockResolvedValue('https://dbx/new');
+  });
+
+  test('stale path-links are RETRACTED and counted', async () => {
+    // The case arrives holding two documents that are not in the new folder.
+    const db = db2({ links: [machine(8, 'c1'), machine(9, 'c1')] });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+
+    const out = await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+
+    expect(out.detached_docs).toBe(2);
+    expect(out.linked_docs).toBe(2);
+    expect(db.linksFor('c1').map(l => l.document_id).sort()).toEqual([1, 2]);
+  });
+
+  test('A HUMAN LINK IS NEVER TOUCHED, even to a document outside the folder', async () => {
+    // created_by set means a person filed it. Correcting a folder must not
+    // silently undo somebody's filing decision.
+    const db = db2({
+      links: [
+        { document_id: 8, link_type: 'case', link_id: 'c1', relation: 'path', created_by: 5 },
+        { document_id: 9, link_type: 'case', link_id: 'c1', relation: 'manual', created_by: 5 },
+      ],
+    });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+
+    const out = await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+
+    expect(out.detached_docs).toBe(0);
+    expect(db.linksFor('c1').map(l => l.document_id).sort()).toEqual([1, 2, 8, 9]);
+  });
+
+  test('a NON-PATH machine link is not ours to retract either', async () => {
+    // Belt to created_by's braces: relation is the engine's own mark, and
+    // anything else is a classification somebody chose.
+    const db = db2({
+      links: [{ document_id: 8, link_type: 'case', link_id: 'c1', relation: 'esign', created_by: null }],
+    });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+
+    const out = await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+    expect(out.detached_docs).toBe(0);
+    expect(db.linksFor('c1').some(l => l.document_id === 8)).toBe(true);
+  });
+
+  test('ANOTHER CASE\u2019S links are its own business', async () => {
+    const db = db2({ links: [machine(8, 'other9'), machine(9, 'c1')] });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+
+    const out = await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+    expect(out.detached_docs).toBe(1);                       // only c1's
+    expect(db.linksFor('other9').map(l => l.document_id)).toEqual([8]);
+  });
+
+  test('a document already correctly linked is left alone, not churned', async () => {
+    const db = db2({ links: [machine(1, 'c1')] });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+
+    const out = await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+    expect(out.detached_docs).toBe(0);
+    expect(out.linked_docs).toBe(1);                          // only doc 2 was new
+    expect(db.linksFor('c1').map(l => l.document_id).sort()).toEqual([1, 2]);
+  });
+
+  test('THE MIS-CLICK, END TO END: wrong folder, then right folder', async () => {
+    const db = db2();
+
+    // 1. the mis-click — another client's documents land on the case
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: WRONG });
+    const bad = await sync.applyRelink(db, 'c1', WRONG, { actorUserId: 9 });
+    expect(bad.linked_docs).toBe(2);
+    expect(db.linksFor('c1').map(l => l.document_id).sort()).toEqual([8, 9]);
+
+    // 2. the correction
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+    const good = await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+
+    // 3. the wrong client's documents are GONE, not merely outnumbered
+    expect(good.detached_docs).toBe(2);
+    expect(good.linked_docs).toBe(2);
+    expect(db.linksFor('c1').map(l => l.document_id).sort()).toEqual([1, 2]);
+
+    // 4. and BOTH actions are on the record
+    expect(logService.createLogEntry).toHaveBeenCalledTimes(2);
+    const [first, second] = logService.createLogEntry.mock.calls.map(c => c[1]);
+    expect(first.extra.relink).toMatchObject({ new_path: WRONG, detached_docs: 0, linked_docs: 2 });
+    expect(second.extra.relink).toMatchObject({ new_path: RIGHT, detached_docs: 2, linked_docs: 2 });
+    expect(second.extra.relink.old_path).toBe(WRONG);
+    expect(second.message).toMatch(/Detached 2 documents no longer in the folder, attached 2/);
+  });
+
+  test('THE RETRACTION IS SILENT — there is no unlink event to fire', async () => {
+    const db = db2({ links: [machine(8, 'c1'), machine(9, 'c1')] });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+    await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+
+    const emitted = domainEvents.emit.mock.calls.map(c => c[1]);
+    expect(emitted).not.toContain('document.unlinked');
+    expect(emitted).not.toContain('document.linked');
+  });
+
+  test('IT RETRACTS BEFORE IT ATTACHES — the safe place to crash', async () => {
+    // Disjoint sets, so order cannot change the OUTCOME. It changes the
+    // failure outcome: stop after the retraction and the case holds fewer
+    // wrong links; stop after the attachment and it holds the right ones AND
+    // the wrong ones.
+    const db = db2({ links: [machine(8, 'c1')] });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+    await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+
+    const order = db.sqls();
+    const del = order.findIndex(q => q.startsWith('DELETE dl FROM document_links'));
+    const ins = order.findIndex(q => q.startsWith('INSERT INTO document_links'));
+    expect(del).toBeGreaterThan(-1);
+    expect(ins).toBeGreaterThan(-1);
+    expect(del).toBeLessThan(ins);
+  });
+
+  test('AN UNRESOLVED CACHE SKIPS BOTH — never detach against a guess', async () => {
+    // If the refresh could not reach Dropbox we do not know what the folder
+    // resolved to. Attaching on a guess is bad; detaching on one is worse,
+    // because the sweep only adds and would not put back what a wrong guess
+    // removed. Both steps go together or neither does.
+    dropbox.getSharedLinkMetadata.mockRejectedValue(new Error('dropbox is down'));
+    const db = db2({
+      links: [machine(8, 'c1')],
+      cache: [{ case_id: 'c1', path_lower: null }],
+    });
+
+    const out = await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+    expect(out.detached_docs).toBe(0);
+    expect(out.linked_docs).toBe(0);
+    expect(db.linksFor('c1').map(l => l.document_id)).toEqual([8]);   // untouched
+    expect(out.warnings.join(' ')).toMatch(/did not refresh/);
+  });
+
+  test('the scope clauses are all IN THE STATEMENT, not applied afterwards', async () => {
+    const db = db2({ links: [machine(8, 'c1')] });
+    dropbox.getSharedLinkMetadata.mockResolvedValue({ path_lower: RIGHT });
+    await sync.applyRelink(db, 'c1', RIGHT, { actorUserId: 9 });
+
+    const del = db.find('DELETE dl FROM document_links');
+    expect(del.sql).toMatch(/dl\.link_type = 'case'/);
+    expect(del.sql).toMatch(/dl\.link_id = \?/);
+    expect(del.sql).toMatch(/dl\.relation = \?/);
+    expect(del.sql).toMatch(/dl\.created_by IS NULL/);
+    // NOT LIKE against a NULL path yields NULL, not TRUE — a document with no
+    // path would survive a filter that only said NOT LIKE.
+    expect(del.sql).toMatch(/d\.path_lower IS NULL OR d\.path_lower NOT LIKE \?/);
   });
 });
 
@@ -886,6 +1160,17 @@ describe('_nameKey', () => {
 
 describe('_likeEscape', () => {
   test('escapes the LIKE metacharacters so a folder named "100%_x" is literal', () => {
-    expect(sync._likeEscape('/a/100%_x')).toBe('/a/100|%|_x');
+    expect(sync._likeEscape('/a/100%_x')).toBe('/a/100\\%\\_x');
+  });
+
+  test('IT IS THE HOUSE IDIOM, not a second one', () => {
+    // S3.3 shipped a private '|'-escape here. Two escaping conventions against
+    // the same column, in adjacent statements of the same function, is a trap
+    // for whoever edits one of them next — so this now delegates. If someone
+    // reintroduces a local implementation, this fails.
+    const docs = require('../services/documentService');
+    for (const s of ['/a/b', '/100%_x', 'back\\slash', '/  Law Office/   Cases']) {
+      expect(sync._likeEscape(s)).toBe(docs._escapeLike(s));
+    }
   });
 });

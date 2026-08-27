@@ -129,6 +129,10 @@ function makeDb({
       }
       if (/^UPDATE documents/.test(flat))           return [updateResult || { affectedRows: 1 }];
       if (/^DELETE FROM document_links/.test(flat)) return [deleteResult || { affectedRows: 1 }];
+      // S3.3 reconcileCaseFolderLinks — a multi-table DELETE, so its own arm.
+      if (/^DELETE dl FROM document_links dl/.test(flat)) {
+        return [deleteResult || { affectedRows: 1 }];
+      }
 
       throw new Error('stubDb: unhandled SQL: ' + flat);
     },
@@ -1696,6 +1700,68 @@ describe('reconcilePathLinks', () => {
     expect(await documentSvc.reconcilePathLinks(db, 0, null)).toBe(0);
     expect(await documentSvc.reconcilePathLinks(db, null, null)).toBe(0);
     expect(db.calls.length).toBe(0);
+  });
+
+  // ── S3.3 — the same discipline on the OTHER axis ────────────────────────
+  describe('reconcileCaseFolderLinks — the mirror image', () => {
+    async function ranCase(caseId, folder, deleted = 1) {
+      const db = makeDb({ deleteResult: { affectedRows: deleted } });
+      const n = await documentSvc.reconcileCaseFolderLinks(db, caseId, folder);
+      return { n, sql: db.sqlAt(0), params: db.paramsAt(0), db };
+    }
+
+    test('scoped to ONE CASE and to documents outside its folder', async () => {
+      // reconcilePathLinks asks "which cases does this file's new path still
+      // support?". This asks "which files does this case's new folder still
+      // contain?". Same table, opposite axis.
+      const { sql, params } = await ranCase('c1', '/  law office/ x');
+      expect(sql).toContain('DELETE dl FROM document_links dl');
+      expect(sql).toContain('JOIN documents d ON d.id = dl.document_id');
+      expect(params).toEqual(['c1', 'path', '/  law office/ x/%']);
+    });
+
+    test('the same four scope clauses, IN THE STATEMENT', async () => {
+      const { sql } = await ranCase('c1', '/x');
+      expect(sql).toContain("dl.link_type = 'case'");
+      expect(sql).toContain('dl.link_id = ?');
+      expect(sql).toContain('dl.relation = ?');        // 'path' — the engine's mark
+      expect(sql).toContain('dl.created_by IS NULL');  // the engine has no user
+    });
+
+    test('a NULL path_lower is named explicitly, because NOT LIKE would miss it', async () => {
+      // `NULL NOT LIKE 'x/%'` is NULL, not TRUE. A document with no path cannot
+      // be under the folder, so a filter that only said NOT LIKE would leave
+      // its link in place forever.
+      const { sql } = await ranCase('c1', '/x');
+      expect(sql).toContain('d.path_lower IS NULL OR d.path_lower NOT LIKE ?');
+    });
+
+    test('the folder prefix is LIKE-escaped with the house idiom', async () => {
+      // A real folder name: "100% Complete_Final". Unescaped, '%' and '_' are
+      // wildcards and the DELETE widens to documents that are not under it.
+      const { params } = await ranCase('c1', '/x/100% complete_final');
+      expect(params[2]).toBe('/x/100\\% complete\\_final/%');
+    });
+
+    test('returns the number actually removed', async () => {
+      expect((await ranCase('c1', '/x', 7)).n).toBe(7);
+    });
+
+    test('emits NOTHING — there is no document.unlinked event type', async () => {
+      await ranCase('c1', '/x', 3);
+      expect(emit).not.toHaveBeenCalled();
+    });
+
+    test('a missing case id or folder is a no-op, never a table-wide DELETE', async () => {
+      const db = makeDb({});
+      expect(await documentSvc.reconcileCaseFolderLinks(db, '', '/x')).toBe(0);
+      expect(await documentSvc.reconcileCaseFolderLinks(db, null, '/x')).toBe(0);
+      // No folder means nothing to reconcile AGAINST — deleting every path-link
+      // for the case would be the worst possible reading of "no folder".
+      expect(await documentSvc.reconcileCaseFolderLinks(db, 'c1', '')).toBe(0);
+      expect(await documentSvc.reconcileCaseFolderLinks(db, 'c1', null)).toBe(0);
+      expect(db.calls.length).toBe(0);
+    });
   });
 
   test('an empty-string keep is treated as NO match, not as a keep of ""', async () => {

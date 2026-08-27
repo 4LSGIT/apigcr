@@ -8,7 +8,14 @@ folder.
 operations panel; it is collapsed until you open it and only exists on the full
 Documents page — the Documents tab inside a case or contact never shows it.
 
-Not SU-gated: any signed-in staff member can open this page and the Sync panel.
+**Not SU-gated, on purpose.** Any signed-in staff member can open this page and
+the Sync panel, including the re-link workflow that rewrites a case's Dropbox
+link. That is a deliberate decision, not an oversight — the firm is small enough
+that the people who know which folder belongs to which client are the people who
+need to fix it, and gating it behind IT would mean the queue never gets worked.
+The protections are the confirmation step, the cross-link guard that refuses a
+folder already belonging to another case, and the fact that every re-link is
+written to the case's activity log with a name against it. Please leave it open.
 
 For the Dropbox integration underneath (credentials, folder templates, the
 `dropbox_*` internal functions) see
@@ -190,17 +197,25 @@ The confirm box shows the old path, the new path, and how many documents are
 about to appear. Read both paths. Then:
 
 - The case's `Dropbox link` is rewritten to the new folder.
-- Documents already in that folder attach to the case, usually within seconds.
+- Any documents the system had attached from the **old** folder are detached.
+- Documents already in the **new** folder attach to the case, usually within
+  seconds.
 - A **note is written to the case's activity log** recording who did it, both
-  paths, and how many documents moved.
+  paths, and how many documents were detached and attached.
 
 Surname-only matches need a second tick confirming you actually looked at the
 folder in Dropbox. Take that seriously — a same-surname collision is the most
 likely explanation for a surname-only match, not the least.
 
-**If you get it wrong:** re-link again to the correct folder. The old
-attachments are not removed automatically, so tell IT — the previous case may
-need documents detaching by hand.
+**If you get it wrong:** re-link again to the correct folder. That is the whole
+fix — confirming a new folder also **detaches** any documents that are no longer
+in it, so the wrong client's files come off the case in the same action. The
+toast will say something like *"Detached 12, attached 164"*, and the activity log
+records both numbers.
+
+Only documents the system attached by itself are detached this way. Anything a
+person attached to the case by hand stays put — correcting a folder never
+silently undoes somebody's filing decision.
 
 ### Dismissing
 

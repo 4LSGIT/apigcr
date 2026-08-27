@@ -1173,6 +1173,44 @@ describe('the re-link block', () => {
     expect(dlg.html).toMatch(/surname only/);
   });
 
+  test('THE TOAST REPORTS BOTH HALVES after a correction', async () => {
+    // A confirm that also detached the wrong client's documents must say so.
+    // "164 documents linked" alone leaves the person who just fixed a mis-click
+    // with no confirmation that the wrong ones went.
+    const { window, toasts } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([qCase()]), {
+        'POST /api/documents/relink':
+          { status: 'success', result: { linked_docs: 164, detached_docs: 12, warnings: [] } },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    expect(toasts.some(t => /Detached 12, attached 164/.test(String(t.title || '')))).toBe(true);
+  });
+
+  test('a first-time re-link still reads as a plain attach, not "detached 0"', async () => {
+    // The common case detaches nothing. Reporting a zero would invite the
+    // question "what got detached?" on every single confirm.
+    const { window, toasts } = await boot({
+      swal: { confirm: true },
+      routes: relinkRoutes(queueBody([qCase()]), {
+        'POST /api/documents/relink':
+          { status: 'success', result: { linked_docs: 164, detached_docs: 0, warnings: [] } },
+      }),
+    });
+    await openPanel(window);
+    await openRelink(window);
+    clickIn(window, '[data-relink-cand]');
+    await tick(window, 40);
+
+    expect(toasts.some(t => /^164 documents linked$/.test(String(t.title || '')))).toBe(true);
+    expect(toasts.some(t => /Detached/.test(String(t.title || '')))).toBe(false);
+  });
+
   test('a SKIPPED confirm never paints as a success', async () => {
     const { window, toasts } = await boot({
       swal: { confirm: true },

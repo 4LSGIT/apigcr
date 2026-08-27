@@ -1793,8 +1793,18 @@ const RELINK_BATCH_CAP = 500;
  */
 const TYPE_LEVEL_MIN_CASES = 2;
 
-/** cases.case_dropbox is VARCHAR(255). See the reject-don't-clamp note below. */
-const CASE_DROPBOX_MAX = 255;
+/**
+ * cases.case_dropbox is VARCHAR(512). See the reject-don't-clamp note below.
+ *
+ * It was 255 when S3.3 shipped, which made the guard a live risk rather than a
+ * formality — the longest link in production is 125 characters, but a Dropbox
+ * shared link is the provider's format to change, and a confirm that 500s
+ * because the URL is fine and the column is not is a bad way to find out. The
+ * column was widened rather than the guard relaxed: the guard still REJECTS,
+ * because a truncated URL is not a shortened label, it is a link that resolves
+ * to nothing, and this schema has no STRICT_TRANS_TABLES to catch it.
+ */
+const CASE_DROPBOX_MAX = 512;
 
 /**
  * Dropped from name tokens. Deliberately tiny: an aggressive stop list turns a
@@ -1816,9 +1826,20 @@ function _ts(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** LIKE-metacharacter escape. Paired with ESCAPE '|' at every call site. */
+/**
+ * LIKE-metacharacter escape.
+ *
+ * Delegates to documentService's `_escapeLike` rather than carrying its own.
+ * S3.3 shipped a second idiom here (a `|` escape char with an explicit
+ * ESCAPE clause); both are correct, but two escaping conventions against the
+ * same column in adjacent statements of the same function is a trap for
+ * whoever edits one of them next. documentService's is the house one — it is
+ * older, it is used by markDeletedByPath and the name filter, and its docblock
+ * records why the backslash default is safe here (this session's sql_mode has
+ * no NO_BACKSLASH_ESCAPES). One idiom, documented in one place.
+ */
 function _likeEscape(s) {
-  return String(s).replace(/([|%_])/g, '|$1');
+  return documents._escapeLike(String(s));
 }
 
 /** The directory part of a path, or '' for a root-level file. */
@@ -2432,7 +2453,7 @@ async function _attributeUnderFolder(db, caseId, folderLower, cache) {
         AND dl.relation = ?
       WHERE d.status = 'active'
         AND d.path_lower IS NOT NULL
-        AND d.path_lower LIKE ? ESCAPE '|'
+        AND d.path_lower LIKE ?
         AND dl.id IS NULL
       ORDER BY d.id
       LIMIT ${RELINK_ATTRIBUTION_CAP}`,
@@ -2467,12 +2488,31 @@ async function _attributeUnderFolder(db, caseId, folderLower, cache) {
  *   3. mint the permanent shared link
  *   4. rewrite cases.case_dropbox through caseService (house write path)
  *   5. refresh THIS case's folder cache, targeted
- *   6. attribute what is under it, silently, with engine parity
- *   7. clear any dismissal, and write the audit entry
+ *   6. RETRACT the path-links the new folder no longer supports
+ *   7. attribute what is under it, silently, with engine parity
+ *   8. clear any dismissal, and write the audit entry
  *
  * Steps 4 and 5 cannot swap: the cache resolves the SHARED LINK, so it has to
- * read the new one. Steps 5 and 6 cannot swap either: attribution matches
+ * read the new one. Steps 5 and 7 cannot swap either: attribution matches
  * against the cache, so it has to see the new path.
+ *
+ * ── WHY THE RETRACTION COMES BEFORE THE ATTACHMENT ────────────────────────
+ * The two sets are disjoint by construction — step 6 only removes documents
+ * OUTSIDE the folder, step 7 only adds documents INSIDE it — so the order
+ * cannot change the outcome. It changes the FAILURE outcome, which is the
+ * reason to care. Nothing here is in a transaction (a Dropbox round trip sits
+ * in the middle of it), so either step can be the last one that ran. Retract
+ * first and a crash leaves the case holding fewer wrong links than it started
+ * with; attach first and a crash leaves it holding the right ones AND the
+ * wrong ones. Only one of those is a safe place to stop.
+ *
+ * ── WHY BOTH ARE GATED ON A RESOLVED PATH ─────────────────────────────────
+ * If step 5 could not reach Dropbox, the cache still holds the OLD path and we
+ * do not know what the new folder actually resolved to. Attaching against a
+ * guess is bad; DETACHING against a guess is worse, because the sweep only
+ * ever adds and would not put back what a wrong guess removed. So both steps
+ * are skipped together and the caller is told, rather than one of them
+ * proceeding on an unconfirmed path.
  *
  * @returns {Promise<object>} what changed, plus any warnings worth surfacing
  */
@@ -2619,9 +2659,15 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
       : 'the folder cache did not refresh — documents will attach on the next cache run');
   }
 
-  // ── 6. ATTRIBUTE ────────────────────────────────────────────────────────
+  // ── 6. RETRACT, then 7. ATTRIBUTE ───────────────────────────────────────
+  // The invariant this pair maintains: after a confirm, the case's MACHINE
+  // links are exactly the documents under its folder. Human links are outside
+  // the invariant entirely and are never touched — see
+  // documentService.reconcileCaseFolderLinks for the clause-by-clause scope.
+  let detached = 0;
   let attribution = { scanned: 0, linked: 0, truncated: false };
   if (resolved) {
+    detached = await documents.reconcileCaseFolderLinks(db, caseId, resolved);
     const cache = await _loadCaseFolderCache(db);
     attribution = await _attributeUnderFolder(db, caseId, resolved, cache);
   }
@@ -2652,8 +2698,9 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
       subject: 'Case Dropbox folder re-linked',
       message:
         `Re-linked the case's Dropbox folder from "${oldPath || '(none cached)'}" ` +
-        `to "${resolved || lower}". ${attribution.linked} document` +
-        `${attribution.linked === 1 ? '' : 's'} attributed.` +
+        `to "${resolved || lower}". Detached ${detached} document` +
+        `${detached === 1 ? '' : 's'} no longer in the folder, attached ` +
+        `${attribution.linked}.` +
         (warnings.length ? ` Notes: ${warnings.join('; ')}.` : ''),
       extra: {
         relink: {
@@ -2663,6 +2710,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
           requested_path: path,
           new_link: sharedLink,
           linked_docs: attribution.linked,
+          detached_docs: detached,
           scanned_docs: attribution.scanned,
           nested_case_ids: nested,
           warnings,
@@ -2685,6 +2733,9 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
     requested_path: path,
     shared_link: sharedLink,
     linked_docs: attribution.linked,
+    // What a mis-click correction actually removed. Staff need "detached N,
+    // attached M" — a bare attach count reads as if nothing was cleaned up.
+    detached_docs: detached,
     scanned_docs: attribution.scanned,
     cache: cacheResult,
     warnings,

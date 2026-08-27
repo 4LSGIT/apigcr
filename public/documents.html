@@ -2177,9 +2177,15 @@ window.onRelinkConfirm = async function (caseId, idx) {
       // button. Nothing was changed.
       Toast.fire({ icon: 'info', title: 'Skipped \u2014 ' + (out.reason || 'sync is disabled') });
     } else {
+      // BOTH HALVES, when there is a second half. A correction after a
+      // mis-click removes the wrong client's documents, and a toast that only
+      // counted the arrivals would leave the person who just fixed it with no
+      // confirmation that the wrong ones went.
       Toast.fire({
         icon: 'success',
-        title: out.linked_docs + ' document' + (out.linked_docs === 1 ? '' : 's') + ' linked',
+        title: out.detached_docs
+          ? 'Detached ' + out.detached_docs + ', attached ' + out.linked_docs
+          : out.linked_docs + ' document' + (out.linked_docs === 1 ? '' : 's') + ' linked',
       });
       if (out.warnings && out.warnings.length) {
         Swal.fire({
