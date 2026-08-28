@@ -11,6 +11,12 @@
  * POST /api/cases/:id/pipeline/advance  — body { stage: <stage_key|numeric stage_id>, note? }
  *                                         → advances + returns fresh pipeline payload.
  *                                         Repeating the current stage → 200 with noop:true.
+ * GET  /api/cases/:id/pipeline/requirements
+ *                                       — (R3) the FULL resolveRequirements output for
+ *                                         the case: BOTH applicable templates, so a
+ *                                         phase='case' case's INTAKE requirements are
+ *                                         visible here and nowhere else.
+ *                                         ?client_only=1 → client_visible rows only.
  * POST   /api/cases/:id/pipeline/requirements/:key/override
  *                                       — body { status: 'na'|'done', note? } → set/replace
  *                                         the per-case override on requirement :key.
@@ -69,6 +75,30 @@ router.get('/api/cases/:id/pipeline', jwtOrApiKey, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const reqSvc = require('../services/requirementService');
+
+// ── GET /api/cases/:id/pipeline/requirements — the FULL resolver output ──────
+//
+// (R3) BOTH applicable templates, not just the resolved one. This is the ONLY
+// HTTP surface on which a phase='case' case's INTAKE-template requirements are
+// visible: getPipeline's payload is stage-anchored to the resolved template, so
+// the intake questionnaire a filed case submitted in March — correctly resolved
+// `done` (or `skipped`) by requirementService since R2 — had nowhere to appear.
+// The staff Steps panel's "Intake history" section is that finding's consumer.
+//
+// ?client_only=1 → the portal's clientOnly filter (client_visible=1 only). The
+// SAME resolver, one flag; there is no second read model.
+//
+// Ordering, statuses and precedence are the resolver's — this route projects
+// nothing and re-derives nothing.
+router.get('/api/cases/:id/pipeline/requirements', jwtOrApiKey, async (req, res) => {
+  try {
+    const clientOnly = req.query.client_only === '1' || req.query.client_only === 'true';
+    const requirements = await reqSvc.getCaseRequirements(req.db, req.params.id, { clientOnly });
+    res.json({ status: 'success', requirements });
+  } catch (err) {
+    fail(res, 'requirements', err);
+  }
+});
 
 router.post('/api/cases/:id/pipeline/requirements/:key/override', jwtOrApiKey, async (req, res) => {
   try {
