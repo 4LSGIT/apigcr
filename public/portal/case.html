@@ -119,12 +119,20 @@
     background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
     font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
   }
-  .ns-proj { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--border); }
-  .ns-proj-head {
+  /* The greyed forward projection. ONE rule set, TWO surfaces (R3.1): the
+     "Your next steps" card (.ns-proj*, R2.5) and the Case Progress timeline
+     (.tl-proj*). They render one above the other on the same page showing the
+     SAME server-side labels, so sharing the declarations is not tidiness —
+     a second copy would eventually drift and the drift would be visible.
+     Deliberately NOT the .tl treatment: no dot, no connector, no date. These
+     are possibilities, not history, and must not look like a step the case
+     has a position in. */
+  .ns-proj, .tl-proj { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--border); }
+  .ns-proj-head, .tl-proj-head {
     font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--muted); margin: 0 0 5px;
   }
-  .ns-proj-item { font-size: 13.5px; color: var(--muted); padding: 2px 0; }
+  .ns-proj-item, .tl-proj-item { font-size: 13.5px; color: var(--muted); padding: 2px 0; }
 
   .msg { text-align: center; color: var(--muted); padding: 24px 0; }
   .msg a { color: var(--accent); }
@@ -169,6 +177,28 @@
              '<div class="lbl">' + escText(label) + '</div>' +
              (when ? '<div class="when">' + escText(when) + '</div>' : '') +
            '</li>';
+  }
+
+  // (R3.1) The timeline's forward tail — what usually comes next once the
+  // chapter is chosen. Present on LEADS only: the server emits
+  // timeline.projected exactly when getPipeline shipped a projection, and
+  // omits the key entirely otherwise, so a case-phase view (and a pre-R3.1
+  // server) falls straight through this and the timeline card ends where it
+  // always has.
+  //
+  // Rendered OUTSIDE the <ul class="tl">, with the same divider + greyed-text
+  // treatment the "Your next steps" card already uses for the same labels.
+  // NOT tlItem: no dot, no connector, no date. A dot would put these stages
+  // in the same visual sequence as the case's real history and upcoming, and
+  // they are not in it — they belong to a template the case has not entered.
+  function tlProjected(list) {
+    if (!list || !list.length) return '';
+    return '<div class="tl-proj">' +
+             '<p class="tl-proj-head">Typical next steps</p>' +
+             list.map(function (p) {
+               return '<div class="tl-proj-item">' + escText(p.label) + '</div>';
+             }).join('') +
+           '</div>';
   }
 
   // '2026-08-28' + '10:00' (firm-local wall values, server-computed) →
@@ -381,9 +411,13 @@
     (tl.upcoming || []).forEach(function (u) {
       items += tlItem('upcoming', u.label, '');
     });
+    // R3.1 — the greyed forward tail closes the card. A lead's timeline used
+    // to stop at the last intake stage while the next-steps card directly
+    // above it already showed the continuation; both now end the same way.
     html += '<div class="card"><h2>Case Progress</h2>' +
             (items ? '<ul class="tl">' + items + '</ul>'
                    : '<p class="msg" style="padding:6px 0;">No progress to show yet.</p>') +
+            tlProjected(tl.projected) +
             '</div>';
 
     // Cards below the timeline (placement 'case'). R2 (2026-08-09): the

@@ -1193,11 +1193,53 @@ async function listCaseWorkflows(db, caseId, {
  *   video_views      — case_id
  *   ai_change_log    — entity_id     WHERE entity_type='case'
  *
+ * (M1, 2026-08-28) — added after a live audit of every case-keyed column in
+ * the schema found six tables three later arcs had introduced without ever
+ * being added here. None of them carries a foreign key, so the loser's DELETE
+ * would have stranded their rows silently rather than erroring:
+ *   case_stage_log             — case_id. Append-only; no unique involves
+ *                                case_id, so the loser's stage history joins
+ *                                the survivor's and interleaves by entered_at.
+ *   case_requirement_overrides — case_id, SURVIVOR-WINS. UNIQUE (case_id,
+ *                                requirement_key): colliding loser rows are
+ *                                DELETEd first, the rest UPDATEd. Counts are
+ *                                reported as moved + `_dropped`.
+ *   case_stage_aged_emitted    — case_id only. Its UNIQUE is (stage_log_id,
+ *                                threshold_days), which the case_stage_log
+ *                                repoint leaves intact (row ids don't change),
+ *                                so no collision is possible. Deleting these
+ *                                instead would re-arm already-emitted aged
+ *                                thresholds.
+ *   case_folder_cache          — DELETE-ONLY, never repointed. PK is case_id,
+ *                                and it caches a Dropbox folder that
+ *                                case_dropbox (survivor-wins) contradicts.
+ *   portal_access_log          — case_id. Client-access audit follows the
+ *                                surviving case.
+ *   trigger_executions         — the case_id COLUMN ONLY. The stored event
+ *                                envelope JSON is an immutable historical
+ *                                record and is left byte-untouched.
+ *
+ * With these in place the repoint set covers every case-keyed table in the
+ * schema, so the loser's children are preserved BY TRANSFER, not merely by
+ * the snapshot below. (documents/document_links are deliberately excluded —
+ * they link via document_links.link_type='case' AND link_id, but their
+ * path-relation rows are machine-derived from the case's Dropbox folder and
+ * would be retracted again by documentService.reconcileCaseFolderLinks on the
+ * next sync. Flagged for a decision of its own, not merged in here.)
+ *
  * LOSER DISPOSITION: full row JSON + move counts snapshotted via
  * logService.createLogEntry (type 'update', link_type 'case', link_id =
  * survivor; snapshot in log_extra) — THEN hard-deleted. This is the sanctioned
  * exception to the "no DELETE for cases" rule: the legal record survives in
  * the snapshot, attached to the case that absorbed it.
+ *
+ * The snapshot is the loser ROW's recovery record — it always was, and it
+ * never claimed to cover the children. As of M1 the children do not need
+ * covering: every case-keyed table is repointed (or, for the one cache table,
+ * deliberately dropped), so they are preserved by TRANSFER onto the survivor.
+ * What the snapshot's `children` block now records is therefore an account of
+ * where each child WENT, per table, including the rows a survivor-wins
+ * collision discarded (`<table>_dropped`).
  *
  * @param {object} db          mysql2 promise pool
  * @param {string} survivorId  case that remains
@@ -1213,7 +1255,8 @@ async function listCaseWorkflows(db, caseId, {
  *   fields:   { filled: [col…], survivor_wins: [{column,survivor,loser}…],
  *               conflicts: [{column,survivor,loser}…] },   // blocking set
  *   notes_appended, alerts_appended, dropbox_noted,
- *   children: { table: rowCount, … , case_relate_deduped }
+ *   children: { table: rowCount, … , '<table>_dropped': rowCount,
+ *               case_relate_deduped, checklists_consolidated }
  * }
  * Throws err with .code:
  *   'MERGE_NOT_FOUND'  — either case missing
@@ -1352,9 +1395,57 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     }
   }
 
+  // ── survivor-wins pre-delete: case_requirement_overrides (M1) ──
+  // Declared ahead of CHILDREN because the array literal references them
+  // (the DEDUPE_* pair below is declared after, and can be — it is read at
+  // execution time, not at construction).
+  //
+  // Same JOIN idiom as DEDUPE_*_SQL, one clause shorter: the collision key is
+  // (case_id, requirement_key) — verified live as UNIQUE `uq_case_reqkey` —
+  // so a loser row collides exactly when the survivor already holds an
+  // override on the same requirement_key. Both bound [survivorId, loserId].
+  const OVERRIDE_COLLIDE_COUNT_SQL =
+    `SELECT COUNT(*) AS c
+       FROM case_requirement_overrides lo
+       JOIN case_requirement_overrides so
+         ON so.case_id = ? AND so.requirement_key = lo.requirement_key
+      WHERE lo.case_id = ?`;
+  const OVERRIDE_COLLIDE_DELETE_SQL =
+    `DELETE lo
+       FROM case_requirement_overrides lo
+       JOIN case_requirement_overrides so
+         ON so.case_id = ? AND so.requirement_key = lo.requirement_key
+      WHERE lo.case_id = ?`;
+
   // ── child repoint spec ──
-  // [label, countSql, updateSql, params-are-(survivorId, loserId) or (loserId)]
-  // Every UPDATE takes [survivorId, loserId]; every COUNT takes [loserId].
+  // [label, countSql, moveSql, pre?]
+  //   countSql — always [loserId].
+  //   moveSql  — always [survivorId, loserId] (the 'log' label is the one
+  //              special case: it binds three, see the repoint loop). NULL
+  //              means "this table is never repointed" — the pre-statement is
+  //              the whole operation (M1: case_folder_cache).
+  //   pre      — OPTIONAL { countSql, sql }, both bound [survivorId, loserId].
+  //              A DELETE run FIRST, inside the transaction, immediately
+  //              before this entry's move. It exists for loser rows that
+  //              CANNOT move: rows that would violate a UNIQUE key the
+  //              survivor already occupies (survivor-wins), or rows in a table
+  //              that is never repointed at all. affectedRows lands in
+  //              plan.children[`${label}_dropped`], so the merge note reports
+  //              kept AND dropped for every such table.
+  //
+  // WHY A DECLARATIVE 4th SLOT rather than more `label === '…'` branches (M1,
+  // 2026-08-28): the 'log' special case already proves a label branch is
+  // acceptable, but the two tables added below need branches in BOTH loops
+  // (dry-run counts and the real repoint), which is four branches for two
+  // tables — and the next UNIQUE-keyed case table would add two more. The
+  // optional slot is the smaller diff today and the only one that does not
+  // grow. Existing entries are untouched 3-tuples and keep binding exactly as
+  // they always have.
+  //
+  // NOT folded in: step 1's case_relate dedupe-delete, which is the same
+  // survivor-wins idea written out ad hoc. It runs before step 1b's checklist
+  // consolidation for reasons of its own, and moving it would change ordering
+  // that is pinned elsewhere. Left alone deliberately.
   const CHILDREN = [
     ['case_relate',
       `SELECT COUNT(*) AS c FROM case_relate WHERE case_relate_case_id = ?`,
@@ -1398,6 +1489,76 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     ['ai_change_log',
       `SELECT COUNT(*) AS c FROM ai_change_log WHERE entity_type = 'case' AND entity_id = ?`,
       `UPDATE ai_change_log SET entity_id = ? WHERE entity_type = 'case' AND entity_id = ?`],
+
+    // ── M1 (2026-08-28) — the tables three later arcs added ────────────────
+    // This list predates the pipeline engine, the trigger engine, the client
+    // portal and the documents sync. A live audit of every case-keyed column
+    // in the schema found the six below missing from it. Orphan count is 0
+    // TODAY only because no merge loser has yet held a row in any of them —
+    // there are no foreign keys on any of these tables, so the loser's DELETE
+    // in step 5 would simply have stranded them, silently. The risk grows
+    // with pipeline and portal adoption, which is why they are here now.
+
+    // Append-only stage history. No unique key involves case_id (verified:
+    // PK id, idx_case_time non-unique), so the loser's history joins the
+    // survivor's and interleaves by entered_at — which is the truthful merged
+    // account of where the absorbed case had been.
+    ['case_stage_log',
+      `SELECT COUNT(*) AS c FROM case_stage_log WHERE case_id = ?`,
+      `UPDATE case_stage_log SET case_id = ? WHERE case_id = ?`],
+
+    // SURVIVOR-WINS. UNIQUE (case_id, requirement_key): a loser override on a
+    // key the survivor has already ruled on cannot move, and the survivor's
+    // ruling is the one about the case that continues to exist. Dropped
+    // first, the rest repointed. The count above deliberately counts ALL
+    // loser rows (the case_relate precedent) — `_dropped` carries the split.
+    ['case_requirement_overrides',
+      `SELECT COUNT(*) AS c FROM case_requirement_overrides WHERE case_id = ?`,
+      `UPDATE case_requirement_overrides SET case_id = ? WHERE case_id = ?`,
+      { countSql: OVERRIDE_COLLIDE_COUNT_SQL, sql: OVERRIDE_COLLIDE_DELETE_SQL }],
+
+    // The aged-emission claim table. Its UNIQUE is (stage_log_id,
+    // threshold_days) — NOT case_id — and the case_stage_log repoint above
+    // changes no row ids, so those claims stay valid and no collision is
+    // possible here. Repointing case_id keeps each claim consistent with the
+    // (now survivor-owned) log row it claims. DELETING them instead would
+    // re-arm every already-emitted threshold and replay the aged events.
+    ['case_stage_aged_emitted',
+      `SELECT COUNT(*) AS c FROM case_stage_aged_emitted WHERE case_id = ?`,
+      `UPDATE case_stage_aged_emitted SET case_id = ? WHERE case_id = ?`],
+
+    // DELETE-ONLY, never repointed. PRIMARY KEY = case_id, so a repoint
+    // collides outright whenever the survivor has a row — but the deeper
+    // reason is that this is a CACHE of a case's Dropbox folder, and
+    // case_dropbox is survivor-wins (the loser's folder URL is preserved into
+    // case_notes above, not adopted). Moving the loser's cache row would
+    // hand the survivor a resolved folder its own case_dropbox contradicts.
+    // The survivor keeps its own mapping; if it has none, the sync rebuilds
+    // one. `case_id <> ?` is a structural guard that the survivor's row can
+    // never be the one deleted.
+    ['case_folder_cache',
+      `SELECT COUNT(*) AS c FROM case_folder_cache WHERE case_id = ?`,
+      null,
+      { countSql: `SELECT COUNT(*) AS c FROM case_folder_cache WHERE case_id <> ? AND case_id = ?`,
+        sql:      `DELETE FROM case_folder_cache WHERE case_id <> ? AND case_id = ?` }],
+
+    // Client-access audit trail (plain id PK, no unique on case_id) — it
+    // stays attached to the case that survives, or it stops being an audit
+    // trail of anything.
+    ['portal_access_log',
+      `SELECT COUNT(*) AS c FROM portal_access_log WHERE case_id = ?`,
+      `UPDATE portal_access_log SET case_id = ? WHERE case_id = ?`],
+
+    // The case_id COLUMN ONLY — deliberately. trigger_executions also stores
+    // the firing event's envelope as JSON, and that envelope contains ids
+    // too; it is an immutable record of what the engine was handed at the
+    // time and is left BYTE-UNTOUCHED. Do not "fix" it to match: rewriting
+    // history to say a trigger fired for a case that did not exist yet would
+    // make the execution log lie about the past. The indexed column is what
+    // the case view queries; that is what moves.
+    ['trigger_executions',
+      `SELECT COUNT(*) AS c FROM trigger_executions WHERE case_id = ?`,
+      `UPDATE trigger_executions SET case_id = ? WHERE case_id = ?`],
   ];
 
   // ── tagged-checklist consolidation ──
@@ -1485,9 +1646,16 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
 
   // ── dry run: counts only, no writes ──
   if (dryRun) {
-    for (const [label, countSql] of CHILDREN) {
+    for (const [label, countSql, moveSql, pre] of CHILDREN) {
       const [[{ c }]] = await db.query(countSql, [loserId]);
-      plan.children[label] = c;
+      // A never-repointed table moves nothing, and the preview must say so
+      // rather than promise a repoint the real merge will not perform. Its
+      // rows are reported under `_dropped` below instead.
+      plan.children[label] = moveSql ? c : 0;
+      if (pre) {
+        const [[{ c: dropped }]] = await db.query(pre.countSql, [survivorId, loserId]);
+        plan.children[`${label}_dropped`] = dropped;
+      }
     }
     const [[{ c: dedupeC }]] = await db.query(DEDUPE_COUNT_SQL, [survivorId, loserId]);
     plan.children.case_relate_deduped = dedupeC;
@@ -1556,11 +1724,23 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     plan.children.checklists_consolidated = dupTags.length;
 
     // 2. child repoints
-    for (const [label, , updateSql] of CHILDREN) {
+    for (const [label, , moveSql, pre] of CHILDREN) {
+      // Pre-statement first: drop the loser rows that CANNOT move, so the
+      // repoint that follows cannot collide on them. Reported separately —
+      // "8 moved, 1 dropped" is the audit trail; "8 moved" alone would hide
+      // the row that was discarded.
+      if (pre) {
+        const [d] = await conn.query(pre.sql, [survivorId, loserId]);
+        plan.children[`${label}_dropped`] = d.affectedRows;
+      }
+      // Never-repointed table (case_folder_cache): the pre-statement above
+      // WAS the operation. Still reported at 0 so the label appears in the
+      // merge note like every other child table.
+      if (!moveSql) { plan.children[label] = 0; continue; }
       const params = (label === 'log')
         ? [survivorId, survivorId, loserId]     // SET log_link_id=?, log_link=?
         : [survivorId, loserId];
-      const [r] = await conn.query(updateSql, params);
+      const [r] = await conn.query(moveSql, params);
       plan.children[label] = r.affectedRows;
     }
 

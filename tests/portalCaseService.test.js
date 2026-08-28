@@ -138,6 +138,45 @@ function pipelinePayload(over = {}) {
   };
 }
 
+// ── R3.1 fixtures — the LEAD case ────────────────────────────────────────────
+// getPipeline ships `projected` ONLY when the resolved template is
+// role='intake'. Every fixture that carries one is therefore intake-shaped:
+// a role='case' payload holding a projection is a shape production cannot
+// produce, and pinning against it would pin a fiction.
+const I_STAGES = [
+  stage('consult_booked', 1, 'Consultation scheduled',       1),
+  stage('contract_sent',  2, 'Agreement sent for signature', 1),
+];
+
+/** The R2.5 `projected` block — a template the case has NOT entered, so its
+ *  stages carry NO stage_id (reproduced faithfully; inventing one would hide
+ *  a bucketing bug). */
+const PROJECTED = () => ({
+  source: 'subtype',
+  template: { id: 2, name: 'Bankruptcy — Chapter 7' },
+  stages: [
+    { stage_key: 'filed',  stage_number: 3, internal_label: 'INTERNAL filed',
+      client_label: 'Your case is filed',  client_visible: 1, lane: 'main' },
+    { stage_key: 'review', stage_number: 4, internal_label: 'INTERNAL review',
+      client_label: 'Internal review',     client_visible: 0, lane: 'main' },
+  ],
+});
+
+function intakePayload(over = {}) {
+  const history = over.history || [logRow('consult_booked', '2026-08-01T16:00:00Z')];
+  const base = {
+    template: { id: 1, name: 'Intake', role: 'intake', case_type: '', case_subtype: '' },
+    current: history.length ? history[history.length - 1] : null,
+    history,
+    upcoming: over.upcoming || [I_STAGES[1]],
+    stages: over.stages || I_STAGES,
+  };
+  // `projected` is set ONLY when asked for — the key's ABSENCE is the R2.5
+  // contract for every other payload and several tests below turn on it.
+  if ('projected' in over) base.projected = over.projected;
+  return base;
+}
+
 beforeEach(() => {
   // Default: no configured cards pass (tests that need the 341 card override).
   portalCardEngine.renderCards.mockResolvedValue([]);
@@ -377,6 +416,179 @@ describe('projection whitelist', () => {
     const cases = await svc.listCases(db, 42);
     expect(cases).toHaveLength(1);
     expect(pipelineService.getPipeline).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R3.1 — the timeline's forward tail (`timeline.projected`)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A LEAD's Case Progress used to stop at the last intake stage while the
+// "Your next steps" card directly above it already showed the continuation:
+// two answers to "what happens next" on one page, one of them truncated.
+// R3.1 closes that, and every rule it inherits is pinned here:
+//
+//   · FEATURE-DETECTED BY KEY PRESENCE. `'projected' in pipeline` — not
+//     truthiness — decides whether the timeline emits the key at all, so a
+//     phase='case' view and a pre-R2.5 server both keep the exact three-key
+//     shape the portal has shipped since S2.
+//   · ONE READER. The card's greyed tail and the timeline's greyed tail come
+//     from the same projectedLabels helper, so the two blocks stacked on one
+//     page cannot disagree about what comes next.
+//   · POSSIBILITIES, NOT COMMITMENTS. The tail is a SEPARATE key rather than
+//     flagged entries appended to `upcoming`, so a consumer that ignored a
+//     flag could not present a possibility as a commitment. `upcoming` keeps
+//     its label-only entry shape on every payload, projection or not.
+
+describe('R3.1 — timeline.projected (the lead forward tail)', () => {
+  /** requirementService.resolveRequirements output, client-filtered. */
+  function resolvedReq(over = {}) {
+    return Object.assign({
+      requirement_key: 'submit_questionnaire',
+      stage_id: 101,                            // I_STAGES[0] — the current one
+      stage_key: 'consult_booked',
+      internal_label: 'INTERNAL questionnaire', // must never surface
+      client_label: 'Complete your questionnaire',
+      client_visible: 1, required: 1, owner: 'client', kind: 'task',
+      hint: null, effort: null, group_label: null, sort_order: 1,
+      status: 'active', satisfied_at: null, detail: null, progress: null,
+      override: null,
+    }, over);
+  }
+
+  test('LEAD with a projection → the tail rides the timeline, hidden stages excluded', async () => {
+    const db = stubDb([[caseRow()]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(
+      intakePayload({ projected: PROJECTED() }));
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+
+    expect(view.timeline.projected).toEqual([{ label: 'Your case is filed' }]);
+    // The case's OWN position is untouched by the projection.
+    expect(view.timeline.current).toEqual({ label: 'Consultation scheduled', since: '2026-08-01' });
+    expect(view.timeline.upcoming).toEqual([{ label: 'Agreement sent for signature' }]);
+    // client_visible=0 projected stage leaves no trace anywhere.
+    expect(JSON.stringify(view)).not.toMatch(/Internal review|INTERNAL/);
+  });
+
+  test('the projection is LABEL-ONLY — no stage_key, no ids, and never the template name', async () => {
+    const db = stubDb([[caseRow()]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(
+      intakePayload({ projected: PROJECTED() }));
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+
+    view.timeline.projected.forEach(p => expect(Object.keys(p)).toEqual(['label']));
+    const keys = deepKeys(view);
+    for (const k of FORBIDDEN_KEYS) expect(keys.has(k)).toBe(false);
+    // Ratified: a client is never shown a template name, subtype or generic.
+    expect(JSON.stringify(view)).not.toContain('Bankruptcy — Chapter 7');
+    expect(JSON.stringify(view)).not.toContain('subtype');
+  });
+
+  test("source:'generic' renders its single retained entry the same way", async () => {
+    // No matter template resolves → the projection is the Intake template's
+    // `retained` row alone, and `template` is null. Same treatment, no
+    // special case, and still no template vocabulary.
+    const db = stubDb([[caseRow()]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(intakePayload({
+      projected: {
+        source: 'generic',
+        template: null,
+        stages: [{ stage_key: 'retained', stage_number: 10, internal_label: 'Retained',
+                   client_label: "You've retained us", client_visible: 1, lane: 'main' }],
+      },
+    }));
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+    expect(view.timeline.projected).toEqual([{ label: "You've retained us" }]);
+    expect(JSON.stringify(view)).not.toContain('generic');
+  });
+
+  test('phase=case payload (NO projected key) → timeline byte-identical to pre-R3.1', async () => {
+    // THE regression guard. The key must be ABSENT, not [] and not null: an
+    // empty array would be a claim that this case HAS a forward view, and a
+    // case-phase case does not.
+    const db = stubDb([[caseRow()]]);
+    const payload = pipelinePayload();
+    expect('projected' in payload).toBe(false);          // the R2.5 contract
+    pipelineService.getPipeline.mockResolvedValueOnce(payload);
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+
+    expect(Object.keys(view.timeline).sort()).toEqual(['current', 'done', 'upcoming']);
+    expect('projected' in view.timeline).toBe(false);
+    // Pinned by value, not just by shape — this is the output the portal has
+    // rendered since S2 and R3.1 must not have moved a character of it.
+    expect(view.timeline).toEqual({
+      done: [{ label: 'Preparing your case', date: '2026-05-04' }],
+      current: { label: 'Your case is filed', since: '2026-06-10' },
+      upcoming: [{ label: 'Meeting of creditors' }, { label: 'Discharge entered' }],
+    });
+  });
+
+  test('an INTAKE payload with a malformed/empty projection still emits the key, as []', async () => {
+    // Key presence tracks the PIPELINE's key, not the projection's contents:
+    // "this case has a forward view, and none of it is client-visible" is a
+    // different fact from "no forward view exists". Degrades, never throws —
+    // the same tolerance buildNextSteps has always had.
+    for (const bad of [null, {}, { source: 'generic', template: null, stages: [] },
+                       { source: 'subtype', template: null,
+                         stages: [{ stage_key: 'x', client_label: 'Hidden', client_visible: 0 }] }]) {
+      const db = stubDb([[caseRow()]]);
+      pipelineService.getPipeline.mockResolvedValueOnce(intakePayload({ projected: bad }));
+      const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+      expect(view.timeline.projected).toEqual([]);
+      expect('projected' in view.timeline).toBe(true);
+    }
+  });
+
+  test('`upcoming` keeps its label-only shape WITH a projection present — the tail is a separate key', async () => {
+    // The reason for a separate key rather than flagged `upcoming` entries:
+    // no consumer of `upcoming` has to learn that some of its entries are
+    // possibilities, because none of them ever are.
+    const db = stubDb([[caseRow()]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(
+      intakePayload({ projected: PROJECTED() }));
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+    view.timeline.upcoming.forEach(u => expect(Object.keys(u)).toEqual(['label']));
+    expect(JSON.stringify(view.timeline.upcoming)).not.toContain('projected');
+  });
+
+  test('card AND timeline both carry the projection — by design, from one reader', async () => {
+    // They are NOT alternatives: the card answers "what do I have to do", the
+    // timeline answers "where is my case", and a lead's honest answer to the
+    // second runs past the end of the intake template too. Same labels, in
+    // the same order, because projectedLabels is the single reader — and
+    // neither block interferes with the other's own content.
+    const db = stubDb([[caseRow()]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(
+      intakePayload({ projected: PROJECTED() }));
+    requirementService.resolveRequirements.mockResolvedValueOnce(
+      new Map([['AbCdEf12', [resolvedReq()]]]));
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+
+    expect(view.next_steps).not.toBeNull();
+    expect(view.next_steps.projected).toEqual([{ label: 'Your case is filed' }]);
+    expect(view.timeline.projected).toEqual(view.next_steps.projected);
+    // No cross-interference: the card still has its own step, the timeline
+    // still has its own position.
+    expect(view.next_steps.steps.map(s => s.label)).toEqual(['Complete your questionnaire']);
+    expect(view.timeline.current).toEqual({ label: 'Consultation scheduled', since: '2026-08-01' });
+  });
+
+  test('listCases is unaffected — a lead still yields exactly the four list keys', async () => {
+    const db = stubDb([[caseRow()]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(
+      intakePayload({ projected: PROJECTED() }));
+
+    const cases = await svc.listCases(db, 42);
+    expect(Object.keys(cases[0]).sort())
+      .toEqual(['case_id', 'current_stage_label', 'docket', 'title']);
+    expect(cases[0].current_stage_label).toBe('Consultation scheduled');
+    expect(JSON.stringify(cases)).not.toContain('Your case is filed');
   });
 });
 

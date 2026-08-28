@@ -53,6 +53,14 @@
  * anchored to the case's true position without ever naming the hidden stage
  * (skipped stages stay skipped; no phantom "still coming" entries).
  *
+ * (R3.1) A LEAD's `upcoming` ends at the last intake stage — which is not the
+ * end of what we can honestly tell that client, because the next pipeline is
+ * a DIFFERENT TEMPLATE the case has not entered. getPipeline's R2.5
+ * `projected` block supplies that continuation, and BOTH client surfaces
+ * built here now end with it: the "Your next steps" card and the Case
+ * Progress timeline. They read it through ONE helper (projectedLabels), so
+ * two views stacked on the same page cannot disagree about what comes next.
+ *
  * Dates: case_stage_log.entered_at is real UTC (DEFAULT CURRENT_TIMESTAMP;
  * see services/timezoneService.js column reference — NOW() columns are UTC).
  * The portal emits firm-local DATE-ONLY strings (YYYY-MM-DD, FIRM_TIMEZONE)
@@ -161,14 +169,76 @@ function isVisible(stage) {
 }
 
 /**
+ * (R2.5 source, R3.1 shared) THE SINGLE READER of `pipeline.projected` —
+ * the client-visible labels of the forward projection, or [] when there is
+ * no projection, it is malformed, or nothing in it is visible.
+ *
+ * Both surfaces that show the projection call this: buildNextSteps (the R3
+ * card's greyed tail) and buildClientTimeline (the R3.1 timeline tail). One
+ * reader means the two can never disagree about what the projection says —
+ * which matters more than the four lines it saves, because they render one
+ * above the other on the same page and a divergence would be visible.
+ *
+ * Read for LABELS ONLY. Projected stages belong to a template the case has
+ * NOT entered: they carry no stage_id and no requirements, so they can never
+ * become steps or timeline history. client_visible + client_label, the same
+ * whitelist as everything else that reaches a client — and NEVER the
+ * projection's `source` or `template.name`: a client is not shown a template
+ * name, subtype-matched or generic (ratified).
+ *
+ * Truthiness, not `'projected' in pipeline`, on purpose: this answers "what
+ * does the projection SAY", and a null/malformed one says nothing. Whether
+ * the KEY is emitted at all is the caller's decision — see
+ * buildClientTimeline.
+ *
+ * @param {object} pipeline getPipeline payload
+ * @returns {{label:string}[]}
+ */
+function projectedLabels(pipeline) {
+  const out = [];
+  const proj = pipeline && pipeline.projected;
+  if (!proj || !Array.isArray(proj.stages)) return out;
+  for (const s of proj.stages) {
+    if (!isVisible(s)) continue;
+    const l = String(s.client_label == null ? '' : s.client_label).trim();
+    if (l) out.push({ label: l });
+  }
+  return out;
+}
+
+/**
  * THE shared visibility/label/current helper — the single place the ratified
  * rules are applied. Used by both listCases and getCaseView.
  *
+ * (R3.1) FORWARD TAIL. When getPipeline shipped a `projected` block — i.e.
+ * the case resolved to the INTAKE template, so it is a LEAD — the timeline
+ * gains a `projected` array of the projection's client-visible labels. This
+ * closes the gap where a lead's Case Progress stopped at the last intake
+ * stage while the "Your next steps" card directly above it was already
+ * showing the continuation: two answers to "what happens next" on one page,
+ * one of them truncated.
+ *
+ * THE KEY IS ABSENT (not empty, not null) whenever `projected` is absent from
+ * the pipeline payload, so a phase='case' view is byte-identical to pre-R3.1
+ * and a pre-R2.5 server is too. Feature test is `'projected' in pipeline`,
+ * mirroring the contract getPipeline states for its own emission — the
+ * CONTENT is then read by projectedLabels, the same reader buildNextSteps
+ * uses.
+ *
+ * These are POSSIBILITIES, not history: they carry a label and nothing else —
+ * no date (there is none; the case has not entered that template) and no
+ * position among `done`/`current`/`upcoming`. They are a separate key rather
+ * than flagged entries appended to `upcoming` precisely because a consumer
+ * that forgot the flag would present a possibility as a commitment;
+ * `upcoming` stays exactly what it has always been.
+ *
  * @param {object} pipeline getPipeline payload
- *                          ({ template, current, history, upcoming, stages })
+ *                          ({ template, current, history, upcoming, stages }
+ *                           + `projected` on intake-resolved cases)
  * @returns {{ done: {label:string, date:string|null}[],
  *             current: {label:string, since:string|null} | null,
- *             upcoming: {label:string}[] }}
+ *             upcoming: {label:string}[],
+ *             projected?: {label:string}[] }}
  */
 function buildClientTimeline(pipeline) {
   const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
@@ -207,7 +277,20 @@ function buildClientTimeline(pipeline) {
     if (visibleByKey.has(s.stage_key)) upcoming.push({ label: s.client_label });
   }
 
-  return { done, current, upcoming };
+  const timeline = { done, current, upcoming };
+
+  // (R3.1) The forward tail — see the docblock. KEY PRESENCE mirrors
+  // getPipeline's own contract: emitted iff the payload carries `projected`,
+  // so every non-intake view keeps the exact three-key shape it has shipped
+  // since S2. An intake payload whose projection is malformed or entirely
+  // hidden emits `projected: []` — the key is a statement that this case HAS
+  // a forward view, and "[] visible entries" is a different fact from "no
+  // forward view exists".
+  if (pipeline && 'projected' in pipeline) {
+    timeline.projected = projectedLabels(pipeline);
+  }
+
+  return timeline;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,25 +444,20 @@ function buildNextSteps(pipeline, resolved) {
   if (!steps.length) return null;
 
   // (R2.5) FORWARD PROJECTION — feature-detected. The key is ABSENT (not
-  // null) unless the resolved template is role='intake', i.e. it exists only
-  // for LEADS, who are exactly the clients with nothing after the intake
-  // stages to look at. Absent on a pre-R2.5 server too; either way the card
-  // renders without the greyed tail rather than breaking.
+  // null) from the PIPELINE payload unless the resolved template is
+  // role='intake', i.e. it exists only for LEADS, who are exactly the clients
+  // with nothing after the intake stages to look at. Absent on a pre-R2.5
+  // server too; either way the card renders without the greyed tail rather
+  // than breaking.
   //
-  // Read for LABELS ONLY. These stages carry no stage_id and no requirements
-  // (they belong to a template the case has not entered), so they can never
-  // enter the step set — that is bucketed off `current`/`upcoming` stage ids.
-  // client_visible + client_label only, same as everything else that reaches
-  // a client.
-  const projected = [];
-  const proj = pipeline.projected;
-  if (proj && Array.isArray(proj.stages)) {
-    for (const s of proj.stages) {
-      if (!isVisible(s)) continue;
-      const l = String(s.client_label == null ? '' : s.client_label).trim();
-      if (l) projected.push({ label: l });
-    }
-  }
+  // (R3.1) The read itself moved to projectedLabels — the ONE reader
+  // buildClientTimeline now shares, so the card's greyed tail and the
+  // timeline's greyed tail cannot drift apart. Behaviour here is unchanged:
+  // same truthiness guard, same client_visible + client_label filter, same
+  // `[]` for absent/malformed. THIS card's key is always present (unlike the
+  // timeline's, which is emitted only when the pipeline carries one) —
+  // pinned by tests/portalNextSteps.test.js.
+  const projected = projectedLabels(pipeline);
 
   return { remaining, steps, projected };
 }
@@ -476,6 +554,13 @@ async function listCases(db, contactId) {
  * One case, portal-shaped. Scope check FIRST; out-of-scope and nonexistent
  * are both null — the route turns null into the uniform 404 (no oracle).
  *
+ * R3.1: on a LEAD, `timeline.projected` carries the same forward view
+ * `next_steps.projected` does — BY DESIGN, and not a duplication bug. The
+ * card answers "what do I have to do" and the timeline answers "where is my
+ * case"; a lead's honest answer to the second one runs past the end of the
+ * intake template, so both surfaces end with it. One reader
+ * (projectedLabels) feeds both, so they always agree word for word.
+ *
  * E1: `cards` = portalCardEngine.renderCards for the case-view placements
  * ('case_top' above the timeline, 'case' below — the client splits by each
  * card's placement). `meeting341` is included when — and ONLY when — the
@@ -496,7 +581,8 @@ async function listCases(db, contactId) {
  *   next_steps: { remaining:number, steps:object[], projected:object[] } | null,
  *   timeline: { done: {label:string, date:string|null}[],
  *               current: {label:string, since:string|null} | null,
- *               upcoming: {label:string}[] },
+ *               upcoming: {label:string}[],
+ *               projected?: {label:string}[] },     // R3.1 — leads only
  *   cards: Array<{key:string, title:string, body:string|null,
  *                 link:{url:string,label:string}|null,
  *                 coded_key:string|null, placement:string}>} | null>}
