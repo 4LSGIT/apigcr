@@ -34,6 +34,22 @@
   .day { aspect-ratio:1/1; border-radius:3px; }
   .spin { animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* Board view pins itself to the viewport so the page itself never scrolls —
+     the card column and the chat log each scroll internally instead. Only the
+     board view opts in; the admin console stays in normal document flow. */
+  body.board-mode { height:100vh; height:100dvh; overflow:hidden; }
+  body.board-mode #app { padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px)); }
+
+  /* Message bodies are user text: honour their newlines, and break a pasted
+     200-character URL rather than letting it stretch the chat column. */
+  .msgbody { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+  /* Thin scrollbars so the two internal scroll regions don't eat the layout. */
+  .scroller { scrollbar-width:thin; scrollbar-color:#cbd5e1 transparent; }
+  .scroller::-webkit-scrollbar { width:6px; }
+  .scroller::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:3px; }
+  .scroller::-webkit-scrollbar-track { background:transparent; }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen antialiased">
@@ -116,7 +132,21 @@ const SEC  = BTN + ' bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slat
 const DANG = BTN + ' bg-white text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50';
 const INP  = 'w-full rounded-lg border-0 ring-1 ring-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none';
 
+const BADGE  = 'inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold leading-[18px] text-white';
+const TAB_ON = 'rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 shadow-sm';
+const TAB_OFF= 'rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-700';
+
+/* The board view is a fixed-height app shell; everything else is a normal page. */
+const APP_FLOW  = 'mx-auto max-w-2xl px-4 py-6 sm:py-10';
+const APP_SHELL = 'mx-auto flex h-full max-w-6xl flex-col px-4 py-4';
+
+function setShell(mode) {
+  document.body.classList.toggle('board-mode', mode === 'shell');
+  app.className = mode === 'shell' ? APP_SHELL : APP_FLOW;
+}
+
 function loading(label = 'Loading…') {
+  setShell('flow');
   app.innerHTML =
     '<div class="flex items-center justify-center gap-3 py-24 text-slate-400 text-sm">' +
       '<svg class="spin h-5 w-5" viewBox="0 0 24 24" fill="none">' +
@@ -131,6 +161,41 @@ function loading(label = 'Loading…') {
  * ══════════════════════════════════════════════════════════════════════════ */
 
 let BOARD = null;   // last payload from GET /api/streak/board/:slug
+
+/* ─── chat + poll state ──────────────────────────────────────────────────────
+ * All of this is in-memory only and dies with the tab. Nothing about the chat
+ * is persisted client-side: unread state that survived a reload would be a
+ * promise this feature can't keep, since the server tracks no read receipts.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+let MSGS    = [];      // full loaded scrollback, oldest → newest
+let PAGED   = false;   // has "load older" ever run? (see mergeMessages)
+let MORE    = false;   // is there anything older than MSGS[0]?
+let SEEN_ID = 0;       // highest message id treated as read
+let UNSEEN  = 0;       // count of unread messages from OTHER people
+let TAB     = 'board'; // narrow-viewport tab: 'board' | 'chat'
+let STICK   = true;    // pin the chat log to the bottom on the next render
+let BUSY    = false;   // a refresh is already in flight
+
+const COARSE = window.matchMedia('(pointer: coarse)').matches;
+const isWide = () => window.matchMedia('(min-width: 1024px)').matches;
+
+/* Only ever poll a tab the user is actually looking at. A backgrounded or
+ * blurred tab goes completely silent: every request costs the server a full
+ * bcrypt compare in memberAuth, and nobody is reading the answer.
+ *
+ * The SAW_BLUR guard is deliberate. Some standalone-PWA shells report
+ * hasFocus() === false for a page the user is plainly looking at, and the
+ * failure mode there is silent — chat simply never updates and there is nothing
+ * on screen to explain why. So hasFocus() only gets a vote once this tab has
+ * actually observed a blur and proved the signal works. */
+let SAW_BLUR = false;
+const watching = () =>
+  document.visibilityState === 'visible' && (document.hasFocus() || !SAW_BLUR);
+
+/* Is the chat log on screen right now? Side-by-side on desktop, so always;
+ * on a narrow viewport only when its tab is selected. */
+const chatOnScreen = () => isWide() || TAB === 'chat';
 
 /* ─── dynamic PWA manifest ───────────────────────────────────────────────────
  * Chrome installs to the manifest's start_url, so one static manifest would
@@ -182,14 +247,25 @@ async function bootBoard() {
   if (!getCred()) return renderLogin();
   try {
     BOARD = await api('GET', '/api/streak/board/' + SLUG, undefined, memberHeaders());
+
+    // Arriving at a board should not light up a badge for its whole history —
+    // everything already on screen at first paint counts as seen.
+    MSGS    = [];
+    PAGED   = false;
+    SEEN_ID = (BOARD.messages || []).reduce((a, m) => Math.max(a, m.id), 0);
+    STICK   = true;
+
     renderBoard();
+    schedulePoll(true);
   } catch (err) {
     if (err.status === 401) { setCred(null); return renderLogin(err.message); }
+    setShell('flow');
     app.innerHTML = '<p class="py-24 text-center text-sm text-rose-600">' + esc(err.message) + '</p>';
   }
 }
 
 async function renderLogin(msg) {
+  setShell('flow');
   let meta = null;
   try { meta = await api('GET', '/api/streak/meta/' + SLUG); }
   catch (err) {
@@ -257,6 +333,7 @@ function dayCell(d, clickable, todayISO) {
   else if (isToday)      { cls = 'bg-white border-2 border-dashed border-slate-400'; title += ' — today, not yet'; }
   else                   { cls = 'bg-slate-200';   title += ' — missed'; }
 
+  // Legacy notes from before the chat replaced them still surface here.
   if (d.note) title += ' · ' + d.note;
   if (isToday && d.done) cls += ' ring-2 ring-offset-1 ring-emerald-600';
 
@@ -281,21 +358,12 @@ function memberCard(m, board) {
 
   let action = '';
   if (you && !board.archived) {
-    if (!done) {
-      action =
-        '<div class="mt-4 space-y-2">' +
-          '<input id="note" class="' + INP + '" maxlength="280" placeholder="Note (optional)">' +
-          '<button data-act="checkin" class="' + PRI + ' w-full py-3 text-base">✓ Mark today done</button>' +
-        '</div>';
-    } else {
-      const note = m.days[m.days.length - 1]?.note;
-      action =
-        '<div class="mt-4 rounded-lg bg-emerald-50 p-3 text-center ring-1 ring-emerald-200">' +
+    action = done
+      ? '<div class="mt-4 rounded-lg bg-emerald-50 p-3 text-center ring-1 ring-emerald-200">' +
           '<p class="text-sm font-semibold text-emerald-800">Nice. Logged for today.</p>' +
-          (note ? '<p class="mt-1 text-xs italic text-emerald-700">“' + esc(note) + '”</p>' : '') +
           '<button data-act="undo" class="mt-2 text-xs text-emerald-700/70 underline hover:text-emerald-900">undo</button>' +
-        '</div>';
-    }
+        '</div>'
+      : '<button data-act="checkin" class="' + PRI + ' mt-4 w-full py-3 text-base">✓ Mark today done</button>';
   }
 
   return '<section class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200' +
@@ -330,80 +398,537 @@ function memberCard(m, board) {
   '</section>';
 }
 
+/* ─── shell ──────────────────────────────────────────────────────────────────
+ * renderBoard() builds the frame ONCE and binds every listener that must
+ * survive a poll. applyBoard() then refreshes the contents in place.
+ *
+ * This split is load-bearing: the old code re-rendered the whole page on every
+ * poll, which with a chat panel would wipe half-typed text out of the composer
+ * and throw away the scroll position every 15 seconds.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+const ICON_REFRESH =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">' +
+    '<path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path>' +
+  '</svg>';
+
 function renderBoard() {
   const b = BOARD;
+  setShell('shell');
   setManifest(b.title);
+
+  app.innerHTML =
+    '<header class="flex shrink-0 items-start justify-between gap-3">' +
+      '<div class="min-w-0">' +
+        '<h1 class="line-clamp-2 text-xl font-bold tracking-tight sm:text-2xl">' + esc(b.title) + '</h1>' +
+        '<p class="mt-0.5 truncate text-xs text-slate-400">' +
+          (b.description ? esc(b.description) + ' · ' : '') + esc(pretty(b.today)) +
+        '</p>' +
+      '</div>' +
+      '<div class="flex shrink-0 items-center gap-1">' +
+        '<button id="refresh" title="Refresh" aria-label="Refresh" ' +
+          'class="rounded-lg p-2 text-slate-400 hover:bg-white hover:text-slate-700">' + ICON_REFRESH + '</button>' +
+        '<button id="signout" class="rounded-lg px-2 py-2 text-xs text-slate-400 hover:text-slate-600">sign out</button>' +
+      '</div>' +
+    '</header>' +
+
+    /* Tabs exist only below lg, where the two panes can't sit side by side. */
+    '<div class="mt-3 grid shrink-0 grid-cols-2 gap-1 rounded-xl bg-slate-200/70 p-1 lg:hidden">' +
+      '<button data-tab="board" class="tabbtn">Board</button>' +
+      '<button data-tab="chat" class="tabbtn">Chat<span id="tabbadge" class="' + BADGE + ' ml-1.5 hidden"></span></button>' +
+    '</div>' +
+
+    '<main class="mt-3 flex min-h-0 flex-1 gap-4">' +
+
+      '<div id="pane-board" class="scroller min-h-0 flex-1 overflow-y-auto lg:block">' +
+        '<div id="banner"></div>' +
+        '<div id="cards" class="space-y-4"></div>' +
+        '<p class="mt-6 pb-2 text-center text-[11px] text-slate-300">' +
+          'Amber = ticked after the fact. You can only change your own last ' + b.backfill_days + ' days.' +
+        '</p>' +
+      '</div>' +
+
+      '<div id="pane-chat" class="hidden min-h-0 w-full flex-col lg:flex lg:w-[360px] lg:shrink-0">' +
+        '<div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">' +
+          '<div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-2.5">' +
+            '<h2 class="text-sm font-semibold text-slate-700">Chat</h2>' +
+            '<span id="panelbadge" class="' + BADGE + ' hidden"></span>' +
+          '</div>' +
+          '<div id="msgs" class="scroller min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-3"></div>' +
+          '<div id="composer" class="shrink-0 border-t border-slate-100 p-2"></div>' +
+        '</div>' +
+      '</div>' +
+
+    '</main>';
+
+  document.getElementById('signout').addEventListener('click', () => {
+    stopPoll(); setCred(null); bootBoard();
+  });
+
+  document.getElementById('refresh').addEventListener('click', async (e) => {
+    const icon = e.currentTarget.firstElementChild;
+    icon.classList.add('spin');
+    markActive();
+    await refresh();
+    setTimeout(() => icon.classList.remove('spin'), 400);
+  });
+
+  app.querySelectorAll('.tabbtn').forEach((btn) =>
+    btn.addEventListener('click', () => setTab(btn.dataset.tab)));
+
+  /* Delegated so the handlers survive every innerHTML swap of #msgs. */
+  document.getElementById('msgs').addEventListener('click', (e) => {
+    const older = e.target.closest('[data-act="older"]');
+    if (older) return loadOlder(older);
+    const del = e.target.closest('[data-act="delmsg"]');
+    if (del) return deleteMessage(del.dataset.id);
+  });
+  document.getElementById('msgs').addEventListener('scroll', () => {
+    if (atBottom()) markSeen();
+  });
+  // A deliberate scroll gesture releases the bottom pin at once, so stickToBottom
+  // can never drag someone back down while they're reading history.
+  ['wheel', 'touchstart', 'keydown'].forEach((ev) =>
+    document.getElementById('msgs').addEventListener(ev, () => { PIN_UNTIL = 0; }, { passive: true }));
+  document.getElementById('pane-chat').addEventListener('click', markSeen);
+
+  renderComposer();
+  setTab(TAB);
+  applyBoard();
+}
+
+function setTab(t) {
+  TAB = t;
+  document.getElementById('pane-board').classList.toggle('hidden', t !== 'board');
+  const chat = document.getElementById('pane-chat');
+  chat.classList.toggle('hidden', t !== 'chat');
+  chat.classList.toggle('flex', t === 'chat');
+
+  app.querySelectorAll('.tabbtn').forEach((btn) => {
+    btn.className = 'tabbtn ' + (btn.dataset.tab === t ? TAB_ON : TAB_OFF);
+  });
+
+  if (t === 'chat') { markActive(); STICK = true; renderMessages(); markSeen(); }
+}
+
+/* Refresh everything that changes, without touching the frame or the composer. */
+function applyBoard() {
+  const b = BOARD;
+
   // Mirror the server's backfill rule client-side so we only offer taps the API
   // will accept. The server re-checks; this is UI only.
   const t = new Date(b.today + 'T00:00:00Z');
   t.setUTCDate(t.getUTCDate() - b.backfill_days);
   b.days_editable_from = t.toISOString().slice(0, 10);
 
-  const banner = b.archived
+  document.getElementById('banner').innerHTML = b.archived
     ? '<div class="mb-4 rounded-xl bg-slate-200 px-4 py-3 text-center text-sm font-medium text-slate-600">This board is archived — read only.</div>'
     : b.all_done_today
       ? '<div class="mb-4 rounded-xl bg-emerald-500 px-4 py-3 text-center text-sm font-semibold text-white">🎉 Everyone is done today.</div>'
       : '';
 
-  app.innerHTML =
-    '<header class="mb-6 flex items-start justify-between gap-4">' +
-      '<div>' +
-        '<h1 class="text-2xl font-bold tracking-tight">' + esc(b.title) + '</h1>' +
-        (b.description ? '<p class="mt-1 text-sm text-slate-500">' + esc(b.description) + '</p>' : '') +
-        '<p class="mt-1 text-xs text-slate-400">' + esc(pretty(b.today)) + '</p>' +
-      '</div>' +
-      '<button id="signout" class="shrink-0 text-xs text-slate-400 hover:text-slate-600">sign out</button>' +
-    '</header>' +
-    banner +
-    '<div class="space-y-4">' + b.members.map((m) => memberCard(m, b)).join('') + '</div>' +
-    '<p class="mt-8 text-center text-[11px] text-slate-300">' +
-      'Amber = ticked after the fact. You can only change your own last ' + b.backfill_days + ' days.' +
-    '</p>';
+  const cards = document.getElementById('cards');
+  cards.innerHTML = b.members.map((m) => memberCard(m, b)).join('');
 
-  document.getElementById('signout').addEventListener('click', () => { setCred(null); bootBoard(); });
-
-  const me = app.querySelector('[data-user="' + b.you + '"]');
-  if (!me) return;
-
-  me.querySelector('[data-act="checkin"]')?.addEventListener('click', (e) => {
-    const note = document.getElementById('note')?.value || '';
-    send(e.currentTarget, 'POST', { note });
-  });
-  me.querySelector('[data-act="undo"]')?.addEventListener('click', (e) => send(e.currentTarget, 'DELETE', {}));
-  me.querySelectorAll('[data-act="toggle"]').forEach((cell) => {
-    cell.addEventListener('click', () => {
-      const date = cell.dataset.date;
-      const day  = BOARD.members.find((m) => m.is_you).days.find((d) => d.date === date);
-      if (day.done && date !== BOARD.today && !confirm('Remove ' + pretty(date) + ' from your streak?')) return;
-      send(cell, day.done ? 'DELETE' : 'POST', { date });
+  const me = cards.querySelector('[data-user="' + b.you + '"]');
+  if (me) {
+    me.querySelector('[data-act="checkin"]')?.addEventListener('click', (e) => send(e.currentTarget, 'POST', {}));
+    me.querySelector('[data-act="undo"]')?.addEventListener('click', (e) => send(e.currentTarget, 'DELETE', {}));
+    me.querySelectorAll('[data-act="toggle"]').forEach((cell) => {
+      cell.addEventListener('click', () => {
+        const date = cell.dataset.date;
+        const day  = BOARD.members.find((m) => m.is_you).days.find((d) => d.date === date);
+        if (day.done && date !== BOARD.today && !confirm('Remove ' + pretty(date) + ' from your streak?')) return;
+        send(cell, day.done ? 'DELETE' : 'POST', { date });
+      });
     });
-  });
+  }
+
+  mergeMessages(b.messages || [], !!b.messages_has_more);
+  renderMessages();
+  renderComposer();
 }
 
 async function send(el, method, body) {
   el.style.pointerEvents = 'none';
   if (el.tagName === 'BUTTON') { el.disabled = true; el.textContent = 'Saving…'; }
+  markActive();
   try {
     await api(method, '/api/streak/board/' + SLUG + '/checkin', body, memberHeaders());
     BOARD = await api('GET', '/api/streak/board/' + SLUG, undefined, memberHeaders());
-    renderBoard();
+    applyBoard();
   } catch (err) {
     toast(err.message);
-    if (err.status === 401) { setCred(null); bootBoard(); } else { renderBoard(); }
+    if (err.status === 401) { stopPoll(); setCred(null); bootBoard(); } else { applyBoard(); }
   }
 }
 
-/* Pick up the other person's tick without a manual refresh. */
-setInterval(() => { if (!IS_ADMIN_PAGE && BOARD && !document.hidden) bootBoardQuiet(); }, 60000);
-document.addEventListener('visibilitychange', () => {
-  if (!IS_ADMIN_PAGE && BOARD && !document.hidden) bootBoardQuiet();
-});
-async function bootBoardQuiet() {
+/* ════════════════════════════════════════════════════════════════════════════
+ * CHAT
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* Epoch seconds → the VIEWER's local clock. The board's tz decides what day it
+ * is for streak purposes and nothing else; two members in different countries
+ * must each see a message stamped with their own time. */
+const dayKey = (ts) => new Date(ts * 1000).toDateString();
+const clock  = (ts) => new Date(ts * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+function dayLabel(ts) {
+  const key = dayKey(ts);
+  const now = new Date();
+  if (key === now.toDateString()) return 'Today';
+  const y = new Date(now); y.setDate(y.getDate() - 1);
+  if (key === y.toDateString()) return 'Yesterday';
+  return new Date(ts * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/**
+ * Fold a freshly polled page into the loaded scrollback.
+ *
+ * The board payload always carries the NEWEST page, so once the user has paged
+ * backwards we can't just assign — that would silently throw their history
+ * away every 15 seconds. Keep everything older than the fresh page and let the
+ * fresh page be authoritative from its first id onward, so deletions land.
+ */
+function mergeMessages(fresh, freshHasMore) {
+  if (!PAGED) { MSGS = fresh; MORE = freshHasMore; return; }
+  const cut = fresh.length ? fresh[0].id : 0;
+  MSGS = MSGS.filter((m) => m.id < cut).concat(fresh);
+}
+
+function atBottom() {
+  const box = document.getElementById('msgs');
+  if (!box) return true;
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+}
+
+/**
+ * Pin the log to the newest message and KEEP it pinned for a few frames.
+ *
+ * A single scrollTop assignment is not enough. Tailwind ships from a CDN and
+ * applies its styles after first paint, and web fonts land later still — both
+ * change the log's height *after* we've scrolled it, leaving the newest message
+ * stranded below the fold. So re-assert every frame for a short window.
+ *
+ * Any real scroll gesture cancels the pin immediately, so this can never fight
+ * a user who is deliberately reading back through history.
+ */
+let PIN_UNTIL = 0;
+
+function stickToBottom(box) {
+  PIN_UNTIL = Date.now() + 500;
+  (function apply() {
+    if (Date.now() > PIN_UNTIL) return;
+    box.scrollTop = box.scrollHeight;
+    requestAnimationFrame(apply);
+  })();
+}
+
+function messagesHTML() {
+  if (!MSGS.length) {
+    return '<p class="px-2 py-10 text-center text-xs text-slate-400">' +
+             'Nothing here yet. Say something.' +
+           '</p>';
+  }
+
+  let out = MORE
+    ? '<div class="pb-2 text-center">' +
+        '<button data-act="older" class="rounded-full px-3 py-1 text-[11px] text-slate-400 hover:bg-slate-100 hover:text-slate-600">' +
+          'Load older' +
+        '</button>' +
+      '</div>'
+    : '';
+
+  MSGS.forEach((m, i) => {
+    const prev   = i ? MSGS[i - 1] : null;
+    const newDay = !prev || dayKey(prev.ts) !== dayKey(m.ts);
+    const mine   = m.username === BOARD.you;
+    // Collapse the name header for a rapid run of messages from one person.
+    const run    = prev && !newDay && prev.username === m.username && (m.ts - prev.ts) < 300;
+
+    if (newDay) {
+      out += '<div class="py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">' +
+               esc(dayLabel(m.ts)) + '</div>';
+    }
+
+    const unread = m.id > SEEN_ID && !mine;
+
+    out +=
+      '<div class="flex ' + (mine ? 'justify-end' : 'justify-start') + (run ? '' : ' pt-1.5') + '">' +
+        '<div class="max-w-[85%] min-w-0">' +
+          (!mine && !run
+            ? '<p class="mb-0.5 px-1 text-[11px] font-semibold text-slate-500">' + esc(m.name) + '</p>'
+            : '') +
+          '<div class="msgbody rounded-2xl px-3 py-1.5 text-sm ' +
+            (mine ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800') +
+            (unread ? ' ring-2 ring-rose-300' : '') + '">' + esc(m.body) + '</div>' +
+          '<div class="mt-0.5 flex items-center gap-1.5 px-1 text-[10px] text-slate-400' +
+            (mine ? ' justify-end' : '') + '">' +
+            '<span>' + esc(clock(m.ts)) + '</span>' +
+            (mine && !BOARD.archived
+              ? '<button data-act="delmsg" data-id="' + m.id + '" ' +
+                  'class="text-slate-300 hover:text-rose-500" title="Delete">✕</button>'
+              : '') +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  });
+
+  return out;
+}
+
+function renderMessages() {
+  const box = document.getElementById('msgs');
+  if (!box || !BOARD) return;
+
+  const sig = MSGS.length + ':' + (MSGS[0]?.id || 0) + ':' + (MSGS[MSGS.length - 1]?.id || 0) +
+              ':' + SEEN_ID + ':' + MORE + ':' + BOARD.archived;
+
+  // Skip the DOM churn when nothing visible changed, but ALWAYS fall through to
+  // reconcileUnread — refocusing the window clears the badge without altering a
+  // single message.
+  if (sig !== box.dataset.sig || STICK) {
+    const stick   = STICK || atBottom();
+    const prevH   = box.scrollHeight;
+    const prevTop = box.scrollTop;
+
+    box.innerHTML = messagesHTML();
+    box.dataset.sig = sig;
+
+    // Sticking to the bottom covers new arrivals; the height delta keeps the
+    // reader's place when a "load older" page is prepended above them.
+    if (stick) stickToBottom(box);
+    else box.scrollTop = box.scrollHeight - prevH + prevTop;
+  }
+
+  STICK = false;
+  reconcileUnread();
+}
+
+/**
+ * Recount unread and paint both badges, marking messages seen if the log is
+ * actually being read right now.
+ *
+ * Advancing SEEN_ID changes how messages render (the unread ring), so this
+ * re-enters renderMessages once. That terminates at depth two: the second pass
+ * can't advance SEEN_ID again because it's already at the newest id.
+ */
+function reconcileUnread() {
+  if (!BOARD) return;
+  const last   = MSGS.length ? MSGS[MSGS.length - 1].id : 0;
+  const before = SEEN_ID;
+
+  // "Read" means: the log is on screen, the window is focused, and you are at
+  // the bottom of it. Scrolled up in history does NOT clear the badge.
+  if (watching() && chatOnScreen() && atBottom()) SEEN_ID = Math.max(SEEN_ID, last);
+
+  UNSEEN = MSGS.filter((m) => m.id > SEEN_ID && m.username !== BOARD.you).length;
+  const label = UNSEEN > 99 ? '99+' : String(UNSEEN);
+
+  const tab = document.getElementById('tabbadge');
+  if (tab) {
+    tab.textContent = label;
+    tab.classList.toggle('hidden', UNSEEN === 0);
+  }
+  // The panel header badge only earns its place when the log is on screen —
+  // otherwise the tab badge is already saying it.
+  const panel = document.getElementById('panelbadge');
+  if (panel) {
+    panel.textContent = label;
+    panel.classList.toggle('hidden', UNSEEN === 0 || !chatOnScreen());
+  }
+
+  if (SEEN_ID !== before) renderMessages();
+}
+
+/** Bound to the interactions that mean "I'm reading this". */
+function markSeen() { reconcileUnread(); }
+
+function renderComposer() {
+  const box = document.getElementById('composer');
+  if (!box || !BOARD) return;
+
+  if (BOARD.archived) {
+    box.innerHTML = '<p class="px-2 py-2 text-center text-xs text-slate-400">This board is archived.</p>';
+    // Clear the flag so the composer rebuilds if an admin un-archives the board
+    // while this page is still open.
+    delete box.dataset.ready;
+    return;
+  }
+  if (box.dataset.ready === '1') return;   // never rebuild a live composer
+  box.dataset.ready = '1';
+
+  box.innerHTML =
+    '<div class="flex items-end gap-2">' +
+      '<textarea id="say" rows="1" maxlength="' + (BOARD.message_max || 1000) + '" ' +
+        'placeholder="Message…" ' +
+        'class="max-h-[120px] flex-1 resize-none rounded-xl border-0 bg-slate-100 px-3 py-2 text-sm ' +
+        'outline-none focus:ring-2 focus:ring-indigo-500"></textarea>' +
+      '<button id="sendmsg" title="Send" aria-label="Send" ' +
+        'class="shrink-0 rounded-xl bg-indigo-600 px-3 py-2 text-white transition hover:bg-indigo-700 ' +
+        'disabled:opacity-40">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+          'stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">' +
+          '<path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path>' +
+        '</svg>' +
+      '</button>' +
+    '</div>';
+
+  const say = document.getElementById('say');
+  say.addEventListener('input', () => { autoGrow(say); markActive(); });
+  say.addEventListener('focus', () => { markActive(); markSeen(); });
+  say.addEventListener('keydown', (e) => {
+    // Enter sends on a real keyboard; on touch it inserts a newline and the
+    // button is the only way out, which is what people expect on a phone.
+    if (e.key === 'Enter' && !e.shiftKey && !COARSE) { e.preventDefault(); sendMessage(); }
+  });
+  document.getElementById('sendmsg').addEventListener('click', sendMessage);
+}
+
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+async function sendMessage() {
+  const say = document.getElementById('say');
+  const btn = document.getElementById('sendmsg');
+  if (!say) return;
+
+  const body = (say.value || '').trim();
+  if (!body) return;
+
+  btn.disabled = true;
+  markActive();
+  try {
+    await api('POST', '/api/streak/board/' + SLUG + '/message', { body }, memberHeaders());
+    say.value = '';
+    autoGrow(say);
+    STICK = true;
+    await refresh();
+  } catch (err) {
+    toast(err.message);
+    if (err.status === 401) { stopPoll(); setCred(null); bootBoard(); }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteMessage(id) {
+  if (!confirm('Delete this message?')) return;
+  markActive();
+  try {
+    await api('DELETE', '/api/streak/board/' + SLUG + '/message/' + id, undefined, memberHeaders());
+    MSGS = MSGS.filter((m) => String(m.id) !== String(id));
+    renderMessages();
+    refresh();
+  } catch (err) {
+    toast(err.message);
+    if (err.status === 401) { stopPoll(); setCred(null); bootBoard(); }
+  }
+}
+
+async function loadOlder(btn) {
+  if (!MSGS.length) return;
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    const r = await api('GET',
+      '/api/streak/board/' + SLUG + '/messages?before_id=' + MSGS[0].id,
+      undefined, memberHeaders());
+    PAGED = true;
+    MSGS  = r.messages.concat(MSGS);
+    MORE  = r.has_more;
+    renderMessages();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+    btn.textContent = 'Load older';
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * POLLING
+ *
+ * Two cadences. 15s while the conversation is live, 60s otherwise, and NOTHING
+ * at all unless this tab is both visible and focused — every request costs the
+ * server a full bcrypt compare in memberAuth, so a background tab quietly
+ * burning CPU is exactly what we're avoiding. Regaining focus fetches at once,
+ * and every write already refetches on its own.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const POLL_ACTIVE = 15000;
+const POLL_IDLE   = 60000;
+const ACTIVE_FOR  = 120000;   // how long an interaction keeps the fast cadence
+
+let activeUntil = 0;
+let pollTimer   = null;
+let nextPollAt  = 0;
+
+/** Something happened worth watching for a reply — go to the fast cadence. */
+function markActive() {
+  activeUntil = Date.now() + ACTIVE_FOR;
+  schedulePoll(false);
+}
+
+/**
+ * `force` reschedules unconditionally. Without it this only ever moves the next
+ * poll EARLIER — otherwise continuous typing would push the timer out forever
+ * and the tab would never refresh at all.
+ */
+function schedulePoll(force) {
+  if (IS_ADMIN_PAGE || !BOARD) return;
+  const gap = Date.now() < activeUntil ? POLL_ACTIVE : POLL_IDLE;
+  const at  = Date.now() + gap;
+  if (!force && pollTimer && nextPollAt && nextPollAt <= at) return;
+  clearTimeout(pollTimer);
+  nextPollAt = at;
+  pollTimer  = setTimeout(pollTick, gap);
+}
+
+function stopPoll() {
+  clearTimeout(pollTimer);
+  pollTimer  = null;
+  nextPollAt = 0;
+}
+
+async function pollTick() {
+  if (watching()) await refresh();
+  schedulePoll(true);
+}
+
+/** Quiet refetch: a failure just waits for the next tick. */
+async function refresh() {
+  if (BUSY || !SLUG || !getCred()) return;
+  BUSY = true;
   try {
     BOARD = await api('GET', '/api/streak/board/' + SLUG, undefined, memberHeaders());
-    renderBoard();
-  } catch { /* transient — the next tick will retry */ }
+    applyBoard();
+  } catch (err) {
+    if (err.status === 401) { stopPoll(); setCred(null); bootBoard(); }
+    /* anything else is transient — the next tick retries */
+  } finally {
+    BUSY = false;
+  }
 }
+
+function onWake() {
+  if (IS_ADMIN_PAGE || !BOARD) return;
+  if (!watching()) return;
+  refresh();
+  schedulePoll(true);
+}
+
+document.addEventListener('visibilitychange', onWake);
+window.addEventListener('focus', onWake);
+window.addEventListener('blur', () => { SAW_BLUR = true; stopPoll(); });
+
+/* Crossing the lg breakpoint swaps between tabs and side-by-side, which changes
+ * whether the chat counts as on screen. */
+window.matchMedia('(min-width: 1024px)').addEventListener('change', () => {
+  if (BOARD) { setTab(TAB); reconcileUnread(); }
+});
 
 /* ════════════════════════════════════════════════════════════════════════════
  * ADMIN  —  /streak

@@ -41,9 +41,12 @@
  * ── ROUTES ──────────────────────────────────────────────────────────────────
  *   GET    /api/streak/meta/:slug              public   board title + who's on it (for the login screen)
  *   POST   /api/streak/auth/:slug              member   credential check (login screen)
- *   GET    /api/streak/board/:slug             member   full board state + per-member stats + day grid
+ *   GET    /api/streak/board/:slug             member   full board state + day grid + last 50 messages
  *   POST   /api/streak/board/:slug/checkin     member   tick a day for YOURSELF   { date?, note? }
  *   DELETE /api/streak/board/:slug/checkin     member   untick a day for YOURSELF { date? }
+ *   GET    /api/streak/board/:slug/messages    member   older messages { before_id }
+ *   POST   /api/streak/board/:slug/message     member   post a message  { body }
+ *   DELETE /api/streak/board/:slug/message/:id member   delete YOUR OWN message
  *
  *   GET    /api/streak/boards                  admin    list all boards
  *   POST   /api/streak/boards                  admin    create
@@ -51,7 +54,18 @@
  *   DELETE /api/streak/boards/:slug            admin    delete board + its checkins
  *
  * A member can only ever tick or untick their OWN row — the username comes from
- * the credential, never from the request body. That is the whole point.
+ * the credential, never from the request body. That is the whole point. The same
+ * rule governs chat: you post as yourself and you can only delete your own.
+ *
+ * ── CHAT ────────────────────────────────────────────────────────────────────
+ * Board-scoped, not day-scoped. It rides along inside GET /board/:slug rather
+ * than getting its own poll, because memberAuth spends a full bcrypt compare on
+ * every request and a dedicated chat poll would double that bill for nothing.
+ *
+ * Timestamps go out as epoch seconds (UNIX_TIMESTAMP), never as formatted
+ * strings — the client renders them in the VIEWER's timezone. `board.tz` decides
+ * what day it is for streak purposes and nothing else; two members in different
+ * countries must each see their own clock on a message.
  *
  * Every path is >= 2 segments, so the `GET /:page` static catch-all in server.js
  * (registered before the routes/ scan) never intercepts these.
@@ -81,6 +95,10 @@ const BACKFILL_DAYS = 7;
 const GRID_DAYS  = 28;
 const MAX_MEMBERS = 8;
 const MIN_PASS_LEN = 4;
+
+/** Messages returned per page — both in the board payload and per "load older". */
+const MSG_PAGE  = 50;
+const MSG_MAX   = 1000;
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const USER_RE = /^[a-z0-9._-]{1,32}$/;
@@ -221,6 +239,79 @@ function resolveDate(raw, todayISO) {
     return { error: `You can only change the last ${BACKFILL_DAYS} days.` };
   }
   return { date };
+}
+
+// ─── chat helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Author display name, resolved against the board's member list with the raw
+ * username as the fallback — so a member who was later removed from the board
+ * still reads sensibly in the scrollback instead of vanishing.
+ */
+function nameLookup(members) {
+  const map = new Map((members || []).map((m) => [m.u, m.name || m.u]));
+  return (u) => map.get(u) || u;
+}
+
+/**
+ * Normalize an incoming message body. Returns { body } or { error }.
+ *
+ * varchar(1000) counts CHARACTERS in utf8mb4 while JS .length counts UTF-16 code
+ * units, and code units >= characters for every string, so slicing at MSG_MAX in
+ * JS can never overflow the column. The surrogate guard stops the slice landing
+ * between the halves of an astral character and writing a lone surrogate.
+ */
+function cleanBody(raw) {
+  let s = String(raw ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+
+  if (!s) return { error: "Say something first." };
+  if (s.length > MSG_MAX) {
+    s = s.slice(0, MSG_MAX);
+    if (/[\uD800-\uDBFF]$/.test(s)) s = s.slice(0, -1);
+  }
+  return { body: s };
+}
+
+/**
+ * One page of messages, oldest → newest.
+ *
+ * `beforeId` pages backwards for "load older". We ask for one row more than the
+ * page size purely to answer `has_more` without a second COUNT query.
+ * `ts` is epoch seconds — see the CHAT note at the top of the file.
+ */
+async function fetchMessages(db, boardId, members, beforeId = null) {
+  const nameOf = nameLookup(members);
+
+  const params = [boardId];
+  let where = "board_id = ?";
+  if (beforeId) { where += " AND id < ?"; params.push(beforeId); }
+
+  const [rows] = await db.query(
+    `SELECT id, username, body, UNIX_TIMESTAMP(created_at) AS ts
+       FROM streak_messages
+      WHERE ${where}
+      ORDER BY id DESC
+      LIMIT ${MSG_PAGE + 1}`,
+    params
+  );
+
+  const has_more = rows.length > MSG_PAGE;
+  if (has_more) rows.pop();
+
+  return {
+    has_more,
+    messages: rows.reverse().map((r) => ({
+      id: r.id,
+      username: r.username,
+      name: nameOf(r.username),
+      body: r.body,
+      ts: Number(r.ts),
+    })),
+  };
 }
 
 // ─── auth middleware ─────────────────────────────────────────────────────────
@@ -365,6 +456,10 @@ router.get("/api/streak/board/:slug", memberLimiter, memberAuth, async (req, res
       };
     });
 
+    // Chat rides along here rather than on its own poll — see the CHAT note at
+    // the top of the file. One indexed range scan, capped at MSG_PAGE rows.
+    const chat = await fetchMessages(req.db, board.id, board.members);
+
     res.json({
       slug: board.slug,
       title: board.title,
@@ -377,6 +472,9 @@ router.get("/api/streak/board/:slug", memberLimiter, memberAuth, async (req, res
       you: req.member.u,
       members,
       all_done_today: members.length > 0 && members.every((m) => m.done_today),
+      messages: chat.messages,
+      messages_has_more: chat.has_more,
+      message_max: MSG_MAX,
     });
   } catch (err) {
     console.error("[api.streak] GET board error:", err);
@@ -445,6 +543,107 @@ router.delete("/api/streak/board/:slug/checkin", memberLimiter, memberAuth, asyn
   } catch (err) {
     console.error("[api.streak] DELETE checkin error:", err);
     res.status(500).json({ error: "Couldn't undo that." });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CHAT ROUTES
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/streak/board/:slug/messages — page backwards through the scrollback.
+ * Query: { before_id }
+ *
+ * The board payload already carries the newest page, so this exists only to
+ * serve "load older". Omitting before_id returns the newest page again.
+ */
+router.get("/api/streak/board/:slug/messages", memberLimiter, memberAuth, async (req, res) => {
+  try {
+    const raw = req.query?.before_id;
+    const beforeId = (raw == null || raw === "") ? null : Number(raw);
+    if (beforeId !== null && (!Number.isInteger(beforeId) || beforeId < 1)) {
+      return res.status(400).json({ error: "Bad before_id." });
+    }
+    res.json(await fetchMessages(req.db, req.board.id, req.board.members, beforeId));
+  } catch (err) {
+    console.error("[api.streak] GET messages error:", err);
+    res.status(500).json({ error: "Couldn't load the chat." });
+  }
+});
+
+/**
+ * POST /api/streak/board/:slug/message — say something. Body: { body }
+ *
+ * The author is the credential, never the request body. The inserted row is
+ * re-read for its timestamp so the client shows the DATABASE's clock; app server
+ * and DB server are different machines and their clocks can disagree.
+ */
+router.post("/api/streak/board/:slug/message", memberLimiter, memberAuth, async (req, res) => {
+  try {
+    const board = req.board;
+    if (board.archived) return res.status(409).json({ error: "This board is archived." });
+
+    const { body, error } = cleanBody(req.body?.body);
+    if (error) return res.status(400).json({ error });
+
+    const [ins] = await req.db.query(
+      "INSERT INTO streak_messages (board_id, username, body) VALUES (?, ?, ?)",
+      [board.id, req.member.u, body]
+    );
+
+    const [[row]] = await req.db.query(
+      "SELECT UNIX_TIMESTAMP(created_at) AS ts FROM streak_messages WHERE id = ?",
+      [ins.insertId]
+    );
+
+    res.status(201).json({
+      ok: true,
+      message: {
+        id: ins.insertId,
+        username: req.member.u,
+        name: req.member.name || req.member.u,
+        body,
+        ts: Number(row?.ts ?? Math.floor(Date.now() / 1000)),
+      },
+    });
+  } catch (err) {
+    console.error("[api.streak] POST message error:", err);
+    res.status(500).json({ error: "Couldn't send that." });
+  }
+});
+
+/**
+ * DELETE /api/streak/board/:slug/message/:id — remove YOUR OWN message.
+ *
+ * Hard delete, no edit, no tombstone. Two people on a board do not need an audit
+ * trail; they need to be able to fix a typo.
+ */
+router.delete("/api/streak/board/:slug/message/:id", memberLimiter, memberAuth, async (req, res) => {
+  try {
+    const board = req.board;
+    if (board.archived) return res.status(409).json({ error: "This board is archived." });
+
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Bad message id." });
+
+    const [[row]] = await req.db.query(
+      "SELECT username FROM streak_messages WHERE id = ? AND board_id = ? LIMIT 1",
+      [id, board.id]
+    );
+    if (!row) return res.status(404).json({ error: "That message is already gone." });
+    if (row.username !== req.member.u) {
+      return res.status(403).json({ error: "You can only delete your own messages." });
+    }
+
+    const [r] = await req.db.query(
+      "DELETE FROM streak_messages WHERE id = ? AND board_id = ? AND username = ?",
+      [id, board.id, req.member.u]
+    );
+
+    res.json({ ok: true, id, deleted: r.affectedRows });
+  } catch (err) {
+    console.error("[api.streak] DELETE message error:", err);
+    res.status(500).json({ error: "Couldn't delete that." });
   }
 });
 
@@ -657,11 +856,17 @@ router.delete("/api/streak/boards/:slug", adminLimiter, adminAuth, async (req, r
     // No FK, so the cascade is ours. Pure DB work — safe to auto-retry.
     const removed = await req.db.withTransaction(async (conn) => {
       const [c] = await conn.query("DELETE FROM streak_checkins WHERE board_id = ?", [board.id]);
+      const [m] = await conn.query("DELETE FROM streak_messages WHERE board_id = ?", [board.id]);
       await conn.query("DELETE FROM streak_boards WHERE id = ?", [board.id]);
-      return c.affectedRows;
+      return { checkins: c.affectedRows, messages: m.affectedRows };
     });
 
-    res.json({ ok: true, slug, checkins_deleted: removed });
+    res.json({
+      ok: true,
+      slug,
+      checkins_deleted: removed.checkins,
+      messages_deleted: removed.messages,
+    });
   } catch (err) {
     console.error("[api.streak] DELETE board error:", err);
     res.status(500).json({ error: "Couldn't delete the board." });

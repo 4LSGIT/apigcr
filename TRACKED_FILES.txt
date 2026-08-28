@@ -340,6 +340,7 @@ ref/2026-08-26_pipeline_r15_rules.sql
 ref/2026-08-26_pipeline_r2_requirements.sql
 ref/2026-08-27_documents_external_id_bin.sql
 ref/2026-08-27_unified_events_e0a.sql
+ref/2026-08-28_streak_messages.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md

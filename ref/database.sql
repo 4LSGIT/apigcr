@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-27T12:47:09.199Z
+-- Generated: 2026-08-28T15:39:31.192Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:947c02843c18992218639be6b766a327
+-- Fingerprint: sha256:4054f98f3cf73dfe4d9dc0363eb3e59e
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2878,6 +2878,21 @@ CREATE TABLE `streak_checkins` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `streak_messages`
+--
+
+DROP TABLE IF EXISTS `streak_messages`;
+CREATE TABLE `streak_messages` (
+  `id` int unsigned NOT NULL,
+  `board_id` int unsigned NOT NULL,
+  `username` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'matches streak_boards.members[].u — deliberately not an FK',
+  `body` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC-backed; always read via UNIX_TIMESTAMP()'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `system_alerts`
 --
 
@@ -4289,6 +4304,13 @@ ALTER TABLE `streak_checkins`
   ADD KEY `idx_streak_board_date` (`board_id`,`checkin_date`);
 
 --
+-- Indexes for table `streak_messages`
+--
+ALTER TABLE `streak_messages`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_streak_msg_board` (`board_id`,`id`);
+
+--
 -- Indexes for table `system_alerts`
 --
 ALTER TABLE `system_alerts`
@@ -5061,6 +5083,12 @@ ALTER TABLE `streak_boards`
 -- AUTO_INCREMENT for table `streak_checkins`
 --
 ALTER TABLE `streak_checkins`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `streak_messages`
+--
+ALTER TABLE `streak_messages`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
