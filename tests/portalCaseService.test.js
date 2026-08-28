@@ -30,19 +30,9 @@ jest.mock('../services/pipelineService', () => ({
 jest.mock('../lib/portalCardEngine', () => ({
   renderCards: jest.fn(),
 }));
-// R3 AMENDMENT: the requirement resolver is jest-mocked for the SAME reason
-// the two above are — this suite tests portalCaseService's rules against a
-// collaborator's OUTPUT SHAPE, not the collaborator's own queries (which have
-// their own suite, and whose extra reads would otherwise drift every scripted
-// fixture in this file by one). The card's own logic is pinned in
-// tests/portalNextSteps.test.js, which drives the REAL buildNextSteps.
-jest.mock('../services/requirementService', () => ({
-  resolveRequirements: jest.fn(),
-}));
 
 const pipelineService = require('../services/pipelineService');
 const portalCardEngine = require('../lib/portalCardEngine');
-const requirementService = require('../services/requirementService');
 const svc = require('../services/portalCaseService');
 
 // The coded 341 card as the (mocked) engine emits it when its conditions pass.
@@ -141,10 +131,6 @@ function pipelinePayload(over = {}) {
 beforeEach(() => {
   // Default: no configured cards pass (tests that need the 341 card override).
   portalCardEngine.renderCards.mockResolvedValue([]);
-  // Default: nothing authored → next_steps is null and the page is the
-  // pre-R3 case view. (An empty Map is what the real resolver returns when
-  // the requirement tables are empty — the deploy gate's shape.)
-  requirementService.resolveRequirements.mockResolvedValue(new Map());
 });
 afterEach(() => jest.clearAllMocks());
 
@@ -317,11 +303,9 @@ describe('projection whitelist', () => {
 
     const view = await svc.getCaseView(db, 42, 'AbCdEf12');
 
-    expect(Object.keys(view).sort()).toEqual(
-      ['cards', 'case_id', 'docket', 'meeting341', 'next_steps', 'timeline', 'title']);
+    expect(Object.keys(view).sort()).toEqual(['cards', 'case_id', 'docket', 'meeting341', 'timeline', 'title']);
     expect(view.cards).toEqual([]);       // engine mocked: nothing passed
     expect(view.meeting341).toBeNull();   // fixture has no 341 date set
-    expect(view.next_steps).toBeNull();   // R3: nothing authored → no card
     expect(Object.keys(view.timeline).sort()).toEqual(['current', 'done', 'upcoming']);
     view.timeline.done.forEach(d => expect(Object.keys(d).sort()).toEqual(['date', 'label']));
     expect(Object.keys(view.timeline.current).sort()).toEqual(['label', 'since']);

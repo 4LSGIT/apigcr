@@ -92,40 +92,6 @@
   .card-body { margin: 0; white-space: pre-line; }
   .card-body + .pay-btn { margin-top: 12px; }
 
-  /* R3 — "Your next steps". ns- prefix. The card lives ABOVE the progress
-     timeline: the timeline answers "where is my case", this answers "what do
-     I have to do", and the second question is the one a client opens the
-     portal to ask. Both stay — this is additive. */
-  .ns-count { margin: -4px 0 12px; font-size: 13px; color: var(--muted); }
-  .ns-list { list-style: none; margin: 0; padding: 0; }
-  .ns-list li { display: flex; gap: 10px; padding: 9px 0; align-items: flex-start; }
-  .ns-list li + li { border-top: 1px solid var(--border); }
-  .ns-mark {
-    flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 700; margin-top: 1px;
-    background: var(--bg); border: 1.5px solid var(--border); color: var(--muted);
-  }
-  .ns-done .ns-mark { background: var(--done); border-color: var(--done); color: #fff; }
-  .ns-now  .ns-mark { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  .ns-body { min-width: 0; }
-  .ns-label { font-size: 15px; }
-  .ns-done .ns-label { color: var(--muted); }
-  .ns-now  .ns-label { font-weight: 700; }
-  .ns-sub { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
-  .ns-chip {
-    display: inline-block; margin-left: 8px; vertical-align: 1px;
-    padding: 1px 8px; border-radius: 999px;
-    background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
-    font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
-  }
-  .ns-proj { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--border); }
-  .ns-proj-head {
-    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--muted); margin: 0 0 5px;
-  }
-  .ns-proj-item { font-size: 13.5px; color: var(--muted); padding: 2px 0; }
-
   .msg { text-align: center; color: var(--muted); padding: 24px 0; }
   .msg a { color: var(--accent); }
 </style>
@@ -260,69 +226,6 @@
     }
   };
 
-  // ── R3: "Your next steps" ────────────────────────────────────────────────
-  // Rendered from c.next_steps, which the SERVER built (portalCaseService
-  // .buildNextSteps): the set, the ordering, the hiding of skipped/na, the
-  // single Active-now pick and the header count are ALL decided there. This
-  // function lays out what it is handed and decides nothing — the same split
-  // as the engine cards above, so there is no second place for the rules to
-  // drift to.
-  //
-  // NOT an engine card (yet): coded cards need a portal_cards row, and this
-  // slice ships with no SQL. The payload key is shaped so a future coded
-  // 'nextSteps' card can dispatch on it with zero server change.
-  //
-  // Absent / null → nothing renders and the page is byte-identical to pre-R3.
-  function nsCountLine(n) {
-    if (!n) return 'You&rsquo;re all caught up.';
-    return n === 1 ? '1 more step' : escText(n) + ' more steps';
-  }
-
-  function nsStep(s) {
-    var cls = 'ns-step' + (s.done ? ' ns-done' : '') + (s.active_now ? ' ns-now' : '');
-
-    // Done ✓ · event-kind steps a calendar glyph (they are not something the
-    // client DOES, so they carry no number) · everything else its number chip.
-    var mark = s.done ? '&#10003;'
-             : (s.kind === 'event' ? '&#128197;'
-             : (s.number == null ? '' : escText(s.number)));
-
-    var sub = [];
-    if (s.date) sub.push(fmtDate(s.date));
-    if (s.subtitle) sub.push(escText(s.subtitle));
-
-    return '<li class="' + cls + '">' +
-             '<span class="ns-mark">' + mark + '</span>' +
-             '<div class="ns-body">' +
-               '<div class="ns-label">' + escText(s.label) +
-                 (s.active_now ? '<span class="ns-chip">Active now</span>' : '') +
-               '</div>' +
-               (sub.length ? '<div class="ns-sub">' + sub.join(' &middot; ') + '</div>' : '') +
-             '</div>' +
-           '</li>';
-  }
-
-  function renderNextSteps(ns) {
-    if (!ns || !ns.steps || !ns.steps.length) return '';
-
-    var inner = '<p class="ns-count">' + nsCountLine(ns.remaining) + '</p>' +
-                '<ul class="ns-list">' + ns.steps.map(nsStep).join('') + '</ul>';
-
-    // (R2.5) The greyed forward projection — what usually comes next once the
-    // chapter is chosen. Absent on a pre-R2.5 server and on case-phase
-    // payloads; the card just ends earlier.
-    if (ns.projected && ns.projected.length) {
-      inner += '<div class="ns-proj">' +
-                 '<p class="ns-proj-head">Typical next steps</p>' +
-                 ns.projected.map(function (p) {
-                   return '<div class="ns-proj-item">' + escText(p.label) + '</div>';
-                 }).join('') +
-               '</div>';
-    }
-
-    return cardShell('Your next steps', inner);
-  }
-
   function renderCard(card, c) {
     if (card.coded_key) {
       var fn = CODED_RENDERERS[card.coded_key];
@@ -360,12 +263,6 @@
 
     // Cards above the timeline (placement 'case_top' — the 341 card).
     html += renderCards(c.cards, c, true);
-
-    // R3 — "Your next steps", between the case_top cards and the timeline.
-    // Above the timeline because it is the actionable one; below the 341 card
-    // because a dated appearance the client must attend outranks a work list.
-    // Empty / absent → '' and the page reads exactly as it did pre-R3.
-    html += renderNextSteps(c.next_steps);
 
     // Progress timeline: done → current (marked) → upcoming. No current →
     // done + upcoming render without a marker.

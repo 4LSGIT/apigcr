@@ -371,53 +371,6 @@ async function resolveRequirements(db, caseIds, { clientOnly = false } = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getCaseRequirements — the single-case HTTP surface (R3)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * (R3) One case's FULL resolved requirement list — BOTH applicable templates.
- *
- * ── WHY THIS EXISTS SEPARATELY FROM getPipeline({requirements:true}) ─────
- * getPipeline's payload is STAGE-ANCHORED: it attaches requirements to the
- * stages of the RESOLVED template and therefore cannot carry the intake
- * template's requirements once a case is phase='case'. resolveRequirements
- * has always resolved those rows correctly (rule 3b — a filed case's intake
- * questionnaire reads `done` or `skipped`), but until now nothing exposed
- * them over HTTP, so the behavior was correct and unobservable. This route
- * handler's service function IS that surface.
- *
- * ── WHY THE EXISTENCE CHECK IS HERE AND NOT IN THE ROUTE ─────────────────
- * resolveRequirements is BATCH-shaped: unknown ids are simply absent from
- * its map, AND it short-circuits (returning an empty map) when no templates
- * / stages / requirements exist at all. So `map.has(caseId)` cannot tell
- * "no such case" from "no requirements authored" — a route that inferred
- * 404 from an absent key would 404 every real case until Fred authors a
- * requirement. The explicit case read is the same one setOverride /
- * clearOverride do, in the same place (the service), so routes/api.pipeline
- * .js stays SQL-free.
- *
- * @param {object} db mysql2 pool
- * @param {string} caseId cases.case_id
- * @param {object} [opts]
- * @param {boolean} [opts.clientOnly=false] only client_visible=1 rows.
- * @returns {Promise<object[]>} resolvedRequirement[] — [] for a real case
- *          with nothing authored (NOT a 404: an empty work list is a valid
- *          answer, and the deploy gate depends on it being one).
- * @throws 404 unknown case.
- */
-async function getCaseRequirements(db, caseId, { clientOnly = false } = {}) {
-  const [[caseRow]] = await db.query(
-    `SELECT case_id FROM cases WHERE case_id = ?`, [caseId]
-  );
-  if (!caseRow) throw notFound(`Case ${caseId} not found`);
-
-  // Canonical casing from `cases` (utf8mb4_general_ci makes the lookup
-  // case-insensitive; the map is keyed by the DB's value).
-  const byCase = await resolveRequirements(db, [caseRow.case_id], { clientOnly });
-  return byCase.get(String(caseRow.case_id)) || [];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // OVERRIDES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -533,7 +486,6 @@ async function clearOverride(db, caseId, requirementKey, { userId = null } = {})
 
 module.exports = {
   resolveRequirements,
-  getCaseRequirements,
   setOverride,
   clearOverride,
 };

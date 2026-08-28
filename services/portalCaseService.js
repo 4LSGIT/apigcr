@@ -65,7 +65,6 @@
 'use strict';
 
 const pipelineService = require('./pipelineService');
-const requirementService = require('./requirementService');
 const portalCardEngine = require('../lib/portalCardEngine');
 const { utcToLocal } = require('./timezoneService');
 
@@ -211,180 +210,6 @@ function buildClientTimeline(pipeline) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// "Your next steps" (R3)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The client-facing WORK LIST — stages are positions, requirements are the
- * parallel work items inside them, and this card is the only surface that
- * tells a client what THEY still have to do.
- *
- * ── THE SET ──────────────────────────────────────────────────────────────
- * Client-visible requirements of the CURRENT + UPCOMING MAIN-LANE stages,
- * ordered stage → sort_order. Deliberately NOT the whole resolver output:
- *   - Requirements of stages the case has already left are history, and a
- *     client asking "what do I still have to do" is not asking for a
- *     changelog. (They are also, structurally, exactly the intake-template
- *     rows on a phase='case' case — resolved `skipped`/`done`.)
- *   - `upcoming` arrives ALREADY main-lane-filtered from getPipeline (R1),
- *     so off-ramps cannot enter through it. The CURRENT stage is checked
- *     against `stages` for its own lane: a case sitting on an off-ramp is
- *     at a legitimate position, but "your next steps" is a statement about
- *     the happy path, and Dismissed has no next step to offer.
- *
- * ── WHAT IS HIDDEN ───────────────────────────────────────────────────────
- * `skipped` and `na` never reach a client (v1, frozen). A skipped step is
- * work the case moved past without doing; an `na` is staff saying it does
- * not apply. Both are true and neither is the client's business — showing
- * either invites "why does it say I skipped something?".
- *
- * ── THE SINGLE ACTIVE-NOW RULE (frozen) ──────────────────────────────────
- * EXACTLY ONE or ZERO steps carry `active_now`. It is the first step, in
- * render order, that is simultaneously status='active', required=1 and
- * owner='client'. The three conditions are all load-bearing:
- *   status  — an upcoming step is not actionable yet.
- *   required— an optional step must never be the one thing we point at.
- *   owner   — staff/system steps still RENDER (the client should see that
- *             the 341 date is coming) but can never be the client's ask.
- *             Their subtitle comes from `hint` ("Set by the court after
- *             filing"), which is authored for exactly this.
- * One chip, because two "do this now"s is no instruction at all.
- *
- * ── VOCABULARY / PROJECTION ──────────────────────────────────────────────
- * client_label ONLY. A client_visible requirement with a NULL client_label
- * is a config hole, and the portal's answer to a config hole is silence,
- * never a fallback to internal_label: the step is DROPPED (and drops out of
- * the header count with it) and a warn is logged for staff. No
- * requirement_key, no stage_key, no ids — the same whitelist discipline the
- * timeline follows.
- *
- * ── DATES ────────────────────────────────────────────────────────────────
- * satisfied_at is real UTC (detector timestamps and override updated_at
- * alike), so it goes through toLocalIsoDate — the SAME firm-local date-only
- * conversion the timeline uses. No new formatter, no client-side tz math.
- *
- * @param {object} pipeline getPipeline payload
- * @param {object[]} resolved resolveRequirements output for this case,
- *        already filtered to client_visible (clientOnly:true).
- * @returns {{ remaining:number,
- *             steps: {done:boolean, active_now:boolean, kind:string,
- *                     number:number|null, label:string,
- *                     subtitle:string|null, date:string|null}[],
- *             projected: {label:string}[] } | null}
- *          null when there is nothing to show — the card is absent from the
- *          payload and the page falls back to the timeline alone. An empty
- *          shell would be worse than no card.
- */
-function buildNextSteps(pipeline, resolved) {
-  const list = Array.isArray(resolved) ? resolved : [];
-  if (!list.length) return null;
-
-  const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
-  const byStageId = new Map(stages.map((s) => [Number(s.stage_id), s]));
-
-  // Ordered stage ids: the current stage (only if it is main-lane and in the
-  // resolved template), then getPipeline's already-main-lane-only upcoming.
-  const stageIds = [];
-  const cur = pipeline.current
-    ? stages.find((s) => s.stage_key === pipeline.current.stage_key)
-    : null;
-  // Same "not exactly offramp" default as pipelineService.isMainLane: a stage
-  // with no lane (pre-migration row, stub fixture) is main.
-  const isMain = (s) =>
-    String(s && s.lane != null ? s.lane : '').trim().toLowerCase() !== 'offramp';
-  if (cur && isMain(cur)) stageIds.push(Number(cur.stage_id));
-  for (const s of Array.isArray(pipeline.upcoming) ? pipeline.upcoming : []) {
-    const id = Number(s.stage_id);
-    if (!stageIds.includes(id) && byStageId.has(id)) stageIds.push(id);
-  }
-  if (!stageIds.length) return null;
-
-  // Bucket by stage, preserving the resolver's within-stage order
-  // (stage_number, sort_order, id) — nothing is re-sorted here.
-  const inScope = [];
-  for (const id of stageIds) {
-    for (const r of list) {
-      if (Number(r.stage_id) === id) inScope.push(r);
-    }
-  }
-
-  const steps = [];
-  let remaining = 0;
-  let numbered = 0;
-  let activeTaken = false;
-
-  for (const r of inScope) {
-    if (r.status === 'skipped' || r.status === 'na') continue;   // hidden, v1
-
-    const label = String(r.client_label == null ? '' : r.client_label).trim();
-    if (!label) {
-      // Config hole — never fall back to internal_label (portal invariant).
-      console.warn(
-        `[portalCaseService] client-visible requirement "${r.requirement_key}" has no ` +
-        `client_label — step dropped from the portal card (staff: set one in Case Config)`
-      );
-      continue;
-    }
-
-    const done = r.status === 'done';
-    const isEvent = r.kind === 'event';
-
-    // THE SINGLE ACTIVE-NOW RULE — see the docblock.
-    const activeNow = !activeTaken && !done &&
-      r.status === 'active' && !!r.required && r.owner === 'client';
-    if (activeNow) activeTaken = true;
-
-    if (!done && r.required) remaining += 1;
-
-    // Number chips count the actionable steps only. Event-kind steps carry a
-    // calendar glyph instead and do NOT consume a number, so the chips read
-    // 1, 2, 3 with no gaps — a gap would read as a step we forgot to show.
-    let number = null;
-    if (!done && !isEvent) number = ++numbered;
-
-    const subtitleParts = [];
-    const base = r.detail || r.progress || r.hint || null;
-    if (base) subtitleParts.push(String(base));
-    if (r.effort) subtitleParts.push(String(r.effort));
-
-    steps.push({
-      done,
-      active_now: activeNow,
-      kind: isEvent ? 'event' : 'task',
-      number,
-      label,
-      subtitle: subtitleParts.length ? subtitleParts.join(' · ') : null,
-      date: done ? toLocalIsoDate(r.satisfied_at) : null,
-    });
-  }
-
-  if (!steps.length) return null;
-
-  // (R2.5) FORWARD PROJECTION — feature-detected. The key is ABSENT (not
-  // null) unless the resolved template is role='intake', i.e. it exists only
-  // for LEADS, who are exactly the clients with nothing after the intake
-  // stages to look at. Absent on a pre-R2.5 server too; either way the card
-  // renders without the greyed tail rather than breaking.
-  //
-  // Read for LABELS ONLY. These stages carry no stage_id and no requirements
-  // (they belong to a template the case has not entered), so they can never
-  // enter the step set — that is bucketed off `current`/`upcoming` stage ids.
-  // client_visible + client_label only, same as everything else that reaches
-  // a client.
-  const projected = [];
-  const proj = pipeline.projected;
-  if (proj && Array.isArray(proj.stages)) {
-    for (const s of proj.stages) {
-      if (!isVisible(s)) continue;
-      const l = String(s.client_label == null ? '' : s.client_label).trim();
-      if (l) projected.push({ label: l });
-    }
-  }
-
-  return { remaining, steps, projected };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // SCOPE
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -487,13 +312,8 @@ async function listCases(db, contactId) {
  * @param {object} db        mysql2 pool
  * @param {number} contactId authenticated portal contact
  * @param {string} caseId    requested cases.case_id
- * R3: `next_steps` = the client work list (buildNextSteps — see there), or
- * null when there is nothing to show. Fail-open: a resolver error degrades to
- * null and the page renders exactly the pre-R3 case view.
- *
  * @returns {Promise<{case_id:string, title:string, docket:string|null,
  *   meeting341: { date:string, time:string, link:string|null } | null,
- *   next_steps: { remaining:number, steps:object[], projected:object[] } | null,
  *   timeline: { done: {label:string, date:string|null}[],
  *               current: {label:string, since:string|null} | null,
  *               upcoming: {label:string}[] },
@@ -532,21 +352,6 @@ async function getCaseView(db, contactId, caseId) {
     placement: ['case_top', 'case'],
   });
 
-  // (R3) "Your next steps". FAIL-OPEN to the timeline: the work list is
-  // additive, and a resolver failure (a detector's source table locked, a
-  // registry key pulled out from under stored rows) must degrade to the case
-  // view we have shipped since S2 rather than 500 a client's only window into
-  // their case. Empty requirement tables short-circuit inside the resolver,
-  // so a firm with nothing authored pays one cheap query and gets null.
-  let nextSteps = null;
-  try {
-    const resolved = await requirementService.resolveRequirements(db, [row.case_id],
-      { clientOnly: true });
-    nextSteps = buildNextSteps(pipeline, resolved.get(String(row.case_id)) || []);
-  } catch (err) {
-    console.warn(`[portalCaseService] next-steps resolve failed for case ${row.case_id}:`, err.message);
-  }
-
   // 341 data rides ONLY behind the engine-passed coded card (dispatch is by
   // coded_key — the code binding; card_key is staff vocabulary).
   let meeting341 = null;
@@ -566,7 +371,6 @@ async function getCaseView(db, contactId, caseId) {
     title: deriveTitle(row),
     docket: deriveDocket(row),
     meeting341,
-    next_steps: nextSteps,
     timeline: buildClientTimeline(pipeline),
     cards,
   };
@@ -583,7 +387,6 @@ module.exports = {
   // E1: _buildMeeting341 → _formatMeeting341 (gates moved to the card
   // engine's conditions; this is the pure formatter).
   _buildClientTimeline: buildClientTimeline,
-  _buildNextSteps: buildNextSteps,
   _formatMeeting341: formatMeeting341,
   _deriveTitle: deriveTitle,
   _deriveDocket: deriveDocket,

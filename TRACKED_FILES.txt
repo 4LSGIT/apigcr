@@ -642,7 +642,6 @@ tests/apptService.lineage.test.js
 tests/calendarUi.sync.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
-tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
 tests/checklists.s1notes.test.js
 tests/contactTransferShapes.test.js
@@ -754,7 +753,6 @@ tests/pipelineBoard.test.js
 tests/pipelineBoardUi.sync.test.js
 tests/pipelineInternalFn.guard.test.js
 tests/pipelineR15RuleSeeds.test.js
-tests/pipelineRequirementsRoute.test.js
 tests/pipelineService.test.js
 tests/portalAccessAdmin.test.js
 tests/portalAuth.test.js
@@ -767,7 +765,6 @@ tests/portalCaseService.test.js
 tests/portalDocsRoutes.test.js
 tests/portalDocsService.test.js
 tests/portalHome.test.js
-tests/portalNextSteps.test.js
 tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/refreshonmiss.k3.test.js

@@ -283,76 +283,10 @@
       #pwAdvanceRow { border-top:1px solid var(--border); padding-top:10px; margin-top:4px; text-align:center; }
       #pwAdvanceRow .pw-toggle { font-size:0.8em; color:var(--text-2); margin-left:8px; white-space:nowrap; }
       #pwNoteInput { width:60%; margin-top:6px; }
-
-      /* ── R3 Steps view ──────────────────────────────────────────────────
-         The timeline above answers WHERE the case is; these answer WHAT IS
-         OUTSTANDING inside each stage. Requirements are unordered parallel
-         work items, so they render as a flat list under their stage — never
-         as a second timeline, which would imply an order they do not have.
-         Off-ramps live in their own side rail and are NEVER interleaved with
-         main-lane stages: a flat list is exactly the mistake R1's lane axis
-         exists to prevent, and repeating it here would put "Dismissed"
-         between two live stages. */
-      .pw-steps { margin-top:10px; }
-      .pw-steps-cols { display:flex; gap:14px; align-items:flex-start; }
-      .pw-steps-main { flex:1 1 auto; min-width:0; }
-      .pw-rail { flex:0 0 148px; border-left:1px solid var(--border); padding-left:10px; }
-      .pw-rail-head, .pw-sec-head {
-        font-size:0.7em; text-transform:uppercase; letter-spacing:0.05em;
-        color:var(--text-muted); font-weight:bold; margin:0 0 4px;
-      }
-      .pw-rail-item { font-size:0.8em; color:var(--text-muted); padding:2px 0; }
-      .pw-rail-item.pw-rail-here { color:var(--warn-on-soft); font-weight:bold; }
-
-      .pw-stage { border:1px solid var(--border); border-radius:4px; padding:6px 9px; margin-bottom:7px; }
-      .pw-stage-cur { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
-      .pw-stage-done .pw-stage-name { color:var(--text-muted); }
-      .pw-stage-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
-      .pw-stage-name { font-weight:600; }
-      .pw-stage-cur .pw-stage-name { color:var(--accent-2); }
-      .pw-stage-when { font-size:0.75em; color:var(--text-muted); white-space:nowrap; }
-      .pw-stage-empty { font-size:0.8em; color:var(--text-muted); font-style:italic; }
-
-      .pw-grp { font-size:0.72em; text-transform:uppercase; letter-spacing:0.04em;
-                color:var(--text-muted); margin:5px 0 1px; }
-      .pw-req { display:flex; gap:7px; align-items:flex-start; padding:2px 0; }
-      .pw-req-icon { flex:0 0 14px; text-align:center; font-size:0.85em; line-height:1.5; }
-      .pw-req-body { flex:1 1 auto; min-width:0; }
-      .pw-req-label { font-size:0.9em; }
-      .pw-req-sub { font-size:0.75em; color:var(--text-muted); }
-      .pw-req-muted .pw-req-label, .pw-req-muted .pw-req-sub { color:var(--text-muted); }
-      .pw-req-muted .pw-req-label { text-decoration:line-through; }
-      .pw-req-done .pw-req-icon { color:var(--ok, var(--accent)); }
-      .pw-req-active .pw-req-label { font-weight:bold; }
-      .pw-owner { display:inline-block; font-size:0.62em; font-weight:bold; text-transform:uppercase;
-                  border:1px solid var(--border-strong); border-radius:3px; padding:0 4px;
-                  margin-left:5px; color:var(--text-2); vertical-align:1px; }
-      .pw-na { display:inline-block; font-size:0.62em; font-weight:bold; margin-left:5px;
-               border:1px solid var(--border-strong); border-radius:3px; padding:0 4px;
-               color:var(--text-muted); vertical-align:1px; }
-      .pw-effort { font-size:0.72em; color:var(--text-muted); margin-left:5px; }
-      .pw-ov { margin-left:6px; white-space:nowrap; }
-      .pw-ov button {
-        font-size:0.68em; padding:0 5px; margin-left:3px; cursor:pointer;
-        background:var(--surface-2); border:1px solid var(--border-strong);
-        border-radius:3px; color:var(--text-2);
-      }
-      .pw-ov button:hover { color:var(--accent-2); border-color:var(--accent); }
-      .pw-intake { margin-top:8px; }
-      .pw-intake > summary { cursor:pointer; font-size:0.78em; color:var(--text-muted); }
-      .pw-intake[open] > summary { margin-bottom:5px; }
-      .pw-proj { margin-top:7px; border:1px dashed var(--border-strong); border-radius:4px;
-                 padding:5px 9px; }
-      .pw-proj .pw-proj-item { font-size:0.85em; color:var(--text-muted); padding:1px 0; }
     </style>
     <div id="pipelinePanel" style="display:none">
       <h3>Pipeline<span class="pw-subtitle" id="pwSubtitle"></span></h3>
       <div id="pwTimeline"></div>
-      <!-- R3 Steps view: stage sections + their requirements, the off-ramp
-           side rail, the collapsed intake history and the R2.5 projection.
-           Rendered by renderPwSteps(); empty string when the case has no
-           requirements authored, which is the zero-behaviour-change state. -->
-      <div id="pwSteps"></div>
       <div id="pwAdvanceRow" style="display:none">
         <select id="pwStageSelect"></select>
         <label class="pw-toggle"><input type="checkbox" id="pwShowAll" onchange="pwToggleShowAll(this.checked)" /> show all stages</label>
@@ -1810,13 +1744,6 @@ window.addEventListener('message', (e) => {
 
 let pwData = null;      // latest pipeline payload (GET or advance response)
 let pwShowAll = false;  // advance select: false = upcoming only, true = every active stage
-/* R3 — requirements resolved for stages that are NOT in this payload's
-   template. On a phase='case' case that is the INTAKE template's work items,
-   resolved `done` or `skipped`: real history that getPipeline's stage-anchored
-   payload structurally cannot carry. Filled from the full-resolver route; []
-   whenever there is nothing off-template (or the extra GET failed — the panel
-   never depends on it). */
-let pwOffTemplateReqs = [];
 
 /* When pwData was last replaced with a server payload. The sync-bus subscriber
    skips loadPipeline() inside this window, because an in-page advance ALREADY
@@ -1833,12 +1760,8 @@ const pwDate = (d) => d
 
 async function loadPipeline() {
   try {
-    // requirements as a GET PARAMS object, not a literal query string: apiSend
-    // builds the query itself, so the stage sections get their work items in
-    // the SAME round trip the timeline already costs.
-    pwData = await P.apiSend(`/api/cases/${caseID}/pipeline`, 'GET', { requirements: 1 });
+    pwData = await P.apiSend(`/api/cases/${caseID}/pipeline`, 'GET');
     pwLastSet = Date.now();
-    await loadPwOffTemplateReqs();
     renderPipeline();
   } catch (err) {
     // Additive widget — a load failure must never break the page.
@@ -1847,32 +1770,7 @@ async function loadPipeline() {
     E('pwSubtitle').textContent = '';
     E('pwTimeline').innerHTML =
       `<div class="pw-msg">Pipeline unavailable: ${escText(err.message)}</div>`;
-    E('pwSteps').innerHTML = '';
     E('pwAdvanceRow').style.display = 'none';
-  }
-}
-
-/* The second GET, and ONLY when it can return something new: the full resolver
-   covers both applicable templates, and the intake template is only ever a
-   second one when the RESOLVED template is role='case' (requirementService's
-   "which requirements apply" rule). A lead resolves to intake alone, so its
-   payload already carries everything and this stays a single round trip.
-
-   Failure is swallowed to []: the intake-history section is a nice-to-have and
-   must never cost the panel its timeline. */
-async function loadPwOffTemplateReqs() {
-  pwOffTemplateReqs = [];
-  const p = pwData;
-  if (!p || !p.template || p.template.role !== 'case') return;
-  try {
-    const res = await P.apiSend(`/api/cases/${caseID}/pipeline/requirements`, 'GET');
-    const all = (res && res.requirements) || [];
-    // "Off-template" is decided by stage membership, not by guessing which
-    // template a row came from — the payload's own stage ids are the answer.
-    const inPayload = new Set((p.stages || []).map(s => Number(s.stage_id)));
-    pwOffTemplateReqs = all.filter(r => !inPayload.has(Number(r.stage_id)));
-  } catch (err) {
-    console.warn('[pipeline] intake-history requirements unavailable:', err.message);
   }
 }
 
@@ -1884,7 +1782,6 @@ function renderPipeline() {
     E('pwSubtitle').textContent = '';
     E('pwTimeline').innerHTML =
       '<div class="pw-msg">No pipeline configured for this case type</div>';
-    E('pwSteps').innerHTML = '';
     E('pwAdvanceRow').style.display = 'none';
     return;
   }
@@ -1925,7 +1822,6 @@ function renderPipeline() {
   }
 
   E('pwTimeline').innerHTML = rows.join('');
-  E('pwSteps').innerHTML = renderPwSteps(p);
   renderPwSelect();
   E('pwAdvanceRow').style.display = '';
 }
@@ -1950,221 +1846,6 @@ function pwLogRow(h, cLabel, kind, laneCls = '') {
    flat list — exactly today's control. */
 function pwIsOfframp(s) {
   return String(s && s.lane != null ? s.lane : '').trim().toLowerCase() === 'offramp';
-}
-
-/* ── R3: the Steps view ───────────────────────────────────────────────────────
-   Stages are POSITIONS; requirements are the unordered PARALLEL work items
-   inside them. So: stage sections in template order (main lane), each with its
-   requirements as a flat grouped list — never a nested timeline, which would
-   assert an ordering requirements do not have.
-
-   STATUSES ARRIVE RESOLVED. done / active / upcoming / skipped / na are
-   computed server-side (requirementService's precedence: override → detector →
-   position). Nothing here re-derives one; this file renders what it is handed.
-   Re-deriving would put a second, drifting copy of the precedence rules in the
-   browser — and the browser does not have the detector hits to do it with.
-
-   The OFF-RAMP RAIL is not styling. Off-ramps are reachable from anywhere and
-   carry high stage_numbers only because they were appended last, so a flat
-   ordered list puts "Dismissed" between two live stages and tells staff it is
-   next. R1 fixed that for the projection; the rail is the same fix for this
-   surface. */
-
-const PW_REQ_ICON = {
-  done:     '&#10003;',   // ✓
-  active:   '&#9679;',    // ●
-  upcoming: '&#9675;',    // ○
-  skipped:  '&#8856;',    // ⊘
-  na:       '&mdash;',
-};
-
-/* satisfied_at is a real timestamp (detector hit or override updated_at) —
-   pwDate is the widget's existing formatter; no second one is introduced. */
-function pwReqRow(r) {
-  const status = String(r.status || 'upcoming');
-  const muted = (status === 'skipped' || status === 'na');
-  const cls = `pw-req pw-req-${escAttr(status)}` + (muted ? ' pw-req-muted' : '');
-
-  // detail (a satisfied detector's own words) → progress ("4 of 7 received")
-  // → the authored hint. First non-empty wins; the ladder is the same one the
-  // portal card uses, so staff read what the client reads.
-  const sub = r.detail || r.progress || r.hint || '';
-  const when = (status === 'done' && r.satisfied_at) ? pwDate(r.satisfied_at) : '';
-  const subLine = [when, sub].filter(Boolean).map(escText).join(' &middot; ');
-
-  const naChip = status === 'na' ? '<span class="pw-na">N/A</span>' : '';
-  const owner = r.owner ? `<span class="pw-owner">${escText(r.owner)}</span>` : '';
-  const effort = r.effort ? `<span class="pw-effort">${escText(r.effort)}</span>` : '';
-  const note = (r.override && r.override.note)
-    ? `<div class="pw-req-sub">Override: ${escText(r.override.note)}</div>` : '';
-
-  const k = escAttr(r.requirement_key);
-  // Override controls. `clear` is offered only when an override actually
-  // exists — the derived state has nothing to clear, and a button that 404s is
-  // worse than an absent one.
-  const ctrls =
-    `<span class="pw-ov">` +
-      `<button type="button" title="Mark not applicable" onclick="pwOverride('${k}','na')">n/a</button>` +
-      `<button type="button" title="Mark done" onclick="pwOverride('${k}','done')">done</button>` +
-      (r.override
-        ? `<button type="button" title="Clear override" onclick="pwClearOverride('${k}')">clear</button>`
-        : '') +
-    `</span>`;
-
-  return `
-    <div class="${cls}">
-      <span class="pw-req-icon">${PW_REQ_ICON[status] || PW_REQ_ICON.upcoming}</span>
-      <span class="pw-req-body">
-        <span class="pw-req-label">${escText(r.internal_label)}</span>${naChip}${owner}${effort}${ctrls}
-        ${subLine ? `<div class="pw-req-sub">${subLine}</div>` : ''}
-        ${note}
-      </span>
-    </div>`;
-}
-
-/* Group by group_label, PRESERVING the incoming order (sort_order, then id —
-   the resolver's). An ungrouped run renders with no header; a group header is
-   emitted the first time its label appears. Requirements sharing a label that
-   is interrupted by another group render as two runs, which is the honest
-   reading of the author's sort_order — this does not reorder to "fix" it. */
-function pwGroupedReqs(reqs) {
-  let out = '';
-  let last = null;
-  for (const r of reqs) {
-    const g = r.group_label || null;
-    if (g !== last) {
-      if (g) out += `<div class="pw-grp">${escText(g)}</div>`;
-      last = g;
-    }
-    out += pwReqRow(r);
-  }
-  return out;
-}
-
-function renderPwSteps(p) {
-  const stages = p.stages || [];
-  // Requirements ride on the stage rows (?requirements=1). A server that did
-  // not attach them, or a template with none authored, degrades to an empty
-  // Steps view — the zero-behaviour-change state.
-  const anyReqs = stages.some(s => (s.requirements || []).length) || pwOffTemplateReqs.length;
-  if (!anyReqs) return '';
-
-  const main = stages.filter(s => !pwIsOfframp(s));
-  const offramps = stages.filter(pwIsOfframp);
-  const curKey = p.current ? p.current.stage_key : null;
-
-  // Entered-at per stage_key, from history — the payload already carries it,
-  // so an entered stage can show WHEN without a second source of truth.
-  const enteredAt = {};
-  for (const h of (p.history || [])) {
-    if (h.stage_key && !(h.stage_key in enteredAt)) enteredAt[h.stage_key] = h.entered_at;
-  }
-  const curStage = curKey ? stages.find(s => s.stage_key === curKey) : null;
-  const curNum = curStage ? Number(curStage.stage_number) : null;
-
-  let body = '';
-  for (const s of main) {
-    const isCur = s.stage_key === curKey;
-    const isDone = curNum != null && Number(s.stage_number) < curNum;
-    const reqs = s.requirements || [];
-    const when = enteredAt[s.stage_key] ? pwDate(enteredAt[s.stage_key]) : '';
-    body +=
-      `<div class="pw-stage${isCur ? ' pw-stage-cur' : ''}${isDone ? ' pw-stage-done' : ''}">
-         <div class="pw-stage-head">
-           <span class="pw-stage-name">${escText(s.internal_label)}</span>
-           <span class="pw-stage-when">${escText(when)}</span>
-         </div>
-         ${reqs.length ? pwGroupedReqs(reqs)
-                       : '<div class="pw-stage-empty">No requirements</div>'}
-       </div>`;
-  }
-
-  // (R2.5) Forward projection — FEATURE-DETECTED. The key is ABSENT (not null)
-  // on every payload whose resolved template is not role='intake', and on any
-  // server predating R2.5; either way the panel simply ends earlier.
-  // A 'generic' projection has no template to name, so it names none.
-  //
-  // Its stages carry NO stage_id — they belong to a template this case has not
-  // entered — so they are read for LABELS ONLY and never reach renderPwSelect.
-  // The off-ramp filter below is belt-and-braces: R2.5 already filters the lane
-  // server-side, and this agrees with it rather than trusting it.
-  const proj = p.projected;
-  if (proj && Array.isArray(proj.stages) && proj.stages.length) {
-    const label = (proj.source === 'subtype' && proj.template && proj.template.name)
-      ? `Typical next steps &mdash; ${escText(proj.template.name)}`
-      : 'Typical next steps';
-    body +=
-      `<div class="pw-proj">
-         <p class="pw-sec-head">${label}</p>
-         ${proj.stages
-            .filter(s => !pwIsOfframp(s))
-            .map(s => `<div class="pw-proj-item">${escText(s.internal_label)}</div>`)
-            .join('')}
-       </div>`;
-  }
-
-  // The F2 consumer: intake work items on a case that has moved to a matter
-  // template. Collapsed, because it is history — mostly done/skipped — and the
-  // panel's job is the live stages above.
-  if (pwOffTemplateReqs.length) {
-    body +=
-      `<details class="pw-intake">
-         <summary>Intake history (${escText(pwOffTemplateReqs.length)})</summary>
-         ${pwGroupedReqs(pwOffTemplateReqs)}
-       </details>`;
-  }
-
-  const rail = offramps.length
-    ? `<div class="pw-rail">
-         <p class="pw-rail-head">Off-ramps</p>
-         ${offramps.map(s =>
-            `<div class="pw-rail-item${s.stage_key === curKey ? ' pw-rail-here' : ''}">${
-              escText(s.internal_label)}</div>`).join('')}
-       </div>`
-    : '';
-
-  return `<div class="pw-steps"><div class="pw-steps-cols">
-            <div class="pw-steps-main">${body}</div>${rail}
-          </div></div>`;
-}
-
-/* Override write path. Both handlers re-load the panel on success rather than
-   patching the row in place: an override changes a DERIVED status, and the
-   only thing that knows the new one is the resolver. `loadPipeline` also
-   re-stamps pwLastSet, so the sync bus's own echo of the case-log row the
-   override wrote does not buy a second identical GET. */
-async function pwOverride(key, status) {
-  const { value: note, isConfirmed } = await Swal.fire({
-    title: status === 'na' ? 'Mark not applicable' : 'Mark done',
-    input: 'text',
-    inputPlaceholder: 'Note (optional)',
-    showCancelButton: true,
-    confirmButtonText: status === 'na' ? 'Mark N/A' : 'Mark done',
-  });
-  if (!isConfirmed) return;
-  try {
-    const body = { status };
-    if (note && note.trim()) body.note = note.trim();
-    await P.apiSend(
-      `/api/cases/${caseID}/pipeline/requirements/${encodeURIComponent(key)}/override`,
-      'POST', body);
-    Toast.fire({ icon: 'success', title: status === 'na' ? 'Marked N/A' : 'Marked done' });
-    await loadPipeline();
-  } catch (err) {
-    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
-  }
-}
-
-async function pwClearOverride(key) {
-  try {
-    await P.apiSend(
-      `/api/cases/${caseID}/pipeline/requirements/${encodeURIComponent(key)}/override`,
-      'DELETE');
-    Toast.fire({ icon: 'success', title: 'Override cleared' });
-    await loadPipeline();
-  } catch (err) {
-    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
-  }
 }
 
 function renderPwSelect() {
@@ -2227,15 +1908,6 @@ async function pwAdvance() {
     pwLastSet = Date.now();
     E('pwNoteInput').value = '';
     renderPipeline();
-
-    // R3 — RE-RESOLVE THE STEPS. The advance route returns getPipeline WITHOUT
-    // the requirements opt-in, and an advance moves the case's POSITION, which
-    // is one of the three inputs to every requirement's status (override →
-    // detector → position). Carrying the pre-advance statuses over would show
-    // `active` on a stage the case has just left. Fire-and-forget: the timeline
-    // above is already correct from the response, and pwLastSet is re-stamped
-    // by loadPipeline so the bus echo still buys nothing.
-    loadPipeline();
 
     if (payload.noop) {
       Toast.fire({ icon: 'info', title: 'Already at this stage' });
