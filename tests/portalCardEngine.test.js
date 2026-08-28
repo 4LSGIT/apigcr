@@ -23,6 +23,16 @@
 jest.mock('../lib/alerting', () => ({
   alert: jest.fn().mockResolvedValue(undefined),
 }));
+// R3: the PARITY section drives the REAL getCaseView, which now also resolves
+// requirements for its "Your next steps" card. That resolver is a DIFFERENT
+// subject with its own suites (tests/requirementService.test.js,
+// tests/portalNextSteps.test.js), and letting its queries run here would drift
+// every scripted fixture below by five. Mocked to "nothing authored" — the
+// state these parity cases were written against, and the one in which the
+// portal payload is byte-identical to pre-R3.
+jest.mock('../services/requirementService', () => ({
+  resolveRequirements: jest.fn(async () => new Map()),
+}));
 jest.mock('../services/pipelineService', () => ({
   getPipeline: jest.fn(),
 }));
