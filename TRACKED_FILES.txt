@@ -642,6 +642,7 @@ tests/apptService.lineage.test.js
 tests/calendarUi.sync.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
+tests/casePanelCss.test.js
 tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
 tests/checklists.s1notes.test.js

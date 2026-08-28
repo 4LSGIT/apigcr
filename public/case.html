@@ -267,8 +267,11 @@
          foot, because it answers a different question — "what happened" —
          from the one this panel is for, which is "where are we and what is
          outstanding". */
+      #pwSteps { margin-top:10px; }
       .pw-steps-cols { display:flex; gap:14px; align-items:flex-start; }
-      .pw-steps-main { flex:1 1 auto; min-width:0; }
+      /* The stage list is boxed so it reads as one object against the rail. */
+      .pw-steps-main { flex:1 1 auto; min-width:0;
+                       border:1px solid var(--border); border-radius:4px; padding:10px 12px 4px; }
 
       .pw-stage { position:relative; padding:0 0 14px 24px; }
       .pw-stage::before { content:""; position:absolute; left:6px; top:17px; bottom:-2px;
@@ -278,6 +281,12 @@
                 background:var(--surface); border:2px solid var(--border-strong); box-sizing:border-box; }
       .pw-stage-done  .pw-dot { background:var(--text-muted); border-color:var(--text-muted); }
       .pw-stage-cur   .pw-dot { background:var(--accent);     border-color:var(--accent); }
+      /* Current-stage bar. NOT an inset box-shadow: that pins to the stage's own
+         left edge, which is where the timeline dot lives (.pw-dot, left:0), so
+         the bar clipped the dot. As an ::after it sits out in the container's
+         padding gutter instead — negative left, clear of the dot. */
+      .pw-stage-cur::after { content:""; position:absolute; left:-6px; top:0; bottom:14px;
+                             width:3px; border-radius:2px; background:var(--accent); }
       .pw-stage-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
       .pw-stage-name { font-weight:600; }
       .pw-stage-done .pw-stage-name { color:var(--text-muted); }
@@ -362,66 +371,6 @@
       #pwAdvanceRow .pw-toggle { font-size:0.8em; color:var(--text-2); margin-left:8px; white-space:nowrap; }
       #pwNoteInput { width:60%; margin-top:6px; }
 
-      /* ── R3 Steps view ──────────────────────────────────────────────────
-         The timeline above answers WHERE the case is; these answer WHAT IS
-         OUTSTANDING inside each stage. Requirements are unordered parallel
-         work items, so they render as a flat list under their stage — never
-         as a second timeline, which would imply an order they do not have.
-         Off-ramps live in their own side rail and are NEVER interleaved with
-         main-lane stages: a flat list is exactly the mistake R1's lane axis
-         exists to prevent, and repeating it here would put "Dismissed"
-         between two live stages. */
-      .pw-steps { margin-top:10px; }
-      .pw-steps-cols { display:flex; gap:14px; align-items:flex-start; }
-      .pw-steps-main { flex:1 1 auto; min-width:0; }
-      .pw-rail { flex:0 0 148px; border-left:1px solid var(--border); padding-left:10px; }
-      .pw-rail-head, .pw-sec-head {
-        font-size:0.7em; text-transform:uppercase; letter-spacing:0.05em;
-        color:var(--text-muted); font-weight:bold; margin:0 0 4px;
-      }
-      .pw-rail-item { font-size:0.8em; color:var(--text-muted); padding:2px 0; }
-      .pw-rail-item.pw-rail-here { color:var(--warn-on-soft); font-weight:bold; }
-
-      .pw-stage { border:1px solid var(--border); border-radius:4px; padding:6px 9px; margin-bottom:7px; }
-      .pw-stage-cur { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
-      .pw-stage-done .pw-stage-name { color:var(--text-muted); }
-      .pw-stage-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
-      .pw-stage-name { font-weight:600; }
-      .pw-stage-cur .pw-stage-name { color:var(--accent-2); }
-      .pw-stage-when { font-size:0.75em; color:var(--text-muted); white-space:nowrap; }
-      .pw-stage-empty { font-size:0.8em; color:var(--text-muted); font-style:italic; }
-
-      .pw-grp { font-size:0.72em; text-transform:uppercase; letter-spacing:0.04em;
-                color:var(--text-muted); margin:5px 0 1px; }
-      .pw-req { display:flex; gap:7px; align-items:flex-start; padding:2px 0; }
-      .pw-req-icon { flex:0 0 14px; text-align:center; font-size:0.85em; line-height:1.5; }
-      .pw-req-body { flex:1 1 auto; min-width:0; }
-      .pw-req-label { font-size:0.9em; }
-      .pw-req-sub { font-size:0.75em; color:var(--text-muted); }
-      .pw-req-muted .pw-req-label, .pw-req-muted .pw-req-sub { color:var(--text-muted); }
-      .pw-req-muted .pw-req-label { text-decoration:line-through; }
-      .pw-req-done .pw-req-icon { color:var(--ok, var(--accent)); }
-      .pw-req-active .pw-req-label { font-weight:bold; }
-      .pw-owner { display:inline-block; font-size:0.62em; font-weight:bold; text-transform:uppercase;
-                  border:1px solid var(--border-strong); border-radius:3px; padding:0 4px;
-                  margin-left:5px; color:var(--text-2); vertical-align:1px; }
-      .pw-na { display:inline-block; font-size:0.62em; font-weight:bold; margin-left:5px;
-               border:1px solid var(--border-strong); border-radius:3px; padding:0 4px;
-               color:var(--text-muted); vertical-align:1px; }
-      .pw-effort { font-size:0.72em; color:var(--text-muted); margin-left:5px; }
-      .pw-ov { margin-left:6px; white-space:nowrap; }
-      .pw-ov button {
-        font-size:0.68em; padding:0 5px; margin-left:3px; cursor:pointer;
-        background:var(--surface-2); border:1px solid var(--border-strong);
-        border-radius:3px; color:var(--text-2);
-      }
-      .pw-ov button:hover { color:var(--accent-2); border-color:var(--accent); }
-      .pw-intake { margin-top:8px; }
-      .pw-intake > summary { cursor:pointer; font-size:0.78em; color:var(--text-muted); }
-      .pw-intake[open] > summary { margin-bottom:5px; }
-      .pw-proj { margin-top:7px; border:1px dashed var(--border-strong); border-radius:4px;
-                 padding:5px 9px; }
-      .pw-proj .pw-proj-item { font-size:0.85em; color:var(--text-muted); padding:1px 0; }
     </style>
     <div id="pipelinePanel" style="display:none">
       <h3>Pipeline<span class="pw-subtitle" id="pwSubtitle"></span></h3>
