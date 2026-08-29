@@ -470,12 +470,60 @@ const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http
 // against a determined attacker — the code-mode AUTH question is a
 // codebase-wide decision (this pattern exists in 9 other automation
 // surfaces) tracked separately.
-const CODE_TIMEOUT_MS = 200;
+//
+// 2026-08-29: raised 200 -> 2000 and made it env-overridable, matching
+// job_executor's CUSTOM_CODE_TIMEOUT_MS idiom.
+//
+// This is a WALL-CLOCK budget, not a CPU budget, and most trigger chains run
+// DETACHED — domainEvents.emit() is fire-and-forget from every mutation site
+// (see apptService step 9 for appt.created), so the whole tree executes AFTER
+// the HTTP response, under Cloud Run's request-based CPU throttling. Same
+// starvation already documented in actionDispatchers' queued-start comment
+// ("20-45x slowdowns; vm-watchdog aborts on trivial scripts") and in
+// job_executor's custom_code handler (wf27 step 1, 2026-08-19: a ~2ms string
+// formatter blew a 5000ms ceiling while detached; the same step re-run
+// through the UI took 141ms).
+//
+// trigger_executions#458 lost rule 4's transform to this. Replayed against
+// that exact envelope the script runs in ~8ms, so a ~25x slowdown was enough
+// to blow the old 200ms ceiling. 2000ms still bounds a while(true) to a
+// detectable 2s stall — and a stalled rule is loud, since rules fire on every
+// mutation.
+//
+// The real fix is running the chain with CPU allocated (Cloud Tasks, or
+// `--no-cpu-throttling` on the service); with that enabled this never binds.
+// Until then TRIGGER_CODE_TIMEOUT_MS can be raised with a config-only
+// revision if a legitimate rule trips it again. No per-rule override and no
+// upper cap: unlike job_executor's `timeout_ms` (which comes from step config)
+// this value is operator-set, so there is nothing to clamp.
+const CODE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.TRIGGER_CODE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 2000;
+})();
 function _runCode(code, envelope) {
   const ctx = vm.createContext(Object.create(null));
   ctx.input = envelope;
   const script = new vm.Script(`(function(input){ ${code} \n})(input)`);
-  return script.runInContext(ctx, { timeout: CODE_TIMEOUT_MS });
+  const startedAt = Date.now();
+  try {
+    return script.runInContext(ctx, { timeout: CODE_TIMEOUT_MS });
+  } catch (err) {
+    // Same enrichment as job_executor's custom_code path: vm names the limit
+    // but not the actual elapsed wall time, which is the diagnostic that
+    // separates "slow code" from "starved instance". Both callers
+    // (_evaluateMatch / _runTransform) interpolate err.message verbatim, so
+    // this lands in trigger_executions.outcomes.warnings as-is.
+    if (/Script execution timed out/i.test(err.message || '')) {
+      const e = new Error(
+        `${err.message} (elapsed ${Date.now() - startedAt}ms). ` +
+        `A trivial script that exceeds this is almost always a throttled ` +
+        `Cloud Run instance, not slow code — check whether the chain ran detached.`
+      );
+      e.code = 'TRIGGER_CODE_TIMEOUT';
+      throw e;
+    }
+    throw err;
+  }
 }
 
 // Review S6: total-dispatch budget per ROOT event (MAX_DEPTH bounds chain
