@@ -471,7 +471,7 @@ const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http
 // codebase-wide decision (this pattern exists in 9 other automation
 // surfaces) tracked separately.
 //
-// 2026-08-29: raised 200 -> 2000 and made it env-overridable, matching
+// 2026-08-29: raised 200 -> 15000 and made it env-overridable, matching
 // job_executor's CUSTOM_CODE_TIMEOUT_MS idiom.
 //
 // This is a WALL-CLOCK budget, not a CPU budget, and most trigger chains run
@@ -486,9 +486,13 @@ const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http
 //
 // trigger_executions#458 lost rule 4's transform to this. Replayed against
 // that exact envelope the script runs in ~8ms, so a ~25x slowdown was enough
-// to blow the old 200ms ceiling. 2000ms still bounds a while(true) to a
-// detectable 2s stall — and a stalled rule is loud, since rules fire on every
-// mutation.
+// to blow the old 200ms ceiling — and wf27 saw >2500x on a SMALLER script.
+// That spread is not a constant multiplier: throttled wall time is real work
+// plus however long until something grants the instance CPU again, so the tail
+// is unbounded and no ceiling is truly safe. 15000ms buys ~1900x headroom on
+// an 8ms script, enough to cover a wf27-class event, while staying 4x tighter
+// than job_executor's 60000 — right for a surface that fires on every
+// mutation. A stalled rule is still loud and obvious within one event.
 //
 // The real fix is running the chain with CPU allocated (Cloud Tasks, or
 // `--no-cpu-throttling` on the service); with that enabled this never binds.
@@ -498,7 +502,7 @@ const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http
 // this value is operator-set, so there is nothing to clamp.
 const CODE_TIMEOUT_MS = (() => {
   const raw = Number(process.env.TRIGGER_CODE_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 2000;
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 15000;
 })();
 function _runCode(code, envelope) {
   const ctx = vm.createContext(Object.create(null));
