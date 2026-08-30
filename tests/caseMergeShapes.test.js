@@ -60,6 +60,11 @@ jest.mock('../services/logService', () => ({
 
 const caseService = require('../services/caseService');
 const logService  = require('../services/logService');
+// M1.2 spies on emit rather than jest.mock'ing the module: mocking would apply
+// to every test in the file, and the assertion that matters is "the merge path
+// still emits nothing", which is only meaningful against the real object
+// caseService holds a reference to.
+const domainEvents = require('../lib/domainEvents');
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -98,6 +103,15 @@ function caseRows(over = {}) {
  *     (matched by regex, consulted BEFORE the generic fallbacks) so the
  *     survivor-wins split can be modelled without teaching the stub to be a
  *     database.
+ *
+ * (M1.2) An `answers` VALUE may now also be a FUNCTION, called as
+ * `fn(sql, params)` and expected to return the same `[rows]` shape. This is
+ * not generality for its own sake: M1.2 brackets the repoint loop with the
+ * SAME statement run twice — the survivor's latest stage-log row BEFORE the
+ * loser's history arrives, and again after — and the difference between those
+ * two answers IS the mechanism. A single fixed result cannot express it, and
+ * the alternative (a scripted array the stub shifts) is precisely the idiom
+ * tests/helpers/scriptGuard.js exists to keep out of this file.
  */
 function stubDb({ rows = caseRows(), answers = [] } = {}) {
   const seen = [];
@@ -109,7 +123,9 @@ function stubDb({ rows = caseRows(), answers = [] } = {}) {
     calls.push({ sql: s, params: params || [] });
 
     for (const [re, result] of answers) {
-      if (re.test(s)) return result;
+      if (re.test(s)) {
+        return typeof result === 'function' ? result(s, params || []) : result;
+      }
     }
 
     if (/^SELECT \* FROM cases WHERE case_id IN/i.test(s)) return [rows];
@@ -439,5 +455,266 @@ describe('M1 — every case-keyed table is repointed', () => {
       expect(idx).toBeGreaterThan(-1);
       expect(idx).toBeLessThan(idxDelete);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// M1.2 (2026-08-29) — the survivor's pipeline position survives the merge
+// ─────────────────────────────────────────────────────────────
+//
+// ── WHY THIS SECTION EXISTS ────────────────────────────────────────────────
+//
+// M1 added `case_stage_log` to the repoint set, which was right — the rows had
+// to move or the loser's DELETE would strand them. What it did not account for
+// is that case_stage_log is not only history. It is the CURRENT-POSITION
+// ORACLE: getPipeline's `current` is the last row of
+// `ORDER BY entered_at ASC, id ASC`, advanceStage's `latest` is the first of
+// the same order reversed, and `latest` feeds onlyFrom, onlyFromRole,
+// _resolveTarget, the idempotency check and forwardOnly — and names the stage
+// whose template role advanceStage writes into `cases.pipeline_phase`.
+//
+// The canonical merge pair is a stale docketless LEAD absorbed into the
+// RETAINED case it became, and the lead is the side touched most recently:
+// live (2026-08-29), 72 of the 74 phase='case' cases carrying stage history
+// have a newest row OLDER than the newest lead row. So after the repoint, the
+// loser's intake rows are the survivor's `latest`, and an automation guarded
+// `onlyFromRole:['intake']` — which correctly SKIPPED this case a minute
+// earlier — MATCHES, advances into an intake stage, and demotes a retained
+// case back into the funnel. That is the T8 failure, re-entered through merge.
+//
+// ── WHAT IS ACTUALLY WORTH ASSERTING ──────────────────────────────────────
+//
+//   · THE DECISION IS BY ROW ID, NOT TIMESTAMP. An equal `entered_at` broken
+//     by `id DESC` moves the position just as surely as a newer one, and a
+//     timestamp comparison would miss it entirely. Pinned as its own case.
+//   · THE ROW IS BOOKKEEPING. No domain event (case.stage_advanced on a merge
+//     would start rule cascades over a position that never changed), no
+//     `cases` write (step 3's field rules already settled the position; this
+//     row exists to stop the log contradicting them).
+//   · THE RESIDUAL IS REPORTED. A survivor with no history of its own has no
+//     position to restore. That is a real outcome, not a no-op, and it has to
+//     reach the merge note or nobody will ever know it happened.
+//   · THE PREVIEW DESCRIBES THE MERGE. A dry run that says nothing about the
+//     position decision is a preview of a different operation.
+
+/** The projection SURVIVOR_LATEST_SQL / MERGED_LATEST_SQL return. */
+function stageRow(over = {}) {
+  return {
+    id: 10,
+    template_id: 3,
+    stage_id: 31,
+    stage_key: 'retained',
+    case_stage: 'Filed',
+    status_label: 'Retained',
+    entered_at_str: '2026-01-10 09:00:00',
+    ...over,
+  };
+}
+
+/** The survivor's own position (a retained case) and the loser's newer intake
+ *  row — the shape of every real merge this exists to protect. */
+const SURVIVOR_POS = stageRow();
+const LOSER_POS = stageRow({
+  id: 44, template_id: 1, stage_id: 5,
+  stage_key: 'consult_booked', case_stage: 'Open', status_label: 'Consult Booked',
+  entered_at_str: '2026-08-20 14:30:00',
+});
+
+// The two reads. Anchored on the WHERE clause because that is the only thing
+// that distinguishes them, and they must never cross-match: `case_id = ?` is
+// the real path's bracket, `case_id IN (?, ?)` is the dry run's simulation.
+const SURVIVOR_LATEST_RE = /FROM case_stage_log WHERE case_id = \? ORDER BY entered_at DESC, id DESC LIMIT 1/i;
+const MERGED_LATEST_RE   = /FROM case_stage_log WHERE case_id IN \(\?, \?\) ORDER BY entered_at DESC, id DESC LIMIT 1/i;
+
+/** Answers the survivor-latest read with `pre` first and `post` after — the
+ *  before/after the repoint loop sits between. `null` means "no rows". */
+function bracketed(pre, post) {
+  let n = 0;
+  return () => {
+    const row = (n++ === 0) ? pre : post;
+    return [row ? [row] : []];
+  };
+}
+
+describe('M1.2 — the survivor keeps its pipeline position across a merge', () => {
+  test('LOSER ROW NEWER: one re-assert row, no domain event, no `cases` write', async () => {
+    const db = stubDb({ answers: [[SURVIVOR_LATEST_RE, bracketed(SURVIVOR_POS, LOSER_POS)]] });
+    const emit = jest.spyOn(domainEvents, 'emit').mockImplementation(() => {});
+
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    const ins = oneCall(db, /^INSERT INTO case_stage_log/i);
+    // The stage columns are the SURVIVOR's, copied verbatim off the row the
+    // repoint just buried. Copying the loser's instead would write down the
+    // demotion rather than undo it.
+    expect(ins.params).toEqual([
+      SURVIVOR,
+      SURVIVOR_POS.template_id,
+      SURVIVOR_POS.stage_id,
+      SURVIVOR_POS.stage_key,
+      SURVIVOR_POS.case_stage,
+      SURVIVOR_POS.status_label,
+      LOSER_POS.entered_at_str,        // the superseded row's stamp, for GREATEST
+      null,                            // entered_by: by=0 → NULL (system)
+      'system',                        // enum has no 'merge' member
+      `[merge ${LOSER}] position re-asserted`,
+    ]);
+    // Merge time, except when the row it supersedes is stamped later — then
+    // match it and win on the id tiebreak. NULL-safe because a NULL here would
+    // land a zero-date (no STRICT_TRANS_TABLES) and sort the row to the bottom.
+    expect(ins.sql).toMatch(/GREATEST\(NOW\(\), COALESCE\(\?, NOW\(\)\)\)/);
+    // Bookkeeping, not an advance: no event, and nothing written to `cases`.
+    expect(emit).not.toHaveBeenCalled();
+    expect(db.calls.some(c => /^UPDATE cases SET/i.test(c.sql))).toBe(false);
+
+    expect(plan.children.case_stage_log_reassert).toBe('row');
+    expect(plan.children.case_stage_log_reassert_stage).toBe('retained');
+    expect(plan.children).not.toHaveProperty('case_stage_log_position');
+
+    emit.mockRestore();
+  });
+
+  test('the re-assert lands AFTER the repoint and BEFORE the loser is deleted', async () => {
+    // Before the repoint it would be buried by the rows it is meant to
+    // outrank; after the DELETE there would be no transaction left to be in.
+    const db = stubDb({ answers: [[SURVIVOR_LATEST_RE, bracketed(SURVIVOR_POS, LOSER_POS)]] });
+    await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    const idxMove   = db.calls.findIndex(c => /^UPDATE case_stage_log SET case_id/i.test(c.sql));
+    const idxInsert = db.calls.findIndex(c => /^INSERT INTO case_stage_log/i.test(c.sql));
+    const idxDelete = db.calls.findIndex(c => /^DELETE FROM cases WHERE case_id/i.test(c.sql));
+    expect(idxMove).toBeGreaterThan(-1);
+    expect(idxInsert).toBeGreaterThan(idxMove);
+    expect(idxDelete).toBeGreaterThan(idxInsert);
+  });
+
+  test('the decision reaches the merge note and the recovery snapshot', async () => {
+    const db = stubDb({ answers: [[SURVIVOR_LATEST_RE, bracketed(SURVIVOR_POS, LOSER_POS)]] });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    const entry = logService.createLogEntry.mock.calls[0][1];
+    expect(entry.message).toContain('case_stage_log_reassert=row');
+    expect(entry.message).toContain('case_stage_log_reassert_stage=retained');
+    expect(entry.extra.merge.children).toEqual(plan.children);
+  });
+
+  test('LOSER ROWS OLDER: the survivor still leads — nothing written, plan says none', async () => {
+    // Post-repoint the survivor's own row is still `latest` (same row id), so
+    // there is nothing to re-assert and appending anyway would restart the
+    // aged clock for no reason.
+    const db = stubDb({ answers: [[SURVIVOR_LATEST_RE, bracketed(SURVIVOR_POS, SURVIVOR_POS)]] });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    expect(db.calls.some(c => /^INSERT INTO case_stage_log/i.test(c.sql))).toBe(false);
+    expect(plan.children.case_stage_log_reassert).toBe('none');
+    expect(plan.children).not.toHaveProperty('case_stage_log_reassert_stage');
+    expect(plan.children).not.toHaveProperty('case_stage_log_position');
+  });
+
+  test('EQUAL entered_at, loser id higher: the id tiebreak still moves the position', async () => {
+    // `ORDER BY entered_at DESC, id DESC` — an identical timestamp is decided
+    // by the id, and the loser's row wins it. A decision that compared
+    // timestamps would call this "unchanged" and leave the case demoted. This
+    // is why the implementation compares ROW IDS.
+    const tie = '2026-08-20 14:30:00';
+    const db = stubDb({
+      answers: [[SURVIVOR_LATEST_RE, bracketed(
+        stageRow({ id: 10, entered_at_str: tie }),
+        stageRow({ id: 44, template_id: 1, stage_id: 5, stage_key: 'consult_booked',
+                   case_stage: 'Open', status_label: 'Consult Booked',
+                   entered_at_str: tie }),
+      )]],
+    });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    const ins = oneCall(db, /^INSERT INTO case_stage_log/i);
+    expect(ins.params[3]).toBe('retained');   // the survivor's stage, restored
+    expect(ins.params[6]).toBe(tie);          // GREATEST(NOW(), tie) → NOW()
+    expect(plan.children.case_stage_log_reassert).toBe('row');
+  });
+
+  test('SURVIVOR HAS NO HISTORY: no insert, and the residual is reported', async () => {
+    // The loser's rows legitimately become the merged case's only position.
+    // Nothing to restore — but that is an OUTCOME, not a no-op, and it has to
+    // be visible in the note or it is indistinguishable from "nothing
+    // happened".
+    const db = stubDb({ answers: [[SURVIVOR_LATEST_RE, bracketed(null, LOSER_POS)]] });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    expect(db.calls.some(c => /^INSERT INTO case_stage_log/i.test(c.sql))).toBe(false);
+    expect(plan.children.case_stage_log_reassert).toBe('warn');
+    expect(plan.children.case_stage_log_position)
+      .toBe('intake-history-now-leads; no survivor position to re-assert');
+    expect(plan.children).not.toHaveProperty('case_stage_log_reassert_stage');
+
+    const entry = logService.createLogEntry.mock.calls[0][1];
+    expect(entry.message).toContain('case_stage_log_reassert=warn');
+    expect(entry.message)
+      .toContain('case_stage_log_position=intake-history-now-leads; no survivor position to re-assert');
+  });
+
+  test('LOSER HAS NO STAGE ROWS: two cheap reads and nothing else', async () => {
+    // Indistinguishable from "loser rows older" at this seam, deliberately:
+    // the decision is made on which ROW leads, not on whether the loser
+    // brought any. What this pins is the COST — the bracket is exactly two
+    // LIMIT-1 reads on the real path, it never runs the dry run's union query,
+    // and it writes nothing when there is nothing to do.
+    const db = stubDb({ answers: [[SURVIVOR_LATEST_RE, bracketed(SURVIVOR_POS, SURVIVOR_POS)]] });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    expect(db.calls.filter(c => SURVIVOR_LATEST_RE.test(c.sql))).toHaveLength(2);
+    expect(db.calls.filter(c => SURVIVOR_LATEST_RE.test(c.sql)).map(c => c.params))
+      .toEqual([[SURVIVOR], [SURVIVOR]]);
+    expect(db.calls.some(c => MERGED_LATEST_RE.test(c.sql))).toBe(false);
+    expect(db.calls.some(c => /^INSERT INTO case_stage_log/i.test(c.sql))).toBe(false);
+    expect(plan.children.case_stage_log_reassert).toBe('none');
+  });
+
+  test('A DRY RUN previews the decision and writes nothing', async () => {
+    // The preview simulates the post-repoint order with a union over both
+    // case_ids — the repoint changes case_id and nothing else, so row ids (and
+    // therefore the ordering) are identical to what the real merge produces.
+    const db = stubDb({
+      answers: [
+        [SURVIVOR_LATEST_RE, [[SURVIVOR_POS]]],
+        [MERGED_LATEST_RE,   [[LOSER_POS]]],
+      ],
+    });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER, { dryRun: true });
+
+    expect(plan.children.case_stage_log_reassert).toBe('row');
+    expect(plan.children.case_stage_log_reassert_stage).toBe('retained');
+
+    const union = oneCall(db, MERGED_LATEST_RE);
+    expect(union.params).toEqual([SURVIVOR, LOSER]);
+
+    // The premise the sync bus stays silent on, restated for the new statement.
+    expect(db.calls.some(c => /^INSERT/i.test(c.sql))).toBe(false);
+    expect(db.seen.some(s => /^UPDATE/i.test(s))).toBe(false);
+    expect(db.seen.some(s => /^DELETE/i.test(s))).toBe(false);
+  });
+
+  test('A DRY RUN reports the residual too, without writing', async () => {
+    const db = stubDb({
+      answers: [
+        [SURVIVOR_LATEST_RE, [[]]],          // survivor has no history
+        [MERGED_LATEST_RE,   [[LOSER_POS]]],
+      ],
+    });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER, { dryRun: true });
+
+    expect(plan.children.case_stage_log_reassert).toBe('warn');
+    expect(plan.children.case_stage_log_position)
+      .toBe('intake-history-now-leads; no survivor position to re-assert');
+    expect(db.calls.some(c => /^INSERT/i.test(c.sql))).toBe(false);
+  });
+
+  test('NEITHER CASE HAS HISTORY: the decision degrades to none', async () => {
+    // The universal day-one state, and the one every pre-pipeline case is in.
+    const db = stubDb({ answers: [[SURVIVOR_LATEST_RE, bracketed(null, null)]] });
+    const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
+
+    expect(db.calls.some(c => /^INSERT INTO case_stage_log/i.test(c.sql))).toBe(false);
+    expect(plan.children.case_stage_log_reassert).toBe('none');
   });
 });

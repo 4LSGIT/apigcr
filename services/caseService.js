@@ -1200,6 +1200,10 @@ async function listCaseWorkflows(db, caseId, {
  *   case_stage_log             — case_id. Append-only; no unique involves
  *                                case_id, so the loser's stage history joins
  *                                the survivor's and interleaves by entered_at.
+ *                                That interleave is NOT inert: the newest row
+ *                                of the merged set is the case's POSITION, not
+ *                                just its history. See PIPELINE POSITION
+ *                                (M1.2) below.
  *   case_requirement_overrides — case_id, SURVIVOR-WINS. UNIQUE (case_id,
  *                                requirement_key): colliding loser rows are
  *                                DELETEd first, the rest UPDATEd. Counts are
@@ -1241,6 +1245,74 @@ async function listCaseWorkflows(db, caseId, {
  * where each child WENT, per table, including the rows a survivor-wins
  * collision discarded (`<table>_dropped`).
  *
+ * ── PIPELINE POSITION (M1.2, 2026-08-29) ──────────────────────────────────
+ *
+ * INVARIANT: after a merge, the survivor's LATEST case_stage_log row must not
+ * contradict the position this merge just settled on the `cases` row
+ * (case_stage / case_status / pipeline_phase).
+ *
+ * case_stage_log is history AND the current-position ORACLE.
+ * pipelineService.getPipeline's `current` is the LAST row of
+ * `ORDER BY entered_at ASC, id ASC`; advanceStage's `latest` is the FIRST of
+ * the same order reversed. `latest` feeds onlyFrom, onlyFromRole,
+ * _resolveTarget, the idempotency check and forwardOnly — and the stage it
+ * names decides the pipeline_phase advanceStage writes back onto `cases`.
+ *
+ * So the M1 repoint above moves more than history. The canonical merge pair is
+ * a stale docketless LEAD absorbed into the RETAINED case it became, and the
+ * lead is the side touched most recently: live (2026-08-29), 72 of the 74
+ * phase='case' cases carrying stage history have a newest row OLDER than the
+ * newest lead row. Post-repoint those intake rows become the survivor's
+ * `latest`, so an automation guarded onlyFromRole:['intake'] — which correctly
+ * SKIPPED this case a minute earlier — now MATCHES, advances into an intake
+ * stage, and demotes a retained case back into the funnel. That is the T8
+ * failure exactly, re-entered through merge.
+ *
+ * THE FIX: the repoint loop is bracketed by two LIMIT-1 reads of the
+ * survivor's latest row (step 1c and step 2b). When the loser's rows end up
+ * leading — a newer entered_at, OR an equal one that won the `id` tiebreak —
+ * ONE row is appended restoring the survivor's own stage as latest. That row:
+ *   · is a DIRECT INSERT on the transaction connection, NEVER a call into
+ *     advanceStage (which would take a named lock inside this transaction,
+ *     re-run guards, and rewrite `cases`);
+ *   · emits NO domain event — case.stage_advanced firing on a bookkeeping row
+ *     would start rule cascades over a position that never actually changed;
+ *   · touches NO `cases` column. The field rules above already settled
+ *     case_stage / case_status / pipeline_phase; this row exists to make the
+ *     LOG agree with them, not the reverse.
+ *
+ * `source` is 'system': case_stage_log.source is
+ * enum('manual','system','import') and has no 'merge' member (verified live,
+ * 2026-08-29), and this slice adds no SQL. The note carries the identity —
+ * `[merge <loserId>] position re-asserted` — so the row is unambiguous
+ * without one. Extending the enum is a candidate follow-up migration.
+ * The schema carries NO from_* columns (id, case_id, template_id, stage_id,
+ * stage_key, case_stage, status_label, entered_at, entered_by, source, note),
+ * so there is nothing "from" to copy off the superseded row.
+ *
+ * RESIDUAL — no position to restore: when the survivor has NO stage history
+ * of its own and the loser does, the loser's rows legitimately become the
+ * merged case's only position and there is nothing to re-assert. Nothing is
+ * written; the plan and merge note carry
+ *   case_stage_log_position:
+ *     'intake-history-now-leads; no survivor position to re-assert'
+ * so the condition is visible rather than silent.
+ *
+ * ACCEPTED SIDE-EFFECT — the aged clock restarts: the re-assert row is a NEW
+ * log row, so days_in_stage (pipelineAdminService.listBoard,
+ * lib/internal_functions/system.js emit_stage_aged) is measured from merge
+ * time, and case_stage_aged_emitted — keyed on stage_log_id — holds no claims
+ * against it, so every aged threshold re-arms from merge time. Accepted: a
+ * merge IS activity on the case, and the alternative is leaving an intake row
+ * standing as a retained case's position, which is the bug this prevents.
+ *
+ * RESIDUAL — no pipeline lock: advanceStage serializes per case on the named
+ * lock `pipeline_case_<id>`; this path deliberately does not take it (holding
+ * it across the whole merge transaction is a much larger surface than the race
+ * it closes, and the merge is already racing every other writer of both
+ * cases). Merges are rare and operator-initiated; a concurrent advance on the
+ * survivor mid-merge is out of scope here.
+ *
  * @param {object} db          mysql2 promise pool
  * @param {string} survivorId  case that remains
  * @param {string} loserId     case that is absorbed and deleted
@@ -1256,7 +1328,16 @@ async function listCaseWorkflows(db, caseId, {
  *               conflicts: [{column,survivor,loser}…] },   // blocking set
  *   notes_appended, alerts_appended, dropbox_noted,
  *   children: { table: rowCount, … , '<table>_dropped': rowCount,
- *               case_relate_deduped, checklists_consolidated }
+ *               case_relate_deduped, checklists_consolidated,
+ *               // M1.2 — the pipeline-position decision. STRINGS, in a map
+ *               // whose other values are counts: the confirm dialog's
+ *               // `.filter(([, n]) => n > 0)` (public/case.html) drops them,
+ *               // which is why the audit trail for this is the merge NOTE and
+ *               // log_extra, both of which carry every key verbatim.
+ *               case_stage_log_reassert:        'row' | 'warn' | 'none',
+ *               case_stage_log_reassert_stage?: stage_key,   // 'row' only
+ *               case_stage_log_position?:       warning       // 'warn' only
+ *             }
  * }
  * Throws err with .code:
  *   'MERGE_NOT_FOUND'  — either case missing
@@ -1416,6 +1497,62 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
        JOIN case_requirement_overrides so
          ON so.case_id = ? AND so.requirement_key = lo.requirement_key
       WHERE lo.case_id = ?`;
+
+  // ── M1.2 — survivor pipeline position re-assert (2026-08-29) ────────────
+  // Full rationale in the PIPELINE POSITION section of the docblock. Short
+  // version: case_stage_log is the current-position oracle, the repoint below
+  // hands the survivor the loser's (usually NEWER) intake rows, and that
+  // silently moves the case's position backwards into the funnel.
+  //
+  // Column list is a copy of what advanceStage's INSERT writes, minus the
+  // columns a re-assert must NOT inherit (entered_at, entered_by, source,
+  // note — this row is stamped at merge time, by the merging user, as system,
+  // with its own note). entered_at comes back pre-formatted as a STRING so it
+  // can be bound straight into GREATEST() without a Date round-trip through
+  // the driver's timezone handling; the format is fixed-width, so the string
+  // comparison GREATEST performs is chronologically correct.
+  const LATEST_STAGE_LOG_COLS =
+    `id, template_id, stage_id, stage_key, case_stage, status_label, ` +
+    `DATE_FORMAT(entered_at, '%Y-%m-%d %H:%i:%s') AS entered_at_str`;
+
+  // Survivor only. The ORDER BY is byte-identical to advanceStage's `latest`
+  // read on purpose — if that ordering ever changes, this must change with it
+  // or the two disagree about which row is current, which is the entire bug.
+  const SURVIVOR_LATEST_SQL =
+    `SELECT ${LATEST_STAGE_LOG_COLS}
+       FROM case_stage_log
+      WHERE case_id = ?
+      ORDER BY entered_at DESC, id DESC
+      LIMIT 1`;
+
+  // DRY-RUN ONLY: simulates the post-repoint state. The repoint rewrites
+  // case_id and nothing else — row ids are untouched — so the union of both
+  // cases' rows orders EXACTLY as the merged case's rows will.
+  const MERGED_LATEST_SQL =
+    `SELECT ${LATEST_STAGE_LOG_COLS}
+       FROM case_stage_log
+      WHERE case_id IN (?, ?)
+      ORDER BY entered_at DESC, id DESC
+      LIMIT 1`;
+
+  /**
+   * 'row'  — the loser's rows now lead AND the survivor had a position of its
+   *          own → append one re-assert row.
+   * 'warn' — the loser's rows now lead but the survivor had NO history, so
+   *          there is no position to restore. Documented residual; reported.
+   * 'none' — the survivor's own row still leads, or neither case has history.
+   *
+   * Compared by ROW ID, not by timestamp: that covers a newer entered_at and
+   * an equal entered_at broken by `id DESC` in the same test, which a
+   * timestamp comparison would miss.
+   */
+  const decideReassert = (pre, post) => {
+    if (!post) return 'none';
+    if (pre && Number(post.id) === Number(pre.id)) return 'none';
+    return pre ? 'row' : 'warn';
+  };
+  const REASSERT_WARN =
+    'intake-history-now-leads; no survivor position to re-assert';
 
   // ── child repoint spec ──
   // [label, countSql, moveSql, pre?]
@@ -1661,6 +1798,20 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     plan.children.case_relate_deduped = dedupeC;
     const [dupTags] = await db.query(CONSOLIDATE_FIND_SQL, [survivorId, loserId]);
     plan.children.checklists_consolidated = dupTags.length;
+
+    // M1.2 — preview the pipeline-position decision. Two reads, no writes:
+    // the survivor's position today, and the position the merged set WOULD
+    // have. Same decision function the real path runs, so the preview cannot
+    // drift from the behaviour it describes.
+    const [[preDry]]  = await db.query(SURVIVOR_LATEST_SQL, [survivorId]);
+    const [[postDry]] = await db.query(MERGED_LATEST_SQL, [survivorId, loserId]);
+    const decisionDry = decideReassert(preDry, postDry);
+    plan.children.case_stage_log_reassert = decisionDry;
+    if (decisionDry === 'row') {
+      plan.children.case_stage_log_reassert_stage = preDry.stage_key;
+    } else if (decisionDry === 'warn') {
+      plan.children.case_stage_log_position = REASSERT_WARN;
+    }
     return plan;
   }
 
@@ -1723,6 +1874,12 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     }
     plan.children.checklists_consolidated = dupTags.length;
 
+    // 1c. M1.2 — the survivor's OWN pipeline position, read BEFORE step 2
+    //     hands it the loser's stage history. This is the only moment the
+    //     survivor's latest row is still identifiable; after the repoint the
+    //     two histories are one set.
+    const [[preLatest]] = await conn.query(SURVIVOR_LATEST_SQL, [survivorId]);
+
     // 2. child repoints
     for (const [label, , moveSql, pre] of CHILDREN) {
       // Pre-statement first: drop the loser rows that CANNOT move, so the
@@ -1742,6 +1899,64 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
         : [survivorId, loserId];
       const [r] = await conn.query(moveSql, params);
       plan.children[label] = r.affectedRows;
+    }
+
+    // 2b. M1.2 — re-assert the survivor's position when the loser's rows now
+    //     lead. See PIPELINE POSITION in the docblock for why this is not
+    //     cosmetic: `latest` is what advanceStage's guards read and what
+    //     decides pipeline_phase on the next advance.
+    //
+    //     Runs AFTER the loop (so it sees the merged set) and BEFORE step 3's
+    //     field UPDATE and step 4's snapshot — the snapshot must report the
+    //     decision, and step 3 must not be read as the thing this row agrees
+    //     with (it is the other way round: the field rules already decided,
+    //     this row stops the log from contradicting them).
+    const [[postLatest]] = await conn.query(SURVIVOR_LATEST_SQL, [survivorId]);
+    const reassert = decideReassert(preLatest, postLatest);
+    plan.children.case_stage_log_reassert = reassert;
+    if (reassert === 'warn') {
+      // Nothing to restore — the survivor never had a position. Reported so
+      // the residual is legible in the merge note rather than inferred later.
+      plan.children.case_stage_log_position = REASSERT_WARN;
+    } else if (reassert === 'row') {
+      plan.children.case_stage_log_reassert_stage = preLatest.stage_key;
+      // DIRECT INSERT, deliberately. Not advanceStage: that would take a named
+      // lock inside this transaction, re-run its guards against history this
+      // merge just rewrote, emit case.stage_advanced (rule cascades over a
+      // position that never changed), and rewrite `cases` columns step 3 owns.
+      //
+      // entered_at: merge time, EXCEPT when the row this supersedes is
+      // somehow stamped later — then match it and win on the `id` tiebreak
+      // (this row's auto-increment id is the highest in the table). No live
+      // writer produces a future entered_at today (advanceStage is the only
+      // case_stage_log writer and takes the CURRENT_TIMESTAMP default), so
+      // GREATEST is belt-and-braces — but a plain NOW() would leave the
+      // invariant conditional on that staying true, and the whole point of
+      // this row is that the invariant holds unconditionally. COALESCE keeps
+      // it NULL-safe: without STRICT_TRANS_TABLES a NULL here would land a
+      // zero-date on a NOT NULL column and sort the row to the BOTTOM.
+      await conn.query(
+        `INSERT INTO case_stage_log
+           (case_id, template_id, stage_id, stage_key, case_stage,
+            status_label, entered_at, entered_by, source, note)
+         VALUES (?, ?, ?, ?, ?, ?, GREATEST(NOW(), COALESCE(?, NOW())), ?, ?, ?)`,
+        [
+          survivorId,
+          preLatest.template_id,
+          preLatest.stage_id,
+          preLatest.stage_key,
+          preLatest.case_stage,
+          preLatest.status_label == null ? '' : preLatest.status_label,
+          postLatest.entered_at_str,
+          by || null,                 // 0 (unauthenticated/system) → NULL,
+                                      // advanceStage's entered_by convention
+          // source is enum('manual','system','import') — no 'merge' member.
+          // The note carries the identity instead. Enum extension is a
+          // candidate follow-up migration; this slice adds no SQL.
+          'system',
+          `[merge ${loserId}] position re-asserted`.slice(0, 255),
+        ]
+      );
     }
 
     // 3. survivor field updates (adopted dockets + additive fills + concats)
