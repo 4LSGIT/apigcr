@@ -11,22 +11,32 @@
 #   Splitting it out means the layer is built and pushed ONCE. App deploys
 #   then push only the npm + source layers (~50-150 MB) and finish faster.
 #
+# NOTE THE REPOSITORY. This image lives in its OWN Artifact Registry repo
+# (svpcac-base), NOT in cloud-run-source-deploy. That is deliberate: the
+# cleanup policy on cloud-run-source-deploy deletes anything older than 7d,
+# and a base image is by design old. Keeping it in a separate repo with no
+# cleanup policy means the two can never interact. Create it once with:
+#
+#   gcloud artifacts repositories create svpcac-base \
+#     --repository-format=docker --location=us-east1 \
+#     --description="Base image for svpcac (node+chromium). No cleanup policy."
+#
 # BUILD AND PUSH (only when node or chromium needs a security refresh —
-# put a monthly reminder on it):
+# put a monthly reminder on it). `gcloud builds submit --tag` requires the
+# Dockerfile to be named `Dockerfile` in the build context, so stage it:
 #
-#   docker build -f Dockerfile.base \
-#     -t us-east1-docker.pkg.dev/lsg-api-425223/cloud-run-source-deploy/svpcac-base:1 .
-#   docker push \
-#     us-east1-docker.pkg.dev/lsg-api-425223/cloud-run-source-deploy/svpcac-base:1
+#   rm -rf /tmp/svpcac-base && mkdir -p /tmp/svpcac-base
+#   cp Dockerfile.base /tmp/svpcac-base/Dockerfile
+#   gcloud builds submit /tmp/svpcac-base \
+#     --tag us-east1-docker.pkg.dev/lsg-api-425223/svpcac-base/base:1
 #
-#   Or without a local docker daemon:
-#   gcloud builds submit --tag \
-#     us-east1-docker.pkg.dev/lsg-api-425223/cloud-run-source-deploy/svpcac-base:1 \
-#     --file Dockerfile.base .
+# VERIFY before deploying the app against it:
+#   docker run --rm us-east1-docker.pkg.dev/lsg-api-425223/svpcac-base/base:1 \
+#     sh -c 'node -v && /usr/bin/chromium --version'
 #
-# BUMP THE TAG (:2, :3, ...) rather than overwriting :1, so a rebuilt base
-# can never silently change what an already-deployed revision would rebuild
-# from. Update the FROM line in Dockerfile in the same commit.
+# BUMP THE TAG (:2, :3, ...) rather than overwriting :1, so a rebuilt base can
+# never silently change what an already-deployed revision rebuilds from.
+# Update the FROM line in Dockerfile in the same commit.
 FROM node:24-slim
 
 # Chromium for pdfRenderService (Phase 2B: template HTML -> PDF).
