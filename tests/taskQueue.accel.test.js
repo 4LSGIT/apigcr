@@ -274,3 +274,71 @@ describe('lib/taskQueue.warmup (boot-time, startup/init.js)', () => {
     await expect(taskQueue.enqueueJobDispatch(3, Date.now())).resolves.toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Split-phase domain event dispatch (2026-08-30) — sibling doorbell
+// ─────────────────────────────────────────────────────────────
+//
+// Same never-throws contract, same config gate, same fallback: if this
+// returns false the row is drained by the batch pass inside the 60s
+// /process-jobs cron. lib/domainEvents.emit() must not break because Cloud
+// Tasks is having a bad day.
+
+describe('lib/taskQueue.enqueueDomainEventDispatch', () => {
+
+  test('targets /process-domain-event/:id with a bare de-{id} task name', async () => {
+    armEnv();
+    const c = fakeClient();
+    taskQueue._test({ client: c });
+
+    const out = await taskQueue.enqueueDomainEventDispatch(77);
+    expect(out).toBe(true);
+
+    const [{ parent, task }, callOpts] = c.createTask.mock.calls[0];
+    expect(parent).toBe('projects/test-proj/locations/us-central1/queues/yc-jobs');
+    expect(task.httpRequest.url).toBe('https://app.example.test/process-domain-event/77');
+    expect(task.httpRequest.httpMethod).toBe('POST');
+    expect(task.httpRequest.headers['x-api-key']).toBe('yci_test_key');
+    expect(callOpts).toEqual({ timeout: 15000 });
+
+    // No due-time suffix, unlike d-{jobId}-{dueMs}. Safe here and ONLY here:
+    // nothing ever reschedules a domain_event_queue row in place, and ids are
+    // never reused, so the ~1h completed-name retention cannot swallow a
+    // legitimate second doorbell.
+    expect(task.name).toBe('projects/test-proj/locations/us-central1/queues/yc-jobs/tasks/de-77');
+  });
+
+  test('kill switch off → no task, no client work (row rides the cron)', async () => {
+    armEnv();
+    process.env.CLOUD_TASKS_ENABLED = '0';
+    const c = fakeClient();
+    taskQueue._test({ client: c });
+
+    await expect(taskQueue.enqueueDomainEventDispatch(77)).resolves.toBe(false);
+    expect(c.createTask).not.toHaveBeenCalled();
+    expect(c.getProjectId).not.toHaveBeenCalled();
+  });
+
+  test('misconfigured → false, never throws', async () => {
+    process.env.CLOUD_TASKS_ENABLED = '1';   // enabled but no location/url/key
+    const c = fakeClient();
+    taskQueue._test({ client: c });
+    await expect(taskQueue.enqueueDomainEventDispatch(77)).resolves.toBe(false);
+    expect(c.createTask).not.toHaveBeenCalled();
+  });
+
+  test('RPC failure → false, never throws (emit() must not reject)', async () => {
+    armEnv();
+    const c = fakeClient({ createTask: jest.fn(async () => { throw new Error('UNAVAILABLE'); }) });
+    taskQueue._test({ client: c });
+    await expect(taskQueue.enqueueDomainEventDispatch(77)).resolves.toBe(false);
+  });
+
+  test('ALREADY_EXISTS (gRPC 6) is silent — the named task is already queued', async () => {
+    armEnv();
+    const err = new Error('already exists'); err.code = 6;
+    const c = fakeClient({ createTask: jest.fn(async () => { throw err; }) });
+    taskQueue._test({ client: c });
+    await expect(taskQueue.enqueueDomainEventDispatch(77)).resolves.toBe(false);
+  });
+});

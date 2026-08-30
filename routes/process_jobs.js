@@ -6,6 +6,7 @@ const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { advanceWorkflow, scheduleResume } = require("../lib/workflow_engine");
 const { executeJob }      = require("../lib/job_executor");
 const { executeStep }     = require("../lib/sequenceEngine");
+const domainEventDrain    = require("../lib/domainEventDrain");
 
 
 /**
@@ -237,6 +238,36 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
       await recoverStuckJobs(db);
     } catch (recoveryErr) {
       console.warn(`[PROCESS-JOBS] recoverStuckJobs failed (non-fatal): ${recoveryErr.code || ""} ${recoveryErr.message}`);
+    }
+    // ── Domain event queue — CRON FALLBACK (split-phase dispatch, 2026-08-30)
+    //
+    // Batch path only, same reasoning as recoverStuckJobs above: per-task
+    // sweeps would multiply DB load by the task rate for no benefit.
+    //
+    // POSITION IS LOAD-BEARING. This sits in the housekeeping block, BEFORE
+    // the job claim, and not after the batch — because runJobPass returns
+    // early when no jobs are due, which is most ticks. Anything placed after
+    // the batch runs only when a job happened to be due, i.e. almost never,
+    // and the fallback would silently not exist. (It was written there
+    // first; tests/processJobs.targeted.test.js caught it.)
+    //
+    // Sweep first, then drain: a row recovered from a dead instance becomes
+    // pending and is picked up in the SAME tick rather than waiting another.
+    //
+    // The hot path is the Cloud Tasks doorbell (POST /process-domain-event/:id,
+    // ~seconds). This exists so a doorbell that never rang — Cloud Tasks
+    // disabled, misconfigured, throttled, down — costs one tick of latency
+    // instead of forever. Bounded batch, run inside the request so it gets
+    // CPU allocated, which is the entire point of the slice. Both calls
+    // swallow their own errors and cannot break the poll cycle.
+    await domainEventDrain.sweepStale(db);
+    try {
+      const drained = await domainEventDrain.drainBatch(db);
+      if (drained.processed > 0) {
+        console.log(`[PROCESS-JOBS] drained ${drained.processed} domain event(s) via the cron fallback`);
+      }
+    } catch (drainErr) {
+      console.warn(`[PROCESS-JOBS] domain event batch drain failed (non-fatal): ${drainErr.message}`);
     }
   }
 
@@ -680,6 +711,39 @@ router.post("/process-job/:id", jwtOrApiKey, async (req, res) => {
     console.error(`[PROCESS-JOB ${id}] Claim failed:`, err);
     return res.status(500).json({
       error: "Failed to claim job",
+      code: err.code || err.errno || null,
+      detail: String(err.message || "").slice(0, 300),
+    });
+  }
+});
+
+// Targeted domain event drain — Cloud Tasks push target for the split-phase
+// dispatch slice (lib/domainEvents.js → lib/taskQueue.enqueueDomainEventDispatch).
+// The whole reason this is a ROUTE and not a detached call: work inside a
+// request gets CPU allocated, work after res.json() does not.
+//
+// Contract deliberately mirrors POST /process-job/:id — malformed id → 400
+// (Cloud Tasks does NOT retry 4xx, correct for a request that can never
+// succeed); already-claimed → 200 (it retries any non-2xx, and losing the
+// race to the cron is a normal outcome); claim failure → 500 so the task
+// retries, which is right for a DB blip.
+//
+// NO heartbeat stamp here, for the same reason the targeted job route has
+// none: the heartbeat means "the POLL cycle ran" and
+// routes/api.systemStatus.js uses its age to detect a dead Cloud Scheduler
+// job. Task traffic stamping it would mask exactly that failure.
+router.post("/process-domain-event/:id", jwtOrApiKey, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid domain event id" });
+  }
+  try {
+    const out = await domainEventDrain.drainOne(req.db, id);
+    res.json(out);
+  } catch (err) {
+    console.error(`[PROCESS-DOMAIN-EVENT ${id}] Claim failed:`, err);
+    return res.status(500).json({
+      error: "Failed to claim domain event",
       code: err.code || err.errno || null,
       detail: String(err.message || "").slice(0, 300),
     });

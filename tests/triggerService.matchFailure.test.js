@@ -77,6 +77,7 @@ const domainEvents   = require('../lib/domainEvents');
 function makeDb(rulesByEvent) {
   const calls = [];
   let nextId = 500;
+  let queueRow = null;
   return {
     calls,
     async query(sql, params) {
@@ -95,6 +96,28 @@ function makeDb(rulesByEvent) {
       }
       if (/INSERT INTO trigger_execution/.test(sql)) {
         return [{ insertId: nextId++, affectedRows: 1 }];
+      }
+      // Split-phase dispatch: emit() writes here instead of evaluating.
+      // Single-row queue is enough for this suite — it drains by id.
+      if (/INSERT INTO domain_event_queue/.test(sql)) {
+        queueRow = {
+          id: 1, event_type: params[0], root_id: params[1], envelope: params[2],
+          status: 'pending', attempts: 0, dispatches: 0,
+        };
+        return [{ insertId: 1, affectedRows: 1 }];
+      }
+      if (/UPDATE domain_event_queue/.test(sql) && /status = 'running'/.test(sql)) {
+        if (!queueRow || queueRow.status !== 'pending') return [{ affectedRows: 0 }];
+        queueRow.status = 'running';
+        queueRow.attempts++;
+        return [{ affectedRows: 1 }];
+      }
+      if (/UPDATE domain_event_queue/.test(sql)) return [{ affectedRows: 1 }];
+      if (/SELECT dispatches FROM domain_event_queue/.test(sql)) {
+        return [queueRow ? [{ dispatches: queueRow.dispatches }] : []];
+      }
+      if (/FROM domain_event_queue/.test(sql)) {
+        return [queueRow ? [{ ...queueRow }] : []];
       }
       if (/UPDATE trigger_executions/.test(sql)) return [{ affectedRows: 1 }];
       if (/UPDATE trigger_rules/.test(sql))      return [{ affectedRows: params.length }];
@@ -394,10 +417,25 @@ test('a rejecting alert() does not produce an unhandled rejection', async () => 
 });
 
 test('domainEvents.emit stays fire-and-forget over a broken rule', async () => {
+  // PORTED for split-phase dispatch (2026-08-30). emit() now queues rather
+  // than evaluating, so the broken rule is reached by DRAINING the row. The
+  // contract under test is unchanged and is the reason this test exists:
+  // neither half may throw, and a rule that fails to EVALUATE must produce
+  // exactly one trigger_match_failed alert and no trigger_engine_error on
+  // top of it (a match failure is not an engine failure).
   const db = makeDb({ 'appt.created': [rule(1, { match_mode: 'regex' })] });
+
   await expect(
     domainEvents.emit(db, 'appt.created', { contact_id: 7, source: 'system' })
   ).resolves.toBeUndefined();
+
+  // Nothing evaluated yet — the emit path is now two cheap writes.
+  expect(matchAlerts()).toHaveLength(0);
+
+  const { drainOne } = require('../lib/domainEventDrain');
+  const out = await drainOne(db, 1);
+  expect(out.results[0].status).toBe('done');
+
   expect(matchAlerts()).toHaveLength(1);
   // The engine did NOT throw, so no trigger_engine_error was raised on top.
   expect(alert.mock.calls.filter(c => c[1].kind === 'trigger_engine_error')).toHaveLength(0);

@@ -27,6 +27,7 @@ lib/courtCitation.js
 lib/courtResolve.js
 lib/credentialCrypto.js
 lib/credentialInjection.js
+lib/domainEventDrain.js
 lib/domainEvents.js
 lib/errorMiddleware.js
 lib/firmConfig.js
@@ -342,6 +343,7 @@ ref/2026-08-26_pipeline_r2_requirements.sql
 ref/2026-08-27_documents_external_id_bin.sql
 ref/2026-08-27_unified_events_e0a.sql
 ref/2026-08-28_streak_messages.sql
+ref/2026-08-30_domain_event_queue.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -667,6 +669,7 @@ tests/documentsUi.related.test.js
 tests/documentsUi.syncPanel.test.js
 tests/documentsUi.upload.test.js
 tests/documentsUpload.routes.test.js
+tests/domainEventQueue.test.js
 tests/dropboxService.normalizePath.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js

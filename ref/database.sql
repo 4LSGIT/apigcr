@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-30T17:08:27.143Z
+-- Generated: 2026-08-30T21:50:59.189Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:84d3f406ccdbd1621ef1e6a525cba3a3
+-- Fingerprint: sha256:d0d2d7deba782443baa4c2cc9d048e06
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1317,6 +1317,27 @@ CREATE TABLE `documents` (
   `status` enum('active','deleted','missing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `domain_event_queue`
+--
+
+DROP TABLE IF EXISTS `domain_event_queue`;
+CREATE TABLE `domain_event_queue` (
+  `id` bigint unsigned NOT NULL,
+  `event_type` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `root_id` bigint unsigned DEFAULT NULL,
+  `envelope` json NOT NULL,
+  `status` enum('pending','running','done','error') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
+  `dispatches` int unsigned NOT NULL DEFAULT '0',
+  `attempts` int unsigned NOT NULL DEFAULT '0',
+  `claimed_at` datetime DEFAULT NULL,
+  `completed_at` datetime DEFAULT NULL,
+  `error_message` text COLLATE utf8mb4_general_ci,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3753,6 +3774,14 @@ ALTER TABLE `documents`
   ADD FULLTEXT KEY `ft_docs` (`name`,`title`,`tags`);
 
 --
+-- Indexes for table `domain_event_queue`
+--
+ALTER TABLE `domain_event_queue`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_status_created` (`status`,`created_at`),
+  ADD KEY `idx_created` (`created_at`);
+
+--
 -- Indexes for table `email_credentials`
 --
 ALTER TABLE `email_credentials`
@@ -4670,6 +4699,12 @@ ALTER TABLE `document_sync_roots`
 -- AUTO_INCREMENT for table `documents`
 --
 ALTER TABLE `documents`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `domain_event_queue`
+--
+ALTER TABLE `domain_event_queue`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --

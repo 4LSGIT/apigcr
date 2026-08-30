@@ -895,6 +895,17 @@ async function _dispatchAction(db, rule, action, transformedInput) {
           group_key: 'trigger_budget',
           title: `Trigger dispatch budget (${MAX_DISPATCHES_PER_ROOT}) exhausted`,
           message: `Rule ${rule.id} (${rule.name}) and later actions skipped for this root event — likely rule fan-out.`,
+          // Split-phase dispatch (2026-08-30): budgetAlerted is per-PROCESS
+          // and the tree now spans several requests, so the in-memory flag
+          // alone would write one alert row per drained node of a runaway
+          // fan-out — exactly when the alert table is least useful. rootId
+          // rides on the counters object (set by lib/domainEventDrain.js),
+          // and lib/alerting.js switches to INSERT IGNORE whenever
+          // dedup_key is present, so this collapses the whole tree to one
+          // row. Absent rootId (no queue row — dry runs, direct
+          // processEvent calls in tests) it stays undefined and the old
+          // un-deduped behaviour applies, which is correct there.
+          ...(counters.rootId ? { dedup_key: `trigger_budget:${counters.rootId}` } : {}),
         }).catch(() => {});
       } catch (_) {}
     }

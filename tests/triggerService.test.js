@@ -53,10 +53,53 @@ const triggerService = require('../services/triggerService');
 function makeDb(rulesByEvent) {
   const calls = [];
   let nextId = 100;
-  return {
+  // Split-phase dispatch (2026-08-30): emit() no longer runs the tree, it
+  // writes a domain_event_queue row. The stub keeps those rows in memory so
+  // a test can drain them and drive the engine exactly as production does.
+  const queue = new Map();
+  let nextQueueId = 1;
+  const db = {
     calls,
+    queue,
     async query(sql, params) {
       calls.push({ sql, params });
+      if (/INSERT INTO domain_event_queue/.test(sql)) {
+        const id = nextQueueId++;
+        const [event_type, root_id, envelope] = params;
+        queue.set(id, {
+          id, event_type, root_id, envelope,
+          status: 'pending', attempts: 0, dispatches: 0,
+        });
+        return [{ insertId: id, affectedRows: 1 }];
+      }
+      if (/UPDATE domain_event_queue/.test(sql) && /status = 'running'/.test(sql)) {
+        const row = queue.get(params[0]);
+        if (!row || row.status !== 'pending') return [{ affectedRows: 0 }];
+        row.status = 'running';
+        row.attempts++;
+        return [{ affectedRows: 1 }];
+      }
+      if (/UPDATE domain_event_queue/.test(sql) && /dispatches = dispatches \+/.test(sql)) {
+        const row = queue.get(params[1]);
+        if (row) row.dispatches += params[0];
+        return [{ affectedRows: row ? 1 : 0 }];
+      }
+      if (/UPDATE domain_event_queue/.test(sql)) {
+        const row = queue.get(params[params.length - 1]);
+        if (row) row.status = /'error'/.test(sql) ? 'error' : 'done';
+        return [{ affectedRows: row ? 1 : 0 }];
+      }
+      if (/SELECT dispatches FROM domain_event_queue/.test(sql)) {
+        const row = queue.get(params[0]);
+        return [row ? [{ dispatches: row.dispatches }] : []];
+      }
+      if (/FROM domain_event_queue/.test(sql) && /status = 'pending'/.test(sql)) {
+        return [[...queue.values()].filter(r => r.status === 'pending').map(r => ({ id: r.id }))];
+      }
+      if (/FROM domain_event_queue/.test(sql)) {
+        const row = queue.get(params[0]);
+        return [row ? [{ ...row }] : []];
+      }
       if (/FROM trigger_rules/.test(sql)) {
         return [(rulesByEvent[params[0]] || []).map(r => ({ ...r }))];
       }
@@ -84,6 +127,21 @@ function makeDb(rulesByEvent) {
       throw new Error('stub: unscripted SQL: ' + sql.slice(0, 60));
     },
   };
+  return db;
+}
+
+/**
+ * Drain the stub queue until it is empty, mirroring what the Cloud Tasks
+ * doorbell + cron do in production. Bounded so a genuine runaway loop fails
+ * the test loudly instead of hanging the suite.
+ */
+async function drainAll(db, maxPasses = 50) {
+  const { drainBatch } = require('../lib/domainEventDrain');
+  for (let i = 0; i < maxPasses; i++) {
+    const out = await drainBatch(db);
+    if (out.processed === 0) return;
+  }
+  throw new Error('drainAll: queue never emptied — runaway emission?');
 }
 
 const execInserts = (db) => db.calls.filter(c => /INSERT INTO trigger_executions/.test(c.sql));
@@ -131,6 +189,13 @@ test('runAsAction nests depth/chain and shares counters; scope resets outside', 
 });
 
 test('END-TO-END loop: two mutually-triggering rules stop at the depth cap', async () => {
+  // PORTED for split-phase dispatch (2026-08-30). Previously emit() ran the
+  // whole tree inline, so this test was a single await. Now emit() only
+  // queues, and each level is drained in its own request — so the loop is
+  // driven by draining until the queue empties. The ASSERTIONS are
+  // unchanged, and that is the point: the depth cap must survive the split.
+  // If it did not, this test would either loop forever (drainAll throws) or
+  // stop producing the depth_capped row.
   const db = makeDb({
     'appt.created':  [rule(1, 'appt.created',  [hookAction(11, 1)])],
     'appt.attended': [rule(2, 'appt.attended', [hookAction(12, 2)])],
@@ -143,6 +208,7 @@ test('END-TO-END loop: two mutually-triggering rules stop at the depth cap', asy
   });
 
   await domainEvents.emit(db, 'appt.created', { contact_id: 1 });
+  await drainAll(db);
 
   const depths = execInserts(db).map(c => c.params[3]);
   // depth 0..3 processed; the depth-4 emission is dropped as depth_capped
@@ -152,6 +218,62 @@ test('END-TO-END loop: two mutually-triggering rules stop at the depth cap', asy
   expect(statuses[4]).toBe('depth_capped');
   // exactly MAX_DEPTH dispatches happened (one per processed level)
   expect(hookService.executeHook).toHaveBeenCalledTimes(4);
+});
+
+test('SPLIT-PHASE: emit() queues and evaluates NOTHING; the drain does the work', async () => {
+  // Explicit: the suite's beforeEach only mockClear()s, so the loop test's
+  // re-emitting implementation would otherwise leak in here.
+  hookService.executeHook.mockImplementation(async () => ({ status: 'delivered', executionId: 1 }));
+  const db = makeDb({ 'appt.created': [rule(1, 'appt.created', [hookAction(11, 1)])] });
+
+  await domainEvents.emit(db, 'appt.created', { contact_id: 1 });
+
+  // The whole point of the slice: no rule load, no execution row, no
+  // dispatch happened in the (throttled) emit path.
+  expect(db.calls.some(c => /FROM trigger_rules/.test(c.sql))).toBe(false);
+  expect(execInserts(db)).toHaveLength(0);
+  expect(hookService.executeHook).not.toHaveBeenCalled();
+
+  // One durable row, carrying the envelope — the event cannot be lost now.
+  expect(db.queue.size).toBe(1);
+  const row = [...db.queue.values()][0];
+  expect(row.status).toBe('pending');
+  expect(row.root_id).toBeNull();              // root emission
+  expect(JSON.parse(row.envelope).event).toBe('appt.created');
+
+  await drainAll(db);
+
+  expect(hookService.executeHook).toHaveBeenCalledTimes(1);
+  expect(execInserts(db)).toHaveLength(1);
+  expect([...db.queue.values()][0].status).toBe('done');
+});
+
+test('SPLIT-PHASE: nested emissions carry root_id, and the budget accumulates on the ROOT row', async () => {
+  const db = makeDb({
+    'appt.created':  [rule(1, 'appt.created',  [hookAction(11, 1)])],
+    'appt.attended': [rule(2, 'appt.attended', [hookAction(12, 2)])],
+  });
+  hookService.executeHook.mockImplementation(async (dbArg, slug, wrapped) => {
+    if (wrapped.body.event === 'appt.created') {
+      await domainEvents.emit(dbArg, 'appt.attended', { contact_id: 1 });
+    }
+    return { status: 'delivered', executionId: 1 };
+  });
+
+  await domainEvents.emit(db, 'appt.created', { contact_id: 1 });
+  await drainAll(db);
+
+  const rows = [...db.queue.values()];
+  expect(rows).toHaveLength(2);
+  expect(rows[0].root_id).toBeNull();     // root
+  expect(rows[1].root_id).toBe(rows[0].id); // child points at the root
+
+  // Two dispatches across the tree, both counted on the ROOT row — this is
+  // what keeps MAX_DISPATCHES_PER_ROOT a per-root budget once evaluation is
+  // spread across requests. Reconstructing counters fresh per drain would
+  // leave both rows at 1.
+  expect(rows[0].dispatches).toBe(2);
+  expect(rows[1].dispatches).toBe(0);
 });
 
 // ─────────────────────────────────────────────────────────────

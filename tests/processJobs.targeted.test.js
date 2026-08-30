@@ -71,6 +71,11 @@ function makeDb({ claimRows = [] } = {}) {
     if (s.includes('FROM workflow_executions') && s.includes("status = 'processing'")) {
       return [[]];
     }
+    // Split-phase dispatch: the cron's stale sweep + batch drain, and the
+    // targeted route's claim. Nothing pending / nothing stale by default —
+    // these tests are about routing and wiring, not about draining.
+    if (s.includes('SELECT id FROM domain_event_queue')) return [[]];
+    if (s.includes('domain_event_queue')) return [{ affectedRows: 0 }];
     return [{ affectedRows: 1, insertId: 1 }];
   }
   return {
@@ -180,7 +185,70 @@ describe('POST /process-job/:id (targeted dispatch)', () => {
   });
 });
 
+describe('POST /process-domain-event/:id (split-phase dispatch push target)', () => {
+
+  test('malformed id → 400, before any DB work (Cloud Tasks does NOT retry 4xx)', async () => {
+    currentDb = makeDb();
+    for (const bad of ['abc', '1.5', '-3', '0']) {
+      const res = await post(`/process-domain-event/${bad}`);
+      expect(res.status).toBe(400);
+    }
+    expect(currentDb.calls.some((c) => c.sql.includes('domain_event_queue'))).toBe(false);
+  });
+
+  test('unauthenticated → 401 (same jwtOrApiKey gate as every other dispatch route)', async () => {
+    currentDb = makeDb();
+    const res = await fetch(base + '/process-domain-event/9', { method: 'POST' });
+    expect(res.status).toBe(401);
+  });
+
+  test('not claimable → 200 already_claimed, and NO heartbeat (poll-liveness isolation)', async () => {
+    currentDb = makeDb();
+    const res = await post('/process-domain-event/9');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      processed: 0,
+      results: [{ id: 9, status: 'already_claimed' }],
+    });
+    // Lock 1 extends to this route: the heartbeat means "the POLL cycle ran".
+    expect(heartbeatCalls(currentDb)).toHaveLength(0);
+    expect(recoveryCalls(currentDb)).toHaveLength(0);
+  });
+
+  test('claims by id with a conditional UPDATE — not a transaction', async () => {
+    currentDb = makeDb();
+    await post('/process-domain-event/9');
+    const claim = currentDb.calls.find((c) => c.sql.includes('domain_event_queue'));
+    const s = claim.sql.replace(/\s+/g, ' ');
+    expect(s).toContain("SET status = 'running'");
+    expect(s).toContain('WHERE id = ?');
+    expect(s).toContain("status = 'pending'");
+    expect(claim.params).toEqual([9]);
+  });
+});
+
 describe('/process-jobs (cron batch — externally unchanged)', () => {
+
+  test('the cron is wired as the domain-event fallback: stale sweep + batch drain', async () => {
+    currentDb = makeDb({ claimRows: [] });
+    const res = await post('/process-jobs');
+    expect(res.status).toBe(200);
+
+    const dq = currentDb.calls.filter((c) => c.sql.includes('domain_event_queue'));
+    const sqls = dq.map((c) => c.sql.replace(/\s+/g, ' '));
+    // Stale-claim sweep (both halves) …
+    expect(sqls.some((s) => /UPDATE domain_event_queue.*status = 'error'/.test(s))).toBe(true);
+    expect(sqls.some((s) => /UPDATE domain_event_queue.*SET status = 'pending'/.test(s))).toBe(true);
+    // … and the bounded batch drain, so a dead doorbell costs one tick, not forever.
+    expect(sqls.some((s) => /SELECT id FROM domain_event_queue.*status = 'pending'/.test(s))).toBe(true);
+  });
+
+  test('the TARGETED job path does NOT run domain-event housekeeping', async () => {
+    currentDb = makeDb({ claimRows: [] });
+    await post('/process-job/50');
+    expect(currentDb.calls.some((c) => c.sql.includes('domain_event_queue'))).toBe(false);
+  });
+
 
   test('0 due jobs → {processed:0,results:[]}, heartbeat stamped, recovery sweep ran', async () => {
     currentDb = makeDb({ claimRows: [] });
