@@ -521,8 +521,19 @@
       // every one of them — so the preview silently dropped the one line the
       // operator most needs before confirming. Admit strings, and escape `n`:
       // it can now carry text into this HTML.
+      //
+      // 'none' IS EXCLUDED, deliberately. This filter's convention has always
+      // been "hide the zeroes", and 'none' is precisely the zero of
+      // case_stage_log_reassert — which caseService stamps on EVERY plan,
+      // dry run included. Admitting it would put `case_stage_log_reassert:
+      // none` on every preview and, worse, make the `'nothing to move'`
+      // fallback below dead code: a merge with no children at all would
+      // report a no-op decision instead of saying plainly that there is
+      // nothing to move. The two outcomes an operator must see before
+      // confirming — 'row' and 'warn', with their companion keys — are
+      // unaffected.
       const childLines = Object.entries(plan.children || {})
-        .filter(([, n]) => n > 0 || typeof n === 'string')
+        .filter(([, n]) => n > 0 || (typeof n === 'string' && n !== 'none'))
         .map(([t, n]) => `${esc(t)}: ${esc(n)}`)
         .join(', ') || 'nothing to move';
       const conflicts = plan.fields.conflicts || [];
