@@ -515,9 +515,15 @@
       const esc = (v) => String(v ?? '').replace(/[&<>"]/g,
         (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
 
+      // M1.2 — `children` is no longer counts-only. The pipeline-position
+      // decision (case_stage_log_reassert / _reassert_stage /
+      // case_stage_log_position) arrives as STRINGS, and `n > 0` is false for
+      // every one of them — so the preview silently dropped the one line the
+      // operator most needs before confirming. Admit strings, and escape `n`:
+      // it can now carry text into this HTML.
       const childLines = Object.entries(plan.children || {})
-        .filter(([, n]) => n > 0)
-        .map(([t, n]) => `${esc(t)}: ${n}`)
+        .filter(([, n]) => n > 0 || typeof n === 'string')
+        .map(([t, n]) => `${esc(t)}: ${esc(n)}`)
         .join(', ') || 'nothing to move';
       const conflicts = plan.fields.conflicts || [];
       const conflictHtml = conflicts.length
