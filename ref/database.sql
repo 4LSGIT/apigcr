@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-28T15:39:31.192Z
+-- Generated: 2026-08-30T17:08:27.143Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:4054f98f3cf73dfe4d9dc0363eb3e59e
+-- Fingerprint: sha256:84d3f406ccdbd1621ef1e6a525cba3a3
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1259,23 +1259,6 @@ CREATE TABLE `default` (
 DROP TABLE IF EXISTS `document_links`;
 CREATE TABLE `document_links` (
   `id` bigint unsigned NOT NULL,
-  `document_id` bigint unsigned NOT NULL,
-  `link_type` varchar(32) COLLATE utf8mb4_general_ci NOT NULL,
-  `link_id` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `relation` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `created_by` int DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `document_links_bak_20260827`
---
-
-DROP TABLE IF EXISTS `document_links_bak_20260827`;
-CREATE TABLE `document_links_bak_20260827` (
-  `id` bigint unsigned NOT NULL DEFAULT '0',
   `document_id` bigint unsigned NOT NULL,
   `link_type` varchar(32) COLLATE utf8mb4_general_ci NOT NULL,
   `link_id` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,

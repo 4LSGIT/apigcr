@@ -1,0 +1,40 @@
+# Dockerfile.base — the heavy, slow-changing half of the runtime image.
+#
+# WHY THIS FILE EXISTS (2026-08-30)
+#   Chromium is a ~800 MB layer. Cloud Build's source-deploy path keeps no
+#   persistent layer cache between builds, so when this apt step lived in the
+#   main Dockerfile it was rebuilt and re-pushed as a FRESH BLOB on every
+#   deploy. At ~5 deploys/day that added ~4 GiB/day to Artifact Registry —
+#   measured 4.1 GiB/day, taking the repo to 150 GiB and $14.94/mo on a
+#   trajectory to ~$182/mo within a year.
+#
+#   Splitting it out means the layer is built and pushed ONCE. App deploys
+#   then push only the npm + source layers (~50-150 MB) and finish faster.
+#
+# BUILD AND PUSH (only when node or chromium needs a security refresh —
+# put a monthly reminder on it):
+#
+#   docker build -f Dockerfile.base \
+#     -t us-east1-docker.pkg.dev/lsg-api-425223/cloud-run-source-deploy/svpcac-base:1 .
+#   docker push \
+#     us-east1-docker.pkg.dev/lsg-api-425223/cloud-run-source-deploy/svpcac-base:1
+#
+#   Or without a local docker daemon:
+#   gcloud builds submit --tag \
+#     us-east1-docker.pkg.dev/lsg-api-425223/cloud-run-source-deploy/svpcac-base:1 \
+#     --file Dockerfile.base .
+#
+# BUMP THE TAG (:2, :3, ...) rather than overwriting :1, so a rebuilt base
+# can never silently change what an already-deployed revision would rebuild
+# from. Update the FROM line in Dockerfile in the same commit.
+FROM node:24-slim
+
+# Chromium for pdfRenderService (Phase 2B: template HTML -> PDF).
+# apt chromium, NOT puppeteer's own download -- one binary, managed by the
+# base image's debian, resolved at /usr/bin/chromium (pdfRenderService
+# falls back through PUPPETEER_EXECUTABLE_PATH and common alternates).
+# fonts-liberation + dejavu: metric-compatible Arial/Times/Courier stand-ins
+# so contracts don't render in chromium's last-resort fallback font.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium fonts-liberation fonts-dejavu-core && \
+    rm -rf /var/lib/apt/lists/*

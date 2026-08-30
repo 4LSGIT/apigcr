@@ -3,6 +3,7 @@
 .github/workflows/node.js.yml
 .gitignore
 Dockerfile
+Dockerfile.base
 TRACKED_FILES.txt
 jest.config.js
 lib/actionDispatchers.js
@@ -361,6 +362,7 @@ ref/THEME-HANDOFF-v2.md
 ref/TOKEN-MAP.md
 ref/X2_DESIGN_AMENDMENTS.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
+ref/artifact-registry-cleanup-policy.json
 ref/database.sql
 ref/documents_s1.sql
 ref/documents_s2.sql
