@@ -65,10 +65,35 @@
 //
 //   Capability probe — answers "can we actually read call notes?" in one call:
 //   GET https://app.4lsg.com/api/temp/ringcentral/probe?days=30
-//     → runs, in order: client/info → authz-profile (what permissions the app
-//       actually holds) → call-log w/ recordings → RingSense record list →
-//       RingSense insights for the newest recording id found. Each step
-//       reports independently; a failing step does not abort the rest.
+//     → extension info → authz-profile (user-role permissions, filtered) →
+//       call-log w/ recordings → AI Copilot call notes → RingSense insights.
+//       Each step reports independently; a failing step does not abort the rest.
+//
+//   WHAT THE 2026-08-31 PROBE ESTABLISHED (account 55880693):
+//     • "Call notes" are NOT RingSense here. They are AI Copilot notes, and the
+//       call-log flags them per record via metadataCategories:["AiNotes"] —
+//       present on 9 of the last 10 recorded calls.
+//     • The endpoint is
+//         GET /ai/copilot/v1/accounts/~/extensions/{extId}/ai-notes/{telephonySessionId}
+//       keyed by telephonySessionId (NOT recording.id, NOT sessionId, NOT the
+//       call-log id), scoped to the extension that OWNS the call.
+//     • It currently returns 403 CMN-401 needing app scope ReadCopilotCallNotes.
+//       That is an app-registration scope, not a user-role permission and not a
+//       licensing problem: the notes demonstrably exist. Add the scope to app
+//       XpOitoDi… in the RingCentral Developer Console, then RE-AUTHORIZE
+//       credential 9 — scopes are baked in at authorize time, so a token
+//       refresh will not pick up a newly added scope. config.scopes is [] so
+//       oauthService omits the scope param entirely (services/oauthService.js
+//       :339), which means RC grants whatever the app declares; no YisraCase
+//       code change is needed once the console scope is added.
+//     • RingSense is a dead end on this account: /ai/ringsense/… responds (the
+//       app scope is fine) but returns RAH-3001 "Call not found with
+//       sourceRecordId" for recording.id, sessionId, telephonySessionId AND the
+//       call-log id alike — i.e. the RingSense store is simply not ingesting
+//       this account. Kept as a probe step only to distinguish "no scope" (403)
+//       from "no data" (404 RAH-3001) if that ever changes.
+//     • /restapi/v1.0/client-info needs ReadClientInfo, which the app does NOT
+//       have — use /restapi/v1.0/account/~/extension/~ for identity instead.
 //
 //   Typical exploration calls:
 //   { path: "/restapi/v1.0/account/~/call-log",
@@ -390,18 +415,24 @@ router.get('/api/temp/ringcentral/whoami', readonlyApiKeyAuth, async (req, res) 
 // ── GET /api/temp/ringcentral/probe — capability probe ───────────────────────
 //
 // Answers "can this credential actually read call notes?" without requiring
-// five hand-rolled round trips. Steps run sequentially and independently: a
-// 403 on one does not abort the others, because WHICH step fails is the
-// diagnosis. Step 5 chains off step 3 to test the community-reported claim
-// that RingSense's `sourceRecordId` is the call-log recording id.
+// hand-rolled round trips. Steps run sequentially and independently: a 403 on
+// one does not abort the others, because WHICH step fails is the diagnosis.
+// Step 4 chains off step 3 — see the header for what each outcome means.
 router.get('/api/temp/ringcentral/probe', readonlyApiKeyAuth, async (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
   const dateFrom = new Date(Date.now() - days * 86400_000).toISOString();
   const steps = [];
 
-  async function step(name, note, body) {
+  // authz-profile returns ~192 permissions; dumping them all buries the signal.
+  const RELEVANT_PERM_RE = /Copilot|Ai|AI|Sense|Recording|CallLog|Transcript|ClientInfo/;
+
+  async function step(name, note, body, transform) {
     const r = await performRequest(req.db, body);
-    const p = r.ok ? r.payload : r.payload;
+    const p = r.payload;
+    let bodyJson = r.ok ? p.body_json : null;
+    if (bodyJson && typeof transform === 'function') {
+      try { bodyJson = transform(bodyJson); } catch (_) { /* keep raw */ }
+    }
     steps.push({
       step: name,
       note,
@@ -409,47 +440,111 @@ router.get('/api/temp/ringcentral/probe', readonlyApiKeyAuth, async (req, res) =
       status: r.ok ? p.status : (r.http_status || null),
       error: p.error || null,
       rate_limit: p.rate_limit || {},
-      body_json: r.ok ? p.body_json : null,
+      body_json: bodyJson,
       body_snippet: r.ok && !p.body_json && typeof p.body === 'string'
         ? p.body.slice(0, 800) : null,
     });
     return r.ok ? p : null;
   }
 
-  await step('client_info', 'Who is this token? Confirms auth works at all.',
-    { path: '/restapi/v1.0/client/info' });
+  // 1. Identity. NOT /restapi/v1.0/client-info — that needs ReadClientInfo,
+  //    which this app does not hold (verified 403).
+  await step('extension_info', 'Who is this token? Confirms auth works at all.',
+    { path: '/restapi/v1.0/account/~/extension/~' },
+    (b) => ({ id: b.id, extensionNumber: b.extensionNumber, type: b.type,
+              name: b.name || (b.contact && `${b.contact.firstName} ${b.contact.lastName}`),
+              status: b.status }));
 
-  await step('authz_profile', 'Which permissions did RC actually grant this app? ReadCallLog / ReadCallRecording / RingSense are the ones that matter.',
-    { path: '/restapi/v1.0/account/~/extension/~/authz-profile' });
+  // 2. USER-ROLE permissions. Distinct from APP SCOPES — a 403 naming a
+  //    permission that appears here means the app scope is missing, not the role.
+  await step('authz_profile',
+    'User-role permissions (filtered). Note: app SCOPES are separate and are NOT listed here — ReadCopilotCallNotes is an app scope.',
+    { path: '/restapi/v1.0/account/~/extension/~/authz-profile' },
+    (b) => {
+      const all = (b.permissions || []).map((p) => p.permission && p.permission.id).filter(Boolean);
+      return { total: all.length, relevant: all.filter((p) => RELEVANT_PERM_RE.test(p)).sort() };
+    });
 
+  // 3. Recent calls. metadataCategories:["AiNotes"] is the flag that AI notes
+  //    exist for a call; telephonySessionId is the key step 4 needs.
   const callLog = await step('call_log',
-    'Recent account calls with recordings attached. Recording ids feed step 5.',
+    'Recent account calls. metadataCategories:["AiNotes"] flags calls that HAVE AI notes.',
     { path: '/restapi/v1.0/account/~/call-log',
-      query: { view: 'Detailed', perPage: 10, withRecording: true, dateFrom } });
+      query: { view: 'Detailed', perPage: 10, withRecording: true, dateFrom } },
+    (b) => ({
+      total: (b.records || []).length,
+      records: (b.records || []).map((r) => ({
+        id: r.id,
+        startTime: r.startTime,
+        direction: r.direction,
+        telephonySessionId: r.telephonySessionId,
+        recordingId: (r.recording || {}).id || null,
+        extensionId: (r.extension || {}).id || null,
+        metadataCategories: r.metadataCategories || null,
+      })),
+    }));
 
-  await step('ringsense_records',
-    'Does the RingSense record list answer at all? 403 here = no RingSense app scope; 404 = wrong path; 200 with empty list = scope OK but no licensed/processed records.',
-    { path: '/ai/ringsense/v1/public/accounts/~/domains/pbx/records',
-      query: { recordFrom: dateFrom, perPage: 10 } });
-
-  // Chain: pull the newest recording id out of the call log, if any.
-  let recordingId = null;
-  const records = callLog && callLog.body_json && Array.isArray(callLog.body_json.records)
-    ? callLog.body_json.records : [];
-  for (const rec of records) {
-    if (rec && rec.recording && rec.recording.id) { recordingId = String(rec.recording.id); break; }
+  // Chain: newest call that actually advertises AiNotes. NOTE: `callLog` is the
+  // RAW payload — the field flattening above only applies to the copy stored in
+  // `steps`, so read the nested shape here (rec.extension.id, rec.recording.id)
+  // and normalize into `target`. Reading `rec.extensionId` would be undefined
+  // and would silently skip the one step that matters.
+  let target = null;
+  for (const rec of (callLog && callLog.body_json && callLog.body_json.records) || []) {
+    if (!(rec.metadataCategories || []).includes('AiNotes')) continue;
+    if (!rec.telephonySessionId) continue;
+    target = {
+      id: rec.id,
+      startTime: rec.startTime,
+      direction: rec.direction,
+      telephonySessionId: rec.telephonySessionId,
+      extensionId: (rec.extension || {}).id || null,
+      recordingId: (rec.recording || {}).id || null,
+    };
+    break;
   }
 
-  if (recordingId) {
+  // 4. THE ONE THAT MATTERS. Keyed by telephonySessionId, scoped to the owning
+  //    extension. 403 ReadCopilotCallNotes => add the app scope + re-authorize.
+  if (target && target.extensionId) {
+    await step('ai_notes_copilot',
+      `AI Copilot call notes for telephonySessionId ${target.telephonySessionId}. 403 => app scope ReadCopilotCallNotes missing; 200 => notes are readable.`,
+      { path: `/ai/copilot/v1/accounts/~/extensions/${encodeURIComponent(String(target.extensionId))}` +
+              `/ai-notes/${encodeURIComponent(target.telephonySessionId)}` });
+  } else {
+    steps.push({
+      step: 'ai_notes_copilot',
+      note: 'SKIPPED — no call in the window carried metadataCategories:["AiNotes"] with both a telephonySessionId and an extension.id. Widen ?days=.',
+      status: null, error: null, rate_limit: {}, body_json: null, body_snippet: null,
+    });
+  }
+
+  // 5. RingSense, retained only to tell "no scope" (403) from "no data"
+  //    (404 RAH-3001). As of 2026-08-31 this account returns the latter.
+  if (target && target.recordingId) {
     await step('ringsense_insights',
-      `Insights for recording id ${recordingId}. Tests whether sourceRecordId == call-log recording.id.`,
-      { path: `/ai/ringsense/v1/public/accounts/~/domains/pbx/records/${encodeURIComponent(recordingId)}/insights` });
+      'Secondary. 404 RAH-3001 => RingSense reachable but not ingesting this account. 403 => no RingSense app scope.',
+      { path: `/ai/ringsense/v1/public/accounts/~/domains/pbx/records/${encodeURIComponent(target.recordingId)}/insights` });
   } else {
     steps.push({
       step: 'ringsense_insights',
-      note: 'SKIPPED — no recording id found in the call-log window. Widen ?days= or confirm call recording is enabled.',
+      note: 'SKIPPED — no recording id on the selected call.',
       status: null, error: null, rate_limit: {}, body_json: null, body_snippet: null,
     });
+  }
+
+  const aiStep = steps.find((s) => s.step === 'ai_notes_copilot');
+  let verdict;
+  if (!aiStep || aiStep.status === null) {
+    verdict = 'INCONCLUSIVE — no candidate call found in the window.';
+  } else if (aiStep.status === 200) {
+    verdict = 'READABLE — AI Copilot call notes are being returned.';
+  } else if (aiStep.status === 403) {
+    verdict = 'BLOCKED ON APP SCOPE — add ReadCopilotCallNotes to the RC app, then RE-AUTHORIZE credential 9 (refresh will not pick it up).';
+  } else if (aiStep.status === 404) {
+    verdict = 'NO NOTES for this call despite the AiNotes flag — try another call or widen ?days=.';
+  } else {
+    verdict = `UNEXPECTED status ${aiStep.status} — read the step body.`;
   }
 
   res.json({
@@ -457,8 +552,8 @@ router.get('/api/temp/ringcentral/probe', readonlyApiKeyAuth, async (req, res) =
     credential_id: PINNED_CREDENTIAL_ID,
     window_days: days,
     date_from: dateFrom,
-    call_log_records: records.length,
-    recording_id_used: recordingId,
+    verdict,
+    selected_call: target,
     steps,
   });
 });
