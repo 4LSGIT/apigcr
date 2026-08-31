@@ -42,6 +42,18 @@
     open_contact  P.addFile(label, 'client', row[idKey])   ('client', not 'contact')
     open_bill     P.addFile(label, 'bill',   row[idKey])
     copy          copy row[idKey ?? key] to clipboard, toast
+    open_form     modal iframe /forms/render.html?form_key={formKey}&{linkType}_id={row[idKey]}
+                  (2026-09-01). formKey/linkType are validated at save time
+                  (slug / enum) and re-checked here; the URL is built HERE from
+                  those two registry-shaped values plus the row id — a
+                  definition still cannot carry a URL. This page relays
+                  window.apiSend (and lazily firmData) down to the form iframe,
+                  the same relay formInbox.html does, because render.html
+                  resolves window.parent.apiSend and this window is that
+                  parent. On the form's 'form-saved' postMessage the view
+                  re-runs silently, preserving sort and page — the write
+                  itself rides the shell's apiSend chain, so the sync bus
+                  announces it to any open case tab for free.
 
   ── PARAM CONTROLS ───────────────────────────────────────────────────────────
   params[].control 'select' renders a dropdown from params[].options. An option
@@ -128,6 +140,21 @@
     background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
     padding: 10px; overflow-x: auto; font-size: 12px; white-space: pre-wrap;
   }
+  #formModal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 40;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #formModal .fm-panel {
+    background: var(--page-bg); border: 1px solid var(--border); border-radius: 10px;
+    width: min(980px, 94vw); height: min(780px, 92vh);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #formModal .fm-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  #formModal .fm-head .t { font-weight: 600; font-size: 13px; }
+  #formModal iframe { border: 0; flex: 1; width: 100%; }
   #toast {
     position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
     background: var(--text); color: var(--page-bg); padding: 8px 14px;
@@ -188,6 +215,22 @@
   </details>
 </div>
 
+<!-- open_form modal — an iframe of the ONE form renderer, hosted by THIS page
+     (not the shell) so the apiSend relay chain below is the form's parent
+     chain. Close is explicit (button / Esc); there is deliberately no
+     click-outside close — templates autosave drafts, but dismissing a
+     half-edited form by a stray click is still a footgun. -->
+<div id="formModal" class="hidden">
+  <div class="fm-panel">
+    <div class="fm-head">
+      <span id="fmTitle" class="t"></span>
+      <button class="ghost" onclick="closeFormModal()" title="Close">
+        <i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <iframe id="fmFrame" src="about:blank" title="Edit form"></iframe>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -196,8 +239,24 @@ const P = window.parent;
 const RC = window.ReportCharts;
 const PAGE_SIZE = 100;
 
-// Renderer-owned action registry: type → addFile kind. `copy` is special-cased.
+// Renderer-owned action registry: type → addFile kind. `copy` is special-cased,
+// and `open_form` (modal form) is handled by its own branch throughout.
 const ACTION_FILE_KIND = { open_case: "case", open_contact: "client", open_bill: "bill" };
+const ACTION_FORM_LINK_PARAM = { case: "case_id", contact: "contact_id", appt: "appt_id" };
+const FORM_KEY_RE = /^[a-zA-Z0-9_-]{1,50}$/;   // mirror of the save-time check
+
+// ── apiSend / firmData relay for the open_form modal ────────────────────────
+// render.html (the form renderer) resolves window.parent.apiSend, and when a
+// form runs inside this page's modal iframe, THIS window is that parent — so
+// relay the shell's apiSend down the chain (formInbox.html precedent). The
+// relay is a closure over P, evaluated at CALL time, so it is safe to define
+// before the shell has finished booting. firmData is exposed as a lazy getter
+// for the same reason: the shell populates it asynchronously, and a one-shot
+// snapshot here could freeze `undefined` forever.
+window.apiSend = (url, method, body) => P.apiSend(url, method, body);
+try {
+  Object.defineProperty(window, "firmData", { get: () => P.firmData });
+} catch (_) { /* already defined or sandboxed — forms fall back gracefully */ }
 
 let views = [];            // list from GET /api/reports?kind=view
 let currentView = null;    // full definition (GET /api/reports/:id)
@@ -349,15 +408,26 @@ function collectParams() {
   return out;
 }
 
-async function runCurrent() {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.preservePosition]  TRUE for the open_form modal's
+ *   silent refresh after a save: keep the current page (clamped) and the
+ *   current sort instead of snapping back to page 1 — the user is mid-list
+ *   with a form still open. Every pre-existing caller passes nothing (or a
+ *   click event, which has no `preservePosition`) and keeps today's reset.
+ */
+async function runCurrent(opts) {
   if (!currentView) return;
+  const keepPos = !!(opts && opts.preservePosition === true);
+  const prevPage = pageNo;
   E("vStatus").textContent = "Running…";
   E("vError").classList.add("hidden");
   try {
     const d = await P.apiSend(`/api/reports/${currentView.id}/run`, "POST",
       { params: collectParams() });
     lastResult = d;
-    pageNo = 0;
+    const lastPage = Math.max(0, Math.ceil(((d.rows || []).length) / PAGE_SIZE) - 1);
+    pageNo = keepPos ? Math.min(prevPage, lastPage) : 0;
     buildColumns();
     renderTable();
     const bits = [`${d.rowCount ?? (d.rows || []).length} rows`, `${d.durationMs} ms`];
@@ -419,6 +489,12 @@ function makeCol(m, prof) {
 function sanitizeAction(a) {
   if (!a || typeof a !== "object") return null;
   if (a.type === "copy") return { type: "copy", idKey: a.idKey || null };
+  if (a.type === "open_form") {
+    if (!a.idKey || !a.formKey || !FORM_KEY_RE.test(String(a.formKey))) return null;
+    const linkType = ACTION_FORM_LINK_PARAM[a.linkType] ? String(a.linkType) : "case";
+    return { type: "open_form", idKey: String(a.idKey), formKey: String(a.formKey),
+             linkType, labelKey: a.labelKey ? String(a.labelKey) : null };
+  }
   if (!ACTION_FILE_KIND[a.type]) return null;
   if (!a.idKey) return null;
   return { type: a.type, idKey: String(a.idKey), labelKey: a.labelKey ? String(a.labelKey) : null };
@@ -501,7 +577,7 @@ function cellHtml(row, c, absIdx) {
       <button class="copybtn" data-act="copy" data-r="${absIdx}" data-k="${esc(c.key)}"
         title="Copy"><i class="fa-regular fa-copy"></i></button></td>`;
   }
-  if (a && ACTION_FILE_KIND[a.type]) {
+  if (a && (ACTION_FILE_KIND[a.type] || a.type === "open_form")) {
     const id = row[a.idKey];
     if (id !== null && id !== undefined && id !== "") {
       const label = a.labelKey && row[a.labelKey] != null && row[a.labelKey] !== ""
@@ -538,6 +614,15 @@ function onCellClick(ev) {
     return;
   }
 
+  if (a.type === "open_form") {
+    const id = row[a.idKey];
+    if (id === null || id === undefined || id === "") return;
+    const label = a.labelKey && row[a.labelKey] != null && row[a.labelKey] !== ""
+      ? String(row[a.labelKey]) : String(row[col.key] ?? id);
+    openFormModal(a, label, id);
+    return;
+  }
+
   const kind = ACTION_FILE_KIND[a.type];
   const id = row[a.idKey];
   if (!kind || id === null || id === undefined || id === "") return;
@@ -545,6 +630,41 @@ function onCellClick(ev) {
     ? String(row[a.labelKey]) : String(row[col.key] ?? id);
   try { P.addFile(label, kind, String(id)); } catch (e) { toast("Could not open"); }
 }
+
+// ── open_form modal ─────────────────────────────────────────────────────────
+
+let formModalOpen = false;
+
+function openFormModal(a, label, id) {
+  const param = ACTION_FORM_LINK_PARAM[a.linkType] || "case_id";
+  E("fmTitle").textContent = label;
+  E("fmFrame").src = `/forms/render.html?form_key=${encodeURIComponent(a.formKey)}`
+    + `&${param}=${encodeURIComponent(String(id))}`;
+  E("formModal").classList.remove("hidden");
+  formModalOpen = true;
+}
+
+function closeFormModal() {
+  E("formModal").classList.add("hidden");
+  E("fmFrame").src = "about:blank";   // stop the form (autosave timers etc.)
+  formModalOpen = false;
+}
+
+// The form posts { type: 'form-saved', … } to its parent (yc-forms save());
+// its parent is THIS window because the modal iframe lives here. Source-check
+// against the modal frame so a message from any other embedded content can
+// never trigger a refetch. Modal stays OPEN — the user closes it when done —
+// and the view refreshes underneath, keeping page and sort.
+window.addEventListener("message", (ev) => {
+  const frame = E("fmFrame");
+  if (!formModalOpen || !frame || ev.source !== frame.contentWindow) return;
+  if (!ev.data || ev.data.type !== "form-saved") return;
+  runCurrent({ preservePosition: true });
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && formModalOpen) closeFormModal();
+});
 
 // ── Paging / CSV ────────────────────────────────────────────────────────────
 

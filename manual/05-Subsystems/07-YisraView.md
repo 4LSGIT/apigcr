@@ -160,9 +160,18 @@ tidied-up heading. You can't accidentally hide data by forgetting to list it.
 | `open_contact` | Opens `row[idKey]` as a contact |
 | `open_bill` | Opens `row[idKey]` as a bill |
 | `copy` | Copies the cell value to the clipboard |
+| `open_form` | Opens the YisraForm named by `formKey` in a modal, linked to `row[idKey]` |
+
+`open_form` takes two extra keys beside `idKey`: a required `formKey` (the
+`form_key` of a form template; slug-validated) and an optional `linkType`
+(`case` — the default — `contact`, or `appt`), which only selects whether the
+id rides as `case_id`, `contact_id`, or `appt_id`. Saving inside the modal
+silently re-runs the view, keeping your sort and page.
 
 An action carries **only a registry name and column references** — never a URL,
-never a snippet of JavaScript, never a template. That boundary is deliberate and
+never a snippet of JavaScript, never a template. `formKey` and `linkType` obey
+the same rule: they are registry-shaped names the renderer resolves, and the
+renderer builds the only URL that ever exists. That boundary is deliberate and
 enforced on the way in. If you need behaviour that isn't on this list, it needs
 to be added to the renderer, not smuggled through a definition.
 
@@ -269,9 +278,15 @@ before anyone relies on it.
 
 ### Views don't change anything
 
-Everything here is read-only, all the way down to the database user, which holds
-no permission to write. A view can show you that ten cases need a contract sent;
-it can't send them. Clicking through to the case is how you act on it.
+Everything the view itself does is read-only, all the way down to the database
+user, which holds no permission to write. A view can show you that ten cases
+need a contract sent; it can't send them.
+
+The one editing affordance a view can *reach* is the `open_form` action, which
+opens an ordinary YisraForm in a modal. That form saves through the same
+authenticated form → PATCH path it uses everywhere else in the app — the view
+engine and its read-only database user are never in that loop. Clicking through
+to the case, or into a worksheet form, is how you act on what a view shows you.
 
 ### The page keeps no memory
 
