@@ -961,7 +961,14 @@ function renderOauthStatusCard(e) {
 
   const status = e.oauth_status;
   const showConnect    = !status || status === 'pending_auth';
-  const showReauth     = status === 'refresh_failed' || status === 'revoked';
+  // 'connected' included deliberately: POST /api/credentials/:id/authorize has
+  // NO status check (routes/api.oauth.js:172) — it just builds an auth URL. The
+  // callback overwrites tokens via exchangeCodeForTokens, and oauth_state is
+  // single-use, so re-consenting while connected is safe and leaves the existing
+  // tokens valid until the new ones land. Without this, widening a provider's
+  // scopes forces Revoke-then-Connect, which opens a window where the
+  // integration is down and a failed re-auth leaves it stranded.
+  const showReauth     = status === 'refresh_failed' || status === 'revoked' || status === 'connected';
   const showRefreshNow = status === 'connected';
   const showRevoke     = status === 'connected' || status === 'refresh_failed';
   const showTest       = status === 'connected';
