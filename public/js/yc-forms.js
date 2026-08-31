@@ -16,6 +16,7 @@ class YCForm {
   constructor(config) {
     this.config = Object.assign({
       formKey:       '',
+      formTitle:     '',                 // template title; rides onSubmit workflow initData as form_title
       schemaVersion: 1,
       linkType:      '',
       linkId:        '',
@@ -834,15 +835,21 @@ if (this.config.endpoints.load && !this.config.external) {
       const wfList = Array.isArray(this.config.onSubmit.workflows)
         ? this.config.onSubmit.workflows
         : (this.config.onSubmit.workflow ? [this.config.onSubmit.workflow] : []);
+      const wfValues = wfList.length ? this.collect() : null;
       for (const wfConfig of wfList) {
         // Spread form data as top-level vars so workflow can use {{fieldName}} directly.
         // System fields override any collisions. Custom initData overrides form data.
         const initData = Object.assign(
           {},
-          this.collect(),                // form field values as base
+          wfValues,                      // form field values as base
           wfConfig.initData || {},       // custom overrides from config
           {                              // system fields always win
             form_key:      this.config.formKey,
+            // The template's human title, so a SHARED workflow can name the
+            // form it is reporting on without per-form initData. Mirrors the
+            // external route. Hand-written form hosts that pass no formTitle
+            // send '' and the workflow falls back to the key.
+            form_title:    this.config.formTitle || '',
             link_type:     this.config.linkType,
             link_id:       this.config.linkId,
             submission_id: submitResult.id,
@@ -850,6 +857,13 @@ if (this.config.endpoints.load && !this.config.external) {
             // false) so a workflow gate reads a defined variable. Mirrors the
             // external route exactly.
             make_pdf:      !!this.config.onSubmit.pdf,
+            // The collected values as ONE object, mirroring the external
+            // route's `_values`. A shared workflow's custom_code step sees
+            // only its explicit `input`, so without this a wf40-style generic
+            // formatter dispatched from the INTERNAL surface has nothing to
+            // format. Assigned last: it wins over any field or initData key
+            // that happened to be named _values.
+            _values:       wfValues,
           }
         );
         this._api(`/workflows/${wfConfig.id}/start`, 'POST', initData).catch(err => {

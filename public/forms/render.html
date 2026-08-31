@@ -1468,6 +1468,10 @@
 
     var config = {
       formKey:       meta.formKey,
+      // Rides onSubmit workflow initData as form_title (all four boot() call
+      // sites already carry meta.title). Lets the shared notify workflow name
+      // the form in its subject line without per-form config.
+      formTitle:     meta.title || '',
       schemaVersion: meta.schemaVersion,
       linkType:      meta.linkType,
       // View mode (X4): linkId stays '' ON PURPOSE even for a linked

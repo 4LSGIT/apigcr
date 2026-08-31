@@ -277,6 +277,11 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
         wf.initData || {},
         {
           form_key: tpl.form_key,
+          // The template's human title, so a SHARED workflow can name the
+          // form it is reporting on (wf40's subject line) without per-form
+          // initData. Always present; a workflow started any other way sees
+          // no form_title and falls back to the key.
+          form_title: tpl.title,
           link_type: linkType,
           link_id: linkId,
           submission_id: submitResult.id,
