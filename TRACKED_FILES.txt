@@ -409,6 +409,7 @@ routes/api.contactLookup.js
 routes/api.contactPhones.js
 routes/api.contactRelations.js
 routes/api.contacts.js
+routes/api.credentials.js
 routes/api.documents.js
 routes/api.dropbox.js
 routes/api.emailCredentials.js
@@ -560,6 +561,7 @@ services/contactRelationService.js
 services/contactService.js
 services/courtExecutor.js
 services/courtRerun.js
+services/credentialService.js
 services/documentIngestService.js
 services/documentService.js
 services/documentSourceService.js

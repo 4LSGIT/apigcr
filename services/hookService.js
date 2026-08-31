@@ -5,7 +5,8 @@
  * services/hookService.js
  *
  * Orchestrates the full pipeline: authenticate → filter → transform → deliver.
- * Also provides CRUD helpers for hooks, targets, and credentials.
+ * Also provides CRUD helpers for hooks and targets. Credential CRUD moved
+ * to services/credentialService.js.
  *
  * v1.2 — Internal Automation Targets
  *   Targets can now be one of four types:
@@ -1149,34 +1150,6 @@ async function deleteTarget(db, targetId) {
   await db.query(`DELETE FROM hook_targets WHERE id = ?`, [targetId]);
 }
 
-// -- Credentials --
-
-async function listCredentials(db) {
-  const [rows] = await db.query(
-    `SELECT id, name, type, allowed_urls, created_at, updated_at FROM credentials ORDER BY name ASC`
-  );
-  // Never return config (contains secrets)
-  return rows;
-}
-
-async function getCredentialById(db, id) {
-  const [[row]] = await db.query(`SELECT * FROM credentials WHERE id = ?`, [id]);
-  return row || null;
-}
-
-async function createCredential(db, data) {
-  const [result] = await db.query(`INSERT INTO credentials SET ?`, [data]);
-  return result.insertId;
-}
-
-async function updateCredential(db, id, data) {
-  await db.query(`UPDATE credentials SET ? WHERE id = ?`, [data, id]);
-}
-
-async function deleteCredential(db, id) {
-  await db.query(`DELETE FROM credentials WHERE id = ?`, [id]);
-}
-
 // -- Executions --
 
 async function listExecutions(db, hookId, { limit = 50, offset = 0 } = {}) {
@@ -1236,12 +1209,6 @@ module.exports = {
   createTarget,
   updateTarget,
   deleteTarget,
-  // CRUD — Credentials
-  listCredentials,
-  getCredentialById,
-  createCredential,
-  updateCredential,
-  deleteCredential,
   // CRUD — Executions
   listExecutions,
   getExecution,
