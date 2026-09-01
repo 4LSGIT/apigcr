@@ -5,7 +5,7 @@ committed as `ref/UNIFIED_EVENTS_DESIGN_V0_4.md` in `4d13cbf` and removed once t
 all of it — `git show 4d13cbf:ref/UNIFIED_EVENTS_DESIGN_V0_4.md` for the text E0a and E1 were
 built against. v0.4's section numbers are preserved here, so its cites still resolve.
 
-**Status: RATIFIED 2026-09-01; U1–U4 shipped the same day (§7).** Every gate in the
+**Status: RATIFIED 2026-09-01; U1–U5 shipped the same day (§7).** Every gate in the
 2026-08-30 draft is ruled (§8.1); the remaining open items in §8.2 are work to schedule, not
 decisions to make. The registry is live: `calendar_item_types` (34 seeded rows) and `type_key` on
 both `appts` and `events`, backfilled and verified 2026-09-01 — and since U3 the COLUMN, not a
@@ -596,9 +596,10 @@ Model column is CAL's recommendation for the *executing* worker when CAL writes 
 | U2 | `calendar_item_types` (34 rows) + `type_key` on both tables + GENERATED backfill (`scripts/genTypeKeyBackfill.js`, byte-checked against E1); `calendarTypeService`; write paths (`createEvent` sets `kind`+`type_key`, `createAppt` sets `type_key`, PATCH allowlists, `err.status` convention); `GET /api/calendar-types`; eventform picker with setting fallback | **Fable** | U1 | **deployed + verified 2026-09-01** (168 / 5,466 / 1). Deferred out of the slice: labels not canonicalized (U5), `court_item_policy` untouched (U7), `booking_views` untouched (U5), registry admin CRUD → U2b (§8.2) |
 | U3 | Alignment pass on E1 at `_deriveKeys`: column replaces derivation; vocabulary moves to `scripts/typeKeyVocabulary.js` (frozen, generator-only); delete `_EVENT_ROW_OVERRIDES`; `events.event_resolution` column (no writer until U6); `state`/`resolution` per §3.7; opt-in `attendees[]`; widen link audit to appts | **Opus** | E1, U2 | **deployed + verified 2026-09-01** (169 / 5,514 / 1). Two vocabulary↔column divergences recorded by name (§0.1); attendee third party ruled `firm`, not `external` (§3.6); audit `counts` gained a nested `appts` block |
 | U4 | `calendar.scheduled/rescheduled/cancelled/resolved` from both services, **beside** the `appt.*` emits (aliases until U5); **12 emit sites**; one projected envelope shape — no row spreads, `appt_manage_token` must never enter `data`; dual-carry envelope; `EVENT_TYPES` entries + set-equality catalog guard; `updateEvent` transitions decided by a before/after ROW comparison (not `changedKeys`, except the time move); `source` accepted on the event writers (no caller yet); event supersession has no writer yet (U6/U7 emit `rescheduled` with `superseded_by`) | **Opus** | U2, U3 | **deployed + verified 2026-09-01** (172 / 5,585 / 1). Zero behaviour change — no rule bound. Gate 1 (envelope shape on the first post-deploy write) still pending |
-| U5 | Consumer cutover to keys (§6.1): rules 1–3, templates 19/20/23/24 and requirement 3 rewritten; `priority_fields` gain `type_key` **ahead of** `appt_type`; detector matches `type_key` then `kind_key`, unlocking `source:'event'\|'any'` (E1.5 folded in; prefer all sources via `listForCases`); booking views gain `type_key` + registry picker; catalog `data.type_key`; one-directional `extra.*` guard. Rules stay on `appt.*` — alias retirement is a later slice | **Opus** | U4 | **prompt issued 2026-09-01**; scripted, before/after live counts in the prompt. **Deploy order backend → SQL** — a deliberate inversion of §7.1 rule 5 |
-| U6 | Write API `schedule/reschedule/cancel/resolve`; `singleton` behind `unified_singleton_enabled`; A3a docket anchor + client-less; `event_resolution` writes; `missed` sweep | **Fable** | U2 | the live-risk slice |
-| U7 | Court-v2 s2 on U6: resolve/reconcile executor; 341 → appts; retire event `341`; dedupe the 12 **by singleton identity, not date**; CHECK constraint with strict-mode proof; `court_v2 schema_gaps` (`block_minutes` → `default_length`, `blocks_whole_day` → `blocks_default`) | **Fable** | U6 + SS worksheet | owner of U6 owns U7 (both managers) |
+| U5 | Consumer cutover to keys (§6.1): rules 1–3, templates 19/20/23/24, requirement 3 rewritten; `priority_fields` gain `type_key` **ahead of** `appt_type`; detector matches `type_key` then `kind_key`; **all three sources via `listForCases`** (path 1, Fred ruled); booking views gain `type_key` + registry picker; catalog `data.type_key`; one-directional `extra.*` guard | Opus | U4 | **deployed + verified 2026-09-01** (174 / 5,693 / 1). Detector query budget 1 → 3 (resolver 11 → 13, still constant in N×M). Deploy order backend → SQL pinned by two tests named "THE DEPLOY-ORDER TRAP". Two behaviours ruled, not worked around: a stale label config resolves **unsatisfied**; `want:'missed'` on `source:'event'` is unsatisfiable until U6a's sweep writes `missed` |
+| U6a | Events side: `supersedeEvent` writer (pointer + `'rescheduled'`, status untouched, GCal/tasks/log side effects, `calendar.rescheduled` with `extra.superseded_by`); `singleton` in `createEvent` behind `unified_singleton_enabled` (identity = resolved case, so cross-form pairs match); **consumer audit** — every raw `FROM events` liveness query gains the pointer filter (availability, `listEvents`, dedupe candidates, digest, feed); `event_resolution` writers (complete/cancel/PATCH + routes); `sweep_calendar_missed` internal function with a required `since` | **Fable** | U5 | prompt issued 2026-09-01. Flag stays off at deploy — acceptance bar is zero observable change |
+| U6b | Appts side: `singleton` replaces the `=== '341 Meeting'` block (flag-guarded; `case_341_current`/`341_appt_id` become write-through projections); A3a `appt_link_type`/`appt_link_id` + backfill; client-less tolerance (skip confirmations/`pre_appt`, still block the provider); `calendarWriteService` façade `schedule/reschedule/cancel/resolve` for U7 | **Fable** | U6a | the live-risk slice — `createAppt`, availability, reminders in scope |
+| U7 | Court-v2 s2 on U6a+U6b: resolve/reconcile executor; the five raw `FROM events` sites in `courtExecutor.js` gain the pointer filter (U6a reports which); 341 → appts; retire event `341`; dedupe the 12 **by singleton identity, not date**; CHECK constraint with strict-mode proof; `court_v2 schema_gaps` (`block_minutes` → `default_length`, `blocks_whole_day` → `blocks_default`) | **Fable** | U6 + SS worksheet | owner of U6 owns U7 (both managers) |
 | U8 | `calendar.approaching` claim table + emitter; reminder rules seeded; `court_item_reminders` → seeder or drop | **Opus** | U4 | pattern exists (`case.stage_aged`) |
 | U9 | Shell unified list (kind / attendee / anchor / range / **unlinked** filters) beside the three tabs; tabs removed one release later | **Opus** | U3 | UI only |
 | U10 | **was E3** per §4: writer census (form_templates first), form-definition migration, mirror flips, 341 last / forward-only | **Fable** | U6, U7 | live staff forms |
@@ -666,6 +667,12 @@ multi-tenant registry.
 
 ### 8.2 Open — needs Fred
 
+- **`missed` sweep cutoff (U6a).** 0 `Completed` events exist live — staff have never marked a
+  deadline met, so every past-dated Scheduled deadline is *unknown*, not *missed*. The sweep takes
+  a required `since` param and Fred sets it in the scheduled job. CAL proposes `since = 2026-09-01`;
+  U6a's report carries the dry-run count for that value and the size of the unbounded "unknown"
+  population. Older rows stay `Scheduled` until a human resolves them.
+
 1. **Case roles is unowned** (PIPE handed it back): reminder assignee (§3.2), R3 team card, portal
    triage owner, A2 role-resolved attendance (§3.3.1). Four consumers, no manager — Fred to assign
    one.
@@ -674,6 +681,18 @@ multi-tenant registry.
    someone can act on what it surfaces — Fred to schedule it.
 
 ### 8.3 Open — design, not blocking
+
+- **Forward supersession needs its consumers (U6a finding).** §3.4's rule — pointer, never a
+  status — means a `'rescheduled'` predecessor stays `Scheduled`. Before U6a only `caseEventService`
+  filtered the pointer; availability, `listEvents`, the digest, the feed and the dedupe candidate
+  queries filtered on status alone. That was invisible because all 31 E0a rows are `Canceled`. The
+  writer and the consumer filters ship together in U6a; U7 owns the five `courtExecutor` sites.
+- **U5 detector shape-neutralisation:** `satisfied_at` is rebuilt as a `Date` from the read layer's
+  naive string (`portalCaseService:440` feeds it to `utcToLocal`); `detail` maps `status_norm` back
+  to the raw label per source (`case.html:2306` reads it). Both 1:1 over live statuses.
+- **Pre-existing doc drift, unowned:** `apptService` comments and `manual/…/03-sequences.md`
+  describe an `iss_intake` enrollment that `enrollApptReminderSequences` no longer performs (it
+  enrolls `pre_appt` only). Fixing it is a behaviour decision, not a doc fix.
 
 - **U8:** approaching offsets per type (registry column) vs per rule.
 - **Supersession sign-off** was carried from v0.4 §8 Q2 and never explicitly ruled. E0a shipped
