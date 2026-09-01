@@ -41,6 +41,8 @@ These are two distinct fields that work together to describe where a matter stan
 
 Think of Stage as the milestone and Status as the current note on that milestone.
 
+> **With pipelines enabled, both are set by the pipeline.** Each pipeline stage maps to one of the five Stage values and carries a status label; advancing a case writes both. Status stays editable, but the next advance replaces it. See [Pipelines](13-pipelines.md).
+
 ---
 
 ## Leads

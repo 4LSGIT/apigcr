@@ -7,6 +7,10 @@
 -- NOT:  no DDL (events.kind exists since E0a), no type_key (arrives in U2), no rewrite of
 --       event_type strings, no session variables, no write to any other table.
 --
+-- PRE-FLIGHT: one readonly SELECT before the UPDATEs — must return 0 rows. It catches an
+--       event_type coined between authoring and apply, which the bulk statements would miss and
+--       VERIFY 1 would only report afterwards.
+--
 -- IDEMPOTENT: every bulk UPDATE is guarded by `kind IS NULL`; hand-fixes are guarded by the
 --       row's exact current (id, type[, status]). Re-running is a no-op. U2 re-runs the five
 --       bulk statements for rows created between this apply and U2's apply (write paths do not
@@ -22,6 +26,29 @@
 -- ROLLBACK: UPDATE events SET kind = NULL;  (E0a state)  and, for id 134 only,
 --       UPDATE events SET event_status='Scheduled' WHERE event_id=134 AND event_type='Trial / Pre-Trial Hearing';
 --       Nothing else changes. caseEventService derives keys from strings and is unaffected either way.
+
+-- ── PRE-FLIGHT (run BEFORE applying; must return 0 rows) ────────────────────────────────────
+-- `eventform.html` still writes event_type as free text until U2, so a string coined between
+-- authoring and apply would be missed by the bulk statements below and would surface only as a
+-- failed VERIFY 1 — after the writes. This finds it first. Readonly.
+--
+-- If it returns rows: STOP and route the new string to CAL. `kind` decides STORAGE under §3.3.2,
+-- so an unmapped type is a vocabulary ruling, not a value to guess. The rest of the migration
+-- stays safe to apply (the row keeps kind NULL and U2 backfills it once the key is ruled).
+--
+-- The list is the union of the five bulk IN-lists, verbatim — edit one, edit both.
+SELECT event_type, COUNT(*) AS n
+  FROM events
+ WHERE kind IS NULL
+   AND (event_type IS NULL OR event_type = ''
+        OR event_type NOT IN (
+          'Confirmation Hearing','confirmation_hearing','Hearing','Show Cause',
+          'Show Cause Hearing','Trial','Trial / Pre-Trial Hearing','Telephonic Status Conference',
+          'Status Conference','Initial Scheduling Conference','Pre-trial Conference','Deposition',
+          '341','dischargeability_due','object_confirmation_due','poc_due','poc_gov_due',
+          'Docs Deadline','Schedules Deadline','Confirmation Certificate Deadline',
+          'Filing Fee Deadline','Filing Fee Installment Deadline','Deadline','Order','Milestone'))
+ GROUP BY event_type ORDER BY n DESC;
 
 -- ── bulk: kind by type ───────────────────────────────────────────────────────────────────────
 UPDATE events SET kind = 'hearing'
