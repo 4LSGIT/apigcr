@@ -61,15 +61,20 @@ Status changes are made from the appointment list or detail view. Each change up
 
 ## How Appointments Connect to Contacts and Cases
 
-An appointment is always anchored to a **contact**. When you open a contact record, you see all their appointments across all cases.
+Historically an appointment always had a **contact**. Since the U6b update it needs an **anchor**, which can be any one of three things:
 
-When an appointment is linked to a **case**, it also appears on the case record. The hierarchy is:
+- **A contact** — the classic shape. When you open a contact record, you see all their appointments across all cases.
+- **A case** — the appointment appears on that case whether or not a contact is attached.
+- **A docket number** — for appointments (typically a 341 Meeting written from a court email) created *before* the case exists in YisraCase. The appointment stores the docket and attaches itself to the case automatically, the moment a case with that number is created. Nothing needs to be re-linked by hand — this is the same self-healing behaviour court-created events have.
+
+When both a contact and a case/docket are present, the contact is the **client attendee** and the case (or docket) is the anchor. The old rule "you cannot have an appointment without a contact" is gone; the new rule is "you cannot have an appointment without an anchor."
+
+**Client-less appointments** behave sensibly: everything client-facing is simply skipped. No confirmation can be sent (asking for one is rejected before anything is written), no reminder sequences are enrolled, and the staff calendar entry has no client name — but the time is still blocked on the provider's calendar, the log is written (marked *Clientless*), and the appointment shows on the case timeline. When a client is later attached (edit the appointment and set the client), future actions treat it normally.
 
 ```
-Contact → Appointment → Case (optional)
+Anchor (contact, case, or docket) → Appointment
+Contact (optional attendee) ──────↗
 ```
-
-You cannot have an appointment without a contact. You can have an appointment without a case.
 
 ---
 
@@ -119,6 +124,29 @@ When an appointment is **scheduled**, the system can:
 When an appointment is marked **no-show**, the system can enroll the client in a follow-up sequence to prompt them to reschedule — with automatic cancellation if they book again.
 
 All of these happen in the background; the action completes immediately and the communications fire asynchronously.
+
+---
+
+## One Live Appointment per Type (singleton)
+
+Some appointment types — most importantly the **341 Meeting** — are *singletons*: a case should have exactly one live one at a time. When a new singleton appointment is created for a case, any prior still-Scheduled appointment of the same type on that case is automatically marked **Rescheduled** (its calendar entries and reminder automation are torn down), and the new appointment records which one it replaced.
+
+Two implementations exist, switched by the `unified_singleton_enabled` setting:
+
+- **Off (current default):** the long-standing 341-specific behaviour — only the type named exactly "341 Meeting" supersedes, found through the case's stored 341 pointer.
+- **On:** any type marked `singleton` in the calendar type registry supersedes, found by querying the appointment table directly — including court-created, docket-anchored appointments on the same case. The `case_341_current` / `341_appt_id` columns on the case keep being maintained either way.
+
+#### If a supersession is wrong
+
+An administrator can restore the old appointment from the database console:
+
+```sql
+UPDATE appts
+   SET appt_status = 'Scheduled'
+ WHERE appt_id = <the old appointment>;
+```
+
+That restores the old appointment as live. It does **not** restore what the supersession tore down: the Google Calendar entries (firm and provider) and any reminder sequence enrollments must be recreated by hand (edit-and-save the appointment to resync the calendar, and re-enroll reminders if needed). The new appointment is untouched — cancel it separately if it should not exist. If the old appointment was a 341, also correct the case's *341 Current* pointer (`case_341_current` / `341_appt_id`) to point back at it.
 
 ---
 

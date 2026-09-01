@@ -1257,6 +1257,8 @@ describe('unknown cases', () => {
  * every branch condition and would make every negative assertion pass.
  */
 const whereOf = (sql) => sql.split('FROM events e')[1].split('ORDER BY')[0];
+// Appt-side twin (U6b): the WHERE only, excluding the SELECT's CASE.
+const apWhereOf = (sql) => sql.split('FROM appts a')[1].split('ORDER BY')[0];
 
 const auditRow = (over) => Object.assign({
   event_id: 4, event_type: 'Milestone', event_title: 'Reminder smoke',
@@ -1335,12 +1337,12 @@ describe('auditEventLinks — the events half (E1, unchanged at U3)', () => {
   });
 
   test.each([
-    // The third column is the QUERY COUNT, which is branch-dependent at U3:
-    // 'broken' asks both tables, 'pending' asks only events (appts have no
-    // docket anchor until A3a). scriptGuard fails an under-consumed script, so
-    // the count has to be stated rather than assumed.
+    // The third column is the QUERY COUNT. U6b made it constant: every
+    // severity asks BOTH tables now that appts carry a docket anchor (A3a).
+    // scriptGuard fails an under-consumed script, so the count is still
+    // stated rather than assumed.
     ['broken',   /c\.case_id = e\.event_link_id/, 2],
-    ['pending',  /case_number_full/,               1],
+    ['pending',  /case_number_full/,               2],
   ])('filtering to %s emits only that branch', async (sev, re, queries) => {
     const db = stubDb(Array.from({ length: queries }, () => []));
     await svc.auditEventLinks(db, { severity: [sev] });
@@ -1405,7 +1407,8 @@ describe('auditEventLinks — the events half (E1, unchanged at U3)', () => {
 //             + 3 rows (1786, 2477, 2908) whose appt_client_id names a deleted
 //             contact. Either dead pointer is the same defect.
 //   unlinked  12 rows with neither anchor. Legitimate, like an unlinked event.
-//   pending    0, and structurally so: appts have no docket anchor until A3a.
+//   pending    0 at U3 cutover; REAL since U6b (A3a) — a docket anchor that
+//              resolves to no case, self-healing like the events side.
 //
 // The 46 appts with a blank case_id and a LIVE client are in NONE of these.
 // They are consultations booked before a case exists — the commonest shape in
@@ -1482,30 +1485,47 @@ describe('auditEventLinks — the appts half', () => {
   });
 
   test('appt severity filtering happens in SQL', async () => {
+    // Scoped to the WHERE (like the events-side test): the SELECT's CASE
+    // carries the full pending predicate at U6b so a docket-anchored row
+    // matched for a dead client still classifies honestly — that NOT EXISTS
+    // is classification, not filtering.
     const db = stubDb(auditScript());
     await svc.auditEventLinks(db, { severity: ['unlinked'] });
-    const ap = db.calls[1].sql;
-    expect(ap).toMatch(/TRIM\(a\.appt_case_id\) = ''/);
-    expect(ap).not.toMatch(/NOT EXISTS/);
+    const apWhere = apWhereOf(db.calls[1].sql);
+    expect(apWhere).toMatch(/TRIM\(a\.appt_case_id\) = ''/);
+    expect(apWhere).not.toMatch(/NOT EXISTS/);
   });
 
-  test('pending ALONE issues no appt query — it could only return zero rows', async () => {
-    // Appts have no docket anchor until A3a, so there is nothing to be pending
-    // about. Paying a round trip to prove that is the waste the SQL-side filter
-    // exists to avoid.
-    const db = stubDb([[]]);
+  test('pending ALONE queries appts too now (U6b — the docket anchor exists)', async () => {
+    // Pre-U6b this severity skipped the appt query because appts had nothing
+    // to be pending ABOUT. A3a gave them the anchor, so 'pending' is a real
+    // appt condition and the round trip is no longer provably empty.
+    const db = stubDb(auditScript());
     const { counts } = await svc.auditEventLinks(db, { severity: ['pending'] });
-    expect(db.calls).toHaveLength(1);
+    expect(db.calls).toHaveLength(2);
     expect(db.calls[0].sql).toMatch(/FROM events e/);
-    // Still reported as a zero: absence of the key would read as "not audited",
-    // which is a different claim from "audited, none found".
+    expect(db.calls[1].sql).toMatch(/FROM appts a/);
+    // The appt WHERE carries ONLY the unresolved branch.
+    const apWhere = apWhereOf(db.calls[1].sql);
+    expect(apWhere).toMatch(/a\.appt_link_type = 'case_number'/);
+    expect(apWhere).not.toMatch(/appt_client_id IS NULL/);       // no unlinked branch
+    expect(apWhere).not.toMatch(/c\.case_id = a\.appt_case_id/); // no broken branch
     expect(counts.appts).toEqual({ broken: 0, pending: 0, unlinked: 0, total: 0 });
   });
 
-  test('appt pending is ALWAYS zero, even asked for alongside the others', async () => {
-    const db = stubDb(auditScript([], [auditAppt(), auditAppt({ appt_id: 3802, reason: 'dead_anchor', appt_case_id: 'GONE' })]));
-    const { counts } = await svc.auditEventLinks(db);
-    expect(counts.appts.pending).toBe(0);
+  test('a docket-anchored appt whose docket resolves to no case is pending (U6b)', async () => {
+    const db = stubDb(auditScript([], [auditAppt({
+      appt_id: 3901, appt_case_id: '', appt_client_id: null,
+      appt_link_type: 'case_number', appt_link_id: '26-99999',
+      reason: 'unresolved_case_number',
+    })]));
+    const { counts, items } = await svc.auditEventLinks(db);
+    expect(counts.appts).toEqual({ broken: 0, pending: 1, unlinked: 0, total: 1 });
+    expect(items[0]).toMatchObject({
+      source: 'appt', appt_id: 3901, severity: 'pending',
+      reason: 'unresolved_case_number',
+      link_type: 'case_number', link_id: '26-99999',
+    });
   });
 
   test('the events counts are NOT polluted by appt rows', async () => {

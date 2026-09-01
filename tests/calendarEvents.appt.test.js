@@ -100,6 +100,7 @@ function makeDb(seedRows = []) {
         appt_with: params[7], appt_note: params[8], appt_gcal: '', appt_gcal_user: null,
         appt_manage_token: params[11], appt_view_id: params[12],
         rescheduled_from_appt_id: params[13], type_key: params[14],
+        appt_link_type: params[15] ?? null, appt_link_id: params[16] ?? null,
       });
       return [{ insertId: id, affectedRows: 1 }];
     }
@@ -112,7 +113,7 @@ function makeDb(seedRows = []) {
     if (/^SELECT \* FROM appts WHERE appt_id/i.test(flat)) {
       const row = rows.get(Number(params[0])); return [row ? [row] : []];
     }
-    if (/^SELECT appt_client_id, appt_case_id, appt_type, appt_date FROM appts/i.test(flat)) {
+    if (/^SELECT appt_client_id, appt_case_id, appt_type, appt_date/i.test(flat)) {
       const row = rows.get(Number(params[0])); return [row ? [row] : []];
     }
     if (/^SELECT appt_id, appt_client_id, appt_case_id, appt_type, type_key/i.test(flat)) {  // rescheduleLater

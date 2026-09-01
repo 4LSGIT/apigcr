@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-01T15:34:12.229Z
+-- Generated: 2026-09-01T19:45:02.133Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:0c09b3905fff79d7493779e0059742ec
+-- Fingerprint: sha256:1a8a3a7d17932c0a5d0b8ebd5796d1c1
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -235,6 +235,8 @@ CREATE TABLE `appts` (
   `appt_id` int NOT NULL,
   `appt_client_id` int DEFAULT NULL,
   `appt_case_id` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `appt_link_type` enum('case','contact','case_number') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'A3a anchor form. Derived by apptService (create + PATCH rewrites); NULL = unlinked (held slot) or pre-backfill. case_number = docket-anchored, resolves query-side.',
+  `appt_link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Anchor id for appt_link_type: case_id | contact_id | docket (either form). Derived, never PATCHed directly.',
   `appt_type` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U2: calendar_item_types.type_key (by value, no FK). NULL = appt_type NULL, unresolved, or pre-backfill.',
   `appt_length` tinyint DEFAULT NULL,
@@ -3562,7 +3564,8 @@ ALTER TABLE `appts`
   ADD KEY `lead_id` (`appt_case_id`),
   ADD KEY `date` (`appt_date`),
   ADD KEY `idx_appts_rescheduled_from` (`rescheduled_from_appt_id`),
-  ADD KEY `idx_appts_type_key` (`type_key`);
+  ADD KEY `idx_appts_type_key` (`type_key`),
+  ADD KEY `idx_appts_link` (`appt_link_type`,`appt_link_id`);
 
 --
 -- Indexes for table `availability_blocks`

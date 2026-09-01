@@ -355,6 +355,7 @@ ref/2026-09-01_unified_events_e0b.sql
 ref/2026-09-01_unified_events_u2.sql
 ref/2026-09-01_unified_events_u3.sql
 ref/2026-09-01_unified_events_u5.sql
+ref/2026-09-01_unified_events_u6b.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -572,6 +573,7 @@ services/assetService.js
 services/availabilityService.js
 services/calendarService.js
 services/calendarTypeService.js
+services/calendarWriteService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
@@ -860,6 +862,9 @@ tests/unifiedEventsU6a.consumers.test.js
 tests/unifiedEventsU6a.resolution.test.js
 tests/unifiedEventsU6a.supersede.test.js
 tests/unifiedEventsU6a.sweep.test.js
+tests/unifiedEventsU6b.appts.test.js
+tests/unifiedEventsU6b.facade.test.js
+tests/unifiedEventsU6b.links.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js

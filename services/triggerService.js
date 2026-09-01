@@ -242,17 +242,17 @@ const EVENT_TYPES = {
   },
   'calendar.rescheduled': {
     label: 'Calendar item rescheduled',
-    description: "Fires from apptService.rescheduleAppt for the PREDECESSOR appt once its successor exists (data is the predecessor row, data.state='superseded'; the successor separately fires calendar.scheduled); from eventService.updateEvent when event_date / event_time / event_all_day changed AND the row is still live afterwards (extra.via='update' — a PATCH that moves the date and cancels in one call emits only calendar.cancelled); and from eventService.supersedeEvent (U6a, extra.via='supersede') for the PREDECESSOR event once superseded_by_event_id is stamped — data is the predecessor row with data.state='superseded' and data.superseded_by_event_id set; the successor fired its own calendar.scheduled first. Singleton supersession in createEvent (flag unified_singleton_enabled) reaches this through supersedeEvent with extra.reason='rescheduled'.",
+    description: "Fires from apptService.rescheduleAppt for the PREDECESSOR appt once its successor exists (data is the predecessor row, data.state='superseded'; the successor separately fires calendar.scheduled); from eventService.updateEvent when event_date / event_time / event_all_day changed AND the row is still live afterwards (extra.via='update' — a PATCH that moves the date and cancels in one call emits only calendar.cancelled); and from eventService.supersedeEvent (U6a, extra.via='supersede') for the PREDECESSOR event once superseded_by_event_id is stamped — data is the predecessor row with data.state='superseded' and data.superseded_by_event_id set; the successor fired its own calendar.scheduled first. Singleton supersession (flag unified_singleton_enabled): createEvent reaches this through supersedeEvent with extra.reason='rescheduled'; apptService.createAppt (U6b) emits it directly per superseded prior appt with extra.via='singleton' and extra.superseded_by = the new appt id, AFTER its own calendar.scheduled.",
     fields: [
       ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
       { path: 'extra.legacy_event',    label: "'appt.rescheduled' (appt rows only)" },
       { path: 'extra.new_source_id',   label: 'Successor appt id (appt rows only)' },
       { path: 'extra.new_starts_at',   label: 'Successor start, firm-local (appt rows; event rows via supersede)' },
       { path: 'extra.prior_starts_at', label: 'Start before the move' },
-      { path: 'extra.via',             label: "'update' | 'supersede' (event rows only)" },
+      { path: 'extra.via',             label: "'update' | 'supersede' (event rows) | 'singleton' (appt rows, U6b flag-on supersession)" },
       { path: 'extra.prior_all_day',   label: 'All-day flag before the move (event rows, via update only)' },
-      { path: 'extra.superseded_by',   label: 'Successor event id (event rows, via supersede only)' },
-      { path: 'extra.reason',          label: "'rescheduled' | 'duplicate' — supersede_reason (event rows, via supersede only)" },
+      { path: 'extra.superseded_by',   label: 'Successor id (event rows via supersede: event id; appt rows via singleton: appt id)' },
+      { path: 'extra.reason',          label: "'rescheduled' | 'duplicate' — supersede reason (event rows via supersede; appt rows via singleton: always 'rescheduled')" },
     ],
   },
   'calendar.cancelled': {

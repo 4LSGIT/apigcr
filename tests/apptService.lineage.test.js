@@ -171,7 +171,7 @@ function makeDb(seedRows = []) {
     }
 
     // insertApptLog's fetch
-    if (/^SELECT appt_client_id, appt_case_id, appt_type, appt_date FROM appts/i.test(flat)) {
+    if (/^SELECT appt_client_id, appt_case_id, appt_type, appt_date/i.test(flat)) {
       const row = rows.get(Number(params[0]));
       return [row ? [row] : []];
     }

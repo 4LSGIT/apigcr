@@ -638,6 +638,16 @@ function _mapAppt(row, caseId, { includeSuperseded, includeAttendees, registry }
     resolution:  st.resolution,
   };
 
+  // U6b: a docket-bucketed appt says so — the consumer needs to know this row
+  // reached the case through its docket, exactly as event rows do. CONDITIONAL
+  // (case/contact/NULL-linked rows keep the frozen default shape); the
+  // events-side mapper carries its link unconditionally — a deliberate
+  // asymmetry until U9 revisits the row contract.
+  if (String(row.appt_link_type || '') === 'case_number') {
+    out.link_type = 'case_number';
+    out.docket    = row.appt_link_id == null ? null : String(row.appt_link_id);
+  }
+
   // `client_expected` is EVENTS-ONLY (v0.5 §3.6). An appt already carries the
   // fact as data: appt_client_id is either there or it is not, and the attendee
   // list above says so directly. A registry OPINION about whether a client
@@ -800,11 +810,20 @@ async function _listForCases(db, caseIds, {
 
   // ── QUERY 3 — appts ────────────────────────────────────────────────────────
   //
-  // Appts anchor ONLY on appt_case_id (the case id). They have no docket anchor
-  // today — v0.5 A3a adds appt_link_type/appt_link_id at U2, at which point this
-  // query grows the same two branches the events query already has.
-  const apFilters = [`a.appt_case_id IN (${canonicalIds.map(() => '?').join(',')})`];
-  const apParams  = [...canonicalIds];
+  // U6b (v0.5 A3a): appts anchor like events now. The case branch matches
+  // appt_case_id; the docket branch matches docket-anchored rows
+  // (appt_link_type='case_number') against the SAME docket IN-list the events
+  // query built from query 1 — a court-created 341 written before the case
+  // existed surfaces here the moment the case does, with no adoption pass.
+  const apWhere  = [`a.appt_case_id IN (${canonicalIds.map(() => '?').join(',')})`];
+  const apParams = [...canonicalIds];
+  if (numbers.length) {
+    apWhere.push(
+      `(a.appt_link_type = 'case_number' AND a.appt_link_id IN (${numbers.map(() => '?').join(',')}))`
+    );
+    apParams.push(...numbers);
+  }
+  const apFilters = [`(${apWhere.join(' OR ')})`];
   if (!includeSuperseded) apFilters.push(`a.appt_status <> 'Rescheduled'`);
   // appt_date is a DATETIME. Keep the COLUMN bare so it stays index-eligible:
   // the interval is applied to the bound parameter, never to appt_date. `to` is
@@ -815,7 +834,7 @@ async function _listForCases(db, caseIds, {
   const [apptRows] = await db.query(
     `SELECT a.appt_id, a.appt_case_id, a.appt_client_id, a.appt_type, a.type_key,
             a.appt_status, a.appt_date, a.appt_end, a.appt_length, a.appt_platform,
-            a.appt_with
+            a.appt_with, a.appt_link_type, a.appt_link_id
        FROM appts a
       WHERE ${apFilters.join(' AND ')}`,
     apParams
@@ -860,9 +879,15 @@ async function _listForCases(db, caseIds, {
   }
 
   for (const r of apptRows) {
-    const cid = caseIdByKey.get(_key(r.appt_case_id));
-    if (!cid) continue;                       // defensive: SQL matched, map did not
-    byCase.get(cid).push(_mapAppt(r, cid, mapOpts));
+    // U6b: docket-anchored rows bucket through the docket map — a shared
+    // docket fans out to BOTH cases, same rule (and same reason) as events.
+    // Everything else buckets on appt_case_id as it always has.
+    const targets = String(r.appt_link_type) === 'case_number'
+      ? (numberToCases.get(_key(r.appt_link_id)) || [])
+      : [caseIdByKey.get(_key(r.appt_case_id))].filter(Boolean);
+    for (const cid of targets) {
+      byCase.get(cid).push(_mapAppt(r, cid, mapOpts));
+    }
   }
 
   for (const rows of byCase.values()) rows.sort(_byStart);
@@ -968,19 +993,21 @@ async function listForCase(db, caseId, opts = {}) {
 // ── U3: THE SAME THREE WORDS, NOW OVER APPTS TOO (v0.5 §0.1, §3.1) ─────────
 //
 // E1 audited events only, because appts had no docket anchor to be unresolved
-// against. They still don't — A3a adds `appt_link_type`/`appt_link_id` at U6 —
-// but the other two conditions apply today and 20 live rows are in them:
+// against. U6b (A3a) gave them one — `appt_link_type`/`appt_link_id` — so all
+// three conditions apply now. Live figures at U3 (2026-09-01): 20 rows:
 //
 //   broken    (8)  appt_case_id names a case that does not exist (5 rows, all
 //                  the literal '<TEST>'), OR appt_client_id names a contact that
 //                  does not exist (3 rows: 1786, 2477, 2908). Either pointer
 //                  being dead is the same defect as a dead event link.
-//   unlinked (12)  appt_case_id = '' AND appt_client_id IS NULL. Attached to
-//                  nothing, and legitimate for the same reason an unlinked event
-//                  is: a held slot, a blocked hour. Listed so it can be FOUND.
-//   pending   (0)  structurally impossible until A3a. Returned as a zero rather
-//                  than omitted — the key's absence would read as "not audited",
-//                  which is a different claim from "audited, none found".
+//   unlinked (12)  no anchors at all: appt_case_id = '' AND appt_client_id IS
+//                  NULL AND not docket-anchored. Attached to nothing, and
+//                  legitimate for the same reason an unlinked event is: a held
+//                  slot, a blocked hour. Listed so it can be FOUND.
+//   pending   (0 at cutover)  appt_link_type='case_number' with a docket
+//                  matching neither case_number column. SELF-HEALING, exactly
+//                  as on the events side — U7's court writer is what will
+//                  populate this.
 //
 // NOT unlinked: the 46 appts with a blank case_id and a LIVE client. Those are
 // consultations booked before a case exists — the single commonest shape in the
@@ -1093,13 +1120,20 @@ async function auditEventLinks(db, { severity = null } = {}) {
   // need a `source` discriminator anyway. Two shaped queries read as what they
   // are, and each keeps its own index eligibility.
   //
-  // Skipped entirely when the caller asked for `pending` alone — appts have no
-  // pending branch until A3a, so the query could only ever return zero rows.
-  // Paying a round trip to prove that is the same waste the SQL-side severity
-  // filter exists to avoid.
-  const wantAppt = want.filter((sv) => sv !== 'pending');
+  // U6b (A3a): the pending branch is REAL now — a docket-anchored appt whose
+  // docket matches neither case_number column is exactly as pending (and
+  // exactly as self-healing) as its event counterpart. All three severities
+  // query appts.
+  const wantAppt = want;
   if (wantAppt.length) {
-    const AP_NO_LINK = `(TRIM(a.appt_case_id) = '' AND a.appt_client_id IS NULL)`;
+    // Unlinked = no anchors AT ALL: blank case, no client, and not
+    // docket-anchored. (Post-backfill the third condition is implied by the
+    // first two — the migration only leaves the pair NULL on exactly those
+    // rows — but a docket-anchored, client-less row must never read as
+    // unlinked, so the predicate says so rather than relying on it.)
+    const AP_NO_LINK = `(TRIM(a.appt_case_id) = '' AND a.appt_client_id IS NULL
+                         AND NOT (a.appt_link_type = 'case_number'
+                                  AND TRIM(COALESCE(a.appt_link_id, '')) <> ''))`;
     // Either dead pointer is broken. Written as one OR rather than two
     // severities because the caller's question is "is this row's anchor real",
     // and a row with both dead is one broken row, not two.
@@ -1109,15 +1143,26 @@ async function auditEventLinks(db, { severity = null } = {}) {
                       OR (a.appt_client_id IS NOT NULL
                           AND NOT EXISTS (SELECT 1 FROM contacts ct
                                            WHERE ct.contact_id = a.appt_client_id)))`;
-    const apBranches = { unlinked: AP_NO_LINK, broken: AP_DEAD };
+    // Same predicate the events side uses, over the appt anchor pair.
+    const AP_UNRESOLVED = `(a.appt_link_type = 'case_number'
+                            AND NOT EXISTS (SELECT 1 FROM cases c
+                                             WHERE c.case_number = a.appt_link_id
+                                                OR c.case_number_full = a.appt_link_id))`;
+    const apBranches = { unlinked: AP_NO_LINK, broken: AP_DEAD, pending: AP_UNRESOLVED };
     const apWhere = wantAppt.map((sv) => apBranches[sv]).join('\n         OR ');
 
     // NO_LINK first in the CASE, for the same reason as the events side: a row
-    // with no anchors at all is unlinked, not a dead pointer.
+    // with no anchors at all is unlinked, not a dead pointer. The pending test
+    // is the FULL predicate (not just the link_type) so a docket-anchored row
+    // matched here for a dead CLIENT pointer still reports broken when its
+    // docket resolves.
     const [apRows] = await db.query(
       `SELECT a.appt_id, a.appt_type, a.type_key, a.appt_date, a.appt_status,
               a.appt_platform, a.appt_case_id, a.appt_client_id,
-              CASE WHEN ${AP_NO_LINK} THEN 'unlinked' ELSE 'dead_anchor' END AS reason
+              a.appt_link_type, a.appt_link_id,
+              CASE WHEN ${AP_NO_LINK} THEN 'unlinked'
+                   WHEN ${AP_UNRESOLVED} THEN 'unresolved_case_number'
+                   ELSE 'dead_anchor' END AS reason
          FROM appts a
         WHERE ${apWhere}
         ORDER BY a.appt_date DESC, a.appt_id DESC`
@@ -1125,7 +1170,9 @@ async function auditEventLinks(db, { severity = null } = {}) {
 
     for (const r of apRows) {
       const reason = String(r.reason);
-      const sev = reason === 'unlinked' ? 'unlinked' : 'broken';
+      const sev = reason === 'unlinked' ? 'unlinked'
+        : reason === 'unresolved_case_number' ? 'pending'
+        : 'broken';
       counts.appts[sev] += 1;
       counts.appts.total += 1;
       items.push({
@@ -1145,6 +1192,10 @@ async function auditEventLinks(db, { severity = null } = {}) {
         location:     _s(r.appt_platform),
         case_id:      _s(r.appt_case_id),
         client_id:    r.appt_client_id == null ? null : Number(r.appt_client_id),
+        // U6b — the anchor pair, so a pending item shows WHICH docket it is
+        // waiting on. NULL/NULL on pre-A3a shapes.
+        link_type:    r.appt_link_type == null ? null : String(r.appt_link_type),
+        link_id:      r.appt_link_id == null ? null : String(r.appt_link_id),
       });
     }
   }

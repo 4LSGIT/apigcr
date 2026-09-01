@@ -33,7 +33,33 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   const params = [];
 
   if (contact_id) { conditions.push('appts.appt_client_id = ?'); params.push(contact_id); }
-  if (case_id)    { conditions.push('appts.appt_case_id = ?');   params.push(case_id); }
+  if (case_id) {
+    // U6b (A3a): the case filter also matches docket-anchored rows whose
+    // docket is one of this case's forms — same fan-out the read layer does.
+    // Dockets resolved here (one PK read) so both the rows query and the
+    // count query below reuse one whereSql/params pair, index-friendly.
+    let dockets = [];
+    try {
+      const [[c]] = await db.query(
+        'SELECT case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1',
+        [case_id]
+      );
+      if (c) {
+        dockets = [...new Set([c.case_number, c.case_number_full]
+          .map(v => (v == null ? '' : String(v).trim()))
+          .filter(Boolean))];
+      }
+    } catch (e) { /* filter degrades to the case-id branch alone */ }
+    if (dockets.length) {
+      conditions.push(
+        `(appts.appt_case_id = ? OR (appts.appt_link_type = 'case_number' AND appts.appt_link_id IN (${dockets.map(() => '?').join(',')})))`
+      );
+      params.push(case_id, ...dockets);
+    } else {
+      conditions.push('appts.appt_case_id = ?');
+      params.push(case_id);
+    }
+  }
   if (status)     { conditions.push('appts.appt_status = ?');    params.push(status); }
   if (from)       { conditions.push('appts.appt_date >= ?');     params.push(`${from} 00:00:00`); }
   if (to)         { conditions.push('appts.appt_date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(to);} 
@@ -174,10 +200,15 @@ router.patch('/api/appts/:id', jwtOrApiKey, async (req, res) => {
     const resolved = await calendarTypeService.applyApptTypePatch(req.db, fields, {
       errorPrefix: 'PATCH /api/appts',
     });
-    const keys = Object.keys(resolved);
+    // U6b — the anchor pair is DERIVED, never patched directly (the allowlist
+    // above rejects the raw columns). A patched appt_case_id / appt_client_id
+    // rewrites appt_link_type/appt_link_id per the A3a rules; shared helper so
+    // this route and update_appointment derive identically.
+    const withLinks = await apptService.applyApptLinkPatch(req.db, apptId, resolved);
+    const keys = Object.keys(withLinks);
 
     const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
-    const values = [...keys.map(k => resolved[k]), apptId];
+    const values = [...keys.map(k => withLinks[k]), apptId];
 
     const [result] = await req.db.query(
       `UPDATE appts SET ${setClauses} WHERE appt_id = ?`,

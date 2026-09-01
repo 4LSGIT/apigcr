@@ -91,13 +91,14 @@ function makeDb(seedRows = [], { cases = {} } = {}) {
         appt_length: params[3], appt_platform: params[4], appt_date: params[5], appt_status: 'Scheduled',
         appt_with: params[7], appt_note: params[8], appt_gcal: '', appt_gcal_user: null,
         appt_view_id: params[12], rescheduled_from_appt_id: params[13], type_key: params[14],
+        appt_link_type: params[15] ?? null, appt_link_id: params[16] ?? null,
       });
       return [{ insertId: id, affectedRows: 1 }];
     }
     if (/^SELECT \* FROM appts WHERE appt_id/i.test(flat)) {
       const row = rows.get(Number(params[0])); return [row ? [row] : []];
     }
-    if (/^SELECT appt_client_id, appt_case_id, appt_type, appt_date FROM appts/i.test(flat)) {   // insertApptLog
+    if (/^SELECT appt_client_id, appt_case_id, appt_type, appt_date/i.test(flat)) {   // insertApptLog
       const row = rows.get(Number(params[0])); return [row ? [row] : []];
     }
     if (/^SELECT a\.appt_id, a\.appt_client_id/i.test(flat)) {                                    // markAttended / markNoShow
@@ -200,17 +201,19 @@ describe('createAppt — type_key', () => {
     expect(db.rows.get(b.appt_id).type_key).toBe('iss');
   });
 
-  test('INSERT shape: type_key is the LAST bound column; binds 0..13 are unchanged', async () => {
+  test('INSERT shape: binds 0..14 unchanged; U6b appends the link pair as binds 15/16', async () => {
     const db = makeDb();
     await apptService.createAppt(db, { ...BASE, appt_type: '341 Meeting', appt_with: 2, note: 'n', appt_source: 'src',
                                         appt_ref_id: 'ref', appt_view_id: 3, hook_rescheduled_from: 9 });
     await flush();
     const ins = apptInsert(db);
     const cols = /\(([^)]*)\)\s*VALUES/i.exec(ins.sql)[1].split(',').map((s) => s.trim());
-    expect(cols.slice(-2)).toEqual(['type_key', 'appt_create_date']);
+    // U2 pinned type_key as the last bound column; U6b appends appt_link_type/
+    // appt_link_id AFTER it (same rule: new binds go LAST so 0..14 never shift).
+    expect(cols.slice(-4)).toEqual(['type_key', 'appt_link_type', 'appt_link_id', 'appt_create_date']);
     const placeholders = (/VALUES\s*\(([\s\S]*)\)\s*$/i.exec(ins.sql)[1].match(/\?/g) || []).length;
     expect(ins.params).toHaveLength(placeholders);
-    expect(ins.params).toHaveLength(15);
+    expect(ins.params).toHaveLength(17);
     expect(ins.params[0]).toBe(CONTACT_ID);
     expect(ins.params[2]).toBe('341 Meeting');
     expect(ins.params[7]).toBe(2);
@@ -218,6 +221,9 @@ describe('createAppt — type_key', () => {
     expect(ins.params[12]).toBe(3);
     expect(ins.params[13]).toBe(9);
     expect(ins.params[14]).toBe('meeting_341');
+    // Contact-only create → ('contact', contact_id) per the A3a anchor rules.
+    expect(ins.params[15]).toBe('contact');
+    expect(ins.params[16]).toBe(String(CONTACT_ID));
   });
 
   test('the registry is read on the POOL before the transaction, never on the conn (R1.1)', async () => {

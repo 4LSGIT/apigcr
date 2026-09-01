@@ -24,7 +24,13 @@
 'use strict';
 
 jest.mock('../lib/auth.jwtOrApiKey', () => jest.fn((req, res, next) => { req.auth = { userId: 9 }; next(); }));
-jest.mock('../services/apptService', () => ({}));   // the PATCH route does not touch the service
+// U6b: both surfaces derive the anchor pair through the service after the
+// type patch. Passthrough here — nothing in THIS file patches an anchor
+// column, and the derivation itself is pinned in
+// tests/unifiedEventsU6b.links.test.js against the real implementation.
+jest.mock('../services/apptService', () => ({
+  applyApptLinkPatch: jest.fn(async (_db, _id, fields) => ({ ...fields })),
+}));
 
 const fs      = require('fs');
 const path    = require('path');

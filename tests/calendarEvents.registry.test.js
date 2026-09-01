@@ -333,6 +333,9 @@ const SITE_EXTRAS = [
   { event: 'calendar.resolved',     site: 'eventService.completeEvent',    keys: ['via', 'prior_status'] },
   // U6a — the supersession writer (v0.5 §3.4).
   { event: 'calendar.rescheduled',  site: 'eventService.supersedeEvent',   keys: ['via', 'superseded_by', 'reason', 'prior_starts_at', 'new_starts_at'] },
+  // U6b — appt-side singleton supersession (flag on): createAppt emits one
+  // per superseded prior, after its own calendar.scheduled.
+  { event: 'calendar.rescheduled',  site: 'apptService.createAppt',        keys: ['via', 'superseded_by', 'reason'] },
 ];
 
 // ── the scanner ─────────────────────────────────────────────────────────────
