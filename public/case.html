@@ -53,6 +53,19 @@
         <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();">
           <i class="fa-solid fa-calendar-day"></i> Events
         </button>
+        <!-- Unified timeline (E1). Sits between Appointments and Events
+             because it is their union — one list of every dated thing on the
+             case, appts and court events interleaved, from
+             services/caseEventService.js.
+             ADDITIVE: Appointments and Events are untouched and stay the write
+             surfaces (this tab is read-only). Adoption is gradual; nothing is
+             removed until the unified list proves itself (v0.5 §6 U9).
+             Lazy-loaded on first open, like tabEvents — the tab costs nothing
+             on a case page nobody opens it on. -->
+        <button class="tab" id="timelineButton" onclick="openTab(this, 'tabTimeline'); ctEnter();">
+          <i class="fa-solid fa-timeline"></i> Timeline
+        </button>
+
         <!-- Notes & Lists widget. Lazy iframe src on first open (esignButton
              idiom); on re-entry pushes a reload so the cards are fresh.
              The id, the tab-content id, the frame id, the file name and the
@@ -774,6 +787,279 @@
         });
       }
     </script>
+
+    <style>
+      /* ct- = case timeline (E1). Second prefixed block on this page; see the
+         pw- block above for the convention. The row states and the kind glyphs
+         genuinely need rules — a status that reads as a colour in one theme and
+         nothing in another is not a status. */
+      #tabTimeline .ct-wrap { margin:0 auto; max-width:650px; text-align:left; }
+      .ct-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+                margin:0 0 10px; font-size:0.8em; color:var(--text-2); }
+      .ct-bar label { white-space:nowrap; }
+      .ct-msg { color:var(--text-muted); font-style:italic; margin:6px 0; }
+      .ct-err { color:var(--danger); font-style:italic; margin:6px 0; }
+
+      .ct-sec-head { font-size:0.7em; text-transform:uppercase; letter-spacing:0.05em;
+                     color:var(--text-muted); font-weight:bold; margin:12px 0 4px; }
+      .ct-sec:first-child .ct-sec-head { margin-top:0; }
+
+      .ct-row { display:flex; gap:9px; align-items:flex-start; padding:4px 0;
+                border-bottom:1px solid var(--border); }
+      .ct-row:last-child { border-bottom:none; }
+      .ct-glyph { flex:0 0 16px; text-align:center; font-size:0.9em; line-height:1.55;
+                  color:var(--text-2); cursor:help; }
+      .ct-glyph-deadline { color:var(--warn-on-soft); }
+      .ct-glyph-unknown  { color:var(--text-muted); font-size:0.55em; }
+      .ct-body { flex:1 1 auto; min-width:0; }
+      .ct-title { font-size:0.92em; }
+      .ct-sub { font-size:0.76em; color:var(--text-muted); }
+      .ct-when { white-space:nowrap; }
+      .ct-loc { margin-left:6px; }
+
+      /* Source chip — which table the row came from. Staff need it: the two
+         sides have different edit surfaces and different write paths. */
+      .ct-src { display:inline-block; font-size:0.62em; font-weight:bold;
+                text-transform:uppercase; letter-spacing:0.03em;
+                border:1px solid var(--border-strong); border-radius:3px;
+                padding:0 4px; margin-left:6px; color:var(--text-muted);
+                vertical-align:1px; }
+
+      /* Status treatments. `held` gets a tick, `missed` a warning strike,
+         `canceled` a full grey strikethrough, `scheduled` nothing at all —
+         plain IS the treatment for the normal case. A null status_norm (the 6
+         legacy blank-enum appts) also renders plain: unknown must not look
+         like a claim. */
+      .ct-st-held .ct-title::after { content:" \2713"; color:var(--ok, var(--accent)); }
+      .ct-st-missed .ct-title { color:var(--warn-on-soft); text-decoration:line-through; }
+      .ct-st-canceled .ct-title,
+      .ct-st-canceled .ct-sub { color:var(--text-muted); }
+      .ct-st-canceled .ct-title { text-decoration:line-through; }
+
+      /* Superseded. Event chains collapse UNDER their live successor; appt
+         tombstones have no successor to collapse under (v0.4 §3.4) and grey
+         out in place. */
+      .ct-sup { margin:2px 0 0 0; }
+      .ct-sup summary { cursor:pointer; font-size:0.72em; color:var(--text-2); }
+      .ct-sup-item { font-size:0.76em; color:var(--text-muted); padding:1px 0 1px 10px;
+                     text-decoration:line-through; }
+      .ct-sup-why { text-decoration:none; display:inline-block; margin-left:5px;
+                    font-style:italic; }
+      .ct-row-tomb .ct-title, .ct-row-tomb .ct-sub { color:var(--text-muted); }
+      .ct-row-tomb .ct-title { text-decoration:line-through; }
+    </style>
+
+    <div id="tabTimeline" class="tab-content">
+      <h1>Timeline</h1>
+      <div class="ct-wrap">
+        <div class="ct-bar">
+          <label>
+            <input type="checkbox" id="ctSupToggle" onchange="ctLoad()" />
+            include superseded
+          </label>
+          <button onclick="ctLoad()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+        </div>
+        <div id="ctList"></div>
+      </div>
+    </div>
+    <script>
+      /* ── Unified case timeline (E1) ─────────────────────────────────────────
+         Appts and court events in ONE list, from GET /api/cases/:id/events
+         (services/caseEventService.js). Read-only: every write still happens on
+         the Appointments and Events tabs, which are untouched.
+
+         ADDITIVE AND FAIL-SOFT (the R3 lesson). This tab must never be able to
+         break the case page. It loads only when opened, and a failed load
+         renders an inline message instead of throwing — a case file is the
+         firm's primary work surface and a new read-only view is not worth a
+         single broken page load. */
+
+      let ctRows = null;      // null = never loaded; [] = loaded and empty
+      let ctLoading = false;
+
+      /* Lazy entry, matching the tabEvents/tasks idiom: load on first open,
+         and on re-entry refresh so a tab left open behind an appt edit is not
+         showing yesterday. One GET; the page already pays more than this for
+         its other tabs. */
+      function ctEnter() {
+        ctLoad();
+      }
+
+      function ctEsc(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
+      async function ctLoad() {
+        if (ctLoading) return;
+        ctLoading = true;
+        const sup = !!(E("ctSupToggle") && E("ctSupToggle").checked);
+        if (ctRows === null) E("ctList").innerHTML = '<div class="ct-msg">Loading…</div>';
+        try {
+          const params = {};
+          if (sup) params.include_superseded = 1;
+          const data = await P.apiSend(`/api/cases/${caseID}/events`, "GET", params);
+          ctRows = (data && data.events) || [];
+          ctRender();
+        } catch (err) {
+          console.error("[timeline] load failed:", err.message);
+          E("ctList").innerHTML =
+            `<div class="ct-err">Timeline unavailable: ${ctEsc(err.message)}</div>`;
+        } finally {
+          ctLoading = false;
+        }
+      }
+      window.ctLoad = ctLoad;
+
+      /* Firm-local today as 'YYYY-MM-DD'. starts_at is a naive firm-local
+         string, so the split is a STRING compare against today — no Date
+         parsing, no timezone maths, and no chance of a UTC misread flipping a
+         row between Upcoming and Past at 7pm. Staff sit in the firm timezone,
+         so the browser's own calendar date is the right one. */
+      function ctToday() {
+        const d = new Date();
+        const p = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+      }
+
+      /* Glyph per KIND, not per type — the whole point of kind_key. A thing you
+         attend and a date you must not miss are different obligations and have
+         to be distinguishable at a glance (v0.4 §0: Glade's post-filing panel
+         is the reference rendering). kind_key is NULL for every event row until
+         E0b populates the column, so the neutral dot is the common case today,
+         not an edge case. */
+      const CT_GLYPH = {
+        meeting:    ["fa-calendar-check", "Meeting"],
+        hearing:    ["fa-calendar-day",   "Hearing"],
+        conference: ["fa-calendar-day",   "Conference"],
+        deadline:   ["fa-flag",           "Deadline"],
+        other:      ["fa-calendar",       "Other"],
+      };
+
+      function ctGlyph(kind) {
+        const g = CT_GLYPH[kind];
+        if (!g) {
+          return '<i class="ct-glyph ct-glyph-unknown fa-solid fa-circle" ' +
+                 'title="Unclassified"></i>';
+        }
+        return `<i class="ct-glyph ct-glyph-${ctEsc(kind)} fa-solid ${g[0]}" ` +
+               `title="${ctEsc(g[1])}"></i>`;
+      }
+
+      /* 'YYYY-MM-DD HH:MM:SS' → "Mar 4, 2026 · 2:00 PM" (date only for all-day).
+         Sliced, never parsed: see ctToday. */
+      function ctWhen(row) {
+        const s = row.starts_at || "";
+        const d = s.slice(0, 10);
+        if (!d) return "";
+        const [y, m, day] = d.split("-").map(Number);
+        const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        const datePart = `${MON[(m || 1) - 1]} ${day}, ${y}`;
+        if (row.all_day) return `${datePart} · all day`;
+        const hhmm = s.slice(11, 16);
+        if (!hhmm) return datePart;
+        let [hh, mm] = hhmm.split(":").map(Number);
+        const ap = hh >= 12 ? "PM" : "AM";
+        hh = hh % 12 || 12;
+        return `${datePart} · ${hh}:${String(mm).padStart(2, "0")} ${ap}`;
+      }
+
+      /* 'court' rather than 'event' on the chip: staff call these court dates,
+         and "event" beside "appt" reads as a system-internals label. */
+      const ctSrcLabel = (src) => (src === "appt" ? "appt" : "court");
+
+      function ctRowHtml(row, extraClass, children) {
+        const st = row.status_norm ? ` ct-st-${ctEsc(row.status_norm)}` : "";
+        const loc = row.location
+          ? `<span class="ct-loc">· ${ctEsc(row.location)}</span>` : "";
+        return (
+          `<div class="ct-row${st}${extraClass || ""}">` +
+            ctGlyph(row.kind_key) +
+            `<div class="ct-body">` +
+              `<div class="ct-title">${ctEsc(row.title)}` +
+                `<span class="ct-src ct-src-${ctEsc(row.source)}">` +
+                  `${ctEsc(ctSrcLabel(row.source))}</span>` +
+              `</div>` +
+              `<div class="ct-sub"><span class="ct-when">${ctEsc(ctWhen(row))}</span>${loc}</div>` +
+              (children || "") +
+            `</div>` +
+          `</div>`
+        );
+      }
+
+      /* Superseded predecessors, collapsed under the live row that replaced
+         them. Modest by design — the brief is "no chain-graph UI": a <details>
+         with one struck line per predecessor answers "was this moved?" without
+         pretending to be a lineage explorer. */
+      function ctSupHtml(preds) {
+        if (!preds || !preds.length) return "";
+        const items = preds.map(p =>
+          `<div class="ct-sup-item">${ctEsc(p.title)} — ${ctEsc(ctWhen(p))}` +
+          (p.supersede_reason
+            ? `<span class="ct-sup-why">(${ctEsc(p.supersede_reason)})</span>` : "") +
+          `</div>`
+        ).join("");
+        const n = preds.length;
+        return `<details class="ct-sup"><summary>${n} superseded ` +
+               `${n === 1 ? "version" : "versions"}</summary>${items}</details>`;
+      }
+
+      function ctRender() {
+        const host = E("ctList");
+        const rows = ctRows || [];
+        if (!rows.length) {
+          host.innerHTML = '<div class="ct-msg">Nothing on this case\u2019s calendar yet.</div>';
+          return;
+        }
+
+        /* Attach superseded EVENTS to their successor and drop them from the
+           main list. Appt tombstones have no successor pointer to attach to
+           (v0.4 §3.4's asymmetry: events chain, appts tombstone), so they stay
+           inline and simply grey out. */
+        const preds = new Map();          // successor event_id -> [predecessor rows]
+        for (const r of rows) {
+          if (r.superseded && r.source === "event" && r.superseded_by_event_id != null) {
+            const k = String(r.superseded_by_event_id);
+            if (!preds.has(k)) preds.set(k, []);
+            preds.get(k).push(r);
+          }
+        }
+
+        const main = rows.filter(r => {
+          if (!r.superseded) return true;
+          if (r.source !== "event") return true;                  // appt tombstone: inline
+          // A predecessor whose successor is not in THIS list has nothing to
+          // collapse under; show it inline rather than silently dropping it.
+          return !(r.superseded_by_event_id != null &&
+                   preds.has(String(r.superseded_by_event_id)) &&
+                   rows.some(x => x.source === "event" &&
+                                  x.source_id === r.superseded_by_event_id));
+        });
+
+        const today = ctToday();
+        const upcoming = main.filter(r => (r.starts_at || "").slice(0, 10) >= today);
+        const past = main.filter(r => (r.starts_at || "").slice(0, 10) < today).reverse();
+
+        const draw = (r) => {
+          const kids = r.source === "event" ? ctSupHtml(preds.get(String(r.source_id))) : "";
+          const tomb = (r.superseded && r.source === "appt") ? " ct-row-tomb" : "";
+          return ctRowHtml(r, tomb, kids);
+        };
+
+        let html = "";
+        if (upcoming.length) {
+          html += '<div class="ct-sec"><div class="ct-sec-head">Upcoming</div>' +
+                  upcoming.map(draw).join("") + "</div>";
+        }
+        if (past.length) {
+          html += '<div class="ct-sec"><div class="ct-sec-head">Past</div>' +
+                  past.map(draw).join("") + "</div>";
+        }
+        host.innerHTML = html;
+      }
+    </script>
+
     <!-- Notes & Lists widget (public/checklistView.html). Stacked: every note
          and list on the case, native and tagged ones pinned first. src set
          lazily by the tab button. -->

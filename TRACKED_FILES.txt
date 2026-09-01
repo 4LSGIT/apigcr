@@ -403,6 +403,7 @@ routes/api.assets.js
 routes/api.availability.js
 routes/api.bookingViews.js
 routes/api.calendarFeed.js
+routes/api.caseEvents.js
 routes/api.cases.js
 routes/api.checklists.js
 routes/api.contactAddresses.js
@@ -555,6 +556,7 @@ services/assetService.js
 services/availabilityService.js
 services/calendarService.js
 services/campaignService.js
+services/caseEventService.js
 services/caseService.js
 services/contactAddressService.js
 services/contactEmailService.js
@@ -650,11 +652,13 @@ tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js
 tests/apptService.lineage.test.js
 tests/calendarUi.sync.test.js
+tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
 tests/casePanelCss.test.js
 tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
+tests/caseUi.timeline.test.js
 tests/checklists.s1notes.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-30T21:50:59.189Z
+-- Generated: 2026-09-01T06:53:28.359Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d0d2d7deba782443baa4c2cc9d048e06
+-- Fingerprint: sha256:cdf7a939edeacc72b8e5d4f7ed4391dd
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -555,7 +555,26 @@ CREATE TABLE `cases` (
   `341_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_clio_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `case_alerts` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
+  `case_alerts` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `bk_fee_application` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_fee_order_proposed` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_fee_order_issued` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_fee_amounts` text COLLATE utf8mb4_general_ci,
+  `bk_fee_dates_due` text COLLATE utf8mb4_general_ci,
+  `bk_fee_due` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_funding_app` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_clio_pay_schedule` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_reaffirmation` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_ch13_plan_filed` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_ch13_plan_cos` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_dismissal_notice` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_confirmation_hearing` date DEFAULT NULL,
+  `bk_confirmation_exp_discharge` date DEFAULT NULL,
+  `bk_confirmation_cert` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_2nd_course_due` date DEFAULT NULL,
+  `bk_outcome` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_followup_email` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_7steps_course` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --

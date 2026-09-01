@@ -266,7 +266,11 @@ async function boot({ pipeline = null, full = null, fullFails = false,
   window.document.body.innerHTML = noComments.replace(/<script[\s\S]*?<\/script>/g, '');
   const inline = [...noComments.matchAll(
     /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-  expect(inline.length).toBe(6);   // fence: a seventh block means this harness is stale
+  // fence: an eighth block means this harness is stale. Bumped 6 -> 7 by E1
+  // (unified events), which added case.html's #tabTimeline renderer as its own
+  // block beside the tab markup it drives — the tabEvents shape. Folding it into
+  // an unrelated block to keep the counter at 6 would invert this guard's purpose.
+  expect(inline.length).toBe(7);
 
   const errors = [];
   window.addEventListener('error', e => errors.push(String(e.error || e.message)));
