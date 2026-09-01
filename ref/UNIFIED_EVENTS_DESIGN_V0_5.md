@@ -5,11 +5,12 @@ committed as `ref/UNIFIED_EVENTS_DESIGN_V0_4.md` in `4d13cbf` and removed once t
 all of it — `git show 4d13cbf:ref/UNIFIED_EVENTS_DESIGN_V0_4.md` for the text E0a and E1 were
 built against. v0.4's section numbers are preserved here, so its cites still resolve.
 
-**Status: RATIFIED 2026-09-01; U1, U2 and U3 shipped the same day (§7).** Every gate in the
+**Status: RATIFIED 2026-09-01; U1–U4 shipped the same day (§7).** Every gate in the
 2026-08-30 draft is ruled (§8.1); the remaining open items in §8.2 are work to schedule, not
 decisions to make. The registry is live: `calendar_item_types` (34 seeded rows) and `type_key` on
 both `appts` and `events`, backfilled and verified 2026-09-01 — and since U3 the COLUMN, not a
-read-time derivation, is what the read layer returns.
+read-time derivation, is what the read layer returns. Since U4 the `calendar.*` domain events
+fire from both services beside the legacy `appt.*` names (§3.5), with no rule bound to them yet.
 
 **Authors:** PIPE (pipeline-arc manager, Fable) — v0.1–v0.4. CAL (unified-events manager, Fable) —
 v0.5, reconciled with PIPE via scratch `fred/unified_events_coord` 2026-08-30. Figures verified
@@ -22,14 +23,16 @@ spelling variants covering 19% of appts); **E1 landed** and PIPE's calendar role
 U1 becomes a SQL-only migration with the picker moved to U2 (§7); the Jest baseline becomes a
 verify-don't-trust figure (§7.1 rule 6).
 
-**Since ratification (2026-09-01, same day).** U1 applied and verified; U2 deployed and verified;
-U3 deployed and verified (§7). Five things the slices settled are folded back into the design text
-above: the registry `kind` enum ships in the COLUMN's order (§3.3, U2 ruling D1); an unmapped
+**Since ratification (2026-09-01, same day).** U1 applied and verified; U2, U3 and U4 deployed and
+verified (§7). Five things the U1–U3 slices settled are folded back into the design text above:
+the registry `kind` enum ships in the COLUMN's order (§3.3, U2 ruling D1); an unmapped
 non-blank type resolves to `type_key` NULL **and `kind='other'`**, not `kind` NULL (§3.3, U2 ruling
 D7); any backfill touching `events` must self-assign `event_updated_at` (§7.1 rule 9 — U1 and U2
 did not, and bumped every pre-existing row); the attendee third party is **`firm`, not `external`**,
 and carries no `label` (§3.6, U3 ruling); and the Appendix A vocabulary is now history rather than
-policy, with two named live rows already diverging from the column (§0.1).
+policy, with two named live rows already diverging from the column (§0.1). **U4 settled two
+more** (§3.5): the `calendar.*` envelope's `starts_at` is deliberately a *different shape* from the
+read layer's, and `appt.reschedule_later` has no calendar twin.
 
 **Changelog v0.4→v0.5.** Amendment ids A1–A8 are kept in the section headings so the coordination
 scratch and the drafted slice prompts still resolve:
@@ -412,7 +415,33 @@ by `eventService` and `apptService`. Envelope carries `source ('appt'|'event')`,
 `case_id`, `contact_id`, `type_key`, `kind`, `starts_at` (firm-local), `resolution`, and — for one
 release — the legacy `appt_type` / `event_type` string. Existing `appt.*` names keep firing
 unchanged (**aliases, not replacements**). Registered in `EVENT_TYPES` + coverage test per house
-rule. `eventService` emits nothing today; `taskService` emits nothing today (unchanged).
+rule. `taskService` emits nothing today (unchanged); `eventService`, which emitted nothing before
+U4, is now half the emitters.
+
+**Shipped at U4** (2026-09-01), zero behaviour change — no rule binds a `calendar.*` name yet.
+**12 emit sites**: `apptService` 5 (`createAppt`, `markAttended`, `markNoShow`, `cancelAppt`,
+`rescheduleAppt`) and `eventService` 7 (`createEvent`, `completeEvent`, `cancelEvent`, and four in
+`updateEvent`). One projected envelope shape in both services — never a row spread, so
+`appt_manage_token` cannot reach `data`. `EVENT_TYPES` entries plus a set-equality catalog guard
+(`tests/calendarEvents.registry.test.js`): a path the envelope produces and the catalog omits fails
+the suite, and so does the reverse. `source` is accepted on the event writers, with no caller
+passing it yet.
+
+- **`updateEvent` transitions are a before/after ROW comparison**, not an inspection of the PATCH
+  body — PATCHing `event_status` to the value it already held is in `changedKeys` but is not a
+  transition, and a reminder-only call emits nothing for free. The time-move test is the one
+  exception: it still reads `changedKeys`. A PATCH that moves the date *and* cancels emits only
+  `calendar.cancelled`, because a reschedule onto a date the event will never be held on would be
+  two contradictory claims about one write.
+- **`starts_at` has two shapes on purpose (U4 ruling).** The §3.1 read layer returns
+  `YYYY-MM-DD HH:MM:SS` — the frozen contract, which feeds sorts. The envelope carries
+  `YYYY-MM-DD HH:mm` / `YYYY-MM-DD`, because it feeds rule filters that humans write from sample
+  payloads, and seconds nobody stored are an equality trap. Not unified; documented.
+- **`appt.reschedule_later` has no calendar twin.** It is an intent flag with no successor row, so
+  none of the four names fits it. If a rule ever needs one the name is `calendar.unscheduled`, not
+  `rescheduled`. Not proposed.
+- Event **supersession** still has no writer here; U6/U7 emit `calendar.rescheduled` with
+  `extra.superseded_by` from their own sites.
 
 ### 3.6 Attendees: contract now, storage later (A8)
 
@@ -448,10 +477,10 @@ and `event_status` (Scheduled / Completed / Canceled) stay. One addition:
 `events.event_resolution ENUM('held','met','missed','moot','cancelled') NULL` — **shipped at U3**,
 NULL on all 156 live rows, no writer until U6. Rather than invent history in a backfill, the read
 layer derives the obvious answer from status + kind (below) and lets a real value override it.
-Allowed values per
-*kind*, fixed in code: meeting → attended/no_show/cancelled (appts encode these in `appt_status`
-already); hearing/conference → held/cancelled; deadline → met/missed/moot. A daily sweep sets
-`missed` on deadlines still `Scheduled` at date+1 (Fred: ok).
+**No live event is `Completed`** — 0 rows — so that fallback is test-covered only until U6's
+writers exist. Allowed values per *kind*, fixed in code: meeting → attended/no_show/cancelled
+(appts encode these in `appt_status` already); hearing/conference → held/cancelled; deadline →
+met/missed/moot. A daily sweep sets `missed` on deadlines still `Scheduled` at date+1 (Fred: ok).
 
 The read layer maps both tables to `state ∈ {live, resolved, cancelled, superseded}` +
 `resolution`; §3.1's `status_norm` was **extended, not forked**, in the U3 alignment pass:
@@ -553,6 +582,8 @@ frontend: the registry, `type_key` on both tables, the generated backfill, `cale
 **U3** — `ref/2026-09-01_unified_events_u3.sql` + `caseEventService`: column-is-truth at
 `_deriveKeys`, the frozen `scripts/typeKeyVocabulary.js`, `events.event_resolution`,
 `state`/`resolution`, opt-in `includeAttendees`, and the appt half of the link audit; deployed and
+verified the same day. **U4** — `apptService`, `eventService`, `triggerService` + three test
+suites: the `calendar.*` family from both services beside `appt.*`, no migration; deployed and
 verified the same day.
 
 Model column is CAL's recommendation for the *executing* worker when CAL writes the prompt.
@@ -564,14 +595,14 @@ Model column is CAL's recommendation for the *executing* worker when CAL writes 
 | U1 | **was E0b**: `ref/2026-09-01_unified_events_e0b.sql` — `events.kind` by type per Appendix A + the 4 hand-fixes, with a PRE-FLIGHT (unmapped types, must be 0 rows) and a VERIFY block. **SQL only; no picker** | **CAL-authored; Fred applied** | — | **applied + verified 2026-09-01.** Pre-flight returned 0 unmapped; the four hand-fixes executed; U2 re-ran the bulk statements for rows created in between |
 | U2 | `calendar_item_types` (34 rows) + `type_key` on both tables + GENERATED backfill (`scripts/genTypeKeyBackfill.js`, byte-checked against E1); `calendarTypeService`; write paths (`createEvent` sets `kind`+`type_key`, `createAppt` sets `type_key`, PATCH allowlists, `err.status` convention); `GET /api/calendar-types`; eventform picker with setting fallback | **Fable** | U1 | **deployed + verified 2026-09-01** (168 / 5,466 / 1). Deferred out of the slice: labels not canonicalized (U5), `court_item_policy` untouched (U7), `booking_views` untouched (U5), registry admin CRUD → U2b (§8.2) |
 | U3 | Alignment pass on E1 at `_deriveKeys`: column replaces derivation; vocabulary moves to `scripts/typeKeyVocabulary.js` (frozen, generator-only); delete `_EVENT_ROW_OVERRIDES`; `events.event_resolution` column (no writer until U6); `state`/`resolution` per §3.7; opt-in `attendees[]`; widen link audit to appts | **Opus** | E1, U2 | **deployed + verified 2026-09-01** (169 / 5,514 / 1). Two vocabulary↔column divergences recorded by name (§0.1); attendee third party ruled `firm`, not `external` (§3.6); audit `counts` gained a nested `appts` block |
-| U4 | `calendar.scheduled/rescheduled/cancelled/resolved` from both services, **beside** the `appt.*` emits (aliases until U5); one projected envelope shape — no row spreads, `appt_manage_token` must never enter `data`; dual-carry envelope; `EVENT_TYPES` entries + catalog-drift test; `updateEvent` status transitions via PATCH emit too; event supersession has no writer yet (U6/U7 emit `rescheduled` with `superseded_by`) | **Opus** | U2, U3 | **prompt issued 2026-09-01**; zero behaviour change (no rules bound) |
-| U5 | Consumer cutover to keys (§6.1): rules 1–3, templates 19/20/23/24, requirement 3, detector `source:'event'\|'any'` (E1.5 folded in), booking views | **Opus** | U2, U3 | scripted; before/after live counts in the prompt |
+| U4 | `calendar.scheduled/rescheduled/cancelled/resolved` from both services, **beside** the `appt.*` emits (aliases until U5); **12 emit sites**; one projected envelope shape — no row spreads, `appt_manage_token` must never enter `data`; dual-carry envelope; `EVENT_TYPES` entries + set-equality catalog guard; `updateEvent` transitions decided by a before/after ROW comparison (not `changedKeys`, except the time move); `source` accepted on the event writers (no caller yet); event supersession has no writer yet (U6/U7 emit `rescheduled` with `superseded_by`) | **Opus** | U2, U3 | **deployed + verified 2026-09-01** (172 / 5,585 / 1). Zero behaviour change — no rule bound. Gate 1 (envelope shape on the first post-deploy write) still pending |
+| U5 | Consumer cutover to keys (§6.1): rules 1–3, templates 19/20/23/24 and requirement 3 rewritten; `priority_fields` gain `type_key` **ahead of** `appt_type`; detector matches `type_key` then `kind_key`, unlocking `source:'event'\|'any'` (E1.5 folded in; prefer all sources via `listForCases`); booking views gain `type_key` + registry picker; catalog `data.type_key`; one-directional `extra.*` guard. Rules stay on `appt.*` — alias retirement is a later slice | **Opus** | U4 | **prompt issued 2026-09-01**; scripted, before/after live counts in the prompt. **Deploy order backend → SQL** — a deliberate inversion of §7.1 rule 5 |
 | U6 | Write API `schedule/reschedule/cancel/resolve`; `singleton` behind `unified_singleton_enabled`; A3a docket anchor + client-less; `event_resolution` writes; `missed` sweep | **Fable** | U2 | the live-risk slice |
 | U7 | Court-v2 s2 on U6: resolve/reconcile executor; 341 → appts; retire event `341`; dedupe the 12 **by singleton identity, not date**; CHECK constraint with strict-mode proof; `court_v2 schema_gaps` (`block_minutes` → `default_length`, `blocks_whole_day` → `blocks_default`) | **Fable** | U6 + SS worksheet | owner of U6 owns U7 (both managers) |
 | U8 | `calendar.approaching` claim table + emitter; reminder rules seeded; `court_item_reminders` → seeder or drop | **Opus** | U4 | pattern exists (`case.stage_aged`) |
 | U9 | Shell unified list (kind / attendee / anchor / range / **unlinked** filters) beside the three tabs; tabs removed one release later | **Opus** | U3 | UI only |
 | U10 | **was E3** per §4: writer census (form_templates first), form-definition migration, mirror flips, 341 last / forward-only | **Fable** | U6, U7 | live staff forms |
-| later | attendees table · appt chains · case roles · drop `appt_type`/`event_type` strings | — | — | |
+| later | attendees table · appt chains · case roles · `appt.*` retirement (rules move to `calendar.*`) · drop `appt_type`/`event_type` strings | — | — | the alias retirement is a slice after U7 |
 
 **Timezone:** all times firm-local (America/Detroit); appt reads use `appt_date`, never
 `appt_date_utc`. Single-district assumption is **unmonitored** — `cases` has no district/court
@@ -591,12 +622,13 @@ multi-tenant registry.
    default off, with a one-line rollback (flip the flag).
 4. Envelopes, filters and payloads dual-carry old and new fields for one release.
 5. Deploy order: SQL → backend → frontend. Schema ref regenerated via
-   `POST /admin/db/schema/save-to-ref` after every migration.
+   `POST /admin/db/schema/save-to-ref` after every migration. A slice that must invert this states
+   so in its own prompt — U5 does (backend → SQL).
 6. Full Jest suite before and after. **The baseline drifts continuously** (other arcs merge), so
    every prompt says verify-don't-trust and the worker reports the figure it actually measured.
-   Last known: **169 suites / 5,514 tests / 1 skip**, measured at U3 landing 2026-09-01 (U2 landed
-   at 168 / 5,466 / 1 and E1 at 161 / 5,382 / 1 earlier the same day). New services registered in
-   `moduleLoad.smoke`; new domain events in `EVENT_TYPES` + coverage test.
+   Last known: **172 suites / 5,585 tests / 1 skip**, reported at U4 landing 2026-09-01 (U3 landed
+   at 169 / 5,514 / 1, U2 at 168 / 5,466 / 1 and E1 at 161 / 5,382 / 1 earlier the same day). New
+   services registered in `moduleLoad.smoke`; new domain events in `EVENT_TYPES` + coverage test.
 7. Every prompt has a Rollback section and a "does not touch" list; workers stop and report on any
    divergence between prompt claims and repo/DB.
 8. Post-deploy gates are readonly-SQL queries Fred runs, listed in the prompt with expected
@@ -652,6 +684,11 @@ multi-tenant registry.
   `case_preference`, matrix ×2).
 - **Deposition** — revisit `conference` if depositions want client reminders (would move to
   `meeting` → `appts`).
+- **`state` / `resolution` have no renderer.** `case.html` reads `status_norm` only, which is
+  correct for it. U9 decides whether the unified list surfaces them; U5 and the portal consume
+  them as data, not as UI.
+- **`appt.*` retirement** — every rule moved to the `calendar.*` names, the old family dropped —
+  is a slice after U7, when every calendar rule can be authored against one family. Unscheduled.
 
 Reported by U2, recorded rather than worked around:
 
