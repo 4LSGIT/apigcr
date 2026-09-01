@@ -4,7 +4,7 @@
  * Case Event Service — THE UNIFIED CALENDAR READ LAYER  (Unified Events E1)
  * services/caseEventService.js
  *
- * Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_4.md §3.1 / §3.4 / §7-E1,
+ * Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §3.1 / §3.4 / §7-E1,
  * as amended by ref/UNIFIED_EVENTS_DESIGN_V0_5_AMENDMENTS.md (§0 carve-out,
  * §3 vocabulary, §5 status model). Where the two conflict, v0.5 wins.
  *

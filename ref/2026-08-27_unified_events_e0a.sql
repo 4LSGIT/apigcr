@@ -2,7 +2,7 @@
 -- 2026-08-27 — Unified Events E0a: schema atoms + dedup backfill
 -- ref/2026-08-27_unified_events_e0a.sql
 --
--- Governing design: UNIFIED_EVENTS_DESIGN_V0_4.md (frozen) §3.4, §7.
+-- Governing design: UNIFIED_EVENTS_DESIGN_V0_5.md §3.4, §7 (was V0_4.md; same section numbers).
 --
 -- WHY
 --   Three facts the schema cannot currently express, all of which the unified

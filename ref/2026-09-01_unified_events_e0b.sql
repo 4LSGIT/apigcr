@@ -1,5 +1,5 @@
 -- 2026-09-01_unified_events_e0b.sql
--- Slice U1 (= v0.4 E0b). Governing: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §3.1, §6 (U1).
+-- Slice U1 (= v0.4 E0b). Governing: ref/UNIFIED_EVENTS_DESIGN_V0_5.md Appendix A.1, §7 (U1).
 -- Author: CAL (manager), 2026-09-01. Applied by Fred via the SQL runner.
 --
 -- WHAT: populate events.kind from event_type per the ratified vocabulary, and apply the four

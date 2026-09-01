@@ -1,8 +1,9 @@
 # UNIFIED EVENTS DESIGN — appts / events / deadlines / tasks
 
-**v0.5 — GOVERNING.** Supersedes v0.4, which stays in `ref/UNIFIED_EVENTS_DESIGN_V0_4.md` as
-history (frozen post review round 3). Where the two differ, this file is the design; v0.4 is what
-E0a was built against.
+**v0.5 — GOVERNING.** Supersedes and absorbs v0.4 (frozen post review round 3), which was
+committed as `ref/UNIFIED_EVENTS_DESIGN_V0_4.md` in `4d13cbf` and removed once this file carried
+all of it — `git show 4d13cbf:ref/UNIFIED_EVENTS_DESIGN_V0_4.md` for the text E0a and E1 were
+built against. v0.4's section numbers are preserved here, so its cites still resolve.
 
 **Status: RATIFIED 2026-09-01.** Every gate in the 2026-08-30 draft is ruled (§8.1); the
 remaining open items in §8.2 are work to schedule, not decisions to make.
@@ -36,6 +37,30 @@ scratch and the drafted slice prompts still resolve:
 | — | type-key vocabulary v1 (the E1 + U2 map) | Appendix A | v0.4's "E0b mapping table TBD" |
 | — | consumer bindings after cutover | §6.1 | new |
 | — | slice plan E1 + U0–U10, live-safety rules | §7 | v0.4 §7 E0b–E3 |
+
+### Reading older cites — amendments numbering → this document
+
+E1, its tests, `case.html` and the U1 migration were written against the standalone amendments
+file, whose sections this fold renumbered. **A cite of the form "v0.5 §N" uses the left column.**
+The overlap is genuinely confusing — old §3.1 is the events vocabulary, new §3.1 is the read
+layer — so check here before following one.
+
+| cite in code (amendments) | here |
+|---|---|
+| §0 ownership / hold list | §0.1 |
+| §1 A1 registry · A2 initials · A3 341 · A4 singleton | §3.3 · §3.3.1 · §3.4.1 · §3.4.2 |
+| §1 A5 domain events · A6 reminders · A7 resolution · A8 attendees | §3.5 · §3.2 · §3.7 · §3.6 |
+| §2 rulings log | §8.1 |
+| §3 vocabulary · §3.1 events side · §3.2 appts side | Appendix A · A.1 · A.2 |
+| §3.3 consumer bindings | §6.1 |
+| §4 storage rule | §3.3.2 |
+| §5 status / resolution model | §3.7 |
+| §6 slice plan | §7 |
+| §7 live-safety rules | §7.1 |
+| §8 open items | §8.2, §8.3 |
+
+New cites should use this document's numbering. The v0.4-era cites in the same files (`v0.4 §0`,
+`§3.1`, `§3.4`) still resolve as written — v0.4's numbers were deliberately preserved here.
 
 ## 0. Purpose and constraint
 
