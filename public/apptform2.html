@@ -466,7 +466,17 @@ function render() {
 
   document.getElementById('phone').textContent = formatPhone(a.contact_phone);
   document.getElementById('email').textContent = a.client_email || a.contact_email || '—';
-  document.getElementById('apptType').textContent = a.appt_type || '—';
+  // Type: the display label, plus the registry key (U2 — appts.type_key) in
+  // muted small text so staff can see what a consumer would match on. Display
+  // only; the appt type is not editable here.
+  const typeEl = document.getElementById('apptType');
+  typeEl.textContent = a.appt_type || '—';
+  if (a.type_key) {
+    const k = document.createElement('span');
+    k.style.cssText = 'color:var(--text-muted);font-size:0.8em;margin-left:6px;';
+    k.textContent = '(' + String(a.type_key) + ')';
+    typeEl.appendChild(k);
+  }
   document.getElementById('platform').textContent = a.appt_platform || '—';
   document.getElementById('datetime').textContent = formatDateTime(a.appt_date);
   document.getElementById('length').textContent = a.appt_length ? `${a.appt_length} min` : '—';

@@ -168,7 +168,10 @@ router.patch('/api/events/:id(\\d+)', jwtOrApiKey, async (req, res) => {
     // FOLLOW-UP: eventService now throws validation errors on bad date/time
     // input (e.g. "Invalid event_date …", "event_date cannot be empty"). These
     // fall through to 500 below; they are client errors and should map to 400.
-    const status = err.message.includes('blocked') ? 400
+    // U2: a numeric err.status set by the service wins (unknown type_key →
+    // 400); the message heuristic below is unchanged for everything else.
+    const status = typeof err.status === 'number' ? err.status
+                 : err.message.includes('blocked') ? 400
                  : err.message.includes('not found') ? 404
                  : 500;
     res.status(status).json({ status: 'error', title: 'Error', message: err.message });

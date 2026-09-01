@@ -1,0 +1,511 @@
+[
+  {
+    "type_key": "iss",
+    "label": "Initial Strategy Session",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 15,
+    "ingest_aliases": [
+      "Intial Strategy Session"
+    ],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 10
+  },
+  {
+    "type_key": "ss",
+    "label": "Strategy Session",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 15,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 20
+  },
+  {
+    "type_key": "ss_follow_up",
+    "label": "Strategy Session Follow Up",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 15,
+    "ingest_aliases": [
+      "Follow Up"
+    ],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 30
+  },
+  {
+    "type_key": "consultation",
+    "label": "Consultation",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 30,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 40
+  },
+  {
+    "type_key": "pre_filing",
+    "label": "Pre-Filing Meeting",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 30,
+    "ingest_aliases": [
+      "Pre-filing (30 min)"
+    ],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 50
+  },
+  {
+    "type_key": "meeting_341",
+    "label": "341 Meeting",
+    "kind": "meeting",
+    "singleton": 1,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 10,
+    "ingest_aliases": [
+      "341"
+    ],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 60
+  },
+  {
+    "type_key": "schedules_meeting",
+    "label": "Schedules Completion Meeting",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 45,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 70
+  },
+  {
+    "type_key": "docs_meeting",
+    "label": "Documents Completion Meeting",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 30,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 80
+  },
+  {
+    "type_key": "matrix_meeting",
+    "label": "Matrix Completion Meeting",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 30,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 90
+  },
+  {
+    "type_key": "pre_lawsuit",
+    "label": "Pre-Lawsuit Meeting",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 30,
+    "ingest_aliases": [
+      "Pre Lawsuit Meeting"
+    ],
+    "case_types": [
+      "Civil Litigation"
+    ],
+    "active": 1,
+    "sort_order": 100
+  },
+  {
+    "type_key": "tax_consult",
+    "label": "Tax Consult",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 30,
+    "ingest_aliases": [
+      "Tax Consultation"
+    ],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 110
+  },
+  {
+    "type_key": "meeting",
+    "label": "Meeting",
+    "kind": "meeting",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 15,
+    "ingest_aliases": [
+      "to go over claims",
+      "to go over objections to Chapt",
+      "Case Status Review"
+    ],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 120
+  },
+  {
+    "type_key": "confirmation_hearing",
+    "label": "Confirmation Hearing",
+    "kind": "hearing",
+    "singleton": 1,
+    "blocks_default": "attendee",
+    "client_attends": 0,
+    "default_length": 30,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 200
+  },
+  {
+    "type_key": "show_cause",
+    "label": "Show Cause Hearing",
+    "kind": "hearing",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": 30,
+    "ingest_aliases": [
+      "Show Cause"
+    ],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 210
+  },
+  {
+    "type_key": "hearing",
+    "label": "Hearing",
+    "kind": "hearing",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 0,
+    "default_length": 30,
+    "ingest_aliases": [
+      "Court Date"
+    ],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 220
+  },
+  {
+    "type_key": "trial",
+    "label": "Trial",
+    "kind": "hearing",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [
+      "Trial / Pre-Trial Hearing"
+    ],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 230
+  },
+  {
+    "type_key": "status_conference",
+    "label": "Status Conference",
+    "kind": "conference",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 0,
+    "default_length": 30,
+    "ingest_aliases": [
+      "Telephonic Status Conference"
+    ],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 300
+  },
+  {
+    "type_key": "scheduling_conference",
+    "label": "Initial Scheduling Conference",
+    "kind": "conference",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 0,
+    "default_length": 30,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 310
+  },
+  {
+    "type_key": "pretrial_conference",
+    "label": "Pre-trial Conference",
+    "kind": "conference",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 0,
+    "default_length": 30,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 320
+  },
+  {
+    "type_key": "deposition",
+    "label": "Deposition",
+    "kind": "conference",
+    "singleton": 0,
+    "blocks_default": "attendee",
+    "client_attends": 1,
+    "default_length": 240,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 330
+  },
+  {
+    "type_key": "docs_deadline",
+    "label": "Docs Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 400
+  },
+  {
+    "type_key": "schedules_deadline",
+    "label": "Schedules Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 410
+  },
+  {
+    "type_key": "dischargeability_due",
+    "label": "Dischargeability Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 420
+  },
+  {
+    "type_key": "object_confirmation_due",
+    "label": "Objection to Confirmation Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 430
+  },
+  {
+    "type_key": "poc_due",
+    "label": "Proof of Claim Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 440
+  },
+  {
+    "type_key": "poc_gov_due",
+    "label": "Governmental Proof of Claim Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 450
+  },
+  {
+    "type_key": "confirmation_certificate_deadline",
+    "label": "Confirmation Certificate Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 460
+  },
+  {
+    "type_key": "filing_fee_deadline",
+    "label": "Filing Fee Deadline",
+    "kind": "deadline",
+    "singleton": 1,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 470
+  },
+  {
+    "type_key": "filing_fee_installment_deadline",
+    "label": "Filing Fee Installment Deadline",
+    "kind": "deadline",
+    "singleton": 0,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": [
+      "Bankruptcy"
+    ],
+    "active": 1,
+    "sort_order": 480
+  },
+  {
+    "type_key": "deadline",
+    "label": "Deadline",
+    "kind": "deadline",
+    "singleton": 0,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 490
+  },
+  {
+    "type_key": "order",
+    "label": "Order",
+    "kind": "other",
+    "singleton": 0,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 500
+  },
+  {
+    "type_key": "milestone",
+    "label": "Milestone",
+    "kind": "other",
+    "singleton": 0,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 510
+  },
+  {
+    "type_key": "internal",
+    "label": "Internal",
+    "kind": "other",
+    "singleton": 0,
+    "blocks_default": "firm",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [],
+    "case_types": null,
+    "active": 1,
+    "sort_order": 520
+  },
+  {
+    "type_key": "test",
+    "label": "Test",
+    "kind": "other",
+    "singleton": 0,
+    "blocks_default": "none",
+    "client_attends": 0,
+    "default_length": null,
+    "ingest_aliases": [
+      "test appt",
+      "test2 appt",
+      "test3 appt",
+      "Test Appointment",
+      "Pizza Party",
+      "bug hunting Session",
+      "Repetitive Session",
+      "Potato Hunting"
+    ],
+    "case_types": null,
+    "active": 0,
+    "sort_order": 999
+  }
+]

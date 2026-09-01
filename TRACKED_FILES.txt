@@ -348,6 +348,7 @@ ref/2026-08-30_domain_event_queue.sql
 ref/2026-08-31_wf40_subject_form_name.sql
 ref/2026-09-01_bk_worksheet.sql
 ref/2026-09-01_unified_events_e0b.sql
+ref/2026-09-01_unified_events_u2.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -406,6 +407,7 @@ routes/api.assets.js
 routes/api.availability.js
 routes/api.bookingViews.js
 routes/api.calendarFeed.js
+routes/api.calendarTypes.js
 routes/api.caseEvents.js
 routes/api.cases.js
 routes/api.checklists.js
@@ -524,6 +526,7 @@ scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
 scripts/backfill_court_event_calendars_2026_08.js
+scripts/calendarTypeSeed.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
 scripts/courtBacktest.js
@@ -535,6 +538,7 @@ scripts/dump-schema.js
 scripts/encrypt-smtp-passwords.js
 scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
+scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
 scripts/probe-db-connect.js
 scripts/sweep_validate_live.js
@@ -558,6 +562,7 @@ services/apptService.js
 services/assetService.js
 services/availabilityService.js
 services/calendarService.js
+services/calendarTypeService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
@@ -647,13 +652,18 @@ startup/db.js
 startup/dbReadonly.js
 startup/init.js
 tests/adminapikeys.k2.test.js
+tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js
 tests/aimatch.service.test.js
 tests/alertingStartLatency.test.js
 tests/apiAppSettings.validate.test.js
+tests/apiCalendarTypes.routes.test.js
 tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js
 tests/apptService.lineage.test.js
+tests/apptService.typeKey.test.js
+tests/apptTypeKey.patch.test.js
+tests/calendarTypeService.test.js
 tests/calendarUi.sync.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
@@ -707,12 +717,14 @@ tests/esignTemplates.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventRegistryCoverage.test.js
+tests/eventService.typeKey.test.js
 tests/eventservice.linkfilter.test.js
 tests/eventservice.remindertitle.test.js
 tests/executionVersionStamp.test.js
 tests/extforms.x2.test.js
 tests/f_route.x21.test.js
 tests/firmConfig.test.js
+tests/fixtures/calendar_item_types.seed.json
 tests/fixtures/slice26/legacy_case_details_bk2.js
 tests/fixtures/slice26/legacy_notes_341.js
 tests/fixtures/slice26/tpl5_code.js
@@ -743,6 +755,7 @@ tests/formrender.x4view.test.js
 tests/formsubmissions.x4.test.js
 tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
+tests/genTypeKeyBackfill.test.js
 tests/helpers/bcPolyfill.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js

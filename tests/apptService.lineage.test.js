@@ -93,6 +93,14 @@ jest.mock('../lib/alerting', () => ({ alert: jest.fn(() => Promise.resolve()) })
 
 const apptService = require('../services/apptService');
 
+// U2 — the write paths now resolve type_key from the calendar_item_types
+// registry. Prime the registry cache from the seed fixture so no registry
+// query reaches this suite's stub (Fred, U2 R1.3: prime, never script a
+// positional registry query). Resolution code still runs for real.
+const calendarTypeService = require('../services/calendarTypeService');
+beforeAll(() => calendarTypeService._primeCache(require('./fixtures/calendar_item_types.seed.json')));
+afterAll(() => calendarTypeService.invalidate());
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,7 +177,7 @@ function makeDb(seedRows = []) {
     }
 
     // rescheduleLater's fetch
-    if (/^SELECT appt_id, appt_client_id, appt_case_id, appt_type, appt_gcal/i.test(flat)) {
+    if (/^SELECT appt_id, appt_client_id, appt_case_id, appt_type, type_key, appt_gcal/i.test(flat)) {   // U2: + type_key
       const row = rows.get(Number(params[0]));
       return [row ? [row] : []];
     }

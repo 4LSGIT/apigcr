@@ -25,6 +25,10 @@ const { DateTime } = require('luxon');
 const { alert } = require('../lib/alerting');
 const crypto = require('crypto');
 const domainEvents = require('../lib/domainEvents');
+// U2 — the item-type registry (calendar_item_types). Resolves appt_type free
+// text to type_key at WRITE time; fail-soft (registry read failure → NULL
+// key, never a failed create). Do NOT import caseEventService here (v0.5 §0).
+const calendarTypeService = require('./calendarTypeService');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
 function getSequenceEngine() {
@@ -855,6 +859,10 @@ async function createAppt(db, {
   case_id         = '',
   appt_length,
   appt_type,
+  // U2 — optional registry key. A given key that EXISTS in calendar_item_types
+  // is used as-is; otherwise the key is resolved from appt_type (label /
+  // ingest alias / key, ci). Unmapped → NULL (raw passthrough, v0.5 §8.1).
+  type_key        = null,
   appt_platform,
   appt_date,
   appt_with       = 1,
@@ -948,6 +956,21 @@ async function createAppt(db, {
       : null;
 
   // ────────────────────────────────────────────────────────────
+  // U2 — TYPE KEY (unified events design §3.3)
+  //
+  // Resolved HERE, on the pool `db`, BEFORE the transaction opens (Fred, U2
+  // R1.1): the registry read never rides the transaction connection, so it
+  // cannot widen the write window or hold the conn across a cache miss. The
+  // read is cached (60s) and fail-soft — a registry failure yields NULL, never
+  // a failed booking; the post-deploy `type_key IS NULL` gate finds stragglers.
+  //
+  // appt_type is written UNCHANGED (label canonicalization is U5). The 341
+  // block below still keys on the STRING '341 Meeting' — that becomes the
+  // registry's `singleton` at U6, behind a flag. Do not switch it here.
+  // ────────────────────────────────────────────────────────────
+  const typeKeyVal = (await calendarTypeService.resolveForCreate(db, type_key, appt_type)).type_key;
+
+  // ────────────────────────────────────────────────────────────
   // Atomic core writes (transaction): INSERT appt + log + 341 supersession + pointer.
   // If any of these fail, we don't want the appt to exist.
   // Post-commit side effects (sequences, GCal, etc.) are fire-and-forget.
@@ -966,8 +989,8 @@ async function createAppt(db, {
          (appt_client_id, appt_case_id, appt_type, appt_length,
           appt_platform, appt_date, appt_date_utc, appt_status, appt_with,
           appt_note, appt_source, appt_ref_id, appt_manage_token, appt_view_id,
-          rescheduled_from_appt_id, appt_create_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          rescheduled_from_appt_id, type_key, appt_create_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [contact_id, case_id, appt_type, appt_length,
        appt_platform, appt_date, apptDateUTC, appt_with, note,
        appt_source,
@@ -979,7 +1002,10 @@ async function createAppt(db, {
          ? Number(appt_view_id) : null,
        // E0a — predecessor id, or NULL for an original booking. See the
        // coercion block above.
-       rescheduledFromApptId]
+       rescheduledFromApptId,
+       // U2 — registry key resolved above (bind 14, LAST on purpose: binds
+       // 0..13 are read positionally by tests and must not shift).
+       typeKeyVal]
     );
     apptId = result.insertId;
 
@@ -1162,7 +1188,7 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0, source =
   // SELECT — type-filtered consumers disqualify on undefined fields).
   const [[appt]] = await db.query(
     `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
-            a.appt_type, a.appt_with, a.appt_status,
+            a.appt_type, a.type_key, a.appt_with, a.appt_status,
             c.contact_phone,
             cs.case_type,
             cs.case_subtype
@@ -1240,7 +1266,7 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   // when the trigger field is undefined).
   const [[appt]] = await db.query(
     `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
-            a.appt_type, a.appt_with, a.appt_status,
+            a.appt_type, a.type_key, a.appt_with, a.appt_status,
             c.contact_phone,
             cs.case_type,
             cs.case_subtype
@@ -1592,6 +1618,11 @@ async function rescheduleAppt(db, {
     case_id:         oldAppt.appt_case_id,
     appt_length:     oldAppt.appt_length,
     appt_type:       oldAppt.appt_type,
+    // U2 — carry the predecessor's registry key (Fred, R2). createAppt uses a
+    // given key only when it exists in the registry; a NULL / stale key falls
+    // through to resolution from appt_type, so a pre-U2 predecessor still
+    // yields a keyed successor.
+    type_key:        oldAppt.type_key,
     appt_platform:   oldAppt.appt_platform,
     appt_date:       newDate,
     appt_with:       oldAppt.appt_with,
@@ -1660,7 +1691,7 @@ async function rescheduleLater(db, {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_case_id, appt_type, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_case_id, appt_type, type_key, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-01T06:53:28.359Z
+-- Generated: 2026-09-01T10:48:16.460Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:cdf7a939edeacc72b8e5d4f7ed4391dd
+-- Fingerprint: sha256:4430b25df365170d780637f75a1e551d
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -236,6 +236,7 @@ CREATE TABLE `appts` (
   `appt_client_id` int DEFAULT NULL,
   `appt_case_id` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_type` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U2: calendar_item_types.type_key (by value, no FK). NULL = appt_type NULL, unresolved, or pre-backfill.',
   `appt_length` tinyint DEFAULT NULL,
   `appt_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `appt_status` enum('Attended','No Show','Rescheduled','Canceled','Scheduled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -309,6 +310,29 @@ CREATE TABLE `booking_views` (
   `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   `page_windows` json DEFAULT NULL,
   `footer_html` text COLLATE utf8mb4_general_ci
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `calendar_item_types`
+--
+
+DROP TABLE IF EXISTS `calendar_item_types`;
+CREATE TABLE `calendar_item_types` (
+  `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `kind` enum('hearing','meeting','deadline','conference','other') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'byte-identical to events.kind (E0a). meeting → appts, else → events (v0.5 §3.3.2).',
+  `singleton` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'U2: data only. Enforced by the U6 write API behind unified_singleton_enabled.',
+  `blocks_default` enum('attendee','firm','none') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'attendee' COMMENT 'U2: data only (was court_item_policy.blocks). Read at U6/U7.',
+  `client_attends` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'U2: data only (was court_item_policy.attendance). Read at U6/U7.',
+  `default_length` smallint DEFAULT NULL COMMENT 'minutes; court_v2 schema_gaps duration lands here (U7)',
+  `ingest_aliases` json DEFAULT NULL COMMENT 'inbound free text → this key, WRITE TIME ONLY; never the row''s own label (ci)',
+  `case_types` json DEFAULT NULL COMMENT 'picker scoping; NULL = all case types',
+  `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'gates pickers only; inactive types still resolve',
+  `sort_order` int NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1533,6 +1557,7 @@ CREATE TABLE `events` (
   `event_id` int unsigned NOT NULL,
   `event_type` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `kind` enum('hearing','meeting','deadline','conference','other') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'E0a atom: what the event IS, independent of event_type free text. NULL = unclassified. Populated by E0b (judgment-gated), not here.',
+  `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U2: calendar_item_types.type_key (by value, no FK). NULL = unresolved/raw passthrough or pre-backfill.',
   `event_link_type` enum('case','contact','case_number') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_link_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
@@ -3532,7 +3557,8 @@ ALTER TABLE `appts`
   ADD UNIQUE KEY `uq_appts_manage_token` (`appt_manage_token`),
   ADD KEY `lead_id` (`appt_case_id`),
   ADD KEY `date` (`appt_date`),
-  ADD KEY `idx_appts_rescheduled_from` (`rescheduled_from_appt_id`);
+  ADD KEY `idx_appts_rescheduled_from` (`rescheduled_from_appt_id`),
+  ADD KEY `idx_appts_type_key` (`type_key`);
 
 --
 -- Indexes for table `availability_blocks`
@@ -3547,6 +3573,13 @@ ALTER TABLE `availability_blocks`
 ALTER TABLE `booking_views`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `uq_bv_slug` (`slug`);
+
+--
+-- Indexes for table `calendar_item_types`
+--
+ALTER TABLE `calendar_item_types`
+  ADD PRIMARY KEY (`type_key`),
+  ADD KEY `idx_cit_kind_active` (`kind`,`active`);
 
 --
 -- Indexes for table `campaign_contacts`
@@ -3872,7 +3905,8 @@ ALTER TABLE `events`
   ADD KEY `idx_events_link` (`event_link_type`,`event_link_id`),
   ADD KEY `idx_events_date` (`event_date`),
   ADD KEY `idx_events_status_date` (`event_status`,`event_date`),
-  ADD KEY `idx_events_superseded_by` (`superseded_by_event_id`);
+  ADD KEY `idx_events_superseded_by` (`superseded_by_event_id`),
+  ADD KEY `idx_events_type_key` (`type_key`);
 
 --
 -- Indexes for table `feature_request_comments`

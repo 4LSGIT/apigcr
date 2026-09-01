@@ -19,6 +19,7 @@ const { checkNoteLengths } = require('../lib/noteLimits');
 const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const apptService  = require('../services/apptService');
+const calendarTypeService = require('../services/calendarTypeService');   // U2 — type_key on PATCH
 
 // ─── LIST ───
 router.get('/api/appts', jwtOrApiKey, async (req, res) => {
@@ -142,15 +143,17 @@ router.patch('/api/appts/:id', jwtOrApiKey, async (req, res) => {
   }
 
   // Whitelist — matches update_appointment internal function
+  // (lib/internal_functions/appointments.js). tests/apptTypeKey.patch.test.js
+  // asserts the two sets are equal — change both or neither.
   const ALLOWED = new Set([
     'appt_client_id', 'appt_case_id', 'appt_type', 'appt_length',
     'appt_form', 'appt_status', 'appt_date', 'appt_gcal',
     'appt_ref_id', 'appt_note', 'appt_platform', 'appt_with',
-    'appt_gcal_user'
+    'appt_gcal_user', 'type_key'
   ]);
 
-  const keys = Object.keys(fields);
-  const blocked = keys.filter(k => !ALLOWED.has(k));
+  const rawKeys = Object.keys(fields);
+  const blocked = rawKeys.filter(k => !ALLOWED.has(k));
   if (blocked.length) {
     return res.status(400).json({ status: 'error', message: `Blocked columns: ${blocked.join(', ')}` });
   }
@@ -163,8 +166,18 @@ router.patch('/api/appts/:id', jwtOrApiKey, async (req, res) => {
   if (tooLong) return res.status(400).json({ status: 'error', message: tooLong });
 
   try {
+    // U2 — type_key. A patch that carries appt_type but not type_key gets the
+    // key resolved from the label (registry: label / alias / key, ci) and
+    // ADDED to the SET; a given type_key must exist in the registry (unknown →
+    // 400 via err.status). Shared helper so this route and update_appointment
+    // resolve identically. Runs on the pool before the UPDATE.
+    const resolved = await calendarTypeService.applyApptTypePatch(req.db, fields, {
+      errorPrefix: 'PATCH /api/appts',
+    });
+    const keys = Object.keys(resolved);
+
     const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
-    const values = [...keys.map(k => fields[k]), apptId];
+    const values = [...keys.map(k => resolved[k]), apptId];
 
     const [result] = await req.db.query(
       `UPDATE appts SET ${setClauses} WHERE appt_id = ?`,
@@ -177,6 +190,11 @@ router.patch('/api/appts/:id', jwtOrApiKey, async (req, res) => {
 
     res.json({ status: 'success', message: 'Appointment updated', updated_fields: keys });
   } catch (err) {
+    // Service-shaped errors carry a numeric status (400 for an unknown
+    // type_key); anything else is a 500 with the generic message as before.
+    if (typeof err.status === 'number' && err.status < 500) {
+      return res.status(err.status).json({ status: 'error', message: err.message });
+    }
     console.error('PATCH /api/appts/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to update appointment' });
   }

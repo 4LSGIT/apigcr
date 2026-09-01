@@ -15,7 +15,9 @@
        errors thrown by scripts.js itself (case.html idiom). -->
   <script src="/js/diag.js"></script>
   <!-- scripts.js gives this page getEventTypeOptions() (the ONE source the
-       shell's Events filter and newEventDialog also read), Toast, E(), and the
+       shell's Events filter and newEventDialog read; since U2 this page's
+       Type picker reads the item-type registry first and falls back to it —
+       see efLoadTypes), Toast, E(), and the
        shared eventComplete/eventCancel row helpers. It declares top-level
        `const E/V/S/D/U/X/P` — NOTHING below may redeclare those, which is why
        every identifier in this file is ef-prefixed. It also needs Swal loaded
@@ -300,6 +302,68 @@ let efRow   = null;   // the event row as last loaded from the server
 let efOrig  = null;   // efRowState(efRow) — the baseline every diff is against
 let efBusy  = false;
 
+/* ── Type picker source (Unified Events U2) ──────────────────────
+   The Type select is fed from the item-type registry
+   (GET /api/calendar-types → calendar_item_types): option value = type_key,
+   text = label, grouped by kind in the column's enum order minus `meeting`
+   (meetings are appts, v0.5 §3.3.2). On save the form sends type_key AND
+   event_type = that key's label, so the label column keeps the value it
+   would have had.
+
+   FALLBACK. If the fetch fails or returns nothing, efTypes stays null and the
+   picker renders exactly what it rendered before U2 — getEventTypeOptions()
+   from the fe-event_types setting, value = label — so the form never goes
+   blank. The server resolves the label to a key either way.
+
+   "Other…" stays. It sends event_type = the custom text and NO type_key: the
+   registry has no 'other' row, so the server applies the one rule every
+   unknown type gets (type_key NULL, kind 'other'). A known label typed by hand
+   still lands on its key. A stored row whose label matches no registry label
+   and carries no key renders as Other… + text, and an unchanged save sends
+   nothing. */
+let efTypes = null;
+const EF_PICKER_KINDS = ['hearing', 'deadline', 'conference', 'other'];
+const EF_KIND_LABELS  = { hearing: 'Hearings', deadline: 'Deadlines', conference: 'Conferences', other: 'Other' };
+
+async function efLoadTypes() {
+  try {
+    const res  = await efApi('/api/calendar-types?kind=' + EF_PICKER_KINDS.join(',') + '&active=1', 'GET');
+    const rows = res && Array.isArray(res.data) ? res.data : [];
+    efTypes = rows.length ? rows : null;
+    if (!efTypes) console.warn('[eventform] /api/calendar-types returned no rows — using the fe-event_types fallback');
+  } catch (err) {
+    efTypes = null;
+    console.warn('[eventform] /api/calendar-types failed — using the fe-event_types fallback:', err && err.message);
+  }
+}
+
+function efTypeByKey(key) {
+  const n = String(key == null ? '' : key).trim().toLowerCase();
+  if (!n || !efTypes) return null;
+  return efTypes.find(t => String(t.type_key).trim().toLowerCase() === n) || null;
+}
+function efTypeByLabel(label) {
+  const n = String(label == null ? '' : label).trim().toLowerCase();
+  if (!n || !efTypes) return null;
+  return efTypes.find(t => String(t.label).trim().toLowerCase() === n) || null;
+}
+
+/* The picker value a loaded row starts on. Registry mode: the row's own key
+   when it has one (an option is added if the picker lacks it), else a ci
+   label match, else Other…. Fallback mode: the label when the setting lists
+   it, else Other…. '' = no type. */
+function efInitialTypeSel(ev) {
+  const label = String(ev.event_type || '').trim();
+  if (efTypes) {
+    if (ev.type_key) return String(ev.type_key);
+    const byLabel = efTypeByLabel(label);
+    if (byLabel) return byLabel.type_key;
+    return label ? '__other__' : '';
+  }
+  if (!label) return '';
+  return getEventTypeOptions().includes(label) ? label : '__other__';
+}
+
 function efShell() { try { return window.top; } catch (_) { return null; } }
 
 function efApi(...args) {
@@ -354,7 +418,12 @@ async function efLoad() {
     // GET /api/events/:id wraps its row in `data` (routes/api.events.js) —
     // the same envelope /api/appts/:id uses, and the one checklistView.html's
     // NATIVE_ENVELOPE declares for this endpoint.
-    const res = await efApi('/api/events/' + encodeURIComponent(efEventId), 'GET');
+    // The registry fetch rides alongside; it can only fail into the fallback
+    // picker (efLoadTypes never rejects), so it cannot fail the load.
+    const [res] = await Promise.all([
+      efApi('/api/events/' + encodeURIComponent(efEventId), 'GET'),
+      efLoadTypes(),
+    ]);
     efRow = res && res.data;
     if (!efRow) throw new Error('Not found');
     efRender();
@@ -490,27 +559,57 @@ function efRenderActions() {
 function efRenderForm() {
   const ev = efRow;
 
-  // Type select. getEventTypeOptions() (scripts.js) is the single source the
-  // shell's Events filter and newEventDialog also read — a stored type that is
-  // not in the list must still render, as a selected Other….
-  const opts     = getEventTypeOptions();
-  const existing = ev.event_type || '';
-  const isOther  = !!existing && !opts.includes(existing);
+  const s = efRowState(ev);
+
+  // Type select — the registry picker (U2), or the pre-U2 rendering from
+  // getEventTypeOptions() when the registry is unavailable. See the
+  // efTypes block above for the contract.
   const sel = E('efTypeSelect');
   sel.innerHTML = '';
   const blank = document.createElement('option');
   blank.value = ''; blank.textContent = '— select —';
   sel.appendChild(blank);
-  opts.forEach(t => {
-    const o = document.createElement('option');
-    o.value = t; o.textContent = t;
-    sel.appendChild(o);
-  });
+  if (efTypes) {
+    const groups = new Map(EF_PICKER_KINDS.map(k => [k, []]));
+    efTypes.forEach(t => {
+      const k = String(t.kind);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(t);
+    });
+    for (const [kind, rows] of groups) {
+      if (!rows.length) continue;
+      const og = document.createElement('optgroup');
+      og.label = EF_KIND_LABELS[kind] || kind;
+      rows.forEach(t => {
+        const o = document.createElement('option');
+        o.value = String(t.type_key); o.textContent = String(t.label);
+        og.appendChild(o);
+      });
+      sel.appendChild(og);
+    }
+  } else {
+    getEventTypeOptions().forEach(t => {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t;
+      sel.appendChild(o);
+    });
+  }
   const other = document.createElement('option');
   other.value = '__other__'; other.textContent = 'Other…';
   sel.appendChild(other);
-  sel.value = isOther ? '__other__' : existing;
-  E('efTypeOther').value = isOther ? existing : '';
+  sel.value = s.type_sel;
+  // A stored key the picker does not offer (a kind=meeting '341' row, an
+  // inactive type) would leave the select on its first option and rewrite the
+  // row on the next save. Add it back as an explicit option — the same idiom
+  // as event_with below — so an unchanged save sends nothing.
+  if (s.type_sel && s.type_sel !== '__other__' && sel.value !== s.type_sel) {
+    const o = document.createElement('option');
+    o.value = s.type_sel;
+    o.textContent = String(ev.event_type || s.type_sel);
+    sel.appendChild(o);
+    sel.value = s.type_sel;
+  }
+  E('efTypeOther').value = s.type_other;
 
   // Blocks calendar of (events.event_with): NULL = firm-wide, 0 = blocks
   // nothing, an id = that provider only. Only providers who take appts are
@@ -532,7 +631,6 @@ function efRenderForm() {
       bw.appendChild(o);
     });
 
-  const s = efRowState(ev);
   E('efTitle').value    = s.event_title;
   E('efDate').value     = s.event_date;
   E('efAllDay').checked = s.event_all_day === 1;
@@ -570,7 +668,12 @@ function efRowState(ev) {
     // inputs, so a stored value with a stray trailing space would otherwise
     // read as an edit and light up "Unsaved changes" on a page nobody touched.
     event_title:    String(ev.event_title || '').trim(),
-    event_type:     String(ev.event_type || '').trim(),
+    // The type is diffed as the PICKER's state (selection + custom text), not
+    // as event_type, so a row selected by its key (label 'confirmation_hearing',
+    // key 'confirmation_hearing' → shows "Confirmation Hearing") is not dirty
+    // on load. efTypePayload() turns a changed selection into the columns.
+    type_sel:       efInitialTypeSel(ev),
+    type_other:     efInitialTypeSel(ev) === '__other__' ? String(ev.event_type || '').trim() : '',
     event_date:     efDateInput(ev.event_date),
     event_all_day:  allDay,
     // Masked by all-day for the same reason, and with the same rule
@@ -588,12 +691,12 @@ function efRowState(ev) {
 }
 
 function efFormState() {
-  const sel    = E('efTypeSelect');
-  const type   = sel.value === '__other__' ? E('efTypeOther').value.trim() : sel.value;
+  const sel    = E('efTypeSelect').value;
   const allDay = E('efAllDay').checked;
   return {
     event_title:    E('efTitle').value.trim(),
-    event_type:     type,
+    type_sel:       sel,
+    type_other:     sel === '__other__' ? E('efTypeOther').value.trim() : '',
     event_date:     E('efDate').value,
     event_all_day:  allDay ? 1 : 0,
     // An all-day event carries no time, no length and blocks nobody's calendar
@@ -617,11 +720,33 @@ function efPayloadValue(key, v) {
   return v === '' ? null : v;
 }
 
+/* The columns a CHANGED picker state becomes. Only called when type_sel or
+   type_other differs from the loaded baseline, so an unchanged type sends
+   neither column (v0.5 §7 D: opening and saving an old row cannot rewrite it). */
+function efTypePayload(cur) {
+  if (cur.type_sel === '__other__') {
+    // Custom text → label only. No key: the server resolves a known label to
+    // its key and leaves anything else type_key NULL / kind 'other' — the one
+    // rule every unknown type gets, on every write path.
+    return { event_type: cur.type_other === '' ? null : cur.type_other };
+  }
+  if (cur.type_sel === '') return { event_type: null };   // "— select —": server clears key + kind
+  if (efTypes) {
+    const t = efTypeByKey(cur.type_sel);
+    return { type_key: cur.type_sel, event_type: t ? String(t.label) : cur.type_sel };
+  }
+  return { event_type: cur.type_sel };   // fallback picker: the value IS the label
+}
+
 function efDiff() {
   const cur = efFormState();
   const out = {};
   for (const k of Object.keys(cur)) {
+    if (k === 'type_sel' || k === 'type_other') continue;   // handled below as one unit
     if (String(cur[k]) !== String(efOrig[k])) out[k] = efPayloadValue(k, cur[k]);
+  }
+  if (cur.type_sel !== efOrig.type_sel || cur.type_other !== efOrig.type_other) {
+    Object.assign(out, efTypePayload(cur));
   }
   return out;
 }

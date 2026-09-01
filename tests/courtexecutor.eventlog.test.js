@@ -66,6 +66,14 @@ const courtCitation = require('../lib/courtCitation');
 courtCitation.checkCitations = () => ({ pass: true, misses: [] });
 
 const eventService  = require('../services/eventService');
+
+// U2 — the write paths now resolve type_key from the calendar_item_types
+// registry. Prime the registry cache from the seed fixture so no registry
+// query reaches this suite's stub (Fred, U2 R1.3: prime, never script a
+// positional registry query). Resolution code still runs for real.
+const calendarTypeService = require('../services/calendarTypeService');
+beforeAll(() => calendarTypeService._primeCache(require('./fixtures/calendar_item_types.seed.json')));
+afterAll(() => calendarTypeService.invalidate());
 const logService    = require('../services/logService');
 const gcalService   = require('../services/gcalService');
 const taskService   = require('../services/taskService');

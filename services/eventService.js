@@ -50,6 +50,11 @@ const emailService = require('./emailService');
 const { FIRM_TZ }  = require('./timezoneService');
 const { cfg }      = require('../lib/firmConfig');
 const { DateTime } = require('luxon');
+// U2 — the item-type registry (calendar_item_types). Resolves event_type free
+// text to (type_key, kind) at WRITE time. Fail-soft: a registry read failure
+// yields nulls, never a failed create. Do NOT import caseEventService here
+// (v0.5 §0: E1 derives at read time from its own vocabulary until U3).
+const calendarTypeService = require('./calendarTypeService');
 
 // ─────────────────────────────────────────────────────────────
 // GOOGLE CALENDAR INTEGRATION
@@ -1218,6 +1223,38 @@ async function findDuplicateEvent(db, {
 
 
 // ─────────────────────────────────────────────────────────────
+// TYPE KEY + KIND  (Unified Events U2 — v0.5 §3.3, §3.3.2)
+//
+// Every event write carries (type_key, kind) alongside the free-text
+// event_type. WHAT IS WRITTEN TO event_type DOES NOT CHANGE in this slice —
+// court labels like 'confirmation_hearing' keep landing verbatim, with
+// type_key='confirmation_hearing' beside them. Label canonicalization is U5;
+// the dedupe guard (_normType) is untouched.
+//
+//   given type_key exists in the registry → that row's (key, kind)
+//   else event_type resolves (label / alias / key, ci) → that row's (key, kind)
+//   else non-blank event_type   → type_key NULL, kind 'other'   (an unknown
+//                                 TYPE is still an event of SOME kind, and
+//                                 'other' is the honest one; NULL type_key
+//                                 keeps the row findable by the U2 VERIFY /
+//                                 later audits)
+//   else blank event_type       → both NULL
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * @param {object} db
+ * @param {string|null} givenKey   caller-supplied type_key (optional)
+ * @param {string|null} label      event_type free text
+ * @returns {Promise<{ type_key: string|null, kind: string|null }>}
+ */
+async function _eventTypeKeys(db, givenKey, label) {
+  const r = await calendarTypeService.resolveForCreate(db, givenKey, label);
+  if (r.type_key) return { type_key: r.type_key, kind: r.kind };
+  const blank = label == null || String(label).trim() === '';
+  return { type_key: null, kind: blank ? null : 'other' };
+}
+
+// ─────────────────────────────────────────────────────────────
 // createEvent
 // ─────────────────────────────────────────────────────────────
 
@@ -1249,6 +1286,7 @@ async function findDuplicateEvent(db, {
  */
 async function createEvent(db, {
   event_type        = null,
+  type_key          = null,   // U2: optional; must exist in the registry to be honoured
   event_link_type   = null,
   event_link_id     = null,
   event_title,
@@ -1327,12 +1365,19 @@ async function createEvent(db, {
     }
   }
 
+  // U2 — (type_key, kind) from the registry. Resolved on the pool `db` before
+  // the INSERT; this service holds no transaction, and the registry read is
+  // cached (60s) and fail-soft. Appended as the LAST two bound columns so the
+  // positional bind order 0..13 that tests and callers rely on is unchanged.
+  const { type_key: typeKeyVal, kind: kindVal } = await _eventTypeKeys(db, type_key, event_type);
+
   const [result] = await db.query(
     `INSERT INTO events
        (event_type, event_link_type, event_link_id, event_title, event_date,
         event_time, event_all_day, event_length, event_location, event_link,
-        event_note, event_status, event_calendar_id, event_with, event_create_date, event_created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, NOW(), ?)`,
+        event_note, event_status, event_calendar_id, event_with, event_create_date, event_created_by,
+        kind, type_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, NOW(), ?, ?, ?)`,
     [
       event_type,
       event_link_type,
@@ -1348,6 +1393,8 @@ async function createEvent(db, {
       event_calendar_id,
       withVal,
       createdBy,
+      kindVal,         // U2 (bind 14)
+      typeKeyVal,      // U2 (bind 15)
     ]
   );
   const eventId = result.insertId;
@@ -1357,6 +1404,8 @@ async function createEvent(db, {
   const eventRow = {
     event_id:          eventId,
     event_type,
+    kind:              kindVal,       // U2
+    type_key:          typeKeyVal,    // U2
     event_link_type,
     event_link_id,     // normalized above: trimmed string or null
     event_title:       String(event_title).trim(),
@@ -1413,8 +1462,13 @@ async function createEvent(db, {
 // An event's entity is decided when it is created. To move one: cancel it and
 // create it on the right entity. Both columns are now REJECTED here with the
 // standard "blocked fields: …" 400.
+//
+// U2: `type_key` is allowed (callers may set it directly; it is validated
+// against the registry and rejected with status 400 when unknown). `kind` is
+// NOT in the list — it is DERIVED from type_key / event_type inside
+// updateEvent and never accepted raw, so it can never disagree with the key.
 const UPDATE_ALLOWED = new Set([
-  'event_type', 'event_title',
+  'event_type', 'type_key', 'event_title',
   'event_date', 'event_time', 'event_all_day', 'event_length',
   'event_location', 'event_link', 'event_note', 'event_status',
   'event_calendar_id', 'event_with',
@@ -1442,6 +1496,21 @@ const GCAL_AFFECTING = new Set([
  *   - opts.reminder = null                    → cancel existing active reminder
  *                                               task(s), spawn none (remove).
  * A reminder-only update (no `fields`) is allowed.
+ *
+ * Type key handling (Unified Events U2 — v0.5 §3.3):
+ *   - `type_key` given, non-blank  → must exist in the registry, else an
+ *                                    Error with status 400 ("unknown type_key");
+ *                                    `kind` is written from that row.
+ *   - `event_type` given, no key   → (type_key, kind) re-resolved from the
+ *                                    new label; NULL / 'other' when unmapped
+ *                                    (same rule as createEvent).
+ *   - `type_key` given but blank   → treated as "re-derive": resolved from
+ *                                    the patched event_type if present, else
+ *                                    from the row's existing label.
+ *   A PATCH that sets ONLY `type_key` leaves `event_type` alone, so the label
+ *   and the key may then disagree. That is allowed by design: the label is
+ *   DISPLAY, the key is TRUTH; consumers bind to the key (v0.5 §3.3 "labels").
+ *   `kind` cannot be patched directly — it is always derived here.
  *
  * @param {object} db
  * @param {number} eventId
@@ -1530,6 +1599,26 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder } =
     // firm-wide); absence leaves it untouched. Same validation as create.
     if ('event_with' in merged) {
       merged.event_with = await _normalizeEventWith(db, merged.event_with);
+    }
+
+    // U2 — type_key / kind (see the function comment). `kind` is never in
+    // `fields` (not in UPDATE_ALLOWED); it enters `merged` only here.
+    const hasKey   = 'type_key'   in fields;
+    const hasLabel = 'event_type' in fields;
+    if (hasKey && fields.type_key != null && String(fields.type_key).trim() !== '') {
+      const row = await calendarTypeService.getType(db, fields.type_key);
+      if (!row) {
+        const e = new Error(`updateEvent: unknown type_key ${JSON.stringify(String(fields.type_key))}`);
+        e.status = 400;
+        throw e;
+      }
+      merged.type_key = row.type_key;
+      merged.kind     = row.kind;
+    } else if (hasKey || hasLabel) {
+      const label = hasLabel ? fields.event_type : existing.event_type;
+      const r = await _eventTypeKeys(db, null, label);
+      merged.type_key = r.type_key;
+      merged.kind     = r.kind;
     }
 
     const keys = Object.keys(merged);
@@ -1707,7 +1796,8 @@ async function getEventsForDigest(db, { from, to } = {}) {
   //     not a JOIN — see RESOLVED_CASE_SUBQUERY). Label = the docket itself.
   const [rows] = await db.query(
     `SELECT
-       e.event_id, e.event_type, e.event_title, e.event_date, e.event_time,
+       e.event_id, e.event_type, e.kind, e.type_key,
+       e.event_title, e.event_date, e.event_time,
        e.event_all_day, e.event_location, e.event_link,
        e.event_link_type, e.event_link_id,
        co.contact_name,
