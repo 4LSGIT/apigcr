@@ -14,6 +14,10 @@
   <link rel="stylesheet" href="/theme.css">
   <link rel="stylesheet" type="text/css" href="/style.css">
   <script src="/esign/esignActions.js"></script>
+  <!-- The fill-in-fields block (G3). Extracted from THIS page so the generate
+       form can mount the same one; the markup is byte-identical, and the
+       `.sf-*` classes in it are still styled by this page's <style> below. -->
+  <script src="/esign/prefillFields.js"></script>
   <!-- pdf.js — PINNED 3.11.174 legacy UMD, same version/rationale as
        templateAdmin.html (worker below can't be SRI'd; version pinning is the
        guard). Loaded here for the one-time upload placement editor. -->
@@ -505,8 +509,12 @@ function gatherRecipients() {
 }
 
 // ── templates ────────────────────────────────────────────────
+// ?purpose=esign (G2/G3) — templates authored purely for the generate surface
+// never appear here. 'both' counts for either, and the filter is applied
+// server-side (esignTemplateService.listTemplates), so this picker cannot
+// drift from the send path's own purpose refusal.
 async function loadTemplates() {
-  const data = await esignApi('/api/esign/templates', 'GET');
+  const data = await esignApi('/api/esign/templates', 'GET', { purpose: 'esign' });
   const list = data.templates || [];
   const sel = E('sf-template');
   sel.innerHTML = '<option value="" selected disabled>Select a template…</option>' +
@@ -530,7 +538,7 @@ async function templateChanged(id) {
         { linkable_type: 'case', linkable_id: caseId }),
     ]);
     template = tplOut.template;
-    renderFields(template.prefill_schema || [], prefills.values || {}, prefills.missing || []);
+    prefillFields.render(template.prefill_schema || [], prefills.values || {}, prefills.missing || []);
 
     // Doc name default mirrors the server's _defaultTemplateDocName:
     // '{Template name} – {last whitespace token of Primary's name}'.
@@ -545,57 +553,15 @@ async function templateChanged(id) {
   }
 }
 
-// prefill_schema entries: {key, label, type(text|number|date|money), resolver,
-// default, required}. Values arrive FORMATTED (money '$1,234.50', date
-// 'MM/DD/YYYY'). Overrides are re-parsed server-side by formatValue, so text
-// inputs sending '1234.5' or a date input sending ISO yyyy-mm-dd are both fine.
-function renderFields(schema, values, missing) {
-  const missingSet = new Set(missing);
-  E('sf-fields').innerHTML = schema.length
-    ? schema.map(e => {
-        const val = values[e.key] != null ? values[e.key] : '';
-        const isMissing = missingSet.has(e.key) && e.required;
-        let input;
-        if (e.type === 'options') {
-          const list = Array.isArray(val) ? val : [];
-          input = `<textarea class="sf-f" data-key="${e.key}" rows="${Math.min(8, Math.max(3, list.length))}" ` +
-            `spellcheck="false" style="font-family:inherit;">${esignEsc(list.join('\n'))}</textarea>` +
-            `<div class="sf-hint">One choice per line — the dropdown the signer picks from.</div>`;
-        } else if (e.type === 'date') {
-          input = `<input type="date" class="sf-f" data-key="${e.key}" value="${mdyToIso(val)}">`;
-        } else {
-          const ph = e.type === 'money' ? '$0.00' : (e.type === 'number' ? '0' : '');
-          input = `<input type="text" class="sf-f" data-key="${e.key}" ` +
-            `inputmode="${e.type === 'text' ? 'text' : 'decimal'}" placeholder="${ph}" ` +
-            `value="${esignEsc(val).replace(/"/g, '&quot;')}">`;
-        }
-        return `<div class="sf-row">` +
-          `<label${isMissing ? ' style="color:#b45309"' : ''}>${esignEsc(e.label)}` +
-          `${e.required ? ' <span class="req">*</span>' : ''}:</label>` +
-          input +
-          (isMissing ? ` <span class="sf-missing"><i class="fa-solid fa-triangle-exclamation"></i> required — not resolved from the case</span>` : '') +
-          `</div>`;
-      }).join('')
-    : '<div class="sf-hint">This template has no fill-in fields.</div>';
-}
-
-function mdyToIso(v) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v || '').trim());
-  return m ? `${m[3]}-${m[1]}-${m[2]}` : '';
-}
-function isoToMdy(v) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || '').trim());
-  return m ? `${m[2]}/${m[3]}/${m[1]}` : v;
-}
-
-function gatherValues() {
-  const out = {};
-  document.querySelectorAll('.sf-f').forEach(el => {
-    const v = el.type === 'date' ? isoToMdy(el.value) : el.value.trim();
-    if (v !== '') out[el.dataset.key] = v;
-  });
-  return out;
-}
+// ── fill-in fields (shared module: /esign/prefillFields.js) ──
+// renderFields / gatherValues / mdyToIso / isoToMdy used to live HERE and were
+// lifted out VERBATIM for G3 so /documents/generateForm.html mounts the same
+// block. The markup is unchanged, the `.sf-*` classes are still this page's
+// CSS, and gatherValues() is now prefillFields.gather() — scoped to #sf-fields
+// instead of the whole document, which is the same set of elements on this
+// page and a correctness fix on any page that grows a second block.
+const prefillFields = buildPrefillFields({ containerId: 'sf-fields', esc: esignEsc });
+const gatherValues = () => prefillFields.gather();
 
 // ── preview ──────────────────────────────────────────────────
 // Free — no rows, no provider, no credits. Same rendering path as send.

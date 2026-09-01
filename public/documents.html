@@ -548,6 +548,18 @@
   </label>
   <div class="spacer"></div>
   <span class="count" id="scopedCount"></span>
+  <!-- G3 — the other way a document gets onto this record: render one from a
+       template instead of uploading one. SCOPED ONLY, for free: #scopedHead is
+       display:none unless body.scoped, so the whole line is absent on the
+       global page — which is right, because generateForm needs a linkable to
+       resolve prefills against and to file the output under, and the global
+       page has none. It NAVIGATES this iframe rather than opening a dialog — same
+       posture as caseWidget → sendForm, so the shell relay stays reachable and
+       Back lands here again. -->
+  <button class="btn btn-primary btn-sm" id="genBtnScoped" onclick="onGenerateClick()"
+          title="Generate a document from a template into this record's Dropbox folder">
+    <i class="fa-solid fa-file-circle-plus"></i> Generate
+  </button>
   <!-- PRIMARY here, ghost in the global topbar. On a case tab "put a document
        on this case" is the action staff came for; on the global page it is one
        verb among several and shouting would be wrong. -->
@@ -1233,6 +1245,27 @@ window.onRefresh = async function () {
 /** Parent hook — mirrors reloadTasks / reloadChecklists / refreshEsign, so a
  *  host tab can push a reload on re-entry without knowing anything else. */
 window.reloadDocuments = fetchDocs;
+
+/**
+ * Generate a document from a template (G3) — scoped mode only.
+ *
+ * Navigates THIS iframe, the caseWidget → sendForm posture: the form is a
+ * whole page's worth of controls and a dialog would be the wrong container,
+ * and staying in the same frame keeps window.top (and therefore apiSend and
+ * the JWT) exactly where it was. generateForm's Back comes straight back to
+ * this URL, and the boot below fetches unconditionally, so the row the trip
+ * just created is on screen when it lands.
+ *
+ * ABSOLUTE path deliberately: generateForm lives at /documents/, one segment
+ * deeper than this page, so its own relative link back would resolve to
+ * /documents/documents.html.
+ */
+window.onGenerateClick = function () {
+  if (!SCOPED) return;
+  location.href = '/documents/generateForm.html' +
+    '?link_type=' + encodeURIComponent(LINK_TYPE) +
+    '&link_id='   + encodeURIComponent(LINK_ID);
+};
 
 function findDoc(id) {
   for (var i = 0; i < state.docs.length; i++) {

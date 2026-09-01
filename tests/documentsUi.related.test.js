@@ -184,11 +184,23 @@ async function boot({ responses = [], query = `?link_type=case&link_id=${CASE_ID
   return { window, shell, calls, toasts, errors, dom };
 }
 
-// The shadow above is only exact while the page reads `location` in ONE place.
-test('HARNESS FENCE: documents.html touches `location` exactly once', () => {
+// The shadow above is only exact while every `location` touch is one this
+// harness models. There are two, and they are different KINDS:
+//
+//   READ   `new URLSearchParams(location.search)` — the shadow supplies
+//          `search`, which is the whole reason it exists.
+//   WRITE  `location.href = …` in onGenerateClick (G3). A write to a plain
+//          object is a no-op, so the shadow absorbs it: nothing navigates,
+//          nothing throws, and no test below is affected. Naming it here is
+//          what keeps the count from being a number nobody can explain.
+//
+// A THIRD touch means this harness has stopped being exact — check what it
+// does before bumping the number.
+test('HARNESS FENCE: documents.html touches `location` exactly twice', () => {
   const hits = HTML.match(/\blocation\s*\./g) || [];
-  expect(hits.length).toBe(1);
+  expect(hits.length).toBe(2);
   expect(HTML).toContain('new URLSearchParams(location.search)');
+  expect(HTML).toContain("location.href = '/documents/generateForm.html'");
 });
 
 /** Every rendered row's text, in order. */

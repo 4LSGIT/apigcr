@@ -516,12 +516,16 @@ describe('the sync bus', () => {
 // Harness fences — shared with tests/documentsUi.related.test.js
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('HARNESS FENCE: documents.html still touches `location` exactly once', () => {
+test('HARNESS FENCE: documents.html still touches `location` exactly twice', () => {
   // The shadow in boot() is only exact while this holds. S4 edits this page,
   // so the fence is re-asserted here rather than relying on the sibling suite.
+  // Two touches since G3: the URLSearchParams read the shadow exists for, and
+  // onGenerateClick's `location.href` write — a no-op against a plain object,
+  // so the shadow still absorbs it. See the sibling suite for the long version.
   const hits = HTML.match(/\blocation\s*\./g) || [];
-  expect(hits.length).toBe(1);
+  expect(hits.length).toBe(2);
   expect(HTML).toContain('new URLSearchParams(location.search)');
+  expect(HTML).toContain("location.href = '/documents/generateForm.html'");
 });
 
 test('HARNESS FENCE: the upload input is wired to the handler this suite calls', () => {

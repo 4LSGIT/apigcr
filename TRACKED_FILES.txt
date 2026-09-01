@@ -218,10 +218,12 @@ public/dbConsole.html
 public/docReq.html
 public/docs.html
 public/documents.html
+public/documents/generateForm.html
 public/esign/caseWidget.html
 public/esign/dashboard.html
 public/esign/esignActions.js
 public/esign/placementEditor.js
+public/esign/prefillFields.js
 public/esign/sendForm.html
 public/esign/templateAdmin.html
 public/etch.html
@@ -348,6 +350,7 @@ ref/2026-08-30_domain_event_queue.sql
 ref/2026-08-31_wf40_subject_form_name.sql
 ref/2026-09-01_bk_worksheet.sql
 ref/2026-09-01_g2_document_generate.sql
+ref/2026-09-01_g4_notice_automation.sql
 ref/2026-09-01_unified_events_e0b.sql
 ref/2026-09-01_unified_events_u2.sql
 ref/2026-09-01_unified_events_u3.sql
@@ -374,6 +377,7 @@ ref/UNIFIED_EVENTS_DESIGN_V0_5.md
 ref/X2_DESIGN_AMENDMENTS.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
 ref/artifact-registry-cleanup-policy.json
+ref/build_notice_of_bankruptcy_filing.py
 ref/database.sql
 ref/documents_s1.sql
 ref/documents_s2.sql
@@ -385,6 +389,7 @@ ref/legacy-trap-schema.sql
 ref/migration_trigger_R4.sql
 ref/migration_trigger_system_T1.sql
 ref/migration_trigger_system_T3T4.sql
+ref/notice_of_bankruptcy_filing.json
 ref/pages/form.html
 ref/pages/submitted.html
 ref/plans.md
@@ -720,6 +725,7 @@ tests/esignInputFields.test.js
 tests/esignPdfFill.test.js
 tests/esignPlacementEditor.test.js
 tests/esignPlacementEditorUi.test.js
+tests/esignPrefill.notice.test.js
 tests/esignProvider.zoho.test.js
 tests/esignReconcile.test.js
 tests/esignReminders.test.js
@@ -728,6 +734,7 @@ tests/esignSentEmit.test.js
 tests/esignService.test.js
 tests/esignTemplates.purpose.test.js
 tests/esignTemplates.test.js
+tests/esignTplPanel.purpose.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventRegistryCoverage.test.js
@@ -818,6 +825,7 @@ tests/portalDocsRoutes.test.js
 tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/portalNextSteps.test.js
+tests/prefillFieldsUi.test.js
 tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/refreshonmiss.k3.test.js

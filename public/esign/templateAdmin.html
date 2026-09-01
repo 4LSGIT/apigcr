@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Contract Templates</title>
+  <title>Document Templates</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <!-- pdf.js — PINNED. 3.11.174 is the last pdfjs-dist release shipping a UMD
@@ -37,6 +37,14 @@
     .ta-empty { color: #999; padding: 20px; text-align: center; }
     .ta-badge-off { font-size: 10px; background: #e5e7eb; color: #6b7280;
                     border-radius: 8px; padding: 1px 7px; margin-left: 6px; }
+    /* Purpose badge — which picker a template appears in (G3). Solid fills
+       with explicit label colours, the same posture as the esign status chips
+       in esignActions.js: mode-independent, nothing for the theme arc to fix. */
+    .ta-badge-purpose { font-size: 10px; border-radius: 8px; padding: 1px 7px;
+                        white-space: nowrap; font-weight: bold; }
+    .ta-pp-esign    { background: #e0f2fe; color: #075985; }
+    .ta-pp-generate { background: #dcfce7; color: #166534; }
+    .ta-pp-both     { background: #ede9fe; color: #5b21b6; }
 
     /* editor */
     .ta-section { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px;
@@ -87,7 +95,7 @@
 <div id="ta-list-view">
   <div class="ta-top">
     <span class="ta-back" onclick="goDashboard()"><i class="fa-solid fa-arrow-left"></i> Signatures</span>
-    <h2><i class="fa-solid fa-file-contract"></i> Contract Templates</h2>
+    <h2><i class="fa-solid fa-file-contract"></i> Document Templates</h2>
     <label style="font-weight:normal;font-size:13px">
       <input type="checkbox" id="ta-show-inactive" onchange="renderList()"> show deactivated
     </label>
@@ -95,7 +103,7 @@
     <button class="big-button" onclick="openEditor(null)"><i class="fa-solid fa-plus"></i> New template</button>
   </div>
   <table id="ta-table" class="logTable">
-    <tr><th>Name</th><th>Kind</th><th>Expires after</th><th>Updated</th><th></th></tr>
+    <tr><th>Name</th><th>Kind</th><th>Purpose</th><th>Expires after</th><th>Updated</th><th></th></tr>
   </table>
   <div id="ta-empty" class="ta-empty" style="display:none">No templates yet — create the first one.</div>
   <div id="ta-load" style="text-align:center;padding:14px"><i class="fa-solid fa-spinner fa-spin-pulse fa-2x"></i></div>
@@ -119,6 +127,23 @@
         <option value="pdf">Uploaded PDF (fill-in fields)</option>
       </select>
       <span class="ta-hint">locked after the first save — the two types are different artifacts</span>
+    </div>
+    <!-- G3 — purpose gates which PICKER offers this template, and the service
+         refuses the other surface outright (documentGenerateService rejects a
+         'esign' template, sendFromTemplate rejects a 'generate' one). It is
+         not a hint, so it sits with the type rather than with the extras. -->
+    <div class="ta-row"><label>Purpose:</label>
+      <select id="ta-purpose" onchange="syncPurposeUI()" style="width:190px">
+        <option value="esign">E-sign — send for signature</option>
+        <option value="generate">Generate — file a PDF, no signature</option>
+        <option value="both">Both</option>
+      </select>
+      <span class="ta-hint">which surface may use it — the other one refuses it</span>
+    </div>
+    <div class="ta-row" id="ta-subfolder-row" style="display:none"><label>Files to subfolder:</label>
+      <input type="text" id="ta-subfolder" maxlength="64" placeholder="Generated Documents">
+      <span class="ta-hint">Subfolder under the case's Dropbox folder for generated (non-esign)
+        output. Ignored for esign-only templates.</span>
     </div>
     <div class="ta-row"><label>Name:</label><input type="text" id="ta-name" maxlength="128"></div>
     <div class="ta-row"><label>Kind:</label>
@@ -314,10 +339,23 @@ function renderList() {
       `<td><span class="ta-name">${esignEsc(t.name)}</span>` +
       (t.active ? '' : '<span class="ta-badge-off">deactivated</span>') + `</td>` +
       `<td>${esignEsc(t.kind)}</td>` +
+      `<td>${purposeBadge(t.purpose)}</td>` +
       `<td>${t.expiration_days} days</td>` +
       `<td>${esignEsc(esignFmtDate(t.updated_at))}</td>` +
       `<td><button onclick="openEditor(${t.id})"><i class="fa-solid fa-pen"></i> Edit</button></td>`;
   });
+}
+
+// Rows written before G2 have no purpose column value in flight only if the
+// server ever omits it — it doesn't (listTemplates selects it, the column is
+// NOT NULL with a default), so an unknown value here means a NEW purpose was
+// added server-side and this page hasn't caught up. Say the raw value rather
+// than mislabel it.
+const TA_PURPOSE_LABEL = { esign: 'E-sign', generate: 'Generate', both: 'Both' };
+function purposeBadge(p) {
+  const key = TA_PURPOSE_LABEL[p] ? p : '';
+  const cls = key ? ` ta-pp-${key}` : '';
+  return `<span class="ta-badge-purpose${cls}">${esignEsc(TA_PURPOSE_LABEL[p] || p || '?')}</span>`;
 }
 
 // ── editor open / close ──────────────────────────────────────
@@ -369,6 +407,15 @@ function syncTypeUI() {
     : '<i class="fa-solid fa-wand-magic-sparkles"></i> Render &amp; place fields';
 }
 
+// The subfolder only means anything on the generate path, so it is hidden for
+// an esign-only template rather than shown-and-ignored. It is NOT cleared when
+// hidden: switching purpose back must not silently lose the author's value,
+// and the server takes null (→ its own 'Generated Documents' default) for a
+// blank one anyway.
+function syncPurposeUI() {
+  E('ta-subfolder-row').style.display = E('ta-purpose').value === 'esign' ? 'none' : '';
+}
+
 function syncPdfStatus() {
   const el = E('ta-pdf-status');
   if (!current) { el.innerText = 'Save the template first, then upload.'; return; }
@@ -386,6 +433,12 @@ function fillEditor(t) {
   E('ta-type').disabled = !!t;
   syncTypeUI();
   syncPdfStatus();
+  // G3 — purpose/file_subfolder. Defaults mirror the SERVICE's own
+  // (esignTemplateService DEFAULT_PURPOSE / DEFAULT_FILE_SUBFOLDER) so a new
+  // template saved without touching either lands where the server would put it.
+  E('ta-purpose').value   = (t && t.purpose) || 'esign';
+  E('ta-subfolder').value = t && t.file_subfolder != null ? t.file_subfolder : '';
+  syncPurposeUI();
   E('ta-name').value  = t ? t.name : '';
   E('ta-kind').value  = t ? t.kind : '';
   E('ta-exp').value   = t ? t.expiration_days : 14;
@@ -416,6 +469,7 @@ function fillEditor(t) {
 function formSnapshot() {
   return JSON.stringify({
     name: E('ta-name').value, kind: E('ta-kind').value, exp: E('ta-exp').value,
+    purpose: E('ta-purpose').value, subfolder: E('ta-subfolder').value,
     remoff: E('ta-remoff').checked, seq: E('ta-seqid').value,
     ctsT: E('ta-cts-type').value, ctsI: E('ta-cts-id').value,
     ctdT: E('ta-ctd-type').value, ctdI: E('ta-ctd-id').value,
@@ -804,6 +858,10 @@ function buildPayload() {
   const completionTargets = (ctSigned || ctDeclined)
     ? { ...(ctSigned ? { signed: ctSigned } : {}), ...(ctDeclined ? { declined: ctDeclined } : {}) }
     : null;
+  // NULL, never '' — the service validates file_subfolder as a Dropbox path
+  // SEGMENT (1–64 chars) and rejects an empty string, but coerces null to its
+  // own default. A blank field means "you decide", not "no folder".
+  const subfolder = E('ta-subfolder').value.trim();
   return {
     name: E('ta-name').value.trim(),
     kind: E('ta-kind').value.trim(),
@@ -818,6 +876,8 @@ function buildPayload() {
     reminder_seq_id: seq === '' ? null : parseInt(seq, 10),
     completion_targets: completionTargets,
     static_body: E('ta-static').checked,
+    purpose: E('ta-purpose').value,
+    file_subfolder: subfolder === '' ? null : subfolder,
   };
 }
 

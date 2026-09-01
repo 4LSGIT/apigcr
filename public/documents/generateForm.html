@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generate Document</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
+       errors thrown by scripts.js itself. See public/js/diag.js. -->
+  <script src="/js/diag.js"></script>
+  <script src="/js/yc-sync.js"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <script src="/esign/esignActions.js"></script>
+  <script src="/esign/prefillFields.js"></script>
+  <style>
+    /* Layout only — colors/inputs come from /style.css. Class names are
+       sendForm.html's verbatim (this page IS its sibling, and prefillFields.js
+       emits .sf-row / .req / .sf-hint / .sf-missing), so the two read as one
+       surface and neither can drift into its own visual dialect. */
+    body { margin: 0; background: #fff; }
+    .sf-wrap { max-width: 760px; margin: 0 auto; padding: 16px; text-align: left; }
+    .sf-section { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px; margin-bottom: 14px; }
+    .sf-section h3 { margin: 0 0 10px; font-size: 15px; }
+    .sf-row { margin: 6px 0; }
+    .sf-row label { font-weight: bold; display: inline-block; min-width: 170px; vertical-align: top; }
+    .sf-row .req { color: #dc2626; }
+    .sf-row input, .sf-row select, .sf-row textarea { width: 300px; }
+    .sf-hint { font-size: 11px; color: #888; margin-left: 4px; }
+    .sf-missing { color: #b45309; font-size: 12px; }
+    .sf-actions { text-align: center; margin: 16px 0; }
+    .sf-actions button { margin: 0 6px; }
+    #gf-preview-frame { width: 100%; height: 70vh; border: 1px solid #ccc; display: none; margin-top: 10px; }
+    .sf-back { color: #07adef; cursor: pointer; font-size: 13px; display: inline-block; margin-bottom: 2px; }
+    #gf-header h2 { margin: 4px 0; }
+    #gf-header .sub { color: #666; font-size: 13px; }
+    .gf-note { font-size: 12px; color: #666; margin: 8px 0 0; }
+    .gf-warn { color: #b45309; }
+    .gf-warn-list { color: #b45309; font-size: 12px; margin: 8px 0 0; padding-left: 18px; }
+
+    /* ── mobile ── same breakpoints as sendForm: a 170px label beside a 300px
+       input needs 470px of row, so under 700px they stack. */
+    @media (max-width: 700px) {
+      .sf-wrap { padding: 10px; }
+      .sf-section { padding: 11px 12px; }
+      .sf-row label { display: block; min-width: 0; margin-bottom: 3px; }
+      .sf-row input, .sf-row select, .sf-row textarea { width: 100%; box-sizing: border-box; }
+      .sf-actions button { display: block; width: 100%; margin: 8px 0; }
+      #gf-preview-frame { height: 60vh; }
+    }
+    @media (any-pointer: coarse) {
+      .sf-row input, .sf-row select { min-height: 40px; font-size: 16px; }
+      .sf-actions button, .sf-row button { min-height: 42px; }
+    }
+    #gf-success { display: none; border: 2px solid #059669; border-radius: 4px; padding: 14px 16px; }
+    #gf-badstate { display: none; border: 2px solid #dc2626; border-radius: 4px; padding: 14px 16px; }
+    .gf-file { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+               word-break: break-all; }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════════
+  GENERATE FORM (G3) — a template, a case or contact, and a filed PDF.
+
+  The non-esign sibling of /esign/sendForm.html: same templates, same
+  resolvers, same renderer, same preview endpoint — no recipients, no
+  expiration, no envelope, no credits, nothing outstanding afterwards. The
+  document is finished the moment it is written.
+
+  ── ENTRY ────────────────────────────────────────────────────
+  ?link_type=case|contact&link_id=X   REQUIRED — from documents.html's scoped
+                                      Generate button, which navigates THIS
+                                      iframe in place.
+  &template_id=Y                      optional preselect.
+
+  There is deliberately NO standalone/picker mode in this slice. sendForm has
+  one because a signature request is a thing staff start from the Signatures
+  dashboard with no case in hand; a generated document is always FOR something,
+  and the only door to this page is a record's own Documents tab. Without the
+  link params the page says so and offers nothing — an empty CasePicker would
+  be inventing a workflow nobody asked for.
+
+  ── NETWORK ──────────────────────────────────────────────────
+  Identical to sendForm's: JSON via esignActions.js's esignApi (the
+  window.top.apiSend relay) and the binary preview via esignFetchPdf (Bearer
+  jwt raw fetch — apiSend is JSON-only). BOTH reach window.top, not
+  window.parent, so the extra /documents/ path segment is irrelevant: this page
+  sits at whatever depth documents.html sat at, and every request path is
+  root-absolute.
+
+  ── BACK ─────────────────────────────────────────────────────
+  Navigates back to /documents.html with the same scope — ABSOLUTE, because a
+  relative 'documents.html' from /documents/ would resolve to
+  /documents/documents.html. documents.html fetches unconditionally on boot, so
+  a document generated here is on the list when the trip lands.
+═══════════════════════════════════════════════════════════════ -->
+<div class="sf-wrap">
+  <div id="gf-header">
+    <span class="sf-back" onclick="goBack()"><i class="fa-solid fa-arrow-left"></i> Documents</span>
+    <h2><i class="fa-solid fa-file-circle-plus"></i> Generate Document</h2>
+    <div class="sub" id="gf-scope-line">Loading…</div>
+  </div>
+
+  <!-- No link params — see the header for why there is no picker fallback. -->
+  <div id="gf-badstate">
+    <h3 style="margin-top:0"><i class="fa-solid fa-circle-exclamation" style="color:#dc2626"></i>
+      No case or contact</h3>
+    <div>This page generates a document <b>for</b> a record, so it needs one.
+      Open a case or contact, go to its <b>Documents</b> tab, and press
+      <b>Generate</b> there.</div>
+  </div>
+
+  <div id="gf-form">
+    <!-- ── 1. Template ────────────────────────────────────────── -->
+    <div class="sf-section">
+      <h3>1. Template</h3>
+      <div class="sf-row">
+        <label>Template:</label>
+        <select id="gf-template" onchange="templateChanged(this.value)">
+          <option value="" selected disabled>Loading templates…</option>
+        </select>
+      </div>
+      <div id="gf-placement-hint" class="gf-note"></div>
+      <div id="gf-fields"></div>
+    </div>
+
+    <!-- ── 2. Document name ───────────────────────────────────── -->
+    <div class="sf-section">
+      <h3>2. Document name</h3>
+      <div class="sf-row">
+        <label>Document name:</label>
+        <input id="gf-docname" maxlength="255" placeholder="(leave blank for the default)">
+      </div>
+      <!-- LEFT BLANK on purpose, unlike sendForm which pre-fills it. There the
+           name is in the email subject the client reads, so staff must see it
+           before sending. Here it only names a file, the server derives
+           "{template} – {debtor surname}" itself, and a client-side guess at
+           that rule would be a second copy waiting to disagree with the first. -->
+      <div class="gf-note">Blank uses <b>{template name} – {client surname}</b>.
+        The file is saved as <span class="gf-file">{YYYY-MM-DD} {document name}.pdf</span>.</div>
+    </div>
+
+    <!-- ── 3. Actions ─────────────────────────────────────────── -->
+    <div class="sf-actions">
+      <button class="big-button" style="background:var(--neutral-fill);color:var(--fill-text)"
+              id="gf-preview-btn" onclick="doPreview()">
+        <i class="fa-solid fa-eye"></i> Preview PDF
+      </button>
+      <button class="big-button" id="gf-generate-btn" onclick="doGenerate()">
+        <i class="fa-solid fa-file-circle-plus"></i> Generate
+      </button>
+    </div>
+    <div id="gf-preview-missing" class="sf-missing"></div>
+    <iframe id="gf-preview-frame"></iframe>
+  </div>
+
+  <!-- ── Success panel ────────────────────────────────────────── -->
+  <div id="gf-success">
+    <h3 style="margin-top:0"><i class="fa-solid fa-circle-check" style="color:#059669"></i> Generated</h3>
+    <div id="gf-success-body"></div>
+    <div style="margin-top:12px">
+      <button onclick="goBack()"><i class="fa-solid fa-arrow-left"></i> Back to documents</button>
+      <button onclick="location.reload()"><i class="fa-solid fa-plus"></i> Generate another</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// See the markup header for entry points, the network posture and why there
+// is no standalone mode.
+// ═══════════════════════════════════════════════════════════════
+window.apiSend = function () { return esignApi.apply(null, arguments); };
+
+const qs        = new URLSearchParams(location.search);
+const linkType  = (qs.get('link_type') || '').trim();
+const linkId    = (qs.get('link_id')   || '').trim();
+const wantTplId = qs.get('template_id') || '';
+
+let template = null;   // full template row (GET /api/esign/templates/:id)
+
+// The fill-in block, shared verbatim with sendForm (/esign/prefillFields.js).
+const prefillFields = buildPrefillFields({ containerId: 'gf-fields', esc: esignEsc });
+
+// ── boot ─────────────────────────────────────────────────────
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return init();
+  } catch (_) { /* fall through to retry */ }
+  setTimeout(waitForShell, 100);
+})();
+
+async function init() {
+  if (!linkType || !linkId || (linkType !== 'case' && linkType !== 'contact')) {
+    E('gf-form').style.display = 'none';
+    E('gf-badstate').style.display = 'block';
+    E('gf-scope-line').innerText = '';
+    return;
+  }
+  await loadScopeLine();
+  try {
+    await loadTemplates();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error loading templates', text: err.message });
+  }
+}
+
+// Label only — never block the form on it (the dashboard's hydrateLabels
+// posture: a missing label costs a nicety, a thrown one costs the page).
+async function loadScopeLine() {
+  const fallback = `${linkType === 'case' ? 'Case' : 'Contact'} ${linkId}`;
+  try {
+    if (linkType === 'case') {
+      const d = await esignApi(`/api/cases/${linkId}`, 'GET');
+      const c = d && d.case;
+      E('gf-scope-line').innerHTML = c
+        ? `Case <b>${esignEsc(c.case_number_full || c.case_number || linkId)}</b>`
+        : esignEsc(fallback);
+    } else {
+      const d = await esignApi(`/api/contacts/${linkId}`, 'GET');
+      const c = d && (d.contact || d);
+      E('gf-scope-line').innerHTML = (c && c.contact_name)
+        ? `Contact <b>${esignEsc(c.contact_name)}</b>`
+        : esignEsc(fallback);
+    }
+  } catch (_) {
+    E('gf-scope-line').innerText = fallback;
+  }
+}
+
+// ── templates ────────────────────────────────────────────────
+// ?purpose=generate — an esign-only template is REFUSED by
+// documentGenerateService (ESIGN_TEMPLATE_PURPOSE), so offering it here would
+// only produce a 409 later. 'both' counts for either surface.
+async function loadTemplates() {
+  const data = await esignApi('/api/esign/templates', 'GET', { purpose: 'generate' });
+  const list = data.templates || [];
+  const sel = E('gf-template');
+  sel.innerHTML = '<option value="" selected disabled>Select a template…</option>' +
+    list.map(t => `<option value="${t.id}">${esignEsc(t.name)} (${esignEsc(t.kind)})</option>`).join('');
+  if (!list.length) {
+    sel.innerHTML = '<option value="" selected disabled>' +
+      'No templates for generating — set a template\u2019s purpose to Generate or Both</option>';
+  }
+  if (wantTplId && list.some(t => String(t.id) === String(wantTplId))) {
+    sel.value = wantTplId;
+    await templateChanged(wantTplId);
+  }
+}
+
+async function templateChanged(id) {
+  E('gf-fields').innerHTML = '<i class="fa-solid fa-spinner fa-spin-pulse"></i> Loading…';
+  E('gf-preview-missing').innerHTML = '';
+  try {
+    const [tplOut, prefills] = await Promise.all([
+      esignApi(`/api/esign/templates/${id}`, 'GET'),
+      esignApi(`/api/esign/templates/${id}/prefills`, 'POST',
+        { linkable_type: linkType, linkable_id: linkId }),
+    ]);
+    template = tplOut.template;
+    prefillFields.render(template.prefill_schema || [], prefills.values || {}, prefills.missing || []);
+    renderPlacementHint();
+  } catch (err) {
+    E('gf-fields').innerHTML = '';
+    E('gf-placement-hint').innerHTML = '';
+    template = null;
+    Toast.fire({ icon: 'error', title: 'Error loading template', text: err.message });
+  }
+}
+
+/**
+ * Where the file will land, said BEFORE the generate rather than after.
+ *
+ * A contact has no Dropbox folder convention at all (filePlacementService's
+ * case branch is the only one that files anywhere but the bin), so on a
+ * contact the answer is always the unsorted generated-documents folder. That
+ * is not a failure and it should not arrive dressed as one in the success
+ * panel's amber — it is simply what filing against a contact means.
+ */
+function renderPlacementHint() {
+  const el = E('gf-placement-hint');
+  if (!template) { el.innerHTML = ''; return; }
+  const sub = esignEsc(template.file_subfolder || 'Generated Documents');
+  el.innerHTML = linkType === 'case'
+    ? `<i class="fa-solid fa-folder-open"></i> Files to: <b>&lt;case folder&gt;/${sub}</b>`
+    : `<i class="fa-solid fa-folder-open"></i> Contacts have no Dropbox folder convention, so this ` +
+      `files to the <b>unsorted generated-documents folder</b> and is linked to the contact here. ` +
+      `The template\u2019s subfolder (<b>${sub}</b>) does not apply.`;
+}
+
+// ── preview ──────────────────────────────────────────────────
+// The SAME endpoint and the same rendering path the generate uses. Free — no
+// rows, no Dropbox write, no chromium beyond this one render.
+async function doPreview() {
+  if (!template) { Toast.fire({ icon: 'info', title: 'Pick a template first' }); return; }
+  const btn = E('gf-preview-btn');
+  btn.disabled = true;
+  try {
+    const out = await esignFetchPdf(`/api/esign/templates/${template.id}/preview`, {
+      linkable_type: linkType, linkable_id: linkId, values: prefillFields.gather(),
+    });
+    E('gf-preview-missing').innerHTML = out.missing.length
+      ? `<i class="fa-solid fa-triangle-exclamation"></i> Still blank on the document: ` +
+        out.missing.map(esignEsc).join(', ')
+      : '';
+    const frame = E('gf-preview-frame');
+    if (frame.dataset.url) URL.revokeObjectURL(frame.dataset.url);
+    const url = URL.createObjectURL(out.blob);
+    frame.dataset.url = url;
+    frame.src = url;
+    frame.style.display = 'block';
+    frame.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Preview failed', text: err.message });
+  }
+  btn.disabled = false;
+}
+
+// ── generate ─────────────────────────────────────────────────
+async function doGenerate() {
+  if (!template) { Toast.fire({ icon: 'info', title: 'Pick a template first' }); return; }
+  const btn = E('gf-generate-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin-pulse"></i> Generating…';
+  try {
+    const out = await esignApi('/api/documents/generate', 'POST', {
+      template_id:   template.id,
+      linkable_type: linkType,
+      linkable_id:   linkId,
+      values:        prefillFields.gather(),
+      // null, not '': the service derives the default from the template and
+      // the debtor's surname, and an empty string would be a name.
+      document_name: E('gf-docname').value.trim() || null,
+    });
+    prefillFields.markMissing([]);
+    showSuccess(out);
+  } catch (err) {
+    handleGenerateError(err);
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fa-solid fa-file-circle-plus"></i> Generate';
+}
+
+/**
+ * The three shapes routes/api.documents.js's sendGenerateError produces.
+ *
+ * 400 + `missing`  ESIGN_MISSING_PREFILL — required keys that resolvers and
+ *                  the form between them left empty. The keys are the whole
+ *                  point of the error, so they are marked ON the fields rather
+ *                  than recited in a dialog the user then has to remember.
+ * 409              right template, wrong state (deactivated / wrong purpose /
+ *                  a pdf-type template with no source pdf). Nothing on this
+ *                  form fixes it — it is a template-admin problem — so it gets
+ *                  a dialog that says so.
+ * anything else    verbatim; the service's messages are written to be shown.
+ */
+function handleGenerateError(err) {
+  const body = err.body || {};
+  const missing = Array.isArray(body.missing) ? body.missing : [];
+  if (err.status === 400 && missing.length) {
+    prefillFields.markMissing(missing);
+    Swal.fire({
+      icon: 'warning', title: 'Fill these in first',
+      html: '<div style="text-align:left;font-size:13px">' +
+        '<p style="margin:0 0 8px">These required fields are still empty and could not be ' +
+        'resolved from this ' + esignEsc(linkType) + ':</p><b>' +
+        missing.map(esignEsc).join('</b>, <b>') + '</b></div>',
+    });
+    const first = E('gf-fields').querySelector('.sf-f');
+    if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (err.status === 409) {
+    Swal.fire({ icon: 'error', title: 'This template can\u2019t be generated', text: err.message });
+    return;
+  }
+  Swal.fire({ icon: 'error', title: 'Generate failed', text: err.message });
+}
+
+function showSuccess(out) {
+  const unsorted = out.placement === 'unsorted';
+  const optional = Array.isArray(out.missing_optional) ? out.missing_optional : [];
+  // placement_note is ALSO pushed into warnings by filePlacementService, so it
+  // is dropped from the warnings list here rather than said twice.
+  const warnings = (out.warnings || []).filter(w => w !== out.placement_note);
+
+  E('gf-success-body').innerHTML =
+    `<table class="es-meta">` +
+    `<tr><td>File</td><td class="gf-file">${esignEsc(out.file_name || '')}</td></tr>` +
+    `<tr><td>Document</td><td>${esignEsc(out.document_name || '')}</td></tr>` +
+    `<tr><td>Filed to</td><td class="gf-file${unsorted ? ' gf-warn' : ''}">` +
+      (unsorted ? '<i class="fa-solid fa-triangle-exclamation"></i> ' : '') +
+      `${esignEsc(out.path || '')}</td></tr>` +
+    `</table>` +
+    (unsorted && out.placement_note
+      ? `<div class="gf-note gf-warn" style="margin-top:8px">` +
+        `<i class="fa-solid fa-triangle-exclamation"></i> ${esignEsc(out.placement_note)}</div>`
+      : '') +
+    (optional.length
+      ? `<div class="gf-note gf-warn" style="margin-top:8px">Rendered blank (not required): ` +
+        optional.map(esignEsc).join(', ') + `</div>`
+      : '') +
+    (warnings.length
+      ? `<ul class="gf-warn-list">` +
+        warnings.map(w => `<li>${esignEsc(w)}</li>`).join('') + `</ul>`
+      : '') +
+    (out.temp_link
+      ? `<div style="margin-top:10px"><a href="${esignEsc(out.temp_link).replace(/"/g, '&quot;')}" ` +
+        `target="_blank" rel="noopener"><i class="fa-solid fa-download"></i> ` +
+        `Download (link expires in ~4h)</a></div>`
+      // The link is best-effort — filePlacementService warns when Dropbox
+      // refused one. The FILE is filed either way, so say what is true rather
+      // than leaving a gap where a button was.
+      : `<div class="gf-note" style="margin-top:10px">No download link was available — ` +
+        `the file is filed at the path above.</div>`);
+
+  document.querySelectorAll('.sf-section, .sf-actions, #gf-preview-frame, #gf-preview-missing')
+    .forEach(el => { el.style.display = 'none'; });
+  E('gf-success').style.display = 'block';
+  E('gf-success').scrollIntoView();
+}
+
+// Back = swap this iframe back to the documents widget it was launched from
+// (caseWidget → sendForm → caseWidget posture). ABSOLUTE path — see the
+// markup header.
+function goBack() {
+  location.href = '/documents.html' +
+    '?link_type=' + encodeURIComponent(linkType) +
+    '&link_id='   + encodeURIComponent(linkId);
+}
+</script>
+</body>
+</html>

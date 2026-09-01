@@ -954,16 +954,51 @@ function wfWireStartWorkflowPanel() {
   wfRenderTargetPanel();
 }
 
-// ── E-sign template-fields panel (shared module, 'e' prefix) ──
-// Lazy singleton: buildEsignTplPanel comes from /automation/esignTplPanel.js;
-// api/esc are this page's helpers. Wired after each esign_send_from_template
-// form render (same setTimeout(…, 0) timing as 6R/CP-1).
+// ── Template-fields panels (shared module, 'e' prefix) ────────
+// Lazy singletons: buildEsignTplPanel comes from /automation/esignTplPanel.js;
+// api/esc are this page's helpers. Wired after each matching form render (same
+// setTimeout(…, 0) timing as 6R/CP-1).
+//
+// ── WHY TWO SINGLETONS SHARE ONE SET OF ELEMENT IDS ───────────
+// Both panels address `#e-etpl-panel`, `#e-pf-template_id` and `#e-pf-values`,
+// which is only safe because of an invariant this file owns:
+// wfRenderInternalFnBody emits exactly ONE `#e-fn-body-inner` per render, and
+// the panel div is mounted inside its single meta.params.map — so the editor
+// can never have two internal-function forms, and therefore never two panels,
+// on screen at once. The two wire calls below are likewise mutually exclusive
+// branches on the same fnName.
+//
+// Belt and braces on the module side: each instance was built with its own
+// `fnName` and render() hides itself unless the fn selector currently reads
+// it, so a stray call to the wrong instance is inert rather than wrong.
+//
+// The two differ ONLY in which templates they may offer:
+//   esign_send_from_template        → purpose esign|both
+//   document_generate_from_template → purpose generate|both
+// contract_templates.purpose is enforced by each service, so an author cannot
+// pick a template the step would then refuse.
+//
+// document_generate_from_template is __meta.workflowOnly (chromium renders
+// serialize on the 1GiB container), so it is excluded from the sequence
+// function list — sequences.html has no counterpart to WF_DTPL on purpose.
 let WF_ETPL = null;
 function wfWireEsignTplPanel() {
   if (!WF_ETPL && typeof window.buildEsignTplPanel === 'function') {
     WF_ETPL = window.buildEsignTplPanel({ prefix: 'e', api, esc });
   }
   if (WF_ETPL) WF_ETPL.wire();
+}
+
+let WF_DTPL = null;
+function wfWireDocTplPanel() {
+  if (!WF_DTPL && typeof window.buildEsignTplPanel === 'function') {
+    WF_DTPL = window.buildEsignTplPanel({
+      prefix: 'e', api, esc,
+      purpose: 'generate',
+      fnName: 'document_generate_from_template',
+    });
+  }
+  if (WF_DTPL) WF_DTPL.wire();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1726,9 +1761,12 @@ function wfRenderInternalFnBody(fnName, params) {
     if (fnName === 'enroll_sequence' && spec.name === 'trigger_data') {
       html += `<div id="e-esq-target-panel" style="display:none"></div>`;
     }
-    // E-sign template-fields panel — mounts under template_id when editing an
-    // esign_send_from_template step (shared module: /automation/esignTplPanel.js).
-    if (fnName === 'esign_send_from_template' && spec.name === 'template_id') {
+    // Template-fields panel — mounts under template_id when editing an
+    // esign_send_from_template OR document_generate_from_template step (shared
+    // module: /automation/esignTplPanel.js). ONE div id for both: only one fn
+    // form renders at a time — see the wire sites for the full invariant.
+    if ((fnName === 'esign_send_from_template' || fnName === 'document_generate_from_template') &&
+        spec.name === 'template_id') {
       html += `<div id="e-etpl-panel" style="display:none"></div>`;
     }
     return html;
@@ -1741,7 +1779,10 @@ function wfRenderInternalFnBody(fnName, params) {
     setTimeout(wfWireStartWorkflowPanel, 0);
   }
   if (fnName === 'enroll_sequence') setTimeout(wfWireEnrollSequencePanel, 0); // Slice CP-1
+  // Mutually exclusive — fnName is one value. See wfWireEsignTplPanel's header
+  // for why both may safely target the same panel div.
   if (fnName === 'esign_send_from_template') setTimeout(wfWireEsignTplPanel, 0);
+  if (fnName === 'document_generate_from_template') setTimeout(wfWireDocTplPanel, 0);
 
   return `<div id="e-fn-body-inner" data-mode="${current || ''}">${desc}${modeBar}${fieldsHtml}</div>`;
 }

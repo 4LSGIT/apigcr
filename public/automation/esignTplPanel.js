@@ -4,7 +4,7 @@
 //
 // Shared by workflows.html ('e' prefix) and sequences.html ('se' prefix) —
 // same split as fnPicker.js. When the internal_function editor's selected
-// function is `esign_send_from_template`, a panel mounts under the
+// function is the one this instance was built for, a panel mounts under the
 // template_id field:
 //
 //   • A template dropdown (lazy GET /api/esign/templates) that WRITES the
@@ -41,6 +41,23 @@
 // 6R/CP-1 panels — call sites assign innerHTML synchronously, so the
 // elements exist by the time the timeout fires). Caches live in the instance
 // and survive across renders; a page reload naturally refreshes them.
+//
+// ── TWO FUNCTIONS, TWO INSTANCES, ONE SET OF ELEMENT IDS (G3) ─
+// `document_generate_from_template` has the same three params this panel
+// drives (template_id + values against a prefill_schema) and differs only in
+// WHICH templates are offerable — contract_templates.purpose gates the two
+// surfaces and each service refuses the other's templates outright. So the
+// caller builds a SECOND instance with { purpose:'generate',
+// fnName:'document_generate_from_template' } rather than the panel learning a
+// second shape.
+//
+// Both instances address the SAME ids (`<prefix>-etpl-panel`,
+// `<prefix>-pf-template_id`, `<prefix>-pf-values`) because the editor renders
+// exactly one internal-function form at a time — see the wire sites in
+// workflows.html for the invariant that makes that safe. `fnName` is what
+// keeps them from fighting: render() hides the panel unless the fn selector
+// currently reads this instance's own function, so the instance the page did
+// not wire this render is inert even if something calls it.
 // ─────────────────────────────────────────────────────────────
 
 (function () {
@@ -48,7 +65,11 @@
 
   const PLACEHOLDER_RE = /\{\{[^}]+\}\}/; // mirrors lib/internal_functions PLACEHOLDER_RE
 
-  window.buildEsignTplPanel = function buildEsignTplPanel({ prefix, api, esc }) {
+  window.buildEsignTplPanel = function buildEsignTplPanel({
+    prefix, api, esc,
+    purpose = 'esign',
+    fnName = 'esign_send_from_template',
+  }) {
     const state = {
       list: null,          // null = not loaded; [] = loaded empty
       listInflight: null,
@@ -69,7 +90,11 @@
       if (state.listInflight) return state.listInflight;
       state.listInflight = (async () => {
         try {
-          const data = await api('/api/esign/templates');
+          // Server-side purpose filter (esignTemplateService.listTemplates):
+          // 'both' counts for either, so this offers exactly what the step's
+          // own service will accept. The cache is per-instance, so the two
+          // instances never see each other's list.
+          const data = await api(`/api/esign/templates?purpose=${encodeURIComponent(purpose)}`);
           state.list = data.templates || [];
         } catch (e) {
           console.warn('esignTplPanel: template list load failed:', e.message);
@@ -209,7 +234,7 @@
       if (!p || !idEl) return;
       // Stale-timer guard, 6R-style: only meaningful for this function's form.
       const fnSel = el('fn') || document.getElementById(`${prefix}-fn`);
-      if (fnSel && fnSel.value !== 'esign_send_from_template') { p.style.display = 'none'; return; }
+      if (fnSel && fnSel.value !== fnName) { p.style.display = 'none'; return; }
 
       p.style.display = '';
       const raw = (idEl.value || '').trim();

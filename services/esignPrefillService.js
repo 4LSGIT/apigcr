@@ -38,6 +38,33 @@
  *             cfgJson). firm_name / firm_attorney_name keep a literal fallback
  *             so a cleared setting degrades to the previous hardcoded value;
  *             firm_address has none — see the comment at those resolvers.
+ *   trustee.* — the matched entry of the `fe-trustees` json_array setting,
+ *             matched on cases.case_trustee. See the TRUSTEE block below for
+ *             why the match is exact-name.
+ *
+ * ── RESOLVER INVENTORY ──────────────────────────────────────────────────────
+ *   case.case_name  case.case_number  case.case_number_full  case.debtor_names
+ *   case.docket  case.chapter  case.open_date
+ *   case.judge  case.trustee  case.file_date                        (G4)
+ *   debtor1.name  debtor1.email  debtor1.phone
+ *   debtor1.address_street  debtor1.address_csz                     (G4)
+ *   debtor1.ssn_last4  debtor1.ssn_masked                           (G4)
+ *   debtor2.{the same seven}
+ *   trustee.name  trustee.address_street  trustee.address_csz
+ *   trustee.phone  trustee.email                                    (G4)
+ *   attorney.name
+ *   firm.name  firm.phone  firm.email  firm.website
+ *   firm.address  firm.address_line1  firm.address_line2
+ *
+ * ── LAYOUT LIVES IN THE TEMPLATE ────────────────────────────────────────────
+ * The address resolvers come in PIECES (street / city-state-zip) rather than
+ * one pre-joined block, for the reason spelled out at firm.address below:
+ * interpolateTemplate HTML-escapes every value, so a '<br>' in a value renders
+ * as literal '&lt;br&gt;'. A template that wants stacked lines puts each piece
+ * in its own element; the empty-value-hides-label idiom
+ * (`.l:has(> span:empty){display:none}`) then collapses the ones that resolved
+ * to ''. That is why EVERY resolver here returns '' and never a placeholder
+ * string like 'N/A' — '' is the only value a template can style away.
  *
  * ── FORMATTING ──────────────────────────────────────────────────────────────
  * By declared prefill type:  money → $X,XXX.XX;  date → MM/DD/YYYY (firm-
@@ -247,6 +274,17 @@ const RESOLVERS = Object.freeze({
   'case.chapter':          (ctx) => s(ctx.caseRow && ctx.caseRow.case_chapter),
   'case.open_date':        (ctx) => ctx.caseRow ? formatDate(ctx.caseRow.case_open_date) : '',
 
+  // G4 — the post-filing trio. All three are FREE TEXT on `cases`
+  // (case_judge / case_trustee varchar(100) NOT NULL, no default, populated by
+  // the court-email pipeline and by staff); nothing here parses or validates
+  // them, exactly as case_number is passed through verbatim.
+  'case.judge':            (ctx) => s(ctx.caseRow && ctx.caseRow.case_judge),
+  'case.trustee':          (ctx) => s(ctx.caseRow && ctx.caseRow.case_trustee),
+  // cases.case_file_date is a DATE column — mysql2 reads it as midnight
+  // labeled UTC, so formatDate reads the UTC components. There is no time
+  // component to render and the template must not imply one.
+  'case.file_date':        (ctx) => ctx.caseRow ? formatDate(ctx.caseRow.case_file_date) : '',
+
   // debtors
   'debtor1.name':  (ctx) => s(ctx.debtor1 && ctx.debtor1.contact_name),
   'debtor1.email': (ctx) => s(ctx.debtor1 && ctx.debtor1.contact_email),
@@ -254,6 +292,63 @@ const RESOLVERS = Object.freeze({
   'debtor2.name':  (ctx) => s(ctx.debtor2 && ctx.debtor2.contact_name),
   'debtor2.email': (ctx) => s(ctx.debtor2 && ctx.debtor2.contact_email),
   'debtor2.phone': (ctx) => ctx.debtor2 ? formatPhone(ctx.debtor2.contact_phone) : '',
+
+  // ── G4: DEBTOR ADDRESS ────────────────────────────────────────────────────
+  // Read from the CONTACTS COLUMNS (contact_address / _city / _state / _zip),
+  // not from contact_addresses. Those columns are the mirror that
+  // contactAddressService maintains from the child table, and they are what
+  // every other read path in the repo uses; going to the child table here
+  // would mean this module owns a second definition of "the debtor's address".
+  //
+  // Two pieces, not one: see LAYOUT LIVES IN THE TEMPLATE in the header.
+  'debtor1.address_street': (ctx) => s(ctx.debtor1 && ctx.debtor1.contact_address),
+  'debtor1.address_csz':    (ctx) => composeCsz(ctx.debtor1),
+  'debtor2.address_street': (ctx) => s(ctx.debtor2 && ctx.debtor2.contact_address),
+  'debtor2.address_csz':    (ctx) => composeCsz(ctx.debtor2),
+
+  // ── G4: SSN — LAST FOUR ONLY, BY DESIGN ───────────────────────────────────
+  // There is no full-SSN resolver and there must not be one. A notice of
+  // filing carries the masked form because that is what the recipient needs to
+  // identify the case; a template author who could reach the other nine digits
+  // could put them on any document, and the whole point of a bespoke resolver
+  // over a dot-path eval is that the reachable set is a list somebody chose.
+  //
+  // resolverService.BLOCKED_COLUMNS.contacts = ['contact_ssn'] refuses the
+  // column to EXPRESSION resolvers for the same reason. These two functions
+  // are the only sanctioned path to any part of an SSN in the template layer;
+  // if a future document needs more, that is a decision somebody makes on
+  // purpose, in this file, with a comment saying why.
+  //
+  // Digits-only first: the column is char(11) and staff type it both ways
+  // ('123-45-6789' and '123456789'). Anything that does not yield at least
+  // four digits resolves to '' rather than to a partial mask — 'xxx-xx-' with
+  // nothing after it on a legal document is worse than a blank the template
+  // collapses.
+  'debtor1.ssn_last4':  (ctx) => ssnLast4(ctx.debtor1),
+  'debtor1.ssn_masked': (ctx) => ssnMasked(ctx.debtor1),
+  'debtor2.ssn_last4':  (ctx) => ssnLast4(ctx.debtor2),
+  'debtor2.ssn_masked': (ctx) => ssnMasked(ctx.debtor2),
+
+  // ── G4: TRUSTEE ───────────────────────────────────────────────────────────
+  // The panel trustee's contact block, from the `fe-trustees` setting, matched
+  // against cases.case_trustee. Every one resolves to '' when there is no
+  // match — a Chapter 7 no-asset case with no trustee yet renders a notice
+  // with the trustee column collapsed, not with orphan labels.
+  'trustee.name':           (ctx) => s(_trusteeEntry(ctx) && _trusteeEntry(ctx).name),
+  'trustee.address_street': (ctx) => {
+    const e = _trusteeEntry(ctx);
+    if (!e) return '';
+    const a1 = s(e.address1);
+    const a2 = s(e.address2);
+    if (!a1) return a2;
+    return a2 ? `${a1}, ${a2}` : a1;
+  },
+  'trustee.address_csz':    (ctx) => composeCsz(_trusteeEntry(ctx)),
+  'trustee.phone':          (ctx) => {
+    const e = _trusteeEntry(ctx);
+    return e ? formatPhone(e.phone) : '';
+  },
+  'trustee.email':          (ctx) => s(_trusteeEntry(ctx) && _trusteeEntry(ctx).email),
 
   // attorney. Settings-backed as of 2026-07-20; the literal remains ONLY as a
   // last-resort fallback. firmConfig falls through an empty DB value to env to
@@ -303,6 +398,135 @@ function _addressLines() {
   const raw = cfgJson('firm_address', null);
   if (!Array.isArray(raw)) return [];
   return raw.map(s).filter(Boolean);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G4 HELPERS — pure, exported under `_` for the table tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * "City, ST 48075" from whichever of the three pieces exist.
+ *
+ * PURE and source-agnostic: it reads `city` / `state` / `zip` off whatever
+ * object it is handed, which is why one function serves both the contacts row
+ * (whose columns are contact_city/_state/_zip — the callers map them) and a
+ * fe-trustees entry (whose keys already are city/state/zip). Callers pass the
+ * OBJECT; the mapping for contacts lives in _cszParts.
+ *
+ * Rules, in order:
+ *   city && state  → "City, ST"
+ *   city only      → "City"
+ *   state only     → "ST"
+ *   then zip, appended after a single space if the zip is present
+ *   nothing at all → ''  (never ', ' and never a bare comma)
+ *
+ * A zip with no city and no state yields just the zip. That is deliberate: a
+ * lone zip is still information, and the empty-value-hides-label idiom in the
+ * template is what decides whether it is worth a line.
+ *
+ * @param {?object} src  a contacts row, a fe-trustees entry, or null
+ * @returns {string}
+ */
+function composeCsz(src) {
+  if (!src || typeof src !== 'object') return '';
+  const { city, state, zip } = _cszParts(src);
+  let head = '';
+  if (city && state)  head = `${city}, ${state}`;
+  else if (city)      head = city;
+  else if (state)     head = state;
+  if (!head) return zip;
+  return zip ? `${head} ${zip}` : head;
+}
+
+/**
+ * The three pieces, from either shape. contacts rows carry the contact_
+ * prefix; fe-trustees entries do not. Prefixed keys win when both are present
+ * so a contacts row that happens to have picked up a stray `city` property
+ * cannot shadow its own column.
+ */
+function _cszParts(src) {
+  return {
+    city:  s(src.contact_city  != null ? src.contact_city  : src.city),
+    state: s(src.contact_state != null ? src.contact_state : src.state),
+    zip:   s(src.contact_zip   != null ? src.contact_zip   : src.zip),
+  };
+}
+
+/**
+ * The last four digits of a contact's SSN, or ''.
+ *
+ * Digits-only, then a length gate: contacts.contact_ssn is char(11) and holds
+ * both '123-45-6789' and '123456789' in live data. Fewer than four digits
+ * (a half-typed value, a placeholder like '000') yields '' — see the SSN
+ * comment in RESOLVERS for why a partial mask is not an acceptable output.
+ *
+ * @param {?object} contact
+ * @returns {string}  exactly 4 characters, or ''
+ */
+function ssnLast4(contact) {
+  if (!contact) return '';
+  const digits = s(contact.contact_ssn).replace(/\D/g, '');
+  return digits.length >= 4 ? digits.slice(-4) : '';
+}
+
+/** 'xxx-xx-6789', or '' when there is no last-4 to mask. */
+function ssnMasked(contact) {
+  const last4 = ssnLast4(contact);
+  return last4 ? `xxx-xx-${last4}` : '';
+}
+
+/**
+ * The fe-trustees entry for this case's trustee, or null.
+ *
+ * ── MATCHING IS EXACT-NAME (case-insensitive), NOT SURNAME ──────────────────
+ * The roster contains BOTH 'Thomas W. McDonald' (a Chapter 12 trustee) and
+ * 'Thomas W. Jr. McDonald' (a Chapter 13 trustee). A surname match would
+ * return whichever came first and put the wrong trustee's address on a mailed
+ * notice — silently, and in the one place a client would act on it. So the
+ * comparison is the whole `name` string, trimmed and lowercased, against the
+ * whole `case_trustee` string. Anything short of an exact match resolves to
+ * null and the template collapses the trustee block.
+ *
+ * That strictness is a deliberate data-entry pressure, the same as the
+ * required debtor1_street key: 105 of the 107 cases filed in the last two
+ * years match a roster name exactly, and the two misses are stale short forms
+ * that should be corrected on the case rather than accommodated here. Fuzzy
+ * matching would hide them forever.
+ *
+ * MEMOIZED on the context object, the way buildExpressionRefs is built once
+ * per resolution: five trustee.* resolvers on one template would otherwise
+ * parse the 6.5KB setting five times. The cache key is a non-enumerable
+ * symbol so it can never leak into a JSON.stringify of the context.
+ *
+ * @param {object} ctx  the resolution context
+ * @returns {?object}   the roster entry, or null
+ */
+const _TRUSTEE_CACHE = Symbol('trusteeEntry');
+
+function _trusteeEntry(ctx) {
+  if (!ctx || typeof ctx !== 'object') return null;
+  if (Object.prototype.hasOwnProperty.call(ctx, _TRUSTEE_CACHE)) {
+    return ctx[_TRUSTEE_CACHE];
+  }
+
+  let entry = null;
+  const wanted = s(ctx.caseRow && ctx.caseRow.case_trustee).toLowerCase();
+  if (wanted) {
+    // cfgJson NEVER throws — unset, malformed, or a non-array all arrive here
+    // as something that is not an array, and a firm-identity read must not be
+    // able to 500 a document render.
+    const roster = cfgJson('fe-trustees', null);
+    if (Array.isArray(roster)) {
+      entry = roster.find(
+        (e) => e && typeof e === 'object' && s(e.name).toLowerCase() === wanted
+      ) || null;
+    }
+  }
+
+  Object.defineProperty(ctx, _TRUSTEE_CACHE, {
+    value: entry, enumerable: false, configurable: true, writable: true,
+  });
+  return entry;
 }
 
 /** The Set esignTemplateService validates against at save time. */
@@ -521,4 +745,11 @@ module.exports = {
   formatDate,
   formatMoney,
   formatNumber,
+  // G4 pure helpers — exported for the table tests, not for callers. Nothing
+  // outside tests/esignPrefill.notice.test.js should reach for these: the
+  // RESOLVERS map is the interface.
+  _composeCsz: composeCsz,
+  _ssnLast4:   ssnLast4,
+  _ssnMasked:  ssnMasked,
+  _trusteeEntry,
 };
