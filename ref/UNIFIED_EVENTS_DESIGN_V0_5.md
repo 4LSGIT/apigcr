@@ -5,8 +5,10 @@ committed as `ref/UNIFIED_EVENTS_DESIGN_V0_4.md` in `4d13cbf` and removed once t
 all of it — `git show 4d13cbf:ref/UNIFIED_EVENTS_DESIGN_V0_4.md` for the text E0a and E1 were
 built against. v0.4's section numbers are preserved here, so its cites still resolve.
 
-**Status: RATIFIED 2026-09-01.** Every gate in the 2026-08-30 draft is ruled (§8.1); the
-remaining open items in §8.2 are work to schedule, not decisions to make.
+**Status: RATIFIED 2026-09-01; U1 and U2 shipped the same day (§7).** Every gate in the
+2026-08-30 draft is ruled (§8.1); the remaining open items in §8.2 are work to schedule, not
+decisions to make. The registry is live: `calendar_item_types` (34 seeded rows) and `type_key` on
+both `appts` and `events`, backfilled and verified 2026-09-01.
 
 **Authors:** PIPE (pipeline-arc manager, Fable) — v0.1–v0.4. CAL (unified-events manager, Fable) —
 v0.5, reconciled with PIPE via scratch `fred/unified_events_coord` 2026-08-30. Figures verified
@@ -18,6 +20,13 @@ Appendix A.2 regenerated from a **BINARY census** (E1 finding — the ci `GROUP 
 spelling variants covering 19% of appts); **E1 landed** and PIPE's calendar role closed (§0.1);
 U1 becomes a SQL-only migration with the picker moved to U2 (§7); the Jest baseline becomes a
 verify-don't-trust figure (§7.1 rule 6).
+
+**Since ratification (2026-09-01, same day).** U1 applied and verified; U2 deployed and verified
+(§7). Three things the slices settled are folded back into the design text above: the registry
+`kind` enum ships in the COLUMN's order (§3.3, U2 ruling D1); an unmapped non-blank type resolves
+to `type_key` NULL **and `kind='other'`**, not `kind` NULL (§3.3, U2 ruling D7); and any backfill
+touching `events` must self-assign `event_updated_at` (§7.1 rule 9 — U1 and U2 did not, and bumped
+every pre-existing row).
 
 **Changelog v0.4→v0.5.** Amendment ids A1–A8 are kept in the section headings so the coordination
 scratch and the drafted slice prompts still resolve:
@@ -102,9 +111,11 @@ and extends `status_norm` per §3.7.
 `services/courtExecutor.js`. PIPE has frozen on all five permanently. All future DDL on
 `events`/`appts` is CAL's.
 
-**E1 ↔ U-series alignment (done):** E1 derives `type_key` / `kind_key` from the Appendix A
-vocabulary; U2's backfill produces the same values, so nothing changes key the day the column
-lands.
+**E1 ↔ U-series alignment (held at U2):** E1 derives `type_key` / `kind_key` from the Appendix A
+vocabulary; U2's backfill is GENERATED from E1's own maps by `scripts/genTypeKeyBackfill.js`, and
+`tests/genTypeKeyBackfill.test.js` asserts the committed SQL equals a fresh regeneration. No row
+changed key the day the column landed, and the migration cannot drift from E1's derivation — which
+is what makes U3's swap (derivation → column) a no-op on the data.
 
 Scratch keys: `fred/unified_events_coord` (handshake, append-only) ·
 `fred/unified_events_handover` (PIPE's verified figures) · `fred/e0b_type_mapping_draft` (PIPE's
@@ -217,7 +228,7 @@ executor) match on `type_key` only — never on the free-text label.
 calendar_item_types
   type_key        VARCHAR(40)  PK                       -- 'iss', 'meeting_341', 'confirmation_hearing'
   label           VARCHAR(80)  NOT NULL
-  kind            ENUM('meeting','hearing','deadline','conference','other') NOT NULL  -- same enum as events.kind
+  kind            ENUM('hearing','meeting','deadline','conference','other') NOT NULL  -- byte-identical to events.kind (E0a column order; U2 ruling D1)
   singleton       TINYINT(1)   NOT NULL DEFAULT 0       -- one live per (anchor, type_key); new supersedes old  (§3.4.2)
   blocks_default  ENUM('attendee','firm','none') NOT NULL DEFAULT 'attendee'   -- was court_item_policy.blocks
   client_attends  TINYINT(1)   NOT NULL DEFAULT 0       -- default attendance; drives notify/portal
@@ -226,9 +237,17 @@ calendar_item_types
   case_types      JSON         NULL                     -- picker scoping (Bankruptcy, Civil, ...); NULL = all
   active          TINYINT(1)   NOT NULL DEFAULT 1
   sort_order      INT          NOT NULL DEFAULT 0
-  approaching_offsets JSON     NULL                     -- §3.2, if per-type wins at U8
+  approaching_offsets JSON     NULL                     -- §3.2, if per-type wins at U8 — NOT in the U2 table; U8 adds it if that route wins
   created_at / updated_at
 ```
+
+**As shipped at U2:** PK `type_key`, `KEY idx_cit_kind_active (kind, active)`, 34 seeded rows
+(`scripts/calendarTypeSeed.js`, fixture `tests/fixtures/calendar_item_types.seed.json`), served by
+`services/calendarTypeService.js`. `type_key` on both tables carries **no FK** — an unknown key must
+be storable (raw passthrough) and the registry is data staff will edit, so integrity is asserted by
+the migration's VERIFY 4 and by `tests/aiMatchTypes.registry.test.js`, not by the engine (`events` /
+`appts` carry zero FKs — E0a convention). `singleton`, `blocks_default` and `client_attends` are
+**data only** until U6 reads them; `active` gates pickers only — an inactive type still resolves.
 
 **Why a table.** v0.4 derived keys at read time from 25 event strings and left appt types as free
 text. Every write path keeps minting strings; every consumer keeps matching them. F1's alias-list
@@ -254,16 +273,23 @@ transitional, not permanent.
 **Registry scope:** firm-specific seed (Fred). Non-BK case types are real (§Appendix A: civil
 deadlines, depositions, pre-lawsuit, tax consults); multi-tenant later if ever.
 
-**Picker:** the free-text type inputs in `eventform.html` and `apptform2.html` are replaced at
-**U2** by a controlled picker fed from the registry, scoped by `case_types`. (The draft put the
-picker in U1; U1 is now SQL-only, so the picker ships with the table it reads.) `ingest_aliases`
-is applied at the two INSERT sites — `apptService.js:965`, `eventService.js:1331` — and in their
-PATCH allowlists; `booking_views.appt_type` becomes a key at U5.
+**Picker (shipped at U2).** `eventform.html` renders a registry-fed picker — `GET
+/api/calendar-types?kind=…&active=1` (`routes/api.calendarTypes.js`), option value = `type_key` —
+and falls back to the existing `fe-event_types` setting list if that fetch fails or returns no
+rows; `apptform2.html` shows the resolved key beside the label. (The draft put the picker in U1;
+U1 went SQL-only, so it shipped with the table it reads.) `ingest_aliases` is applied at the two
+INSERT sites in `apptService` / `eventService` and in their PATCH allowlists. **Still free text:**
+`booking_views.appt_type` — U5 adds the key column and its picker (§8.3).
 
 **Unmapped input is never guessed.** A string absent from the registry and from `ingest_aliases`
-is stored raw with `kind` NULL and a warning; `appt_type IS NULL` (8 rows) stays NULL. Under
+is stored raw with `type_key` NULL and a warning; `appt_type IS NULL` (8 rows) stays NULL. Under
 §3.3.2 a guessed `kind` picks the wrong TABLE, so the failure mode of guessing is structural, not
-cosmetic (Fred, ruled).
+cosmetic (Fred, ruled). **U2 ruling D7** settled the events half: a *non-blank* unmapped type is
+stored `type_key` NULL **and `kind='other'`**; only a blank type leaves `kind` NULL. There is
+deliberately **no `other` registry key** — NULL is the honest "no key" and cannot be bound by a
+consumer by accident, while `WHERE type_key IS NULL AND kind='other'` is U9's worklist for minting
+real types. That split is what makes the §7.1 rule 8 straggler gate readable: `kind='other'` is an
+honest unmapped type, `kind` NULL on a freshly created row is a real straggler.
 
 #### 3.3.1 No user initials in schema (A2)
 
@@ -468,6 +494,10 @@ reclassification backfill (`reason='duplicate'`; every artifact has exactly one 
 verified). SQL: `ref/2026-08-27_unified_events_e0a.sql`. **E1** — `caseEventService`,
 `routes/api.caseEvents.js`, `case.html` tabTimeline, three-way link audit; **E1b** — the
 `link_type:'none'` read filter on `eventService.listEvents`. Landed 2026-09-01.
+**U1** — `ref/2026-09-01_unified_events_e0b.sql`: `events.kind` by type plus the four hand-fixes;
+applied and verified 2026-09-01. **U2** — `ref/2026-09-01_unified_events_u2.sql` + backend +
+frontend: the registry, `type_key` on both tables, the generated backfill, `calendarTypeService`,
+`GET /api/calendar-types` and the eventform picker; deployed and verified the same day.
 
 Model column is CAL's recommendation for the *executing* worker when CAL writes the prompt.
 
@@ -475,9 +505,9 @@ Model column is CAL's recommendation for the *executing* worker when CAL writes 
 |---|---|---|---|---|
 | E1 | `caseEventService` per §3.1 + case timeline + link audit (+E1b `link_type:'none'` filter) | PIPE's worker | — | **landed 2026-09-01** |
 | U0 | this document; commit v0.4 + v0.5 to `ref/`; `fred/calendar_type_keys_v1` | CAL | — | **done** |
-| U1 | **was E0b**: `ref/2026-09-01_unified_events_e0b.sql` — `events.kind` by type per Appendix A + the 4 hand-fixes, with a PRE-FLIGHT (unmapped types, must be 0 rows) and a VERIFY block. **SQL only; no picker** | **CAL-authored, Fred applies** | — | idempotent; U2 re-runs the bulk statements for rows created in between |
-| U2 | `calendar_item_types` + seed; `type_key` on both tables + backfill from Appendix A (+ E1's row overrides by id); write paths set `kind`/`type_key` (registry picker in `eventform.html` / `apptform2.html`; `ingest_aliases` at `apptService.js:965`, `eventService.js:1331` and the PATCH allowlists; `booking_views.appt_type` → key); fold `court_item_policy` | **Fable** | U1 | largest DDL slice; additive only; the backfill asserts equality with `caseEventService._deriveKeys` over every live row |
-| U3 | Alignment pass on E1 at `_deriveKeys`: column replaces derivation; delete `_EVENT_ROW_OVERRIDES`; extend `status_norm` per §3.7; opt-in `attendees[]`; widen link audit to appts | **Opus** | E1, U2 | small |
+| U1 | **was E0b**: `ref/2026-09-01_unified_events_e0b.sql` — `events.kind` by type per Appendix A + the 4 hand-fixes, with a PRE-FLIGHT (unmapped types, must be 0 rows) and a VERIFY block. **SQL only; no picker** | **CAL-authored; Fred applied** | — | **applied + verified 2026-09-01.** Pre-flight returned 0 unmapped; the four hand-fixes executed; U2 re-ran the bulk statements for rows created in between |
+| U2 | `calendar_item_types` (34 rows) + `type_key` on both tables + GENERATED backfill (`scripts/genTypeKeyBackfill.js`, byte-checked against E1); `calendarTypeService`; write paths (`createEvent` sets `kind`+`type_key`, `createAppt` sets `type_key`, PATCH allowlists, `err.status` convention); `GET /api/calendar-types`; eventform picker with setting fallback | **Fable** | U1 | **deployed + verified 2026-09-01** (168 / 5,466 / 1). Deferred out of the slice: labels not canonicalized (U5), `court_item_policy` untouched (U7), `booking_views` untouched (U5), registry admin CRUD → U2b (§8.2) |
+| U3 | Alignment pass on E1 at `_deriveKeys`: column replaces derivation; vocabulary moves to `scripts/typeKeyVocabulary.js` (frozen, generator-only); delete `_EVENT_ROW_OVERRIDES`; `events.event_resolution` column (no writer until U6); `state`/`resolution` per §3.7; opt-in `attendees[]`; widen link audit to appts | **Opus** | E1, U2 | small; **prompt issued 2026-09-01** |
 | U4 | `calendar.*` domain events from both services; dual-carry envelope; `EVENT_TYPES` + coverage test; no rules bound | **Opus** | U2 | zero behaviour change |
 | U5 | Consumer cutover to keys (§6.1): rules 1–3, templates 19/20/23/24, requirement 3, detector `source:'event'\|'any'` (E1.5 folded in), booking views | **Opus** | U2, U3 | scripted; before/after live counts in the prompt |
 | U6 | Write API `schedule/reschedule/cancel/resolve`; `singleton` behind `unified_singleton_enabled`; A3a docket anchor + client-less; `event_resolution` writes; `missed` sweep | **Fable** | U2 | the live-risk slice |
@@ -508,12 +538,20 @@ multi-tenant registry.
    `POST /admin/db/schema/save-to-ref` after every migration.
 6. Full Jest suite before and after. **The baseline drifts continuously** (other arcs merge), so
    every prompt says verify-don't-trust and the worker reports the figure it actually measured.
-   Last known: **161 suites / 5,382 tests / 1 skip** at E1 landing, 2026-09-01. New services
-   registered in `moduleLoad.smoke`; new domain events in `EVENT_TYPES` + coverage test.
+   Last known: **168 suites / 5,466 tests / 1 skip**, measured at U2 landing 2026-09-01 (E1 landed
+   at 161 / 5,382 / 1 earlier the same day). New services registered in `moduleLoad.smoke`; new
+   domain events in `EVENT_TYPES` + coverage test.
 7. Every prompt has a Rollback section and a "does not touch" list; workers stop and report on any
    divergence between prompt claims and repo/DB.
 8. Post-deploy gates are readonly-SQL queries Fred runs, listed in the prompt with expected
-   results.
+   results. The standing straggler gate reads **rows, not a count**:
+   `SELECT event_id, event_type, kind, type_key FROM events WHERE type_key IS NULL AND event_create_date > '<deploy ts>'`
+   — `kind='other'` is an honest unmapped type (§3.3 D7; U9's worklist), `kind` NULL is a real
+   straggler.
+9. Any UPDATE backfill on `events` carries `event_updated_at = event_updated_at` in its SET.
+   The column is `ON UPDATE CURRENT_TIMESTAMP`; U1 and U2 omitted this and bumped it on every
+   pre-existing row (2026-09-01 ~10:47), so that timestamp is **not** staff activity. `appts` has
+   no equivalent column.
 
 ## 8. Rulings and open items
 
@@ -539,10 +577,12 @@ multi-tenant registry.
 
 ### 8.2 Open — needs Fred
 
-1. **Apply U1** — `ref/2026-09-01_unified_events_e0b.sql` — and run its VERIFY block.
-2. **Case roles is unowned** (PIPE handed it back): reminder assignee (§3.2), R3 team card, portal
+1. **Case roles is unowned** (PIPE handed it back): reminder assignee (§3.2), R3 team card, portal
    triage owner, A2 role-resolved attendance (§3.3.1). Four consumers, no manager — Fred to assign
    one.
+2. **U2b — registry admin CRUD**, deferred out of U2. Until it exists, minting a type is a hand
+   INSERT into `calendar_item_types`. It gates no slice, but U9's unmapped worklist (§3.3) assumes
+   someone can act on what it surfaces — Fred to schedule it.
 
 ### 8.3 Open — design, not blocking
 
@@ -555,6 +595,22 @@ multi-tenant registry.
   `case_preference`, matrix ×2).
 - **Deposition** — revisit `conference` if depositions want client reminders (would move to
   `meeting` → `appts`).
+
+Reported by U2, recorded rather than worked around:
+
+- **`ai_match_types.item_type` vs the registry:** the commented example row in
+  `ref/2026-08-10_ai_match_registry.sql` uses `item_type '341_meeting'`; the registry key is
+  `meeting_341`. U2's guard test (`tests/aiMatchTypes.registry.test.js` — every non-NULL
+  `item_type` exists in the registry) fails if that row is uncommented as-is. Fix the comment when
+  U7 touches the file.
+- **Internal functions cannot carry an HTTP status.** `update_appointment` throws with
+  `err.status = 400` on an unknown `type_key`, but only the message reaches
+  `workflow_execution_steps.error_message`. Not hacked around in U2.
+- **`booking_views.appt_type`** holds `Tax Consultation` and `Potato Hunting`, which resolve only
+  through `ingest_aliases`. U5 adds a `type_key` column and a picker to the views manager.
+- **Labels are not canonicalized.** U2 wrote keys but left `appt_type` / `event_type` as they
+  stand, so the 30 appt spellings of Appendix A.2 are still in the rows. U5 decides whether the
+  label follows the key or stays historical until the string columns drop.
 
 ## Appendix A. Type-key vocabulary v1
 
