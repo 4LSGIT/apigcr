@@ -5,18 +5,18 @@
 -- case advances into the `filed` stage.
 --
 -- ╔══════════════════════════════════════════════════════════════════════════╗
--- ║ @@TEMPLATE_ID@@ IS A PARAMETER. THIS FILE DOES NOT RUN AS WRITTEN.       ║
+-- ║ 8 IS A PARAMETER. THIS FILE DOES NOT RUN AS WRITTEN.       ║
 -- ║                                                                          ║
 -- ║ Create the template FIRST (the curl is in the G4 report; the JSON is     ║
 -- ║ ref/templates/notice_of_bankruptcy_filing.json), take the `id` the API   ║
--- ║ returns, and replace @@TEMPLATE_ID@@ below with that integer, UNQUOTED.  ║
+-- ║ returns, and replace 8 below with that integer, UNQUOTED.  ║
 -- ║                                                                          ║
 -- ║ Exactly ONE occurrence is executable — statement 6, the                  ║
 -- ║ document_generate_from_template config. The others are in comments, so   ║
 -- ║ a global replace is safe:                                                ║
--- ║     sed -i 's/@@TEMPLATE_ID@@/8/g' 2026-09-01_g4_notice_automation.sql   ║
+-- ║     sed -i 's/8/8/g' 2026-09-01_g4_notice_automation.sql   ║
 -- ║                                                                          ║
--- ║ A leftover @@TEMPLATE_ID@@ is a SYNTAX error, not a silently bad row —   ║
+-- ║ A leftover 8 is a SYNTAX error, not a silently bad row —   ║
 -- ║ that is the point of the token. Do not default it to a number.           ║
 -- ╚══════════════════════════════════════════════════════════════════════════╝
 --
@@ -25,7 +25,7 @@
 --      The template's resolvers do not exist without it and step 2 would 400
 --      with ESIGN_BAD_RESOLVER.
 --   2. Create the template (POST /api/esign/templates).
---   3. Substitute @@TEMPLATE_ID@@ and run this file, top to bottom.
+--   3. Substitute 8 and run this file, top to bottom.
 --   4. Run the workflow by hand against a real filed case
 --      (Automations -> Workflows -> Run) and OPEN THE PDF IT PRODUCES.
 --   5. Only then arm the rule — statement 13, deliberately commented out.
@@ -165,7 +165,7 @@ SELECT w.id, 1, 3, 'custom_code',
 
 
 -- ═════════════════════════════════════════════════════════════════════════════
--- 6. Step 4 — the document.  ← @@TEMPLATE_ID@@ LIVES HERE
+-- 6. Step 4 — the document.  ← 8 LIVES HERE
 --
 --    on_missing 'task' rather than 'fail': a required prefill still empty
 --    (debtor1_street is the one that will bite — it is required ON PURPOSE, as
@@ -187,7 +187,7 @@ INSERT INTO workflow_steps (workflow_id, version, step_number, type, label, note
 SELECT w.id, 1, 4, 'internal_function',
        'Generate the notice',
        'Renders the Notice template to PDF and files it under the case folder. on_missing task raises a staff task naming the empty required key instead of failing silently. set_vars flattens `generated` because evaluate_condition cannot read a dot path.',
-       '{"function_name":"document_generate_from_template","params":{"template_id":@@TEMPLATE_ID@@,"linkable_type":"case","linkable_id":"{{case_id}}","on_missing":"task","output_var":"notice"},"set_vars":{"notice_generated":"{{this.output.generated}}"}}',
+       '{"function_name":"document_generate_from_template","params":{"template_id":8,"linkable_type":"case","linkable_id":"{{case_id}}","on_missing":"task","output_var":"notice"},"set_vars":{"notice_generated":"{{this.output.generated}}"}}',
        NULL
   FROM workflows w WHERE w.name = 'Notice of Filing -> client';
 
@@ -350,7 +350,7 @@ SELECT r.id, 'start Notice of Filing workflow', 0, 1, 'workflow',
 --      3 Docket for the subject line    (custom_code — the fn column reads NULL)
 --      4 Generate the notice            document_generate_from_template
 --                                       template_id must be a NUMBER — not a
---                                       string, not @@TEMPLATE_ID@@
+--                                       string, not 8
 --      5 Have a notice and an address?  evaluate_condition  then=6  else=null
 --      6 Email the notice to the client send_email
 --      7 Log it on the case             create_log
