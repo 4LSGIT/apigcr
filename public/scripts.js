@@ -3718,6 +3718,12 @@ async function CaseAdoptDialog(value, onDone = null) {
         a "Create new contact" button, and [Cancel] [Attach].
      3. Attach: POST /api/contact-{phones|emails} (force in query). On 409
         conflict → confirm force-transfer → retry with ?force=true.
+        On 400 with body.same_contact (the chosen contact ALREADY holds the
+        value as an active row, its start_date just doesn't reach the log) →
+        offer to backdate that row's start_date to the chosen date via
+        PATCH /api/contact-{phones|emails}/:id instead of stacking a
+        duplicate row. If the existing row already covers the chosen date,
+        nothing to write — the feed row was stale; re-render via onDone.
         On success → onDone({action:'attached', contact_id, force_used}).
      4. Create new: close, call newContact with the value + chosen start date
         prefilled (and duplicate='duplicate' so a matching value still creates).
@@ -3898,7 +3904,54 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
   } catch (err) {
     // apiSend throws ApiError with err.status + err.body (parsed JSON).
     // The dedicated routes surface the service's conflict descriptor as
-    // response.conflict on a 409.
+    // response.conflict on a 409, and the same-contact marker as
+    // response.same_contact on a 400.
+
+    // ── Same-contact collision: the chosen contact already holds this
+    // value as an active row — the only thing to fix is the window.
+    // Offer to pull the row's start_date back to the chosen date.
+    const sameContact = (err && err.body && err.body.same_contact) || null;
+    if (sameContact) {
+      const rowStart    = sameContact.start_date || null;
+      const recipient   = selected.contact_name || ('contact ' + selected.contact_id);
+      if (rowStart == null || rowStart <= chosenStartDate) {
+        // The existing row already covers the chosen date — the orphan
+        // row in the feed was stale. Nothing to write; re-render.
+        Toast.fire({ icon: 'info', title: 'Already attached',
+                     text: `${recipient} already holds this ${type} for that date.` });
+        if (typeof onDone === 'function') {
+          onDone({ action: 'attached', contact_id: selected.contact_id, force_used: false });
+        }
+        return;
+      }
+      const confirmBackdate = await Swal.fire({
+        customClass: { popup: 'yc-popup' },
+        title: 'Already on this contact',
+        html: `<b>${escAttr(recipient)}</b> already has this ${isPhone ? 'phone' : 'email'}, ` +
+              `starting <b>${escAttr(rowStart)}</b>.<br>` +
+              `Move the start date back to <b>${escAttr(chosenStartDate)}</b>?`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Move start date',
+        cancelButtonText: 'Cancel',
+      });
+      if (!confirmBackdate.isConfirmed) return;
+      try {
+        await P.apiSend(`${endpoint}/${sameContact.id}`, 'PATCH',
+                        { start_date: chosenStartDate });
+      } catch (err2) {
+        // e.g. the overlap guard: a prior holder's window blocks the
+        // backdate — the message names the boundary date to use.
+        Toast.fire({ icon: 'error', title: 'Start-date update failed', text: err2.message || '' });
+        return;
+      }
+      Toast.fire({ icon: 'success', title: 'Start date updated' });
+      if (typeof onDone === 'function') {
+        onDone({ action: 'attached', contact_id: selected.contact_id, force_used: false });
+      }
+      return;
+    }
+
     const conflict = (err && err.body && err.body.conflict) || null;
     const isConflict = (err && err.status === 409) || !!conflict;
     if (!isConflict) {

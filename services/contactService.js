@@ -204,12 +204,16 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
       await recomputePrimaryPhone(conn, collision.contact_id);
     }
 
+    // start_date resolved by the shared helper: NULL for a never-held
+    // number, else last holder's end_date + 1 day (donor just ended
+    // yesterday on the collision path above → starts today).
+    const startDate = await phoneSvc.resolveStartDate(conn, newPhone);
     try {
       await conn.query(
         `INSERT INTO contact_phones
            (contact_id, phone, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
-        [cid, newPhone, updatedBy, updatedBy]
+         VALUES (?, ?, 1, ?, ?, ?)`,
+        [cid, newPhone, startDate, updatedBy, updatedBy]
       );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
@@ -312,12 +316,14 @@ async function _propagateEmail(conn, contactId, newEmail, updatedBy) {
       await recomputePrimaryEmail(conn, collision.contact_id);
     }
 
+    // start_date resolved by the shared helper (see _propagatePhone).
+    const startDate = await emailSvc.resolveStartDate(conn, newEmail);
     try {
       await conn.query(
         `INSERT INTO contact_emails
            (contact_id, email, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
-        [cid, newEmail, updatedBy, updatedBy]
+         VALUES (?, ?, 1, ?, ?, ?)`,
+        [cid, newEmail, startDate, updatedBy, updatedBy]
       );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
@@ -907,16 +913,20 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
     } else {
       rowIsPrimary = old.is_primary;
     }
+    const newPhoneValue = 'phone' in inc ? inc.phone : old.phone;
     const row = {
-      phone:       'phone'       in inc ? inc.phone       : old.phone,
+      phone:       newPhoneValue,
       label:       'label'       in inc ? inc.label       : old.label,
       is_primary:  rowIsPrimary,
       sms_optout:  'sms_optout'  in inc ? inc.sms_optout  : old.sms_optout,
       mms_capable: 'mms_capable' in inc ? inc.mms_capable : old.mms_capable,
       verified:    'verified'    in inc ? inc.verified    : old.verified,
-      // Fresh row → start_date today (via COALESCE in SQL),
-      // end_date null, end_reason null.
-      start_date:  null,
+      // Fresh window for the new value: NULL for a never-held number,
+      // else last holder's end_date + 1 day; a caller-supplied
+      // start_date is overlap-validated. end_date null, end_reason null.
+      start_date:  await phoneSvc.resolveStartDate(
+                     conn, newPhoneValue,
+                     inc.start_date != null ? inc.start_date : null),
       notes:       'notes'       in inc ? inc.notes       : old.notes,
     };
     try {
@@ -925,7 +935,7 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
            (contact_id, phone, label, is_primary,
             sms_optout, mms_capable, verified,
             start_date, notes, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [cid, row.phone, row.label, row.is_primary,
          row.sms_optout, row.mms_capable, row.verified,
          row.start_date, row.notes, userId, userId]
@@ -948,16 +958,17 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
     // (aggregate API does NOT auto-promote — that's only the dedicated
     // create route's behavior).
     const isPrimary = v.is_primary === undefined ? 0 : v.is_primary;
+    const startDate = await phoneSvc.resolveStartDate(conn, v.phone, v.start_date);
     try {
       await conn.query(
         `INSERT INTO contact_phones
            (contact_id, phone, label, is_primary,
             sms_optout, mms_capable, verified,
             start_date, notes, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [cid, v.phone, v.label, isPrimary,
          v.sms_optout, v.mms_capable, v.verified,
-         v.start_date, v.notes, userId, userId]
+         startDate, v.notes, userId, userId]
       );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
@@ -981,6 +992,17 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
                     && upd.current.end_date === null;
     if (beingEnded && upd.current.is_primary === 1) {
       v.is_primary = 0;
+    }
+
+    // start_date guard (window integrity) — mirrors the dedicated PATCH.
+    if ('start_date' in v) {
+      const ns     = phoneSvc.ymd(v.start_date);
+      const effEnd = phoneSvc.ymd('end_date' in v ? v.end_date : upd.current.end_date);
+      if (ns != null && effEnd != null && ns > effEnd) {
+        throw new Error(`Cannot update phone row ${upd.id}: start_date must be on or before end_date`);
+      }
+      await phoneSvc.assertNoOwnershipOverlap(conn, upd.current.phone, ns, effEnd, { excludeId: upd.id });
+      v.start_date = ns;
     }
 
     const setKeys = Object.keys(v).filter(k => k !== 'phone');
@@ -1296,13 +1318,17 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
     } else {
       rowIsPrimary = old.is_primary;
     }
+    const newEmailValue = 'email' in inc ? inc.email : old.email;
     const row = {
-      email:        'email'        in inc ? inc.email        : old.email,
+      email:        newEmailValue,
       label:        'label'        in inc ? inc.label        : old.label,
       is_primary:   rowIsPrimary,
       email_optout: 'email_optout' in inc ? inc.email_optout : old.email_optout,
       verified:     'verified'     in inc ? inc.verified     : old.verified,
-      start_date:   null,
+      // Fresh window for the new value (see phone step E note).
+      start_date:   await emailSvc.resolveStartDate(
+                      conn, newEmailValue,
+                      inc.start_date != null ? inc.start_date : null),
       notes:        'notes'        in inc ? inc.notes        : old.notes,
     };
     try {
@@ -1311,7 +1337,7 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
            (contact_id, email, label, is_primary,
             email_optout, verified,
             start_date, notes, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [cid, row.email, row.label, row.is_primary,
          row.email_optout, row.verified,
          row.start_date, row.notes, userId, userId]
@@ -1331,16 +1357,17 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
   for (const ins of plan.inserts) {
     const v = ins.validated;
     const isPrimary = v.is_primary === undefined ? 0 : v.is_primary;
+    const startDate = await emailSvc.resolveStartDate(conn, v.email, v.start_date);
     try {
       await conn.query(
         `INSERT INTO contact_emails
            (contact_id, email, label, is_primary,
             email_optout, verified,
             start_date, notes, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [cid, v.email, v.label, isPrimary,
          v.email_optout, v.verified,
-         v.start_date, v.notes, userId, userId]
+         startDate, v.notes, userId, userId]
       );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
@@ -1363,6 +1390,17 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
                     && upd.current.end_date === null;
     if (beingEnded && upd.current.is_primary === 1) {
       v.is_primary = 0;
+    }
+
+    // start_date guard (window integrity) — mirrors the dedicated PATCH.
+    if ('start_date' in v) {
+      const ns     = emailSvc.ymd(v.start_date);
+      const effEnd = emailSvc.ymd('end_date' in v ? v.end_date : upd.current.end_date);
+      if (ns != null && effEnd != null && ns > effEnd) {
+        throw new Error(`Cannot update email row ${upd.id}: start_date must be on or before end_date`);
+      }
+      await emailSvc.assertNoOwnershipOverlap(conn, upd.current.email, ns, effEnd, { excludeId: upd.id });
+      v.start_date = ns;
     }
 
     const setKeys = Object.keys(v).filter(k => k !== 'email');
@@ -2038,11 +2076,15 @@ async function createContact(db, {
         await recomputePrimaryPhone(conn, collision.contact_id);
       }
 
+      // start_date: caller-supplied (orphan-adopt "create new" prefill,
+      // overlap-validated) or auto-resolved (NULL for a never-held
+      // number, else last holder's end + 1 day).
+      const phoneStart = await phoneSvc.resolveStartDate(conn, normalizedPhone, phone_start_date);
       await conn.query(
         `INSERT INTO contact_phones
            (contact_id, phone, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, COALESCE(?, CURDATE()), ?, ?)`,
-        [newId, normalizedPhone, phone_start_date, userId, userId]
+         VALUES (?, ?, 1, ?, ?, ?)`,
+        [newId, normalizedPhone, phoneStart, userId, userId]
       );
       await recomputePrimaryPhone(conn, newId);
     }
@@ -2069,11 +2111,13 @@ async function createContact(db, {
         await recomputePrimaryEmail(conn, collision.contact_id);
       }
 
+      // start_date: see the phone block above.
+      const emailStart = await emailSvc.resolveStartDate(conn, normalizedEmail, email_start_date);
       await conn.query(
         `INSERT INTO contact_emails
            (contact_id, email, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, COALESCE(?, CURDATE()), ?, ?)`,
-        [newId, normalizedEmail, email_start_date, userId, userId]
+         VALUES (?, ?, 1, ?, ?, ?)`,
+        [newId, normalizedEmail, emailStart, userId, userId]
       );
       await recomputePrimaryEmail(conn, newId);
     }

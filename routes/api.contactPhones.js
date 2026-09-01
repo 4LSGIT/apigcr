@@ -45,6 +45,7 @@ function mapErrorStatus(err) {
       m.includes('forbidden')      ||
       m.includes('Cannot update')  ||
       m.includes('would violate')  ||
+      m.includes('overlap')       ||
       m.includes('already has')   ||
       m.includes('concurrent')    ||
       m.includes('Concurrent')) {
@@ -106,6 +107,7 @@ router.post('/api/contact-phones', jwtOrApiKey, async (req, res) => {
     const status = mapErrorStatus(err);
     const body = { status: 'error', message: err.message };
     if (err.conflict) body.conflict = err.conflict;
+    if (err.same_contact) body.same_contact = err.same_contact;
     res.status(status).json(body);
   }
 });

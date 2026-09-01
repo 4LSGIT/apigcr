@@ -80,6 +80,112 @@ function _toBit(v) {
   return v ? 1 : 0;
 }
 
+/**
+ * Format a DATE-ish value ('YYYY-MM-DD' string, ISO string, or a JS Date
+ * as mysql2 returns for DATE columns) to 'YYYY-MM-DD', or null. Local
+ * components for Date inputs — mysql2 materializes DATE at local midnight.
+ */
+function ymd(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+  }
+  return String(v).slice(0, 10);
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Ownership-window helpers (start_date defaulting + overlap guard)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Throw (→ 400 via 'overlap' in the routes' mapErrorStatus) when the
+ * window [startDate, endDate] would overlap any OTHER contact_phones
+ * row for the same number. NULL startDate = -infinity; NULL endDate =
+ * +infinity. Bounds are inclusive, mirroring the attribution window
+ * math in logService (start_date <= DATE(log_date) <= end_date).
+ *
+ * Why this matters: overlapping windows double-match in the
+ * date-windowed contact_phones JOINs — listLog's LEFT JOIN duplicates
+ * global-feed rows and _buildContactLogWhere attributes one log to two
+ * contacts.
+ *
+ * Zero-duration transfer artifacts (end_date < start_date, produced by
+ * the same-day force-transfer donor-end rule) can never match a log,
+ * so they never block.
+ *
+ * @param {object} conn - open connection/transaction
+ * @param {string} phone - normalized 10 digits
+ * @param {string|null} startDate - 'YYYY-MM-DD' or null (open start)
+ * @param {string|null} endDate   - 'YYYY-MM-DD' or null (open end)
+ * @param {object} [opts]
+ * @param {number|null} [opts.excludeId] - the row being updated, if any
+ */
+async function assertNoOwnershipOverlap(conn, phone, startDate, endDate, { excludeId = null } = {}) {
+  const [[blocker]] = await conn.query(
+    `SELECT cp.id, cp.contact_id, c.contact_name,
+            DATE_FORMAT(cp.start_date, '%Y-%m-%d') AS start_date,
+            DATE_FORMAT(cp.end_date,   '%Y-%m-%d') AS end_date
+       FROM contact_phones cp
+       JOIN contacts c ON c.contact_id = cp.contact_id
+      WHERE cp.phone = ?
+        AND cp.id <> COALESCE(?, -1)
+        AND (? IS NULL OR cp.start_date IS NULL OR cp.start_date <= ?)
+        AND (? IS NULL OR cp.end_date   IS NULL OR cp.end_date   >= ?)
+        AND NOT (cp.start_date IS NOT NULL AND cp.end_date IS NOT NULL
+                 AND cp.end_date < cp.start_date)
+      ORDER BY (cp.end_date IS NULL) DESC, cp.end_date DESC
+      LIMIT 1`,
+    [phone, excludeId, endDate, endDate, startDate, startDate]
+  );
+  if (!blocker) return;
+  const who  = blocker.contact_name || `contact ${blocker.contact_id}`;
+  const held = `${blocker.start_date || 'the beginning'} to ${blocker.end_date || 'present'}`;
+  const e = new Error(
+    `start_date would overlap ${who}'s ownership of this number (${held}).` +
+    (blocker.end_date ? ` Use a date after ${blocker.end_date}.` : '')
+  );
+  e.field = 'start_date';
+  throw e;
+}
+
+/**
+ * Resolve the start_date for a NEW active ownership window of `phone`,
+ * inside an open transaction. Call AFTER any donor-end UPDATE in the
+ * same transaction so the just-ended row participates.
+ *
+ *   requested == null → auto default:
+ *       - number never held by anyone (no rows at all) → NULL
+ *         ("since forever" — matches the backfill convention on most
+ *         existing rows; lets pre-existing orphan logs for the number
+ *         attribute to this contact)
+ *       - number previously held (ended rows exist) → MAX(end_date) + 1 day
+ *         (abuts, never overlaps, the last holder's window)
+ *   requested != null → validated via assertNoOwnershipOverlap against
+ *       the open window [requested, +inf), then returned normalized.
+ *
+ * @param {object} conn
+ * @param {string} phone - normalized 10 digits
+ * @param {string|null} [requested] - caller-supplied 'YYYY-MM-DD' or null
+ * @param {object} [opts]
+ * @param {number|null} [opts.excludeId]
+ * @returns {Promise<string|null>} 'YYYY-MM-DD' or null
+ */
+async function resolveStartDate(conn, phone, requested = null, { excludeId = null } = {}) {
+  if (requested == null) {
+    const [[row]] = await conn.query(
+      `SELECT DATE_FORMAT(DATE_ADD(MAX(end_date), INTERVAL 1 DAY), '%Y-%m-%d') AS next_start
+         FROM contact_phones
+        WHERE phone = ? AND id <> COALESCE(?, -1)`,
+      [phone, excludeId]
+    );
+    return (row && row.next_start != null) ? row.next_start : null;
+  }
+  const startDate = ymd(requested);
+  await assertNoOwnershipOverlap(conn, phone, startDate, null, { excludeId });
+  return startDate;
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // validatePhoneRow — pure validator (no DB access)
@@ -273,7 +379,10 @@ async function getContactPhone(db, phoneId) {
  *   - Active-uniqueness collision, two cases:
  *       (a) same-contact   — the contact already has this phone as an
  *           active row. Throws 400 ("already has...") directing the
- *           caller to PATCH/END the existing row instead.
+ *           caller to PATCH/END the existing row instead. The error
+ *           carries a .same_contact = { id, start_date } marker (route
+ *           surfaces it in the body) so UIs can offer a start-date
+ *           backdate PATCH on the existing row without a second lookup.
  *       (b) cross-contact  — phone is active on a DIFFERENT contact.
  *           Throws (with .conflict attached → 409) unless force=true,
  *           in which case the donor's row is ended ('transferred') and
@@ -316,7 +425,12 @@ async function getContactPhone(db, phoneId) {
  * @param {boolean} [fields.sms_optout=false]
  * @param {boolean} [fields.mms_capable=true]
  * @param {boolean} [fields.verified=false]
- * @param {string}  [fields.start_date] - DATE string; defaults to today via SQL CURDATE()
+ * @param {string}  [fields.start_date] - DATE string. Omitted → resolved by
+ *                                        resolveStartDate (NULL for a never-
+ *                                        held number, else last holder's
+ *                                        end_date + 1 day). Supplied →
+ *                                        rejected if it would overlap
+ *                                        another row's ownership window.
  * @param {string}  [fields.notes='']
  * @param {object}  [opts]
  * @param {boolean} [opts.force=false]      - silently transfer on global collision
@@ -351,7 +465,8 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     //       force=true ends the donor's row + recomputes donor mirror.
     let transferredFrom = null;
     const [[collision]] = await conn.query(
-      `SELECT cp.id AS phone_id, cp.contact_id, c.contact_name
+      `SELECT cp.id AS phone_id, cp.contact_id, c.contact_name,
+              DATE_FORMAT(cp.start_date, '%Y-%m-%d') AS start_date
          FROM contact_phones cp
          JOIN contacts c ON c.contact_id = cp.contact_id
         WHERE cp.phone = ? AND cp.end_date IS NULL`,
@@ -361,11 +476,17 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     if (collision) {
       if (collision.contact_id === cid) {
         // (a) same-contact: caller intent is ambiguous — refuse and
-        // direct them to PATCH the existing row instead.
-        throw new Error(
+        // direct them to PATCH the existing row instead. The marker
+        // lets the route/UI offer that PATCH (start-date backdate).
+        const err = new Error(
           'This contact already has this phone as an active row. ' +
           'End or update the existing row first.'
         );
+        err.same_contact = {
+          id:         collision.phone_id,
+          start_date: collision.start_date || null,
+        };
+        throw err;
       }
 
       // (b) cross-contact
@@ -428,7 +549,11 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
       );
     }
 
-    // 4. INSERT new row
+    // 4. Resolve start_date + INSERT new row. Resolution runs AFTER the
+    // collision block so a force-transferred donor's fresh end_date
+    // participates in the default (yesterday → new row starts today).
+    const startDate = await resolveStartDate(conn, validated.phone, validated.start_date);
+
     let newId;
     try {
       const [insertResult] = await conn.query(
@@ -436,13 +561,13 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
            (contact_id, phone, label, is_primary,
             sms_optout, mms_capable, verified,
             start_date, notes, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           cid, validated.phone, validated.label, isPrimary,
           validated.sms_optout,
           validated.mms_capable,
           validated.verified,
-          validated.start_date,
+          startDate,
           validated.notes,
           createdBy, createdBy,
         ]
@@ -492,8 +617,8 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
  * Update lifecycle fields on a contact_phones row.
  *
  * Allowed:   label, is_primary, sms_optout, mms_capable, verified,
- *            end_date, end_reason, notes
- * Forbidden: id, contact_id, phone, start_date, created_*, updated_*,
+ *            start_date, end_date, end_reason, notes
+ * Forbidden: id, contact_id, phone, created_*, updated_*,
  *            generated columns. Changing the phone value is not supported
  *            via PATCH — delete and re-create instead.
  *            (NOTE: the AGGREGATE PATCH route in api.contacts.js DOES
@@ -504,6 +629,10 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
  *   - is_primary 0→1 → demotes any existing primary-active row first
  *   - end_date NULL→non-NULL on a primary-active row → also clears
  *     is_primary in the same UPDATE (a row can't be "primary ended")
+ *   - start_date change → guarded: must be <= end_date (when both set)
+ *     and must not overlap any other row's window for the same number
+ *     (assertNoOwnershipOverlap). NULL means "since forever" — only
+ *     valid when no other row has ever held the number.
  *
  * Mirror recompute fires if is_primary or end_date appears in fields.
  *
@@ -520,7 +649,7 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
   }
 
   const ALLOWED = ['label', 'is_primary', 'sms_optout', 'mms_capable',
-                   'verified', 'end_date', 'end_reason', 'notes'];
+                   'verified', 'start_date', 'end_date', 'end_reason', 'notes'];
   const unknown = Object.keys(fields).filter(k => !ALLOWED.includes(k));
   if (unknown.length) {
     throw new Error(`Cannot update ${unknown.join(', ')}`);
@@ -539,6 +668,20 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
       [phoneId]
     );
     if (!current) throw new Error(`Phone ${phoneId} not found`);
+
+    // start_date guard (window integrity). Effective end = the incoming
+    // end_date when this same PATCH sets it, else the stored one.
+    if ('start_date' in incoming) {
+      const newStart = ymd(incoming.start_date);
+      const effEnd = ('end_date' in incoming) ? ymd(incoming.end_date) : ymd(current.end_date);
+      if (newStart != null && effEnd != null && newStart > effEnd) {
+        const e = new Error('start_date must be on or before end_date');
+        e.field = 'start_date';
+        throw e;
+      }
+      await assertNoOwnershipOverlap(conn, current.phone, newStart, effEnd, { excludeId: current.id });
+      incoming.start_date = newStart;
+    }
 
     // Detect transitions (validator already coerced to 0/1 ints)
     const becomingPrimary = 'is_primary' in incoming
@@ -666,4 +809,8 @@ module.exports = {
   normalizePhone,
   validatePhoneRow,
   PHONE_LABELS,
+  // Ownership-window helpers (reused by contactService's insert paths)
+  resolveStartDate,
+  assertNoOwnershipOverlap,
+  ymd,
 };

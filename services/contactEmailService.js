@@ -79,6 +79,82 @@ function _toBit(v) {
   return v ? 1 : 0;
 }
 
+/**
+ * Format a DATE-ish value ('YYYY-MM-DD' string, ISO string, or a JS Date
+ * as mysql2 returns for DATE columns) to 'YYYY-MM-DD', or null.
+ */
+function ymd(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+  }
+  return String(v).slice(0, 10);
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Ownership-window helpers (start_date defaulting + overlap guard)
+// Mirrors contactPhoneService — see that file's JSDoc for rationale.
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Throw (→ 400 via 'overlap' in the routes' mapErrorStatus) when the
+ * window [startDate, endDate] would overlap any OTHER contact_emails
+ * row for the same address. NULL bounds are open; bounds are inclusive,
+ * mirroring the attribution window math in logService. Zero-duration
+ * transfer artifacts (end_date < start_date) never block.
+ */
+async function assertNoOwnershipOverlap(conn, email, startDate, endDate, { excludeId = null } = {}) {
+  const [[blocker]] = await conn.query(
+    `SELECT ce.id, ce.contact_id, c.contact_name,
+            DATE_FORMAT(ce.start_date, '%Y-%m-%d') AS start_date,
+            DATE_FORMAT(ce.end_date,   '%Y-%m-%d') AS end_date
+       FROM contact_emails ce
+       JOIN contacts c ON c.contact_id = ce.contact_id
+      WHERE ce.email = ?
+        AND ce.id <> COALESCE(?, -1)
+        AND (? IS NULL OR ce.start_date IS NULL OR ce.start_date <= ?)
+        AND (? IS NULL OR ce.end_date   IS NULL OR ce.end_date   >= ?)
+        AND NOT (ce.start_date IS NOT NULL AND ce.end_date IS NOT NULL
+                 AND ce.end_date < ce.start_date)
+      ORDER BY (ce.end_date IS NULL) DESC, ce.end_date DESC
+      LIMIT 1`,
+    [email, excludeId, endDate, endDate, startDate, startDate]
+  );
+  if (!blocker) return;
+  const who  = blocker.contact_name || `contact ${blocker.contact_id}`;
+  const held = `${blocker.start_date || 'the beginning'} to ${blocker.end_date || 'present'}`;
+  const e = new Error(
+    `start_date would overlap ${who}'s ownership of this address (${held}).` +
+    (blocker.end_date ? ` Use a date after ${blocker.end_date}.` : '')
+  );
+  e.field = 'start_date';
+  throw e;
+}
+
+/**
+ * Resolve the start_date for a NEW active ownership window of `email`,
+ * inside an open transaction. Call AFTER any donor-end UPDATE.
+ * requested == null → NULL for a never-held address, else
+ * MAX(end_date) + 1 day. requested != null → overlap-validated.
+ *
+ * @returns {Promise<string|null>} 'YYYY-MM-DD' or null
+ */
+async function resolveStartDate(conn, email, requested = null, { excludeId = null } = {}) {
+  if (requested == null) {
+    const [[row]] = await conn.query(
+      `SELECT DATE_FORMAT(DATE_ADD(MAX(end_date), INTERVAL 1 DAY), '%Y-%m-%d') AS next_start
+         FROM contact_emails
+        WHERE email = ? AND id <> COALESCE(?, -1)`,
+      [email, excludeId]
+    );
+    return (row && row.next_start != null) ? row.next_start : null;
+  }
+  const startDate = ymd(requested);
+  await assertNoOwnershipOverlap(conn, email, startDate, null, { excludeId });
+  return startDate;
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // validateEmailRow — pure validator (no DB access)
@@ -338,7 +414,8 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
     // 1. Active-uniqueness collision check
     let transferredFrom = null;
     const [[collision]] = await conn.query(
-      `SELECT ce.id AS email_id, ce.contact_id, c.contact_name
+      `SELECT ce.id AS email_id, ce.contact_id, c.contact_name,
+              DATE_FORMAT(ce.start_date, '%Y-%m-%d') AS start_date
          FROM contact_emails ce
          JOIN contacts c ON c.contact_id = ce.contact_id
         WHERE ce.email = ? AND ce.end_date IS NULL`,
@@ -347,11 +424,18 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
 
     if (collision) {
       if (collision.contact_id === cid) {
-        // (a) same-contact: refuse and direct to PATCH the existing row
-        throw new Error(
+        // (a) same-contact: refuse and direct to PATCH the existing row.
+        // The marker lets the route/UI offer that PATCH (start-date
+        // backdate) without a second lookup.
+        const err = new Error(
           'This contact already has this email as an active row. ' +
           'End or update the existing row first.'
         );
+        err.same_contact = {
+          id:         collision.email_id,
+          start_date: collision.start_date || null,
+        };
+        throw err;
       }
 
       // (b) cross-contact
@@ -414,7 +498,11 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
       );
     }
 
-    // 4. INSERT new row
+    // 4. Resolve start_date + INSERT new row. Resolution runs AFTER the
+    // collision block so a force-transferred donor's fresh end_date
+    // participates in the default (yesterday → new row starts today).
+    const startDate = await resolveStartDate(conn, validated.email, validated.start_date);
+
     let newId;
     try {
       const [insertResult] = await conn.query(
@@ -422,12 +510,12 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
            (contact_id, email, label, is_primary,
             email_optout, verified,
             start_date, notes, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           cid, validated.email, validated.label, isPrimary,
           validated.email_optout,
           validated.verified,
-          validated.start_date,
+          startDate,
           validated.notes,
           createdBy, createdBy,
         ]
@@ -473,9 +561,9 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
 /**
  * Update lifecycle fields on a contact_emails row.
  *
- * Allowed:   label, is_primary, email_optout, verified, end_date,
- *            end_reason, notes
- * Forbidden: id, contact_id, email, start_date, created_*, updated_*,
+ * Allowed:   label, is_primary, email_optout, verified, start_date,
+ *            end_date, end_reason, notes
+ * Forbidden: id, contact_id, email, created_*, updated_*,
  *            generated columns. Changing the email value is not supported
  *            via PATCH — delete and re-create instead.
  *            (NOTE: the AGGREGATE PATCH route in api.contacts.js DOES
@@ -486,6 +574,8 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
  *   - is_primary 0→1 → demotes any existing primary-active row first
  *   - end_date NULL→non-NULL on a primary-active row → also clears
  *     is_primary in the same UPDATE
+ *   - start_date change → guarded: must be <= end_date (when both set)
+ *     and must not overlap any other row's window for the same address.
  *
  * Mirror recompute fires if is_primary or end_date appears in fields.
  *
@@ -502,7 +592,7 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
   }
 
   const ALLOWED = ['label', 'is_primary', 'email_optout',
-                   'verified', 'end_date', 'end_reason', 'notes'];
+                   'verified', 'start_date', 'end_date', 'end_reason', 'notes'];
   const unknown = Object.keys(fields).filter(k => !ALLOWED.includes(k));
   if (unknown.length) {
     throw new Error(`Cannot update ${unknown.join(', ')}`);
@@ -518,6 +608,20 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
       [emailId]
     );
     if (!current) throw new Error(`Email ${emailId} not found`);
+
+    // start_date guard (window integrity). Effective end = the incoming
+    // end_date when this same PATCH sets it, else the stored one.
+    if ('start_date' in incoming) {
+      const newStart = ymd(incoming.start_date);
+      const effEnd = ('end_date' in incoming) ? ymd(incoming.end_date) : ymd(current.end_date);
+      if (newStart != null && effEnd != null && newStart > effEnd) {
+        const e = new Error('start_date must be on or before end_date');
+        e.field = 'start_date';
+        throw e;
+      }
+      await assertNoOwnershipOverlap(conn, current.email, newStart, effEnd, { excludeId: current.id });
+      incoming.start_date = newStart;
+    }
 
     const becomingPrimary = 'is_primary' in incoming
       && incoming.is_primary === 1
@@ -626,4 +730,8 @@ module.exports = {
   normalizeEmail,
   validateEmailRow,
   EMAIL_LABELS,
+  // Ownership-window helpers (reused by contactService's insert paths)
+  resolveStartDate,
+  assertNoOwnershipOverlap,
+  ymd,
 };
