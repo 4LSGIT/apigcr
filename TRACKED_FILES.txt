@@ -774,6 +774,7 @@ tests/genTypeKeyBackfill.test.js
 tests/helpers/bcPolyfill.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
+tests/helpers/u6aEventsDb.js
 tests/hookMapper.test.js
 tests/hookReceiver.splitPhase.test.js
 tests/hookService.duplicate.test.js
@@ -847,6 +848,10 @@ tests/triggerService.test.js
 tests/typeKeyVocabulary.test.js
 tests/unifiedEventsU5.booking.test.js
 tests/unifiedEventsU5.cascade.test.js
+tests/unifiedEventsU6a.consumers.test.js
+tests/unifiedEventsU6a.resolution.test.js
+tests/unifiedEventsU6a.supersede.test.js
+tests/unifiedEventsU6a.sweep.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js

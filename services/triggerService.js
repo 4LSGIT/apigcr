@@ -242,20 +242,22 @@ const EVENT_TYPES = {
   },
   'calendar.rescheduled': {
     label: 'Calendar item rescheduled',
-    description: "Fires from apptService.rescheduleAppt for the PREDECESSOR appt once its successor exists (data is the predecessor row, data.state='superseded'; the successor separately fires calendar.scheduled), and from eventService.updateEvent when event_date / event_time / event_all_day changed AND the row is still live afterwards — a PATCH that moves the date and cancels in one call emits only calendar.cancelled. Event supersession (superseded_by_event_id) has NO writer yet; U6/U7 will emit this with extra.superseded_by.",
+    description: "Fires from apptService.rescheduleAppt for the PREDECESSOR appt once its successor exists (data is the predecessor row, data.state='superseded'; the successor separately fires calendar.scheduled); from eventService.updateEvent when event_date / event_time / event_all_day changed AND the row is still live afterwards (extra.via='update' — a PATCH that moves the date and cancels in one call emits only calendar.cancelled); and from eventService.supersedeEvent (U6a, extra.via='supersede') for the PREDECESSOR event once superseded_by_event_id is stamped — data is the predecessor row with data.state='superseded' and data.superseded_by_event_id set; the successor fired its own calendar.scheduled first. Singleton supersession in createEvent (flag unified_singleton_enabled) reaches this through supersedeEvent with extra.reason='rescheduled'.",
     fields: [
       ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
       { path: 'extra.legacy_event',    label: "'appt.rescheduled' (appt rows only)" },
       { path: 'extra.new_source_id',   label: 'Successor appt id (appt rows only)' },
-      { path: 'extra.new_starts_at',   label: 'Successor start, firm-local (appt rows only)' },
+      { path: 'extra.new_starts_at',   label: 'Successor start, firm-local (appt rows; event rows via supersede)' },
       { path: 'extra.prior_starts_at', label: 'Start before the move' },
-      { path: 'extra.via',             label: "'update' (event rows only)" },
-      { path: 'extra.prior_all_day',   label: 'All-day flag before the move (event rows only)' },
+      { path: 'extra.via',             label: "'update' | 'supersede' (event rows only)" },
+      { path: 'extra.prior_all_day',   label: 'All-day flag before the move (event rows, via update only)' },
+      { path: 'extra.superseded_by',   label: 'Successor event id (event rows, via supersede only)' },
+      { path: 'extra.reason',          label: "'rescheduled' | 'duplicate' — supersede_reason (event rows, via supersede only)" },
     ],
   },
   'calendar.cancelled': {
     label: 'Calendar item cancelled',
-    description: "Fires from apptService.cancelAppt (beside appt.cancelled), from eventService.cancelEvent, and from eventService.updateEvent when event_status transitions to Canceled via PATCH. data.resolution is 'cancelled' unless events.event_resolution says 'moot' (v0.5 §3.7 — that column has no writer until U6).",
+    description: "Fires from apptService.cancelAppt (beside appt.cancelled), from eventService.cancelEvent, and from eventService.updateEvent when event_status transitions to Canceled via PATCH. data.resolution is 'cancelled' unless events.event_resolution says 'moot' (v0.5 §3.7 — since U6a every cancel writes the column: 'cancelled' by default, 'moot' when the caller says so on a deadline).",
     fields: [
       ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
       { path: 'extra.legacy_event', label: "'appt.cancelled' (appt rows only)" },
@@ -266,7 +268,7 @@ const EVENT_TYPES = {
   },
   'calendar.resolved': {
     label: 'Calendar item resolved',
-    description: "The item happened, one way or another. Fires from apptService.markAttended (data.resolution='attended') and apptService.markNoShow (data.resolution='no_show'), from eventService.completeEvent, and from eventService.updateEvent when event_status transitions to Completed via PATCH. For events data.resolution is events.event_resolution when set, else the v0.5 §3.7 fallback: kind 'deadline' → 'met', anything else → 'held'. Filter data.resolution, not data.status — attended and no_show are one event here.",
+    description: "The item happened, one way or another. Fires from apptService.markAttended (data.resolution='attended') and apptService.markNoShow (data.resolution='no_show'), from eventService.completeEvent, and from eventService.updateEvent when event_status transitions to Completed via PATCH. For events data.resolution is events.event_resolution, which every completion writes since U6a (default: kind 'deadline' → 'met', anything else → 'held'; the nightly sweep_calendar_missed job writes 'missed' on past-dated deadlines, source='sweep'). Filter data.resolution, not data.status — attended and no_show are one event here.",
     fields: [
       ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
       { path: 'extra.legacy_event', label: "'appt.attended' | 'appt.no_show' (appt rows only)" },

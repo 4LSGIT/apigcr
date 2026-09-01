@@ -8,8 +8,12 @@
  * GET    /api/events/:id             single event (with resolved link label)
  * POST   /api/events                 create
  * PATCH  /api/events/:id             update fields (whitelisted)
- * PATCH  /api/events/:id/complete    mark Completed
- * PATCH  /api/events/:id/cancel      mark Canceled (optional body { delete_gcal })
+ * PATCH  /api/events/:id/complete    mark Completed (optional body { resolution })
+ * PATCH  /api/events/:id/cancel      mark Canceled (optional body { delete_gcal, resolution })
+ *
+ * U6a: GET accepts include_superseded=1 (listEvents' includeSuperseded);
+ * /complete and /cancel accept { resolution } (v0.5 §3.7 — validated against
+ * the row's kind by the service; invalid → 400 via err.status).
  *
  * Events are first-class dated case/contact obligations (hearings, deadlines,
  * internal milestones) — distinct from appts (meetings) and tasks (to-dos).
@@ -36,6 +40,7 @@ router.get('/api/events', jwtOrApiKey, async (req, res) => {
       sort:      req.query.sort || 'asc',
       limit:     req.query.limit  || 100,
       offset:    req.query.offset || 0,
+      includeSuperseded: req.query.include_superseded === '1' || req.query.include_superseded === 'true',
     });
     res.json(result);  // { data, total }
   } catch (err) {
@@ -183,12 +188,21 @@ router.patch('/api/events/:id(\\d+)/complete', jwtOrApiKey, async (req, res) => 
   const eventId = parseInt(req.params.id, 10);
   if (!eventId) return res.status(400).json({ status: 'error', message: 'Invalid event ID' });
 
+  // `resolution` (U6a): absent → the service writes the §3.7 default.
+  const complOpts = {};
+  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'resolution')) {
+    complOpts.resolution = req.body.resolution;
+  }
+
   try {
-    const result = await eventService.completeEvent(req.db, eventId, req.auth?.userId || 0);
+    const result = await eventService.completeEvent(req.db, eventId, req.auth?.userId || 0, complOpts);
     res.json({ status: 'success', title: 'Done!', message: 'Event marked Completed.', data: result.event });
   } catch (err) {
     console.error('PATCH /api/events/:id/complete error:', err);
-    const status = err.message.includes('not found') ? 404
+    // A numeric err.status set by the service wins (U2 convention; U6a uses
+    // it for an invalid resolution → 400). Message heuristics unchanged.
+    const status = typeof err.status === 'number' ? err.status
+                 : err.message.includes('not found') ? 404
                  : err.message.includes('already') ? 400
                  : 500;
     res.status(status).json({ status: 'error', title: 'Error', message: err.message });
@@ -201,13 +215,19 @@ router.patch('/api/events/:id(\\d+)/cancel', jwtOrApiKey, async (req, res) => {
   if (!eventId) return res.status(400).json({ status: 'error', message: 'Invalid event ID' });
 
   const delete_gcal = req.body && req.body.delete_gcal === false ? false : true;
+  // `resolution` (U6a): 'cancelled' (default) or 'moot' (deadlines only).
+  const cancelOpts = { delete_gcal };
+  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'resolution')) {
+    cancelOpts.resolution = req.body.resolution;
+  }
 
   try {
-    const result = await eventService.cancelEvent(req.db, eventId, req.auth?.userId || 0, { delete_gcal });
+    const result = await eventService.cancelEvent(req.db, eventId, req.auth?.userId || 0, cancelOpts);
     res.json({ status: 'success', title: 'Canceled', message: 'Event canceled.', data: result.event });
   } catch (err) {
     console.error('PATCH /api/events/:id/cancel error:', err);
-    const status = err.message.includes('not found') ? 404
+    const status = typeof err.status === 'number' ? err.status
+                 : err.message.includes('not found') ? 404
                  : err.message.includes('already') ? 400
                  : 500;
     res.status(status).json({ status: 'error', title: 'Error', message: err.message });

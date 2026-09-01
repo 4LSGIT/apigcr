@@ -263,6 +263,8 @@ function localStrToMs(s, zone = FIRM_TZ) {
  * even where the SQL already filters):
  *   firmBlocks — all rows block everyone.
  *   events     — timed (event_all_day=0), event_status='Scheduled',
+ *                superseded_by_event_id NULL (U6a — a rescheduled
+ *                predecessor keeps 'Scheduled'; the pointer is what kills it),
  *                event_with NULL (firm-wide) or === providerId.
  *                Interval = event_date+event_time for event_length minutes,
  *                NULL length → 60 (eventService gcal default). All-day
@@ -293,6 +295,12 @@ function normalizeBusyForProvider(providerId, {
   for (const e of events) {
     if (Number(e.event_all_day) === 1) continue;
     if (e.event_status !== 'Scheduled') continue;
+    // U6a: a superseded row is dead whatever its status says (v0.5 §3.4 —
+    // the pointer, never a status). A rescheduled hearing's predecessor keeps
+    // 'Scheduled' and must not block the provider twice. Callers that pass
+    // rows without the column (older fixtures) hit `undefined != null` →
+    // false → no change.
+    if (e.superseded_by_event_id != null) continue;
     if (e.event_with != null && Number(e.event_with) !== pid) continue;
     if (e.event_time == null || e.event_time === '') continue; // invariant violation — skip
     const start = localStrToMs(`${String(e.event_date).slice(0, 10)} ${e.event_time}`, zone);
@@ -864,13 +872,18 @@ async function getSlots(db, {
     [rangeStartStr, rangeEndStr]
   );
 
+  // superseded_by_event_id: selected AND filtered (U6a). Filtered so the row
+  // never ships; selected so normalizeBusyForProvider's in-memory guard sees
+  // the same shape the SQL does.
   const [evRows] = await db.query(
     `SELECT DATE_FORMAT(event_date, '%Y-%m-%d') AS event_date,
             TIME_FORMAT(event_time, '%H:%i:%s') AS event_time,
-            event_all_day, event_length, event_status, event_with
+            event_all_day, event_length, event_status, event_with,
+            superseded_by_event_id
        FROM events
       WHERE event_all_day = 0
         AND event_status = 'Scheduled'
+        AND superseded_by_event_id IS NULL
         AND (event_with IS NULL OR event_with IN (?))
         AND event_date BETWEEN ? AND ?`,
     [pids, lookbackStr, to]

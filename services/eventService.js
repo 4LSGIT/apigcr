@@ -211,7 +211,7 @@ function _calendarStartsAt(row) {
 function _calendarEnvelope(row, { source = null, actingUserId = 0, extra = null } = {}) {
   const allDay = _calendarAllDay(row);
   // Supersession is a POINTER, never a status (E0a rule) — it decides state
-  // outright. No writer sets it yet; U6/U7 will.
+  // outright. supersedeEvent (U6a) is the writer.
   const isDead = row.superseded_by_event_id != null;
   const kind   = row.kind == null ? null : String(row.kind);
   const st     = _deriveState('event', row, kind, isDead);
@@ -277,6 +277,113 @@ function _calendarEnvelope(row, { source = null, actingUserId = 0, extra = null 
 
 /** Fields whose change is a RESCHEDULE for calendar.* purposes (v0.5 §3.5). */
 const CALENDAR_TIME_FIELDS = new Set(['event_date', 'event_time', 'event_all_day']);
+
+// ─────────────────────────────────────────────────────────────
+// UNIFIED EVENTS U6a — event_resolution writers (v0.5 §3.7, amendment A7)
+//
+// events.event_resolution shipped at U3 with NO writer; the read layer
+// (caseEventService._deriveState) has been deriving the obvious answer from
+// status + kind ever since. From U6a every terminal write STAMPS the column,
+// so post-U6a rows carry a real value and the fallback becomes history.
+//
+// THE VOCABULARY IS §3.7's, PER KIND, AND IT LIVES HERE ONCE. _deriveState
+// exports no allowed-set constant (it is a mapper, not a validator, and
+// caseEventService is a hold-list file), so the sets below are the writer's
+// statement of the same table. tests/unifiedEventsU6a.resolution.test.js pins
+// the DEFAULTS this file writes against what _deriveState derives for the
+// same (status, kind), so the two cannot disagree without a failing test.
+//
+//   kind        Completed may carry      Canceled may carry
+//   hearing     held                     cancelled
+//   conference  held                     cancelled
+//   meeting     held  (interim 341 rows; appts own attended/no_show)
+//   other       held                     cancelled
+//   deadline    met | missed | moot      cancelled | moot
+//   (null kind) held                     cancelled     — unmapped rows resolve as 'other'
+//
+// 'moot' is Canceled-only on deadlines ("the obligation stopped applying");
+// completeEvent never writes it. 'cancelled' is written by cancel paths only.
+// ─────────────────────────────────────────────────────────────
+
+/** Resolutions completeEvent (and a PATCH to Completed) accepts, per kind. */
+const EVENT_RESOLUTIONS_COMPLETED = Object.freeze({
+  hearing:    Object.freeze(['held']),
+  conference: Object.freeze(['held']),
+  meeting:    Object.freeze(['held']),
+  other:      Object.freeze(['held']),
+  deadline:   Object.freeze(['met', 'missed', 'moot']),
+});
+
+/** Resolutions cancelEvent (and a PATCH to Canceled) accepts, per kind. */
+const EVENT_RESOLUTIONS_CANCELED = Object.freeze({
+  hearing:    Object.freeze(['cancelled']),
+  conference: Object.freeze(['cancelled']),
+  meeting:    Object.freeze(['cancelled']),
+  other:      Object.freeze(['cancelled']),
+  deadline:   Object.freeze(['cancelled', 'moot']),
+});
+
+/** kind → the key used in the two tables above (NULL kind reads as 'other'). */
+function _resolutionKind(kind) {
+  const k = kind == null ? '' : String(kind);
+  return Object.prototype.hasOwnProperty.call(EVENT_RESOLUTIONS_COMPLETED, k) ? k : 'other';
+}
+
+/**
+ * The §3.7 default a terminal write stamps when the caller gives none.
+ * Completed: deadline → 'met', else 'held'. Canceled: 'cancelled'. These are
+ * exactly _deriveState's fallbacks, written down.
+ */
+function _defaultResolution(status, kind) {
+  if (status === 'Completed') return _resolutionKind(kind) === 'deadline' ? 'met' : 'held';
+  if (status === 'Canceled')  return 'cancelled';
+  return null;
+}
+
+/**
+ * Validate a caller-supplied resolution against (target status, kind).
+ * Returns the normalized value, or throws an Error with status 400.
+ *
+ *   value undefined / ''  → the default for (status, kind)
+ *   value null            → null, allowed ONLY when status is 'Scheduled'
+ *                           (a live row has nothing to resolve; clearing a
+ *                           stale value on reopen is the one legitimate use)
+ *   status 'Scheduled' + any non-null value → 400
+ */
+function _validateResolution(value, status, kind, { prefix = 'event_resolution' } = {}) {
+  if (value === undefined || value === '') return _defaultResolution(status, kind);
+  if (value === null) {
+    if (status === 'Scheduled') return null;
+    const e = new Error(`${prefix}: cannot clear the resolution on a ${status} event`);
+    e.status = 400;
+    throw e;
+  }
+  const v = String(value).trim().toLowerCase();
+  if (status === 'Scheduled') {
+    const e = new Error(`${prefix}: a Scheduled event cannot carry a resolution (${JSON.stringify(v)})`);
+    e.status = 400;
+    throw e;
+  }
+  const table = status === 'Completed' ? EVENT_RESOLUTIONS_COMPLETED
+              : status === 'Canceled'  ? EVENT_RESOLUTIONS_CANCELED
+              : null;
+  if (!table) {
+    const e = new Error(`${prefix}: unknown event_status ${JSON.stringify(String(status))}`);
+    e.status = 400;
+    throw e;
+  }
+  const rk = _resolutionKind(kind);
+  const allowed = table[rk];
+  if (!allowed.includes(v)) {
+    const e = new Error(
+      `${prefix}: ${JSON.stringify(v)} is not a valid ${status} resolution for kind ` +
+      `${JSON.stringify(rk)} (allowed: ${allowed.join(', ')})`
+    );
+    e.status = 400;
+    throw e;
+  }
+  return v;
+}
 
 // ─────────────────────────────────────────────────────────────
 // LINK TYPES
@@ -998,7 +1105,24 @@ async function getEvent(db, eventId) {
  *   sort      {string?}  'asc' (soonest first, default) | 'desc' (latest first)
  *   limit     {number?}  default 100
  *   offset    {number?}  default 0
+ *   includeSuperseded {boolean?} default false — see below
  * @returns {Promise<{ data: object[], total: number }>}
+ *
+ * SUPERSEDED ROWS (Unified Events U6a, v0.5 §3.4). A row whose
+ * superseded_by_event_id is set is dead whatever its status says; the E0a
+ * rule is "supersession is the pointer, never a status", so a rescheduled
+ * predecessor KEEPS event_status='Scheduled'. Left unfiltered, that row is a
+ * phantom live twin on the case Events tab. By default this list therefore
+ * hides every superseded row that is still 'Scheduled'.
+ *
+ * It does NOT hide superseded rows whose status is already terminal (the 31
+ * E0a dedup tombstones are Canceled + 'duplicate'): case.html and
+ * contact.html call this with status:'all', and those rows were visible under
+ * "All" / "Canceled" before this slice. Hiding them would be an observable
+ * change with the singleton flag off, which the U6a acceptance bar forbids
+ * (Fred, 2026-09-01: option B). caseEventService — the §3.1 read layer — hides
+ * ALL superseded rows; that stricter contract is U9's to converge on when it
+ * owns the tab. `includeSuperseded: true` disables the predicate entirely.
  */
 async function listEvents(db, {
   link_type = null,
@@ -1011,9 +1135,18 @@ async function listEvents(db, {
   sort      = 'asc',
   limit     = 100,
   offset    = 0,
+  includeSuperseded = false,
 } = {}) {
   const where  = [];
   const params = [];
+
+  // Written as NOT(dead AND live-looking) rather than the equivalent
+  // (pointer IS NULL OR status <> 'Scheduled') on purpose: tests pin that a
+  // positive-link query contains no "IS NULL", and this phrasing also says
+  // what it means — hide the rows that would LOOK live and are not.
+  if (!includeSuperseded) {
+    where.push(`NOT (e.superseded_by_event_id IS NOT NULL AND e.event_status = 'Scheduled')`);
+  }
 
   if (link_type === 'case' && link_id != null && link_id !== '') {
     // Case-scope expansion: include docket-linked ('case_number') events whose
@@ -1169,6 +1302,13 @@ async function listEvents(db, {
 // rules 2-3 — still correct, just narrower. An UNLINKED candidate gets rule 1
 // only: with no entity, "same slot" is not a meaningful claim.
 //
+// SUPERSEDED ROWS (U6a). Both candidate queries carry
+// `superseded_by_event_id IS NULL`: a rescheduled predecessor keeps
+// event_status='Scheduled' (v0.5 §3.4 — the pointer, never a status), and it
+// must never be "the existing match" — deduping a re-notice onto a dead row
+// would report success and schedule nothing. Adds no query; excludes no live
+// row today (0 Scheduled rows carry a pointer, verified 2026-09-01).
+//
 // NO UNIQUE INDEX. Cancellation is soft (event_status='Canceled'), so a DB
 // UNIQUE key would block legitimately re-creating a previously-cancelled
 // event; and the key needs cross-link-form normalization a plain index cannot
@@ -1280,7 +1420,7 @@ async function findDuplicateEvent(db, {
     `SELECT e.* FROM events e
       WHERE e.event_link_type <=> ? AND e.event_link_id <=> ?
         AND e.event_type <=> ? AND e.event_date = ? AND e.event_title = ?
-        AND e.event_status = 'Scheduled'${exclSQL}
+        AND e.event_status = 'Scheduled' AND e.superseded_by_event_id IS NULL${exclSQL}
       ORDER BY e.event_id ASC
       LIMIT 1`,
     [event_link_type, event_link_id, event_type, date, title, ...exclParams]
@@ -1324,7 +1464,7 @@ async function findDuplicateEvent(db, {
     `SELECT e.* FROM events e
       WHERE ${linkSQL}
         AND e.event_date = ? AND e.event_time <=> ?
-        AND e.event_status = 'Scheduled'${exclSQL}
+        AND e.event_status = 'Scheduled' AND e.superseded_by_event_id IS NULL${exclSQL}
       ORDER BY e.event_id ASC`,
     [...linkParams, date, time, ...exclParams]
   );
@@ -1590,6 +1730,20 @@ async function createEvent(db, {
     }));
   }
 
+  // U6a — singleton supersession (v0.5 §3.4.2), FLAG-GUARDED. Read at call
+  // time so the settings tab can flip it live. Off → nothing below runs and
+  // this function is byte-for-byte its pre-U6a self (tests count the queries).
+  // Runs AFTER the calendar.scheduled emit so a rule sees "new row exists"
+  // before "old row superseded" — the successor is real before the chain
+  // points at it. Never throws: the row is already committed.
+  if (event && cfg('unified_singleton_enabled') === '1') {
+    try {
+      await _applySingleton(db, event, { actingUserId: createdBy || 0, source });
+    } catch (err) {
+      console.error(`[EVENT SERVICE] singleton policy for event ${eventId} failed:`, err.message);
+    }
+  }
+
   return { event_id: eventId, event, deduped: false };
 }
 
@@ -1616,10 +1770,21 @@ async function createEvent(db, {
 // against the registry and rejected with status 400 when unknown). `kind` is
 // NOT in the list — it is DERIVED from type_key / event_type inside
 // updateEvent and never accepted raw, so it can never disagree with the key.
+//
+// U6a: `event_resolution` is allowed (v0.5 §3.7). It is validated against the
+// row's kind AND the status the row will have AFTER this patch: a resolution
+// on a Scheduled row is a 400, and `null` is accepted only when the
+// post-update status is Scheduled. A patch that moves event_status to
+// Completed/Canceled WITHOUT a resolution gets the §3.7 default written in
+// the same UPDATE (deadline → met, else held; cancel → cancelled), and a
+// patch that moves it back to Scheduled clears the column — a reopened
+// event has not resolved. Both are decided here so the U4 transition block
+// below emits off a row that already carries the value.
 const UPDATE_ALLOWED = new Set([
   'event_type', 'type_key', 'event_title',
   'event_date', 'event_time', 'event_all_day', 'event_length',
   'event_location', 'event_link', 'event_note', 'event_status',
+  'event_resolution',
   'event_calendar_id', 'event_with',
 ]);
 
@@ -1770,6 +1935,23 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder, so
       merged.kind     = r.kind;
     }
 
+    // U6a — event_resolution (see UPDATE_ALLOWED). Decided against the
+    // POST-update status and kind, so `{event_status:'Completed',
+    // event_resolution:'missed'}` on a deadline validates as Completed/deadline
+    // and a bare `{event_status:'Canceled'}` gets 'cancelled' stamped.
+    {
+      const priorStatus = existing.event_status == null ? null : String(existing.event_status);
+      const nextStatus  = 'event_status' in merged ? String(merged.event_status) : priorStatus;
+      const nextKind    = 'kind' in merged ? merged.kind : existing.kind;
+      const statusMoves = 'event_status' in merged && nextStatus !== priorStatus;
+      if ('event_resolution' in fields) {
+        merged.event_resolution = _validateResolution(fields.event_resolution, nextStatus, nextKind, { prefix: 'updateEvent' });
+      } else if (statusMoves) {
+        // Terminal → the §3.7 default; back to Scheduled → clear.
+        merged.event_resolution = _defaultResolution(nextStatus, nextKind);
+      }
+    }
+
     const keys = Object.keys(merged);
     const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
     const values = [...keys.map(k => merged[k]), eventId];
@@ -1848,9 +2030,11 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder, so
   // it already had is in changedKeys but is not a transition. It also makes a
   // reminder-only call (no UPDATE at all) emit nothing, for free.
   //
-  // Supersession has no writer in this file and U4 does not add one. When U6/U7
-  // start setting superseded_by_event_id they emit calendar.rescheduled with
-  // extra.superseded_by from their own site.
+  // Supersession is written by supersedeEvent (U6a), which emits its own
+  // calendar.rescheduled with extra.via='supersede' / extra.superseded_by.
+  // This block never sees a pointer change: superseded_by_event_id is not in
+  // UPDATE_ALLOWED, and a superseded row derives 'superseded' (never 'live'),
+  // so a date move on one is not a reschedule.
   if (event) {
     const priorStatus = existing.event_status == null ? null : String(existing.event_status);
     const nextStatus  = event.event_status    == null ? null : String(event.event_status);
@@ -1911,18 +2095,28 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder, so
  *   - do NOT delete the gcal event (it's a real past calendar entry)
  *   - log action 'completed'
  */
-async function completeEvent(db, eventId, actingUserId = 0, { source = null } = {}) {
+async function completeEvent(db, eventId, actingUserId = 0, { source = null, resolution } = {}) {
   const existing = await getEvent(db, eventId);
   if (!existing) throw new Error(`Event ${eventId} not found`);
   if (existing.event_status === 'Completed') throw new Error('Event is already Completed');
 
+  // U6a — event_resolution (v0.5 §3.7). Validated against the row's KIND
+  // (deadline → met|missed|moot; everything else → held); unknown/invalid →
+  // Error with status 400 before any write. Omitted → the §3.7 default,
+  // WRITTEN EXPLICITLY so post-U6a rows carry a value instead of relying on
+  // the read layer's fallback. Same UPDATE as the status: a row can never be
+  // observed Completed-without-resolution between two statements.
+  const resolutionVal = _validateResolution(resolution, 'Completed', existing.kind, { prefix: 'completeEvent' });
+
   await db.query(
-    `UPDATE events SET event_status = 'Completed' WHERE event_id = ?`,
-    [eventId]
+    `UPDATE events SET event_status = 'Completed', event_resolution = ? WHERE event_id = ?`,
+    [resolutionVal, eventId]
   );
 
-  await insertEventLog(db, existing, actingUserId, 'completed',
-    existing.event_status !== 'Scheduled' ? { from: existing.event_status } : {});
+  await insertEventLog(db, existing, actingUserId, 'completed', {
+    resolution: resolutionVal,
+    ...(existing.event_status !== 'Scheduled' ? { from: existing.event_status } : {}),
+  });
 
   cancelReminderTasks(db, eventId, actingUserId)
     .catch(err => console.error('[EVENT SERVICE] completeEvent cancelReminderTasks failed:', err.message));
@@ -1930,9 +2124,9 @@ async function completeEvent(db, eventId, actingUserId = 0, { source = null } = 
   const event = await getEvent(db, eventId);
 
   // U4 — calendar.resolved (v0.5 §3.5). data.resolution comes from
-  // events.event_resolution when set, else §3.7's fallback (deadline → 'met',
-  // anything else → 'held'); that column has no writer until U6, so today the
-  // fallback is what every row reports.
+  // events.event_resolution — which this function now always writes (U6a),
+  // so the envelope carries the stamped value; _deriveState's fallback only
+  // matters for rows Completed before U6a (none exist: 0 live Completed rows).
   if (event) {
     domainEvents.emit(db, 'calendar.resolved', _calendarEnvelope(event, {
       source, actingUserId,
@@ -1955,18 +2149,25 @@ async function completeEvent(db, eventId, actingUserId = 0, { source = null } = 
  *   - cancel reminder task(s) (non-blocking)
  *   - log action 'canceled'
  */
-async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true, source = null } = {}) {
+async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true, source = null, resolution } = {}) {
   const existing = await getEvent(db, eventId);
   if (!existing) throw new Error(`Event ${eventId} not found`);
   if (existing.event_status === 'Canceled') throw new Error('Event is already Canceled');
 
+  // U6a — event_resolution: 'cancelled' (default, every kind) or 'moot'
+  // (deadlines only — "the obligation stopped applying"; 400 elsewhere).
+  // Written in the same UPDATE as the status. See completeEvent.
+  const resolutionVal = _validateResolution(resolution, 'Canceled', existing.kind, { prefix: 'cancelEvent' });
+
   await db.query(
-    `UPDATE events SET event_status = 'Canceled' WHERE event_id = ?`,
-    [eventId]
+    `UPDATE events SET event_status = 'Canceled', event_resolution = ? WHERE event_id = ?`,
+    [resolutionVal, eventId]
   );
 
-  await insertEventLog(db, existing, actingUserId, 'canceled',
-    existing.event_status !== 'Scheduled' ? { from: existing.event_status } : {});
+  await insertEventLog(db, existing, actingUserId, 'canceled', {
+    resolution: resolutionVal,
+    ...(existing.event_status !== 'Scheduled' ? { from: existing.event_status } : {}),
+  });
 
   if (delete_gcal && existing.event_gcal) {
     deleteEventCalendarEvent(db, existing.event_gcal, existing.event_calendar_id, 'cancel');
@@ -1993,6 +2194,242 @@ async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true, 
   }
 
   return { event };
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// supersedeEvent  (Unified Events U6a — v0.5 §3.4, the first forward writer)
+//
+// Reschedule = create the successor + stamp the predecessor with a POINTER.
+// The predecessor's event_status is NOT touched (E0a rule: supersession is
+// the pointer, never a status). A rescheduled predecessor therefore stays
+// 'Scheduled' in the raw table, and every raw liveness query in this tree
+// filters `superseded_by_event_id IS NULL` itself (the U6a consumer audit);
+// the §3.1 read layer excludes it by default.
+//
+// `reason` is the column that keeps the two meanings apart: 'rescheduled'
+// builds an adjournment chain (court-v2's S1 identity question filters on
+// it); 'duplicate' is what E0a stamped on the 31 July-cleanup rows and is
+// accepted here so a future dedupe tool has a writer, but nothing in this
+// slice writes it.
+//
+// NO TRANSACTION. Step 1 (the guarded UPDATE) is the atomic authority: its
+// `AND superseded_by_event_id IS NULL` makes a concurrent double-supersede
+// lose with affectedRows 0 → 409 instead of silently overwriting the pointer.
+// Steps 2–3 are post-write side effects — GCal teardown, reminder cancel,
+// log, emit — each idempotent and each already fire-and-forget or
+// never-throwing in the cancel path they mirror.
+//
+// event_updated_at is SELF-ASSIGNED on both UPDATEs here (v0.5 §7.1 rule 9):
+// the column is ON UPDATE CURRENT_TIMESTAMP, and the pointer is a fact about
+// the successor's creation, not an edit of the predecessor. Keeping the
+// predecessor's timestamp untouched is what lets "last edited" on a dead row
+// keep meaning what it says.
+// ─────────────────────────────────────────────────────────────
+
+const SUPERSEDE_REASONS = new Set(['rescheduled', 'duplicate']);
+
+function _conflict(msg) {
+  const e = new Error(msg);
+  e.status = 409;
+  return e;
+}
+
+/**
+ * Stamp `predecessorId` as superseded by `successorId`.
+ *
+ * Preconditions (each an Error with status 409, naming the ids):
+ *   - both rows exist
+ *   - predecessor ≠ successor
+ *   - neither row already carries a pointer
+ *   - reason ∈ {'rescheduled','duplicate'}
+ *
+ * Side effects on the predecessor, mirroring cancelEvent's MINUS the status:
+ *   - GCal entry deleted (if any) and event_gcal cleared
+ *   - active reminder task(s) soft-deleted
+ *   - log row action 'superseded' { successor_id, reason }
+ *   - calendar.rescheduled emitted with the PREDECESSOR as `data`
+ *     (state derives 'superseded' off the pointer) and
+ *     extra { via:'supersede', superseded_by, reason, prior_starts_at, new_starts_at }
+ *
+ * @returns {{ predecessor, successor }} both rows re-read after the write
+ */
+async function supersedeEvent(db, {
+  predecessorId,
+  successorId,
+  reason        = 'rescheduled',
+  actingUserId  = 0,
+  source        = null,
+} = {}) {
+  const predId = Number(predecessorId);
+  const succId = Number(successorId);
+  if (!Number.isInteger(predId) || predId <= 0) throw _conflict(`supersedeEvent: invalid predecessorId ${JSON.stringify(predecessorId)}`);
+  if (!Number.isInteger(succId) || succId <= 0) throw _conflict(`supersedeEvent: invalid successorId ${JSON.stringify(successorId)}`);
+  if (predId === succId) throw _conflict(`supersedeEvent: event ${predId} cannot supersede itself`);
+  if (!SUPERSEDE_REASONS.has(reason)) {
+    throw _conflict(`supersedeEvent: reason must be 'rescheduled' or 'duplicate', got ${JSON.stringify(reason)}`);
+  }
+
+  const pred = await getEvent(db, predId);
+  if (!pred) throw _conflict(`supersedeEvent: predecessor event ${predId} not found`);
+  const succ = await getEvent(db, succId);
+  if (!succ) throw _conflict(`supersedeEvent: successor event ${succId} not found`);
+  if (pred.superseded_by_event_id != null) {
+    throw _conflict(`supersedeEvent: event ${predId} is already superseded by ${pred.superseded_by_event_id}`);
+  }
+  if (succ.superseded_by_event_id != null) {
+    throw _conflict(`supersedeEvent: successor event ${succId} is itself superseded by ${succ.superseded_by_event_id}`);
+  }
+
+  // 1. The pointer. Guarded, so a lost race is a 409 rather than an overwrite.
+  const [res] = await db.query(
+    `UPDATE events
+        SET superseded_by_event_id = ?, supersede_reason = ?,
+            event_updated_at = event_updated_at
+      WHERE event_id = ? AND superseded_by_event_id IS NULL`,
+    [succId, reason, predId]
+  );
+  if (!res || res.affectedRows === 0) {
+    throw _conflict(`supersedeEvent: event ${predId} was superseded concurrently (lost the race)`);
+  }
+
+  // 2. Predecessor side effects — cancelEvent's, minus the status flip.
+  if (pred.event_gcal) {
+    deleteEventCalendarEvent(db, pred.event_gcal, pred.event_calendar_id, 'supersede');
+    db.query(
+      `UPDATE events SET event_gcal = NULL, event_updated_at = event_updated_at WHERE event_id = ?`,
+      [predId]
+    ).catch(err => console.error('[EVENT SERVICE] supersedeEvent clear gcal id failed:', err.message));
+  }
+  cancelReminderTasks(db, predId, actingUserId)
+    .catch(err => console.error('[EVENT SERVICE] supersedeEvent cancelReminderTasks failed:', err.message));
+  await insertEventLog(db, pred, actingUserId, 'superseded', { successor_id: succId, reason });
+
+  // 3. calendar.rescheduled off the re-read (pointer now set → state 'superseded').
+  const predecessor = await getEvent(db, predId);
+  const successor   = succ;
+  if (predecessor) {
+    domainEvents.emit(db, 'calendar.rescheduled', _calendarEnvelope(predecessor, {
+      source, actingUserId,
+      extra: {
+        via:             'supersede',
+        superseded_by:   succId,
+        reason,
+        prior_starts_at: _calendarStartsAt(pred),
+        new_starts_at:   _calendarStartsAt(successor),
+      },
+    }));
+  }
+
+  return { predecessor, successor };
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// SINGLETON  (Unified Events U6a — v0.5 §3.4.2, amendment A4)
+//
+// "One live row per (anchor, type_key)" is REGISTRY policy: when the resolved
+// type carries singleton=1, a freshly created row supersedes every prior live
+// row with the same identity. Flag-guarded by app_settings
+// `unified_singleton_enabled` (firmConfig), read at call time; off → the
+// block below is never entered and createEvent is byte-for-byte pre-U6a.
+//
+// IDENTITY. Resolved CASE + type_key when the row's link resolves to a case —
+// a 'case' link, or a 'case_number' docket that matches either docket column
+// — so the two link FORMS collapse into one identity. That is the whole point:
+// PIPE verified the live duplicates are exactly cross-form pairs
+// (event 94 'case'/ayx7GJ7j vs 152 'case_number'/26-47542, same
+// confirmation_hearing), date-divergent, and findDuplicateEvent's slot key
+// cannot see them. Otherwise (contact link, or a docket no case has yet) the
+// identity is the raw (link_type, link_id, type_key). An UNLINKED row has no
+// anchor and gets no check — a firm-wide "office closed" is not per-anchor.
+//
+// ORDER. The dedupe guard (same natural key / same slot) runs first and
+// RETURNS before the INSERT, exactly as before; singleton only ever sees a
+// row whose date differs from its predecessor. Emits: calendar.scheduled for
+// the new row (the U4 site, unchanged), then one calendar.rescheduled per
+// predecessor (from supersedeEvent).
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Prior LIVE rows sharing the singleton identity of `row` (a getEvent row
+ * of the just-inserted event). Read-only. `[]` when the row has no anchor.
+ */
+async function _singletonPriors(db, row) {
+  const linkType = row.event_link_type == null ? null : String(row.event_link_type);
+  const linkId   = row.event_link_id   == null ? '' : String(row.event_link_id).trim();
+  if (!linkType || !linkId) return [];                       // no anchor → no identity
+
+  let linkSQL, linkParams;
+  const caseRow = await _resolveLinkedCase(db, linkType, linkId);
+  if (caseRow) {
+    // Same expansion listEvents / findDuplicateEvent use: the case row PLUS
+    // any docket-linked row whose docket is either of this case's forms.
+    const dockets = [];
+    for (const v of [caseRow.case_number, caseRow.case_number_full]) {
+      const s = v != null ? String(v).trim() : '';
+      if (s && !dockets.includes(s)) dockets.push(s);
+    }
+    if (dockets.length) {
+      linkSQL = `( (e.event_link_type = 'case' AND e.event_link_id = ?)
+                   OR (e.event_link_type = 'case_number'
+                       AND e.event_link_id IN (${dockets.map(() => '?').join(',')})) )`;
+      linkParams = [caseRow.case_id, ...dockets];
+    } else {
+      linkSQL    = `(e.event_link_type = 'case' AND e.event_link_id = ?)`;
+      linkParams = [caseRow.case_id];
+    }
+  } else {
+    linkSQL    = '(e.event_link_type = ? AND e.event_link_id = ?)';
+    linkParams = [linkType, linkId];
+  }
+
+  const [rows] = await db.query(
+    `SELECT e.event_id, e.event_date, e.event_time, e.event_all_day, e.type_key
+       FROM events e
+      WHERE ${linkSQL}
+        AND e.type_key = ?
+        AND e.event_id <> ?
+        AND e.event_status = 'Scheduled'
+        AND e.superseded_by_event_id IS NULL
+      ORDER BY e.event_id ASC`,
+    [...linkParams, String(row.type_key), Number(row.event_id)]
+  );
+  return rows;
+}
+
+/**
+ * Apply singleton policy for a just-created row. Called by createEvent ONLY
+ * when the flag is on; never throws out (a supersede failure must not fail a
+ * create that already committed). Returns the superseded ids.
+ */
+async function _applySingleton(db, row, { actingUserId = 0, source = null } = {}) {
+  if (!row || row.type_key == null) return [];
+  let type = null;
+  try { type = await calendarTypeService.getType(db, row.type_key); } catch (_) { type = null; }
+  if (!type || Number(type.singleton) !== 1) return [];
+
+  const priors = await _singletonPriors(db, row);
+  if (!priors.length) return [];
+  if (priors.length > 1) {
+    console.warn(
+      `[EVENT SERVICE] singleton: event ${row.event_id} (${row.type_key}) found ${priors.length} prior live rows ` +
+      `[${priors.map(p => p.event_id).join(', ')}] — superseding all of them`
+    );
+  }
+  const done = [];
+  for (const p of priors) {
+    try {
+      await supersedeEvent(db, {
+        predecessorId: p.event_id, successorId: row.event_id,
+        reason: 'rescheduled', actingUserId, source,
+      });
+      done.push(p.event_id);
+    } catch (err) {
+      console.error(`[EVENT SERVICE] singleton: supersede ${p.event_id} ← ${row.event_id} failed:`, err.message);
+    }
+  }
+  return done;
 }
 
 
@@ -2031,6 +2468,10 @@ async function getEventsForDigest(db, { from, to } = {}) {
   //     implicit numeric cast (same as getEvent, proven in production).
   //   - case_number rows: resolved_case_id via correlated subquery (LIMIT 1,
   //     not a JOIN — see RESOLVED_CASE_SUBQUERY). Label = the docket itself.
+  //   - superseded rows excluded (U6a): a rescheduled predecessor keeps
+  //     event_status='Scheduled' (v0.5 §3.4) and must not appear in the
+  //     digest beside its successor. Excludes nothing today (0 Scheduled
+  //     rows carry a pointer).
   const [rows] = await db.query(
     `SELECT
        e.event_id, e.event_type, e.kind, e.type_key,
@@ -2044,6 +2485,7 @@ async function getEventsForDigest(db, { from, to } = {}) {
      LEFT JOIN contacts co ON (e.event_link_type = 'contact' AND e.event_link_id = co.contact_id)
      LEFT JOIN cases    ca ON (e.event_link_type = 'case'    AND e.event_link_id = ca.case_id)
      WHERE e.event_status = 'Scheduled'
+       AND e.superseded_by_event_id IS NULL
        AND e.event_date BETWEEN ? AND ?
      ORDER BY e.event_date ASC, e.event_all_day DESC, e.event_time ASC`,
     [fromStr, toStr]
@@ -2404,6 +2846,16 @@ module.exports = {
   updateEvent,
   completeEvent,
   cancelEvent,
+  // U6a — supersession writer (v0.5 §3.4) and the resolution vocabulary
+  // (§3.7). Both `_`-exports are for tests / U6b / U7; the vocabulary tables
+  // are frozen.
+  supersedeEvent,
+  _singletonPriors,
+  _applySingleton,
+  _defaultResolution,
+  _validateResolution,
+  _EVENT_RESOLUTIONS_COMPLETED: EVENT_RESOLUTIONS_COMPLETED,
+  _EVENT_RESOLUTIONS_CANCELED:  EVENT_RESOLUTIONS_CANCELED,
   getEvent,
   listEvents,
   spawnReminderTask,

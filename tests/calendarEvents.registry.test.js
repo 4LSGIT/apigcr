@@ -331,6 +331,8 @@ const SITE_EXTRAS = [
   { event: 'calendar.cancelled',    site: 'eventService.cancelEvent',      keys: ['via', 'prior_status', 'delete_gcal'] },
   { event: 'calendar.resolved',     site: 'eventService.updateEvent',      keys: ['via', 'prior_status'] },
   { event: 'calendar.resolved',     site: 'eventService.completeEvent',    keys: ['via', 'prior_status'] },
+  // U6a — the supersession writer (v0.5 §3.4).
+  { event: 'calendar.rescheduled',  site: 'eventService.supersedeEvent',   keys: ['via', 'superseded_by', 'reason', 'prior_starts_at', 'new_starts_at'] },
 ];
 
 // ── the scanner ─────────────────────────────────────────────────────────────
@@ -437,7 +439,7 @@ describe('extra.* one-directional guard (U4 open item 2, landed at U5)', () => {
 
   test('the SOURCE SCAN finds every emit site, and parses every extra literal', () => {
     // Guard against the scanner silently rotting into a no-op.
-    expect(SCANNED.length).toBeGreaterThanOrEqual(18);
+    expect(SCANNED.length).toBeGreaterThanOrEqual(19);   // U6a added supersedeEvent
     const unparsed = SCANNED.filter((r) => r.keys.some((k) => k.startsWith('<')));
     expect(unparsed).toEqual([]);
   });

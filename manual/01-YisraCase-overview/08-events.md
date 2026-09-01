@@ -51,6 +51,44 @@ Choosing **Other** lets you type a one-off type. The blessed list lives in a set
 
 Status changes are made from the event list with the **Complete** and **Cancel** buttons, which appear only on Scheduled events. Each change writes a log entry on the linked case or contact.
 
+### Resolution (how it ended)
+
+Every Completed or Canceled event also carries a **resolution** — the *outcome*, which the status alone cannot express. A canceled deadline might have been withdrawn, or it might have become moot because the case converted; both are "Canceled", and only the resolution tells them apart.
+
+| Kind | Completed may be | Canceled may be |
+|---|---|---|
+| hearing / conference / other | `held` | `cancelled` |
+| deadline | `met` · `missed` · `moot` | `cancelled` · `moot` |
+
+You do not have to choose one. The **Complete** and **Cancel** buttons write the sensible default (a completed deadline is `met`, a completed hearing is `held`, a cancel is `cancelled`). The API and the automation functions accept an explicit `resolution` when the default is wrong — `PATCH /api/events/:id/complete { "resolution": "missed" }`, or `complete_event` with `resolution`. A value that does not fit the event's kind is rejected (`400`) and nothing is written. A Scheduled event never carries a resolution; reopening an event clears it.
+
+The trigger engine sees the resolution as `data.resolution` on `calendar.resolved` / `calendar.cancelled` — filter that, not the status.
+
+### Missed deadlines (the nightly sweep)
+
+A deadline that is still Scheduled after its date has passed is marked `Completed` / `missed` by a nightly job (`sweep_calendar_missed`) — it emits `calendar.resolved` with `resolution: 'missed'`, writes a log row, and clears the reminder task, so a rule can chase it. The job only looks at deadlines dated **on or after** a floor date set in its parameters (`since`); older past-dated deadlines were never resolved by anyone and are left alone as *unknown*, not *missed*, until a human completes or cancels them. "Today" is the firm's local day — a deadline due today is not missed until tomorrow.
+
+### Rescheduled events (supersession)
+
+When a hearing is adjourned, the system does **not** edit the old event's date. It creates a new event and marks the old one as *superseded by* the new one (`superseded_by_event_id`). The old row keeps its status but is dead: it comes off Google Calendar, its reminder task is cleared, it stops blocking availability, it leaves the digest and the calendar feed, and the trigger engine fires `calendar.rescheduled` for it (`extra.via = 'supersede'`, `extra.superseded_by` = the new event). The chain — first setting, every adjournment, current date — is preserved as data.
+
+Superseded rows are hidden from event lists by default. The case and contact Events tabs (which show every status) still show the 31 historical duplicate rows the July 2026 cleanup marked, because those are Canceled and always were; what the lists hide is a superseded row that would otherwise *look* live. `GET /api/events?include_superseded=1` shows everything.
+
+**Singleton types.** Some item types can only have one live occurrence per case at a time — a confirmation hearing, a 341 meeting, the standard bankruptcy deadlines. For those, creating a new event automatically supersedes the previous live one on the same case (the two can be linked by case id or by docket; both count as the same case). This is the registry's `singleton` flag and it is switched on with the `unified_singleton_enabled` setting (`1` = on; write `0`, not blank, to turn it off). While it is off, creating a second confirmation hearing on a case simply creates a second event, as before.
+
+#### If a supersession is wrong
+
+An administrator can undo the pointer from the database console:
+
+```sql
+UPDATE events
+   SET superseded_by_event_id = NULL, supersede_reason = NULL,
+       event_updated_at = event_updated_at
+ WHERE event_id = <the old event>;
+```
+
+That restores the old event as live. It does **not** restore what the supersession tore down: the Google Calendar entry and any reminder task must be recreated by hand (edit the event and save with its calendar id re-asserted, or re-add the reminder). The new event is untouched — cancel it separately if it should not exist.
+
 ---
 
 ## What Happens When You…
@@ -66,12 +104,12 @@ Status changes are made from the event list with the **Complete** and **Cancel**
 - A log entry records what changed
 
 ### Complete an event
-- Status becomes Completed
+- Status becomes Completed, with a resolution (`met` for a deadline, `held` otherwise, unless you say otherwise)
 - The calendar entry is **left in place** — it really happened, and the calendar is the historical record
 - Any open reminder task for the event is cleared
 
 ### Cancel an event
-- Status becomes Canceled
+- Status becomes Canceled, with resolution `cancelled` (or `moot`, deadlines only, when asked)
 - The calendar entry is **deleted**
 - Any open reminder task for the event is cleared
 
@@ -112,7 +150,7 @@ Edit, Complete, and Cancel are available wherever the event is listed.
 
 ## Automation
 
-Events are first-class citizens of the automation engine. Workflows and sequences can create, update, complete, and look up events through internal functions (`create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`). This is the foundation for automations like:
+Events are first-class citizens of the automation engine. Workflows and sequences can create, update, complete, and look up events through internal functions (`create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, and the nightly `sweep_calendar_missed`). This is the foundation for automations like:
 
 - Creating a **docs deadline** event automatically when a 341 Meeting is scheduled, dated a set number of business days before it
 - Creating a **confirmation hearing** event automatically from the court's email, using the explicit date in the email text

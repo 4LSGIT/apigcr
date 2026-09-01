@@ -98,9 +98,15 @@ function makeDb(seedEvents = [], { cases = [] } = {}) {
     // NOTE the ordering: completeEvent/cancelEvent write a LITERAL status with
     // no backticked placeholder, so the generic column-writer below would match
     // the statement and then write nothing at all. Specific first.
+    // U6a: the status write carries event_resolution in the same statement —
+    // `SET event_status = 'Completed', event_resolution = ? WHERE event_id = ?`
+    // — so the id is the LAST bind and the resolution the first.
     if (/^UPDATE events SET event_status = '(Completed|Canceled)'/i.test(flat)) {
-      const row = events.get(Number(params[0]));
-      if (row) row.event_status = /Completed/.test(flat) ? 'Completed' : 'Canceled';
+      const row = events.get(Number(params[params.length - 1]));
+      if (row) {
+        row.event_status = /Completed/.test(flat) ? 'Completed' : 'Canceled';
+        if (/event_resolution = \?/.test(flat)) row.event_resolution = params[0];
+      }
       return [{ affectedRows: row ? 1 : 0 }];
     }
     if (/^UPDATE events SET .* WHERE event_id = \?$/i.test(flat)) {
@@ -342,16 +348,22 @@ describe('updateEvent — the transition matrix', () => {
     expect(onlyEmit('calendar.resolved').data.resolution).toBe('held');
   });
 
+  // U6a rewrote these two: a Scheduled row cannot CARRY a resolution any more
+  // (the writer rejects it), and a status move without one writes the §3.7
+  // default. The U4 claim — the envelope reads the STORED value, not the
+  // fallback — is now proven the way it will actually happen: the value
+  // arrives in the same PATCH as the status.
   test('a stored event_resolution overrides the fallback (the U6 contract)', async () => {
-    const db = makeDb(seed({ event_resolution: 'missed' }));
-    await eventService.updateEvent(db, 42, { event_status: 'Completed' }, 1);
+    const db = makeDb(seed());
+    await eventService.updateEvent(db, 42, { event_status: 'Completed', event_resolution: 'missed' }, 1);
     await flush();
     expect(onlyEmit('calendar.resolved').data.resolution).toBe('missed');
+    expect(db.events.get(42).event_resolution).toBe('missed');
   });
 
   test("Canceled + event_resolution 'moot' reads moot, not cancelled", async () => {
-    const db = makeDb(seed({ event_resolution: 'moot' }));
-    await eventService.updateEvent(db, 42, { event_status: 'Canceled' }, 1);
+    const db = makeDb(seed());
+    await eventService.updateEvent(db, 42, { event_status: 'Canceled', event_resolution: 'moot' }, 1);
     await flush();
     expect(onlyEmit('calendar.cancelled').data.resolution).toBe('moot');
   });

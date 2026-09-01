@@ -48,6 +48,7 @@ routes/api.triggers.js              REST surface
 public/automation/triggers.html     UI (iframed tab in automationManager.html)
 public/automation/matchBuilder.js   Shared condition-tree builder (also used by the ingest pages)
 lib/internal_functions/system.js    sweep_trigger_executions — retention; emit_stage_aged — nightly case.stage_aged emitter
+lib/internal_functions/events.js    sweep_calendar_missed — nightly deadline sweep (calendar.resolved, resolution 'missed')
 ```
 
 Emission sites live in the services that own each mutation — `apptService`, `contactService`, `caseService`, `pipelineService`, `formService`, `esignWebhookService`, and `routes/api.checklists.js`.
@@ -128,7 +129,15 @@ Three things to know before writing a rule on one:
 - **`data.status` is raw; `data.state` and `data.resolution` are the model.**
   An attended appt and a no-show are both `calendar.resolved`, distinguished by
   `data.resolution` (`attended` / `no_show`). A completed deadline resolves
-  `met`, a completed hearing `held`. Filter the resolution, not the status.
+  `met` (or `missed` from the nightly sweep, or `moot`), a completed hearing
+  `held`. Since U6a every event completion and cancellation writes
+  `events.event_resolution`, so the value is stored, not derived. Filter the
+  resolution, not the status.
+- **A rescheduled event fires `calendar.rescheduled` for the OLD row**
+  (`extra.via = 'supersede'`, `extra.superseded_by` = the new event id,
+  `data.state = 'superseded'`), after the new row fired its own
+  `calendar.scheduled`. A date edit in place still fires it with
+  `extra.via = 'update'`. Filter `extra.via` if the difference matters.
 - **`data.starts_at` is firm-local `YYYY-MM-DD HH:mm`**, or a bare
   `YYYY-MM-DD` when `data.all_day` is true. No seconds — deliberately, so an
   equality filter written from a sample matches.
@@ -264,6 +273,23 @@ How to author against it:
 Operational notes: the claim table is `case_stage_aged_emitted` (`INSERT IGNORE` on `(stage_log_id, threshold_days)` — atomic, safe under overlap or manual re-runs). Emissions are awaited inside the job and each is its own **root** event with its own 50-dispatch budget; the job's own bounds — `max_emissions` (default 200) and `max_runtime_ms` (default 8 min, kept inside the job runner's 15-minute stuck-job recovery) — stop the run before claiming, alert when hit, and leave the remainder unclaimed to retry the next night while still in-window. `emit_stage_aged` also takes `dry_run: true` (via apiTester) to list would-emit crossings without claiming or emitting. After a rung passes its grace window unfired (job dead > 7 days), that nudge is permanently skipped — the job-failure alerting is the backstop.
 
 A sibling event keyed on *activity* rather than stage age — `case.idle`, full coverage across all open cases today — is designed but not built; it needs a rolling-watermark dedup rather than a one-shot claim.
+
+### `sweep_calendar_missed` — the nightly deadline sweep (Unified Events U6a)
+
+The second synthetic job, same house pattern. A deadline nobody resolved is not a mutation either, so a nightly job turns *a deadline's date passing* into `calendar.resolved` with `data.resolution = 'missed'`: every `kind='deadline'` event still `Scheduled` (and not superseded) whose `event_date` is before the firm's local today is completed through `eventService.completeEvent({ resolution: 'missed', source: 'sweep' })` — so it gets the same log row, reminder-task cleanup and emit a hand-completion gets. No Google Calendar action. Rules bind `calendar.resolved` and filter `data.kind = 'deadline'` + `data.resolution = 'missed'` (`source` is `sweep`, `actor.user_id` is `0`).
+
+Params, set on the scheduled job:
+
+| param | default | meaning |
+|---|---|---|
+| `since` | **none — required** | Floor on `event_date` (inclusive, `YYYY-MM-DD`). The job refuses to run without it. |
+| `max_rows` | 200 | Per-run cap, oldest first; the remainder is picked up next night. `capped` in the output says it hit. |
+| `max_runtime_ms` | 20000 | Wall-clock bound; stops before the next row. |
+| `dry_run` | false | Lists `would_mark` without writing or emitting (apiTester). |
+
+**Why `since` has no default.** At the time the resolution writers shipped (2026-09-01) zero events had ever been Completed — staff had never marked a deadline met — so every one of the 30 past-dated Scheduled deadlines is *unknown*, not *missed*. A sweep with no floor would stamp `missed` on history it knows nothing about and fire 30 rules on the first night. Fred sets `since` in the job's params (proposed: `2026-09-01`, the ship date); rows before it stay Scheduled until a human resolves them.
+
+Operational notes: "today" is computed in `FIRM_TZ` in the job and bound as a parameter — never `CURDATE()`, because the pool session runs in UTC and a deadline dated today is not missed until the firm's day is over. Idempotent by construction (a marked row leaves the population), so overlap or a manual re-run is harmless. Output: `{ scanned, marked, skipped, dry_run, since, today, capped, timed_out, wall_clock_ms, errors[] }`. A per-row failure is recorded in `errors` and does not stop the run. Scheduling it lives in data (Scheduled Jobs → `internal_function`, function `sweep_calendar_missed`, params `{ "since": "2026-09-01" }`, overnight band) — it is not created by deploy.
 
 ### Execution statuses
 

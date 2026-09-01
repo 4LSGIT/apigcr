@@ -232,7 +232,9 @@ router.get('/api/calendar-feed', jwtOrApiKey, async (req, res) => {
     }
 
     // ── events — Scheduled events; provider filter on event_with
-    //    (NULL = firm-wide, always included) ───────────────────────────────
+    //    (NULL = firm-wide, always included). Superseded rows excluded
+    //    (U6a): a rescheduled predecessor keeps 'Scheduled' (v0.5 §3.4) and
+    //    would otherwise render beside its successor. ──────────────────────
     if (showSet.has('events')) {
       // Resolved-case subquery mirrors eventService.RESOLVED_CASE_SUBQUERY
       // (not exported there) — equality only, dockets are opaque.
@@ -252,6 +254,7 @@ router.get('/api/calendar-feed', jwtOrApiKey, async (req, res) => {
            LEFT JOIN contacts co ON (e.event_link_type = 'contact' AND e.event_link_id = co.contact_id)
            LEFT JOIN cases    ca ON (e.event_link_type = 'case'    AND e.event_link_id = ca.case_id)
           WHERE e.event_status = 'Scheduled'
+            AND e.superseded_by_event_id IS NULL
             AND (e.event_with IS NULL OR e.event_with IN (?))
             AND e.event_date BETWEEN ? AND ?
           ORDER BY e.event_date ASC, e.event_time ASC`,
