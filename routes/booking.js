@@ -766,6 +766,11 @@ async function bookUnderLock(db, view, providerId, dateStr, start, contactId, no
       case_id:       '',
       appt_length:   view.appt_length,
       appt_type:     view.appt_type,
+      // U5 — the view's registry key, when it has one. createAppt prefers a
+      // GIVEN key that exists in the registry and otherwise falls through to
+      // resolving the label (U2 resolveForCreate semantics), so a view whose
+      // type_key is still NULL keeps booking exactly as it did before.
+      type_key:      view.type_key || null,
       appt_platform: view.platform,
       appt_date:     `${start}:00`,
       appt_with:     providerId,

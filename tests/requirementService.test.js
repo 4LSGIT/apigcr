@@ -9,11 +9,11 @@
 //   - Each detector: satisfied/unsatisfied/progress hit shapes + QUERY-COUNT
 //     assertions proving batching (N cases × M requirements of one kind =
 //     constant queries): esign 1 · checklist 2 (1 when no lists) · form 1 ·
-//     event 1 · manual 0.
-//   - event detector: want→appt_status mapping, which latest/first,
-//     Rescheduled tombstones excluded in SQL, write-time rejection of
-//     source 'event'/'any' (E1 pending), read-time warn path for a stored
-//     non-appt source.
+//     event 3 · manual 0.
+//   - event detector (U5): registry-key matching with kind fallback, all
+//     three sources through caseEventService.listForCases, want→status_norm
+//     mapping, which latest/first, dead rows excluded by the read layer,
+//     read-time warn path for an unknown stored source.
 //   - Resolver precedence matrix, one scenario exercising every row:
 //     override-na beats a satisfied detector; override-done supplies
 //     satisfied_at; detector-done beats position (THE FILED-CASE
@@ -21,8 +21,8 @@
 //     behind+unsatisfied → skipped (same-template AND cross-template);
 //     current → active; ahead → upcoming; manual + no override → never
 //     done. Plus: no-history → all upcoming, none active. Plus a
-//     whole-resolver query-count assertion (2 cases × 7 requirements = 11
-//     queries).
+//     whole-resolver query-count assertion (2 cases × 7 requirements = 13
+//     queries; 11 before U5 moved the event detector onto listForCases).
 //   - C1: default getPipeline payload byte-identical (keys + no
 //     requirements anywhere + no extra queries); { requirements:true }
 //     attaches per-stage arrays (empty tables → [] — the deploy gate).
@@ -211,46 +211,108 @@ describe('form detector', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// event detector (v1: appts only)
+// event detector (U5: registry keys; all three sources through the read layer)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The detector now reads caseEventService.listForCases rather than its own
+// appt SQL, so a stub script for it is THREE results in the read layer's own
+// order: cases, events, appts. Everything below scripts them explicitly, which
+// is also what pins the 3-query budget — an accidental 4th read would overrun
+// the script and scriptGuard would say so.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('event detector (appt)', () => {
-  const APPTS = [
-    { appt_case_id: 'A', appt_type: '341 Meeting', appt_status: 'Attended',  appt_date: '2026-05-01 10:00:00' },
-    { appt_case_id: 'A', appt_type: '341 Meeting', appt_status: 'Attended',  appt_date: '2026-06-01 10:00:00' },
-    { appt_case_id: 'A', appt_type: '341 Meeting', appt_status: 'No Show',   appt_date: '2026-04-01 10:00:00' },
-    { appt_case_id: 'A', appt_type: '341 Meeting', appt_status: 'Scheduled', appt_date: '2026-09-01 10:00:00' },
-    { appt_case_id: 'A', appt_type: '341 Meeting', appt_status: 'Canceled',  appt_date: '2026-03-01 10:00:00' },
-  ];
-  const cfg = (over = {}) => ({ source: 'appt', kind_or_type: '341 Meeting', ...over });
+/** cases rows as _listForCases selects them (case_id + both docket columns). */
+const CE_CASES = (...ids) =>
+  ids.map((id) => ({ case_id: id, case_number: null, case_number_full: null }));
 
-  test('BATCHED: ONE query; Rescheduled tombstones excluded IN THE SQL', async () => {
-    const db = stubDb([APPTS]);
+/** An appts row in the shape _listForCases selects. */
+const CE_APPT = (caseId, typeKey, status, date, over = {}) => ({
+  appt_id: over.appt_id ?? Math.floor(Math.random() * 1e6),
+  appt_case_id: caseId,
+  appt_client_id: 1,
+  appt_type: over.appt_type ?? typeKey,
+  type_key: typeKey,
+  appt_status: status,
+  appt_date: date,
+  appt_end: null,
+  appt_length: 30,
+  appt_platform: 'Zoom',
+  appt_with: 1,
+});
+
+/** An events row in the shape _listForCases selects. */
+const CE_EVENT = (caseId, typeKey, kind, status, date, over = {}) => ({
+  event_id: over.event_id ?? Math.floor(Math.random() * 1e6),
+  event_type: over.event_type ?? typeKey,
+  event_title: over.event_title ?? typeKey,
+  event_date: date,
+  event_time: over.event_time ?? '10:00:00',
+  event_all_day: 0,
+  event_length: 60,
+  event_location: null,
+  event_status: status,
+  event_resolution: null,
+  event_link_type: 'case',
+  event_link_id: caseId,
+  kind,
+  type_key: typeKey,
+  event_with: 1,
+  superseded_by_event_id: null,
+  supersede_reason: null,
+});
+
+describe('event detector (appt source, registry keys)', () => {
+  const CASES = CE_CASES('A', 'B');
+  const APPTS = [
+    CE_APPT('A', 'meeting_341', 'Attended',  '2026-05-01 10:00:00'),
+    CE_APPT('A', 'meeting_341', 'Attended',  '2026-06-01 10:00:00'),
+    CE_APPT('A', 'meeting_341', 'No Show',   '2026-04-01 10:00:00'),
+    CE_APPT('A', 'meeting_341', 'Scheduled', '2026-09-01 10:00:00'),
+    CE_APPT('A', 'meeting_341', 'Canceled',  '2026-03-01 10:00:00'),
+  ];
+  const cfg = (over = {}) => ({ source: 'appt', kind_or_type: 'meeting_341', ...over });
+
+  /** The Date mysql2 would have produced for the same DATETIME under the
+   *  pool's timezone:'Z'. satisfied_at must stay a Date — portalCaseService
+   *  runs it through utcToLocal. */
+  const at = (naive) => new Date(`${naive.replace(' ', 'T')}Z`);
+
+  test('BATCHED: THREE queries via listForCases; tombstones excluded in ITS sql', async () => {
+    const db = stubDb([CASES, [], APPTS]);
     await detectors.DETECTORS.event.batchResolve(db, ['A', 'B'],
       [req('m341_held', 'event', cfg())]);
-    expect(db.calls.length).toBe(1);
-    expect(db.calls[0].sql).toContain(`appt_status <> 'Rescheduled'`);
-    expect(db.calls[0].params).toEqual([['A', 'B'], ['341 Meeting']]);
+    expect(db.calls.length).toBe(3);
+    expect(db.calls[0].sql).toMatch(/FROM cases/);
+    expect(db.calls[1].sql).toMatch(/FROM events/);
+    expect(db.calls[2].sql).toMatch(/FROM appts/);
+    // The dead-row rules are the read layer's now, not this detector's.
+    expect(db.calls[1].sql).toContain('superseded_by_event_id IS NULL');
+    expect(db.calls[2].sql).toContain(`appt_status <> 'Rescheduled'`);
+    // No type filter reaches SQL at all — the vocabulary match is in JS,
+    // against type_key/kind_key, so one read serves every requirement.
+    expect(db.calls[2].sql).not.toContain('type_key IN');
   });
 
-  test('want held (default) → Attended; which latest (default) picks max appt_date', async () => {
-    const db = stubDb([APPTS]);
+  test('want held (default) → status_norm held; which latest (default) picks max start', async () => {
+    const db = stubDb([CASES, [], APPTS]);
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('m341_held', 'event', cfg())]);
     const hit = out.get('A').get('m341_held');
-    expect(hit.satisfied_at).toBe('2026-06-01 10:00:00');
+    expect(hit.satisfied_at).toEqual(at('2026-06-01 10:00:00'));
+    expect(hit.satisfied_at instanceof Date).toBe(true);
+    // detail is still the RAW status label staff read in case.html.
     expect(hit.detail).toBe('Attended');
   });
 
-  test('which first picks min appt_date among matches', async () => {
-    const db = stubDb([APPTS]);
+  test('which first picks min start among matches', async () => {
+    const db = stubDb([CASES, [], APPTS]);
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('m341_held', 'event', cfg({ which: 'first' }))]);
-    expect(out.get('A').get('m341_held').satisfied_at).toBe('2026-05-01 10:00:00');
+    expect(out.get('A').get('m341_held').satisfied_at).toEqual(at('2026-05-01 10:00:00'));
   });
 
   test('want scheduled → Scheduled; want missed → No Show', async () => {
-    const db = stubDb([APPTS, APPTS]);
+    const db = stubDb([CASES, [], APPTS, CASES, [], APPTS]);
     const out1 = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('m341_sched', 'event', cfg({ want: 'scheduled' }))]);
     expect(out1.get('A').get('m341_sched').detail).toBe('Scheduled');
@@ -260,84 +322,199 @@ describe('event detector (appt)', () => {
   });
 
   test('want any matches any non-tombstone (Canceled included), latest wins', async () => {
-    const db = stubDb([APPTS]);
+    const db = stubDb([CASES, [], APPTS]);
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('m341_any', 'event', cfg({ want: 'any' }))]);
-    // Latest non-Rescheduled row of the type is the 2026-09-01 Scheduled.
-    expect(out.get('A').get('m341_any').satisfied_at).toBe('2026-09-01 10:00:00');
+    expect(out.get('A').get('m341_any').satisfied_at).toEqual(at('2026-09-01 10:00:00'));
+    expect(out.get('A').get('m341_any').detail).toBe('Scheduled');
   });
 
   test('no matching status → unsatisfied (no entry)', async () => {
-    const db = stubDb([[APPTS[4]]]);   // only the Canceled row
+    const db = stubDb([CE_CASES('A'), [], [APPTS[4]]]);   // only the Canceled row
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('m341_held', 'event', cfg())]);
     expect(out.size).toBe(0);
   });
 
-  test('WRITE-time rejection: source event / any (unified-events E1 pending); bad want/which; typo key', () => {
+  test('a STALE LABEL config no longer matches — the U5 cutover is a real cutover', async () => {
+    const db = stubDb([CE_CASES('A'), [], APPTS]);
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('m341_held', 'event', { source: 'appt', kind_or_type: '341 Meeting' })]);
+    // The rows carry appt_type '341 Meeting' but type_key 'meeting_341'.
+    // Matching the label would be matching a vocabulary the registry replaced.
+    expect(out.size).toBe(0);
+  });
+
+  test('WRITE-time: all three sources accepted; bad want/which; typo key', () => {
     expect(detectors.validateDetectorConfig('event', cfg())).toBeNull();
-    expect(detectors.validateDetectorConfig('event', cfg({ source: 'event' }))).toMatch(/E1 pending/);
-    expect(detectors.validateDetectorConfig('event', cfg({ source: 'any' }))).toMatch(/E1 pending/);
+    expect(detectors.validateDetectorConfig('event', cfg({ source: 'event' }))).toBeNull();
+    expect(detectors.validateDetectorConfig('event', cfg({ source: 'any' }))).toBeNull();
+    expect(detectors.validateDetectorConfig('event', cfg({ source: 'task' }))).toMatch(/source must be one of/);
     expect(detectors.validateDetectorConfig('event', cfg({ want: 'happened' }))).toMatch(/want/);
     expect(detectors.validateDetectorConfig('event', cfg({ which: 'newest' }))).toMatch(/which/);
     expect(detectors.validateDetectorConfig('event', cfg({ kindortype: 'x' }))).toMatch(/unknown config key/);
   });
 
-  test('READ-time guard: a stored non-appt source resolves unsatisfied + console.warn', async () => {
+  test('READ-time guard: an unknown stored source resolves unsatisfied + console.warn', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const db = stubDb([APPTS]);   // one query still runs for the valid appt req
+      const db = stubDb([CE_CASES('A'), [], APPTS]);
       const out = await detectors.DETECTORS.event.batchResolve(db, ['A'], [
         req('m341_held', 'event', cfg()),
-        req('future_event', 'event', { source: 'event', kind_or_type: 'hearing' }),
+        req('bogus_src', 'event', { source: 'task', kind_or_type: 'meeting_341' }),
       ]);
-      expect(db.calls.length).toBe(1);
+      expect(db.calls.length).toBe(3);
       expect(out.get('A').has('m341_held')).toBe(true);
-      expect(out.get('A').has('future_event')).toBe(false);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('future_event'));
+      expect(out.get('A').has('bogus_src')).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('bogus_src'));
     } finally {
       warn.mockRestore();
     }
   });
+
+  test('ZERO queries when there are no ids, no reqs, or no usable values', async () => {
+    const none = stubDb([]);
+    await detectors.DETECTORS.event.batchResolve(none, [], [req('x', 'event', cfg())]);
+    await detectors.DETECTORS.event.batchResolve(none, ['A'], []);
+    await detectors.DETECTORS.event.batchResolve(none, ['A'],
+      [req('x', 'event', { source: 'appt', kind_or_type: ['   '] })]);
+    expect(none.calls.length).toBe(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// (F1) event detector — kind_or_type accepts a LIST of alias names
+// (U5) event detector — kind FALLBACK, and sources 'event' / 'any'
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// v0.5 §6: "match type_key first, then kind_key". A configured value is
+// therefore either a registry type key or one of the five kinds, and the same
+// selector may name both. ['meeting'] matches every appt by construction
+// (§3.3.2: kind='meeting' → appts); ['deadline'] matches every deadline event.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('event detector — kind fallback and the widened sources (U5)', () => {
+  const CASES = CE_CASES('A');
+  const APPTS = [
+    CE_APPT('A', 'iss',         'Attended',  '2026-02-01 09:00:00'),
+    CE_APPT('A', 'meeting_341', 'Attended',  '2026-08-01 09:00:00'),
+  ];
+  const EVENTS = [
+    CE_EVENT('A', 'poc_due',              'deadline', 'Completed', '2026-03-01'),
+    CE_EVENT('A', 'confirmation_hearing', 'hearing',  'Scheduled', '2026-09-15'),
+    CE_EVENT('A', 'docs_deadline',        'deadline', 'Completed', '2026-05-01'),
+  ];
+  const script = () => [CASES, EVENTS, APPTS];
+
+  test("['meeting'] matches EVERY appt — appts are 'meeting' by table", async () => {
+    const db = stubDb(script());
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('any_meeting', 'event', { source: 'appt', kind_or_type: ['meeting'], want: 'held' })]);
+    // Latest of the two Attended appts, regardless of their differing types.
+    expect(out.get('A').get('any_meeting').satisfied_at)
+      .toEqual(new Date('2026-08-01T09:00:00Z'));
+  });
+
+  test("['deadline'] matches every deadline EVENT and no appt", async () => {
+    const db = stubDb(script());
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('a_deadline', 'event', { source: 'event', kind_or_type: ['deadline'], want: 'held' })]);
+    const hit = out.get('A').get('a_deadline');
+    // 'Completed' on the event side normalizes to status_norm 'held'.
+    expect(hit.satisfied_at).toEqual(new Date('2026-05-01T10:00:00Z'));
+    expect(hit.detail).toBe('Completed');
+  });
+
+  test("source 'event' matches an event by TYPE key", async () => {
+    const db = stubDb(script());
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('conf_set', 'event', { source: 'event', kind_or_type: 'confirmation_hearing', want: 'scheduled' })]);
+    expect(out.get('A').get('conf_set').detail).toBe('Scheduled');
+  });
+
+  test("source 'any' spans BOTH tables in one selector", async () => {
+    const db = stubDb(script());
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('mixed', 'event', { source: 'any', kind_or_type: ['iss', 'poc_due'], want: 'held' })]);
+    // The 341 appt (2026-08-01) is NOT in the selector; the latest match
+    // across the two named keys is the poc_due deadline on 2026-03-01.
+    expect(out.get('A').get('mixed').satisfied_at).toEqual(new Date('2026-03-01T10:00:00Z'));
+  });
+
+  test("source 'appt' ignores events of a matching kind, and vice versa", async () => {
+    const db = stubDb([...script(), ...script()]);
+    const apptOnly = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('d', 'event', { source: 'appt', kind_or_type: ['deadline'], want: 'held' })]);
+    expect(apptOnly.size).toBe(0);
+    const eventOnly = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('m', 'event', { source: 'event', kind_or_type: ['meeting'], want: 'held' })]);
+    expect(eventOnly.size).toBe(0);
+  });
+
+  test("want:'missed' on source 'event' is honestly unsatisfiable (no missed status)", async () => {
+    const db = stubDb(script());
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
+      [req('missed_deadline', 'event', { source: 'event', kind_or_type: ['deadline'], want: 'missed' })]);
+    expect(out.size).toBe(0);
+  });
+
+  test('one read serves several requirements of every source', async () => {
+    const db = stubDb(script());
+    const out = await detectors.DETECTORS.event.batchResolve(db, ['A'], [
+      req('iss_held',   'event', { source: 'appt',  kind_or_type: ['iss'] }),
+      req('a_deadline', 'event', { source: 'event', kind_or_type: ['deadline'] }),
+      req('anything',   'event', { source: 'any',   kind_or_type: ['meeting', 'hearing'], want: 'any' }),
+    ]);
+    expect(db.calls.length).toBe(3);
+    expect(out.get('A').get('iss_held').satisfied_at).toEqual(new Date('2026-02-01T09:00:00Z'));
+    expect(out.get('A').get('a_deadline').satisfied_at).toEqual(new Date('2026-05-01T10:00:00Z'));
+    // want 'any' across meetings + hearings: the 2026-09-15 hearing is latest.
+    expect(out.get('A').get('anything').satisfied_at).toEqual(new Date('2026-09-15T10:00:00Z'));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (F1, carried through U5) event detector — kind_or_type is a LIST
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Why a list and not a data migration: 'Strategy Session' (Feb 2024 → Jun
 // 2026) and 'Initial Strategy Session' (Jun 2024 → Jul 2026) OVERLAP. They
-// are two names in concurrent use for one activity, not a rename with a
+// were two names in concurrent use for one activity, not a rename with a
 // cutover, so no normalization could collapse them without falsifying booked
 // history. Verified live 2026-08-27: the single-string config covered 285
-// cases, the four-name list covers 353 — 68 real strategy sessions the
-// requirement was calling unmet. trigger_rules #2 already matches on exactly
-// this list; the detector now agrees with the trigger instead of
-// contradicting it.
+// cases, the four-name list covered 353 — 68 real strategy sessions the
+// requirement was calling unmet.
+//
+// U5 changed what the list holds, not why it exists. The registry absorbed the
+// TYPO ('Intial Strategy Session' is an ingest_alias of `iss`, applied at write
+// time), so that spelling leaves the list; the three genuinely distinct
+// activities Fred ruled — iss, ss, consultation — keep three keys, and the
+// selector keeps naming all three. trigger_rules #1/#2 match on exactly this
+// list; the detector agrees with the trigger rather than contradicting it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('event detector — kind_or_type list (F1)', () => {
-  // Two names, deliberately interleaved in time so `which` ordering across
-  // the union is distinguishable from ordering within either name alone.
+  // Two keys, deliberately interleaved in time so `which` ordering across the
+  // union is distinguishable from ordering within either key alone.
+  const CASES = CE_CASES('A', 'B');
   const MIXED = [
-    { appt_case_id: 'A', appt_type: 'Strategy Session',         appt_status: 'Attended',  appt_date: '2024-03-01 10:00:00' },
-    { appt_case_id: 'A', appt_type: 'Initial Strategy Session', appt_status: 'Attended',  appt_date: '2025-01-15 10:00:00' },
-    { appt_case_id: 'A', appt_type: 'Strategy Session',         appt_status: 'Attended',  appt_date: '2026-06-02 10:00:00' },
-    { appt_case_id: 'A', appt_type: 'Initial Strategy Session', appt_status: 'No Show',   appt_date: '2026-07-07 10:00:00' },
-    { appt_case_id: 'B', appt_type: 'Strategy Session',         appt_status: 'Attended',  appt_date: '2024-05-05 10:00:00' },
+    CE_APPT('A', 'ss',  'Attended', '2024-03-01 10:00:00'),
+    CE_APPT('A', 'iss', 'Attended', '2025-01-15 10:00:00'),
+    CE_APPT('A', 'ss',  'Attended', '2026-06-02 10:00:00'),
+    CE_APPT('A', 'iss', 'No Show',  '2026-07-07 10:00:00'),
+    CE_APPT('B', 'ss',  'Attended', '2024-05-05 10:00:00'),
   ];
-  // The exact live config requirement 3 (iss_held) is being moved to. The
-  // typo'd 'Intial Strategy Session' is DELIBERATE — it mirrors trigger rule
-  // 2 and matches real booked history. Do not correct it.
-  const ISS_LIST = ['Initial Strategy Session', 'Strategy Session', 'Consultation', 'Intial Strategy Session'];
+  // The exact live config requirement 3 (iss_held) was moved to by the U5
+  // migration.
+  const ISS_LIST = ['iss', 'ss', 'consultation'];
   const listCfg = (over = {}) => ({ source: 'appt', kind_or_type: ISS_LIST, want: 'held', which: 'latest', ...over });
+  const script = () => [CASES, [], MIXED];
 
   // ── validateConfig ──────────────────────────────────────────────────────
 
   test('WRITE-time: a non-empty array of non-empty strings is accepted', () => {
     expect(detectors.validateDetectorConfig('event', listCfg())).toBeNull();
     expect(detectors.validateDetectorConfig('event',
-      { source: 'appt', kind_or_type: ['341 Meeting'] })).toBeNull();
+      { source: 'appt', kind_or_type: ['meeting_341'] })).toBeNull();
   });
 
   test('WRITE-time: empty array rejected (it would silently match nothing)', () => {
@@ -364,108 +541,95 @@ describe('event detector — kind_or_type list (F1)', () => {
       { source: 'appt', kind_or_type: long })).toMatch(/at most 60 characters/);
   });
 
-  test('WRITE-time: the other rules are untouched (unknown key, source, want, which)', () => {
+  test('WRITE-time: the other rules are untouched (unknown key, want, which)', () => {
     expect(detectors.validateDetectorConfig('event', listCfg({ nope: 1 }))).toMatch(/unknown config key/);
-    expect(detectors.validateDetectorConfig('event', listCfg({ source: 'event' }))).toMatch(/E1 pending/);
-    expect(detectors.validateDetectorConfig('event', listCfg({ source: 'any' }))).toMatch(/E1 pending/);
     expect(detectors.validateDetectorConfig('event', listCfg({ want: 'happened' }))).toMatch(/want/);
     expect(detectors.validateDetectorConfig('event', listCfg({ which: 'newest' }))).toMatch(/which/);
   });
 
-  test('config_hint advertises the array form', () => {
-    expect(detectors.DETECTORS.event.config_hint).toContain('[');
-    expect(JSON.parse(detectors.DETECTORS.event.config_hint).kind_or_type).toEqual(
-      ['Initial Strategy Session', 'Strategy Session']);
+  test('config_hint advertises the array form AND registry keys, not labels', () => {
+    const hint = JSON.parse(detectors.DETECTORS.event.config_hint);
+    expect(Array.isArray(hint.kind_or_type)).toBe(true);
+    expect(hint.kind_or_type).toEqual(['iss', 'ss']);
+    // A label in the hint would teach the wrong vocabulary on the admin screen.
+    expect(detectors.DETECTORS.event.config_hint).not.toMatch(/Strategy Session/);
   });
 
   // ── batchResolve ────────────────────────────────────────────────────────
 
-  test('QUERY COUNT UNCHANGED: every alias flattens into the ONE existing IN (?)', async () => {
-    const db = stubDb([MIXED]);
+  test('QUERY COUNT UNCHANGED BY LIST LENGTH: every key rides the one read', async () => {
+    const db = stubDb(script());
     await detectors.DETECTORS.event.batchResolve(db, ['A', 'B'],
       [req('iss_held', 'event', listCfg())]);
-    expect(db.calls.length).toBe(1);
-    expect(db.calls[0].params).toEqual([['A', 'B'], ISS_LIST]);
-    expect(db.calls[0].sql).toContain(`appt_status <> 'Rescheduled'`);
+    expect(db.calls.length).toBe(3);
   });
 
-  test('resolves across MIXED types — the 68-case gap closes', async () => {
-    const db = stubDb([MIXED]);
+  test('resolves across MIXED keys — the 68-case gap stays closed', async () => {
+    const db = stubDb(script());
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A', 'B'],
       [req('iss_held', 'event', listCfg())]);
-    // B has ONLY a 'Strategy Session' — invisible to the single-string config
-    // this replaces, and satisfied now.
-    expect(out.get('B').get('iss_held').satisfied_at).toBe('2024-05-05 10:00:00');
+    // B has ONLY an `ss` — invisible to a single-key config, satisfied here.
+    expect(out.get('B').get('iss_held').satisfied_at).toEqual(new Date('2024-05-05T10:00:00Z'));
     expect(out.get('B').get('iss_held').detail).toBe('Attended');
   });
 
-  test('which latest picks the max across the UNION, not per name', async () => {
-    const db = stubDb([MIXED]);
+  test('which latest picks the max across the UNION, not per key', async () => {
+    const db = stubDb(script());
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('iss_held', 'event', listCfg())]);
-    // 2026-06-02 is a 'Strategy Session'; the latest 'Initial Strategy
-    // Session' Attended is 2025-01-15. Picking per name would return the
-    // wrong row.
-    expect(out.get('A').get('iss_held').satisfied_at).toBe('2026-06-02 10:00:00');
+    // 2026-06-02 is an `ss`; the latest `iss` Attended is 2025-01-15. Picking
+    // per key would return the wrong row.
+    expect(out.get('A').get('iss_held').satisfied_at).toEqual(new Date('2026-06-02T10:00:00Z'));
   });
 
   test('which first picks the min across the UNION', async () => {
-    const db = stubDb([MIXED]);
+    const db = stubDb(script());
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('iss_held', 'event', listCfg({ which: 'first' }))]);
-    expect(out.get('A').get('iss_held').satisfied_at).toBe('2024-03-01 10:00:00');
+    expect(out.get('A').get('iss_held').satisfied_at).toEqual(new Date('2024-03-01T10:00:00Z'));
   });
 
   test('want still filters status across the union (No Show ignored under held)', async () => {
-    const db = stubDb([MIXED, MIXED]);
+    const db = stubDb([...script(), ...script()]);
     const held = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('iss_held', 'event', listCfg())]);
     expect(held.get('A').get('iss_held').detail).toBe('Attended');
     const missed = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('iss_missed', 'event', listCfg({ want: 'missed' }))]);
-    expect(missed.get('A').get('iss_missed').satisfied_at).toBe('2026-07-07 10:00:00');
+    expect(missed.get('A').get('iss_missed').satisfied_at).toEqual(new Date('2026-07-07T10:00:00Z'));
   });
 
-  test('BACKWARD COMPATIBLE: a single string behaves exactly as before', async () => {
-    const db = stubDb([MIXED, MIXED]);
+  test('BACKWARD COMPATIBLE: a single string behaves as a one-element list', async () => {
+    const db = stubDb([...script(), ...script()]);
     const asString = await detectors.DETECTORS.event.batchResolve(db, ['A'],
-      [req('iss_held', 'event', { source: 'appt', kind_or_type: 'Initial Strategy Session' })]);
-    expect(db.calls[0].params).toEqual([['A'], ['Initial Strategy Session']]);
-    // Only the ISS rows are considered: the 2026-06-02 'Strategy Session' is
-    // NOT picked, exactly as pre-F1.
-    expect(asString.get('A').get('iss_held').satisfied_at).toBe('2025-01-15 10:00:00');
+      [req('iss_held', 'event', { source: 'appt', kind_or_type: 'iss' })]);
+    // Only the `iss` rows are considered: the 2026-06-02 `ss` is NOT picked.
+    expect(asString.get('A').get('iss_held').satisfied_at).toEqual(new Date('2025-01-15T10:00:00Z'));
 
-    // ... and a ONE-ELEMENT array is byte-identical to that string.
     const asArray = await detectors.DETECTORS.event.batchResolve(db, ['A'],
-      [req('iss_held', 'event', { source: 'appt', kind_or_type: ['Initial Strategy Session'] })]);
-    expect(db.calls[1].params).toEqual(db.calls[0].params);
+      [req('iss_held', 'event', { source: 'appt', kind_or_type: ['iss'] })]);
     expect(asArray.get('A').get('iss_held')).toEqual(asString.get('A').get('iss_held'));
   });
 
-  test('configured names that collapse under the ci key do not double-count the bucket', async () => {
-    // 'Consultation' / 'consultation' bucket to the same ci key. Concatenating
-    // the bucket twice would not change WHICH row wins, but it would make the
-    // union quadratic on a hot path — and mask a real authoring mistake.
-    const ROWS = [
-      { appt_case_id: 'A', appt_type: 'Consultation', appt_status: 'Attended', appt_date: '2026-01-01 10:00:00' },
-    ];
-    const db = stubDb([ROWS]);
+  test('configured values that collapse under the ci key do not double-count', async () => {
+    const ROWS = [CE_APPT('A', 'consultation', 'Attended', '2026-01-01 10:00:00')];
+    const db = stubDb([CE_CASES('A'), [], ROWS]);
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'],
       [req('c', 'event', { source: 'appt', kind_or_type: ['Consultation', 'consultation'] })]);
-    expect(out.get('A').get('c').satisfied_at).toBe('2026-01-01 10:00:00');
+    // Registry keys are matched case-insensitively — the general_ci semantics
+    // the column is stored under.
+    expect(out.get('A').get('c').satisfied_at).toEqual(new Date('2026-01-01T10:00:00Z'));
   });
 
-  test('two requirements with DIFFERENT lists share the one query and stay separate', async () => {
-    const db = stubDb([MIXED]);
+  test('two requirements with DIFFERENT lists share the one read and stay separate', async () => {
+    const db = stubDb(script());
     const out = await detectors.DETECTORS.event.batchResolve(db, ['A'], [
       req('iss_held', 'event', listCfg()),
-      req('formal_only', 'event', { source: 'appt', kind_or_type: ['Initial Strategy Session'] }),
+      req('formal_only', 'event', { source: 'appt', kind_or_type: ['iss'] }),
     ]);
-    expect(db.calls.length).toBe(1);
-    // Union of both lists, deduped, in first-seen order.
-    expect(db.calls[0].params[1]).toEqual(ISS_LIST);
-    expect(out.get('A').get('iss_held').satisfied_at).toBe('2026-06-02 10:00:00');
-    expect(out.get('A').get('formal_only').satisfied_at).toBe('2025-01-15 10:00:00');
+    expect(db.calls.length).toBe(3);
+    expect(out.get('A').get('iss_held').satisfied_at).toEqual(new Date('2026-06-02T10:00:00Z'));
+    expect(out.get('A').get('formal_only').satisfied_at).toEqual(new Date('2025-01-15T10:00:00Z'));
   });
 });
 
@@ -519,13 +683,15 @@ const R_DOCS_RCVD   = reqRow(3, 201, 'docs_received',   'checklist', { tag: 'doc
 const R_RETAINER    = reqRow(4, 201, 'retainer_signed', 'esign',     { kind: 'contract' });
 const R_BUDGET      = reqRow(5, 201, 'budget_manual',   'manual',    null);
 const R_PETITION    = reqRow(6, 202, 'petition_manual', 'manual',    null);
-const R_M341        = reqRow(7, 203, 'm341_held',       'event',     { source: 'appt', kind_or_type: '341 Meeting' });
+// U5: the selector's VALUES are registry keys now. Shape unchanged.
+const R_M341        = reqRow(7, 203, 'm341_held',       'event',     { source: 'appt', kind_or_type: 'meeting_341' });
 
 describe('resolveRequirements — precedence matrix', () => {
   // CASE1: at 'filed' (tpl 2). CASE3: at 'docs' (tpl 2). Both phase 'case'.
   // Detector kind order (first appearance): form, manual, checklist, esign,
   // event → scripted detector queries: form(1), checklist(2), esign(1),
-  // event(1); manual issues none.
+  // event(3 — U5: caseEventService.listForCases is cases/events/appts);
+  // manual issues none.
   function masterDb() {
     return stubDb([
       [ // 1 cases
@@ -561,16 +727,27 @@ describe('resolveRequirements — precedence matrix', () => {
         { linkable_id: 'CASE1', kind: 'contract', status: 'signed',
           completed_at: '2026-02-01 10:00:00', updated_at: null, created_at: null },
       ],
-      [],                                                      // 11 event — no 341s
+      // 11–13 event — listForCases: cases, events, appts. The cases row must be
+      // present or the read layer short-circuits after query 11 and the budget
+      // assertion below silently lands back on 11.
+      [
+        { case_id: 'CASE1', case_number: null, case_number_full: null },
+        { case_id: 'CASE3', case_number: null, case_number_full: null },
+      ],
+      [],                                                      // 12 events — none
+      [],                                                      // 13 appts — no 341s
     ]);
   }
 
   const byKey = (list) => Object.fromEntries(list.map((r) => [r.requirement_key, r]));
 
-  test('BATCHED: 2 cases × 7 requirements = 11 queries, and every precedence rule at once', async () => {
+  test('BATCHED: 2 cases × 7 requirements = 13 queries, and every precedence rule at once', async () => {
     const db = masterDb();
     const out = await reqSvc.resolveRequirements(db, ['CASE1', 'CASE3']);
-    expect(db.calls.length).toBe(11);                       // the whole-pass batching proof
+    // 11 before U5; the event detector traded its single appt query for
+    // caseEventService.listForCases (3). Still a CONSTANT for N cases × M
+    // requirements, which is the property this assertion exists to prove.
+    expect(db.calls.length).toBe(13);                       // the whole-pass batching proof
 
     const c1 = byKey(out.get('CASE1'));
     const c3 = byKey(out.get('CASE3'));

@@ -414,6 +414,49 @@ describe('rescheduleLater emits NO calendar.* — deliberately', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// (U5) the three appt.* envelopes nothing else asserts carry type_key
+//
+// tests/calendarEvents.registry.test.js proves the CATALOG lists
+// data.type_key on all six appt.* entries; tests/apptService.typeKey.test.js
+// proves appt.created / attended / no_show actually carry it. These are the
+// remaining three. A catalogued path that no envelope produces is worse than
+// an undocumented one: the author builds a filter on it, it matches nothing,
+// and nothing crashes to say why.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('appt.* data carries type_key (U5)', () => {
+  test('appt.cancelled — from fetchApptWithContact (appts.*)', async () => {
+    const db = makeDb([existingAppt({ appt_id: 811, appt_type: '341 Meeting', type_key: 'meeting_341' })]);
+    await apptService.cancelAppt(db, { appt_id: 811 });
+    await flush();
+    const data = onlyEmit('appt.cancelled').data;
+    expect(data.type_key).toBe('meeting_341');
+    expect(data.appt_type).toBe('341 Meeting');
+  });
+
+  test('appt.rescheduled — the PREDECESSOR row (SELECT *)', async () => {
+    const db = makeDb([existingAppt({ appt_id: 512, appt_type: 'Strategy Session', type_key: 'ss' })]);
+    await apptService.rescheduleAppt(db, { appt_id: 512, newDate: '2026-09-10 14:00' });
+    await flush();
+    expect(onlyEmit('appt.rescheduled').data.type_key).toBe('ss');
+  });
+
+  test('appt.reschedule_later — its narrow SELECT names the column explicitly', async () => {
+    const db = makeDb([existingAppt({ appt_id: 912, appt_type: 'Pre-Filing Meeting', type_key: 'pre_filing' })]);
+    await apptService.rescheduleLater(db, { appt_id: 912 });
+    await flush();
+    expect(onlyEmit('appt.reschedule_later').data.type_key).toBe('pre_filing');
+  });
+
+  test('a pre-U2 row emits type_key null — absent, never derived from the label', async () => {
+    const db = makeDb([existingAppt({ appt_id: 813, appt_type: '341 Meeting', type_key: null })]);
+    await apptService.cancelAppt(db, { appt_id: 813 });
+    await flush();
+    expect(onlyEmit('appt.cancelled').data.type_key).toBeNull();
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe('_calendarEnvelope edge cases', () => {
   const env = (row) => apptService._calendarEnvelope(row);
 

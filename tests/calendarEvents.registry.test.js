@@ -237,3 +237,236 @@ describe('the values a rule author will actually filter on', () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (U5) THE APPT CATALOG CARRIES THE REGISTRY KEY
+//
+// Every appt.* emit's `data` is a row that has a type_key column
+// (createAppt / rescheduleAppt SELECT *; cancelAppt's fetchApptWithContact
+// takes appts.*; markAttended / markNoShow / rescheduleLater name it
+// explicitly), so publishing data.type_key is a statement of fact, not an
+// aspiration — and the reverse test below proves the catalog is not inventing
+// a path either.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APPT_EVENTS = [
+  'appt.created', 'appt.attended', 'appt.no_show',
+  'appt.cancelled', 'appt.rescheduled', 'appt.reschedule_later',
+];
+
+describe('appt.* catalog: data.type_key (U5)', () => {
+  test.each(APPT_EVENTS)('%s publishes data.type_key', (name) => {
+    const paths = EVENT_TYPES[name].fields.map((f) => f.path);
+    expect(paths).toContain('data.type_key');
+  });
+
+  test('data.appt_type is still published, labelled as the legacy field', () => {
+    for (const name of APPT_EVENTS) {
+      const f = EVENT_TYPES[name].fields.find((x) => x.path === 'data.appt_type');
+      expect(f).toBeDefined();
+      // A rule author reading the picker must be told which one to prefer;
+      // "free text" told them nothing about the alternative.
+      expect(f.label).toMatch(/legacy/i);
+      expect(f.label).toMatch(/type_key/);
+    }
+  });
+
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (U5) extra.* IS ONE-DIRECTIONAL: EVERY EMITTED KEY IS CATALOGUED
+//
+// U4 shipped a SET-EQUALITY guard on `data.*` — the two helpers project one
+// shape, so the catalog can be held to it exactly. `extra.*` cannot work that
+// way: it is per-EMIT-SITE, not per-helper, and several sites contribute
+// disjoint key sets to one event name (calendar.cancelled gets
+// {legacy_event, prior_status} from apptService, {via, prior_status} from
+// updateEvent, and {via, prior_status, delete_gcal} from cancelEvent). No
+// single envelope carries the union, so "the catalog lists nothing an envelope
+// never produces" is not a checkable claim in that direction.
+//
+// The direction that IS checkable is the one that matters: an emitted key
+// MISSING from the catalog is invisible — the field picker never offers it and
+// the author never learns it exists. So: subset, extra → catalog.
+//
+// Two layers, because each catches what the other cannot:
+//
+//   SITE_EXTRAS   binds key → event name, so a key catalogued on the wrong
+//                 event fails. Hand-maintained, and therefore able to fall
+//                 behind the code.
+//   the scan      reads the two services and extracts every `extra:` object
+//                 literal inside a domainEvents.emit(...) call, so a key added
+//                 at a NEW site fails even if nobody updates the table. It is
+//                 coarser (it re-derives the same binding independently), and
+//                 the two are asserted to agree.
+//
+// The scan is paren/brace-balanced and string-aware rather than a bare regex,
+// because `extra: extra || {}` inside _calendarEnvelope and
+// `extra: source ? { source } : null` inside insertApptLog are both `extra:`
+// occurrences that are NOT domain-event extras — a loose match would drag
+// `source` into the expected set and the guard would be asserting fiction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const fs   = require('fs');
+const path = require('path');
+
+/** Every emit site's `extra` keys, by event name. Mirrors the code; the scan
+ *  below is what stops it drifting. */
+const SITE_EXTRAS = [
+  { event: 'appt.created',          site: 'apptService.createAppt',        keys: ['hook_event', 'rescheduled_from'] },
+  { event: 'appt.attended',         site: 'apptService.markAttended',      keys: ['prior_status'] },
+  { event: 'appt.no_show',          site: 'apptService.markNoShow',        keys: ['prior_status', 'enrolled'] },
+  { event: 'appt.cancelled',        site: 'apptService.cancelAppt',        keys: ['prior_status'] },
+  { event: 'appt.rescheduled',      site: 'apptService.rescheduleAppt',    keys: ['new_appt_id', 'new_appt_date'] },
+  { event: 'appt.reschedule_later', site: 'apptService.rescheduleLater',   keys: [] },
+  { event: 'calendar.scheduled',    site: 'apptService.createAppt',        keys: ['legacy_event', 'hook_event', 'rescheduled_from'] },
+  { event: 'calendar.resolved',     site: 'apptService.markAttended',      keys: ['legacy_event'] },
+  { event: 'calendar.resolved',     site: 'apptService.markNoShow',        keys: ['legacy_event'] },
+  { event: 'calendar.cancelled',    site: 'apptService.cancelAppt',        keys: ['legacy_event', 'prior_status'] },
+  { event: 'calendar.rescheduled',  site: 'apptService.rescheduleAppt',    keys: ['legacy_event', 'new_source_id', 'new_starts_at', 'prior_starts_at'] },
+  { event: 'calendar.scheduled',    site: 'eventService.createEvent',      keys: ['deduped', 'created_by_source'] },
+  { event: 'calendar.scheduled',    site: 'eventService.updateEvent',      keys: ['via', 'reopened', 'prior_status'] },
+  { event: 'calendar.rescheduled',  site: 'eventService.updateEvent',      keys: ['via', 'prior_starts_at', 'prior_all_day'] },
+  { event: 'calendar.cancelled',    site: 'eventService.updateEvent',      keys: ['via', 'prior_status'] },
+  { event: 'calendar.cancelled',    site: 'eventService.cancelEvent',      keys: ['via', 'prior_status', 'delete_gcal'] },
+  { event: 'calendar.resolved',     site: 'eventService.updateEvent',      keys: ['via', 'prior_status'] },
+  { event: 'calendar.resolved',     site: 'eventService.completeEvent',    keys: ['via', 'prior_status'] },
+];
+
+// ── the scanner ─────────────────────────────────────────────────────────────
+
+/** Index just past a string/template/comment starting at i, or -1. */
+function _skip(src, i) {
+  const c = src[i];
+  if (c === "'" || c === '"' || c === '`') {
+    let j = i + 1;
+    while (j < src.length) {
+      if (src[j] === '\\') { j += 2; continue; }
+      if (src[j] === c) return j + 1;
+      j++;
+    }
+    return src.length;
+  }
+  if (c === '/' && src[i + 1] === '/') { const n = src.indexOf('\n', i); return n === -1 ? src.length : n; }
+  if (c === '/' && src[i + 1] === '*') { const n = src.indexOf('*/', i); return n === -1 ? src.length : n + 2; }
+  return -1;
+}
+
+/** Text inside the balanced (...) whose '(' is at `open`. */
+function _balanced(src, open) {
+  let depth = 0, i = open;
+  while (i < src.length) {
+    const s = _skip(src, i);
+    if (s !== -1) { i = s; continue; }
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')') { depth--; if (depth === 0) return src.slice(open + 1, i); }
+    i++;
+  }
+  return null;
+}
+
+/** Top-level keys of the object literal whose '{' is at `open`. */
+function _objectKeys(src, open) {
+  const segs = []; let depth = 0, i = open, start = open + 1;
+  while (i < src.length) {
+    const s = _skip(src, i);
+    if (s !== -1) { i = s; continue; }
+    const c = src[i];
+    if (c === '{' || c === '[' || c === '(') { depth++; i++; continue; }
+    if (c === '}' || c === ']' || c === ')') {
+      depth--;
+      if (depth === 0) { segs.push(src.slice(start, i)); break; }
+      i++; continue;
+    }
+    if (c === ',' && depth === 1) { segs.push(src.slice(start, i)); start = i + 1; }
+    i++;
+  }
+  const keys = [];
+  for (const raw of segs) {
+    const seg = raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ').trim();
+    if (!seg || seg.startsWith('...')) continue;   // a spread contributes no literal key
+    const m = /^(?:([A-Za-z_$][\w$]*)|'([^']*)'|"([^"]*)")\s*(?::|$)/.exec(seg);
+    keys.push(m ? (m[1] || m[2] || m[3]) : `<UNPARSED:${seg.slice(0, 40)}>`);
+  }
+  return keys;
+}
+
+/** [{ file, event, keys }] for every domainEvents.emit(...) in `file`. */
+function scanEmitExtras(file) {
+  const src = fs.readFileSync(file, 'utf8');
+  const out = [];
+  const re = /domainEvents\s*\.\s*emit\s*\(/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const args = _balanced(src, m.index + m[0].length - 1);
+    if (args == null) continue;
+    const nm = /['"]([A-Za-z0-9_.]+)['"]/.exec(args);
+    if (!nm) continue;
+    const ei = args.search(/\bextra\s*:/);
+    let keys = [];
+    if (ei !== -1) {
+      const colon = ei + args.slice(ei).indexOf(':');
+      const brace = args.indexOf('{', colon);
+      // Only an object LITERAL counts. `extra: cond ? {…} : null` is not one,
+      // and is flagged rather than silently read.
+      keys = (brace !== -1 && /^\s*$/.test(args.slice(colon + 1, brace)))
+        ? _objectKeys(args, brace)
+        : ['<NON-LITERAL>'];
+    }
+    out.push({ file: path.basename(file), event: nm[1], keys });
+  }
+  return out;
+}
+
+const SCANNED = ['apptService.js', 'eventService.js']
+  .flatMap((f) => scanEmitExtras(path.join(__dirname, '..', 'services', f)));
+
+const extraPaths = (name) =>
+  new Set((EVENT_TYPES[name] ? EVENT_TYPES[name].fields : [])
+    .map((f) => f.path).filter((p) => p.startsWith('extra.')));
+
+describe('extra.* one-directional guard (U4 open item 2, landed at U5)', () => {
+  test.each(SITE_EXTRAS.map((s) => [`${s.event} @ ${s.site}`, s]))(
+    '%s — every extra key it emits is in that event\'s catalog',
+    (_label, s) => {
+      const cat = extraPaths(s.event);
+      const missing = s.keys.filter((k) => !cat.has(`extra.${k}`));
+      expect(missing).toEqual([]);
+    }
+  );
+
+  test('the SOURCE SCAN finds every emit site, and parses every extra literal', () => {
+    // Guard against the scanner silently rotting into a no-op.
+    expect(SCANNED.length).toBeGreaterThanOrEqual(18);
+    const unparsed = SCANNED.filter((r) => r.keys.some((k) => k.startsWith('<')));
+    expect(unparsed).toEqual([]);
+  });
+
+  test('every extra key found IN THE CODE is catalogued on the event it is emitted with', () => {
+    const missing = [];
+    for (const r of SCANNED) {
+      const cat = extraPaths(r.event);
+      for (const k of r.keys) {
+        if (!cat.has(`extra.${k}`)) missing.push(`${r.file}: ${r.event} emits extra.${k} — not in EVENT_TYPES`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  test('the hand-written table has not fallen behind the code', () => {
+    // Same claim, derived twice. If a new emit site appears and only the scan
+    // sees it, this is what says so.
+    const norm = (list) => [...new Set(list.map((r) => `${r.event}|${[...r.keys].sort().join(',')}`))].sort();
+    expect(norm(SCANNED)).toEqual(norm(SITE_EXTRAS));
+  });
+
+  test('NOT set-equality: the catalog may list keys no SINGLE envelope carries', () => {
+    // calendar.cancelled is the proof — three sites, three disjoint sets, one
+    // catalog entry that is the union. Asserting equality per site would be
+    // asserting that every site emits every key, which is false by design.
+    const sites = SITE_EXTRAS.filter((s) => s.event === 'calendar.cancelled');
+    expect(sites.length).toBeGreaterThan(1);
+    const union = new Set(sites.flatMap((s) => s.keys));
+    expect(union.size).toBeGreaterThan(Math.min(...sites.map((s) => s.keys.length)));
+  });
+});

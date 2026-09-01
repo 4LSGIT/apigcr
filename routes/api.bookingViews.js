@@ -22,6 +22,10 @@
  * Validation mirrors booking.js loadView's sanity checks so a saved view
  * can never trip the misconfigured-view alert path:
  *   - slug ^[a-zA-Z0-9_-]{1,100}$, unique
+ *   - type_key must name a calendar_item_types row (U5). REQUIRED ON CREATE,
+ *     optional on PATCH: the six pre-U5 views were backfilled by the U5
+ *     migration, but a row hand-INSERTed without one must still load and save
+ *     rather than becoming uneditable through its own admin screen.
  *   - provider_mode ∈ enum; provider_ids non-empty int array;
  *     fixed_one → exactly one id; ids must exist in users (does_appts=1)
  *   - appt_length int 1–127 (appts.appt_length is tinyint even though
@@ -39,6 +43,7 @@ const express = require('express');
 const router  = express.Router();
 
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const calendarTypeService = require('../services/calendarTypeService');
 
 const SLUG_RE = /^[a-zA-Z0-9_-]{1,100}$/;
 
@@ -49,7 +54,7 @@ const IDENTITY_MODES = ['public', 'prefill'];
 // Columns the API accepts on create/update (everything except id/timestamps).
 const FIELDS = [
   'slug', 'active', 'provider_mode', 'provider_ids', 'page_windows',
-  'appt_type', 'appt_length', 'platform',
+  'appt_type', 'type_key', 'appt_length', 'platform',
   'buffer_min', 'min_notice_min', 'horizon_days', 'granularity_min',
   'identity_mode', 'source_tag', 'collect_note',
   'confirm_template', 'confirm_sms', 'confirm_email', 'hook_id',
@@ -94,7 +99,7 @@ function trimOrNull(v, max) {
  * with-patch). Returns { values } (normalized, DB-ready except provider_ids
  * still an array) or { error: 'message' }.
  */
-async function validateView(db, v) {
+async function validateView(db, v, { isCreate = false } = {}) {
   const out = {};
 
   // slug
@@ -218,6 +223,27 @@ async function validateView(db, v) {
   const apptType = trimOrNull(v.appt_type, 60);
   if (!apptType) return { error: 'appt_type is required.' };
   out.appt_type = apptType;
+
+  // type_key (U5) — the registry key the booked appt is written with.
+  // appt_type stays as the DISPLAY LABEL: the confirmation template
+  // interpolates {{appts.appt_type}} and staff wrote those strings, so the
+  // key never overwrites them here (v0.5 §3.3 "labels").
+  //
+  // Validated against calendar_item_types by EXACT KEY — getType, not
+  // resolveTypeKey: a label or an ingest alias must not be accepted where a
+  // key is asked for, or the column would hold two vocabularies again.
+  // Registry reads are cached 60s and fail-soft; a registry that will not load
+  // yields no row and therefore a 400, which is the right way round for a
+  // write path (createAppt's read is the one that must never block a booking).
+  const typeKey = trimOrNull(v.type_key, 40);
+  if (!typeKey) {
+    if (isCreate) return { error: 'type_key is required — pick an appointment type from the registry.' };
+    out.type_key = null;
+  } else {
+    const row = await calendarTypeService.getType(db, typeKey);
+    if (!row) return { error: `Unknown type_key ${JSON.stringify(typeKey)} — not a calendar_item_types key.` };
+    out.type_key = row.type_key;   // canonical casing from the registry
+  }
 
   const title = trimOrNull(v.title, 200);
   if (!title) return { error: 'title is required.' };
@@ -363,7 +389,7 @@ router.get('/api/booking-views/:id', jwtOrApiKey, async (req, res) => {
 
 router.post('/api/booking-views', jwtOrApiKey, async (req, res) => {
   try {
-    const result = await validateView(req.db, req.body || {});
+    const result = await validateView(req.db, req.body || {}, { isCreate: true });
     if (result.error) {
       return res.status(400).json({ status: 'error', message: result.error });
     }

@@ -870,7 +870,7 @@ async function resolveConfirmationMessage(db, message, contactId, apptId) {
  * Enroll the appropriate appt-reminder sequences for a new appointment.
  *
  * Enrolls the appt in the pre_appt sequence. The cascade matches the right
- * template by appt_type × appt_with (341 → T19, ISS → ISS template, else the
+ * template by type_key × appt_with (341 → T19, ISS → ISS template, else the
  * generic fallback). No per-type pre-computation: templates own all timing
  * (341 day-before via before_appt; ISS welcome via open_delay, nags via
  * before_appt). trigger_data carries only IDs + appt_time.
@@ -882,6 +882,7 @@ async function enrollApptReminderSequences(db, {
   contact_id,
   case_id,
   appt_type,
+  type_key,
   appt_with,
   appt_date,
   appt_date_utc,
@@ -890,11 +891,19 @@ async function enrollApptReminderSequences(db, {
   // Generic for every appt type. No per-type pre-computation: the templates
   // own all timing now (341 via before_appt; ISS welcome via open_delay, nags
   // via before_appt). The cascade picks the right pre_appt template by
-  // appt_type × appt_with.
+  // type_key × appt_with.
+  //
+  // U5: type_key is the cascade key; appt_type stays for one release as the
+  // wildcard it became when the templates' filters moved off it (v0.5 §7.1
+  // rule 4). It is FLATTENED, not nested — sequenceEngine reads cascade
+  // fields off the top level of trigger_data, and a template with a specific
+  // filter and no trigger value for it is DISQUALIFIED, not skipped. Without
+  // this line every pre_appt template in the U5 migration loses.
   const triggerData = {
     appt_id,
     appt_time:   appt_date_utc.toISOString(),
     appt_type,
+    type_key:    type_key || null,
     appt_with:   Number(appt_with),
     case_id:     case_id || null,
     // entity_ref: the most-specific entity this appt is about, as a ready-made
@@ -1206,6 +1215,10 @@ async function createAppt(db, {
       contact_id,
       case_id,
       appt_type,
+      // U5 — the key createAppt already resolved above (typeKeyVal), NOT a
+      // re-resolution: re-reading the registry here could disagree with the
+      // key the row was actually written with.
+      type_key:      typeKeyVal,
       appt_with,
       appt_date,
       appt_date_utc: apptDateUTC,
@@ -1482,6 +1495,12 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
             appt_time:   appt.appt_date,
             case_id:     appt.appt_case_id,
             appt_type:   appt.appt_type,
+            // U5 — the no_show cascade key. The SELECT above already returns
+            // a.type_key (U2/U4). appt_type rides along for one release; the
+            // templates' filters moved to type_key in the U5 migration, and a
+            // specific filter with no trigger value disqualifies the template
+            // outright, so this line is what keeps 23/24 reachable.
+            type_key:    appt.type_key || null,
             appt_with:   appt.appt_with,
             case_type:    appt.case_type,
             case_subtype: appt.case_subtype,

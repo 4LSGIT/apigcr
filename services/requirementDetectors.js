@@ -54,9 +54,14 @@
  * auto-advance will run this over whole columns of cases; N×M query
  * fan-out is the failure mode this shape exists to prevent. Query counts
  * are asserted in tests (scriptGuard style):
- *     esign 1 · checklist 2 · form 1 · event 1 · manual 0 · case_field 1 ·
+ *     esign 1 · checklist 2 · form 1 · event 3 · manual 0 · case_field 1 ·
  *     report 1 (key→id lookup) + one reportService.runReport per unique
  *     report_key (execution itself is the report stack's, not this file's).
+ * The event detector's 3 is caseEventService.listForCases (cases, events,
+ * appts) — U5 traded 1 query for the frozen §3.1 read layer and its
+ * vocabulary. Still a fixed count for ALL cases and ALL requirements, which
+ * is the property this section is about; the constant moved, the shape did
+ * not.
  *
  * ── KEY IDENTITY ─────────────────────────────────────────────────────────
  * The inner map keys by requirement_key. A key shared across templates
@@ -391,7 +396,8 @@ const formDetector = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// event — an appointment (v1) of the configured type in the wanted state.
+// event — a calendar item (appt, event, or either) of the configured type in
+// the wanted state. (U5: keys, not labels; all three sources live.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** THE FROZEN SELECTOR (R2 spec; kind_or_type widened to a list in F1):
@@ -399,68 +405,101 @@ const formDetector = {
  *      want: 'held'|'scheduled'|'missed'|'any',   default 'held'
  *      which: 'latest'|'first'|'any' }            default 'latest'
  *
- *  ── F1: kind_or_type IS A SET OF ALIASES, NOT A NAME ─────────────────────
- *  A single string could only ever name ONE appt_type, and the live data has
- *  no such thing as one name per activity. The Initial Strategy Session has
- *  been booked under FOUR spellings — 'Initial Strategy Session',
- *  'Strategy Session', 'Consultation', and the typo'd 'Intial Strategy
- *  Session' — and, critically, 'Strategy Session' ran Feb 2024 → Jun 2026
- *  OVERLAPPING 'Initial Strategy Session' (Jun 2024 → Jul 2026). That is not
- *  a rename with a cutover date; it is two names in concurrent use, so there
- *  is no migration that could collapse them without falsifying history.
- *  Verified live 2026-08-27: single-string matching covered 285 cases,
- *  the four-name list covers 353 — a 68-case gap, every one of them a real
- *  strategy session the requirement was calling unmet. Fix the detector,
- *  never the data. trigger_rules #2 ('Consult attended -> consult_held')
- *  already matches on exactly this four-name list; the detector now agrees
- *  with the trigger instead of contradicting it.
+ *  The SHAPE is unchanged by U5. What changed is what `kind_or_type` VALUES
+ *  mean and where the rows come from.
  *
- *  A string and a one-element array are EXACTLY equivalent. Existing stored
- *  single-string configs keep behaving identically (asserted in tests), and
- *  the query count is unchanged — every configured value across every
- *  requirement flattens into the one existing `IN (?)` list.
+ *  ── U5: KEYS AND KINDS, NOT LABELS (v0.5 §3.3 / §6.1) ────────────────────
+ *  Each configured value is matched against the row's `type_key` FIRST, then
+ *  its `kind_key` — both case-insensitively, both from
+ *  caseEventService's normalized rows. So:
  *
- *  v1 implements source:'appt' ONLY. validateConfig REJECTS 'event'/'any'
- *  at write time ("not yet supported; unified-events E1 pending") so no
- *  STORED config can dangle; if read time meets one anyway (future data
- *  written around the validator), the requirement resolves unsatisfied and
- *  console.warn fires — a dangling selector must not silently satisfy or
- *  crash the resolver.
+ *    ['iss', 'ss']   → exactly those two registry types
+ *    ['meeting']     → every appt (appts are 'meeting' BY TABLE, v0.5 §3.3.2)
+ *    ['deadline']    → every deadline event
+ *    ['iss', 'deadline'] → a mixed set; a value is a type key or a kind, and
+ *                    nothing stops one selector from naming both
  *
- *  Appt mapping (appts.appt_status ENUM('Attended','No Show','Rescheduled',
- *  'Canceled','Scheduled'), verified live):
- *    kind_or_type  = appt_type equality against ANY configured value
- *                    (utf8mb4_general_ci — live data has 'Pre-Filing Meeting'
- *                    AND 'Pre-filing Meeting'; both match, which is the
- *                    collation working as intended. The collation handles
- *                    CASE variants; the list handles genuinely different
- *                    names, which no collation can)
- *    want held     → 'Attended'
- *         scheduled→ 'Scheduled'
- *         missed   → 'No Show'
- *         any      → any status EXCEPT the tombstones below ('Canceled'
- *                    included: a canceled appt still HAPPENED as a record;
- *                    'any' means "an appointment of this type exists")
- *    'Rescheduled' rows are TOMBSTONES (apptService supersedes the old row
- *    by flipping it to Rescheduled on rebook) — ALWAYS excluded, every
- *    want, in the SQL itself.
- *    which picks AMONG MATCHES by appt_date: 'latest' = max, 'first' = min,
- *    'any' = existence (satisfied_at reported from the latest match).
- *    (F1) "matches" is the UNION across every configured name — the aliases
- *    describe one activity, so 'first' means the first session under ANY of
- *    its names, not the first under each.
- *    which never changes WHETHER the requirement is satisfied — a match
- *    existing is satisfaction; which only chooses the row that supplies
- *    satisfied_at/detail.
+ *  The registry (`calendar_item_types`) is the vocabulary. `GET
+ *  /api/calendar-types` lists it. A LABEL ('Initial Strategy Session') is no
+ *  longer a match — U5's migration rewrote the one live selector to keys, and
+ *  a stale label config now resolves UNSATISFIED rather than silently half-
+ *  matching. That is the intended failure: labels were never a stable
+ *  identity (four live spellings of one activity — see F1 below), keys are.
  *
- *  satisfied_at = the picked row's appt_date; detail = its appt_status.
+ *  ── F1's ALIAS LIST IS NOW A KEY LIST ────────────────────────────────────
+ *  F1 existed because a single label could only ever name one spelling, and
+ *  the live data had four for the Initial Strategy Session ('Initial Strategy
+ *  Session', 'Strategy Session', 'Consultation', the typo'd 'Intial Strategy
+ *  Session'), two of them in CONCURRENT use — not a rename with a cutover
+ *  date, so no migration could collapse them without falsifying history.
+ *  The registry absorbed the typo as an `ingest_aliases` entry at write time,
+ *  so 'Intial Strategy Session' rows carry type_key 'iss' like the rest; the
+ *  three genuinely-different activities keep three keys and the selector
+ *  keeps listing them. A string and a one-element array remain EXACTLY
+ *  equivalent.
+ *
+ *  ── ALL THREE SOURCES, ONE MATCHER (U5, path 1) ──────────────────────────
+ *  Rows come from `caseEventService.listForCases` — the frozen §3.1 read
+ *  layer — for every source, including 'appt'. One code path, one vocabulary,
+ *  and the read layer's dead-row rules for free:
+ *
+ *    · superseded events are excluded in ITS SQL (superseded_by_event_id IS
+ *      NULL), as are appt tombstones (appt_status <> 'Rescheduled') — the
+ *      same exclusion this detector used to spell out itself;
+ *    · 'contact'-linked and unlinked events are not case-scoped and never
+ *      appear;
+ *    · a docket-anchored event reaches its case through the read layer's
+ *      case_number join, which the old appt-only SQL could not see at all.
+ *
+ *  QUERY BUDGET: 3, not 1 (was: one appt query). listForCases is 3 for ALL
+ *  cases and ALL requirements — cases, events, appts — so the batching
+ *  contract ("a fixed small number for N cases × M requirements") holds; the
+ *  constant moved. Asserted in tests/requirementService.test.js.
+ *
+ *  ── want × source ────────────────────────────────────────────────────────
+ *    want held      → status_norm 'held'      (appt 'Attended' / event 'Completed')
+ *         scheduled → status_norm 'scheduled'
+ *         missed    → status_norm 'missed'    (appt 'No Show' ONLY — events have
+ *                     no missed status; `events.event_status` is
+ *                     Scheduled|Completed|Canceled and the deadline `missed`
+ *                     sweep is U6/A7. want:'missed' on source 'event' is
+ *                     therefore honestly unsatisfiable today, not broken.)
+ *         any       → EXISTENCE. Canceled included (a canceled item still
+ *                     happened as a record); dead rows already excluded above.
+ *
+ *  `which` picks AMONG MATCHES by starts_at: 'latest' = max, 'first' = min,
+ *  'any' = existence (satisfied_at reported from the latest match). It never
+ *  changes WHETHER the requirement is satisfied. (F1) "matches" is the UNION
+ *  across every configured value — the list describes one work item, so
+ *  'first' means the first session under ANY of its keys.
+ *
+ *  satisfied_at = the picked row's start, as a Date. The read layer emits a
+ *  NAIVE firm-local 'YYYY-MM-DD HH:MM:SS' string; the pool runs
+ *  `timezone:'Z'`, so re-reading it as if-UTC reconstructs BYTE-IDENTICALLY
+ *  the Date mysql2 handed the pre-U5 detector. Every other detector returns a
+ *  Date and portalCaseService feeds satisfied_at to utcToLocal — returning
+ *  the bare string here would silently shift portal dates.
+ *
+ *  detail = the row's raw status label, mapped back from status_norm per
+ *  source, so `case.html`'s requirement subtitle reads 'Attended' after U5
+ *  exactly as it read 'Attended' before it. The map is 1:1 over every live
+ *  status; an unknown/blank status normalizes to null and reports null detail
+ *  (unchanged: the six blank-enum 2024 appts already did).
  */
 const EVENT_SOURCES = ['appt', 'event', 'any'];
 const EVENT_WANTS = ['held', 'scheduled', 'missed', 'any'];
 const EVENT_WHICH = ['latest', 'first', 'any'];
-const WANT_STATUS = { held: 'Attended', scheduled: 'Scheduled', missed: 'No Show' };
 
 const KIND_OR_TYPE_MAX = 60;
+
+/** status_norm → the raw status label of the table it came from. The inverse
+ *  of caseEventService's *_STATUS_NORM maps, which are 1:1 over live data.
+ *  'Rescheduled' has no entry on purpose — it is a tombstone the read layer
+ *  never returns by default. */
+const EVENT_STATUS_LABEL = Object.freeze({
+  appt:  Object.freeze({ held: 'Attended',  scheduled: 'Scheduled', missed: 'No Show', canceled: 'Canceled' }),
+  event: Object.freeze({ held: 'Completed', scheduled: 'Scheduled', canceled: 'Canceled' }),
+});
 
 /** (F1) kind_or_type accepts a bare string OR a non-empty array of them.
  *  Normalized to an array so caller and validator share one shape; a
@@ -470,10 +509,18 @@ function kindList(v) {
   return Array.isArray(v) ? v : [];
 }
 
+/** Naive firm-local 'YYYY-MM-DD HH:MM:SS' → the Date mysql2 would have made
+ *  of the same column under the pool's `timezone:'Z'`. Round-trip exact. */
+function naiveToDate(s) {
+  if (s == null || s === '') return null;
+  const d = new Date(`${String(s).replace(' ', 'T')}Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 const eventDetector = {
   key: 'event',
-  label: 'Appointment / event (appts — v1)',
-  config_hint: '{ "source": "appt", "kind_or_type": ["Initial Strategy Session", "Strategy Session"], "want": "held", "which": "latest" }',
+  label: 'Appointment / event (registry keys)',
+  config_hint: '{ "source": "appt", "kind_or_type": ["iss", "ss"], "want": "held", "which": "latest" }',
 
   validateConfig(cfg) {
     const o = asObject(cfg);
@@ -482,9 +529,6 @@ const eventDetector = {
     if (bad) return bad;
     if (!EVENT_SOURCES.includes(o.source)) {
       return `source must be one of: ${EVENT_SOURCES.join(', ')}`;
-    }
-    if (o.source !== 'appt') {
-      return `source "${o.source}" is not yet supported; unified-events E1 pending — use source "appt"`;
     }
     // (F1) string | non-empty string[]. Each element goes through the SAME
     // reqString check the single-string form has always used, so the string
@@ -520,69 +564,84 @@ const eventDetector = {
     const out = emptyResult();
     const ids = (caseIds || []).map(String);
     const pairs = uniqueReqs(reqs).filter(([reqKey, cfg]) => {
-      if (cfg.source === 'appt') return true;
-      // Read-time guard: a stored non-appt source should be impossible
-      // (validateConfig rejects it) — future data written around the
-      // validator resolves UNSATISFIED, loudly, never silently satisfied.
+      if (EVENT_SOURCES.includes(cfg.source)) return true;
+      // Read-time guard: validateConfig rejects an unknown source at write
+      // time, so a stored one means data written around the validator. It
+      // resolves UNSATISFIED, loudly — never silently satisfied, never a
+      // crash that takes the whole resolver pass with it.
       console.warn(
         `[requirementDetectors] event requirement "${reqKey}" has ` +
-        `source="${cfg.source}" — not yet supported (unified-events E1 ` +
-        `pending); resolving unsatisfied`
+        `source="${cfg.source}" — not a known source ` +
+        `(${EVENT_SOURCES.join('|')}); resolving unsatisfied`
       );
       return false;
     });
-    // (F1) Every configured value from EVERY requirement flattens into the
-    // one existing IN (?) list — the query count is unchanged, which is the
-    // point: aliases must not cost a query each.
-    const types = [...new Set(
-      pairs.flatMap(([, cfg]) => kindList(cfg.kind_or_type).map((t) => String(t)))
-    )].filter((t) => t !== '');
-    if (!ids.length || !types.length) return out;
+    // Every configured value from EVERY requirement is matched in JS against
+    // one batched read; the selector list costs nothing per entry.
+    const anyValues = pairs.some(([, cfg]) =>
+      kindList(cfg.kind_or_type).some((t) => String(t).trim() !== ''));
+    if (!ids.length || !pairs.length || !anyValues) return out;   // 0 queries
 
-    const [rows] = await db.query(
-      `SELECT appt_case_id, appt_type, appt_status, appt_date
-         FROM appts
-        WHERE appt_case_id IN (?)
-          AND appt_type IN (?)
-          AND appt_status <> 'Rescheduled'`,
-      [ids, types]
-    );
+    // Lazy require — the reportService precedent below. caseEventService pulls
+    // luxon + calendarTypeService at load; this file is required from
+    // pipelineService's dependency graph and stays boot-cheap.
+    const caseEventService = require('./caseEventService');
 
-    // Bucket per (case, type) — JS bucketing uses ci keys so it agrees with
-    // the general_ci SQL match that produced the rows.
-    const buckets = new Map();
-    for (const r of rows) {
-      const k = `${String(r.appt_case_id)}\u0000${ciKey(r.appt_type)}`;
-      if (!buckets.has(k)) buckets.set(k, []);
-      buckets.get(k).push(r);
-    }
+    // 3 queries, whatever N is. Defaults: superseded events and Rescheduled
+    // appt tombstones excluded; no attendees; no date bounds.
+    const byCase = await caseEventService.listForCases(db, ids);
+
+    // listForCases keys by the CANONICAL cases.case_id. The caller's ids are
+    // already canonical today (requirementService takes them from its own
+    // `cases` query), but the read layer matches case ids case-insensitively
+    // and so must the bucketing here — the same rule ciKey exists for.
+    const rowsByKey = new Map();
+    for (const [cid, rows] of byCase) rowsByKey.set(ciKey(cid), rows);
 
     for (const caseId of ids) {
+      const rows = rowsByKey.get(ciKey(caseId));
+      if (!rows || !rows.length) continue;
+
       for (const [reqKey, cfg] of pairs) {
         const want = cfg.want === undefined ? 'held' : cfg.want;
         const which = cfg.which === undefined ? 'latest' : cfg.which;
-        // (F1) UNION across this requirement's configured names. A single
-        // string yields one bucket — byte-identical to pre-F1. Duplicate
-        // spellings that collapse under ciKey (e.g. 'Consultation' and
-        // 'consultation') would otherwise concat the same bucket twice, so
-        // the ci keys are deduped first.
-        const bucketKeys = [...new Set(
-          kindList(cfg.kind_or_type).map((t) => `${caseId}\u0000${ciKey(t)}`)
-        )];
-        const bucket = bucketKeys.flatMap((k) => buckets.get(k) || []);
-        const matches = bucket.filter((r) =>
-          want === 'any' ? true : r.appt_status === WANT_STATUS[want]
+        const wanted = new Set(
+          kindList(cfg.kind_or_type).map((t) => ciKey(t)).filter((t) => t !== '')
         );
+        if (!wanted.size) continue;
+
+        const matches = rows.filter((r) => {
+          if (cfg.source !== 'any' && r.source !== cfg.source) return false;
+          // type_key FIRST, then kind_key (v0.5 §6). A value naming a kind
+          // matches every row of that kind; a value naming a type matches
+          // only that type. Unmapped rows carry their raw label as type_key
+          // (caseEventService's passthrough) and so cannot accidentally match
+          // a key a consumer bound.
+          const tk = ciKey(r.type_key);
+          const kk = ciKey(r.kind_key);
+          if (!(tk && wanted.has(tk)) && !(kk && wanted.has(kk))) return false;
+          if (want !== 'any' && r.status_norm !== want) return false;
+          // satisfied_at IS the protocol (see the registry contract), and a
+          // row with no start cannot supply one. Both date columns are NOT
+          // NULL, so this is defensive, not a live path.
+          return r.starts_at != null;
+        });
         if (!matches.length) continue;
-        // 'first' = min appt_date; 'latest' and 'any' = max appt_date.
+
+        // 'first' = min starts_at; 'latest' and 'any' = max. The read layer's
+        // naive 'YYYY-MM-DD HH:MM:SS' shape is fixed-width, so lexicographic
+        // order IS chronological order — no Date parsing in the hot loop.
         let pick = matches[0];
         for (const r of matches.slice(1)) {
-          const rd = new Date(r.appt_date), pd = new Date(pick.appt_date);
-          if (which === 'first' ? rd < pd : rd > pd) pick = r;
+          if (which === 'first' ? r.starts_at < pick.starts_at : r.starts_at > pick.starts_at) {
+            pick = r;
+          }
         }
+        const at = naiveToDate(pick.starts_at);
+        if (!at) continue;
         ensureCase(out, caseId).set(reqKey, {
-          satisfied_at: pick.appt_date,
-          detail: pick.appt_status,
+          satisfied_at: at,
+          detail: (EVENT_STATUS_LABEL[pick.source] || {})[pick.status_norm] || null,
           progress: null,
         });
       }

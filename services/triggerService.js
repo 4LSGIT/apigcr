@@ -103,9 +103,15 @@ const COMMON_FIELDS = [
   { path: 'case_id',    label: 'Case id (null when caseless)' },
 ];
 
+// U5: every appt.* emit site's `data` is a row that carries `type_key`
+// (createAppt/rescheduleAppt SELECT *, cancelAppt appts.*, markAttended /
+// markNoShow / rescheduleLater name it explicitly), so publishing it here is a
+// statement of fact, not an aspiration. Prefer it over the label in new rules:
+// the label has thirty live spellings, the key has one per activity.
 const APPT_DATA_FIELDS = [
   { path: 'data.appt_id',       label: 'Appt id' },
-  { path: 'data.appt_type',     label: 'Appt type (free text)' },
+  { path: 'data.type_key',      label: 'Type key (registry: calendar_item_types); null when unmapped' },
+  { path: 'data.appt_type',     label: 'Appt type label (legacy; prefer data.type_key)' },
   { path: 'data.appt_with',     label: 'Provider user id' },
   { path: 'data.appt_date',     label: 'Appt date (firm-local)' },
   { path: 'data.appt_status',   label: 'Appt status (post-mutation)' },
@@ -202,7 +208,8 @@ const EVENT_TYPES = {
     fields: [
       ...COMMON_FIELDS,
       { path: 'data.appt_id',   label: 'Appt id' },
-      { path: 'data.appt_type', label: 'Appt type (free text)' },
+      { path: 'data.type_key',  label: 'Type key (registry); null when unmapped' },
+      { path: 'data.appt_type', label: 'Appt type label (legacy; prefer data.type_key)' },
       { path: 'data.appt_date', label: 'Appt date' },
       { path: 'data.appt_with', label: 'Provider user id' },
     ],

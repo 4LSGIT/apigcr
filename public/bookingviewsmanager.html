@@ -118,8 +118,9 @@
     border-bottom: 1px solid var(--border); padding-bottom: 5px;
   }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 12px; }
   .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 12px; }
-  @media (max-width: 640px) { .grid2, .grid4 { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { .grid2, .grid3, .grid4 { grid-template-columns: 1fr; } }
 
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 11px; color: var(--text-muted);
@@ -272,10 +273,19 @@
     </div>
 
     <h4>Appointment</h4>
-    <div class="grid2">
+    <div class="grid3">
       <div class="field">
-        <label for="f-appt-type">Appointment type</label>
+        <label for="f-type-key">Appointment type</label>
+        <select id="f-type-key"></select>
+        <div class="hint">From the calendar type registry — this is what
+          automation matches on.</div>
+      </div>
+      <div class="field">
+        <label for="f-appt-type">Display label</label>
         <input type="text" id="f-appt-type" placeholder="Consultation" maxlength="60">
+        <div class="hint">Shown to the client and used by
+          <code>{{appts.appt_type}}</code> in the confirmation. Follows the type
+          above unless you edit it.</div>
       </div>
       <div class="field">
         <label for="f-platform">Platform</label>
@@ -407,7 +417,7 @@
 let api = null;
 
 // ── State ───────────────────────────────────────────────────
-const state = { views: [], providers: [], hooks: [], editingId: null };
+const state = { views: [], providers: [], hooks: [], calendarTypes: [], editingId: null, prevTypeKey: '' };
 
 // New-view defaults (existing views always show their own stored values).
 // Lifted from the test-consult view: confirmation SMS on with a templated
@@ -491,6 +501,56 @@ async function loadHooks() {
   }
 }
 
+// U5 — the calendar type registry, scoped to kind=meeting: a booking view
+// books an APPOINTMENT, and v0.5 §3.3.2's storage rule is kind='meeting' →
+// appts. Offering a hearing or a deadline here would offer a type that cannot
+// be stored in the table the booking writes to.
+async function loadCalendarTypes() {
+  try {
+    const data = await api('/api/calendar-types?kind=meeting&active=1', 'GET');
+    state.calendarTypes = Array.isArray(data.data) ? data.data : [];
+  } catch {
+    state.calendarTypes = []; // renderTypeKeySelect falls back to a text input
+  }
+}
+
+/** Populate the type picker; degrade to a free-text key input if the registry
+ *  did not load, so a registry outage cannot make every view unsaveable. */
+function renderTypeKeySelect(selected) {
+  const el = E('f-type-key');
+  if (!state.calendarTypes.length) {
+    if (el.tagName !== 'INPUT') {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = 'f-type-key';
+      input.placeholder = 'type_key (registry unavailable)';
+      input.maxLength = 40;
+      el.replaceWith(input);
+    }
+    E('f-type-key').value = selected || '';
+    return;
+  }
+  const cur = selected || '';
+  // A stored key that is inactive (or has since been retired) is still shown,
+  // as its own option — opening the editor must never silently re-point a
+  // live view at a different type.
+  const known = state.calendarTypes.some(t => t.type_key === cur);
+  const opts = [`<option value="">— select a type —</option>`]
+    .concat(state.calendarTypes.map(t =>
+      `<option value="${esc(t.type_key)}">${esc(t.label)} (${esc(t.type_key)})</option>`));
+  if (cur && !known) {
+    opts.push(`<option value="${esc(cur)}">${esc(cur)} (not in the active registry)</option>`);
+  }
+  el.innerHTML = opts.join('');
+  el.value = cur;
+}
+
+/** The label for a key, or '' when unknown. */
+function typeKeyLabel(key) {
+  const hit = state.calendarTypes.find(t => t.type_key === key);
+  return hit ? hit.label : '';
+}
+
 // ── List ────────────────────────────────────────────────────
 async function loadViews() {
   const region = E('list-region');
@@ -571,7 +631,7 @@ function listRow(v) {
     <tr data-id="${v.id}">
       <td class="slug-cell">${esc(v.slug)}${winBadge}</td>
       <td>${esc(v.title)}</td>
-      <td>${esc(v.appt_type)} <span class="muted">· ${v.appt_length}m</span></td>
+      <td>${esc(v.appt_type)}${v.type_key ? ` <span class="muted">(${esc(v.type_key)})</span>` : ''} <span class="muted">· ${v.appt_length}m</span></td>
       <td title="${esc(providerNames(v))}">${esc(mode)} <span class="muted">(${(v.provider_ids || []).length})</span></td>
       <td>${statusBadge(v)}</td>
       <td class="muted">${fmtDate(v.created_at)}</td>
@@ -705,6 +765,8 @@ function openEditor(id) {
   E('f-logo-link').value = v ? (v.logo_link_url || '') : (fd.firm_site_url || '');
   E('f-active').checked = v ? !!v.active : true;
 
+  state.prevTypeKey = v ? (v.type_key || '') : '';
+  renderTypeKeySelect(state.prevTypeKey);
   E('f-appt-type').value   = v ? v.appt_type : '';
   E('f-platform').value    = v ? v.platform : 'telephone';
   E('f-length').value      = v ? v.appt_length : 30;
@@ -761,6 +823,7 @@ function collectPayload() {
     logo_link_url:    E('f-logo-link').value.trim() || null,
     active:           E('f-active').checked ? 1 : 0,
     appt_type:        E('f-appt-type').value.trim(),
+    type_key:         E('f-type-key').value.trim() || null,
     platform:         E('f-platform').value,
     appt_length:      Number(E('f-length').value),
     granularity_min:  Number(E('f-granularity').value),
@@ -788,7 +851,8 @@ function clientValidate(p) {
     return 'Slug may contain only letters, numbers, _ and - (max 100).';
   }
   if (!p.title) return 'Title is required.';
-  if (!p.appt_type) return 'Appointment type is required.';
+  if (!p.type_key) return 'Appointment type is required.';
+  if (!p.appt_type) return 'Display label is required.';
   if (!Number.isInteger(p.appt_length) || p.appt_length < 1 || p.appt_length > 127) {
     return 'Length must be 1–127 minutes.';
   }
@@ -893,6 +957,21 @@ function init() {
   E('f-provider-mode').addEventListener('change', () => {
     E('provider-mode-hint').textContent = PROVIDER_MODE_HINTS[E('f-provider-mode').value];
   });
+  // U5 — the display label FOLLOWS the type, but only while it is still the
+  // type's own label. Once staff type something of their own ('Free 15-min
+  // chat'), changing the type must not overwrite it: that string is what the
+  // client reads in the confirmation SMS. Delegated off the container so it
+  // survives renderTypeKeySelect's fallback swapping the element.
+  E('modal-backdrop').addEventListener('change', (e) => {
+    if (e.target.id !== 'f-type-key') return;
+    const nextKey = e.target.value;
+    const label   = typeKeyLabel(nextKey);
+    const cur     = E('f-appt-type').value.trim();
+    if (label && (cur === '' || cur === typeKeyLabel(state.prevTypeKey))) {
+      E('f-appt-type').value = label;
+    }
+    state.prevTypeKey = nextKey;
+  });
   E('f-windows-add').addEventListener('click', addWindowRow);
   E('f-windows').addEventListener('click', e => {
     const btn = e.target.closest('.win-remove');
@@ -918,7 +997,7 @@ function init() {
   E('mint-btn').addEventListener('click', mintLink);
   E('mint-copy').addEventListener('click', () => copyText(E('mint-url').textContent, 'Booking link copied'));
 
-  Promise.all([loadProviders(), loadHooks()])
+  Promise.all([loadProviders(), loadHooks(), loadCalendarTypes()])
     .catch(() => {}) // reference data failures shouldn't block the list
     .then(loadViews);
 }

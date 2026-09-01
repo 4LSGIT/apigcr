@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-01T12:31:01.514Z
+-- Generated: 2026-09-01T15:34:12.229Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:6c481aa182268bb0a0c2327a280f07fb
+-- Fingerprint: sha256:0c09b3905fff79d7493779e0059742ec
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -287,6 +287,7 @@ CREATE TABLE `booking_views` (
   `provider_mode` enum('fixed_one','client_choice','any_auto') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'client_choice',
   `provider_ids` json NOT NULL,
   `appt_type` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `appt_length` smallint NOT NULL,
   `platform` enum('telephone','Zoom','in-person') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'telephone',
   `buffer_min` smallint NOT NULL DEFAULT '0',
@@ -1127,6 +1128,8 @@ CREATE TABLE `contract_templates` (
   `name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `kind` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `template_type` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'html' COMMENT 'html = body rendered to PDF; pdf = stored source PDF filled via pdf-lib',
+  `purpose` enum('esign','generate','both') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'esign' COMMENT 'esign = Send-for-Signature picker only; generate = Generate-document picker only; both = both',
+  `file_subfolder` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Generated Documents' COMMENT 'Subfolder under the case Dropbox folder where generated (non-esign) output files',
   `body` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'HTML, rendered to PDF in a later phase',
   `prefill_schema` json NOT NULL COMMENT '[{key,label,type,resolver,default,required}]',
   `placement_json` json NOT NULL COMMENT '{"coord_space":"pdf_user_space","fields":[{page,x,y,w,h,type,signer}]}',

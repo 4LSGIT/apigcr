@@ -177,15 +177,20 @@ await apiSend("/sequences/enroll", "POST", {
     appt_id:    123,
     appt_time:  "2026-03-20T14:00:00Z",
     // cascade fields — flatten into trigger_data:
+    type_key:   "ss",
     appt_type:  "Strategy Session",
     appt_with:  2
   }
 });
 ```
 
-The cascade fields (`appt_type`, `appt_with`, etc.) are passed inside `trigger_data`. The engine reads them from there — there is no separate `filters` arg or top-level `appt_type` / `appt_with` body field.
+The cascade fields (`type_key`, `appt_with`, etc.) are passed inside `trigger_data`. The engine reads them from there — there is no separate `filters` arg or top-level body field.
 
-A worked cascade example with multiple templates and trigger shapes lives in **cookbook §3.5** (`manual/03-YisraFlow/13-cookbook.md`). The `no_show` type ships with `priority_fields: ["appt_type", "appt_with"]` — equivalent to the prior hardcoded cascade.
+**Keys, not labels (U5).** `pre_appt` and `no_show` lead their `priority_fields` with `type_key` — the `calendar_item_types` registry key, listed by `GET /api/calendar-types`. `appt_type` is still in both lists and still legal in `filters`, for one release, but no shipping template filters on it: a label carries no identity (the Initial Strategy Session has four live spellings) and a filter on one will miss every booking made under another. See *Keys vs labels* in chapter 15.
+
+**The disqualify rule is why this matters.** A template with a **specific** filter and **no** corresponding value in `trigger_data` is disqualified outright — not scored low, not skipped. So an enrollment site that stops flattening `type_key` does not degrade the match; it silently hands every appointment to the generic fallback. `apptService` flattens it at both sites (`createAppt` → `pre_appt`, `markNoShow` → `no_show`), and that is a load-bearing pairing with the filters, not a convenience.
+
+A worked cascade example with multiple templates and trigger shapes lives in **cookbook §3.5** (`manual/03-YisraFlow/13-cookbook.md`).
 
 **Template `filters` validation.** `POST` and `PUT /sequences/templates` reject `filters` keys not in the type's `priority_fields` (`validateTemplateFilters` in `lib/sequenceEngine.js`). Type-less (ID-only) templates can't have filters at all.
 
@@ -334,9 +339,9 @@ Leave `contact_id_override` empty to fall through to the workflow template's own
 
 The appointment reminder system uses **two cooperating sequence types** instead of one workflow:
 
-**`pre_appt`** (`priority_fields = ["appt_type", "appt_with"]`) — appt-time-anchored reminders for every new appt. Enrolled from `apptService.createAppt`. Three templates ship:
-- `pre_appt — 341 Meeting` — 6PM day-before client SMS + 10-min-before client SMS (both with trustee Zoom link), 3-min-before staff alert
-- `pre_appt — Initial Strategy Session` — 24h-before client SMS, 3-min-before alert to `appt_with`, 3-min-before alert to RG, 3-min-before Clio Grow inbox webhook. Omits a 2h step — `iss_intake` step 8 owns that slot for ISS.
+**`pre_appt`** (`priority_fields = ["type_key", "appt_type", "appt_with"]`) — appt-time-anchored reminders for every new appt. Enrolled from `apptService.createAppt`. Three templates ship:
+- `pre_appt — 341 Meeting` (`filters.type_key = 'meeting_341'`) — 6PM day-before client SMS + 10-min-before client SMS (both with trustee Zoom link), 3-min-before staff alert
+- `pre_appt — Initial Strategy Session` (`filters.type_key = 'iss'`) — 24h-before client SMS, 3-min-before alert to `appt_with`, 3-min-before alert to RG, 3-min-before Clio Grow inbox webhook. Omits a 2h step — `iss_intake` step 8 owns that slot for ISS.
 - `pre_appt — Fallback (generic)` — 24h-before, 2h-before, 3-min-before. Matches any non-341, non-ISS appt.
 
 **`iss_intake`** (`priority_fields = ["appt_with"]`) — enrolled only when `appt_type === 'Initial Strategy Session'`, in addition to `pre_appt`. Single fallback template with 9 steps in Shape-A paired-conditional design: each timing slot has an "intake not submitted" step and an "intake submitted" step on opposite `case_intake_form is_null` conditions. Exactly one of each pair fires.

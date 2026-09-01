@@ -14,6 +14,13 @@
  *   341 block       still keys on the STRING '341 Meeting' (untouched until
  *                   U6): the prior 341 is superseded and the case pointer moves
  *   envelopes       appt.attended / appt.no_show data carries type_key (R4)
+ *   trigger_data    (U5) createAppt's pre_appt enrollment and markNoShow's
+ *                   no_show enrollment FLATTEN type_key into trigger_data —
+ *                   the cascade key the U5 migration points four templates at
+ *
+ * The cascade OUTCOMES those payloads drive live in
+ * tests/unifiedEventsU5.cascade.test.js; this file pins the payloads
+ * themselves, because the two halves fail independently.
  *
  * Stub posture mirrors tests/apptService.lineage.test.js (SQL-routing db,
  * `unmatched` recorded and asserted empty). Registry cache PRIMED from the
@@ -325,5 +332,77 @@ describe('envelopes dual-carry type_key (R4)', () => {
     const ns  = domainEvents.emit.mock.calls.find((c) => c[1] === 'appt.no_show')[2].data;
     expect([att.appt_type, att.type_key]).toEqual(['341 Meeting', 'meeting_341']);
     expect([ns.appt_type, ns.type_key]).toEqual(['Initial Strategy Session', 'iss']);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// (U5) trigger_data carries the cascade key
+//
+// FLATTENED, not nested: sequenceEngine reads cascade fields off the TOP LEVEL
+// of trigger_data. A template with a specific filter and no trigger value for
+// it is DISQUALIFIED — so an omission here is not a degraded match, it is the
+// wrong template, silently, forever.
+// ────────────────────────────────────────────────────────────────────────
+describe('trigger_data carries type_key (U5)', () => {
+  const seqEngine = require('../lib/sequenceEngine');
+
+  const enrollment = (type) =>
+    seqEngine.enrollContact.mock.calls.find((c) => c[2] === type);
+
+  test('pre_appt trigger_data carries the key createAppt RESOLVED, beside appt_type', async () => {
+    const db = makeDb();
+    await apptService.createAppt(db, { ...BASE, appt_type: 'Initial Strategy Session' });
+    await flush();
+    const [, , , triggerData] = enrollment('pre_appt');
+    expect(triggerData.type_key).toBe('iss');
+    expect(triggerData.appt_type).toBe('Initial Strategy Session');
+  });
+
+  test('the key comes from the RESOLUTION, not the label — an alias proves it', async () => {
+    // 'Potato Hunting' resolves through ingest_aliases to `test`. A consumer
+    // re-deriving a key from the label would get nothing; the row and the
+    // trigger_data must agree, and they do because both read typeKeyVal.
+    const db = makeDb();
+    const r = await apptService.createAppt(db, { ...BASE, appt_type: 'Potato Hunting' });
+    await flush();
+    expect(enrollment('pre_appt')[3].type_key).toBe('test');
+    expect(db.rows.get(r.appt_id).type_key).toBe('test');
+  });
+
+  test('an unmapped label enrolls with type_key null — absent, never guessed', async () => {
+    const db = makeDb();
+    await apptService.createAppt(db, { ...BASE, appt_type: 'Nobody Registered This' });
+    await flush();
+    expect(enrollment('pre_appt')[3].type_key).toBeNull();
+  });
+
+  test('a GIVEN key wins in trigger_data exactly as it wins on the row', async () => {
+    const db = makeDb();
+    const r = await apptService.createAppt(db,
+      { ...BASE, appt_type: 'Consultation', type_key: 'meeting_341' });
+    await flush();
+    expect(enrollment('pre_appt')[3].type_key).toBe('meeting_341');
+    expect(db.rows.get(r.appt_id).type_key).toBe('meeting_341');
+  });
+
+  test('no_show trigger_data carries the row key from markNoShow\'s own SELECT', async () => {
+    const db = makeDb([existingAppt({ appt_id: 801, appt_type: 'Strategy Session Follow Up',
+                                      type_key: 'ss_follow_up' })]);
+    await apptService.markNoShow(db, { appt_id: 801, enroll: true });
+    await flush();
+    const [, , , triggerData] = enrollment('no_show');
+    expect(triggerData.type_key).toBe('ss_follow_up');
+    expect(triggerData.appt_type).toBe('Strategy Session Follow Up');
+    // The other cascade fields are untouched by U5.
+    expect(triggerData.appt_with).toBe(1);
+  });
+
+  test('a no_show on a pre-U2 row (NULL key) enrolls with null, not undefined', async () => {
+    // undefined and null are the same to the cascade (both \"not provided\"),
+    // but null is what the column holds and what the payload should say.
+    const db = makeDb([existingAppt({ appt_id: 802, appt_type: 'Legacy Thing', type_key: null })]);
+    await apptService.markNoShow(db, { appt_id: 802, enroll: true });
+    await flush();
+    expect(enrollment('no_show')[3].type_key).toBeNull();
   });
 });

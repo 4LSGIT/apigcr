@@ -137,6 +137,40 @@ Three things to know before writing a rule on one:
 carried for one release beside `data.label`. New rules should read `data.label`
 (or better, `data.type_key`).
 
+#### Keys vs labels (Unified Events U5)
+
+A calendar item has two names. The **label** is free text a human typed — the
+Initial Strategy Session has been booked under four spellings, one of them a
+typo, two of them in concurrent use for two years. The **key** is a row in
+`calendar_item_types`: one per activity, stable, and what every consumer now
+matches on.
+
+`GET /api/calendar-types` is the vocabulary — `?kind=meeting&active=1` for the
+appointment types, no filter for all 34. Each row is `{ type_key, label, kind,
+… }`; `kind` is one of `hearing | meeting | deadline | conference | other`, and
+under the storage rule `kind='meeting'` lives in `appts` while everything else
+lives in `events`.
+
+Where the keys are now the binding:
+
+| Consumer | Field | Example |
+|---|---|---|
+| trigger rules | `data.type_key` | `in ['iss','ss','consultation']` |
+| sequence template filters | `filters.type_key` | `"iss\|ss\|ss_follow_up\|pre_filing"` |
+| pipeline requirement `event` detector | `kind_or_type` | `["iss","ss","consultation"]` |
+| booking views | `booking_views.type_key` | picked from the registry in the views manager |
+
+`data.appt_type` still rides along on every `appt.*` envelope and
+`filters.appt_type` is still a legal key — both for one release, so a rule or
+template written the old way keeps working while the cutover settles. Neither
+is where new work should go: the label carries no identity, and a filter on it
+will miss every row booked under a spelling you did not think of.
+
+**A key you do not recognise is not a bug.** An item whose type was never
+registered stores `type_key` NULL and keeps its raw label; the read layer passes
+that label through so nothing renders blank. Such a row will never match a key
+filter — which is the intended behaviour, not a silent half-match.
+
 **The bypass column is the important one.** `case.updated` not firing for court-executor writes is a design decision, not a gap: those writes are high-volume and machine-driven, and routing them through the event system would have made every docket sync a potential trigger storm. If you need to react to one of them, react to the thing that caused it instead.
 
 `esign.status_changed` uses the **internal** status vocabulary — `sent`, `viewed`, `signed`, `declined`, `bounced`, `recalled`, `expired`, `reminded`. Filter `data.status equals "signed"` for completion; `data.provider_status` carries the raw provider string.
@@ -176,7 +210,7 @@ Mapper config is an array of mapping rules, each:
 | You write | You get |
 |---|---|
 | `case_id` | dot-path lookup into the transformed envelope |
-| `data.appt_type` | nested dot-path |
+| `data.type_key` | nested dot-path |
 | `'consult_booked'` | single quotes = **literal string** |
 | `$` | the whole transformed object |
 
@@ -263,11 +297,13 @@ Batched deletes, 5k per batch, 20 batches max per run, so a backlog drains acros
 
 ### The seeded rules, as worked examples
 
-**1. `appt.created` → "Consult booked → consult_booked"** — conditions mode: `case_id exists` AND `data.appt_type in [Initial Strategy Session, Strategy Session, Consultation, Intial Strategy Session]` (the misspelling is in the live data on purpose). Passthrough transform. One `advance_stage` action with `stage: 'consult_booked'` and `only_from: 'lead,no_show,not_eligible_yet,not_interested,dead_lead,none'` — the `only_from` guard is what stops the rule dragging a mid-pipeline case backwards.
+**1. `appt.created` → "Consult booked → consult_booked"** — conditions mode: `case_id exists` AND `data.type_key in ['iss','ss','consultation']`. Passthrough transform. One `advance_stage` action with `stage: 'consult_booked'` and `only_from: 'lead,no_show,not_eligible_yet,not_interested,dead_lead,none'` — the `only_from` guard is what stops the rule dragging a mid-pipeline case backwards.
+
+Before U5 this matched `data.appt_type in [Initial Strategy Session, Strategy Session, Consultation, Intial Strategy Session]` — four spellings, one of them a typo, because the label was the only identity available. Three keys replace the four labels: the typo is an `ingest_aliases` entry on `iss` and resolves at write time, so it never needs naming again.
 
 **2. `appt.attended` → "Consult attended → consult_held"** — same shape, different target stage and `only_from` list.
 
-**3. `appt.attended` → "341 attended → meeting_341"** — same event as rule 2, distinguished by `data.appt_type equals '341 Meeting'` and gated `only_from: 'filed'`. Two rules on one event, ordered by position (10, 20); both are evaluated, so ordering is about action sequence, not exclusivity.
+**3. `appt.attended` → "341 attended → meeting_341"** — same event as rule 2, distinguished by `data.type_key equals 'meeting_341'` and gated `only_from: 'filed'`. Two rules on one event, ordered by position (10, 20); both are evaluated, so ordering is about action sequence, not exclusivity.
 
 **4. `case.stage_advanced` → "Stage change → case log"** — the match-all example: `{"operator":"and","conditions":[]}`, deliberately every advance. Code transform composes the log text from `extra.from_stage`, `data.stage_key`, `data.status_label`, and `extra.note`, then a `create_log` action writes a `type='status'` row on the case. This is the one to read if you want to see the code-transform → params-mapping handoff end to end.
 

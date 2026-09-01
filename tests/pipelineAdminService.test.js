@@ -742,12 +742,16 @@ describe('R2 requirements CRUD', () => {
       .rejects.toMatchObject({ status: 400, message: expect.stringContaining('kind') });
   });
 
-  test('detector_config rejected at WRITE time — event source "event" (E1 pending)', async () => {
+  test('detector_config rejected at WRITE time — event source outside the enum', async () => {
+    // U5 opened source 'event' and 'any' (they read through
+    // caseEventService.listForCases now), so the old "E1 pending" refusal is
+    // gone. The enum itself still refuses anything else — a stored source no
+    // detector understands is the booby trap validateConfig exists to prevent.
     const db = stubTxDb([]);
     await expect(svc.createRequirement(db, 7, {
       ...GOOD_BODY, detector: 'event',
-      detector_config: { source: 'event', kind_or_type: '341 Meeting' },
-    })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('E1') });
+      detector_config: { source: 'task', kind_or_type: 'meeting_341' },
+    })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('source must be one of') });
   });
 
   test('detector_config unknown key rejected (typo guard)', async () => {

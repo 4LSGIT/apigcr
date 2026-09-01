@@ -134,15 +134,27 @@ skipped. Once a case is on a matter pipeline, every Intake-stage requirement cou
 | `esign` | A signing request of this kind for the case reached signed/completed | `{ "kind": "retainer_prepetition" }` |
 | `checklist` | The case's checklist with this tag is complete (unsatisfied shows progress, e.g. "4 of 7 received") | `{ "tag": "docs_needed" }` |
 | `form` | A submission of this form exists for the case | `{ "form_key": "intake" }` |
-| `event` | An appointment of one of these types has the wanted outcome. `want`: `held` / `scheduled` / `missed` / `any`; `which`: `latest` / `first` / `any`. Several type names may be listed — booking history spells things more than one way | `{ "source": "appt", "kind_or_type": ["Initial Strategy Session", "Strategy Session"], "want": "held", "which": "latest" }` |
+| `event` | A calendar item of one of these types has the wanted outcome. `source`: `appt` / `event` / `any`; `want`: `held` / `scheduled` / `missed` / `any`; `which`: `latest` / `first` / `any`. `kind_or_type` holds **registry keys** — several may be listed, because one activity can have several keys | `{ "source": "appt", "kind_or_type": ["iss", "ss"], "want": "held", "which": "latest" }` |
 | `case_field` | A whitelisted date column on the case is set (filed date, discharge date, 341 date, docs due, …) | `{ "field": "case_341_current" }` |
 | `report` | A saved report (zero parameters, columns `case_id` + `satisfied_at`, optional `detail`/`progress`) returns a row for the case. The escape hatch for anything the others can't express; the report is run once at save time to prove it fits | `{ "report_key": "req_tax_returns" }` |
 | `manual` | Never automatically — only a staff override completes it | `{}` |
 
 Configs are validated when saved (a bad field name, a report with the wrong columns, or an
 unsupported event source is refused at authoring time, not discovered later on a case page).
-The `event` detector currently reads appointments only; court events arrive with the unified
-calendar work.
+
+**`kind_or_type` holds keys, not labels.** Each value is matched against the item's `type_key`
+first and then its `kind` — so `["iss","ss"]` names two registry types, while `["meeting"]` matches
+every appointment and `["deadline"]` every deadline. `GET /api/calendar-types` is the vocabulary
+(`?kind=meeting&active=1` for appointment types). A label like `"Initial Strategy Session"` no
+longer matches anything: labels were never a stable identity — that one activity has four live
+spellings — which is exactly why the registry exists. See *Keys vs labels* in YisraFlow chapter 15.
+
+**All three sources are live.** `source: "appt"` reads appointments, `"event"` reads court dates
+and deadlines, `"any"` spans both. Everything comes through the unified calendar read layer, so
+superseded court events and rescheduled-appointment tombstones are excluded for free, and a
+docket-anchored hearing reaches its case even though it carries no case id. One caveat:
+`want: "missed"` means nothing on the `event` side yet — court events are Scheduled / Completed /
+Canceled and have no missed state until the deadline sweep ships.
 
 ### Overrides
 
