@@ -474,15 +474,93 @@ describe('ref/templates/notice_of_bankruptcy_filing.json', () => {
 
   test('no court seal, and the document says who issued it', () => {
     // A firm-issued notice bearing the court's seal misrepresents the sender.
-    expect(tpl.body.toLowerCase()).not.toContain('seal of the united states');
-    expect(tpl.body).toContain('does not bear the seal of the Court');
-    expect(tpl.body).toContain('United States Bankruptcy Court');
+    // Both source notices Fred supplied DO carry the seal — the court's own
+    // and the firm's Jotform copy of it. This one deliberately does not, and
+    // says so in the closing line.
+    //
+    // Compared on collapsed whitespace: the disclaimer wraps across source
+    // lines, so a literal substring match here breaks on a re-wrap rather than
+    // on a real change.
+    const flat = tpl.body.replace(/\s+/g, ' ');
+    expect(flat.toLowerCase()).not.toContain('seal of the united states');
+    expect(flat).toContain('does not bear the seal of the Court');
+    expect(flat).toContain('United States Bankruptcy Court');
+    expect(flat).toContain('This notice is provided by {{firm_name}} as a courtesy.');
   });
 
-  test('the draft-prose banner is still present (remove it when SS approves the wording)', () => {
-    // This test is a TRIPWIRE, not a rule: the prose in the committed template
-    // is a placeholder that nobody has approved. When the firm's paragraphs are
-    // pasted in and the banner comes out, DELETE THIS TEST in the same commit.
-    expect(tpl.body).toContain('MUST BE REPLACED BEFORE THIS TEMPLATE IS');
+  // ── VERBATIM WORDING (G4.1) ────────────────────────────────────────────────
+  // These three paragraphs are quoted from the court's own Notice of Bankruptcy
+  // Case Filing, by way of the firm's Jotform version. They are not ours to
+  // paraphrase: the automatic-stay language in particular is what a creditor
+  // reads and acts on. If a test here fails, the question is not "update the
+  // test" — it is "who changed the legal text, and did SS approve it?"
+  describe('verbatim wording', () => {
+    // The body wraps paragraphs across source lines; compare on collapsed
+    // whitespace so re-wrapping the file is not a test failure.
+    const flat = tpl.body.replace(/\s+/g, ' ');
+    const has = (s) => expect(flat).toContain(s.replace(/\s+/g, ' ').trim());
+
+    test('automatic stay paragraph', () => {
+      has(`In most instances, the filing of the bankruptcy case automatically
+           stays certain collection and other actions against the debtor and the
+           debtor's property. Under certain circumstances, the stay may be
+           limited to 30 days or not exist at all, although the debtor can
+           request the court to extend or impose a stay. If you attempt to
+           collect a debt or take other action in violation of the Bankruptcy
+           Code, you may be penalized. Consult a lawyer to determine your rights
+           in this case.`);
+    });
+
+    test("clerk's office paragraph, with the live URL and street address", () => {
+      has(`If you would like to view the bankruptcy petition and other documents
+           filed by the debtor, they are available at http://www.mieb.uscourts.gov
+           or at the Bankruptcy Court Clerk's Office, 211 West Fort Street,
+           Detroit, MI 48226.`);
+    });
+
+    test('creditor paragraph', () => {
+      has(`You may be a creditor of the debtor. If so, you will receive an
+           additional notice from the court setting forth important deadlines.`);
+    });
+
+    test('opening sentence carries chapter and file date, and claims no filed TIME', () => {
+      has(`Please take note that a bankruptcy case concerning the debtor(s)
+           listed below was filed under Chapter {{chapter}} of the United States
+           Bankruptcy Code, on {{file_date}}.`);
+      // cases.case_file_date is a DATE column — there is no time to print, and
+      // the firm's Jotform version's "at 10:25 AM" cannot be honoured.
+      expect(flat).not.toMatch(/\{\{file_date\}\} at /);
+    });
+
+    test('assignment line, lead-in, and both column captions', () => {
+      has('The case was assigned case number {{docket}} to Judge {{judge}}.');
+      has('Notice from {{firm_name}}');
+      has("The case was filed by the debtor's attorney:");
+      has('The bankruptcy trustee is:');
+    });
+
+    test('the trustee caption lives INSIDE the collapsing block', () => {
+      // Otherwise a Chapter 7 with no appointed trustee prints the heading
+      // "The bankruptcy trustee is:" over four blank lines. The caption must be
+      // a sibling of the .drv line under the same .blk.
+      const col = flat.match(/<div class="blk">.*?<\/div> <\/div>/);
+      expect(col).not.toBeNull();
+      expect(col[0]).toContain('The bankruptcy trustee is:');
+      expect(col[0]).toContain('drv');
+      expect(col[0]).toContain('{{trustee_name}}');
+    });
+  });
+
+  test('ONE PAGE: the size budget has not been loosened', () => {
+    // Not a page count — jest has no chromium. This guards the three numbers
+    // the one-page fit was measured against (2026-09-01: worst case, a joint
+    // Ch13 with two SSNs and a full trustee block, rendered with ~1.9in to
+    // spare). Loosening any of them without re-rendering is how a second page
+    // appears carrying nothing but the closing disclaimer.
+    expect(tpl.body).toContain('font-size: 10.5pt');
+    expect(tpl.body).toContain('line-height: 1.34');
+    expect(tpl.body).toContain('ONE PAGE IS A REQUIREMENT');
+    // A forced break would defeat the whole budget.
+    expect(tpl.body).not.toMatch(/(page-)?break-(before|after)\s*:/);
   });
 });

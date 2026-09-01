@@ -24,7 +24,7 @@ from PIL import Image
 
 LOGO_URL = "https://iili.io/Jy2nXHv.md.png"   # = app_settings['fe-firm_logo_url'], read live 2026-09-01
 OUT = os.path.join(os.path.dirname(__file__),
-                   "apigcr-main/ref/templates/notice_of_bankruptcy_filing.json")
+                   "notice_of_bankruptcy_filing.json")
 
 
 def logo_data_uri() -> str:
@@ -39,7 +39,6 @@ def logo_data_uri() -> str:
     b = buf.getvalue()
     print(f"  logo: {len(raw)} raw -> {len(b)} png -> {len(base64.b64encode(b))} b64")
     return "data:image/png;base64," + base64.b64encode(b).decode("ascii")
-
 
 BODY_TEMPLATE = """<!doctype html>
 <html>
@@ -56,10 +55,13 @@ BODY_TEMPLATE = """<!doctype html>
    resolved to ''.
 
      .l   a line. Hidden when its <span> is empty, which takes the LABEL with
-          it — "SSN / ITIN:" with nothing after it is worse than no line.
+          it. The firm's own Jotform version printed "SSN / ITIN: xxx-xx-"
+          with nothing after it whenever the SSN was missing — that orphan is
+          the exact failure this rule exists to prevent.
      .blk a group with a DRIVING line (.drv). Hidden entirely when the driver
-          is empty: no joint debtor means no joint-debtor block at all, not a
-          block of four blank labels.
+          is empty: no joint debtor means no joint-debtor block, and no
+          appointed trustee means the trustee column AND its caption both go,
+          rather than a heading over four blank lines.
 
    :empty matches an element with NO children INCLUDING TEXT NODES, so a
    single space inside a span defeats it. A placeholder must therefore sit
@@ -76,187 +78,141 @@ BODY_TEMPLATE = """<!doctype html>
 .l:has(> span:empty) { display: none; }
 .blk:has(> .drv > span:empty) { display: none; }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   ONE PAGE IS A REQUIREMENT, NOT A PREFERENCE (Fred, G4.1).
+
+   Every size below is chosen against the WORST CASE — a joint Chapter 13
+   with two debtors, two SSNs, a full trustee block and a two-line firm
+   address — because that is the longest this document can get. Measured at
+   Letter with pdfRenderService's 0.75in margins: 7.0in x 9.5in of content.
+
+   If you make the type bigger or the leading looser, re-render the joint
+   fixture and count the pages. A second page here is not a cosmetic problem:
+   the closing disclaimer and the clerk's address would land alone on it.
+   ────────────────────────────────────────────────────────────────────────── */
 html, body { margin: 0; padding: 0; }
 
 body {
   font-family: "Times New Roman", Times, serif;
-  font-size: 11.5pt;
-  line-height: 1.42;
+  font-size: 10.5pt;
+  line-height: 1.34;
   color: #111;
 }
 
 /* ── letterhead ───────────────────────────────────────────────────────── */
-.head { display: flex; align-items: flex-start; justify-content: space-between; }
-.head .logo { width: 190px; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.head .logo { width: 165px; flex: none; }
 .head .logo img { width: 100%; display: block; }
-.head .firm { text-align: right; font-size: 10pt; line-height: 1.35; }
-.head .firm .nm { font-weight: bold; font-size: 11.5pt; }
-
-.rule { border-bottom: 2px solid #17365d; margin: 10px 0 16px; }
+.head h1 {
+  margin: 0; text-align: right; font-size: 19pt; font-weight: bold;
+  line-height: 1.12; letter-spacing: .01em; text-transform: uppercase;
+}
 
 /* ── court header (a LITERAL — this document is issued by the firm) ────── */
-.court { text-align: center; margin-bottom: 18px; }
-.court .c1 { font-variant: small-caps; font-size: 13pt; letter-spacing: .02em; }
-.court .c2 { font-size: 11.5pt; }
-.title {
-  text-align: center; font-weight: bold; font-size: 14pt;
-  letter-spacing: .04em; text-transform: uppercase; margin: 18px 0 14px;
+.court {
+  text-align: center; margin: 14px 0 16px;
+  font-size: 13pt; font-weight: bold; line-height: 1.25;
 }
 
-/* ── caption: debtors left, case data right ───────────────────────────── */
-.caption { display: flex; gap: 26px; margin-bottom: 18px; }
-.caption > div { flex: 1 1 0; }
-.box { border: 1px solid #999; padding: 9px 11px; }
-.box h3 {
-  margin: 0 0 6px; font-size: 8.5pt; font-weight: bold;
-  text-transform: uppercase; letter-spacing: .07em; color: #555;
-}
+h2 { margin: 0 0 6px; font-size: 10.5pt; font-weight: bold; }
+
+p { margin: 0 0 9px; }
+
+/* ── debtors ──────────────────────────────────────────────────────────── */
+.dbt + .dbt { margin-top: 8px; }
 .nm { font-weight: bold; }
-.blk + .blk { margin-top: 9px; padding-top: 8px; border-top: 1px dotted #bbb; }
-.lbl { color: #555; }
 
-p { margin: 0 0 10px; text-align: justify; }
-h4 {
-  margin: 16px 0 5px; font-size: 11pt;
-  text-transform: uppercase; letter-spacing: .05em;
-}
+/* ── attorney | trustee ───────────────────────────────────────────────── */
+.cols { display: flex; gap: 30px; margin: 14px 0; }
+.cols > div { flex: 1 1 0; }
+.cap { margin-bottom: 7px; }
 
-/* ── who to contact ───────────────────────────────────────────────────── */
-.contacts { display: flex; gap: 26px; margin-top: 18px; }
-.contacts > div { flex: 1 1 0; }
-
-/* PAGE BREAKS. Found by rendering, not by reading: without these the
-   trustee/attorney row split across the page boundary on a sparse notice --
-   the box's top border printed at the foot of page 1 and its address lines
-   continued, borderless, at the head of page 2. A contact block a creditor is
-   supposed to write to must not be cut in half. Applied to the whole row so
-   the two boxes travel together, and to each box so neither is ever severed.
-   orphans/widows keep a single stranded line off a page of its own. */
-.caption, .contacts, .box { break-inside: avoid; }
-p { orphans: 2; widows: 2; }
+.assign { margin: 0 0 10px; }
 
 .disclaimer {
-  margin-top: 20px; padding-top: 8px; border-top: 1px solid #ccc;
-  font-size: 8.5pt; color: #444; text-align: left;
+  margin-top: 14px; padding-top: 7px; border-top: 1px solid #ccc;
+  font-size: 8pt; color: #444; line-height: 1.3;
 }
+
+/* PAGE BREAKS. Belt to the one-page braces above: if a future edit ever does
+   overflow, these keep a block from being severed mid-way rather than letting
+   a contact block a creditor writes to print half on each page. */
+.cols, .cols > div, .dbt { break-inside: avoid; }
+p { orphans: 2; widows: 2; }
 </style>
 </head>
 <body>
 
 <div class="head">
   <div class="logo"><img src="__LOGO__" alt=""></div>
-  <div class="firm">
-    <div class="l nm"><span>{{firm_name}}</span></div>
-    <div class="l"><span>{{firm_addr1}}</span></div>
-    <div class="l"><span>{{firm_addr2}}</span></div>
-    <div class="l"><span>{{firm_phone}}</span></div>
-  </div>
+  <h1>Notice of<br>Bankruptcy Filing</h1>
 </div>
-
-<div class="rule"></div>
 
 <div class="court">
-  <div class="c1">United States Bankruptcy Court</div>
-  <div class="c2">Eastern District of Michigan</div>
+  United States Bankruptcy Court<br>
+  Eastern District of Michigan
 </div>
 
-<div class="title">Notice of Bankruptcy Filing</div>
+<h2>Notice from {{firm_name}}</h2>
 
-<div class="caption">
-  <div class="box">
-    <h3>Debtor(s)</h3>
+<p>Please take note that a bankruptcy case concerning the debtor(s) listed below
+was filed under Chapter {{chapter}} of the United States Bankruptcy Code, on
+{{file_date}}.</p>
 
-    <div class="blk">
-      <div class="l drv nm"><span>{{debtor1_name}}</span></div>
-      <div class="l"><span>{{debtor1_street}}</span></div>
-      <div class="l"><span>{{debtor1_csz}}</span></div>
-      <div class="l"><span class="lbl">SSN / ITIN:</span> <span>{{debtor1_ssn}}</span></div>
-    </div>
-
-    <div class="blk">
-      <div class="l drv nm"><span>{{debtor2_name}}</span></div>
-      <div class="l"><span>{{debtor2_street}}</span></div>
-      <div class="l"><span>{{debtor2_csz}}</span></div>
-      <div class="l"><span class="lbl">SSN / ITIN:</span> <span>{{debtor2_ssn}}</span></div>
-    </div>
-  </div>
-
-  <div class="box">
-    <h3>Case Information</h3>
-    <div class="l"><span class="lbl">Chapter:</span> <span>{{chapter}}</span></div>
-    <div class="l"><span class="lbl">Case number:</span> <span>{{docket}}</span></div>
-    <div class="l"><span class="lbl">Date filed:</span> <span>{{file_date}}</span></div>
-    <div class="l"><span class="lbl">Judge:</span> <span>{{judge}}</span></div>
-  </div>
+<div class="dbt blk">
+  <div class="l drv nm"><span>{{debtor1_name}}</span></div>
+  <div class="l"><span>{{debtor1_street}}</span></div>
+  <div class="l"><span>{{debtor1_csz}}</span></div>
+  <div class="l">SSN / ITIN: <span>{{debtor1_ssn}}</span></div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════
-     PROSE BELOW IS A DRAFT AND MUST BE REPLACED BEFORE THIS TEMPLATE IS
-     USED IN ANGER.
+<div class="dbt blk">
+  <div class="l drv nm"><span>{{debtor2_name}}</span></div>
+  <div class="l"><span>{{debtor2_street}}</span></div>
+  <div class="l"><span>{{debtor2_csz}}</span></div>
+  <div class="l">SSN / ITIN: <span>{{debtor2_ssn}}</span></div>
+</div>
 
-     G4 specified "the standard automatic-stay / clerk's-office / creditor
-     paragraphs from the firm version, verbatim" and pointed at an attached
-     Jotform PDF. NO PDF WAS ATTACHED to the task, so there was nothing to
-     copy. What follows is descriptive, firm-voice prose written to hold the
-     right shape and exercise every placeholder — it is NOT the firm's
-     approved wording and has had no legal review.
-
-     ACTION: paste the firm version's paragraphs over the four <p> blocks
-     below, keeping the double-braced placeholders wherever the firm text
-     names the same values, and re-save the template. Nothing else in this
-     file needs to change.
-     ══════════════════════════════════════════════════════════════════════ -->
-
-<h4>Notice</h4>
-
-<p>A petition for relief under Chapter {{chapter}} of the United States Bankruptcy
-Code was filed on {{file_date}} in the United States Bankruptcy Court for the
-Eastern District of Michigan on behalf of the debtor or debtors named above. The
-case is docketed as {{docket}} and is assigned to the Honorable {{judge}}.</p>
-
-<p><strong>The automatic stay is in effect.</strong> The filing of the petition
-operates as a stay under 11 U.S.C. &sect; 362. Without an order of the Bankruptcy
-Court, creditors and other parties may not begin or continue any action to
-collect a debt that arose before the filing date, enforce a judgment, repossess
-or foreclose on property, garnish wages or bank accounts, or otherwise attempt
-to collect such a debt. Please direct any communication concerning a
-pre-petition debt to this office rather than to the debtor or debtors.</p>
-
-<p><strong>The Clerk's office holds the official record.</strong> The docket in
-this case, including the petition, the schedules, and every order entered, is
-maintained by the Clerk of the United States Bankruptcy Court for the Eastern
-District of Michigan. Case information is available from the Clerk's office and
-through PACER at pacer.uscourts.gov.</p>
-
-<p><strong>Creditors.</strong> Please update your records to reflect this filing.
-Notices from the Court &mdash; including the notice of the meeting of creditors
-and any deadline for filing a proof of claim &mdash; are sent separately by the
-Clerk's office and are not enclosed with this letter. Questions about this case
-may be directed to counsel for the debtor or debtors at the address below.</p>
-
-<div class="contacts">
-  <div class="box blk">
-    <h3>Trustee</h3>
-    <div class="l drv nm"><span>{{trustee_name}}</span></div>
-    <div class="l"><span>{{trustee_street}}</span></div>
-    <div class="l"><span>{{trustee_csz}}</span></div>
-    <div class="l"><span>{{trustee_phone}}</span></div>
-  </div>
-
-  <div class="box">
-    <h3>Attorney for the Debtor(s)</h3>
+<div class="cols">
+  <div>
+    <div class="cap">The case was filed by the debtor's attorney:</div>
     <div class="l nm"><span>{{attorney_name}}</span></div>
     <div class="l"><span>{{firm_name}}</span></div>
     <div class="l"><span>{{firm_addr1}}</span></div>
     <div class="l"><span>{{firm_addr2}}</span></div>
     <div class="l"><span>{{firm_phone}}</span></div>
   </div>
+
+  <div class="blk">
+    <div class="cap">The bankruptcy trustee is:</div>
+    <div class="l drv nm"><span>{{trustee_name}}</span></div>
+    <div class="l"><span>{{trustee_street}}</span></div>
+    <div class="l"><span>{{trustee_csz}}</span></div>
+    <div class="l"><span>{{trustee_phone}}</span></div>
+  </div>
 </div>
 
-<div class="disclaimer">This notice is issued by counsel for the debtor or
-debtors as a courtesy. It is not an official notice of the United States
-Bankruptcy Court, it does not bear the seal of the Court, and it is not legal
-advice to any creditor or other recipient.</div>
+<p class="assign">The case was assigned case number {{docket}} to Judge {{judge}}.</p>
+
+<p>In most instances, the filing of the bankruptcy case automatically stays
+certain collection and other actions against the debtor and the debtor's
+property. Under certain circumstances, the stay may be limited to 30 days or not
+exist at all, although the debtor can request the court to extend or impose a
+stay. If you attempt to collect a debt or take other action in violation of the
+Bankruptcy Code, you may be penalized. Consult a lawyer to determine your rights
+in this case.</p>
+
+<p>If you would like to view the bankruptcy petition and other documents filed by
+the debtor, they are available at http://www.mieb.uscourts.gov or at the
+Bankruptcy Court Clerk's Office, 211 West Fort Street, Detroit, MI 48226.</p>
+
+<p>You may be a creditor of the debtor. If so, you will receive an additional
+notice from the court setting forth important deadlines.</p>
+
+<div class="disclaimer">This notice is provided by {{firm_name}} as a courtesy.
+It is not an official notice of the United States Bankruptcy Court, it does not
+bear the seal of the Court, and it is not legal advice to any creditor or other
+recipient.</div>
 
 </body>
 </html>
