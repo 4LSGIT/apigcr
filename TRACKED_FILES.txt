@@ -646,6 +646,7 @@ services/settingsService.js
 services/smsService.js
 services/storageService.js
 services/taskService.js
+services/templateRenderService.js
 services/timezoneService.js
 services/triggerService.js
 services/uploadTargetService.js
@@ -825,6 +826,7 @@ tests/taskQueue.accel.test.js
 tests/taskService.status.test.js
 tests/taskService.test.js
 tests/tasksUi.boot.test.js
+tests/templateRenderService.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
 tests/test-oauthService.js
