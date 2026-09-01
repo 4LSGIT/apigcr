@@ -1661,6 +1661,19 @@ async function sendFromTemplate(db, {
       `Template "${template.name}" is inactive and cannot be sent. Reactivate it, or pick another.`
     );
   }
+  // G2. contract_templates.purpose says which PICKER a template belongs to.
+  // The refusal is not about capability — templateRenderService would render
+  // this happily — it is about a generate-only document (a notice, a letter)
+  // never being sent out as something a client is asked to SIGN. The mirror
+  // refusal lives in documentGenerateService. Checked here as well as in the
+  // picker because the picker is not the only caller: the internal function,
+  // hooks and ingest paths all reach sendFromTemplate directly.
+  if (template.purpose === 'generate') {
+    throw _err(
+      'ESIGN_TEMPLATE_PURPOSE',
+      `Template "${template.name}" is a generate-only template and cannot be sent for signature.`
+    );
+  }
 
   // ── completion targets: template default + per-send override ──────────────
   //   undefined → the template's own completion_targets, verbatim

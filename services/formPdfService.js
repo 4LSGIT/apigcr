@@ -41,37 +41,34 @@
  *
  *   case-linked submission:
  *     1. live cases.case_dropbox → <case folder>/Forms/   (created if absent)
- *     2. no case_dropbox → caseService.ensureCaseDropboxFolder (the same
- *        stage-aware creator intake / e-sign / client-upload use), then (1).
- *        The auto-create ALWAYS raises a staff task — a silently-created
- *        duplicate next to a hand-made never-linked folder is worse than the
- *        task. Task raised at create time: the folder exists and is linked
- *        even if the upload then fails.
+ *     2. no case_dropbox → caseService.ensureCaseDropboxFolder, then (1),
+ *        always with a staff task.
  *     3. dead link / create failure / case row gone → the UNSORTED FORM
  *        SUBMISSIONS bin (X5.1: its own bin, app_settings
- *        'dropbox_unsorted_forms_path'), in a per-case subfolder named by the
- *        client-upload convention ("{case_id} - {lfm name}") so a case's
- *        strays stay together — plus a move-task raised only AFTER the upload
- *        actually lands.
+ *        'dropbox_unsorted_forms_path'), in a per-case subfolder — plus a
+ *        move-task raised only AFTER the upload actually lands.
  *   contact / appt / unlinked submission:
  *     straight to the unsorted bin as a loose file with an identity prefix
- *     ("contact 12 - Jane Doe - ", "appt 45 - ", "submission 288 - Bob - "),
- *     the e-sign unsorted-filename convention. NO task: the Form Inbox
- *     already surfaces unlinked submissions, and a task per anonymous PDF
- *     would duplicate that signal. The verdict's placement/placement_note
- *     tell the workflow author, who owns any notification.
- *   everything failed (Dropbox unreachable) → throws; the workflow step's
- *     error_policy decides retry/stop. Note the file may not exist — but a
- *     RETRY that succeeds files a second copy only under autorename, which
- *     is the acceptable failure mode (atomic, never lost).
+ *     ("contact 12 - Jane Doe - ", "appt 45 - ", "submission 288 - Bob - ").
+ *     NO task: the Form Inbox already surfaces unlinked submissions, and a
+ *     task per anonymous PDF would duplicate that signal.
+ *
+ * G2 MOVED THAT LADDER OUT to services/filePlacementService.js, verbatim, so
+ * the non-esign "generate a document" path files by the same rules rather than
+ * growing a third copy. What stays here is everything FORM-SPECIFIC: the print
+ * HTML, the filename core, and _identityPrefix (which reads submission answers
+ * to guess a submitter's name). The bin key, the subfolder, the task source and
+ * the prose labels are passed IN — see the placeAndRegister call at the bottom.
+ * Everything failed (Dropbox unreachable) still throws; the workflow step's
+ * error_policy decides retry/stop. A RETRY that succeeds files a second copy
+ * only under autorename, which is the acceptable failure mode.
  *
  * ── TEMP LINK ───────────────────────────────────────────────────────────────
  * A files/get_temporary_link (~4h) rides the verdict for send_email's
  * attachment_urls — short expiry is the leak posture the charter chose (the
  * URL dies on its own instead of living forever in a mailbox). Minting it is
- * BEST-EFFORT after a successful upload: failing the whole function over the
- * link would re-file the PDF on retry, so the verdict carries
- * temp_link:null + a warning instead and the author guards.
+ * BEST-EFFORT after a successful upload (filePlacementService owns that), so
+ * the verdict can carry temp_link:null + a warning and the author guards.
  *
  * ── RENDERING ───────────────────────────────────────────────────────────────
  * pdfRenderService.renderHtmlToPdf: chromium with NETWORK BLOCKED, renders
@@ -85,15 +82,13 @@
 'use strict';
 
 const { DateTime } = require('luxon');
-const dropboxService = require('./dropboxService');
 const pdfRenderService = require('./pdfRenderService');
-const taskService = require('./taskService');
 // NOTE: deliberately NOT requiring uploadTargetService. X5.1 gave form PDFs
 // their own unsorted bin (below), so the only thing left to share with the
-// client-upload ladder was the per-case subfolder NAMING convention, which is
-// 3 lines and already needs _casePrimaryName here.
+// client-upload ladder was the per-case subfolder NAMING convention — which
+// now lives in filePlacementService alongside the rest of the ladder.
 const { getSetting } = require('./settingsService');
-const { resolveAlertAssignee } = require('./esignAlertService');
+const filePlacementService = require('./filePlacementService');
 
 const FIRM_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
 
@@ -122,23 +117,26 @@ const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 /** tasks.task_source — marks these as machine-pushed. varchar(50). */
 const TASK_SOURCE = 'form_pdf';
 
+/** documents envelope `source` for a registered form PDF. */
+const EVENT_SOURCE = 'form_pdf';
+
+/** Console prefix. Passed into the shared ladder so its lines read as ours. */
+const LOG_TAG = '[FORM PDF]';
+
+/**
+ * Prose labels handed to the shared ladder. It writes the placement notes and
+ * the move-task title, and without these it could only say "file" and
+ * "unsorted folder" — which is what staff would then read on the task telling
+ * them which bin to go sweep.
+ */
+const ARTIFACT_LABEL = 'form PDF';
+const BIN_LABEL = 'unsorted form-submissions folder';
+
 /** Longest form-title fragment allowed in a filename. */
 const MAX_NAME_FRAGMENT = 100;
 
 /** Longest identity prefix on an unsorted filename (e-sign convention). */
 const MAX_PREFIX = 80;
-
-// taskService.createTask THROWS above these rather than truncating (sql_mode
-// is not strict). Clip so a task is never lost to a long name.
-const MAX_TITLE = 100;
-const MAX_DESC = 1000;
-
-// tasks.task_link_id is varchar(20); real case ids are ~8 chars — tripwire.
-const MAX_TASK_LINK_ID = 20;
-
-/** Characters Dropbox rejects in a generated name (e-sign convention). */
-// eslint-disable-next-line no-control-regex
-const ILLEGAL_IN_NAME = /[/\\:*?"<>|\u0000-\u001f]/g;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Small helpers
@@ -158,21 +156,16 @@ function htmlEscape(s) {
     .replace(/'/g, '&#39;');
 }
 
-/** Filesystem-safe fragment of a generated name (e-sign convention). */
+/**
+ * Filesystem-safe fragment of a generated name (e-sign convention).
+ *
+ * One implementation, in filePlacementService; this wrapper only pins the
+ * empty-input fallback to 'form'. The two lifted copies disagreed on it
+ * (esignFilingService uses 'document'), and silently changing it here would
+ * rename an edge case nobody asked to have renamed.
+ */
 function sanitizeNameFragment(name, max = MAX_NAME_FRAGMENT) {
-  const cleaned = String(name == null ? '' : name)
-    .replace(ILLEGAL_IN_NAME, '-')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const base = cleaned || 'form';
-  return base.length <= max ? base : base.slice(0, max).trim();
-}
-
-/** Clip to `max`, marking the cut (esignAlertService convention). */
-function _clip(s, max) {
-  const str = String(s == null ? '' : s);
-  if (str.length <= max) return str;
-  return `${str.slice(0, max - 14)}…(truncated)`;
+  return filePlacementService.sanitizeNameFragment(name, max, 'form');
 }
 
 /**
@@ -521,30 +514,11 @@ async function _logoDataUri(db) {
 // Linkage label + identity prefix (best-effort lookups, never throw)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Primary-contact lfm name for a case (the shared identity convention). */
-async function _casePrimaryName(db, caseId) {
-  try {
-    const [[row]] = await db.query(
-      `SELECT c.contact_lfm_name
-         FROM case_relate cr
-         JOIN contacts c ON c.contact_id = cr.case_relate_client_id
-        WHERE cr.case_relate_case_id = ?
-        ORDER BY (cr.case_relate_type = 'Primary') DESC, cr.case_relate_client_id ASC
-        LIMIT 1`,
-      [String(caseId)]
-    );
-    return row?.contact_lfm_name || null;
-  } catch (err) {
-    console.warn(`[FORM PDF] case name lookup failed for ${caseId}: ${err.message}`);
-    return null;
-  }
-}
-
 /** Header line describing what the submission is linked to. */
 async function _linkLabel(db, sub) {
   const t = sub.link_type;
   if (t === 'case') {
-    const name = await _casePrimaryName(db, sub.link_id);
+    const name = await filePlacementService.casePrimaryName(db, sub.link_id, LOG_TAG);
     return `Case ${sub.link_id}${name ? ` \u2014 ${name}` : ''}`;
   }
   if (t === 'contact') {
@@ -605,178 +579,6 @@ async function _identityPrefix(db, sub) {
   if (name) parts.push(sanitizeNameFragment(name, 40));
   const prefix = `${parts.join(' - ')} - `;
   return prefix.length <= MAX_PREFIX ? prefix : `${prefix.slice(0, MAX_PREFIX - 3)} - `;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tasks (best-effort, never block a filing)
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function _raiseTask(db, { title, desc, caseId }) {
-  try {
-    const assignee = await resolveAlertAssignee(db);
-    if (!assignee) {
-      console.warn(`[FORM PDF] office_alerts_to names no user \u2014 dropping task: ${title}`);
-      return { ok: false, reason: 'no_assignee' };
-    }
-    const idStr = String(caseId);
-    const linkable = idStr.length <= MAX_TASK_LINK_ID;
-    const { task_id } = await taskService.createTask(db, {
-      from: 0,                        // automations user
-      to: assignee,
-      title: _clip(title, MAX_TITLE),
-      desc: _clip(desc, MAX_DESC),
-      link_type: linkable ? 'case' : null,
-      link_id: linkable ? idStr : null,
-      source: TASK_SOURCE,
-    });
-    console.log(`[FORM PDF] task #${task_id} \u2192 user ${assignee}: ${title}`);
-    return { ok: true, taskId: task_id };
-  } catch (err) {
-    console.error(`[FORM PDF] failed to raise task "${title}": ${err && err.message}`);
-    return { ok: false, reason: 'error' };
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Placement — THE LADDER
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** The form-PDF unsorted bin's base path (setting, else the default). */
-async function _unsortedBasePath(db) {
-  let path = null;
-  try {
-    const raw = await getSetting(db, UNSORTED_PATH_KEY);
-    // Trailing CR/LF only — leading/embedded spaces are the firm's sort
-    // convention and must survive a settings round-trip untouched.
-    if (raw != null && String(raw).replace(/[\r\n]+$/, '') !== '') {
-      path = String(raw).replace(/[\r\n]+$/, '');
-    }
-  } catch (err) {
-    console.warn(`[FORM PDF] ${UNSORTED_PATH_KEY} lookup failed, using default: ${err.message}`);
-  }
-  return path || DEFAULT_UNSORTED_PATH;
-}
-
-/**
- * "{bin}/{case_id} - {lfm name}" — the per-case subfolder inside the form-PDF
- * bin, so one case's strays stay together instead of scattering through a flat
- * list. Naming mirrors uploadTargetService's client-upload convention (same
- * Primary-contact rule) on purpose: staff sorting either bin sees one format.
- * A failed name lookup degrades to the bare case id, never throws.
- */
-async function _unsortedCaseFolderPath(db, caseId) {
-  const base = await _unsortedBasePath(db);
-  const name = await _casePrimaryName(db, caseId);
-  const parts = [sanitizeNameFragment(String(caseId), 40)];
-  if (name) parts.push(sanitizeNameFragment(name, 60));
-  return dropboxService.joinPath(base, parts.join(' - '));
-}
-
-/**
- * Resolve where this submission's PDF belongs (header: THE LADDER).
- *
- * @returns {Promise<{credentialId, folderPath, filenamePrefix:string,
- *                    placement:'case'|'unsorted', placementNote:string|null,
- *                    warnings:string[], moveTaskAfterUpload:boolean}>}
- * Throws only when even the unsorted bin cannot be resolved (which, since
- * that rung is settings+string work, effectively means the credential lookup
- * failed — Dropbox trouble surfaces at upload time instead).
- */
-async function _preparePlacement(db, sub) {
-  const credentialId = await dropboxService._resolveCredential(db, {});
-  const warnings = [];
-
-  if (sub.link_type === 'case') {
-    const caseId = String(sub.link_id);
-    let sharedLink = null;
-    let fallbackNote = null;
-
-    let row = null;
-    try {
-      [[row]] = await db.query(
-        'SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]
-      );
-    } catch (err) {
-      fallbackNote = `Could not read the case row: ${err.message}`;
-    }
-
-    if (row && row.case_dropbox && String(row.case_dropbox).trim() !== '') {
-      sharedLink = String(row.case_dropbox);
-    } else if (row) {
-      // ── rung 2: auto-create the case folder ─────────────────────────────
-      try {
-        const caseService = require('./caseService');   // deferred require (convention)
-        const ensured = await caseService.ensureCaseDropboxFolder(db, caseId);
-        sharedLink = ensured.shared_link;
-        const warn =
-          `Case "${caseId}" had no Dropbox folder linked, so one was created automatically` +
-          (ensured.shared_link ? `: ${ensured.shared_link}` : '.') +
-          ' If this case already had a folder that was never linked, merge the two and re-link ' +
-          'the original on the case page.';
-        warnings.push(warn);
-        // Raised NOW, not after upload: the folder exists and is linked to
-        // the case whether or not the upload then succeeds.
-        await _raiseTask(db, {
-          caseId,
-          title: `Dropbox folder auto-created for case ${caseId}`,
-          desc: warn,
-        });
-        console.log(`[FORM PDF] auto-created case folder for ${caseId}: ${ensured.path || '(pre-existing)'}`);
-      } catch (err) {
-        fallbackNote = `Case "${caseId}" has no Dropbox folder and auto-creating one failed (${err.message}).`;
-      }
-    } else if (!fallbackNote) {
-      fallbackNote = `Case "${caseId}" was not found.`;
-    }
-
-    // ── rung 1 (possibly via rung 2): <case folder>/Forms ─────────────────
-    if (sharedLink) {
-      try {
-        const caseFolder = await dropboxService.resolveLocation(db, credentialId, {
-          sharedLink, expectFolder: true,
-        });
-        // files/upload creates missing parents, but creating explicitly keeps
-        // the failure legible (e-sign convention). Idempotent.
-        const created = await dropboxService.createFolder(db, {
-          credentialId, path: dropboxService.joinPath(caseFolder, SUBFOLDER),
-        });
-        return {
-          credentialId, folderPath: created.path, filenamePrefix: '',
-          placement: 'case', placementNote: null, warnings,
-          moveTaskAfterUpload: false,
-        };
-      } catch (err) {
-        fallbackNote = `Could not open the case's Dropbox folder: ${err.message}`;
-      }
-    }
-
-    // ── rung 3: the form bin, per-case subfolder ─────────────────────────
-    const folderPath = await _unsortedCaseFolderPath(db, caseId);
-    return {
-      credentialId, folderPath, filenamePrefix: '',
-      placement: 'unsorted', warnings,
-      placementNote:
-        `The PDF could not be filed to the case folder \u2014 ${fallbackNote} ` +
-        `It was filed to the unsorted form-submissions folder instead (${folderPath}); ` +
-        'move it into the correct case folder.',
-      moveTaskAfterUpload: true,
-    };
-  }
-
-  // ── contact / appt / unlinked: the unsorted bin, loose file w/ identity ──
-  const base = await _unsortedBasePath(db);
-  const what = sub.link_type === 'contact' ? `a contact (id ${sub.link_id})`
-    : sub.link_type === 'appt' ? `an appointment (id ${sub.link_id})`
-      : 'nothing yet';
-  return {
-    credentialId, folderPath: base,
-    filenamePrefix: await _identityPrefix(db, sub),
-    placement: 'unsorted', warnings,
-    placementNote:
-      `This submission is linked to ${what}, so there is no case folder to file into. ` +
-      `The PDF went to the unsorted form-submissions folder (${base}).`,
-    moveTaskAfterUpload: false,   // the Form Inbox already surfaces these
-  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -849,94 +651,32 @@ async function renderSubmissionPdf(db, { submissionId, filename: filenameOverrid
 async function fileSubmissionPdf(db, { submissionId, filename: filenameOverride } = {}) {
   const rendered = await renderSubmissionPdf(db, { submissionId, filename: filenameOverride });
   const { buffer: pdf, submission: sub } = rendered;
-  const core = rendered.fileName.replace(/\.pdf$/i, '');
 
-  // ── place + name ──────────────────────────────────────────────────────────
-  const prep = await _preparePlacement(db, sub);
-  const fileName = `${prep.filenamePrefix}${core}.pdf`;
-
-  // ── upload — the path Dropbox RETURNS is authoritative (autorename) ──────
-  const requested = dropboxService.joinPath(prep.folderPath, fileName);
-  let meta;
-  try {
-    meta = await dropboxService.uploadFile(db, {
-      credentialId: prep.credentialId,
-      path: requested,
-      content: pdf,
-      mode: 'add',
-      autorename: true,
-    });
-  } catch (err) {
-    throw new Error(
-      `could not upload the PDF to Dropbox (${requested}): ${err.message}` +
-      (prep.placement === 'unsorted' ? ' The unsorted fallback also being unreachable means Dropbox itself is down.' : '')
-    );
-  }
-  const actualPath = meta?.path_display || meta?.path_lower || requested;
-  if (actualPath !== requested) {
-    console.log(`[FORM PDF] Dropbox autorenamed: "${requested}" \u2192 "${actualPath}"`);
-  }
-  const actualName = actualPath.split('/').pop();
-
-  // ── REGISTER (Documents S4) ─────────────────────────────────────────────
-  //
-  // A form PDF is the clearest case there is for write-time attribution: the
-  // submission already CARRIES its owner (sub.link_type / sub.link_id), and on
-  // the unsorted rung the path will never reveal it — a case's filled
-  // questionnaire sitting in the form bin is exactly the document staff will
-  // later go looking for on the case and not find.
-  //
-  // link_type 'appt' and NULL are passed through untouched and simply produce
-  // no link: documentIngestService links whatever it is handed, and inventing
-  // an appointment→document relation here would be a schema decision made by a
-  // side effect. Registration still happens, so the file is in the list.
-  //
-  // Safe variant — the PDF is filed and the caller's return value is about the
-  // filing. A registry hiccup must not turn a successful filing into a throw.
-  const ingest = require('./documentIngestService');   // deferred (convention)
-  await ingest.registerWrittenSafe(db, {
-    entry:       meta,                 // files/upload returned it; authoritative post-autorename
-    links:       (sub.link_type === 'case' || sub.link_type === 'contact') && sub.link_id != null
-                   ? [{ type: sub.link_type, id: sub.link_id }]
-                   : [],
-    createdBy:   null,                 // generated by the app, not by a person
-    eventSource: 'form_pdf',
-    credentialId: prep.credentialId,
+  // The identity prefix is computed unconditionally and used ONLY if the
+  // ladder ends up on the loose (non-case) rung — filePlacementService decides.
+  // It is form-specific (it reads the submitted answers to guess a submitter's
+  // name for an unlinked submission), which is why it stays in this file. For
+  // a case-linked submission it costs no query: the guess branch reads
+  // sub.data, not the database.
+  const verdict = await filePlacementService.placeAndRegister(db, {
+    linkType:               sub.link_type || null,
+    linkId:                 sub.link_id,
+    content:                pdf,
+    fileName:               rendered.fileName,
+    subfolder:              SUBFOLDER,
+    unsortedPathKey:        UNSORTED_PATH_KEY,
+    unsortedDefault:        DEFAULT_UNSORTED_PATH,
+    unsortedFilenamePrefix: await _identityPrefix(db, sub),
+    eventSource:            EVENT_SOURCE,
+    taskSource:             TASK_SOURCE,
+    logTag:                 LOG_TAG,
+    artifactLabel:          ARTIFACT_LABEL,
+    binLabel:               BIN_LABEL,
+    createdBy:              null,      // generated by the app, not by a person
   });
 
-  // ── post-upload move-task (only after the file actually landed) ──────────
-  if (prep.moveTaskAfterUpload) {
-    await _raiseTask(db, {
-      caseId: String(sub.link_id),
-      title: `Move form PDF for case ${sub.link_id} out of Unsorted`,
-      desc: `${prep.placementNote} File: ${actualPath}`,
-    });
-  }
-
-  // ── temp link, best-effort (see header) ──────────────────────────────────
-  let tempLink = null;
-  const warnings = prep.warnings.slice();
-  try {
-    const tl = await dropboxService.getTemporaryLink(db, {
-      credentialId: prep.credentialId, path: actualPath,
-    });
-    tempLink = tl.link;
-  } catch (err) {
-    warnings.push(
-      `The PDF was filed, but a temporary download link could not be created: ${err.message}. ` +
-      'temp_link is null \u2014 email-attachment steps consuming it will need a retry or the Dropbox path.'
-    );
-  }
-  if (prep.placementNote) warnings.push(prep.placementNote);
-
   return {
-    path: actualPath,
-    file_name: actualName,
-    placement: prep.placement,
-    placement_note: prep.placementNote,
-    temp_link: tempLink,
-    temp_link_expires_note: tempLink ? 'Dropbox temporary link \u2014 expires ~4 hours after creation' : null,
-    warnings,
+    ...verdict,
     submission_id: sub.id,
     form_key: sub.form_key,
     link_type: sub.link_type,
@@ -959,7 +699,6 @@ module.exports = {
   isVisible,
   evalCondition,
   sanitizeNameFragment,
-  _preparePlacement,
   _identityPrefix,
   _logoDataUri,
   _resetLogoCacheForTest,

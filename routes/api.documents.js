@@ -16,6 +16,11 @@
  * POST   /api/documents/:id/share     get-or-create the PERMANENT shared link
  * POST   /api/documents/register      { source?, external_id } → stat → upsert
  *
+ * G2 — generate a document from a contract template and file it. Same
+ * declaration-order rule as the blocks below.
+ * POST   /api/documents/generate      { template_id, linkable_type, linkable_id,
+ *                                       values?, document_name? } → the verdict
+ *
  * S4 — staff upload. Same declaration-order rule as the two blocks below.
  * POST   /api/documents/upload-link   { case_id?|contact_id?, filename }
  *                                     → { link, path, placement, ticket, note? }
@@ -290,6 +295,87 @@ router.post('/api/documents/register', jwtOrApiKey, async (req, res) => {
     res.status(created ? 201 : 200).json({ status: 'success', created, document: row });
   } catch (err) {
     sendError(res, err);
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GENERATE (G2) — POST /api/documents/generate
+//
+// ⚠️ DECLARED BEFORE THE ':id' ROUTES, same rule the sync-roots block states at
+// length: '/api/documents/generate' and '/api/documents/:id' are both two
+// segments and declaration order decides. There is no POST '/api/documents/:id'
+// today; if one is ever added it must go below this.
+//
+// Body: { template_id, linkable_type, linkable_id, values?, document_name? }
+//
+// A template in, a filed PDF out. Everything real lives in
+// services/documentGenerateService.js — this is the boundary: snake→camel, the
+// acting user, and the code→status map.
+//
+// ── WHY THIS LIVES ON THE DOCUMENTS SURFACE AND NOT THE ESIGN ONE ───────────
+// The artifact is a DOCUMENT. It has no envelope, no recipients, no status and
+// nothing to reconcile; the only trace it leaves is a row in the registry this
+// file already serves. Putting it under /api/esign because it shares a template
+// table would file it by its ingredients rather than by what it produces.
+//
+// ── ERROR CODES ─────────────────────────────────────────────────────────────
+// The service throws the ESIGN_* vocabulary (shared templates, shared
+// renderer). This file's own sendError maps on err.status and message
+// substrings and has no code→status switch to extend, so the generate route
+// carries its own map and its own responder — which also lets it forward
+// `missing` on ESIGN_MISSING_PREFILL, the one thing a caller needs to act on.
+// The envelope stays this file's { status, message } plus `code`.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const GENERATE_ERROR_STATUS = {
+  ESIGN_NOT_FOUND:          404,
+  ESIGN_MISSING_PREFILL:    400,   // fixable by the caller — which keys is in `missing`
+  ESIGN_BAD_LINKABLE:       400,
+  ESIGN_BAD_TEMPLATE:       400,
+  ESIGN_BAD_PREFILL_SCHEMA: 400,
+  ESIGN_TEMPLATE_INACTIVE:  409,   // right template, wrong state
+  ESIGN_TEMPLATE_PURPOSE:   409,   // right template, wrong picker
+  ESIGN_TEMPLATE_NO_PDF:    409,
+};
+
+function sendGenerateError(res, err) {
+  const status = GENERATE_ERROR_STATUS[err && err.code] || 500;
+  if (status >= 500) {
+    console.error('[api.documents] POST /api/documents/generate failed:',
+      err && err.stack ? err.stack : err);
+  } else {
+    console.warn(`[api.documents] POST /api/documents/generate → ${status} ` +
+      `${err && err.code}: ${err && err.message}`);
+  }
+  return res.status(status).json({
+    status:  'error',
+    message: status >= 500 && !(err && err.code)
+      ? 'Something went wrong generating this document.'
+      : (err && err.message) || 'Request failed.',
+    code:    (err && err.code) || 'DOC_GENERATE_ERROR',
+    ...(err && err.missing ? { missing: err.missing } : {}),
+  });
+}
+
+router.post('/api/documents/generate', jwtOrApiKey, async (req, res) => {
+  try {
+    const generate = require('../services/documentGenerateService');
+    const b = req.body || {};
+
+    const out = await generate.generateFromTemplate(req.db, {
+      templateId:   b.template_id,
+      linkableType: b.linkable_type,
+      linkableId:   b.linkable_id,
+      values:       b.values || null,
+      documentName: b.document_name || null,
+      // JWT only. An API-key caller legitimately has no user and this file does
+      // not invent one — see actingUserId.
+      createdBy:    actingUserId(req),
+    });
+
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    sendGenerateError(res, err);
   }
 });
 

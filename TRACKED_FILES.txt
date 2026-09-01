@@ -347,6 +347,7 @@ ref/2026-08-28_streak_messages.sql
 ref/2026-08-30_domain_event_queue.sql
 ref/2026-08-31_wf40_subject_form_name.sql
 ref/2026-09-01_bk_worksheet.sql
+ref/2026-09-01_g2_document_generate.sql
 ref/2026-09-01_unified_events_e0b.sql
 ref/2026-09-01_unified_events_u2.sql
 ref/2026-09-01_unified_events_u3.sql
@@ -576,6 +577,7 @@ services/contactService.js
 services/courtExecutor.js
 services/courtRerun.js
 services/credentialService.js
+services/documentGenerateService.js
 services/documentIngestService.js
 services/documentService.js
 services/documentSourceService.js
@@ -605,6 +607,7 @@ services/esignTemplateService.js
 services/esignWebhookService.js
 services/eventService.js
 services/extFormService.js
+services/filePlacementService.js
 services/firmBlocksService.js
 services/formPdfService.js
 services/formService.js
@@ -687,11 +690,14 @@ tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js
+tests/documentGenerateFn.test.js
+tests/documentGenerateService.test.js
 tests/documentIngest.s4.test.js
 tests/documentRelink.test.js
 tests/documentService.test.js
 tests/documentSourceService.test.js
 tests/documentSyncService.test.js
+tests/documentsGenerate.routes.test.js
 tests/documentsRoutes.test.js
 tests/documentsUi.related.test.js
 tests/documentsUi.syncPanel.test.js
@@ -719,6 +725,7 @@ tests/esignReminders.test.js
 tests/esignSend.test.js
 tests/esignSentEmit.test.js
 tests/esignService.test.js
+tests/esignTemplates.purpose.test.js
 tests/esignTemplates.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
@@ -729,6 +736,7 @@ tests/eventservice.remindertitle.test.js
 tests/executionVersionStamp.test.js
 tests/extforms.x2.test.js
 tests/f_route.x21.test.js
+tests/filePlacementService.test.js
 tests/firmConfig.test.js
 tests/fixtures/calendar_item_types.seed.json
 tests/fixtures/slice26/legacy_case_details_bk2.js

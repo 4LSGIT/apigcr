@@ -59,7 +59,9 @@ function errorToStatus(code) {
     case 'ESIGN_RENDER_EXTERNAL_REF':
     case 'ESIGN_INLINE_BAD_INPUT':
       return 400;
+    // Right template, wrong state / wrong picker for this verb.
     case 'ESIGN_TEMPLATE_INACTIVE':
+    case 'ESIGN_TEMPLATE_PURPOSE':
       return 409;
     // Render machinery: the caller's request was fine; the box is not.
     case 'ESIGN_RENDER_NO_BROWSER':
@@ -130,6 +132,10 @@ function templateInputFromBody(body) {
     static_body:     'staticBody',
     template_type:   'templateType',
     completion_targets: 'completionTargets',
+    // G2 — which picker this template appears in, and where its generated
+    // output files under the case folder.
+    purpose:         'purpose',
+    file_subfolder:  'fileSubfolder',
   };
   for (const [wire, svc] of Object.entries(map)) {
     if (Object.prototype.hasOwnProperty.call(b, wire)) out[svc] = b[wire];
@@ -169,6 +175,10 @@ router.get('/api/esign/templates', jwtOrApiKey, async (req, res) => {
     const templates = await esignTemplateService.listTemplates(req.db, {
       // ?all=1 → include inactive (the manager view); default is picker-shaped.
       activeOnly: !parseBool(req.query.all),
+      // ?purpose=esign|generate → only what THAT picker may offer ('both'
+      // counts for either). Absent or unrecognised filters nothing, which is
+      // what the manager view wants: it must show every template.
+      purpose: req.query.purpose || null,
     });
     return res.json({ templates });
   } catch (err) {

@@ -58,6 +58,49 @@ const PREFILL_TYPES = Object.freeze(['text', 'number', 'date', 'money', 'options
 const TEMPLATE_TYPES = Object.freeze(['html', 'pdf']);
 
 /**
+ * G2. WHICH PICKER a template appears in — not what it can technically do.
+ *
+ *   'esign'     Send-for-Signature only. sendFromTemplate accepts it;
+ *               documentGenerateService refuses it.
+ *   'generate'  Generate-document only. The mirror: documentGenerateService
+ *               accepts it, sendFromTemplate refuses it.
+ *   'both'      Both pickers.
+ *
+ * The DEFAULT IS 'esign' and the column default matches, which is what makes
+ * the migration safe: every template that existed before G2 is a signature
+ * template and stays invisible to the generate path until a human says
+ * otherwise. A new capability does not get to opt existing rows in.
+ *
+ * This is a POLICY flag, deliberately not a capability check — an html
+ * template renders identically down either path (templateRenderService is the
+ * one renderer). The refusals exist so a fee agreement cannot be quietly
+ * generated-and-filed instead of sent for signature, which looks like success
+ * and leaves nothing signed.
+ */
+const PURPOSES = Object.freeze(['esign', 'generate', 'both']);
+const DEFAULT_PURPOSE = 'esign';
+
+/**
+ * Where a GENERATED document lands under the case folder — the generate-path
+ * equivalent of formPdfService's hardcoded 'Forms'. Per-template because a fee
+ * agreement and a court notice do not belong in the same drawer.
+ * Column: varchar(64) NOT NULL DEFAULT 'Generated Documents'.
+ */
+const DEFAULT_FILE_SUBFOLDER = 'Generated Documents';
+const MAX_FILE_SUBFOLDER = 64;
+
+/**
+ * Characters Dropbox rejects in a path segment. Same set formPdfService and
+ * esignFilingService use — a THIRD literal copy, on purpose: importing
+ * filePlacementService here would drag dropboxService, taskService and
+ * documentIngestService into the template service's dependency graph for one
+ * regex. Non-global (no /g) because this copy only ever .test()s, and a global
+ * regex's stateful lastIndex makes repeated .test() calls alternate.
+ */
+// eslint-disable-next-line no-control-regex
+const ILLEGAL_IN_SUBFOLDER = /[/\\:*?"<>|\u0000-\u001f]/;
+
+/**
  * Completion triggers (esign workflow actions, part 2). A template may name
  * what to START when a request sent from it completes:
  *
@@ -213,6 +256,8 @@ function extractPlaceholders(body) {
  * @param {boolean} [t.remindersOff=false]
  * @param {?number} [t.reminderSeqId] stored, NOT validated (Phase 3's table)
  * @param {boolean} [t.staticBody=false]  explicit "no placeholders on purpose"
+ * @param {string}  [t.purpose='esign']   'esign' | 'generate' | 'both'
+ * @param {string}  [t.fileSubfolder]     case-folder subfolder for generated output
  * @param {Set<string>} resolverWhitelist  legal resolver strings
  * @returns {{ clean: object, warnings: string[] }}
  */
@@ -221,6 +266,7 @@ function validateTemplateInput(t, resolverWhitelist) {
     name, kind, body, prefillSchema, placementJson,
     expirationDays = 14, remindersOff = false, reminderSeqId = null,
     staticBody = false, templateType = 'html', completionTargets = null,
+    purpose = DEFAULT_PURPOSE, fileSubfolder = DEFAULT_FILE_SUBFOLDER,
   } = t || {};
 
   // ── template_type (Phase 2E) ──────────────────────────────────────────────
@@ -235,6 +281,31 @@ function validateTemplateInput(t, resolverWhitelist) {
       `template_type "${templateType}" is invalid (expected one of: ${TEMPLATE_TYPES.join(', ')}).`);
   }
   const isPdf = templateType === 'pdf';
+
+  // ── purpose (G2) ──────────────────────────────────────────────────────────
+  const purposeClean = purpose == null ? DEFAULT_PURPOSE : String(purpose);
+  if (!PURPOSES.includes(purposeClean)) {
+    throw _err('ESIGN_BAD_TEMPLATE',
+      `purpose "${purposeClean}" is invalid (expected one of: ${PURPOSES.join(', ')}).`);
+  }
+
+  // ── file_subfolder (G2) ───────────────────────────────────────────────────
+  // Becomes a Dropbox PATH SEGMENT under the case folder, so it is validated
+  // like a filename fragment rather than like free text: a '/' here would
+  // silently create a nested tree nobody asked for, and the rest of the set
+  // Dropbox rejects outright. Length is enforced HERE because sql_mode is not
+  // strict — a 90-char value would truncate at 64 without a word.
+  const subfolderClean =
+    String(fileSubfolder == null ? DEFAULT_FILE_SUBFOLDER : fileSubfolder).trim();
+  if (subfolderClean.length < 1 || subfolderClean.length > MAX_FILE_SUBFOLDER) {
+    throw _err('ESIGN_BAD_TEMPLATE',
+      `file_subfolder must be 1–${MAX_FILE_SUBFOLDER} characters.`);
+  }
+  if (ILLEGAL_IN_SUBFOLDER.test(subfolderClean)) {
+    throw _err('ESIGN_BAD_TEMPLATE',
+      'file_subfolder must be a single folder name — it cannot contain / \\ : * ? " < > | ' +
+      'or control characters.');
+  }
 
   // ── name / kind ───────────────────────────────────────────────────────────
   const nameClean = String(name == null ? '' : name).trim();
@@ -466,6 +537,8 @@ function validateTemplateInput(t, resolverWhitelist) {
       name: nameClean,
       kind: kindClean,
       templateType,
+      purpose: purposeClean,
+      fileSubfolder: subfolderClean,
       body: bodyClean,
       prefillSchema: schemaClean,
       placementJson: placements,
@@ -487,15 +560,33 @@ function validateTemplateInput(t, resolverWhitelist) {
  * that ships every contract's full HTML on every page load is a self-inflicted
  * wound. getTemplate fetches one body when the editor opens it.
  * has_pdf rides along from a LEFT JOIN on size — never the blob itself.
+ *
+ * `purpose` (G2) is a PICKER filter, not a validity filter: 'esign' asks for
+ * everything the Send-for-Signature picker may offer ('esign' ∪ 'both'),
+ * 'generate' for everything the Generate-document picker may offer
+ * ('generate' ∪ 'both'). Anything else — including null, which is what the
+ * manager view passes — filters nothing, because the admin list has to show
+ * every template regardless of where it is offered.
+ *
+ * @param {object} db
+ * @param {object} [o]
+ * @param {boolean} [o.activeOnly=true]
+ * @param {?string} [o.purpose=null]  'esign' | 'generate' | null
  */
-async function listTemplates(db, { activeOnly = true } = {}) {
+async function listTemplates(db, { activeOnly = true, purpose = null } = {}) {
+  const where = [];
+  if (activeOnly) where.push('t.active = 1');
+  if (purpose === 'esign') where.push("t.purpose IN ('esign','both')");
+  else if (purpose === 'generate') where.push("t.purpose IN ('generate','both')");
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
   const [rows] = await db.query(
-    `SELECT t.id, t.name, t.kind, t.template_type, t.active, t.expiration_days,
-            t.reminders_off, t.updated_at,
+    `SELECT t.id, t.name, t.kind, t.template_type, t.purpose, t.file_subfolder,
+            t.active, t.expiration_days, t.reminders_off, t.updated_at,
             (p.template_id IS NOT NULL) AS has_pdf
        FROM contract_templates t
        LEFT JOIN contract_template_pdfs p ON p.template_id = t.id
-      ${activeOnly ? 'WHERE t.active = 1' : ''}
+      ${whereSql}
       ORDER BY t.name ASC, t.id ASC`
   );
   return (rows || []).map((r) => ({
@@ -724,11 +815,20 @@ async function createTemplate(db, input, resolverWhitelist) {
   // Both JSON columns supplied EXPLICITLY — non-strict sql_mode turns an
   // omitted NOT NULL JSON column into JSON null, and nothing errors until a
   // send tries to read the placement three weeks later.
+  //
+  // G2's two columns are APPENDED rather than slotted in next to
+  // template_type, even though that is where they sit in the table. The column
+  // list here is a bind order, not a schema description, and
+  // tests/esignTemplates.test.js reads prefill_schema and placement_json out of
+  // params[4] and params[5] by position. Inserting ahead of them would shift
+  // both and break a test that has nothing to do with this feature. Append-only
+  // is the rule for this statement.
   const [result] = await db.query(
     `INSERT INTO contract_templates
        (name, kind, template_type, body, prefill_schema, placement_json,
-        reminder_seq_id, reminders_off, expiration_days, completion_targets, active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        reminder_seq_id, reminders_off, expiration_days, completion_targets,
+        purpose, file_subfolder, active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     [
       clean.name,
       clean.kind,
@@ -740,6 +840,8 @@ async function createTemplate(db, input, resolverWhitelist) {
       clean.remindersOff ? 1 : 0,
       clean.expirationDays,
       clean.completionTargets == null ? null : JSON.stringify(clean.completionTargets),
+      clean.purpose,
+      clean.fileSubfolder,
     ]
   );
 
@@ -774,6 +876,12 @@ async function updateTemplate(db, id, input, resolverWhitelist) {
     name:           has('name')           ? input.name           : existing.name,
     kind:           has('kind')           ? input.kind           : existing.kind,
     templateType:   existing.template_type,
+    // G2. Unlike template_type these ARE mutable: flipping a template into the
+    // generate picker, or re-pointing its output drawer, is a policy edit, not
+    // a change of artifact. Same keep-the-stored-value-when-absent rule as
+    // every other field here.
+    purpose:        has('purpose')        ? input.purpose        : existing.purpose,
+    fileSubfolder:  has('fileSubfolder')  ? input.fileSubfolder  : existing.file_subfolder,
     body:           has('body')           ? input.body           : existing.body,
     prefillSchema:  has('prefillSchema')  ? input.prefillSchema  : existing.prefill_schema,
     placementJson:  has('placementJson')  ? input.placementJson  : existing.placement_json,
@@ -789,11 +897,13 @@ async function updateTemplate(db, id, input, resolverWhitelist) {
   await _assertReminderSeqExists(db, clean.reminderSeqId);
   await _assertCompletionTargetsExist(db, clean.completionTargets);
 
+  // Appended, not slotted in — same reason as createTemplate's INSERT above:
+  // this list is a bind order and existing tests read params by position.
   await db.query(
     `UPDATE contract_templates
         SET name = ?, kind = ?, body = ?, prefill_schema = ?, placement_json = ?,
             reminder_seq_id = ?, reminders_off = ?, expiration_days = ?,
-            completion_targets = ?
+            completion_targets = ?, purpose = ?, file_subfolder = ?
       WHERE id = ?`,
     [
       clean.name,
@@ -805,6 +915,8 @@ async function updateTemplate(db, id, input, resolverWhitelist) {
       clean.remindersOff ? 1 : 0,
       clean.expirationDays,
       clean.completionTargets == null ? null : JSON.stringify(clean.completionTargets),
+      clean.purpose,
+      clean.fileSubfolder,
       Number(id),
     ]
   );
@@ -859,6 +971,10 @@ module.exports = {
   // constants
   PREFILL_TYPES,
   TEMPLATE_TYPES,
+  PURPOSES,
+  DEFAULT_PURPOSE,
+  DEFAULT_FILE_SUBFOLDER,
+  MAX_FILE_SUBFOLDER,
   COMPLETION_TRIGGER_KEYS,
   COMPLETION_TARGET_TYPES,
   MAX_TEMPLATE_PDF_BYTES,
