@@ -4,12 +4,19 @@
 history (frozen post review round 3). Where the two differ, this file is the design; v0.4 is what
 E0a was built against.
 
-**Status: DRAFT for Fred's red pen, 2026-08-30.** Lines marked **⛔ GATED** are waiting on a ruling
-and must not be built until it lands (all of them are collected in §8).
+**Status: RATIFIED 2026-09-01.** Every gate in the 2026-08-30 draft is ruled (§8.1); the
+remaining open items in §8.2 are work to schedule, not decisions to make.
 
 **Authors:** PIPE (pipeline-arc manager, Fable) — v0.1–v0.4. CAL (unified-events manager, Fable) —
 v0.5, reconciled with PIPE via scratch `fred/unified_events_coord` 2026-08-30. Figures verified
 live 2026-08-26 (v0.4) and re-verified / extended 2026-08-28..30 (v0.5) by one or both.
+
+**Changelog v0.5-draft → v0.5 (ratification pass, 2026-09-01):** Fred's rulings applied (§8.1) —
+A3 ruled **yes**, Option B confirmed, `consultation` gets its own key, hand-fixes approved;
+Appendix A.2 regenerated from a **BINARY census** (E1 finding — the ci `GROUP BY` had collapsed
+spelling variants covering 19% of appts); **E1 landed** and PIPE's calendar role closed (§0.1);
+U1 becomes a SQL-only migration with the picker moved to U2 (§7); the Jest baseline becomes a
+verify-don't-trust figure (§7.1 rule 6).
 
 **Changelog v0.4→v0.5.** Amendment ids A1–A8 are kept in the section headings so the coordination
 scratch and the drafted slice prompts still resolve:
@@ -19,7 +26,7 @@ scratch and the drafted slice prompts still resolve:
 | — | Option B ownership, hold list, E1 carve-out | §0.1 | new |
 | A1 | item-type registry TABLE + `type_key` COLUMN on both tables | §3.3 | v0.4 §3.3 read-time derivation |
 | A2 | no user initials in schema | §3.3.1 | `court_item_policy.attendance/blocks` |
-| A3 | 341 lives in `appts`, always; event type `341` retired ⛔ | §3.4.1, §5 | v0.4's "defer to SS worksheet" |
+| A3 | 341 lives in `appts`, always; event type `341` retired (**ruled yes** 2026-09-01) | §3.4.1, §5 | v0.4's "defer to SS worksheet" |
 | A4 | `singleton` is registry policy, not code | §3.4.2 | `createAppt`'s `'341 Meeting'` block |
 | A5 | `calendar.*` domain events from both services | §3.5 | new |
 | A6 | reminders = `calendar.approaching` + trigger rules | §3.2 | v0.4 §3.2 task-spawner |
@@ -42,24 +49,37 @@ ownership and evolution.
 
 ### 0.1 Ownership and coordination
 
-**Option B, endorsed by both managers. ⛔ GATED on Fred's confirm.** CAL owns the calendar
+**Option B, endorsed by both managers, confirmed by Fred 2026-09-01.** CAL owns the calendar
 substrate: everything in v0.4 §7 from E0b onward (here: §7's U-series), plus every amendment in
 this file. PIPE keeps pipeline / portal / merge and consumes the §3.1 read contract as a frozen
 API.
 
-**Carve-out:** E1 (`caseEventService` + staff case timeline + orphan audit) finishes under PIPE
-first. Its worker is primed with a completed read-and-verify pass, creates only new files
-(`services/caseEventService.js`, a new route, `case.html` tabTimeline + two script-fence bumps,
-tests), and edits no held file and no DDL. CAL's U3 becomes an alignment pass on it (§7).
+**E1 landed 2026-09-01** (the PIPE carve-out; reviewed and approved; suite 161 / 5,382 / 1 at
+landing): `services/caseEventService.js`, `routes/api.caseEvents.js`, `case.html` tabTimeline,
+tests. **E1b** added the one hold-list edit made so far, with a coord entry first:
+`eventService.listEvents` gained a read-only pseudo-filter `link_type:'none'` — deliberately
+absent from `EVENT_LINK_TYPES`, so it can never reach the enum column. **PIPE's calendar role is
+closed**; from here PIPE writes no calendar prompts and touches nothing on the hold list.
+
+**E1's link audit is three-way, not "orphans":** `broken` (dead `case_id` — genuinely wrong),
+`pending` (docket with no case yet — self-healing), `unlinked` (legitimate: firm-wide events like
+office-closed or a CLE). Live **0 / 0 / 1**. The same split applies to appts once A3a lands, and
+U9's unified list carries the `unlinked` filter.
+
+**U3 handoff site:** `caseEventService._deriveKeys` — one site, exporting `_EVENT_TYPE_KEYS`,
+`_APPT_TYPE_KEYS` and `_EVENT_ROW_OVERRIDES` for U2's backfill assertions. E1 normalizes lookups
+trim+lowercase to mirror the column collation, and throws at load if two vocabulary entries
+collide with different values. U3 swaps derivation → column there, deletes the row-override map,
+and extends `status_norm` per §3.7.
 
 **Hold list — nobody edits these without an entry in `fred/unified_events_coord` first:**
 `events` DDL, `appts` DDL, `services/eventService.js`, `services/apptService.js`,
 `services/courtExecutor.js`. PIPE has frozen on all five permanently. All future DDL on
 `events`/`appts` is CAL's.
 
-**E1 ↔ U-series alignment (the one thing E1 must do for CAL):** derive `type_key` and `kind_key`
-from the Appendix A vocabulary, not from an ad-hoc map. Keys are the contract; the U2 column
-replaces the derivation at one mapping site.
+**E1 ↔ U-series alignment (done):** E1 derives `type_key` / `kind_key` from the Appendix A
+vocabulary; U2's backfill produces the same values, so nothing changes key the day the column
+lands.
 
 Scratch keys: `fred/unified_events_coord` (handshake, append-only) ·
 `fred/unified_events_handover` (PIPE's verified figures) · `fred/e0b_type_mapping_draft` (PIPE's
@@ -73,12 +93,12 @@ tasks/reminders (8AM jobs, digest, Shabbos/YT) · pipeline R2 `event(selector)`.
 `court_item_policy` blocking/calendar (now the registry — §3.3), staff case timeline, portal / R3
 client card. Added by v0.5: trigger rules and sequence templates bind `type_key` directly (§6.1).
 
-## 2. Verified inventory (live, 2026-08-26; deltas 2026-08-28..30)
+## 2. Verified inventory (live, 2026-08-26; deltas 2026-08-28..30 and 2026-09-01)
 
 | store | shape | live usage | notes |
 |---|---|---|---|
 | `events` | event_type (free varchar), link ∈ {case, contact, **case_number**, NULL}, date, time, all_day, length, location, URL, note, status ∈ Scheduled/Completed/Canceled, gcal, with | **152 rows: 100 Scheduled, 52 Canceled** (of which **31 are July-cleanup dedup artifacts with a live Scheduled twin** — see §3.4). Link split **114 case_number / 36 case / 1 contact / 1 NULL** | Already the court occurrence store. Vocabulary: **25 distinct types** with live variants (`Confirmation Hearing`/`confirmation_hearing`, `Show Cause`/`Show Cause Hearing`, `Trial`/`Pre-Trial Hearing`/`Pre-trial Conference`, bare `Deadline` beside five `* Deadline`s) — mapped in Appendix A. `event_length` populated 11/152, none court-written (write-path gap, column fine). **No TZ columns** (date+time+all_day). |
-| `appts` | appt_type, client+case, status ∈ Attended/No Show/Rescheduled/Canceled/Scheduled, `appt_date` (firm-local) **and** `appt_date_utc` (**2,106/2,213 rows differ**), platform, booking machinery, gcal | 2,213 rows; **6 rows blank status** (ids in `fred/unified_events_handover`); `appt_with≠1` on 5 of 403 appts this year | E0a added `rescheduled_from_appt_id`; before it, succession lived only in `rescheduleAppt`'s write-time logic and trigger payloads, not as data. |
+| `appts` | appt_type, client+case, status ∈ Attended/No Show/Rescheduled/Canceled/Scheduled, `appt_date` (firm-local) **and** `appt_date_utc` (**2,106/2,213 rows differ**), platform, booking machinery, gcal | **2,216 rows** (BINARY census 2026-09-01; 2,213 at the 08-26 pass); **6 rows blank status** (ids in `fred/unified_events_handover`); `appt_with≠1` on 5 of 403 appts this year | E0a added `rescheduled_from_appt_id`; before it, succession lived only in `rescheduleAppt`'s write-time logic and trigger payloads, not as data. **`appt_type` is `utf8mb4_general_ci`** — a ci `GROUP BY` collapses spelling variants covering **19% of appts**; every census over it must be BINARY (Appendix A.2). |
 | `tasks` | assignee, due, computed lifecycle, `task_link_type ENUM(...,'event')` already, 8AM one_time reminders, digest | daily use | Reminder/digest engine exists; under A6 tasks are a reminder *outcome*, produced by trigger rules. |
 | `cases` date columns | 17; ~13 occurrence-shaped incl. `case_341_current` (datetime) + `case_341_initial` (date) + `_form`/`_link`, `docs_due`, `schedules_due_*`, `show_cause`, `case_objection`, `case_180`, `case_preference`, `filing_fee_extended_deadline`, matrix ×2; 4 lifecycle facts. **341 columns: 149/130 populated vs 16 event rows (~10×).** | staff forms + court executor `set_column` | **Staff editability is DB-defined, not HTML**: internal form templates `case_details` and `341_notes` carry these columns in `definition` AND `draft_definition` — `case_341_current` has THREE live writers today (two forms + set_column). |
 | `court_item_policy` / `court_item_reminders` | storage ∈ appt/event/none, attendance, blocks, calendar; lead_days, assignee, title_template | **both EMPTY** | **Folded into the registry (A1/A2) and A6 respectively** — `storage` becomes derived (§3.3.2), `attendance`/`blocks` become registry columns, `court_item_reminders` becomes a `trigger_rules` seeder or is dropped. |
@@ -120,13 +140,24 @@ detectors never do.
 - **Link resolution (all four states):** `case` → direct. `case_number` → equality join on
   `cases.case_number OR cases.case_number_full` (the two existing log-feed indexes; same fragility
   note, re-check above 5–10k cases). `contact` → excluded from case-scoped reads. `NULL` (1 row) →
-  excluded; orphan-audit query ships with E1. Appts gain the same anchor shape at U6 (§3.4.1).
+  excluded. Appts gain the same anchor shape at U6 (§3.4.1).
+- **Link audit is three-way, not "orphans"** (shipped in E1; live 0 / 0 / 1): `broken`
+  (`dead_case_id`), `pending` (`unresolved_case_number` — self-healing when the case appears),
+  `unlinked` (legitimate — firm-wide events like office-closed or a CLE). Only `broken` is a
+  defect. Widened to appts at U3, surfaced as a filter at U9.
 - **`starts_at` representation (defined):** firm-local naive datetime, America/Detroit. Appt side
   sources **`appt_date` only — never `appt_date_utc`** (they differ on 2,106/2,213 rows; using the
   wrong one is a silent offset bug). Event side composes `event_date` + `event_time`
   (`all_day` → date at 00:00 + flag). No TZ conversion anywhere in this arc.
-- **Keys:** E1 derives `type_key` / `kind_key` from Appendix A. **U3 swaps the derivation for the
-  U2 columns at one mapping site** — same output, one source of truth.
+- **Keys:** E1 derives `type_key` / `kind_key` from Appendix A at exactly one site,
+  `caseEventService._deriveKeys` (exports `_EVENT_TYPE_KEYS`, `_APPT_TYPE_KEYS`,
+  `_EVENT_ROW_OVERRIDES` for U2's backfill assertions). Lookups normalize trim+lowercase to mirror
+  the column collation; a vocabulary collision throws at load. **U3 swaps the derivation for the
+  U2 columns there** — same output, one source of truth.
+- **Unmapped and NULL types pass through honestly:** an unrecognized `event_type` / `appt_type` is
+  returned raw with `kind_key` NULL and a warning — never a guessed kind. `appt_type IS NULL`
+  (8 rows) yields `type_key` NULL. A guessed `meeting` would route the row to the wrong TABLE
+  under §3.3.2, so guessing is not a cosmetic error (Fred, ruled).
 - **Status:** `status_norm` per §3.7, which *extends* this section rather than forking it.
 - **Opt-in fields:** `includeSuperseded` (above) and `attendees` (§3.6). The default row shape is
   frozen; new information arrives as opt-ins, never as new default keys.
@@ -198,8 +229,16 @@ transitional, not permanent.
 **Registry scope:** firm-specific seed (Fred). Non-BK case types are real (§Appendix A: civil
 deadlines, depositions, pre-lawsuit, tax consults); multi-tenant later if ever.
 
-**Picker:** `eventform.html`'s free-text type input is replaced at U1 by a controlled picker fed
-from the registry (or, if U1 runs before U2, from a setting), scoped by `case_types`.
+**Picker:** the free-text type inputs in `eventform.html` and `apptform2.html` are replaced at
+**U2** by a controlled picker fed from the registry, scoped by `case_types`. (The draft put the
+picker in U1; U1 is now SQL-only, so the picker ships with the table it reads.) `ingest_aliases`
+is applied at the two INSERT sites — `apptService.js:965`, `eventService.js:1331` — and in their
+PATCH allowlists; `booking_views.appt_type` becomes a key at U5.
+
+**Unmapped input is never guessed.** A string absent from the registry and from `ingest_aliases`
+is stored raw with `kind` NULL and a warning; `appt_type IS NULL` (8 rows) stays NULL. Under
+§3.3.2 a guessed `kind` picks the wrong TABLE, so the failure mode of guessing is structural, not
+cosmetic (Fred, ruled).
 
 #### 3.3.1 No user initials in schema (A2)
 
@@ -246,7 +285,7 @@ forward-only: 130 populated initials vs 16 event rows means most chains will nev
 mirrored under §4's single-writer rule like every other occurrence column, and is additionally
 reconstructible from the chain for post-s2 cases only.
 
-#### 3.4.1 341 lives in `appts`, always (A3) — ⛔ GATED on Fred's yes/no
+#### 3.4.1 341 lives in `appts`, always (A3) — **ruled yes, Fred 2026-09-01**
 
 A 341 is `kind='meeting'` → stored in `appts` (§3.3.2). Court-v2 resolves docket → case → primary
 contact at write time and writes the appt through the U6 API; the registry's `singleton=1`
@@ -264,6 +303,11 @@ enrollment, logs it, still blocks the provider's calendar. `appt_case_id` keeps 
 **Why.** The live duplication in §2 — v0.4 deferred 341 routing to the SS worksheet; the data has
 answered it. Cross-table supersession (an event superseding an appt) would need a polymorphic
 pointer — avoided entirely by one table per kind.
+
+**U7's dedupe census runs by singleton identity, not by date** (PIPE, verified): the cross-form
+duplicates are date-divergent — 26-46639's 45/85 differ by a day, likewise 50/86 and 46/51, and
+same-date cross-form pairs number **0** — so `collapse_same_date` cannot catch them. Only
+`(anchor, type_key)` can.
 
 **Unaffected:** R2 requirement seeds bind 341 via `case_field(case_341_current)`; cutover to
 `event(selector)` is optional at U5.
@@ -360,8 +404,8 @@ is the cautionary tale.)
   `canceled`; occurred → `held` / `event_resolution`; status_changed → note/status.
   `collapse_same_date` = per-type "same date ⇒ same item" dedup applied **before**
   create-vs-supersede (§3.4.2).
-- 341 writes go to `appts` via the U6 API (§3.4.1 ⛔), docket-anchored and client-less when the
-  docket doesn't resolve.
+- 341 writes go to `appts` via the U6 API (§3.4.1), docket-anchored and client-less when the
+  docket doesn't resolve. U7's dedupe of the 12 live rows keys on `(anchor, type_key)`, not date.
 - `court_v2 schema_gaps`: `block_minutes` → registry `default_length`; `blocks_whole_day` →
   `blocks_default`; both land at U7.
 - **Gate: court v2 s2's prerequisite is this design AGREED (+ SS worksheet), not E1 shipped.** The
@@ -396,23 +440,25 @@ widening to `'event'|'any'` is adapter work, folded into U5.
 **Shipped:** **E0a** — `events.kind`, `events.superseded_by_event_id`, `events.supersede_reason`,
 `appts.rescheduled_from_appt_id` + the `rescheduleAppt` write, and the 31-row dedup
 reclassification backfill (`reason='duplicate'`; every artifact has exactly one live twin,
-verified). SQL: `ref/2026-08-27_unified_events_e0a.sql`.
+verified). SQL: `ref/2026-08-27_unified_events_e0a.sql`. **E1** — `caseEventService`,
+`routes/api.caseEvents.js`, `case.html` tabTimeline, three-way link audit; **E1b** — the
+`link_type:'none'` read filter on `eventService.listEvents`. Landed 2026-09-01.
 
 Model column is CAL's recommendation for the *executing* worker when CAL writes the prompt.
 
 | # | Slice | Model | Depends | Notes |
 |---|---|---|---|---|
-| E1 | `caseEventService` per §3.1 + case timeline + orphan audit | PIPE's worker (in flight) | — | derives keys from Appendix A; no DDL; no held files |
-| U0 | this document; commit v0.4 + v0.5 to `ref/`; `fred/calendar_type_keys_v1` | CAL | PIPE reply ✓ | done on Fred's approval |
-| U1 | **was E0b**: `UPDATE events SET kind, type_key`* per Appendix A + 3 hand-fixes (ids 134, 107, 4/6) + VERIFY counts; `eventform.html` picker from registry-or-setting (no free text) | **Opus** | U0 rulings | *`type_key` column arrives in U2; if U1 runs first it sets `kind` only and U2 backfills keys — either order is safe |
-| U2 | `calendar_item_types` + seed; `type_key` on both tables + backfill from Appendix A; write paths set it (picker / `ingest_aliases`); fold `court_item_policy` | **Fable** | U1 | largest DDL slice; additive only |
-| U3 | Alignment pass on E1: swap key derivation → column at one mapping site; extend `status_norm` per §3.7; opt-in `attendees[]` | **Opus** | E1, U2 | small |
+| E1 | `caseEventService` per §3.1 + case timeline + link audit (+E1b `link_type:'none'` filter) | PIPE's worker | — | **landed 2026-09-01** |
+| U0 | this document; commit v0.4 + v0.5 to `ref/`; `fred/calendar_type_keys_v1` | CAL | — | **done** |
+| U1 | **was E0b**: `ref/2026-09-01_unified_events_e0b.sql` — `events.kind` by type per Appendix A + the 4 hand-fixes + VERIFY. **SQL only; no picker** | **CAL-authored, Fred applies** | — | idempotent; U2 re-runs the bulk statements for rows created in between |
+| U2 | `calendar_item_types` + seed; `type_key` on both tables + backfill from Appendix A (+ E1's row overrides by id); write paths set `kind`/`type_key` (registry picker in `eventform.html` / `apptform2.html`; `ingest_aliases` at `apptService.js:965`, `eventService.js:1331` and the PATCH allowlists; `booking_views.appt_type` → key); fold `court_item_policy` | **Fable** | U1 | largest DDL slice; additive only; the backfill asserts equality with `caseEventService._deriveKeys` over every live row |
+| U3 | Alignment pass on E1 at `_deriveKeys`: column replaces derivation; delete `_EVENT_ROW_OVERRIDES`; extend `status_norm` per §3.7; opt-in `attendees[]`; widen link audit to appts | **Opus** | E1, U2 | small |
 | U4 | `calendar.*` domain events from both services; dual-carry envelope; `EVENT_TYPES` + coverage test; no rules bound | **Opus** | U2 | zero behaviour change |
 | U5 | Consumer cutover to keys (§6.1): rules 1–3, templates 19/20/23/24, requirement 3, detector `source:'event'\|'any'` (E1.5 folded in), booking views | **Opus** | U2, U3 | scripted; before/after live counts in the prompt |
 | U6 | Write API `schedule/reschedule/cancel/resolve`; `singleton` behind `unified_singleton_enabled`; A3a docket anchor + client-less; `event_resolution` writes; `missed` sweep | **Fable** | U2 | the live-risk slice |
-| U7 | Court-v2 s2 on U6: resolve/reconcile executor; 341 → appts; retire event `341`; dedupe the 12; CHECK constraint with strict-mode proof; `court_v2 schema_gaps` | **Fable** | U6 + SS worksheet | owner of U6 owns U7 (both managers) |
+| U7 | Court-v2 s2 on U6: resolve/reconcile executor; 341 → appts; retire event `341`; dedupe the 12 **by singleton identity, not date**; CHECK constraint with strict-mode proof; `court_v2 schema_gaps` | **Fable** | U6 + SS worksheet | owner of U6 owns U7 (both managers) |
 | U8 | `calendar.approaching` claim table + emitter; reminder rules seeded; `court_item_reminders` → seeder or drop | **Opus** | U4 | pattern exists (`case.stage_aged`) |
-| U9 | Shell unified list (kind / attendee / anchor / range filters) beside the three tabs; tabs removed one release later | **Opus** | U3 | UI only |
+| U9 | Shell unified list (kind / attendee / anchor / range / **unlinked** filters) beside the three tabs; tabs removed one release later | **Opus** | U3 | UI only |
 | U10 | **was E3** per §4: writer census (form_templates first), form-definition migration, mirror flips, 341 last / forward-only | **Fable** | U6, U7 | live staff forms |
 | later | attendees table · appt chains · case roles · drop `appt_type`/`event_type` strings | — | — | |
 
@@ -435,16 +481,18 @@ multi-tenant registry.
 4. Envelopes, filters and payloads dual-carry old and new fields for one release.
 5. Deploy order: SQL → backend → frontend. Schema ref regenerated via
    `POST /admin/db/schema/save-to-ref` after every migration.
-6. Full Jest suite before and after (baseline 157 suites / 5,205 tests / 1 skip pre-E1); new
-   services registered in `moduleLoad.smoke`; new domain events in `EVENT_TYPES` + coverage test.
+6. Full Jest suite before and after. **The baseline drifts continuously** (other arcs merge), so
+   every prompt says verify-don't-trust and the worker reports the figure it actually measured.
+   Last known: **161 suites / 5,382 tests / 1 skip** at E1 landing, 2026-09-01. New services
+   registered in `moduleLoad.smoke`; new domain events in `EVENT_TYPES` + coverage test.
 7. Every prompt has a Rollback section and a "does not touch" list; workers stop and report on any
    divergence between prompt claims and repo/DB.
 8. Post-deploy gates are readonly-SQL queries Fred runs, listed in the prompt with expected
    results.
 
-## 8. Rulings, open questions, gates
+## 8. Rulings and open items
 
-### 8.1 Rulings log (Fred, 2026-08-30)
+### 8.1 Rulings log (Fred, 2026-08-30 and 2026-09-01)
 
 | Question | Ruling |
 |---|---|
@@ -457,22 +505,26 @@ multi-tenant registry.
 | Ambiguous `cases` columns | SS worksheet, led by the `case_details` form (answered R2 review) |
 | Reminder assignee | fixed user id — nothing exists to role-resolve against |
 | 341 backfill | forward-only; `case_341_initial` stays a mirrored column ("derived" withdrawn) |
+| Court-email 341 supersedes/creates the 341 appt; event `341` retired (A3) | **yes** (2026-09-01) |
+| Ownership | **B**, confirmed (2026-09-01); E1 carve-out completed |
+| `Consultation` (7) | own key `consultation` |
+| Hand-fixes ids 134 → Canceled, 107 → `filing_fee_deadline`, 4/6 → `test` | approved; executed in U1 |
+| `appt_type IS NULL` (8 rows) | `type_key` NULL (honest passthrough; matches E1) — **not** `meeting` |
+| Unmapped strings | raw passthrough, `kind_key` NULL, warn — never a guessed kind (a guessed `meeting` would route to the wrong TABLE under §3.3.2) |
 
-### 8.2 ⛔ Open — blocking, needs Fred
+### 8.2 Open — needs Fred
 
-1. **A3 (§3.4.1): court-email 341 supersedes/creates the 341 appt; event `341` retired.** Answered
-   "probably" — **explicit yes/no requested**. Blocks U6's A3a shape and all of U7.
-2. **Ownership Option B (§0.1)** — PIPE endorsed with the E1 carve-out; awaiting Fred's confirm.
-3. **`consultation`**: own key (CAL suggests) vs fold into `iss`. Rule 2 today treats it as
-   consult-equivalent; under keys, rule 2 binds `['iss','ss','consultation']` explicitly.
-4. **Hand-fixes** for event ids 134, 107, 4, 6 (Appendix A notes) — approve before U1 runs.
-5. **Supersession sign-off** (carried from v0.4 §8 Q2), with §3.4's asymmetry attached: events
-   chain, appts tombstone; appt chains would be a later second column, not a free consequence.
-6. **Unblock E1's worker**; commit v0.4 + this file to `ref/`.
+1. **Apply U1** — `ref/2026-09-01_unified_events_e0b.sql` — and run its VERIFY block.
+2. **Case roles is unowned** (PIPE handed it back): reminder assignee (§3.2), R3 team card, portal
+   triage owner, A2 role-resolved attendance (§3.3.1). Four consumers, no manager — Fred to assign
+   one.
 
 ### 8.3 Open — design, not blocking
 
 - **U8:** approaching offsets per type (registry column) vs per rule.
+- **Supersession sign-off** was carried from v0.4 §8 Q2 and never explicitly ruled. E0a shipped
+  the chain and E1 reads it, so it is settled in practice; §3.4's asymmetry (events chain, appts
+  tombstone) stands unless Fred says otherwise.
 - **SS worksheet** (still gates U7): adjournment identity is answered by §3.4.2; remaining items
   are chapter-conversion supersession and the ambiguous `cases` columns (`case_180`,
   `case_preference`, matrix ×2).
@@ -488,11 +540,13 @@ today or an appt after U7.
 
 ### A.1 Events side (PIPE's E0b table, red-penned by CAL against the live rows)
 
+25 BINARY-distinct = 25 ci-distinct — the events vocabulary is collation-clean.
+
 | live `event_type` (n) | `type_key` | `kind` | note |
 |---|---|---|---|
 | Confirmation Hearing, confirmation_hearing | `confirmation_hearing` | hearing | merged spelling |
 | Hearing | `hearing` | hearing | generic catch-all |
-| Show Cause, Show Cause Hearing | `show_cause` | hearing | CAL: kind=hearing confirmed; `blocks_default='none'` |
+| Show Cause, Show Cause Hearing | `show_cause` | hearing | kind=hearing confirmed; `blocks_default='none'` |
 | Trial | `trial` | hearing | |
 | Trial / Pre-Trial Hearing (×1, id 134) | `trial` | hearing | row is "Order **Canceling** Trial and Pre-Trial Hearing Dates" stored as Scheduled → **hand-fix: set `event_status='Canceled'`**, key `trial` |
 | Telephonic Status Conference, Status Conference | `status_conference` | conference | telephonic = attribute, not type |
@@ -516,29 +570,37 @@ today or an appt after U7.
 Registry rows seeded beyond the live set (so the picker is complete): `order` (other),
 `milestone` (other), `test` (other, inactive).
 
-### A.2 Appts side (CAL, from all-time `appt_type`)
+### A.2 Appts side (BINARY census 2026-09-01: 30 distinct spellings + NULL, 2,216 rows)
 
-| live `appt_type` (n) | `type_key` | `kind` | note |
+**Regenerated for the ratified version.** `appt_type` is `utf8mb4_general_ci`, and the draft's ci
+`GROUP BY` had collapsed spelling variants covering **19% of appts** — the dominant `Pre-filing
+Meeting` (316) and `Meeting` (108) were both hidden behind their minority spellings. Every
+spelling is listed below so a case-sensitive reader cannot miss one. E1 normalizes trim+lowercase;
+U2's SQL backfill runs under general_ci; both hit every variant.
+
+| live `appt_type` (n, exact) | `type_key` | `kind` | note |
 |---|---|---|---|
-| Initial Strategy Session (923), Intial Strategy Session (1) | `iss` | meeting | |
+| Initial Strategy Session (924), Intial Strategy Session (1) | `iss` | meeting | |
 | Strategy Session (276) | `ss` | meeting | **distinct from `iss`** (Fred) |
 | Strategy Session Follow Up (173), Follow Up (1) | `ss_follow_up` | meeting | |
-| Pre-Filing Meeting (331), Pre-filing (30 min) (1) | `pre_filing` | meeting | |
+| **Pre-filing Meeting (316)**, Pre-Filing Meeting (15), Pre-filing (30 min) (1) | `pre_filing` | meeting | the dominant spelling is lower-case f |
 | 341 Meeting (241) | `meeting_341` | meeting | same key as events side |
-| Schedules Completion Meeting (122) | `schedules_meeting` | meeting | |
+| Schedules Completion Meeting (121), Schedules completion meeting (1) | `schedules_meeting` | meeting | |
 | Documents Completion Meeting (1) | `docs_meeting` | meeting | |
 | Matrix Completion Meeting (1) | `matrix_meeting` | meeting | |
-| meeting (113), None (8), "to go over …" (2), Case Status Review (1) | `meeting` | meeting | generic (Fred) |
-| Consultation (7; 4 from `test-consult` source, Rena, June 2026) | `consultation` | meeting | **⛔ §8.2 item 3**: own key vs fold into `iss` |
+| **Meeting (108)**, meeting (5), to go over claims (1), to go over objections to Chapt (1), Case Status Review (1) | `meeting` | meeting | generic (Fred) |
+| NULL (8) | NULL | meeting (by table) | honest passthrough; not backfilled (§8.1) |
+| Consultation (7; 4 from `test-consult` source, Rena, June 2026) | `consultation` | meeting | own key (Fred); rule 2 binds `['iss','ss','consultation']` |
 | Pre-Lawsuit Meeting (2), Pre Lawsuit Meeting (1) | `pre_lawsuit` | meeting | non-BK |
 | Tax Consult (2) | `tax_consult` | meeting | non-BK |
-| test*, Pizza Party, bug hunting Session, Repetitive Session, Test Appointment (9) | `test` | meeting | inactive in picker |
+| test (2), test appt, test2 appt, test3 appt, Test Appointment, Pizza Party, bug hunting Session, Repetitive Session (1 each) | `test` | meeting | inactive in picker |
 
 ## Backlog (named here, owned elsewhere)
 
 - **Case roles** (attorney/paralegal/owner per case): shared prerequisite for **four** consumers —
   reminder assignee (§3.2), R3's "Your team" panel, portal triage owner (portal messaging S4's
   blocker), and role-resolved attendance (§3.3.1). Deserves one design, not four ad-hoc solutions.
+  **Unowned** — PIPE handed it back; awaiting a manager (§8.2).
 - Appt succession CHAINS in the read layer (the pointer shipped in E0a; chain-building is the
   deferred part).
 - Attendees child table (§3.6) — when a real multi-attendee case exists.
