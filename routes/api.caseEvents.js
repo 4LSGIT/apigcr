@@ -9,10 +9,15 @@
  *                               ?include_superseded=1  include superseded events
  *                                                      and Rescheduled appt
  *                                                      tombstones, flagged
+ *                               ?include_attendees=1   add attendees[] to every
+ *                                                      row and client_expected
+ *                                                      to event rows (U3, v0.5
+ *                                                      §3.6). Off by default:
+ *                                                      the row shape is frozen.
  *                               ?from=YYYY-MM-DD       inclusive lower bound
  *                               ?to=YYYY-MM-DD         inclusive upper bound
  *
- * GET /api/case-events/audit  — event→case link health.
+ * GET /api/case-events/audit  — event AND appt link health (widened at U3).
  *                               ?severity=unlinked|pending|broken (CSV, repeatable)
  *                               Backs public/automation/eventLinks.html.
  *
@@ -76,6 +81,7 @@ router.get('/api/cases/:id/events', jwtOrApiKey, async (req, res) => {
   try {
     const events = await svc.listForCase(req.db, req.params.id, {
       includeSuperseded: flag(req.query.include_superseded),
+      includeAttendees:  flag(req.query.include_attendees),
       from: dateParam(req.query.from),
       to:   dateParam(req.query.to),
     });

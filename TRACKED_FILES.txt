@@ -349,6 +349,7 @@ ref/2026-08-31_wf40_subject_form_name.sql
 ref/2026-09-01_bk_worksheet.sql
 ref/2026-09-01_unified_events_e0b.sql
 ref/2026-09-01_unified_events_u2.sql
+ref/2026-09-01_unified_events_u3.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -548,6 +549,7 @@ scripts/test_email_ingest.sh
 scripts/test_email_ingest_automation.sh
 scripts/test_email_ingest_crud.js
 scripts/test_email_ingest_suppression.sh
+scripts/typeKeyVocabulary.js
 scripts/updateRoutes.js
 scripts/verify_strictstring_live.js
 server.js
@@ -828,6 +830,7 @@ tests/test_classifier.js
 tests/test_report_author.sh
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
+tests/typeKeyVocabulary.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js

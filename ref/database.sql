@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-01T10:48:16.460Z
+-- Generated: 2026-09-01T12:31:01.514Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:4430b25df365170d780637f75a1e551d
+-- Fingerprint: sha256:6c481aa182268bb0a0c2327a280f07fb
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1569,6 +1569,7 @@ CREATE TABLE `events` (
   `event_link` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_note` text COLLATE utf8mb4_general_ci,
   `event_status` enum('Scheduled','Completed','Canceled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Scheduled',
+  `event_resolution` enum('held','met','missed','moot','cancelled') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U3: HOW the event ended, per v0.5 §3.7. NULL = not recorded; the read layer falls back to met (deadline) / held (else) on Completed and cancelled on Canceled. No writer until U6.',
   `event_gcal` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_calendar_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_create_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -8,11 +8,18 @@
  *      null + ONE warning for unmapped. Inactive types still resolve.
  *   2. CACHE + FAIL-SOFT  TTL, force, invalidate, prime; a registry read
  *      failure yields an empty registry (or the last good one) and NEVER throws.
- *   3. PARITY WITH E1  every (raw → key) pair in
- *      caseEventService._EVENT_TYPE_KEYS / _APPT_TYPE_KEYS resolves to the SAME
+ *   3. PARITY WITH THE FROZEN E1 VOCABULARY  every (raw → key) pair in
+ *      typeKeyVocabulary.EVENT_TYPE_KEYS / APPT_TYPE_KEYS resolves to the SAME
  *      key against the seed the generator writes. This is the guarantee that
- *      write-time resolution == backfill == E1 derivation. If it fails, the
- *      SEED is wrong (scripts/calendarTypeSeed.js) — fix the seed, not the test.
+ *      write-time resolution == backfill == E1's original derivation. If it
+ *      fails, the SEED is wrong (scripts/calendarTypeSeed.js) — fix the seed,
+ *      not the test.
+ *
+ *      U3 MOVED THE SOURCE, NOT THE CONTENT. The maps used to live in
+ *      services/caseEventService.js; that service now reads the `type_key`
+ *      COLUMN and imports no vocabulary at all. The maps themselves are
+ *      byte-identical in their new home (scripts/typeKeyVocabulary.js), so this
+ *      test asserts exactly what it asserted at U2.
  *
  * The seed is read from tests/fixtures/calendar_item_types.seed.json (written
  * by scripts/genTypeKeyBackfill.js --write; byte-checked in
@@ -26,7 +33,7 @@
 const path = require('path');
 const svc  = require('../services/calendarTypeService');
 const SEED = require('./fixtures/calendar_item_types.seed.json');
-const caseEventService = require('../services/caseEventService');
+const vocabulary = require('../scripts/typeKeyVocabulary');
 
 /** A db whose ONLY query is the registry SELECT; JSON columns as MySQL strings. */
 function registryDb(rows = SEED, { fail = false } = {}) {
@@ -279,25 +286,25 @@ describe('write-path helpers', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // PARITY WITH E1 — the load-bearing test of this slice
 // ─────────────────────────────────────────────────────────────────────────────
-describe('parity: caseEventService (E1) vocabulary → registry seed', () => {
+describe('parity: the frozen E1 vocabulary → registry seed', () => {
   beforeEach(() => svc._primeCache(SEED));
 
   test('every E1 EVENT raw resolves to the same type_key AND kind', async () => {
     const db = { query: async () => { throw new Error('primed — no query expected'); } };
     const misses = [];
-    for (const [raw, [key, kind]] of caseEventService._EVENT_TYPE_KEYS.entries()) {
+    for (const [raw, [key, kind]] of vocabulary.EVENT_TYPE_KEYS.entries()) {
       const r = await svc.resolveTypeKey(db, raw);
       if (r.type_key !== key || r.kind !== kind) misses.push({ raw, e1: [key, kind], registry: [r.type_key, r.kind] });
     }
     expect(misses).toEqual([]);
-    expect(caseEventService._EVENT_TYPE_KEYS.size).toBeGreaterThan(20);   // the loop ran
+    expect(vocabulary.EVENT_TYPE_KEYS.size).toBeGreaterThan(20);   // the loop ran
   });
 
   test('every E1 APPT raw resolves to the same type_key (kind is meeting-by-table on appts)', async () => {
     const db = { query: async () => { throw new Error('primed — no query expected'); } };
     const misses = [];
     let skipped = 0;
-    for (const [raw, [key]] of caseEventService._APPT_TYPE_KEYS.entries()) {
+    for (const [raw, [key]] of vocabulary.APPT_TYPE_KEYS.entries()) {
       // ONE explicit exclusion (U2 §2): E1 carries the LITERAL string 'None'
       // (0 live rows; SQL NULL is handled separately). It is NOT an alias and
       // must not become one — skip it rather than teach the registry a lie.
@@ -311,7 +318,7 @@ describe('parity: caseEventService (E1) vocabulary → registry seed', () => {
   });
 
   test('every E1 row-override key exists in the seed with the same kind', () => {
-    for (const [, [key, kind]] of caseEventService._EVENT_ROW_OVERRIDES.entries()) {
+    for (const [, [key, kind]] of vocabulary.EVENT_ROW_OVERRIDES.entries()) {
       const row = SEED.find((s) => s.type_key === key);
       expect(row).toBeDefined();
       expect(row.kind).toBe(kind);

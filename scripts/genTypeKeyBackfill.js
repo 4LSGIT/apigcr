@@ -5,12 +5,12 @@
  * U2 GENERATOR — the migration's two GENERATED blocks come from code, not hands.
  *
  *   block 'seed'      calendar_item_types rows            ← scripts/calendarTypeSeed.js
- *   block 'backfill'  events/appts.type_key UPDATEs        ← services/caseEventService.js
+ *   block 'backfill'  events/appts.type_key UPDATEs        ← scripts/typeKeyVocabulary.js
  *                     + the five E0b kind statements       ← embedded verbatim (asserted
  *                                                            against ref/2026-09-01_unified_events_e0b.sql)
  *
  * WHY GENERATED. E1 derives type_key at read time from
- * caseEventService._EVENT_TYPE_KEYS / _APPT_TYPE_KEYS / _EVENT_ROW_OVERRIDES.
+ * scripts/typeKeyVocabulary.js (E1's vocabulary, frozen and moved there at U3).
  * U2 fills the column those reads will be swapped to (U3). If the two ever
  * disagreed, every row would silently change key the day U3 landed. So the
  * backfill is EMITTED from E1's exports, and tests/genTypeKeyBackfill.test.js
@@ -49,7 +49,12 @@ const E0B_PATH       = path.join(ROOT, 'ref', '2026-09-01_unified_events_e0b.sql
 const FIXTURE_PATH   = path.join(ROOT, 'tests', 'fixtures', 'calendar_item_types.seed.json');
 
 const { SEED, COLUMNS, seedRows } = require('./calendarTypeSeed');
-const caseEventService            = require('../services/caseEventService');
+// U3: the vocabulary moved OUT of services/caseEventService.js into a frozen,
+// generator-only module. The service now reads the `type_key` COLUMN and imports
+// nothing from here. Same Maps, same iteration order, so this file's output is
+// byte-identical to what it emitted at U2 — asserted by
+// tests/genTypeKeyBackfill.test.js against the committed migration.
+const vocabulary                  = require('./typeKeyVocabulary');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SQL literal helpers
@@ -92,9 +97,9 @@ function generateSeedSql() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Raw event_type per overridden row id. caseEventService._EVENT_ROW_OVERRIDES
+ * Raw event_type per overridden row id. typeKeyVocabulary.EVENT_ROW_OVERRIDES
  * carries [key, kind] only; the guard clause `AND event_type = '…'` needs the
- * live string (verified 2026-09-01). Every id in E1's map MUST appear here —
+ * live string (verified 2026-09-01). Every id in that map MUST appear here —
  * generate() throws otherwise, so a new override cannot ship without its guard.
  */
 const OVERRIDE_RAW_TYPE = {
@@ -162,7 +167,7 @@ function generateBackfillSql() {
 
   // ── events: bulk by key ──
   out.push('-- events.type_key by event_type  (caseEventService._EVENT_TYPE_KEYS)');
-  const evGroups = groupByKey(caseEventService._EVENT_TYPE_KEYS);
+  const evGroups = groupByKey(vocabulary.EVENT_TYPE_KEYS);
   for (const [key, raws] of evGroups) {
     if (!seedKeys.has(key)) throw new Error(`E1 event key '${key}' is not in the seed — add it to scripts/calendarTypeSeed.js`);
     out.push(updateStmt('events', 'event_type', key, raws));
@@ -173,9 +178,9 @@ function generateBackfillSql() {
   //    they must win over the bulk statement above; re-run writes the same value) ──
   out.push('-- events row overrides by id  (caseEventService._EVENT_ROW_OVERRIDES; unguarded so');
   out.push('-- they win over the bulk statements — a re-run writes the same value)');
-  const ids = [...caseEventService._EVENT_ROW_OVERRIDES.keys()].sort((a, b) => a - b);
+  const ids = [...vocabulary.EVENT_ROW_OVERRIDES.keys()].sort((a, b) => a - b);
   for (const id of ids) {
-    const [key] = caseEventService._EVENT_ROW_OVERRIDES.get(id);
+    const [key] = vocabulary.EVENT_ROW_OVERRIDES.get(id);
     const rawType = OVERRIDE_RAW_TYPE[id];
     if (!rawType) throw new Error(`E1 row override for event ${id} has no raw type in OVERRIDE_RAW_TYPE (scripts/genTypeKeyBackfill.js)`);
     if (!seedKeys.has(key)) throw new Error(`E1 override key '${key}' is not in the seed`);
@@ -188,7 +193,7 @@ function generateBackfillSql() {
   out.push("-- appts.type_key by appt_type  (caseEventService._APPT_TYPE_KEYS; the literal 'None'");
   out.push('-- entry is skipped — 0 live rows — and appt_type IS NULL rows stay type_key NULL by');
   out.push('-- ruling, v0.5 §8.1)');
-  const apGroups = groupByKey(caseEventService._APPT_TYPE_KEYS, { skip: new Set(['none']) });
+  const apGroups = groupByKey(vocabulary.APPT_TYPE_KEYS, { skip: new Set(['none']) });
   for (const [key, raws] of apGroups) {
     if (!seedKeys.has(key)) throw new Error(`E1 appt key '${key}' is not in the seed — add it to scripts/calendarTypeSeed.js`);
     out.push(updateStmt('appts', 'appt_type', key, raws));
