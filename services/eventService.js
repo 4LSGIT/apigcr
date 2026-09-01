@@ -52,9 +52,22 @@ const { cfg }      = require('../lib/firmConfig');
 const { DateTime } = require('luxon');
 // U2 — the item-type registry (calendar_item_types). Resolves event_type free
 // text to (type_key, kind) at WRITE time. Fail-soft: a registry read failure
-// yields nulls, never a failed create. Do NOT import caseEventService here
-// (v0.5 §0: E1 derives at read time from its own vocabulary until U3).
+// yields nulls, never a failed create.
 const calendarTypeService = require('./calendarTypeService');
+// U4 (v0.5 §3.5, amendment A5) — this service emitted NOTHING before now.
+const domainEvents = require('../lib/domainEvents');
+// U4 — the state/resolution vocabulary of v0.5 §3.7, REUSED not re-implemented.
+//
+// The U2 comment above said "Do NOT import caseEventService here ... until U3".
+// U3 has landed, and the qualifier was always about the TYPE VOCABULARY: keys
+// come from calendarTypeService, never from the read layer's frozen word list.
+// That still holds. _deriveState is a different thing — a pure
+// (source, row, kind, isDead) → {state, resolution} function over columns this
+// file already reads. Copying its table here would put v0.5 §3.7 in two
+// places and they would disagree the day U6 starts writing event_resolution.
+// No cycle: caseEventService requires only luxon, timezoneService and
+// calendarTypeService, and never touches this file.
+const { _deriveState } = require('./caseEventService');
 
 // ─────────────────────────────────────────────────────────────
 // GOOGLE CALENDAR INTEGRATION
@@ -151,6 +164,119 @@ function _timeOnly(t) {
   if (!m) return null;
   return m[1].length === 5 ? `${m[1]}:00` : m[1];
 }
+
+// ─────────────────────────────────────────────────────────────
+// UNIFIED EVENTS U4 — the calendar.* envelope (v0.5 §3.5, amendment A5)
+//
+// ONE payload shape for both calendar sources. apptService has a twin of this
+// function over its own columns; they are deliberately NOT a shared module —
+// the two services must not import each other (v0.5 §0.1 hold list), and what
+// they must agree on is the SHAPE, which
+// tests/calendarEvents.registry.test.js pins against the field catalog.
+//
+// PROJECTED, NEVER SPREAD: `data` is an explicit key list, so a column added to
+// `events` tomorrow does not silently join a 90-day-retained, staff-readable
+// envelope.
+// ─────────────────────────────────────────────────────────────
+
+/** events.event_all_day is tinyint(1); mysql2 hands it back as a number. */
+function _calendarAllDay(row) {
+  return row.event_all_day === 1 || row.event_all_day === '1' || row.event_all_day === true;
+}
+
+/**
+ * Firm-local start in the U4 envelope shape: 'YYYY-MM-DD HH:mm' for a timed
+ * row, bare 'YYYY-MM-DD' for an all-day one.
+ *
+ * NOTE the deliberate difference from caseEventService's `starts_at`, which is
+ * always 'YYYY-MM-DD HH:MM:SS' with a synthesised 00:00:00 for all-day rows.
+ * That layer feeds a SORT; this one feeds RULE FILTERS a human writes from a
+ * sample, where ':00' seconds nobody stored are three characters of noise an
+ * equality filter can trip over. The two are different contracts on purpose.
+ */
+function _calendarStartsAt(row) {
+  const d = _dateOnly(row.event_date);
+  if (!d) return null;
+  const t = _calendarAllDay(row) ? null : _timeOnly(row.event_time);
+  return t ? `${d} ${t.slice(0, 5)}` : d;
+}
+
+/**
+ * Build the calendar.* payload for an event row.
+ *
+ * @param {object} row   a getEvent() row: events.* plus link_type / link_id /
+ *                       resolved_case_id. POST-mutation at every call site.
+ * @param {object} opts  { source, actingUserId, extra }
+ */
+function _calendarEnvelope(row, { source = null, actingUserId = 0, extra = null } = {}) {
+  const allDay = _calendarAllDay(row);
+  // Supersession is a POINTER, never a status (E0a rule) — it decides state
+  // outright. No writer sets it yet; U6/U7 will.
+  const isDead = row.superseded_by_event_id != null;
+  const kind   = row.kind == null ? null : String(row.kind);
+  const st     = _deriveState('event', row, kind, isDead);
+
+  const linkType = row.event_link_type == null ? null : String(row.event_link_type);
+  const linkId   = row.event_link_id   == null ? null : String(row.event_link_id);
+
+  // 'case' → the id itself; 'case_number' → whatever the docket resolves to
+  // RIGHT NOW (getEvent's correlated subquery, self-healing). A docket with no
+  // case yet promotes null, and the same event emitted after intake creates the
+  // case promotes the id — which is the intended behaviour, not a bug.
+  let caseId = null;
+  if (linkType === 'case') caseId = linkId;
+  else if (linkType === 'case_number') {
+    caseId = row.resolved_case_id == null ? null : String(row.resolved_case_id);
+  }
+
+  // Contact promotion (Fred, U4): for a contact-linked event event_link_id IS
+  // the contact id — no join, no lookup. The digit guard is because the column
+  // is varchar(20) and opaque by contract; a non-numeric value in a 'contact'
+  // row would be corrupt data, and promoting it into the numeric
+  // trigger_executions.contact_id column would turn that into an error at
+  // dispatch time instead of a null.
+  const contactId = (linkType === 'contact' && linkId != null && /^\d+$/.test(linkId))
+    ? Number(linkId)
+    : null;
+
+  const label = row.event_type == null ? null : String(row.event_type);
+
+  return {
+    contact_id: contactId,
+    case_id:    caseId,
+    source,
+    actor: { user_id: actingUserId },
+    data: {
+      source:       'event',
+      source_id:    Number(row.event_id),
+      type_key:     row.type_key == null ? null : String(row.type_key),
+      kind,
+      label,
+      // LEGACY dual-carry for one release (v0.5 §7.1 rule 4).
+      event_type:   label,
+      starts_at:    _calendarStartsAt(row),
+      all_day:      allDay,
+      length_min:   (row.event_length == null || row.event_length === '') ? null : Number(row.event_length),
+      // RAW: null = firm-wide (blocks every provider), 0 = nobody in
+      // particular. availabilityService already distinguishes them; collapsing
+      // either into the other here would name the wrong fact (v0.5 §3.6).
+      with_user_id: row.event_with == null ? null : Number(row.event_with),
+      status:       row.event_status == null ? null : String(row.event_status),
+      state:        st.state,
+      resolution:   st.resolution,
+      link_type:    linkType,
+      link_id:      linkId,
+      docket:       linkType === 'case_number' ? linkId : null,
+      rescheduled_from_appt_id: null,
+      superseded_by_event_id: row.superseded_by_event_id == null
+        ? null : Number(row.superseded_by_event_id),
+    },
+    extra: extra || {},
+  };
+}
+
+/** Fields whose change is a RESCHEDULE for calendar.* purposes (v0.5 §3.5). */
+const CALENDAR_TIME_FIELDS = new Set(['event_date', 'event_time', 'event_all_day']);
 
 // ─────────────────────────────────────────────────────────────
 // LINK TYPES
@@ -1303,6 +1429,13 @@ async function createEvent(db, {
   reminder          = null,
   skip_gcal         = false,
   dedupe            = false,
+  // U4 — optional caller provenance for the calendar.scheduled envelope
+  // (envelope.source + extra.created_by_source). No caller passes one today:
+  // courtExecutor, routes/api.events.js and lib/internal_functions/events.js
+  // all predate it, and wiring them is U5/U6's (routes are off-limits here).
+  // Accepted now so the envelope field is real rather than structurally null,
+  // and so filling it later does not reopen a hold-list file.
+  source            = null,
 } = {}) {
   if (!event_title || !String(event_title).trim()) throw new Error('createEvent requires event_title');
   if (!event_date) throw new Error('createEvent requires event_date');
@@ -1441,6 +1574,22 @@ async function createEvent(db, {
   }
 
   const event = await getEvent(db, eventId);
+
+  // U4 — calendar.scheduled (v0.5 §3.5). Post-commit: this service holds no
+  // transaction, so the row is committed and domainEvents' queue INSERT can
+  // never race an invisible parent. NOT reached on the dedupe early-return
+  // above — no row was written, so nothing was scheduled.
+  //
+  // Emitted off the getEvent re-read the return value already needed, so the
+  // envelope gets resolved_case_id / link_type / link_id for free.
+  if (event) {
+    domainEvents.emit(db, 'calendar.scheduled', _calendarEnvelope(event, {
+      source,
+      actingUserId: createdBy || 0,
+      extra: { deduped: false, created_by_source: source },
+    }));
+  }
+
   return { event_id: eventId, event, deduped: false };
 }
 
@@ -1520,7 +1669,7 @@ const GCAL_AFFECTING = new Set([
  * @param {object|null} [opts.reminder] - see above. `undefined` = leave reminders alone.
  * @returns {{ event }}
  */
-async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder } = {}) {
+async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder, source = null } = {}) {
   const hasFields        = !!(fields && Object.keys(fields).length);
   const reminderProvided = reminder !== undefined;
 
@@ -1685,6 +1834,68 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder } =
   }
 
   const event = await getEvent(db, eventId);
+
+  // ── U4 — calendar.* (v0.5 §3.5) ──────────────────────────────────────────────
+  //
+  // Post-commit, off the row AFTER the write. One PATCH can satisfy several of
+  // these at once (a date move and a status change arrive in the same body), so
+  // each is decided independently and they fire in the order below — which is
+  // the order of the table in the U4 prompt and in the EVENT_TYPES catalog.
+  //
+  // The transition test is a BEFORE/AFTER ROW COMPARISON, not an inspection of
+  // `fields`. That matters: `changedKeys` is the list of columns WRITTEN, not
+  // the list that actually changed value, so PATCHing event_status to the value
+  // it already had is in changedKeys but is not a transition. It also makes a
+  // reminder-only call (no UPDATE at all) emit nothing, for free.
+  //
+  // Supersession has no writer in this file and U4 does not add one. When U6/U7
+  // start setting superseded_by_event_id they emit calendar.rescheduled with
+  // extra.superseded_by from their own site.
+  if (event) {
+    const priorStatus = existing.event_status == null ? null : String(existing.event_status);
+    const nextStatus  = event.event_status    == null ? null : String(event.event_status);
+    const statusMoved = nextStatus !== priorStatus;
+    const timeMoved   = changedKeys.some((k) => CALENDAR_TIME_FIELDS.has(k));
+    const afterState  = _deriveState(
+      'event', event, event.kind == null ? null : String(event.kind),
+      event.superseded_by_event_id != null
+    ).state;
+    const base = { source, actingUserId };
+
+    // A move is only a RESCHEDULE if there is still something scheduled. A
+    // PATCH that changes the date and cancels in the same body cancelled the
+    // event; saying it was also moved to a date it will never be held on
+    // would be two contradictory claims about one write.
+    if (timeMoved && afterState === 'live') {
+      domainEvents.emit(db, 'calendar.rescheduled', _calendarEnvelope(event, {
+        ...base,
+        extra: {
+          via:             'update',
+          prior_starts_at: _calendarStartsAt(existing),
+          prior_all_day:   _calendarAllDay(existing),
+        },
+      }));
+    }
+    if (statusMoved && nextStatus === 'Canceled') {
+      domainEvents.emit(db, 'calendar.cancelled', _calendarEnvelope(event, {
+        ...base, extra: { via: 'update', prior_status: priorStatus },
+      }));
+    }
+    if (statusMoved && nextStatus === 'Completed') {
+      domainEvents.emit(db, 'calendar.resolved', _calendarEnvelope(event, {
+        ...base, extra: { via: 'update', prior_status: priorStatus },
+      }));
+    }
+    // Reopen: Canceled/Completed → Scheduled. The same name a fresh create
+    // fires, because that is what it is to a consumer — something is on the
+    // calendar that was not — with extra.reopened for anyone who cares.
+    if (statusMoved && nextStatus === 'Scheduled') {
+      domainEvents.emit(db, 'calendar.scheduled', _calendarEnvelope(event, {
+        ...base, extra: { via: 'update', reopened: true, prior_status: priorStatus },
+      }));
+    }
+  }
+
   return { event };
 }
 
@@ -1700,7 +1911,7 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder } =
  *   - do NOT delete the gcal event (it's a real past calendar entry)
  *   - log action 'completed'
  */
-async function completeEvent(db, eventId, actingUserId = 0) {
+async function completeEvent(db, eventId, actingUserId = 0, { source = null } = {}) {
   const existing = await getEvent(db, eventId);
   if (!existing) throw new Error(`Event ${eventId} not found`);
   if (existing.event_status === 'Completed') throw new Error('Event is already Completed');
@@ -1717,6 +1928,18 @@ async function completeEvent(db, eventId, actingUserId = 0) {
     .catch(err => console.error('[EVENT SERVICE] completeEvent cancelReminderTasks failed:', err.message));
 
   const event = await getEvent(db, eventId);
+
+  // U4 — calendar.resolved (v0.5 §3.5). data.resolution comes from
+  // events.event_resolution when set, else §3.7's fallback (deadline → 'met',
+  // anything else → 'held'); that column has no writer until U6, so today the
+  // fallback is what every row reports.
+  if (event) {
+    domainEvents.emit(db, 'calendar.resolved', _calendarEnvelope(event, {
+      source, actingUserId,
+      extra: { via: 'complete', prior_status: existing.event_status == null ? null : String(existing.event_status) },
+    }));
+  }
+
   return { event };
 }
 
@@ -1732,7 +1955,7 @@ async function completeEvent(db, eventId, actingUserId = 0) {
  *   - cancel reminder task(s) (non-blocking)
  *   - log action 'canceled'
  */
-async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true } = {}) {
+async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true, source = null } = {}) {
   const existing = await getEvent(db, eventId);
   if (!existing) throw new Error(`Event ${eventId} not found`);
   if (existing.event_status === 'Canceled') throw new Error('Event is already Canceled');
@@ -1755,6 +1978,20 @@ async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true }
     .catch(err => console.error('[EVENT SERVICE] cancelEvent cancelReminderTasks failed:', err.message));
 
   const event = await getEvent(db, eventId);
+
+  // U4 — calendar.cancelled (v0.5 §3.5). Fires whether or not the calendar
+  // entry teardown above ran: the ROW is the truth, GCal is a projection of it.
+  if (event) {
+    domainEvents.emit(db, 'calendar.cancelled', _calendarEnvelope(event, {
+      source, actingUserId,
+      extra: {
+        via:          'cancel',
+        prior_status: existing.event_status == null ? null : String(existing.event_status),
+        delete_gcal:  !!delete_gcal,
+      },
+    }));
+  }
+
   return { event };
 }
 
@@ -2159,6 +2396,10 @@ async function sendEventDigest(db, { force = false, from = null, to = null } = {
 
 
 module.exports = {
+  // U4 test helper (repo `_`-prefix convention, as caseEventService does).
+  // tests/calendarEvents.registry.test.js builds one envelope per source and
+  // diffs the data.* path set against triggerService.CALENDAR_DATA_FIELDS.
+  _calendarEnvelope,
   createEvent,
   updateEvent,
   completeEvent,

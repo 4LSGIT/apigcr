@@ -111,6 +111,39 @@ const APPT_DATA_FIELDS = [
   { path: 'data.appt_status',   label: 'Appt status (post-mutation)' },
 ];
 
+// ── UNIFIED EVENTS U4 (v0.5 §3.5 / A5) ────────────────────────
+// ONE data shape for BOTH calendar sources. Every path below is produced by
+// both services' _calendarEnvelope EXCEPT the legacy dual-carry pair:
+// data.appt_type exists only on appt-sourced rows, data.event_type only on
+// event-sourced rows. Both carry the same string as data.label; they exist for
+// one release so rules written against the old envelopes keep matching
+// (v0.5 §7.1 rule 4).
+//
+// tests/calendarEvents.registry.test.js diffs this list against the path sets
+// the two helpers actually produce — the catalog cannot drift from the
+// code, in either direction.
+const CALENDAR_DATA_FIELDS = [
+  { path: 'data.source',       label: "Source table ('appt' | 'event')" },
+  { path: 'data.source_id',    label: 'appts.appt_id | events.event_id' },
+  { path: 'data.type_key',     label: 'Registry key (calendar_item_types); null when unmapped' },
+  { path: 'data.kind',         label: "'hearing'|'meeting'|'deadline'|'conference'|'other' (appts are 'meeting' by table)" },
+  { path: 'data.label',        label: 'Raw type string as stored (appt_type | event_type)' },
+  { path: 'data.appt_type',    label: 'LEGACY dual-carry of data.label — appt rows only' },
+  { path: 'data.event_type',   label: 'LEGACY dual-carry of data.label — event rows only' },
+  { path: 'data.starts_at',    label: "Firm-local 'YYYY-MM-DD HH:mm' ('YYYY-MM-DD' when all-day)" },
+  { path: 'data.all_day',      label: 'All-day flag (appts are always false)' },
+  { path: 'data.length_min',   label: 'Length in minutes (nullable)' },
+  { path: 'data.with_user_id', label: 'Provider user id (event rows: null = firm-wide, 0 = nobody)' },
+  { path: 'data.status',       label: 'Raw appt_status / event_status, post-mutation' },
+  { path: 'data.state',        label: "'live'|'resolved'|'cancelled'|'superseded' (v0.5 §3.7)" },
+  { path: 'data.resolution',   label: "'attended'|'no_show'|'held'|'met'|'missed'|'moot'|'cancelled'|null" },
+  { path: 'data.link_type',    label: "'case'|'contact'|'case_number'|null" },
+  { path: 'data.link_id',      label: 'Link target id, raw string' },
+  { path: 'data.docket',       label: "link_id when link_type='case_number', else null" },
+  { path: 'data.rescheduled_from_appt_id', label: 'Predecessor appt id (appt rows only)' },
+  { path: 'data.superseded_by_event_id',   label: 'Successor event id (event rows only; no writer until U6/U7)' },
+];
+
 const EVENT_TYPES = {
   'appt.created': {
     label: 'Appointment created',
@@ -175,6 +208,65 @@ const EVENT_TYPES = {
     ],
   },
   // ── T3 events ────────────────────────────────────────────
+  // ── Unified events U4 — calendar.* from BOTH services (v0.5 §3.5) ─
+  //
+  // ALIASES, NOT REPLACEMENTS. Every appt.* name above keeps firing with its
+  // envelope untouched; the calendar.* twin fires beside it, from the same
+  // post-commit position. U5 migrates rules to the calendar.* names; nothing
+  // binds them today, which is what makes U4 a zero-behaviour-change slice.
+  //
+  // The `data` shape is IDENTICAL for both sources (CALENDAR_DATA_FIELDS), so a
+  // rule can filter data.type_key / data.kind / data.state without caring which
+  // table the row came from — which is the entire point of A5.
+  'calendar.scheduled': {
+    label: 'Calendar item scheduled',
+    description: "Fires post-commit from apptService.createAppt (beside appt.created, for EVERY caller including the reschedule successor and the /m rebook), from eventService.createEvent (NOT on a dedupe hit — no row was written, so nothing was scheduled), and from eventService.updateEvent when event_status transitions BACK to Scheduled from Canceled/Completed (extra.reopened=true). data.source says which.",
+    fields: [
+      ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
+      { path: 'extra.legacy_event',      label: "'appt.created' (appt rows only)" },
+      { path: 'extra.hook_event',        label: "'created' | 'rescheduled' | 'rebooked' (appt rows only)" },
+      { path: 'extra.rescheduled_from',  label: 'Predecessor appt id (appt reschedule/rebook successor only)' },
+      { path: 'extra.deduped',           label: 'Always false (event creates; a dedupe hit emits nothing at all)' },
+      { path: 'extra.created_by_source', label: "createEvent's caller source when it passes one (null until U5/U6 wire it)" },
+      { path: 'extra.via',               label: "'update' — present only on the event reopen path" },
+      { path: 'extra.reopened',          label: 'true when a Canceled/Completed event went back to Scheduled' },
+      { path: 'extra.prior_status',      label: 'Status before the reopen' },
+    ],
+  },
+  'calendar.rescheduled': {
+    label: 'Calendar item rescheduled',
+    description: "Fires from apptService.rescheduleAppt for the PREDECESSOR appt once its successor exists (data is the predecessor row, data.state='superseded'; the successor separately fires calendar.scheduled), and from eventService.updateEvent when event_date / event_time / event_all_day changed AND the row is still live afterwards — a PATCH that moves the date and cancels in one call emits only calendar.cancelled. Event supersession (superseded_by_event_id) has NO writer yet; U6/U7 will emit this with extra.superseded_by.",
+    fields: [
+      ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
+      { path: 'extra.legacy_event',    label: "'appt.rescheduled' (appt rows only)" },
+      { path: 'extra.new_source_id',   label: 'Successor appt id (appt rows only)' },
+      { path: 'extra.new_starts_at',   label: 'Successor start, firm-local (appt rows only)' },
+      { path: 'extra.prior_starts_at', label: 'Start before the move' },
+      { path: 'extra.via',             label: "'update' (event rows only)" },
+      { path: 'extra.prior_all_day',   label: 'All-day flag before the move (event rows only)' },
+    ],
+  },
+  'calendar.cancelled': {
+    label: 'Calendar item cancelled',
+    description: "Fires from apptService.cancelAppt (beside appt.cancelled), from eventService.cancelEvent, and from eventService.updateEvent when event_status transitions to Canceled via PATCH. data.resolution is 'cancelled' unless events.event_resolution says 'moot' (v0.5 §3.7 — that column has no writer until U6).",
+    fields: [
+      ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
+      { path: 'extra.legacy_event', label: "'appt.cancelled' (appt rows only)" },
+      { path: 'extra.prior_status', label: 'Status before the cancel' },
+      { path: 'extra.via',          label: "'cancel' | 'update' (event rows only)" },
+      { path: 'extra.delete_gcal',  label: 'Whether the calendar entry was torn down (cancelEvent only)' },
+    ],
+  },
+  'calendar.resolved': {
+    label: 'Calendar item resolved',
+    description: "The item happened, one way or another. Fires from apptService.markAttended (data.resolution='attended') and apptService.markNoShow (data.resolution='no_show'), from eventService.completeEvent, and from eventService.updateEvent when event_status transitions to Completed via PATCH. For events data.resolution is events.event_resolution when set, else the v0.5 §3.7 fallback: kind 'deadline' → 'met', anything else → 'held'. Filter data.resolution, not data.status — attended and no_show are one event here.",
+    fields: [
+      ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
+      { path: 'extra.legacy_event', label: "'appt.attended' | 'appt.no_show' (appt rows only)" },
+      { path: 'extra.via',          label: "'complete' | 'update' (event rows only)" },
+      { path: 'extra.prior_status', label: 'Status before the resolve (event rows only)' },
+    ],
+  },
   'contact.created': {
     label: 'Contact created',
     description: 'Fires post-commit from contactService.createContact (all callers: intake, orphan-adopt, API).',
@@ -457,9 +549,13 @@ const EVENT_TYPES = {
 
 // V2 event candidates (noted, deliberately not emitted yet): checklist.created,
 // checkitem.created, checkitem.uncompleted, checklist.uncompleted (reopen
-// transitions), event.* (eventService lifecycle — court v2 will define needs),
-// contact.opted_out as a discrete event (covered today by contact.updated +
-// changes.<field> exists).
+// transitions), contact.opted_out as a discrete event (covered today by
+// contact.updated + changes.<field> exists).
+//
+// The eventService lifecycle used to sit on that list as 'event.*'. U4 landed it
+// as calendar.* above instead, from BOTH services under one shape (v0.5 §3.5):
+// a separate event.* namespace would have made every rule author pick a table
+// before they could express what they wanted.
 
 const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http', 'hook']);
 

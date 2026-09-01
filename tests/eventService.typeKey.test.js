@@ -13,6 +13,8 @@
  *                 (unknown → Error.status 400, NO UPDATE issued); a key-only
  *                 patch leaves the label alone; kind is never patchable raw.
  *
+ * U4 note: lib/domainEvents is mocked below — see the comment there.
+ *
  * DB is a SQL-routing stub (no ordered script). The registry cache is PRIMED
  * from the seed fixture (Fred, U2 R1.3) so no registry query hits the stub;
  * the SELECT itself is covered by tests/calendarTypeService.test.js.
@@ -32,6 +34,17 @@ jest.mock('../services/taskService', () => ({
 }));
 jest.mock('../services/logService', () => ({ createLogEntry: jest.fn(async () => ({ log_id: 1 })) }));
 jest.mock('../services/emailService', () => ({ sendEmail: jest.fn(async () => ({})) }));
+// U4 — eventService now emits calendar.* (v0.5 §3.5). Left unmocked, the real
+// emit() would fire an INSERT INTO domain_event_queue at this suite's SQL
+// router and land in `unmatched`, which every test here asserts is empty. The
+// emits themselves are this file's neighbour's job
+// (tests/calendarEvents.event.test.js); here they are noise.
+jest.mock('../lib/domainEvents', () => ({
+  emit:         jest.fn(() => Promise.resolve()),
+  buildChanges: jest.fn(() => ({})),
+  runAsAction:  (_ruleId, fn) => fn(),
+  MAX_DEPTH:    4,
+}));
 
 const eventService        = require('../services/eventService');
 const calendarTypeService = require('../services/calendarTypeService');

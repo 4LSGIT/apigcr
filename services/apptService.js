@@ -27,8 +27,22 @@ const crypto = require('crypto');
 const domainEvents = require('../lib/domainEvents');
 // U2 — the item-type registry (calendar_item_types). Resolves appt_type free
 // text to type_key at WRITE time; fail-soft (registry read failure → NULL
-// key, never a failed create). Do NOT import caseEventService here (v0.5 §0).
+// key, never a failed create).
 const calendarTypeService = require('./calendarTypeService');
+// U4 — the state/resolution vocabulary of v0.5 §3.7, REUSED not re-implemented.
+//
+// The U2 comment above used to end "Do NOT import caseEventService here
+// (v0.5 §0)"; eventService's twin said the same thing "until U3". That rule was
+// about the TYPE VOCABULARY — resolve labels through the registry, not through the
+// read layer's frozen word list — and it still holds: type_key comes from
+// calendarTypeService above and from nowhere else.
+//
+// _deriveState is a different animal: a pure (source, row, kind, isDead) →
+// {state, resolution} function over columns this file already has. Copying its
+// table in here would put v0.5 §3.7 in two places, and the day U6 starts writing
+// events.event_resolution the two would disagree. No cycle: caseEventService
+// requires only luxon, timezoneService and calendarTypeService.
+const { _deriveState } = require('./caseEventService');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
 function getSequenceEngine() {
@@ -452,6 +466,81 @@ function wallClockStr(dt) {
   if (!dt) return null;
   if (dt instanceof Date) return dt.toISOString().slice(0, 16).replace('T', ' ');
   return String(dt).replace('T', ' ').slice(0, 16);
+}
+
+// ─────────────────────────────────────────────────────────────
+// UNIFIED EVENTS U4 — the calendar.* envelope (v0.5 §3.5, amendment A5)
+//
+// ONE payload shape for both calendar sources. eventService has a twin of this
+// function over its own columns; they are deliberately NOT a shared module —
+// the two services must not import each other (v0.5 §0.1 hold list), and the
+// thing they must agree on is the SHAPE, which
+// tests/calendarEvents.registry.test.js pins against the field catalog.
+//
+// PROJECTED, NEVER SPREAD. `data` is an explicit key list, not {...appt}. The
+// appt.created site re-reads with SELECT *, which carries appt_manage_token —
+// a bearer credential for /m/<token>. domainEvents' suffix denylist already
+// strips it, but a denylist is a backstop; a projection means the token can
+// never be in the object in the first place, and the next column somebody adds
+// to `appts` does not silently join the envelope either.
+//
+// kind is 'meeting' BY TABLE, not from the registry (v0.5 §3.3.2's storage
+// rule: kind='meeting' → appts). Same derivation caseEventService._deriveKeys
+// makes, and for the same reason — a registry lookup here could only agree or
+// contradict the table it just read.
+//
+// @param {object} appt   appt row, POST-mutation (callers pass
+//                        { ...row, appt_status: '<new>' } exactly as the
+//                        appt.* emits beside them already do)
+// @param {object} opts   { source, actingUserId, extra }
+// ─────────────────────────────────────────────────────────────
+function _calendarEnvelope(appt, { source = null, actingUserId = 0, extra = null } = {}) {
+  const status = appt.appt_status == null ? null : String(appt.appt_status);
+  // A 'Rescheduled' appt is a TOMBSTONE, not a status (v0.5 §3.4): it decides
+  // state outright. Mirrors caseEventService._mapAppt's isTombstone.
+  const isDead = status === 'Rescheduled';
+  const st     = _deriveState('appt', appt, 'meeting', isDead);
+
+  // appts.appt_case_id is varchar(8) NOT NULL and defaults to '' — blank is the
+  // case-less shape (46 live pre-case consultations), not a missing column.
+  const caseId    = appt.appt_case_id ? String(appt.appt_case_id) : null;
+  const contactId = appt.appt_client_id == null ? null : Number(appt.appt_client_id);
+  const label     = appt.appt_type == null ? null : String(appt.appt_type);
+
+  // A3a widens this later (docket-anchored, client-less appts). Today an appt
+  // is anchored to its case if it has one, else to its client.
+  const linkType = caseId ? 'case' : (contactId != null ? 'contact' : null);
+  const linkId   = caseId ? caseId : (contactId != null ? String(contactId) : null);
+
+  return {
+    contact_id: contactId,
+    case_id:    caseId,
+    source,
+    actor: { user_id: actingUserId },
+    data: {
+      source:       'appt',
+      source_id:    Number(appt.appt_id),
+      type_key:     appt.type_key == null ? null : String(appt.type_key),
+      kind:         'meeting',
+      label,
+      // LEGACY dual-carry for one release (v0.5 §7.1 rule 4).
+      appt_type:    label,
+      starts_at:    wallClockStr(appt.appt_date),
+      all_day:      false,
+      length_min:   (appt.appt_length == null || appt.appt_length === '') ? null : Number(appt.appt_length),
+      with_user_id: appt.appt_with == null ? null : Number(appt.appt_with),
+      status,
+      state:        st.state,
+      resolution:   st.resolution,
+      link_type:    linkType,
+      link_id:      linkId,
+      docket:       null,
+      rescheduled_from_appt_id:
+        appt.rescheduled_from_appt_id == null ? null : Number(appt.rescheduled_from_appt_id),
+      superseded_by_event_id: null,
+    },
+    extra: extra || {},
+  };
 }
 
 /**
@@ -1160,6 +1249,19 @@ async function createAppt(db, {
     extra: { hook_event, rescheduled_from: hook_rescheduled_from || null },
   });
 
+  // 9b) U4 — calendar.scheduled, the source-neutral twin (v0.5 §3.5). An
+  //     ALIAS: appt.created above is untouched and keeps firing for every rule
+  //     bound to it until U5 migrates them.
+  domainEvents.emit(db, 'calendar.scheduled', _calendarEnvelope(appt, {
+    source,
+    actingUserId,
+    extra: {
+      legacy_event:     'appt.created',
+      hook_event,
+      rescheduled_from: hook_rescheduled_from || null,
+    },
+  }));
+
   return {
     appt_id: apptId,
     appt,
@@ -1186,9 +1288,15 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0, source =
   // SELECT widened (Trigger T1): the appt.attended envelope carries the row
   // + joined case_type/case_subtype (same rationale as markNoShow's widened
   // SELECT — type-filtered consumers disqualify on undefined fields).
+  //
+  // U4 widened it again, by the same rule: the calendar.resolved twin publishes
+  // data.length_min and data.rescheduled_from_appt_id, and a column that is not
+  // SELECTed would arrive as null-by-absence — indistinguishable, to a rule
+  // author reading a sample, from null-in-fact.
   const [[appt]] = await db.query(
     `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
             a.appt_type, a.type_key, a.appt_with, a.appt_status,
+            a.appt_length, a.rescheduled_from_appt_id,
             c.contact_phone,
             cs.case_type,
             cs.case_subtype
@@ -1241,6 +1349,13 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0, source =
     extra: { prior_status: appt.appt_status },
   });
 
+  // U4 — calendar.resolved (alias). attended and no_show are ONE calendar
+  // event distinguished by data.resolution, per v0.5 §3.7.
+  domainEvents.emit(db, 'calendar.resolved',
+    _calendarEnvelope({ ...appt, appt_status: 'Attended' }, {
+      source, actingUserId, extra: { legacy_event: 'appt.attended' },
+    }));
+
   return { appt_id };
 }
 
@@ -1264,9 +1379,11 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   // Without case_type in trigger_data, future case_type-filtered no_show
   // templates would never qualify (sequenceEngine disqualifies specific filters
   // when the trigger field is undefined).
+  // (U4 added appt_length + rescheduled_from_appt_id — see markAttended.)
   const [[appt]] = await db.query(
     `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
             a.appt_type, a.type_key, a.appt_with, a.appt_status,
+            a.appt_length, a.rescheduled_from_appt_id,
             c.contact_phone,
             cs.case_type,
             cs.case_subtype
@@ -1403,6 +1520,14 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
     data:  { ...appt, appt_status: 'No Show' },
     extra: { prior_status: priorStatus, enrolled },
   });
+
+  // U4 — calendar.resolved (alias), data.resolution 'no_show'. The hardcoded
+  // pipeline advance above stays where it is; do not re-add it as a rule on
+  // this name either.
+  domainEvents.emit(db, 'calendar.resolved',
+    _calendarEnvelope({ ...appt, appt_status: 'No Show' }, {
+      source, actingUserId, extra: { legacy_event: 'appt.no_show' },
+    }));
 
   return { appt_id, enrolled, skipReason };
 }
@@ -1553,6 +1678,16 @@ async function cancelAppt(db, {
     extra: { prior_status: priorStatus },
   });
 
+  // U4 — calendar.cancelled (alias). `appt` here is fetchApptWithContact's
+  // appts.* + contact columns; the projection in _calendarEnvelope takes the
+  // appt columns and leaves the joined contact fields (and the manage token)
+  // out of the envelope entirely.
+  domainEvents.emit(db, 'calendar.cancelled',
+    _calendarEnvelope({ ...appt, appt_status: 'Canceled' }, {
+      source, actingUserId,
+      extra: { legacy_event: 'appt.cancelled', prior_status: priorStatus },
+    }));
+
   return result;
 }
 
@@ -1661,6 +1796,23 @@ async function rescheduleAppt(db, {
     extra: { new_appt_id: newAppt.appt_id, new_appt_date: newDate },
   });
 
+  // U4 — calendar.rescheduled (alias), on the PREDECESSOR. Its data.state is
+  // 'superseded' (the row is a tombstone), and the successor has already fired
+  // its own calendar.scheduled from inside createAppt. new_starts_at reads the
+  // successor's STORED appt_date rather than the caller's `newDate` string:
+  // createAppt canonicalizes seconds and firm-tz at its boundary, so the two
+  // can differ in shape for the same instant.
+  domainEvents.emit(db, 'calendar.rescheduled',
+    _calendarEnvelope({ ...oldAppt, appt_status: 'Rescheduled' }, {
+      source, actingUserId,
+      extra: {
+        legacy_event:    'appt.rescheduled',
+        new_source_id:   newAppt.appt_id,
+        new_starts_at:   wallClockStr(newAppt.appt ? newAppt.appt.appt_date : newDate),
+        prior_starts_at: wallClockStr(oldAppt.appt_date),
+      },
+    }));
+
   return { old_appt_id: appt_id, new_appt_id: newAppt.appt_id };
 }
 
@@ -1752,6 +1904,13 @@ async function rescheduleLater(db, {
   await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
   // Trigger: appt.reschedule_later (fire-and-forget; slot freed, no successor)
+  //
+  // U4: NO calendar.* twin here, deliberately. This is not a calendar
+  // transition — nothing moved, nothing resolved, nothing was cancelled. The
+  // row's status becomes 'Rescheduled' as an INTENT FLAG ("call them back"),
+  // with no successor to point at; emitting calendar.rescheduled would promise
+  // a new_source_id that does not exist. If a rule ever needs this, it is its
+  // own name (calendar.unscheduled), not a lie under an existing one.
   domainEvents.emit(db, 'appt.reschedule_later', {
     contact_id: appt.appt_client_id,
     case_id:    appt.appt_case_id || null,
@@ -1776,5 +1935,9 @@ module.exports = {
   insertApptLog,
   fetchApptWithContact,
   notifyStaffOfClientAction,
-  friendlyApptDateTime
+  friendlyApptDateTime,
+  // U4 test helper (repo `_`-prefix convention, as caseEventService does).
+  // tests/calendarEvents.registry.test.js builds one envelope per source and
+  // diffs the data.* path set against triggerService.CALENDAR_DATA_FIELDS.
+  _calendarEnvelope,
 };

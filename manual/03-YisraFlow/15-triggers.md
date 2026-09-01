@@ -93,6 +93,10 @@ The authoritative list is `EVENT_TYPES` in `services/triggerService.js` — it c
 | `appt.cancelled` | `apptService.cancelAppt` | — |
 | `appt.rescheduled` | `apptService.rescheduleAppt`, for the OLD appt | the successor separately fires `appt.created` with `extra.hook_event='rescheduled'` |
 | `appt.reschedule_later` | `apptService.rescheduleLater` | — |
+| `calendar.scheduled` | `apptService.createAppt` (beside `appt.created`); `eventService.createEvent`; `eventService.updateEvent` on a reopen back to `Scheduled` | a `createEvent` **dedupe hit** — no row was written, so nothing was scheduled |
+| `calendar.rescheduled` | `apptService.rescheduleAppt`, for the OLD appt; `eventService.updateEvent` when the date/time/all-day moved **and** the row is still live | a PATCH that moves the date *and* cancels emits only `calendar.cancelled`; event supersession has no writer until U6/U7 |
+| `calendar.cancelled` | `apptService.cancelAppt`; `eventService.cancelEvent`; `eventService.updateEvent` on a transition to `Canceled` | — |
+| `calendar.resolved` | `apptService.markAttended` / `markNoShow`; `eventService.completeEvent`; `eventService.updateEvent` on a transition to `Completed` | `rescheduleLater` — the slot was freed, not resolved |
 | `contact.created` | `contactService.createContact` — intake, orphan-adopt, API | direct `contacts` INSERTs |
 | `contact.updated` | `contactService.updateContact`, only when something actually changed | **any direct SQL writer that bypasses updateContact** |
 | `case.created` | the intake case-create route and the petition-filing branch (the two case INSERT sites); `source` distinguishes `intake` / `petition` | — |
@@ -105,6 +109,33 @@ The authoritative list is `EVENT_TYPES` in `services/triggerService.js` — it c
 | `checkitem.completed` | `PATCH /checkitems/:id` on a transition to complete | idempotent re-saves don't fire |
 | `checklist.completed` | item status change or item deletion that completes the list | — |
 | `case.stage_aged` | **synthetic** — the nightly `emit_stage_aged` job (13:00 UTC / 9am Detroit), not a mutation | already-stale-at-import cases (grace window); terminal stages; `Closed`/`Concluded` cases |
+
+#### The `calendar.*` family (Unified Events U4)
+
+Four names, **two sources, one payload shape**. `data.source` is `'appt'` or
+`'event'`; everything else — `type_key`, `kind`, `starts_at`, `state`,
+`resolution`, `link_type`/`link_id`/`docket` — is identical in structure whether
+the row came from `appts` or `events`. That is the point: a rule that wants
+"any 341, however it was booked" filters `data.type_key` and stops caring which
+table it lives in.
+
+Three things to know before writing a rule on one:
+
+- **They are ALIASES, not replacements.** Every `appt.*` name above still fires,
+  with its envelope untouched. A booking emits `appt.created` *and*
+  `calendar.scheduled`. Bind one or the other, not both, or your action runs
+  twice. The `appt.*` names are retired in a later slice, not this one.
+- **`data.status` is raw; `data.state` and `data.resolution` are the model.**
+  An attended appt and a no-show are both `calendar.resolved`, distinguished by
+  `data.resolution` (`attended` / `no_show`). A completed deadline resolves
+  `met`, a completed hearing `held`. Filter the resolution, not the status.
+- **`data.starts_at` is firm-local `YYYY-MM-DD HH:mm`**, or a bare
+  `YYYY-MM-DD` when `data.all_day` is true. No seconds — deliberately, so an
+  equality filter written from a sample matches.
+
+`data.appt_type` and `data.event_type` are the old label under its old name,
+carried for one release beside `data.label`. New rules should read `data.label`
+(or better, `data.type_key`).
 
 **The bypass column is the important one.** `case.updated` not firing for court-executor writes is a design decision, not a gap: those writes are high-volume and machine-driven, and routing them through the event system would have made every docket sync a potential trigger storm. If you need to react to one of them, react to the thing that caused it instead.
 
