@@ -1137,6 +1137,17 @@
         <option>Canceled</option>
         <option value="all">All</option>
       </select>
+      <!-- Link state. An event is ALLOWED to be attached to nothing — the
+           columns are nullable and the write path returns cleanly for it, so a
+           firm-wide event (office closed, a CLE seminar) is a legitimate
+           unlinked row. This finds them; it also finds the ones where somebody
+           meant to attach a case and didn't. It composes with every other
+           filter here, which is the point of putting it here rather than on a
+           list of its own. -->
+      <label style="white-space: nowrap">
+        <input type="checkbox" id="tabEventsUnlinked" onchange="tabEventsGet(0)" />
+        Unlinked only
+      </label>
       Time:
       <select id="tabEventsTime" style="width: auto" onchange="tabEventsTimeChange(this.value)">
         <option>All</option>
@@ -1253,6 +1264,10 @@
       const params = { limit, offset, status, sort };
       if (typeVal) params.type = typeVal;
       if (q) params.q = q;
+      // 'none' is listEvents' read-only pseudo-filter for "attached to
+      // nothing". Omitted entirely when unchecked — sending link_type='' would
+      // read as a real link_type and match nothing.
+      if (E("tabEventsUnlinked").checked) params.link_type = "none";
 
       if (time === "Before") { params.to = date1; }
       if (time === "After") { params.from = date1; }

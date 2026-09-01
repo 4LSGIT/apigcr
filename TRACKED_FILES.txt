@@ -704,6 +704,7 @@ tests/esignTemplates.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventRegistryCoverage.test.js
+tests/eventservice.linkfilter.test.js
 tests/eventservice.remindertitle.test.js
 tests/executionVersionStamp.test.js
 tests/extforms.x2.test.js

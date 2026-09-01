@@ -801,55 +801,136 @@ describe('unknown cases', () => {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// auditOrphans
+// auditEventLinks
+//
+// THE FRAMING IS THE FEATURE. An event is ALLOWED to be attached to nothing:
+// the columns are nullable, eventService._normalizeLink returns cleanly for an
+// absent link (it throws only on a HALF link), listEvents does not filter it
+// out, eventform renders '—' and calendar.html renders it without a case line.
+// A firm-wide event — office closed, a CLE seminar — is exactly this shape.
+//
+// E1 shipped this as an "orphan audit" and lumped that supported state in with
+// two broken ones. It read as garbage only because the single live unlinked row
+// happens to be a Canceled test row ("Reminder smoke"). These tests pin the
+// three conditions APART so nobody re-collapses them and has staff "cleaning
+// up" the first real firm-wide event somebody creates.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('auditOrphans', () => {
-  test('covers all three orphan shapes and excludes contact-linked rows', async () => {
+/**
+ * The audit query's OUTER where clause.
+ *
+ * A naive `sql.split(/\bWHERE\b/)[1]` stops at the first subquery's WHERE and
+ * silently asserts against the wrong fragment. Slicing between `FROM events e`
+ * and `ORDER BY` also excludes the SELECT list, whose CASE expression mentions
+ * every branch condition and would make every negative assertion pass.
+ */
+const whereOf = (sql) => sql.split('FROM events e')[1].split('ORDER BY')[0];
+
+const auditRow = (over) => Object.assign({
+  event_id: 4, event_type: 'Milestone', event_title: 'Reminder smoke',
+  event_date: D('2026-05-01 00:00:00'), event_time: null, event_all_day: 1,
+  event_status: 'Canceled', event_location: null,
+  event_link_type: null, event_link_id: null,
+  superseded_by_event_id: null, supersede_reason: null, reason: 'unlinked',
+}, over);
+
+describe('auditEventLinks', () => {
+  test('covers all three conditions and excludes contact-linked rows', async () => {
     const db = stubDb([[]]);
-    await svc.auditOrphans(db);
+    await svc.auditEventLinks(db);
     const sql = db.calls[0].sql;
     expect(sql).toMatch(/e\.event_link_type IS NULL/);
     expect(sql).toMatch(/event_link_type = 'case_number' AND NOT EXISTS/);
     expect(sql).toMatch(/event_link_type = 'case' AND NOT EXISTS/);
     expect(sql).toMatch(/c\.case_number = e\.event_link_id OR c\.case_number_full/);
-    // A contact-linked event resolves — to a contact. Not an orphan.
+    // A contact-linked event resolves — to a contact. Not a link fault.
     expect(sql).not.toMatch(/'contact'/);
   });
 
-  test('labels each row with its reason and normalizes the shape', async () => {
+  test('an unlinked row is severity "unlinked", NOT broken and NOT an orphan', async () => {
+    const db = stubDb([[auditRow()]]);
+    const { counts, items } = await svc.auditEventLinks(db);
+    expect(items[0]).toMatchObject({
+      event_id: 4, severity: 'unlinked', reason: 'unlinked',
+      event_date: '2026-05-01', all_day: true, link_type: null, link_id: null,
+    });
+    expect(counts).toEqual({ broken: 0, pending: 0, unlinked: 1, total: 1 });
+  });
+
+  test('the three severities are counted separately', async () => {
     const db = stubDb([[
-      { event_id: 4, event_type: 'Milestone', event_title: 'Reminder smoke',
-        event_date: D('2026-05-01 00:00:00'), event_time: null, event_all_day: 1,
-        event_status: 'Canceled', event_link_type: null, event_link_id: null,
-        superseded_by_event_id: null, supersede_reason: null, reason: 'no_link' },
-      { event_id: 88, event_type: 'Hearing', event_title: 'Hearing',
-        event_date: D('2026-04-01 00:00:00'), event_time: '10:00:00', event_all_day: 0,
-        event_status: 'Scheduled', event_link_type: 'case_number', event_link_id: '99-00000',
-        superseded_by_event_id: null, supersede_reason: null,
-        reason: 'unresolved_case_number' },
+      auditRow({ event_id: 4 }),
+      auditRow({ event_id: 88, event_link_type: 'case_number', event_link_id: '99-00000',
+                 event_type: 'Hearing', event_title: 'Hearing', event_all_day: 0,
+                 event_time: '10:00:00', event_status: 'Scheduled',
+                 reason: 'unresolved_case_number' }),
+      auditRow({ event_id: 90, event_link_type: 'case', event_link_id: 'GONE1234',
+                 reason: 'dead_case_id' }),
     ]]);
-    const rows = await svc.auditOrphans(db);
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({
-      event_id: 4, reason: 'no_link', event_date: '2026-05-01',
-      event_time: null, all_day: true, link_type: null, link_id: null,
-    });
-    expect(rows[1]).toMatchObject({
-      event_id: 88, reason: 'unresolved_case_number',
-      event_date: '2026-04-01', event_time: '10:00:00', all_day: false,
-      link_type: 'case_number', link_id: '99-00000',
-    });
+    const { counts, items } = await svc.auditEventLinks(db);
+    expect(counts).toEqual({ broken: 1, pending: 1, unlinked: 1, total: 3 });
+    expect(items.map(i => i.severity)).toEqual(['unlinked', 'pending', 'broken']);
+    expect(items[1].event_time).toBe('10:00:00');
+    expect(items[1].all_day).toBe(false);
+  });
+
+  test('severity filtering happens in SQL, not by slicing the result', async () => {
+    // The UI's "unlinked only" view must not pull broken rows over the wire to
+    // throw them away.
+    const db = stubDb([[]]);
+    await svc.auditEventLinks(db, { severity: ['unlinked'] });
+    const where = whereOf(db.calls[0].sql);
+    expect(where).toMatch(/event_link_type IS NULL/);
+    expect(where).not.toMatch(/NOT EXISTS/);      // neither broken nor pending branch
+  });
+
+  test.each([
+    ['broken',   /c\.case_id = e\.event_link_id/],
+    ['pending',  /case_number_full/],
+  ])('filtering to %s emits only that branch', async (sev, re) => {
+    const db = stubDb([[]]);
+    await svc.auditEventLinks(db, { severity: [sev] });
+    const where = whereOf(db.calls[0].sql);
+    expect(where).toMatch(re);
+    expect(where).not.toMatch(/event_link_type IS NULL/);
+  });
+
+  test('counts always carry all three keys, even when filtered', async () => {
+    // A zero you asked to hide is still a zero worth seeing — the UI's segment
+    // control would otherwise blank out the options you are not looking at.
+    const db = stubDb([[auditRow()]]);
+    const { counts } = await svc.auditEventLinks(db, { severity: ['unlinked'] });
+    expect(Object.keys(counts).sort()).toEqual(['broken', 'pending', 'total', 'unlinked']);
+    expect(counts.broken).toBe(0);
+  });
+
+  test('unknown severities are dropped; an all-unknown filter returns nothing', async () => {
+    const db = stubDb([]);
+    const { counts, items } = await svc.auditEventLinks(db, { severity: ['nonsense'] });
+    expect(items).toEqual([]);
+    expect(counts.total).toBe(0);
+    // Zero queries: quietly widening to ALL would show more than was asked for.
+    expect(db.calls).toHaveLength(0);
+  });
+
+  test('a half-written link reports as unlinked, not as a dead pointer', async () => {
+    // A blank id points at nothing in particular, which is not the same claim
+    // as pointing at a case that was deleted. The CASE expression tests the
+    // no-link branch first for exactly this reason.
+    const db = stubDb([[]]);
+    await svc.auditEventLinks(db);
+    const caseExpr = db.calls[0].sql.split('CASE')[1].split('END')[0];
+    expect(caseExpr.indexOf("'unlinked'"))
+      .toBeLessThan(caseExpr.indexOf("'dead_case_id'"));
   });
 
   test('one query, no parameters', async () => {
     const db = stubDb([[]]);
-    await svc.auditOrphans(db);
+    await svc.auditEventLinks(db);
     expect(db.calls).toHaveLength(1);
     expect(db.calls[0].params).toEqual([]);
   });
 });
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The route
@@ -943,17 +1024,46 @@ describe('routes/api.caseEvents.js', () => {
     expect(db.calls[1].params).toEqual(['TYL6KJN8', '26-46639', '26-46639-mar']);
   });
 
-  test('GET /api/case-events/audit returns the census with a count', async () => {
-    const db = stubDb([[
-      { event_id: 4, event_type: 'Milestone', event_title: 'Reminder smoke',
-        event_date: D('2026-05-01 00:00:00'), event_time: null, event_all_day: 1,
-        event_status: 'Canceled', event_link_type: null, event_link_id: null,
-        superseded_by_event_id: null, supersede_reason: null, reason: 'no_link' },
-    ]]);
+  test('GET /api/case-events/audit returns counts + items', async () => {
+    const db = stubDb([[auditRow()]]);
     const { status, body } = await get(app(db), '/api/case-events/audit');
     expect(status).toBe(200);
-    expect(body).toMatchObject({ status: 'success', count: 1 });
-    expect(body.orphans[0].reason).toBe('no_link');
+    expect(body.status).toBe('success');
+    expect(body.counts).toEqual({ broken: 0, pending: 0, unlinked: 1, total: 1 });
+    expect(body.items[0]).toMatchObject({ event_id: 4, severity: 'unlinked' });
+  });
+
+  test('?severity= filters, CSV and repeated both', async () => {
+    for (const q of ['?severity=unlinked', '?severity=unlinked,unlinked']) {
+      const db = stubDb([[]]);
+      await get(app(db), `/api/case-events/audit${q}`);
+      expect(whereOf(db.calls[0].sql)).not.toMatch(/NOT EXISTS/);
+    }
+    const multi = stubDb([[]]);
+    await get(app(multi), '/api/case-events/audit?severity=broken&severity=pending');
+    const where = whereOf(multi.calls[0].sql);
+    expect(where).toMatch(/c\.case_id = e\.event_link_id/);
+    expect(where).toMatch(/case_number_full/);
+    expect(where).not.toMatch(/event_link_type IS NULL/);
+  });
+
+  test('a typo\'d severity narrows rather than 400s, and never widens', async () => {
+    // Diagnostics list: a bad filter should show LESS, never more. Quietly
+    // showing everything when the caller asked for one thing is the worse bug.
+    const db = stubDb([]);
+    const { status, body } = await get(app(db), '/api/case-events/audit?severity=brokn');
+    expect(status).toBe(200);
+    expect(body.items).toEqual([]);
+    expect(db.calls).toHaveLength(0);
+  });
+
+  test('no severity param means all three', async () => {
+    const db = stubDb([[]]);
+    await get(app(db), '/api/case-events/audit');
+    const where = whereOf(db.calls[0].sql);
+    expect(where).toMatch(/event_link_type IS NULL/);
+    expect(where).toMatch(/c\.case_id = e\.event_link_id/);
+    expect(where).toMatch(/case_number_full/);
   });
 
   test('both routes are behind jwtOrApiKey', async () => {

@@ -159,6 +159,13 @@ function _timeOnly(t) {
 const EVENT_LINK_TYPES = new Set(['case', 'contact', 'case_number']);
 
 /**
+ * NOTE — listEvents additionally accepts the READ-ONLY pseudo-filter
+ * `link_type: 'none'`, meaning "rows attached to nothing". It is deliberately
+ * NOT in the set above: it is a query, never a value, and must never reach a
+ * write. _normalizeLink would reject it, which is the correct behaviour.
+ */
+
+/**
  * Normalize an (event_link_type, event_link_id) pair for a write, or throw.
  *   - no/empty link_type        → { type:null, id:null }
  *   - unknown link_type         → throw (enum-safe)
@@ -906,6 +913,17 @@ async function listEvents(db, {
     // 'contact' and 'case_number' (direct docket filter): plain equality.
     where.push('e.event_link_type = ? AND e.event_link_id = ?');
     params.push(link_type, String(link_id));
+  } else if (link_type === 'none') {
+    // UNLINKED: attached to nothing. Not a broken row — the columns are
+    // nullable, _normalizeLink returns { type:null, id:null } for an absent
+    // link (it throws only on a HALF link), and eventform/calendar both render
+    // these. A firm-wide event — office closed, a CLE seminar — is this shape.
+    // 'none' rather than a bare null because null already means "no link
+    // filter at all"; the two are different questions and the caller must be
+    // able to ask the second one.
+    where.push(`(e.event_link_type IS NULL
+                 OR e.event_link_id IS NULL
+                 OR TRIM(e.event_link_id) = '')`);
   } else if (link_type) {
     where.push('e.event_link_type = ?');
     params.push(link_type);

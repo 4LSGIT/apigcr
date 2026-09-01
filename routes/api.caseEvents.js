@@ -12,8 +12,9 @@
  *                               ?from=YYYY-MM-DD       inclusive lower bound
  *                               ?to=YYYY-MM-DD         inclusive upper bound
  *
- * GET /api/case-events/audit  — every event that resolves to no case.
- *                               Diagnostics; no UI in E1.
+ * GET /api/case-events/audit  — event→case link health.
+ *                               ?severity=unlinked|pending|broken (CSV, repeatable)
+ *                               Backs public/automation/eventLinks.html.
  *
  * Auto-mounted from routes/ (server.js readdir loop). Both paths are new:
  * routes/api.cases.js owns /api/cases/:id and its /contacts /tasks /log /merge
@@ -86,19 +87,32 @@ router.get('/api/cases/:id/events', jwtOrApiKey, async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/case-events/audit — orphan census
+// GET /api/case-events/audit — event→case link health
 //
 // Static path, no :id, so it cannot collide with the route above.
+//
+// `severity` filters to any of 'unlinked' | 'pending' | 'broken', comma-
+// separated or repeated. Absent = all three. Unknown values are dropped rather
+// than 400'd: this is a diagnostics list, and a typo'd filter should show a
+// narrower list, not an error page. An explicitly-supplied filter that leaves
+// nothing valid returns an empty list rather than silently widening to all —
+// quietly showing MORE than was asked for is the worse failure here.
+//
+// `counts` always carries all three severities even when filtered, because a
+// zero you asked to hide is still a zero worth seeing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.get('/api/case-events/audit', jwtOrApiKey, async (req, res) => {
   try {
-    const orphans = await svc.auditOrphans(req.db);
-    res.json({ status: 'success', count: orphans.length, orphans });
+    const raw = [].concat(req.query.severity == null ? [] : req.query.severity)
+      .join(',').split(',').map((s) => String(s).trim()).filter(Boolean);
+    const { counts, items } = await svc.auditEventLinks(req.db, {
+      severity: raw.length ? raw : null,
+    });
+    res.json({ status: 'success', counts, items });
   } catch (err) {
-    fail(res, 'auditOrphans', err);
+    fail(res, 'auditEventLinks', err);
   }
 });
-
 
 module.exports = router;

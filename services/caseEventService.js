@@ -97,7 +97,7 @@
  *
  *   listForCase(db, caseId, opts)   → Promise<row[]>       (404s on unknown case)
  *   listForCases(db, caseIds, opts) → Promise<Map<caseId, row[]>>  (silent absence)
- *   auditOrphans(db)                → Promise<orphanRow[]>
+ *   auditEventLinks(db, opts)       → Promise<{counts, items}>
  *   (+ _-prefixed test helpers — repo pattern)
  *
  * Usage:
@@ -654,7 +654,8 @@ async function _listForCases(db, caseIds, { includeSuperseded = false, from = nu
   // ONE query covering every case id AND every docket. Both branches ride
   // idx_events_link (event_link_type, event_link_id) with bound constants.
   // 'contact'-linked and NULL-linked rows match neither branch and are
-  // therefore excluded — they are not orphans (auditOrphans covers those),
+  // therefore excluded — they are not broken (auditEventLinks covers link
+  // health separately),
   // they simply are not case-scoped.
   const evWhere = [
     `(e.event_link_type = 'case' AND e.event_link_id IN (${canonicalIds.map(() => '?').join(',')}))`,
@@ -772,83 +773,151 @@ async function listForCase(db, caseId, opts = {}) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ORPHAN AUDIT
+// EVENT LINK AUDIT
+//
+// NOT an "orphan audit", though that is what v0.4 §3.1 called it and what E1
+// shipped as. The word was wrong and it mattered: it lumped a supported state
+// in with two broken ones.
+//
+// AN EVENT IS ALLOWED TO BE ATTACHED TO NOTHING. That is not a gap in the
+// model, it is the model, at three layers:
+//
+//   · schema      — event_link_type and event_link_id are both nullable.
+//   · write path  — eventService._normalizeLink documents
+//                   "no/empty link_type → { type:null, id:null }" and returns
+//                   cleanly. It throws only on a HALF link (a type with no id).
+//   · read paths  — listEvents defaults link_type=null (no filter), so unlinked
+//                   events appear in the general list; eventform.html renders
+//                   '—' for them; calendar.html's link block is an if/else-if
+//                   chain with no else, so they render on the calendar without
+//                   a "Case:" line.
+//
+// Three surfaces that all anticipated it. A firm-wide event — office closed, a
+// CLE seminar, a staff meeting — is exactly this shape.
+//
+// The reason it read as garbage is an accident of today's data: the single live
+// unlinked row is event 4, "Reminder smoke", Canceled — a test row. Calling the
+// state an orphan on that evidence would have had someone "cleaning up" a
+// perfectly good firm-wide event the first time staff created one.
+//
+// So this reports three DIFFERENT conditions and says which is which:
+//
+//   severity   reason                  meaning
+//   ────────   ─────────────────────   ──────────────────────────────────────
+//   broken     dead_case_id            link_type='case' pointing at a case_id
+//                                      that does not exist. A pointer to
+//                                      nothing. Genuinely wrong; needs a human.
+//   pending    unresolved_case_number  a docket matching neither case_number
+//                                      nor case_number_full. SELF-HEALING —
+//                                      it resolves the moment the case is
+//                                      created with that number. A worklist,
+//                                      not a fault.
+//   unlinked   unlinked                attached to nothing. Legitimate. Listed
+//                                      so it can be FOUND — some will be
+//                                      deliberate, some will be a staffer who
+//                                      meant to attach a case and didn't. The
+//                                      audit does not presume which.
+//
+// `contact`-linked events are absent entirely: they resolve, to a contact. They
+// are merely out of scope for CASE reads (v0.4 §3.1) and get their own surface
+// in the backlog's contact-scoped timeline.
+//
+// Read-only diagnostics. Nothing here blocks, validates or changes a write.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** severity → the reason it corresponds to. Also the filter vocabulary. */
+const LINK_SEVERITIES = new Map([
+  ['broken',   'dead_case_id'],
+  ['pending',  'unresolved_case_number'],
+  ['unlinked', 'unlinked'],
+]);
+
 /**
- * Every event that resolves to NO case. Diagnostics for the E1 deploy gate and
- * for whoever inherits the docket-linking model — not a UI surface.
+ * Audit event→case links.
  *
- * Three ways an event can be case-orphaned, reported as `reason`:
- *
- *   no_link                 event_link_type IS NULL, or the id is null/blank.
- *                           One live row (the E0a migration's excluded-by-NULL
- *                           join row).
- *   unresolved_case_number  a docket that matches neither cases.case_number nor
- *                           cases.case_number_full. Self-healing by design —
- *                           these resolve the moment the case is created with
- *                           that number — so a nonzero count is a WORKLIST, not
- *                           necessarily a fault.
- *   dead_case_id            link_type='case' pointing at a case_id that no
- *                           longer exists.
- *
- * `contact`-linked events are NOT orphans. They resolve — to a contact. They
- * are merely out of scope for case reads (v0.4 §3.1) and get their own surface
- * in the backlog's contact-scoped timeline.
- *
- * Superseded rows are included and carry their pointer: a tombstone that
- * resolves to nothing is still a fact worth seeing in an audit.
- *
- * @returns {Promise<object[]>} newest first
+ * @param {object} db
+ * @param {object} [opts]
+ * @param {string[]|null} [opts.severity] restrict to these severities
+ *        ('broken' | 'pending' | 'unlinked'). Null/empty = all three.
+ *        Filtering happens in SQL so the UI's "unlinked only" view does not
+ *        pull the broken rows over the wire to discard them.
+ * @returns {Promise<{counts: object, items: object[]}>} counts is keyed by
+ *          severity plus `total`, and ALWAYS carries all three keys even when
+ *          filtered — a zero you asked to hide is still a zero worth seeing.
  */
-async function auditOrphans(db) {
+async function auditEventLinks(db, { severity = null } = {}) {
+  const want = Array.isArray(severity) && severity.length
+    ? severity.filter((s) => LINK_SEVERITIES.has(s))
+    : [...LINK_SEVERITIES.keys()];
+
+  const counts = { broken: 0, pending: 0, unlinked: 0, total: 0 };
+  if (!want.length) return { counts, items: [] };
+
+  const NO_LINK = `(e.event_link_type IS NULL
+                    OR e.event_link_id IS NULL
+                    OR TRIM(e.event_link_id) = '')`;
+  const DEAD_CASE = `(e.event_link_type = 'case'
+                      AND NOT EXISTS (SELECT 1 FROM cases c
+                                       WHERE c.case_id = e.event_link_id))`;
+  const UNRESOLVED = `(e.event_link_type = 'case_number'
+                       AND NOT EXISTS (SELECT 1 FROM cases c
+                                        WHERE c.case_number = e.event_link_id
+                                           OR c.case_number_full = e.event_link_id))`;
+
+  // NO_LINK is tested first in the CASE so that a half-written row (a type with
+  // a blank id) reports as unlinked rather than as a dead pointer — a blank id
+  // points at nothing in particular, which is not the same claim as pointing at
+  // a case that was deleted.
+  const branches = { unlinked: NO_LINK, broken: DEAD_CASE, pending: UNRESOLVED };
+  const where = want.map((s) => branches[s]).join('\n         OR ');
+
   const [rows] = await db.query(
     `SELECT e.event_id, e.event_type, e.event_title, e.event_date, e.event_time,
-            e.event_all_day, e.event_status,
+            e.event_all_day, e.event_status, e.event_location,
             e.event_link_type, e.event_link_id,
             e.superseded_by_event_id, e.supersede_reason,
             CASE
-              WHEN e.event_link_type IS NULL
-                OR e.event_link_id IS NULL
-                OR TRIM(e.event_link_id) = ''         THEN 'no_link'
-              WHEN e.event_link_type = 'case_number'  THEN 'unresolved_case_number'
+              WHEN ${NO_LINK}                        THEN 'unlinked'
+              WHEN e.event_link_type = 'case_number' THEN 'unresolved_case_number'
               ELSE 'dead_case_id'
             END AS reason
        FROM events e
-      WHERE (e.event_link_type IS NULL
-             OR e.event_link_id IS NULL
-             OR TRIM(e.event_link_id) = '')
-         OR (e.event_link_type = 'case_number'
-             AND NOT EXISTS (SELECT 1 FROM cases c
-                              WHERE c.case_number = e.event_link_id
-                                 OR c.case_number_full = e.event_link_id))
-         OR (e.event_link_type = 'case'
-             AND NOT EXISTS (SELECT 1 FROM cases c
-                              WHERE c.case_id = e.event_link_id))
+      WHERE ${where}
       ORDER BY e.event_date DESC, e.event_id DESC`
   );
 
-  return rows.map((r) => ({
-    event_id:    Number(r.event_id),
-    reason:      String(r.reason),
-    event_type:  r.event_type == null ? null : String(r.event_type),
-    event_title: r.event_title == null ? null : String(r.event_title),
-    event_date:  _dateOnly(r.event_date),
-    event_time:  _timeOnly(r.event_time),
-    all_day:     r.event_all_day === 1 || r.event_all_day === '1' || r.event_all_day === true,
-    event_status: r.event_status == null ? null : String(r.event_status),
-    link_type:   r.event_link_type == null ? null : String(r.event_link_type),
-    link_id:     r.event_link_id == null ? null : String(r.event_link_id),
-    superseded_by_event_id: r.superseded_by_event_id == null ? null : Number(r.superseded_by_event_id),
-    supersede_reason:       r.supersede_reason == null ? null : String(r.supersede_reason),
-  }));
-}
+  const severityOf = { unlinked: 'unlinked', unresolved_case_number: 'pending',
+                       dead_case_id: 'broken' };
 
+  const items = rows.map((r) => {
+    const reason = String(r.reason);
+    counts[severityOf[reason]] += 1;
+    counts.total += 1;
+    return {
+      event_id:    Number(r.event_id),
+      severity:    severityOf[reason],
+      reason,
+      event_type:  r.event_type == null ? null : String(r.event_type),
+      event_title: r.event_title == null ? null : String(r.event_title),
+      event_date:  _dateOnly(r.event_date),
+      event_time:  _timeOnly(r.event_time),
+      all_day:     r.event_all_day === 1 || r.event_all_day === '1' || r.event_all_day === true,
+      event_status: r.event_status == null ? null : String(r.event_status),
+      location:    _s(r.event_location),
+      link_type:   r.event_link_type == null ? null : String(r.event_link_type),
+      link_id:     r.event_link_id == null ? null : String(r.event_link_id),
+      superseded_by_event_id: r.superseded_by_event_id == null ? null : Number(r.superseded_by_event_id),
+      supersede_reason:       r.supersede_reason == null ? null : String(r.supersede_reason),
+    };
+  });
+
+  return { counts, items };
+}
 
 module.exports = {
   listForCase,
   listForCases,
-  auditOrphans,
+  auditEventLinks,
 
   // Test helpers (repo `_`-prefix convention). Exported so the U2 backfill and
   // the U3 alignment pass can assert against the SAME vocabulary this derives
@@ -856,6 +925,7 @@ module.exports = {
   _deriveKeys,
   _normStatus,
   _byStart,
+  _LINK_SEVERITIES: LINK_SEVERITIES,
   _EVENT_TYPE_KEYS: EVENT_TYPE_KEYS,
   _APPT_TYPE_KEYS: APPT_TYPE_KEYS,
   _EVENT_ROW_OVERRIDES: EVENT_ROW_OVERRIDES,
