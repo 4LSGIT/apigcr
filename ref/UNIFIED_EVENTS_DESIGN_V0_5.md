@@ -599,6 +599,7 @@ Model column is CAL's recommendation for the *executing* worker when CAL writes 
 | U5 | Consumer cutover to keys (§6.1): rules 1–3, templates 19/20/23/24, requirement 3 rewritten; `priority_fields` gain `type_key` **ahead of** `appt_type`; detector matches `type_key` then `kind_key`; **all three sources via `listForCases`** (path 1, Fred ruled); booking views gain `type_key` + registry picker; catalog `data.type_key`; one-directional `extra.*` guard | Opus | U4 | **deployed + verified 2026-09-01** (174 / 5,693 / 1). Detector query budget 1 → 3 (resolver 11 → 13, still constant in N×M). Deploy order backend → SQL pinned by two tests named "THE DEPLOY-ORDER TRAP". Two behaviours ruled, not worked around: a stale label config resolves **unsatisfied**; `want:'missed'` on `source:'event'` is unsatisfiable until U6a's sweep writes `missed` |
 | U6a | Events side: `supersedeEvent` writer; `singleton` in `createEvent` behind `unified_singleton_enabled`; consumer audit (every raw `FROM events` classified — availability, dedupe, digest, feed filter the pointer; `listEvents`/`get_events` use the **option-B predicate** `NOT (pointer AND Scheduled)` so the 31 E0a tombstones still show under All/Canceled; `caseEventService` hides all — U9 reconciles); `event_resolution` writers + routes (PATCH back to `Scheduled` **clears** the resolution — ruled keep); `sweep_calendar_missed` with required `since` | Fable | U5 | **deployed 2026-09-01** (183 / 5,978 / 1), flag off. Gates: 0 forward pointers, 0 phantoms. Sweep dry-run: unbounded "unknown" population **30**, `since='2026-09-01'` → **0**. `courtExecutor` 824 / 964 need the filter, 1331 should skip pointered rows — U7 |
 | U6b | Appts side: A3a columns + backfill (12 / 2,162 / 46, matches the audit); `contact_id` optional with a case/docket anchor (client-less skips enumerated); `singleton` **by query, not the `341_appt_id` pointer** under the flag; supersession reason `singleton_superseded` (legacy path keeps `341_superseded` byte-identical); lineage max-id + `IS NULL` guard, caller wins; projection keyed on `meeting_341` regardless of the singleton bit; contact-anchored appts get **no** singleton check (deliberate asymmetry with events — §8.3); docket-anchored appts resolve query-side in the read layer and the case tab; `rescheduleAppt` carries the docket anchor forward; façade with `findLive` (event-side `superseded:[]` until U7's one-line return change) | Fable | U6a | **deployed + verified 2026-09-01** (189 / 6,130 / 1), flag off. Live gates: 0 half-writes, 0 case mismatches, post-deploy writes linked |
+| U2b | **Case Config** page (More Features panel, tabbed shell, Calendar Types tab first) + `calendar_item_types.surfaces` JSON (closed vocab: `new_client`, `follow_up`, `staff_event`, `booking`, `court`; NULL = all) + admin CRUD (`type_key` immutable; `kind` immutable once referenced; delete only at zero refs, else deactivate; alias-collision 409) + the two hardcoded dialog lists (`NCApptTypeSel`, `newApptDialog`) go registry-first with today's lists as fetch-failure fallback — the ISS new-client-only rule becomes a `surfaces` row | **Opus** | U6b | prompt issued 2026-09-02. SS-independent |
 | U7 | Court-v2 s2 on U6a+U6b: resolve/reconcile executor; the five raw `FROM events` sites in `courtExecutor.js` gain the pointer filter (U6a reports which); 341 → appts; retire event `341`; dedupe the 12 **by singleton identity, not date**; CHECK constraint with strict-mode proof; `court_v2 schema_gaps` (`block_minutes` → `default_length`, `blocks_whole_day` → `blocks_default`) | **Fable** | U6 + SS worksheet | owner of U6 owns U7 (both managers) |
 | U8 | `calendar.approaching` claim table + emitter; reminder rules seeded; `court_item_reminders` → seeder or drop | **Opus** | U4 | pattern exists (`case.stage_aged`) |
 | U9 | Shell unified list (kind / attendee / anchor / range / **unlinked** filters) beside the three tabs; tabs removed one release later | **Opus** | U3 | UI only |
@@ -665,8 +666,22 @@ multi-tenant registry.
 | `appt_type IS NULL` (8 rows) | `type_key` NULL (honest passthrough; matches E1) — **not** `meeting` |
 | Unmapped strings | raw passthrough, `kind_key` NULL, warn — never a guessed kind (a guessed `meeting` would route to the wrong TABLE under §3.3.2) |
 
+### 8.0 Build philosophy (ratified 2026-09-02)
+
+**Code owns vocabulary; data owns policy.** The closed sets consumers reason over — the five
+`kind`s, `state`/`resolution`, "supersession is a pointer", "deadlines never block" — stay in
+code. Everything firm-specific is user-editable data: which types exist, labels, aliases,
+`singleton`, `blocks_default`, `client_attends`, lengths, `case_types`, **`surfaces`** (which UI
+offers which type — U2b), sequence cascade filters, trigger configs, court ingest mapping,
+pipeline stages. Remaining firm-specific hardcodes, fenced and scheduled: the `meeting_341` →
+`cases` projection (U10) and the legacy 341 string block (deleted after U10). The SaaS/general
+angle rides on this line: the engine is case-type- and firm-agnostic; a firm is its tables.
+
 ### 8.2 Open — needs Fred
 
+- **SS worksheet still blocks U7 only** (chapter-conversion supersession; `case_180` /
+  `case_preference` / matrix columns). SS unavailable 2026-09-02; U2b, U8, U9 proceed without him —
+  and his eventual answers land mostly as registry rows and trigger rules, not code.
 - **`missed` sweep cutoff (U6a).** 0 `Completed` events exist live — staff have never marked a
   deadline met, so every past-dated Scheduled deadline is *unknown*, not *missed*. The sweep takes
   a required `since` param and Fred sets it in the scheduled job. CAL proposes `since = 2026-09-01`;
