@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-01T19:45:02.133Z
+-- Generated: 2026-09-02T12:49:06.563Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:1a8a3a7d17932c0a5d0b8ebd5796d1c1
+-- Fingerprint: sha256:6a1b1b462e9b0ae9d3a43d80589581fb
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -337,6 +337,25 @@ CREATE TABLE `calendar_item_types` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `calendar_type_options`
+--
+
+DROP TABLE IF EXISTS `calendar_type_options`;
+CREATE TABLE `calendar_type_options` (
+  `id` int unsigned NOT NULL,
+  `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'FK-by-convention → calendar_item_types.type_key (no FK constraints, repo convention). Meeting types only.',
+  `label` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'picker text override; NULL = the type''s label. Display only — appt_type is always the TYPE label.',
+  `length` smallint unsigned NOT NULL COMMENT 'minutes offered by this option (1..1440)',
+  `surfaces` json NOT NULL COMMENT 'non-empty subset of the closed surface vocabulary',
+  `sort_order` int NOT NULL DEFAULT '0' COMMENT 'within the type; types order by calendar_item_types.sort_order first',
+  `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'inactive options are not offered; the type''s own active flag also gates',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='U2b: staff-picker options per calendar item type (length × surfaces). Presentation, not identity.';
 
 -- --------------------------------------------------------
 
@@ -3589,6 +3608,14 @@ ALTER TABLE `calendar_item_types`
   ADD KEY `idx_cit_kind_active` (`kind`,`active`);
 
 --
+-- Indexes for table `calendar_type_options`
+--
+ALTER TABLE `calendar_type_options`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_cto_type_length` (`type_key`,`length`),
+  ADD KEY `idx_cto_type_active` (`type_key`,`active`);
+
+--
 -- Indexes for table `campaign_contacts`
 --
 ALTER TABLE `campaign_contacts`
@@ -4609,6 +4636,12 @@ ALTER TABLE `availability_blocks`
 -- AUTO_INCREMENT for table `booking_views`
 --
 ALTER TABLE `booking_views`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `calendar_type_options`
+--
+ALTER TABLE `calendar_type_options`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --

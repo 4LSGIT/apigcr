@@ -1710,6 +1710,154 @@ function CasePicker(hostEl, options = {}) {
 
 
 /* ──────────────────────────────────────────────────────────────────────────
+   Appointment-type picker source   (Unified Events U2b)
+
+   The two appointment dialogs below (newContact's inline first-appt box and
+   the shared newApptDialog) used to carry hardcoded <option> lists. Which
+   types a picker OFFERS is policy, and policy is data: it now lives in
+   calendar_item_types.surfaces (Case Config → Calendar Types). Each dialog
+   asks the registry for its own surface:
+
+     GET /api/calendar-types/options?surface=<new_client|follow_up>[&case_type=…]
+
+   Options are calendar_type_options rows — one per (type, length) — so a
+   type can be offered at two lengths as two first-class entries (Fred's
+   ruling, 2026-09-02). The picker renders `text (N min)` with value =
+   type_key, carrying data-label (the TYPE label) / data-len. On submit the
+   dialog sends BOTH type_key and appt_type (= the type label), so the
+   sequence cascade (matches type_key since U5) and the label column stay
+   right. "Other" stays: free text, no key → the server's unmapped rule
+   (type_key NULL).
+
+   CASE TYPE. When the dialog knows the case's type it passes case_type, and
+   the server hides options whose TYPE is scoped to other case types
+   (calendar_item_types.case_types). No case / unknown type → no filter.
+   The picker re-fetches when the case side changes.
+
+   FALLBACK — a registry outage must never blank a dialog. If the fetch
+   fails or returns no rows, the picker renders YC_APPT_TYPE_FALLBACK, which
+   is the pre-U2b hardcoded list for that surface, byte for byte. Touch it
+   only if a type is RENAMED in the registry; scoping changes belong in the
+   registry, not here.
+
+   LENGTH. After any pick the length input is shown, prefilled from the
+   option and still editable — an ad-hoc 25-minute booking needs no option
+   row.
+
+   CACHE. Per (surface, case_type), 60s — the same TTL as the server-side
+   registry cache, which the Case Config admin invalidates on every write.
+   ────────────────────────────────────────────────────────────────────────── */
+const YC_APPT_TYPE_FALLBACK = Object.freeze({
+  // #NCApptTypeSel as it stood before U2b (new-client dialog).
+  new_client: Object.freeze([
+    { type_key: 'iss',               label: 'Initial Strategy Session',     default_length: 15 },
+    { type_key: 'ss',                label: 'Strategy Session',             default_length: 15 },
+    { type_key: 'ss_follow_up',      label: 'Strategy Session Follow Up',   default_length: 15 },
+    { type_key: 'ss_follow_up',      label: 'Strategy Session Follow Up',   default_length: 30 },
+    { type_key: 'pre_filing',        label: 'Pre-filing Meeting',           default_length: 30 },
+    { type_key: 'schedules_meeting', label: 'Schedules Completion Meeting', default_length: 45 },
+    { type_key: 'docs_meeting',      label: 'Documents Completion Meeting', default_length: 30 },
+    { type_key: 'matrix_meeting',    label: 'Matrix Completion Meeting',    default_length: 15 },
+  ]),
+  // newApptDialog()'s #naTypeSelect as it stood before U2b (follow-up surfaces).
+  follow_up: Object.freeze([
+    { type_key: 'ss',                label: 'Strategy Session',             default_length: 15 },
+    { type_key: 'ss_follow_up',      label: 'Strategy Session Follow Up',   default_length: 15 },
+    { type_key: 'ss_follow_up',      label: 'Strategy Session Follow Up',   default_length: 30 },
+    { type_key: 'pre_filing',        label: 'Pre-filing Meeting',           default_length: 30 },
+    { type_key: 'schedules_meeting', label: 'Schedules Completion Meeting', default_length: 45 },
+    { type_key: 'docs_meeting',      label: 'Documents Completion Meeting', default_length: 30 },
+    { type_key: 'matrix_meeting',    label: 'Matrix Completion Meeting',    default_length: 15 },
+    { type_key: 'schedules_meeting', label: 'Schedules Completion Meeting', default_length: 20 },
+  ]),
+});
+const YC_APPT_TYPE_TTL_MS = 60 * 1000;
+const _ycApptTypeCache = {};   // `${surface}|${case_type}` → { at, rows }
+
+/**
+ * Picker rows for a surface (or the fallback list). Never rejects.
+ * Row shape: { type_key, label (TYPE label → appt_type), text (picker text),
+ *              default_length }.
+ */
+async function ycApptTypeOptions(surface, caseType) {
+  const ct = String(caseType || '').trim();
+  const ck = surface + '|' + ct.toLowerCase();
+  const c = _ycApptTypeCache[ck];
+  if (c && Date.now() - c.at < YC_APPT_TYPE_TTL_MS) return c.rows;
+  const send = (typeof window !== 'undefined' && typeof window.apiSend === 'function')
+    ? window.apiSend
+    : (P && P.apiSend);
+  try {
+    if (typeof send !== 'function') throw new Error('apiSend unavailable');
+    const url = '/api/calendar-types/options?surface=' + encodeURIComponent(surface)
+              + (ct ? '&case_type=' + encodeURIComponent(ct) : '');
+    const res  = await send(url, 'GET');
+    const rows = res && Array.isArray(res.data) ? res.data : [];
+    if (!rows.length) throw new Error('registry returned no options');
+    const out = rows.map(r => ({
+      type_key: r.type_key, label: r.type_label || r.label, text: r.label, default_length: r.length,
+    }));
+    _ycApptTypeCache[ck] = { at: Date.now(), rows: out };
+    return out;
+  } catch (err) {
+    console.warn('[ycApptTypeOptions] ' + surface + ': ' + ((err && err.message) || err) + ' — using the hardcoded fallback');
+    return YC_APPT_TYPE_FALLBACK[surface] || [];
+  }
+}
+
+/**
+ * Fill a picker <select>: keeps its first (placeholder) option, then the rows,
+ * then "Other". A current registry pick survives a re-render when the same
+ * (key, length) is still offered; otherwise the placeholder is reselected and
+ * the caller's hidden fields are NOT touched (the user keeps what they had
+ * until they pick again).
+ */
+function ycRenderApptTypeSelect(sel, rows) {
+  if (!sel) return;
+  const prev = sel.selectedOptions && sel.selectedOptions[0];
+  const prevKey = prev && prev.dataset ? prev.dataset.key : '';
+  const prevLen = prev && prev.dataset ? prev.dataset.len : '';
+  const wasOther = prev && prev.value === '' && !prev.disabled;
+  const placeholder = sel.options[0] ? sel.options[0].cloneNode(true) : null;
+  sel.innerHTML = '';
+  if (placeholder) sel.appendChild(placeholder);
+  let reselect = null;
+  (rows || []).forEach(r => {
+    const o = document.createElement('option');
+    o.value = r.type_key;
+    o.dataset.key   = r.type_key;
+    o.dataset.label = r.label;
+    o.dataset.len   = r.default_length == null ? '' : String(r.default_length);
+    const text = r.text || r.label;
+    o.textContent   = r.default_length == null ? text : text + ' (' + r.default_length + ' min)';
+    if (prevKey && o.dataset.key === prevKey && o.dataset.len === prevLen) reselect = o;
+    sel.appendChild(o);
+  });
+  const other = document.createElement('option');
+  other.value = '';
+  other.textContent = 'Other';
+  sel.appendChild(other);
+  if (reselect) reselect.selected = true;
+  else if (wasOther) other.selected = true;
+}
+
+/**
+ * onchange for a picker <select>. ids: { type, len, key, otherSpan }.
+ * A registry pick writes label → #type (hidden), length → #len (shown,
+ * editable), key → #key. "Other" clears all three and shows #type for free text.
+ */
+function ycApptTypePick(sel, ids) {
+  const opt   = sel.selectedOptions && sel.selectedOptions[0];
+  const type  = E(ids.type), len = E(ids.len), key = E(ids.key), span = E(ids.otherSpan);
+  const other = !opt || opt.value === '';
+  if (type) { type.value = other ? '' : (opt.dataset.label || ''); type.style.display = other ? '' : 'none'; }
+  if (len)  { len.value  = other ? '' : (opt.dataset.len || ''); }
+  if (key)  { key.value  = other ? '' : (opt.dataset.key || ''); }
+  if (span) { span.style.display = ''; }
+  if (other && type) type.focus();
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
    newContact(prefill = {}, onSuccess = null)
 
    The new-client intake dialog. Creates a contact and, optionally, a case
@@ -1779,29 +1927,20 @@ function newContact(prefill = {}, onSuccess = null) {
     <div id="NCApptBox" style="display:none; border:1px solid var(--border); border-radius:5px; padding:8px; margin:4px 0; text-align:center;">
       <form onchange="newContact._recompute && newContact._recompute()">
       <select id="NCApptWith" style="width:320px;">${withOptions}</select><br>
+      <!-- U2b: options come from the registry, surface=new_client (see
+           ycApptTypeOptions above; filled in didOpen). Which types appear
+           here — and that "Initial Strategy Session" appears ONLY here, being
+           the first-contact type and the cascade key for the ISS pre_appt
+           sequence — is now calendar_item_types.surfaces, edited in Case
+           Config → Calendar Types. The old "keep the string byte-identical"
+           warning is obsolete: the cascade matches type_key (U5), which this
+           dialog now sends alongside the label. -->
       <select id="NCApptTypeSel" style="width:320px; margin-top:6px;"
-        onchange="[E('NCApptType').value,E('NCApptLen').value]=this.value.split(',');E('NCApptOtherSpan').style.display=this.value==','?'':'none'">
+        onchange="ycApptTypePick(this,{type:'NCApptType',len:'NCApptLen',key:'NCApptKey',otherSpan:'NCApptOtherSpan'})">
         <option disabled selected>Appointment Type:</option>
-        <!-- "Initial Strategy Session" is deliberately ONLY offered here, in the
-             new-client dialog. It is the first-contact appointment type and it
-             is the cascade key for the pre_appt "Initial Strategy Session"
-             sequence template (welcome video + intake-form nag chain), which is
-             wrong for an existing client. The shared newApptDialog() — used by
-             case.html, contact.html, calendar.html and the shell Appointments
-             tab — deliberately does NOT list it; those surfaces book follow-ups
-             for clients who already exist. Keep the string byte-identical to
-             sequence_templates.filters -> appt_type or the cascade silently
-             falls through to the generic fallback template. -->
-        <option value="Initial Strategy Session,15">Initial Strategy Session (15 min)</option>
-        <option value="Strategy Session,15">Strategy Session (15 min)</option>
-        <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
-        <option value="Strategy Session Follow Up,30">Strategy Session Follow Up (30 min)</option>
-        <option value="Pre-filing Meeting,30">Pre-filing Meeting (30 min)</option>
-        <option value="Schedules Completion Meeting,45">Schedules Completion Meeting (45 min)</option>
-        <option value="Documents Completion Meeting,30">Documents Completion Meeting (30 min)</option>
-        <option value="Matrix Completion Meeting,15">Matrix Completion Meeting (15 min)</option>
-        <option value=",">Other</option>
+        <option value="">Other</option>
       </select><br>
+      <input type="hidden" id="NCApptKey">
       <span id="NCApptOtherSpan" style="display:none;">
         <input id="NCApptType" style="width:240px;" placeholder="Other type">
         <input id="NCApptLen" style="width:60px;" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="min">
@@ -1871,6 +2010,17 @@ function newContact(prefill = {}, onSuccess = null) {
       if (hasPhoneStart && E("NCPhoneStart")) E("NCPhoneStart").value = prefill.phone_start_date;
       if (hasEmailStart && E("NCEmailStart")) E("NCEmailStart").value = prefill.email_start_date;
       if (defaultWith && E("NCApptWith")) E("NCApptWith").value = defaultWith;
+      // U2b — registry-fed type picker (fallback list on failure), scoped by
+      // the chosen case type; re-fetched when that changes.
+      const ncCaseType = () => {
+        const raw = E("NCType") ? E("NCType").value : '';
+        return raw === 'Other' ? (E("NCOtherType") ? E("NCOtherType").value.trim() : '') : raw;
+      };
+      const ncLoadTypes = () => ycApptTypeOptions('new_client', ncCaseType())
+        .then(rows => ycRenderApptTypeSelect(E("NCApptTypeSel"), rows));
+      ncLoadTypes();
+      if (E("NCType"))      E("NCType").addEventListener('change', ncLoadTypes);
+      if (E("NCOtherType")) E("NCOtherType").addEventListener('change', ncLoadTypes);
       const on = E("NCApptOn");
       if (on) on.addEventListener("change", () => {
         E("NCApptBox").style.display = on.checked ? "" : "none";
@@ -2012,9 +2162,11 @@ function newContact(prefill = {}, onSuccess = null) {
       // 3) appt (optional) — attach the created case if there is one
       let apptResult = null;
       if (apptOn) {
+        const apptKey = E("NCApptKey") ? E("NCApptKey").value : '';
         const apptBody = {
           contact_id:    contactResult.id,
           appt_type:     apptType,
+          ...(apptKey ? { type_key: apptKey } : {}),   // U2b: registry pick → key travels with the label
           appt_length:   apptLen,
           appt_platform: apptPlatform,
           appt_date:     apptDate,
@@ -2103,6 +2255,7 @@ function newApptDialog(opts = {}) {
   const caseSide = {
     mode:   null,
     fixedId: null, fixedLabel: '',
+    caseType: null,          // U2b: case_type of the selected case when known (scopes the type picker)
     list:   null,            // [{case_id, case_number, case_number_full, ...}]
     allowEmpty: true,        // a case is optional
     selectedId: null,
@@ -2110,6 +2263,14 @@ function newApptDialog(opts = {}) {
     drove: false,            // did the user pick this side (vs. caller-fixed)?
     crossPopulated: false,
   };
+
+  // U2b — type picker source (registry options, fallback list). Re-run
+  // whenever the case side changes so case_type scoping follows the case.
+  // Safe before the dialog exists: ycRenderApptTypeSelect ignores a null select.
+  function naLoadTypes() {
+    ycApptTypeOptions('follow_up', caseSide.caseType)
+      .then(rows => ycRenderApptTypeSelect(E('naTypeSelect'), rows));
+  }
 
   // Contact side from opts
   if (opts.contactFixed && opts.contactFixed.id != null) {
@@ -2140,6 +2301,7 @@ function newApptDialog(opts = {}) {
     caseSide.fixedId = opts.caseFixed.id;
     caseSide.fixedLabel = opts.caseFixed.label || ('Case ' + opts.caseFixed.id);
     caseSide.selectedId = opts.caseFixed.id;
+    caseSide.caseType = opts.caseFixed.case_type || null;
   } else if (opts.caseId != null) {                          // legacy flat fixed
     caseSide.mode = 'fixed';
     caseSide.fixedId = opts.caseId;
@@ -2275,9 +2437,17 @@ function newApptDialog(opts = {}) {
       sel += `</select>`;
       host.innerHTML = `<label>Case${caseSide.allowEmpty ? ' (optional)' : ''}</label>${sel}${lockNote}`;
       const selEl = E('naCaseSel');
+      const listCaseType = () => {
+        const row = list.find(c => String(c.case_id) === String(caseSide.selectedId));
+        return row ? (row.case_type || null) : null;
+      };
       caseSide.selectedId = selEl ? (selEl.value || null) : null;
+      caseSide.caseType = listCaseType();
+      naLoadTypes();
       if (selEl) selEl.addEventListener('change', () => {
         caseSide.selectedId = selEl.value || null;
+        caseSide.caseType = listCaseType();
+        naLoadTypes();
       });
       const chg = E('naCaseChange');
       if (chg) chg.addEventListener('click', (e) => { e.preventDefault(); revertToPickers(); });
@@ -2289,6 +2459,8 @@ function newApptDialog(opts = {}) {
         placeholder: 'Search cases…',
         onSelect: (cid, row) => {
           caseSide.selectedId = cid;
+          caseSide.caseType = (row && row.case_type) || null;
+          naLoadTypes();
           caseSide.fixedLabel = caseLabelOf(row || { case_id: cid });
           // Collapse this side to a confirmed line (with a change link) so the
           // raw typed query no longer lingers in the input.
@@ -2318,8 +2490,10 @@ function newApptDialog(opts = {}) {
       caseSide.drove = false;
       caseSide.crossPopulated = false;
       caseSide.selectedId = null;
+      caseSide.caseType = null;
       caseSide.list = null;
       renderCaseSide();
+      naLoadTypes();
     }
   }
 
@@ -2484,19 +2658,14 @@ function newApptDialog(opts = {}) {
       <div class="na-section-label">With</div>
       <select id="naWith" style="width:300px;">${withOptions}</select><br>
       <form onchange="newApptDialog._recompute && newApptDialog._recompute()">
+      <!-- U2b: options from the registry, surface=follow_up (filled in
+           didOpen; hardcoded fallback on failure — see ycApptTypeOptions). -->
       <select id="naTypeSelect" style="width:300px"
-        onchange="[E('naType').value,E('naLen').value]=this.value.split(',');E('naOtherSpan').style.display=this.value==','?'block':'none'">
+        onchange="ycApptTypePick(this,{type:'naType',len:'naLen',key:'naKey',otherSpan:'naOtherSpan'})">
         <option disabled selected>Appointment Type:</option>
-        <option value="Strategy Session,15">Strategy Session (15 min)</option>
-        <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
-        <option value="Strategy Session Follow Up,30">Strategy Session Follow Up (30 min)</option>
-        <option value="Pre-filing Meeting,30">Pre-filing Meeting (30 min)</option>
-        <option value="Schedules Completion Meeting,45">Schedules Completion Meeting (45 min)</option>
-        <option value="Documents Completion Meeting,30">Documents Completion Meeting (30 min)</option>
-        <option value="Matrix Completion Meeting,15">Matrix Completion Meeting (15 min)</option>
-        <option value="Schedules Completion Meeting,20">Schedules Completion Meeting (20 min)</option>
-        <option value=",">Other</option>
+        <option value="">Other</option>
       </select><br>
+      <input type="hidden" id="naKey">
       <span id="naOtherSpan" style="display:none">
         <input id="naType" style="width:240px" placeholder="Other Appointment Type">
         <input id="naLen" style="width:60px" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="length">
@@ -2533,6 +2702,9 @@ function newApptDialog(opts = {}) {
     didOpen: () => {
       newApptDialog._recompute = recompute;
       if (defaultWith && E('naWith')) E('naWith').value = defaultWith;
+      // U2b — registry-fed type picker (fallback list on failure). renderCaseSide
+      // above also calls naLoadTypes() for list mode; this covers fixed / pick.
+      naLoadTypes();
       if (opts.defaultDate && E('naDate')) E('naDate').value = opts.defaultDate;
       renderContactSide();
       renderCaseSide();
@@ -2589,9 +2761,11 @@ function newApptDialog(opts = {}) {
         return false;
       }
 
+      const apptKey = E('naKey') ? E('naKey').value : '';
       const body = {
         contact_id:    contactId,
         appt_type:     apptType,
+        ...(apptKey ? { type_key: apptKey } : {}),   // U2b: registry pick → key travels with the label
         appt_length:   apptLen,
         appt_platform: platform,
         appt_date:     apptDate,

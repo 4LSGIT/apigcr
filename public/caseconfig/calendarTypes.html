@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calendar Types</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       CALENDAR TYPES SUB-PAGE — self-contained styles.
+       Shared tokens duplicated from the shell (house pattern);
+       table + Swal-form styling lifted from caseconfig/pipelines.html.
+       ══════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--page-bg);
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .toolbar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+      font-size: 12px; color: var(--text-2); flex-wrap: wrap;
+    }
+    .toolbar i { color: var(--text-muted); }
+    .toolbar select, .toolbar input[type=text] {
+      padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
+      background: var(--page-bg); color: var(--text); font-family: inherit;
+    }
+    .toolbar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+
+    #wrap { flex: 1; overflow: auto; padding: 16px; }
+    table.types { width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    table.types th {
+      text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
+      background: var(--surface-2); white-space: nowrap; position: sticky; top: -16px; z-index: 1;
+    }
+    table.types td { padding: 7px 10px; border-bottom: 1px solid var(--page-bg); font-size: 12.5px; vertical-align: middle; }
+    table.types tr:last-child td { border-bottom: none; }
+    table.types tbody tr { cursor: pointer; transition: background 0.1s; }
+    table.types tbody tr:hover { background: var(--surface-2); }
+    table.types tr.inactive td { color: var(--text-muted); }
+    table.types tr.inactive .t-label { text-decoration: line-through; }
+    tr.kind-head td { background: var(--surface-2); font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-2); cursor: default; padding: 5px 10px; }
+    tr.kind-head:hover td { background: var(--surface-2); }
+    .t-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--text-2); }
+    .t-label { font-weight: 600; }
+    .t-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .t-c { text-align: center; }
+    .chip { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+      background: var(--surface-2); color: var(--text-2); margin: 1px 2px 1px 0; white-space: nowrap; }
+    .chip.sf { background: var(--accent-soft); color: var(--info-dark); }
+    .chip.all { background: transparent; border: 1px dashed var(--border); color: var(--text-muted); font-weight: 500; }
+    .chip.refs { background: var(--warn-soft); color: var(--warn-on-soft); }
+    .chip.refs0 { background: transparent; color: var(--text-muted); }
+    .chip.off { opacity: .45; text-decoration: line-through; }
+    .opt-link { cursor: pointer; }
+    .opt-link:hover .chip { filter: brightness(0.95); }
+    table.opts { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    table.opts th { text-align: left; font-size: 10px; text-transform: uppercase; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+    table.opts td { padding: 5px 6px; border-bottom: 1px solid var(--page-bg); vertical-align: middle; }
+    table.opts input[type=number] { width: 64px; }
+    table.opts input[type=text] { width: 100%; }
+    table.opts .sfc { display: inline-flex; gap: 8px; }
+    table.opts .sfc label { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; margin: 0; text-transform: none; letter-spacing: 0; font-weight: 500; cursor: pointer; }
+    table.opts tr.new td { background: var(--surface-2); }
+    .dot-on  { color: var(--ok); }
+    .dot-off { color: var(--border-strong); }
+    .fa-lock { color: var(--warn); font-size: 10px; margin-left: 4px; }
+
+    /* toggle switch (active) — same as pipelines */
+    .tgl { position: relative; display: inline-block; width: 30px; height: 17px; vertical-align: middle; }
+    .tgl input { opacity: 0; width: 0; height: 0; }
+    .tgl .slider { position: absolute; inset: 0; background: var(--border-strong); border-radius: 17px; transition: .15s; cursor: pointer; }
+    .tgl .slider:before { content: ""; position: absolute; height: 13px; width: 13px; left: 2px; top: 2px;
+      background: var(--fill-text); border-radius: 50%; transition: .15s; }
+    .tgl input:checked + .slider { background: var(--ok); }
+    .tgl input:checked + .slider:before { transform: translateX(13px); }
+
+    /* footer teaser */
+    #footer {
+      background: var(--surface); border-top: 1px solid var(--border);
+      padding: 8px 16px; font-size: 12px; color: var(--text-2); flex-shrink: 0;
+      display: flex; align-items: center; gap: 8px;
+    }
+    #footer a { color: var(--accent-2); cursor: pointer; text-decoration: underline; }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--text-muted);
+      gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 36px; opacity: 0.25; }
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Swal form bits (house .cc-form) */
+    .cc-form { text-align: left; font-size: 13px; }
+    .cc-form label { display: block; font-size: 11px; font-weight: 600; color: var(--text-2);
+      margin: 10px 0 3px; text-transform: uppercase; letter-spacing: 0.03em; }
+    .cc-form input[type=text], .cc-form input[type=number], .cc-form select {
+      width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; outline: none; font-family: inherit; background: var(--page-bg); color: var(--text);
+    }
+    .cc-form input:focus, .cc-form select:focus { border-color: var(--info); }
+    .cc-form input:disabled, .cc-form select:disabled { opacity: .6; cursor: not-allowed; }
+    .cc-form .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .cc-form .row2 { display: flex; gap: 12px; }
+    .cc-form .row3 { display: flex; gap: 12px; }
+    .cc-form .row2 > div, .cc-form .row3 > div { flex: 1; min-width: 0; }
+    .cc-form .checks { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+    .cc-form .checks label { display: inline-flex; align-items: center; gap: 6px; margin: 0;
+      text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+    .cc-form .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .cc-form .locked-note { font-size: 11px; color: var(--warn); background: var(--warn-soft);
+      border-radius: 6px; padding: 6px 8px; margin-top: 4px; }
+    .cc-form .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 7px; min-height: 34px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); cursor: text; }
+    .cc-form .chips:focus-within { border-color: var(--info); }
+    .cc-form .chips .chip { font-size: 11px; display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; }
+    .cc-form .chips .chip i { cursor: pointer; opacity: .6; }
+    .cc-form .chips .chip i:hover { opacity: 1; color: var(--danger); }
+    .cc-form .chips input { flex: 1; min-width: 120px; border: none !important; padding: 2px 4px !important;
+      background: transparent !important; font-size: 12.5px; }
+    .cc-form .addrow { display: flex; gap: 6px; margin-top: 6px; }
+    .cc-form .addrow input { flex: 1; }
+    .yc-popup-wide { width: 640px !important; max-width: 95vw; }
+    .unmapped-list { text-align: left; font-size: 12px; max-height: 50vh; overflow: auto; }
+    .unmapped-list table { width: 100%; border-collapse: collapse; }
+    .unmapped-list th { text-align: left; font-size: 10px; text-transform: uppercase; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+    .unmapped-list td { padding: 4px 6px; border-bottom: 1px solid var(--page-bg); }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="toolbar">
+  <i class="fa-solid fa-circle-info"></i>
+  <span>The item-type registry (<b>calendar_item_types</b>) — what a calendar item <i>is</i>, and which pickers offer it.
+        Keys are permanent; labels, lengths and scoping are yours to edit.</span>
+  <span style="flex:1"></span>
+  <select id="f-kind" onchange="render()">
+    <option value="">All kinds</option>
+    <option value="meeting">Meetings</option>
+    <option value="hearing">Hearings</option>
+    <option value="deadline">Deadlines</option>
+    <option value="conference">Conferences</option>
+    <option value="other">Other</option>
+  </select>
+  <label><input type="checkbox" id="f-inactive" onchange="render()"> show inactive</label>
+  <button class="btn btn-primary btn-sm" onclick="openEditor(null)"><i class="fa-solid fa-plus"></i> New Type</button>
+</div>
+
+<div id="wrap">
+  <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
+</div>
+
+<div id="footer">
+  <i class="fa-solid fa-triangle-exclamation" style="color:var(--warn)"></i>
+  <span id="unmapped-line">Checking for unmapped types…</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CALENDAR TYPES SUB-PAGE (Case Config manager) — Unified Events U2b
+//
+// Admin CRUD over calendar_item_types through /api/calendar-types-admin
+// (routes/api.calendarTypesAdmin.js → services/calendarTypeAdminService.js).
+// The runtime picker read layer (services/calendarTypeService.js) has a 60s
+// cache that the server invalidates on every write made here, so an edit
+// reaches the pickers immediately.
+//
+// Server-rule surfacing (the server is the enforcer; the UI just explains):
+//   - type_key is immutable: the input is disabled after create; auto-
+//     suggested from the label on create until the user edits it by hand.
+//   - kind locks (lock icon + disabled select + note) once refs.total > 0.
+//     kind routes storage — meeting → appts, else → events — so the server
+//     409s a change under live rows.
+//   - DELETE 409s (referenced) surface as an offer to deactivate instead.
+//   - alias / label collisions with another row's key/label/alias → 409
+//     naming the row; alias == own label/key → 400. Shown via Toast.
+//   - PICKER OPTIONS (meeting types only): one row per (type, length) with
+//     the surfaces it appears on — the "Options" column opens their own
+//     editor. A meeting type with NO options is offered in NO staff
+//     appointment picker (explicit-only). Nothing references an option row;
+//     appts store type_key + appt_length, which is the same pair.
+//   - case_types: NONE checked = NULL = every case type. Options come from
+//     DISTINCT cases.case_type; a free-add box covers types with no case yet.
+//     The pickers pass the case's type, so a BK-scoped type hides on a Civil
+//     Litigation case.
+//
+// Shell protocol: P.apiSend relay; lifecycle hooks onShow/onRefresh/onNew
+// exposed on window; topbar buttons via P.setTopbarButtons.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2800 });
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+const KINDS    = ['meeting', 'hearing', 'deadline', 'conference', 'other'];
+const KIND_LBL = { meeting: 'Meetings (→ appts)', hearing: 'Hearings', deadline: 'Deadlines', conference: 'Conferences', other: 'Other' };
+const BLOCKS   = ['attendee', 'firm', 'none'];
+const SURFACES = [
+  { key: 'new_client', short: 'new', label: 'New-client dialog', hint: 'first-appointment picker in Add New Client' },
+  { key: 'follow_up',  short: 'f/u', label: 'Follow-up dialog',  hint: 'Schedule Appointment on case / contact / calendar / shell' },
+];
+const SF_SHORT = Object.fromEntries(SURFACES.map(s => [s.key, s.short]));
+
+// ── State ──────────────────────────────────────────────────────
+let types = [];          // server-fresh rows (+refs)
+let caseTypeOpts = [];   // [{case_type, cases}]
+let loaded = false;
+
+// ── Load ───────────────────────────────────────────────────────
+async function reload() {
+  try {
+    const data = await api('/api/calendar-types-admin');
+    types = data.types || [];
+    loaded = true;
+    render();
+  } catch (e) {
+    E('wrap').innerHTML = `<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i><div>${esc(e.message)}</div></div>`;
+  }
+  loadUnmappedLine();
+}
+
+async function loadCaseTypes() {
+  try {
+    const data = await api('/api/calendar-types-admin/case-types');
+    caseTypeOpts = data.case_types || [];
+  } catch (_) { caseTypeOpts = []; }
+}
+
+async function loadUnmappedLine() {
+  const el = E('unmapped-line');
+  try {
+    const d = await api('/api/calendar-types-admin/unmapped');
+    const n = Number(d.total || 0);
+    if (!n) { el.innerHTML = 'Every event and appointment carries a registry type.'; return; }
+    el.innerHTML = `<b>${n}</b> row${n === 1 ? '' : 's'} carr${n === 1 ? 'ies' : 'y'} an unmapped type ` +
+      `(${d.events.length} event${d.events.length === 1 ? '' : 's'}, ${d.appts.length} appt${d.appts.length === 1 ? '' : 's'}) — ` +
+      `<a onclick="showUnmapped()">view</a>. Minting a type from these lands in U9.`;
+    window._unmapped = d;
+  } catch (e) {
+    el.textContent = 'Unmapped check failed: ' + e.message;
+  }
+}
+window.showUnmapped = function () {
+  const d = window._unmapped || { events: [], appts: [] };
+  const fmt = (v) => v ? String(v).slice(0, 10) : '';
+  const rows = [
+    ...d.events.map(r => `<tr><td>event</td><td>${r.id}</td><td>${esc(r.label)}</td><td>${fmt(r.date)}</td><td>${esc(r.link_type || '')} ${r.link_id || ''}</td></tr>`),
+    ...d.appts.map(r =>  `<tr><td>appt</td><td>${r.id}</td><td>${esc(r.label ?? '(blank)')}</td><td>${fmt(r.date)}</td><td>case ${r.case_id || '—'} · ${esc(r.status || '')}</td></tr>`),
+  ].join('');
+  Swal.fire({
+    title: 'Unmapped types',
+    customClass: { popup: 'yc-popup-wide' },
+    html: `<div class="unmapped-list"><table><thead><tr><th>Table</th><th>ID</th><th>Stored type</th><th>Date</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table></div>
+           <div style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:left">Read-only list. Add a matching alias to an existing type (or create the type), then the U9 backfill re-resolves these.</div>`,
+    showConfirmButton: false, showCloseButton: true,
+  });
+};
+
+// ── Render ─────────────────────────────────────────────────────
+function chips(arr, cls, allText) {
+  if (!arr || !arr.length) return `<span class="chip all">${allText}</span>`;
+  return arr.map(x => `<span class="chip ${cls}">${esc(x)}</span>`).join('');
+}
+function optionChips(t) {
+  if (t.kind !== 'meeting') return '<span style="color:var(--text-muted)">—</span>';
+  const opts = t.options || [];
+  const body = opts.length
+    ? opts.map(o => `<span class="chip sf ${o.active ? '' : 'off'}" title="${esc((o.label || t.label) + ' · ' + o.surfaces.join(', '))}">${o.length}m·${o.surfaces.map(x => SF_SHORT[x] || x).join('+')}</span>`).join('')
+    : '<span class="chip all" title="no picker offers this type">none</span>';
+  return `<a class="opt-link" onclick="openOptions('${esc(t.type_key)}')" title="edit picker options">${body} <i class="fa-solid fa-pen" style="font-size:9px;color:var(--text-muted)"></i></a>`;
+}
+function dot(on) { return `<i class="fa-solid fa-circle ${on ? 'dot-on' : 'dot-off'}" style="font-size:9px"></i>`; }
+
+function render() {
+  const host = E('wrap');
+  const fk = E('f-kind').value;
+  const showInactive = E('f-inactive').checked;
+  const rows = types.filter(t => (!fk || t.kind === fk) && (showInactive || t.active));
+  if (!rows.length) {
+    host.innerHTML = `<div class="empty-state"><i class="fa-solid fa-calendar-check"></i><div>No types match</div></div>`;
+    return;
+  }
+  const byKind = {};
+  rows.forEach(t => { (byKind[t.kind] = byKind[t.kind] || []).push(t); });
+  const body = KINDS.filter(k => byKind[k]).map(k => `
+    <tr class="kind-head"><td colspan="13">${esc(KIND_LBL[k])}</td></tr>
+    ${byKind[k].map(t => {
+      const r = t.refs || { total: 0 };
+      const refTitle = `events ${r.events} · appts ${r.appts} · booking views ${r.booking_views} · court matches ${r.ai_match_types}`;
+      const aliasTitle = (t.ingest_aliases || []).join('\n');
+      return `<tr class="${t.active ? '' : 'inactive'}" onclick="openEditor('${esc(t.type_key)}')">
+        <td class="t-num">${t.sort_order}</td>
+        <td><span class="t-label">${esc(t.label)}</span></td>
+        <td><span class="t-key">${esc(t.type_key)}</span>${r.total ? '<i class="fa-solid fa-lock" title="referenced — kind locked"></i>' : ''}</td>
+        <td class="t-c" title="singleton">${dot(t.singleton)}</td>
+        <td>${esc(t.blocks_default)}</td>
+        <td class="t-c" title="client attends">${dot(t.client_attends)}</td>
+        <td class="t-num">${t.default_length == null ? '<span style="color:var(--text-muted)">—</span>' : t.default_length + 'm'}</td>
+        <td onclick="event.stopPropagation()">${optionChips(t)}</td>
+        <td>${chips(t.case_types, '', 'all')}</td>
+        <td class="t-c" title="${esc(aliasTitle)}">${(t.ingest_aliases || []).length || '<span style="color:var(--text-muted)">—</span>'}</td>
+        <td class="t-c" title="${esc(refTitle)}"><span class="chip refs${r.total ? '' : '0'}">${r.total}</span></td>
+        <td class="t-c" onclick="event.stopPropagation()">
+          <label class="tgl" title="active (gates pickers only — inactive types still resolve)">
+            <input type="checkbox" ${t.active ? 'checked' : ''} onchange="toggleActive('${esc(t.type_key)}', this.checked)">
+            <span class="slider"></span></label>
+        </td>
+      </tr>`;
+    }).join('')}
+  `).join('');
+  host.innerHTML = `<table class="types">
+    <thead><tr>
+      <th class="t-num">#</th><th>Label</th><th>Key</th><th class="t-c">Single</th><th>Blocks</th><th class="t-c">Client</th>
+      <th class="t-num">Len</th><th>Picker options</th><th>Case types</th><th class="t-c">Aliases</th><th class="t-c">Refs</th><th class="t-c">Active</th>
+    </tr></thead><tbody>${body}</tbody></table>`;
+}
+window.render = render;
+
+// ── Active toggle (inline) ─────────────────────────────────────
+async function toggleActive(key, on) {
+  try {
+    await api(`/api/calendar-types-admin/${encodeURIComponent(key)}`, 'PUT', { active: on ? 1 : 0 });
+    Toast.fire({ icon: 'success', title: `${key} ${on ? 'activated' : 'deactivated'}` });
+    await reload();
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+    render();   // revert the switch
+  }
+}
+window.toggleActive = toggleActive;
+
+// ── Editor ─────────────────────────────────────────────────────
+function suggestKey(label) {
+  return String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^[^a-z]+/, '').slice(0, 40);
+}
+
+async function openEditor(key) {
+  const isNew = key == null;
+  const t = isNew ? {
+    type_key: '', label: '', kind: 'meeting', singleton: 0, blocks_default: 'attendee', client_attends: 0,
+    default_length: null, ingest_aliases: [], case_types: null, options: [], active: 1,
+    sort_order: (Math.max(0, ...types.map(x => x.sort_order || 0)) + 10), refs: { total: 0 },
+  } : types.find(x => x.type_key === key);
+  if (!t) return;
+  if (!caseTypeOpts.length) await loadCaseTypes();
+
+  const refs = t.refs || { total: 0, events: 0, appts: 0, booking_views: 0, ai_match_types: 0 };
+  const kindLocked = !isNew && (refs.total > 0 || (t.options || []).length > 0);
+  const ctSet = new Set((t.case_types || []).map(s => s.toLowerCase()));
+  const ctOpts = caseTypeOpts.map(o => o.case_type);
+  (t.case_types || []).forEach(c => { if (!ctOpts.some(o => o.toLowerCase() === c.toLowerCase())) ctOpts.push(c); });
+
+  const html = `<div class="cc-form">
+    <div class="row2">
+      <div><label>Label</label><input type="text" id="ed-label" maxlength="80" value="${esc(t.label)}"></div>
+      <div><label>Key ${isNew ? '' : '<span style="color:var(--text-muted);text-transform:none;font-weight:400">(permanent)</span>'}</label>
+        <input type="text" id="ed-key" class="mono" maxlength="40" value="${esc(t.type_key)}" ${isNew ? '' : 'disabled'} placeholder="auto from label">
+        ${isNew ? '<div class="hint">lowercase, starts with a letter, letters/digits/underscore. Referenced everywhere by key — cannot change after save.</div>' : ''}
+      </div>
+    </div>
+    <div class="row3">
+      <div><label>Kind</label>
+        <select id="ed-kind" ${kindLocked ? 'disabled title="locked: referenced rows exist"' : ''}>
+          ${KINDS.map(k => `<option value="${k}" ${t.kind === k ? 'selected' : ''}>${k}</option>`).join('')}
+        </select>
+        ${kindLocked ? `<div class="locked-note"><i class="fa-solid fa-lock"></i> ${refs.total ? refs.total + ' row(s) reference this key — kind routes storage (meeting → appts, else → events), so it is locked.' : 'This type has picker options (a meeting-only concept) — remove them before changing kind.'}</div>`
+                     : '<div class="hint">meeting → appointments table; everything else → events table</div>'}
+      </div>
+      <div><label>Blocks</label>
+        <select id="ed-blocks">${BLOCKS.map(b => `<option value="${b}" ${t.blocks_default === b ? 'selected' : ''}>${b}</option>`).join('')}</select>
+        <div class="hint">whose availability it blocks</div>
+      </div>
+      <div><label>Default length (min)</label><input type="number" id="ed-len" min="0" max="1440" value="${t.default_length == null ? '' : t.default_length}" placeholder="none"></div>
+    </div>
+    <div class="row2">
+      <div><label>Sort order</label><input type="number" id="ed-sort" value="${t.sort_order ?? 0}"></div>
+      <div><label>&nbsp;</label>
+        <div class="checks">
+          <label><input type="checkbox" id="ed-singleton" ${t.singleton ? 'checked' : ''}> singleton</label>
+          <label><input type="checkbox" id="ed-client" ${t.client_attends ? 'checked' : ''}> client attends</label>
+          <label><input type="checkbox" id="ed-active" ${t.active ? 'checked' : ''}> active</label>
+        </div>
+      </div>
+    </div>
+
+    ${(!isNew && t.kind === 'meeting') ? `<div class="hint" style="margin-top:10px"><i class="fa-solid fa-list-check"></i> Picker options (${(t.options || []).length}) are edited from the table's <b>Picker options</b> column.</div>` : ''}
+    <label>Case types <span style="color:var(--text-muted);text-transform:none;font-weight:400">— none checked = every case type</span></label>
+    <div class="checks" id="ed-casetypes">
+      ${ctOpts.map(c => `<label><input type="checkbox" value="${esc(c)}" ${ctSet.has(c.toLowerCase()) ? 'checked' : ''}> ${esc(c)}</label>`).join('')}
+    </div>
+    <div class="addrow"><input type="text" id="ed-ct-add" placeholder="add a case type not listed…"><button type="button" class="btn btn-outline btn-sm" id="ed-ct-btn">Add</button></div>
+
+    <label>Ingest aliases <span style="color:var(--text-muted);text-transform:none;font-weight:400">— inbound free text that resolves to this key (never its own label)</span></label>
+    <div class="chips" id="ed-aliases">
+      ${(t.ingest_aliases || []).map(a => `<span class="chip" data-v="${esc(a)}">${esc(a)} <i class="fa-solid fa-xmark"></i></span>`).join('')}
+      <input type="text" id="ed-alias-in" placeholder="type, then Enter or comma">
+    </div>
+    ${isNew ? '' : `<div class="hint" style="margin-top:10px">References: events ${refs.events} · appts ${refs.appts} · booking views ${refs.booking_views} · court matches ${refs.ai_match_types}</div>`}
+  </div>`;
+
+  const { isConfirmed, isDenied } = await Swal.fire({
+    title: isNew ? 'New calendar type' : `Edit ${t.label}`,
+    customClass: { popup: 'yc-popup-wide' },
+    html,
+    showCancelButton: true,
+    confirmButtonText: isNew ? 'Create' : 'Save',
+    showDenyButton: !isNew,
+    denyButtonText: 'Delete',
+    denyButtonColor: 'var(--danger-fill)',
+    focusConfirm: false,
+    didOpen: () => {
+      // key auto-suggest (create only) until the user touches the key field
+      if (isNew) {
+        let touched = false;
+        E('ed-key').addEventListener('input', () => { touched = true; });
+        E('ed-label').addEventListener('input', () => { if (!touched) E('ed-key').value = suggestKey(E('ed-label').value); });
+      }
+      // free-add case type
+      const addCt = () => {
+        const v = E('ed-ct-add').value.trim();
+        if (!v) return;
+        const host = E('ed-casetypes');
+        const exists = [...host.querySelectorAll('input')].find(i => i.value.toLowerCase() === v.toLowerCase());
+        if (exists) { exists.checked = true; }
+        else {
+          const lbl = document.createElement('label');
+          lbl.innerHTML = `<input type="checkbox" value="${esc(v)}" checked> ${esc(v)}`;
+          host.appendChild(lbl);
+        }
+        E('ed-ct-add').value = '';
+      };
+      E('ed-ct-btn').addEventListener('click', addCt);
+      E('ed-ct-add').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addCt(); } });
+      // alias chips
+      const host = E('ed-aliases');
+      const inp = E('ed-alias-in');
+      const addAlias = () => {
+        const parts = inp.value.split(',').map(s => s.trim()).filter(Boolean);
+        for (const v of parts) {
+          if ([...host.querySelectorAll('.chip')].some(c => c.dataset.v.toLowerCase() === v.toLowerCase())) continue;
+          const chip = document.createElement('span');
+          chip.className = 'chip'; chip.dataset.v = v;
+          chip.innerHTML = `${esc(v)} <i class="fa-solid fa-xmark"></i>`;
+          host.insertBefore(chip, inp);
+        }
+        inp.value = '';
+      };
+      inp.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); addAlias(); }
+        else if (ev.key === 'Backspace' && !inp.value) { const last = host.querySelector('.chip:last-of-type'); if (last) last.remove(); }
+      });
+      inp.addEventListener('blur', addAlias);
+      host.addEventListener('click', (ev) => {
+        if (ev.target.tagName === 'I') ev.target.closest('.chip').remove();
+        else inp.focus();
+      });
+    },
+    preConfirm: async () => {
+      const body = {
+        label:          E('ed-label').value.trim(),
+        blocks_default: E('ed-blocks').value,
+        default_length: E('ed-len').value === '' ? null : Number(E('ed-len').value),
+        sort_order:     Number(E('ed-sort').value || 0),
+        singleton:      E('ed-singleton').checked ? 1 : 0,
+        client_attends: E('ed-client').checked ? 1 : 0,
+        active:         E('ed-active').checked ? 1 : 0,
+        case_types:     [...E('ed-casetypes').querySelectorAll('input:checked')].map(i => i.value),
+        ingest_aliases: [...E('ed-aliases').querySelectorAll('.chip')].map(c => c.dataset.v),
+      };
+      if (!kindLocked) body.kind = E('ed-kind').value;
+      if (isNew) { body.type_key = E('ed-key').value.trim(); body.kind = E('ed-kind').value; }
+      if (!body.label) { Swal.showValidationMessage('Label is required'); return false; }
+      if (isNew && !/^[a-z][a-z0-9_]{1,39}$/.test(body.type_key)) {
+        Swal.showValidationMessage('Key must match ^[a-z][a-z0-9_]{1,39}$'); return false;
+      }
+      try {
+        if (isNew) await api('/api/calendar-types-admin', 'POST', body);
+        else       await api(`/api/calendar-types-admin/${encodeURIComponent(t.type_key)}`, 'PUT', body);
+        return true;
+      } catch (e) {
+        Swal.showValidationMessage(e.message || 'Save failed');
+        return false;
+      }
+    },
+  });
+
+  if (isConfirmed) {
+    Toast.fire({ icon: 'success', title: isNew ? 'Type created' : 'Saved' });
+    await reload();
+  } else if (isDenied) {
+    await deleteType(t);
+  }
+}
+window.openEditor = openEditor;
+
+async function deleteType(t) {
+  const refs = t.refs || { total: 0 };
+  if (refs.total > 0) {
+    const { isConfirmed } = await Swal.fire({
+      icon: 'warning', title: 'Cannot delete',
+      html: `<div style="font-size:13px"><b>${refs.total}</b> row(s) reference <b>${esc(t.type_key)}</b>
+             (events ${refs.events}, appts ${refs.appts}, booking views ${refs.booking_views}, court matches ${refs.ai_match_types}).<br><br>
+             Deactivate it instead? It disappears from pickers; existing rows keep resolving.</div>`,
+      showCancelButton: true, confirmButtonText: 'Deactivate',
+    });
+    if (!isConfirmed) return;
+    return toggleActive(t.type_key, false);
+  }
+  const { isConfirmed } = await Swal.fire({
+    icon: 'warning', title: `Delete "${t.label}"?`,
+    html: `<div style="font-size:13px">Key <b>${esc(t.type_key)}</b> has no references. This is permanent.</div>`,
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: 'var(--danger-fill)',
+  });
+  if (!isConfirmed) return;
+  try {
+    await api(`/api/calendar-types-admin/${encodeURIComponent(t.type_key)}`, 'DELETE');
+    Toast.fire({ icon: 'success', title: `${t.type_key} deleted` });
+    await reload();
+  } catch (e) {
+    if (/reference/i.test(e.message || '')) {
+      // raced: a reference appeared since the list loaded — offer deactivate
+      const { isConfirmed: deact } = await Swal.fire({ icon: 'warning', title: 'Now referenced', text: e.message + ' Deactivate instead?', showCancelButton: true, confirmButtonText: 'Deactivate' });
+      if (deact) return toggleActive(t.type_key, false);
+      return;
+    }
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+
+// ── Picker options editor ──────────────────────────────────────
+// One Swal per type. Each row is its own PUT/DELETE; the "new" row POSTs.
+// The Swal re-renders after every write from a fresh GET of the type.
+async function openOptions(key) {
+  let t = types.find(x => x.type_key === key);
+  if (!t) return;
+  const refresh = async () => {
+    const d = await api(`/api/calendar-types-admin/${encodeURIComponent(key)}`);
+    t = d.type;
+  };
+  const sfBoxes = (prefix, chosen) => `<span class="sfc">${SURFACES.map(s =>
+    `<label title="${esc(s.hint)}"><input type="checkbox" data-sf="${s.key}" ${chosen.includes(s.key) ? 'checked' : ''}> ${esc(s.short)}</label>`).join('')}</span>`;
+  const rowHtml = (o) => `<tr data-id="${o.id}">
+      <td><input type="number" min="1" max="1440" value="${o.length}" data-f="length"></td>
+      <td><input type="text" maxlength="80" value="${esc(o.label || '')}" placeholder="${esc(t.label)}" data-f="label"></td>
+      <td>${sfBoxes('o' + o.id, o.surfaces)}</td>
+      <td><input type="number" value="${o.sort_order}" data-f="sort_order" style="width:56px"></td>
+      <td class="t-c"><input type="checkbox" data-f="active" ${o.active ? 'checked' : ''}></td>
+      <td class="t-c" style="white-space:nowrap">
+        <button type="button" class="btn btn-outline btn-sm" data-act="save" title="Save"><i class="fa-solid fa-floppy-disk"></i></button>
+        <button type="button" class="btn btn-outline btn-sm" data-act="del" title="Delete"><i class="fa-solid fa-trash"></i></button>
+      </td></tr>`;
+  const html = () => `<div class="cc-form">
+    <div class="hint" style="margin-bottom:8px">One row per length. Surfaces: <b>new</b> = new-client dialog, <b>f/u</b> = follow-up dialog (case / contact / calendar / shell).
+      Picker text is the label override or "<b>${esc(t.label)}</b>", plus the length. The saved appointment always carries the type label.</div>
+    <table class="opts"><thead><tr><th>Min</th><th>Label override</th><th>Surfaces</th><th>Sort</th><th class="t-c">Active</th><th></th></tr></thead>
+    <tbody>${(t.options || []).map(rowHtml).join('')}
+      <tr class="new" data-id="">
+        <td><input type="number" min="1" max="1440" placeholder="${t.default_length ?? ''}" data-f="length"></td>
+        <td><input type="text" maxlength="80" placeholder="(optional)" data-f="label"></td>
+        <td>${sfBoxes('new', [])}</td>
+        <td><input type="number" value="${((t.options || []).length + 1) * 10}" data-f="sort_order" style="width:56px"></td>
+        <td class="t-c"><input type="checkbox" data-f="active" checked></td>
+        <td class="t-c"><button type="button" class="btn btn-primary btn-sm" data-act="add"><i class="fa-solid fa-plus"></i> Add</button></td>
+      </tr></tbody></table>
+    <div id="opt-msg" class="hint" style="min-height:14px;margin-top:6px"></div></div>`;
+
+  const readRow = (tr) => ({
+    length:     tr.querySelector('[data-f=length]').value === '' ? null : Number(tr.querySelector('[data-f=length]').value),
+    label:      tr.querySelector('[data-f=label]').value.trim() || null,
+    surfaces:   [...tr.querySelectorAll('input[data-sf]:checked')].map(i => i.dataset.sf),
+    sort_order: Number(tr.querySelector('[data-f=sort_order]').value || 0),
+    active:     tr.querySelector('[data-f=active]').checked ? 1 : 0,
+  });
+
+  await Swal.fire({
+    title: `Picker options — ${t.label}`,
+    customClass: { popup: 'yc-popup-wide' },
+    html: html(),
+    showConfirmButton: false, showCloseButton: true,
+    didOpen: () => {
+      const popup = Swal.getHtmlContainer();
+      const msg = (txt, err) => { const m = E('opt-msg'); if (m) { m.textContent = txt; m.style.color = err ? 'var(--danger)' : 'var(--ok)'; } };
+      const rerender = async () => { await refresh(); popup.innerHTML = html(); };
+      popup.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('button[data-act]');
+        if (!btn) return;
+        const tr = btn.closest('tr');
+        const id = tr.dataset.id;
+        const body = readRow(tr);
+        try {
+          if (btn.dataset.act === 'add') {
+            await api(`/api/calendar-types-admin/${encodeURIComponent(key)}/options`, 'POST', body);
+            await rerender(); msg('Option added');
+          } else if (btn.dataset.act === 'save') {
+            await api(`/api/calendar-types-admin/options/${id}`, 'PUT', body);
+            await rerender(); msg('Saved');
+          } else if (btn.dataset.act === 'del') {
+            await api(`/api/calendar-types-admin/options/${id}`, 'DELETE');
+            await rerender(); msg('Deleted');
+          }
+        } catch (e) { msg(e.message || 'Failed', true); }
+      });
+    },
+  });
+  await reload();
+}
+window.openOptions = openOptions;
+
+// ── Lifecycle ──────────────────────────────────────────────────
+async function init() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  await reload();
+}
+function onShow()    { P.setTopbarButtons({ new: true, refresh: true }); if (loaded) reload(); }
+function onHide()    {}
+function onRefresh() { reload(); }
+function onNew()     { openEditor(null); }
+window.onShow = onShow; window.onHide = onHide; window.onRefresh = onRefresh; window.onNew = onNew;
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

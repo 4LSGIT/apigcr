@@ -16,8 +16,20 @@
  *             case_types, active, sort_order } … ] }  — sorted by sort_order,
  *             type_key (the registry's own order).
  *
- * No write routes here — admin CRUD is U2b, which also calls
- * calendarTypeService.invalidate() after every write.
+ * GET /api/calendar-types/options — (U2b) what a staff APPOINTMENT picker shows.
+ *                             ?surface=new_client|follow_up   REQUIRED (else 400)
+ *                             ?case_type=Bankruptcy           options whose TYPE is
+ *                                                             unscoped or scoped to it
+ *                             Active options of active types only.
+ *
+ * Response: { status:'success', data:[ { option_id, type_key, label, type_label,
+ *             length, kind, surfaces, sort_order, active } … ] } — type order,
+ *             then option order. `label` is the picker text (override or type
+ *             label); callers send `type_label` back as appt_type so the label
+ *             column always carries the registry's canonical string.
+ *
+ * No write routes here — admin CRUD is routes/api.calendarTypesAdmin.js
+ * (U2b), which calls calendarTypeService.invalidate() after every write.
  *
  * Auto-mounted from routes/ (server.js readdir loop). /api/calendar-types is
  * a new path; nothing else in routes/ declares it (grep verified).
@@ -53,6 +65,22 @@ router.get('/api/calendar-types', jwtOrApiKey, async (req, res) => {
   } catch (err) {
     console.error('GET /api/calendar-types error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch calendar types' });
+  }
+});
+
+router.get('/api/calendar-types/options', jwtOrApiKey, async (req, res) => {
+  try {
+    const data = await calendarTypeService.listOptions(req.db, {
+      surface:   req.query.surface   == null ? undefined : String(req.query.surface),
+      case_type: req.query.case_type == null ? undefined : String(req.query.case_type),
+    });
+    res.json({ status: 'success', data });
+  } catch (err) {
+    if (typeof err.status === 'number' && err.status < 500) {
+      return res.status(err.status).json({ status: 'error', message: err.message });
+    }
+    console.error('GET /api/calendar-types/options error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch calendar type options' });
   }
 });
 

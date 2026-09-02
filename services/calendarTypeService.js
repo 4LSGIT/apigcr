@@ -54,9 +54,22 @@
  * failed refresh keeps serving the last good cache rather than replacing it
  * with nothing.
  *
+ * ── OPTIONS (U2b) ───────────────────────────────────────────────────────────
+ * A second table, `calendar_type_options`, is what the staff APPOINTMENT
+ * pickers offer: one row per (type_key, length) with a surfaces subset and an
+ * optional label override. Identity stays on the type (type_key is what the
+ * cascade / singleton / court / booking reference); an option is presentation
+ * and nothing references one. listOptions({ surface, case_type }) is the
+ * fourth question this module answers. A meeting type with no option rows is
+ * offered in no staff picker (explicit-only — nothing appears by accident).
+ * Options have their OWN cache (loadOptions) so the many suites that script
+ * REGISTRY_SQL positionally are untouched. The admin CRUD lives in
+ * services/calendarTypeAdminService.js and calls invalidate() after every
+ * write — this module stays read-only.
+ *
  * ── CACHE ───────────────────────────────────────────────────────────────────
- * In-process, TTL 60s. `invalidate()` is exported now for the U2b admin write
- * path. `_primeCache(rows)` is the test hook: suites with scripted DB stubs
+ * In-process, TTL 60s. `invalidate()` is called by the U2b admin write path
+ * (calendarTypeAdminService). `_primeCache(rows)` is the test hook: suites with scripted DB stubs
  * prime the cache with the seed fixture instead of adding a positional
  * registry query to their scripts (R1.3). Primed caches never expire; only
  * `invalidate()` or `{ force: true }` replace them.
@@ -75,6 +88,13 @@ const WARN_THROTTLE_MS = 60 * 1000;
 /** Enum values of calendar_item_types.kind — byte-identical to events.kind (E0a order). */
 const KINDS = ['hearing', 'meeting', 'deadline', 'conference', 'other'];
 const BLOCKS = ['attendee', 'firm', 'none'];
+/**
+ * Closed vocabulary of calendar_type_options.surfaces (U2b) — the staff
+ * appointment pickers. Each option row names the subset it appears on.
+ *   new_client   scripts.js newContact() inline first-appt picker
+ *   follow_up    scripts.js newApptDialog() (case / contact / calendar / shell tab)
+ */
+const SURFACES = ['new_client', 'follow_up'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Normalization
@@ -217,10 +237,106 @@ async function _idx(db, opts) {
   return _cache;
 }
 
-/** Drop the cache. Called by the admin write path (U2b). */
+/** Drop both caches (registry + options). Called by the admin write path (U2b). */
 function invalidate() {
   _cache = null;
+  _optCache = null;
   _lastLoadWarnAt = 0;   // a fresh load deserves a fresh warning if it fails
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Options (U2b) — separate cache, same TTL / fail-soft rules
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OPTIONS_SQL =
+  `SELECT id, type_key, label, length, surfaces, sort_order, active
+     FROM calendar_type_options
+    ORDER BY sort_order ASC, length ASC, id ASC`;
+
+/** Shape one option row (raw DB or fixture). */
+function _shapeOption(o) {
+  return {
+    id:         Number(o.id),
+    type_key:   String(o.type_key),
+    label:      o.label == null || o.label === '' ? null : String(o.label),
+    length:     Number(o.length),
+    surfaces:   (_jsonArray(o.surfaces) || []).map((x) => _norm(x)),
+    sort_order: o.sort_order == null ? 0 : Number(o.sort_order),
+    active:     o.active == null ? 1 : _int01(o.active),
+  };
+}
+
+let _optCache = null;   // { at, primed, rows }
+
+async function loadOptions(db, { force = false } = {}) {
+  if (!force && _optCache && (_optCache.primed || Date.now() - _optCache.at < TTL_MS)) {
+    return _optCache.rows;
+  }
+  let rows;
+  try {
+    const [res] = await db.query(OPTIONS_SQL);
+    rows = (Array.isArray(res) ? res : []).map(_shapeOption);
+  } catch (err) {
+    _warnLoad(err);
+    if (_optCache) { _optCache.at = Date.now(); return _optCache.rows; }
+    _optCache = { at: Date.now() - (TTL_MS - FAIL_RETRY_MS), primed: false, rows: [] };
+    return _optCache.rows;
+  }
+  _optCache = { at: Date.now(), primed: false, rows };
+  return _optCache.rows;
+}
+
+/** TEST HOOK. Prime the options cache (raw DB shape or fixture shape). */
+function _primeOptions(rows) {
+  _optCache = { at: Date.now(), primed: true, rows: (rows || []).map(_shapeOption) };
+}
+
+/**
+ * What a staff appointment picker shows (U2b).
+ *
+ * @param {object} opts
+ * @param {string} opts.surface     REQUIRED, one of SURFACES (else status-400 error)
+ * @param {string} [opts.case_type] keep options whose TYPE's case_types is NULL or contains it (ci)
+ * @param {*}      [opts.active]    default true: only active options of active types.
+ *                                  Pass false/'0' to include inactive (admin views).
+ * @returns rows ordered by type sort_order, option sort_order, length, id:
+ *   { option_id, type_key, label (override ?? type label), type_label, length,
+ *     kind, surfaces, sort_order, active }
+ */
+async function listOptions(db, { surface, case_type, active = true } = {}) {
+  const sf = _norm(surface);
+  if (!sf || !SURFACES.includes(sf)) {
+    const e = new Error(`surface is required and must be one of ${SURFACES.join(', ')} (got ${JSON.stringify(surface == null ? null : String(surface))})`);
+    e.status = 400;
+    throw e;
+  }
+  const activeOnly = !(active === false || active === 0 || active === '0' || active === 'false');
+  const ct = _norm(case_type);
+  const idx = await _idx(db);
+  const options = await loadOptions(db);
+
+  const out = [];
+  for (const o of options) {
+    const t = idx.byKey.get(_norm(o.type_key));
+    if (!t) continue;                                   // orphan option — never offered
+    if (!o.surfaces.includes(sf)) continue;
+    if (activeOnly && (!o.active || !t.active)) continue;
+    if (ct && t.case_types && !t.case_types.some((c) => _norm(c) === ct)) continue;
+    out.push({
+      option_id:  o.id,
+      type_key:   t.type_key,
+      label:      o.label || t.label,
+      type_label: t.label,
+      length:     o.length,
+      kind:       t.kind,
+      surfaces:   o.surfaces.slice(),
+      sort_order: o.sort_order,
+      active:     o.active,
+      _ts:        t.sort_order,
+    });
+  }
+  out.sort((a, b) => (a._ts - b._ts) || (a.sort_order - b.sort_order) || (a.length - b.length) || (a.option_id - b.option_id));
+  return out.map(({ _ts, ...r }) => r);
 }
 
 /**
@@ -385,15 +501,21 @@ module.exports = {
   resolveTypeKey,
   getType,
   listTypes,
+  listOptions,
+  loadOptions,
   invalidate,
   resolveForCreate,
   applyApptTypePatch,
   KINDS,
   BLOCKS,
+  SURFACES,
   // test hooks / internals (repo `_`-prefix convention)
   _primeCache,
+  _primeOptions,
+  _shapeOption,
   _norm,
   _shapeRow,
   _TTL_MS: TTL_MS,
   _REGISTRY_SQL: REGISTRY_SQL,
+  _OPTIONS_SQL: OPTIONS_SQL,
 };

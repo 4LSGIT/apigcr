@@ -148,6 +148,7 @@ manual/05-Subsystems/05-document-requests.md
 manual/05-Subsystems/06-reports.md
 manual/05-Subsystems/07-YisraView.md
 manual/05-Subsystems/08-documents.md
+manual/05-Subsystems/09-calendar-types.md
 manual/05-Subsystems/README.md
 manual/06-Admin-Tools/01-db-console.md
 manual/06-Admin-Tools/02-readonly-keys.md
@@ -202,6 +203,7 @@ public/calendar.html
 public/campaign.html
 public/case.html
 public/caseConfigManager.html
+public/caseconfig/calendarTypes.html
 public/caseconfig/fields.html
 public/caseconfig/pipelines.html
 public/caseconfig/types.html
@@ -357,6 +359,7 @@ ref/2026-09-01_unified_events_u3.sql
 ref/2026-09-01_unified_events_u5.sql
 ref/2026-09-01_unified_events_u6b.sql
 ref/2026-09-02_g4_2_notice_precheck.sql
+ref/2026-09-02_unified_events_u2b.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -418,6 +421,7 @@ routes/api.availability.js
 routes/api.bookingViews.js
 routes/api.calendarFeed.js
 routes/api.calendarTypes.js
+routes/api.calendarTypesAdmin.js
 routes/api.caseEvents.js
 routes/api.cases.js
 routes/api.checklists.js
@@ -536,6 +540,7 @@ scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
 scripts/backfill_court_event_calendars_2026_08.js
+scripts/calendarTypeOptionsSeed.js
 scripts/calendarTypeSeed.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
@@ -573,6 +578,7 @@ services/apptService.js
 services/assetService.js
 services/availabilityService.js
 services/calendarService.js
+services/calendarTypeAdminService.js
 services/calendarTypeService.js
 services/calendarWriteService.js
 services/campaignService.js
@@ -857,6 +863,9 @@ tests/test_report_author.sh
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/typeKeyVocabulary.test.js
+tests/unifiedEventsU2b.admin.test.js
+tests/unifiedEventsU2b.options.test.js
+tests/unifiedEventsU2b.pickers.test.js
 tests/unifiedEventsU5.booking.test.js
 tests/unifiedEventsU5.cascade.test.js
 tests/unifiedEventsU6a.consumers.test.js

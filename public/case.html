@@ -669,7 +669,7 @@
           relate_type:  cl.relate_type || cl.case_relate_type || ''
         }));
         newApptDialog({
-          caseFixed:    { id: caseID, label: caseLabel },
+          caseFixed:    { id: caseID, label: caseLabel, case_type: c.case_type || null },   // U2b: scopes the type picker
           contactList,
           contactDefaultPrimary: true,
           onCreated: async () => {

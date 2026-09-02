@@ -15,6 +15,7 @@ lives behind the **More** menu in the main navigation.
 | 6 | [06-reports.md](06-reports.md) | Saved questions that answer with a number — charts, filters, CSV, scheduled emails, and an AI that drafts new ones. (More → Reports) |
 | 7 | [07-YisraView.md](07-YisraView.md) | Working lists built on the same engine — filter, sort, and click straight into a case. Pin one to your own sidebar tab. (More → Views) |
 | 8 | [08-documents.md](08-documents.md) | The Documents registry: how files in Dropbox reach a case, the Sync panel that operates it, and the guided workflow for re-linking a case that points at the wrong folder. (More → Documents) |
+| 9 | [09-calendar-types.md](09-calendar-types.md) | The calendar item-type registry — appointment/event types, their keys, and which staff pickers offer them at which lengths. (More → Case Config → Calendar Types) |
 
 > **Reports and Views are the same system.** One saved SQL definition, one
 > curated schema, one set of guards — a report renders it as a number, a view
