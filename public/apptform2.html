@@ -319,13 +319,15 @@
       <div class="yc-row">
         <div class="yc-field">
           <label class="yc-label">Create New Case</label>
-          <select id="newCaseType">
+          <!-- Options come from the fe-case_types registry via the shell's
+               getCaseTypeMap() — see acFillCaseTypes() below. The hardcoded
+               list this replaced had drifted (Debt Settlement / Student Loan
+               are not case types the firm uses). -->
+          <select id="newCaseType" onchange="acSyncCaseType()">
             <option value="">Select type...</option>
-            <option>Bankruptcy</option>
-            <option>Debt Settlement</option>
-            <option>Student Loan</option>
-            <option>Other</option>
           </select>
+          <input type="text" id="newCaseOtherType" placeholder="Enter case type" style="display:none;margin-top:4px;">
+          <select id="newCaseSubtype" style="display:none;margin-top:4px;"></select>
         </div>
         <div class="yc-field" style="flex:0;align-self:flex-end;">
           <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="createCase()">Create</button>
@@ -507,6 +509,7 @@ function renderCase() {
     display.innerHTML = '<span style="color:var(--text-muted);">No case linked</span>';
     document.getElementById('caseInfo').innerHTML = '<span style="color:var(--text-muted);">None</span>';
     addPanel.style.display = 'block';
+    acFillCaseTypes();   // registry-fed options; safe to re-run
   }
 }
 
@@ -717,15 +720,59 @@ async function linkCase() {
   }
 }
 
+/* ─── CASE-TYPE REGISTRY (fe-case_types) ───
+   This page doesn't load scripts.js, so it borrows the shell's
+   getCaseTypeMap() — the same single source NewCaseForm, newContact,
+   case.html's cascading selects and the Cases-tab filter all read. If the
+   shell is somehow unreachable we fall back to a bare 'Other' so the control
+   still works (free text is always available through it). */
+function acCaseTypeMap() {
+  try {
+    if (P && typeof P.getCaseTypeMap === 'function') return P.getCaseTypeMap();
+  } catch (_) { /* same-origin, cannot actually throw */ }
+  return { Other: [] };
+}
+function acEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+/* Rebuilt blank-first on every type change, so a stale subtype can't leak
+   across types. 'Other' additionally reveals the free-text override. */
+function acSyncCaseType() {
+  const map  = acCaseTypeMap();
+  const t    = document.getElementById('newCaseType').value;
+  const subs = map[t] || [];
+  const sub  = document.getElementById('newCaseSubtype');
+  sub.innerHTML = '<option value="">— subtype —</option>'
+    + subs.map(s => `<option value="${acEsc(s)}">${acEsc(s)}</option>`).join('');
+  sub.style.display = subs.length ? '' : 'none';
+  document.getElementById('newCaseOtherType').style.display = (t === 'Other') ? '' : 'none';
+}
+/* Idempotent — renderCase() calls it every time the add-case panel is shown. */
+function acFillCaseTypes() {
+  const keys = Object.keys(acCaseTypeMap());
+  if (!keys.includes('Other')) keys.push('Other');
+  const sel = document.getElementById('newCaseType');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Select type...</option>'
+    + keys.map(t => `<option value="${acEsc(t)}">${acEsc(t)}</option>`).join('');
+  if (prev) sel.value = prev;
+  acSyncCaseType();
+}
+
 async function createCase() {
-  const caseType = document.getElementById('newCaseType').value;
+  // Types stay OPAQUE free text: 'Other' + non-empty override wins, otherwise
+  // the literal selected value is sent as-is.
+  const typeRaw  = document.getElementById('newCaseType').value;
+  const otherTxt = (document.getElementById('newCaseOtherType').value || '').trim();
+  const caseType = (typeRaw === 'Other' && otherTxt) ? otherTxt : typeRaw;
+  const caseSubtype = (document.getElementById('newCaseSubtype').value || '').trim();
   if (!caseType) { Toast.fire({ icon: 'warning', title: 'Select a case type' }); return; }
 
   try {
-    const r = await P.apiSend('/api/intake/case', 'POST', {
-      contact_id: apptData.appt_client_id,
-      case_type: caseType,
-    });
+    const body = { contact_id: apptData.appt_client_id, case_type: caseType };
+    if (caseSubtype) body.case_subtype = caseSubtype;
+    const r = await P.apiSend('/api/intake/case', 'POST', body);
     if (r.id || r.case_id) {
       const newCaseId = r.case_id || r.id;
       await P.apiSend(`/api/appts/${apptData.appt_id}`, 'PATCH', { appt_case_id: newCaseId });

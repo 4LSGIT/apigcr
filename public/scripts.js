@@ -1984,6 +1984,19 @@ function newContact(prefill = {}, onSuccess = null) {
        <input style="width:200px;" type="date" id="NCEmailStart"><br>`
     : '';
 
+  // Case type — map-driven from the fe-case_types registry (getCaseTypeMap),
+  // the SAME single source as NewCaseForm, case.html's cascading selects and
+  // the shells' Cases-tab filter. Was a hardcoded Bankruptcy/Other pair.
+  // 'Other' is appended only if the registry doesn't already define it, and
+  // keeps its free-text override so an unlisted type can still be typed in.
+  // Subtype cascades off the chosen type and hides when the type has none.
+  const ncTypeMap  = getCaseTypeMap();
+  const ncTypeKeys = Object.keys(ncTypeMap);
+  if (!ncTypeKeys.includes('Other')) ncTypeKeys.push('Other');
+  const ncTypeOptions = ncTypeKeys
+    .map(t => `<option value="${escAttr(t)}">${escAttr(t)}</option>`)
+    .join('');
+
   // appt_with options (lowest-id does_appts user default)
   const firm = (typeof window !== 'undefined' && window.firmData)
     ? window.firmData
@@ -2064,12 +2077,15 @@ function newContact(prefill = {}, onSuccess = null) {
          <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
          ${emailStartHtml}
          <label class="input-label">Case Type:</label>
-         <select id="NCType" style="width:200px;" onchange="E('NCOtherType').style.display = this.value === 'Other' ? '' : 'none';">
+         <select id="NCType" style="width:200px;">
           <option selected value="">Select a case type</option>
-          <option>Bankruptcy</option>
-          <option>Other</option>
+          ${ncTypeOptions}
          </select>
          <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
+         <span id="NCSubtypeRow" style="display:none;">
+           <label class="input-label">Subtype:</label>
+           <select id="NCSubtype" style="width:200px;"></select><br>
+         </span>
          <label class="sub-label">Optional, select type to open a case.</label><br>
          ${apptBlockHtml}
          `,
@@ -2099,9 +2115,32 @@ function newContact(prefill = {}, onSuccess = null) {
       if (defaultWith && E("NCApptWith")) E("NCApptWith").value = defaultWith;
       // U2b — registry-fed type picker (fallback list on failure), scoped by
       // the chosen case type; re-fetched when that changes.
+      // Cascading subtype + the 'Other' free-text override. The subtype select
+      // is rebuilt blank-first on every type change, so a stale subtype can
+      // never leak across types; the whole row hides for types with none.
+      // (Replaces the inline onchange the hardcoded select carried.)
+      const syncNCType = () => {
+        const t    = E("NCType") ? E("NCType").value : '';
+        const subs = ncTypeMap[t] || [];
+        const sel  = E("NCSubtype");
+        if (sel) {
+          sel.innerHTML = `<option value="" selected>— subtype —</option>`
+            + subs.map(s => `<option value="${escAttr(s)}">${escAttr(s)}</option>`).join('');
+        }
+        if (E("NCSubtypeRow")) E("NCSubtypeRow").style.display = subs.length ? '' : 'none';
+        if (E("NCOtherType"))  E("NCOtherType").style.display  = (t === 'Other') ? '' : 'none';
+      };
+      syncNCType();
+      if (E("NCType")) E("NCType").addEventListener('change', syncNCType);
+
+      // The case_type the registry scopes the appt-type picker by. Resolves
+      // 'Other' EXACTLY as _ncInlineSubmit does — non-empty override wins,
+      // empty falls back to the literal 'Other' — so the picker is scoped by
+      // the same string the case is about to be created with.
       const ncCaseType = () => {
-        const raw = E("NCType") ? E("NCType").value : '';
-        return raw === 'Other' ? (E("NCOtherType") ? E("NCOtherType").value.trim() : '') : raw;
+        const raw   = E("NCType") ? E("NCType").value : '';
+        const other = ((E("NCOtherType") && E("NCOtherType").value) || '').trim();
+        return (raw === 'Other' && other) ? other : raw;
       };
       const ncLoadTypes = () => ycApptTypeOptions('new_client', ncCaseType())
         .then(rows => ycRenderApptTypeSelect(E("NCApptTypeSel"), rows));
@@ -2175,7 +2214,16 @@ function newContact(prefill = {}, onSuccess = null) {
     const phone = E("NCPhone").value.replace(/\D/g, "");
     const email = E("NCEmail").value.trim();
     const caseTypeRaw = E("NCType").value;
-    const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
+    // 'Other' + non-empty free text = a custom opaque type; empty free text
+    // falls back to the LITERAL 'Other', which is a real registry category
+    // now. Same rule as NewCaseForm and apptform2's createCase() — one
+    // registry, one meaning. (This used to hard-error instead.)
+    const otherTxt = ((E("NCOtherType") && E("NCOtherType").value) || '').trim();
+    const caseType = (caseTypeRaw === "Other" && otherTxt) ? otherTxt : caseTypeRaw;
+    // Only carries a value when the chosen type has subtypes — the select is
+    // rebuilt blank-first on every type change (syncNCType), so nothing stale
+    // can leak across types.
+    const caseSubtype = ((E("NCSubtype") && E("NCSubtype").value) || '').trim();
 
     // ── Contact validation (shared) ──
     if (!name || (!E("NCPhone").value && !email)) {
@@ -2199,10 +2247,8 @@ function newContact(prefill = {}, onSuccess = null) {
       Swal.showValidationMessage("Please select a case type");
       return false;
     }
-    if (caseTypeRaw === "Other" && !caseType) {
-      Swal.showValidationMessage("Please enter a case type");
-      return false;
-    }
+    // No "Other requires free text" guard: 'Other' always resolves to a
+    // non-empty type now (see caseType above), so the check was dead code.
 
     // ── Appt validation (only if scheduling) ──
     const apptOn = E("NCApptOn") && E("NCApptOn").checked;
@@ -2240,10 +2286,9 @@ function newContact(prefill = {}, onSuccess = null) {
       // 2) case (always for 'case' mode; for 'client' mode only if type chosen)
       let caseResult = null;
       if (mode === 'case' || caseType) {
-        caseResult = await P.apiSend("/api/intake/case", "POST", {
-          contact_id: contactResult.id,
-          case_type: caseType
-        });
+        const caseBody = { contact_id: contactResult.id, case_type: caseType };
+        if (caseSubtype) caseBody.case_subtype = caseSubtype;
+        caseResult = await P.apiSend("/api/intake/case", "POST", caseBody);
       }
 
       // 3) appt (optional) — attach the created case if there is one
