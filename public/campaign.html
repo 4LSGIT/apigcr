@@ -119,7 +119,23 @@
     </div>
     <div class="filter-group">
       <label>Case Type</label>
-      <input type="text" id="f-case-type" placeholder="e.g. Chapter 7">
+      <!-- Options come from the shell's populateCaseTypeFilter(), fed by
+           fe-case_types MERGED WITH the types that actually exist in cases
+           (GET /api/campaigns/case-types) — see fillCaseTypeFilter below. The
+           static "Any" survives re-populates; dynamic options are data-dyn
+           and carry data-type (case_type) plus data-subtype (exact
+           case_subtype, absent = every subtype of that type).
+
+           This was a free-text input placeholdered "e.g. Chapter 7", which
+           could never match: since the 2026-06 split "Chapter 7" lives in
+           cases.case_subtype and this filter only ever compared
+           cases.case_type, so following the placeholder gave a silent
+           zero-result search. A select also removes that whole failure mode —
+           an exact-match filter you have to spell from memory fails silently
+           by design. -->
+      <select id="f-case-type">
+        <option value="">Any</option>
+      </select>
     </div>
     <div class="filter-group">
       <label>Case Stage</label>
@@ -355,6 +371,7 @@ let quill = null;
 let pollTimer = null;
 let mmsAttachmentUrl = null;
 let emailAttachmentUrl = null;
+let caseTypeFacets = null;   // { Type: [Subtype, ...] } of types that EXIST
 
 // ─── CUSTOM QUILL IMAGE BLOT ──────────────────────────────────
 // Quill's default Image blot only keeps src. This extends it to
@@ -389,6 +406,44 @@ EmailImage.blotName = 'image';
 EmailImage.tagName  = 'IMG';
 Quill.register(EmailImage, true);
 
+/* Case-type filter options.
+
+   Two sources, deliberately. fe-case_types (via the shell's
+   populateCaseTypeFilter — this page doesn't load scripts.js, and P is
+   index.html; see the iframe comment there) is the WRITER vocabulary: what
+   staff may create. But every create dialog also offers an 'Other' free-text
+   escape, so cases carry types the registry never listed — 'potato hunting',
+   'support' and 'Unknown' are all live today. A filter needs the READER
+   vocabulary, so we merge in what the data actually contains.
+
+   Free text was the other way to reach those rows, and it is worse here: the
+   comparison is exact, so a misremembered string fails silently — the exact
+   bug this filter already had. A derived list cannot be misspelled, and on a
+   filter it can express everything free text could.
+
+   Facets are fetched once (they move slowly); the registry half is read live
+   on every call, so a Settings edit lands without a reload. If either source
+   is unavailable we degrade toward "Any" — never to a broken filter. */
+function fillCaseTypeFilter() {
+  const sel = document.getElementById('f-case-type');
+  if (!sel) return;
+  try {
+    if (P && typeof P.populateCaseTypeFilter === 'function') {
+      P.populateCaseTypeFilter(sel, caseTypeFacets);
+    }
+  } catch (_) { /* same-origin, cannot actually throw */ }
+}
+
+async function loadCaseTypeFacets() {
+  try {
+    const r = await P.apiSend('/api/campaigns/case-types', 'GET');
+    caseTypeFacets = (r && r.case_types) || null;
+  } catch (err) {
+    // Non-fatal: the filter still offers the registry types.
+    console.warn('case-type facets unavailable:', err.message);
+  }
+}
+
 // ─── INIT ─────────────────────────────────────────────────────
 async function init() {
   try {
@@ -397,6 +452,9 @@ async function init() {
   } catch (err) {
     console.error('Init failed:', err);
   }
+
+  await loadCaseTypeFacets();
+  fillCaseTypeFilter();
 
   // Quill — custom image handler uploads to GCS instead of base64 embed
   quill = new Quill('#quill-editor', {
@@ -523,8 +581,17 @@ async function searchContacts() {
   const tags = document.getElementById('f-tags').value.trim();
   if (tags) params.set('tags', tags);
 
-  const caseType = document.getElementById('f-case-type').value.trim();
-  if (caseType) params.set('case_type', caseType);
+  // Re-populate before reading: the helper is idempotent and restores the
+  // current selection, so this costs nothing and picks up a registry edit
+  // made in another tab since this frame loaded. (Mirrors tabCasesGet.)
+  fillCaseTypeFilter();
+  const typeOpt = document.getElementById('f-case-type').selectedOptions[0];
+  // The static "Any" option carries neither attribute — no filter at all.
+  // A "Type (all)" option carries data-type only, so every subtype matches.
+  const caseType    = (typeOpt && typeOpt.dataset.type)    || '';
+  const caseSubtype = (typeOpt && typeOpt.dataset.subtype) || '';
+  if (caseType)    params.set('case_type', caseType);
+  if (caseSubtype) params.set('case_subtype', caseSubtype);
 
   const caseStage = document.getElementById('f-case-stage').value;
   if (caseStage) params.set('case_stage', caseStage);
@@ -603,7 +670,7 @@ function updateSelectedCount() {
 
 function clearFilters() {
   document.getElementById('f-tags').value = '';
-  document.getElementById('f-case-type').value = '';
+  document.getElementById('f-case-type').selectedIndex = 0;   // the static "Any"
   document.getElementById('f-case-stage').value = '';
   document.getElementById('f-open-after').value = '';
   document.getElementById('f-open-before').value = '';

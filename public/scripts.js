@@ -184,12 +184,36 @@ function fmtCaseType(c) {
    for the static options:
      const opt = sel.selectedOptions[0];
      const type = opt ? (opt.dataset.type ?? opt.value) : '%';
-     const subtype = (opt && opt.dataset.subtype) || ''; */
-function populateCaseTypeFilter(sel) {
+     const subtype = (opt && opt.dataset.subtype) || '';
+
+   extraTypes (optional): a second {Type: [Subtype, ...]} map merged OVER the
+   registry, same shape as fe-case_types. It exists because the registry is a
+   WRITER vocabulary — what staff may create — while a filter needs a READER
+   vocabulary: what actually exists. The three create dialogs all offer an
+   'Other' free-text escape, so cases carry types the registry never listed
+   ('potato hunting' is live today), and a registry-only filter simply cannot
+   see them. Callers that pass nothing behave exactly as before.
+
+   Merge rule: union of types, registry order first; within a shared type,
+   union of subtypes, registry subtypes first. Types stay opaque — nothing
+   here validates shape. */
+function populateCaseTypeFilter(sel, extraTypes) {
   if (!sel) return;
   const prev = sel.value;
   sel.querySelectorAll('option[data-dyn="1"]').forEach(o => o.remove());
   const map = getCaseTypeMap();
+  if (extraTypes && typeof extraTypes === 'object' && !Array.isArray(extraTypes)) {
+    for (const [t, subs] of Object.entries(extraTypes)) {
+      const key = String(t).trim();
+      if (!key) continue;                       // '' is "no type set", not a type
+      if (!map[key]) map[key] = [];
+      if (!Array.isArray(subs)) continue;
+      for (const s of subs) {
+        const sub = String(s).trim();
+        if (sub && !map[key].includes(sub)) map[key].push(sub);
+      }
+    }
+  }
   for (const [type, subs] of Object.entries(map)) {
     const add = (label, subtype) => {
       const opt = document.createElement('option');

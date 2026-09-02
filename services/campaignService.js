@@ -43,7 +43,10 @@ const { localToUTC } = require('./timezoneService');
  * @param {object} db
  * @param {object} filters
  * @param {string[]} [filters.tags]            — OR logic: contact has any of these tags
- * @param {string}   [filters.case_type]       — e.g. "Chapter 7"
+ * @param {string}   [filters.case_type]       — case CATEGORY, exact, e.g. "Bankruptcy"
+ * @param {string}   [filters.case_subtype]    — category refinement, exact, e.g. "Chapter 7"
+ *                                               (2026-06 split). Independently optional:
+ *                                               case_type alone matches every subtype.
  * @param {string|string[]} [filters.case_stage] — e.g. "Open" or ["Open","Filed"]
  * @param {string}   [filters.case_open_after] — date string YYYY-MM-DD
  * @param {string}   [filters.case_open_before]
@@ -55,7 +58,7 @@ const { localToUTC } = require('./timezoneService');
  *   excluded — count excluded due to opt-out or missing phone/email
  */
 async function getFilteredContacts(db, filters = {}) {
-  const { tags, case_type, case_stage, case_open_after, case_open_before, channel } = filters;
+  const { tags, case_type, case_subtype, case_stage, case_open_after, case_open_before, channel } = filters;
 
   // ── Build query ──
 
@@ -68,7 +71,7 @@ async function getFilteredContacts(db, filters = {}) {
   const params = [];
 
   // Case filters require JOINs through case_relate
-  const needsCaseJoin = case_type || case_stage || case_open_after || case_open_before;
+  const needsCaseJoin = case_type || case_subtype || case_stage || case_open_after || case_open_before;
   if (needsCaseJoin) {
     joins.push('JOIN case_relate cr ON cr.case_relate_client_id = c.contact_id');
     joins.push('JOIN cases cs ON cs.case_id = cr.case_relate_case_id');
@@ -84,6 +87,14 @@ async function getFilteredContacts(db, filters = {}) {
   if (case_type) {
     wheres.push('cs.case_type = ?');
     params.push(case_type);
+  }
+
+  // Subtype (2026-06 split) is EXACT and applied only when present, matching
+  // caseService.listCases. Values are opaque free text, so no LIKE here — a
+  // subtype may legitimately contain '%'.
+  if (case_subtype) {
+    wheres.push('cs.case_subtype = ?');
+    params.push(case_subtype);
   }
 
   if (case_stage) {
@@ -131,6 +142,44 @@ async function getFilteredContacts(db, filters = {}) {
   return { contacts, total: allMatching.length, excluded };
 }
 
+
+
+/**
+ * The case-type vocabulary that ACTUALLY EXISTS in cases, as a
+ * { Type: [Subtype, ...] } map — the same shape as the fe-case_types setting,
+ * so a caller can merge the two with no translation.
+ *
+ * WHY, given fe-case_types already exists: that setting is the WRITER
+ * vocabulary (what staff may create). Every create dialog also offers an
+ * 'Other' free-text escape, so cases carry types the registry never listed —
+ * 'potato hunting', 'support' and 'Unknown' are all live right now. A filter
+ * built from the registry alone cannot reach those rows.
+ *
+ * Rows with an empty case_type are EXCLUDED: '' is "no type set", not a type,
+ * and an empty key would render as a blank option. There are ~63 such cases;
+ * reaching them needs a deliberate "(no type set)" affordance, not this.
+ *
+ * Cheap: one DISTINCT over ~1,100 rows returning well under a dozen pairs.
+ * Kept here rather than in caseService because campaign.html is the only
+ * consumer today — promote it if the Cases-tab filter ever wants it too.
+ */
+async function getCaseTypeFacets(db) {
+  const [rows] = await db.query(
+    `SELECT DISTINCT case_type, case_subtype
+       FROM cases
+      WHERE case_type IS NOT NULL AND case_type <> ''
+      ORDER BY case_type, case_subtype`
+  );
+
+  const map = {};
+  for (const r of rows) {
+    const t = String(r.case_type);
+    if (!map[t]) map[t] = [];
+    const sub = r.case_subtype == null ? '' : String(r.case_subtype);
+    if (sub && !map[t].includes(sub)) map[t].push(sub);
+  }
+  return map;
+}
 
 // ─────────────────────────────────────────────────────────────
 // CREATE CAMPAIGN
@@ -840,6 +889,7 @@ async function checkCompletion(db, campaignId) {
 
 module.exports = {
   getFilteredContacts,
+  getCaseTypeFacets,
   createCampaign,
   cancelCampaign,
   getCampaign,

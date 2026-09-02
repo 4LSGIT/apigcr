@@ -689,6 +689,7 @@ tests/calendarEvents.event.test.js
 tests/calendarEvents.registry.test.js
 tests/calendarTypeService.test.js
 tests/calendarUi.sync.test.js
+tests/campaignCaseTypeFilter.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js

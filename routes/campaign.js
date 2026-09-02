@@ -35,6 +35,10 @@ router.get('/api/campaigns/contacts', jwtOrApiKey, async (req, res) => {
       filters.tags = req.query.tags.split(',').map(t => t.trim()).filter(Boolean);
     }
     if (req.query.case_type)       filters.case_type       = req.query.case_type;
+    // 2026-06 type/subtype split: case_type is the CATEGORY ("Bankruptcy"),
+    // case_subtype the refinement ("Chapter 7"). Independently optional —
+    // type alone means "every subtype of that type".
+    if (req.query.case_subtype)    filters.case_subtype    = req.query.case_subtype;
     if (req.query.case_stage)      filters.case_stage       = req.query.case_stage.split(',').map(s => s.trim());
     if (req.query.case_open_after) filters.case_open_after  = req.query.case_open_after;
     if (req.query.case_open_before) filters.case_open_before = req.query.case_open_before;
@@ -44,6 +48,26 @@ router.get('/api/campaigns/contacts', jwtOrApiKey, async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('[GET /campaigns/contacts]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /campaigns/case-types — the case-type vocabulary that EXISTS
+//
+// Returns { case_types: { Type: [Subtype, ...] } } in fe-case_types shape, so
+// the caller merges it straight over the registry map. Feeds the campaign
+// contact filter, which must offer what the data contains rather than what
+// the registry configures — the create dialogs' 'Other' free-text path means
+// those two sets differ.
+//
+// MUST stay above /campaigns/:id, or 'case-types' is captured as an id.
+// ─────────────────────────────────────────────────────────────
+router.get('/api/campaigns/case-types', jwtOrApiKey, async (req, res) => {
+  try {
+    res.json({ case_types: await campaignService.getCaseTypeFacets(req.db) });
+  } catch (err) {
+    console.error('[GET /campaigns/case-types]', err);
     res.status(500).json({ error: err.message });
   }
 });
