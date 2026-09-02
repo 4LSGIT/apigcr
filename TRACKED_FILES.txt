@@ -356,6 +356,7 @@ ref/2026-09-01_unified_events_u2.sql
 ref/2026-09-01_unified_events_u3.sql
 ref/2026-09-01_unified_events_u5.sql
 ref/2026-09-01_unified_events_u6b.sql
+ref/2026-09-02_g4_2_notice_precheck.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
