@@ -49,6 +49,7 @@ public/automation/triggers.html     UI (iframed tab in automationManager.html)
 public/automation/matchBuilder.js   Shared condition-tree builder (also used by the ingest pages)
 lib/internal_functions/system.js    sweep_trigger_executions — retention; emit_stage_aged — nightly case.stage_aged emitter
 lib/internal_functions/events.js    sweep_calendar_missed — nightly deadline sweep (calendar.resolved, resolution 'missed')
+                                    emit_calendar_approaching — nightly calendar.approaching emitter (reminders)
 ```
 
 Emission sites live in the services that own each mutation — `apptService`, `contactService`, `caseService`, `pipelineService`, `formService`, `esignWebhookService`, and `routes/api.checklists.js`.
@@ -110,6 +111,7 @@ The authoritative list is `EVENT_TYPES` in `services/triggerService.js` — it c
 | `checkitem.completed` | `PATCH /checkitems/:id` on a transition to complete | idempotent re-saves don't fire |
 | `checklist.completed` | item status change or item deletion that completes the list | — |
 | `case.stage_aged` | **synthetic** — the nightly `emit_stage_aged` job (13:00 UTC / 9am Detroit), not a mutation | already-stale-at-import cases (grace window); terminal stages; `Closed`/`Concluded` cases |
+| `calendar.approaching` | **synthetic** — the nightly `emit_calendar_approaching` job, not a mutation | types with no `approaching_offsets` (i.e. all of them until somebody sets one); past-dated items; superseded / non-Scheduled rows |
 
 #### The `calendar.*` family (Unified Events U4)
 
@@ -290,6 +292,68 @@ Params, set on the scheduled job:
 **Why `since` has no default.** At the time the resolution writers shipped (2026-09-01) zero events had ever been Completed — staff had never marked a deadline met — so every one of the 30 past-dated Scheduled deadlines is *unknown*, not *missed*. A sweep with no floor would stamp `missed` on history it knows nothing about and fire 30 rules on the first night. Fred sets `since` in the job's params (proposed: `2026-09-01`, the ship date); rows before it stay Scheduled until a human resolves them.
 
 Operational notes: "today" is computed in `FIRM_TZ` in the job and bound as a parameter — never `CURDATE()`, because the pool session runs in UTC and a deadline dated today is not missed until the firm's day is over. Idempotent by construction (a marked row leaves the population), so overlap or a manual re-run is harmless. Output: `{ scanned, marked, skipped, dry_run, since, today, capped, timed_out, wall_clock_ms, errors[] }`. A per-row failure is recorded in `errors` and does not stop the run. Scheduling it lives in data (Scheduled Jobs → `internal_function`, function `sweep_calendar_missed`, params `{ "since": "2026-09-01" }`, overnight band) — it is not created by deploy.
+
+### `calendar.approaching` — the reminder event (Unified Events U8)
+
+The third synthetic job, and the one that replaces "reminders" as a feature. There is no reminder subsystem: **a reminder is this event plus a rule you write.** The event says *the 7-day mark for this hearing has arrived*; whether that becomes a task, a client text, a staff email or nothing at all is a trigger rule's business.
+
+Two pieces of configuration, in two places, and they are independent:
+
+| Piece | Where | Says |
+|---|---|---|
+| `approaching_offsets` | Case Config → **Calendar Types** → a type's editor | *when* the event fires for items of that type — e.g. `7, 1` = seven days out and again the day before. Empty = never. |
+| the rule | YisraFlow → **Triggers** | *what happens* when it fires |
+
+**Every type ships with no offsets**, so the job emits nothing until somebody sets one. Set the offsets and the event starts firing whether or not a rule is listening (harmless, just wasted rows) — so **create the rules first, then the offsets**.
+
+Authoring notes:
+
+- **Filter `data.offset_days` `equals` N — never `>=`.** Each configured rung is its own emission, exactly like `data.threshold_days` on `case.stage_aged`. A `>=` filter fires the same rule on every rung.
+- **`data` is the ordinary `calendar.*` shape**, so a rule can filter `data.type_key`, `data.kind`, `data.link_type`, `data.starts_at` without caring whether the reminder is for an appointment or an event. Two extra paths: `data.offset_days` (the configured rung) and `data.days_until` (whole days from today to the item).
+- **`days_until` usually equals `offset_days`, but not always.** A rung fires once its day has *arrived or passed*, so a job that missed a night still emits what it slept through, and an item booked inside its own longest offset fires the already-passed rungs on the next run (a hearing booked 2 days out with offsets `7, 1` emits `offset_days: 7` immediately). If a rule must only act on the nose, compare the two.
+- **Deadlines, hearings, meetings and appointments all work** — the emitter reads both `events` and `appts`. Storage follows `kind` (§3.3.2), the reminder does not care.
+- `source` is `system`, `actor.user_id` is `0`, `extra.via` is `approaching_emitter`.
+- Give the rule's task action a **dedup key** if it creates one — the event is exactly-once, but a rule you edit and re-test is not.
+
+Operational notes: the claim table is `calendar_approaching_emitted`, `INSERT IGNORE` on `(source, source_id, offset_days, item_date)`. `item_date` is in that key deliberately — **moving an item's date re-arms all of its rungs** for the new date, and the stale claim can never suppress them because it is keyed to a date the item no longer has. "Today" is firm-local (`FIRM_TZ`), never `CURDATE()`. The window is `[today, today + max(offset)]`, so past-dated items are invisible here — those belong to `sweep_calendar_missed`. Bounds: `max_emits` (default 200) and `max_runtime_ms` (default 20000) both stop the run *before* claiming and raise an alert, so the remainder simply goes out on the next run. `dry_run: true` (via apiTester) lists `would_emit` without claiming or emitting — **run it once after setting offsets for the first time.** It reads the claim ledger first, so rungs that already fired show up in `duplicates` rather than in `would_emit`; a dry run on a system that has been live for months lists only what is genuinely still pending. Output: `{ scanned, pairs_due, claimed, emitted, duplicates, skipped_capped, capped, timed_out, today, horizon, max_offset, types_configured, wall_clock_ms }`.
+
+Scheduling lives in data, not in a deploy: Scheduled Jobs → `internal_function`, function `emit_calendar_approaching`, no params needed. Put it in the human/outbound band (alongside the Stage Aged Emitter) rather than the overnight system band — rules on this event send client-facing nudges.
+
+Order of operations for turning reminders on:
+
+1. Write the rule(s) on `calendar.approaching`, filtering `data.type_key` and `data.offset_days`.
+2. Set `approaching_offsets` on the type in Case Config.
+3. `emit_calendar_approaching { "dry_run": true }` in apiTester — check `would_emit` looks like the items you expect.
+4. Create the nightly scheduled job.
+
+Example rule config — a task seven days before any Schedules Deadline:
+
+```json
+{
+  "event_type": "calendar.approaching",
+  "match": {
+    "all": [
+      { "path": "data.type_key",    "op": "equals", "value": "schedules_deadline" },
+      { "path": "data.offset_days", "op": "equals", "value": 7 }
+    ]
+  },
+  "actions": [
+    {
+      "type": "create_task",
+      "params": {
+        "task_title": "Schedules due {{data.starts_at}} — {{data.link_id}}",
+        "task_to": 22,
+        "task_due": "{{data.starts_at}}",
+        "task_link_type": "case",
+        "task_link_id": "{{case_id}}",
+        "dedup_key": "approaching:{{data.source}}:{{data.source_id}}:{{data.offset_days}}"
+      }
+    }
+  ]
+}
+```
+
+The `dedup_key` is belt-and-braces: the claim table already guarantees one emission per rung per date, but a rule re-tested from the Triggers UI replays the envelope.
 
 ### Execution statuses
 

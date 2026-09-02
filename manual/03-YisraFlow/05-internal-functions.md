@@ -50,7 +50,7 @@ Each function carries a `__meta` block — a JSON description of its params (nam
 | users | `lookup_user`, `list_users` |
 | cases | `update_case` |
 | appointments | `create_appointment`, `lookup_appointment`, `update_appointment`, `get_appointments` |
-| events | `create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, `run_event_digest`, `sweep_calendar_missed` |
+| events | `create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, `run_event_digest`, `sweep_calendar_missed`, `emit_calendar_approaching` |
 | calendar | `gcal_create_event`, `gcal_get_event`, `gcal_update_event`, `gcal_delete_event` |
 | dropbox | `dropbox_create_folder`, `dropbox_get_shared_link`, `dropbox_list_folder`, `dropbox_move`, `dropbox_rename`, `dropbox_delete`, `dropbox_save_url`, `dropbox_ensure_case_folder` |
 | log | `create_log`, `phone_log` |

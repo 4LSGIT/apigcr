@@ -360,6 +360,7 @@ ref/2026-09-01_unified_events_u5.sql
 ref/2026-09-01_unified_events_u6b.sql
 ref/2026-09-02_g4_2_notice_precheck.sql
 ref/2026-09-02_unified_events_u2b.sql
+ref/2026-09-02_unified_events_u8.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -756,6 +757,7 @@ tests/extforms.x2.test.js
 tests/f_route.x21.test.js
 tests/filePlacementService.test.js
 tests/firmConfig.test.js
+tests/firmConfigCoverage.test.js
 tests/fixtures/calendar_item_types.seed.json
 tests/fixtures/slice26/legacy_case_details_bk2.js
 tests/fixtures/slice26/legacy_notes_341.js
@@ -877,6 +879,7 @@ tests/unifiedEventsU6a.sweep.test.js
 tests/unifiedEventsU6b.appts.test.js
 tests/unifiedEventsU6b.facade.test.js
 tests/unifiedEventsU6b.links.test.js
+tests/unifiedEventsU8.approaching.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js

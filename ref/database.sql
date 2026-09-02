@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-02T12:49:06.563Z
+-- Generated: 2026-09-02T18:18:58.529Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:6a1b1b462e9b0ae9d3a43d80589581fb
+-- Fingerprint: sha256:233d6104318d25d0707a2099a701c0b0
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -318,6 +318,21 @@ CREATE TABLE `booking_views` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `calendar_approaching_emitted`
+--
+
+DROP TABLE IF EXISTS `calendar_approaching_emitted`;
+CREATE TABLE `calendar_approaching_emitted` (
+  `source` enum('appt','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'which table source_id points at — appts.appt_id | events.event_id',
+  `source_id` int NOT NULL,
+  `offset_days` smallint NOT NULL COMMENT 'days before item_date; 0 = on the day',
+  `item_date` date NOT NULL COMMENT 'the item date this claim was made against. IN THE KEY on purpose: an in-place date move invalidates the old claim and re-arms every rung for the new date.',
+  `emitted_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='U8/A6: calendar.approaching claim ledger. INSERT IGNORE; affectedRows=1 = claimed.';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `calendar_item_types`
 --
 
@@ -330,6 +345,7 @@ CREATE TABLE `calendar_item_types` (
   `blocks_default` enum('attendee','firm','none') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'attendee' COMMENT 'U2: data only (was court_item_policy.blocks). Read at U6/U7.',
   `client_attends` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'U2: data only (was court_item_policy.attendance). Read at U6/U7.',
   `default_length` smallint DEFAULT NULL COMMENT 'minutes; court_v2 schema_gaps duration lands here (U7)',
+  `approaching_offsets` json DEFAULT NULL COMMENT 'U8/A6: days-before offsets that emit calendar.approaching, e.g. [7,1]. NULL/[] = none. Distinct ints 0..365.',
   `ingest_aliases` json DEFAULT NULL COMMENT 'inbound free text → this key, WRITE TIME ONLY; never the row''s own label (ci)',
   `case_types` json DEFAULT NULL COMMENT 'picker scoping; NULL = all case types',
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'gates pickers only; inactive types still resolve',
@@ -1226,22 +1242,6 @@ CREATE TABLE `court_item_policy` (
   `blocks` enum('none','ss','firm') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `calendar` enum('ss','firm','none') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `court_item_reminders`
---
-
-DROP TABLE IF EXISTS `court_item_reminders`;
-CREATE TABLE `court_item_reminders` (
-  `id` int unsigned NOT NULL,
-  `type_id` int unsigned NOT NULL,
-  `assignee` int DEFAULT NULL,
-  `lead_days` int NOT NULL DEFAULT '7',
-  `title_template` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `active` tinyint(1) NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3601,6 +3601,12 @@ ALTER TABLE `booking_views`
   ADD UNIQUE KEY `uq_bv_slug` (`slug`);
 
 --
+-- Indexes for table `calendar_approaching_emitted`
+--
+ALTER TABLE `calendar_approaching_emitted`
+  ADD PRIMARY KEY (`source`,`source_id`,`offset_days`,`item_date`);
+
+--
 -- Indexes for table `calendar_item_types`
 --
 ALTER TABLE `calendar_item_types`
@@ -3802,13 +3808,6 @@ ALTER TABLE `court_emails2`
 --
 ALTER TABLE `court_item_policy`
   ADD PRIMARY KEY (`type_id`);
-
---
--- Indexes for table `court_item_reminders`
---
-ALTER TABLE `court_item_reminders`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_cir_type` (`type_id`);
 
 --
 -- Indexes for table `credentials`
@@ -4753,12 +4752,6 @@ ALTER TABLE `court_ai_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT for table `court_item_reminders`
---
-ALTER TABLE `court_item_reminders`
-  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
-
---
 -- AUTO_INCREMENT for table `credentials`
 --
 ALTER TABLE `credentials`
@@ -5370,12 +5363,6 @@ ALTER TABLE `contact_relations`
 --
 ALTER TABLE `court_item_policy`
   ADD CONSTRAINT `fk_cip_type` FOREIGN KEY (`type_id`) REFERENCES `ai_match_types` (`id`) ON DELETE CASCADE;
-
---
--- Constraints for table `court_item_reminders`
---
-ALTER TABLE `court_item_reminders`
-  ADD CONSTRAINT `fk_cir_type` FOREIGN KEY (`type_id`) REFERENCES `ai_match_types` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `email_credentials`

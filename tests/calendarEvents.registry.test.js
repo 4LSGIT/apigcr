@@ -185,6 +185,23 @@ describe('catalog ↔ envelope: the drift guard', () => {
     expect(apptEnv().data.source_id).toBe(3001);
     expect(eventEnv().data.source_id).toBe(4001);
   });
+
+  // ── U8: the fifth name ────────────────────────────────────────────────────
+  // `calendar.approaching` is deliberately NOT in CALENDAR_EVENTS above: it
+  // carries two paths the other four do not, so the same-set assertion would
+  // be false. What must stay true is that it is the four's shape PLUS exactly
+  // those two — otherwise CALENDAR_DATA_FIELDS could grow a path that never
+  // reaches the reminder catalog, or the reminder catalog could quietly grow
+  // one of its own. The envelope-vs-catalog set equality for approaching lives
+  // in tests/unifiedEventsU8.approaching.test.js, where the emitter's own
+  // envelope builder is in scope.
+  test('calendar.approaching is the four-name data shape plus exactly offset_days + days_until', () => {
+    const four = catalogPaths('calendar.scheduled');
+    const appr = catalogPaths('calendar.approaching');
+    expect([...four].filter((p) => !appr.has(p))).toEqual([]);          // loses nothing
+    expect([...appr].filter((p) => !four.has(p)).sort())
+      .toEqual(['data.days_until', 'data.offset_days']);                 // adds exactly two
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

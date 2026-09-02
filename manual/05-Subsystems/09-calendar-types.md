@@ -33,6 +33,7 @@ Grouped by kind. Filter by kind, tick *show inactive*. Columns:
 - **#** sort order · **Label** · **Key** (mono; a lock icon means rows reference it)
 - **Single** singleton · **Blocks** whose availability it blocks · **Client** client attends
 - **Len** `default_length` — the fallback when no option is chosen (API, court, booking)
+- **Remind** approaching-reminder offsets, e.g. `7d` `1d` (see below); `—` = none
 - **Picker options** chips like `15m·new+f/u` — one per option row; click to edit
 - **Case types** — `all`, or the case types this type is scoped to
 - **Aliases** count (hover for the list) · **Refs** total references (hover for the breakdown)
@@ -54,6 +55,33 @@ the key is auto-suggested from the label until you edit it.
 - **Delete** only at zero references; otherwise deactivate. Deleting a type
   removes its option rows with it.
 - Options: length 1–1440, at least one surface, one row per (type, length).
+
+## Approaching reminders
+
+The editor's **Approaching reminders (days before)** field is a list of whole
+days, `0`–`365`. Each one makes items of this type emit a
+**`calendar.approaching`** trigger event that many days before their date —
+`7, 1` means "a week out, and again the day before"; `0` means "on the day".
+Empty means none, which is how every type ships.
+
+**The offsets say WHEN. A trigger rule says WHAT.** There is no reminder
+setting here for who gets told or what they get — that is a rule on
+`calendar.approaching` filtering `data.type_key` and `data.offset_days`
+(YisraFlow → Triggers; see *manual/03-YisraFlow/15-triggers.md*). Which means
+the useful order is **rules first, offsets second**: offsets with no rule
+listening emit into a void.
+
+Notes:
+
+- Works for both tables — a deadline, a hearing and a 341 appointment all
+  remind the same way. Storage follows `kind`; reminders do not care.
+- **Not gated by *Active*.** Deactivating a type stops it being *offered*;
+  items already on the calendar keep reminding. Clear the offsets to stop them.
+- Moving an item's date **re-arms all of its rungs** for the new date.
+- Past-dated items never remind — that is the nightly missed-deadline sweep's
+  territory, not this one's.
+- Nothing fires until the nightly `emit_calendar_approaching` job exists in
+  Scheduled Jobs. Fred creates it once, after the first offsets are set.
 
 ## Surfaces
 

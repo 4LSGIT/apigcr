@@ -206,6 +206,10 @@
 //     editor. A meeting type with NO options is offered in NO staff
 //     appointment picker (explicit-only). Nothing references an option row;
 //     appts store type_key + appt_length, which is the same pair.
+//   - APPROACHING REMINDERS (U8): days-before offsets that make a type emit
+//     calendar.approaching (e.g. 7, 1). EMPTY = no reminders, which is how
+//     every type ships. What a reminder DOES is a trigger rule, not this
+//     page — the offsets only decide WHEN the event fires.
 //   - case_types: NONE checked = NULL = every case type. Options come from
 //     DISTINCT cases.case_type; a free-add box covers types with no case yet.
 //     The pickers pass the case's type, so a BK-scoped type hides on a Civil
@@ -302,6 +306,12 @@ function optionChips(t) {
   return `<a class="opt-link" onclick="openOptions('${esc(t.type_key)}')" title="edit picker options">${body} <i class="fa-solid fa-pen" style="font-size:9px;color:var(--text-muted)"></i></a>`;
 }
 function dot(on) { return `<i class="fa-solid fa-circle ${on ? 'dot-on' : 'dot-off'}" style="font-size:9px"></i>`; }
+// U8 — approaching offsets, furthest-out first (the server stores them sorted).
+function offsetChips(t) {
+  const o = t.approaching_offsets || [];
+  if (!o.length) return '<span style="color:var(--text-muted)">—</span>';
+  return o.map(d => `<span class="chip" title="calendar.approaching fires ${d} day(s) before">${d === 0 ? 'day of' : d + 'd'}</span>`).join('');
+}
 
 function render() {
   const host = E('wrap');
@@ -328,6 +338,7 @@ function render() {
         <td>${esc(t.blocks_default)}</td>
         <td class="t-c" title="client attends">${dot(t.client_attends)}</td>
         <td class="t-num">${t.default_length == null ? '<span style="color:var(--text-muted)">—</span>' : t.default_length + 'm'}</td>
+        <td class="t-c" title="approaching reminders (days before)">${offsetChips(t)}</td>
         <td onclick="event.stopPropagation()">${optionChips(t)}</td>
         <td>${chips(t.case_types, '', 'all')}</td>
         <td class="t-c" title="${esc(aliasTitle)}">${(t.ingest_aliases || []).length || '<span style="color:var(--text-muted)">—</span>'}</td>
@@ -343,7 +354,7 @@ function render() {
   host.innerHTML = `<table class="types">
     <thead><tr>
       <th class="t-num">#</th><th>Label</th><th>Key</th><th class="t-c">Single</th><th>Blocks</th><th class="t-c">Client</th>
-      <th class="t-num">Len</th><th>Picker options</th><th>Case types</th><th class="t-c">Aliases</th><th class="t-c">Refs</th><th class="t-c">Active</th>
+      <th class="t-num">Len</th><th class="t-c">Remind</th><th>Picker options</th><th>Case types</th><th class="t-c">Aliases</th><th class="t-c">Refs</th><th class="t-c">Active</th>
     </tr></thead><tbody>${body}</tbody></table>`;
 }
 window.render = render;
@@ -366,11 +377,49 @@ function suggestKey(label) {
   return String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^[^a-z]+/, '').slice(0, 40);
 }
 
+/**
+ * Chip-list input. `numeric: true` accepts only whole days 0–365 (silently
+ * dropping anything else — the server is the enforcer and re-validates), and
+ * dedupes numerically rather than case-insensitively.
+ */
+function wireChips(hostId, inputId, { numeric = false } = {}) {
+  const host = E(hostId);
+  const inp  = E(inputId);
+  if (!host || !inp) return;
+  const has = (v) => [...host.querySelectorAll('.chip')].some(c =>
+    numeric ? Number(c.dataset.v) === Number(v) : c.dataset.v.toLowerCase() === String(v).toLowerCase());
+  const add = () => {
+    for (const raw of inp.value.split(',').map(x => x.trim()).filter(Boolean)) {
+      let v = raw;
+      if (numeric) {
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < 0 || n > 365) continue;
+        v = String(n);
+      }
+      if (has(v)) continue;
+      const chip = document.createElement('span');
+      chip.className = 'chip'; chip.dataset.v = v;
+      chip.innerHTML = `${esc(v)} <i class="fa-solid fa-xmark"></i>`;
+      host.insertBefore(chip, inp);
+    }
+    inp.value = '';
+  };
+  inp.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); add(); }
+    else if (ev.key === 'Backspace' && !inp.value) { const last = host.querySelector('.chip:last-of-type'); if (last) last.remove(); }
+  });
+  inp.addEventListener('blur', add);
+  host.addEventListener('click', (ev) => {
+    if (ev.target.tagName === 'I') ev.target.closest('.chip').remove();
+    else inp.focus();
+  });
+}
+
 async function openEditor(key) {
   const isNew = key == null;
   const t = isNew ? {
     type_key: '', label: '', kind: 'meeting', singleton: 0, blocks_default: 'attendee', client_attends: 0,
-    default_length: null, ingest_aliases: [], case_types: null, options: [], active: 1,
+    default_length: null, approaching_offsets: null, ingest_aliases: [], case_types: null, options: [], active: 1,
     sort_order: (Math.max(0, ...types.map(x => x.sort_order || 0)) + 10), refs: { total: 0 },
   } : types.find(x => x.type_key === key);
   if (!t) return;
@@ -422,6 +471,16 @@ async function openEditor(key) {
     </div>
     <div class="addrow"><input type="text" id="ed-ct-add" placeholder="add a case type not listed…"><button type="button" class="btn btn-outline btn-sm" id="ed-ct-btn">Add</button></div>
 
+    <label>Approaching reminders (days before) <span style="color:var(--text-muted);text-transform:none;font-weight:400">— empty = none</span></label>
+    <div class="chips" id="ed-offsets">
+      ${(t.approaching_offsets || []).map(d => `<span class="chip" data-v="${d}">${d} <i class="fa-solid fa-xmark"></i></span>`).join('')}
+      <input type="text" id="ed-offset-in" inputmode="numeric" placeholder="e.g. 7, 1 — Enter or comma">
+    </div>
+    <div class="hint">Whole days, 0–365 (0 = the day itself). Each one makes this type emit
+      <b>calendar.approaching</b> once, that many days out. What the reminder <i>does</i> —
+      a task, a text, a staff email — is a trigger rule filtering
+      <span class="mono">data.offset_days</span>; rules should exist before the offsets do.</div>
+
     <label>Ingest aliases <span style="color:var(--text-muted);text-transform:none;font-weight:400">— inbound free text that resolves to this key (never its own label)</span></label>
     <div class="chips" id="ed-aliases">
       ${(t.ingest_aliases || []).map(a => `<span class="chip" data-v="${esc(a)}">${esc(a)} <i class="fa-solid fa-xmark"></i></span>`).join('')}
@@ -463,29 +522,12 @@ async function openEditor(key) {
       };
       E('ed-ct-btn').addEventListener('click', addCt);
       E('ed-ct-add').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addCt(); } });
-      // alias chips
-      const host = E('ed-aliases');
-      const inp = E('ed-alias-in');
-      const addAlias = () => {
-        const parts = inp.value.split(',').map(s => s.trim()).filter(Boolean);
-        for (const v of parts) {
-          if ([...host.querySelectorAll('.chip')].some(c => c.dataset.v.toLowerCase() === v.toLowerCase())) continue;
-          const chip = document.createElement('span');
-          chip.className = 'chip'; chip.dataset.v = v;
-          chip.innerHTML = `${esc(v)} <i class="fa-solid fa-xmark"></i>`;
-          host.insertBefore(chip, inp);
-        }
-        inp.value = '';
-      };
-      inp.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); addAlias(); }
-        else if (ev.key === 'Backspace' && !inp.value) { const last = host.querySelector('.chip:last-of-type'); if (last) last.remove(); }
-      });
-      inp.addEventListener('blur', addAlias);
-      host.addEventListener('click', (ev) => {
-        if (ev.target.tagName === 'I') ev.target.closest('.chip').remove();
-        else inp.focus();
-      });
+      // chip inputs — aliases (free text) and approaching offsets (integers).
+      // One wiring, two fields: the widgets are identical apart from what
+      // counts as a valid entry, and a second hand-rolled copy is how the two
+      // drift apart.
+      wireChips('ed-aliases', 'ed-alias-in');
+      wireChips('ed-offsets', 'ed-offset-in', { numeric: true });
     },
     preConfirm: async () => {
       const body = {
@@ -498,6 +540,9 @@ async function openEditor(key) {
         active:         E('ed-active').checked ? 1 : 0,
         case_types:     [...E('ed-casetypes').querySelectorAll('input:checked')].map(i => i.value),
         ingest_aliases: [...E('ed-aliases').querySelectorAll('.chip')].map(c => c.dataset.v),
+        // [] is sent, not null: the server normalizes empty → NULL, and
+        // sending [] is how a user CLEARS the offsets on an existing type.
+        approaching_offsets: [...E('ed-offsets').querySelectorAll('.chip')].map(c => Number(c.dataset.v)),
       };
       if (!kindLocked) body.kind = E('ed-kind').value;
       if (isNew) { body.type_key = E('ed-key').value.trim(); body.kind = E('ed-kind').value; }

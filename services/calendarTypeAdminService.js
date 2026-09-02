@@ -40,6 +40,17 @@
  *               ER_DUP_ENTRY maps to 409; type_key immutable on an option.
  *   blocks_default ∈ BLOCKS; default_length null or integer 0..1440;
  *               singleton / client_attends / active ∈ {0,1}; sort_order integer.
+ *   approaching_offsets   (U8/A6) null, or an array of DISTINCT integers
+ *               0..365 — days before the item's date at which
+ *               `calendar.approaching` fires. A CSV string is accepted too
+ *               (the Case Config field is a chip/CSV input). Stored sorted
+ *               DESCENDING and deduped; [] normalizes to NULL, which is what
+ *               "no reminders for this type" means. Order is not load-bearing
+ *               — the emitter re-sorts — so normalizing here just makes
+ *               display and the horizon calculation deterministic.
+ *               NOT gated by `active`: an inactive type still reminds about
+ *               obligations already booked on it (active gates pickers only).
+ *               Clear the offsets to stop reminders.
  *   RESOLVER UNAMBIGUITY (the rule E1 enforced at load, calendarTypeService
  *               warns on): across the registry no two rows may claim the same
  *               (ci, trim) string as key, label or alias. On every write the
@@ -170,6 +181,39 @@ function vLength(v) {
   return n;
 }
 
+/**
+ * U8/A6 — `approaching_offsets`. Accepts an array, a CSV string ("7, 1"),
+ * null / '' / undefined. Returns a deduped array of integers 0..365 sorted
+ * DESCENDING, or null when empty.
+ *
+ * Empty → NULL rather than []: the column's documented "no approaching
+ * events" value is NULL, and two spellings of the same fact in one column is
+ * how a WHERE clause ends up wrong later. (`ingest_aliases` goes the other
+ * way — [] there, NULL here — because an alias list is a list that happens to
+ * be empty, while offsets absent means the feature is off for this type.)
+ */
+function vOffsets(v) {
+  if (v === undefined || v === null || v === '') return null;
+  let raw = v;
+  if (typeof raw === 'string') raw = raw.split(',');
+  if (!Array.isArray(raw)) throw badRequest('approaching_offsets must be an array of integers (or a comma-separated string)');
+  const out = [];
+  const seen = new Set();
+  for (const x of raw) {
+    const t = typeof x === 'string' ? x.trim() : x;
+    if (t === '') continue;                       // trailing comma in a CSV
+    const n = Number(t);
+    if (!Number.isInteger(n) || n < 0 || n > 365) {
+      throw badRequest(`approaching_offsets: ${JSON.stringify(x)} is not an integer between 0 and 365 (days before the item)`);
+    }
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  if (!out.length) return null;                   // [] means "none" — store NULL
+  return out.sort((a, b) => b - a);               // descending: furthest-out rung first
+}
+
 function vSortOrder(v) {
   if (v === undefined || v === null || v === '') return 0;
   const n = Number(v);
@@ -216,6 +260,12 @@ function shapeRow(r) {
     blocks_default: String(r.blocks_default || 'attendee'),
     client_attends: Number(r.client_attends) ? 1 : 0,
     default_length: r.default_length == null ? null : Number(r.default_length),
+    // U8: numbers, not the strings jsonArray() coerces to. NULL stays NULL —
+    // "no approaching reminders for this type" is a distinct answer from [].
+    approaching_offsets: (() => {
+      const a = jsonArray(r.approaching_offsets);
+      return a ? a.map(Number).filter((n) => Number.isInteger(n)) : null;
+    })(),
     ingest_aliases: jsonArray(r.ingest_aliases) || [],
     case_types:     jsonArray(r.case_types),
     active:         r.active == null ? 1 : (Number(r.active) ? 1 : 0),
@@ -227,7 +277,7 @@ function shapeRow(r) {
 
 const SELECT_COLS =
   `type_key, label, kind, singleton, blocks_default, client_attends, default_length,
-   ingest_aliases, case_types, active, sort_order, created_at, updated_at`;
+   approaching_offsets, ingest_aliases, case_types, active, sort_order, created_at, updated_at`;
 
 const OPTION_COLS = `id, type_key, label, length, surfaces, sort_order, active, created_at, updated_at`;
 
@@ -441,6 +491,7 @@ async function createType(db, body = {}) {
     blocks_default: vBlocks(body.blocks_default),
     client_attends: body.client_attends === undefined ? 0 : vBool(body.client_attends, 'client_attends'),
     default_length: vLength(body.default_length),
+    approaching_offsets: vOffsets(body.approaching_offsets),
     ingest_aliases: vAliases(body.ingest_aliases),
     case_types:     vCaseTypes(body.case_types),
     active:         body.active === undefined ? 1 : vBool(body.active, 'active'),
@@ -453,10 +504,12 @@ async function createType(db, body = {}) {
     await db.query(
       `INSERT INTO calendar_item_types
          (type_key, label, kind, singleton, blocks_default, client_attends, default_length,
-          ingest_aliases, case_types, active, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          approaching_offsets, ingest_aliases, case_types, active, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [next.type_key, next.label, next.kind, next.singleton, next.blocks_default, next.client_attends,
-       next.default_length, JSON.stringify(next.ingest_aliases),
+       next.default_length,
+       next.approaching_offsets ? JSON.stringify(next.approaching_offsets) : null,
+       JSON.stringify(next.ingest_aliases),
        next.case_types ? JSON.stringify(next.case_types) : null,
        next.active, next.sort_order]
     );
@@ -469,7 +522,7 @@ async function createType(db, body = {}) {
 }
 
 const UPDATABLE = ['label', 'kind', 'singleton', 'blocks_default', 'client_attends', 'default_length',
-                   'ingest_aliases', 'case_types', 'active', 'sort_order'];
+                   'approaching_offsets', 'ingest_aliases', 'case_types', 'active', 'sort_order'];
 
 async function updateType(db, key, patch = {}) {
   if (Object.prototype.hasOwnProperty.call(patch, 'type_key') && _norm(patch.type_key) !== _norm(key)) {
@@ -501,6 +554,7 @@ async function updateType(db, key, patch = {}) {
       case 'blocks_default': set.blocks_default = vBlocks(v); break;
       case 'client_attends': set.client_attends = vBool(v, 'client_attends'); break;
       case 'default_length': set.default_length = vLength(v); break;
+      case 'approaching_offsets': set.approaching_offsets = vOffsets(v); break;
       case 'ingest_aliases': set.ingest_aliases = vAliases(v); break;
       case 'case_types':     set.case_types = vCaseTypes(v); break;
       case 'active':         set.active = vBool(v, 'active'); break;
@@ -522,6 +576,7 @@ async function updateType(db, key, patch = {}) {
     const v = set[f];
     if (f === 'ingest_aliases') return JSON.stringify(v);
     if (f === 'case_types') return v ? JSON.stringify(v) : null;
+    if (f === 'approaching_offsets') return v ? JSON.stringify(v) : null;
     return v;
   });
   await db.query(
@@ -656,6 +711,7 @@ module.exports = {
   // internals (repo `_`-prefix convention)
   _assertUnambiguous: assertUnambiguous,
   _vSurfaces: vSurfaces,
+  _vOffsets: vOffsets,
   _KEY_RE: KEY_RE,
   _SELECT_COLS: SELECT_COLS,
   _REF_SOURCES: REF_SOURCES,

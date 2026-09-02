@@ -66,6 +66,8 @@ The trigger engine sees the resolution as `data.resolution` on `calendar.resolve
 
 ### Missed deadlines (the nightly sweep)
 
+Ahead of the date rather than behind it: a type can carry **approaching reminders** (Case Config → Calendar Types → *Approaching reminders (days before)*, e.g. `7, 1`). Each configured day makes items of that type emit a `calendar.approaching` trigger event that many days out, and a trigger rule decides what the reminder does — a task, a client text, a staff email. Off by default on every type; see *manual/05-Subsystems/09-calendar-types.md* and *manual/03-YisraFlow/15-triggers.md*.
+
 A deadline that is still Scheduled after its date has passed is marked `Completed` / `missed` by a nightly job (`sweep_calendar_missed`) — it emits `calendar.resolved` with `resolution: 'missed'`, writes a log row, and clears the reminder task, so a rule can chase it. The job only looks at deadlines dated **on or after** a floor date set in its parameters (`since`); older past-dated deadlines were never resolved by anyone and are left alone as *unknown*, not *missed*, until a human completes or cancels them. "Today" is the firm's local day — a deadline due today is not missed until tomorrow.
 
 ### Rescheduled events (supersession)
@@ -150,7 +152,7 @@ Edit, Complete, and Cancel are available wherever the event is listed.
 
 ## Automation
 
-Events are first-class citizens of the automation engine. Workflows and sequences can create, update, complete, and look up events through internal functions (`create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, and the nightly `sweep_calendar_missed`). This is the foundation for automations like:
+Events are first-class citizens of the automation engine. Workflows and sequences can create, update, complete, and look up events through internal functions (`create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, and the nightly `sweep_calendar_missed` / `emit_calendar_approaching`). This is the foundation for automations like:
 
 - Creating a **docs deadline** event automatically when a 341 Meeting is scheduled, dated a set number of business days before it
 - Creating a **confirmation hearing** event automatically from the court's email, using the explicit date in the email text

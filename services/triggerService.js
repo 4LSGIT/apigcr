@@ -276,6 +276,34 @@ const EVENT_TYPES = {
       { path: 'extra.prior_status', label: 'Status before the resolve (event rows only)' },
     ],
   },
+  // ── Unified events U8 — the reminder event (v0.5 §3.2 / A6) ──────────────
+  //
+  // The fifth calendar.* name, and the only SYNTHETIC one: the other four fire
+  // from a mutation, this one fires because a DATE ARRIVED. Same `data` shape
+  // as the other four plus two paths of its own, so a rule can filter
+  // data.type_key / data.kind exactly as it would on a scheduled item.
+  //
+  // A6's whole point: nothing here knows what a reminder IS. This event says
+  // "the 7-day mark for this hearing has arrived"; a trigger rule decides
+  // whether that means a task, an SMS or nothing at all.
+  'calendar.approaching': {
+    label: 'Calendar item approaching',
+    description:
+      "SYNTHETIC — fires from the nightly emit_calendar_approaching job (lib/internal_functions/events.js), " +
+      "not from a mutation. For each live appt / event whose type carries approaching_offsets in the " +
+      "registry, one emission per offset once that rung's day has arrived (data.days_until <= " +
+      "data.offset_days), claimed exactly once per (item, offset, date) in calendar_approaching_emitted. " +
+      "FILTER data.offset_days WITH equals, NEVER >= — every configured rung fires separately, exactly as " +
+      "data.threshold_days works on case.stage_aged. Moving an item's date re-arms all of its rungs for the " +
+      "new date. source is 'system', actor.user_id is 0. Emits nothing until a type is given offsets in " +
+      "Case Config → Calendar Types.",
+    fields: [
+      ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
+      { path: 'data.offset_days', label: 'The configured rung, in days before the item (0 = on the day)' },
+      { path: 'data.days_until',  label: 'Whole days from firm-local today to the item date; == offset_days on time, less after a catch-up' },
+      { path: 'extra.via',        label: "Always 'approaching_emitter'" },
+    ],
+  },
   'contact.created': {
     label: 'Contact created',
     description: 'Fires post-commit from contactService.createContact (all callers: intake, orphan-adopt, API).',

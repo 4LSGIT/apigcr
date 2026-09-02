@@ -126,7 +126,9 @@ describe('createType', () => {
     const ins = db.calls[1];
     expect(ins.sql).toMatch(/INSERT INTO calendar_item_types/);
     expect(ins.sql).not.toMatch(/surfaces/);
-    expect(ins.params).toEqual(['mediation', 'Mediation', 'conference', 0, 'attendee', 0, null, '["Mediation Session"]', '["Civil Litigation"]', 1, 0]);
+    // U8 inserted approaching_offsets after default_length (DDL order, mirrored
+    // by SELECT_COLS / shapeRow / UPDATABLE) — hence the second null.
+    expect(ins.params).toEqual(['mediation', 'Mediation', 'conference', 0, 'attendee', 0, null, null, '["Mediation Session"]', '["Civil Litigation"]', 1, 0]);
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -144,6 +146,12 @@ describe('createType', () => {
     [{ ...body, case_types: [''] },               /blank entries/],
     [{ ...body, singleton: 'yes' },               /singleton must be 0 or 1/],
     [{ ...body, sort_order: 1.5 },                /sort_order must be an integer/],
+    // U8/A6 — approaching_offsets
+    [{ ...body, approaching_offsets: [7, 400] },  /not an integer between 0 and 365/],
+    [{ ...body, approaching_offsets: [-1] },      /not an integer between 0 and 365/],
+    [{ ...body, approaching_offsets: [1.5] },     /not an integer between 0 and 365/],
+    [{ ...body, approaching_offsets: ['soon'] },  /not an integer between 0 and 365/],
+    [{ ...body, approaching_offsets: { d: 7 } },  /must be an array of integers/],
   ])('400 validation: %j', async (bad, re) => {
     await expect(svc.createType(stubDb([]), bad)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(re) });
   });
