@@ -360,6 +360,17 @@ function sortSelect(element) {
     .logTable .log-data-cell {
       max-width: 40em;
       min-width: 15em;
+      /* Per-cell expand affordance. No chevron on purpose: this renders on up
+         to 500 rows and a permanent glyph is noise the pointer already covers. */
+      cursor: pointer;
+      border-radius: 3px;
+      transition: background-color 0.12s;
+    }
+    /* --accent-soft is translucent, so it COMPOSITES over whatever the row is
+       already painted (nth-child striping, tr:hover). An opaque token would be
+       invisible under .logTable tr:hover, which fires on the same gesture. */
+    .logTable .log-data-cell:hover {
+      background-color: var(--accent-soft);
     }
     .logTable .log-data-cell .log-data-row {
       white-space: nowrap;
@@ -370,6 +381,22 @@ function sortSelect(element) {
       white-space: normal;
       overflow: visible;
       text-overflow: clip;
+    }
+    /* Per-cell override, tri-state. ORDER-SENSITIVE: .is-expanded scores
+       0-4-0, exactly the same as the .log-data-expanded rule above, so it wins
+       on source order alone and MUST stay after it. The .is-collapsed rule is
+       0-5-0 and wins outright. The toggle only ever tags a class when the cell
+       diverges from the switch, so a cell returned to the default follows the
+       switch again, and flipping the switch clears every override. */
+    .logTable .log-data-cell.is-expanded .log-data-row {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+    .logTable.log-data-expanded .log-data-cell.is-collapsed .log-data-row {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     #logTableFoot {
       display: flex;
@@ -523,6 +550,61 @@ function sortSelect(element) {
     }
   `;
   document.head.appendChild(style);
+
+  /* ── Per-cell expand, delegated once per document ───────────────────────
+     Scoped to .log-data-cell, NOT to the <tr>. The row's other cells carry
+     the entity link (P.addFile), the about badge, the extras inspector icon
+     and — on the global feed — the orphan/docket adopt icons; a row-level
+     handler would have to stopPropagation past every one of those, and past
+     every affordance anyone adds later. The data cell itself is emitted by
+     buildLogDataCell and contains only <div> and <b>, so there is nothing
+     inside it to compete with.
+
+     State is deliberately ephemeral and unpersisted: rows are rebuilt on
+     every tabLogGet, so overrides evaporate on paginate/filter change, which
+     is right — they are keyed to nothing stable.
+
+     This IIFE early-returns when #log-helpers-styles already exists, so the
+     listeners bind exactly once per document — top-level page AND each
+     iframe, which gets its own copy of this file. */
+  let logCellDownX = 0, logCellDownY = 0;
+  document.addEventListener('mousedown', (ev) => {
+    logCellDownX = ev.clientX;
+    logCellDownY = ev.clientY;
+  }, true);
+
+  document.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (!t || !t.closest) return;
+    const cell = t.closest('.log-data-cell');
+    if (!cell) return;
+    // Defensive only — nothing in the cell is interactive today, but do not
+    // swallow a click if buildLogDataCell ever starts emitting links.
+    if (t.closest('a, button, input, select, textarea, label')) return;
+    // Drag-to-select guard: people copy values out of these cells, and the
+    // mouseup that ends a selection still fires a click. Movement threshold
+    // plus a live-selection check, because either alone has a hole.
+    if (Math.abs(ev.clientX - logCellDownX) > 4 ||
+        Math.abs(ev.clientY - logCellDownY) > 4) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().length) return;
+
+    const table = cell.closest('.logTable');
+    if (!table) return;
+
+    const globalExpanded = table.classList.contains('log-data-expanded');
+    const isExpanded = cell.classList.contains('is-expanded') ||
+      (globalExpanded && !cell.classList.contains('is-collapsed'));
+    const next = !isExpanded;
+
+    cell.classList.remove('is-expanded', 'is-collapsed');
+    // Tag a class ONLY when the cell diverges from the switch, so toggling a
+    // cell back to the default hands it to the switch again rather than
+    // pinning it at a value that merely happens to match right now.
+    if (next !== globalExpanded) {
+      cell.classList.add(next ? 'is-expanded' : 'is-collapsed');
+    }
+  });
 })();
 
 /* Log link-type → icon mapping. NULL/unknown → no icon (alignment preserved). */
@@ -884,6 +966,11 @@ function toggleLogDataExpand() {
   const cb = E('logExpandData');
   if (!t || !cb) return;
   t.classList.toggle('log-data-expanded', cb.checked);
+  // The switch is the master reset: drop every per-cell override so the whole
+  // table follows it again. Without this, a cell expanded while the switch was
+  // off would stay pinned open after the switch is turned off a second time.
+  t.querySelectorAll('.log-data-cell.is-expanded, .log-data-cell.is-collapsed')
+    .forEach(c => c.classList.remove('is-expanded', 'is-collapsed'));
   setTabPref('log', 'expand', cb.checked ? 'true' : 'false');
 }
 
