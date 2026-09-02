@@ -265,6 +265,22 @@ router.get("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   const { id } = req.params;
   const includeHistory = req.query.history === "true";
 
+  // History paging. `?history=true` used to return EVERY job_results row for
+  // the job — for a long-lived recurring job that is thousands of rows and
+  // megabytes of output_data (live check 2026-09-02: job 867 = 3,025 rows /
+  // 1.15 MB, job 4312 = 984 rows / 1.59 MB) sent to a dialog that renders a
+  // dozen. Now bounded: default 25, cap 200, with `history_offset` for paging
+  // and `history_total` in the response so callers can page or say
+  // "showing 25 of 3025". Callers that genuinely want everything walk the
+  // offset — no single response is unbounded.
+  const HISTORY_DEFAULT_LIMIT = 25;
+  const HISTORY_MAX_LIMIT     = 200;
+  const historyLimit = Math.min(
+    HISTORY_MAX_LIMIT,
+    Math.max(1, parseInt(req.query.history_limit, 10) || HISTORY_DEFAULT_LIMIT)
+  );
+  const historyOffset = Math.max(0, parseInt(req.query.history_offset, 10) || 0);
+
   try {
     // 1. Get job metadata
     const [jobs] = await db.query(
@@ -331,7 +347,7 @@ router.get("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
       }
     }
 
-    // 4. Optional full history
+    // 4. Optional history page (bounded — see historyLimit block at top)
     let history = undefined;
 
     if (includeHistory) {
@@ -341,8 +357,9 @@ router.get("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
         FROM job_results
         WHERE job_id = ?
         ORDER BY execution_number DESC, attempt DESC
+        LIMIT ? OFFSET ?
         `,
-        [id]
+        [id, historyLimit, historyOffset]
       );
 
       history = historyRows.map((row) => {
@@ -387,7 +404,14 @@ router.get("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
 
       latest_execution: latestExecution,
 
-      ...(includeHistory && { history }),
+      ...(includeHistory && {
+        history,
+        // total_runs counts the same rows the history query pages over, so it
+        // doubles as history_total — no second COUNT needed.
+        history_total:  Number(stats.total_runs) || 0,
+        history_limit:  historyLimit,
+        history_offset: historyOffset,
+      }),
     });
 
   } catch (err) {

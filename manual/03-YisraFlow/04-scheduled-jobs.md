@@ -180,11 +180,25 @@ GET /scheduled-jobs                       list all (filterable)
     ?page=<n>  ?limit=<n>           (default 30, max 100)
 
 GET /scheduled-jobs/:id                   single job + stats + latest execution
-GET /scheduled-jobs/:id?history=true      adds full attempt history from job_results
+GET /scheduled-jobs/:id?history=true      adds a page of attempt history from job_results
+    ?history_limit=<n>                    default 25, max 200
+    ?history_offset=<n>                   default 0
+    → response also carries history_total / history_limit / history_offset
 
 PATCH  /scheduled-jobs/:id                edit (only pending/failed)
 DELETE /scheduled-jobs/:id                delete
 ```
+
+`history` is **paged, not complete**. A long-lived recurring job accumulates one
+`job_results` row per run forever (job 867 was at 3,025 rows / 1.15 MB of
+`output_data` as of 2026-09-02), so an unbounded fetch was multi-megabyte.
+Callers that want the whole history walk `history_offset` until they receive
+fewer rows than `history_limit`.
+
+Each history row carries the run's real payload: `output_data` (whatever
+`executeJob` returned, on success rows) or `error_message` (on failure rows),
+plus `executed_at` and `duration_ms`. The Scheduled Jobs UI renders these in the
+per-run expander in the View dialog.
 
 The list endpoint hides `workflow_resume` and `sequence_step` by default. Pass `?internal=true` to include them.
 

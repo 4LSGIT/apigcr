@@ -1097,9 +1097,116 @@ async function jobDelete(id) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// VIEW JOB — config + RUN RESULTS
+//
+// job_results carries the actual payload of every run in output_data
+// (the value executeJob returned; see routes/process_jobs.js
+// recordResult — success rows get output_data, failure rows get
+// error_message). The API has always returned it; this dialog just
+// never rendered it, so a dry-run sweep or a webhook response was
+// invisible from the UI and only readable via SQL.
+//
+// Paging: GET /scheduled-jobs/:id?history=true is now bounded
+// (default 25) and returns history_total / history_limit /
+// history_offset. "Load more" walks the offset and appends. A daily
+// recurring job accumulates a row per run forever — job 867 is at
+// 3,025 — so the list must never be "fetch all and render 10".
+// ══════════════════════════════════════════════════════════════════
+
+const SJ_HISTORY_PAGE  = 25;     // rows per fetch
+const SJ_OUTPUT_MAXLEN = 20000;  // chars of pretty JSON rendered per run
+
+// Run-local state for the open View dialog (single dialog at a time).
+const SJ_VIEW = { id: null, offset: 0, total: 0, rows: [] };
+
+function sjLocalTime(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+}
+
+// Pretty-print a run's payload. output_data is arbitrary JSON (whatever
+// executeJob returned), so print it verbatim rather than guessing at an
+// envelope — truncated with an explicit marker so a huge webhook body
+// can't lock the dialog.
+function sjOutputPre(row) {
+  let text = '';
+  if (row.error_message) {
+    text = String(row.error_message);
+  } else if (row.output_data !== null && row.output_data !== undefined) {
+    try { text = JSON.stringify(row.output_data, null, 2); }
+    catch { text = String(row.output_data); }
+  }
+  if (!text) return `<div style="font-size:11px;color:var(--text-muted);padding:4px 0">No output recorded.</div>`;
+  const truncated = text.length > SJ_OUTPUT_MAXLEN;
+  if (truncated) text = text.slice(0, SJ_OUTPUT_MAXLEN);
+  return `<pre style="background:var(--surface-2);padding:6px 8px;border-radius:4px;font-size:11px;line-height:1.45;margin:4px 0 0;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;color:${row.error_message ? 'var(--danger)' : 'var(--text)'}">${esc(text)}</pre>` +
+    (truncated ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">… truncated at ${SJ_OUTPUT_MAXLEN.toLocaleString()} chars</div>` : '');
+}
+
+// One collapsible run row. Failures start expanded — that's the row
+// someone opened this dialog to read.
+function sjRunRowHTML(row, openByDefault) {
+  const ok = row.status === 'success';
+  const color = ok ? 'var(--ok)' : 'var(--danger)';
+  const bg    = ok ? 'var(--ok-soft)' : 'var(--danger-soft)';
+  const errPeek = row.error_message
+    ? ` — <span style="color:var(--danger)">${esc(String(row.error_message).slice(0, 80))}${String(row.error_message).length > 80 ? '…' : ''}</span>`
+    : '';
+  return `
+    <details${openByDefault ? ' open' : ''} style="border-bottom:1px solid var(--border);padding:5px 0">
+      <summary style="cursor:pointer;font-size:12px;list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-family:ui-monospace,Menlo,monospace;color:var(--text-2)">#${row.execution_number}.${row.attempt}</span>
+        <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;background:${bg};color:${color}">${esc(row.status)}</span>
+        <span style="color:var(--text-muted)">${esc(sjLocalTime(row.executed_at))}</span>
+        <span style="color:var(--text-muted)">${row.duration_ms ?? 0}ms</span>
+        ${errPeek}
+      </summary>
+      ${sjOutputPre(row)}
+    </details>`;
+}
+
+// Render the accumulated rows + Load more into the dialog's container.
+function sjRenderHistory() {
+  const el = document.getElementById('sj-history');
+  if (!el) return;
+  if (!SJ_VIEW.rows.length) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text-muted);padding:4px 0">No runs recorded yet.</div>`;
+    return;
+  }
+  const shown = SJ_VIEW.rows.length;
+  el.innerHTML =
+    `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Showing ${shown} of ${SJ_VIEW.total}</div>` +
+    `<div style="max-height:340px;overflow:auto;padding-right:4px">` +
+    SJ_VIEW.rows.map((r, i) => sjRunRowHTML(r, i === 0 && r.status !== 'success')).join('') +
+    `</div>` +
+    (shown < SJ_VIEW.total
+      ? `<button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="sjHistoryMore()"><i class="fa-solid fa-chevron-down"></i> Load ${Math.min(SJ_HISTORY_PAGE, SJ_VIEW.total - shown)} more</button>`
+      : '');
+}
+
+async function sjHistoryMore() {
+  try {
+    const d = await api(`/scheduled-jobs/${SJ_VIEW.id}?history=true&history_limit=${SJ_HISTORY_PAGE}&history_offset=${SJ_VIEW.offset}`);
+    const page = d.history || [];
+    SJ_VIEW.rows.push(...page);
+    SJ_VIEW.offset += page.length;
+    if (typeof d.history_total === 'number') SJ_VIEW.total = d.history_total;
+    // Server returned fewer than asked → we're at the end regardless of what
+    // total said (rows can be pruned between pages).
+    if (page.length < SJ_HISTORY_PAGE) SJ_VIEW.total = SJ_VIEW.rows.length;
+    sjRenderHistory();
+  } catch (e) {
+    const el = document.getElementById('sj-history');
+    if (el) el.insertAdjacentHTML('beforeend',
+      `<div style="font-size:11px;color:var(--danger);margin-top:6px">${esc(e.message)}</div>`);
+  }
+}
+
 async function jobView(id) {
   try {
-    const data = await api(`/scheduled-jobs/${id}?history=true`);
+    const data = await api(`/scheduled-jobs/${id}?history=true&history_limit=${SJ_HISTORY_PAGE}`);
     const jobData = typeof data.data === 'string' ? JSON.parse(data.data || '{}') : (data.data || {});
     const jobType = jobData.type || '—';
     const when = data.scheduled_time ? new Date(data.scheduled_time).toLocaleString() + ' (UTC)' : '—';
@@ -1140,22 +1247,34 @@ async function jobView(id) {
       <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
       ${config}`;
 
-    if (data.latest_execution) {
+    const le = data.latest_execution;
+    if (le) {
       body += `<hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
-      <strong>Latest Result:</strong> ${data.latest_execution.status} in ${data.latest_execution.duration_ms}ms`;
-      if (data.latest_execution.error_message) body += `<br><span style="color:var(--danger)">${esc(data.latest_execution.error_message)}</span>`;
+      <strong>Latest Result:</strong>
+      <span style="color:${le.status === 'success' ? 'var(--ok)' : 'var(--danger)'}">${esc(le.status)}</span>
+      · ${esc(sjLocalTime(le.executed_at))} · ${le.duration_ms ?? 0}ms
+      ${sjOutputPre(le)}`;
     }
 
-    if (data.history?.length) {
-      body += `<hr style="border:none;border-top:1px solid var(--border);margin:8px 0"><strong>History (${data.history.length})</strong><div style="font-size:12px;margin-top:4px;max-height:150px;overflow:auto">`;
-      body += data.history.slice(0, 10).map(h =>
-        `<div style="padding:2px 0;border-bottom:1px solid var(--border)">#${h.execution_number}.${h.attempt} — <span style="color:${h.status === 'success' ? 'var(--ok)' : 'var(--danger)'}">${h.status}</span> ${h.duration_ms}ms${h.error_message ? ' — ' + esc(h.error_message) : ''}</div>`
-      ).join('');
-      body += `</div>`;
-    }
+    // Run history is rendered imperatively (paged + collapsible), so the
+    // dialog body only carries the container; sjRenderHistory fills it in
+    // didOpen and again on every Load more.
+    body += `<hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+      <strong>Run History</strong>
+      <div id="sj-history" style="margin-top:4px"></div>`;
     body += `</div>`;
 
-    Swal.fire({ title: `Job #${id}`, html: body, width: 560 });
+    SJ_VIEW.id     = id;
+    SJ_VIEW.rows   = data.history || [];
+    SJ_VIEW.offset = SJ_VIEW.rows.length;
+    SJ_VIEW.total  = typeof data.history_total === 'number' ? data.history_total : SJ_VIEW.rows.length;
+
+    Swal.fire({
+      title: `Job #${id}`,
+      html: body,
+      width: 720,
+      didOpen: () => sjRenderHistory(),
+    });
   } catch (e) {
     Swal.fire('Error', e.message, 'error');
   }
