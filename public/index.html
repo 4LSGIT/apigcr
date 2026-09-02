@@ -517,6 +517,14 @@
     <div class="sb-item" data-tab="tabAppts" onclick="openApptsTab()" title="Appointments">
       <i class="fa-solid fa-calendar-days"></i><span>Appointments</span>
     </div>
+    <!-- Unified Events U9. ONE list over both tables — the appointment and the
+         hearing and the deadline, in one window, in one vocabulary. It sits
+         between the two lists it unifies rather than replacing them: this
+         release ships all three side by side so the new one can be checked
+         against the old two. Retiring them is U9b. -->
+    <div class="sb-item" data-tab="tabCalendar" onclick="openCalendarTab()" title="Calendar">
+      <i class="fa-solid fa-calendar-week"></i><span>Calendar</span>
+    </div>
     <div class="sb-item" data-tab="tabEvents" onclick="openEventsTab()" title="Events">
       <i class="fa-solid fa-flag"></i><span>Events</span>
     </div>
@@ -1186,6 +1194,409 @@
       <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
     </div>
   </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       CALENDAR — the unified list (Unified Events U9)
+       ══════════════════════════════════════════════════════════════════════ -->
+  <style>
+    #tabCalendar .calx-bar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      margin-bottom: 10px;
+    }
+    #tabCalendar .calx-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+    #tabCalendar .calx-chip {
+      padding: 3px 11px; border-radius: 14px; border: 1px solid var(--border-strong);
+      background: var(--surface); color: var(--text-2); cursor: pointer;
+      font-size: 0.8rem; font-weight: 500; user-select: none; white-space: nowrap;
+    }
+    #tabCalendar .calx-chip:hover { background: var(--hover); }
+    #tabCalendar .calx-chip.on {
+      background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600;
+    }
+    #tabCalendar .calx-presets button { font-size: 0.78rem; padding: 3px 9px; }
+    #tabCalendar .calx-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    #tabCalendar .calx-allday { color: var(--text-muted); font-style: italic; }
+    #tabCalendar .calx-key { color: var(--text-muted); font-size: 0.78rem; }
+    #tabCalendar .calx-kind { color: var(--text-2); white-space: nowrap; }
+    #tabCalendar .calx-badge { font-weight: 600; white-space: nowrap; }
+    #tabCalendar .calx-b-resolved { color: var(--ok); }
+    #tabCalendar .calx-b-missed { color: var(--danger); }
+    #tabCalendar .calx-b-cancelled { color: var(--text-muted); }
+    #tabCalendar .calx-b-superseded { color: var(--text-muted); text-decoration: line-through; }
+    #tabCalendar tbody tr { cursor: pointer; }
+    #tabCalendar .calx-note { color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; }
+  </style>
+
+  <div id="tabCalendar" class="tab-main">
+    <h1><i class="fa-solid fa-calendar-week"></i> Calendar <i class="fa-solid fa-calendar-week"></i></h1>
+    <div class="calx-bar">
+      <span class="calx-chips" id="calxKinds">
+        <span class="calx-chip on" data-kind="">All</span>
+        <span class="calx-chip" data-kind="meeting">Meetings</span>
+        <span class="calx-chip" data-kind="hearing">Hearings</span>
+        <span class="calx-chip" data-kind="deadline">Deadlines</span>
+        <span class="calx-chip" data-kind="conference">Conferences</span>
+        <span class="calx-chip" data-kind="other">Other</span>
+      </span>
+      State:
+      <select id="calxState" style="width: auto">
+        <option value="live" selected>Live</option>
+        <option value="resolved">Resolved</option>
+        <option value="cancelled">Cancelled</option>
+        <option value="all">All</option>
+      </select>
+      <label style="white-space: nowrap">
+        <input type="checkbox" id="calxSuperseded" /> + superseded
+      </label>
+      With:
+      <select id="calxWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
+        <option value="">Everyone</option>
+      </select>
+      <input id="calxFrom" type="date" style="width: auto" />
+      <label>to</label>
+      <input id="calxTo" type="date" style="width: auto" />
+      <span class="calx-presets">
+        <button data-preset="0">Today</button>
+        <button data-preset="6">Week</button>
+        <button data-preset="30">30d</button>
+        <button data-preset="90">90d</button>
+      </span>
+      <button id="calxButton">Refresh</button>
+    </div>
+    <table id="calxTable" class="logTable">
+      <tr>
+        <th>When</th>
+        <th>Kind</th>
+        <th>What</th>
+        <th>Attached to</th>
+        <th>With</th>
+        <th>State</th>
+      </tr>
+    </table>
+    <div id="calxFoot" class="calx-note"></div>
+    <div id="calxLoad" style="display: none">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>
+
+  <script>
+    /* ═══════════════════════════════════════════════════════════════════════
+       CALENDAR TAB — Unified Events U9
+
+       ONE list over `events` AND `appts`, read through
+       GET /api/calendar-range → services/caseEventService.listRange. The tab
+       renders exactly what that layer returns and derives nothing: the state,
+       the resolution, the kind and the anchor are all fields on the row.
+
+       WHY IT SITS BESIDE THE OLD TABS RATHER THAN REPLACING THEM
+       The read layer hides superseded rows by default; the Events tab's
+       listEvents shows them unless excluded ("option B"). Those are two
+       different answers to the same question, and reconciling them is a
+       behaviour change to a shipped surface. This release ships all three
+       lists so the new one can be checked against the old two on live data;
+       U9b retires the old pair and unifies the predicate.
+
+       PAGINATION: there is none, deliberately. The window is capped at 92 days
+       and the page at 1000 rows server-side, which for a firm this size means
+       the cap is reachable only by asking for a quarter of everything at once.
+       When it IS reached the footer says so rather than silently truncating.
+       Real pagination arrives when a real user hits the cap, not before.
+
+       LIVENESS: `event:*` and `appt:*` off the sync bus, same shape as the
+       Cases/Contacts/Events tabs — stale flag when hidden, debounced refetch
+       when visible. This tab has no writers of its own, so it needs no echo
+       fence (the Appts tab's fence exists because apptUpdate refetches
+       itself). It DOES need the subscriber: completing a deadline happens in
+       eventform, in a Swal over this tab, and the badge has to move when it
+       does. The visibilitychange half registers its own listener rather than
+       adding a fourth line to the Cases block's handler — additive listeners
+       are free, and it keeps this feature to one contiguous edit.
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    let calxRows = null;          // null = never loaded (drives first-open)
+    let calxStale = false;
+    let calxDeb = null;
+    let calxBusDeb = null;
+
+    const CALX_KIND_ICON = {
+      hearing:    'fa-gavel',
+      meeting:    'fa-handshake',
+      deadline:   'fa-hourglass-half',
+      conference: 'fa-users',
+      other:      'fa-circle-dot',
+    };
+    const CALX_RESOLUTION_LABEL = {
+      met: 'met', missed: 'missed', moot: 'moot', held: 'held',
+      cancelled: 'cancelled', attended: 'attended', no_show: 'no show',
+    };
+    const CALX_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const CALX_DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    function calxEsc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /* LOCAL date, never toISOString(): the inputs and the API are both naive
+       firm-local, and toISOString() would shift the date by the browser's
+       offset — the exact bug the read layer's header warns about, arriving
+       from the other end. */
+    function calxISO(d) {
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+        + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    /* 'YYYY-MM-DD HH:MM:SS' → 'Mon Sep 7'. Parsed by COMPONENT, so the string
+       is never handed to new Date() and can never be read as UTC. The Date
+       built here is used only to name the weekday. */
+    function calxWhen(row) {
+      const s = String(row.starts_at || '');
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+      if (!m) return '<span class="calx-allday">—</span>';
+      const d = new Date(+m[1], +m[2] - 1, +m[3]);
+      const day = CALX_DAYS[d.getDay()] + ' ' + CALX_MONTHS[+m[2] - 1] + ' ' + (+m[3]);
+      if (row.all_day || !m[4]) return day + ' <span class="calx-allday">all day</span>';
+      let h = +m[4];
+      const ampm = h >= 12 ? 'pm' : 'am';
+      h = h % 12 || 12;
+      return day + ' ' + h + ':' + m[5] + ' ' + ampm;
+    }
+
+    /* The state/resolution badge. `live` is deliberately plain text with no
+       colour: it is the default answer for most of the list, and a colour on
+       the majority row makes the colours on the minority rows mean less. */
+    function calxBadge(row) {
+      const st = String(row.state || 'live');
+      const res = row.resolution ? (CALX_RESOLUTION_LABEL[row.resolution] || row.resolution) : null;
+      if (st === 'live') return '<span class="calx-badge">live</span>';
+      if (st === 'superseded') return '<span class="calx-badge calx-b-superseded">superseded</span>';
+      // 'missed' is a RESOLVED row (the obligation is closed) whose outcome is
+      // a problem, so it takes the red rather than the green. The state still
+      // reads 'resolved' to anything that filters on state.
+      const cls = row.resolution === 'missed' ? 'calx-b-missed'
+                : st === 'cancelled' ? 'calx-b-cancelled' : 'calx-b-resolved';
+      return '<span class="calx-badge ' + cls + '">' + calxEsc(res || st) + '</span>';
+    }
+
+    /* The anchor cell. Every link goes through addFile(), the same navigation
+       the Appts and Events tables use. A docket with no matching case is
+       plain text, exactly as the Events tab renders it — the docket is opaque
+       free text and this tab never parses or guesses at it. */
+    function calxAnchor(row) {
+      const d = row.display || {};
+      const lt = String(row.link_type || '');
+      if (lt === 'contact') {
+        const name = d.contact_name || ('Contact #' + row.link_id);
+        return row.link_id == null ? calxEsc(name)
+          : '<a href="#" onclick="addFile(' + JSON.stringify(String(name)).replace(/"/g, '&quot;')
+            + ',\'client\',\'' + calxEsc(row.link_id) + '\');return false">' + calxEsc(name) + '</a>';
+      }
+      if (row.case_id) {
+        const label = d.case_label || row.docket || row.case_id;
+        return '<a href="#" onclick="addFile(' + JSON.stringify(String(label)).replace(/"/g, '&quot;')
+          + ',\'case\',\'' + calxEsc(row.case_id) + '\');return false">' + calxEsc(label) + '</a>';
+      }
+      if (row.docket) {
+        return calxEsc(row.docket)
+          + ' <span class="calx-key">(no case matches this docket yet)</span>';
+      }
+      return '<span class="calx-key">—</span>';
+    }
+
+    function calxWithName(row) {
+      // Events: NULL event_with = firm-wide, 0 = nobody. Appts: a real host.
+      // The row does not carry the raw column, so this reads the attendee
+      // shape the read layer already derived — one derivation, not two.
+      const a = (row.attendees || [])[0];
+      if (!a) return '<span class="calx-key">—</span>';
+      if (a.party === 'firm') return 'Everyone';
+      if (a.party === 'user') {
+        const u = (window.firmData?.users || []).find(x => Number(x.user) === Number(a.id));
+        return calxEsc(u ? u.user_name : ('#' + a.id));
+      }
+      return '<span class="calx-key">—</span>';
+    }
+
+    /** The kinds currently selected. Empty = all (the "All" chip). */
+    function calxSelectedKinds() {
+      return [...document.querySelectorAll('#calxKinds .calx-chip.on')]
+        .map(c => c.dataset.kind).filter(Boolean);
+    }
+
+    /** A human sentence naming the active filters, for the empty state. */
+    function calxFilterSentence() {
+      const bits = [];
+      const kinds = calxSelectedKinds();
+      bits.push(kinds.length ? kinds.join(' / ') : 'all kinds');
+      const st = E('calxState').value;
+      bits.push(st === 'all' ? 'any state' : st);
+      if (E('calxSuperseded').checked) bits.push('including superseded');
+      const w = E('calxWith');
+      if (w.value) bits.push('with ' + (w.options[w.selectedIndex] || {}).text);
+      bits.push(E('calxFrom').value + ' → ' + E('calxTo').value);
+      return bits.join(', ');
+    }
+
+    /**
+     * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
+     *   Suppresses the error toast for the same reason every other list does:
+     *   a background fetch that fails must not red-toast a user who did
+     *   nothing. There is no "nothing found" toast to suppress — this tab
+     *   renders its empty state in the table instead, because an empty
+     *   calendar window is a completely ordinary answer.
+     */
+    async function calxGet(silent = false) {
+      E('calxButton').disabled = true;
+      E('calxLoad').style.display = 'block';
+
+      const params = {
+        from: E('calxFrom').value,
+        to: E('calxTo').value,
+        include_labels: 1,
+        // attendees give the With column its answer without this tab
+        // re-deriving "NULL means firm-wide" for a second time.
+        include_attendees: 1,
+      };
+      const kinds = calxSelectedKinds();
+      if (kinds.length) params.kind = kinds.join(',');
+      const st = E('calxState').value;
+      params.state = st === 'all' ? 'live,resolved,cancelled' : st;
+      if (E('calxSuperseded').checked) params.include_superseded = 1;
+      if (E('calxWith').value) params.with_user_id = E('calxWith').value;
+
+      const table = E('calxTable');
+      const foot = E('calxFoot');
+      const trs = table.getElementsByTagName('tr');
+      for (let i = trs.length - 1; i > 0; i--) table.deleteRow(i);
+      foot.innerHTML = '';
+
+      try {
+        const data = await apiSend('/api/calendar-range', 'GET', params);
+        calxRows = data.items || [];
+        if (!calxRows.length) {
+          const row = table.insertRow();
+          row.style.cursor = 'default';
+          row.innerHTML = '<td colspan="6" style="color:var(--text-muted)">Nothing on the calendar for '
+            + calxEsc(calxFilterSentence()) + '.</td>';
+        } else {
+          calxRows.forEach((r) => {
+            const row = table.insertRow();
+            const kind = String(r.kind_key || 'other');
+            const icon = CALX_KIND_ICON[kind] || CALX_KIND_ICON.other;
+            // The label. `title` is the read layer's human label — the
+            // authored event_title on events, appt_type on appts — and
+            // type_key rides muted beside it so an unmapped row is visible as
+            // an unmapped row rather than just as a string.
+            const label = calxEsc(r.title || '(untitled)')
+              + (r.type_key ? ' <span class="calx-key">' + calxEsc(r.type_key) + '</span>'
+                            : ' <span class="calx-key" title="no registry type — mint one in Case Config → Calendar Types">unmapped</span>');
+            row.innerHTML =
+              '<td class="calx-when">' + calxWhen(r) + '</td>' +
+              '<td class="calx-kind"><i class="fa-solid ' + icon + '"></i> ' + calxEsc(kind) + '</td>' +
+              '<td>' + label + '</td>' +
+              '<td>' + calxAnchor(r) + '</td>' +
+              '<td>' + calxWithName(r) + '</td>' +
+              '<td>' + calxBadge(r) + '</td>';
+            // Row click opens the row's OWN form, through the shell's existing
+            // openers — the same two Swals the Appts and Events tabs use, so
+            // there is one way to open an appointment and one way to open an
+            // event in this whole application. An anchor click is excluded so
+            // the case/contact links still navigate.
+            row.onclick = (ev) => {
+              if (ev.target.closest('a')) return;
+              if (r.source === 'appt') showAppt(r.source_id);
+              else showEvent(r.source_id);
+            };
+          });
+          foot.innerHTML = calxRows.length + ' item' + (calxRows.length === 1 ? '' : 's') + ' · '
+            + calxEsc(calxFilterSentence())
+            + (data.has_more
+              ? ' · <b style="color:var(--warn)">capped at ' + data.limit
+                + ' — narrow the window or the filters to see the rest</b>'
+              : '');
+        }
+      } catch (err) {
+        if (silent) console.warn('[calendar] background refetch failed:', err);
+        else Toast.fire({ icon: 'error', title: 'Error loading calendar', text: err.message });
+      }
+
+      E('calxLoad').style.display = 'none';
+      E('calxButton').disabled = false;
+    }
+
+    /** Debounced refetch — every filter control routes through this. */
+    function calxChanged() {
+      clearTimeout(calxDeb);
+      calxDeb = setTimeout(() => calxGet(), 200);
+    }
+
+    function calxSetRange(days) {
+      const now = new Date();
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + Number(days));
+      E('calxFrom').value = calxISO(now);
+      E('calxTo').value = calxISO(end);
+    }
+
+    /* Wiring. Done here rather than with inline onclick attributes because the
+       chips are a multi-select with one rule worth stating: "All" and the
+       named kinds are mutually exclusive, and deselecting the last named kind
+       falls back to All rather than to an empty list that would mean nothing
+       at all. */
+    (function calxWire() {
+      E('calxKinds').addEventListener('click', (ev) => {
+        const chip = ev.target.closest('.calx-chip');
+        if (!chip) return;
+        const all = E('calxKinds').querySelector('[data-kind=""]');
+        if (chip === all) {
+          E('calxKinds').querySelectorAll('.calx-chip').forEach(c => c.classList.remove('on'));
+          all.classList.add('on');
+        } else {
+          all.classList.remove('on');
+          chip.classList.toggle('on');
+          if (!calxSelectedKinds().length) all.classList.add('on');
+        }
+        calxChanged();
+      });
+      ['calxState', 'calxSuperseded', 'calxWith', 'calxFrom', 'calxTo']
+        .forEach(id => E(id).addEventListener('change', calxChanged));
+      document.querySelectorAll('#tabCalendar .calx-presets button').forEach(b => {
+        b.addEventListener('click', () => { calxSetRange(b.dataset.preset); calxChanged(); });
+      });
+      E('calxButton').addEventListener('click', () => calxGet());
+      calxSetRange(30);                      // today → +30d, the default window
+    })();
+
+    function calxTabVisible() {
+      return currentMainTabId() === 'tabCalendar' && !document.hidden;
+    }
+
+    /* One subscriber per source table. A completion in eventform, a reschedule
+       from the Appts tab, a court write from another browser tab — the row's
+       state changed and only the server knows what the window now contains, so
+       the answer is always a refetch. */
+    ['event:*', 'appt:*'].forEach((topic) => {
+      YC.on(topic, '*', () => {
+        if (!calxTabVisible()) { calxStale = true; return; }
+        clearTimeout(calxBusDeb);
+        calxBusDeb = setTimeout(() => calxGet(true), 250);
+      });
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !calxStale) return;
+      if (currentMainTabId() !== 'tabCalendar') return;
+      calxStale = false;
+      calxGet(true);
+    });
+
+    /** Sole opener for the Calendar tab. */
+    function openCalendarTab() {
+      if (calxRows === null) calxGet();
+      else if (calxStale) { calxStale = false; calxGet(true); }
+      openMainTab('tabCalendar');
+    }
+  </script>
+
   <script>
     function tabApptsCal() {
       Swal.fire({

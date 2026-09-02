@@ -262,33 +262,101 @@ async function loadCaseTypes() {
   } catch (_) { caseTypeOpts = []; }
 }
 
+/* ── The unmapped worklist (U2b footer, U9 actions) ──────────────────────
+   Rows whose STORED TYPE STRING resolves to no registry key. U9 made the list
+   actionable: each distinct label gets a "Mint type…" button that opens the
+   create editor prefilled, and on save offers to adopt the rows carrying it.
+
+   The list is grouped BY LABEL, not by row. Minting is a decision about a
+   STRING ("what is 'Mediation'?"), and adopt-unmapped stamps every row with
+   that string in one statement — so showing four 'Mediation' rows with four
+   identical buttons would offer the same action four times.
+
+   `no_label` is a COUNT, not a list. Those rows carry no type string at all
+   (8 live appts, all 2024), so there is nothing to mint from and no action
+   that could ever clear them. They are a separate sentence for that reason —
+   see listUnmapped's header for the full argument. */
 async function loadUnmappedLine() {
   const el = E('unmapped-line');
   try {
     const d = await api('/api/calendar-types-admin/unmapped');
-    const n = Number(d.total || 0);
-    if (!n) { el.innerHTML = 'Every event and appointment carries a registry type.'; return; }
+    window._unmapped = d;
+    const n = (d.events || []).length + (d.appts || []).length;
+    const nb = ((d.no_label && d.no_label.events) || 0) + ((d.no_label && d.no_label.appts) || 0);
+    const residue = nb
+      ? ` <span style="color:var(--text-muted)">${nb} further row${nb === 1 ? '' : 's'} carr${nb === 1 ? 'ies' : 'y'} no type at all — nothing to mint.</span>`
+      : '';
+    if (!n) {
+      el.innerHTML = 'Every typed event and appointment carries a registry type.' + residue;
+      return;
+    }
     el.innerHTML = `<b>${n}</b> row${n === 1 ? '' : 's'} carr${n === 1 ? 'ies' : 'y'} an unmapped type ` +
       `(${d.events.length} event${d.events.length === 1 ? '' : 's'}, ${d.appts.length} appt${d.appts.length === 1 ? '' : 's'}) — ` +
-      `<a onclick="showUnmapped()">view</a>. Minting a type from these lands in U9.`;
-    window._unmapped = d;
+      `<a onclick="showUnmapped()">view and mint</a>.` + residue;
   } catch (e) {
     el.textContent = 'Unmapped check failed: ' + e.message;
   }
 }
+
+/** Group the unmapped rows by their (ci) label. → [{label, events[], appts[]}] */
+function unmappedByLabel(d) {
+  const byLabel = new Map();
+  const put = (bucket, r) => {
+    const raw = String(r.label == null ? '' : r.label).trim();
+    if (!raw) return;                      // defensive: the server filters these
+    const k = raw.toLowerCase();
+    if (!byLabel.has(k)) byLabel.set(k, { label: raw, events: [], appts: [] });
+    byLabel.get(k)[bucket].push(r);
+  };
+  (d.events || []).forEach(r => put('events', r));
+  (d.appts  || []).forEach(r => put('appts', r));
+  return [...byLabel.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
 window.showUnmapped = function () {
-  const d = window._unmapped || { events: [], appts: [] };
+  const d = window._unmapped || { events: [], appts: [], no_label: { events: 0, appts: 0 } };
   const fmt = (v) => v ? String(v).slice(0, 10) : '';
-  const rows = [
-    ...d.events.map(r => `<tr><td>event</td><td>${r.id}</td><td>${esc(r.label)}</td><td>${fmt(r.date)}</td><td>${esc(r.link_type || '')} ${r.link_id || ''}</td></tr>`),
-    ...d.appts.map(r =>  `<tr><td>appt</td><td>${r.id}</td><td>${esc(r.label ?? '(blank)')}</td><td>${fmt(r.date)}</td><td>case ${r.case_id || '—'} · ${esc(r.status || '')}</td></tr>`),
-  ].join('');
+  const groups = unmappedByLabel(d);
+  const rows = groups.map((g, i) => {
+    const detail = [
+      ...g.events.map(r => `event ${r.id} · ${fmt(r.date)}${r.link_type ? ' · ' + esc(r.link_type) + ' ' + esc(r.link_id || '') : ''}`),
+      ...g.appts.map(r => `appt ${r.id} · ${fmt(r.date)} · ${esc(r.status || '')}`),
+    ].join('<br>');
+    return `<tr>
+      <td><b>${esc(g.label)}</b></td>
+      <td style="text-align:right">${g.events.length} ev · ${g.appts.length} ap</td>
+      <td style="font-size:11px;color:var(--text-muted)">${detail}</td>
+      <td><button type="button" class="btn btn-primary btn-sm" data-mint="${i}"><i class="fa-solid fa-wand-magic-sparkles"></i> Mint type…</button></td>
+    </tr>`;
+  }).join('');
+  const nb = ((d.no_label && d.no_label.events) || 0) + ((d.no_label && d.no_label.appts) || 0);
   Swal.fire({
     title: 'Unmapped types',
     customClass: { popup: 'yc-popup-wide' },
-    html: `<div class="unmapped-list"><table><thead><tr><th>Table</th><th>ID</th><th>Stored type</th><th>Date</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table></div>
-           <div style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:left">Read-only list. Add a matching alias to an existing type (or create the type), then the U9 backfill re-resolves these.</div>`,
+    html: `<div class="unmapped-list"><table><thead><tr><th>Stored type</th><th style="text-align:right">Rows</th><th>Which</th><th></th></tr></thead>
+             <tbody>${rows || '<tr><td colspan="4" style="color:var(--text-muted)">Nothing to mint.</td></tr>'}</tbody></table></div>
+           <div style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:left">
+             Minting opens the create editor prefilled from the label; on save you are offered the adoption.
+             Adding a matching <b>alias</b> to an existing type instead resolves future writes but does not
+             touch the rows already stored — the adoption is what does that.
+             ${nb ? `<br>${nb} further row${nb === 1 ? '' : 's'} carr${nb === 1 ? 'ies' : 'y'} no type string at all and cannot be minted from.` : ''}
+           </div>`,
     showConfirmButton: false, showCloseButton: true,
+    didOpen: () => {
+      const popup = Swal.getHtmlContainer();
+      popup.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-mint]');
+        if (!btn) return;
+        const g = groups[Number(btn.dataset.mint)];
+        if (!g) return;
+        Swal.close();
+        // The editor's own Swal replaces this one. Prefill: the raw string as
+        // the label, a key suggested from it, and kind 'other' — which is what
+        // the write path assigned these rows and is EDITABLE on purpose.
+        // Minting is exactly the moment the human knows better than 'other'.
+        openEditor(null, { label: g.label, kind: 'other', adopt: g });
+      });
+    },
   });
 };
 
@@ -415,10 +483,20 @@ function wireChips(hostId, inputId, { numeric = false } = {}) {
   });
 }
 
-async function openEditor(key) {
+/**
+ * @param {string|null} key      existing type_key, or null to create
+ * @param {object|null} prefill  U9 mint-from-unmapped: { label, kind, adopt }.
+ *        `label`/`kind` seed the create form (both stay fully editable — a
+ *        prefill is a starting point, not a decision). `adopt` is the row group
+ *        that triggered the mint; its presence is what makes the save offer the
+ *        adoption, and it is ignored entirely when editing an existing type.
+ */
+async function openEditor(key, prefill) {
   const isNew = key == null;
+  const pf = (isNew && prefill) ? prefill : null;
   const t = isNew ? {
-    type_key: '', label: '', kind: 'meeting', singleton: 0, blocks_default: 'attendee', client_attends: 0,
+    type_key: '', label: (pf && pf.label) || '', kind: (pf && pf.kind) || 'meeting',
+    singleton: 0, blocks_default: 'attendee', client_attends: 0,
     default_length: null, approaching_offsets: null, ingest_aliases: [], case_types: null, options: [], active: 1,
     sort_order: (Math.max(0, ...types.map(x => x.sort_order || 0)) + 10), refs: { total: 0 },
   } : types.find(x => x.type_key === key);
@@ -489,7 +567,7 @@ async function openEditor(key) {
     ${isNew ? '' : `<div class="hint" style="margin-top:10px">References: events ${refs.events} · appts ${refs.appts} · booking views ${refs.booking_views} · court matches ${refs.ai_match_types}</div>`}
   </div>`;
 
-  const { isConfirmed, isDenied } = await Swal.fire({
+  const { isConfirmed, isDenied, value } = await Swal.fire({
     title: isNew ? 'New calendar type' : `Edit ${t.label}`,
     customClass: { popup: 'yc-popup-wide' },
     html,
@@ -505,6 +583,10 @@ async function openEditor(key) {
         let touched = false;
         E('ed-key').addEventListener('input', () => { touched = true; });
         E('ed-label').addEventListener('input', () => { if (!touched) E('ed-key').value = suggestKey(E('ed-label').value); });
+        // A mint arrives with the label already filled, so the `input` listener
+        // above will never fire for it — seed the key here or the field opens
+        // blank beside a filled label and the form looks broken.
+        if (pf && pf.label) E('ed-key').value = suggestKey(pf.label);
       }
       // free-add case type
       const addCt = () => {
@@ -553,7 +635,9 @@ async function openEditor(key) {
       try {
         if (isNew) await api('/api/calendar-types-admin', 'POST', body);
         else       await api(`/api/calendar-types-admin/${encodeURIComponent(t.type_key)}`, 'PUT', body);
-        return true;
+        // The saved key is returned so the adopt offer below knows what to
+        // adopt ONTO — on create the key only exists after the user typed it.
+        return { type_key: isNew ? body.type_key : t.type_key };
       } catch (e) {
         Swal.showValidationMessage(e.message || 'Save failed');
         return false;
@@ -563,12 +647,51 @@ async function openEditor(key) {
 
   if (isConfirmed) {
     Toast.fire({ icon: 'success', title: isNew ? 'Type created' : 'Saved' });
+    // U9 — the mint's second half. Offered, never automatic: creating the type
+    // and rewriting historical rows are two decisions, and a human who minted
+    // 'Mediation' to use going forward may not want the 2024 rows touched.
+    if (pf && pf.adopt && value && value.type_key) await offerAdopt(value.type_key, pf.adopt);
     await reload();
   } else if (isDenied) {
     await deleteType(t);
   }
 }
 window.openEditor = openEditor;
+
+/**
+ * Offer to stamp the freshly-minted key onto the rows that carry its label.
+ *
+ * The count shown is what the WORKLIST saw. The server re-derives its own
+ * match (type_key IS NULL AND type string = the label), so the number in the
+ * result toast is the authority and can legitimately differ — another session
+ * may have adopted some of them a second ago. Showing the server's number
+ * rather than the one we predicted is the honest report.
+ */
+async function offerAdopt(typeKey, group) {
+  const n = (group.events || []).length + (group.appts || []).length;
+  if (!n) return;
+  const { isConfirmed } = await Swal.fire({
+    icon: 'question',
+    title: `Adopt ${n} existing row${n === 1 ? '' : 's'}?`,
+    html: `<div style="font-size:13px;text-align:left">
+      ${n} row${n === 1 ? '' : 's'} still carr${n === 1 ? 'ies' : 'y'} <b>${esc(group.label)}</b> as raw text
+      (${(group.events || []).length} event${(group.events || []).length === 1 ? '' : 's'},
+       ${(group.appts || []).length} appt${(group.appts || []).length === 1 ? '' : 's'}).
+      Stamp <b>${esc(typeKey)}</b> onto them?<br><br>
+      <span style="color:var(--text-muted)">This classifies them only — dates, statuses and
+      last-updated timestamps are untouched. Skipping is safe: the type exists either way and
+      new writes resolve to it.</span></div>`,
+    showCancelButton: true, confirmButtonText: `Adopt ${n}`, cancelButtonText: 'Not now',
+  });
+  if (!isConfirmed) return;
+  try {
+    const r = await api(`/api/calendar-types-admin/${encodeURIComponent(typeKey)}/adopt-unmapped`, 'POST',
+      { raw_label: group.label });
+    Toast.fire({ icon: 'success', title: `Adopted ${r.total} row(s)`, text: `events ${r.events}, appts ${r.appts}` });
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: 'Adoption failed', text: e.message });
+  }
+}
 
 async function deleteType(t) {
   const refs = t.refs || { total: 0 };

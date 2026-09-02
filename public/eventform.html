@@ -364,6 +364,58 @@ function efInitialTypeSel(ev) {
   return getEventTypeOptions().includes(label) ? label : '__other__';
 }
 
+/* ── Resolution (Unified Events U9, v0.5 §3.7) ───────────────────────────
+   HOW an event ended, beside WHETHER it ended. `event_status` alone cannot
+   tell a deadline that was CANCELLED (the obligation was withdrawn) from one
+   that became MOOT (the case converted; the date stopped applying) — both are
+   Canceled rows, and only `event_resolution` separates them.
+
+   TWO HALVES, and they are different jobs:
+
+   DISPLAY mirrors caseEventService._deriveState's fallback exactly, because
+   `event_resolution` is NULL on every row written before U6a and this page
+   must show the same word the Calendar tab's badge shows for the same row.
+   The fallback is: Completed + deadline → met, Completed + else → held,
+   Canceled → cancelled unless the column says moot.
+
+   WRITE only asks when the answer is not already determined. A hearing you
+   completed, you held; there is nothing to ask, so non-deadline Complete stays
+   the one-click confirm it has always been (the server writes the default).
+   A DEADLINE is the whole reason the column exists, so it asks.
+
+   WHY THIS PAGE HAS ITS OWN DIALOGS FOR THE DEADLINE CASE
+   scripts.js's eventComplete/eventCancel send a fixed body — no resolution on
+   complete, {delete_gcal:true} on cancel — and scripts.js is out of scope for
+   this slice. So the deadline branch runs a local Swal and every other kind
+   still delegates to the shared helpers, which keeps the confirm wording for
+   the common case in exactly one place. */
+const EF_RESOLUTION_LABEL = {
+  met:       'Met',
+  missed:    'Missed',
+  moot:      'Moot — no longer applied',
+  held:      'Held',
+  cancelled: 'Cancelled',
+  attended:  'Attended',
+  no_show:   'No show',
+};
+
+/* The resolution to DISPLAY for a row: the stored value when there is one,
+   else the §3.7 fallback. Null for a Scheduled row — a live event has not
+   ended, so it has no answer yet. */
+function efResolution(ev) {
+  const stored = ev.event_resolution == null ? null : String(ev.event_resolution);
+  const status = String(ev.event_status || 'Scheduled');
+  if (status === 'Completed') return stored || (efIsDeadline(ev) ? 'met' : 'held');
+  if (status === 'Canceled')  return stored === 'moot' ? 'moot' : 'cancelled';
+  return null;
+}
+
+/* kind decides which resolutions are legal, and `kind` is a real column on
+   events (E0b) that GET /api/events/:id returns via `e.*`. An unmapped row has
+   kind 'other', never 'deadline', so it takes the silent path — correct: you
+   cannot ask a meaningful met/moot question about a row nobody classified. */
+function efIsDeadline(ev) { return String(ev && ev.kind || '') === 'deadline'; }
+
 function efShell() { try { return window.top; } catch (_) { return null; } }
 
 function efApi(...args) {
@@ -540,20 +592,135 @@ function efRenderActions() {
     s.style.fontSize = '0.84rem';
     s.textContent = `This event is ${efRow.event_status}. Status actions are only offered while it is Scheduled.`;
     bar.appendChild(s);
+
+    // U9 — the resolution line. Plain text beside the status, red for 'missed'
+    // and only for 'missed': a missed deadline is the one outcome here that is
+    // a problem rather than a fact, and colouring the others too would make
+    // the colour mean nothing.
+    const res = efResolution(efRow);
+    if (res) {
+      const r = document.createElement('span');
+      r.style.fontSize = '0.84rem';
+      r.style.marginLeft = '10px';
+      r.style.fontWeight = '600';
+      if (res === 'missed') r.style.color = 'var(--danger)';
+      else { r.style.color = 'var(--text-2)'; r.style.fontWeight = '500'; }
+      r.textContent = 'Outcome: ' + (EF_RESOLUTION_LABEL[res] || res);
+      // A row whose column is still NULL is showing the read layer's FALLBACK,
+      // not a recorded fact. Say so on hover rather than in the line — the
+      // distinction matters to whoever is auditing, not to whoever is reading.
+      if (efRow.event_resolution == null) {
+        r.title = 'Derived from the status (nothing was recorded when this event was closed).';
+        r.style.fontStyle = 'italic';
+      }
+      bar.appendChild(r);
+    }
     return;
   }
+
+  const isDeadline = efIsDeadline(efRow);
 
   const done = document.createElement('button');
   done.className = 'ef-btn-complete';
   done.innerHTML = '<i class="fa-solid fa-check"></i> Complete';
-  done.onclick = () => eventComplete(efRow.event_id, efAfterWrite);
+  done.onclick = () => (isDeadline ? efCompleteDeadline() : eventComplete(efRow.event_id, efAfterWrite));
   bar.appendChild(done);
 
   const cancel = document.createElement('button');
   cancel.className = 'ef-btn-cancel';
   cancel.innerHTML = '<i class="fa-solid fa-ban"></i> Cancel';
-  cancel.onclick = () => eventCancel(efRow.event_id, efAfterWrite);
+  cancel.onclick = () => (isDeadline ? efCancelDeadline() : eventCancel(efRow.event_id, efAfterWrite));
   bar.appendChild(cancel);
+}
+
+/**
+ * PATCH a status endpoint with a resolution, falling back to no resolution on
+ * a 400.
+ *
+ * THE FALLBACK IS NOT DEFENSIVE PADDING. This page is served from the same
+ * origin as the API but is not deployed with it in the same instant, and the
+ * U6a `{ resolution }` parameter is young. A browser holding a cached copy of
+ * this file against a rolled-back server would otherwise turn "mark this
+ * deadline met" into a red toast and a deadline that stays open — the form
+ * would be bricked by a parameter that is, for its purpose, optional.
+ *
+ * So: send the resolution, and if the server rejects THE RESOLUTION (400),
+ * send the same action without it and let the server write its own §3.7
+ * default. Any other status is a real failure and propagates.
+ */
+async function efPatchStatus(path, body, resolution) {
+  const url = '/api/events/' + encodeURIComponent(efRow.event_id) + path;
+  try {
+    return await efApi(url, 'PATCH', { ...body, resolution });
+  } catch (err) {
+    if (!err || err.status !== 400) throw err;
+    console.warn('[eventform] resolution ' + JSON.stringify(resolution) +
+      ' rejected (400: ' + (err.message || '') + ') — retrying without it');
+    return await efApi(url, 'PATCH', body);
+  }
+}
+
+/* Complete a DEADLINE. 'met' or 'moot' — the two answers a human has. 'missed'
+   is deliberately NOT offered: it is what the nightly sweep writes for a
+   deadline whose date passed untouched, and a person sitting on this form
+   marking something complete is not describing a miss. */
+function efCompleteDeadline() {
+  Swal.fire({
+    title: 'Complete this deadline',
+    input: 'radio',
+    inputValue: 'met',
+    inputOptions: { met: 'Met — the obligation was satisfied', moot: 'Moot — it stopped applying' },
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Mark complete',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async (choice) => {
+      try {
+        return { data: await efPatchStatus('/complete', {}, choice === 'moot' ? 'moot' : 'met') };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to complete event');
+        return false;
+      }
+    },
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    efToast(data.status || 'success', data.title || 'Done!', data.message);
+    if (data.status === 'success') efAfterWrite();
+  });
+}
+
+/* Cancel a DEADLINE. The checkbox is the whole point of the branch: cancelled
+   and moot are both Canceled rows, and only this answer tells them apart. */
+function efCancelDeadline() {
+  Swal.fire({
+    title: 'Cancel this deadline?',
+    html: 'This also removes it from the calendar.' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:0.88rem;text-align:left">' +
+      '<input type="checkbox" id="efMoot" style="width:15px;height:15px">' +
+      '<span>It no longer applies (moot), rather than being called off</span></label>',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Cancel deadline',
+    cancelButtonText: 'Keep',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      const moot = !!(document.getElementById('efMoot') || {}).checked;
+      try {
+        return { data: await efPatchStatus('/cancel', { delete_gcal: true }, moot ? 'moot' : 'cancelled') };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to cancel event');
+        return false;
+      }
+    },
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    efToast(data.status || 'success', data.title || 'Canceled', data.message);
+    if (data.status === 'success') efAfterWrite();
+  });
 }
 
 function efRenderForm() {

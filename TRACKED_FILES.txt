@@ -149,6 +149,7 @@ manual/05-Subsystems/06-reports.md
 manual/05-Subsystems/07-YisraView.md
 manual/05-Subsystems/08-documents.md
 manual/05-Subsystems/09-calendar-types.md
+manual/05-Subsystems/10-calendar-tab.md
 manual/05-Subsystems/README.md
 manual/06-Admin-Tools/01-db-console.md
 manual/06-Admin-Tools/02-readonly-keys.md
@@ -421,6 +422,7 @@ routes/api.assets.js
 routes/api.availability.js
 routes/api.bookingViews.js
 routes/api.calendarFeed.js
+routes/api.calendarRange.js
 routes/api.calendarTypes.js
 routes/api.calendarTypesAdmin.js
 routes/api.caseEvents.js
@@ -880,6 +882,9 @@ tests/unifiedEventsU6b.appts.test.js
 tests/unifiedEventsU6b.facade.test.js
 tests/unifiedEventsU6b.links.test.js
 tests/unifiedEventsU8.approaching.test.js
+tests/unifiedEventsU9.eventform.test.js
+tests/unifiedEventsU9.range.test.js
+tests/unifiedEventsU9.shell.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js

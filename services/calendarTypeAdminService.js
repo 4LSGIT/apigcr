@@ -448,23 +448,49 @@ async function getTypeAdmin(db, key) {
 /**
  * Rows that carry an UNMAPPED type: type_key IS NULL. For events that means
  * the 'other' kind bucket the server assigns to every unknown string; appts
- * are all meetings so any NULL key counts. This is the U9 worklist teaser —
- * minting a type from an unmapped row is U9, not here.
+ * are all meetings so any NULL key counts.
+ *
+ * ── U9: A LABEL IS NOW REQUIRED TO BE ON THE LIST ──────────────────────────
+ *
+ * U2b listed every NULL-key appt. Live that is 8 rows, and ALL EIGHT have
+ * `appt_type IS NULL` — 2024 rows where nobody recorded a type at all. They
+ * are not "an unmapped type"; they are no type. Nothing can be minted from
+ * them (there is no string to mint) and nothing can adopt them (adoptUnmapped
+ * requires a non-blank raw_label), so under the U2b query the worklist showed
+ * a permanent floor of 8 that no action could ever clear.
+ *
+ * A worklist you cannot action is a worklist people stop reading, so the list
+ * itself is now what it always claimed to be — rows whose STORED TYPE STRING
+ * has no registry key — and the untyped rows are reported alongside it as
+ * `no_label`, a COUNT rather than a list. They are a different problem (a
+ * write path that let a type through blank), they are historical, and they
+ * belong in a different sentence.
+ *
+ * @returns {Promise<{events: object[], appts: object[], no_label: {events: number, appts: number}}>}
  */
 async function listUnmapped(db) {
+  const NON_BLANK_EV = `event_type IS NOT NULL AND TRIM(event_type) <> ''`;
+  const NON_BLANK_AP = `appt_type IS NOT NULL AND TRIM(appt_type) <> ''`;
+
   const [ev] = await db.query(
     `SELECT event_id AS id, event_type AS label, event_date AS date, event_link_type AS link_type, event_link_id AS link_id
-       FROM events WHERE type_key IS NULL AND kind = 'other'
+       FROM events WHERE type_key IS NULL AND kind = 'other' AND ${NON_BLANK_EV}
       ORDER BY event_date DESC LIMIT 200`
   );
   const [ap] = await db.query(
     `SELECT appt_id AS id, appt_type AS label, appt_date AS date, appt_case_id AS case_id, appt_client_id AS contact_id, appt_status AS status
-       FROM appts WHERE type_key IS NULL
+       FROM appts WHERE type_key IS NULL AND ${NON_BLANK_AP}
       ORDER BY appt_date DESC LIMIT 200`
+  );
+  // One query for both residue counts — it is a footnote, not a page.
+  const [[blank]] = await db.query(
+    `SELECT (SELECT COUNT(*) FROM events WHERE type_key IS NULL AND kind = 'other' AND NOT (${NON_BLANK_EV})) AS ev,
+            (SELECT COUNT(*) FROM appts  WHERE type_key IS NULL AND NOT (${NON_BLANK_AP}))                    AS ap`
   );
   return {
     events: (ev || []).map((r) => ({ ...r, id: Number(r.id) })),
     appts:  (ap || []).map((r) => ({ ...r, id: Number(r.id) })),
+    no_label: { events: Number((blank && blank.ev) || 0), appts: Number((blank && blank.ap) || 0) },
   };
 }
 
@@ -695,6 +721,105 @@ async function deleteOption(db, id) {
   return { id: cur.id, type_key: cur.type_key, deleted: true };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ADOPT UNMAPPED  (Unified Events U9)
+//
+// THE ONLY WRITE TO `events` / `appts` IN THIS SLICE, and the only one in this
+// file. Everything else here writes the registry. Two UPDATE statements, both
+// narrow, both idempotent, and both honouring v0.5 §7.1 rule 9 (a backfill
+// touches the columns it is backfilling and nothing else).
+//
+// ── WHAT IT DOES ───────────────────────────────────────────────────────────
+//
+// You minted a type from an unmapped row. The registry now knows what
+// 'Mediation' means; the 1 event still carrying that raw string does not. This
+// stamps the key onto every row whose stored type string is exactly that raw
+// label AND which has no key yet.
+//
+//   UPDATE events SET type_key = ?, kind = <registry kind>,
+//                     event_updated_at = event_updated_at
+//    WHERE type_key IS NULL AND event_type = ?
+//
+// ── THE `event_updated_at = event_updated_at` CLAUSE IS LOAD-BEARING ───────
+//
+// `events.event_updated_at` is `ON UPDATE CURRENT_TIMESTAMP` (verified against
+// the live DDL). Without the self-assignment, adopting a type would restamp
+// every matched row as "modified now" — and eventform shows that timestamp,
+// the log feed orders by it, and a human looking at a 2024 hearing would see
+// it was edited today by nobody. Classifying a row is not editing it.
+//
+// `appts` has NO updated_at column at all (also verified against the DDL), so
+// its statement carries no such clause. The asymmetry is the schema's, not a
+// mistake here.
+//
+// ── WHAT IT DOES NOT DO ────────────────────────────────────────────────────
+//
+//   · no cache invalidation — the options cache is keyed on registry rows, and
+//     this touches none. Calling invalidate() would be a lie about what
+//     changed.
+//   · no domain events — a backfill is not a calendar action. Nothing was
+//     scheduled, moved or resolved; a row was classified.
+//   · no kind on appts — appts have no kind column. Every appt is kind
+//     'meeting' BY TABLE (§3.3.2), which is exactly why the read layer derives
+//     it rather than storing it.
+//
+// ── WHY IT WILL ADOPT APPTS ONTO A NON-MEETING TYPE ────────────────────────
+//
+// Deliberately unguarded. `kind` routes storage for NEW rows; these rows
+// already exist, in the table they already live in, and refusing to classify
+// an appt because the human minted its type as 'other' would leave it unmapped
+// forever with no way out. It is a live shape already: appt 3966 carries
+// type_key 'test', whose registry kind is 'other'. The counts come back split
+// by table so the human sees exactly what was stamped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Stamp a registry key onto the unmapped rows carrying a raw label.
+ *
+ * @param {object} db
+ * @param {string} typeKey   must exist AND be active (409 otherwise) — you do
+ *        not backfill rows onto a type that is not in service
+ * @param {string} rawLabel  the stored type string, non-blank (400 otherwise).
+ *        Matched with `=` under utf8mb4_general_ci, so it is case-insensitive
+ *        and trailing-space-insensitive exactly as the resolver is.
+ * @returns {Promise<{type_key, kind, raw_label, events: number, appts: number, total: number}>}
+ */
+async function adoptUnmapped(db, typeKey, rawLabel) {
+  const label = typeof rawLabel === 'string' ? rawLabel.trim() : '';
+  if (!label) throw badRequest('raw_label is required');
+
+  const [rows] = await db.query(
+    `SELECT type_key, kind, active FROM calendar_item_types WHERE type_key = ?`,
+    [String(typeKey == null ? '' : typeKey)]
+  );
+  const t = rows && rows[0];
+  if (!t) throw notFound(`Calendar type '${typeKey}' not found`);
+  if (!Number(t.active)) {
+    throw conflict(`'${t.type_key}' is inactive — activate it before adopting rows onto it`);
+  }
+
+  const [evRes] = await db.query(
+    `UPDATE events
+        SET type_key = ?, kind = ?, event_updated_at = event_updated_at
+      WHERE type_key IS NULL AND event_type = ?`,
+    [String(t.type_key), String(t.kind), label]
+  );
+  const [apRes] = await db.query(
+    `UPDATE appts SET type_key = ? WHERE type_key IS NULL AND appt_type = ?`,
+    [String(t.type_key), label]
+  );
+
+  const events = Number((evRes && evRes.affectedRows) || 0);
+  const appts  = Number((apRes && apRes.affectedRows) || 0);
+  // ONE line, at info level. A backfill that stamps rows in two tables and
+  // leaves no trace is a backfill nobody can explain afterwards.
+  console.log(
+    `[calendarTypeAdmin] adopt-unmapped: '${label}' -> ${t.type_key} (kind ${t.kind}) ` +
+    `— events ${events}, appts ${appts}`
+  );
+  return { type_key: String(t.type_key), kind: String(t.kind), raw_label: label, events, appts, total: events + appts };
+}
+
 module.exports = {
   listTypesAdmin,
   getTypeAdmin,
@@ -703,6 +828,7 @@ module.exports = {
   createType,
   updateType,
   deleteType,
+  adoptUnmapped,
   getRefs,
   getOption,
   createOption,

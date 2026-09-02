@@ -135,11 +135,34 @@ moves it out of *Other* on the next cache turn.
 
 ## Unmapped types (footer)
 
-"N rows carry an unmapped type" counts events with `type_key IS NULL AND
-kind='other'` and appts with `type_key IS NULL`. *View* lists them read-only.
-To fix one: add its stored string as an alias on the right type (or create
-the type), then the backfill re-resolves it. Minting a type *from* an unmapped
-row is U9.
+"N rows carry an unmapped type" counts rows whose **stored type string** has no
+registry key: events with `type_key IS NULL AND kind='other'`, appts with
+`type_key IS NULL`. *View and mint* opens the worklist.
+
+The worklist groups by **label**, not by row — minting is a decision about a
+string ("what is 'Mediation'?"), and one adoption stamps every row carrying it.
+
+Two ways to fix one:
+
+- **Add an alias.** Put the stored string on an existing type's
+  `ingest_aliases`. Future writes resolve to it. **The rows already stored are
+  not touched.**
+- **Mint the type.** *Mint type…* opens the create editor prefilled — label =
+  the raw string, key suggested from it, kind `other` and fully editable
+  (minting is exactly when you know better than `other`). On save you are
+  offered *Adopt N existing rows*, which is what actually rewrites them.
+
+Adoption is offered, never automatic: creating a type to use going forward and
+rewriting history are two decisions. It classifies only — dates, statuses and
+`event_updated_at` are untouched, so a 2024 hearing does not become "edited
+today".
+
+### "N further rows carry no type at all"
+
+A separate sentence, and a count rather than a list. These rows have a blank
+stored type (live: 8 appts, all 2024) — there is no string to mint from and
+nothing to adopt, so they are not on the worklist. They are a write-path
+artifact from before the type was required, not a classification backlog.
 
 ## If the registry is unreachable
 
@@ -157,7 +180,7 @@ narrows to unmapped-only in that state rather than claiming every appointment.
 GET    /api/calendar-types                       registry rows (event pickers, the Appointments-tab filter)
 GET    /api/calendar-types/options?surface=…[&case_type=…]   picker options (appointments)
 GET    /api/calendar-types-admin                 every row + refs + options
-GET    /api/calendar-types-admin/unmapped
+GET    /api/calendar-types-admin/unmapped        {events[], appts[], no_label:{events,appts}}
 GET    /api/calendar-types-admin/case-types
 GET    /api/calendar-types-admin/:type_key
 POST   /api/calendar-types-admin                 create
@@ -166,4 +189,5 @@ DELETE /api/calendar-types-admin/:type_key
 POST   /api/calendar-types-admin/:type_key/options
 PUT    /api/calendar-types-admin/options/:id
 DELETE /api/calendar-types-admin/options/:id
+POST   /api/calendar-types-admin/:type_key/adopt-unmapped   {raw_label} → counts
 ```

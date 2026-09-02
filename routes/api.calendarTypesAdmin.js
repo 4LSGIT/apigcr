@@ -9,8 +9,12 @@
  * GET    /api/calendar-types-admin              — every row (active or not), registry
  *                                                  order, + refs {events, appts,
  *                                                  booking_views, ai_match_types, total}
- * GET    /api/calendar-types-admin/unmapped     — U9 worklist teaser: rows with
- *                                                  type_key IS NULL ({events[], appts[]})
+ * GET    /api/calendar-types-admin/unmapped     — the mint worklist: rows whose
+ *                                                  stored type string has no key
+ *                                                  ({events[], appts[], no_label:{…}}).
+ *                                                  U9 narrowed it to rows with a
+ *                                                  NON-BLANK label — see
+ *                                                  listUnmapped for why.
  * GET    /api/calendar-types-admin/case-types   — DISTINCT cases.case_type + counts
  *                                                  (checkbox-group options)
  * GET    /api/calendar-types-admin/:type_key    — one row + refs
@@ -19,6 +23,10 @@
  *                                                  kind locked once referenced → 409)
  * DELETE /api/calendar-types-admin/:type_key    — hard delete at zero refs → else 409
  *                                                  (cascades the type's option rows)
+ * POST   /api/calendar-types-admin/:type_key/adopt-unmapped  { raw_label }  (U9)
+ *                                                — stamp this key onto the
+ *                                                  unmapped rows carrying that
+ *                                                  raw label; returns counts
  *
  * Picker OPTIONS (U2b; presentation rows under a kind=meeting type):
  * POST   /api/calendar-types-admin/:type_key/options — create { length, surfaces[], label?, sort_order?, active? }
@@ -108,6 +116,25 @@ router.delete('/api/calendar-types-admin/:type_key', jwtOrApiKey, async (req, re
     const out = await svc.deleteType(req.db, String(req.params.type_key));
     res.json({ status: 'success', ...out });
   } catch (err) { fail(res, 'delete', err); }
+});
+
+// ── Adopt unmapped (U9) ──────────────────────────────────────────────────────
+//
+// POST /api/calendar-types-admin/:type_key/adopt-unmapped  { raw_label }
+//
+// Stamps this key onto every events/appts row that still carries `raw_label`
+// as its raw type string and has no key yet. Declared alongside the options
+// sub-paths, after the :type_key routes above — no shadowing either way, since
+// those are GET/PUT/DELETE on the bare key and this is a POST on a sub-path.
+//
+// The only endpoint in this file that writes a table other than the registry.
+// See services/calendarTypeAdminService.adoptUnmapped for why it pins
+// events.event_updated_at and why it invalidates nothing.
+router.post('/api/calendar-types-admin/:type_key/adopt-unmapped', jwtOrApiKey, async (req, res) => {
+  try {
+    const out = await svc.adoptUnmapped(req.db, String(req.params.type_key), (req.body || {}).raw_label);
+    res.json({ status: 'success', ...out });
+  } catch (err) { fail(res, 'adoptUnmapped', err); }
 });
 
 // ── Options ──────────────────────────────────────────────────────────────────

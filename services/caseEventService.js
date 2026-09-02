@@ -693,6 +693,40 @@ function _byStart(a, b) {
   return a.source_id - b.source_id;
 }
 
+/**
+ * U9 — the RANGE sort. A SECOND comparator, deliberately, because it answers a
+ * different question and `_byStart` is frozen (R2 and every per-case consumer
+ * bind it).
+ *
+ * The difference is one rule: WITHIN A DAY, ALL-DAY ROWS COME FIRST. On a
+ * per-case timeline that never mattered — an all-day row composes to
+ * '<date> 00:00:00' and sorts first anyway, because nothing else in a case's
+ * calendar sits at literal midnight. On a firm-wide range read across 92 days
+ * it does matter, and relying on the 00:00:00 coincidence would put a deadline
+ * below a 00:00 hearing the one time somebody creates one.
+ *
+ * So the day is compared as a date, all_day is compared explicitly, and only
+ * then does starts_at break the tie. (source, source_id) closes it, same as
+ * _byStart and for the same reason: MySQL's return order is not a contract.
+ */
+function _byRangeStart(a, b) {
+  const da = a.starts_at == null ? null : a.starts_at.slice(0, 10);
+  const db_ = b.starts_at == null ? null : b.starts_at.slice(0, 10);
+  if (da !== db_) {
+    if (da == null) return 1;
+    if (db_ == null) return -1;
+    return da < db_ ? -1 : 1;
+  }
+  if (a.all_day !== b.all_day) return a.all_day ? -1 : 1;
+  if (a.starts_at !== b.starts_at) {
+    if (a.starts_at == null) return 1;
+    if (b.starts_at == null) return -1;
+    return a.starts_at < b.starts_at ? -1 : 1;
+  }
+  if (a.source !== b.source) return a.source < b.source ? -1 : 1;
+  return a.source_id - b.source_id;
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE BATCHED READ
@@ -937,6 +971,483 @@ async function listForCase(db, caseId, opts = {}) {
   const canonical = known.get(_key(raw));
   if (!canonical) throw _notFound(`Case ${raw} not found`);
   return byCase.get(canonical) || [];
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE RANGE READ  (Unified Events U9, v0.5 §3.1 / §3.7)
+//
+// The per-case read above answers "what does THIS CASE have?". listRange
+// answers the other question the firm actually asks all day: "what does the
+// NEXT MONTH have, for everyone?" — one list, both tables, one vocabulary.
+//
+// ── WHY IT IS NOT listEvents WITH A UNION BOLTED ON ────────────────────────
+//
+// eventService.listEvents already lists events in a window, and api.appts
+// already lists appts in a window. Two lists with two vocabularies, two status
+// enums and two notions of a dead row is precisely the problem this layer
+// exists to end. listRange reuses `_mapEvent` / `_mapAppt` / `_deriveState`
+// UNCHANGED, so a row read here is byte-identical to the same row read through
+// listForCase — asserted by the parity test rather than by this comment.
+//
+// ── DELIBERATELY UNLIKE listEvents ON SUPERSESSION ─────────────────────────
+//
+// listEvents ships "option B": superseded rows are visible unless excluded.
+// This layer hides them unless asked (`includeSuperseded`), which is E1's
+// semantic and stays E1's semantic. U9 does NOT unify the two — the new tab
+// takes the read layer's answer, the old Events tab keeps its own, side by
+// side for one release. Unifying them is U9b's job and is a behaviour change
+// to a shipped surface, which is not something a UI slice gets to do quietly.
+//
+// ── THE QUERY BUDGET: 2, +1 FOR ANCHORS, +1 FOR LABELS, +1 FOR ATTENDEES ───
+//
+//   1. events   — one query over the window
+//   2. appts    — one query over the window
+//   3. cases    — ONCE, only when the page actually contains docket-anchored
+//                 or (under includeLabels) case-anchored rows
+//   4. contacts — ONCE, only under includeLabels and only when the page
+//                 contains contact-anchored rows
+//   5. registry — ONCE, only under includeAttendees (cached 60s)
+//
+// None of 3–5 scales with the number of rows: each is a single IN-list keyed
+// by the DISTINCT anchors the page returned. Pinned by test (the query count
+// is asserted against a 200-row page and a 2-row page and must be equal).
+//
+// ── THE ONE PLACE THIS LAYER WALKS THE DOCKET JOIN BACKWARDS ───────────────
+//
+// The header explains at length why the per-case path never probes `cases` by
+// docket: it has case ids from the caller, so dockets travel OUT as constants.
+// A range read has no caller-supplied case — the docket IS the input, and
+// `idx_cases_case_number` / `idx_cases_case_number_full` exist for exactly
+// this direction. It is still ONE query with a bounded IN list (≤ the page
+// size), never a correlated subquery, so `cases` growing cannot change the
+// events plan any more than it can up there.
+//
+// ── STATE FILTERING HAPPENS TWICE, ON PURPOSE ──────────────────────────────
+//
+// `state` is DERIVED (_deriveState), not stored, so it cannot be a WHERE
+// clause on its own. But every derived state has an exact status predicate, so
+// the requested states are pushed into SQL as a status filter AND re-applied
+// in JS after mapping. The SQL half keeps the wire small and index-eligible;
+// the JS half is the authority. They agree by construction — the predicates
+// below are transcribed from APPT_STATE / _deriveState's switch — and the
+// belt-and-braces JS pass costs one comparison per row.
+//
+// Note the predicates are written as COMPLEMENTS for 'live' on both sides
+// (`NOT IN (…)` rather than `= 'Scheduled'`). That is not style: _deriveState
+// maps a blank or unknown status to live-with-no-resolution (the six 2024
+// blank-enum appts), so `= 'Scheduled'` would silently drop rows the JS half
+// then expects to see.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The §3.7 state vocabulary, as a filter set. */
+const RANGE_STATES = Object.freeze(['live', 'resolved', 'cancelled', 'superseded']);
+
+/** The `kind` vocabulary (mirrors events.kind's enum + the appt-side constant). */
+const RANGE_KINDS = Object.freeze(['hearing', 'meeting', 'deadline', 'conference', 'other']);
+
+/** Hard ceiling on one page, whatever the caller asks for. */
+const RANGE_LIMIT_MAX = 1000;
+const RANGE_LIMIT_DEFAULT = 500;
+
+/** Widest window one call may span, in days between `from` and `to`. */
+const RANGE_MAX_DAYS = 92;
+
+/** 400-carrying error (the route maps `.status` straight through). */
+function _badRange(msg) {
+  const e = new Error(msg);
+  e.status = 400;
+  return e;
+}
+
+/** 'YYYY-MM-DD' or throw. */
+function _rangeDate(v, field) {
+  const s = v == null ? '' : String(v).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw _badRange(`${field} is required and must be YYYY-MM-DD`);
+  }
+  return s;
+}
+
+/** Whole days between two 'YYYY-MM-DD' strings. UTC on purpose: both are naive. */
+function _daysBetween(from, to) {
+  const a = Date.UTC(+from.slice(0, 4), +from.slice(5, 7) - 1, +from.slice(8, 10));
+  const b = Date.UTC(+to.slice(0, 4), +to.slice(5, 7) - 1, +to.slice(8, 10));
+  return Math.round((b - a) / 86400000);
+}
+
+/** Normalize an array-ish option (array | CSV string | scalar | null) → string[]. */
+function _rangeList(v) {
+  if (v == null || v === '') return [];
+  const raw = Array.isArray(v) ? v : String(v).split(',');
+  const out = [];
+  const seen = new Set();
+  for (const x of raw) {
+    const s = String(x == null ? '' : x).trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/**
+ * SQL status predicates per derived state, per source. Transcribed from
+ * _deriveState — see the section comment for why 'live' is a complement.
+ *
+ * Supersession is NOT here: it is decided by the pointer / the Rescheduled
+ * tombstone, never by status, and is handled by its own clause.
+ */
+const RANGE_EVENT_STATE_SQL = Object.freeze({
+  live:      `e.event_status NOT IN ('Completed','Canceled')`,
+  resolved:  `e.event_status = 'Completed'`,
+  cancelled: `e.event_status = 'Canceled'`,
+});
+const RANGE_APPT_STATE_SQL = Object.freeze({
+  live:      `a.appt_status NOT IN ('Attended','No Show','Canceled','Rescheduled')`,
+  resolved:  `a.appt_status IN ('Attended','No Show')`,
+  cancelled: `a.appt_status = 'Canceled'`,
+});
+
+/**
+ * Firm-wide unified calendar for a date window.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {string} opts.from  inclusive, 'YYYY-MM-DD' firm-local. REQUIRED.
+ * @param {string} opts.to    inclusive, 'YYYY-MM-DD' firm-local. REQUIRED.
+ *        `to` - `from` must be ≤ 92 days; wider throws `.status = 400`. A
+ *        firm-wide read with no ceiling is a table scan waiting for the day
+ *        somebody types 1970 into a date input.
+ * @param {string[]|string} [opts.kind]      restrict to these kinds
+ * @param {string[]|string} [opts.type_key]  restrict to these type keys
+ * @param {string[]|string} [opts.state=['live']]  §3.7 states to return
+ * @param {number[]|number} [opts.with_user_id]  provider filter. Matches
+ *        `appt_with` / `event_with` — AND every firm-wide event
+ *        (`event_with IS NULL`), because a firm-wide event blocks every
+ *        provider's calendar (availabilityService's own rule) and hiding it
+ *        from a provider's view would hide the thing that is actually on it.
+ *        `event_with = 0` ("nobody") is excluded, which is the same rule read
+ *        from the other end.
+ * @param {boolean} [opts.includeSuperseded=false] ADDITIVE to `state`, not a
+ *        filter within it: the U9 tab puts this checkbox BESIDE the state
+ *        select, so ticking it on the default Live view must ADD the dead rows
+ *        rather than replace the live ones. Naming 'superseded' in `state`
+ *        implies it.
+ * @param {boolean} [opts.includeAttendees=false]  §3.6, as listForCase
+ * @param {boolean} [opts.includeLabels=false] add `display: {case_label,
+ *        contact_name}` — display-only, additive, never a key to bind
+ * @param {number} [opts.limit=500]   capped at 1000
+ * @param {number} [opts.offset=0]
+ * @returns {Promise<{items: object[], has_more: boolean}>}
+ *
+ * NOT `row[]`, unlike listForCase. The caller needs to know whether the cap
+ * clipped the window — a firm-wide list that silently stops at 500 with no
+ * signal is a list that lies. `has_more` is derived by fetching one row past
+ * the page from each side, which costs nothing.
+ */
+async function listRange(db, opts = {}) {
+  const from = _rangeDate(opts.from, 'from');
+  const to   = _rangeDate(opts.to, 'to');
+  if (to < from) throw _badRange('to must not be earlier than from');
+  const span = _daysBetween(from, to);
+  if (span > RANGE_MAX_DAYS) {
+    throw _badRange(`window is ${span} days; the maximum is ${RANGE_MAX_DAYS}`);
+  }
+
+  const kinds = _rangeList(opts.kind).map((k) => k.toLowerCase());
+  const badKind = kinds.find((k) => !RANGE_KINDS.includes(k));
+  if (badKind) throw _badRange(`kind: unknown ${JSON.stringify(badKind)} (expected ${RANGE_KINDS.join(', ')})`);
+
+  const typeKeys = _rangeList(opts.type_key);
+
+  let states = _rangeList(opts.state).map((s) => s.toLowerCase());
+  const badState = states.find((s) => !RANGE_STATES.includes(s));
+  if (badState) throw _badRange(`state: unknown ${JSON.stringify(badState)} (expected ${RANGE_STATES.join(', ')})`);
+  if (!states.length) states = ['live'];
+
+  // includeSuperseded is additive (see the jsdoc). Either spelling turns the
+  // dead rows on; neither turns the live ones off.
+  const wantSuperseded = states.includes('superseded') || !!opts.includeSuperseded;
+  if (wantSuperseded && !states.includes('superseded')) states = [...states, 'superseded'];
+  const liveStates = states.filter((s) => s !== 'superseded');
+
+  const withIds = _rangeList(opts.with_user_id)
+    .map((n) => Number(n))
+    .filter((n) => Number.isInteger(n));
+
+  const includeAttendees = !!opts.includeAttendees;
+  const includeLabels    = !!opts.includeLabels;
+
+  let limit = Number(opts.limit);
+  if (!Number.isInteger(limit) || limit < 1) limit = RANGE_LIMIT_DEFAULT;
+  limit = Math.min(limit, RANGE_LIMIT_MAX);
+  let offset = Number(opts.offset);
+  if (!Number.isInteger(offset) || offset < 0) offset = 0;
+
+  // Each side fetches (offset + limit + 1) of the EARLIEST rows. The global
+  // first N by start are always a subset of (first N events) ∪ (first N
+  // appts) — the standard merge-of-sorted-lists argument — so slicing the
+  // merged, re-sorted array is exact. The +1 is what answers `has_more`.
+  const fetchCap = offset + limit + 1;
+
+  // A state set that asks for nothing at all returns nothing, rather than
+  // widening to everything. Same rule as auditEventLinks' severity filter:
+  // quietly showing MORE than was asked for is the worse failure.
+  if (!states.length) return { items: [], has_more: false };
+
+  // ── QUERY 1 — events ──────────────────────────────────────────────────────
+  const evWhere  = ['e.event_date >= ?', 'e.event_date <= ?'];
+  const evParams = [from, to];
+
+  // Supersession + status, as ONE bracket: a superseded row must come back
+  // when asked for REGARDLESS of its status (the 31 E0a tombstones are
+  // genuinely 'Canceled' and would otherwise need 'cancelled' in the state
+  // set to appear at all — which is exactly the confusion §3.7 exists to end).
+  const evStateOr = [];
+  if (liveStates.length) {
+    evStateOr.push(
+      `(e.superseded_by_event_id IS NULL AND (${liveStates.map((s) => RANGE_EVENT_STATE_SQL[s]).join(' OR ')}))`
+    );
+  }
+  if (wantSuperseded) evStateOr.push('e.superseded_by_event_id IS NOT NULL');
+  if (!evStateOr.length) return { items: [], has_more: false };
+  evWhere.push(`(${evStateOr.join(' OR ')})`);
+
+  if (kinds.length) {
+    // kind NULL is not a kind — a NULL-kind row is a write-path bug (§7.1
+    // rule 8), and a filter that asked for 'other' must not silently collect
+    // them. Absent from every kind filter; present when no kind filter is set.
+    evWhere.push(`e.kind IN (${kinds.map(() => '?').join(',')})`);
+    evParams.push(...kinds);
+  }
+  if (typeKeys.length) {
+    evWhere.push(`e.type_key IN (${typeKeys.map(() => '?').join(',')})`);
+    evParams.push(...typeKeys);
+  }
+  if (withIds.length) {
+    evWhere.push(`(e.event_with IS NULL OR e.event_with IN (${withIds.map(() => '?').join(',')}))`);
+    evParams.push(...withIds);
+  }
+
+  const [eventRows] = await db.query(
+    `SELECT e.event_id, e.event_type, e.event_title, e.event_date, e.event_time,
+            e.event_all_day, e.event_length, e.event_location, e.event_status,
+            e.event_resolution, e.event_link_type, e.event_link_id,
+            e.kind, e.type_key, e.event_with,
+            e.superseded_by_event_id, e.supersede_reason
+       FROM events e
+      WHERE ${evWhere.join(' AND ')}
+      ORDER BY e.event_date ASC, e.event_all_day DESC, e.event_time ASC, e.event_id ASC
+      LIMIT ?`,
+    [...evParams, fetchCap]
+  );
+
+  // ── QUERY 2 — appts ───────────────────────────────────────────────────────
+  //
+  // appt_date is a DATETIME. The COLUMN stays bare so it stays index-eligible
+  // (`date` index): the interval goes on the bound parameter, exactly as
+  // _listForCases does it. `to` is inclusive of its whole day.
+  const apWhere  = ['a.appt_date >= ?', 'a.appt_date < (? + INTERVAL 1 DAY)'];
+  const apParams = [from, to];
+
+  const apStateOr = [];
+  if (liveStates.length) apStateOr.push(`(${liveStates.map((s) => RANGE_APPT_STATE_SQL[s]).join(' OR ')})`);
+  if (wantSuperseded) apStateOr.push(`a.appt_status = 'Rescheduled'`);
+  apWhere.push(`(${apStateOr.join(' OR ')})`);
+
+  // Every appt is kind 'meeting' BY TABLE (§3.3.2, and _deriveKeys says so).
+  // So a kind filter that does not name 'meeting' excludes the appt table
+  // entirely — skip the query rather than run one that cannot match.
+  const apptsWanted = !kinds.length || kinds.includes('meeting');
+
+  if (typeKeys.length) {
+    apWhere.push(`a.type_key IN (${typeKeys.map(() => '?').join(',')})`);
+    apParams.push(...typeKeys);
+  }
+  if (withIds.length) {
+    // NO firm-wide branch here, unlike events: appts have no firm-wide
+    // semantic (appt_with defaults to 1 and names a real host). A NULL host is
+    // "not recorded", not "everyone" — _deriveAttendees draws the same line.
+    apWhere.push(`a.appt_with IN (${withIds.map(() => '?').join(',')})`);
+    apParams.push(...withIds);
+  }
+
+  let apptRows = [];
+  if (apptsWanted) {
+    [apptRows] = await db.query(
+      `SELECT a.appt_id, a.appt_case_id, a.appt_client_id, a.appt_type, a.type_key,
+              a.appt_status, a.appt_date, a.appt_end, a.appt_length, a.appt_platform,
+              a.appt_with, a.appt_link_type, a.appt_link_id
+         FROM appts a
+        WHERE ${apWhere.join(' AND ')}
+        ORDER BY a.appt_date ASC, a.appt_id ASC
+        LIMIT ?`,
+      [...apParams, fetchCap]
+    );
+  }
+
+  // ── QUERY 3 — anchors (cases) ─────────────────────────────────────────────
+  //
+  // TWO jobs, one query:
+  //   · resolve DOCKETS to case ids, so a docket-anchored court row carries a
+  //     real `case_id` in the frozen §3.1 field instead of null. This is not
+  //     cosmetic: it is what makes the row's case link clickable, and most
+  //     hearings in the window are docket-anchored.
+  //   · under includeLabels, fetch the DISPLAY docket for case-anchored rows.
+  //
+  // Both are keyed by the DISTINCT anchors this page returned, so the cost is
+  // bounded by the page and not by the size of `cases`.
+  const docketKeys = new Set();     // lowercased docket → needs resolution
+  const dockets    = [];            // distinct dockets, original casing
+  const caseIdKeys = new Set();     // lowercased case_id → needs a label
+  const caseIds    = [];
+  const contactIds = new Set();
+
+  const noteDocket = (v) => {
+    const s = _s(v);
+    if (!s || docketKeys.has(_key(s))) return;
+    docketKeys.add(_key(s));
+    dockets.push(s);
+  };
+  const noteCaseId = (v) => {
+    const s = _s(v);
+    if (!s || caseIdKeys.has(_key(s))) return;
+    caseIdKeys.add(_key(s));
+    caseIds.push(s);
+  };
+
+  for (const r of eventRows) {
+    const lt = String(r.event_link_type || '');
+    if (lt === 'case_number') noteDocket(r.event_link_id);
+    else if (lt === 'case') noteCaseId(r.event_link_id);
+    else if (lt === 'contact' && r.event_link_id != null) contactIds.add(Number(r.event_link_id));
+  }
+  for (const r of apptRows) {
+    if (String(r.appt_link_type || '') === 'case_number') noteDocket(r.appt_link_id);
+    else noteCaseId(r.appt_case_id);
+    if (r.appt_client_id != null) contactIds.add(Number(r.appt_client_id));
+  }
+
+  const caseByDocket = new Map();   // lowercased docket  → {case_id, label}
+  const caseById     = new Map();   // lowercased case_id → {case_id, label}
+  const wantCaseQuery = dockets.length > 0 || (includeLabels && caseIds.length > 0);
+  if (wantCaseQuery) {
+    const parts = [];
+    const params = [];
+    if (dockets.length) {
+      parts.push(`c.case_number IN (${dockets.map(() => '?').join(',')})`);
+      params.push(...dockets);
+      parts.push(`c.case_number_full IN (${dockets.map(() => '?').join(',')})`);
+      params.push(...dockets);
+    }
+    if (includeLabels && caseIds.length) {
+      parts.push(`c.case_id IN (${caseIds.map(() => '?').join(',')})`);
+      params.push(...caseIds);
+    }
+    const [caseRows] = await db.query(
+      `SELECT c.case_id, c.case_number, c.case_number_full
+         FROM cases c
+        WHERE ${parts.join(' OR ')}`,
+      params
+    );
+    for (const c of caseRows || []) {
+      const canonical = String(c.case_id);
+      const label = _s(c.case_number_full) || _s(c.case_number) || canonical;
+      caseById.set(_key(canonical), { case_id: canonical, label });
+      for (const v of [c.case_number, c.case_number_full]) {
+        const s = _s(v);
+        // FIRST WRITER WINS on a shared docket. The per-case path fans a shared
+        // docket out to BOTH cases because the caller named a case and the
+        // fan-out IS the answer there. Here there is no caller-named case and a
+        // row belongs to exactly one line of the list, so a duplicate cannot
+        // fan out — it has to pick. Zero live collisions (verified 2026-08-30);
+        // if one ever appears, the row shows the first case and the docket text
+        // still says which docket it was, which is the honest failure.
+        if (s && !caseByDocket.has(_key(s))) caseByDocket.set(_key(s), { case_id: canonical, label });
+      }
+    }
+  }
+
+  // ── QUERY 4 — contacts (labels only) ──────────────────────────────────────
+  const contactName = new Map();
+  if (includeLabels && contactIds.size) {
+    const ids = [...contactIds];
+    const [ctRows] = await db.query(
+      `SELECT contact_id, contact_name FROM contacts WHERE contact_id IN (${ids.map(() => '?').join(',')})`,
+      ids
+    );
+    for (const c of ctRows || []) contactName.set(Number(c.contact_id), _s(c.contact_name));
+  }
+
+  // ── QUERY 5 — the registry, for client_expected ───────────────────────────
+  let registry = null;
+  if (includeAttendees) {
+    try { registry = await calendarTypeService.loadRegistry(db); } catch (_) { registry = null; }
+  }
+
+  // ── Map ───────────────────────────────────────────────────────────────────
+  //
+  // `includeSuperseded` is passed to the mappers as `wantSuperseded` so a dead
+  // row that came back BECAUSE it was asked for carries its `superseded: true`
+  // flag and (events) its successor pointer. A caller that did not ask for
+  // them never sees the extra keys, and the frozen default shape is untouched.
+  const mapOpts = { includeSuperseded: wantSuperseded, includeAttendees, registry };
+  const items = [];
+
+  for (const r of eventRows) {
+    const lt = String(r.event_link_type || '');
+    const anchor = lt === 'case_number' ? caseByDocket.get(_key(r.event_link_id))
+                 : lt === 'case'        ? (caseById.get(_key(r.event_link_id)) || { case_id: _s(r.event_link_id), label: null })
+                 : null;
+    const row = _mapEvent(r, anchor ? anchor.case_id : null, mapOpts);
+    // The events mapper does not carry its link (the appt one does, U6b). A
+    // range list has no ambient case, so BOTH sources must say what they are
+    // attached to or the anchor column cannot be rendered. Additive, and only
+    // on this surface — the per-case row shape is untouched.
+    row.link_type = lt || null;
+    row.link_id   = _s(r.event_link_id);
+    if (lt === 'case_number') row.docket = _s(r.event_link_id);
+    if (includeLabels) {
+      row.display = {
+        case_label:   anchor ? anchor.label : null,
+        contact_name: lt === 'contact' && r.event_link_id != null
+          ? (contactName.get(Number(r.event_link_id)) || null) : null,
+      };
+    }
+    items.push(row);
+  }
+
+  for (const r of apptRows) {
+    const isDocket = String(r.appt_link_type || '') === 'case_number';
+    const anchor = isDocket
+      ? caseByDocket.get(_key(r.appt_link_id))
+      : (caseById.get(_key(r.appt_case_id)) || (_s(r.appt_case_id) ? { case_id: _s(r.appt_case_id), label: null } : null));
+    const row = _mapAppt(r, anchor ? anchor.case_id : null, mapOpts);
+    // _mapAppt already sets link_type/docket for a docket-anchored row (U6b).
+    // Fill in the other shapes so the anchor column has one contract.
+    if (!isDocket) {
+      row.link_type = _s(r.appt_case_id) ? 'case' : (r.appt_client_id != null ? 'contact' : null);
+      row.link_id   = _s(r.appt_case_id) || (r.appt_client_id != null ? String(r.appt_client_id) : null);
+    } else {
+      row.link_id = _s(r.appt_link_id);
+    }
+    if (includeLabels) {
+      row.display = {
+        case_label:   anchor ? anchor.label : null,
+        contact_name: r.appt_client_id != null ? (contactName.get(Number(r.appt_client_id)) || null) : null,
+      };
+    }
+    items.push(row);
+  }
+
+  // ── The JS half of the state filter (see the section comment) ─────────────
+  const wanted = new Set(states);
+  const kept = items.filter((r) => wanted.has(r.state));
+
+  kept.sort(_byRangeStart);
+  const page = kept.slice(offset, offset + limit);
+  return { items: page, has_more: kept.length > offset + limit };
 }
 
 
@@ -1206,6 +1717,7 @@ async function auditEventLinks(db, { severity = null } = {}) {
 module.exports = {
   listForCase,
   listForCases,
+  listRange,
   auditEventLinks,
 
   // Test helpers (repo `_`-prefix convention).
@@ -1223,4 +1735,15 @@ module.exports = {
   _normStatus,
   _byStart,
   _LINK_SEVERITIES: LINK_SEVERITIES,
+
+  // U9 — the range read's vocabulary and limits, exported so the route can
+  // 400 on a bad value without re-declaring the lists (one source of truth for
+  // what a legal filter is), and so tests can assert the cap without a magic
+  // number. `_byRangeStart` is exported for the same reason `_byStart` is.
+  _byRangeStart,
+  _RANGE_STATES: RANGE_STATES,
+  _RANGE_KINDS: RANGE_KINDS,
+  _RANGE_LIMIT_MAX: RANGE_LIMIT_MAX,
+  _RANGE_LIMIT_DEFAULT: RANGE_LIMIT_DEFAULT,
+  _RANGE_MAX_DAYS: RANGE_MAX_DAYS,
 };

@@ -95,15 +95,24 @@ describe('listTypesAdmin', () => {
     await expect(svc.getTypeAdmin(stubDb([[]]), 'nope')).rejects.toMatchObject({ status: 404 });
   });
 
-  test('listUnmapped: events kind=other + appts, ids numeric', async () => {
+  /* U9 narrowed this: a row with a BLANK stored type is not "an unmapped type",
+     it is no type, and it can never be minted from or adopted. It moved from
+     the list to the `no_label` counts — third query. See listUnmapped. */
+  test('listUnmapped: events kind=other + appts, ids numeric, blank labels excluded', async () => {
     const db = stubDb([
       [{ id: 156, label: 'Mediation', date: '2026-08-31', link_type: null, link_id: null }],
-      [{ id: 1809, label: null, date: '2024-05-01', case_id: 9, contact_id: 2, status: 'Scheduled' }],
+      [{ id: 3966, label: 'Potato Hunting', date: '2026-09-01', case_id: 9, contact_id: 2, status: 'Scheduled' }],
+      [{ ev: 0, ap: 8 }],
     ]);
     const out = await svc.listUnmapped(db);
     expect(out.events[0]).toMatchObject({ id: 156, label: 'Mediation' });
-    expect(out.appts[0]).toMatchObject({ id: 1809, status: 'Scheduled' });
+    expect(out.appts[0]).toMatchObject({ id: 3966, status: 'Scheduled' });
+    expect(out.no_label).toEqual({ events: 0, appts: 8 });
     expect(db.calls[0].sql).toMatch(/type_key IS NULL AND kind = 'other'/);
+    // Both list queries demand a non-blank label; the third counts the rest.
+    expect(db.calls[0].sql).toMatch(/TRIM\(event_type\) <> ''/);
+    expect(db.calls[1].sql).toMatch(/TRIM\(appt_type\) <> ''/);
+    expect(db.calls[2].sql).toMatch(/COUNT\(\*\)/);
   });
 });
 
@@ -333,7 +342,7 @@ describe('routes/api.calendarTypesAdmin', () => {
   });
 
   test('static sub-paths are not shadowed by :type_key', async () => {
-    dbHolder.db = stubDb([[], []]);
+    dbHolder.db = stubDb([[], [], [{ ev: 0, ap: 0 }]]);   // U9: + the no_label count
     const um = await (await call('/api/calendar-types-admin/unmapped')).json();
     expect(um).toMatchObject({ status: 'success', events: [], appts: [], total: 0 });
     dbHolder.db = stubDb([[{ case_type: 'Bankruptcy', n: 996 }]]);
