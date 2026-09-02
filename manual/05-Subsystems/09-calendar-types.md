@@ -79,6 +79,32 @@ Follow Up" is 15 and 30; "Schedules Completion Meeting" is 45 on both surfaces
 and 20 on follow-up only. After any pick the length field stays editable, so an
 odd 25-minute booking needs no option row.
 
+## The Appointments-tab filter
+
+Separate from the pickers above, and driven by the registry rather than by
+`calendar_type_options`: the **Type** dropdown on the shell's Appointments tab
+lists every *active* `kind='meeting'` type, in registry order. Surfaces do not
+apply — this filters existing appointments, it does not offer new ones — so a
+meeting type with no option rows still appears here.
+
+It filters on `appts.type_key`, not on the label. That matters: an appointment
+booked years ago as "Follow Up" or "Pre-filing (30 min)" carries `ss_follow_up`
+/ `pre_filing` today, and only a keyed filter finds it.
+
+Three fixed entries bracket the list:
+
+| Entry | Means |
+|---|---|
+| **Default** | everything except the 341 |
+| **All** | no type filter |
+| **Other** | every appointment whose key is *not* one of the listed types — unmapped (`type_key IS NULL`) included |
+
+*Other* is the complement of the list, computed on the server from the same
+registry the dropdown reads. So an appointment keyed to a hearing type, or to a
+type someone later deactivated, is always reachable from exactly one entry —
+nothing falls between the options, and adding a meeting type in Case Config
+moves it out of *Other* on the next cache turn.
+
 ## Unmapped types (footer)
 
 "N rows carry an unmapped type" counts events with `type_key IS NULL AND
@@ -93,10 +119,14 @@ The two appointment dialogs fall back to their pre-U2b hardcoded lists
 (`YC_APPT_TYPE_FALLBACK` in `scripts.js`). A registry outage never blanks a
 dialog. The fallback only needs touching if a type is renamed.
 
+The Appointments-tab filter does the same (`APPTS_TYPE_FALLBACK` in
+`index.html`) — a short list, but still keyed, so it filters correctly. *Other*
+narrows to unmapped-only in that state rather than claiming every appointment.
+
 ## API
 
 ```
-GET    /api/calendar-types                       registry rows (pickers for events)
+GET    /api/calendar-types                       registry rows (event pickers, the Appointments-tab filter)
 GET    /api/calendar-types/options?surface=…[&case_type=…]   picker options (appointments)
 GET    /api/calendar-types-admin                 every row + refs + options
 GET    /api/calendar-types-admin/unmapped

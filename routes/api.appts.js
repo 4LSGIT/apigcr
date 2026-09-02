@@ -5,6 +5,11 @@
  * routes/api.appts.js
  *
  * GET    /api/appts              list with filters
+ *                                contact_id, case_id, status, from, to, appt_with,
+ *                                type / exclude_type       (appt_type label — legacy)
+ *                                type_key / exclude_type_key (registry identity — preferred)
+ *                                unmapped=1                ("Other": type_key IS NULL, or
+ *                                                           keyed outside the active meeting types)
  * GET    /api/appts/:id          single appointment (with contact, case, user)
  * PATCH  /api/appts/:id          update fields (note, case_id, etc.)
  * POST   /api/appts              create
@@ -26,6 +31,7 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
     contact_id, case_id, status, type, exclude_type, from, to, appt_with,
+    type_key, exclude_type_key, unmapped,
     limit = 50, offset = 0
   } = req.query;
 
@@ -65,6 +71,43 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   if (to)         { conditions.push('appts.appt_date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(to);} 
   if (type)         { conditions.push('appts.appt_type = ?');  params.push(type); }
   if (exclude_type) { conditions.push('appts.appt_type != ?'); params.push(exclude_type); }
+  // U2b — registry-keyed type filters. Prefer these over the label pair above:
+  // appt_type drifts (calendar_item_types.ingest_aliases is the evidence — real
+  // rows read 'Follow Up', 'Pre-filing (30 min)', 'Intial Strategy Session'),
+  // while type_key is the resolved identity U2 backfilled. The label params stay
+  // for any caller still sending them.
+  if (type_key)     { conditions.push('appts.type_key = ?'); params.push(type_key); }
+  // NULL-safe on purpose: an unmapped row is not the excluded type, so it has to
+  // survive the exclusion. (`type_key != ?` alone would swallow it, which is the
+  // bug the label-based exclude_type still has above.)
+  if (exclude_type_key) {
+    conditions.push('(appts.type_key IS NULL OR appts.type_key != ?)');
+    params.push(exclude_type_key);
+  }
+  // The tab's "Other" — the COMPLEMENT of the types the picker lists, not just
+  // the unmapped ones. The dropdown offers active kind='meeting' types, so an
+  // appt keyed to a hearing, a deactivated type, or a key the registry dropped
+  // would otherwise be reachable from no filter value at all. Ruling (Fred,
+  // 2026-09-02): nothing may fall between the options.
+  //
+  // The complement is computed HERE, from the registry, so it can never drift
+  // from the list the dropdown built from that same registry — add a meeting
+  // type in Case Config and "Other" stops claiming it on the next cache turn.
+  if (unmapped === '1' || unmapped === 'true') {
+    let listed = [];
+    try {
+      listed = (await calendarTypeService.listTypes(db, { kind: 'meeting', active: 1 }))
+        .map((t) => t.type_key);
+    } catch (e) {
+      // Registry unreachable: fall back to the narrow reading (unmapped only)
+      // rather than returning every appointment as "Other".
+      listed = [];
+    }
+    conditions.push(listed.length
+      ? `(appts.type_key IS NULL OR appts.type_key NOT IN (${listed.map(() => '?').join(',')}))`
+      : 'appts.type_key IS NULL');
+    params.push(...listed);
+  }
   if (appt_with) { conditions.push('appts.appt_with = ?'); params.push(appt_with); }
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

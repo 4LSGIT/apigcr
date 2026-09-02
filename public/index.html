@@ -1067,15 +1067,13 @@
       <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
       <button id="tabApptsNew" onclick="newApptDialog({ contactPick: true, casePick: true, onCreated: () => tabApptsGet(0) })"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
       Type:
+      <!-- U2b: the type list is built from the registry by tabApptsTypesLoad()
+           (active kind='meeting' types). Default / All / Other are fixed and
+           stay put; the types are inserted before Other. -->
       <select id="tabApptsType" style="width: auto">
-        <option>Default</option>
-        <option>All</option>
-        <option>Initial Strategy Session</option>
-        <option>Strategy Session</option>
-        <option>Strategy Session Follow Up</option>
-        <option>Pre-filing Meeting</option>
-        <option>Schedules Completion Meeting</option>
-        <option>341 Meeting</option>
+        <option value="__default__">Default</option>
+        <option value="__all__">All</option>
+        <option value="__other__">Other</option>
       </select>
       Status:
       <select id="tabApptsStatus" style="width: auto">
@@ -1496,6 +1494,62 @@
       }
     }
 
+    /* ── Appointment-type filter, from the registry (Unified Events U2b) ─────
+       #tabApptsType used to be a hardcoded six-label list filtering on
+       appts.appt_type. Two faults: it went stale the moment a type was added in
+       Case Config, and label matching is lossy — the registry's own
+       ingest_aliases are the proof that live rows read 'Follow Up',
+       'Pre-filing (30 min)', 'Intial Strategy Session'. It now lists the
+       registry's active kind='meeting' types and filters on appts.type_key,
+       which U2 backfilled and every write path has set since.
+
+       Meeting kinds only: deadlines, hearings and conferences are case_events,
+       never appts, so they would be dead options here.
+
+       "Other" is the COMPLEMENT the server computes — every appt whose key is
+       not one of the listed meeting types, NULL included. Nothing falls between
+       the options, which is why an appt keyed to a hearing or a deactivated
+       type is still reachable.
+
+       FALLBACK: on any registry failure the pre-U2b six come back. They filter
+       by type_key like everything else — keys are permanent, so a stale list is
+       still a correct filter, just a short one. */
+    const APPTS_TYPE_FALLBACK = [
+      { type_key: 'iss',               label: 'Initial Strategy Session' },
+      { type_key: 'ss',                label: 'Strategy Session' },
+      { type_key: 'ss_follow_up',      label: 'Strategy Session Follow Up' },
+      { type_key: 'pre_filing',        label: 'Pre-Filing Meeting' },
+      { type_key: 'schedules_meeting', label: 'Schedules Completion Meeting' },
+      { type_key: 'meeting_341',       label: '341 Meeting' },
+    ];
+    let apptsTypesLoaded = false;
+
+    /** Fill #tabApptsType from the registry. Once per page; never rejects. */
+    async function tabApptsTypesLoad() {
+      if (apptsTypesLoaded) return;
+      apptsTypesLoaded = true;
+      let rows;
+      try {
+        const data = await apiSend("/api/calendar-types", "GET", { kind: "meeting", active: 1 });
+        rows = (data && data.data) || [];
+        if (!rows.length) throw new Error("registry returned no meeting types");
+      } catch (err) {
+        console.warn("[tabApptsTypesLoad] " + ((err && err.message) || err) + " — using the hardcoded fallback");
+        rows = APPTS_TYPE_FALLBACK;
+      }
+      const sel = E("tabApptsType");
+      if (!sel) return;
+      const keep = sel.value;
+      const other = sel.querySelector('option[value="__other__"]');
+      rows.forEach((r) => {
+        const o = document.createElement("option");
+        o.value = r.type_key;
+        o.textContent = r.label;
+        sel.insertBefore(o, other);            // types sit between All and Other
+      });
+      sel.value = keep;                        // the pre-load choice survives
+    }
+
     /**
      * @param {number}  offset
      * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
@@ -1508,6 +1562,8 @@
      *   Every pre-existing caller passes nothing and keeps today's behaviour.
      */
     async function tabApptsGet(offset, silent = false) {
+      tabApptsTypesLoad();                     // lazy, non-blocking — the list is
+                                               // only needed once staff open it
       // ECHO-FENCE STAMP — read by the `appt:*` subscriber below. Taken here,
       // before the await, so it is always in the past by the time the (macro-
       // task) bus message announcing the write that triggered this fetch
@@ -1526,11 +1582,15 @@
 
       const params = { limit, offset };
 
-      // Type filter
-      if (typeVal === "Default") {
-        params.exclude_type = "341 Meeting";
-      } else if (typeVal !== "All") {
-        params.type = typeVal;
+      // Type filter — U2b: registry keys, not labels (see tabApptsTypesLoad).
+      // Default still means "everything but the 341", now NULL-safely: appts
+      // with no type used to vanish from the default view under `appt_type != `.
+      if (typeVal === "__default__") {
+        params.exclude_type_key = "meeting_341";
+      } else if (typeVal === "__other__") {
+        params.unmapped = 1;
+      } else if (typeVal !== "__all__") {
+        params.type_key = typeVal;
       }
 
       if (withUser) params.appt_with = withUser;

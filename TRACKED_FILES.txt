@@ -864,6 +864,7 @@ tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/typeKeyVocabulary.test.js
 tests/unifiedEventsU2b.admin.test.js
+tests/unifiedEventsU2b.apptsFilter.test.js
 tests/unifiedEventsU2b.options.test.js
 tests/unifiedEventsU2b.pickers.test.js
 tests/unifiedEventsU5.booking.test.js
