@@ -52,7 +52,7 @@
       "type": "text",
       "resolver": "debtor1.address_street",
       "default": null,
-      "required": true
+      "required": false
     },
     {
       "key": "debtor1_csz",

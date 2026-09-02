@@ -239,10 +239,18 @@ SCHEMA = [
     entry("judge",          "Judge",                    "case.judge",             required=True),
 
     entry("debtor1_name",   "Debtor name",              "debtor1.name",           required=True),
-    # REQUIRED ON PURPOSE — the deliberate data-entry pressure. A notice with no
-    # debtor address is not a notice; on_missing:'task' turns the gap into a
-    # staff task naming the key instead of a silently incomplete document.
-    entry("debtor1_street", "Debtor street",            "debtor1.address_street", required=True),
+    # OPTIONAL, reversed 2026-09-01 (G4.2). It was required as deliberate
+    # data-entry pressure; the cost of that turned out to be the wrong thing to
+    # pay. This notice exists to tell the client the automatic stay is in
+    # effect so they can put it in front of a creditor — withholding it over a
+    # blank street line means more days of collection calls, and the client
+    # already knows their own address. The line is on the page for the
+    # CREDITOR's benefit.
+    #
+    # The blank collapses cleanly (the .l:has() rule), so the document is still
+    # correct, and the workflow's pre-check still raises a staff task naming the
+    # gap. Data pressure without holding the stay notice hostage.
+    entry("debtor1_street", "Debtor street",            "debtor1.address_street"),
     entry("debtor1_csz",    "Debtor city/state/zip",    "debtor1.address_csz"),
     entry("debtor1_ssn",    "Debtor SSN (masked)",      "debtor1.ssn_masked"),
 

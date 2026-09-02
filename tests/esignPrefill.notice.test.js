@@ -436,17 +436,21 @@ describe('ref/templates/notice_of_bankruptcy_filing.json', () => {
     }
   });
 
-  test('the five required keys are the ones a notice cannot be issued without', () => {
+  test('required keys are only the ones a notice is meaningless without', () => {
+    // debtor1_street came OFF this list on 2026-09-01 (G4.2). Requiring it meant
+    // a blank street field withheld the client's automatic-stay notice; the
+    // blank collapses cleanly instead, and the workflow's pre-check raises the
+    // staff task. See the comment at the entry() call in the build script.
     const required = tpl.prefill_schema.filter((e) => e.required).map((e) => e.key).sort();
     expect(required).toEqual(
-      ['chapter', 'debtor1_name', 'debtor1_street', 'docket', 'file_date', 'judge'].sort());
+      ['chapter', 'debtor1_name', 'docket', 'file_date', 'judge'].sort());
   });
 
   test('nothing optional is required — the joint debtor and the trustee may be absent', () => {
     const req = new Set(tpl.prefill_schema.filter((e) => e.required).map((e) => e.key));
     for (const k of ['debtor2_name', 'debtor2_street', 'debtor2_csz', 'debtor2_ssn',
                      'trustee_name', 'trustee_street', 'trustee_csz', 'trustee_phone',
-                     'debtor1_csz', 'debtor1_ssn', 'firm_addr2']) {
+                     'debtor1_street', 'debtor1_csz', 'debtor1_ssn', 'firm_addr2']) {
       expect(req.has(k)).toBe(false);
     }
   });
