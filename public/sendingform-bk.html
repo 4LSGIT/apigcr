@@ -236,10 +236,10 @@
   <!-- ═══ QUESTIONNAIRE ═══ -->
   <div class="sf-section">
     <div class="sf-section-title">
-      <input disabled type="checkbox" id="chkQuestionnaire"> Detailed BK Questionnaire
+      <input type="checkbox" id="chkQuestionnaire"> Detailed BK Questionnaire
       <label style="margin-left:20px; font-weight:400; font-size:0.88rem;">
-        <input disabled type="checkbox" id="chkEnrollReminders"> Enroll in reminders
-      </label><span class="sf-badge sf-badge-future">Coming Soon</span>
+        <input type="checkbox" id="chkEnrollReminders"> Enroll in reminders
+      </label>
     </div>
   </div>
 
@@ -377,6 +377,19 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 const TAX_YEARS = [CURRENT_YEAR - 4, CURRENT_YEAR - 3, CURRENT_YEAR - 2, CURRENT_YEAR - 1, CURRENT_YEAR];
 const IRS_YEARS = [];
 for (let y = CURRENT_YEAR; y >= 2015; y--) IRS_YEARS.push(y);
+
+// ── Detailed Bankruptcy Questionnaire ────────────────────────────────────────
+// Still the firm's JotForm (231694062254152). Field qid 289 has unique name
+// "caseId", so ?caseId=<case_id> prefills it — that is what ties the eventual
+// submission back to a case without name-matching. The YisraForm replacement
+// is a separate arc; when it lands, only DBKQ_LINK changes.
+//
+// DBKQ_SEQ_TYPE is a sequence_template_types row, NOT a template id: the
+// on-submit workflow cancels by type (cancel_sequences), so both ends have to
+// agree on this string.
+const DBKQ_FORM_ID  = '231694062254152';
+const DBKQ_LINK     = `https://form.jotform.com/${DBKQ_FORM_ID}?caseId=${encodeURIComponent(caseId || '')}`;
+const DBKQ_SEQ_TYPE = 'dbkq_reminder';
 
 const BANKS = [
   'Bank of America','Bank One','Bestbank','Chase','Citizens','Comerica',
@@ -1026,7 +1039,9 @@ async function preview() {
       lines.push('── PAYMENT OPTIONS ──\n' + PAYMENT_OPTIONS_TEXT);
     }
     if (action.type === 'questionnaire') {
-      lines.push('── DETAILED BK QUESTIONNAIRE ──\n[Link to questionnaire]' + (action.enroll ? '\n[Will enroll in reminder sequence]' : ''));
+      lines.push('── DETAILED BK QUESTIONNAIRE ──\n'
+        + `Please fill out the Detailed Bankruptcy Questionnaire: ${DBKQ_LINK}`
+        + (action.enroll ? '\n[Will enroll in reminder sequence]' : ''));
     }
     if (action.type === 'contracts') {
       const signers = getContractSigners();
@@ -1343,7 +1358,7 @@ async function send() {
 
       // ── QUESTIONNAIRE ──
       if (action.type === 'questionnaire') {
-        const qLink = `https://app.4lsg.com/questionnaire?case_id=${caseId}`;
+        const qLink = DBKQ_LINK;
         const msg = `Please fill out the Detailed Bankruptcy Questionnaire: ${qLink}`;
         for (const r of recipients) {
           if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: msg }); successes.push(`Questionnaire SMS → ${r.name}`); }
@@ -1355,9 +1370,18 @@ async function send() {
             successes.push(`Questionnaire Email → ${r.name}`);
           }
         }
+        // Enrollment goes to the INTERNAL sequence engine (POST /sequences/enroll),
+        // not /internal/sequence/enroll — that one is still the fire-and-forget
+        // Pabbly relay (see its own TODO) and would enroll into nothing.
+        // trigger_data carries case_id because the on-submit workflow resolves the
+        // contact from the case to cancel the enrollment.
         if (action.enroll && primaryContact) {
           try {
-            await P.apiSend('/internal/sequence/enroll', 'POST', { contact_id: primaryContact.contact_id, sequence_type: 'questionnaire_reminder' });
+            await P.apiSend('/sequences/enroll', 'POST', {
+              contact_id:    primaryContact.contact_id,
+              template_type: DBKQ_SEQ_TYPE,
+              trigger_data:  { case_id: caseId, form_id: DBKQ_FORM_ID, source: 'sendingform-bk' },
+            });
             successes.push('Enrolled in questionnaire reminders');
           } catch (err) { errors.push('Sequence enrollment: ' + err.message); }
         }
