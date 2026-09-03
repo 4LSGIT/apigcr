@@ -111,31 +111,11 @@ function authenticateRequest(hook, req) {
     if (!signature || !secret) {
       return { valid: false, error: 'Missing HMAC signature' };
     }
-    // HMAC verifies the BYTES ON THE WIRE, so it needs the raw body captured by
-    // middleware — the verify hooks on the scoped /hooks json/urlencoded
-    // parsers, lib/multipartBody, or lib/rawBodyFallback for everything else.
-    //
-    // Prefer the Buffer: buf.toString() is a UTF-8 DECODE, so an invalid byte
-    // sequence becomes U+FFFD and re-encoding the string yields different bytes
-    // than the sender signed. (Same reasoning as the /webhooks rawBodyBuf.)
-    //
-    // `!= null`, not truthiness — a legitimately EMPTY body is signable, and
-    // '' is falsy.
-    const rawBody = Buffer.isBuffer(req.rawBodyBuf) ? req.rawBodyBuf
-                  : (req.rawBody != null ? req.rawBody : null);
-
-    if (rawBody == null) {
-      // No middleware captured the bytes for this content-type. This used to
-      // fall back to JSON.stringify(req.body), which cannot match a signature
-      // over wire bytes — so the sender was told "HMAC signature mismatch" and
-      // the operator went hunting for a wrong secret. Name the real cause.
-      // (Mirrors esignWebhookService.evaluateHmac's 'raw_body_unavailable'.)
-      return {
-        valid: false,
-        error: `HMAC verification unavailable: raw body was not captured (content-type: ${req.headers['content-type'] || 'none'})`,
-      };
-    }
-
+    // rawBody MUST be populated by middleware (see INTEGRATION_NOTES.md).
+    // The JSON.stringify fallback is a safety net but will produce different
+    // bytes than the original request if Express re-serializes — HMAC will
+    // fail in that case, which is the safe/correct outcome.
+    const rawBody = req.rawBody || JSON.stringify(req.body);
     const expected = crypto.createHmac(algorithm, secret).update(rawBody).digest('hex');
 
     // Strip common prefixes: some providers send "sha256=abc123..." format

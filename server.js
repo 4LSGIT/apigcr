@@ -42,12 +42,9 @@ app.use((req, res, next) => {
 });
 console.log(`app build: ${appBuild.build} (mtime ${appBuild.mtime})`);
 
-// Capture raw body for webhook HMAC verification.
-// rawBodyBuf alongside rawBody for the same reason /webhooks keeps both: a
-// UTF-8 decode turns invalid byte sequences into U+FFFD, so re-encoding the
-// string can differ from the bytes the sender signed.
+// Capture raw body for webhook HMAC verification
 app.use('/hooks', express.json({
-  verify: (req, res, buf) => { req.rawBody = buf.toString(); req.rawBodyBuf = buf; }
+  verify: (req, res, buf) => { req.rawBody = buf.toString(); }
 }));
 // multipart/form-data deliveries to /hooks/*. Neither parser above nor the
 // global urlencoded one below understands multipart, and Express does not
@@ -57,21 +54,6 @@ app.use('/hooks', express.json({
 // See lib/multipartBody.js for the shape decisions (and why file parts are
 // summarized rather than stored).
 app.use('/hooks', require('./lib/multipartBody').multipartBody());
-// Form-encoded deliveries to /hooks/*. Without this the GLOBAL urlencoded
-// parser below claims them — it has no verify hook, so req.rawBody stayed
-// unset and per-hook HMAC auth could never verify a form-encoded sender
-// (hookService.authenticateRequest signs the wire bytes). Same fix /webhooks
-// already carries. Parsers short-circuit on req._body, so this scoped one wins
-// for /hooks and the global one still serves everything else.
-app.use('/hooks', express.urlencoded({
-  extended: true,
-  verify: (req, res, buf) => { req.rawBody = buf.toString(); req.rawBodyBuf = buf; }
-}));
-// Everything else: capture the bytes for content-types no parser above claims
-// (text/plain, application/xml, JSON under a vendor content-type, no
-// content-type at all) so HMAC works for EVERY sender rather than the three
-// encodings we happen to parse. Leaves req.body untouched — see the module.
-app.use('/hooks', require('./lib/rawBodyFallback').rawBodyFallback());
 // Same treatment for /webhooks/* (e-sign providers). Two reasons, neither of
 // which the generic parser below can serve:
 //   1. Zoho Sign's webhook payload shape is undocumented, so slice 1C stores
