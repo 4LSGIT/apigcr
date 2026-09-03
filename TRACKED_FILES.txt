@@ -72,6 +72,7 @@ lib/noteLimits.js
 lib/parseName.js
 lib/portalCardEngine.js
 lib/rateLimiter.js
+lib/rawBodyFallback.js
 lib/reportSchema/manifest.js
 lib/reportSchema/validator.js
 lib/responseObserver.js
@@ -800,6 +801,7 @@ tests/helpers/bcPolyfill.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/u6aEventsDb.js
+tests/hookHmacRawBody.test.js
 tests/hookMapper.test.js
 tests/hookReceiver.splitPhase.test.js
 tests/hookService.duplicate.test.js
