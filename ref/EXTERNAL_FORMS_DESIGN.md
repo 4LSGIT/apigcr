@@ -143,6 +143,19 @@ Body: `{ case_id?, values }` (+ portal JWT header in portal mode).
    path, in addition to landing in the Form Inbox (§8).
 8. External autosave/drafts: localStorage-only in v1 (no server draft identity
    for anonymous users; portal-mode server drafts are a later portal decision).
+   > **D1 amendment (2026-09-04, Fred-ratified — arc scratch `fred/yf_dbkq_arc`).**
+   > LINKED external drafts are now server-side, opt-in per template via
+   > `external.serverDrafts: true` (validated strictly boolean): POST/DELETE
+   > `/api/ext/forms/:form_key/draft`, draft returned in the GET payload
+   > (present-and-null when empty, absent when not opted in — the renderer's
+   > signal is `'draft' in payload`). The case_id bearer is the draft identity;
+   > anonymous server drafts remain refused for exactly the reason above, and
+   > localStorage/sessionStorage stays as the anonymous path and the linked
+   > fallback. Draft readback widens the guessed-credential prize (client-typed
+   > answers vs the 3-field projection); the §2/F1 arithmetic still governs
+   > guessability — accepted, same trust model as Jotform SCL bearer links.
+   > Contract details live in the route/service doc blocks
+   > (`routes/api.ext.forms.js`, `services/extFormService.js`).
 
 ### 5.4 Abuse controls (both routes)
 - `lib/rateLimiter` with `getClientIp` (the proven post-hardening pattern):
@@ -227,6 +240,6 @@ Test-lock culture applies: every §9 item that can be a jest assertion becomes o
 ## 11. Explicitly out of scope
 
 form_tokens (reserved), external code/css/hooks/embed (refused pending on-demand
-review), server-side external drafts, per-type intake dispatch, PDF export of
+review), server-side external drafts **for anonymous submitters** (linked drafts shipped in D1 — §5.3.8 amendment), per-type intake dispatch, PDF export of
 submissions, any change to internal-tier behavior, contact_info template port
 (separate forms-arc decision), payment anything.
