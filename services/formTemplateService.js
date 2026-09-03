@@ -768,12 +768,25 @@ function validateDefinition(def) {
       throw badRequest('external must be an object');
     }
     for (const k of Object.keys(def.external)) {
-      if (k !== 'badLink' && k !== 'postSubmit' && k !== 'appearance') {
-        throw badRequest(`external has unknown key "${k}" (allowed: badLink, postSubmit, appearance)`);
+      if (k !== 'badLink' && k !== 'postSubmit' && k !== 'appearance' && k !== 'serverDrafts') {
+        throw badRequest(`external has unknown key "${k}" (allowed: badLink, postSubmit, appearance, serverDrafts)`);
       }
     }
     if (def.external.badLink !== undefined && !BADLINK_MODES.has(def.external.badLink)) {
       throw badRequest('external.badLink must be "reject" or "degrade"');
+    }
+    // serverDrafts (D1, Fred-ratified 2026-09-04): opt in to SERVER-SIDE
+    // draft persistence on the external surface. Absent/false keeps today's
+    // localStorage-only behavior (EXTERNAL_FORMS_DESIGN §5.3 item 8), so no
+    // existing template changes — `intake` in particular is untouched and
+    // test-locked that way. Strictly boolean: a truthy string here would be a
+    // silent opt-in to persisting a client's typed answers server-side, which
+    // is a decision that must be made deliberately per form. Server drafts
+    // are LINKED-ONLY (a resolved case_id is the draft identity); the routes
+    // enforce that, not this validator. Never part of fieldSignature —
+    // flipping it does not bump schema_version.
+    if (def.external.serverDrafts !== undefined && typeof def.external.serverDrafts !== 'boolean') {
+      throw badRequest('external.serverDrafts must be a boolean');
     }
     // postSubmit (X3, Fred-ratified 2026-08-12): the external renderer's
     // terminal state after a successful submit — a thank-you panel replacing

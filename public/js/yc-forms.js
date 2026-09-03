@@ -28,6 +28,11 @@ class YCForm {
       external:      false,
       baseUrl:       '',
       submitUrl:     '',             // external mode: where save() POSTs { case_id?, values }
+      // D1 server drafts (external mode only). Defaults are OFF, so every
+      // existing host keeps localStorage-only drafts with no config change.
+      serverDrafts:  false,          // template opted in AND the server said so
+      draftUrl:      '',             // POST/DELETE /api/ext/forms/:key/draft
+      externalDraft: null,           // the draft the GET payload already carried
       fields:        {},
       repeaters:     {},
       validation:    {},
@@ -175,14 +180,21 @@ if (this.config.endpoints.load && !this.config.external) {
 
       // 8. Fetch latest draft + submission.
       //    External mode (X2): /api/forms/latest is an authed staff route —
-      //    external drafts are localStorage-only (EXTERNAL_FORMS_DESIGN
-      //    §5.3.8; anonymous server drafts would collide globally on the
+      //    external drafts were localStorage-only (EXTERNAL_FORMS_DESIGN
+      //    §5.3 item 8; anonymous server drafts would collide globally on the
       //    draft_key generated column). The localStorage record carries the
       //    same { data, updated_at, schema_version } shape, so the banner /
       //    restore / version-warning machinery below runs unchanged.
+      //
+      //    D1: a template may opt into SERVER drafts (external.serverDrafts),
+      //    in which case the one /api/ext GET already carried the server
+      //    record and there are two candidates. No extra request — the
+      //    renderer threads it in as config.externalDraft.
       let latest = { submitted: null, draft: null };
       if (this.config.external) {
-        latest.draft = this._readLocalDraft();
+        latest.draft = this.config.serverDrafts
+          ? this._pickExternalDraft(this.config.externalDraft, this._readLocalDraft())
+          : this._readLocalDraft();
       } else {
         try {
           latest = await this._api(
@@ -353,6 +365,20 @@ if (this.config.endpoints.load && !this.config.external) {
     if (discardBtn) {
       discardBtn.onclick = async () => {
         if (this.config.external) {
+          // D1: when the server holds a draft, discard means BOTH — leaving
+          // the server row would resurrect the discarded answers on the next
+          // device (or the next reload). Best-effort: a failed DELETE must
+          // not leave the banner up, and the local clear happens either way.
+          if (this.config.serverDrafts && this.config.linkId) {
+            try {
+              await this._api(
+                `${this.config.draftUrl}?case_id=${encodeURIComponent(this.config.linkId)}`,
+                'DELETE'
+              );
+            } catch (err) {
+              console.warn('[YCForm] Server draft discard failed:', err);
+            }
+          }
           this._clearLocalDraft();                 // X2: localStorage draft
         } else {
           try {
@@ -1017,10 +1043,36 @@ if (this.config.endpoints.load && !this.config.external) {
     const currentJson = JSON.stringify(this.collect());
     if (currentJson === this._lastAutosaveJson) return; // No-op: nothing changed
 
-    // External mode (X2): localStorage-only drafts (§5.3.8) — same record
+    // External mode (X2): localStorage drafts (§5.3 item 8) — same record
     // shape the banner machinery reads. localStorage can throw (private
     // browsing, quota) — a failed draft save degrades silently.
+    //
+    // D1: when the template opted in AND the link resolved, the SERVER is the
+    // draft store and the local copy is only a fallback. Anonymous or
+    // opted-out forms take the untouched local path below.
     if (this.config.external) {
+      let serverTried = false;
+      if (this.config.serverDrafts && this.config.linkId) {
+        serverTried = true;
+        try {
+          await this._api(this.config.draftUrl, 'POST', {
+            case_id: this.config.linkId,
+            values:  this.collect(),
+          });
+          // Server is now the source of truth. Drop the local copy so a stale
+          // device-local draft can never out-rank it on a later boot — the
+          // pick-newer rule would otherwise resurrect older answers whenever
+          // clocks or a failed sync left the local record ahead.
+          this._clearLocalDraft();
+          this._lastAutosaveJson = currentJson;
+          this._showStatus('Draft saved just now');
+          return;
+        } catch (err) {
+          // A draft save is a convenience, never a failure mode. Fall through
+          // to the device-local write and say so honestly in the status.
+          console.warn('[YCForm] Server draft save failed — falling back to this device:', err);
+        }
+      }
       try {
         this._draftStore().setItem(this._localDraftKey(), JSON.stringify({
           data: this.collect(),
@@ -1028,7 +1080,7 @@ if (this.config.endpoints.load && !this.config.external) {
           schema_version: this.config.schemaVersion,
         }));
         this._lastAutosaveJson = currentJson;
-        this._showStatus('Draft saved just now');
+        this._showStatus(serverTried ? 'Draft saved on this device' : 'Draft saved just now');
       } catch (err) {
         console.warn('[YCForm] Local draft save failed:', err);
       }
@@ -1104,6 +1156,32 @@ if (this.config.endpoints.load && !this.config.external) {
 
   _clearLocalDraft() {
     try { this._draftStore().removeItem(this._localDraftKey()); } catch (_) { /* ok */ }
+  }
+
+  /**
+   * D1 — which external draft wins when both a server record and a device
+   * record exist: the NEWER by updated_at.
+   *
+   * Both carry the same { data, updated_at, schema_version } shape, so the
+   * winner drops straight into the existing banner/restore machinery.
+   *
+   * Ties and unparseable timestamps go to the SERVER. It is the shared record
+   * — the one the client's other device wrote and the one submit clears — so
+   * preferring it is both the safer default and the one that keeps two
+   * devices converging. A local record only wins by being strictly newer,
+   * which happens exactly when the last server save failed and the fallback
+   * write in autosaveTick caught it.
+   *
+   * (Normally there is no contest: a successful server save clears the local
+   * copy. Both present means a save failed, or the form was filled once
+   * before the template opted in.)
+   */
+  _pickExternalDraft(server, local) {
+    if (!server || !server.data) return local || null;
+    if (!local || !local.data) return server;
+    const st = Date.parse(server.updated_at);
+    const lt = Date.parse(local.updated_at);
+    return (Number.isFinite(st) && Number.isFinite(lt) && lt > st) ? local : server;
   }
 
 

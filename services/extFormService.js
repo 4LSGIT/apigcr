@@ -130,6 +130,19 @@ function badLinkMode(def) {
     ? 'degrade' : 'reject';
 }
 
+/**
+ * D1 — is server-side draft persistence opted in for this definition?
+ *
+ * `external.serverDrafts: true` and nothing looser: absent, false, or any
+ * non-boolean is OFF, so every template that predates D1 (intake included)
+ * keeps localStorage-only drafts with no definition edit. validateDefinition
+ * already rejects non-boolean values at the write; this reads STRICTLY true
+ * anyway, because a definition row can predate any validator.
+ */
+function serverDraftsEnabled(def) {
+  return !!(def && def.external && def.external.serverDrafts === true);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DEFINITION PROJECTION — what the public GET payload carries
 // ─────────────────────────────────────────────────────────────────────────────
@@ -434,23 +447,21 @@ function checkScalar(field, value, path) {
  * integrator everything (the §5.4 no-oracle rule governs the template
  * refusal branches, not field validation).
  */
-function validateValues(def, values) {
-  if (!values || typeof values !== 'object' || Array.isArray(values)) {
-    throw badRequest('values must be an object');
-  }
-
-  // Payload size (X2.1, §9 co-review F5): measured on the PARSED object, not
-  // on Content-Length — chunked requests carry no such header, so the old
-  // check passed unconditionally and the only real bound was the global
-  // express.json 10mb. Note the per-field caps do NOT bound the whole: 100
-  // repeater items x N fields x 20000 chars is a legitimately multi-megabyte
-  // payload that every field-level rule accepts, and form_submissions.data
-  // would store it.
-  if (Buffer.byteLength(JSON.stringify(values)) > MAX_VALUES_BYTES) {
-    throw badRequest('submission is too large');
-  }
-
-  // Registry from the published definition — all containers, one pool.
+/**
+ * The value registry for a published definition — every container, one pool:
+ *   { fields: { name → field }, repeaters: { key → { name → field } } }
+ *
+ * Sections mode walks def.sections; tabs mode (2.6) walks stickyTop, each
+ * tab's sections, then stickyBottom. DISPLAY_ONLY_TYPES carry no value and
+ * are excluded, so a crafted payload naming one is rejected as "not a field
+ * of this form" rather than stashing junk in form_submissions.data.
+ *
+ * EXTRACTED (D1) so submit re-validation and draft shape-checking read the
+ * SAME definition of "is this a declared field". Two copies of this walk
+ * would drift the first time a container type is added, and the drift would
+ * show up as a form that can be drafted but not submitted (or worse).
+ */
+function buildValueRegistry(def) {
   const fields = Object.create(null);      // top-level name → field
   const repeaters = Object.create(null);   // repeater key → { name → field }
   const lists = Array.isArray(def.tabs)
@@ -476,6 +487,95 @@ function validateValues(def, values) {
       }
     }
   }
+  return { fields, repeaters };
+}
+
+/**
+ * D1 — SHAPE check for a server-side DRAFT payload. Deliberately NOT
+ * validateValues: a draft is partial by nature (required fields unfilled,
+ * selects blank, a half-typed email), and running submit validation on one
+ * would make the autosave fail on every keystroke until the form happened to
+ * be submittable — which is the exact opposite of what a resumable 300-field
+ * questionnaire needs. Submit still re-validates in full; nothing about this
+ * relaxes that.
+ *
+ * Three rules only:
+ *   1. `values` is a plain object,
+ *   2. the whole payload fits MAX_VALUES_BYTES (the same 64KB storage bound
+ *      submit enforces — a draft row lands in the same column),
+ *   3. every key names a declared field or repeater of the PUBLISHED
+ *      definition (shared registry above).
+ *
+ * Rule 3's message names the offending key. That branch fires only after
+ * every template gate has already passed (§5.4 no-oracle governs those), so
+ * it tells the caller nothing the form's own served definition doesn't.
+ */
+function checkDraftShape(def, values) {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) {
+    throw badRequest('values must be an object');
+  }
+  if (Buffer.byteLength(JSON.stringify(values)) > MAX_VALUES_BYTES) {
+    throw badRequest('draft is too large');
+  }
+  const { fields, repeaters } = buildValueRegistry(def);
+  for (const k of Object.keys(values)) {
+    if (!(k in fields) && !(k in repeaters)) {
+      throw badRequest(`values.${k} is not a field of this form`);
+    }
+  }
+}
+
+/**
+ * D1 — the current server draft for (form, case), or null.
+ *
+ * Narrow on purpose: three columns, named explicitly. formService.getLatest
+ * would also fetch the latest SUBMITTED row and join users for a display
+ * name — neither belongs anywhere near this payload (§5.2.3's projection
+ * discipline), and its draft half carries `id` / `submitted_by`, which the
+ * external surface withholds for the same volume-oracle reason submit
+ * returns no id. A SELECT that cannot name those columns cannot leak them.
+ *
+ * Drafts are case-linked only, so link_type is the literal 'case' — the same
+ * server-resolved linkage submit writes.
+ */
+async function getServerDraft(db, formKey, caseId) {
+  const [[row]] = await db.query(
+    `SELECT data, updated_at, schema_version
+       FROM form_submissions
+      WHERE form_key = ? AND link_type = 'case' AND link_id = ? AND status = 'draft'
+      LIMIT 1`,
+    [formKey, caseId]
+  );
+  if (!row) return null;
+
+  // mysql2 hands a json column back parsed or raw depending on driver config.
+  let data = row.data;
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch (_) { return null; }   // corrupt row → no draft
+  }
+  if (!data || typeof data !== 'object') return null;
+
+  return { data, updated_at: row.updated_at, schema_version: row.schema_version };
+}
+
+function validateValues(def, values) {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) {
+    throw badRequest('values must be an object');
+  }
+
+  // Payload size (X2.1, §9 co-review F5): measured on the PARSED object, not
+  // on Content-Length — chunked requests carry no such header, so the old
+  // check passed unconditionally and the only real bound was the global
+  // express.json 10mb. Note the per-field caps do NOT bound the whole: 100
+  // repeater items x N fields x 20000 chars is a legitimately multi-megabyte
+  // payload that every field-level rule accepts, and form_submissions.data
+  // would store it.
+  if (Buffer.byteLength(JSON.stringify(values)) > MAX_VALUES_BYTES) {
+    throw badRequest('submission is too large');
+  }
+
+  // Registry from the published definition — all containers, one pool.
+  const { fields, repeaters } = buildValueRegistry(def);
 
   // Unknown keys rejected.
   for (const k of Object.keys(values)) {
@@ -526,6 +626,10 @@ module.exports = {
   projectDefinition,
   resolveCase,
   validateValues,
+  // D1 — server-side drafts on the external surface:
+  serverDraftsEnabled,
+  checkDraftShape,
+  getServerDraft,
   // exported for tests:
   evalCond,
 };

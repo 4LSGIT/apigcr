@@ -1503,6 +1503,15 @@
       config.baseUrl   = '';
       config.submitUrl = '/api/ext/forms/' + encodeURIComponent(meta.formKey) + '/submit';
       config.onSubmit  = {};
+      // D1 server drafts. The SERVER decides whether this form has them:
+      // EXT.serverDrafts is set from the presence of the payload's `draft`
+      // key, never inferred from a null value (a null draft means "enabled,
+      // nothing saved yet" and must not read as "disabled"). One renderer —
+      // opted-out and anonymous forms simply leave these at their defaults
+      // and keep the localStorage path.
+      config.serverDrafts  = !!EXT.serverDrafts;
+      config.draftUrl      = '/api/ext/forms/' + encodeURIComponent(meta.formKey) + '/draft';
+      config.externalDraft = EXT.draft || null;
     }
 
     // endpoints.load: pass through the definition's. Skipped entirely in
@@ -2319,6 +2328,14 @@
             }
             EXT.load   = body.load || null;
             EXT.linked = !!body.linked;
+            // D1: the server sends `draft` ONLY when this template opted into
+            // server drafts and the case resolved — so key PRESENCE is the
+            // signal, and a null value legitimately means "enabled, nothing
+            // saved yet". Testing the value instead would silently drop back
+            // to device-local drafts the first time a client opened the form.
+            EXT.serverDrafts = ('draft' in body);
+            EXT.draft = (body.draft && typeof body.draft === 'object')
+              ? body.draft : null;
             // postSubmit (X3/X3.3): validated server-side (message string
             // ≤2000, edit/new/redirectBack booleans, redirect path-or-https
             // ≤2000), rendered via textContent only below; redirect

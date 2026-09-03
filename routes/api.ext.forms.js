@@ -6,11 +6,16 @@
  *
  * GET  /api/ext/forms/:form_key?case_id=   — everything the external renderer
  *      needs in one payload: projected published definition + the server-
- *      computed 3-field prefill projection. §5.2.
+ *      computed 3-field prefill projection. §5.2. Carries `draft` only when
+ *      the template opted into server drafts AND the case resolved (D1).
  * POST /api/ext/forms/:form_key/submit     — body { case_id?, values }.
  *      Server re-validates values, resolves linkage from the credential,
  *      records the submission, dispatches onSubmit.workflow SERVER-SIDE from
  *      the published definition. §5.3.
+ * POST   /api/ext/forms/:form_key/draft            — body { case_id, values }.
+ * DELETE /api/ext/forms/:form_key/draft?case_id=   — D1 server-side drafts,
+ *      opt-in per template (external.serverDrafts) and LINKED-ONLY. See the
+ *      block comment above those handlers for the trust-model note.
  *
  * UNAUTHED BY DESIGN — the credential is the case_id bearer param (40-bit;
  * see the entropy note in extFormService.js — the incumbent docReq/intake
@@ -45,6 +50,15 @@ const formService = require('../services/formService');
 const getLimited        = makeLimiter(15 * 60 * 1000, 30);  // GET  30 / 15min / IP
 const postLimited       = makeLimiter(15 * 60 * 1000, 10);  // POST 10 / 15min / IP
 const perCaseLimited    = makeLimiter(60 * 60 * 1000, 5);   // POST  5 / hour / case_id
+
+// D1 draft budgets — necessarily looser than submit's, because an autosave is
+// not an event, it is a heartbeat. The client debounces at autosaveMs (3000
+// default, yc-forms.js), so a client typing steadily through a long
+// questionnaire legitimately produces roughly one POST per typing pause. 10
+// per 15 minutes — the submit budget — would cut a real client off inside the
+// first section of a 300-field form.
+const draftLimited        = makeLimiter(15 * 60 * 1000, 60);   // draft POST/DELETE 60 / 15min / IP
+const perCaseDraftLimited = makeLimiter(60 * 60 * 1000, 120);  // draft POST 120 / hour / case_id
 
 // form_key shape (services/formTemplateService.js §2). Gated before the DB is
 // touched, mirroring routes/f.js — symmetry, and one less free query per
@@ -117,6 +131,28 @@ router.get('/api/ext/forms/:form_key', async (req, res) => {
     }
     // §6 degrade: anonymous mode — the form works, load stays null.
 
+    // 3b. D1 — the resumable server draft, when the template opted in AND the
+    //     case resolved. See the DRAFT ROUTES block comment below for why
+    //     readback is acceptable under the same bearer credential.
+    //
+    //     PRESENCE IS THE CLIENT'S SIGNAL, so it is exact: the key rides when
+    //     (and only when) serverDrafts is on and the request is linked —
+    //     present-and-null when no draft exists yet, absent entirely
+    //     otherwise. The renderer reads `'draft' in payload` to decide whether
+    //     to use the server path at all; a null value must therefore mean
+    //     "enabled, nothing saved", never "not enabled". Anonymous requests
+    //     get no key: an anonymous server draft has no identity, so the
+    //     client's localStorage/sessionStorage path is the whole story there.
+    //
+    //     NOTE what is NOT here: the latest submitted row. getServerDraft
+    //     reads three columns of the draft row and nothing else — resume
+    //     needs the draft, and last time's answers are not the external
+    //     surface's to hand back on a guessed credential.
+    let draft;
+    if (linked && extSvc.serverDraftsEnabled(tpl.definition)) {
+      draft = await extSvc.getServerDraft(req.db, tpl.form_key, caseId);
+    }
+
     // 5. (Cache-Control: no-store is set for every branch by noCors above —
     //     prefill is per-case PII, and N3 flagged that the 404 branches were
     //     previously uncovered.)
@@ -166,6 +202,9 @@ router.get('/api/ext/forms/:form_key', async (req, res) => {
       definition: extSvc.projectDefinition(tpl.definition),
       load,
       linked,
+      // D1: present-and-null when enabled+linked with nothing saved; absent
+      // otherwise. The renderer's serverDrafts signal is `'draft' in payload`.
+      ...(draft !== undefined ? { draft } : {}),
       ...(postSubmit ? { postSubmit } : {}),
       ...(appearance ? { appearance } : {}),
     });
@@ -252,6 +291,25 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
       req.db, tpl.form_key, linkType, linkId, tpl.schema_version, body.values, null,
       { surface: 'external' }
     );
+
+    // 4b. D1 — retire the now-superseded server draft. FIRE-AND-FORGET, the
+    //     house pattern (see the workflow dispatch below): the submission is
+    //     already recorded and irreversible at this point, so a failed DELETE
+    //     must never turn a successful submit into an error the client would
+    //     retry. Worst case on failure is a stale draft row whose banner
+    //     offers older answers than the submission — annoying, not lossy, and
+    //     the next autosave overwrites it. Nothing to do when the template is
+    //     not opted in (no draft row can exist) or the submit was anonymous.
+    if (linkId && extSvc.serverDraftsEnabled(def)) {
+      Promise.resolve(
+        formService.deleteDraft(req.db, tpl.form_key, linkType, linkId)
+      ).catch((err) => {
+        console.error(
+          `[api.ext.forms] draft cleanup failed for ${tpl.form_key}/${linkId}:`,
+          err && err.message
+        );
+      });
+    }
 
     // 6. onSubmit workflow(s) — SERVER-SIDE, the sanctioned side-effect
     //    channel. Ids come from the PUBLISHED DEFINITION, never the request
@@ -340,6 +398,148 @@ router.post('/api/ext/forms/:form_key/submit', async (req, res) => {
     return res.json({ status: 'success' });
   } catch (err) {
     console.error('[api.ext.forms] submit error:', err);
+    return res.status(500).json({ status: 'error', message: 'Internal error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRAFT ROUTES (D1) — server-side drafts for case-linked external forms
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// WHY THESE EXIST: external drafts have been localStorage-only
+// (EXTERNAL_FORMS_DESIGN §5.3 item 8), which means a client who starts a form
+// on their phone cannot finish it on a laptop. That is survivable for a
+// one-screen intake and disqualifying for the ~300-field Detailed Bankruptcy
+// Questionnaire, which nobody completes in one sitting on one device.
+//
+// WHAT IT COSTS, STATED PLAINLY: draft READBACK widens what a guessed case_id
+// exposes — from the hard 3-field prefill projection (§5.2.3) to whatever the
+// client has typed into this form. The governing analysis is unchanged: the
+// credential is still 40 bits (lib/caseId.js; the entropy note in
+// extFormService.js), CORS is still revoked on /api/ext (the F1 comment at the
+// top of this file), and both a per-IP and a per-case limiter still stand. The
+// PRIZE grows; the guessability does not. That is the same trade the firm
+// already accepts on the incumbent JotForm save-and-continue bearer links and
+// on today's prefilled link, and it is the same trust model: whoever holds the
+// link is treated as the client. Fred signed off 2026-09-04 (arc scratch
+// `fred/yf_dbkq_arc`). If the credential is ever widened or the CORS grant
+// restored, redo that arithmetic BEFORE touching these routes.
+//
+// LINKED-ONLY, deliberately: an anonymous server draft has no identity to key
+// on, so degrade mode does not extend here. badLink degrade governs whether an
+// anonymous visitor can RENDER and SUBMIT the form; it says nothing about
+// persisting their answers server-side, and there is no correct row to write.
+// Anonymous clients keep the sessionStorage path (yc-forms _draftStore).
+//
+// NO-ORACLE PARITY (§5.4): every refusal on both handlers — unknown key,
+// unpublished, wrong visibility, serverDrafts off, unresolvable case_id —
+// returns the byte-identical generic 404. There is deliberately NO badLink
+// flag here: unlike the render path, a draft request has no UI branch that
+// needs to tell "bad link" from "no such form", so the tighter answer is free.
+
+/**
+ * Shared template gate for both draft handlers: form_key shape, the same
+ * published/visibility gate GET and submit use, and the serverDrafts opt-in.
+ * Returns the template, or null meaning THE generic 404 — one null for all
+ * three, so the caller cannot accidentally distinguish them in the response.
+ * Linkage is resolved by each handler (POST reads the body, DELETE the query).
+ */
+async function draftGate(req) {
+  if (!FORM_KEY_RE.test(req.params.form_key)) return null;
+
+  const tpl = await extSvc.getServableTemplate(req.db, req.params.form_key);
+  if (!tpl) return null;
+
+  // Opt-in. Templates that never set the flag (intake included) behave
+  // exactly as they did before D1: these routes do not exist for them.
+  if (!extSvc.serverDraftsEnabled(tpl.definition)) return null;
+
+  return tpl;
+}
+
+// ── POST /api/ext/forms/:form_key/draft ─────────────────────────────────────
+
+router.post('/api/ext/forms/:form_key/draft', async (req, res) => {
+  try {
+    if (draftLimited(getClientIp(req))) return tooMany(res);
+
+    const tpl = await draftGate(req);
+    if (!tpl) return res.status(404).json(notFoundBody);
+    const def = tpl.definition;
+
+    // Body: { case_id, values } and NOTHING else — the §2 inversion rule, the
+    // same rejection submit applies. Checked AFTER the serverDrafts gate on
+    // purpose: a 400 here would otherwise confirm that a public form exists
+    // under this key even when it never opted into drafts, and no-oracle
+    // parity is cheaper to keep than to argue about.
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body : {};
+    for (const k of Object.keys(body)) {
+      if (k !== 'case_id' && k !== 'values') {
+        return res.status(400).json({ status: 'error', message: `unexpected body key "${k}"` });
+      }
+    }
+
+    // Linkage: the credential IS the draft identity. Invalid or absent
+    // case_id → the generic 404, regardless of badLink mode.
+    const caseId = typeof body.case_id === 'string' ? body.case_id : '';
+    const resolved = await extSvc.resolveCase(req.db, caseId);
+    if (!resolved.valid) return res.status(404).json(notFoundBody);
+
+    // Shape check only — NOT validateValues. A draft is partial by nature;
+    // see checkDraftShape in extFormService.js.
+    try {
+      extSvc.checkDraftShape(def, body.values);
+    } catch (err) {
+      if (err.status === 400) {
+        return res.status(400).json({ status: 'error', message: err.message });
+      }
+      throw err;
+    }
+
+    // Per-case cap, consumed only by a well-formed draft — the F5 ordering
+    // lesson from the submit path above, which applies with more force here:
+    // an autosave loop that spent a token per malformed attempt would lock a
+    // client out of their own draft over a transient client bug.
+    if (perCaseDraftLimited(caseId)) return tooMany(res);
+
+    // submitted_by NULL = external, the same convention submit writes.
+    const out = await formService.upsertDraft(
+      req.db, tpl.form_key, 'case', caseId, tpl.schema_version, body.values, null
+    );
+
+    // updated_at and nothing more — the client needs it to compare against a
+    // local draft. Row ids stay off this surface (the submit-body precedent).
+    return res.json({ status: 'success', updated_at: out.updated_at });
+  } catch (err) {
+    console.error('[api.ext.forms] draft save error:', err);
+    return res.status(500).json({ status: 'error', message: 'Internal error' });
+  }
+});
+
+// ── DELETE /api/ext/forms/:form_key/draft?case_id= ──────────────────────────
+
+router.delete('/api/ext/forms/:form_key/draft', async (req, res) => {
+  try {
+    // Shares the draft POST's per-IP budget. No per-case cap: a DELETE writes
+    // no row, so capping it would add a lockout surface and buy nothing.
+    if (draftLimited(getClientIp(req))) return tooMany(res);
+
+    const tpl = await draftGate(req);
+    if (!tpl) return res.status(404).json(notFoundBody);
+
+    const caseId = typeof req.query.case_id === 'string' ? req.query.case_id : '';
+    const resolved = await extSvc.resolveCase(req.db, caseId);
+    if (!resolved.valid) return res.status(404).json(notFoundBody);
+
+    await formService.deleteDraft(req.db, tpl.form_key, 'case', caseId);
+
+    // Success whether or not a row existed: "there was something to delete"
+    // is exactly the kind of per-case existence signal this surface withholds,
+    // and the client has nothing useful to do with the distinction anyway.
+    return res.json({ status: 'success' });
+  } catch (err) {
+    console.error('[api.ext.forms] draft delete error:', err);
     return res.status(500).json({ status: 'error', message: 'Internal error' });
   }
 });
