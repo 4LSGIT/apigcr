@@ -686,17 +686,28 @@ describe('dead rows are excluded by default', () => {
     expect(db.calls[2].sql).toMatch(/a\.appt_status <> 'Rescheduled'/);
   });
 
-  test('a superseded event is excluded even though its status is Canceled', async () => {
-    // The 31 E0a tombstones genuinely ARE Canceled. The pointer is what marks
-    // them dead; excluding on status alone would also hide the 21 real
-    // cancellations, and excluding on neither shows phantom twins.
+  test('a superseded event is excluded by the pointer AND by the status (U6c)', async () => {
+    // Both halves, and BOTH are load-bearing for different rows.
+    //
+    // The pointer arm: the 31 E0a tombstones carry supersede_reason='duplicate'
+    // and genuinely ARE 'Canceled'. Only the pointer distinguishes them from
+    // the 21 real cancellations, so the pointer clause can never be dropped.
+    //
+    // The status arm (U6c): a RESCHEDULED predecessor now carries
+    // event_status='Rescheduled'. Normally it carries the pointer too — they
+    // are written in one UPDATE — so this arm is belt-and-braces, and it earns
+    // its place on a hand-edited or half-deployed row. It also makes this
+    // query read as the exact twin of the appt query above
+    // (`a.appt_status <> 'Rescheduled'`), which was the point of the slice.
+    //
+    // What must still NOT appear is 'Canceled' or 'Completed' as a liveness
+    // filter: those are real outcomes the timeline shows, not tombstones.
     const db = stubDb(script3([CASE_A], [], []));
     await svc.listForCase(db, 'TYL6KJN8');
-    // Scope the negative to the WHERE clause — event_status is legitimately in
-    // the SELECT list; what must not happen is it becoming a liveness FILTER.
     const where = db.calls[1].sql.split(/\bWHERE\b/)[1];
     expect(where).toMatch(/superseded_by_event_id IS NULL/);
-    expect(where).not.toMatch(/event_status/);
+    expect(where).toMatch(/event_status <> 'Rescheduled'/);
+    expect(where).not.toMatch(/Canceled|Completed/);
   });
 
   test('default rows omit the superseded trio AND the attendee pair (frozen R2 shape)', async () => {

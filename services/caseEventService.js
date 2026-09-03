@@ -248,6 +248,12 @@ const EVENT_STATUS_NORM = new Map(Object.entries({
   'Scheduled': 'scheduled',
   'Completed': 'held',
   'Canceled':  'canceled',
+  // U6c: 'Rescheduled' is deliberately ABSENT, for the identical reason it is
+  // absent from APPT_STATUS_NORM below — it is a tombstone, not a status.
+  // status_norm null + superseded:true, and excluded from default reads. This
+  // is NOT a change to status_norm's frozen vocabulary: no existing value
+  // moves, and R2 never saw such a row (it was excluded by the pointer before
+  // the status existed).
 }));
 
 const APPT_STATUS_NORM = new Map(Object.entries({
@@ -354,13 +360,24 @@ function _deriveState(source, row, kindKey, isDead) {
       return { state: 'resolved', resolution: stored || (kindKey === 'deadline' ? 'met' : 'held') };
     case 'Canceled':
       return { state: 'cancelled', resolution: stored === 'moot' ? 'moot' : 'cancelled' };
+    case 'Rescheduled':
+      // U6c. Normally unreachable, because the pointer is written in the same
+      // UPDATE and `isDead` already returned above. This branch fires only for
+      // a row carrying the status WITHOUT the pointer — which updateEvent now
+      // refuses to create, so it means a hand-edit or a half-applied deploy.
+      // Reading it as superseded is the safe answer either way: the row says
+      // it was replaced, and the worst outcome of believing it is hiding one
+      // row too many. Mirrors the appt side, where 'Rescheduled' is likewise
+      // a tombstone with no resolution.
+      return { state: 'superseded', resolution: null };
     case 'Scheduled':
       return { state: 'live', resolution: null };
     default:
-      // event_status is NOT NULL DEFAULT 'Scheduled' and the enum has three
-      // values, so this is unreachable on live data. Defensive: a '' from a
-      // non-strict-mode write reads as live-with-nothing-recorded, matching the
-      // appt side rather than inventing a cancellation.
+      // event_status is NOT NULL DEFAULT 'Scheduled' and the enum has four
+      // values, all handled above, so this is unreachable on live data.
+      // Defensive: a '' from a non-strict-mode write reads as
+      // live-with-nothing-recorded, matching the appt side rather than
+      // inventing a cancellation.
       return { state: 'live', resolution: null };
   }
 }
@@ -560,7 +577,13 @@ function _mapEvent(row, caseId, { includeSuperseded, includeAttendees, registry 
   const allDay = row.event_all_day === 1 || row.event_all_day === '1' || row.event_all_day === true;
   const startsAt = _composeStart(row.event_date, allDay ? null : row.event_time);
   const keys = _deriveKeys('event', row);
-  const isDead = row.superseded_by_event_id != null;
+  // U6c: EITHER half marks the row dead, exactly as _mapAppt reads
+  // appt_status='Rescheduled'. The pointer is the normal signal — supersedeEvent
+  // writes both in one UPDATE and updateEvent refuses to write the status
+  // alone — so the second arm fires only on a hand-edit or a half-applied
+  // deploy. Believing it costs at most one hidden row; disbelieving it puts a
+  // tombstone back on the timeline.
+  const isDead = row.superseded_by_event_id != null || String(row.event_status) === 'Rescheduled';
   const st = _deriveState('event', row, keys.kind_key, isDead);
 
   const out = {
@@ -603,7 +626,11 @@ function _mapEvent(row, caseId, { includeSuperseded, includeAttendees, registry 
   // says 'superseded' for the same reason — see _deriveState.
   if (includeSuperseded && isDead) {
     out.superseded             = true;
-    out.superseded_by_event_id = Number(row.superseded_by_event_id);
+    // Null-safe since U6c: a status-only tombstone has no successor to name,
+    // and `Number(null)` would report 0 — a real event id. Null says "dead,
+    // successor unknown", which is the truth about such a row.
+    out.superseded_by_event_id = row.superseded_by_event_id == null
+      ? null : Number(row.superseded_by_event_id);
     out.supersede_reason       = row.supersede_reason == null ? null : String(row.supersede_reason);
   }
   return out;
@@ -825,7 +852,13 @@ async function _listForCases(db, caseIds, {
   // Superseded rows are excluded in SQL, not in JS: a case with a long
   // adjournment chain should not ship the whole chain over the wire to have it
   // dropped in the mapper.
-  if (!includeSuperseded) evFilters.push('e.superseded_by_event_id IS NULL');
+  // U6c: both halves, so this reads as the exact twin of the appt line below
+  // (`appt_status <> 'Rescheduled'`). The pointer is the normal signal; the
+  // status arm catches a hand-edited or half-deployed row.
+  if (!includeSuperseded) {
+    evFilters.push(`e.superseded_by_event_id IS NULL`);
+    evFilters.push(`e.event_status <> 'Rescheduled'`);
+  }
   // from/to are date-granular and inclusive. event_date is a DATE column, so
   // plain comparison against 'YYYY-MM-DD' is exact on both ends.
   if (from) { evFilters.push('e.event_date >= ?'); evParams.push(String(from).slice(0, 10)); }
@@ -1099,7 +1132,12 @@ function _rangeList(v) {
  * tombstone, never by status, and is handled by its own clause.
  */
 const RANGE_EVENT_STATE_SQL = Object.freeze({
-  live:      `e.event_status NOT IN ('Completed','Canceled')`,
+  // U6c: 'Rescheduled' joins the exclusion list, and the appt line below now
+  // reads as its exact twin — which is the point of the slice. It is belt-and
+  // -braces here (the pointer clause in listRange already excludes the row),
+  // but a `live` predicate that could return a tombstone if the pointer clause
+  // were ever refactored away is not one worth keeping.
+  live:      `e.event_status NOT IN ('Completed','Canceled','Rescheduled')`,
   resolved:  `e.event_status = 'Completed'`,
   cancelled: `e.event_status = 'Canceled'`,
 });
@@ -1210,7 +1248,13 @@ async function listRange(db, opts = {}) {
       `(e.superseded_by_event_id IS NULL AND (${liveStates.map((s) => RANGE_EVENT_STATE_SQL[s]).join(' OR ')}))`
     );
   }
-  if (wantSuperseded) evStateOr.push('e.superseded_by_event_id IS NOT NULL');
+  // U6c: EITHER half marks the row dead. The pointer is the normal signal; the
+  // status alone means a hand-edit or a half-applied deploy, and a row in that
+  // state should still be findable under "show superseded" rather than
+  // vanishing from every view at once.
+  if (wantSuperseded) {
+    evStateOr.push(`(e.superseded_by_event_id IS NOT NULL OR e.event_status = 'Rescheduled')`);
+  }
   if (!evStateOr.length) return { items: [], has_more: false };
   evWhere.push(`(${evStateOr.join(' OR ')})`);
 

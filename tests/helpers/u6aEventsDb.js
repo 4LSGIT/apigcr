@@ -121,12 +121,22 @@ function makeEventsDb({ events = [], cases = [], tasks = {} } = {}) {
     }
 
     // ── supersedeEvent — the guarded pointer write ─────────────────────────
-    if (/^UPDATE events SET superseded_by_event_id = \?, supersede_reason = \?, event_updated_at = event_updated_at WHERE event_id = \? AND superseded_by_event_id IS NULL$/i.test(flat)) {
-      const row = table.get(Number(params[2]));
-      if (!row || row.superseded_by_event_id != null) return [{ affectedRows: 0 }];
-      row.superseded_by_event_id = Number(params[0]);
-      row.supersede_reason = params[1];
-      return [{ affectedRows: 1 }];
+    //
+    // U6c: a reschedule sets event_status='Rescheduled' in the SAME statement,
+    // so the shape is one of two literals. The status clause is matched as an
+    // OPTIONAL group rather than loosened to `.*`, so a future edit that drops
+    // it (or writes it on the 'duplicate' path, where it does not belong)
+    // falls through to `unmatched` and fails the suite.
+    {
+      const m = flat.match(/^UPDATE events SET superseded_by_event_id = \?, supersede_reason = \?,(?: (event_status = 'Rescheduled'),)? event_updated_at = event_updated_at WHERE event_id = \? AND superseded_by_event_id IS NULL$/i);
+      if (m) {
+        const row = table.get(Number(params[2]));
+        if (!row || row.superseded_by_event_id != null) return [{ affectedRows: 0 }];
+        row.superseded_by_event_id = Number(params[0]);
+        row.supersede_reason = params[1];
+        if (m[1]) row.event_status = 'Rescheduled';
+        return [{ affectedRows: 1 }];
+      }
     }
 
     // ── gcal id writes ─────────────────────────────────────────────────────

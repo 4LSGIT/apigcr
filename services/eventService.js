@@ -1108,12 +1108,13 @@ async function getEvent(db, eventId) {
  *   includeSuperseded {boolean?} default false — see below
  * @returns {Promise<{ data: object[], total: number }>}
  *
- * SUPERSEDED ROWS (Unified Events U6a, v0.5 §3.4). A row whose
- * superseded_by_event_id is set is dead whatever its status says; the E0a
- * rule is "supersession is the pointer, never a status", so a rescheduled
- * predecessor KEEPS event_status='Scheduled'. Left unfiltered, that row is a
- * phantom live twin on the case Events tab. By default this list therefore
- * hides every superseded row that is still 'Scheduled'.
+ * SUPERSEDED ROWS (U6a, amended by U6c). A row whose superseded_by_event_id
+ * is set is dead whatever its status says. Since U6c a RESCHEDULED
+ * predecessor also carries event_status='Rescheduled', so the default
+ * status:'Scheduled' filter already hides it and the predicate below is
+ * belt-and-braces for that case. It still does real work on a hand-edited row
+ * (pointer set, status left Scheduled) — which is the phantom live twin this
+ * list must never show.
  *
  * It does NOT hide superseded rows whose status is already terminal (the 31
  * E0a dedup tombstones are Canceled + 'duplicate'): case.html and
@@ -1304,7 +1305,7 @@ async function listEvents(db, {
 //
 // SUPERSEDED ROWS (U6a). Both candidate queries carry
 // `superseded_by_event_id IS NULL`: a rescheduled predecessor keeps
-// event_status='Scheduled' (v0.5 §3.4 — the pointer, never a status), and it
+// event_status='Rescheduled' since U6c (the pointer AND the status), and it
 // must never be "the existing match" — deduping a re-notice onto a dead row
 // would report success and schedule nothing. Adds no query; excludes no live
 // row today (0 Scheduled rows carry a pointer, verified 2026-09-01).
@@ -1870,6 +1871,45 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder, so
   const existing = await getEvent(db, eventId);
   if (!existing) throw new Error(`Event ${eventId} not found`);
 
+  // ── U6c — 'Rescheduled' is supersedeEvent's to write, nobody else's ───────
+  //
+  // The status and the pointer are two halves of ONE fact and are written in
+  // one guarded UPDATE inside supersedeEvent. A raw PATCH could produce either
+  // half alone:
+  //
+  //   · status without pointer — a row that says it was replaced but cannot
+  //     say by what; the chain queries (adjournment count, court-v2 S1) then
+  //     silently under-count.
+  //   · pointer cleared by a status flip back to Scheduled — a live-looking
+  //     row still pointing at its own successor, i.e. exactly the phantom twin
+  //     this slice exists to prevent.
+  //
+  // So both directions are refused here rather than half-handled. Undoing a
+  // supersession is a real operation and needs a real writer (none exists yet;
+  // it belongs with U7's court reconcile, which is the only thing that will
+  // ever need it).
+  if ('event_status' in fields) {
+    const target = fields.event_status == null ? '' : String(fields.event_status);
+    if (target === 'Rescheduled') {
+      const e = new Error(
+        'updateEvent: event_status cannot be set to Rescheduled directly — ' +
+        'supersession is written by supersedeEvent, which sets the status and the ' +
+        'superseded_by_event_id pointer together'
+      );
+      e.status = 400;
+      throw e;
+    }
+    if (existing.superseded_by_event_id != null &&
+        target !== String(existing.event_status == null ? '' : existing.event_status)) {
+      const e = new Error(
+        `updateEvent: event ${eventId} is superseded by ${existing.superseded_by_event_id} — ` +
+        'its status is owned by that supersession and cannot be patched'
+      );
+      e.status = 409;
+      throw e;
+    }
+  }
+
   let changedKeys = [];
 
   if (hasFields) {
@@ -2200,12 +2240,32 @@ async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true, 
 // ─────────────────────────────────────────────────────────────
 // supersedeEvent  (Unified Events U6a — v0.5 §3.4, the first forward writer)
 //
-// Reschedule = create the successor + stamp the predecessor with a POINTER.
-// The predecessor's event_status is NOT touched (E0a rule: supersession is
-// the pointer, never a status). A rescheduled predecessor therefore stays
-// 'Scheduled' in the raw table, and every raw liveness query in this tree
-// filters `superseded_by_event_id IS NULL` itself (the U6a consumer audit);
-// the §3.1 read layer excludes it by default.
+// Reschedule = create the successor + stamp the predecessor with a POINTER
+// AND the status 'Rescheduled' (U6c — Fred, 2026-09-03).
+//
+// U6a shipped the pointer alone, on E0a's "supersession is the pointer, never
+// a status" rule. That rule was wrong, and `appts` is the proof: it carries
+// `appt_status='Rescheduled'` (85 live rows) AND `rescheduled_from_appt_id`.
+// The status answers "is this row dead"; the pointer answers "which row
+// replaced it". Two questions, two columns.
+//
+// Events having only the pointer meant every liveness query in the tree —
+// availability, the digest, the ICS feed, both dedupe scans, and
+// courtExecutor's reschedule/cancel candidate queries — had to be taught a
+// second predicate it had never needed. courtExecutor's two never were, and
+// with the singleton flag ON that would have handed the court robot a dead
+// row as a live candidate. Setting the status makes all of them correct
+// without touching one of them.
+//
+// The pointer is UNCHANGED and still authoritative for identity: chain
+// queries (adjournment count, first-of-chain, court-v2 S1) read
+// `supersede_reason='rescheduled'`, and `_deriveState` still derives
+// 'superseded' off the pointer, so a row is dead if EITHER says so.
+//
+// reason='duplicate' does NOT touch the status: the 31 E0a cleanup artifacts
+// are 'Canceled' because a script cancelled them, and a dedupe tool
+// reclassifying a row is not the same act as a court moving a hearing.
+// 'Canceled' therefore still means court-cancelled only, exactly as before.
 //
 // `reason` is the column that keeps the two meanings apart: 'rescheduled'
 // builds an adjournment chain (court-v2's S1 identity question filters on
@@ -2281,10 +2341,14 @@ async function supersedeEvent(db, {
     throw _conflict(`supersedeEvent: successor event ${succId} is itself superseded by ${succ.superseded_by_event_id}`);
   }
 
-  // 1. The pointer. Guarded, so a lost race is a 409 rather than an overwrite.
+  // 1. The pointer AND (for a reschedule) the status, in ONE guarded UPDATE —
+  //    so the two can never disagree. Guarded, so a lost race is a 409 rather
+  //    than an overwrite. `reason='duplicate'` leaves the status alone (see the
+  //    section comment: the 31 E0a artifacts are 'Canceled' on purpose).
   const [res] = await db.query(
     `UPDATE events
         SET superseded_by_event_id = ?, supersede_reason = ?,
+            ${reason === 'rescheduled' ? `event_status = 'Rescheduled',` : ''}
             event_updated_at = event_updated_at
       WHERE event_id = ? AND superseded_by_event_id IS NULL`,
     [succId, reason, predId]

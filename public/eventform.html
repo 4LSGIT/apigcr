@@ -70,6 +70,11 @@
     /* --accent takes the NEAR-BLACK label, not white: white on #07ADEF is 2.55. */
     .ef-status-Completed { background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 80%, white)); color: var(--accent-text); }
     .ef-status-Canceled  { background: linear-gradient(135deg, var(--neutral-fill), color-mix(in srgb, var(--neutral-fill) 80%, black)); }
+    /* U6c — superseded by a successor event. Shares the neutral fill with
+       Canceled (both are 'this one is not happening') but is struck through,
+       so the two are never mistaken for each other at a glance. Matches the
+       Calendar tab's .calx-b-superseded treatment. */
+    .ef-status-Rescheduled { background: linear-gradient(135deg, var(--neutral-fill), color-mix(in srgb, var(--neutral-fill) 80%, black)); text-decoration: line-through; }
 
     /* ── Info grid (read-only facts) ── */
     .ef-grid {

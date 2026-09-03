@@ -819,6 +819,19 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       // match, and the show-cause drift regex. The Scheduled + future-date
       // floor stays — unlike a dissolution, a reschedule targets a live
       // hearing, and CURDATE() keeps a same-day adjournment reachable.
+      //
+      // U6c — SUPERSESSION IS COVERED BY THE STATUS FILTER, ON PURPOSE.
+      // A predecessor superseded by a reschedule carries
+      // event_status='Rescheduled' (supersedeEvent writes the status and the
+      // pointer in one UPDATE), so `event_status='Scheduled'` already excludes
+      // it and no `superseded_by_event_id IS NULL` clause is needed here.
+      //
+      // That is the reason U6c exists. Under U6a's pointer-only design this
+      // query would have returned a dead predecessor as a live candidate the
+      // first time unified_singleton_enabled was switched on and a hearing was
+      // adjourned to a date announced more than a day out — two type-matching
+      // rows, and the executor free to write the next adjournment onto the one
+      // nobody reads. Do not "simplify" the status filter away.
       const [candidates] = await db.query(
         `SELECT event_id, event_type, event_date, event_time, event_all_day, event_location, event_title
            FROM events
@@ -978,6 +991,13 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         const dated = matches.filter((m) => toDatePart(m.event_date) === fields.date);
         if (dated.length) matches = dated;
       }
+      // U6c: this filter is also the supersession filter. A rescheduled
+      // predecessor reads 'Rescheduled', so it lands in `matches` (the query
+      // above is deliberately status-blind — a dissolution email is
+      // authoritative and must be able to see an already-Canceled row) but
+      // never in `scheduled`, and therefore can never be the cancel target.
+      // A run that matches ONLY dead rows falls through to
+      // 'cancel_already_done', which is the correct reading.
       const scheduled = matches.filter((m) => m.event_status === 'Scheduled');
 
       if (scheduled.length === 1) {

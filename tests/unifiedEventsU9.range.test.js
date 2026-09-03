@@ -191,7 +191,7 @@ describe('listRange — filters', () => {
     await svc.listRange(db, WINDOW);
     // The blank-enum rows are LIVE (_deriveState). `= 'Scheduled'` would drop
     // them in SQL while the JS half still expected them.
-    expect(db.calls[0].sql).toContain(`e.event_status NOT IN ('Completed','Canceled')`);
+    expect(db.calls[0].sql).toContain(`e.event_status NOT IN ('Completed','Canceled','Rescheduled')`);
     expect(db.calls[1].sql).toContain(`a.appt_status NOT IN ('Attended','No Show','Canceled','Rescheduled')`);
   });
 

@@ -6,7 +6,7 @@
  *
  *   supersedeEvent  the first FORWARD writer of superseded_by_event_id. It
  *                   stamps a pointer + reason, self-assigns event_updated_at
- *                   (§7.1 rule 9), leaves event_status ALONE (E0a rule), tears
+ *                   (§7.1 rule 9), sets event_status='Rescheduled' (U6c), tears
  *                   down the predecessor's GCal entry and reminder task(s),
  *                   logs 'superseded', and emits calendar.rescheduled with
  *                   the PREDECESSOR as data. Every precondition is a 409, and
@@ -100,12 +100,12 @@ describe('supersedeEvent — the writer', () => {
     const pred = db.events.get(94);
     expect(pred.superseded_by_event_id).toBe(152);
     expect(pred.supersede_reason).toBe('rescheduled');
-    expect(pred.event_status).toBe('Scheduled');                 // NEVER a status (E0a rule)
+    expect(pred.event_status).toBe('Rescheduled');               // U6c — status AND pointer, written together
     expect(pred.event_updated_at).toBe('T0');                    // §7.1 rule 9 — self-assigned, not bumped
 
     // The pointer write is the guarded form, byte-exact.
     const ptr = db.calls.find((c) => /superseded_by_event_id = \?/.test(c.sql));
-    expect(ptr.sql).toBe('UPDATE events SET superseded_by_event_id = ?, supersede_reason = ?, event_updated_at = event_updated_at WHERE event_id = ? AND superseded_by_event_id IS NULL');
+    expect(ptr.sql).toBe("UPDATE events SET superseded_by_event_id = ?, supersede_reason = ?, event_status = 'Rescheduled', event_updated_at = event_updated_at WHERE event_id = ? AND superseded_by_event_id IS NULL");
     expect(ptr.params).toEqual([152, 'rescheduled', 94]);
 
     // GCal delete + id clear (self-assigned too), reminder tasks soft-deleted.
@@ -128,7 +128,10 @@ describe('supersedeEvent — the writer', () => {
     expect(env.actor).toEqual({ user_id: 3 });
     expect(env.case_id).toBe('ayx7GJ7j');
     expect(env.data).toMatchObject({
-      source: 'event', source_id: 94, status: 'Scheduled',
+      // U6c: the envelope carries the RAW status, which is now 'Rescheduled'.
+      // `state` was already 'superseded' off the pointer and is unchanged —
+      // the two agree instead of the status contradicting the state.
+      source: 'event', source_id: 94, status: 'Rescheduled',
       state: 'superseded', resolution: null, superseded_by_event_id: 152,
     });
     expect(env.extra).toEqual({
@@ -263,7 +266,7 @@ describe('singleton in createEvent', () => {
     const pred = db.events.get(94);
     expect(pred.superseded_by_event_id).toBe(event_id);
     expect(pred.supersede_reason).toBe('rescheduled');
-    expect(pred.event_status).toBe('Scheduled');
+    expect(pred.event_status).toBe('Rescheduled');               // U6c
     expect(db.events.get(event_id).superseded_by_event_id).toBeNull();
 
     // Emit ORDER: the successor is real before the chain points at it.
