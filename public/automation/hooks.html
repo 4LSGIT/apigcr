@@ -322,6 +322,7 @@
     .hook-status-received   { background: var(--accent-soft); color: var(--accent-on-soft); }
     .hook-status-processing { background: var(--accent-soft); color: var(--cat-indigo); }
     .hook-status-queued     { background: var(--accent-soft); color: var(--cat-indigo); }
+    .hook-status-captured   { background: var(--warn-soft); color: var(--warn); }
     .hook-status-success    { background: var(--ok-soft); color: var(--ok); }
 
     /* Utilities */
@@ -2656,7 +2657,7 @@ window.togglePanelLeft = togglePanelLeft;
                 <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px">
                   <div><b>${esc(dl.target_name || 'Target #' + dl.target_id)}</b>
                     <span style="font-size:10px;font-weight:600;background:var(--surface-2);color:var(--text-2);padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase">${esc(dlType)}</span>
-                    <span class="hook-status-badge hook-status-${dl.status === 'success' ? 'delivered' : dl.status === 'queued' ? 'queued' : 'failed'}" style="margin-left:6px">${dl.status}</span>
+                    <span class="hook-status-badge hook-status-${dl.status === 'success' ? 'delivered' : (dl.status === 'queued' || dl.status === 'captured') ? dl.status : 'failed'}" style="margin-left:6px">${dl.status}</span>
                     ${dl.response_status ? `<span style="margin-left:8px;color:var(--text-muted)">${isInternal ? 'result' : 'HTTP'} ${dl.response_status}</span>` : ''}
                   </div>
                   <div class="mono text-sm" style="margin-top:4px;color:var(--text-muted)">${esc(dl.request_method)} ${esc(dl.request_url)}</div>

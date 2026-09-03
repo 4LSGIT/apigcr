@@ -46,6 +46,14 @@ console.log(`app build: ${appBuild.build} (mtime ${appBuild.mtime})`);
 app.use('/hooks', express.json({
   verify: (req, res, buf) => { req.rawBody = buf.toString(); }
 }));
+// multipart/form-data deliveries to /hooks/*. Neither parser above nor the
+// global urlencoded one below understands multipart, and Express does not
+// error on a content-type it can't parse — it leaves req.body = {} and the
+// receiver stores an empty payload. Jotform posts submissions this way:
+// hook_executions 24678 recorded `content-length: 19632` beside `"body": {}`.
+// See lib/multipartBody.js for the shape decisions (and why file parts are
+// summarized rather than stored).
+app.use('/hooks', require('./lib/multipartBody').multipartBody());
 // Same treatment for /webhooks/* (e-sign providers). Two reasons, neither of
 // which the generic parser below can serve:
 //   1. Zoho Sign's webhook payload shape is undocumented, so slice 1C stores

@@ -10,6 +10,7 @@ const {
   resolveExecutionContactId,
   InvalidContactIdError,
   captureWorkflowInput,
+  captureRefusedStart,
 } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
 const { diffWorkflowSteps, validateWorkflowDraft, retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC } = require("../lib/versionDiff");
@@ -531,17 +532,31 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     }
     const workflow = wfRows[0];
 
-    // Inactive workflows cannot be started — manual or otherwise. Toggle the
-    // workflow active in the editor first.
-    if (!workflow.active) {
-      return { respond: { status: 409, body: { error: "Workflow is inactive", message: "Activate the workflow before starting it." } } };
+    // Capture-before-publish: the two refusals below (inactive / never
+    // published) both mean "this payload will never reach a step", so an armed
+    // capture takes the sample FIRST and the refusal carries `captured: true`.
+    // Ordering matters — this used to sit after the gates, which made the arm
+    // unusable on the brand-new workflow it exists for.
+    const refusal = !workflow.active
+      ? { status: 409, body: { error: "Workflow is inactive", message: "Activate the workflow before starting it." } }
+      : (!useDraft && !workflow.current_version)
+        ? { status: 409, body: { error: "Workflow has never been published", message: "Publish the workflow before starting it (or use use_draft to test the draft)." } }
+        : null;
+
+    if (refusal) {
+      const captured = await captureRefusedStart(connection, workflowId, initData);
+      if (captured) {
+        refusal.body.captured = true;
+        refusal.body.message += " The input was captured as this workflow's sample — open Capture in the editor to review it.";
+      }
+      return { respond: refusal };
     }
 
     // Versioning (S3): resolve which version this run pins to.
     //   use_draft → the draft (editor test-runs); 409 if none exists.
-    //   otherwise → the published current_version; 0 (never published) is
-    //   refused loudly — the pre-versioning behavior was a silent zero-step
-    //   execution marked 'completed' (review D4).
+    //   otherwise → the published current_version (the 0 case is refused
+    //   above — the pre-versioning behavior was a silent zero-step execution
+    //   marked 'completed', review D4).
     let runVersion;
     if (useDraft) {
       if (workflow.draft_version == null) {
@@ -549,15 +564,14 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       }
       runVersion = workflow.draft_version;
     } else {
-      if (!workflow.current_version) {
-        return { respond: { status: 409, body: { error: "Workflow has never been published", message: "Publish the workflow before starting it (or use use_draft to test the draft)." } } };
-      }
       runVersion = workflow.current_version;
     }
 
     // Capture slice — one-shot capture of init_data when armed. Guarded
     // UPDATE inside captureWorkflowInput makes this race-free across the
-    // four execution-creation sites (Cookbook §5.21).
+    // four execution-creation sites (Cookbook §5.21). 'intercept' is
+    // deliberately NOT captured here: it records at step 0 instead, so the
+    // execution can park 'held'.
     if (workflow.capture_mode === 'capturing') {
       await captureWorkflowInput(connection, workflowId, initData);
     }

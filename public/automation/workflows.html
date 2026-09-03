@@ -2369,11 +2369,26 @@ async function wfCaptureModal() {
   const sampleJson = sample != null ? JSON.stringify(sample, null, 2) : null;
   const when = cap.captured_at ? new Date(cap.captured_at).toLocaleString() : null;
 
+  // Capture-before-publish: a workflow that has never been published refuses
+  // every start, so an armed capture banks the payload at ingress and nothing
+  // runs — for BOTH modes (there is no execution to hold, so intercept
+  // degrades to a tap). The first such capture also seeds test_input when it
+  // is still empty, which is the whole point: point a hook at the new
+  // workflow, fire one real event, and author against the real shape.
+  const prePublish = WF.activeWf && !WF.activeWf.current_version;
+
   const statusLine = mode === 'capturing'
-    ? '<span style="color:var(--warn);font-weight:600">armed — tap</span> <span style="color:var(--text-2)">(next run recorded; it still executes)</span>'
+    ? `<span style="color:var(--warn);font-weight:600">armed — tap</span> <span style="color:var(--text-2)">(${prePublish ? 'next inbound payload recorded; nothing runs until you publish' : 'next run recorded; it still executes'})</span>`
     : mode === 'intercept'
-      ? '<span style="color:var(--warn);font-weight:600">armed — intercept</span> <span style="color:var(--text-2)">(next run recorded and held before step 1)</span>'
+      ? `<span style="color:var(--warn);font-weight:600">armed — intercept</span> <span style="color:var(--text-2)">(${prePublish ? 'next inbound payload recorded; nothing runs until you publish' : 'next run recorded and held before step 1'})</span>`
       : '<span style="color:var(--text-2)">off</span>';
+
+  const prePublishHtml = prePublish ? `
+    <div style="border:1px solid var(--border);background:var(--surface-2);border-radius:8px;padding:9px 11px;margin:0 0 12px;color:var(--text-2)">
+      <i class="fa-solid fa-circle-info"></i> This workflow has never been published, so it can't run yet — but it
+      <b>can still capture</b>. Arm either mode, then fire one real event at whatever points here (hook, sequence step, parent workflow).
+      The payload lands below and seeds <b>Test Input</b> if it's empty. The sender sees a refusal saying the input was captured.
+    </div>` : '';
 
   const heldHtml = held ? `
     <div style="border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;padding:10px 12px;margin:0 0 12px">
@@ -2403,7 +2418,7 @@ async function wfCaptureModal() {
       </label>
       <label style="display:block;margin-bottom:8px;cursor:pointer">
         <input type="radio" name="wf-cap-mode" value="intercept">
-        <b>Intercept</b> — record it and hold the execution before step 1; release it from here.
+        <b>Intercept</b> — record it and hold the execution before step 1; release it from here.${prePublish ? ' <span style="color:var(--text-muted)">(nothing to hold until published — behaves like Tap)</span>' : ''}
       </label>
       <button class="btn btn-primary btn-sm" onclick="wfCapArm()"><i class="fa-solid fa-satellite-dish"></i> Arm</button>
     </div>` : `
@@ -2417,6 +2432,7 @@ async function wfCaptureModal() {
     html: `
       <div style="text-align:left;font-size:13px">
         <p style="margin:0 0 10px"><b>Status:</b> ${statusLine}</p>
+        ${prePublishHtml}
         ${heldHtml}
         ${sampleHtml}
         ${armHtml}

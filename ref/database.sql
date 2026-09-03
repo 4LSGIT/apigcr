@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-02T18:18:58.529Z
+-- Generated: 2026-09-03T16:10:13.304Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:233d6104318d25d0707a2099a701c0b0
+-- Fingerprint: sha256:16f8225af477a72ba1f7173a8b00432f
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1592,7 +1592,7 @@ CREATE TABLE `events` (
   `event_location` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_link` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_note` text COLLATE utf8mb4_general_ci,
-  `event_status` enum('Scheduled','Completed','Canceled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Scheduled',
+  `event_status` enum('Scheduled','Completed','Canceled','Rescheduled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Scheduled' COMMENT 'U6c: Rescheduled = superseded by a successor row (paired with superseded_by_event_id + supersede_reason=''rescheduled''). Mirrors appt_status.Rescheduled. Canceled still means court-cancelled ONLY.',
   `event_resolution` enum('held','met','missed','moot','cancelled') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U3: HOW the event ended, per v0.5 §3.7. NULL = not recorded; the read layer falls back to met (deadline) / held (else) on Completed and cancelled on Canceled. No writer until U6.',
   `event_gcal` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_calendar_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1769,7 +1769,7 @@ CREATE TABLE `hook_delivery_logs` (
   `request_body` json DEFAULT NULL,
   `response_status` int DEFAULT NULL,
   `response_body` text COLLATE utf8mb4_general_ci,
-  `status` enum('success','failed','queued') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'failed',
+  `status` enum('success','failed','queued','captured') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'failed',
   `error` text COLLATE utf8mb4_general_ci,
   `attempts` int NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP

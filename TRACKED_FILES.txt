@@ -67,6 +67,7 @@ lib/internal_functions/variables.js
 lib/job_executor.js
 lib/legacyTrap.js
 lib/logMeta.js
+lib/multipartBody.js
 lib/noteLimits.js
 lib/parseName.js
 lib/portalCardEngine.js
@@ -362,6 +363,7 @@ ref/2026-09-01_unified_events_u6b.sql
 ref/2026-09-02_g4_2_notice_precheck.sql
 ref/2026-09-02_unified_events_u2b.sql
 ref/2026-09-02_unified_events_u8.sql
+ref/2026-09-03_capture_before_publish.sql
 ref/2026-09-03_unified_events_u6c.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
@@ -694,6 +696,7 @@ tests/calendarEvents.registry.test.js
 tests/calendarTypeService.test.js
 tests/calendarUi.sync.test.js
 tests/campaignCaseTypeFilter.test.js
+tests/captureBeforePublish.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
@@ -815,6 +818,7 @@ tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
 tests/manualReadmeCoverage.test.js
 tests/moduleLoad.smoke.test.js
+tests/multipartBody.test.js
 tests/pageLanding.originsep.test.js
 tests/paramsMappingCsvList.test.js
 tests/pdfRender.test.js
