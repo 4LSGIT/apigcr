@@ -200,6 +200,10 @@
       font-size: 12px;
     }
     .fg .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .fg .hint.slug-url-row { display: flex; align-items: center; gap: 6px; }
+    .slug-url-row .slug-url { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .slug-url-row .btn { flex: 0 0 auto; padding: 2px 8px; font-size: 11px; }
+    .slug-url-row .btn:disabled { opacity: .5; cursor: default; }
     .fg-row { display: flex; gap: 12px; }
     .fg-row .fg { flex: 1; }
     .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
@@ -402,7 +406,13 @@
             <div class="fg">
               <label>Slug</label>
               <input id="f-slug" placeholder="e.g. calendly-new-lead" class="mono">
-              <div class="hint">URL path: /hooks/<span id="slug-preview">…</span></div>
+              <div class="hint slug-url-row">
+                <span id="slug-preview" class="mono slug-url">…</span>
+                <button type="button" class="btn btn-outline" id="slug-copy-btn"
+                        onclick="window.hookCopyUrl(this)" title="Copy hook URL" disabled>
+                  <i class="fa-solid fa-copy"></i> Copy
+                </button>
+              </div>
             </div>
           </div>
           <div class="fg">
@@ -852,6 +862,34 @@ window.togglePanelLeft = togglePanelLeft;
     });
   }
 
+  // ── Receiver URL preview ──
+  // /hooks/:slug is served by this same app (routes/api.hooks.js), so the
+  // page's own origin is the sender-facing origin. Shown in full — the whole
+  // point of the hint is something you can hand to Calendly/Stripe/etc.
+  function hookUrlFor(slug) { return `${window.location.origin}/hooks/${slug}`; }
+
+  function renderSlugPreview() {
+    const slug = E('f-slug').value.trim();
+    E('slug-preview').textContent = hookUrlFor(slug || '…');
+    E('slug-copy-btn').disabled = !slug;
+  }
+
+  function hookCopyUrl(btn) {
+    const slug = E('f-slug').value.trim();
+    if (!slug) return;
+    const url = hookUrlFor(slug);
+    const done = () => {
+      const was = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
+      setTimeout(() => { btn.innerHTML = was; }, 1200);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(url).then(done, () => prompt('Copy the hook URL:', url));
+    } else {
+      prompt('Copy the hook URL:', url);
+    }
+  }
+
   // ── Populate editor from hook data ──
   function populateEditor() {
     const h = activeHook;
@@ -859,7 +897,7 @@ window.togglePanelLeft = togglePanelLeft;
 
     E('f-name').value = h.name || '';
     E('f-slug').value = h.slug || '';
-    E('slug-preview').textContent = h.slug || '…';
+    renderSlugPreview();
     E('f-description').value = h.description || '';
     E('f-active').checked = !!h.active;
 
@@ -929,7 +967,7 @@ window.togglePanelLeft = togglePanelLeft;
     testTabLastPopulatedSample = null;
     renderCaptureSection();
     hookSwitchTab('general');
-    E('f-slug').oninput = () => { E('slug-preview').textContent = E('f-slug').value || '…'; };
+    E('f-slug').oninput = renderSlugPreview;
   }
 
   function hookSwitchTab(tab) {
@@ -3116,6 +3154,7 @@ async function runLiveTest() {
   window.hooksNew                 = hooksNew;
 
   window.hookSwitchTab            = hookSwitchTab;
+  window.hookCopyUrl              = hookCopyUrl;
   window.hookToggleAuthFields     = toggleAuthFields;
   window.hookGenerateApiKey       = generateApiKey;
   window.hookGenerateHmacSecret   = generateHmacSecret;
