@@ -38,7 +38,7 @@ GROUP BY w.id;
 ```
 
 Expect: `active=1`, `current_version>=1`, `default_contact_id_from` NULL,
-`steps=5`.
+`steps=4`.
 
 **Verify — the two replicated configs match wf48's:**
 

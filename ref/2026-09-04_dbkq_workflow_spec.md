@@ -28,7 +28,7 @@ already handled by the platform:
 | **step 22: stamp `cases.case_detailed_form`** | **nothing — this workflow** |
 
 So the delta is exactly two side effects, plus the case gate and the contact
-lookup they need. **Five steps.**
+lookup they need. **Four steps.**
 
 Hook 39 + wf48 stay live and untouched for the JotForm tail. This workflow can
 only ever fire from a YisraForm `dbkq` submission.
@@ -197,7 +197,7 @@ purpose: the stamp is what makes a future re-enrolment's condition fail, so
 stamping first and then failing to cancel would leave a running drip that can
 never be re-cancelled by re-running this. The cheap side effect goes first.
 
-### Step 5 — none
+### That is all
 
 Step 4 is the last step. Nothing follows.
 
