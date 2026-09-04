@@ -58,7 +58,15 @@ const perCaseLimited    = makeLimiter(60 * 60 * 1000, 5);   // POST  5 / hour / 
 // per 15 minutes — the submit budget — would cut a real client off inside the
 // first section of a 300-field form.
 const draftLimited        = makeLimiter(15 * 60 * 1000, 60);   // draft POST/DELETE 60 / 15min / IP
-const perCaseDraftLimited = makeLimiter(60 * 60 * 1000, 120);  // draft POST 120 / hour / case_id
+// 360/hr, not the original 120 (corrected 2026-09-04, Fred-ratified). The
+// autosave is a DEBOUNCE reset on every change (yc-forms _onFieldChange), so
+// the worst case a legitimate filler can produce is one POST per autosaveMs —
+// 360/hr at the 10s the DBKQ uses. A cap BELOW the worst case degrades a
+// continuous filler to device-local drafts partway through the form, which is
+// precisely the resume this feature exists to provide. Cap == worst case: an
+// honest client never trips it, and anything above it is not a form-filler.
+// Throttled requests still fall back to the local write with an honest status.
+const perCaseDraftLimited = makeLimiter(60 * 60 * 1000, 360);  // draft POST 360 / hour / case_id
 
 // form_key shape (services/formTemplateService.js §2). Gated before the DB is
 // touched, mirroring routes/f.js — symmetry, and one less free query per

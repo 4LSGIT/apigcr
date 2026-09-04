@@ -209,6 +209,25 @@ function validateDefinition(def) {
   };
   const noteShowWhen = (sw, path) => noteConditionSlot(sw, path, 'showWhen');
 
+  // showWhenAny (§4.4 amendment, Fred-ratified 2026-09-04): the OR list.
+  // ALWAYS an array — unlike showWhen, a bare object is REJECTED rather than
+  // treated as a one-element list, because "OR" written as a single object is
+  // almost certainly a showWhen the author mistyped, and silently accepting it
+  // would hide the mistake behind identical behavior until a second condition
+  // arrives. Entries are the same normalized conditions showWhen takes, and
+  // they go through the same condRefs second pass (field existence, embed and
+  // content targets, the includes→checkgroup rule).
+  const noteShowWhenAny = (swa, path) => {
+    if (swa === undefined || swa === null) return;
+    if (!Array.isArray(swa)) {
+      throw badRequest(`${path}.showWhenAny must be an ARRAY of conditions (it is an OR list; a single condition belongs in showWhen)`);
+    }
+    if (swa.length === 0) {
+      throw badRequest(`${path}.showWhenAny must not be an empty array`);
+    }
+    swa.forEach((c, i) => noteCondition(c, path, `showWhenAny[${i}]`));
+  };
+
   const validateField = (field, path, { topLevelField, repScope }) => {
     if (!field || typeof field !== 'object' || Array.isArray(field)) {
       throw badRequest(`${path} must be an object`);
@@ -486,7 +505,11 @@ function validateDefinition(def) {
     }
 
     noteShowWhen(field.showWhen, path);
+    noteShowWhenAny(field.showWhenAny, path);
     // requiredWhen (2.5A A2): same normalized-condition shape; array = AND.
+    // Deliberately NOT extended with an "any" form in this amendment —
+    // conditional-required OR has no caller yet and every unused key is a
+    // future migration.
     noteConditionSlot(field.requiredWhen, path, 'requiredWhen');
   };
 
@@ -536,6 +559,7 @@ function validateDefinition(def) {
           throw badRequest(`${rPath} must be an object with a "fields" array`);
         }
         noteShowWhen(row.showWhen, rPath);
+        noteShowWhenAny(row.showWhenAny, rPath);
         row.fields.forEach((f, k) => {
           validateField(f, `${rPath}.fields[${k}]`, { topLevelField: true });
         });
@@ -543,6 +567,7 @@ function validateDefinition(def) {
     }
 
     noteShowWhen(section.showWhen, sPath);
+    noteShowWhenAny(section.showWhenAny, sPath);
   };
 
   if (hasTabs) {

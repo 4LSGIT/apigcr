@@ -256,6 +256,34 @@ Renderer translation to runtime attrs:
 
 Field-level `showWhen` wraps the individual `.yc-field`. Conditions target TOP-LEVEL fields only (repeater keys and repeater fields are not valid targets).
 
+#### 4.4.1 `showWhenAny` — OR (amendment 2026-09-04, Fred-ratified; arc scratch `fred/yf_dbkq_arc`)
+
+```json
+{ "showWhenAny": [ { "field": "leasing",  "op": "eq", "value": "YES" },
+                   { "field": "repossessed", "op": "eq", "value": "YES" },
+                   { "field": "amount_owed", "op": "notEmpty" } ] }
+```
+
+`showWhenAny` is a **non-empty array** of the same condition objects `showWhen` takes, valid in the same three places (section, row, field) and on embeds/content exactly as `showWhen` is. Semantics: **OR**. A bare object is REJECTED, not coerced — an OR written as one condition is a mistyped `showWhen`, and accepting it would hide the mistake behind identical behavior until a second condition arrived.
+
+**Composition:** a node is visible iff `showWhen` (AND, unchanged) **and** `showWhenAny` (OR) both pass. Either may appear alone. `requiredWhen` is deliberately NOT extended — no caller, and an unused key is a future migration.
+
+**Why it exists:** the DBKQ conversion (D2-A) turned up cross-source OR as ordinary questionnaire logic — "show this if you lease **or** were repossessed **or** owe money on the vehicle". `in` only ORs over one field's values; the AND-array wrapper trick cannot nest into an OR.
+
+Runtime translation:
+
+| key | emitted |
+|---|---|
+| `showWhen` (single) | condition on the node (unchanged) |
+| `showWhen` (array) | condition[0] on the node, one `.ycr-and-wrap` per extra (unchanged) |
+| `showWhenAny` | `data-yc-show-any="<JSON array>"` on the SAME node as condition[0] |
+
+**One attribute, JSON-serialized, set via `setAttribute`** — not a delimited encoding. OR cannot be expressed by nesting (nesting is AND by construction), so it needs a single node-level attribute; and a delimiter would corrupt option values that legitimately contain commas (this conversion found two in the source checkgroups). `_evaluateConditionals` parses it and ORs the terms through `_matchCond` — the SAME helper the legacy attribute triple now routes through, so there is one implementation of every operator rather than two that can drift. A node carrying both attributes ANDs the two results. Nodes carrying only the legacy attributes produce byte-identical DOM and byte-identical behavior (test-locked).
+
+**Card mode:** no change needed — `cardHidden` / `visibleFieldsOn` / `fieldHiddenInDom` all read *evaluated* `style.display` and walk the DOM, so an any-hidden card is skipped by the existing sweep. A field carrying only `showWhenAny` counts as a FOLLOW-UP (not a base question) in the single-question-card test, same as `showWhen`. X5 PDF rides the shared evaluator and needs nothing.
+
+**External surface:** `showWhenAny` is in `SECTION_KEYS` / `REPEATER_KEYS` / `FIELD_KEYS` and the row projection in `extFormService.projectDefinition`. Omitting it would make the operator silently not exist externally — the defect class `layout` (§Q) and `content` both shipped with.
+
 ### 4.5 Tabs & sticky regions (2.6)
 
 Top level: **exactly one of** `sections` | `tabs`.

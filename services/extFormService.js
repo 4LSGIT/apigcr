@@ -173,13 +173,18 @@ const TOP_KEYS = [
   // already executes all three in ext boots — projection was the last gate.
   'code', 'css', 'hooks',
 ];
-const SECTION_KEYS  = ['title', 'subtitle', 'showWhen'];
-const REPEATER_KEYS = ['repeater', 'title', 'subtitle', 'addLabel', 'showWhen'];
+// showWhenAny (§4.4 amendment, 2026-09-04) rides beside showWhen in all three
+// key lists AND in the row projection below. Omitting it would make the OR
+// operator silently not exist on the external surface — the same class of
+// defect `layout` shipped with in §Q and `content` shipped with before it.
+// Test-locked, third time.
+const SECTION_KEYS  = ['title', 'subtitle', 'showWhen', 'showWhenAny'];
+const REPEATER_KEYS = ['repeater', 'title', 'subtitle', 'addLabel', 'showWhen', 'showWhenAny'];
 const FIELD_KEYS = [
   'name', 'label', 'type', 'width', 'sublabel', 'placeholder', 'rows',
   'readonly', 'lockedMsg', 'mask', 'required', 'requiredWhen',
   'requiredMessage', 'minLength', 'maxLength', 'pattern', 'patternMessage',
-  'email', 'options', 'allowOther', 'columns', 'showWhen', 'prefillMode',
+  'email', 'options', 'allowOther', 'columns', 'showWhen', 'showWhenAny', 'prefillMode',
   'urlParam', 'min', 'max', 'step',
   // §Q content (display-only, EXTERNAL-SAFE): the block's whole payload IS
   // display content, so it must survive the projection or an external form
@@ -238,7 +243,9 @@ function projectSection(section) {
   }
   const out = pick(section || {}, SECTION_KEYS);
   out.rows = ((section && section.rows) || []).map((row) => {
-    const r = row && row.showWhen !== undefined ? { showWhen: row.showWhen } : {};
+    const r = {};
+    if (row && row.showWhen !== undefined) r.showWhen = row.showWhen;
+    if (row && row.showWhenAny !== undefined) r.showWhenAny = row.showWhenAny;
     r.fields = ((row && row.fields) || []).map(projectField);
     return r;
   });

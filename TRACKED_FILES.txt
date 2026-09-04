@@ -366,6 +366,8 @@ ref/2026-09-02_unified_events_u2b.sql
 ref/2026-09-02_unified_events_u8.sql
 ref/2026-09-03_capture_before_publish.sql
 ref/2026-09-03_unified_events_u6c.sql
+ref/2026-09-04_dbkq_coverage.md
+ref/2026-09-04_dbkq_definition.v1.json
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -389,6 +391,7 @@ ref/X2_DESIGN_AMENDMENTS.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
 ref/artifact-registry-cleanup-policy.json
 ref/database.sql
+ref/dbkq_source_2026-09-04.html
 ref/documents_s1.sql
 ref/documents_s2.sql
 ref/documents_s2_hotfix.sql
@@ -556,6 +559,8 @@ scripts/courtCitationTest.js
 scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
 scripts/courtTitleMatchTest.js
+scripts/dbkq_convert.js
+scripts/dbkq_verify.js
 scripts/dump-schema.js
 scripts/encrypt-smtp-passwords.js
 scripts/esign_e2e_check.js
@@ -781,6 +786,7 @@ tests/formBuilder_slice25B.test.js
 tests/formBuilder_slice26.test.js
 tests/formRender.content.test.js
 tests/formRender.radioColumns.test.js
+tests/formRender.showWhenAny.test.js
 tests/formRender.slice2.test.js
 tests/formRender.slice25A.test.js
 tests/formRender.slice25B.test.js

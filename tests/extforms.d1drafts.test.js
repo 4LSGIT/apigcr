@@ -567,21 +567,29 @@ describe('routes/api.ext.forms.js — draft routes (live router)', () => {
 
   test('per-case draft cap: malformed drafts spend no token (the F5 ordering lesson), valid ones do', async () => {
     fixture.caseRow = { case_id: 'capcase1' };
-    // 121 malformed — more than the 120/hr per-case budget. Rotating IPs so
-    // the per-IP limiter is not what the assertion is really measuring.
-    for (let i = 0; i < 121; i++) {
+    // The cap is 360/hr, RAISED from 120 on 2026-09-04. The original number was
+    // set against arithmetic that ran the wrong way: the autosave is a debounce
+    // reset on every change (yc-forms _onFieldChange), so a legitimate filler's
+    // worst case is one POST per autosaveMs — 360/hr at the 10s the DBKQ uses,
+    // i.e. THREE TIMES the old cap. A cap below the worst case degrades a
+    // real client to device-local drafts partway through a 148-card form,
+    // which is the exact resume this feature exists to provide.
+    //
+    // 361 malformed — more than the whole per-case budget. Rotating IPs so the
+    // per-IP limiter is not what the assertion is really measuring.
+    for (let i = 0; i < 361; i++) {
       const r = await POST('/api/ext/forms/dbkq_test/draft',
         { case_id: 'capcase1', values: { not_a_field: 'x' } });
       expect(r.status).toBe(400);
     }
-    // The real client is untouched: 120 valid saves still fit...
+    // The real client is untouched: 360 valid saves still fit...
     let last;
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 360; i++) {
       last = await POST('/api/ext/forms/dbkq_test/draft',
         { case_id: 'capcase1', values: { reason: 'tick ' + i } });
     }
     expect(last.status).toBe(200);
-    // ...and the 121st is capped.
+    // ...and the 361st is capped.
     const over = await POST('/api/ext/forms/dbkq_test/draft',
       { case_id: 'capcase1', values: { reason: 'one too many' } });
     expect(over.status).toBe(429);

@@ -1663,7 +1663,9 @@ if (this.config.endpoints.load && !this.config.external) {
   // ═══════════════════════════════════════════════════════════════════════════
 
   _setupConditionals() {
-    const conditionalEls = this.el.querySelectorAll('[data-yc-show-when]');
+    // data-yc-show-any (showWhenAny, 2026-09-04): OR lists join the selector.
+    // A node may carry either attribute or both.
+    const conditionalEls = this.el.querySelectorAll('[data-yc-show-when],[data-yc-show-any]');
     if (conditionalEls.length === 0) return;
 
     // Evaluate on load
@@ -1674,57 +1676,144 @@ if (this.config.endpoints.load && !this.config.external) {
     this.el.addEventListener('input', () => this._evaluateConditionals());
   }
 
-  _evaluateConditionals() {
-    this.el.querySelectorAll('[data-yc-show-when]').forEach(el => {
-      const watchField = el.dataset.ycShowWhen;
-      const showValue = el.dataset.ycShowValue;
-      const showValues = el.dataset.ycShowValues;
-      const showIncludes = el.dataset.ycShowIncludes;
+  /**
+   * The watched field's current value as the conditional engine sees it, or
+   * NULL when the field cannot be resolved at all.
+   *
+   * null is distinct from '' on purpose and is load-bearing: an unresolvable
+   * watch field leaves the conditional node's display UNTOUCHED (the original
+   * engine's early `return`), rather than hiding a node whose condition can
+   * never be evaluated.
+   */
+  _condFieldValue(watchField) {
+    const watchEl = this.el.querySelector(`[name="${watchField}"]`);
+    if (!watchEl) {
+      // Checkgroup fallback (Slice 2.5A): checkgroup member checkboxes carry
+      // no name attribute, so a checkgroup can never match the [name=…]
+      // lookup — resolve the container instead. Value is the comma-joined
+      // selection (_getCheckgroup), incl. the Other free text. The change/
+      // input listeners on this.el already cover the member checkboxes
+      // (they're inside the form root), so no extra binding is needed.
+      const grid = this.el.querySelector(`[data-yc-checkgroup="${watchField}"]`);
+      if (!grid) return null;
+      return this._getCheckgroup(grid);
+    }
+    if (watchEl.type === 'checkbox') return watchEl.checked ? 'true' : 'false';
+    if (watchEl.type === 'radio') {
+      const checked = this.el.querySelector(`input[name="${watchField}"]:checked`);
+      return checked ? checked.value : '';
+    }
+    return watchEl.value;
+  }
 
-      // Find the watched field's current value
-      const watchEl = this.el.querySelector(`[name="${watchField}"]`);
-      let currentVal;
-      if (!watchEl) {
-        // Checkgroup fallback (Slice 2.5A): checkgroup member checkboxes carry
-        // no name attribute, so a checkgroup can never match the [name=…]
-        // lookup — resolve the container instead. Value is the comma-joined
-        // selection (_getCheckgroup), incl. the Other free text. The change/
-        // input listeners on this.el already cover the member checkboxes
-        // (they're inside the form root), so no extra binding is needed.
-        const grid = this.el.querySelector(`[data-yc-checkgroup="${watchField}"]`);
-        if (!grid) return;
-        currentVal = this._getCheckgroup(grid);
-      } else if (watchEl.type === 'checkbox') {
-        currentVal = watchEl.checked ? 'true' : 'false';
-      } else if (watchEl.type === 'radio') {
-        const checked = this.el.querySelector(`input[name="${watchField}"]:checked`);
-        currentVal = checked ? checked.value : '';
-      } else {
-        currentVal = watchEl.value;
-      }
-
-      let show = false;
-
-      if (showIncludes) {
+  /**
+   * One normalized condition { op, value } against an already-resolved value.
+   * Extracted verbatim from the original _evaluateConditionals if/else chain
+   * so the legacy attribute path and the showWhenAny JSON path share ONE
+   * implementation of every operator — two copies would drift.
+   */
+  _matchCondValue(currentVal, cond) {
+    if (!cond || typeof cond !== 'object') return false;
+    switch (cond.op) {
+      case 'includes': {
         // includes op (Slice 2.5A, checkgroup targets): show when ANY of the
         // wanted values is present in the comma-joined current selection.
-        const want = showIncludes.split(',').map(v => v.trim()).filter(Boolean);
+        const want = (Array.isArray(cond.value) ? cond.value : [cond.value])
+          .map(v => String(v == null ? '' : v).trim()).filter(Boolean);
         const have = String(currentVal).split(',').map(v => v.trim());
-        show = want.some(w => have.includes(w));
-      } else if (showValues) {
-        // Match any of comma-separated values
-        const vals = showValues.split(',').map(v => v.trim());
-        show = vals.includes(currentVal);
-      } else if (showValue) {
-        if (showValue === '*') {
-          show = !!currentVal;
-        } else if (showValue.startsWith('!')) {
-          show = currentVal !== showValue.slice(1);
-        } else {
-          show = currentVal === showValue;
+        return want.some(w => have.includes(w));
+      }
+      case 'in': {
+        const vals = (Array.isArray(cond.value) ? cond.value : [cond.value])
+          .map(v => String(v == null ? '' : v));
+        return vals.includes(currentVal);
+      }
+      case 'notEmpty': return !!currentVal;
+      case 'neq':      return currentVal !== String(cond.value == null ? '' : cond.value);
+      case 'eq':       return currentVal === String(cond.value == null ? '' : cond.value);
+      default:         return false;
+    }
+  }
+
+  /**
+   * One condition against one named field. Returns true/false, or NULL when
+   * the field is unresolvable (see _condFieldValue).
+   */
+  _matchCond(watchField, cond) {
+    const currentVal = this._condFieldValue(watchField);
+    if (currentVal === null) return null;
+    return this._matchCondValue(currentVal, cond);
+  }
+
+  /**
+   * The legacy attribute triple → a normalized condition, or null when none
+   * of the three value attributes is set (which the original chain treated as
+   * "never show"). Precedence — includes, then values, then value — and the
+   * '*' / '!' sentinels are the original's, unchanged.
+   */
+  _condFromAttrs(el) {
+    const showValue    = el.dataset.ycShowValue;
+    const showValues   = el.dataset.ycShowValues;
+    const showIncludes = el.dataset.ycShowIncludes;
+    if (showIncludes) {
+      return { op: 'includes', value: showIncludes.split(',').map(v => v.trim()).filter(Boolean) };
+    }
+    if (showValues) {
+      return { op: 'in', value: showValues.split(',').map(v => v.trim()) };
+    }
+    if (showValue) {
+      if (showValue === '*')          return { op: 'notEmpty' };
+      if (showValue.startsWith('!'))  return { op: 'neq', value: showValue.slice(1) };
+      return { op: 'eq', value: showValue };
+    }
+    return null;
+  }
+
+  _evaluateConditionals() {
+    this.el.querySelectorAll('[data-yc-show-when],[data-yc-show-any]').forEach(el => {
+      let show      = true;
+      let evaluated = false;
+
+      // ── AND half: the original single-condition attribute triple. Order of
+      //    operations is the original's exactly (resolve the field FIRST, so
+      //    an unresolvable watch field still leaves the node untouched even
+      //    when no value attribute is present) — legacy DOM and legacy
+      //    behavior are byte-identical.
+      if (el.dataset.ycShowWhen !== undefined) {
+        const currentVal = this._condFieldValue(el.dataset.ycShowWhen);
+        if (currentVal === null) return;
+        const cond = this._condFromAttrs(el);
+        show      = cond === null ? false : this._matchCondValue(currentVal, cond);
+        evaluated = true;
+      }
+
+      // ── OR half (showWhenAny): one attribute carrying the JSON-serialized
+      //    condition array. JSON rather than a delimited encoding because
+      //    option VALUES legitimately contain commas — a delimiter here would
+      //    be the same latent corruption the checkgroup join already suffers.
+      //    A node carrying BOTH attributes ANDs the two results.
+      const anyRaw = el.dataset.ycShowAny;
+      if (anyRaw !== undefined) {
+        let list = null;
+        try { list = JSON.parse(anyRaw); } catch (e) { list = null; }
+        if (Array.isArray(list) && list.length) {
+          let hit = false, resolvable = false;
+          for (let i = 0; i < list.length; i++) {
+            const c = list[i];
+            const r = this._matchCond(c && c.field, c);
+            if (r === null) continue;             // this term is unresolvable
+            resolvable = true;
+            if (r === true) { hit = true; break; }
+          }
+          // No term resolvable and no AND half either → nothing to decide on;
+          // leave the node alone, same posture as the AND half's early return.
+          if (!resolvable && !evaluated) return;
+          show      = show && hit;
+          evaluated = true;
         }
       }
 
+      if (!evaluated) return;
       el.style.display = show ? '' : 'none';
     });
   }

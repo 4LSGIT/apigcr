@@ -360,6 +360,41 @@
     }
   }
 
+  var SHOWWHEN_OPS = { eq: 1, neq: 1, in: 1, notEmpty: 1, includes: 1 };
+
+  // ── showWhenAny (§4.4 amendment, Fred-ratified 2026-09-04) → ONE attribute
+  //    carrying the JSON-serialized condition array. OR cannot be expressed by
+  //    the AND-by-nesting wrapper trick, and it cannot be expressed by a
+  //    delimited attribute either: option values legitimately contain commas
+  //    (the DBKQ conversion turned up two), so any delimiter encoding is
+  //    latent corruption. setAttribute + JSON.stringify survives HTML escaping
+  //    with no encoding of our own. The runtime (_evaluateConditionals) ORs
+  //    the list through the SAME _matchCond helper the legacy attrs use. ──
+  function applyShowWhenAny(node, arr, path, warn) {
+    if (!node || !Array.isArray(arr) || !arr.length) return;
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var c = arr[i], cPath = path + '.showWhenAny[' + i + ']';
+      if (!c || typeof c !== 'object' || typeof c.field !== 'string' || !c.field) {
+        warn(cPath + ': field missing — condition ignored');
+        continue;
+      }
+      if (!SHOWWHEN_OPS[c.op]) {
+        warn(cPath + ': op "' + c.op + '" is unknown — condition ignored');
+        continue;
+      }
+      var one = { field: c.field, op: c.op };
+      if (c.op !== 'notEmpty') {
+        one.value = Array.isArray(c.value)
+          ? c.value.map(function (v) { return String(v != null ? v : ''); })
+          : String(c.value != null ? c.value : '');
+      }
+      out.push(one);
+    }
+    if (!out.length) { warn(path + '.showWhenAny: no usable conditions — ignored'); return; }
+    node.setAttribute('data-yc-show-any', JSON.stringify(out));
+  }
+
   // ── showWhen arrays = AND (Slice 2.5A §4.4). A single condition (object)
   //    goes straight on the node — byte-identical to pre-2.5 output. An array
   //    puts condition [0] on the node and wraps one .ycr-and-wrap div per
@@ -367,12 +402,27 @@
   //    at runtime (an outer display:none hides everything inside), and
   //    display:contents keeps the wrappers out of flex layout (.yc-row is a
   //    flexbox — a plain block wrapper between row and .yc-field would break
-  //    the equal-width columns). Returns the OUTERMOST node to append. ──
-  function wrapShowWhen(node, sw, path, warn) {
-    if (!sw || !node) return node;
-    if (!Array.isArray(sw)) { applyShowWhen(node, sw, path, warn); return node; }
-    if (!sw.length) return node;
+  //    the equal-width columns). Returns the OUTERMOST node to append.
+  //
+  //    swAny (2026-09-04) rides on the SAME node as condition[0] — the runtime
+  //    ANDs the two attributes on one node, so the composed meaning is
+  //    showWhen(AND) ∧ showWhenAny(OR) regardless of how many wrappers the
+  //    AND half needed. When swAny is absent every byte of output is what it
+  //    was before this amendment. ──
+  function wrapShowWhen(node, sw, path, warn, swAny) {
+    if (!node) return node;
+    var hasAny = Array.isArray(swAny) && swAny.length > 0;
+    if (!sw || (Array.isArray(sw) && !sw.length)) {
+      if (hasAny) applyShowWhenAny(node, swAny, path, warn);
+      return node;
+    }
+    if (!Array.isArray(sw)) {
+      applyShowWhen(node, sw, path, warn);
+      if (hasAny) applyShowWhenAny(node, swAny, path, warn);
+      return node;
+    }
     applyShowWhen(node, sw[0], path + '.showWhen[0]', warn);
+    if (hasAny) applyShowWhenAny(node, swAny, path, warn);
     var out = node;
     for (var i = 1; i < sw.length; i++) {
       var w = el('div', { class: 'ycr-and-wrap' }, [out]);
@@ -451,7 +501,7 @@
       } else {
         warn('embed "' + f.name + '": src is not a valid https URL — iframe skipped');
       }
-      return wrapShowWhen(eWrap, f.showWhen, 'field "' + f.name + '"', warn);
+      return wrapShowWhen(eWrap, f.showWhen, 'field "' + f.name + '"', warn, f.showWhenAny);
     }
 
     if (f.type === 'content') {
@@ -517,7 +567,7 @@
         cBox.appendChild(el('div', { class: 'yc-content-text', text: String(f.text) }));
       }
       cWrap.appendChild(cBox);
-      return wrapShowWhen(cWrap, f.showWhen, 'field "' + f.name + '"', warn);
+      return wrapShowWhen(cWrap, f.showWhen, 'field "' + f.name + '"', warn, f.showWhenAny);
     }
 
     var wrapClass = 'yc-field';
@@ -678,7 +728,7 @@
     wrap.appendChild(el('small', { class: 'yc-error' }));   // §4.3 locked decision
     // Field-level showWhen wraps the individual .yc-field (contract §4.4);
     // an array (AND, Slice 2.5A) adds .ycr-and-wrap layers around it.
-    return wrapShowWhen(wrap, f.showWhen, 'field "' + f.name + '"', warn);
+    return wrapShowWhen(wrap, f.showWhen, 'field "' + f.name + '"', warn, f.showWhenAny);
   }
 
   // ── Build one REPEATER field's DOM (contract §4.2 subset: text, number,
@@ -796,8 +846,9 @@
     sec.appendChild(tpl);
 
     return {
-      node: section.showWhen
-        ? wrapShowWhen(sec, section.showWhen, 'repeater section "' + repKey + '"', warn)
+      node: (section.showWhen || section.showWhenAny)
+        ? wrapShowWhen(sec, section.showWhen, 'repeater section "' + repKey + '"', warn,
+                       section.showWhenAny)
         : sec,
       config: { container: '#' + contId, template: '#' + tplId, fields: repFields }
     };
@@ -1016,13 +1067,15 @@
             // them. Everything else registers exactly as before.
             if (f.type !== 'embed' && f.type !== 'content') registerField(f);
           });
-          sec.appendChild(row && row.showWhen
-            ? wrapShowWhen(rowEl, row.showWhen, prefix + '[' + i + '].rows[' + j + ']', warn)
+          sec.appendChild(row && (row.showWhen || row.showWhenAny)
+            ? wrapShowWhen(rowEl, row.showWhen, prefix + '[' + i + '].rows[' + j + ']', warn,
+                           row.showWhenAny)
             : rowEl);
         });
 
-        container.appendChild(section.showWhen
-          ? wrapShowWhen(sec, section.showWhen, prefix + '[' + i + ']', warn)
+        container.appendChild((section.showWhen || section.showWhenAny)
+          ? wrapShowWhen(sec, section.showWhen, prefix + '[' + i + ']', warn,
+                         section.showWhenAny)
           : sec);
       });
     }
@@ -1072,9 +1125,10 @@
                 questions.push(f.name);
                 if (!anyLabel) anyLabel = String(f.label || f.name);
                 // "Base" questions are the ones always present. A question
-                // carrying showWhen is a FOLLOW-UP to something else on the
-                // card ("Other → please specify"), not a second question.
-                if (!f.showWhen) {
+                // carrying showWhen (or showWhenAny, 2026-09-04) is a
+                // FOLLOW-UP to something else on the card ("Other → please
+                // specify"), not a second question.
+                if (!f.showWhen && !f.showWhenAny) {
                   base.push(f.name);
                   if (!firstLabel) firstLabel = String(f.label || f.name);
                 }
