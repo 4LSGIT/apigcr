@@ -369,7 +369,9 @@ ref/2026-09-02_unified_events_u8.sql
 ref/2026-09-03_capture_before_publish.sql
 ref/2026-09-03_unified_events_u6c.sql
 ref/2026-09-04_dbkq_coverage.md
+ref/2026-09-04_dbkq_cutover_runbook.md
 ref/2026-09-04_dbkq_definition.v1.json
+ref/2026-09-04_dbkq_workflow_spec.md
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -709,6 +711,7 @@ tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
 tests/casePanelCss.test.js
+tests/caseUi.detTab.test.js
 tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
@@ -868,6 +871,7 @@ tests/schemaCollationBin.test.js
 tests/schemaConventions.test.js
 tests/scriptGuard.setup.js
 tests/scriptGuardCoverage.test.js
+tests/sendingformBk.dbkqLink.test.js
 tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js
 tests/sequences.routeOrder.test.js

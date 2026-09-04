@@ -1827,6 +1827,41 @@ async function caseSubtypeChanged(sub) {
 // revealing the current one — a new type's group MUST be added here too.
 const TYPE_GROUPS = ["bkButtons", "otherButtons"];
 
+// ── Detailed Questionnaire tab src (D3) ─────────────────────
+// `cases.case_detailed_form` is the ONE fact column for "which questionnaire
+// submission does this case have", and it now carries TWO shapes:
+//
+//   "yf:<submission_id>"  a YisraForm submission. Rendered read-only through
+//                         the shared staff view — the same URL formInbox.html
+//                         and forms/submissionsWidget.html use ("one renderer,
+//                         always"; render.html ?view_submission mode, backed by
+//                         GET /api/forms/submissions/:id/render). View mode
+//                         renders FLAT, so the DBKQ's 148 cards collapse into
+//                         one readable page instead of a 148-click stepper.
+//   "<digits>"            a legacy JotForm submission id (126 cases). Nothing
+//                         internal can render those, so the tab keeps showing
+//                         the PDF wf48 archived, via case_detailed_link.
+//
+// '' / null means a request is OUTSTANDING — sendingform-bk blanks this column
+// on every questionnaire send so the dbkq_reminder condition stays correct. It
+// deliberately does NOT blank case_detailed_link, so a case with an old PDF
+// keeps showing it while a new questionnaire is pending. That is exactly why
+// the yf: test comes FIRST and the link is only the fallback: once a YisraForm
+// submission lands, the live submission outranks any stale archived PDF.
+//
+// Anything else (a bare id, an empty string, a null) falls through unchanged —
+// byte-identical to the pre-D3 behaviour.
+function detTabSrc(c) {
+  const form = String((c && c.case_detailed_form) || "");
+  if (form.slice(0, 3) === "yf:") {
+    const submissionId = form.slice(3);
+    if (submissionId) {
+      return `/forms/render.html?view_submission=${encodeURIComponent(submissionId)}`;
+    }
+  }
+  return (c && c.case_detailed_link) || "about:blank";
+}
+
 function applyCaseType(c) {
   // Reset: hide all type groups so re-running on a type change can't leave a
   // stale group visible. (Standard tabs in #caseButtons are never touched.)
@@ -1846,7 +1881,7 @@ function applyCaseType(c) {
     E("SendingForm").src = `sendingform-bk.html?case_id=${c.case_id}`;
     E("caseForm").src    = `forms/casedetails-bk.html?case_id=${c.case_id}`;
     E("341").src         = `/forms/render.html?form_key=341_notes&case_id=${c.case_id}`;
-    E("det").src         = c.case_detailed_link || "about:blank";
+    E("det").src         = detTabSrc(c);
   }
   // ↓↓↓ NEW CASE TYPES GO HERE — copy this template, uncomment, rename ↓↓↓
   // else if (type === "Litigation") {
