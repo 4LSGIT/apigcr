@@ -97,6 +97,7 @@ beforeAll((done) => {
   // express.static stand-ins for the allowlisted assets
   app.get('/forms/render.html', (req, res) => res.type('html').send('RENDER'));
   app.get('/forms/hooks/:name', (req, res) => res.type('js').send('//hook'));
+  app.get('/theme.css', (req, res) => res.type('css').send(':root{--ui:x}'));
   app.get('/css/yc-forms.css', (req, res) => res.type('css').send('/*css*/'));
   app.get('/js/yc-forms.js', (req, res) => res.type('js').send('//js'));
   // the server.js single-segment /:page static catch-all stand-in
@@ -227,6 +228,15 @@ describe('landing host — allowlist serves', () => {
     expect(css.status).toBe(200);
     expect(css.headers.get('x-robots-tag')).toBeNull();
     expect((await landing('/js/yc-forms.js')).status).toBe(200);
+
+    // theme.css is a HARD dependency of the tokenised yc-forms.css — without
+    // it the external form renders completely unstyled. Locked because the
+    // failure is silent (a 302 to the firm site, not an error) and only
+    // visible by eye. Regression: 2026-09-04.
+    const theme = await landing('/theme.css');
+    expect(theme.status).toBe(200);
+    expect(theme.headers.get('content-type')).toMatch(/text\/css/);
+    expect(theme.headers.get('x-robots-tag')).toBeNull();
   });
 
   test('/api/ext GET + submit work, noindex set', async () => {

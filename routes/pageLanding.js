@@ -257,7 +257,7 @@ router.post('/p/:slug', async (req, res) => {
 //   /api/m/:token/{cancel,reschedule} (POST)
 //   /v/:slug (GET)               — video landing pages (routes/videoLanding.js)
 //   /api/v/:slug/{track,cta-click} (POST) — the page's own beacons
-//   /css/yc-forms.css, /js/yc-forms.js, /favicon.ico (GET)
+//   /theme.css, /css/yc-forms.css, /js/yc-forms.js, /favicon.ico (GET)
 // EVERYTHING ELSE — /login, the shell, every staff/API route, every other
 // static file — gets the deadPage treatment (firm-site redirect / 404). If a
 // JWT could be minted or used on the landing host the boundary would be
@@ -502,6 +502,15 @@ function landingAllowed(req) {
   if (D_POST_RE.test(p))               return m === 'POST';   // BEFORE D_VALUE_RE
   if (D_ROUTE_RE.test(p))              return isRead;
   if (D_VALUE_RE.test(p))              return isRead;
+  // Shared static assets the allowlisted pages load. theme.css is a HARD
+  // dependency of yc-forms.css, not a nicety: the density/colour arc
+  // tokenised that sheet, so with theme.css missing every var() in it is
+  // invalid-at-computed-value-time and the external form renders with no
+  // font, no surfaces, no borders — literally unstyled (observed on
+  // 4lsg.com 2026-09-04; /theme.css was 302ing to the firm site because it
+  // was never added here when the theme link landed in render.html). Repo
+  // static CSS, no JS, no auth surface — same class as yc-forms.css.
+  if (p === '/theme.css')              return isRead;
   if (p === '/css/yc-forms.css')       return isRead;
   if (p === '/js/yc-forms.js')         return isRead;
   if (p === '/favicon.ico')            return isRead;
