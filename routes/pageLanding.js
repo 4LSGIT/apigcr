@@ -700,4 +700,11 @@ function pageHostMiddleware(db) {
 
 router.pageHostMiddleware = pageHostMiddleware;
 
+// Test-only export. tests/pageLanding.landingAssets.test.js scans every HTML
+// file the landing host serves and asserts each absolute subresource it
+// references passes this predicate — the guard that would have caught
+// /theme.css. Nothing in the app calls it through the router object; the
+// middleware closes over the function directly.
+router._landingAllowed = landingAllowed;
+
 module.exports = router;

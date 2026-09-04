@@ -829,6 +829,7 @@ tests/logservice.buildcontactlogwhere.test.js
 tests/manualReadmeCoverage.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
+tests/pageLanding.landingAssets.test.js
 tests/pageLanding.originsep.test.js
 tests/paramsMappingCsvList.test.js
 tests/pdfRender.test.js
