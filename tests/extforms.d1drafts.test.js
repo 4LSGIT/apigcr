@@ -809,7 +809,34 @@ describe('external server drafts — client (jsdom)', () => {
     expect(page.fetches.some((f) => f.url.indexOf('/draft') !== -1)).toBe(true);
     const local = JSON.parse(w.localStorage.getItem(LOCAL_KEY));
     expect(local.data.reason).toBe('network is flaky');
-    expect(w.document.getElementById('saveStatus').textContent).toContain('on this device');
+    // "(locally)" marks every browser-backed write — see autosaveTick. It
+    // replaced the narrower "on this device", which only ever fired on THIS
+    // path and left the anonymous path (below) claiming a plain server save.
+    expect(w.document.getElementById('saveStatus').textContent).toContain('(locally)');
+  });
+
+  test('an anonymous form never touches the draft route and marks the save local', async () => {
+    // No case_id → the server omits `draft` entirely (D1 is linked-only), so
+    // serverDrafts stays off and the browser is the only store. This is the
+    // shape a mistyped or truncated SMS link produces on a degrade-mode form.
+    const page = makePage({
+      query: 'form_key=dbkq_test&ext=1',
+      getBody: { status: 'success', title: 'Q', link_type: 'case', schema_version: 3,
+                 definition: EXT_DEF, load: null, linked: false },
+    });
+    const w = await ready(page);
+
+    type(w, 'reason', 'filling this in anonymously');
+    await sleep(150);
+
+    expect(page.fetches.some((f) => f.url.indexOf('/draft') !== -1)).toBe(false);
+    expect(w.document.getElementById('saveStatus').textContent).toContain('(locally)');
+    // Anonymous → sessionStorage under the shared ':anon' key (X2.1 F4: one
+    // localStorage slot per device would offer visitor 2 visitor 1's answers).
+    // Per-tab, so an unqualified "Draft saved just now" would be a lie.
+    expect(w.localStorage.getItem('ycExtDraft:dbkq_test:anon')).toBeNull();
+    const anon = JSON.parse(w.sessionStorage.getItem('ycExtDraft:dbkq_test:anon'));
+    expect(anon.data.reason).toBe('filling this in anonymously');
   });
 
   test('discard DELETEs the server draft (with the case_id) and clears the device copy', async () => {

@@ -1051,9 +1051,7 @@ if (this.config.endpoints.load && !this.config.external) {
     // draft store and the local copy is only a fallback. Anonymous or
     // opted-out forms take the untouched local path below.
     if (this.config.external) {
-      let serverTried = false;
       if (this.config.serverDrafts && this.config.linkId) {
-        serverTried = true;
         try {
           await this._api(this.config.draftUrl, 'POST', {
             case_id: this.config.linkId,
@@ -1080,7 +1078,15 @@ if (this.config.endpoints.load && !this.config.external) {
           schema_version: this.config.schemaVersion,
         }));
         this._lastAutosaveJson = currentJson;
-        this._showStatus(serverTried ? 'Draft saved on this device' : 'Draft saved just now');
+        // "(locally)" whenever the BROWSER is the store — an anonymous form, a
+        // template that never opted into server drafts, or a server save that
+        // just failed. The unqualified "Draft saved just now" (the server path
+        // above, and the internal path below) is a promise this write cannot
+        // keep: an unlinked form's copy lives in sessionStorage and dies with
+        // the tab, and even the linked localStorage copy is this device only.
+        // A client who reads "saved" and comes back on another phone finds an
+        // empty form, which is worse than being told the truth up front.
+        this._showStatus('Draft saved just now (locally)');
       } catch (err) {
         console.warn('[YCForm] Local draft save failed:', err);
       }
