@@ -28,6 +28,7 @@ steps:
     args: ['push', '$_IMAGE:cache']
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
     args:
       - run
       - services
