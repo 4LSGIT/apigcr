@@ -6,15 +6,26 @@
  *
  * WHY THIS FILE EXISTS
  *
- * THE PARAM NAME IS THE WHOLE BUG SURFACE. Three spellings exist historically
- * in this flow — `caseId` (the retired JotForm's field), `id` (the /p/detail
- * interstitial's own input), and `case_id` (YisraForm's credential param, the
- * only one /api/ext/forms reads). A YisraForm link carrying the wrong one does
- * not fail: dbkq is badLink:"degrade", so it renders anonymously, the client
- * fills 252 fields, and the submission lands in the Form Inbox attached to no
- * case. Nothing alerts. The failure is silent, expensive, and only visible
- * days later when the reminder drip keeps running against a case that already
- * answered. So the spelling gets a test.
+ * THE HOP IS THE POINT. Every client-facing questionnaire link — this one and
+ * all five dbkq_reminder steps — goes through /p/detail, and ONLY /p/detail
+ * knows the form's real address. So what this file guards is that sendingform
+ * emits the interstitial's own `?id=` spelling and nothing else.
+ *
+ * Three spellings exist historically: `caseId` (the retired JotForm's field),
+ * `id` (the /p/detail input, what we emit), `case_id` (YisraForm's credential
+ * param, the only one /api/ext/forms reads — emitted by /p/detail, not here).
+ * Sending the form's own spelling from here would BYPASS the interstitial's
+ * prep copy; sending JotForm's would land at a form that no longer exists.
+ *
+ * A wrong spelling anywhere in this chain fails SILENTLY: dbkq is
+ * badLink:"degrade", so it renders anonymously, the client fills 252 fields,
+ * and the submission lands in the Form Inbox attached to no case. Nothing
+ * alerts, and it is only visible days later when the drip keeps running
+ * against a case that already answered.
+ *
+ * NOT COVERED HERE: /p/detail itself is a `pages` row, not a repo file, so CI
+ * cannot see the far half of this chain. ref/pages/detail.html is a reviewable
+ * copy; the live one is the DB.
  *
  * The rest of the questionnaire action is deliberately NOT changing and is
  * asserted as such:
@@ -75,39 +86,40 @@ function evalDbkqConstants(caseId) {
   const sandbox = { caseId, encodeURIComponent, out: {} };
   vm.createContext(sandbox);
   new vm.Script(
-    block + '\n;out = { DBKQ_FORM_ID, DBKQ_FORM_KEY, DBKQ_LINK, DBKQ_SEQ_TYPE };'
+    block + '\n;out = { DBKQ_FORM_ID, DBKQ_DETAIL_BASE, DBKQ_LINK, DBKQ_SEQ_TYPE };'
   ).runInContext(sandbox);
   return sandbox.out;
 }
 
 describe('DBKQ link', () => {
 
-  test('points at the YisraForm external route with the case_id credential', () => {
+  test('points at the /p/detail interstitial, not the form', () => {
     const { DBKQ_LINK } = evalDbkqConstants('uT7EU36v');
-    expect(DBKQ_LINK).toBe('https://4lsg.com/f/dbkq?case_id=uT7EU36v');
+    expect(DBKQ_LINK).toBe('https://4lsg.com/p/detail?id=uT7EU36v');
   });
 
-  test('emits case_id — never caseId, never bare id', () => {
+  test('emits id — the interstitial\u2019s spelling, never caseId, never case_id', () => {
     const { DBKQ_LINK } = evalDbkqConstants('uT7EU36v');
     const qs = new URLSearchParams(DBKQ_LINK.split('?')[1]);
-    expect(qs.get('case_id')).toBe('uT7EU36v');
+    expect(qs.get('id')).toBe('uT7EU36v');
     expect(qs.has('caseId')).toBe(false);
-    expect(qs.has('id')).toBe(false);
+    expect(qs.has('case_id')).toBe(false);
   });
 
-  test('the case_id value is encoded', () => {
+  test('the case id value is encoded', () => {
     const { DBKQ_LINK } = evalDbkqConstants('a b&c');
-    expect(DBKQ_LINK).toBe('https://4lsg.com/f/dbkq?case_id=a%20b%26c');
+    expect(DBKQ_LINK).toBe('https://4lsg.com/p/detail?id=a%20b%26c');
   });
 
   test('a missing caseId still yields a well-formed link, not "undefined"', () => {
     const { DBKQ_LINK } = evalDbkqConstants(null);
-    expect(DBKQ_LINK).toBe('https://4lsg.com/f/dbkq?case_id=');
+    expect(DBKQ_LINK).toBe('https://4lsg.com/p/detail?id=');
   });
 
-  test('the form key matches the published template', () => {
-    const { DBKQ_FORM_KEY } = evalDbkqConstants('X');
-    expect(DBKQ_FORM_KEY).toBe('dbkq');
+  test('does NOT link the form directly \u2014 that would skip the prep page', () => {
+    const { DBKQ_LINK } = evalDbkqConstants('uT7EU36v');
+    expect(DBKQ_LINK).not.toMatch(/\/f\/dbkq/);
+    expect(CODE).not.toMatch(/\/f\/dbkq/);
   });
 
   test('the sequence type still matches what the on-submit workflow cancels', () => {
@@ -115,11 +127,10 @@ describe('DBKQ link', () => {
     expect(DBKQ_SEQ_TYPE).toBe('dbkq_reminder');
   });
 
-  test('no JotForm host or /p/detail interstitial survives in the code', () => {
-    // Both are still NAMED in the constants block's comment, which is the
-    // point of CODE — see its doc block.
+  test('no JotForm host survives in the code', () => {
+    // Still NAMED in the constants block's comment (the retired id is kept for
+    // trigger_data provenance), which is the point of CODE — see its doc block.
     expect(CODE).not.toMatch(/form\.jotform\.com/);
-    expect(CODE).not.toMatch(/p\/detail/);
   });
 
   test('both channels send the same DBKQ_LINK — no second link shape', () => {

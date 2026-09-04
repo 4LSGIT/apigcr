@@ -380,37 +380,48 @@ for (let y = CURRENT_YEAR; y >= 2015; y--) IRS_YEARS.push(y);
 
 // ── Detailed Bankruptcy Questionnaire ────────────────────────────────────────
 // D3: the questionnaire is now the YisraForm template `dbkq` (form_templates
-// id 11, public, serverDrafts on), NOT the firm's JotForm. /f/:form_key is the
-// SMS-friendly external entry point (routes/f.js) — it 302s to the renderer in
-// ext mode and forwards the credential.
+// id 11, public, serverDrafts on), NOT the firm's JotForm.
 //
-// THE PARAM NAME IS LOAD-BEARING. Three spellings exist historically:
+// EVERY client-facing link still goes through /p/detail (pages.slug 'detail'),
+// and /p/detail is the ONE place that knows the questionnaire's real address.
+// That is deliberate. The initial SMS, the initial email and all five
+// dbkq_reminder steps point at the same interstitial, so:
+//   · the client sees the same prep copy ("have your tax returns handy")
+//     whichever message they act on;
+//   · one host across every channel, which 10DLC carrier filtering treats far
+//     better than a raw form host;
+//   · moving the questionnaire again is one page edit, not four emitters.
+//
+// THE PARAM NAME IS LOAD-BEARING, but not HERE — it is load-bearing INSIDE
+// /p/detail, which maps its own ?id= to the credential the form API reads.
+// Three spellings exist historically:
 //   caseId   — JotForm's field name (the retired form)
-//   id       — the /p/detail interstitial's own input
+//   id       — the /p/detail interstitial's own input, which is what we emit
 //   case_id  — YisraForm's credential param, the ONLY one /api/ext reads
-// A YisraForm link with the wrong spelling does not error. It resolves to an
-// UNLINKED submission (dbkq is badLink:"degrade"), the client fills 252 fields,
-// and the result lands in the Form Inbox attached to nothing. Emit case_id.
+// If /p/detail ever forwards the wrong one the failure is SILENT: dbkq is
+// badLink:"degrade", so it renders anonymously, the client fills 252 fields,
+// and the submission lands attached to no case. That page is not in this repo
+// and not covered by CI — a copy lives at ref/pages/detail.html.
 //
-// NO PER-RECIPIENT PREFILL, deliberately: the dbkq definition declares no
-// urlParam prefills and no endpoints.load, so the form opens blank for whoever
-// holds the link and a co-debtor types their own name in section 1. That is a
-// change from the JotForm links, which prefilled name/phone per recipient. To
-// restore it, declare urlParam fields on the template first — then, and only
-// then, build a per-recipient query here.
+// NO PER-RECIPIENT PREFILL any more: /p/detail still forwards whatever it is
+// given, but routes/f.js drops nested-object query shapes (name[first]=…) and
+// dbkq declares no urlParam prefills, so the JotForm-shaped keys reach nothing.
+// The form opens blank for whoever holds the link and a co-debtor types their
+// own name in section 1. To restore prefill, declare urlParam fields on the
+// template first — then, and only then, build a per-recipient query here.
 //
 // DBKQ_SEQ_TYPE is a sequence_template_types row, NOT a template id: the
-// on-submit workflow cancels by type (cancel_sequences), so both ends have to
-// agree on this string.
+// on-submit workflow (wf49) cancels by type (cancel_sequences), so both ends
+// have to agree on this string.
 //
 // DBKQ_FORM_ID is the RETIRED JotForm id. It survives for one reason only:
 // sequence trigger_data provenance (see the enrolment below), so a row written
 // after cutover is still readable next to the pre-cutover rows. Nothing routes
 // on it any more.
-const DBKQ_FORM_ID  = '231694062254152';
-const DBKQ_FORM_KEY = 'dbkq';
-const DBKQ_LINK     = `https://4lsg.com/f/${DBKQ_FORM_KEY}?case_id=${encodeURIComponent(caseId || '')}`;
-const DBKQ_SEQ_TYPE = 'dbkq_reminder';
+const DBKQ_FORM_ID     = '231694062254152';
+const DBKQ_DETAIL_BASE = 'https://4lsg.com/p/detail';
+const DBKQ_LINK        = `${DBKQ_DETAIL_BASE}?id=${encodeURIComponent(caseId || '')}`;
+const DBKQ_SEQ_TYPE    = 'dbkq_reminder';
 
 const BANKS = [
   'Bank of America','Bank One','Bestbank','Chase','Citizens','Comerica',
