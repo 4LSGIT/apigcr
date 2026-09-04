@@ -5,6 +5,7 @@
 Dockerfile
 Dockerfile.base
 TRACKED_FILES.txt
+cloudbuild.yaml
 jest.config.js
 lib/actionDispatchers.js
 lib/aiPrompts/courtExtract.js
@@ -157,6 +158,7 @@ manual/06-Admin-Tools/01-db-console.md
 manual/06-Admin-Tools/02-readonly-keys.md
 manual/06-Admin-Tools/03-api-tester.md
 manual/06-Admin-Tools/README.md
+package-lock.json
 package.json
 public/apiTester.html
 public/apikeys.html

@@ -1,0 +1,46 @@
+# Replaces the auto-generated rmgpgab-* trigger's inline build config.
+# Added value over the generated config is --cache-from: the shared pool hands
+# out an empty docker daemon per build, so without a remote cache source every
+# build re-runs the npm layer against the registry. 2026-09-04 investigation:
+# npm install ranged 57s to 5m20s on identical inputs (tarball-fetch stalls).
+# With the cache primed, commits that don't touch package*.json skip npm
+# entirely. DOCKER_BUILDKIT=0: --cache-from only matches under the classic
+# builder; pinned so a builder-image default flip can't silently kill caching.
+steps:
+  # Prime the daemon so --cache-from has layers to match. || true: first run,
+  # or after the 7d cleanup policy reaps :cache, is a legitimate miss.
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args: ['-c', 'docker pull $_IMAGE:cache || true']
+
+  - name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=0']
+    args:
+      - build
+      - --cache-from=$_IMAGE:cache
+      - -t=$_IMAGE:$COMMIT_SHA
+      - -t=$_IMAGE:cache
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args: ['push', '$_IMAGE:$COMMIT_SHA']
+  - name: gcr.io/cloud-builders/docker
+    args: ['push', '$_IMAGE:cache']
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    args:
+      - run
+      - services
+      - update
+      - svpcac
+      - --platform=managed
+      - --image=$_IMAGE:$COMMIT_SHA
+      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=deae68ad-1912-4a06-9db6-516dab663a64
+      - --region=us-east1
+      - --quiet
+
+substitutions:
+  _IMAGE: us-east1-docker.pkg.dev/lsg-api-425223/cloud-run-source-deploy/apigcr/svpcac
+
+options:
+  logging: CLOUD_LOGGING_ONLY
