@@ -1816,6 +1816,23 @@ if (this.config.endpoints.load && !this.config.external) {
       if (!evaluated) return;
       el.style.display = show ? '' : 'none';
     });
+
+    // ── Announce completion (D2-H). Layers built ON TOP of the engine —
+    //    render.html's card navigation is the only one today — have to
+    //    recompute from the engine's FULL trigger set, not from a guessed
+    //    subset of DOM events. Guessing was the defect: the card layer
+    //    refreshed on `change` while the engine also runs on `input` (so the
+    //    nav stayed stale until blur) and after a draft restore, which fires
+    //    no DOM event at all (so the nav never refreshed). Emitting HERE means
+    //    every caller — the change/input listeners, init step 13b, refresh(),
+    //    the restore handler — announces for free, and no future caller can
+    //    forget to.
+    //
+    //    Consumers are read-only observers by contract: dispatchEvent reports
+    //    a listener's exception to the global handler rather than rethrowing,
+    //    so a broken consumer cannot break the restore/refresh paths that call
+    //    us, and nothing here re-enters the engine.
+    this.el.dispatchEvent(new CustomEvent('yc:conditionals', { bubbles: true }));
   }
 
 

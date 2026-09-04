@@ -2179,6 +2179,42 @@
       });
       nextBtn.addEventListener('click', function () { goRelative(1, true); });
 
+      // ── Nav refresh, driven by the CONDITIONAL ENGINE (D2-H) ──
+      // yc-forms re-evaluates conditionals on `change`, on `input`, AND after
+      // a draft restore (which fires no DOM event at all). The card layer used
+      // to refresh from the `change` listener below — a strict subset of that
+      // — so a text-driven gate (`notEmpty` revealing a later card) left the
+      // counter and the Next label stale until blur, and clicking "Review and
+      // Submit" skipped the freshly revealed question with no signal; a
+      // restore never refreshed at all. yc-forms now emits 'yc:conditionals'
+      // at the end of every _evaluateConditionals() run, and consuming THAT is
+      // the whole coupling — one event, one listener, no shared trigger list
+      // to keep in sync.
+      //
+      // This is a REFRESH, not a navigation: `cur` is preserved. The one
+      // exception is a current card the re-evaluation just HID (a restore can
+      // do it) — a collapsed card is not a state the user can navigate out of,
+      // so move to the nearest FOLLOWING visible card, else the nearest
+      // preceding one.
+      function refreshNav() {
+        if (review) { buildReview(); return; }   // an open summary must not stale
+        if (cur < 0) return;                     // before the first paint
+        var vis = visibleIdx();
+        if (!vis.length) return;                 // nothing visible at all: leave the paint alone
+        var pos = vis.indexOf(cur);
+        if (pos === -1) {
+          var to = -1;
+          for (var i = 0; i < vis.length; i++) { if (vis[i] > cur) { to = vis[i]; break; } }
+          if (to === -1) to = vis[vis.length - 1];      // everything visible precedes cur
+          show(to);                                     // repaints count/label/dots itself
+          return;
+        }
+        countEl.textContent = (pos + 1) + ' of ' + vis.length;
+        nextBtn.textContent = pos === vis.length - 1 ? 'Review and Submit' : 'Next \u2192';
+        renderDots();
+      }
+      form_.el.addEventListener('yc:conditionals', refreshNav);
+
       // Auto-advance (Fred D1, the Jotform feel). Fires only for a
       // TERMINAL GESTURE: one interaction that completes the answer, where
       // the change event means "done" rather than "still typing".
@@ -2222,20 +2258,15 @@
         return !!target.checked;                       // radio, checkbox
       }
 
+      // AUTO-ADVANCE ONLY. The nav refresh that used to share this listener
+      // moved to refreshNav/'yc:conditionals' above (D2-H) — it has to run on
+      // `input` and on restore too. Advancing must NOT: `change` is the
+      // terminal gesture, per-keystroke advance is the thing the type list
+      // above exists to prevent. A conditional flip caused by this same change
+      // has already repainted the nav by the time we get here — the engine's
+      // change listener binds first (init step 5) and emits synchronously.
       form_.el.addEventListener('change', function (e) {
         if (review || cur < 0) return;
-        // A change may have toggled a conditional card (the engine's own
-        // change listener ran first — init step 5 binds before this one):
-        // refresh the dot bar + counter so a card appearing/disappearing is
-        // visible immediately, not on the next navigation.
-        var vis = visibleIdx();
-        var pos = vis.indexOf(cur);
-        if (pos !== -1) {
-          countEl.textContent = (pos + 1) + ' of ' + vis.length;
-          nextBtn.textContent = pos === vis.length - 1 ? 'Review and Submit' : 'Next \u2192';
-        }
-        renderDots();
-
         var cardEl = cardEls[cur];
         if (!cardEl || !cardEl.contains(e.target)) return;
         var visNames = visibleFieldsOn(cur);

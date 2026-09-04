@@ -785,6 +785,7 @@ tests/formBuilder_slice25A.test.js
 tests/formBuilder_slice25B.test.js
 tests/formBuilder_slice26.test.js
 tests/formRender.content.test.js
+tests/formRender.d2hCardNav.test.js
 tests/formRender.radioColumns.test.js
 tests/formRender.showWhenAny.test.js
 tests/formRender.slice2.test.js
