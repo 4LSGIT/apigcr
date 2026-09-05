@@ -1945,6 +1945,7 @@
       var chapters  = maps.cards.chapters  || [];
       var chapterOf = maps.cards.chapterOf || [];
       var chapMode  = !!(chapsEl && chapters.length);
+      var lastScrolledChap = -1;   // scroll the bar on chapter CHANGE only, not per keystroke
       var saveBtnEl = document.getElementById('saveBtn');
       if (!cardEls.length || !navEl) return;
 
@@ -2163,10 +2164,14 @@
                                                   (anyBad ? ', needs attention' : '') });
           pill.addEventListener('click', function () { jumpTo(members[0]); });
           chapsEl.appendChild(pill);
-          if (isCurrent) {
-            // Keep the active pill in view on a scrolling bar. block:'nearest'
-            // never moves the page vertically when the bar is already on
-            // screen; jsdom no-ops the call entirely.
+          if (isCurrent && ci !== lastScrolledChap) {
+            // Keep the active pill in view on a scrolling bar — but only when
+            // the chapter CHANGES. renderChapters runs per keystroke (via
+            // refreshNav), and an unconditional inline:'center' would snap
+            // the bar back every time the user scrolled it to peek ahead.
+            // block:'nearest' never moves the page vertically when the bar is
+            // already on screen; jsdom no-ops the call entirely.
+            lastScrolledChap = ci;
             try { pill.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) { /* older engines */ }
           }
         });
