@@ -216,19 +216,18 @@ html.mode-grow #lpFrame{height:600px} /* replaced by JS on every reflow */
        t   optional — heading override. Needed only on a vanity domain, where
                       the frame's own title can't be read cross-origin.
 
-     These MUST be added to URL_PARAM_RESERVED in services/formTemplateService.js
-     (currently form_key/ext/preview/template_id/link_id/case_id/contact_id/
-     appt_id). Until they are, a staff-authored field declaring urlParam:"f"
-     would publish cleanly and then silently never receive its value on this
-     page. Verified 2026-08-12: no template declares either name today —
-     `intake`.`src` is the only urlParam in the table.
+     Both names are reserved in URL_PARAM_RESERVED (services/formTemplateService.js,
+     X3.2) alongside form_key/ext/preview/template_id/link_id/case_id/contact_id/
+     appt_id and X3.3's `b`. A staff-authored field declaring urlParam:"f" or "t"
+     is refused at publish, so neither name can be shadowed out from under this
+     page — a prefill declaration can never silently lose its value here.
 
      Everything else on the querystring is forwarded verbatim to /f/:form_key,
      which drops the four params it owns and passes the rest through to the
      renderer (case_id, src, and any declared urlParam).
      ───────────────────────────────────────────────────────────────────────── */
-  var P_FORM      = 'f';                      // → 'form'  if the reserved-list call goes long
-  var P_TITLE     = 't';                      // → 'title'      "        "        "
+  var P_FORM      = 'f';                      // reserved in URL_PARAM_RESERVED — renaming
+  var P_TITLE     = 't';                      // either means updating that list too
   var FORM_BASE   = 'https://app.4lsg.com/f/';
   var DEFAULT_KEY = '';                       // set e.g. 'intake' to make a bare hit work
   var KEY_RE      = /^[a-z0-9_]{1,50}$/;      // routes/f.js FORM_KEY_RE
