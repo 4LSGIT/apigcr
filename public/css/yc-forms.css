@@ -880,19 +880,17 @@ body {
   box-sizing: border-box;
 }
 
-/* X6b: chapter pill bar — one pill per chapter, horizontally scrollable on
-   narrow screens (auto-scroll keeps the current pill in view). States:
-   solid green = complete, green ring = started, red = a member card is
-   known-bad, accent ring = current chapter. Rendered only when the
-   definition declares chapters. */
+/* X6b: chapter pill bar — one pill per chapter, wrapping to as many lines
+   as needed (a hidden scroll strip buried pills off-screen on mobile; a
+   wrapped bar shows the whole map at once). States: solid green = complete,
+   green ring = started, red = a member card is known-bad, accent ring =
+   current chapter. Rendered only when the definition declares chapters. */
 .yc-card-chapters {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
   margin: 12px 0 0;
-  padding-bottom: 4px;
 }
 
 .yc-chap {

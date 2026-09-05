@@ -1945,7 +1945,6 @@
       var chapters  = maps.cards.chapters  || [];
       var chapterOf = maps.cards.chapterOf || [];
       var chapMode  = !!(chapsEl && chapters.length);
-      var lastScrolledChap = -1;   // scroll the bar on chapter CHANGE only, not per keystroke
       var saveBtnEl = document.getElementById('saveBtn');
       if (!cardEls.length || !navEl) return;
 
@@ -2164,31 +2163,19 @@
                                                   (anyBad ? ', needs attention' : '') });
           pill.addEventListener('click', function () { jumpTo(members[0]); });
           chapsEl.appendChild(pill);
-          if (isCurrent && ci !== lastScrolledChap) {
-            // Keep the active pill in view on a scrolling bar — but only when
-            // the chapter CHANGES. renderChapters runs per keystroke (via
-            // refreshNav), and an unconditional inline:'center' would snap
-            // the bar back every time the user scrolled it to peek ahead.
-            // block:'nearest' never moves the page vertically when the bar is
-            // already on screen; jsdom no-ops the call entirely.
-            lastScrolledChap = ci;
-            try { pill.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) { /* older engines */ }
-          }
         });
       }
 
-      // The count string: chapter-local when chapters exist ("Vehicles — 3 of
-      // 6"), the global count otherwise. On a conditional form the global
-      // number is a moving target; the chapter-local one is short and stable.
+      // The count string. Chapter mode shows NO counter at all: the
+      // highlighted pill already names where you are and the dot row shows
+      // position within it, so the text was redundant — and a long chapter
+      // name in the nav row broke the mobile layout. Chapter-free forms keep
+      // the global count unchanged.
       function countText() {
         var vis = visibleIdx();
         var pos = vis.indexOf(cur);
         if (pos === -1) return '';
-        if (chapMode && chapterOf[cur] >= 0) {
-          var ch = chapters[chapterOf[cur]];
-          var members = ch.cards.filter(function (i) { return vis.indexOf(i) !== -1; });
-          return ch.label + ' \u2014 ' + (members.indexOf(cur) + 1) + ' of ' + members.length;
-        }
+        if (chapMode && chapterOf[cur] >= 0) return '';
         return (pos + 1) + ' of ' + vis.length;
       }
 

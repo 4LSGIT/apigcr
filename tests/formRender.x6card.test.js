@@ -28,7 +28,7 @@
  *      never turn green
  *   H  chapters (X6b): `chapter` on a section starts a sticky-down group;
  *      pill bar (current/started/done/error as a fold over member cards),
- *      dots scoped to the current chapter, chapter-local counter, hidden
+ *      dots scoped to the current chapter, NO counter text, hidden
  *      chapters absent, review headings, implicit "Start" lead, validator
  *      type gate, signature-blind, projection forwards the key; a
  *      chapter-free definition renders with NO chapter artifacts at all
@@ -402,7 +402,7 @@ describe('H chapters', () => {
     expect(ps.map(x => x.textContent)).toEqual(['One', 'Two']);
     expect(ps[0].classList.contains('current')).toBe(true);
     expect(dots(p).length).toBe(2);                          // cards 0–1 only
-    expect(countTx(p)).toBe('One \u2014 1 of 2');
+    expect(countTx(p)).toBe('');                             // no counter in chapter mode
     // the reveal: a1 non-empty → chapter Three appears in the bar
     setText(p, 'a1', 'x'); await sleep(20);
     expect(pills(p).length).toBe(3);
@@ -413,7 +413,7 @@ describe('H chapters', () => {
     setText(p, 'a1', 'x'); await sleep(20);
     pills(p)[1].click(); await sleep(20);                    // One → Two
     expect(activeCard(p)).toBe(qa(p, '.yc-card')[2]);
-    expect(countTx(p)).toBe('Two \u2014 1 of 2');
+    expect(countTx(p)).toBe('');
     expect(dots(p).length).toBe(2);                          // cards 2–3 only
     expect(pills(p)[0].classList.contains('started')).toBe(true);   // 1 of 2 visited
     // jump on with b1 (required) still empty → departing card 2 goes bad →
@@ -455,7 +455,7 @@ describe('H chapters', () => {
     d.sections[1].chapter = 'Late';
     const p = await ready(bootPage({ definition: d }));
     expect(pills(p).map(x => x.textContent)).toEqual(['Start', 'Late', 'Two']);
-    expect(countTx(p)).toBe('Start \u2014 1 of 1');
+    expect(countTx(p)).toBe('');
   });
 
   test('validator: bad chapter rejected; fieldSignature chapter-blind; projection forwards it', () => {
