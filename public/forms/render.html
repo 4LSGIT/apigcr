@@ -724,7 +724,24 @@
       control.setAttribute('data-yc-mask', f.mask);
     }
 
-    wrap.appendChild(input);
+    // prefix / suffix (D4 A1): display-only adornment reading as part of the
+    // input (the .yc-tags-wrap pattern: bordered flex box, :focus-within ring,
+    // borderless inner input — CSS in yc-forms.css). NEVER part of the value:
+    // collect()/drafts/submit read input.value and the adornment is a sibling
+    // <span> the value pipeline cannot see. Applied only on the two types the
+    // server accepts (validateDefinition rejects the rest), and only via
+    // el()'s text path — submitter-facing but author-typed, same class as a
+    // label. Never in fieldSignature (name+type only), so it can't bump
+    // schema_version.
+    var adornWrap = null;
+    if ((f.type === 'number' || f.type === 'text') && (f.prefix || f.suffix)) {
+      adornWrap = el('div', { class: 'yc-input-adorn' });
+      if (f.prefix) adornWrap.appendChild(el('span', { class: 'yc-adorn', text: String(f.prefix) }));
+      adornWrap.appendChild(input);
+      if (f.suffix) adornWrap.appendChild(el('span', { class: 'yc-adorn', text: String(f.suffix) }));
+    }
+
+    wrap.appendChild(adornWrap || input);
     wrap.appendChild(el('small', { class: 'yc-error' }));   // §4.3 locked decision
     // Field-level showWhen wraps the individual .yc-field (contract §4.4);
     // an array (AND, Slice 2.5A) adds .ycr-and-wrap layers around it.
@@ -796,7 +813,18 @@
         break;
     }
 
-    wrap.appendChild(input);
+    // prefix / suffix (D4 A1): same adornment as buildField, same two types.
+    // Clone-safe: no ids, and the delegated number keystroke guard reads the
+    // min ATTRIBUTE, which el() already writes on every cloned row.
+    var adornWrap = null;
+    if ((type === 'number' || type === 'text') && (f.prefix || f.suffix)) {
+      adornWrap = el('div', { class: 'yc-input-adorn' });
+      if (f.prefix) adornWrap.appendChild(el('span', { class: 'yc-adorn', text: String(f.prefix) }));
+      adornWrap.appendChild(input);
+      if (f.suffix) adornWrap.appendChild(el('span', { class: 'yc-adorn', text: String(f.suffix) }));
+    }
+
+    wrap.appendChild(adornWrap || input);
     wrap.appendChild(el('small', { class: 'yc-error' }));   // uniform markup (§4.3)
     return wrap;
   }
@@ -1009,6 +1037,19 @@
         } catch (e) {
           warn('field "' + f.name + '": pattern is not a valid RegExp — skipped (' + e.message + ')');
         }
+      }
+      // number rule (D4 A3): EVERY number field carries one — the format half
+      // (reject scientific notation and pasted junk the native input let
+      // through) applies unconditionally; the bounds half only when the
+      // definition DECLARED min/max. Before D4 those declarations were
+      // half-wired: buildField wrote them to the native attributes, nothing
+      // enforced them (the Save button is type=button, so native constraint
+      // validation never runs) — spinner clamping was their entire effect.
+      if (f.type === 'number') {
+        var nRule = {};
+        if (f.min != null) nRule.min = f.min;
+        if (f.max != null) nRule.max = f.max;
+        rules.number = nRule;
       }
       if (Object.keys(rules).length || f.requiredWhen) {
         // requiredWhen (Slice 2.5A A2): conditionally required — an array

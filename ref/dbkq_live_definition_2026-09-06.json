@@ -1,0 +1,6188 @@
+{
+  "layout": "card",
+  "toggle": false,
+  "external": {
+    "badLink": "degrade",
+    "postSubmit": {
+      "message": "Thank you \u2014 your Detailed Bankruptcy Questionnaire has been submitted to our office. We'll review your answers as we prepare your case and will reach out if anything needs clarification. If you need to add or correct anything, please call our office."
+    },
+    "serverDrafts": true
+  },
+  "onSubmit": {
+    "workflows": [
+      {
+        "id": 49,
+        "initData": {}
+      }
+    ]
+  },
+  "sections": [
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "intro_lead",
+              "text": "This is the questionnaire we use to build your bankruptcy petition. It asks for a lot, because the court does \u2014 but you don\u2019t have to do it all at once.",
+              "type": "content"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "intro_saves",
+              "text": "You can stop partway through and pick up where you left off. Use the same link and your answers will be waiting, even on a different phone or computer.",
+              "type": "content",
+              "label": "Your progress is saved."
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "intro_handy",
+              "text": "Your last two years of tax returns, recent pay stubs, a rough list of who you owe and roughly how much, and vehicle details (make, model, mileage, plate or VIN).",
+              "type": "content",
+              "label": "Have these handy if you can:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "intro_ask",
+              "text": "If a question isn\u2019t clear, skip it and call us at (248) 417-9800. We\u2019d much rather answer a question than fix an answer later.",
+              "type": "content",
+              "label": "Don\u2019t guess."
+            }
+          ]
+        }
+      ],
+      "title": "Before you start",
+      "chapter": "Getting started"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q1_name_first_name",
+              "type": "text",
+              "label": "First Name"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q1_name_last_name",
+              "type": "text",
+              "label": "Last Name"
+            }
+          ]
+        }
+      ],
+      "title": "Name",
+      "chapter": "You & your household"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q112_hadothername",
+              "type": "radio",
+              "label": "Have you ever been known by any other names (eg. maiden name)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q113_othernames",
+              "type": "text",
+              "label": "What other names have you been known by?",
+              "sublabel": "Please list all of your previous names."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q112_hadothername",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q208_emergencyContact208_first_name",
+              "type": "text",
+              "label": "First Name"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q208_emergencyContact208_last_name",
+              "type": "text",
+              "label": "Last Name"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "mask": "phone",
+              "name": "q208_emergencyContact208_phone_number",
+              "type": "text",
+              "label": "Phone Number"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q208_emergencyContact208_email_address",
+              "type": "text",
+              "email": true,
+              "label": "email Address"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q208_emergencyContact208_relationship",
+              "type": "text",
+              "label": "Relationship"
+            }
+          ]
+        }
+      ],
+      "title": "Please provide an Emergency Contact",
+      "subtitle": "Someone who we can contact if we cannot get in touch with you."
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q103_maritalstatus",
+              "type": "radio",
+              "label": "What is your marital status?",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Single",
+                  "value": "Single"
+                },
+                {
+                  "label": "Married",
+                  "value": "Married"
+                },
+                {
+                  "label": "Separated",
+                  "value": "Separated"
+                },
+                {
+                  "label": "Divorced",
+                  "value": "Divorced"
+                },
+                {
+                  "label": "Widowed",
+                  "value": "Widowed"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q278_howLong",
+              "type": "text",
+              "label": "How long have you been separated?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q103_maritalstatus",
+        "value": "Separated"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q279_howLong279",
+              "type": "text",
+              "label": "How long have you been widowed?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q103_maritalstatus",
+        "value": "Widowed"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q281_areYou281",
+              "type": "radio",
+              "label": "Are you expecting any type of inheritance that you have not already received?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q103_maritalstatus",
+        "value": "Widowed"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q245_whatIs245",
+              "type": "text",
+              "label": "What is your spouse's name?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q103_maritalstatus",
+        "value": "Married"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "mask": "phone",
+              "name": "q246_whatIs246",
+              "type": "text",
+              "label": "What is your spouse's cell phone number?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q103_maritalstatus",
+        "value": "Married"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q102_divorceyear",
+              "type": "text",
+              "label": "What year was your divorce finalized?",
+              "sublabel": "If you're not sure, please provide the approximate year."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q103_maritalstatus",
+        "value": "Divorced"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q266_wereYou",
+              "type": "radio",
+              "label": "Were you ever in the military?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q267_areYou267",
+              "type": "radio",
+              "label": "Are you a disabled veteran?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q266_wereYou",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q268_areYou268",
+              "type": "radio",
+              "label": "Are you a reservist or member of the National Guard?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q266_wereYou",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q270_pleaseSelect",
+              "type": "radio",
+              "label": "Please select your active duty status:",
+              "options": [
+                {
+                  "label": "Never called to duty or performed a homeland defense activity",
+                  "value": "Never called to duty or performed a homeland defense activity"
+                },
+                {
+                  "label": "Call to duty after September 11, 2001 for at least 90 days",
+                  "value": "Call to duty after September 11 / 2001 for at least 90 days"
+                },
+                {
+                  "label": "Performed a homeland defense activity for at least 90 days",
+                  "value": "Performed a homeland defense activity for at least 90 days"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q266_wereYou",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q272_areYou272",
+              "type": "radio",
+              "label": "Are you currently on active duty?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q266_wereYou",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q274_whenWere",
+              "type": "date",
+              "label": "When were you released from active duty?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q266_wereYou",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q38_dependents",
+              "type": "radio",
+              "label": "Do you have any dependents?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q39_dependnum",
+              "type": "text",
+              "label": "How many dependents do you have?",
+              "placeholder": "Number of dependants who live with you and are claimed on your tax return"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q38_dependents",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q40_dependage",
+              "type": "text",
+              "label": "What are the ages of your dependents?",
+              "placeholder": "example:  10, 7, 5, 3"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q38_dependents",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q108_houshold",
+              "type": "number",
+              "label": "How many people live in your household?",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q114_Qamybusiness",
+              "type": "radio",
+              "label": "In the past four years have you owned any type of business?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q115_namebusiness",
+              "type": "text",
+              "label": "What is the name of the business(es)?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q114_Qamybusiness",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q176_havealimony",
+              "type": "radio",
+              "label": "Do you have any alimony or child support obligations?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q277_whatIs277_name",
+              "type": "text",
+              "label": "Name"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q277_whatIs277_address",
+              "type": "text",
+              "label": "Address"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q277_whatIs277_city",
+              "type": "text",
+              "label": "City"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q277_whatIs277_state_province",
+              "type": "text",
+              "label": "State / Province"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q277_whatIs277_postal_zip_code",
+              "type": "text",
+              "label": "Postal / Zip Code"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q277_whatIs277_country",
+              "type": "select",
+              "label": "Country",
+              "options": [
+                "Afghanistan",
+                "Albania",
+                "Algeria",
+                "American Samoa",
+                "Andorra",
+                "Angola",
+                "Anguilla",
+                "Antigua and Barbuda",
+                "Argentina",
+                "Armenia",
+                "Aruba",
+                "Australia",
+                "Austria",
+                "Azerbaijan",
+                "The Bahamas",
+                "Bahrain",
+                "Bangladesh",
+                "Barbados",
+                "Belarus",
+                "Belgium",
+                "Belize",
+                "Benin",
+                "Bermuda",
+                "Bhutan",
+                "Bolivia",
+                "Bosnia and Herzegovina",
+                "Botswana",
+                "Brazil",
+                "Brunei",
+                "Bulgaria",
+                "Burkina Faso",
+                "Burundi",
+                "Cambodia",
+                "Cameroon",
+                "Canada",
+                "Cape Verde",
+                "Cayman Islands",
+                "Central African Republic",
+                "Chad",
+                "Chile",
+                "China",
+                "Christmas Island",
+                "Cocos (Keeling) Islands",
+                "Colombia",
+                "Comoros",
+                "Congo",
+                "Cook Islands",
+                "Costa Rica",
+                "Cote d'Ivoire",
+                "Croatia",
+                "Cuba",
+                "Cura\u00e7ao",
+                "Cyprus",
+                "Czech Republic",
+                "Democratic Republic of the Congo",
+                "Denmark",
+                "Djibouti",
+                "Dominica",
+                "Dominican Republic",
+                "Ecuador",
+                "Egypt",
+                "El Salvador",
+                "Equatorial Guinea",
+                "Eritrea",
+                "Estonia",
+                "Ethiopia",
+                "Falkland Islands",
+                "Faroe Islands",
+                "Fiji",
+                "Finland",
+                "France",
+                "French Polynesia",
+                "Gabon",
+                "The Gambia",
+                "Georgia",
+                "Germany",
+                "Ghana",
+                "Gibraltar",
+                "Greece",
+                "Greenland",
+                "Grenada",
+                "Guadeloupe",
+                "Guam",
+                "Guatemala",
+                "Guernsey",
+                "Guinea",
+                "Guinea-Bissau",
+                "Guyana",
+                "Haiti",
+                "Honduras",
+                "Hong Kong",
+                "Hungary",
+                "Iceland",
+                "India",
+                "Indonesia",
+                "Iran",
+                "Iraq",
+                "Ireland",
+                "Israel",
+                "Italy",
+                "Jamaica",
+                "Japan",
+                "Jersey",
+                "Jordan",
+                "Kazakhstan",
+                "Kenya",
+                "Kiribati",
+                "North Korea",
+                "South Korea",
+                "Kosovo",
+                "Kuwait",
+                "Kyrgyzstan",
+                "Laos",
+                "Latvia",
+                "Lebanon",
+                "Lesotho",
+                "Liberia",
+                "Libya",
+                "Liechtenstein",
+                "Lithuania",
+                "Luxembourg",
+                "Macau",
+                "Macedonia",
+                "Madagascar",
+                "Malawi",
+                "Malaysia",
+                "Maldives",
+                "Mali",
+                "Malta",
+                "Marshall Islands",
+                "Martinique",
+                "Mauritania",
+                "Mauritius",
+                "Mayotte",
+                "Mexico",
+                "Micronesia",
+                "Moldova",
+                "Monaco",
+                "Mongolia",
+                "Montenegro",
+                "Montserrat",
+                "Morocco",
+                "Mozambique",
+                "Myanmar",
+                "Nagorno-Karabakh",
+                "Namibia",
+                "Nauru",
+                "Nepal",
+                "Netherlands",
+                "Netherlands Antilles",
+                "New Caledonia",
+                "New Zealand",
+                "Nicaragua",
+                "Niger",
+                "Nigeria",
+                "Niue",
+                "Norfolk Island",
+                "Turkish Republic of Northern Cyprus",
+                "Northern Mariana",
+                "Norway",
+                "Oman",
+                "Pakistan",
+                "Palau",
+                "Palestine",
+                "Panama",
+                "Papua New Guinea",
+                "Paraguay",
+                "Peru",
+                "Philippines",
+                "Pitcairn Islands",
+                "Poland",
+                "Portugal",
+                "Puerto Rico",
+                "Qatar",
+                "Republic of the Congo",
+                "Romania",
+                "Russia",
+                "Rwanda",
+                "Saint Barthelemy",
+                "Saint Helena",
+                "Saint Kitts and Nevis",
+                "Saint Lucia",
+                "Saint Martin",
+                "Saint Pierre and Miquelon",
+                "Saint Vincent and the Grenadines",
+                "Samoa",
+                "San Marino",
+                "Sao Tome and Principe",
+                "Saudi Arabia",
+                "Senegal",
+                "Serbia",
+                "Seychelles",
+                "Sierra Leone",
+                "Singapore",
+                "Slovakia",
+                "Slovenia",
+                "Solomon Islands",
+                "Somalia",
+                "Somaliland",
+                "South Africa",
+                "South Ossetia",
+                "South Sudan",
+                "Spain",
+                "Sri Lanka",
+                "Sudan",
+                "Suriname",
+                "Svalbard",
+                "eSwatini",
+                "Sweden",
+                "Switzerland",
+                "Syria",
+                "Taiwan",
+                "Tajikistan",
+                "Tanzania",
+                "Thailand",
+                "Timor-Leste",
+                "Togo",
+                "Tokelau",
+                "Tonga",
+                "Transnistria Pridnestrovie",
+                "Trinidad and Tobago",
+                "Tristan da Cunha",
+                "Tunisia",
+                "Turkey",
+                "Turkmenistan",
+                "Turks and Caicos Islands",
+                "Tuvalu",
+                "Uganda",
+                "Ukraine",
+                "United Arab Emirates",
+                "United Kingdom",
+                "United States",
+                "Uruguay",
+                "Uzbekistan",
+                "Vanuatu",
+                "Vatican City",
+                "Venezuela",
+                "Vietnam",
+                "British Virgin Islands",
+                "Isle of Man",
+                "US Virgin Islands",
+                "Wallis and Futuna",
+                "Western Sahara",
+                "Yemen",
+                "Zambia",
+                "Zimbabwe",
+                "other"
+              ]
+            }
+          ]
+        }
+      ],
+      "title": "What is the name and complete address of the person / people to whom you pay alimony or child support?",
+      "showWhen": {
+        "op": "eq",
+        "field": "q176_havealimony",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q98_housing",
+              "type": "radio",
+              "label": "Do you own your home, are you renting, or do you live with family members?",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Own",
+                  "value": "Own"
+                },
+                {
+                  "label": "Renting",
+                  "value": "Renting"
+                },
+                {
+                  "label": "Live With Family Members",
+                  "value": "Live With Family Members"
+                },
+                {
+                  "label": "None of the Above",
+                  "value": "None of the Above"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "chapter": "Your home"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q218_address218_name",
+              "type": "text",
+              "label": "Name"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q218_address218_address",
+              "type": "text",
+              "label": "Address"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q218_address218_city",
+              "type": "text",
+              "label": "City"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q218_address218_state",
+              "type": "select",
+              "label": "State",
+              "options": [
+                "Alabama",
+                "Alaska",
+                "Arizona",
+                "Arkansas",
+                "California",
+                "Colorado",
+                "Connecticut",
+                "Delaware",
+                "District of Columbia",
+                "Florida",
+                "Georgia",
+                "Hawaii",
+                "Idaho",
+                "Illinois",
+                "Indiana",
+                "Iowa",
+                "Kansas",
+                "Kentucky",
+                "Louisiana",
+                "Maine",
+                "Maryland",
+                "Massachusetts",
+                "Michigan",
+                "Minnesota",
+                "Mississippi",
+                "Missouri",
+                "Montana",
+                "Nebraska",
+                "Nevada",
+                "New Hampshire",
+                "New Jersey",
+                "New Mexico",
+                "New York",
+                "North Carolina",
+                "North Dakota",
+                "Ohio",
+                "Oklahoma",
+                "Oregon",
+                "Pennsylvania",
+                "Rhode Island",
+                "South Carolina",
+                "South Dakota",
+                "Tennessee",
+                "Texas",
+                "Utah",
+                "Vermont",
+                "Virginia",
+                "Washington",
+                "West Virginia",
+                "Wisconsin",
+                "Wyoming"
+              ]
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q218_address218_zip_code",
+              "type": "text",
+              "label": "Zip Code"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q218_address218_country",
+              "type": "select",
+              "label": "Country",
+              "options": [
+                "Afghanistan",
+                "Albania",
+                "Algeria",
+                "American Samoa",
+                "Andorra",
+                "Angola",
+                "Anguilla",
+                "Antigua and Barbuda",
+                "Argentina",
+                "Armenia",
+                "Aruba",
+                "Australia",
+                "Austria",
+                "Azerbaijan",
+                "The Bahamas",
+                "Bahrain",
+                "Bangladesh",
+                "Barbados",
+                "Belarus",
+                "Belgium",
+                "Belize",
+                "Benin",
+                "Bermuda",
+                "Bhutan",
+                "Bolivia",
+                "Bosnia and Herzegovina",
+                "Botswana",
+                "Brazil",
+                "Brunei",
+                "Bulgaria",
+                "Burkina Faso",
+                "Burundi",
+                "Cambodia",
+                "Cameroon",
+                "Canada",
+                "Cape Verde",
+                "Cayman Islands",
+                "Central African Republic",
+                "Chad",
+                "Chile",
+                "China",
+                "Christmas Island",
+                "Cocos (Keeling) Islands",
+                "Colombia",
+                "Comoros",
+                "Congo",
+                "Cook Islands",
+                "Costa Rica",
+                "Cote d'Ivoire",
+                "Croatia",
+                "Cuba",
+                "Cura\u00e7ao",
+                "Cyprus",
+                "Czech Republic",
+                "Democratic Republic of the Congo",
+                "Denmark",
+                "Djibouti",
+                "Dominica",
+                "Dominican Republic",
+                "Ecuador",
+                "Egypt",
+                "El Salvador",
+                "Equatorial Guinea",
+                "Eritrea",
+                "Estonia",
+                "Ethiopia",
+                "Falkland Islands",
+                "Faroe Islands",
+                "Fiji",
+                "Finland",
+                "France",
+                "French Polynesia",
+                "Gabon",
+                "The Gambia",
+                "Georgia",
+                "Germany",
+                "Ghana",
+                "Gibraltar",
+                "Greece",
+                "Greenland",
+                "Grenada",
+                "Guadeloupe",
+                "Guam",
+                "Guatemala",
+                "Guernsey",
+                "Guinea",
+                "Guinea-Bissau",
+                "Guyana",
+                "Haiti",
+                "Honduras",
+                "Hong Kong",
+                "Hungary",
+                "Iceland",
+                "India",
+                "Indonesia",
+                "Iran",
+                "Iraq",
+                "Ireland",
+                "Israel",
+                "Italy",
+                "Jamaica",
+                "Japan",
+                "Jersey",
+                "Jordan",
+                "Kazakhstan",
+                "Kenya",
+                "Kiribati",
+                "North Korea",
+                "South Korea",
+                "Kosovo",
+                "Kuwait",
+                "Kyrgyzstan",
+                "Laos",
+                "Latvia",
+                "Lebanon",
+                "Lesotho",
+                "Liberia",
+                "Libya",
+                "Liechtenstein",
+                "Lithuania",
+                "Luxembourg",
+                "Macau",
+                "Macedonia",
+                "Madagascar",
+                "Malawi",
+                "Malaysia",
+                "Maldives",
+                "Mali",
+                "Malta",
+                "Marshall Islands",
+                "Martinique",
+                "Mauritania",
+                "Mauritius",
+                "Mayotte",
+                "Mexico",
+                "Micronesia",
+                "Moldova",
+                "Monaco",
+                "Mongolia",
+                "Montenegro",
+                "Montserrat",
+                "Morocco",
+                "Mozambique",
+                "Myanmar",
+                "Nagorno-Karabakh",
+                "Namibia",
+                "Nauru",
+                "Nepal",
+                "Netherlands",
+                "Netherlands Antilles",
+                "New Caledonia",
+                "New Zealand",
+                "Nicaragua",
+                "Niger",
+                "Nigeria",
+                "Niue",
+                "Norfolk Island",
+                "Turkish Republic of Northern Cyprus",
+                "Northern Mariana",
+                "Norway",
+                "Oman",
+                "Pakistan",
+                "Palau",
+                "Palestine",
+                "Panama",
+                "Papua New Guinea",
+                "Paraguay",
+                "Peru",
+                "Philippines",
+                "Pitcairn Islands",
+                "Poland",
+                "Portugal",
+                "Puerto Rico",
+                "Qatar",
+                "Republic of the Congo",
+                "Romania",
+                "Russia",
+                "Rwanda",
+                "Saint Barthelemy",
+                "Saint Helena",
+                "Saint Kitts and Nevis",
+                "Saint Lucia",
+                "Saint Martin",
+                "Saint Pierre and Miquelon",
+                "Saint Vincent and the Grenadines",
+                "Samoa",
+                "San Marino",
+                "Sao Tome and Principe",
+                "Saudi Arabia",
+                "Senegal",
+                "Serbia",
+                "Seychelles",
+                "Sierra Leone",
+                "Singapore",
+                "Slovakia",
+                "Slovenia",
+                "Solomon Islands",
+                "Somalia",
+                "Somaliland",
+                "South Africa",
+                "South Ossetia",
+                "South Sudan",
+                "Spain",
+                "Sri Lanka",
+                "Sudan",
+                "Suriname",
+                "Svalbard",
+                "eSwatini",
+                "Sweden",
+                "Switzerland",
+                "Syria",
+                "Taiwan",
+                "Tajikistan",
+                "Tanzania",
+                "Thailand",
+                "Timor-Leste",
+                "Togo",
+                "Tokelau",
+                "Tonga",
+                "Transnistria Pridnestrovie",
+                "Trinidad and Tobago",
+                "Tristan da Cunha",
+                "Tunisia",
+                "Turkey",
+                "Turkmenistan",
+                "Turks and Caicos Islands",
+                "Tuvalu",
+                "Uganda",
+                "Ukraine",
+                "United Arab Emirates",
+                "United Kingdom",
+                "United States",
+                "Uruguay",
+                "Uzbekistan",
+                "Vanuatu",
+                "Vatican City",
+                "Venezuela",
+                "Vietnam",
+                "British Virgin Islands",
+                "Isle of Man",
+                "US Virgin Islands",
+                "Wallis and Futuna",
+                "Western Sahara",
+                "Yemen",
+                "Zambia",
+                "Zimbabwe",
+                "other"
+              ]
+            }
+          ]
+        }
+      ],
+      "title": "You indicated that you are renting your home. What is the name and complete address of your landlord?",
+      "showWhen": {
+        "op": "eq",
+        "field": "q98_housing",
+        "value": "Renting"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q248_howMuch",
+              "type": "number",
+              "label": "How much is your monthly rent?",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q98_housing",
+        "value": "Renting"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q125_gavesecuritydep",
+              "type": "radio",
+              "label": "Did you give your landlord a security deposit?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q98_housing",
+        "value": "Renting"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q127_securitydep",
+              "type": "text",
+              "label": "How much was your security deposit (which may also include \"last month's rent\")?"
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Renting"
+        },
+        {
+          "op": "neq",
+          "field": "q125_gavesecuritydep",
+          "value": "NO"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q70_Qowemortgage",
+              "type": "radio",
+              "label": "Do you owe money for a mortgage on your house or real property?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q98_housing",
+        "value": "Own"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q249_howMuch249",
+              "type": "number",
+              "label": "How much is your monthly mortgage payment?",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q70_Qowemortgage",
+          "value": "YES"
+        },
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Own"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q177_amountowemortgage",
+              "type": "text",
+              "label": "Approximately how much money do you owe altogether on your mortgage (NOT per month)?",
+              "sublabel": "If you're not sure you can say \"UNKNOWN\""
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q70_Qowemortgage",
+          "value": "YES"
+        },
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Own"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q250_whatIs250",
+              "type": "text",
+              "label": "What is the name of your mortgage company?"
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q70_Qowemortgage",
+          "value": "YES"
+        },
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Own"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q251_doYou251",
+              "type": "radio",
+              "label": "Do you have a 2nd mortgage or HELOC (home equity loan)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q70_Qowemortgage",
+          "value": "YES"
+        },
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Own"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q252_whatIs252",
+              "type": "text",
+              "label": "What is the name of the mortgage company for your 2nd mortgage or HELOC?"
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q251_doYou251",
+          "value": "YES"
+        },
+        {
+          "op": "neq",
+          "field": "q70_Qowemortgage",
+          "value": "NO"
+        },
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Own"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q253_howMuch253",
+              "type": "number",
+              "label": "How much is your MONTHLY payment for your 2nd mortgage or HELOC?",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q251_doYou251",
+          "value": "YES"
+        },
+        {
+          "op": "neq",
+          "field": "q70_Qowemortgage",
+          "value": "NO"
+        },
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Own"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q254_number254",
+              "type": "number",
+              "label": "Approximately how much do you owe in TOTAL for your 2nd mortgage or HELOC?",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ],
+      "showWhen": [
+        {
+          "op": "eq",
+          "field": "q251_doYou251",
+          "value": "YES"
+        },
+        {
+          "op": "neq",
+          "field": "q70_Qowemortgage",
+          "value": "NO"
+        },
+        {
+          "op": "eq",
+          "field": "q98_housing",
+          "value": "Own"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q187_otherproperty",
+              "type": "checkgroup",
+              "label": "Do you own any other real property? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "House",
+                  "value": "House"
+                },
+                {
+                  "label": "Commercial building",
+                  "value": "Commercial building"
+                },
+                {
+                  "label": "Vacant Land",
+                  "value": "Vacant Land"
+                },
+                {
+                  "label": "Time share",
+                  "value": "Time share"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q72_CarOwn",
+              "type": "radio",
+              "label": "Do you currently own one or more vehicles (including financed vehicles but not including leased vehicles)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "chapter": "Vehicles"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q223_howMany223",
+              "type": "select",
+              "label": "How many vehicles do you own (including financed vehicles)?",
+              "options": [
+                {
+                  "label": "1",
+                  "value": "1"
+                },
+                {
+                  "label": "2",
+                  "value": "2"
+                },
+                {
+                  "label": "3",
+                  "value": "3"
+                },
+                {
+                  "label": "4 or more",
+                  "value": "4 or more"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q72_CarOwn",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_make_model_of_vehicle",
+              "type": "text",
+              "label": "Make / model of vehicle:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_license_plate_or_vin",
+              "type": "text",
+              "label": "License Plate or VIN:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_approximate_mileage",
+              "type": "text",
+              "label": "Approximate Mileage:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_color",
+              "type": "text",
+              "label": "Color:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_do_you_have_2_or_more_keys_or_keyless",
+              "type": "text",
+              "label": "Do you have 2 or more keys or keyless remotes for your vehicle?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_are_there_any_modifications_to_your",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Are there any modifications to your vehicle (such as custom wheels or tires, suspension kit, upgraded stereo, performance modifications and/or upgraded exhaust system)?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_please_describe_any_damage_to_or",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Please describe any damage to or problems with the vehicle (eg. body damage, vehicle does not operate, engine problem, transmission problem, etc.)"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_how_much_do_you_owe_on_the_vehicle",
+              "type": "text",
+              "label": "How much do you owe on the vehicle?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q222_typeA_who_is_the_finance_company",
+              "type": "text",
+              "label": "Who is the finance company?"
+            }
+          ]
+        }
+      ],
+      "title": "For your 1st Vehicle please indicate:",
+      "showWhen": {
+        "op": "in",
+        "field": "q223_howMany223",
+        "value": [
+          "4 or more",
+          "3",
+          "2",
+          "1"
+        ]
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_what_is_the_make_model_of_the",
+              "type": "text",
+              "label": "What is the make / model of the vehicle?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_what_is_the_license_plate_number_or",
+              "type": "text",
+              "label": "What is the license plate number or VIN?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_what_is_the_approximate_mileage_on",
+              "type": "number",
+              "label": "What is the approximate mileage on the vehicle?",
+              "placeholder": "XXX,000"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_do_you_have_2_or_more_keys_or",
+              "type": "select",
+              "label": "Do you have 2 or more keys or remotes?",
+              "options": [
+                {
+                  "label": "YES",
+                  "value": "YES"
+                },
+                {
+                  "label": "NO",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_what_color_is_the_vehicle",
+              "type": "text",
+              "label": "What color is the vehicle?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_are_there_any_modifications_to_the",
+              "note": "source dropdown has NO options \u2014 degraded to text; session B: restore the intended choice list",
+              "type": "select",
+              "label": "Are there any modifications to the vehicle?",
+              "options": [
+                {
+                  "label": "YES",
+                  "value": "YES"
+                },
+                {
+                  "label": "NO",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_any_major_problems_with_or_damage",
+              "type": "select",
+              "label": "Any major problems with or damage to the vehicle?",
+              "options": [
+                {
+                  "label": "YES",
+                  "value": "YES"
+                },
+                {
+                  "label": "NO",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q229_typeA229_do_you_owe_any_money_for_the_vehicle",
+              "type": "select",
+              "label": "Do you owe any money for the vehicle?",
+              "options": [
+                {
+                  "label": "YES",
+                  "value": "YES"
+                },
+                {
+                  "label": "NO",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "title": "Please provide the following information for your 1st vehicle:",
+      "subtitle": "This will help us determine the value of the vehicle."
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q231_whatModifications",
+              "type": "checkgroup",
+              "label": "What modifications are there on Vehicle #1?",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Custom tires or wheels",
+                  "value": "Custom tires or wheels"
+                },
+                {
+                  "label": "Upgraded suspension",
+                  "value": "Upgraded suspension"
+                },
+                {
+                  "label": "Upgraded stereo",
+                  "value": "Upgraded stereo"
+                },
+                {
+                  "label": "Upgraded exhaust",
+                  "value": "Upgraded exhaust"
+                }
+              ],
+              "sublabel": "Please check all that apply",
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q224_vehicle2_make_model",
+              "type": "text",
+              "label": "Make / model:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q224_vehicle2_license_plate_or_vin",
+              "type": "text",
+              "label": "License Plate or VIN:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q224_vehicle2_approximate_mileage",
+              "type": "text",
+              "label": "Approximate Mileage:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q224_vehicle2_color",
+              "type": "text",
+              "label": "Color:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q224_vehicle2_do_you_have_2_or_more_keys_or",
+              "type": "text",
+              "label": "Do you have 2 or more keys or keyless remotes for your vehicle?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q224_vehicle2_are_there_any_modifications_to_your",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Are there any modifications to your vehicle (such as custom wheels or tires, suspension kit, upgraded stereo, performance modifications and/or upgraded exhaust system)?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q224_vehicle2_please_describe_any_damage_to_or",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Please describe any damage to or problems with the vehicle (eg. body damage, vehicle does not operate, engine problem, transmission problem, etc.)"
+            }
+          ]
+        }
+      ],
+      "title": "Vehicle #2",
+      "showWhen": {
+        "op": "in",
+        "field": "q223_howMany223",
+        "value": [
+          "4 or more",
+          "3",
+          "2"
+        ]
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q225_vehicle3_make_model",
+              "type": "text",
+              "label": "Make / model:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q225_vehicle3_license_plate_or_vin",
+              "type": "text",
+              "label": "License Plate or VIN:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q225_vehicle3_approximate_mileage",
+              "type": "text",
+              "label": "Approximate Mileage:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q225_vehicle3_color",
+              "type": "text",
+              "label": "Color:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q225_vehicle3_do_you_have_2_or_more_keys_or",
+              "type": "text",
+              "label": "Do you have 2 or more keys or keyless remotes for your vehicle?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q225_vehicle3_are_there_any_modifications_to_your",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Are there any modifications to your vehicle (such as custom wheels or tires, suspension kit, upgraded stereo, performance modifications and/or upgraded exhaust system)?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q225_vehicle3_please_describe_any_damage_to_or",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Please describe any damage to or problems with the vehicle (eg. body damage, vehicle does not operate, engine problem, transmission problem, etc.)"
+            }
+          ]
+        }
+      ],
+      "title": "Vehicle #3",
+      "showWhen": {
+        "op": "in",
+        "field": "q223_howMany223",
+        "value": [
+          "4 or more",
+          "3"
+        ]
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q226_vehicle4_make_model",
+              "type": "text",
+              "label": "Make / model:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q226_vehicle4_license_plate_or_vin",
+              "type": "text",
+              "label": "License Plate or VIN:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q226_vehicle4_approximate_mileage",
+              "type": "text",
+              "label": "Approximate Mileage:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q226_vehicle4_color",
+              "type": "text",
+              "label": "Color:"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q226_vehicle4_do_you_have_2_or_more_keys_or",
+              "type": "text",
+              "label": "Do you have 2 or more keys or keyless remotes for your vehicle?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q226_vehicle4_are_there_any_modifications_to_your",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Are there any modifications to your vehicle (such as custom wheels or tires, suspension kit, upgraded stereo, performance modifications and/or upgraded exhaust system)?"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q226_vehicle4_please_describe_any_damage_to_or",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Please describe any damage to or problems with the vehicle (eg. body damage, vehicle does not operate, engine problem, transmission problem, etc.)"
+            }
+          ]
+        }
+      ],
+      "title": "Vehicle #4",
+      "showWhen": {
+        "op": "eq",
+        "field": "q223_howMany223",
+        "value": "4 or more"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q59_CarValue",
+              "type": "number",
+              "label": "Approximately how much do you think your vehicle is worth?",
+              "sublabel": "Use your best estimate of how much you would sell it for",
+              "placeholder": "example: 10,000"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q26_CarOwe",
+              "type": "text",
+              "label": "Approximately how much do you owe on the vehicle?",
+              "placeholder": "example:  10,000"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q73_CarLease",
+              "type": "radio",
+              "label": "Are you currently leasing a vehicle?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q28_CarMonthly",
+              "type": "number",
+              "label": "How much is the monthly payment?",
+              "placeholder": "example:  400"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q73_CarLease",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q27_CarCurrent",
+              "type": "radio",
+              "label": "Are you current on your payments?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q73_CarLease",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q54_CarRepo",
+              "type": "radio",
+              "label": "Was your vehicle repossessed?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q27_CarCurrent",
+        "value": "NO"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q56_CarRepoPref",
+              "type": "radio",
+              "label": "Do you want your repossessed vehicle back or would you prefer to attempt to get a different vehicle?",
+              "options": [
+                {
+                  "label": "I would prefer to get my vehicle back.",
+                  "value": "I would prefer to get my vehicle back."
+                },
+                {
+                  "label": "I would prefer to try to get a different vehicle but, if I can't, then I would like to get my repossessed vehicle back.",
+                  "value": "I would prefer to try to get a different vehicle but / if I can't / then I would like to get my repossessed vehicle back."
+                },
+                {
+                  "label": "I don't care if I get my vehicle back as I don't need a vehicle right now.",
+                  "value": "I don't care if I get my vehicle back as I don't need a vehicle right now."
+                },
+                {
+                  "label": "I don't need to get my vehicle back, as I would prefer to get a different vehicle.",
+                  "value": "I don't need to get my vehicle back / as I would prefer to get a different vehicle."
+                }
+              ],
+              "sublabel": "Choose one."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q54_CarRepo",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q36_CarPref",
+              "type": "radio",
+              "label": "Do you want to keep your vehicle or would you prefer to replace it?",
+              "options": [
+                {
+                  "label": "I want to keep my vehicle no matter what.",
+                  "value": "I want to keep my vehicle no matter what."
+                },
+                {
+                  "label": "I want to keep my vehicle - but only if I can lower the monthly payment.",
+                  "value": "I want to keep my vehicle - but only if I can lower the monthly payment."
+                },
+                {
+                  "label": "I prefer to keep my current vehicle, but I would consider trying to find a different vehicle with a lower monthly payment.",
+                  "value": "I prefer to keep my current vehicle / but I would consider trying to find a different vehicle with a lower monthly payment."
+                },
+                {
+                  "label": "I would rather replace my vehicle if I can get a lower payment and save money, but I am willing to keep my current vehicle if I have no other choice.",
+                  "value": "I would rather replace my vehicle if I can get a lower payment and save money / but I am willing to keep my current vehicle if I have no other choice."
+                },
+                {
+                  "label": "I would like to return my vehicle no matter what.",
+                  "value": "I would like to return my vehicle no matter what."
+                }
+              ],
+              "sublabel": "Please choose the best option."
+            }
+          ]
+        }
+      ],
+      "showWhenAny": [
+        {
+          "op": "eq",
+          "field": "q73_CarLease",
+          "value": "YES"
+        },
+        {
+          "op": "eq",
+          "field": "q54_CarRepo",
+          "value": "YES"
+        },
+        {
+          "op": "notEmpty",
+          "field": "q26_CarOwe"
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q188_MajorAssets",
+              "type": "checkgroup",
+              "label": "Do you own any of the following? If so, please check all that apply.",
+              "options": [
+                {
+                  "label": "Motorcycle",
+                  "value": "Motorcycle"
+                },
+                {
+                  "label": "Truck",
+                  "value": "Truck"
+                },
+                {
+                  "label": "Trailer",
+                  "value": "Trailer"
+                },
+                {
+                  "label": "Camper",
+                  "value": "Camper"
+                },
+                {
+                  "label": "RV",
+                  "value": "RV"
+                },
+                {
+                  "label": "Boat",
+                  "value": "Boat"
+                },
+                {
+                  "label": "Jet ski",
+                  "value": "Jet ski"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "chapter": "Personal property"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q79_OwnKitchen",
+              "type": "checkgroup",
+              "label": "Do you own any of the following appliances / kitchen items? If so, please check all that apply.",
+              "options": [
+                {
+                  "label": "Pots, pans, dishes, silverware drinking glasses, towels, linens, etc.",
+                  "value": "Pots / pans / dishes / silverware drinking glasses / towels / linens / etc."
+                },
+                {
+                  "label": "China",
+                  "value": "China"
+                },
+                {
+                  "label": "Refrigerator / Freezer",
+                  "value": "Refrigerator / Freezer"
+                },
+                {
+                  "label": "Freestanding Freezer",
+                  "value": "Freestanding Freezer"
+                },
+                {
+                  "label": "Freestanding Kitchen Stove (not built-in)",
+                  "value": "Freestanding Kitchen Stove (not built-in)"
+                },
+                {
+                  "label": "Microwave (not built-in)",
+                  "value": "Microwave (not built-in)"
+                },
+                {
+                  "label": "Mixer",
+                  "value": "Mixer"
+                },
+                {
+                  "label": "Blender",
+                  "value": "Blender"
+                },
+                {
+                  "label": "Bread maker",
+                  "value": "Bread maker"
+                },
+                {
+                  "label": "Coffee maker",
+                  "value": "Coffee maker"
+                },
+                {
+                  "label": "Instapot",
+                  "value": "Instapot"
+                },
+                {
+                  "label": "Air fryer",
+                  "value": "Air fryer"
+                },
+                {
+                  "label": "Vacuum cleaner",
+                  "value": "Vacuum cleaner"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q80_OwnFurniture",
+              "type": "checkgroup",
+              "label": "Do you own any furniture? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Bed",
+                  "value": "Bed"
+                },
+                {
+                  "label": "Dresser",
+                  "value": "Dresser"
+                },
+                {
+                  "label": "Nightstand",
+                  "value": "Nightstand"
+                },
+                {
+                  "label": "Sofa",
+                  "value": "Sofa"
+                },
+                {
+                  "label": "Loveseat",
+                  "value": "Loveseat"
+                },
+                {
+                  "label": "End Tables",
+                  "value": "End Tables"
+                },
+                {
+                  "label": "Recliner chair",
+                  "value": "Recliner chair"
+                },
+                {
+                  "label": "Bookcase(s)",
+                  "value": "Bookcase(s)"
+                },
+                {
+                  "label": "TV stand",
+                  "value": "TV stand"
+                },
+                {
+                  "label": "Dining room table",
+                  "value": "Dining room table"
+                },
+                {
+                  "label": "Dining room chairs",
+                  "value": "Dining room chairs"
+                },
+                {
+                  "label": "Breakfront / china cabinet",
+                  "value": "Breakfront / china cabinet"
+                },
+                {
+                  "label": "Desk",
+                  "value": "Desk"
+                },
+                {
+                  "label": "Kitchen table",
+                  "value": "Kitchen table"
+                },
+                {
+                  "label": "Kitchen chairs",
+                  "value": "Kitchen chairs"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q87_OwnMedical",
+              "type": "radio",
+              "label": "Do you own any medical equipment (such as a wheelchair, walker, electric bed, hearing aids, etc.)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q81_OwnOutdoor",
+              "type": "checkgroup",
+              "label": "Do you own any outdoor equipment? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Lawnmower",
+                  "value": "Lawnmower"
+                },
+                {
+                  "label": "Snow Blower",
+                  "value": "Snow Blower"
+                },
+                {
+                  "label": "Leaf blower",
+                  "value": "Leaf blower"
+                },
+                {
+                  "label": "Edger",
+                  "value": "Edger"
+                },
+                {
+                  "label": "Hand tools (shovels, rakes, etc.)",
+                  "value": "Hand tools (shovels / rakes / etc.)"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "sublabel": "Please check all that apply",
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q75_Electronics",
+              "type": "checkgroup",
+              "label": "What electronics do you own? Please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Cell phone",
+                  "value": "Cell phone"
+                },
+                {
+                  "label": "Desktop computer",
+                  "value": "Desktop computer"
+                },
+                {
+                  "label": "Laptop Computer",
+                  "value": "Laptop Computer"
+                },
+                {
+                  "label": "iPad or Tablet",
+                  "value": "iPad or Tablet"
+                },
+                {
+                  "label": "Television(s)",
+                  "value": "Television(s)"
+                },
+                {
+                  "label": "Smart Watch",
+                  "value": "Smart Watch"
+                },
+                {
+                  "label": "Play Station",
+                  "value": "Play Station"
+                },
+                {
+                  "label": "Game Boy",
+                  "value": "Game Boy"
+                },
+                {
+                  "label": "Stereo",
+                  "value": "Stereo"
+                },
+                {
+                  "label": "Xbox",
+                  "value": "Xbox"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q291_whichType",
+              "type": "radio",
+              "label": "Which type of cell phone do you own?",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "iPhone 16",
+                  "value": "iPhone 16"
+                },
+                {
+                  "label": "iPhone 16 Plus",
+                  "value": "iPhone 16 Plus"
+                },
+                {
+                  "label": "iPhone 16 Pro",
+                  "value": "iPhone 16 Pro"
+                },
+                {
+                  "label": "iPhone 16 Pro Max",
+                  "value": "iPhone 16 Pro Max"
+                },
+                {
+                  "label": "iPhone 15",
+                  "value": "iPhone 15"
+                },
+                {
+                  "label": "iPhone 15 Plus",
+                  "value": "iPhone 15 Plus"
+                },
+                {
+                  "label": "iPhone 15 Pro",
+                  "value": "iPhone 15 Pro"
+                },
+                {
+                  "label": "iPhone 15 Pro Max",
+                  "value": "iPhone 15 Pro Max"
+                },
+                {
+                  "label": "iPhone 14",
+                  "value": "iPhone 14"
+                },
+                {
+                  "label": "iPhone 14 Plus",
+                  "value": "iPhone 14 Plus"
+                },
+                {
+                  "label": "iPhone 14 Pro",
+                  "value": "iPhone 14 Pro"
+                },
+                {
+                  "label": "iPhone 14 Pro Max",
+                  "value": "iPhone 14 Pro Max"
+                },
+                {
+                  "label": "iPhone 13",
+                  "value": "iPhone 13"
+                },
+                {
+                  "label": "iPhone 13 mini",
+                  "value": "iPhone 13 mini"
+                },
+                {
+                  "label": "iPhone 13 Pro",
+                  "value": "iPhone 13 Pro"
+                },
+                {
+                  "label": "iPhone 13 Pro Max",
+                  "value": "iPhone 13 Pro Max"
+                },
+                {
+                  "label": "iPhone SE",
+                  "value": "iPhone SE"
+                },
+                {
+                  "label": "iPhone 12",
+                  "value": "iPhone 12"
+                },
+                {
+                  "label": "iPhone 12 mini",
+                  "value": "iPhone 12 mini"
+                },
+                {
+                  "label": "iPhone 12 Pro",
+                  "value": "iPhone 12 Pro"
+                },
+                {
+                  "label": "iPhone 12 Pro Max",
+                  "value": "iPhone 12 Pro Max"
+                },
+                {
+                  "label": "iPhone (11 or earlier)",
+                  "value": "iPhone (11 or earlier)"
+                },
+                {
+                  "label": "Samsung Galaxy",
+                  "value": "Samsung Galaxy"
+                },
+                {
+                  "label": "Other",
+                  "value": "Other"
+                }
+              ],
+              "sublabel": "Please pick the choice that best describes your cell phone."
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q291_whichType_other",
+              "note": "JotForm radio \"other\" free-text input (q291_whichType[other])",
+              "type": "text",
+              "label": "Other \u2014 please specify",
+              "showWhen": {
+                "op": "eq",
+                "field": "q291_whichType",
+                "value": "Other"
+              }
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "includes",
+        "field": "q75_Electronics",
+        "value": "Cell phone"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q292_whichType292",
+              "type": "radio",
+              "label": "Which type of tablet do you own?",
+              "columns": 3,
+              "options": [
+                {
+                  "label": "iPad",
+                  "value": "iPad"
+                },
+                {
+                  "label": "Amazon",
+                  "value": "Amazon"
+                },
+                {
+                  "label": "Samsung",
+                  "value": "Samsung"
+                },
+                {
+                  "label": "Pixel",
+                  "value": "Pixel"
+                },
+                {
+                  "label": "Older tablet",
+                  "value": "Older tablet"
+                },
+                {
+                  "label": "Other",
+                  "value": "Other"
+                }
+              ],
+              "sublabel": "Please pick the choice that best describes your tablet."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "includes",
+        "field": "q75_Electronics",
+        "value": "iPad or Tablet"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q294_howMany",
+              "type": "radio",
+              "label": "How many TVs do you own?",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "1",
+                  "value": "1"
+                },
+                {
+                  "label": "2",
+                  "value": "2"
+                },
+                {
+                  "label": "3",
+                  "value": "3"
+                },
+                {
+                  "label": "4",
+                  "value": "4"
+                },
+                {
+                  "label": "5",
+                  "value": "5"
+                },
+                {
+                  "label": "6",
+                  "value": "6"
+                },
+                {
+                  "label": "7",
+                  "value": "7"
+                },
+                {
+                  "label": "8",
+                  "value": "8"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "includes",
+        "field": "q75_Electronics",
+        "value": "Television(s)"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q189_Collectibles",
+              "type": "checkgroup",
+              "label": "Do you own any collectibles of value? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Artwork",
+                  "value": "Artwork"
+                },
+                {
+                  "label": "Antiques",
+                  "value": "Antiques"
+                },
+                {
+                  "label": "Paintings",
+                  "value": "Paintings"
+                },
+                {
+                  "label": "Figurines",
+                  "value": "Figurines"
+                },
+                {
+                  "label": "Coin collection",
+                  "value": "Coin collection"
+                },
+                {
+                  "label": "Stamp collection",
+                  "value": "Stamp collection"
+                },
+                {
+                  "label": "Baseball or sports cards",
+                  "value": "Baseball or sports cards"
+                },
+                {
+                  "label": "Memorabilia",
+                  "value": "Memorabilia"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q200_OwnSport",
+              "type": "checkgroup",
+              "label": "Do you own any sports or hobby equipment? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Photographic equipment",
+                  "value": "Photographic equipment"
+                },
+                {
+                  "label": "Skis / Skiing equipment",
+                  "value": "Skis / Skiing equipment"
+                },
+                {
+                  "label": "Exercise equipment",
+                  "value": "Exercise equipment"
+                },
+                {
+                  "label": "Hockey equipment",
+                  "value": "Hockey equipment"
+                },
+                {
+                  "label": "Golf clubs / equipment",
+                  "value": "Golf clubs / equipment"
+                },
+                {
+                  "label": "Camping equipment",
+                  "value": "Camping equipment"
+                },
+                {
+                  "label": "Bicycle",
+                  "value": "Bicycle"
+                },
+                {
+                  "label": "Musical instrument(s)",
+                  "value": "Musical instrument(s)"
+                },
+                {
+                  "label": "Canoes / kayaks",
+                  "value": "Canoes / kayaks"
+                },
+                {
+                  "label": "Carpentry tools",
+                  "value": "Carpentry tools"
+                },
+                {
+                  "label": "Other",
+                  "value": "Other"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q77_FirearmOwn",
+              "type": "radio",
+              "label": "Do you own any firearms (such as pistols, rifles, shotguns, ammunition and related equipment)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q78_FirearmReg",
+              "type": "radio",
+              "label": "Are all of your firearms registered and/or licensed?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q77_FirearmOwn",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q233_pleaseDescribe233",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Please describe your firearms and list the approximate value."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q77_FirearmOwn",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q255_ifYou",
+              "type": "number",
+              "label": "If you sold all of your clothing at a garage sale (or pawn shop) how much do you think you would get?",
+              "sublabel": "Most people say between $100 and $1,000. Keep in mind that the pair of shoes you buy for $100 is only worth $2 or $3 at a garage sale.",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q213_doYou213",
+              "type": "radio",
+              "label": "Do you own any \"real\" (not costume) jewelry?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ],
+              "sublabel": "\"Real\" means expensive jewelry containing real gold, platinum and/or diamonds"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q214_pleaseDescribe",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Please describe your \"real\" jewelry and list the approximate value."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q213_doYou213",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q234_isYour234",
+              "type": "radio",
+              "label": "Is your \"real\" jewelry scheduled on your homeowner's or renter's insurance policy?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q213_doYou213",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q256_whatIs256",
+              "type": "number",
+              "label": "What is the approximately \"garage sale\" value of your real jewelry?",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q213_doYou213",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q82_OwnJewlery",
+              "type": "radio",
+              "label": "Do you own any costume jewelry?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q235_whatIs",
+              "type": "text",
+              "label": "What is the approximate \"garage sale\" value of your costume jewelry?"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q199_OwnPet",
+              "type": "checkgroup",
+              "label": "Do you own any pets? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Dog",
+                  "value": "Dog"
+                },
+                {
+                  "label": "Other",
+                  "value": "Other"
+                },
+                {
+                  "label": "Cat",
+                  "value": "Cat"
+                },
+                {
+                  "label": "Fish",
+                  "value": "Fish"
+                },
+                {
+                  "label": "Bird",
+                  "value": "Bird"
+                },
+                {
+                  "label": "I don't own any pets",
+                  "value": "I don't own any pets"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q86_OwnOther",
+              "type": "radio",
+              "label": "Do you own any other type of personal property that we did not ask about?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q179_OwnWhatOther",
+              "type": "text",
+              "label": "What other personal property do you own?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q86_OwnOther",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q88_Cash",
+              "type": "radio",
+              "label": "At the time that you filed bankruptcy did you have any cash on hand (eg. in your wallet, purse, under a mattress, in safe deposit box, etc.)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "chapter": "Cash, accounts & taxes"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q131_CashAmnt",
+              "type": "text",
+              "label": "How much did you have in cash at the time you filed bankruptcy?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q88_Cash",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q89_Banks",
+              "type": "checkgroup",
+              "label": "Do you now have (or within the past year have you had) accounts at any of the following banks? Please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Bank of America",
+                  "value": "Bank of America"
+                },
+                {
+                  "label": "Bank One",
+                  "value": "Bank One"
+                },
+                {
+                  "label": "Bestbank",
+                  "value": "Bestbank"
+                },
+                {
+                  "label": "Chase",
+                  "value": "Chase"
+                },
+                {
+                  "label": "Citizens",
+                  "value": "Citizens"
+                },
+                {
+                  "label": "Comerica",
+                  "value": "Comerica"
+                },
+                {
+                  "label": "Fifth Third",
+                  "value": "Fifth Third"
+                },
+                {
+                  "label": "Flagstar",
+                  "value": "Flagstar"
+                },
+                {
+                  "label": "Huntington",
+                  "value": "Huntington"
+                },
+                {
+                  "label": "Independent",
+                  "value": "Independent"
+                },
+                {
+                  "label": "Key Bank",
+                  "value": "Key Bank"
+                },
+                {
+                  "label": "National City",
+                  "value": "National City"
+                },
+                {
+                  "label": "PNC",
+                  "value": "PNC"
+                },
+                {
+                  "label": "TCF",
+                  "value": "TCF"
+                },
+                {
+                  "label": "USAA Bank",
+                  "value": "USAA Bank"
+                },
+                {
+                  "label": "Wells Fargo",
+                  "value": "Wells Fargo"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q90_CreditUnions",
+              "type": "checkgroup",
+              "label": "Do you now have (or within the past year have you had) accounts at any of the following Credit Unions? Please check all that apply.",
+              "options": [
+                {
+                  "label": "Alliance Catholic CU",
+                  "value": "Alliance Catholic CU"
+                },
+                {
+                  "label": "America One CU",
+                  "value": "America One CU"
+                },
+                {
+                  "label": "Christian Financial CU",
+                  "value": "Christian Financial CU"
+                },
+                {
+                  "label": "Community Choice CU",
+                  "value": "Community Choice CU"
+                },
+                {
+                  "label": "Credit Union One",
+                  "value": "Credit Union One"
+                },
+                {
+                  "label": "DFCU - Dearborn Federal CU",
+                  "value": "DFCU - Dearborn Federal CU"
+                },
+                {
+                  "label": "Freestar CU",
+                  "value": "Freestar CU"
+                },
+                {
+                  "label": "Genesis CU",
+                  "value": "Genesis CU"
+                },
+                {
+                  "label": "Michigan First CU",
+                  "value": "Michigan First CU"
+                },
+                {
+                  "label": "Navy Federal CU",
+                  "value": "Navy Federal CU"
+                },
+                {
+                  "label": "One Detroit CU",
+                  "value": "One Detroit CU"
+                },
+                {
+                  "label": "Parkside CU",
+                  "value": "Parkside CU"
+                },
+                {
+                  "label": "Pen Federal CU",
+                  "value": "Pen Federal CU"
+                },
+                {
+                  "label": "People\u2019s Driven CU",
+                  "value": "People\u2019s Driven CU"
+                },
+                {
+                  "label": "Pubilc Service CU",
+                  "value": "Pubilc Service CU"
+                },
+                {
+                  "label": "Teamster\u2019s CU",
+                  "value": "Teamster\u2019s CU"
+                },
+                {
+                  "label": "True Community CU",
+                  "value": "True Community CU"
+                },
+                {
+                  "label": "Zeal CU",
+                  "value": "Zeal CU"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                },
+                {
+                  "label": "Other credit union",
+                  "value": "Other credit union"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q238_doYou",
+              "type": "checkgroup",
+              "label": "Do you now have (or within the past year have you had) any of the following online financial accounts? Please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Cash App",
+                  "value": "Cash App"
+                },
+                {
+                  "label": "Chime",
+                  "value": "Chime"
+                },
+                {
+                  "label": "Netspend",
+                  "value": "Netspend"
+                },
+                {
+                  "label": "Paypal",
+                  "value": "Paypal"
+                },
+                {
+                  "label": "VenMo",
+                  "value": "VenMo"
+                },
+                {
+                  "label": "Acorns",
+                  "value": "Acorns"
+                },
+                {
+                  "label": "Albert",
+                  "value": "Albert"
+                },
+                {
+                  "label": "Apple Pay Checking",
+                  "value": "Apple Pay Checking"
+                },
+                {
+                  "label": "Bluebird",
+                  "value": "Bluebird"
+                },
+                {
+                  "label": "Coinbase",
+                  "value": "Coinbase"
+                },
+                {
+                  "label": "Credit Karma",
+                  "value": "Credit Karma"
+                },
+                {
+                  "label": "Direct Express",
+                  "value": "Direct Express"
+                },
+                {
+                  "label": "Door Dash",
+                  "value": "Door Dash"
+                },
+                {
+                  "label": "Etrade",
+                  "value": "Etrade"
+                },
+                {
+                  "label": "Found Business Banking",
+                  "value": "Found Business Banking"
+                },
+                {
+                  "label": "Green Dot",
+                  "value": "Green Dot"
+                },
+                {
+                  "label": "Go2Bank (Rush)",
+                  "value": "Go2Bank (Rush)"
+                },
+                {
+                  "label": "Greenlight",
+                  "value": "Greenlight"
+                },
+                {
+                  "label": "Krypto Currency",
+                  "value": "Krypto Currency"
+                },
+                {
+                  "label": "MetaBank / Pathward Financial",
+                  "value": "MetaBank / Pathward Financial"
+                },
+                {
+                  "label": "Movo",
+                  "value": "Movo"
+                },
+                {
+                  "label": "Robin",
+                  "value": "Robin"
+                },
+                {
+                  "label": "Varo Bank",
+                  "value": "Varo Bank"
+                },
+                {
+                  "label": "Way2Go",
+                  "value": "Way2Go"
+                },
+                {
+                  "label": "Wisely Cash Card",
+                  "value": "Wisely Cash Card"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q95_OtherAccounts",
+              "type": "checkgroup",
+              "label": "Within the past two years have you owned any of the following types of accounts? Please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Brokerage Account",
+                  "value": "Brokerage Account"
+                },
+                {
+                  "label": "Certificate of Deposit",
+                  "value": "Certificate of Deposit"
+                },
+                {
+                  "label": "Money Market Account",
+                  "value": "Money Market Account"
+                },
+                {
+                  "label": "Health Savings Account (HSA)",
+                  "value": "Health Savings Account (HSA)"
+                },
+                {
+                  "label": "Safe Deposit Box",
+                  "value": "Safe Deposit Box"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q257_ltstronggtwithinThe",
+              "type": "checkgroup",
+              "label": "Within the past two years have you owned any of the following? Please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Bond(s)",
+                  "value": "Bond(s)"
+                },
+                {
+                  "label": "Mutual Fund(s)",
+                  "value": "Mutual Fund(s)"
+                },
+                {
+                  "label": "Stock(s) in a publicly traded company",
+                  "value": "Stock(s) in a publicly traded company"
+                },
+                {
+                  "label": "Education IRA",
+                  "value": "Education IRA"
+                },
+                {
+                  "label": "Annuities",
+                  "value": "Annuities"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q129_InvestmentAcct",
+              "type": "checkgroup",
+              "label": "Do you have any of the following types of investments, retirement accounts or insurance? Please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "401K",
+                  "value": "401K"
+                },
+                {
+                  "label": "403B",
+                  "value": "403B"
+                },
+                {
+                  "label": "Annuity",
+                  "value": "Annuity"
+                },
+                {
+                  "label": "Government or savings bonds",
+                  "value": "Government or savings bonds"
+                },
+                {
+                  "label": "IRA",
+                  "value": "IRA"
+                },
+                {
+                  "label": "Joint Venture",
+                  "value": "Joint Venture"
+                },
+                {
+                  "label": "Keough Plan",
+                  "value": "Keough Plan"
+                },
+                {
+                  "label": "Pension",
+                  "value": "Pension"
+                },
+                {
+                  "label": "Publicly Traded Stock",
+                  "value": "Publicly Traded Stock"
+                },
+                {
+                  "label": "Whole Life Insurance",
+                  "value": "Whole Life Insurance"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                },
+                {
+                  "label": "Term Life Insurance",
+                  "value": "Term Life Insurance"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q259_doYou259",
+              "type": "radio",
+              "label": "Do you have, or are you the beneficiary of any type of trust?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q128_HaveUtilitySD",
+              "type": "radio",
+              "label": "Do you have a security deposit with any utility company?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q180_UtilitySD",
+              "type": "text",
+              "label": "Which utility company do you have a security deposit with and how much is the security deposit?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q128_HaveUtilitySD",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q258_ltstronggtdoYou",
+              "type": "checkgroup",
+              "label": "Do you have any of the following? Please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Copyright",
+                  "value": "Copyright"
+                },
+                {
+                  "label": "Patent",
+                  "value": "Patent"
+                },
+                {
+                  "label": "Trademark",
+                  "value": "Trademark"
+                },
+                {
+                  "label": "Website",
+                  "value": "Website"
+                },
+                {
+                  "label": "Other intellectual propety",
+                  "value": "Other intellectual propety"
+                },
+                {
+                  "label": "Business or professional license",
+                  "value": "Business or professional license"
+                },
+                {
+                  "label": "Franchise",
+                  "value": "Franchise"
+                },
+                {
+                  "label": "Other intangible property",
+                  "value": "Other intangible property"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q50_didYou50",
+              "type": "radio",
+              "label": "Did you file your 2023 federal and state (and city, if required) tax returns?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q295_didYou295",
+              "type": "radio",
+              "label": "Did you file your 2024 federal and state (and city, if required) tax returns?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q260_areYou",
+              "type": "radio",
+              "label": "Are you expecting a federal, state or city tax refund that you HAVE NOT RECEIVED?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q262_howMuch262_federal_tax_refund",
+              "type": "number",
+              "label": "Federal Tax Refund"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q262_howMuch262_state_tax_refund",
+              "type": "number",
+              "label": "State Tax Refund"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q262_howMuch262_city_tax_refund",
+              "type": "number",
+              "label": "City Tax Refund"
+            }
+          ]
+        }
+      ],
+      "title": "How much are you expecting to receive (that you have NOT already received)?",
+      "showWhen": {
+        "op": "eq",
+        "field": "q260_areYou",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q130_AnyoneOwe",
+              "type": "checkgroup",
+              "label": "Does anyone owe you money for any reason? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Accounts receivable",
+                  "value": "Accounts receivable"
+                },
+                {
+                  "label": "Alimony or spousal support",
+                  "value": "Alimony or spousal support"
+                },
+                {
+                  "label": "Child support",
+                  "value": "Child support"
+                },
+                {
+                  "label": "Disability benefits",
+                  "value": "Disability benefits"
+                },
+                {
+                  "label": "Divorce Settlement",
+                  "value": "Divorce Settlement"
+                },
+                {
+                  "label": "Personal Injury Claims",
+                  "value": "Personal Injury Claims"
+                },
+                {
+                  "label": "Property Settlements",
+                  "value": "Property Settlements"
+                },
+                {
+                  "label": "Sick or Vacation Pay",
+                  "value": "Sick or Vacation Pay"
+                },
+                {
+                  "label": "Social Security Benefits",
+                  "value": "Social Security Benefits"
+                },
+                {
+                  "label": "Worker\u2019s Comp Benefits",
+                  "value": "Worker\u2019s Comp Benefits"
+                },
+                {
+                  "label": "Unpaid Loans",
+                  "value": "Unpaid Loans"
+                },
+                {
+                  "label": "Unpaid Wages",
+                  "value": "Unpaid Wages"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ],
+      "chapter": "Money owed to you"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q53_Sue",
+              "type": "radio",
+              "label": "Are you thinking of suing anyone for any reason?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q133_BusinessProp",
+              "type": "radio",
+              "label": "Do you own any business property (such as customer lists, franchise, inventory, licenses, machinery, office equipment, patents, copyrights, intellectual property, farm property or livestock)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q64_SueWhy",
+              "type": "text",
+              "label": "Why are you thinking of suing someone?",
+              "placeholder": "Example:  I was in an auto accident, I have a malpractice case or __________ ripped me off"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q53_Sue",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q134_HaveOthersProp",
+              "type": "radio",
+              "label": "Are you holding any property that belongs to someone else?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q182_WhatOthersProp",
+              "type": "text",
+              "label": "What property are you holding that belongs to someone else?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q134_HaveOthersProp",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q136_Storage",
+              "type": "radio",
+              "label": "Within the past year, did you (or currently do you) have any property stored anywhere else (eg. like in a storage unit)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q282_whereIs_street_address",
+              "type": "text",
+              "label": "Street Address"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q282_whereIs_street_address_line_2",
+              "type": "text",
+              "label": "Street Address Line 2"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q282_whereIs_city",
+              "type": "text",
+              "label": "City"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q282_whereIs_state_province",
+              "type": "text",
+              "label": "State / Province"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q282_whereIs_postal_zip_code",
+              "type": "text",
+              "label": "Postal / Zip Code"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q282_whereIs_country",
+              "type": "select",
+              "label": "Country",
+              "options": [
+                "Afghanistan",
+                "Albania",
+                "Algeria",
+                "American Samoa",
+                "Andorra",
+                "Angola",
+                "Anguilla",
+                "Antigua and Barbuda",
+                "Argentina",
+                "Armenia",
+                "Aruba",
+                "Australia",
+                "Austria",
+                "Azerbaijan",
+                "The Bahamas",
+                "Bahrain",
+                "Bangladesh",
+                "Barbados",
+                "Belarus",
+                "Belgium",
+                "Belize",
+                "Benin",
+                "Bermuda",
+                "Bhutan",
+                "Bolivia",
+                "Bosnia and Herzegovina",
+                "Botswana",
+                "Brazil",
+                "Brunei",
+                "Bulgaria",
+                "Burkina Faso",
+                "Burundi",
+                "Cambodia",
+                "Cameroon",
+                "Canada",
+                "Cape Verde",
+                "Cayman Islands",
+                "Central African Republic",
+                "Chad",
+                "Chile",
+                "China",
+                "Christmas Island",
+                "Cocos (Keeling) Islands",
+                "Colombia",
+                "Comoros",
+                "Congo",
+                "Cook Islands",
+                "Costa Rica",
+                "Cote d'Ivoire",
+                "Croatia",
+                "Cuba",
+                "Cura\u00e7ao",
+                "Cyprus",
+                "Czech Republic",
+                "Democratic Republic of the Congo",
+                "Denmark",
+                "Djibouti",
+                "Dominica",
+                "Dominican Republic",
+                "Ecuador",
+                "Egypt",
+                "El Salvador",
+                "Equatorial Guinea",
+                "Eritrea",
+                "Estonia",
+                "Ethiopia",
+                "Falkland Islands",
+                "Faroe Islands",
+                "Fiji",
+                "Finland",
+                "France",
+                "French Polynesia",
+                "Gabon",
+                "The Gambia",
+                "Georgia",
+                "Germany",
+                "Ghana",
+                "Gibraltar",
+                "Greece",
+                "Greenland",
+                "Grenada",
+                "Guadeloupe",
+                "Guam",
+                "Guatemala",
+                "Guernsey",
+                "Guinea",
+                "Guinea-Bissau",
+                "Guyana",
+                "Haiti",
+                "Honduras",
+                "Hong Kong",
+                "Hungary",
+                "Iceland",
+                "India",
+                "Indonesia",
+                "Iran",
+                "Iraq",
+                "Ireland",
+                "Israel",
+                "Italy",
+                "Jamaica",
+                "Japan",
+                "Jersey",
+                "Jordan",
+                "Kazakhstan",
+                "Kenya",
+                "Kiribati",
+                "North Korea",
+                "South Korea",
+                "Kosovo",
+                "Kuwait",
+                "Kyrgyzstan",
+                "Laos",
+                "Latvia",
+                "Lebanon",
+                "Lesotho",
+                "Liberia",
+                "Libya",
+                "Liechtenstein",
+                "Lithuania",
+                "Luxembourg",
+                "Macau",
+                "Macedonia",
+                "Madagascar",
+                "Malawi",
+                "Malaysia",
+                "Maldives",
+                "Mali",
+                "Malta",
+                "Marshall Islands",
+                "Martinique",
+                "Mauritania",
+                "Mauritius",
+                "Mayotte",
+                "Mexico",
+                "Micronesia",
+                "Moldova",
+                "Monaco",
+                "Mongolia",
+                "Montenegro",
+                "Montserrat",
+                "Morocco",
+                "Mozambique",
+                "Myanmar",
+                "Nagorno-Karabakh",
+                "Namibia",
+                "Nauru",
+                "Nepal",
+                "Netherlands",
+                "Netherlands Antilles",
+                "New Caledonia",
+                "New Zealand",
+                "Nicaragua",
+                "Niger",
+                "Nigeria",
+                "Niue",
+                "Norfolk Island",
+                "Turkish Republic of Northern Cyprus",
+                "Northern Mariana",
+                "Norway",
+                "Oman",
+                "Pakistan",
+                "Palau",
+                "Palestine",
+                "Panama",
+                "Papua New Guinea",
+                "Paraguay",
+                "Peru",
+                "Philippines",
+                "Pitcairn Islands",
+                "Poland",
+                "Portugal",
+                "Puerto Rico",
+                "Qatar",
+                "Republic of the Congo",
+                "Romania",
+                "Russia",
+                "Rwanda",
+                "Saint Barthelemy",
+                "Saint Helena",
+                "Saint Kitts and Nevis",
+                "Saint Lucia",
+                "Saint Martin",
+                "Saint Pierre and Miquelon",
+                "Saint Vincent and the Grenadines",
+                "Samoa",
+                "San Marino",
+                "Sao Tome and Principe",
+                "Saudi Arabia",
+                "Senegal",
+                "Serbia",
+                "Seychelles",
+                "Sierra Leone",
+                "Singapore",
+                "Slovakia",
+                "Slovenia",
+                "Solomon Islands",
+                "Somalia",
+                "Somaliland",
+                "South Africa",
+                "South Ossetia",
+                "South Sudan",
+                "Spain",
+                "Sri Lanka",
+                "Sudan",
+                "Suriname",
+                "Svalbard",
+                "eSwatini",
+                "Sweden",
+                "Switzerland",
+                "Syria",
+                "Taiwan",
+                "Tajikistan",
+                "Tanzania",
+                "Thailand",
+                "Timor-Leste",
+                "Togo",
+                "Tokelau",
+                "Tonga",
+                "Transnistria Pridnestrovie",
+                "Trinidad and Tobago",
+                "Tristan da Cunha",
+                "Tunisia",
+                "Turkey",
+                "Turkmenistan",
+                "Turks and Caicos Islands",
+                "Tuvalu",
+                "Uganda",
+                "Ukraine",
+                "United Arab Emirates",
+                "United Kingdom",
+                "United States",
+                "Uruguay",
+                "Uzbekistan",
+                "Vanuatu",
+                "Vatican City",
+                "Venezuela",
+                "Vietnam",
+                "British Virgin Islands",
+                "Isle of Man",
+                "US Virgin Islands",
+                "Wallis and Futuna",
+                "Western Sahara",
+                "Yemen",
+                "Zambia",
+                "Zimbabwe",
+                "other"
+              ]
+            }
+          ]
+        }
+      ],
+      "title": "Where is / was the property stored?",
+      "showWhen": {
+        "op": "eq",
+        "field": "q136_Storage",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q52_doesAnybody",
+              "type": "radio",
+              "label": "Does anybody owe you any money for any reason?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q63_ifSo",
+              "type": "text",
+              "label": "If so, how much and why?",
+              "placeholder": "Example:  I loaned money to .... and they have not yet paid me back."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q52_doesAnybody",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q48_ExpectInherit",
+              "type": "radio",
+              "label": "Are you expecting any type of inheritance within the next year?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q183_InheritanceWhat",
+              "type": "text",
+              "label": "What inheritance are you expecting?",
+              "placeholder": "My _______ died and I expect to receive $____ in life insurance OR _____'s house / property "
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q48_ExpectInherit",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q167_inThe167",
+              "type": "radio",
+              "label": "In the year prior to filing bankruptcy did you have any losses from theft, fire, other disaster or gambling?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q143_doYou143",
+              "type": "checkgroup",
+              "label": "Do you owe money to any of the following utilities (whose bills usually do not show up on your credit report)?",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Consumer\u2019s Energy",
+                  "value": "Consumer\u2019s Energy"
+                },
+                {
+                  "label": "DTE Energy",
+                  "value": "DTE Energy"
+                },
+                {
+                  "label": "Comcast / Xfinity",
+                  "value": "Comcast / Xfinity"
+                },
+                {
+                  "label": "Wow Internet",
+                  "value": "Wow Internet"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ],
+      "chapter": "Debts you owe"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q146_doYou146",
+              "type": "checkgroup",
+              "label": "Do you owe any money to a cell phone provider (whose bills usually do not show up on your credit report)? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "AT&T",
+                  "value": "AT&T"
+                },
+                {
+                  "label": "Sprint",
+                  "value": "Sprint"
+                },
+                {
+                  "label": "T-Mobile",
+                  "value": "T-Mobile"
+                },
+                {
+                  "label": "Verizon",
+                  "value": "Verizon"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q145_doYou145",
+              "type": "checkgroup",
+              "label": "Do you owe any money to any hospitals (whose bills usually do not show up on your credit report)? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "Ascension Providence",
+                  "value": "Ascension Providence"
+                },
+                {
+                  "label": "Ascension St. John",
+                  "value": "Ascension St. John"
+                },
+                {
+                  "label": "Beaumont",
+                  "value": "Beaumont"
+                },
+                {
+                  "label": "Children\u2019s (DMC)",
+                  "value": "Children\u2019s (DMC)"
+                },
+                {
+                  "label": "Detroit Medical Center (DMC)",
+                  "value": "Detroit Medical Center (DMC)"
+                },
+                {
+                  "label": "Detroit Receiving",
+                  "value": "Detroit Receiving"
+                },
+                {
+                  "label": "Garden City",
+                  "value": "Garden City"
+                },
+                {
+                  "label": "Harper (DMC)",
+                  "value": "Harper (DMC)"
+                },
+                {
+                  "label": "Henry Ford",
+                  "value": "Henry Ford"
+                },
+                {
+                  "label": "McLaren",
+                  "value": "McLaren"
+                },
+                {
+                  "label": "Providence Park",
+                  "value": "Providence Park"
+                },
+                {
+                  "label": "St. John Oakland",
+                  "value": "St. John Oakland"
+                },
+                {
+                  "label": "St. Joseph Mercy Oakland",
+                  "value": "St. Joseph Mercy Oakland"
+                },
+                {
+                  "label": "St. Mary Mercy",
+                  "value": "St. Mary Mercy"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q148_doYou148",
+              "type": "radio",
+              "label": "Do you owe any doctor or dentist bills?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q147_pleaseList",
+              "type": "text",
+              "label": "Please list the names / addresses of any doctors or dentists that you owe money to (and the amounts, if known)"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q148_doYou148",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q150_doYou150",
+              "type": "radio",
+              "label": "Do you have any contracts in progress (like a lease agreement)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q151_doYou151",
+              "type": "radio",
+              "label": "Do you have any co-debtors (people who co-signed for any of your debts or people you co-signed for)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q32_areYou32",
+              "type": "radio",
+              "label": "Are you currently working?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "chapter": "Work & income"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q140_WorkWhere",
+              "type": "text",
+              "label": "Where do you work?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q32_areYou32",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q37_isYour",
+              "type": "radio",
+              "label": "Is your spouse currently working?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ],
+              "sublabel": "We need this information even if your spouse is not filing bankruptcy."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q103_maritalstatus",
+        "value": "Married"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q141_WorkSpouseWhere",
+              "type": "text",
+              "label": "Where does your spouse work?",
+              "sublabel": "We need this information even if your spouse is not filing bankruptcy."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q37_isYour",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q142_OtherIncome",
+              "type": "checkgroup",
+              "label": "In the past seven months have you (and/or your spouse) had any other income? If so, please check all that apply.",
+              "columns": 2,
+              "options": [
+                {
+                  "label": "2nd (or 3rd) Job",
+                  "value": "2nd (or 3rd) Job"
+                },
+                {
+                  "label": "Spouse 2nd (or 3rd) Job",
+                  "value": "Spouse 2nd (or 3rd) Job"
+                },
+                {
+                  "label": "Social Security or SSD",
+                  "value": "Social Security or SSD"
+                },
+                {
+                  "label": "Spouse Social Security or SSD",
+                  "value": "Spouse Social Security or SSD"
+                },
+                {
+                  "label": "Pension",
+                  "value": "Pension"
+                },
+                {
+                  "label": "Retirement",
+                  "value": "Retirement"
+                },
+                {
+                  "label": "Unemployment",
+                  "value": "Unemployment"
+                },
+                {
+                  "label": "Spouse Unemployment",
+                  "value": "Spouse Unemployment"
+                },
+                {
+                  "label": "Welfare",
+                  "value": "Welfare"
+                },
+                {
+                  "label": "WIC",
+                  "value": "WIC"
+                },
+                {
+                  "label": "Bridge Card",
+                  "value": "Bridge Card"
+                },
+                {
+                  "label": "Rental Assistance",
+                  "value": "Rental Assistance"
+                },
+                {
+                  "label": "Food Stamps",
+                  "value": "Food Stamps"
+                },
+                {
+                  "label": "Income from Business",
+                  "value": "Income from Business"
+                },
+                {
+                  "label": "Rental Income",
+                  "value": "Rental Income"
+                },
+                {
+                  "label": "Alimony",
+                  "value": "Alimony"
+                },
+                {
+                  "label": "Child Support",
+                  "value": "Child Support"
+                },
+                {
+                  "label": "Family assistance",
+                  "value": "Family assistance"
+                },
+                {
+                  "label": "None of the above",
+                  "value": "None of the above"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q153_ExpectIncome",
+              "type": "radio",
+              "label": "Do you expect that your income will increase or decrease significantly within the next year?",
+              "options": [
+                {
+                  "label": "I expect my income to increase significantly in the next year.",
+                  "value": "I expect my income to increase significantly in the next year."
+                },
+                {
+                  "label": "I expect my income to decrease significantly in the next year.",
+                  "value": "I expect my income to decrease significantly in the next year."
+                },
+                {
+                  "label": "I expect that my income will be about the same over the next year.",
+                  "value": "I expect that my income will be about the same over the next year."
+                }
+              ],
+              "sublabel": "Choose the best answer."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_rent_or_mortgage",
+              "type": "number",
+              "label": "Rent or Mortgage",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_2nd_mortgage_or_other_home",
+              "type": "number",
+              "label": "2nd mortgage or other home expense",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_homeowner_s_or_renter_s",
+              "type": "number",
+              "label": "Homeowner's or renter's insurance",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_property_taxes_if_not",
+              "type": "number",
+              "label": "Property taxes (if NOT included in mortgage)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_condo_hoa_fee",
+              "type": "number",
+              "label": "Condo / HOA Fee",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_repairs_upkeep_on_your_home",
+              "type": "number",
+              "label": "Repairs / Upkeep on your home",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_other_home_expenses",
+              "type": "number",
+              "label": "Other home expenses",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q155_MonthHomeExpense_describe_other_home_expenses",
+              "type": "text",
+              "label": "Describe other home expenses"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much are your MONTHLY home expenses?",
+      "chapter": "Monthly expenses"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_electric",
+              "type": "number",
+              "label": "Electric",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_heat_natural_gas",
+              "type": "number",
+              "label": "Heat / Natural Gas",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_water_sewer_trash",
+              "type": "number",
+              "label": "Water / Sewer / Trash",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_cell_phone",
+              "type": "number",
+              "label": "Cell Phone",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_home_phone_if_any",
+              "type": "number",
+              "label": "Home Phone (if any)"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_cable_internet",
+              "type": "number",
+              "label": "Cable / Internet",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_other_home_utility_expenses",
+              "type": "number",
+              "label": "Other home utility expenses",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q156_MonthUtility_describe_other_home_utility",
+              "type": "text",
+              "label": "Describe other home utility expenses"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much are your MONTHLY utility bills:"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_groceries",
+              "type": "number",
+              "label": "Groceries",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_restaurants_fast_food",
+              "type": "number",
+              "label": "Restaurants / Fast Food"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_housekeeping_supplies",
+              "type": "number",
+              "label": "Housekeeping supplies",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_childcare",
+              "type": "number",
+              "label": "Childcare",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_children_s_education",
+              "type": "number",
+              "label": "Children's education",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_buying_personal_clothing",
+              "type": "number",
+              "label": "Buying personal clothing",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_laundry",
+              "type": "number",
+              "label": "Laundry",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q157_MonthPersonalExpense_drycleaning",
+              "type": "number",
+              "label": "Drycleaning",
+              "placeholder": "ex:23"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much do you spend PER MONTH (if any) on the following?"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q283_approximatelyHow283_personal_care_products",
+              "type": "number",
+              "label": "Personal care products (eg. soap, shampoo, etc.)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q283_approximatelyHow283_haircuts",
+              "type": "number",
+              "label": "Haircuts"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q283_approximatelyHow283_nails",
+              "type": "number",
+              "label": "Nails",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q283_approximatelyHow283_other_personal_services",
+              "type": "number",
+              "label": "Other personal services",
+              "placeholder": "ex:23"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much do you spend PER MONTH (if any) on the following?"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q158_MonthMedExpense_medical_expenses_co_pays_not",
+              "type": "number",
+              "label": "Medical expenses / co-pays (not covered by insurance)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q158_MonthMedExpense_dental_expenses_not_covered",
+              "type": "number",
+              "label": "Dental expenses (not covered by insurance)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q158_MonthMedExpense_medical_prescriptions_not",
+              "type": "number",
+              "label": "Medical Prescriptions (not covered by insurance)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q158_MonthMedExpense_dental_prescriptions_not",
+              "type": "number",
+              "label": "Dental prescriptions (not covered by insurance)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q158_MonthMedExpense_health_insurance_not",
+              "type": "number",
+              "label": "Health insurance (not deducted from paycheck)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q158_MonthMedExpense_vision_expenses_not_deducted",
+              "type": "number",
+              "label": "Vision expenses (not deducted from paycheck)",
+              "placeholder": "ex:23"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much are your MONTHLY out-of-pocket medical expenses:"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q241_approximatelyHow241",
+              "type": "number",
+              "label": "Approximately how much do you spend EACH WEEK on gasoline?",
+              "placeholder": "e.g., 23"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q242_approximatelyHow242_oil_changes",
+              "type": "number",
+              "label": "Oil changes"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q242_approximatelyHow242_vehicle_repairs",
+              "type": "number",
+              "label": "Vehicle Repairs"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q242_approximatelyHow242_bus_fare",
+              "type": "number",
+              "label": "Bus fare"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q242_approximatelyHow242_uber_lyft",
+              "type": "number",
+              "label": "Uber / Lyft"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q242_approximatelyHow242_train_or_plane_fare",
+              "type": "number",
+              "label": "Train or plane fare"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q242_approximatelyHow242_other_transportation",
+              "type": "number",
+              "label": "Other transportation expenses"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q242_approximatelyHow242_please_describe_other",
+              "type": "text",
+              "label": "Please describe other transportation expenses"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much do you spend PER MONTH (if any) on the following transportation expenses?"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_movies",
+              "type": "number",
+              "label": "Movies",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_clubs",
+              "type": "number",
+              "label": "Clubs",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_gym_memberships",
+              "type": "number",
+              "label": "Gym memberships",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_other_recreation",
+              "type": "number",
+              "label": "Other recreation",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_newspapers",
+              "type": "number",
+              "label": "Newspapers",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_magazines",
+              "type": "number",
+              "label": "Magazines",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_books",
+              "type": "number",
+              "label": "Books",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q243_approximatelyHow243_charity_tithes",
+              "type": "number",
+              "label": "Charity / tithes",
+              "placeholder": "ex:23"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much per MONTH (if any) do you spend on the following?"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q244_approximatelyHow244_life_insurance_not",
+              "type": "number",
+              "label": "Life insurance (not deducted from paycheck)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q244_approximatelyHow244_health_insurance_not",
+              "type": "number",
+              "label": "Health insurance (not deducted from paycheck)",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q244_approximatelyHow244_other_insurance",
+              "type": "number",
+              "label": "Other insurance",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q244_approximatelyHow244_vehicle_insurance",
+              "type": "number",
+              "label": "Vehicle insurance",
+              "placeholder": "ex:23"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q244_approximatelyHow244_please_describe_other",
+              "type": "text",
+              "label": "Please describe other insurance"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q244_approximatelyHow244_other_taxes",
+              "type": "number",
+              "label": "Other taxes"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "q244_approximatelyHow244_please_describe_other_2",
+              "type": "text",
+              "label": "Please describe other taxes"
+            }
+          ]
+        }
+      ],
+      "title": "Approximately how much per MONTH (if any) do you spend on the following?"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q161_doYou161",
+              "type": "radio",
+              "label": "Do you have any other regular monthly expenses?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q162_OtherMonthExpense1",
+              "type": "text",
+              "label": "What are your other regular monthly expenses?"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q161_doYou161",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q163_doYou163",
+              "type": "radio",
+              "label": "Do you expect your regular monthly expenses to significantly increase or decrease in the next year?",
+              "options": [
+                {
+                  "label": "I expect my regular monthly expenses to increase significantly in the next year.",
+                  "value": "I expect my regular monthly expenses to increase significantly in the next year."
+                },
+                {
+                  "label": "I expect my regular monthly expenses to decrease significantly in the next year.",
+                  "value": "I expect my regular monthly expenses to decrease significantly in the next year."
+                },
+                {
+                  "label": "I expect my regular monthly expenses to stay about the same in the next year.",
+                  "value": "I expect my regular monthly expenses to stay about the same in the next year."
+                }
+              ],
+              "sublabel": "Choose the best answer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q47_More600",
+              "type": "radio",
+              "label": "Have you paid more than $600 to any friend or family member within the past two years?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "chapter": "Financial history"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q184_toWhom",
+              "type": "text",
+              "label": "To whom did you pay or give more than $600; when and how much?",
+              "placeholder": "I gave $_____ to my ________ in _________________."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q47_More600",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q139_withinThe139",
+              "type": "radio",
+              "label": "Within the past two years did you give any gifts to charity totaling more than $600?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q185_toWhom185",
+              "type": "text",
+              "label": "To whom did you give charity totaling more than $600; when and how much?",
+              "placeholder": "Name of church or organization, amount donated and approximate dates(s)"
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q139_withinThe139",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q149_inThe149",
+              "type": "radio",
+              "label": "In the year before you filed bankruptcy were a party to a lawsuit? (Did you sue anyone or get sued by anyone (including a family law case)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q287_youIndicated",
+              "type": "text",
+              "label": "You indicated that you were a party to a lawsuit. Please provide the name(s) / location(s) of the court(s) and the case number(s) (if known)."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q149_inThe149",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q286_inThe",
+              "type": "radio",
+              "label": "In the year before you filed bankruptcy, did you receive a traffic ticket or were you charged in a criminal case?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q288_youIndicated288",
+              "type": "text",
+              "label": "You indicated that you received a traffic ticket or were charged in a criminal case. Please provide the name(s) / location(s) of the court(s) and the case number(s) (if known)."
+            }
+          ]
+        }
+      ],
+      "showWhen": {
+        "op": "eq",
+        "field": "q286_inThe",
+        "value": "YES"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q165_inThe165",
+              "type": "radio",
+              "label": "In the year before you filed bankruptcy did you have any property repossessed, foreclosed, garnished, attached, seized or levied; or did you have a Receiver appointed over any of your property?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q152_inThe152",
+              "type": "radio",
+              "label": "In the two years before you filed bankruptcy did you pay back any debts to any family members, close friends or business partners?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q166_inThe166",
+              "type": "radio",
+              "label": "In the 90 days prior to filing bankruptcy, did any creditor (including a bank), set off any amounts from your accounts or refuse to make a payment because you owed a debt?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q168_inThe168",
+              "type": "radio",
+              "label": "In the year prior to filing bankruptcy did you (or someone on your behalf) pay money to anyone about seeking bankruptcy or preparing a bankruptcy petition?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q169_inThe169",
+              "type": "radio",
+              "label": "In the year prior to filing bankruptcy did you (or someone on your behalf) pay money to anyone who promised to help you deal with your creditors or make payments to your creditors (eg. a debt consolidation company)?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q173_within10",
+              "type": "radio",
+              "label": "Within 10 years before you filed bankruptcy did you transfer any property to a trust?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "q174_typeA174",
+              "type": "radio",
+              "label": "Did you ever receive any type of notice or violation from a government agency regarding an environmental hazard?",
+              "options": [
+                {
+                  "label": "Yes",
+                  "value": "YES"
+                },
+                {
+                  "label": "No",
+                  "value": "NO"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "autosaveMs": 10000,
+  "warningText": " "
+}

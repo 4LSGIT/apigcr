@@ -414,11 +414,14 @@ for (let y = CURRENT_YEAR; y >= 2015; y--) IRS_YEARS.push(y);
 // on-submit workflow (wf49) cancels by type (cancel_sequences), so both ends
 // have to agree on this string.
 //
-// DBKQ_FORM_ID is the RETIRED JotForm id. It survives for one reason only:
-// sequence trigger_data provenance (see the enrolment below), so a row written
-// after cutover is still readable next to the pre-cutover rows. Nothing routes
-// on it any more.
-const DBKQ_FORM_ID     = '231694062254152';
+// DBKQ_FORM_ID exists for one reason only: sequence trigger_data provenance
+// (see the enrolment below). Nothing routes on it — verified again at D4
+// (2026-09-06): zero readers in code (grep) or config (workflow_steps,
+// sequence_steps action_config + condition, trigger rules). Since D4 it
+// records the honest identifier — the YisraForm template key. Enrolment rows
+// written before 2026-09-06 carry the retired JotForm id ('231694062254152')
+// instead; that value difference IS the cutover line in the data.
+const DBKQ_FORM_ID     = 'dbkq';
 const DBKQ_DETAIL_BASE = 'https://4lsg.com/p/detail';
 const DBKQ_LINK        = `${DBKQ_DETAIL_BASE}?id=${encodeURIComponent(caseId || '')}`;
 const DBKQ_SEQ_TYPE    = 'dbkq_reminder';

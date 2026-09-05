@@ -441,6 +441,59 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ADORNED INPUTS — prefix/suffix (D4 A1)
+   The .yc-tags-wrap pattern: the WRAPPER carries the input's border, radius,
+   background and focus ring (:focus-within); the inner input goes borderless
+   and transparent so the "$" reads as part of one control, not a badge glued
+   next to it. Disabled state mirrors .yc-field input:disabled via :has() —
+   already the sheet's supported baseline (see the readonly :has rules).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-field .yc-input-adorn {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background-color: var(--surface-2);
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.yc-field .yc-input-adorn:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.yc-field .yc-input-adorn input,
+.yc-field .yc-input-adorn input:focus {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  border: 0;
+  background-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.yc-adorn {
+  flex: 0 0 auto;
+  padding: 0 2px 0 8px;
+  color: var(--text-muted, #6b7280);
+  font-size: 0.92rem;
+  user-select: none;
+  pointer-events: none;   /* clicks fall through to nothing; the input is one tab stop */
+}
+
+.yc-input-adorn .yc-adorn:last-child {
+  padding: 0 8px 0 2px;   /* suffix mirrors the prefix inset */
+}
+
+.yc-field .yc-input-adorn:has(input:disabled) {
+  background-color: var(--hover);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
    READONLY STATES
    ═══════════════════════════════════════════════════════════════════════════ */
 

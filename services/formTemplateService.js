@@ -413,6 +413,51 @@ function validateDefinition(def) {
       }
     }
 
+    // prefix / suffix (D4 A1): display-only input adornments ("$", "%",
+    // "/mo"). number and text only — the renderer styles exactly those two,
+    // and an accepted-but-unrendered key would be the silent no-op this
+    // validator rejects on principle (the layout-typo precedent). Short cap:
+    // an adornment longer than a unit string is a label wearing the wrong
+    // hat. Never part of fieldSignature (name+type only) — publishing one
+    // cannot bump schema_version, which is load-bearing while live drafts
+    // exist.
+    for (const adornKey of ['prefix', 'suffix']) {
+      const av = field[adornKey];
+      if (av !== undefined && av !== null && av !== '') {
+        if (field.type !== 'number' && field.type !== 'text') {
+          throw badRequest(`${path}.${adornKey} is only allowed on type "number" or "text"`);
+        }
+        if (typeof av !== 'string') {
+          throw badRequest(`${path}.${adornKey} must be a string`);
+        }
+        if (av.length > 12) {
+          throw badRequest(`${path}.${adornKey} must be at most 12 characters`);
+        }
+      }
+    }
+
+    // min / max (D4 A3): numeric bounds, number fields only, min <= max.
+    // Tightened from silently-carried to validated: the renderer now
+    // ENFORCES these (native attribute + blur/gate `number` rule), so a
+    // typo'd bound must fail at publish, not misvalidate live. Verified
+    // against every stored definition AND draft_definition (2026-09-06):
+    // no non-number field carries either key, so nothing republishable
+    // breaks.
+    for (const boundKey of ['min', 'max']) {
+      const bv = field[boundKey];
+      if (bv !== undefined && bv !== null) {
+        if (field.type !== 'number') {
+          throw badRequest(`${path}.${boundKey} is only allowed on type "number"`);
+        }
+        if (typeof bv !== 'number' || !Number.isFinite(bv)) {
+          throw badRequest(`${path}.${boundKey} must be a finite number`);
+        }
+      }
+    }
+    if (field.min != null && field.max != null && field.min > field.max) {
+      throw badRequest(`${path}.min must be <= ${path}.max`);
+    }
+
     // pattern, if present, must compile
     if (field.pattern !== undefined && field.pattern !== null && field.pattern !== '') {
       if (typeof field.pattern !== 'string') {

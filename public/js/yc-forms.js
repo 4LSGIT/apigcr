@@ -99,6 +99,12 @@ class YCForm {
       // 2. Set up masks
       this._setupMasks();
 
+      // 2b. Single-field format validation on focus loss (D4 A2)
+      this._setupBlurValidation();
+
+      // 2c. Keystroke filter for type=number inputs (D4 A3)
+      this._setupNumberGuard();
+
       // 3. Auto-inject textarea counters
       this._setupTextareaCounters();
 
@@ -691,88 +697,19 @@ if (this.config.endpoints.load && !this.config.external) {
     });
 
     for (const [fieldName, rules] of Object.entries(this.config.validation)) {
-      const fieldConfig = this.config.fields[fieldName];
-      if (!fieldConfig) continue;
+      const r = this._evaluateField(fieldName, rules);
+      if (!r) continue;
 
-      const el = this.el.querySelector(fieldConfig.el);
-      if (!el) continue;
-
-      // Extract the value the same way collect() does. Reading el.value
-      // directly is wrong for: radio (first radio's value attr regardless of
-      // checked state — required always passed), checkgroup (container has no
-      // value), tags (original element is hidden/empty), checkbox (checked
-      // state matters, not value).
-      let raw;
-      if (fieldConfig.type === 'checkbox') {
-        raw = el.checked ? 'true' : '';
-      } else if (fieldConfig.type === 'radio') {
-        const checked = this.el.querySelector(`input[name="${el.getAttribute('name')}"]:checked`);
-        raw = checked ? checked.value : '';
-      } else if (fieldConfig.type === 'tags') {
-        raw = this._getTags(fieldName);
-      } else if (fieldConfig.type === 'checkgroup') {
-        raw = this._getCheckgroup(el);
-      } else {
-        raw = el.value;
-      }
-      const value = String(raw).trim();
-      const wrapper = el.closest('.yc-field');
-      const errorEl = wrapper
-        ? wrapper.querySelector('.yc-error')
-        : el.parentElement.querySelector('.yc-error');
-      let error = null;
-
-      // Required
-      if (rules.required && !value) {
-        error = 'This field is required';
-      }
-
-      // Min length
-      if (!error && rules.minLength && value.length > 0 && value.length < rules.minLength) {
-        error = `Minimum ${rules.minLength} characters`;
-      }
-
-      // Max length
-      if (!error && rules.maxLength && value.length > rules.maxLength) {
-        error = `Maximum ${rules.maxLength} characters`;
-      }
-
-      // Email
-      if (!error && rules.email && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-        error = 'Enter a valid email address';
-      }
-
-      // Pattern
-      if (!error && rules.pattern && value && !rules.pattern.test(value)) {
-        error = rules.patternMessage || 'Invalid format';
-      }
-
-      // Mask validation
-      if (!error && rules.mask && value) {
-        const maskValid = this._validateMask(value, rules.mask);
-        if (!maskValid) {
-          error = `Invalid ${rules.mask} format`;
-        }
-      }
-
-      // Custom
-      if (!error && rules.custom) {
-        const customResult = rules.custom(value, this.collect());
-        if (customResult !== true) {
-          error = customResult || 'Invalid value';
-        }
-      }
-
-      if (error) {
+      if (r.error) {
         isValid = false;
-        if (errorEl) {
-          errorEl.textContent = error;
-          errorEl.classList.add('visible');
+        if (r.errorEl) {
+          r.errorEl.textContent = r.error;
+          r.errorEl.classList.add('visible');
         } else if (!firstUndisplayed) {
           // No .yc-error element in this field's markup — remember it so we
           // can surface the message some other way instead of a silently
           // dead Save button.
-          firstUndisplayed = { fieldName, error };
+          firstUndisplayed = { fieldName, error: r.error };
         }
       }
     }
@@ -790,6 +727,213 @@ if (this.config.endpoints.load && !this.config.external) {
     return isValid;
   }
 
+  /**
+   * Evaluate ONE field against a rules object — the loop body validate() ran
+   * inline before D4, extracted verbatim so the on-blur path (A2) reuses the
+   * SAME value extraction, rule cascade and error-element lookup instead of
+   * growing a second validation system. Returns null when the field has no
+   * config or no element in the DOM; otherwise { el, errorEl, error } with
+   * error === null when every rule passed. Does NOT paint: validate() clears
+   * everything then paints its whole scope, validateFieldOnBlur() paints one
+   * field's own .yc-error and nothing else — the painting policy is the
+   * difference between the two callers, so it lives in them.
+   */
+  _evaluateField(fieldName, rules) {
+    const fieldConfig = this.config.fields[fieldName];
+    if (!fieldConfig) return null;
+
+    const el = this.el.querySelector(fieldConfig.el);
+    if (!el) return null;
+
+    // Extract the value the same way collect() does. Reading el.value
+    // directly is wrong for: radio (first radio's value attr regardless of
+    // checked state — required always passed), checkgroup (container has no
+    // value), tags (original element is hidden/empty), checkbox (checked
+    // state matters, not value).
+    let raw;
+    if (fieldConfig.type === 'checkbox') {
+      raw = el.checked ? 'true' : '';
+    } else if (fieldConfig.type === 'radio') {
+      const checked = this.el.querySelector(`input[name="${el.getAttribute('name')}"]:checked`);
+      raw = checked ? checked.value : '';
+    } else if (fieldConfig.type === 'tags') {
+      raw = this._getTags(fieldName);
+    } else if (fieldConfig.type === 'checkgroup') {
+      raw = this._getCheckgroup(el);
+    } else {
+      raw = el.value;
+    }
+    const value = String(raw).trim();
+    const wrapper = el.closest('.yc-field');
+    const errorEl = wrapper
+      ? wrapper.querySelector('.yc-error')
+      : el.parentElement.querySelector('.yc-error');
+    let error = null;
+
+    // Required
+    if (rules.required && !value) {
+      error = 'This field is required';
+    }
+
+    // Min length
+    if (!error && rules.minLength && value.length > 0 && value.length < rules.minLength) {
+      error = `Minimum ${rules.minLength} characters`;
+    }
+
+    // Max length
+    if (!error && rules.maxLength && value.length > rules.maxLength) {
+      error = `Maximum ${rules.maxLength} characters`;
+    }
+
+    // Email
+    if (!error && rules.email && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      error = 'Enter a valid email address';
+    }
+
+    // Pattern
+    if (!error && rules.pattern && value && !rules.pattern.test(value)) {
+      error = rules.patternMessage || 'Invalid format';
+    }
+
+    // Mask validation
+    if (!error && rules.mask && value) {
+      const maskValid = this._validateMask(value, rules.mask);
+      if (!maskValid) {
+        error = `Invalid ${rules.mask} format`;
+      }
+    }
+
+    // Number (D4 A3): strict plain-decimal format first — a native
+    // type=number input sanitizes most junk to '' but scientific notation
+    // ("1e9") is a valid floating-point string and pasted values bypass the
+    // keystroke filter entirely — then the DECLARED bounds only. Never
+    // invents a bound: a loaded negative on a field whose author set no min
+    // must not block Save.
+    if (!error && rules.number && value) {
+      if (!/^-?(\d+(\.\d+)?|\.\d+)$/.test(value)) {
+        error = 'Enter a valid number';
+      } else {
+        const num = parseFloat(value);
+        if (rules.number.min != null && num < Number(rules.number.min)) {
+          error = `Must be at least ${rules.number.min}`;
+        } else if (rules.number.max != null && num > Number(rules.number.max)) {
+          error = `Must be at most ${rules.number.max}`;
+        }
+      }
+    }
+
+    // Custom
+    if (!error && rules.custom) {
+      const customResult = rules.custom(value, this.collect());
+      if (customResult !== true) {
+        error = customResult || 'Invalid value';
+      }
+    }
+
+    return { el, errorEl, error };
+  }
+
+  /**
+   * D4 A2 — validate ONE field's FORMAT rules and paint (or clear) only that
+   * field's own .yc-error. Format rules = mask, email, pattern, number: the
+   * "the value you typed is malformed" class, judgeable from this field
+   * alone the moment focus leaves it. Deliberately excluded:
+   *   required / requiredWhen(custom) — completeness rules; erroring a blank
+   *     field on tab-through is the nagging A2 forbids, and the card gate /
+   *     Save remain the backstop for them;
+   *   minLength/maxLength — untouched to keep hand-built hosts byte-stable
+   *     (maxlength is already a native attribute; minLength mid-typing is a
+   *     judgment call this slice doesn't need to make);
+   *   custom — may read OTHER fields (via collect()), so it can fire before
+   *     the user has reached those fields; gate-only keeps it honest.
+   * Empty value ⇒ every format rule passes ⇒ any prior error CLEARS — a
+   * blank optional field is never nagged, and deleting a bad value is a fix.
+   */
+  validateFieldOnBlur(fieldName) {
+    const all = this.config.validation[fieldName];
+    if (!all) return true;
+    const sub = {};
+    for (const k of ['mask', 'email', 'pattern', 'patternMessage', 'number']) {
+      if (all[k] !== undefined) sub[k] = all[k];
+    }
+    if (!Object.keys(sub).some((k) => k !== 'patternMessage')) return true;
+    const r = this._evaluateField(fieldName, sub);
+    if (!r) return true;
+    if (r.errorEl) {
+      if (r.error) {
+        r.errorEl.textContent = r.error;
+        r.errorEl.classList.add('visible');
+      } else {
+        r.errorEl.textContent = '';
+        r.errorEl.classList.remove('visible');
+      }
+    }
+    return !r.error;
+  }
+
+  /**
+   * D4 A2 wiring. `focusout` and NOT `change`, deliberately:
+   *   - focusout bubbles (blur doesn't), so one delegated listener covers
+   *     repeater rows created later — the constructor's bump() pattern;
+   *   - it fires AFTER the element's own 'blur' listener, so the mask
+   *     formatter (_applyMaskListeners) has already reformatted the value
+   *     this judges;
+   *   - it fires AFTER 'change', so it cannot interleave with the two
+   *     consumers change already has (the conditional engine's re-eval and
+   *     render.html's card auto-advance) — no shared event, no interaction
+   *     to reason about. Auto-advance additionally type-guards to
+   *     radio/select/checkbox, none of which carry format rules, so even a
+   *     shared event couldn't advance on a text blur — but not sharing is
+   *     the stronger guarantee;
+   *   - unlike change it also fires when a restored draft's pre-filled bad
+   *     value is merely tabbed through, which is exactly when a client
+   *     should learn the phone number they saved last week is junk.
+   * Non-control targets (the Next button, dots) bail on the matches() check
+   * before any per-field work.
+   */
+  _setupBlurValidation() {
+    this.el.addEventListener('focusout', (e) => {
+      const t = e.target;
+      if (!t || !t.matches || !t.matches('input, select, textarea')) return;
+      const name = t.getAttribute('name');
+      if (name && this.config.fields[name]
+          && this.el.querySelector(this.config.fields[name].el) === t) {
+        this.validateFieldOnBlur(name);
+        return;
+      }
+      // Hand-built hosts may register fields by id selector — scan only the
+      // rule-carrying fields (a field without rules cannot error).
+      for (const [fn, fc] of Object.entries(this.config.fields)) {
+        if (!this.config.validation[fn]) continue;
+        if (this.el.querySelector(fc.el) === t) { this.validateFieldOnBlur(fn); return; }
+      }
+    });
+  }
+
+  /**
+   * D4 A3 — keystroke filter for every type=number input under this form
+   * (delegated, so repeater clones are covered). Blocks the characters a
+   * native number input ACCEPTS but this application never wants typed:
+   * 'e'/'E' (scientific notation) and '+' always; '-' unless the element's
+   * own min attribute declares negatives legal (min < 0 — render.html writes
+   * the attribute from the definition, hand-built markup declares its own).
+   * Attribute-driven on purpose: the DOM is the one source both generated
+   * and hand-built inputs share. Modifier chords (Ctrl/Cmd/Alt) pass —
+   * shortcuts are not typing. Paste bypasses keystrokes entirely; the
+   * `number` validation rule (blur + gate) is the backstop for that.
+   */
+  _setupNumberGuard() {
+    this.el.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (!t || t.tagName !== 'INPUT' || t.type !== 'number') return;
+      if (e.key === 'e' || e.key === 'E' || e.key === '+') { e.preventDefault(); return; }
+      if (e.key === '-') {
+        const min = parseFloat(t.getAttribute('min'));
+        if (!(isFinite(min) && min < 0)) e.preventDefault();
+      }
+    });
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SAVE (explicit)

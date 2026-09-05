@@ -372,6 +372,7 @@ ref/2026-09-04_dbkq_coverage.md
 ref/2026-09-04_dbkq_cutover_runbook.md
 ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-04_dbkq_workflow_spec.md
+ref/2026-09-06_dbkq_definition.v1.2.json
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -395,6 +396,7 @@ ref/X2_DESIGN_AMENDMENTS.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
 ref/artifact-registry-cleanup-policy.json
 ref/database.sql
+ref/dbkq_live_definition_2026-09-06.json
 ref/dbkq_source_2026-09-04.html
 ref/documents_s1.sql
 ref/documents_s2.sql
@@ -564,6 +566,7 @@ scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
 scripts/courtTitleMatchTest.js
 scripts/dbkq_convert.js
+scripts/dbkq_v12_polish.js
 scripts/dbkq_verify.js
 scripts/dump-schema.js
 scripts/encrypt-smtp-passwords.js
@@ -724,6 +727,7 @@ tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js
+tests/dbkqV12Polish.test.js
 tests/documentGenerateFn.test.js
 tests/documentGenerateService.test.js
 tests/documentIngest.s4.test.js
@@ -791,6 +795,7 @@ tests/formBuilder_slice25B.test.js
 tests/formBuilder_slice26.test.js
 tests/formRender.content.test.js
 tests/formRender.d2hCardNav.test.js
+tests/formRender.d4inputPolish.test.js
 tests/formRender.radioColumns.test.js
 tests/formRender.showWhenAny.test.js
 tests/formRender.slice2.test.js
@@ -807,6 +812,7 @@ tests/formrender.extcode.test.js
 tests/formrender.x2external.test.js
 tests/formrender.x4view.test.js
 tests/formsubmissions.x4.test.js
+tests/formtemplates.d4schema.test.js
 tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
