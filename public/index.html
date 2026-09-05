@@ -3550,6 +3550,12 @@
       loginInProgress: null
     };
     AUTH_STATE.jwt = localStorage.getItem("jwt");
+    // Prefill the re-login modal across page loads: login() only caches the
+    // username in memory, so a reload/new tab/PWA relaunch used to reach
+    // loginBlocking() with an empty field. The stale jwt still carries it
+    // (routes/auth.login.js signs `username`). Logout removes the jwt AND
+    // blanks this, so a logged-out browser prefills nothing — as intended.
+    AUTH_STATE.username = (getJwtPayload(AUTH_STATE.jwt) || {}).username || null;
 
 
     function getJwtPayload(token) {
