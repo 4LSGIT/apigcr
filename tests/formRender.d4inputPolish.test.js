@@ -357,3 +357,54 @@ describe('D4 A2 — card-mode interaction guarantees', () => {
     expect(errorOf(w, 's2').classList.contains('visible')).toBe(false);   // blank = no nag
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// D4b — the external projection must carry the D4 keys.
+// The defect that shipped: DBKQ v1.2 published with 63 `$` prefixes and the
+// external wire stripped every one — extFormService's FIELD_KEYS allowlist
+// omission, fourth instance of the class (layout, content, showWhenAny). The
+// D4 suite stayed green because makePage's fetch stub serves the definition
+// RAW, bypassing the projection; the full-chain test below closes that hole
+// by serving projectDefinition() output instead.
+// ════════════════════════════════════════════════════════════════════════════
+
+const extSvc = require('../services/extFormService');
+
+describe('D4b — external projection carries prefix/suffix', () => {
+  test('REPRO: prefix/suffix survive projectDefinition on fields and repeater fields', () => {
+    const out = extSvc.projectDefinition({
+      sections: [
+        { title: 'S', rows: [{ fields: [
+          { name: 'rent', type: 'number', prefix: '$', min: 0, apiColumn: 'secret_col' },
+          { name: 'rate', type: 'number', suffix: '%', max: 100 },
+        ] }] },
+        { repeater: 'debts', title: 'Debts',
+          fields: [{ name: 'amt', type: 'number', prefix: '$', min: 0 }] },
+      ],
+    });
+    const [rent, rate] = out.sections[0].rows[0].fields;
+    expect(rent.prefix).toBe('$');
+    expect(rent.min).toBe(0);
+    expect(rate.suffix).toBe('%');
+    expect(rate.max).toBe(100);
+    expect(out.sections[1].fields[0].prefix).toBe('$');
+    // Allowlist discipline intact — this is an addition, not a loosening.
+    expect(rent.apiColumn).toBeUndefined();
+  });
+
+  test('REPRO full chain: a PROJECTED definition still renders the $ adornment', async () => {
+    // Exactly what production serves: render.html + yc-forms.js fed the
+    // projection's output. On the unfixed allowlist the adornment vanishes
+    // here while every raw-definition test above stays green.
+    const w = await ready(makePage(extSvc.projectDefinition(FLAT_DEF)));
+    const adorn = field(w, 'rent').closest('.yc-field').querySelector('.yc-input-adorn');
+    expect(adorn).not.toBeNull();
+    expect(adorn.firstElementChild.textContent).toBe('$');
+    // And the keys that already rode the projection keep working end-to-end:
+    // min survived, so the '-' policy and blur bounds hold on projected input.
+    expect(press(w, 'family_size', '-')).toBe(true);
+    expect(press(w, 'net_adjust', '-')).toBe(false);
+    typeAndLeave(w, 'family_size', '-4');
+    expect(errorOf(w, 'family_size').textContent).toBe('Must be at least 0');
+  });
+});

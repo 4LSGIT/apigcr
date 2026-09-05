@@ -192,6 +192,19 @@ const FIELD_KEYS = [
   'requiredMessage', 'minLength', 'maxLength', 'pattern', 'patternMessage',
   'email', 'options', 'allowOther', 'columns', 'showWhen', 'showWhenAny', 'prefillMode',
   'urlParam', 'min', 'max', 'step',
+  // prefix/suffix (D4 A1; added 2026-09-06 as the D4b hotfix): display-only
+  // input adornments ("$", "%"). Validator-bounded (schema §7: number/text
+  // only, string, ≤12 chars) and DOM-safe (render.html emits them through
+  // el()'s textContent path). Same lesson, FOURTH instance: a
+  // renderer-consumed presentation key must ride this projection or it
+  // silently does not exist externally — layout (§Q), content, showWhenAny,
+  // and now this: DBKQ v1.2 published with 63 `$` prefixes and the external
+  // wire stripped every one while min/max (already listed) sailed through.
+  // Test-locked in tests/formRender.d4inputPolish.test.js, including a
+  // full-chain render test that serves projectDefinition() output — the D4
+  // suite's fetch stub bypassed this projection, which is exactly how the
+  // defect stayed green.
+  'prefix', 'suffix',
   // §Q content (display-only, EXTERNAL-SAFE): the block's whole payload IS
   // display content, so it must survive the projection or an external form
   // renders an empty box. All six are SU-authored and validator-bounded
