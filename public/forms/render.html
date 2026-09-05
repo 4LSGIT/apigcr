@@ -1951,16 +1951,129 @@
       // no interleaving inside the swap window) and rules.custom receives
       // collect(), which is NOT narrowed, so requiredWhen conditions
       // referencing other cards' fields still evaluate correctly.
-      function scopedValidate(i) {
+      //
+      // `silent` suppresses validate()'s toast. That toast is a "you pressed
+      // Next/Save and it didn't work" affordance; every OTHER caller here is
+      // recording state the user didn't ask about — leaving a card by Back or
+      // by a dot, or the load-time sweep below — and firing a toast there is
+      // noise (goRelative's own comment already claimed this path was silent;
+      // the toast leaked through it). Error PAINTING still happens: it stays
+      // on the card being left, invisible until the user returns.
+      function scopedValidate(i, silent) {
         var names = (maps.cards.fieldNames[i] || []);
         var full = form_.config.validation, sub = {}, any = false;
         names.forEach(function (n) { if (full[n]) { sub[n] = full[n]; any = true; } });
         if (!any) return true;      // nothing validatable on this card
+        var hadOwnToast = Object.prototype.hasOwnProperty.call(form_, '_toast');
+        var prevToast = form_._toast;
         form_.config.validation = sub;
+        if (silent) form_._toast = function () {};
         var ok;
         try { ok = form_.validate(); }
-        finally { form_.config.validation = full; }
+        finally {
+          form_.config.validation = full;
+          if (silent) {
+            if (hadOwnToast) form_._toast = prevToast; else delete form_._toast;
+          }
+        }
         return ok;
+      }
+      // True when the card carries at least one rule — i.e. when
+      // scopedValidate would actually run validate() and repaint the DOM.
+      function cardHasRules(i) {
+        var names = (maps.cards.fieldNames[i] || []);
+        for (var k = 0; k < names.length; k++) {
+          if (form_.config.validation[names[k]]) return true;
+        }
+        return false;
+      }
+
+      // ── Data-driven progress (D2-I) ───────────────────────────────────────
+      // `visited` only ever grew by WALKING the form, so a restored draft (or
+      // any pre-populated load) left the whole trail grey: 149 answered cards,
+      // 149 grey dots. A card counts as answered when at least one of its
+      // currently VISIBLE questions carries a value — visibility matters, or a
+      // condition-hidden follow-up would keep a card lit after the answer that
+      // revealed it went away.
+      function cardAnswered(i, all) {
+        var section = maps.cards.sections[i] || {};
+        if (Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+          var items = all[section.repeater];
+          return Array.isArray(items) && items.length > 0;
+        }
+        var names = visibleFieldsOn(i);
+        for (var k = 0; k < names.length; k++) {
+          var v = all[names[k]];
+          if (v === undefined || v === null || v === false) continue;
+          if (Array.isArray(v)) { if (v.length) return true; continue; }
+          if (String(v).trim() !== '') return true;
+        }
+        return false;
+      }
+      // Paint the trail from the DATA. Additive only: a card the user walked
+      // through and left blank stays done — you cannot un-visit a card.
+      function hydrateFromData() {
+        var all;
+        try { all = form_.collect(); } catch (e) { return; }
+        var painted = false;
+        visibleIdx().forEach(function (i) {
+          if (!cardAnswered(i, all)) return;
+          visited[i] = true;
+          if (cardHasRules(i)) painted = true;
+          result[i] = scopedValidate(i, true);
+        });
+        // The sweep leaves the LAST rule-carrying card's errors painted
+        // (validate() clears globally, then paints its scope). Nothing in the
+        // sweep was a user gesture, so nothing should be shouting on screen —
+        // wipe it. show() repaints a known-bad card on entry. Skipped entirely
+        // when no card carried a rule, so a legitimately painted error the
+        // user is currently looking at survives an unrelated populate().
+        if (painted) {
+          form_.el.querySelectorAll('.yc-error').forEach(function (e) {
+            e.classList.remove('visible'); e.textContent = '';
+          });
+        }
+        // …but a known-bad CURRENT card gets its messages straight back:
+        // without this a restore leaves the user staring at a red dot on a
+        // silent card until they leave and return.
+        if (cur >= 0 && result[cur] === false) scopedValidate(cur, true);
+        renderDots();
+      }
+      // The draft-restore path is populate() THEN _evaluateConditionals(), so
+      // hydrating synchronously on 'yc:populated' would judge visibility one
+      // beat early and skip every card the restored data just revealed. Defer
+      // to the end of the turn, coalescing repeats.
+      var hydrateTimer = null;
+      function scheduleHydrate() {
+        if (hydrateTimer) return;
+        hydrateTimer = setTimeout(function () {
+          hydrateTimer = null;
+          if (cur < 0) return;
+          hydrateFromData();
+        }, 0);
+      }
+
+      // Span rule: jumping FORWARD past cards judges each passed-over card
+      // once, silently. Known-bad → red, so a skipped required step is marked
+      // the moment it is skipped rather than discovered at Review. Valid →
+      // untouched: an empty optional card nobody has looked at is not "done",
+      // and painting it green would lie — grey is the honest colour. `visited`
+      // is deliberately NOT set (red needs only result[i] === false, and a
+      // card nobody opened was not visited). Backward jumps mark nothing: the
+      // cards between target and origin sit AHEAD of where you land — they
+      // are not being skipped. cardHasRules short-circuits the walk, so on a
+      // rule-light form (DBKQ: 3 rules across 149 cards) this costs nothing.
+      function markSkipped(fromIdx, toIdx) {
+        var vis = visibleIdx();
+        var a = vis.indexOf(fromIdx), b = vis.indexOf(toIdx);
+        if (a === -1 || b === -1 || b <= a + 1) return;
+        for (var p = a + 1; p < b; p++) {
+          var i = vis[p];
+          if (!cardHasRules(i)) continue;          // rule-free cannot be invalid
+          var ok = scopedValidate(i, true);
+          if (!ok) result[i] = false;
+          else if (result[i] === false) result[i] = true;   // stale red from an earlier pass — cleared
+        }
       }
 
       function renderDots() {
@@ -1971,7 +2084,14 @@
           if (i === cur && !review) cls += ' current';
           else if (result[i] === false) cls += ' error';
           else if (visited[i]) cls += ' done';
-          var clickable = (gate ? !!visited[i] : true) && !(i === cur && !review);
+          // EVERY visible dot is a jump target. Restricting clicks to
+          // `visited` cards meant the dot bar could only retrace a walk you
+          // had already made — on DBKQ (149 cards) that left Next as the only
+          // way forward and no way to reach card 90 at all. Free jumping is
+          // safe: Next still gates card-by-card, and "Review and Submit" runs
+          // the FULL unscoped validate() before the summary, so a skipped
+          // required field blocks there with its card revealed.
+          var clickable = !(i === cur && !review);
           if (clickable) cls += ' clickable';
           var d = el('button', { type: 'button', class: cls,
                                  title: maps.cards.titles[i] || ('Step ' + (vis.indexOf(i) + 1)),
@@ -1980,7 +2100,11 @@
             d.addEventListener('click', function () {
               if (review) { exitReview(i); return; }
               if (i === cur) return;
-              if (gate) result[cur] = scopedValidate(cur);   // record the card being left
+              if (gate) {
+                // Record the card being left, silently — a jump is not a Save.
+                result[cur] = scopedValidate(cur, true);
+                markSkipped(cur, i);
+              }
               show(i);
             });
           }
@@ -2000,8 +2124,9 @@
         cardEls.forEach(function (c, j) { c.classList.toggle('active', j === i); });
         // Re-entering a known-bad card repaints its messages (a later scoped
         // run on another card cleared every .yc-error — validate() clears
-        // globally by design).
-        if (result[i] === false) scopedValidate(i);
+        // globally by design). Silent: the messages are already on screen,
+        // and arriving at a card is not a failed Save.
+        if (result[i] === false) scopedValidate(i, true);
         var vis = visibleIdx();
         var pos = vis.indexOf(i);
         var last = pos === vis.length - 1;
@@ -2024,7 +2149,7 @@
           } else {
             // Leaving by any other route records the card's state silently
             // (errors paint on the card being left — hidden until return).
-            result[cur] = scopedValidate(cur);
+            result[cur] = scopedValidate(cur, true);
           }
         }
         var nextPos = pos + dir;
@@ -2156,9 +2281,15 @@
       function revealFirstError() {
         var err = form_.el.querySelector('.yc-error.visible');
         // Refresh dot colors from the painted DOM (a full validate marked
-        // every bad card at once).
+        // every bad card at once). A painted error proves the card bad
+        // whether or not it was ever visited — the old `visited` guard let a
+        // never-opened bad card stay grey while this very function revealed
+        // it. The clean branch only refreshes cards that already carry a
+        // judgment (visited, or red from a span pass); flipping a
+        // never-judged card to "valid" would pollute the model for nothing.
         cardEls.forEach(function (c, i) {
-          if (visited[i]) result[i] = !c.querySelector('.yc-error.visible');
+          if (c.querySelector('.yc-error.visible')) result[i] = false;
+          else if (visited[i] || result[i] === false) result[i] = true;
         });
         if (!err) { renderDots(); return; }
         var cardEl = err.closest('.yc-card');
@@ -2214,6 +2345,14 @@
         renderDots();
       }
       form_.el.addEventListener('yc:conditionals', refreshNav);
+
+      // ── Trail refresh, driven by POPULATE (D2-I) ──
+      // 'yc:conditionals' cannot carry this: it fires on every keystroke, and
+      // a full-form status sweep per keystroke is not a thing to do. populate()
+      // is the exact and only moment values arrive from somewhere other than
+      // the user's fingers — draft Restore, parent refresh — which is why
+      // yc-forms emits its own event for it.
+      form_.el.addEventListener('yc:populated', scheduleHydrate);
 
       // Auto-advance (Fred D1, the Jotform feel). Fires only for a
       // TERMINAL GESTURE: one interaction that completes the answer, where
@@ -2299,9 +2438,14 @@
       }
 
       // First paint: the first condition-visible card (init step 13b has
-      // already evaluated conditionals against loaded/draft data).
+      // already evaluated conditionals against loaded/draft data). init's own
+      // populate() (step 10) fired 'yc:populated' before this listener
+      // existed, so the load-time trail is hydrated explicitly here — safe to
+      // do synchronously, unlike the event path, because conditionals are
+      // already settled by the time afterInit runs.
       var vis0 = visibleIdx();
       show(vis0.length ? vis0[0] : 0);
+      hydrateFromData();
     }
 
     function afterInit() {

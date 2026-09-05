@@ -17,8 +17,15 @@
  *   K  markup contract: cards wrap sections, nav bar, dots (count = visible
  *      cards), counter, review hidden, saveBtn hidden, single-question class
  *   N  navigation: Next blocks on the CURRENT card only (later-card required
- *      fields do not block and are not painted), Back free, visited dots
- *      clickable, unvisited dots inert, dot states (done/error/current)
+ *      fields do not block and are not painted), Back free, EVERY visible dot
+ *      clickable (X6a); a forward jump judges each skipped card silently —
+ *      known-bad goes red, valid stays grey — and dot states (done/error/
+ *      current) render accordingly
+ *   D  data-driven trail (X6a): populate() → 'yc:populated' → deferred
+ *      hydrate marks answered cards done/red from the DATA (the draft-restore
+ *      path), including cards the restored answers just revealed; a known-bad
+ *      current card gets its messages repainted; skipped rule-less cards
+ *      never turn green
  *   A  auto-advance: single radio card advances ~300ms after selection;
  *      multi-field cards never auto-advance
  *   C  conditional cards: a showWhen-false section is skipped by the
@@ -248,16 +255,108 @@ describe('N navigation', () => {
     // leaving card 1 recorded its failure silently → its dot is red
     expect(dots(p)[1].classList.contains('error')).toBe(true);
 
-    // visited dot (card 1) clickable; unvisited dot (card 3) inert
+    // EVERY visible dot is a jump target (X6a) — including never-visited
+    // card 3. Jumping forward runs the span rule: passed-over card 1
+    // (required radio, still unanswered) is judged silently and marked red.
     const ds = dots(p);
     expect(ds[1].classList.contains('clickable')).toBe(true);
-    expect(ds[2].classList.contains('clickable')).toBe(false);
+    expect(ds[2].classList.contains('clickable')).toBe(true);
     ds[2].click(); await sleep(20);
-    expect(activeCard(p)).toBe(cards[0]);       // nothing happened
-    ds[1].click(); await sleep(20);
+    expect(activeCard(p)).toBe(cards[3]);
+    expect(dots(p)[0].classList.contains('done')).toBe(true);    // walked + valid
+    expect(dots(p)[1].classList.contains('error')).toBe(true);   // skipped + known-bad
+    // the landing card shows no errors of its own (arriving is not a Save)
+    expect(cards[3].querySelector('.yc-error.visible')).toBeNull();
+    // jump back to the known-bad card → its message repaints on entry
+    dots(p)[1].click(); await sleep(20);
     expect(activeCard(p)).toBe(cards[1]);
-    // re-entering the known-bad card repaints its message
     expect(cards[1].querySelector('.yc-error.visible')).toBeTruthy();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// D — data-driven trail (X6a)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 4 optional-heavy cards for the grey-honesty tests: only card 2 carries a
+// rule. Titles keep the dots addressable.
+function optDef() {
+  return {
+    layout: 'card', dataMode: 'live', autosave: false, toggle: false,
+    sections: [
+      { title: 'A', rows: [{ fields: [{ name: 'a1', type: 'text', label: 'A1' }] }] },
+      { title: 'B', rows: [{ fields: [{ name: 'b1', type: 'text', label: 'B1' }] }] },
+      { title: 'C', rows: [{ fields: [{ name: 'c1', type: 'text', label: 'C1', required: true }] }] },
+      { title: 'D', rows: [{ fields: [{ name: 'd1', type: 'text', label: 'D1' }] }] },
+    ],
+  };
+}
+
+describe('D data-driven trail', () => {
+  test('populate() (the Restore path) marks answered cards done — including a card the restore revealed', async () => {
+    const p = await ready(bootPage({ definition: cardDef() }));
+    expect(dots(p).length).toBe(3);
+    expect(dots(p)[1].classList.contains('done')).toBe(false);   // fresh trail is grey
+
+    // Mimic the draft banner's Restore handler exactly: populate() THEN
+    // _evaluateConditionals() — the hydrate must judge visibility AFTER the
+    // restored pick='b' reveals card 2, which is why it defers a beat.
+    p.win.ycForm.populate({ full_name: 'Fred T', pick: 'b', beta_note: 'hi', email: 'f@x.test' });
+    p.win.ycForm._evaluateConditionals();
+    await sleep(40);
+
+    const ds = dots(p);
+    expect(ds.length).toBe(4);                                   // card 2 revealed
+    expect(ds[0].classList.contains('current')).toBe(true);      // cur untouched by hydrate
+    expect(ds[1].classList.contains('done')).toBe(true);
+    expect(ds[2].classList.contains('done')).toBe(true);         // the revealed card counts
+    expect(ds[3].classList.contains('done')).toBe(true);
+    // and the trail is immediately navigable end to end
+    ds[3].click(); await sleep(20);
+    expect(activeCard(p)).toBe(qa(p, '.yc-card')[3]);
+  });
+
+  test('restore with a bad answer paints that card red unvisited; a bad CURRENT card gets its message back', async () => {
+    const p = await ready(bootPage({ definition: cardDef() }));
+    p.win.ycForm.populate({ nick: 'x', pick: 'a', email: 'not-an-email' });
+    p.win.ycForm._evaluateConditionals();
+    await sleep(40);
+
+    const ds = dots(p);                       // pick='a' → card 2 hidden → [0,1,3]
+    expect(ds.length).toBe(3);
+    // card 3: answered, email rule fails → red without ever being shown
+    expect(ds[2].classList.contains('error')).toBe(true);
+    // card 1: answered + valid → done
+    expect(ds[1].classList.contains('done')).toBe(true);
+    // card 0 (current): nick answered but full_name required-empty → the
+    // hydrate's sweep wiped the paint, then restored it for the card on
+    // screen — dot renders current, message visible.
+    expect(ds[0].classList.contains('current')).toBe(true);
+    expect(qa(p, '.yc-card')[0].querySelector('.yc-error.visible')).toBeTruthy();
+  });
+
+  test('forward jump: skipped rule-less cards stay grey, skipped required card goes red', async () => {
+    const p = await ready(bootPage({ definition: optDef() }));
+    const ds0 = dots(p);
+    expect(ds0.length).toBe(4);
+    ds0[3].click(); await sleep(20);          // 0 → 3, skipping 1 (no rules) and 2 (required)
+
+    const ds = dots(p);
+    expect(activeCard(p)).toBe(qa(p, '.yc-card')[3]);
+    expect(ds[0].classList.contains('done')).toBe(true);     // walked through
+    expect(ds[1].classList.contains('done')).toBe(false);    // skipped + rule-less → honest grey
+    expect(ds[1].classList.contains('error')).toBe(false);
+    expect(ds[2].classList.contains('error')).toBe(true);    // skipped + required-empty → red
+    // Review is still gated by the FULL validate: the skipped required card
+    // blocks entry and is revealed with its message painted.
+    nextBtn(p).click(); await sleep(20);      // last card → "Review and Submit"
+    expect(activeCard(p)).toBe(qa(p, '.yc-card')[2]);
+    expect(qa(p, '.yc-card')[2].querySelector('.yc-error.visible')).toBeTruthy();
+    expect(dots(p)[2].classList.contains('current')).toBe(true);
+    // fix it → Next → review reachable
+    setText(p, 'c1', 'ok'); nextBtn(p).click(); await sleep(20);
+    nextBtn(p).click(); await sleep(20);
+    expect(q(p, '.yc-card-review').style.display).toBe('');
   });
 });
 

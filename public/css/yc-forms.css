@@ -824,39 +824,60 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 10px;
+  gap: 0;               /* X6a: the buttons below carry their own breathing room */
   flex-wrap: wrap;
   margin: 14px 0 4px;
 }
 
+/* X6a: each dot BUTTON is a 24px touch target; the visible dot is a ::after
+   pseudo-element centred inside it. The old bare 10px button was an
+   unhittable target on a phone, and every dot is now a jump target, so the
+   target size is load-bearing. (background-clip:content-box can't do this —
+   it clips the paint to a square and defeats the border-radius.) Visual
+   sizes unchanged: 10px dot, 16px current ring; uniform 24px buttons also
+   stop the row reflowing when `current` moves. */
 .yc-card-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--border-strong);
+  width: 24px;
+  height: 24px;
+  position: relative;
+  background: none;
   border: none;
   padding: 0;
   cursor: default;
-  transition: background 0.15s, transform 0.15s;
+}
+
+.yc-card-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  transition: background 0.15s, width 0.15s, height 0.15s, margin 0.15s;
 }
 
 .yc-card-dot.clickable {
   cursor: pointer;
 }
 
-.yc-card-dot.done {
+.yc-card-dot.done::after {
   background: var(--ok-fill);
 }
 
-.yc-card-dot.error {
+.yc-card-dot.error::after {
   background: var(--danger-fill);
 }
 
-.yc-card-dot.current {
+.yc-card-dot.current::after {
   width: 16px;
   height: 16px;
+  margin: -8px 0 0 -8px;
   background: var(--surface);
   border: 2px solid var(--accent);
+  box-sizing: border-box;
 }
 
 /* Review page */

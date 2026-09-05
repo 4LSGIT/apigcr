@@ -452,6 +452,15 @@ if (this.config.endpoints.load && !this.config.external) {
 
     // Everything written above is machine-written, so it IS the clean state.
     this.resetBaseline();
+
+    // Tell layered UI that field VALUES were replaced wholesale. populate()
+    // writes the DOM directly, so NO input/change event fires — a consumer
+    // that only watches user gestures cannot see a draft restore at all, and
+    // 'yc:conditionals' is useless as a substitute because it also fires on
+    // every keystroke. Low-frequency by construction: init step 10, the draft
+    // banner's Restore, and refreshFromParent. Purely informational — nothing
+    // in yc-forms listens, and a form with no listener pays one dispatch.
+    this.el.dispatchEvent(new CustomEvent('yc:populated', { bubbles: true }));
   }
 
 
