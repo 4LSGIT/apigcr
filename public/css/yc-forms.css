@@ -880,7 +880,71 @@ body {
   box-sizing: border-box;
 }
 
+/* X6b: chapter pill bar — one pill per chapter, horizontally scrollable on
+   narrow screens (auto-scroll keeps the current pill in view). States:
+   solid green = complete, green ring = started, red = a member card is
+   known-bad, accent ring = current chapter. Rendered only when the
+   definition declares chapters. */
+.yc-card-chapters {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  margin: 12px 0 0;
+  padding-bottom: 4px;
+}
+
+.yc-chap {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.yc-chap.started {
+  border-color: var(--ok-fill);
+}
+
+.yc-chap.done {
+  border-color: var(--ok-fill);
+  background: var(--ok-fill);
+  color: var(--fill-text);
+}
+
+.yc-chap.error {
+  border-color: var(--danger-fill);
+  color: var(--danger-fill);
+}
+
+.yc-chap.current {
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.yc-chap.current.done {
+  background: var(--ok-fill);
+  color: var(--fill-text);
+}
+
 /* Review page */
+.yc-card-review-chapter {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 18px 0 2px;
+}
+
 .yc-card-review-title {
   font-size: 1.1rem;
   font-weight: 600;

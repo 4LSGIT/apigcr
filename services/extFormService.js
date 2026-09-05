@@ -178,7 +178,13 @@ const TOP_KEYS = [
 // operator silently not exist on the external surface — the same class of
 // defect `layout` shipped with in §Q and `content` shipped with before it.
 // Test-locked, third time.
-const SECTION_KEYS  = ['title', 'subtitle', 'showWhen', 'showWhenAny'];
+const SECTION_KEYS  = ['title', 'subtitle', 'showWhen', 'showWhenAny',
+                       // X6b: chapter grouping is presentation and must
+                       // survive the projection — external card forms (DBKQ)
+                       // are exactly where the bar matters. Old code
+                       // stripping it degrades to the plain dot bar, which
+                       // is the rollback story working as designed.
+                       'chapter'];
 const REPEATER_KEYS = ['repeater', 'title', 'subtitle', 'addLabel', 'showWhen', 'showWhenAny'];
 const FIELD_KEYS = [
   'name', 'label', 'type', 'width', 'sublabel', 'placeholder', 'rows',

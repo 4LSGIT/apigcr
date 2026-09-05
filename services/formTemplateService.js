@@ -568,6 +568,17 @@ function validateDefinition(def) {
 
     noteShowWhen(section.showWhen, sPath);
     noteShowWhenAny(section.showWhenAny, sPath);
+
+    // X6b chapters: presentation-only grouping for card layout. Sticky-down —
+    // a declaration starts a chapter that runs until the next one. Type-gated
+    // here so a typo fails at publish, not silently at render; NEVER part of
+    // fieldSignature (a chapter edit must not bump schema_version and warn
+    // every in-flight draft). Old renderers ignore the key; projectDefinition
+    // (extFormService) forwards it externally.
+    if (section.chapter !== undefined &&
+        (typeof section.chapter !== 'string' || !section.chapter.trim())) {
+      throw badRequest(`${sPath}.chapter must be a non-empty string when present`);
+    }
   };
 
   if (hasTabs) {

@@ -1094,8 +1094,41 @@
     var cardsMeta = null;
     if (wantCards) {
       cardsMeta = { fieldNames: [], questionNames: [], single: [], titles: [],
-                    sections: def.sections || [] };
+                    sections: def.sections || [],
+                    // X6b chapters: `chapter` on a section starts one; every
+                    // following section belongs to it until the next
+                    // declaration (sticky-down). chapters[] = { label,
+                    // cards: [cardIdx…] }; chapterOf[i] = chapter index.
+                    // BOTH stay empty when no section declares a chapter —
+                    // that emptiness is the whole feature gate.
+                    chapters: [], chapterOf: [] };
+      var anyChapter = (def.sections || []).some(function (s) {
+        return s && typeof s.chapter === 'string' && s.chapter.trim();
+      });
+      var curChapter = -1;
+      if (anyChapter) {
+        var s0 = (def.sections || [])[0];
+        if (!(s0 && typeof s0.chapter === 'string' && s0.chapter.trim())) {
+          // Sections before the first declaration get an implicit lead
+          // chapter rather than falling outside the bar entirely (a pill-less
+          // card would be unreachable by pill and invisible in the trail).
+          // Authoring the declaration on section 0 is still the clear form.
+          cardsMeta.chapters.push({ label: 'Start', cards: [] });
+          curChapter = 0;
+          warn('chapters: sections[0] declares no chapter — leading cards grouped under "Start"');
+        }
+      }
       (def.sections || []).forEach(function (section, i) {
+        if (section && section.chapter !== undefined) {
+          if (typeof section.chapter === 'string' && section.chapter.trim()) {
+            cardsMeta.chapters.push({ label: section.chapter.trim(), cards: [] });
+            curChapter = cardsMeta.chapters.length - 1;
+          } else {
+            warn('sections[' + i + '].chapter ignored (must be a non-empty string)');
+          }
+        }
+        cardsMeta.chapterOf.push(curChapter);
+        if (curChapter !== -1) cardsMeta.chapters[curChapter].cards.push(i);
         // Two lists per card, deliberately different:
         //   fieldNames    — everything that can carry validation rules, used
         //                   to narrow config.validation (a `hidden` field CAN
@@ -1172,6 +1205,13 @@
         el('button', { type: 'button', class: 'yc-btn yc-btn-sm yc-btn-primary yc-card-next',
                        text: 'Next \u2192' })
       ]));
+      // X6b: the chapter bar exists ONLY when the definition declares
+      // chapters — a chapter-free definition must render byte-identically to
+      // before the feature existed (the same gate discipline layout itself
+      // gets in test G).
+      if (cardsMeta.chapters.length) {
+        form.appendChild(el('div', { class: 'yc-card-chapters' }));
+      }
       form.appendChild(el('div', { class: 'yc-card-dots' }));
     }
 
@@ -1901,6 +1941,10 @@
       var nextBtn  = form_.el.querySelector('.yc-card-next');
       var countEl  = form_.el.querySelector('.yc-card-count');
       var dotsEl   = form_.el.querySelector('.yc-card-dots');
+      var chapsEl  = form_.el.querySelector('.yc-card-chapters');   // X6b: null when no chapters declared
+      var chapters  = maps.cards.chapters  || [];
+      var chapterOf = maps.cards.chapterOf || [];
+      var chapMode  = !!(chapsEl && chapters.length);
       var saveBtnEl = document.getElementById('saveBtn');
       if (!cardEls.length || !navEl) return;
 
@@ -2076,10 +2120,84 @@
         }
       }
 
+      // One navigation path for dots AND chapter pills: record the departing
+      // card silently, run the span rule, land. A jump is not a Save.
+      function jumpTo(i) {
+        if (review) { exitReview(i); return; }
+        if (i === cur) return;
+        if (gate) {
+          result[cur] = scopedValidate(cur, true);
+          markSkipped(cur, i);
+        }
+        show(i);
+      }
+
+      // X6b: chapter pill states are a fold over member cards —
+      //   error    any member is known-bad (result === false)
+      //   done     every visible member is visited and none is bad
+      //   started  some member is visited (or judged) but not all
+      //   current  contains the active card (combines with the above)
+      // A chapter whose every card is condition-hidden disappears, exactly
+      // like a hidden card does.
+      function renderChapters() {
+        if (!chapMode) return;
+        while (chapsEl.firstChild) chapsEl.removeChild(chapsEl.firstChild);
+        var vis = visibleIdx();
+        chapters.forEach(function (ch, ci) {
+          var members = ch.cards.filter(function (i) { return vis.indexOf(i) !== -1; });
+          if (!members.length) return;
+          var anyBad = false, nVisited = 0;
+          members.forEach(function (i) {
+            if (result[i] === false) anyBad = true;
+            if (visited[i]) nVisited += 1;
+          });
+          var isCurrent = !review && cur >= 0 && chapterOf[cur] === ci;
+          var cls = 'yc-chap';
+          if (isCurrent) cls += ' current';
+          if (anyBad) cls += ' error';
+          else if (nVisited === members.length) cls += ' done';
+          else if (nVisited > 0) cls += ' started';
+          var pill = el('button', { type: 'button', class: cls, text: ch.label,
+                                    title: ch.label + ' \u2014 ' + nVisited + ' of ' + members.length,
+                                    'aria-label': ch.label + ' \u2014 ' + nVisited + ' of ' + members.length +
+                                                  (anyBad ? ', needs attention' : '') });
+          pill.addEventListener('click', function () { jumpTo(members[0]); });
+          chapsEl.appendChild(pill);
+          if (isCurrent) {
+            // Keep the active pill in view on a scrolling bar. block:'nearest'
+            // never moves the page vertically when the bar is already on
+            // screen; jsdom no-ops the call entirely.
+            try { pill.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) { /* older engines */ }
+          }
+        });
+      }
+
+      // The count string: chapter-local when chapters exist ("Vehicles — 3 of
+      // 6"), the global count otherwise. On a conditional form the global
+      // number is a moving target; the chapter-local one is short and stable.
+      function countText() {
+        var vis = visibleIdx();
+        var pos = vis.indexOf(cur);
+        if (pos === -1) return '';
+        if (chapMode && chapterOf[cur] >= 0) {
+          var ch = chapters[chapterOf[cur]];
+          var members = ch.cards.filter(function (i) { return vis.indexOf(i) !== -1; });
+          return ch.label + ' \u2014 ' + (members.indexOf(cur) + 1) + ' of ' + members.length;
+        }
+        return (pos + 1) + ' of ' + vis.length;
+      }
+
       function renderDots() {
+        renderChapters();
         while (dotsEl.firstChild) dotsEl.removeChild(dotsEl.firstChild);
         var vis = visibleIdx();
-        vis.forEach(function (i) {
+        // X6b: with chapters, the dot row shows the CURRENT chapter only —
+        // 149 dots becomes the ~dozen that matter right now. The pills above
+        // carry the rest of the map.
+        var row = (chapMode && cur >= 0 && chapterOf[cur] >= 0)
+          ? vis.filter(function (i) { return chapterOf[i] === chapterOf[cur]; })
+          : vis;
+        row.forEach(function (i) {
           var cls = 'yc-card-dot';
           if (i === cur && !review) cls += ' current';
           else if (result[i] === false) cls += ' error';
@@ -2097,16 +2215,7 @@
                                  title: maps.cards.titles[i] || ('Step ' + (vis.indexOf(i) + 1)),
                                  'aria-label': maps.cards.titles[i] || ('Step ' + (vis.indexOf(i) + 1)) });
           if (clickable) {
-            d.addEventListener('click', function () {
-              if (review) { exitReview(i); return; }
-              if (i === cur) return;
-              if (gate) {
-                // Record the card being left, silently — a jump is not a Save.
-                result[cur] = scopedValidate(cur, true);
-                markSkipped(cur, i);
-              }
-              show(i);
-            });
+            d.addEventListener('click', function () { jumpTo(i); });
           }
           dotsEl.appendChild(d);
         });
@@ -2119,6 +2228,7 @@
         if (saveBtnEl) saveBtnEl.style.display = 'none';
         navEl.style.display = '';
         dotsEl.style.display = '';
+        if (chapsEl) chapsEl.style.display = '';
         cur = i;
         visited[i] = true;
         cardEls.forEach(function (c, j) { c.classList.toggle('active', j === i); });
@@ -2132,7 +2242,7 @@
         var last = pos === vis.length - 1;
         prevBtn.style.visibility = pos <= 0 ? 'hidden' : '';
         nextBtn.textContent = last ? 'Review and Submit' : 'Next \u2192';
-        countEl.textContent = (pos + 1) + ' of ' + vis.length;
+        countEl.textContent = countText();
         renderDots();
         try { form_.el.scrollIntoView({ block: 'start' }); } catch (e) { /* older engines */ }
       }
@@ -2199,7 +2309,13 @@
         var all = form_.collect();
         var vis = visibleIdx();
         var qn = 0;                      // running question number across the whole review
+        var lastChap = -1;               // X6b: emit a chapter heading at each boundary
         vis.forEach(function (i) {
+          if (chapMode && chapterOf[i] >= 0 && chapterOf[i] !== lastChap) {
+            lastChap = chapterOf[i];
+            reviewEl.appendChild(el('div', { class: 'yc-card-review-chapter',
+                                             text: chapters[lastChap].label }));
+          }
           var section = maps.cards.sections[i] || {};
           var cardEl = cardEls[i];
           var block = el('div', { class: 'yc-card-review-block' });
@@ -2265,6 +2381,7 @@
         cardEls.forEach(function (c) { c.classList.remove('active'); });
         reviewEl.style.display = '';
         dotsEl.style.display = 'none';
+        if (chapsEl) chapsEl.style.display = 'none';
         countEl.textContent = '';
         nextBtn.style.display = 'none';
         prevBtn.style.visibility = '';
@@ -2340,7 +2457,7 @@
           show(to);                                     // repaints count/label/dots itself
           return;
         }
-        countEl.textContent = (pos + 1) + ' of ' + vis.length;
+        countEl.textContent = countText();
         nextBtn.textContent = pos === vis.length - 1 ? 'Review and Submit' : 'Next \u2192';
         renderDots();
       }

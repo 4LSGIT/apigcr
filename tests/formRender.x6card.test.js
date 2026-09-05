@@ -26,6 +26,12 @@
  *      path), including cards the restored answers just revealed; a known-bad
  *      current card gets its messages repainted; skipped rule-less cards
  *      never turn green
+ *   H  chapters (X6b): `chapter` on a section starts a sticky-down group;
+ *      pill bar (current/started/done/error as a fold over member cards),
+ *      dots scoped to the current chapter, chapter-local counter, hidden
+ *      chapters absent, review headings, implicit "Start" lead, validator
+ *      type gate, signature-blind, projection forwards the key; a
+ *      chapter-free definition renders with NO chapter artifacts at all
  *   A  auto-advance: single radio card advances ~300ms after selection;
  *      multi-field cards never auto-advance
  *   C  conditional cards: a showWhen-false section is skipped by the
@@ -357,6 +363,116 @@ describe('D data-driven trail', () => {
     setText(p, 'c1', 'ok'); nextBtn(p).click(); await sleep(20);
     nextBtn(p).click(); await sleep(20);
     expect(q(p, '.yc-card-review').style.display).toBe('');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// H — chapters (X6b)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// One = cards 0–1 (rule-free), Two = cards 2–3 (card 2 required), Three = a
+// single card hidden until a1 is non-empty (the hidden-chapter case).
+function chapDef() {
+  return {
+    layout: 'card', dataMode: 'live', autosave: false, toggle: false,
+    sections: [
+      { chapter: 'One', title: 'A', rows: [{ fields: [{ name: 'a1', type: 'text', label: 'A1' }] }] },
+      { rows: [{ fields: [{ name: 'a2', type: 'text', label: 'A2' }] }] },
+      { chapter: 'Two', rows: [{ fields: [{ name: 'b1', type: 'text', label: 'B1', required: true }] }] },
+      { rows: [{ fields: [{ name: 'b2', type: 'text', label: 'B2' }] }] },
+      { chapter: 'Three', showWhen: { field: 'a1', op: 'notEmpty' },
+        rows: [{ fields: [{ name: 'c1', type: 'text', label: 'C1' }] }] },
+    ],
+  };
+}
+const pills = (p) => qa(p, '.yc-chap');
+
+describe('H chapters', () => {
+  test('gate: a chapter-free definition renders NO chapter bar and keeps the global counter', async () => {
+    const p = await ready(bootPage({ definition: cardDef() }));
+    expect(q(p, '.yc-card-chapters')).toBeNull();
+    expect(countTx(p)).toBe('1 of 3');
+    expect(dots(p).length).toBe(3);                          // dots stay whole-form
+  });
+
+  test('bar renders declared chapters; dots scope to the current chapter; chapter-local counter', async () => {
+    const p = await ready(bootPage({ definition: chapDef() }));
+    let ps = pills(p);
+    expect(ps.length).toBe(2);                               // Three hidden (a1 empty)
+    expect(ps.map(x => x.textContent)).toEqual(['One', 'Two']);
+    expect(ps[0].classList.contains('current')).toBe(true);
+    expect(dots(p).length).toBe(2);                          // cards 0–1 only
+    expect(countTx(p)).toBe('One \u2014 1 of 2');
+    // the reveal: a1 non-empty → chapter Three appears in the bar
+    setText(p, 'a1', 'x'); await sleep(20);
+    expect(pills(p).length).toBe(3);
+  });
+
+  test('pill click jumps; a bad departing card reds its pill; span rule rides along', async () => {
+    const p = await ready(bootPage({ definition: chapDef() }));
+    setText(p, 'a1', 'x'); await sleep(20);
+    pills(p)[1].click(); await sleep(20);                    // One → Two
+    expect(activeCard(p)).toBe(qa(p, '.yc-card')[2]);
+    expect(countTx(p)).toBe('Two \u2014 1 of 2');
+    expect(dots(p).length).toBe(2);                          // cards 2–3 only
+    expect(pills(p)[0].classList.contains('started')).toBe(true);   // 1 of 2 visited
+    // jump on with b1 (required) still empty → departing card 2 goes bad →
+    // its chapter pill reds; skipped card 3 is rule-free and stays grey
+    pills(p)[2].click(); await sleep(20);
+    expect(activeCard(p)).toBe(qa(p, '.yc-card')[4]);
+    expect(pills(p)[1].classList.contains('error')).toBe(true);
+    expect(dots(p).length).toBe(1);                          // chapter Three has one card
+    expect(dots(p)[0].classList.contains('current')).toBe(true);
+  });
+
+  test('a fully-visited clean chapter renders done (solid), not started (ring)', async () => {
+    const p = await ready(bootPage({ definition: chapDef() }));
+    nextBtn(p).click(); await sleep(20);                     // card 0 → 1 (both rule-free)
+    expect(activeCard(p)).toBe(qa(p, '.yc-card')[1]);
+    const one = pills(p)[0];
+    expect(one.classList.contains('current')).toBe(true);
+    expect(one.classList.contains('done')).toBe(true);
+    expect(one.classList.contains('started')).toBe(false);
+  });
+
+  test('review hides the bar and inserts chapter headings at each boundary', async () => {
+    const p = await ready(bootPage({ definition: chapDef() }));
+    setText(p, 'a1', 'x'); setText(p, 'b1', 'ok'); await sleep(20);
+    pills(p)[2].click(); await sleep(20);                    // land on the last card
+    nextBtn(p).click(); await sleep(20);                     // "Review and Submit"
+    expect(q(p, '.yc-card-review').style.display).toBe('');
+    expect(q(p, '.yc-card-chapters').style.display).toBe('none');
+    expect(qa(p, '.yc-card-review-chapter').map(x => x.textContent))
+      .toEqual(['One', 'Two', 'Three']);
+    // Back to form restores the bar
+    prevBtn(p).click(); await sleep(20);
+    expect(q(p, '.yc-card-chapters').style.display).toBe('');
+  });
+
+  test('sections before the first declaration group under an implicit "Start" pill', async () => {
+    const d = chapDef();
+    delete d.sections[0].chapter;                            // One now starts at… nothing
+    d.sections[1].chapter = 'Late';
+    const p = await ready(bootPage({ definition: d }));
+    expect(pills(p).map(x => x.textContent)).toEqual(['Start', 'Late', 'Two']);
+    expect(countTx(p)).toBe('Start \u2014 1 of 1');
+  });
+
+  test('validator: bad chapter rejected; fieldSignature chapter-blind; projection forwards it', () => {
+    const bad = chapDef(); bad.sections[0].chapter = 5;
+    expect(() => svc.validateDefinition(bad)).toThrow(/chapter must be a non-empty string/);
+    const blank = chapDef(); blank.sections[0].chapter = '   ';
+    expect(() => svc.validateDefinition(blank)).toThrow(/chapter/);
+    expect(() => svc.validateDefinition(chapDef())).not.toThrow();
+
+    const withCh = chapDef();
+    const without = chapDef(); without.sections.forEach(s => delete s.chapter);
+    expect(svc.fieldSignature(withCh)).toBe(svc.fieldSignature(without));
+    expect(svc.fieldSignature(withCh)).not.toBe('');
+
+    const out = ext.projectDefinition(chapDef());
+    expect(out.sections[0].chapter).toBe('One');
+    expect('chapter' in out.sections[1]).toBe(false);
   });
 });
 
