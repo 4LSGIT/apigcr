@@ -821,6 +821,7 @@ tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/u6aEventsDb.js
 tests/hookHmacRawBody.test.js
+tests/hookHmacTimestamped.test.js
 tests/hookMapper.test.js
 tests/hookReceiver.splitPhase.test.js
 tests/hookService.duplicate.test.js

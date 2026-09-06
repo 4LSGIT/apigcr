@@ -154,6 +154,12 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
     // Authenticate
     const auth = hookService.authenticateRequest(hook, req);
     if (!auth.valid) {
+      // Auth failures deliberately leave NO hook_executions row (junk stays
+      // out of the table), which makes a MISCONFIGURED secret invisible —
+      // real deliveries just vanish. Log the rejection so a wrong signing
+      // key shows up in Cloud Run logs instead of as silent lead loss.
+      // (2026-09-06, added alongside the Calendly timestamped-HMAC flip.)
+      console.warn(`[hook] auth failed for ${slug} from ${req.ip}: ${auth.error}`);
       return res.status(401).json({ status: 'error', message: auth.error });
     }
 

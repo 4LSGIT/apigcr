@@ -136,6 +136,67 @@ function authenticateRequest(hook, req) {
       };
     }
 
+    // ── Timestamped scheme (config.scheme === 'timestamped') ──────────────
+    // Calendly / Stripe style. The header carries "t=<unix seconds>,v1=<hex>"
+    // (possibly several v1 entries during a key roll); the signed payload is
+    // `${t}.${rawBody}`; and a delivery whose t is further than
+    // tolerance_seconds from now is rejected to close the replay window.
+    //
+    // Added 2026-09-06 for the native Calendly hooks (32 schedule / 40
+    // cancel). Their auth_type was 'none', and the cancel hook will cancel a
+    // real appointment for any payload that names a real event URI — so a
+    // leaked slug was a live forgery risk. Calendly's format:
+    //   Calendly-Webhook-Signature: t=1492774577,v1=<hmac-sha256 hex>
+    //   signed payload = t + '.' + raw request body
+    // The per-hook secret lives in auth_config.secret like every other hmac
+    // hook (org copy: app_settings.calendly_webhook_signing_key).
+    //
+    // Chained .update(t + '.').update(rawBody) rather than string concat so a
+    // Buffer rawBody keeps its exact wire bytes (same reasoning as above).
+    if (config?.scheme === 'timestamped') {
+      let t = null;
+      const candidates = [];
+      for (const part of String(signature).split(',')) {
+        const eq = part.indexOf('=');
+        if (eq === -1) continue;
+        const k = part.slice(0, eq).trim();
+        const v = part.slice(eq + 1).trim();
+        if (k === 't') t = v;
+        else if (k === 'v1') candidates.push(v);
+      }
+      if (!t || !/^\d+$/.test(t) || candidates.length === 0) {
+        return { valid: false, error: 'Malformed timestamped signature header' };
+      }
+
+      const toleranceSec = Number(config?.tolerance_seconds) > 0
+        ? Number(config.tolerance_seconds)
+        : 300;
+      // Math.abs: a FUTURE timestamp beyond tolerance is just as invalid as a
+      // stale one (forward clock skew shouldn't buy a bigger replay window).
+      const skewSec = Math.abs(Date.now() / 1000 - Number(t));
+      if (skewSec > toleranceSec) {
+        return {
+          valid: false,
+          error: `Signature timestamp outside tolerance (${Math.round(skewSec)}s > ${toleranceSec}s)`,
+        };
+      }
+
+      const expectedHex = crypto.createHmac(algorithm, secret)
+        .update(t + '.')
+        .update(rawBody)
+        .digest('hex');
+      const expectedBuf = Buffer.from(expectedHex, 'hex');
+      for (const cand of candidates) {
+        // Non-hex or wrong-length candidates can't match; skipping them keeps
+        // timingSafeEqual from throwing on a malformed entry.
+        if (!/^[0-9a-fA-F]+$/.test(cand)) continue;
+        const candBuf = Buffer.from(cand, 'hex');
+        if (candBuf.length !== expectedBuf.length) continue;
+        if (crypto.timingSafeEqual(candBuf, expectedBuf)) return { valid: true };
+      }
+      return { valid: false, error: 'HMAC signature mismatch' };
+    }
+
     const expected = crypto.createHmac(algorithm, secret).update(rawBody).digest('hex');
 
     // Strip common prefixes: some providers send "sha256=abc123..." format
