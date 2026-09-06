@@ -125,6 +125,8 @@ When an appointment is marked **no-show**, the system can enroll the client in a
 
 All of these happen in the background; the action completes immediately and the communications fire asynchronously.
 
+The confirmation messages include a private **manage link** (`4lsg.com/m/…`) the client can use to view — and, depending on firm policy, cancel or reschedule — the appointment themselves. What clients are allowed to do from that link is controlled by settings, not code; see [Client Self-Service](../05-Subsystems/11-client-self-service.md) for the toggles and examples.
+
 ---
 
 ## One Live Appointment per Type (singleton)

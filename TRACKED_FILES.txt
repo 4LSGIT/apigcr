@@ -155,6 +155,7 @@ manual/05-Subsystems/07-YisraView.md
 manual/05-Subsystems/08-documents.md
 manual/05-Subsystems/09-calendar-types.md
 manual/05-Subsystems/10-calendar-tab.md
+manual/05-Subsystems/11-client-self-service.md
 manual/05-Subsystems/README.md
 manual/06-Admin-Tools/01-db-console.md
 manual/06-Admin-Tools/02-readonly-keys.md

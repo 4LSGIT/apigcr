@@ -17,6 +17,7 @@ lives behind the **More** menu in the main navigation.
 | 8 | [08-documents.md](08-documents.md) | The Documents registry: how files in Dropbox reach a case, the Sync panel that operates it, and the guided workflow for re-linking a case that points at the wrong folder. (More → Documents) |
 | 9 | [09-calendar-types.md](09-calendar-types.md) | The calendar item-type registry — appointment/event types, their keys, and which staff pickers offer them at which lengths. (More → Case Config → Calendar Types) |
 | 10 | [10-calendar-tab.md](10-calendar-tab.md) | The unified Calendar tab — appointments and events in one list over a date window, its filters, its state/resolution badges, and the deadline outcome prompts. (Sidebar → Calendar) |
+| 11 | [11-client-self-service.md](11-client-self-service.md) | Client manage links (`4lsg.com/m/…`) — the self-service cancel/reschedule page, the `manage_allow_*` policy toggles that control it, and worked examples for every setting. |
 
 > **Reports and Views are the same system.** One saved SQL definition, one
 > curated schema, one set of guards — a report renders it as a number, a view
