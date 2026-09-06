@@ -376,6 +376,7 @@ ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-04_dbkq_workflow_spec.md
 ref/2026-09-06_FIL1_trustee_validation.sql
 ref/2026-09-06_dbkq_definition.v1.2.json
+ref/2026-09-06_manage_selfservice_policy.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
@@ -842,6 +843,7 @@ tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
+tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js

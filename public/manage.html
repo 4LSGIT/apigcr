@@ -487,7 +487,22 @@
       }
       return;
     }
-    if (data.can_modify) { show('actions-region'); return; }
+    // Per-action flags (2026-09 policy split). Fall back to the pre-split
+    // can_modify if an old server ever answers a new page (both actions on).
+    var canCancel = ('can_cancel' in data) ? !!data.can_cancel : !!data.can_modify;
+    var canResched = ('can_reschedule' in data) ? !!data.can_reschedule : !!data.can_modify;
+    if (canCancel || canResched) {
+      E('btn-resched').style.display = canResched ? '' : 'none';
+      E('btn-cancel').style.display  = canCancel  ? '' : 'none';
+      show('actions-region');
+      if (!canResched) {
+        // Cancel-only policy: say how to get a different time instead of
+        // silently offering fewer buttons.
+        E('locked-note').textContent = callUsLine('Need a different time? Please call');
+        show('locked-note');
+      }
+      return;
+    }
     E('locked-note').textContent = callUsLine('Need to change this appointment? Please call');
     show('locked-note');
   }

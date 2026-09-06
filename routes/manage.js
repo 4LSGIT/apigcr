@@ -47,6 +47,16 @@
  *   manage_cancel_template     ''   — optional SMS (resolver), '' = no SMS
  *   fe-firm_phone (optional, not seeded) — shown in "call us" copy when set
  *
+ * ── Self-service policy toggles (2026-09 migration, bool, is_editable=1) ─
+ *   manage_allow_cancel        '1' — client may cancel a Scheduled appt
+ *   manage_allow_reschedule    '0' — client may move a Scheduled appt
+ *   manage_allow_rebook        '0' — Canceled appt offers "pick a new time"
+ *   Missing/blank/garbage rows fall back to the SAME values (see
+ *   DEFAULT_ALLOW_*), so a deploy without the migration still fails closed
+ *   on rescheduling. allow_rebook must track allow_reschedule — rebook-on
+ *   with reschedule-off is cancel-then-rebook = a reschedule in two clicks.
+ *   Flip to '1' in the app-settings UI once SS approves; no deploy needed.
+ *
  * ── Anti-abuse ───────────────────────────────────────────────
  * Same in-memory fixed-window limiter pattern as routes/booking.js
  * (per-instance, Cloud Run best-effort). Reads 30/min/IP, mutations
@@ -120,6 +130,20 @@ const SLOT_BUFFER_MIN      = 0;    // locked: no buffer on manage reschedules
 const DEFAULT_CUTOFF_MIN   = 240;
 const DEFAULT_HORIZON_DAYS = 30;
 
+// Self-service policy defaults — used when the app_settings row is missing,
+// blank, or unparseable. Cancel is client-safe (it only frees the firm's
+// calendar); reschedule and rebook hand the client write access to the
+// provider's availability, so they stay OFF until the firm turns them on
+// (app_settings: manage_allow_reschedule / manage_allow_rebook = '1').
+//
+// allow_rebook governs the Canceled→"pick a new time" path. It is a SEPARATE
+// key from allow_reschedule but must be considered together: leaving rebook on
+// while reschedule is off is not a restriction — a client simply cancels, then
+// rebooks, and has rescheduled themselves in two clicks.
+const DEFAULT_ALLOW_CANCEL     = true;
+const DEFAULT_ALLOW_RESCHEDULE = false;
+const DEFAULT_ALLOW_REBOOK     = false;
+
 // ─────────────────────────────────────────────────────────────
 // Helpers — rate limiting
 // ─────────────────────────────────────────────────────────────
@@ -145,6 +169,9 @@ async function loadManageSettings(db) {
     'manage_reschedule_template',
     'manage_cancel_template',
     'manage_fallback_url',
+    'manage_allow_cancel',
+    'manage_allow_reschedule',
+    'manage_allow_rebook',
     'fe-firm_logo_url',
     'fe-firm_site_url',
     'fe-firm_phone',
@@ -153,9 +180,22 @@ async function loadManageSettings(db) {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : d;
   };
+  // '1'/'true'/'yes'/'on' = allowed; '0'/'false'/'no'/'off' = blocked;
+  // missing/blank/garbage = the hard default below. Defaults deliberately
+  // mirror the intended policy (cancel yes, reschedule/rebook no) so a
+  // code-deployed-before-migration window still fails CLOSED on rescheduling.
+  const bool = (v, d) => {
+    const t = String(v == null ? '' : v).trim().toLowerCase();
+    if (t === '1' || t === 'true' || t === 'yes' || t === 'on')  return true;
+    if (t === '0' || t === 'false' || t === 'no' || t === 'off') return false;
+    return d;
+  };
   return {
     cutoff_min:          num(s.manage_cutoff_min, DEFAULT_CUTOFF_MIN),
     horizon_days:        num(s.manage_horizon_days, DEFAULT_HORIZON_DAYS),
+    allow_cancel:        bool(s.manage_allow_cancel, DEFAULT_ALLOW_CANCEL),
+    allow_reschedule:    bool(s.manage_allow_reschedule, DEFAULT_ALLOW_RESCHEDULE),
+    allow_rebook:        bool(s.manage_allow_rebook, DEFAULT_ALLOW_REBOOK),
     reschedule_template: (s.manage_reschedule_template || '').trim(),
     cancel_template:     (s.manage_cancel_template || '').trim(),
     fallback_url_raw:    (s.manage_fallback_url || '').trim() || null,  // slice 10: JSON {url, button_text}
@@ -305,11 +345,19 @@ function dateWithinHorizon(dateStr, horizonDays) {
 }
 
 /**
- * can_modify = Scheduled AND start > now + cutoff AND sane appt_length.
+ * Window check shared by cancel and reschedule:
+ * Scheduled AND start > now + cutoff AND sane appt_length.
  * (A NULL/invalid appt_length can't be re-verified through getSlots, so
  * such rows — legacy-shaped — are view-only; staff handle changes.)
+ *
+ * Policy split (2026-09): the window is necessary but no longer sufficient.
+ * Each action is additionally gated by its manage_allow_* setting:
+ *   can_cancel     = window AND cfg.allow_cancel
+ *   can_reschedule = window AND cfg.allow_reschedule
+ * computeCanModify (the pre-split name) survives as the OR of the two so the
+ * summary payload keeps its old field for any cached manage.html.
  */
-function computeCanModify(appt, cutoffMin) {
+function computeWindowOk(appt, cutoffMin) {
   if (appt.appt_status !== 'Scheduled') return false;
   const len = Number(appt.appt_length);
   if (!Number.isInteger(len) || len < 1) return false;
@@ -319,12 +367,25 @@ function computeCanModify(appt, cutoffMin) {
   return startDt > earliest;
 }
 
+function computeCanCancel(appt, cfg) {
+  return cfg.allow_cancel && computeWindowOk(appt, cfg.cutoff_min);
+}
+
+function computeCanReschedule(appt, cfg) {
+  return cfg.allow_reschedule && computeWindowOk(appt, cfg.cutoff_min);
+}
+
 /**
- * can_rebook = Canceled AND sane appt_length (same getSlots requirement).
- * Unbounded by design — an old canceled appt's link booking a fresh slot
- * is lead reactivation; the log records the client-initiated provenance.
+ * can_rebook = Canceled AND sane appt_length (same getSlots requirement)
+ * AND cfg.allow_rebook. The time-unbounded part is unchanged — an old
+ * canceled appt's link booking a fresh slot is lead reactivation; the log
+ * records the client-initiated provenance. But the whole path now sits
+ * behind manage_allow_rebook, which must track manage_allow_reschedule:
+ * rebook-with-reschedule-off would let a client reschedule via
+ * cancel-then-rebook in two clicks.
  */
-function computeCanRebook(appt) {
+function computeCanRebook(appt, cfg) {
+  if (!cfg.allow_rebook) return false;
   if (appt.appt_status !== 'Canceled') return false;
   const len = Number(appt.appt_length);
   return Number.isInteger(len) && len >= 1;
@@ -488,8 +549,13 @@ router.get('/api/m/:token', async (req, res) => {
         provider_name: appt.user_real_name || appt.user_name || null,
         contact_first: appt.contact_fname || null,
       },
-      can_modify:   computeCanModify(appt, cfg.cutoff_min),
-      can_rebook:   computeCanRebook(appt),
+      // Per-action flags (2026-09 policy split). can_modify is kept as the
+      // OR for any browser-cached pre-split manage.html; such a page shows
+      // both buttons, but the disallowed action's endpoints 409 server-side.
+      can_cancel:     computeCanCancel(appt, cfg),
+      can_reschedule: computeCanReschedule(appt, cfg),
+      can_modify:     computeCanCancel(appt, cfg) || computeCanReschedule(appt, cfg),
+      can_rebook:     computeCanRebook(appt, cfg),
       canceled_on:  canceledOn,                    // 'YYYY-MM-DD' | null (Canceled only)
       cutoff_min:   cfg.cutoff_min,
       horizon_days: cfg.horizon_days,
@@ -526,7 +592,7 @@ router.get('/api/m/:token/slots', async (req, res) => {
     if (!appt) return res.status(404).json(NOT_FOUND);
 
     const cfg = await loadManageSettings(req.db);
-    if (!computeCanModify(appt, cfg.cutoff_min) && !computeCanRebook(appt)) {
+    if (!computeCanReschedule(appt, cfg) && !computeCanRebook(appt, cfg)) {
       return res.status(409).json({ status: 'error', code: 'not_modifiable' });
     }
 
@@ -571,7 +637,7 @@ router.post('/api/m/:token/cancel', async (req, res) => {
     if (!appt) return res.status(404).json(NOT_FOUND);
 
     const cfg = await loadManageSettings(req.db);
-    if (!computeCanModify(appt, cfg.cutoff_min)) {
+    if (!computeCanCancel(appt, cfg)) {
       return res.status(409).json({ status: 'error', code: 'not_modifiable' });
     }
 
@@ -618,8 +684,8 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
     if (!appt) return res.status(404).json(NOT_FOUND);
 
     const cfg = await loadManageSettings(req.db);
-    const mayReschedule = computeCanModify(appt, cfg.cutoff_min); // Scheduled path
-    const mayRebook     = computeCanRebook(appt);                 // Canceled path
+    const mayReschedule = computeCanReschedule(appt, cfg);  // Scheduled path
+    const mayRebook     = computeCanRebook(appt, cfg);      // Canceled path
     if (!mayReschedule && !mayRebook) {
       return res.status(409).json({ status: 'error', code: 'not_modifiable' });
     }
@@ -765,3 +831,17 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
 });
 
 module.exports = router;
+
+// Test-only surface (tests/manageSelfService.policy.test.js). The module's
+// export IS the router — server.js's routes/ scan mounts it unchanged;
+// these ride along as properties.
+module.exports._test = {
+  loadManageSettings,
+  computeWindowOk,
+  computeCanCancel,
+  computeCanReschedule,
+  computeCanRebook,
+  DEFAULT_ALLOW_CANCEL,
+  DEFAULT_ALLOW_RESCHEDULE,
+  DEFAULT_ALLOW_REBOOK,
+};
