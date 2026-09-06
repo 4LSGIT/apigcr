@@ -688,14 +688,35 @@ router.post('/api/hooks/:id/live-test', jwtOrApiKey, async (req, res) => {
 
     const sampleInput = req.body.input || req.body;
 
-    // Wrap in unified shape if not already — same detection as the dry-run route
-    const input = sampleInput.meta ? sampleInput : {
-      body: sampleInput,
-      headers: {},
-      query: {},
-      method: 'POST',
-      meta: { source: 'live_test', received_at: new Date().toISOString(), slug: hook.slug },
-    };
+    // Wrap in unified shape if not already — same detection as the dry-run route.
+    //
+    // The already-wrapped branch STAMPS meta rather than passing it through. A
+    // captured_sample carries the ORIGINAL meta (source:'http', the original
+    // received_at, and the slug of whichever hook captured it), so replaying one
+    // landed in hook_executions indistinguishable from a real delivery —
+    // including under a DIFFERENT hook's slug. That cost real debugging time
+    // (2026-09-06: a hook-32 capture replayed through hook 40 read as a genuine
+    // misrouted Calendly invitee.created, and the only tell was that its
+    // meta.received_at matched another execution's to the millisecond).
+    // body/headers/query/method stay verbatim — only the envelope is corrected,
+    // because it must describe THIS fire, not the one that produced the sample.
+    const input = sampleInput.meta
+      ? {
+          ...sampleInput,
+          meta: {
+            ...sampleInput.meta,
+            source:      'live_test',
+            slug:        hook.slug,
+            replayed_at: new Date().toISOString(),
+          },
+        }
+      : {
+          body: sampleInput,
+          headers: {},
+          query: {},
+          method: 'POST',
+          meta: { source: 'live_test', received_at: new Date().toISOString(), slug: hook.slug },
+        };
 
     const result = await hookService.executeHook(req.db, hook.slug, input);
     res.json({ status: 'success', result });
