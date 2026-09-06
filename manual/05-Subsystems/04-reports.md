@@ -10,7 +10,7 @@ or have it emailed on a schedule. The answer is recalculated live against the
 database every single time, so a report you saved in March is still telling you
 the truth in November.
 
-Its sibling, **[Views](07-YisraView.md)**, uses the same engine to answer a
+Its sibling, **[Views](05-YisraView.md)**, uses the same engine to answer a
 different kind of question — *which cases need me today* — as a working list
 instead of a number. If you want a list you can click into, read that page
 instead.
@@ -171,7 +171,7 @@ must exactly match the number of `?` in the SQL, and they bind in order.
 > **One `?` per parameter.** The obvious "optional filter" pattern —
 > `AND (? IS NULL OR c.case_stage = ?)` — uses two placeholders for one
 > parameter and is rejected. The single-placeholder forms are listed in the
-> [Views page](07-YisraView.md#writing-the-sql), and they apply equally here.
+> [Views page](05-YisraView.md#writing-the-sql), and they apply equally here.
 
 ---
 

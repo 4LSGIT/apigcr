@@ -36,5 +36,8 @@ independent: read the one matching the record you're working with.
   sequences, scheduled jobs, YisraHook, triggers.
 - **[Integrations](../04-Integrations/)** — Connections (credentials),
   RingCentral, Google Calendar, Dropbox.
-- **[Subsystems](../05-Subsystems/)** — the smaller self-contained tools behind
-  the **More** menu.
+- **[Subsystems](../05-Subsystems/)** — the smaller self-contained staff tools
+  behind the **More** menu.
+- **[Client-Facing](../06-Client-Facing/)** — the portal, booking pages, manage
+  links, document requests and landing pages clients see.
+- **[E-Signature](../07-ESign/)** — templates, placements, sending and filing.

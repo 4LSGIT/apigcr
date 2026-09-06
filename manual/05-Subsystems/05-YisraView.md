@@ -3,7 +3,7 @@
 A **view** answers *which cases need me today* — not with a number, but with a
 list you can click into.
 
-Views run on the same engine as [Reports](06-reports.md): the same saved SQL, the
+Views run on the same engine as [Reports](04-reports.md): the same saved SQL, the
 same curated schema, the same read-only database user, the same guards. The
 difference is what comes out and what you can do with it. A report gives you a
 chart and a figure. A view gives you rows, filters at the top, sortable columns,
@@ -115,7 +115,7 @@ Any logged-in user can author a view, exactly as with reports. The same
 protection applies too: a **locked** view can only be changed by its author or
 by an administrator, anyone can lock a view to protect it, and editing someone
 else's unlocked view asks you to confirm first — the firm shares one copy.
-The full rules are in [Reports → Locking](06-reports.md#locking).
+The full rules are in [Reports → Locking](04-reports.md#locking).
 
 A view **is a report** — the same `report_definitions` row, with `kind` set to
 `view`. There is deliberately no second table, no second editor and no second

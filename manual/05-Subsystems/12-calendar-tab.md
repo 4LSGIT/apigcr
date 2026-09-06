@@ -89,7 +89,7 @@ derived answer, in italics, with a tooltip saying so.
 
 ## See also
 
-- `manual/05-Subsystems/09-calendar-types.md` — the type registry behind
+- `manual/05-Subsystems/11-calendar-types.md` — the type registry behind
   `type_key` and `kind`
 - `ref/UNIFIED_EVENTS_DESIGN_V0_5.md` — §3.1 the row shape, §3.7 state and
   resolution

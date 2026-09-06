@@ -50,7 +50,7 @@ Two things follow from this that are worth internalizing:
 ## The settings
 
 All of these live in **app settings** under the **Booking** category
-(editable in the settings UI, or via the [database console](../06-Admin-Tools/01-db-console.md)).
+(editable in the settings UI, or via the [database console](../08-Admin-Tools/01-db-console.md)).
 
 ### Policy toggles — who may do what
 
@@ -221,4 +221,4 @@ the server rejects the action).
   per-view confirmation SMS templates (where "Manage or cancel: …" lives).
 - **[Variables & templating](../03-YisraFlow/06-variables-templating.md)** — placeholder syntax
   used in the message templates.
-- **[Database console](../06-Admin-Tools/01-db-console.md)** — running the example statements.
+- **[Database console](../08-Admin-Tools/01-db-console.md)** — running the example statements.
