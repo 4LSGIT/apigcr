@@ -63,6 +63,7 @@ lib/internal_functions/sequences.js
 lib/internal_functions/system.js
 lib/internal_functions/tasks.js
 lib/internal_functions/timing.js
+lib/internal_functions/trustee.js
 lib/internal_functions/users.js
 lib/internal_functions/variables.js
 lib/job_executor.js
@@ -83,6 +84,7 @@ lib/signatureValidation.js
 lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/taskQueue.js
+lib/trusteeMatch.js
 lib/unplacehold.js
 lib/unrefPoolIdleSweeper.js
 lib/uploadTicket.js
@@ -372,6 +374,7 @@ ref/2026-09-04_dbkq_coverage.md
 ref/2026-09-04_dbkq_cutover_runbook.md
 ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-04_dbkq_workflow_spec.md
+ref/2026-09-06_FIL1_trustee_validation.sql
 ref/2026-09-06_dbkq_definition.v1.2.json
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
@@ -405,6 +408,7 @@ ref/documents_s3_1.sql
 ref/files.md
 ref/gas.js
 ref/legacy-trap-schema.sql
+ref/manual/2026-09-06_FIL1_trustee_validation.md
 ref/migration_trigger_R4.sql
 ref/migration_trigger_system_T1.sql
 ref/migration_trigger_system_T3T4.sql
@@ -896,6 +900,7 @@ tests/test_classifier.js
 tests/test_report_author.sh
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
+tests/trusteeMatch.test.js
 tests/typeKeyVocabulary.test.js
 tests/unifiedEventsU2b.admin.test.js
 tests/unifiedEventsU2b.apptsFilter.test.js
@@ -915,6 +920,7 @@ tests/unifiedEventsU8.approaching.test.js
 tests/unifiedEventsU9.eventform.test.js
 tests/unifiedEventsU9.range.test.js
 tests/unifiedEventsU9.shell.test.js
+tests/validateCaseTrustee.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
