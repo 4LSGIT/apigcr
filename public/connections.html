@@ -515,7 +515,7 @@ function renderCredsList(host) {
     ? `<div class="inline-error">${esc(state.creds.error)}</div>`
     : '';
   const body = rows.length === 0
-    ? `<tr class="empty-row"><td colspan="6">No credentials yet — click "+ New Credential" to add one.</td></tr>`
+    ? `<tr class="empty-row"><td colspan="7">No credentials yet — click "+ New Credential" to add one.</td></tr>`
     : rows.map(r => credListRow(r)).join('');
 
   host.innerHTML = `
@@ -529,6 +529,7 @@ function renderCredsList(host) {
     <table class="list">
       <thead>
         <tr>
+          <th>ID</th>
           <th>Name</th>
           <th>Type</th>
           <th>Status</th>
@@ -575,6 +576,7 @@ function credListRow(r) {
 
   return `
     <tr data-id="${r.id}" data-name="${esc(r.name)}">
+      <td>${r.id}</td>
       <td>${esc(r.name)}</td>
       <td><span class="badge type">${esc(r.type)}</span></td>
       <td>${status}${warn}</td>
@@ -1304,7 +1306,7 @@ function renderEmailList(host) {
     ? `<div class="inline-error">${esc(state.email.error)}</div>`
     : '';
   const body = rows.length === 0
-    ? `<tr class="empty-row"><td colspan="5">No email senders yet — click "+ New Email Sender" to add one.</td></tr>`
+    ? `<tr class="empty-row"><td colspan="6">No email senders yet — click "+ New Email Sender" to add one.</td></tr>`
     : rows.map(r => emailListRow(r)).join('');
 
   host.innerHTML = `
@@ -1318,6 +1320,7 @@ function renderEmailList(host) {
     <table class="list">
       <thead>
         <tr>
+          <th>ID</th>
           <th>From name</th>
           <th>Email</th>
           <th>Provider</th>
@@ -1377,6 +1380,7 @@ function emailListRow(r) {
     : '';
   return `
     <tr data-id="${r.id}" data-email="${esc(r.email)}">
+      <td>${r.id}</td>
       <td>${esc(r.from_name)}</td>
       <td>${esc(r.email)}</td>
       <td>${provider}</td>
