@@ -19,12 +19,13 @@ a client who only needs to move one appointment should never have to log in:
 
 | # | File | What it is |
 |---|------|----|
+| 2 | [02-client-portal.md](02-client-portal.md) | The client portal — PIN login and why it never says whether an address matched, the Access tab, the configurable card engine and its whitelist, settings and tables. |
 | 3 | [03-self-service-links.md](03-self-service-links.md) | Client manage links (`4lsg.com/m/…`) — the self-service cancel/reschedule page, the `manage_allow_*` policy toggles that control it, and worked examples for every setting. |
 | 5 | [05-document-requests.md](05-document-requests.md) | Asking a client for documents and receiving them back — no attachments, no logins, nothing landing on our servers. |
 | 6 | [06-landing-pages.md](06-landing-pages.md) | Hosted marketing/intake pages, optionally on a custom domain, with form submissions wired into a YisraHook. (More → Landing Pages) |
 
-> Numbers 1, 2 and 4 are reserved for chapters in progress: the section
-> overview, the client portal, and public booking / scheduling.
+> Numbers 1 and 4 are reserved for chapters in progress: the section overview
+> and public booking / scheduling.
 
 ---
 
