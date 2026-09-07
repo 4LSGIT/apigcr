@@ -14,7 +14,12 @@ side: authoring templates and operating the queue.
 
 ## Contents
 
-*Chapters in progress.*
+| # | File | What's in it |
+|---|------|----|
+| 1 | [01-overview.md](01-overview.md) | The four parts of getting something signed, the status lifecycle and what each status means operationally, the layer map, and why the vendor is confined to one directory. |
+| 2 | [02-templates.md](02-templates.md) | Contract templates — the two field classes, the placement schema, the literal prefill-resolver whitelist, save-time validation, and why templates are never deleted. |
+| 3 | [03-sending-and-filing.md](03-sending-and-filing.md) | The send sequence and the different right answer at each failure point, remind/resend/recall/satisfy, webhooks and the nightly reconciliation, and the Dropbox filing fallback ladder. |
+| 4 | [04-api-and-schema.md](04-api-and-schema.md) | Every endpoint and every table, including why the event trail carries two timestamps. |
 
 ---
 

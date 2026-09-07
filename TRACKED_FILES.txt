@@ -154,12 +154,17 @@ manual/05-Subsystems/06-documents.md
 manual/05-Subsystems/11-calendar-types.md
 manual/05-Subsystems/12-calendar-tab.md
 manual/05-Subsystems/README.md
+manual/06-Client-Facing/01-overview.md
 manual/06-Client-Facing/02-client-portal.md
 manual/06-Client-Facing/03-self-service-links.md
 manual/06-Client-Facing/04-booking-and-scheduling.md
 manual/06-Client-Facing/05-document-requests.md
 manual/06-Client-Facing/06-landing-pages.md
 manual/06-Client-Facing/README.md
+manual/07-ESign/01-overview.md
+manual/07-ESign/02-templates.md
+manual/07-ESign/03-sending-and-filing.md
+manual/07-ESign/04-api-and-schema.md
 manual/07-ESign/README.md
 manual/08-Admin-Tools/01-db-console.md
 manual/08-Admin-Tools/02-readonly-keys.md
