@@ -47,12 +47,28 @@ Think of Stage as the milestone and Status as the current note on that milestone
 
 ## Leads
 
-Leads are prospective matters. There is no separate "Lead" stage — a lead is an ordinary case that has not progressed yet, so it carries the normal `Open` default. Leads have their own dedicated **Leads tab** in the main interface, separate from the Cases tab, showing supplementary fields relevant to the intake process (first course completion, pre-petition course status, etc.).
+Leads are prospective matters. There is no separate "Lead" stage and **no
+separate Leads tab** — a lead is an ordinary case that has not progressed yet,
+carrying the normal `Open` default, and it lives in the Cases tab with
+everything else. The Cases list labels its id column *Lead ID* for historical
+reasons; it is `case_id`, the same identifier every case has.
+
+What actually distinguishes a lead is `pipeline_phase`, which is `intake` until
+the case is retained and `case` afterwards. That is the field
+[pipelines](13-pipelines.md) advance, and the intake→matter hand-off is a
+pipeline transition, not a stage change.
 
 A few things to know about Leads:
 
 - Leads are created automatically through the intake process when a new prospective client is entered
 - Leads that do not convert should be set to Closed
+
+> **The Stage filter's "Lead" option matches nothing.** The Cases tab offers
+> All / Lead / Filed / Closed, and the filter compares against `case_stage`,
+> whose only values are Open, Pending, Filed, Concluded and Closed. Selecting
+> **Lead** therefore returns an empty list — it is a leftover from before the
+> stage set settled. Filter on `pipeline_phase` (or use a
+> [view](../05-Subsystems/05-YisraView.md)) to list leads.
 
 ---
 
@@ -65,7 +81,9 @@ Every case has at least one contact linked as **Primary**. Additional contacts c
 - **Other** — involved party
 - **Bystander** — on record for reference
 
-A contact can appear on multiple cases in different roles. The same person might be Primary on their own bankruptcy and Secondary on a spouse's filing. The system prevents the same contact from being added to the same case in the same role twice.
+A contact can appear on multiple cases in different roles. The same person might be Primary on their own bankruptcy and Secondary on a spouse's filing.
+
+A database trigger blocks the exact same combination of case, contact **and** role from being added twice. Note what that permits: the same contact *can* be linked to one case under two different roles, because the guard keys on all three columns.
 
 ---
 
@@ -74,7 +92,7 @@ A contact can appear on multiple cases in different roles. The same person might
 Beyond the type, stage, and linked contacts, a case record holds:
 
 - **Dates** — open date, file date, close date
-- **Court information** — case number, judge (stored by name, not ID), trustee (stored by name, not ID), district
+- **Court information** — case number (short `25-12345` and full `2:25-bk-12345` forms), judge and trustee (both stored by name, not ID)
 - **Bankruptcy-specific fields** — pre-petition garnishments, vehicle disposition elections (reaffirmation, redemption, replacement), pre-petition and post-petition course completion, 341 meeting date, and more
 - **Notes** — free-text notes visible on the case record
 - **Appointments** — all meetings tied to this case
@@ -96,9 +114,18 @@ Cases can be created from a contact's record or through the intake flow. When cr
 1. Select the case type
 2. The system generates a unique case ID automatically, retrying if a collision occurs
 3. At least one contact must be linked as Primary
-4. After creation, a Dropbox folder is created for the client's documents via an automated workflow
+4. After creation, a Dropbox folder is created for the client's documents
 
 The open date is set to the creation date automatically.
+
+**The Dropbox folder is stage-aware.** A case that already carries a docket
+number is treated as *active* and gets the Active-tree naming convention plus
+the four staff subfolders; anything else is *potential*. The naming templates
+live in the `dropbox_case_folder_templates` setting rather than in code, so
+changing the convention is a settings edit, not a deploy. If a case ends up
+without a folder, the case page shows a **Create Dropbox Folder** repair button
+that runs the same operation. See
+[Dropbox](../04-Integrations/05-dropbox.md).
 
 ---
 
