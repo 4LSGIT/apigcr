@@ -308,6 +308,55 @@ Phone events arrive through the RingCentral/Quo path, not a public receiver.
 
 ---
 
+### Human-in-the-loop — chapter 14
+
+| Route | Method | Auth | Purpose |
+|---|---|---|---|
+| `/executions/:id/resume` | POST | jwt | Resume a workflow paused on `request_decision` |
+
+The client-facing decision page and its per-response links are not listed here —
+they carry their own single-use token and are covered in
+[chapter 14](14-human-in-the-loop.md).
+
+### Triggers — chapter 15
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/triggers/rules` | GET, POST | List / create rules |
+| `/api/triggers/rules/:id` | GET, PUT, DELETE | One rule |
+| `/api/triggers/rules/:id/history` | GET | Change history for a rule |
+| `/api/triggers/events` | GET | The event catalog with each event's field list |
+| `/api/triggers/meta` | GET | Operators, action types, param schemas |
+| `/api/triggers/executions` | GET | Paginated execution ledger |
+| `/api/triggers/executions/:id` | GET | One execution with its matched rules |
+| `/api/triggers/samples/:event_type` | GET | Real recent envelopes of that type |
+| `/api/triggers/test` | POST | Dry-run a saved rule against an envelope |
+| `/api/triggers/test-draft` | POST | Dry-run an unsaved rule — author before saving |
+| `/api/triggers/replay` | POST | Re-fire a past event through the current rules |
+
+`/api/triggers/events` is the live source of truth for the event catalog; the
+chapter's table is a snapshot.
+
+### Versioning and capture — chapter 16
+
+Capture mode is the same shape on all three surfaces: arm it, send one real
+payload, and it is held as a sample you can author against instead of
+hand-writing one.
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/workflows/:id/capture/start` | POST | Arm capture on a workflow |
+| `/workflows/:id/capture/stop` | POST | Cancel — the sample is preserved |
+| `/workflows/:id/captured` | GET | The last captured payload |
+| `/sequences/templates/:id/capture/start` | POST | Arm on a sequence template |
+| `/sequences/templates/:id/capture/stop` | POST | Cancel |
+| `/sequences/templates/:id/captured` | GET | Last captured payload |
+| `/api/hooks/:id/capture/start` | POST | Arm on a hook |
+| `/api/hooks/:id/capture/stop` | POST | Cancel |
+
+Arming is an atomic guarded UPDATE, so two people arming at once cannot both
+win. A dry run never triggers capture.
+
 ## Common patterns
 
 ### Always-200 receivers
