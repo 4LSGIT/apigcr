@@ -8,13 +8,44 @@ Users are the firm's staff members — attorneys, paralegals, assistants, and an
 
 | Field | Description |
 |---|---|
-| User ID | A small integer (1, 2, 3…). Used as a foreign key throughout the system. |
-| Username | Login username |
-| Name | Display name shown in the interface and on log entries. Derived automatically from first + last name. |
-| First / Last Name | Stored separately |
-| Initials | Automatically derived from the name — first letter of each word in first + last name, up to 3 characters |
+| User ID | A small integer (1, 2, 3…) in the `user` column. Used as a foreign key throughout the system. |
+| Username | Login username (`username`) |
+| Display name | `user_name` — what appears in the interface and on log entries. **Stored and editable**, not computed |
+| First / Last name | `user_fname` / `user_lname`, stored separately |
+| Initials | `user_initials` — up to 3 characters. **Also stored and editable**: they are typed in, not derived, so a Robert who signs RJT can have RJT |
 | Email | Login email and contact address |
-| Active | Whether the user is active staff. Inactive users don't appear in assignment dropdowns. |
+| Auth level | `user_auth` — see below |
+| Roles | `roles` — any of `it`, `admin`, `staff`, `attorney`, `automation`, `form_dev` |
+| Does appointments | `does_appts` — whether this person can host appointments and appear in booking-view provider lists |
+
+> **There is no "active" flag on a user.** Deactivating someone means changing
+> their auth level or clearing their password, not flipping a status column.
+
+### Auth level and roles
+
+`user_auth` is the gate everything security-related reads:
+
+| Value | Who |
+|---|---|
+| `authorized` | Ordinary staff |
+| `authorized - SU` | Super-user — the only level that can open the tools in [Admin Tools](../08-Admin-Tools/) |
+
+Being a super-user is **necessary but no longer sufficient**: every SU tool also
+requires a short-lived elevation token obtained by re-entering your own
+password. See [the elevation gate](../08-Admin-Tools/).
+
+`roles` is a separate, additive set used for finer-grained routing and feature
+access — `form_dev` for form authors, `automation` for the pseudo-user
+automation acts as, and so on. A person can hold several.
+
+### Hosting appointments
+
+`does_appts = 1` marks someone as a provider: they appear in the appointment
+staff picker, in `GET /api/booking-views/providers`, and their working hours
+drive [availability](../06-Client-Facing/04-booking-and-scheduling.md).
+
+A database constraint enforces that a provider must have a `default_phone` —
+you cannot set `does_appts = 1` on a user without one.
 
 ### Communication Preferences
 
@@ -29,6 +60,14 @@ Each user has a few preference fields that affect how the system contacts them:
 | Default Email | Which sender address to preselect in the sending form and communicate tab dropdowns |
 
 Users can update all of these fields from their profile page.
+
+Two more, both calendar-related: `user_gcal_id` (the person's secondary calendar
+on the firm's Google account) and `freebusy_calendar_ids` (the calendars
+consulted when computing whether they are free). See
+[Google Calendar](../04-Integrations/04-google-calendar.md).
+
+`user_custom_tab` holds the view pinned to that person's **Custom** sidebar tab —
+see [YisraView](../05-Subsystems/05-YisraView.md).
 
 ---
 
@@ -58,6 +97,9 @@ Every log entry records `log_by` — the user ID of whoever (or whatever process
 
 ## Managing Users
 
-User accounts are managed from the Admin tab. Creating, editing, and deactivating users is an administrative function. For security, passwords are hashed using bcrypt and are never stored or displayed in plain text.
+User accounts are managed from the Admin tab (**More → Users (SU)**). For
+security, passwords are hashed with bcrypt into `password_hash` and are never
+stored or displayed in plain text. Password resets go through `reset_token` /
+`reset_expires` rather than an admin ever seeing a password.
 
 Staff members can update their own name, username, email, phone, and communication preferences from their profile page without needing admin access. Password changes go through a separate reset flow.
