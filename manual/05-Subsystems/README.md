@@ -21,7 +21,7 @@ requests, landing pages — moved to [06-Client-Facing](../06-Client-Facing/).
 | 7 | [07-checklists.md](07-checklists.md) | Checklists and notes — one board, two shapes; the `docs_needed` list the sending form, document requests and the portal all read; derived vs manual status. |
 | 8 | [08-asset-manager.md](08-asset-manager.md) | The shared asset store — uploads, collections, the picker other tools read from, and why delete is a soft delete. (More → Asset Manager) |
 | 9 | [09-issue-reports.md](09-issue-reports.md) | Support Inbox — the Help & Support button, what it captures automatically, and why it is deliberately not the feature-request board. (More → Support Inbox) |
-| 10 | [10-court-review.md](10-court-review.md) | The court review queue — what lands there, the four resolutions, the openness rule that defines "still needs review", and why dismiss is terminal. |
+| 10 | [10-court-pipeline.md](10-court-pipeline.md) | The court email pipeline — the review queue and its openness rule, the Court Preview tuning tool, and the registry-driven parser v2 being built alongside. |
 | 11 | [11-calendar-types.md](11-calendar-types.md) | The calendar item-type registry — appointment/event types, their keys, and which staff pickers offer them at which lengths. (More → Case Config → Calendar Types) |
 | 12 | [12-calendar-tab.md](12-calendar-tab.md) | The unified Calendar tab — appointments and events in one list over a date window, its filters, its state/resolution badges, and the deadline outcome prompts. (Sidebar → Calendar) |
 

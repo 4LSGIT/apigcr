@@ -1047,6 +1047,11 @@ Example:
 }
 ```
 
+
+Part of **court parser v2** — the registry-driven extraction layer. See
+[The court email pipeline](../05-Subsystems/10-court-pipeline.md#parser-v2--the-extraction-layer-being-rebuilt)
+for the match-set registry, the citation contract and the stage map.
+
 ---
 
 ### PDF
