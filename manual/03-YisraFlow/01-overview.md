@@ -2,7 +2,7 @@
 
 ## For operators
 
-YisraFlow has **six subsystems** that handle different shapes of automation. Five of them share one underlying job queue, so anything they schedule is processed by the same heartbeat as everything else; the sixth, the Trigger System, runs inline off database mutations rather than off the queue.
+YisraFlow has several subsystems that handle different shapes of automation. Most share one underlying job queue (`scheduled_jobs`), so anything they schedule is processed by the same heartbeat as everything else. The Trigger System is the exception: it is fed by database mutations rather than by a schedule, and rides its own queue (`domain_event_queue`) — drained off that same heartbeat. See [15-triggers.md](15-triggers.md) for why that split exists.
 
 Use this chart to pick one:
 
@@ -35,7 +35,8 @@ lib/sequenceEngine.js           Sequence Engine
 routes/scheduled_jobs.js        Scheduled Jobs (CRUD)
 routes/process_jobs.js          The heartbeat — claims and dispatches all jobs
 lib/job_executor.js             Executes one_time/recurring jobs (webhook, internal_function, custom_code, campaign_send, task_due_reminder, task_daily_digest)
-lib/internal_functions.js       The 23-function action library shared by all engines
+lib/internal_functions/         The action library shared by all engines — one file
+                                per category, auto-scanned (see its README.md)
 
 services/hookService.js         YisraHook receiver + delivery dispatcher
 services/hookFilter.js          Hook condition evaluator (AND/OR groups)
@@ -91,7 +92,9 @@ For `one_time` and `recurring` jobs, the actual *execution flavor* is stored in 
 
 **`/process-jobs` heartbeat** runs `recoverStuckJobs()`, then claims up to 10 pending jobs with `FOR UPDATE SKIP LOCKED` and dispatches each. It's called periodically by Cloud Scheduler.
 
-**`internal_functions.js`** is the action library. 23 functions covering SMS, email, contact CRUD, appointment CRUD, task creation, sequence control, log writing, DB queries, and workflow-only control flow (branching, delays). Workflows and sequences both call into it; scheduled jobs call into it via `data.type='internal_function'`.
+**`lib/internal_functions/`** is the action library — **91 functions**, 85 of them offered in the editors' pickers. It covers SMS, email, contact/case/appointment/event CRUD, task creation, sequence control, log writing, DB reads *and* writes, Dropbox, Google Calendar, e-signature, document generation, PDF, court, pipeline, and workflow-only control flow (branching, delays, `foreach`, `request_decision`). Workflows and sequences both call into it; scheduled jobs call into it via `data.type='internal_function'`; YisraHook targets and the email/phone ingest rule actions dispatch into it too.
+
+It is a **directory**, not a single file — one module per category, auto-scanned at boot by `index.js`, so adding a category needs no registration. Duplicate names throw at startup. See `lib/internal_functions/README.md` for the module convention and chapter 5 for the function reference.
 
 **`resolverService.resolve()`** is the universal placeholder engine. `{{contacts.contact_fname}}`, `{{appts.appt_date|date:dddd}}`, `{{trigger_data.amount}}`. Used by sequences automatically and by workflows via the `set_vars`/template path. Restricted to a whitelist of 12 tables.
 

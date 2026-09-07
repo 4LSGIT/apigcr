@@ -56,7 +56,7 @@ When something doesn't fire when you expected:
 | `sms` | Send a text message via the firm's phone lines |
 | `email` | Send an email via configured providers |
 | `task` | Create a task assigned to a user |
-| `internal_function` | Call any of the 23 built-in functions |
+| `internal_function` | Call any of the 74 built-in functions available to both engines (the 11 picker-visible workflow-only ones are filtered out — see chapter 5) |
 | `webhook` | First-class HTTP call with credential injection (≠ `internal_function: webhook` — see below) |
 | `start_workflow` | Kick off a workflow execution from inside a sequence |
 

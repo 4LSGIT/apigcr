@@ -150,7 +150,7 @@ Runs a built-in function. See [05-internal-functions.md](05-internal-functions.m
 ```
 
 #### `custom_code`
-JS snippet in a sandboxed VM. **No network access. No DB access. 5-second timeout. No retry safety.** The "nuclear option" — prefer extending `internal_functions.js` instead, but it's there for one-off data shaping.
+JS snippet in a sandboxed VM. **No network access. No DB access. 5-second timeout. No retry safety.** The "nuclear option" — prefer adding a function under `lib/internal_functions/` instead, but it's there for one-off data shaping.
 
 ```json
 {

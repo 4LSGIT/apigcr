@@ -19,7 +19,7 @@ the definition is content.
 | Value | External routes serve it? | Use |
 |-------|---------------------------|-----|
 | `internal` *(default)* | No — nothing at all | Staff forms |
-| `portal` | Portal credential only | Client portal (future slice) |
+| `portal` | Portal credential only | Client portal (see [Client Portal](../06-Client-Facing/)) |
 | `public` | Anyone with the link | Intake, lead capture |
 
 Set it in the **Form Builder** — the small select beside the version badge in

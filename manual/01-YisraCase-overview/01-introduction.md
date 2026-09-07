@@ -48,17 +48,48 @@ Tasks and log entries can be linked to a contact, a case, an appointment, or a b
 
 ## Navigation Basics
 
-YisraCase is organized into tabs in the main interface:
+YisraCase is organized into tabs down the left sidebar, in this order:
 
-- **Contacts** — search, browse, and open contact records
-- **Leads** — prospective matters not yet worked; dedicated follow-up view
-- **Cases** — active and historical matters; searchable and filterable by type, stage, and status
-- **Appointments** — all scheduled meetings; filterable by date range, type, and status
-- **Tasks** — your personal task queue
-- **Bills** — billing records *(placeholder; full feature in progress)*
-- **Settings** — documentation, workflow manager, and admin tools
+| Tab | What it is |
+|---|---|
+| **Home** | Landing screen with the global search box |
+| **Cases** | Active and historical matters — searchable and filterable by type, stage, and status. Leads live here too; they are cases at an early stage, not a separate tab |
+| **Contacts** | Search, browse, and open contact records |
+| **Appointments** | All scheduled meetings; filterable by date range, type, and status |
+| **Calendar** | Appointments *and* events in one list over a date window — see [Calendar tab](../05-Subsystems/12-calendar-tab.md) |
+| **Events** | Dated obligations and milestones, distinct from appointments — see [Events](08-events.md) |
+| **Tasks** | Your personal task queue |
+| **Log** | The activity log across records — see [Activity log](06-activity-log.md) |
+| **Bills** | Billing records *(placeholder; full feature in progress)* |
+| **Pipeline Board** | Where every case sits by stage and lane — see [Pipelines](13-pipelines.md) |
+| **Custom** | Your own pinned view, if you've pinned one — see [YisraView](../05-Subsystems/05-YisraView.md) |
+| **Settings** | Personal and firm settings |
+| **Admin** | Firm administration. Hidden unless your account has the authorization for it |
+| **More Features** | Everything else — see below |
 
 Opening any record takes you to a detail page that shows everything connected to it: related contacts or cases, appointments, tasks, and the full activity log.
+
+### The More menu
+
+Most of this manual's smaller systems don't have a sidebar tab of their own —
+they live behind **More Features**, and the section READMEs refer to that as
+"the **More** menu." What you'll find there:
+
+- **Staff tools** — Reports, Views, Documents, Video Manager, Redirects Manager,
+  Asset Manager, Form Builder, Form Inbox, Campaigns, Case Config, Court
+  Preview, Feature Requests, Support Inbox, Signatures, Automations, Manuals
+  (this manual). Covered in [05-Subsystems](../05-Subsystems/),
+  [02-YisraForms](../02-YisraForms/), [03-YisraFlow](../03-YisraFlow/) and
+  [07-ESign](../07-ESign/).
+- **Client-facing managers** — Portal Manager, Booking Manager, Availability
+  Manager, Landing Pages. Covered in [06-Client-Facing](../06-Client-Facing/).
+- **Super-user tools**, marked **(SU)** and invisible to everyone else — DB
+  Console, Readonly Keys, API Tester, API Keys, System Alerts, Connections,
+  Users. Covered in [08-Admin-Tools](../08-Admin-Tools/) and
+  [04-Integrations](../04-Integrations/).
+
+There is also a **Help & Support** button at the bottom of the sidebar — one
+textarea that files a report with the technical state attached automatically.
 
 ---
 

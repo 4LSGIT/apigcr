@@ -244,7 +244,7 @@ If `contact_id` resolves to null/missing, delivery fails (logged with error `seq
 
 #### `target_type: 'internal_function'`
 
-Call any of the 23 functions directly.
+Call any of the built-in functions directly (see chapter 5).
 
 ```json
 {

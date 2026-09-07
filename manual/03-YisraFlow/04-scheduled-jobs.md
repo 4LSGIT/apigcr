@@ -46,7 +46,7 @@ For `one_time` and `recurring` jobs, the *actual execution flavor* is stored in 
 | `data.type` | What it does |
 |---|---|
 | `webhook` | HTTP request to any URL |
-| `internal_function` | Calls a built-in function from `internal_functions.js` |
+| `internal_function` | Calls a built-in function from `lib/internal_functions/` |
 | `custom_code` | Runs a JS snippet in a sandboxed VM (5s timeout, no DB, no network) |
 | `campaign_send` | Sends one campaign message to one contact (system-created via Campaign Manager) |
 | `task_due_reminder` | Sends a single task due-date reminder (system-created via taskService) |

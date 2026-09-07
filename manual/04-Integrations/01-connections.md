@@ -191,7 +191,7 @@ The daily refresh isn't auto-seeded on startup (no seeder pattern exists in this
 - `routes/api.oauth.js` — OAuth flow + reveal
 - `routes/api.emailCredentials.js` — email CRUD + test
 - `public/connections.html` — admin UI
-- Internal function `refresh_expiring_oauth_credentials` in `lib/internal_functions.js`
+- Internal function `refresh_expiring_oauth_credentials` in `lib/internal_functions/connections.js`
 
 ## Required env vars
 
@@ -315,7 +315,7 @@ Same shape as Recipe B but with `db` from the function signature instead
 of `req.db`. The internal-function executor passes `db` as the second arg.
 
 ```js
-// lib/internal_functions.js (or any service file)
+// lib/internal_functions/<category>.js (or any service file)
 const { buildHeadersForCredential } = require('./credentialInjection');
 const fetch = require('node-fetch');
 

@@ -189,7 +189,7 @@ The three visibility tiers are shipped, not planned:
 |------|------|----------|
 | `internal` | JWT via iframe relay | Staff forms |
 | `public` | `case_id` bearer param, or anonymous | Intake, lead capture |
-| `portal` | Portal credential | Client portal (future slice) |
+| `portal` | Portal credential | Client portal (see [Client Portal](../06-Client-Facing/)) |
 
 **See [Part 15 — External Forms](15-external-forms.md)** for the whole surface:
 the `/f/:form_key` link, `case_id` and `badLink`, URL prefill, `postSubmit`,

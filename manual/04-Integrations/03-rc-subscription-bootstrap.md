@@ -177,7 +177,7 @@ Body:
 
 Record `id` and `expirationTime`.
 
-**About `expiresIn: 604800`** — that's 7 days, RC's maximum per their docs. Slice 5 renews at 48h pre-expiry, so each subscription gets renewed on day 5 of its lifecycle. Five days of slack remain before the IT alert would fire on a missed renewal. If RC ever changes the max, update both this doc and `RENEW_LEAD_MS` in `lib/internal_functions.js#rc_renew_subscriptions`.
+**About `expiresIn: 604800`** — that's 7 days, RC's maximum per their docs. Slice 5 renews at 48h pre-expiry, so each subscription gets renewed on day 5 of its lifecycle. Five days of slack remain before the IT alert would fire on a missed renewal. If RC ever changes the max, update both this doc and `RENEW_LEAD_MS` in `lib/internal_functions/connections.js` (`rc_renew_subscriptions`).
 
 ---
 
@@ -515,4 +515,4 @@ This bootstrap doc closes Phase 2's hook layer for production traffic. Several r
 
 ---
 
-*Last meaningful update: May 2026. Bootstrap procedure validated against Slice 5 renewal job id=374 in production. **If the procedure here diverges from `lib/internal_functions.js#rc_renew_subscriptions`, `routes/api.hooks.js`, or the live `hooks` table, the code (and table) win.***
+*Last meaningful update: May 2026. Bootstrap procedure validated against Slice 5 renewal job id=374 in production. **If the procedure here diverges from `lib/internal_functions/connections.js` (`rc_renew_subscriptions`), `routes/api.hooks.js`, or the live `hooks` table, the code (and table) win.***

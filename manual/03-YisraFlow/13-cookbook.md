@@ -100,7 +100,7 @@ Ask these in order. The first "yes" wins.
 
 ### 2.1 Internal Functions (23 total)
 
-Available in `lib/internal_functions.js`, callable by all three engines. Signature: `async (params, db) => { success, output? }`. See chapter 5 for the full reference.
+Available in `lib/internal_functions/`, callable by all three engines. Signature: `async (params, db) => { success, output? }`. See chapter 5 for the full reference.
 
 | Category | Function | Used in |
 |---|---|---|
@@ -144,7 +144,7 @@ pabblyService.send(db, service, data)
 { "type": "custom_code", "code": "...", "input": {...} }  // vm sandbox, 5s timeout
 ```
 
-`custom_code` is the nuclear option — no logging, no retry safety, no access to `db`. Use it only for one-off data shaping where you really can't extend `internal_functions.js`.
+`custom_code` is the nuclear option — no logging, no retry safety, no access to `db`. Use it only for one-off data shaping where you really can't add a function under `lib/internal_functions/`.
 
 **Sequence step action types:** `sms`, `email`, `task`, `internal_function`,
 `webhook`, `start_workflow`. The last two are first-class alternatives to
@@ -583,7 +583,7 @@ YisraHook has four target types. Pick based on what the external event should tr
 | `http` | A URL (internal or external) | Out-to-third-party notifications, or routing to an internal route you control |
 | `workflow` | Workflow execution | Multi-step logic with branching / variable passing — e.g. new-lead intake orchestration |
 | `sequence` | Sequence enrollment | Contact-tied drip with auto-cancel — e.g. external "appt booked" → welcome sequence |
-| `internal_function` | One function from `internal_functions.js` | Single atomic action — log, SMS, task, DB update |
+| `internal_function` | One function from `lib/internal_functions/` | Single atomic action — log, SMS, task, DB update |
 
 **The pipeline, same for all four types:**
 
@@ -1810,7 +1810,7 @@ await apiSend('/scheduled-jobs', 'POST', {
   name:            'Weekly Case Stage Review Email',
   scheduled_time:  '2026-05-04T13:00:00Z',       // first Monday 9 AM ET
   recurrence_rule: '0 13 * * 1',                  // every Monday 9 AM ET
-  function_name:   'run_case_stage_review',       // you'd add this to internal_functions.js
+  function_name:   'run_case_stage_review',       // you'd add this under lib/internal_functions/
   params:          { recipient_user_id: 1 }
 });
 ```
@@ -2058,7 +2058,7 @@ This is the **Resume-Refetch-Recheck-Send pattern (§3.1)**, kicked off by an ex
 |---|---|
 | `lib/workflow_engine.js` | `advanceWorkflow`, `scheduleResume`, `mergeVariables`, `isControlStep`, `getWorkflowFinalStatus` |
 | `lib/sequenceEngine.js` | `enrollContact`, `enrollContactByTemplateId`, `executeStep`, `cancelSequences`, `cancelEnrollment`, `cancelByApptId`, `checkCondition`, `calculateStepTime`, `validateTemplateFilters` |
-| `lib/internal_functions.js` | All 23 built-in functions |
+| `lib/internal_functions/` | All 91 built-in functions, one file per category |
 | `lib/job_executor.js` | `executeJob`, inline blocks for `task_due_reminder` / `task_daily_digest` / `campaign_send` |
 | `routes/process_jobs.js` | Heartbeat: claim jobs, dispatch, record results, reschedule recurring |
 | `routes/scheduled_jobs.js` | CRUD on `scheduled_jobs` |

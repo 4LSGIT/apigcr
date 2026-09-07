@@ -25,7 +25,7 @@ routes/internal/dropbox.js        Case-page "Create Dropbox Folder" button → e
 services/caseService.js           ensureCaseDropboxFolder + folder-template machinery
 routes/api.intake.js              Calls ensure post-response on case creation
 routes/api.checklists.js          /api/public/get-upload-link (docReq client-direct upload)
-lib/internal_functions.js         dropbox_* action functions (DROPBOX section)
+lib/internal_functions/dropbox.js dropbox_* action functions
 ```
 
 Retired: `routes/dropbox.js` + `services/dropboxServiceLegacy.js` (env-var auth, zero traffic per legacy_route_log), and the Pabbly `create_dropbox_folder` / `dropbox_create_folder` workflows.
@@ -118,7 +118,7 @@ Plus `POST /internal/dropbox/create-folder` `{case_id}` — the case-page button
 
 ### Internal functions (automations)
 
-All in the DROPBOX section of `lib/internal_functions.js`, category `dropbox`, chainable via `{{this.output.*}}`:
+All in `lib/internal_functions/dropbox.js`, category `dropbox`, chainable via `{{this.output.*}}`:
 
 #### `dropbox_ensure_case_folder`
 `{ case_id, force? }` → `{ existed, stage, path, shared_link, ... }`. The workflow-facing wrapper over `ensureCaseDropboxFolder`. Use at the top of filing pipelines to guarantee a folder exists; capture `{{this.output.shared_link}}`.

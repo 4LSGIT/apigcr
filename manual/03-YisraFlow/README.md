@@ -2,7 +2,7 @@
 
 YisraFlow is the umbrella name for everything in YisraCase that *runs by itself*: it sends the SMS without you, fires the workflow when the appointment is booked, drips the follow-up over five days, retries the failed webhook, routes the inbound email to the right hook. This manual covers all of it.
 
-There are six subsystems. Five share one job queue and one heartbeat; the Trigger System runs inline off database mutations instead.
+The subsystems below share the `scheduled_jobs` queue and the `/process-jobs` heartbeat — except the Trigger System, which has its own queue (`domain_event_queue`), drained off that same heartbeat, and is fed by database mutations rather than by a schedule.
 
 | Subsystem | What it does | When you reach for it |
 |---|---|---|
@@ -27,7 +27,7 @@ If you've never used the system before, read these in order:
 | 2 | [02-workflows.md](02-workflows.md) | Workflow Engine — concepts, lifecycle, step types, branching, contact-tying |
 | 3 | [03-sequences.md](03-sequences.md) | Sequence Engine — templates, enrollment, conditions, timing, all six step types |
 | 4 | [04-scheduled-jobs.md](04-scheduled-jobs.md) | One-time and recurring jobs, the unified `scheduled_jobs` queue |
-| 5 | [05-internal-functions.md](05-internal-functions.md) | All 23 built-in functions with params and examples |
+| 5 | [05-internal-functions.md](05-internal-functions.md) | The built-in function library — the registry, the categories, and the reference entries |
 | 6 | [06-variables-templating.md](06-variables-templating.md) | Workflow variables, the universal `{{table.column}}` resolver, `trigger_data`, modifiers |
 | 7 | [07-calendar-service.md](07-calendar-service.md) | Jewish business calendar, timing types, holiday handling, randomization |
 | 8 | [08-error-policies.md](08-error-policies.md) | Retry strategies and backoff |

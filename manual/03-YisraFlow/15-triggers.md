@@ -42,7 +42,9 @@ Two things worth knowing before you write your first rule:
 ### Files
 
 ```
-lib/domainEvents.js                 emit() + envelope builder + ALS loop guard
+lib/domainEvents.js                 emit() — envelope builder, queue write, ALS loop guard
+lib/domainEventDrain.js             The drain — claims a queued event and walks the rule tree
+routes/process_jobs.js              POST /process-domain-event/:id + the 60s fallback pass
 services/triggerService.js          Engine: registry, match, transform, dispatch, CRUD
 routes/api.triggers.js              REST surface
 public/automation/triggers.html     UI (iframed tab in automationManager.html)
@@ -53,6 +55,51 @@ lib/internal_functions/events.js    sweep_calendar_missed — nightly deadline s
 ```
 
 Emission sites live in the services that own each mutation — `apptService`, `contactService`, `caseService`, `pipelineService`, `formService`, `esignWebhookService`, and `routes/api.checklists.js`.
+
+### How an event reaches the engine — split-phase dispatch
+
+`emit()` **does not evaluate anything**. It writes the envelope to
+`domain_event_queue` and rings a Cloud Tasks doorbell — two cheap operations —
+and returns. The rule tree is walked later by `lib/domainEventDrain.js`, running
+inside a request: `POST /process-domain-event/:id`, with the 60-second
+`/process-jobs` cron as the fallback sweep.
+
+```
+service mutation
+  └─ domainEvents.emit()          fire-and-forget, never throws
+       ├─ INSERT domain_event_queue     ← the scheduling authority
+       └─ Cloud Tasks doorbell          ← just a nudge; safe to lose
+                                   ↓
+            POST /process-domain-event/:id   (or the 60s cron pass)
+              └─ domainEventDrain.processEvent()
+                   └─ triggerService: match → transform → dispatch
+```
+
+**Why it is split.** Cloud Run allocates CPU *per request*. The engine used to
+run in the detached tail after the response, where wall time is real work plus
+however long until the instance is granted CPU again — unbounded. One execution
+lost a rule's transform (about 8ms of actual work) to a 200ms ceiling that way.
+Moving evaluation into its own request removed the exposure: a correctness risk
+(tree aborted mid-flight, audit rows silently missing) became a bounded latency
+risk — worst case roughly 60 seconds until the cron picks it up, with no loss.
+
+**The queue row is the authority, the task is a doorbell.** Same invariant as
+`scheduled_jobs` vs `lib/taskQueue.js`: if the doorbell never arrives the event
+is still queued and the cron still drains it. Nothing is lost by a dropped task.
+
+**What this means when you are debugging a rule that "didn't fire":**
+
+- A rule firing up to a minute late is normal, not a bug — check
+  `domain_event_queue` before assuming the rule didn't match.
+- The `INSERT` + doorbell still run in the detached tail, because `emit()`'s
+  fire-and-forget contract is unchanged and almost every call site ignores the
+  returned promise. Two operations is not an unbounded tree, and the doorbell
+  degrades to the cron.
+- The loop guard survives the split. `depth` and `chain` are built by `emit()`
+  and persist *with* the envelope; the drain re-establishes the ALS scope from
+  them before walking the tree, so depth-capping is unaffected. The shared
+  `counters` object cannot survive serialization, so the dispatch budget rides
+  in `domain_event_queue.dispatches`, correlated by `root_id`.
 
 ### The envelope
 

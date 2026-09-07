@@ -25,7 +25,7 @@ There are two ways the firm uses it:
 |---|---|
 | `services/gcalService.js` | All logic. CRUD over the Google Calendar API v3 plus calendar discovery. |
 | `routes/api.gcal.js` | Thin REST wrapper over the service. Auto-mounted by the routes loader. |
-| `lib/internal_functions.js` | Four thin `gcal_*` functions (category `calendar`) wrapping the service. |
+| `lib/internal_functions/calendar.js` | Four thin `gcal_*` functions (category `calendar`) wrapping the service. |
 | `services/apptService.js` | Appointment lifecycle — calls `gcalService` on create / cancel / reschedule; owns the `appt_gcal` write-back and throttled IT failure alerts. |
 | `lib/credentialInjection.js` | Supplies the OAuth Authorization header (`buildHeadersForCredential`). |
 | `services/oauthService.js` | Token refresh behind the header builder. |

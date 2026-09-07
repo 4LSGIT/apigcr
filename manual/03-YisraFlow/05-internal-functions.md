@@ -2,11 +2,11 @@
 
 ## For operators
 
-The system has **23 built-in functions** that workflows, sequences, scheduled jobs, and hook targets can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
+The system has **91 built-in functions** that workflows, sequences, scheduled jobs, hook targets and the email/phone ingest rules can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
 
-You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you all 23 (or 16, in sequences) in a categorized dropdown with a form field for each parameter.
+You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you the available ones in a categorized dropdown with a form field for each parameter. Six are hidden from the pickers (internal plumbing), so a workflow offers **85** and a sequence **74** — sequences don't get the eleven that need workflow machinery.
 
-The seven that only work in workflows are the ones that need workflow-specific machinery: branching (`set_next`, `evaluate_condition`), delays (`wait_for`, `schedule_resume`, `wait_until_time`), variable formatting (`format_string`), and a dev-only helper (`set_test_var`).
+The eleven that only work in workflows are the ones that need workflow-specific machinery: branching (`set_next`, `evaluate_condition`, `foreach`), delays (`wait_for`, `schedule_resume`, `wait_until_time`), variable formatting (`format_string`), pausing for a human (`request_decision`), starting another workflow (`start_workflow`), and the two document renderers that write back to the execution (`document_generate_from_template`, `render_submission_pdf`).
 
 Everything else works the same way in any engine that calls it.
 
@@ -19,9 +19,11 @@ When something doesn't fire when you expected:
 
 ## Technical reference
 
-### Module: `lib/internal_functions.js`
+### Module: `lib/internal_functions/`
 
-Exports an object whose keys are function names. Each function has the signature:
+A **directory**, one module per category (`contacts.js`, `timing.js`, `court.js`, …), auto-scanned at boot by `index.js` — there is no registration step, and duplicate names across files throw at startup. It replaced the old single-file `lib/internal_functions.js`; `require('../lib/internal_functions')` still resolves here, so no caller changed. `lib/internal_functions/README.md` carries the module convention (the `__meta` block, category-vs-file placement, picker ordering) and is the place to look before adding one.
+
+The registry exports an object whose keys are function names. Each function has the signature:
 
 ```js
 async (params, db) => { success: boolean, output?: any, set_vars?: object, next_step?: number|null|'end'|'cancel'|'fail', delayed_until?: Date }
@@ -37,7 +39,9 @@ Each function carries a `__meta` block — a JSON description of its params (nam
 
 ### The function registry
 
-54 callable functions as of 2026-07, grouped by `__meta` category. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself — there is no hardcoded name list to go stale.
+**91 callable functions**, grouped by `__meta` category. Counts in this chapter go stale the moment somebody adds a file, so treat `GET /workflows/functions` as the live source of truth — it serves the registry's own metadata. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself, so a new function without a `__meta` block fails the build rather than appearing here silently.
+
+Of the 91: **6** are `uiHidden` (internal plumbing — `court_extract`, `decision_timeout_cleanup`, `set_test_var`, `forward_as_email`, `forward_as_sms`, `portal_callback_reminder`), leaving 85 in the pickers; **11** of those 85 are `workflowOnly`.
 
 | Category | Functions |
 |---|---|
@@ -864,5 +868,5 @@ internalFunctions.__validateParamsAgainstMeta(name, params)   // → null on suc
 5. **`get_appointments` and `query_db` both have a `format` param** — use `count` to just get the row count, `first` (query_db only) for a single row, `html_rows` for an HTML-formatted block ready for an email.
 6. **`evaluate_condition` `else: null` ends the workflow** — same as `set_next` with `null`. Useful for "if condition fails, we're done."
 7. **`send_email` `attachment_urls` must be a JSON array in the editor.** `emailService.sendEmail` accepts a single `{url, name}` object or a comma-separated string at runtime, but the workflow editor's metadata-driven validator declares `type: 'array'` and rejects non-array shapes at save time. Sequence editor enforces the same. **Wrap single attachments as `[{...}]`.** Also: the URL must be publicly reachable at send time (Pabbly fetches it itself; nodemailer's `path:` for SMTP does the same) — private/signed GCS URLs without anonymous access won't work.
-8. **`query_ai` output lives at `{{this.output.field}}`, not `{{this.field}}`** — `this` is the full function return `{success, output, set_vars, usage, call_id}`. This applies to every internal function's same-step `set_vars` (some older docstrings in `internal_functions.js` claim `{{this.column_name}}`; they're wrong — the code and chapter 6 are authoritative). And every `query_ai` attempt bills the API: `error_policy` retries and the json strict retry each write their own `ai_calls` row.
+8. **`query_ai` output lives at `{{this.output.field}}`, not `{{this.field}}`** — `this` is the full function return `{success, output, set_vars, usage, call_id}`. This applies to every internal function's same-step `set_vars` (some older docstrings in the registry claim `{{this.column_name}}`; they're wrong — the code and chapter 6 are authoritative). And every `query_ai` attempt bills the API: `error_policy` retries and the json strict retry each write their own `ai_calls` row.
 8. **Workflow variables shadow resolver placeholders.** A workflow variable named `contact_fname` (set via `set_vars`) makes `{{contact_fname}}` resolve to the variable, not to `contacts.contact_fname`. Pick variable names that don't collide with resolver column names.

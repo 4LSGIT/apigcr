@@ -196,7 +196,7 @@ The shrinkage check is the only place a PUT can 409 — adding fields, reorderin
 |---|---|---|
 | `/workflows/functions` | GET | Returns `{ workflow: [...], sequence: [...], meta: {...} }` |
 
-`workflow` lists all 23 callable functions. `sequence` filters out the 7 workflow-only functions (`set_next`, `evaluate_condition`, `schedule_resume`, `wait_for`, `wait_until_time`, `format_string`, `set_test_var`). `meta` is the per-function metadata registry — drives the form-driven param editor in the UI.
+`workflow` lists the 85 picker-visible functions (6 of the 91 are `uiHidden`). `sequence` filters out the 11 workflow-only ones (`start_workflow`, `set_next`, `evaluate_condition`, `foreach`, `request_decision`, `document_generate_from_template`, `render_submission_pdf`, `schedule_resume`, `wait_for`, `wait_until_time`, `format_string`), leaving 74. `meta` is the per-function metadata registry — drives the form-driven param editor in the UI. This endpoint is the live source of truth; chapter 5's counts are a snapshot.
 
 Internal functions are **not directly callable via HTTP** — they're invoked through workflow steps, sequence steps, scheduled jobs, hook targets, or the `internal_function` job_type. There's no `POST /internal_functions/:name/run` endpoint.
 
