@@ -151,6 +151,10 @@ manual/05-Subsystems/03-feature-requests.md
 manual/05-Subsystems/04-reports.md
 manual/05-Subsystems/05-YisraView.md
 manual/05-Subsystems/06-documents.md
+manual/05-Subsystems/07-checklists.md
+manual/05-Subsystems/08-asset-manager.md
+manual/05-Subsystems/09-issue-reports.md
+manual/05-Subsystems/10-court-review.md
 manual/05-Subsystems/11-calendar-types.md
 manual/05-Subsystems/12-calendar-tab.md
 manual/05-Subsystems/README.md
