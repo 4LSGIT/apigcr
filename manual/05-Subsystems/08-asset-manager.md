@@ -40,12 +40,25 @@ through `storageService`, rows through `assetService`. All routes are under
 | `/api/assets` | POST | Upload — multipart `file` **or** base64 JSON; optional register |
 | `/api/assets` | GET | List — `q`, `collection`, `mime`, `sort`, `limit`, `offset`, `include_deleted` |
 | `/api/assets/:id` | PATCH | Edit title, tags, collection |
+| `/api/assets/collections` | GET | The collection list, for the picker's grouping |
 | `/api/assets/:id` | DELETE | Soft delete — the stored object is intentionally retained |
 
-**Legacy shims**, kept until the communication callers migrate to the shared
-picker: `POST /api/upload` (maps to the `comms-images` collection),
-`GET`/`POST /api/image-library`, `DELETE /api/image-library/:id` (now a soft
-delete).
+**The legacy shims are gone.** `POST /api/upload` and the `/api/image-library`
+family existed until the communication screens moved to the shared picker; they
+no longer exist as routes. The file header in `routes/api.assets.js` still lists
+them — treat that comment as stale.
+
+### The picker
+
+Callers don't hit these endpoints directly. `public/js/assetpicker.js` exposes
+`AssetPicker.pick({...})`, and the screens that need an image — campaigns'
+rich-text editor and MMS attachment, among others — go through it. That is why
+there is one asset store rather than a picker per screen.
+
+### The table is `image_library`
+
+`assetService` reads and writes `image_library` — the name predates the asset
+store and was kept rather than migrated. There is no `assets` table.
 
 ### Upload size handling
 

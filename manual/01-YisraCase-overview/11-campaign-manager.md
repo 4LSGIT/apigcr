@@ -150,18 +150,16 @@ All routes require JWT auth via `jwtOrApiKey`.
 
 **Response:** `{ body: "resolved text", subject: "resolved subject", unresolved: ["{{contacts.bad_field}}"] }`
 
-### Image Upload & Library
+### Images
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/upload` | Upload image (multipart or base64 JSON) |
-| `GET` | `/api/image-library` | List all library images |
-| `POST` | `/api/image-library` | Add URL to library manually |
-| `DELETE` | `/api/image-library/:id` | Remove from library (file stays in bucket) |
+Campaigns no longer have image endpoints of their own. Both the Quill image
+button and the MMS attachment picker call the shared **AssetPicker**
+(`/js/assetpicker.js`), which talks to `/api/assets` — see
+[Asset Manager](../05-Subsystems/08-asset-manager.md).
 
-**Upload body (JSON):** `{ image: "base64...", filename: "logo.png", contentType: "image/png", addToLibrary: true }`
-
-**Upload body (multipart):** Standard file upload with field name `file`. Auto-added to library.
+The older `/api/upload` and `/api/image-library` shims were removed once this
+screen migrated; only the `image_library` table survives, and it is what the
+asset store writes to.
 
 ---
 
@@ -317,6 +315,6 @@ A custom Quill Image blot preserves `width`, `style`, and `alt` attributes that 
 |------|---------|
 | `services/campaignService.js` | All business logic |
 | `routes/campaign.js` | Thin HTTP wrappers, JWT auth |
-| `routes/api.assets.js` | Image upload + library routes — the shared [asset store](../05-Subsystems/08-asset-manager.md). Still serves the legacy `/api/upload` and `/api/image-library` contracts this screen uses |
+| `routes/api.assets.js` | The shared [asset store](../05-Subsystems/08-asset-manager.md), reached through `/js/assetpicker.js` |
 | `lib/job_executor.js` | `campaign_send` job type dispatch |
 | `public/campaign.html` | Frontend (iframe) |

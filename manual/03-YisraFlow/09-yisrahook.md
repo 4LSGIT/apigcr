@@ -325,6 +325,7 @@ Capture mode lets you record one real incoming event without dispatching anythin
    - Inserts a `hook_executions` row with `status = 'captured'` (no filter/transform/delivery runs)
    - Returns `{ status: 'captured', execution_id, truncated }`
 3. The captured sample stays in `hooks.captured_sample` until the operator overwrites it (with another capture) or manually clears.
+   There is no dedicated endpoint to read it back — it comes down with `GET /api/hooks/:id` like any other column.
 4. Future events fall through to the normal pipeline.
 
 **Race safety:** the UPDATE is guarded — `WHERE id = ? AND capture_mode = 'capturing'`. If two events arrive in the same poll window, exactly one wins; the other falls through to normal routing (no double-capture, no double-pipeline).
@@ -370,12 +371,11 @@ Both edit the same `hooks` / `hook_targets` / `credentials` rows. The standalone
 | `PUT /api/hooks/:id` | Update (auto-bumps `version`) |
 | `DELETE /api/hooks/:id` | Soft delete (hooks cascade their targets via FK) |
 | `POST /api/hooks/:id/targets` | Add target |
-| `PUT /api/hooks/:id/targets/:targetId` | Update target |
-| `DELETE /api/hooks/:id/targets/:targetId` | Delete target |
+| `PUT /api/hooks/targets/:id` | Update target — note the path is target-first, not nested under the hook |
+| `DELETE /api/hooks/targets/:id` | Delete target |
 | `POST /api/hooks/:id/test` | Dry-run with arbitrary input |
 | `POST /api/hooks/:id/capture/start` | Arm capture mode |
 | `POST /api/hooks/:id/capture/stop` | Cancel capture (preserves sample) |
-| `GET /api/hooks/:id/captured-sample` | Last captured payload |
 | `GET /api/hooks/:id/executions` | Paginated execution log |
 | `GET /api/hooks/executions/:id` | Single execution + delivery logs |
 | `GET /api/credentials` etc. | Credential CRUD (shared with sequence webhook steps) |

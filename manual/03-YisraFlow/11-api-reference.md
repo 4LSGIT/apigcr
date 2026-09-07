@@ -252,12 +252,11 @@ Auth per hook: `none` / `api_key` (default header `x-hook-key`) / `hmac` (defaul
 | `/api/hooks/:id` | PUT | Update (auto-bumps `version`) |
 | `/api/hooks/:id` | DELETE | Soft delete (cascades targets) |
 | `/api/hooks/:id/targets` | POST | Add target |
-| `/api/hooks/:id/targets/:targetId` | PUT | Update target |
-| `/api/hooks/:id/targets/:targetId` | DELETE | Delete target |
+| `/api/hooks/targets/:id` | PUT | Update target — target-first path, not nested under the hook |
+| `/api/hooks/targets/:id` | DELETE | Delete target |
 | `/api/hooks/:id/test` | POST | Dry-run with arbitrary input |
 | `/api/hooks/:id/capture/start` | POST | Arm capture mode |
 | `/api/hooks/:id/capture/stop` | POST | Cancel (preserves sample) |
-| `/api/hooks/:id/captured-sample` | GET | Last captured payload |
 | `/api/hooks/:id/executions` | GET | Paginated executions |
 | `/api/hooks/executions/:id` | GET | Single execution + delivery logs |
 
