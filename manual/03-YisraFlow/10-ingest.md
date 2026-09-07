@@ -227,10 +227,10 @@ Two things folded into this pipeline:
 
 - **The Email Router** (`/email-router`, `email_routes`, `email_router_config`,
   `email_router_executions`) — a routing layer that matched inbound mail and
-  dispatched into YisraHook. Its tables have been dropped;
-  `routes/api.email_router.js` and `services/emailRouter.js` are still in the
-  tree but no longer have anything to read. Anything it used to do is a layer-3
-  rule with a `hook` action.
+  dispatched into YisraHook. Its tables have been dropped, and
+  `routes/api.email_router.js` and `services/emailRouter.js` have since been
+  deleted from the tree. Anything it used to do is a layer-3 rule with a
+  `hook` action.
 - **The inline `phone_log` pipeline** — the phone-side layers 1 and 2 are a
   verbatim extraction of what used to live inside the `phone_log` internal
   function, with layer 3 added afterwards to mirror email.

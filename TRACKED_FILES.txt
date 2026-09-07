@@ -474,7 +474,6 @@ routes/api.documents.js
 routes/api.dropbox.js
 routes/api.emailCredentials.js
 routes/api.emailIngest.js
-routes/api.email_router.js
 routes/api.esign.actions.js
 routes/api.esign.js
 routes/api.esign.templates.js
@@ -647,7 +646,6 @@ services/emailIngestSampleService.js
 services/emailIngestService.js
 services/emailIngestSuppressionService.js
 services/emailIngestValidator.js
-services/emailRouter.js
 services/emailService.js
 services/esign/index.js
 services/esign/pdfFill.js

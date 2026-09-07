@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-08-31T11:13:14.727Z_  
-_662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL: 2_
+_Generated 2026-09-07T00:42:11.912Z_  
+_667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL: 2_
 
 ## Global middleware chain
 
@@ -96,13 +96,29 @@ _662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL:
 | PATCH | `/api/booking-views/:id` | `jwtOrApiKey` | — |
 | GET | `/api/booking-views/providers` | `jwtOrApiKey` | — |
 | GET | `/api/calendar-feed` | `jwtOrApiKey` | — |
+| GET | `/api/calendar-range` | `jwtOrApiKey` | — |
+| GET | `/api/calendar-types` | `jwtOrApiKey` | — |
+| GET | `/api/calendar-types-admin` | `jwtOrApiKey` | — |
+| POST | `/api/calendar-types-admin` | `jwtOrApiKey` | — |
+| DELETE | `/api/calendar-types-admin/:type_key` | `jwtOrApiKey` | — |
+| GET | `/api/calendar-types-admin/:type_key` | `jwtOrApiKey` | — |
+| PUT | `/api/calendar-types-admin/:type_key` | `jwtOrApiKey` | — |
+| POST | `/api/calendar-types-admin/:type_key/adopt-unmapped` | `jwtOrApiKey` | — |
+| POST | `/api/calendar-types-admin/:type_key/options` | `jwtOrApiKey` | — |
+| GET | `/api/calendar-types-admin/case-types` | `jwtOrApiKey` | — |
+| DELETE | `/api/calendar-types-admin/options/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/calendar-types-admin/options/:id` | `jwtOrApiKey` | — |
+| GET | `/api/calendar-types-admin/unmapped` | `jwtOrApiKey` | — |
+| GET | `/api/calendar-types/options` | `jwtOrApiKey` | — |
 | GET | `/api/campaigns` | `jwtOrApiKey` | — |
 | POST | `/api/campaigns` | `jwtOrApiKey` | — |
 | GET | `/api/campaigns/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/campaigns/:id` | `jwtOrApiKey` | — |
 | GET | `/api/campaigns/:id/results` | `jwtOrApiKey` | — |
+| GET | `/api/campaigns/case-types` | `jwtOrApiKey` | — |
 | GET | `/api/campaigns/contacts` | `jwtOrApiKey` | — |
 | POST | `/api/campaigns/preview` | `jwtOrApiKey` | — |
+| GET | `/api/case-events/audit` | `jwtOrApiKey` | — |
 | GET | `/api/cases` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/cases/:id` | `jwtOrApiKey` | — |
@@ -111,6 +127,7 @@ _662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL:
 | DELETE | `/api/cases/:id/contacts/:contactId` | `jwtOrApiKey` | — |
 | PATCH | `/api/cases/:id/contacts/:contactId` | `jwtOrApiKey` | — |
 | PATCH | `/api/cases/:id/docket` | `jwtOrApiKey` | — |
+| GET | `/api/cases/:id/events` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id/log` | `jwtOrApiKey` | — |
 | POST | `/api/cases/:id/merge` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id/pipeline` | `jwtOrApiKey` | — |
@@ -181,6 +198,7 @@ _662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL:
 | GET | `/api/documents/:id/raw` | `jwtOrApiKey` | — |
 | POST | `/api/documents/:id/share` | `jwtOrApiKey` | — |
 | GET | `/api/documents/:id/view` | `jwtOrApiKey` | — |
+| POST | `/api/documents/generate` | `jwtOrApiKey` | — |
 | POST | `/api/documents/register` | `jwtOrApiKey` | — |
 | POST | `/api/documents/relink` | `jwtOrApiKey` | — |
 | GET | `/api/documents/relink/:caseId/candidates` | `jwtOrApiKey` | — |
@@ -235,20 +253,6 @@ _662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL:
 | DELETE | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | GET | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | PUT | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
-| POST | `/api/email-router/capture/start` | `jwtOrApiKey` | — |
-| POST | `/api/email-router/capture/stop` | `jwtOrApiKey` | — |
-| GET | `/api/email-router/captured-sample` | `jwtOrApiKey` | — |
-| GET | `/api/email-router/config` | `jwtOrApiKey` | — |
-| PUT | `/api/email-router/config` | `jwtOrApiKey` | — |
-| GET | `/api/email-router/executions` | `jwtOrApiKey` | — |
-| GET | `/api/email-router/executions/:id` | `jwtOrApiKey` | — |
-| POST | `/api/email-router/match-test` | `jwtOrApiKey` | — |
-| POST | `/api/email-router/preview` | `jwtOrApiKey` | — |
-| GET | `/api/email-router/routes` | `jwtOrApiKey` | — |
-| POST | `/api/email-router/routes` | `jwtOrApiKey` | — |
-| DELETE | `/api/email-router/routes/:id` | `jwtOrApiKey` | — |
-| GET | `/api/email-router/routes/:id` | `jwtOrApiKey` | — |
-| PUT | `/api/email-router/routes/:id` | `jwtOrApiKey` | — |
 | POST | `/api/email/ingest` | `<anonymous>` | — |
 | GET | `/api/esign` | `jwtOrApiKey` | — |
 | GET | `/api/esign/:id(\d+)` | `jwtOrApiKey` | — |
@@ -280,6 +284,8 @@ _662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL:
 | PATCH | `/api/events/:id(\d+)/complete` | `jwtOrApiKey` | — |
 | POST | `/api/events/batch` | `jwtOrApiKey` | — |
 | GET | `/api/ext/forms/:form_key` | — | — |
+| DELETE | `/api/ext/forms/:form_key/draft` | — | — |
+| POST | `/api/ext/forms/:form_key/draft` | — | — |
 | POST | `/api/ext/forms/:form_key/submit` | — | — |
 | GET | `/api/feature-requests` | `jwtOrApiKey` | — |
 | POST | `/api/feature-requests` | `jwtOrApiKey` | — |
@@ -644,12 +650,6 @@ _662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL:
 | POST | `/dropbox/move` | `<anonymous>` | — |
 | POST | `/dropbox/rename` | `<anonymous>` | — |
 
-## /email-router
-
-| Method | Path | Middlewares | Handler |
-|--------|------|-------------|---------|
-| POST | `/email-router` | `<anonymous>` | — |
-
 ## /executions
 
 | Method | Path | Middlewares | Handler |
@@ -922,4 +922,4 @@ _662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL:
 
 ---
 
-_662 routes total — DELETE: 51, GET: 271, PATCH: 43, POST: 261, PUT: 34, _ALL: 2_
+_667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL: 2_
