@@ -50,6 +50,7 @@ For `one_time` and `recurring` jobs, the *actual execution flavor* is stored in 
 | `custom_code` | Runs a JS snippet in a sandboxed VM (5s timeout, no DB, no network) |
 | `campaign_send` | Sends one campaign message to one contact (system-created via Campaign Manager) |
 | `task_due_reminder` | Sends a single task due-date reminder (system-created via taskService) |
+| `task_start_reminder` | Fires at 8am on a deferred task's **start** date — the moment it becomes live, and the assignee's first notice since the assignment email (system-created via taskService). Same skip rules as `task_due_reminder`. See [Tasks](../01-YisraCase-overview/05-tasks.md) |
 | `task_daily_digest` | Runs the morning task digest for one user (system-created) |
 
 When you create a job via `POST /scheduled-jobs`, you pass the **scheduling type** as `type` and the **execution flavor** as `job_type` — the route translates `job_type` into `data.type` for you. (Confusingly, the API parameter name is `job_type` even though it ends up in `data.type` in the row.)

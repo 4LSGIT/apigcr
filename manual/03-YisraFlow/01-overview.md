@@ -34,7 +34,9 @@ lib/workflow_engine.js          Workflow Engine
 lib/sequenceEngine.js           Sequence Engine
 routes/scheduled_jobs.js        Scheduled Jobs (CRUD)
 routes/process_jobs.js          The heartbeat — claims and dispatches all jobs
-lib/job_executor.js             Executes one_time/recurring jobs (webhook, internal_function, custom_code, campaign_send, task_due_reminder, task_daily_digest)
+lib/job_executor.js             Executes one_time/recurring jobs (webhook, internal_function,
+                                custom_code, campaign_send, task_due_reminder,
+                                task_start_reminder, task_daily_digest)
 lib/internal_functions/         The action library shared by all engines — one file
                                 per category, auto-scanned (see its README.md)
 
