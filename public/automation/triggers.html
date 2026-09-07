@@ -60,6 +60,7 @@ body {
 .tg-rule-item.selected { background: var(--accent-soft); border-left-color: var(--accent); }
 .tg-rule-item .nm { font-size: 13px; font-weight: 600; display:flex; align-items:center; gap:6px; }
 .tg-rule-item .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.tg-rule-item .rid { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .tg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .tg-dot.on { background: var(--ok); } .tg-dot.off { background: var(--text-muted); }
 
@@ -317,7 +318,7 @@ function fmtTs(v) {
       <div class="tg-evt-head">${esc(ev)}</div>
       ${groups.get(ev).map(r => `
         <div class="tg-rule-item ${r.id === selectedId ? 'selected' : ''}" onclick="tgSelectRule(${r.id})">
-          <div class="nm"><span class="tg-dot ${r.active ? 'on' : 'off'}"></span>${esc(r.name)}</div>
+          <div class="nm"><span class="tg-dot ${r.active ? 'on' : 'off'}"></span>${esc(r.name)}<span class="rid" title="Rule ID ${r.id}">#${r.id}</span></div>
           <div class="sub">${(r.actions || []).length} action${(r.actions || []).length === 1 ? '' : 's'} · matched ${r.match_count ?? 0}×${
             (r.error_count > 0) ? ` · <span style="color:var(--danger)">error ${r.error_count}×</span>` : ''
           }${(r.min_interval_s > 0) ? ` · <span title="Cooldown: suppressed if it matched within ${r.min_interval_s}s">⏱ ${r.min_interval_s}s</span>` : ''}</div>
