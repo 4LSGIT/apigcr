@@ -47,6 +47,11 @@ All tables use `utf8mb4` / `utf8mb4_general_ci`, at both table and column level.
 | `trigger_rule_actions` | Trigger System | 15 |
 | `trigger_executions` | Trigger System | 15 |
 | `trigger_execution_rules` | Trigger System | 15 |
+| `domain_event_queue` | Trigger System — the split-phase dispatch queue | 15 |
+| `decision_requests` | Workflow Engine — human-in-the-loop | 14 |
+| `ai_calls` | shared (every AI invocation, billed or failed) | 5 |
+| `system_alerts` | shared (automation failures; the shell banner) | — |
+| `alert_state` | shared (per-group throttle and lifetime count) | — |
 | `phone_lines` | shared (SMS routing) | 4, 9 |
 | `email_credentials` | shared (email routing) | 4, 9 |
 | `app_settings` | shared | — |
@@ -478,6 +483,60 @@ Only *matched* rules get a row. Non-matching and cooldown-suppressed rules produ
 
 ---
 
+#### `domain_event_queue`
+
+The Trigger System's own queue — `emit()` writes here and rings a Cloud Tasks
+doorbell; `lib/domainEventDrain.js` claims and walks the tree. **The row is the
+scheduling authority; the task is only a doorbell**, so a lost task costs
+latency, never an event. See [chapter 15](15-triggers.md).
+
+```sql
+id             bigint unsigned  PK
+event_type     varchar(64)
+root_id        bigint unsigned          -- the root event of this tree
+envelope       json                     -- the full envelope, incl. depth + chain
+status         enum('pending','running','done','error')
+dispatches     int unsigned             -- the shared 50-per-root budget, which
+                                        -- cannot survive serialization in memory
+attempts       int unsigned
+claimed_at     datetime
+completed_at   datetime
+error_message  text
+created_at     datetime
+```
+
+`dispatches` lives here rather than in memory because the counter is shared
+mutable state across a whole event tree, and the split between `emit()` and the
+drain crosses a process boundary. It is correlated by `root_id`.
+
+#### `decision_requests`
+
+Backs `request_decision` — see [chapter 14](14-human-in-the-loop.md).
+
+```sql
+id                    bigint  PK
+token                 varchar(32)   -- the single-use credential in the link
+workflow_execution_id bigint
+step_number           int
+resume_step           int
+recipient_kind        enum('user','contact','raw')
+recipient_user_id     int
+recipient_contact_id  int
+recipient_email       varchar(255)
+recipient_phone       varchar(20)
+question              text
+options               json
+result_var            varchar(64)
+timeout_value         varchar(255)
+expires_at            datetime
+status                enum('pending','responded','timed_out','cancelled')
+response_value        varchar(255)
+responded_at          datetime
+responded_via         varchar(20)
+paired_task_id        bigint        -- the staff task that auto-completes on answer
+created_at, updated_at datetime
+```
+
 ### Shared tables (relevant to YisraFlow)
 
 #### `phone_lines` — SMS routing
@@ -520,6 +579,64 @@ Used by automations to read system-wide values like `sms_default_from`, `email_d
 The `appt_reminder_workflow_id` key was retired in May 2026 when the appointment reminder system moved from a single 31-step workflow to the `pre_appt` + `iss_intake` sequence pair — see chapter 3.
 
 ---
+
+
+#### `ai_calls`
+
+Every AI invocation, billed or failed. `query_ai` retries and the JSON strict
+retry each write their own row — which is why a single step can bill more than
+once (see [chapter 5](05-internal-functions.md)).
+
+```sql
+id              int  PK
+created_at      datetime
+prompt_key      varchar(64)
+prompt_version  varchar(32)
+model           varchar(64)
+mode            enum('sync','async')
+output_type     enum('text','json','html')
+consumer_ref    varchar(128)
+status          enum('ok','error','timeout')
+error           text
+input_tokens, output_tokens  int
+cost_cents      decimal(10,4)
+latency_ms      int
+request_excerpt text
+response        mediumtext
+```
+
+#### `system_alerts` and `alert_state`
+
+Where automation failures surface. `lib/alerting.js` writes them; the sweep
+(`run_error_sweep`, every 15 min) scans the failure tables into `system_alerts`
+and emails one grouped digest. Operator side:
+[System Alerts](../08-Admin-Tools/04-system-alerts.md).
+
+```sql
+-- system_alerts
+id         bigint unsigned  PK
+source     varchar(50)
+kind       varchar(100)          -- uncaught_exception, action_failed, route_500, …
+group_key  varchar(200)          -- the grouping key; joins to alert_state
+severity   enum('info','warning','error','critical')
+title      varchar(500)
+message    text
+context    json
+ref_table  varchar(100)
+ref_id     bigint
+dedup_key  varchar(200)
+digested_at, resolved_at, acked_at  datetime
+acked_by   varchar(100)
+created_at datetime
+
+-- alert_state (one row per group_key)
+group_key        varchar(200)  PK
+first_seen, last_seen, last_alerted_at  datetime
+occurrence_count int                    -- lifetime, not since-last-resolve
+```
+
+Status is derived, not stored: **open** is `resolved_at IS NULL AND acked_at IS
+NULL` — that is what the shell banner counts.
 
 ### FK relationships at a glance
 

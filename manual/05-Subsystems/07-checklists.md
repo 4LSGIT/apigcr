@@ -100,7 +100,7 @@ Creating a list *for* another user, and adding, checking, renaming or removing
 its items, are all open — delegation is the design. Reads are never gated.
 
 `mayDetachPersonal()` is deliberately not exported. Test it the way
-`tests/portalDocsRoutes.js` tests its route: mount the router in a real express
+`tests/portalDocsRoutes.test.js` tests its route: mount the router in a real express
 app on an ephemeral port with `jwtOrApiKey` mocked to inject `req.auth`, and
 drive owner / non-owner / SU / api_key across PATCH and DELETE over HTTP. That
 exercises the gate where it actually runs.

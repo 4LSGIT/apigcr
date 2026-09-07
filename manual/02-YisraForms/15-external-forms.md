@@ -271,10 +271,14 @@ declared `urlParam` all survive both hops.
 
 | | Landing-page record | Static file |
 |---|---|---|
-| Where | pageManager → New Page, slug `form`, status **live** | `public/form.html` |
-| URL | `/p/form?f=…` | `/form?f=…` |
+| Where | pageManager → New Page, slug `form`, status **live** | a file in `public/` |
+| URL | `/p/form?f=…` | `/<file>?f=…` |
 | Deploy needed | no | yes |
 | Vanity domain | yes (Host/Path fields) | no |
+
+**In use today: the landing-page record** — `pages.slug = 'form'`, live. There
+is no static copy in `public/`; the reference HTML is kept at
+`ref/pages/form.html` (and its companion `ref/pages/submitted.html`).
 
 > **The pageManager Preview will show a broken form.** The preview iframe is
 > `sandbox="allow-scripts"` with no `allow-same-origin`, so the nested frame

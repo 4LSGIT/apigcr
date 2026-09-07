@@ -121,7 +121,7 @@ Server-side message assembly. Takes raw checkbox selections and returns composed
 The compose endpoint handles all the string building: pay stubs from-month insertion, tax year formatting ("Federal tax returns for 2023 and 2024"), IRS year formatting ("for the years 2024, 2023 and 2022"), bank list formatting ("Chase, Comerica & Bank One"), property deed with address, and the portal link paragraph.
 
 ### POST /internal/mms/send
-JWT-authenticated MMS sending. In `routes/internal.mms.js`. Mount with `app.use('/', require('./routes/internal.mms'))`.
+JWT-authenticated MMS sending. In `routes/internal/mms.js`. No mounting step — `routes/internal.js` readdir-loads every file in `routes/internal/`, and it is itself auto-mounted by the top-level loop in `server.js`.
 
 **Body:** `{ from, to, text, attachment_url }`
 

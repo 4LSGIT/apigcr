@@ -317,6 +317,6 @@ A custom Quill Image blot preserves `width`, `style`, and `alt` attributes that 
 |------|---------|
 | `services/campaignService.js` | All business logic |
 | `routes/campaign.js` | Thin HTTP wrappers, JWT auth |
-| `routes/upload.js` | Image upload + library routes |
+| `routes/api.assets.js` | Image upload + library routes — the shared [asset store](../05-Subsystems/08-asset-manager.md). Still serves the legacy `/api/upload` and `/api/image-library` contracts this screen uses |
 | `lib/job_executor.js` | `campaign_send` job type dispatch |
 | `public/campaign.html` | Frontend (iframe) |
