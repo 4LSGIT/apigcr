@@ -76,7 +76,7 @@ const payloadAt = (n = 0) => emit.mock.calls[n][2];
  * instead of buried in a fake write path.
  */
 function makeDb({
-  row = null, after = undefined, insertResult, updateResult, deleteResult, rows,
+  row = null, after = undefined, insertResult, updateResult, updateResults, deleteResult, rows,
   linkDuplicate = false,
   // ── S3.1 related-scope fixtures (all default empty, so every pre-existing
   //    test constructs the same stub it always did) ──────────────────────────
@@ -87,6 +87,7 @@ function makeDb({
 } = {}) {
   const calls = [];
   let selectCount = 0;
+  let updateDocCalls = 0;
 
   return {
     calls,
@@ -127,7 +128,19 @@ function makeDb({
         }
         return [insertResult || { affectedRows: 1 }];
       }
-      if (/^UPDATE documents/.test(flat))           return [updateResult || { affectedRows: 1 }];
+      if (/^UPDATE documents/.test(flat)) {
+        // SYNC-1: markDeletedByPath issues TWO statements (exact arm, then
+        // prefix arm). `updateResults` lets a test give the arms different
+        // counts, indexed by call order with `updateResult` (default
+        // affectedRows:1) as the sticky fallback past the end — NOT a
+        // consumable script, so scriptGuard's drift trap does not apply and
+        // every pre-existing test constructs the stub it always did.
+        if (Array.isArray(updateResults) && updateResults[updateDocCalls] !== undefined) {
+          return [updateResults[updateDocCalls++]];
+        }
+        updateDocCalls++;
+        return [updateResult || { affectedRows: 1 }];
+      }
       if (/^DELETE FROM document_links/.test(flat)) return [deleteResult || { affectedRows: 1 }];
       // S3.3 reconcileCaseFolderLinks — a multi-table DELETE, so its own arm.
       if (/^DELETE dl FROM document_links dl/.test(flat)) {
@@ -671,48 +684,79 @@ describe('link / unlink', () => {
 // markDeletedByPath
 // ─────────────────────────────────────────────────────────────
 
-describe('markDeletedByPath', () => {
+describe('markDeletedByPath (SYNC-1: stamps pending-delete, two indexed arms)', () => {
   const P = '/  law office/   cases/  active cases/  smith, john - 123';
 
-  test('matches the exact path by hash OR anything beneath it by prefix', async () => {
-    // Dropbox reports a FOLDER delete as ONE entry with no ids and no entries
-    // for its descendants. Without the prefix arm every file underneath stays
-    // 'active' forever.
-    const db = makeDb({ updateResult: { affectedRows: 42 } });
-    const n = await documentSvc.markDeletedByPath(db, 'dropbox', P);
+  test('stamps pending_delete_at — never flips status directly', async () => {
+    // The 2026-09-07 incident: a rename's delete entry committed a 791-row
+    // status='deleted' cascade one tick before its re-adds arrived. A delta
+    // delete is now revocable — status is the sweeper's job, after grace.
+    const db = makeDb({ updateResult: { affectedRows: 1 } });
+    await documentSvc.markDeletedByPath(db, 'dropbox', P);
 
-    expect(n).toBe(42);
-    const c = db.find('UPDATE documents');
-    expect(c.sql).toContain('path_hash = ?');
-    expect(c.sql).toContain('path_lower LIKE ?');
-    expect(c.params[1]).toBe(sha1(P));
-    expect(c.params[2]).toBe(P + '/%');
+    for (const c of db.all('UPDATE documents')) {
+      expect(c.sql).toContain('SET pending_delete_at = NOW()');
+      expect(c.sql).not.toContain("SET status = 'deleted'");
+    }
   });
 
-  test('is scoped by source and skips rows already deleted', async () => {
+  test('exact arm by path_hash, prefix arm by LIKE — as SEPARATE statements', async () => {
+    // Dropbox reports a FOLDER delete as ONE entry with no ids and no entries
+    // for its descendants; the prefix arm is the cascade. Split from the old
+    // single OR so each arm rides its own index (idx_docs_path_hash /
+    // idx_docs_path_lower(191)) instead of gambling on index_merge — the OR
+    // form measured ~1.7s/entry as a 153k-row scan.
+    const db = makeDb({
+      updateResults: [{ affectedRows: 1 }, { affectedRows: 41 }],
+    });
+    const n = await documentSvc.markDeletedByPath(db, 'dropbox', P);
+
+    const updates = db.all('UPDATE documents');
+    expect(updates.length).toBe(2);
+
+    const [exact, prefix] = updates;
+    expect(exact.sql).toContain('path_hash = ?');
+    expect(exact.sql).not.toContain('LIKE');
+    expect(exact.params[1]).toBe(sha1(P));
+
+    expect(prefix.sql).toContain('path_lower LIKE ?');
+    expect(prefix.sql).not.toContain('path_hash');
+    expect(prefix.params[1]).toBe(P + '/%');
+
+    // The arms are disjoint (a path is never its own descendant), so the sum
+    // is the honest total.
+    expect(n).toBe(42);
+  });
+
+  test('both arms are scoped by source, skip deleted rows, and preserve an existing stamp', async () => {
+    // `pending_delete_at IS NULL` anchors grace to FIRST sighting: a page
+    // re-processed after a crash must not push the promotion deadline out,
+    // and must not double-count in stats.
     const db = makeDb({ updateResult: { affectedRows: 0 } });
     await documentSvc.markDeletedByPath(db, 'dropbox', P);
 
-    const c = db.find('UPDATE documents');
-    expect(c.sql).toContain('source = ?');
-    expect(c.sql).toContain("status <> 'deleted'");
-    expect(c.params[0]).toBe('dropbox');
+    for (const c of db.all('UPDATE documents')) {
+      expect(c.sql).toContain('source = ?');
+      expect(c.sql).toContain("status <> 'deleted'");
+      expect(c.sql).toContain('pending_delete_at IS NULL');
+      expect(c.params[0]).toBe('dropbox');
+    }
   });
 
   test('LIKE metacharacters in a real path are escaped, not interpreted', async () => {
     // A file named "100%_final_v2" is not a wildcard. Unescaped, '%' and '_'
-    // would widen the prefix arm and delete unrelated siblings.
+    // would widen the prefix arm and stamp unrelated siblings.
     const tricky = '/  law office/100%_final_v2';
     const db = makeDb({ updateResult: { affectedRows: 1 } });
     await documentSvc.markDeletedByPath(db, 'dropbox', tricky);
 
-    expect(db.find('UPDATE documents').params[2]).toBe('/  law office/100\\%\\_final\\_v2/%');
+    expect(db.find('LIKE').params[1]).toBe('/  law office/100\\%\\_final\\_v2/%');
   });
 
   test('a backslash in the path is escaped FIRST (order matters)', async () => {
     const db = makeDb({ updateResult: { affectedRows: 1 } });
     await documentSvc.markDeletedByPath(db, 'dropbox', '/a\\b_c');
-    expect(db.find('UPDATE documents').params[2]).toBe('/a\\\\b\\_c/%');
+    expect(db.find('LIKE').params[1]).toBe('/a\\\\b\\_c/%');
   });
 
   test('an empty path is a no-op — never a table-wide UPDATE', async () => {
@@ -725,6 +769,36 @@ describe('markDeletedByPath', () => {
   test('emits nothing — S2 owns delta-event semantics', async () => {
     const db = makeDb({ updateResult: { affectedRows: 4000 } });
     await documentSvc.markDeletedByPath(db, 'dropbox', P);
+    expect(emit).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// promoteExpiredPendingDeletes (SYNC-1)
+// ─────────────────────────────────────────────────────────────
+
+describe('promoteExpiredPendingDeletes', () => {
+  test('promotes only stamps older than the grace window, clearing the stamp', async () => {
+    const db = makeDb({ updateResult: { affectedRows: 7 } });
+    const n = await documentSvc.promoteExpiredPendingDeletes(db);
+
+    expect(n).toBe(7);
+    const c = db.find('UPDATE documents');
+    expect(c.sql).toContain("SET status = 'deleted', pending_delete_at = NULL");
+    expect(c.sql).toContain('pending_delete_at IS NOT NULL');
+    expect(c.sql).toContain('pending_delete_at < NOW() - INTERVAL ? MINUTE');
+    expect(c.params).toEqual([documentSvc.PENDING_DELETE_GRACE_MIN]);
+  });
+
+  test('grace is 30 minutes — three sync ticks of slack', async () => {
+    // Sized against the */10 cadence and the observed two-tick straddle.
+    // Hardcoded by decision; this pins it against accidental drift.
+    expect(documentSvc.PENDING_DELETE_GRACE_MIN).toBe(30);
+  });
+
+  test('emits nothing — promotion is the cascade arriving on a delay', async () => {
+    const db = makeDb({ updateResult: { affectedRows: 4000 } });
+    await documentSvc.promoteExpiredPendingDeletes(db);
     expect(emit).not.toHaveBeenCalled();
   });
 });
@@ -1124,6 +1198,10 @@ describe('bulkUpsertEntries — identical to upsertFromEntry, minus the reads', 
       'mime = COALESCE(new.mime, documents.mime)',
       'path_hash = new.path_hash',
       'status = new.status',
+      // SYNC-1: any provider write proves the file exists and must cancel a
+      // pending delete — on BOTH paths, structurally, or a backfilled re-add
+      // could promote to 'deleted' while sitting right there in the listing.
+      'pending_delete_at = NULL',
     ]) {
       expect(singleSql).toContain(clause);
       expect(bulkSql).toContain(clause);

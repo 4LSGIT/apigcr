@@ -1,0 +1,62 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SYNC-1 — DELETE GRACE + DELETE-SCAN INDEX (2026-09-08)
+--
+-- INCIDENT (2026-09-07, job_results 6528/6530): 11 case folders moved between
+-- watched roots plus one in-place rename. Dropbox's delta put the rename's
+-- `deleted` entry (old path) in page 1 and the folder's 1,025 re-adds in
+-- page 2. Page 1 alone consumed the whole 8-minute runtime budget
+-- (~437ms/file — 6 serial round trips per file against remote MySQL), so the
+-- run hit time_cap with the cursor persisted PAST the delete and BEFORE the
+-- re-adds. markDeletedByPath's prefix cascade had already flipped 791 rows to
+-- status='deleted'; they stayed invisible on the case page for ~12 minutes
+-- until the next-but-one tick replayed page 2. Self-healing, but in business
+-- hours staff would have watched a case empty out and refill.
+--
+-- TWO FIXES, ONE MIGRATION:
+--
+-- 1. `pending_delete_at` — a delete from the delta no longer flips status.
+--    It stamps this column; status stays 'active', so nothing disappears
+--    from any listing. Any provider re-add (same page, later page, later
+--    tick) clears the stamp via the shared upsert clause. A sweeper in the
+--    documents_sync tick promotes stamps older than 30 minutes to
+--    status='deleted'. A rename/move that straddles a page OR tick boundary
+--    is therefore invisible to staff; a genuine Dropbox delete reaches the
+--    UI within ~30–40 minutes instead of ~10. Deliberately a COLUMN and not
+--    a new status enum value: every reader filters status = 'active' by
+--    EQUALITY (listDocuments, listForTarget, documents.html), so a new enum
+--    value would vanish from every default listing — the exact failure this
+--    exists to prevent — or force edits across every consumer.
+--
+-- 2. `idx_docs_path_lower` — markDeletedByPath's prefix arm
+--    (path_lower LIKE 'folder/%') was a full scan of a TEXT column over
+--    153k rows: measured ~0.7s as a SELECT, ~1.7s as the UPDATE. Root 4's
+--    2026-09-07 20:29 pass burned 336,987ms deleting 198 rows — ~200 delete
+--    entries × one full scan each. The 191-char prefix index makes the LIKE
+--    a range scan (191 × 4 bytes = 764B, well under the 3072B InnoDB key
+--    cap); rows longer than the prefix are re-checked against the full WHERE
+--    by the server, so correctness is unaffected. The code change splits the
+--    old `path_hash = ? OR path_lower LIKE ?` into two statements so each
+--    arm gets its index deterministically instead of gambling on index_merge.
+--
+-- `idx_docs_pending_delete` serves the promotion sweeper's range predicate
+-- (pending_delete_at < NOW() - INTERVAL 30 MINUTE); NULLs (the steady state
+-- for ~all rows) are cheap in the index.
+--
+-- DEPLOY ORDER: SQL FIRST, STRICTLY. The code change adds
+-- `pending_delete_at = NULL` to the shared documents upsert clause; deployed
+-- against a schema without the column, EVERY provider upsert errors and the
+-- sync stops registering files. The reverse order is inert: this column and
+-- these indexes are unused by current code.
+--
+-- ROLLBACK: revert code first, then optionally
+--   ALTER TABLE `documents` DROP INDEX `idx_docs_pending_delete`,
+--     DROP INDEX `idx_docs_path_lower`, DROP COLUMN `pending_delete_at`;
+-- Rows caught mid-grace by a code rollback simply keep a stamp nothing reads.
+--
+-- After applying live: regenerate ref/database.sql via `npm run db:ref`.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE `documents`
+  ADD COLUMN `pending_delete_at` datetime DEFAULT NULL AFTER `status`,
+  ADD INDEX `idx_docs_pending_delete` (`pending_delete_at`),
+  ADD INDEX `idx_docs_path_lower` (`path_lower`(191));

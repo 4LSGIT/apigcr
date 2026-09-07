@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-03T16:10:13.304Z
+-- Generated: 2026-09-07T22:33:36.219Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:16f8225af477a72ba1f7173a8b00432f
+-- Fingerprint: sha256:27b1b354410d0d9592d09fed1f84bbbe
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1382,6 +1382,7 @@ CREATE TABLE `documents` (
   `tags` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `ai_meta` json DEFAULT NULL,
   `status` enum('active','deleted','missing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
+  `pending_delete_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -3856,6 +3857,8 @@ ALTER TABLE `documents`
   ADD KEY `idx_docs_status` (`status`),
   ADD KEY `idx_docs_updated` (`updated_at`),
   ADD KEY `idx_docs_modified` (`server_modified`),
+  ADD KEY `idx_docs_pending_delete` (`pending_delete_at`),
+  ADD KEY `idx_docs_path_lower` (`path_lower`(191)),
   ADD FULLTEXT KEY `ft_docs` (`name`,`title`,`tags`);
 
 --

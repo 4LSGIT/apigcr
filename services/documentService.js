@@ -51,7 +51,8 @@
  *   listLinks(db, documentId)                -> row[]
  *   listForTarget(db, linkType, linkId, opts)-> row[]
  *   resolveRelatedTargets(db, type, id)      -> { targets, truncated }
- *   markDeletedByPath(db, source, pathLower) -> number
+ *   markDeletedByPath(db, source, pathLower) -> number   stamps pending-delete (SYNC-1)
+ *   promoteExpiredPendingDeletes(db)         -> number   grace sweeper (SYNC-1)
  */
 
 'use strict';
@@ -360,7 +361,13 @@ const DOC_UPSERT_ON_DUP = `
        content_hash    = new.content_hash,
        rev             = new.rev,
        server_modified = new.server_modified,
-       status          = new.status`;
+       status          = new.status,
+       pending_delete_at = NULL`;
+// pending_delete_at = NULL: any provider write proves the file EXISTS, which
+// cancels a pending delete (SYNC-1). Living in the shared clause makes the
+// cancellation structural — both the incremental and backfill paths clear it,
+// and neither can drift. This is the entire heal path for a rename/move whose
+// delete entry landed in an earlier page or tick than its re-adds.
 
 /**
  * Insert-or-update one document row from a provider listing/stat entry.
@@ -1619,28 +1626,61 @@ async function listForTarget(db, linkType, linkId, opts = {}) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Mark rows deleted by PATH — the one place this registry has to work
- * path-first instead of id-first.
+ * How long a delta delete stays revocable before it becomes status='deleted'.
+ *
+ * Sized against the sync cadence (10 min) and the 2026-09-07 incident, where
+ * a rename's delete entry and its re-adds landed ~2 ticks apart: 30 minutes
+ * is three ticks of slack. The cost is that a GENUINE Dropbox delete stays
+ * visible (with a dead download) for up to ~40 minutes; the benefit is that
+ * a folder rename/move can never make a case's documents vanish, however
+ * many pages or ticks its delta straddles. Hardcoded by decision — nobody
+ * will be tuning this.
+ */
+const PENDING_DELETE_GRACE_MIN = 30;
+
+/**
+ * Stamp rows PENDING-DELETE by PATH — the one place this registry has to
+ * work path-first instead of id-first.
  *
  * Dropbox's delete delta is a DeletedMetadata entry carrying a path and NO id,
  * so there is nothing to look the row up by. Worse, deleting a FOLDER arrives
  * as ONE entry for the folder, with no entries for its descendants — every
- * file underneath it is silently gone. Hence the prefix arm: exact path_hash
- * match OR anything whose path_lower sits under '<path>/'.
+ * file underneath it is silently gone. Hence the prefix arm: anything whose
+ * path_lower sits under '<path>/'.
  *
- * The prefix arm is a full scan (path_lower is TEXT and unindexed). That is
- * accepted: deletes are rare and the alternative — indexing a TEXT column with
- * a prefix key — buys a scan of the index instead of the table. Revisit if
- * S2's delta feed ever shows sustained delete volume.
+ * ── WHY A STAMP AND NOT status='deleted' (SYNC-1) ─────────────────────────
+ * A folder rename/move arrives in the delta as delete(old path) + re-adds
+ * (new paths), and Dropbox does not guarantee both land in the same page.
+ * On 2026-09-07 the delete cascade committed in page 1, the run hit its
+ * runtime cap with the cursor persisted, and the re-adds waited two ticks in
+ * page 2 — 791 documents sat at status='deleted' on a live case for ~12
+ * minutes. So a delta delete now only STAMPS pending_delete_at; status stays
+ * 'active' and nothing leaves any listing. The stamp is cancelled by any
+ * provider re-add (`pending_delete_at = NULL` in the shared upsert clause)
+ * and promoted to a real status='deleted' by promoteExpiredPendingDeletes
+ * once it has survived the grace window unseen. The cascade still resolves
+ * here or nowhere — it just resolves to something revocable.
+ *
+ * ── TWO STATEMENTS, NOT ONE OR ─────────────────────────────────────────────
+ * The old single statement (`path_hash = ? OR path_lower LIKE ?`) invited a
+ * full scan: the OR defeats deterministic index choice, and at 153k rows the
+ * TEXT scan measured ~1.7s per delete entry (root 4 burned 337s on ~200
+ * entries, 2026-09-07 20:29). Split, each arm rides its own index — path_hash
+ * on idx_docs_path_hash, the LIKE range on idx_docs_path_lower(191) — and the
+ * arms are disjoint (a path is never its own descendant), so summing
+ * affectedRows cannot double-count. The `pending_delete_at IS NULL` guard
+ * preserves the ORIGINAL stamp when a page is re-processed after a crash
+ * (grace is anchored to first sighting, and the count stays honest).
  *
  * NO EMISSIONS. S2 owns delta-event semantics (one event per file in a 4,000-
  * file folder delete is not a signal, it is a denial of service), and it needs
- * to make that call with the delta feed in front of it.
+ * to make that call with the delta feed in front of it. Promotion is silent
+ * for the same reason.
  *
  * @param {object} db
  * @param {string} source
  * @param {string} pathLower   Dropbox path_lower of the deleted entry
- * @returns {Promise<number>} rows changed
+ * @returns {Promise<number>} rows newly stamped pending-delete
  */
 async function markDeletedByPath(db, source, pathLower) {
   if (pathLower == null || pathLower === '') return 0;
@@ -1649,13 +1689,55 @@ async function markDeletedByPath(db, source, pathLower) {
   const p      = String(pathLower);
   const prefix = _escapeLike(p) + '/%';
 
-  const [r] = await db.query(
+  // Exact arm — the delete entry names a FILE at exactly this path.
+  const [exact] = await db.query(
     `UPDATE documents
-        SET status = 'deleted'
+        SET pending_delete_at = NOW()
       WHERE source = ?
         AND status <> 'deleted'
-        AND (path_hash = ? OR path_lower LIKE ?)`,
-    [src, _sha1(p), prefix],
+        AND pending_delete_at IS NULL
+        AND path_hash = ?`,
+    [src, _sha1(p)],
+  );
+
+  // Prefix arm — the delete entry names a FOLDER; cascade to descendants.
+  const [pre] = await db.query(
+    `UPDATE documents
+        SET pending_delete_at = NOW()
+      WHERE source = ?
+        AND status <> 'deleted'
+        AND pending_delete_at IS NULL
+        AND path_lower LIKE ?`,
+    [src, prefix],
+  );
+
+  return exact.affectedRows + pre.affectedRows;
+}
+
+/**
+ * Promote pending deletes that outlived the grace window to status='deleted'.
+ *
+ * The other half of SYNC-1's tombstone. Runs from the documents_sync tick
+ * AFTER the roots have walked, so the delta this tick just consumed has had
+ * its last chance to clear stamps before anything is promoted. One statement,
+ * no per-row state, trivially idempotent (Cloud Tasks is at-least-once and
+ * this may share a tick with a retry). Clears the stamp in the same write so
+ * "pending" is unambiguous — a deleted row never carries one.
+ *
+ * NO EMISSIONS — markDeletedByPath's contract, unchanged: a folder delete's
+ * cascade must not storm the trigger engine, and promotion is that same
+ * cascade arriving on a delay.
+ *
+ * @param {object} db
+ * @returns {Promise<number>} rows promoted to status='deleted'
+ */
+async function promoteExpiredPendingDeletes(db) {
+  const [r] = await db.query(
+    `UPDATE documents
+        SET status = 'deleted', pending_delete_at = NULL
+      WHERE pending_delete_at IS NOT NULL
+        AND pending_delete_at < NOW() - INTERVAL ? MINUTE`,
+    [PENDING_DELETE_GRACE_MIN],
   );
   return r.affectedRows;
 }
@@ -1663,6 +1745,8 @@ async function markDeletedByPath(db, source, pathLower) {
 module.exports = {
   upsertFromEntry,
   bulkUpsertEntries,
+  promoteExpiredPendingDeletes,
+  PENDING_DELETE_GRACE_MIN,
   bulkLink,
   mapExternalIds,
   getById,

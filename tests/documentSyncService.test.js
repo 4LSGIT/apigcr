@@ -222,8 +222,11 @@ function makeDb({
         }
         return [{ affectedRows: 1 }];
       }
-      if (/^UPDATE documents SET status = 'deleted'/.test(flat)) {
-        return [{ affectedRows: deletedRows }];
+      if (/^UPDATE documents SET pending_delete_at = NOW\(\)/.test(flat)) {
+        // SYNC-1: markDeletedByPath issues TWO statements per delete entry
+        // (exact path_hash arm, then LIKE prefix arm). Report rows only on
+        // the prefix arm so `deletedRows` stays a per-ENTRY count in tests.
+        return [{ affectedRows: /LIKE/.test(flat) ? deletedRows : 0 }];
       }
 
       // ── document_links ─────────────────────────────────────────────────
@@ -233,6 +236,11 @@ function makeDb({
       // reports; tests set it to say "there WAS a stale path-link here".
       if (/^DELETE FROM document_links/.test(flat)) {
         return [{ affectedRows: db.pathLinksDropped || 0 }];
+      }
+
+      // ── SYNC-1 grace-promotion sweeper (documents_sync full pass) ──────
+      if (/^UPDATE documents SET status = 'deleted', pending_delete_at = NULL/.test(flat)) {
+        return [{ affectedRows: db.pendingPromoted || 0 }];
       }
 
       // ── app_settings (kill switch + sweep watermark) ───────────────────
@@ -984,13 +992,19 @@ describe('syncRoot — deleted entries', () => {
 
     const out = await sync.syncRoot(db, root({ sync_cursor: 'c1', backfill_done: 1 }));
 
-    const updates = db.all("UPDATE documents SET status = 'deleted'");
-    expect(updates.length).toBe(2);
-    // The prefix arm is what makes a folder delete cascade — Dropbox sends
+    // SYNC-1: a delta delete STAMPS pending_delete_at — status is untouched
+    // here, so a rename whose re-adds land in a later page (or tick) never
+    // empties a case page. Two statements per entry: exact path_hash arm and
+    // the LIKE prefix arm that makes a folder delete cascade — Dropbox sends
     // ONE entry for the folder and none for its contents.
-    expect(updates[0].sql).toContain('path_hash = ? OR path_lower LIKE ?');
+    const updates = db.all('UPDATE documents SET pending_delete_at = NOW()');
+    expect(updates.length).toBe(4);
+    expect(updates.filter((u) => u.sql.includes('path_hash = ?')).length).toBe(2);
+    expect(updates.filter((u) => u.sql.includes('path_lower LIKE ?')).length).toBe(2);
+    expect(db.all("UPDATE documents SET status = 'deleted'").length).toBe(0);
+    // `deleted` in stats = rows stamped this pass (per-entry via the stub).
     expect(out.deleted).toBe(8);
-    // Deletes deliberately emit nothing (S1 decision, unchanged in S2).
+    // Deletes deliberately emit nothing (S1 decision, unchanged in S2/SYNC-1).
     expect(emittedTypes()).not.toContain('document.updated');
   });
 });
@@ -1934,6 +1948,22 @@ describe('lib/internal_functions/documents.js', () => {
     expect(out.output.sweep).toBeUndefined();
   });
 
+  test('the full pass promotes expired pending deletes AFTER the walk (SYNC-1)', async () => {
+    // AFTER on purpose: the delta this tick just consumed is a stamped row's
+    // last chance to prove it exists before promotion. sweep:false must not
+    // skip it — promotion is correctness, the reconcile sweep is hygiene.
+    const db = makeDb({ roots: [root()], settings: { documents_sync_enabled: '1' } });
+    db.pendingPromoted = 3;
+    dropbox.listFolderPage.mockResolvedValue(page([], 'c1', false));
+
+    const out = await fns.documents_sync({ sweep: false }, db);
+
+    expect(out.output.pending_promoted).toBe(3);
+    const promo = db.find("UPDATE documents SET status = 'deleted', pending_delete_at = NULL");
+    expect(promo).toBeDefined();
+    expect(promo.sql).toContain('INTERVAL ? MINUTE');
+  });
+
   test('root_id targets one root and runs it EVEN IF DISABLED (explicit override)', async () => {
     // `enabled` keeps a root out of the automatic rotation; it does not make
     // the root unreachable for debugging.
@@ -1946,6 +1976,10 @@ describe('lib/internal_functions/documents.js', () => {
     expect(out.output.targeted).toBe(true);
     expect(out.output.roots[0].root_id).toBe(3);
     expect(out.output.sweep).toBeUndefined();   // off by default on a targeted run
+    // SYNC-1: promotion is estate-wide and belongs to the scheduled full
+    // pass; a hand-run targeted root must not trip it.
+    expect(out.output.pending_promoted).toBeUndefined();
+    expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
   });
 
   test('root_id is NOT an override for the kill switch', async () => {

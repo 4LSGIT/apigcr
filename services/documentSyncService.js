@@ -760,6 +760,14 @@ async function syncRoot(db, root, opts = {}) {
       // ── 3c. Deletes LAST ─────────────────────────────────────────────────
       // markDeletedByPath is prefix-aware: Dropbox reports a folder delete as
       // ONE entry with no descendants, so the cascade happens here or nowhere.
+      //
+      // SYNC-1: the cascade now stamps pending_delete_at rather than flipping
+      // status — a rename's delete entry can land pages (or ticks) ahead of
+      // its re-adds, and 791 rows once sat visibly 'deleted' on a live case
+      // for ~12 minutes because of exactly that. Any later upsert of the row
+      // cancels the stamp; promoteExpiredPendingDeletes (run from the
+      // documents_sync tick) makes it a real delete after the grace window.
+      // `deleted` in stats therefore counts rows STAMPED this pass.
       for (const d of deletedEntries) {
         if (!d.path_lower) continue;
         deletedRows += await documents.markDeletedByPath(db, SOURCE, d.path_lower);

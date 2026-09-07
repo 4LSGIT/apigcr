@@ -394,6 +394,7 @@ ref/2026-09-04_dbkq_workflow_spec.md
 ref/2026-09-06_FIL1_trustee_validation.sql
 ref/2026-09-06_dbkq_definition.v1.2.json
 ref/2026-09-06_manage_selfservice_policy.sql
+ref/2026-09-08_sync1_delete_grace.sql
 ref/AUTOMATION_VERSIONING_AUDIT.md
 ref/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/DENSITY-ARC-CHARTER.md
