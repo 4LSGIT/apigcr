@@ -13,7 +13,7 @@ Use this chart to pick one:
 | Drip a 5-step follow-up to one client that auto-stops if they reply | **Sequence** |
 | Run a multi-step intake flow with branching ("if 341, do this; else, do that") | **Workflow** |
 | Have Calendly / JotForm / a payment processor trigger something in YisraCase | **YisraHook** |
-| Have inbound email trigger something based on sender or subject | **Email Router** (which then routes to a Hook) |
+| Have inbound email, a call or a text trigger something based on sender, subject or number | **Email / Phone Ingest** (a layer-3 rule) |
 | React to something that happened *inside* YisraCase — an appointment attended, a docket filled in, a checklist finished | **Trigger System** |
 
 Everything is configured through `automationManager.html`. Tabs across the top — one per subsystem, plus the email/phone ingest, court review, and activity surfaces.
@@ -44,8 +44,11 @@ services/hookMapper.js          Hook mapper transform engine
 services/hookTransforms.js      Hook transform function library
 routes/api.hooks.js             POST /hooks/:slug + management CRUD
 
-services/emailRouter.js         Email Router — match incoming emails to hooks
-routes/api.email_router.js      POST /email-router + management CRUD
+services/emailIngestService.js  Email Ingest — forensic log, suppression, automation rules
+services/phoneIngestService.js  Phone Ingest — same three layers for calls and texts
+routes/api.emailIngest.js       POST /api/email/ingest + management CRUD
+routes/api.phoneIngest.js       Phone management CRUD
+lib/actionDispatchers.js        The four action types, shared with YisraHook
 
 lib/domainEvents.js             Trigger System — emit(), envelope builder, ALS loop guard
 services/triggerService.js      Trigger engine — registry, match, transform, dispatch

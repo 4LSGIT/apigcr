@@ -34,9 +34,15 @@ All tables use `utf8mb4` / `utf8mb4_general_ci`, at both table and column level.
 | `hook_executions` | YisraHook | 9 |
 | `hook_delivery_logs` | YisraHook | 9 |
 | `credentials` | YisraHook + sequence webhook | 9 |
-| `email_router_config` | Email Router (singleton) | 10 |
-| `email_routes` | Email Router | 10 |
-| `email_router_executions` | Email Router | 10 |
+| `email_ingest_sources` | Email Ingest — one row per adapter, carries its API key | 10 |
+| `email_ingest_rules` + `email_ingest_rule_actions` | Email Ingest — layer 3 automation | 10 |
+| `email_ingest_log_suppressions` | Email Ingest — layer 2 | 10 |
+| `email_ingest_executions` | Email Ingest — one row per event, every path | 10 |
+| `email_log` | Email Ingest — the forensic byte-level record | 10 |
+| `phone_ingest_rules` + `phone_ingest_rule_actions` | Phone Ingest — layer 3 | 10 |
+| `phone_log_suppressions` | Phone Ingest — layer 2 | 10 |
+| `phone_ingest_executions` | Phone Ingest — one row per event | 10 |
+| `phone_event_log` | Phone Ingest — the forensic record | 10 |
 | `trigger_rules` | Trigger System | 15 |
 | `trigger_rule_actions` | Trigger System | 15 |
 | `trigger_executions` | Trigger System | 15 |
@@ -392,56 +398,6 @@ Used by both YisraHook HTTP targets and sequence `webhook` steps.
 
 ---
 
-### Email Router tables
-
-#### `email_router_config` — singleton (id=1)
-
-```sql
-id              int                      PK    default 1   -- always 1
-auth_type       enum('none','api_key')   default 'api_key'
-auth_config     json                                      -- { header, key }
-capture_mode    enum('off','capturing')  default 'off'
-captured_sample json
-captured_at     datetime
-updated_at      timestamp
-```
-
-#### `email_routes` — rules
-
-```sql
-id               int            PK
-name             varchar(120)
-description      text
-slug             varchar(100)              -- target hook slug
-match_mode       enum('conditions','code') default 'conditions'
-match_config     json    NOT NULL
-position         int            default 100
-active           tinyint(1)     default 1
-last_matched_at  datetime
-match_count      int            default 0  -- bumped on every match
-last_modified_by int
-created_at, updated_at
-```
-
-Indexes: `idx_active_position (active, position)`, `idx_slug`.
-
-#### `email_router_executions`
-
-```sql
-id                 bigint   PK
-raw_input          json                    -- truncated to 512 KB
-matched_route_id   int                     -- FK soft-link to email_routes
-resolved_slug      varchar(100)
-hook_execution_id  bigint                  -- soft-link to hook_executions; populated after dispatch
-status             enum('routed','unrouted','captured','error')
-error              text
-created_at         datetime
-```
-
-Indexes: `idx_created_at`, `idx_status`, `idx_route (matched_route_id)`, `idx_hook_exec (hook_execution_id)`.
-
----
-
 ### Trigger System tables
 
 #### `trigger_rules`
@@ -583,9 +539,10 @@ hook_targets ─────────► credentials     (SET NULL on credent
 hook_executions, hook_delivery_logs    -- soft-linked, no FK
                                        -- (preserves audit if hooks/targets deleted)
 
-email_routes ──────────► (no FK to hooks; soft-linked by slug string)
-email_router_executions ──► email_routes (soft-linked by id)
-                          ──► hook_executions (soft-linked by id)
+email_ingest_rule_actions ──► email_ingest_rules  (CASCADE on rule delete)
+email_ingest_executions ──► email_ingest_sources  (soft-linked by id)
+phone_ingest_rule_actions ──► phone_ingest_rules  (CASCADE on rule delete)
+                          -- executions are soft-linked so audit survives
 
 scheduled_jobs ──► workflow_executions (back-pointer column, no FK)
                 ──► sequence_enrollments (back-pointer column, no FK)
@@ -597,7 +554,7 @@ trigger_execution_rules.rule_id  -- soft-linked, NO FK
                                  -- (audit must outlive the rule; rule_name denormalized)
 ```
 
-The hook + email-router log tables and `job_results` are intentionally **soft-linked** so deleting a parent row doesn't cascade through the audit tables. This keeps a permanent record of what happened even if you delete the underlying hook / route / job.
+The hook + ingest execution tables and `job_results` are intentionally **soft-linked** so deleting a parent row doesn't cascade through the audit tables. This keeps a permanent record of what happened even if you delete the underlying hook / rule / job.
 
 ---
 

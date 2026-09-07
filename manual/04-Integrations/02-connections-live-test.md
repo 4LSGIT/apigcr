@@ -402,4 +402,4 @@ Verify it appears in the scheduled-jobs list with type `recurring` and the corre
 - **Performance under load** — the daily job iterates serially. If you scale past ~50 oauth2 credentials, consider parallelizing inside the function (use `Promise.all` with concurrency limit).
 - **Provider-specific quirks** — Clio is a clean reference implementation. Other providers (Salesforce, GoCardless, Stripe Connect) have variations: PKCE-required, audience parameters, custom token rotation behavior. Each new provider gets its own integration test, not covered here.
 - **PKCE flow** — Test 2 used confidential-client mode. To test PKCE, create a second credential with `Use PKCE: true` and run Tests 1–4 against it.
-- **Email Router OAuth (if added later)** — the Email Router uses a separate api_key auth model today; OAuth wiring would be a future project.
+- **Email Ingest OAuth (if added later)** — ingest sources use a per-source api_key auth model today (`X-Email-Ingest-Key`); OAuth wiring would be a future project.

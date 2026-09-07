@@ -131,7 +131,7 @@ manual/03-YisraFlow/06-variables-templating.md
 manual/03-YisraFlow/07-calendar-service.md
 manual/03-YisraFlow/08-error-policies.md
 manual/03-YisraFlow/09-yisrahook.md
-manual/03-YisraFlow/10-email-router.md
+manual/03-YisraFlow/10-ingest.md
 manual/03-YisraFlow/11-api-reference.md
 manual/03-YisraFlow/12-database-schema.md
 manual/03-YisraFlow/13-cookbook.md

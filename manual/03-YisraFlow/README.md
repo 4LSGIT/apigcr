@@ -10,7 +10,7 @@ The subsystems below share the `scheduled_jobs` queue and the `/process-jobs` he
 | **Sequence Engine** | Contact-tied drip series with auto-cancel | Follow-ups that should stop themselves when the reason no longer applies (no-show, intake reminder, post-call) |
 | **Scheduled Jobs** | Single actions at a future time, or recurring on a cron | Daily digests, one-off future actions, recurring reports |
 | **YisraHook** | Configurable inbound webhook receiver | Replacing per-integration custom routes — Calendly, JotForm, Stripe, etc. |
-| **Email Router** | Routing layer in front of YisraHook for inbound email | Sending all firm email through one adapter and dispatching to different hooks based on subject/sender/etc. |
+| **Email & Phone Ingest** | The front door for inbound email, calls and texts: forensic record, log-suppression rules, and automation rules | Anything that should happen because a message arrived — filing a court notice, reacting to a failed payment, keeping a mailing list off a client's timeline |
 | **Trigger System** | Rules that fire on internal domain events | Reacting to something that happened *inside* YisraCase — appointment attended, docket filled in, checklist finished |
 
 Integration docs (Connections, RingCentral bootstrap, Google Calendar, Dropbox) moved to [04-Integrations](../04-Integrations/).
@@ -32,7 +32,7 @@ If you've never used the system before, read these in order:
 | 7 | [07-calendar-service.md](07-calendar-service.md) | Jewish business calendar, timing types, holiday handling, randomization |
 | 8 | [08-error-policies.md](08-error-policies.md) | Retry strategies and backoff |
 | 9 | [09-yisrahook.md](09-yisrahook.md) | Webhook receiver — auth, filter, transform, four target types, capture mode |
-| 10 | [10-email-router.md](10-email-router.md) | Inbound email routing layer in front of YisraHook |
+| 10 | [10-ingest.md](10-ingest.md) | Email & phone ingest — the three layers (forensic, suppression, automation), rules, the executions ledger, and the management API |
 | 11 | [11-api-reference.md](11-api-reference.md) | Every endpoint across all five subsystems |
 | 12 | [12-database-schema.md](12-database-schema.md) | Every table, every column, every index |
 | 13 | [13-cookbook.md](13-cookbook.md) | Patterns and pitfalls catalog. Practical answers to "I need X — which engine, what shape, what gotchas." |

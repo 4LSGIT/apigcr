@@ -16,7 +16,7 @@ If something here disagrees with the rest of the manual, the code wins (see the 
 
 Practical, pattern-first reference for building automations in YisraCase. Every example is copy-pasteable and matches what's actually in the codebase — no aspirational APIs.
 
-> **Scope:** Workflow Engine, Sequence Engine, Scheduled Jobs, YisraHook. Email Router patterns are covered briefly at the end of §3; chapter 10 has the full picture.
+> **Scope:** Workflow Engine, Sequence Engine, Scheduled Jobs, YisraHook. Email and phone ingest patterns are covered at the end of §3; [chapter 10](10-ingest.md) has the full picture.
 > **Audience:** you, six months from now, trying to remember why `schedule_resume` needs to be in `isControlStep`.
 
 ---
@@ -34,7 +34,7 @@ Practical, pattern-first reference for building automations in YisraCase. Every 
 
 ## 1. Architecture & Engine Selection
 
-YisraFlow has five subsystems (see chapter 1). Four share the `scheduled_jobs` queue and `/process-jobs` polling heartbeat directly; the fifth (Email Router) sits in front of YisraHook as a routing layer. The decision tree below walks the four core engines — see §3.16 for when to add an Email Router rule on top.
+YisraFlow's subsystems (see chapter 1) mostly share the `scheduled_jobs` queue and the `/process-jobs` polling heartbeat. The decision tree below walks the four core engines — see §3.17 onward for the ingest pipelines, and [chapter 15](15-triggers.md) for the Trigger System.
 
 ```
                       ┌─────────────────────────┐
@@ -971,42 +971,11 @@ that table means touching four files. A future cleanup candidate: a shared
 **Cross-refs:** §3.12 (contact-tying precedence), §5.18 (webhook idempotency),
 §5.21 (workflow_executions INSERT sites — now four), §5.26 (replay-safety).
 
-### 3.16 Email Router — front-end for inbound email
+### 3.17 Email Ingest — the receiver
 
-**Use when:** the firm has many inbound email integrations (Apps Script forwarder, SiteGround PHP, SES inbound parse, etc.) and you don't want each one configured against its own hook slug. The router takes one URL — `POST /email-router` — and dispatches to the right hook based on rules you configure in `automationManager.html` → Email Router tab.
+The `POST /api/email/ingest` endpoint is the external entrypoint for inbound (and any-direction-tagged) email events. It superseded the Pabbly→`/logEmail` path; `routes/logs.js` still carries `/logEmail` for legacy callers, but all gmail-firm inbound traffic goes through ingest.
 
-Full pipeline and config is in [chapter 10](10-email-router.md). The cookbook-relevant patterns:
-
-**Routes are first-match-wins, ordered by `position`.** Lower position fires first. Conventional layout:
-
-| `position` | Use |
-|---|---|
-| `10`–`50` | Specific senders / subjects (Calendly, JotForm, court email domain) |
-| `100` | Default for new rules |
-| `1000`+ | Catch-all routes that fan out to a debug hook |
-
-If two routes both match an event, only the first dispatches. The `match-test` endpoint (`POST /api/email-router/match-test`) returns *all* matching routes so the operator can spot overlap when authoring rules.
-
-**Use the same condition shape as hook filters.** `email_routes.match_config` is evaluated by `hookFilter.evaluateConditions` — the same operator vocabulary (`==`, `contains`, `regex`, etc.). Field paths address the unified envelope: `body.*` (the email JSON the adapter posts), `headers.*`, `query.*`, `meta.*`.
-
-**Internal alert hooks.** Two well-known slugs the router fires on edge cases:
-
-| Slug | Fires when |
-|---|---|
-| `router-unrouted-alert` | Inbound email matched no active route |
-| `router-error-alert` | Slug from a matched route doesn't resolve, or dispatch threw |
-
-These are throttled per `(slug, sender_email)` with a default 1-hour window (env: `ROUTER_ALERT_THROTTLE_MS`). If the hook doesn't exist, `executeHook` returns `not_found` and the router silently no-ops — there's no harm in leaving these unconfigured. To opt in, just create a hook with one of those slugs and configure its targets (e.g. SMS the on-call attorney, append to a Slack channel).
-
-**Capture mode at the router level.** Same shape as hook capture mode (§3.14) — atomic guarded UPDATE on the singleton `email_router_config` row. The sample is preserved across capture cycles and reusable in `match-test` and `preview` to author routes against real data.
-
-**Why not skip the router and let each adapter post to its own hook?** You can. The router is purely an organizational layer for when the inbound-email count grows past two or three. For a single inbound source, point the adapter directly at `/hooks/<slug>` and skip this entirely.
-
-### 3.17 Email Ingest (Slice 1.1)
-
-The `POST /api/email/ingest` endpoint is the new external entrypoint for inbound (and any-direction-tagged) email events. It replaces the load-bearing Pabbly→`/logEmail` path incrementally; both paths coexist during Phase 1.2 until the Gmail-side Apps Script forwarder is repointed.
-
-**Auth.** Per-source API key in the `X-Email-Ingest-Key` header. Sources are rows in `email_ingest_sources` (one per adapter — `siteground-php` already producing in prod; `gmail-firm` placeholder until Phase 1.2). Constant-time compare in `services/emailIngestService.authenticate`. Bad/missing key returns 401 and writes a `status='auth_failed'` row to `email_ingest_executions` with `source_id=NULL` for attack-pattern visibility.
+**Auth.** Per-source API key in the `X-Email-Ingest-Key` header. Sources are rows in `email_ingest_sources` — one per adapter; `siteground-php` and `gmail-firm` are both live. Constant-time compare in `services/emailIngestService.authenticate`. Bad/missing key returns 401 and writes a `status='auth_failed'` row to `email_ingest_executions` with `source_id=NULL` for attack-pattern visibility.
 
 **Body.** The canonical envelope shape — `{schema_version, received_at, source, adapter_version, kind:'email', envelope:{...}, from, to, cc, reply_to, subject, date, text, html, attachments, auth, headers, raw, _parse_warnings}`. The PHP forwarder already emits this; GAS will be rewritten to match in Phase 1.2. The service tolerates sparse/missing fields — only `kind='email'`, `from.email`, and at least one recipient (via `to[].email` or `envelope.recipient`) are required.
 
@@ -1022,7 +991,7 @@ The `POST /api/email/ingest` endpoint is the new external entrypoint for inbound
 
 **Forensic continuity.** The four legacy `email_log` writers ([routes/logs.js](../../routes/logs.js), [adapters/email/pabbly.js](../../services/adapters/email/pabbly.js), [adapters/email/smtp.js](../../services/adapters/email/smtp.js), [adapters/email/gmail.js](../../services/adapters/email/gmail.js)) all stamp `source` in their INSERTs: `gmail-firm`, `outbound-pabbly`, `outbound-smtp`, `outbound-gmail` respectively. The composite UNIQUE means same RFC message_id from different sources is no longer a duplicate.
 
-**Forward-looking.** Rules table, transforms, dispatch (workflow/sequence/hook actions), code-mode eval, capture mode, and UI are Phase 2. The old `email_router_*` tables and `services/emailRouter.js` stay dead — they are not the foundation of the new system.
+**Layers 2 and 3 shipped after this.** The rules table, transforms, dispatch (workflow / sequence / hook / internal_function actions), code-mode eval and the UI all landed in later slices — see [chapter 10](10-ingest.md) for the current picture. The `email_router_*` tables have since been dropped.
 
 ### 3.18 Email Ingest Layer 2 — Logging Suppression (Slice 2.1)
 

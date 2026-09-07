@@ -9,7 +9,7 @@ All routes require JWT or API-key auth via the `jwtOrApiKey` middleware **except
 | Public route | Auth | Notes |
 |---|---|---|
 | `POST /hooks/:slug` | per-hook (none/api_key/hmac) | YisraHook receiver |
-| `POST /email-router` | router api_key | Email Router receiver |
+| `POST /api/email/ingest` | per-source api_key (`X-Email-Ingest-Key`) | Email ingest receiver |
 | `GET /isWorkday` | none | Used by other internal systems |
 | `POST /process-jobs` | jwt | Heartbeat (called by Cloud Scheduler) |
 
@@ -275,32 +275,36 @@ Auth per hook: `none` / `api_key` (default header `x-hook-key`) / `hmac` (defaul
 
 ---
 
-### Email Router — chapter 10
+### Email & Phone Ingest — chapter 10
 
 #### Receiver
 
 | Route | Method | Auth | Purpose |
 |---|---|---|---|
-| `/email-router` | POST | router api_key | Public receiver — adapter-side. Always 200. Rate limit 60/min/IP. |
+| `/api/email/ingest` | POST | per-source `X-Email-Ingest-Key` | Public receiver — adapter-side. 401 bad key, 400 bad envelope, 500 retryable, **200 everything else**. Rate limited. |
 
-#### Management
+Phone events arrive through the RingCentral/Quo path, not a public receiver.
+
+#### Management — substitute `email-ingest` or `phone-ingest`
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/email-router/routes` | GET | List rules |
-| `/api/email-router/routes/:id` | GET | Single rule |
-| `/api/email-router/routes` | POST | Create rule |
-| `/api/email-router/routes/:id` | PUT | Update |
-| `/api/email-router/routes/:id` | DELETE | Delete |
-| `/api/email-router/config` | GET | Singleton config (api_key masked) |
-| `/api/email-router/config` | PUT | Update auth config |
-| `/api/email-router/capture/start` | POST | Arm capture mode |
-| `/api/email-router/capture/stop` | POST | Cancel (preserves sample) |
-| `/api/email-router/captured-sample` | GET | Last captured payload |
-| `/api/email-router/preview` | POST | Match + hook dry-run preview |
-| `/api/email-router/match-test` | POST | Match-only preview, returns all matches |
-| `/api/email-router/executions` | GET | Paginated execution log |
-| `/api/email-router/executions/:id` | GET | Single execution + linked hook execution + delivery logs |
+| `/api/{…}-ingest/rules` | GET, POST | Layer 3 automation rules |
+| `/api/{…}-ingest/rules/:id` | GET, PUT, DELETE | One rule |
+| `/api/{…}-ingest/rules/:id/duplicate` | POST | Clone a rule |
+| `/api/{…}-ingest/rules/:id/actions` | POST | Attach an action |
+| `/api/{…}-ingest/rule-actions/:id` | PUT, DELETE | Edit or drop one action |
+| `/api/{…}-ingest/suppressions` | GET, POST | Layer 2 log-suppression rules |
+| `/api/{…}-ingest/suppressions/:id` | GET, PUT, DELETE | One suppression rule |
+| `/api/{…}-ingest/executions` | GET | Paginated ledger, filterable by status |
+| `/api/{…}-ingest/executions/:id` | GET | One event with its layer-3 outcomes |
+| `/api/{…}-ingest/meta` | GET | Match fields, operators, action schemas, statuses |
+| `/api/{…}-ingest/sample-events` | GET | Recent real events for the rule tester |
+| `/api/{…}-ingest/rules/test-match` | POST | Dry-run: would this rule match? |
+| `/api/{…}-ingest/rules/test-transform` | POST | Dry-run: what would actions receive? |
+
+> The Email Router (`/email-router`, `/api/email-router/*`) was removed — its
+> tables no longer exist. See chapter 10's history note.
 
 ---
 
@@ -308,7 +312,7 @@ Auth per hook: `none` / `api_key` (default header `x-hook-key`) / `hmac` (defaul
 
 ### Always-200 receivers
 
-Both `POST /hooks/:slug` and `POST /email-router` return 200 even on internal failures. The convention: senders should retry only on **non-200**, which we reserve for auth rejection (401) and slug-not-found.
+Both `POST /hooks/:slug` and `POST /api/email/ingest` return 200 even on internal failures. The convention: senders should retry only on **non-200**, which we reserve for auth rejection (401), a malformed envelope (400), and slug-not-found.
 
 This means a misconfigured hook target failing to deliver is *our* problem, surfaced in the executions log — the sender doesn't get a retry signal.
 

@@ -141,7 +141,7 @@ Nested groups supported — a `condition` can itself be another `{ match, condit
   headers: { /* lowercased keys */ },
   query:   { /* query string */ },
   method:  "POST",
-  meta:    { source, received_at, remote_ip }   // optional, present for email-router-routed events
+  meta:    { source, received_at, remote_ip }   // optional, present on ingest-routed events
 }
 ```
 
@@ -341,14 +341,15 @@ Useful for testing hook config against captured samples — the UI's "Use captur
 
 ### Internal alert convention
 
-Two well-known slugs are used by the Email Router (chapter 10) for operator alerts:
+The removed Email Router used two well-known slugs — `router-unrouted-alert` and
+`router-error-alert` — for operator alerts, opt-in by simply creating a hook with
+that slug. The convention still holds for anything that wants it: if the hook
+doesn't exist, `executeHook` returns `{ status: 'not_found' }` and the caller
+silently no-ops, so an alert hook costs nothing until you create it.
 
-| Slug | Fires when | Throttled |
-|---|---|---|
-| `router-unrouted-alert` | An inbound email matched no route | Per-sender, default 1h |
-| `router-error-alert` | Receiver threw, hook lookup failed, dispatch rejected | Per-sender, default 1h |
-
-If the hook doesn't exist, `executeHook` returns `{ status: 'not_found' }` and the router silently no-ops. To opt in, just create a hook with one of those slugs.
+Ingest does not use this pattern — its failures land in
+`{email,phone}_ingest_executions` with a status, which is queryable and doesn't
+need a throttle. See [chapter 10](10-ingest.md).
 
 ### Two parallel UIs (caveat)
 
