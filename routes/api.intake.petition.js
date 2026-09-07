@@ -414,7 +414,7 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
                 case_subtype = ?,
                 case_chapter = ?,
                 case_stage   = 'Filed',
-                case_status  = 'Case Filed',
+                case_status  = 'Filed',
                 case_file_date = ${fileDateSql}
           WHERE case_id = ?`,
         [caseNumber, caseType, caseSubtype, chapter, ...fileDateParam, caseId]
@@ -433,7 +433,7 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
             `INSERT INTO cases
                (case_id, case_open_date, case_file_date, case_type, case_subtype, case_chapter, case_stage, case_status, case_number)
              VALUES
-               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, ?, 'Filed', 'Case Filed', ?)`,
+               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, ?, 'Filed', 'Filed', ?)`,
             [caseId, ...fileDateParam, caseType, caseSubtype, chapter, caseNumber]
           );
           inserted = true;

@@ -455,6 +455,22 @@ const EVENT_TYPES = {
       { path: 'extra.citation_override', label: 'A human force-applied over a citation miss (bool)' },
     ],
   },
+  'case.trustee_validated': {
+    label: 'Case trustee validated against roster',
+    description: "Fires from validate_case_trustee (lib/internal_functions/trustee.js) on a LIVE matched run only — the extracted trustee resolved to exactly one fe-trustees roster entry and trustee_validation_live='1'. Dry runs NEVER emit, so rules on this event cannot be armed by the dry-run gate. It fires even when zero columns were written (the case was already canonical): the signal is \"the trustee is known and valid\", which is what notice-of-filing style consumers need on an idempotent re-validation — consumers must carry their own send-once guards. No-match / ambiguous / chapter-mismatch runs emit NOTHING (they raise the alert task instead).",
+    fields: [
+      ...CORE_FIELDS,
+      { path: 'source',               label: "'system'" },
+      { path: 'data.status',          label: "'matched' (the only emitting status)" },
+      { path: 'data.method',          label: 'Match method (exact / lname_compat / …)' },
+      { path: 'data.extracted',       label: 'Trustee string as extracted by the court executor' },
+      { path: 'data.canonical',       label: 'Roster spelling now on the case' },
+      { path: 'data.trustee_updated', label: 'cases.case_trustee rewritten this run (bool)' },
+      { path: 'data.link_updated',    label: 'cases.case_341_link written this run (bool)' },
+      { path: 'data.docket',          label: 'Full ‖ short docket ‖ case_id' },
+      { path: 'data.case_chapter',    label: "Chapter from the case row ('7'/'13'; null when blank)" },
+    ],
+  },
   'checklist.completed': {
     label: 'Checklist completed',
     description: 'Fires when a checklist transitions incomplete -> complete via an item status change or item deletion (the two mutation routes). Pairs with the docs pipeline: tag=docs_needed + all items complete is the natural docs-done signal.',

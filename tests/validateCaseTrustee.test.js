@@ -25,11 +25,15 @@ jest.mock('../services/logService', () => ({
 jest.mock('../services/emailService', () => ({
   sendEmail: jest.fn(),
 }));
+jest.mock('../lib/domainEvents', () => ({
+  emit: jest.fn(),   // fire-and-forget in production; a plain spy here
+}));
 
 const { getSettings }  = require('../services/settingsService');
 const taskService      = require('../services/taskService');
 const logService       = require('../services/logService');
 const emailService     = require('../services/emailService');
+const domainEvents     = require('../lib/domainEvents');
 const fns              = require('../lib/internal_functions/trustee');
 
 const validate = fns.validate_case_trustee;
@@ -103,6 +107,10 @@ describe('mock boundary contracts', () => {
     const real = jest.requireActual('../services/logService');
     expect(typeof real.createLogEntry).toBe('function');
   });
+  test('domainEvents really exports emit(db, eventType, payload)', () => {
+    const real = jest.requireActual('../lib/domainEvents');
+    expect(typeof real.emit).toBe('function');
+  });
   test('emailService really exports sendEmail(db, opts)', () => {
     const real = jest.requireActual('../services/emailService');
     expect(typeof real.sendEmail).toBe('function');
@@ -135,6 +143,20 @@ describe('live mode (trustee_validation_live=1)', () => {
     });
     expect(taskService.createTask).not.toHaveBeenCalled();
     expect(emailService.sendEmail).not.toHaveBeenCalled();   // no dry email live
+    // FIL-3: live matched run announces trustee arrival for downstream chains
+    expect(domainEvents.emit).toHaveBeenCalledTimes(1);
+    const [, evType, evPayload] = domainEvents.emit.mock.calls[0];
+    expect(evType).toBe('case.trustee_validated');
+    expect(evPayload).toMatchObject({
+      case_id: 'AB12CD34',
+      source: 'system',
+      data: {
+        status: 'matched', method: 'lname',
+        canonical: 'Michael A. Stevenson',
+        trustee_updated: true, link_updated: true,
+        docket: '26-40001-mar', case_chapter: '7',
+      },
+    });
   });
 
   test('IDEMPOTENT: already-canonical trustee + same link → no UPDATE, no log', async () => {
@@ -148,6 +170,14 @@ describe('live mode (trustee_validation_live=1)', () => {
       status: 'matched', trustee_updated: false, link_updated: false,
     });
     expect(logService.createLogEntry).not.toHaveBeenCalled();
+    // FIL-3: the arrival signal fires even with nothing to write — "trustee
+    // known and valid" is the event, not "a column changed". Consumers carry
+    // their own send-once guards.
+    expect(domainEvents.emit).toHaveBeenCalledTimes(1);
+    expect(domainEvents.emit.mock.calls[0][1]).toBe('case.trustee_validated');
+    expect(domainEvents.emit.mock.calls[0][2].data).toMatchObject({
+      trustee_updated: false, link_updated: false,
+    });
   });
 
   test('link-only delta: canonical name already stored, link missing → only the link is written', async () => {
@@ -162,6 +192,23 @@ describe('live mode (trustee_validation_live=1)', () => {
     const r = await validate({ case_id: 'AB12CD34' }, db);
     drained(db);
     expect(r.output).toMatchObject({ trustee_updated: false, link_updated: true, method: 'exact' });
+  });
+
+  test('live matched run with link-only delta also emits (single signal per validation)', async () => {
+    // covered structurally by the link-only test below via the afterEach-free
+    // spy; asserted here explicitly so a future "only emit when trustee text
+    // changed" refactor fails a named test.
+    settingsLive('1');
+    const db = makeDb([
+      caseStep(baseCase({ case_trustee: 'Stuart A. Gold' })),
+      { match: /^UPDATE cases SET case_341_link = \? WHERE case_id = \?$/ },
+    ]);
+    await validate({ case_id: 'AB12CD34' }, db);
+    drained(db);
+    expect(domainEvents.emit).toHaveBeenCalledTimes(1);
+    expect(domainEvents.emit.mock.calls[0][2].data).toMatchObject({
+      status: 'matched', method: 'exact', canonical: 'Stuart A. Gold',
+    });
   });
 
   test('no match → alert task to alert_to (22), dedupe key stamped, NOTHING written to cases', async () => {
@@ -251,7 +298,33 @@ describe('live mode (trustee_validation_live=1)', () => {
 });
 
 // ── dry-run behavior ───────────────────────────────────────────────────────
+describe('live non-matched statuses never emit', () => {
+  test('no_match raises the alert and emits NOTHING', async () => {
+    settingsLive('1');
+    taskService.createTask.mockResolvedValueOnce({ task_id: 902, action_token: 't', action_url: 'u' });
+    const db = makeDb([
+      caseStep(baseCase({ case_trustee: 'Totally Unknown Person' })),
+      { match: /^SELECT task_id FROM tasks WHERE task_dedupe_key = \? AND task_status IN \(\?, \?, \?\) ORDER BY task_id DESC LIMIT 1$/, rows: [] },
+      { match: /^UPDATE tasks SET task_dedupe_key = \? WHERE task_id = \?$/ },
+    ]);
+    const r = await validate({ case_id: 'AB12CD34' }, db);
+    drained(db);
+    expect(r.output.status).toBe('no_match');
+    expect(domainEvents.emit).not.toHaveBeenCalled();
+  });
+});
+
 describe('dry run (gate absent/0, or dry_run param)', () => {
+  test('dry runs NEVER emit case.trustee_validated — the gate cannot arm downstream chains', async () => {
+    settingsLive('0');
+    const db = makeDb([caseStep(baseCase())]);
+    const r = await validate({ case_id: 'AB12CD34' }, db);
+    drained(db);
+    expect(r.output.status).toBe('matched');
+    expect(r.output.dry_run).toBe(true);
+    expect(domainEvents.emit).not.toHaveBeenCalled();
+  });
+
   test("gate '0': matched run writes NOTHING, reports would_update, sends summary email", async () => {
     settingsLive('0');
     const db = makeDb([caseStep(baseCase())]);   // NO UPDATE step scripted
