@@ -5,6 +5,41 @@ Power tools for IT / super-users only. Every tool here is gated behind
 `admin_audit_log`. They all live behind the **More** menu (the items marked
 **(SU)**) and won't appear for regular staff.
 
+---
+
+## Before any of them will work: elevation
+
+Being a super-user is no longer enough on its own. Every tool in this section
+also requires a **short-lived elevation token**, and you get one by re-entering
+**your own password**. It lasts **15 minutes**.
+
+So the flow is: open an SU tool → it asks for your password → you have 15
+minutes of SU access → it asks again.
+
+**Why.** A stolen or leaked staff JWT must not be enough to run the DB console,
+mint API keys, or read Connections. Elevation makes those tools require
+something the token alone can't supply.
+
+Two properties worth knowing:
+
+- **Elevation adds, it never substitutes.** The SU check runs *first*; a
+  non-super-user is refused before the password is even read, and a forged
+  elevation token still gets them nowhere.
+- **API keys can't elevate.** Elevation is a human act — the guard chain
+  rejects API-key auth outright. Anything automated cannot reach these tools,
+  by design.
+
+The mint endpoint is `POST /admin/elevate` with `{password}`, returning
+`{token, expires_in: 900}`; the token rides on the `X-SU-Elevation` header.
+It is rate-limited to **10/min** — with a stolen JWT this endpoint would
+otherwise be an online oracle for the super-user's password, so the ceiling is
+deliberately low.
+
+Failures are specific: `401 bad_password` for a wrong or empty password,
+`403 no_password` if the account has no password hash set.
+
+---
+
 > **Two kinds of key, easily confused.** [Readonly Keys](02-readonly-keys.md)
 > are short-lived, SELECT-only credentials for `/api/readonly/sql`.
 > [API Keys](05-api-keys.md) are full inbound API credentials. If you want to
