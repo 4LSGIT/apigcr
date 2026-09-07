@@ -173,6 +173,8 @@ manual/07-ESign/README.md
 manual/08-Admin-Tools/01-db-console.md
 manual/08-Admin-Tools/02-readonly-keys.md
 manual/08-Admin-Tools/03-api-tester.md
+manual/08-Admin-Tools/04-system-alerts.md
+manual/08-Admin-Tools/05-api-keys.md
 manual/08-Admin-Tools/README.md
 package-lock.json
 package.json
