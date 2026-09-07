@@ -23,15 +23,30 @@ A few fields are managed by the system and should not be edited manually: the Go
 
 ## Appointment Types
 
-Common appointment types include:
+Types are not free text — they come from a **registry** shared by appointments
+and events, and staff pickers offer only what the registry marks as available.
+See [Calendar Types](../05-Subsystems/11-calendar-types.md) for the registry
+itself; `GET /api/calendar-types` is the live list.
 
-- Initial Consultation
-- Initial Strategy Session
-- 341 Meeting (the court-required creditors meeting in bankruptcy)
-- Follow-up
-- Document Review
+The ones actually in use, by volume:
 
-The type affects how the appointment appears in reports and which automation sequences apply to it. Scheduling a **341 Meeting** against a case automatically updates the case record with the 341 date.
+| Type | Roughly |
+|---|---|
+| Initial Strategy Session | the bulk of them |
+| Pre-Filing Meeting | |
+| Strategy Session, Strategy Session Follow Up | |
+| **341 Meeting** | the court-required creditors meeting |
+| Schedules Completion Meeting, Documents Completion Meeting | |
+| Consultation, Tax Consult, Pre-Lawsuit Meeting | occasional |
+
+Alongside these the registry carries hearings, deadlines, conferences and a
+handful of other kinds — those attach to [events](08-events.md) rather than
+appointments.
+
+The type affects how the appointment appears in reports and which automation
+sequences apply to it. Scheduling a **341 Meeting** against a case automatically
+updates the case record with the 341 date — `apptService` owns
+`cases.case_341_current` and `341_appt_id`, so nothing else should write them.
 
 ---
 
