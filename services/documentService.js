@@ -1632,9 +1632,13 @@ async function listForTarget(db, linkType, linkId, opts = {}) {
  * a rename's delete entry and its re-adds landed ~2 ticks apart: 30 minutes
  * is three ticks of slack. The cost is that a GENUINE Dropbox delete stays
  * visible (with a dead download) for up to ~40 minutes; the benefit is that
- * a folder rename/move can never make a case's documents vanish, however
- * many pages or ticks its delta straddles. Hardcoded by decision — nobody
- * will be tuning this.
+ * a rename/move whose re-adds land within the grace window — in practice
+ * anything up to ~3 ticks of delta backlog — never makes a case's documents
+ * vanish. The guarantee is BOUNDED, not absolute: re-adds that take longer
+ * than the grace to arrive would promote first. The promotion gate in
+ * documents_sync (defer while any root's walk is incomplete) is what covers
+ * the long tail past the bound. Hardcoded by decision — nobody will be
+ * tuning this.
  */
 const PENDING_DELETE_GRACE_MIN = 30;
 
@@ -1718,11 +1722,21 @@ async function markDeletedByPath(db, source, pathLower) {
  * Promote pending deletes that outlived the grace window to status='deleted'.
  *
  * The other half of SYNC-1's tombstone. Runs from the documents_sync tick
- * AFTER the roots have walked, so the delta this tick just consumed has had
- * its last chance to clear stamps before anything is promoted. One statement,
- * no per-row state, trivially idempotent (Cloud Tasks is at-least-once and
- * this may share a tick with a retry). Clears the stamp in the same write so
- * "pending" is unambiguous — a deleted row never carries one.
+ * AFTER the roots have walked — and ONLY on a tick whose walk completed for
+ * every root (the caller gates on that). The gate is what makes the grace
+ * bound safe: a stamped row's heal is a re-add somewhere in the delta, so a
+ * tick that errored, lost a claim, or stopped on a budget/time cap cannot
+ * vouch that the re-adds aren't sitting in pages it never fetched. Deferral
+ * costs nothing — the stamp keeps, and the first fully-complete tick
+ * promotes.
+ *
+ * One statement, no per-row state, trivially idempotent (Cloud Tasks is
+ * at-least-once and this may share a tick with a retry). Clears the stamp in
+ * the same write so "pending" is unambiguous — a deleted row never carries
+ * one. NOT scoped by source, deliberately: a stamp means "the provider that
+ * owns this row reported it deleted and nothing has contradicted that", which
+ * holds per-row whatever provider wrote it — today that is all 153k Dropbox
+ * rows, and a second provider would want exactly this sweep too.
  *
  * NO EMISSIONS — markDeletedByPath's contract, unchanged: a folder delete's
  * cascade must not storm the trigger engine, and promotion is that same

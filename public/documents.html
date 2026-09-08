@@ -1066,6 +1066,15 @@ function rowHtml(d) {
            + '<i class="fa-solid fa-globe"></i> public</span>';
   }
   if (gone) chips += '<span class="chip gone">' + esc(d.status) + '</span>';
+  /* SYNC-1: stamped by a Dropbox delete but inside the ~30-minute grace
+     window — still active, and a move/rename's re-add cancels it silently.
+     The chip is the only surface that says "the registry heard a delete";
+     without it a genuinely deleted file looks fine right up until it flips. */
+  if (!gone && d.pending_delete_at) {
+    chips += '<span class="chip gone" title="Deleted in Dropbox; kept visible during a short grace window '
+           + 'in case this is a move or rename mid-sync. Becomes deleted automatically if no re-add arrives.">'
+           + 'pending delete</span>';
+  }
 
   /* PROVENANCE BADGES (S3.1). `via` lists which of the scope's targets matched
      this row, direct first.
@@ -1768,7 +1777,11 @@ function rootStatsText(r) {
   if (s.files != null)   bits.push(s.files + ' files');
   if (s.linked)          bits.push(s.linked + ' linked');
   if (s.unlinked)        bits.push(s.unlinked + ' unlinked');
-  if (s.deleted)         bits.push(s.deleted + ' deleted');
+  /* SYNC-1: `deleted` in stats counts rows STAMPED pending-delete this pass —
+     revocable until the grace sweeper promotes them. Labelling it "deleted"
+     read as 791 gone documents during the 2026-09-07 incident triage while
+     every one of them was active and healing. */
+  if (s.deleted)         bits.push(s.deleted + ' flagged for delete');
   if (s.folder_heals)    bits.push(s.folder_heals + ' heals');
   if (s.pages != null)   bits.push(s.pages + 'p');
   if (s.stop && s.stop !== 'complete') bits.push('stopped: ' + s.stop);

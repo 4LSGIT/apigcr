@@ -19,9 +19,12 @@
 --    from any listing. Any provider re-add (same page, later page, later
 --    tick) clears the stamp via the shared upsert clause. A sweeper in the
 --    documents_sync tick promotes stamps older than 30 minutes to
---    status='deleted'. A rename/move that straddles a page OR tick boundary
---    is therefore invisible to staff; a genuine Dropbox delete reaches the
---    UI within ~30–40 minutes instead of ~10. Deliberately a COLUMN and not
+--    status='deleted'. A rename/move whose re-adds arrive within the grace
+--    window (~3 ticks of delta backlog) is therefore invisible to staff; the
+--    bound is real — re-adds slower than that would promote first, which is
+--    why the sweeper defers while any root's walk is incomplete. A genuine
+--    Dropbox delete reaches the UI within ~30–40 minutes instead of ~10.
+--    Deliberately a COLUMN and not
 --    a new status enum value: every reader filters status = 'active' by
 --    EQUALITY (listDocuments, listForTarget, documents.html), so a new enum
 --    value would vanish from every default listing — the exact failure this
@@ -36,7 +39,11 @@
 --    cap); rows longer than the prefix are re-checked against the full WHERE
 --    by the server, so correctness is unaffected. The code change splits the
 --    old `path_hash = ? OR path_lower LIKE ?` into two statements so each
---    arm gets its index deterministically instead of gambling on index_merge.
+--    arm can ride its own index instead of gambling on index_merge. "Can",
+--    not "will": the optimizer still chooses, and a degenerate shallow prefix
+--    (e.g. the root itself) can send it to uq_source_ext and a whole-index
+--    scan. For realistic per-folder delete entries the range wins — verified
+--    by EXPLAIN against the live 153k-row table at review time.
 --
 -- `idx_docs_pending_delete` serves the promotion sweeper's range predicate
 -- (pending_delete_at < NOW() - INTERVAL 30 MINUTE); NULLs (the steady state

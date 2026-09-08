@@ -229,6 +229,11 @@ function makeDb({
         return [{ affectedRows: /LIKE/.test(flat) ? deletedRows : 0 }];
       }
 
+      // ── SYNC-1 grace-promotion sweeper (documents_sync full pass) ──────
+      if (/^UPDATE documents SET status = 'deleted', pending_delete_at = NULL/.test(flat)) {
+        return [{ affectedRows: db.pendingPromoted || 0 }];
+      }
+
       // ── document_links ─────────────────────────────────────────────────
       if (/^INSERT INTO document_links/.test(flat)) return [{ affectedRows: 1 }];
       if (/^SELECT \* FROM document_links/.test(flat)) return [[]];
@@ -236,11 +241,6 @@ function makeDb({
       // reports; tests set it to say "there WAS a stale path-link here".
       if (/^DELETE FROM document_links/.test(flat)) {
         return [{ affectedRows: db.pathLinksDropped || 0 }];
-      }
-
-      // ── SYNC-1 grace-promotion sweeper (documents_sync full pass) ──────
-      if (/^UPDATE documents SET status = 'deleted', pending_delete_at = NULL/.test(flat)) {
-        return [{ affectedRows: db.pendingPromoted || 0 }];
       }
 
       // ── app_settings (kill switch + sweep watermark) ───────────────────
@@ -1959,9 +1959,73 @@ describe('lib/internal_functions/documents.js', () => {
     const out = await fns.documents_sync({ sweep: false }, db);
 
     expect(out.output.pending_promoted).toBe(3);
+    expect(out.output.pending_promotion_deferred).toBeUndefined();
     const promo = db.find("UPDATE documents SET status = 'deleted', pending_delete_at = NULL");
     expect(promo).toBeDefined();
     expect(promo.sql).toContain('INTERVAL ? MINUTE');
+  });
+
+  // ── SYNC-1b (review D2): the promotion gate ────────────────────────────
+  // A stamped row's heal is a re-add somewhere in the delta. A tick that
+  // cannot vouch the WHOLE estate's delta was consumed must not promote —
+  // the re-adds may sit in pages it never fetched, and promoting then
+  // recreates the exact invisible-documents window this arc closes.
+
+  test('promotion is DEFERRED when a root stops short of complete', async () => {
+    const db = makeDb({ roots: [root()], settings: { documents_sync_enabled: '1' } });
+    db.pendingPromoted = 3;
+    // has_more forever + a 1-page budget → stop:'page_cap', walk incomplete.
+    dropbox.listFolderPage.mockResolvedValue(page([], 'c', true));
+    dropbox.listFolderContinue.mockResolvedValue(page([], 'c', true));
+
+    const out = await fns.documents_sync({ sweep: false, max_pages: 1 }, db);
+
+    expect(out.output.pending_promoted).toBeUndefined();
+    expect(out.output.pending_promotion_deferred).toMatch(/stopped on page_cap/);
+    expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
+  });
+
+  test('promotion is DEFERRED when a root errors (e.g. Dropbox outage)', async () => {
+    const db = makeDb({ roots: [root()], settings: { documents_sync_enabled: '1' } });
+    db.pendingPromoted = 3;
+    dropbox.listFolderPage.mockRejectedValue(new Error('dropbox is down'));
+
+    const out = await fns.documents_sync({ sweep: false }, db);
+
+    expect(out.output.pending_promoted).toBeUndefined();
+    expect(out.output.pending_promotion_deferred).toMatch(/errored/);
+    expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
+  });
+
+  test('promotion is DEFERRED when another instance holds the claim', async () => {
+    // Overlapping ticks: the other instance is consuming the delta, and this
+    // one cannot see whether it completed. Deferral resolves within a tick.
+    const db = makeDb({ roots: [root()], settings: { documents_sync_enabled: '1' } });
+    db.pendingPromoted = 3;
+    db.claimWins = false;
+
+    const out = await fns.documents_sync({ sweep: false }, db);
+
+    expect(out.output.pending_promoted).toBeUndefined();
+    expect(out.output.pending_promotion_deferred).toMatch(/claimed elsewhere/);
+    expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
+  });
+
+  test('promotion is DEFERRED when the budget dies before every root is reached', async () => {
+    // Root 1 eats the whole 1-page budget; root 2 is never walked at all, so
+    // it does not even appear in results — the roots_considered gap is the
+    // only trace, and it must gate.
+    const roots2 = [root({ id: 1 }), root({ id: 2, path: '/r2' })];
+    const db = makeDb({ roots: roots2, settings: { documents_sync_enabled: '1' } });
+    db.pendingPromoted = 3;
+    dropbox.listFolderPage.mockResolvedValue(page([], 'c', true));
+    dropbox.listFolderContinue.mockResolvedValue(page([], 'c', true));
+
+    const out = await fns.documents_sync({ sweep: false, max_pages: 1 }, db);
+
+    expect(out.output.pending_promoted).toBeUndefined();
+    expect(out.output.pending_promotion_deferred).toMatch(/never reached/);
+    expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
   });
 
   test('root_id targets one root and runs it EVEN IF DISABLED (explicit override)', async () => {
