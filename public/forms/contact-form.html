@@ -195,14 +195,23 @@
     .ycp-kind-row .yc-label { margin: 0; }
     .ycp-kind-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
     .ycp-kind-seg button {
-      background: var(--surface);
-      color: var(--text-2);
+      background: var(--surface-sunken);
+      color: var(--text-muted);
       border: none;
       padding: 5px 14px;
       font-size: 13px;
       cursor: pointer;
+      transition: background .12s ease, color .12s ease;
     }
     .ycp-kind-seg button + button { border-left: 1px solid var(--border); }
+    /* The unselected half rests a step lighter than body text (still AA on
+       --surface-sunken in both themes) and darkens back to --text-2 on hover,
+       so the pointer target reads as live without competing with the active
+       half. :disabled is read-only mode — nothing there is clickable. */
+    .ycp-kind-seg button:not(.active):not(:disabled):hover {
+      background: var(--hover);
+      color: var(--text-2);
+    }
     .ycp-kind-seg button.active { background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 600; }
     .yc-readonly .ycp-kind-seg button { cursor: default; opacity: .75; }
   </style>
@@ -661,7 +670,10 @@
         // the loaded row, so this reflects stored data — an existing org must
         // never render as a person for the split second before a toggle.
         // clearOther:false — this is a render, not a user switch; nothing is
-        // wiped and nothing becomes dirty.
+        // wiped and nothing becomes dirty. The stash resets with the row: a
+        // name stashed off the PREVIOUS record must never be restored onto
+        // this one.
+        resetKindStash();
         applyKind(readKind(), { clearOther: false });
         // Wire per-form glue after first populate.
         bindRepeaterGlue('phones');
@@ -747,6 +759,22 @@
       org:    { pname: 'DBA',            dob: 'Date Formed',   ssn: 'EIN' },
     };
 
+    /** The name inputs each kind owns — the ones clearOther blanks. */
+    const KIND_FIELDS = { person: ['fname', 'mname', 'lname'], org: ['org_name'] };
+
+    /**
+     * Per-kind stash of the names the toggle blanks.
+     *
+     * clearOther wipes the outgoing kind's names on purpose (see applyKind),
+     * but that made person → org → person destroy a name the user never meant
+     * to touch. Stash the outgoing values on the way out and put them back on
+     * the way in: a round trip is then a no-op and the diff closes empty
+     * again. Reset on every populate — a freshly loaded row has nothing to do
+     * with the previous one's stash.
+     */
+    let kindStash = { person: null, org: null };
+    function resetKindStash() { kindStash = { person: null, org: null }; }
+
     /** The stored kind, normalized. Anything unrecognised reads as person —
      *  same direction the DB trigger falls, so UI and DB agree. */
     function readKind() {
@@ -803,13 +831,25 @@
       }
 
       if (clearOther) {
-        const wipe = (k === 'org')
-          ? ['fname', 'mname', 'lname']
-          : ['org_name'];
-        wipe.forEach(n => {
+        const other = (k === 'org') ? 'person' : 'org';
+
+        // Out: remember what we are about to blank, so switching back can
+        // hand it straight back instead of the user retyping it.
+        kindStash[other] = {};
+        KIND_FIELDS[other].forEach(n => {
           const el = document.querySelector(`[name="${n}"]`);
-          if (el) el.value = '';
+          if (el) { kindStash[other][n] = el.value; el.value = ''; }
         });
+
+        // In: restore whatever the last switch away from this kind blanked.
+        // Null on the first switch — the loaded values are already in place.
+        if (kindStash[k]) {
+          Object.entries(kindStash[k]).forEach(([n, v]) => {
+            const el = document.querySelector(`[name="${n}"]`);
+            if (el) el.value = v;
+          });
+          kindStash[k] = null;   // consumed; those inputs are live again
+        }
       }
     }
 

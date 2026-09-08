@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-08T21:39:35.260Z
+-- Generated: 2026-09-08T21:54:39.143Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:87af1952c19bf022d9953c5c30a6e101
+-- Fingerprint: sha256:19f11f9eaed8a220a368b6c04f210bef
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1085,57 +1085,53 @@ END
 $$
 DELIMITER ;
 DELIMITER $$
-CREATE TRIGGER `contact_name_insert` BEFORE INSERT ON `contacts` FOR EACH ROW BEGIN
-    DECLARE full_name VARCHAR(255);
-    DECLARE lfm_name VARCHAR(255);
-    DECLARE rname VARCHAR(255);
-    SET full_name = CONCAT_WS(' ', 
-        NEW.contact_fname, 
-        COALESCE(NEW.contact_mname, ''), 
+CREATE TRIGGER `contact_name_insert` BEFORE INSERT ON `contacts` FOR EACH ROW SET
+  NEW.contact_name = IF(NEW.contact_kind = 'org',
+      TRIM(COALESCE(NEW.contact_org_name, '')),
+      REPLACE(CONCAT_WS(' ',
+        NEW.contact_fname,
+        COALESCE(NEW.contact_mname, ''),
         COALESCE(NEW.contact_lname, '')
-    );
-SET lfm_name = TRIM(CONCAT(
-    COALESCE(NEW.contact_lname, ''),
-    ", ",
-    NEW.contact_fname, " ",
-    COALESCE(NEW.contact_mname, '')
-));
-    SET rname = TRIM(CONCAT_WS(' ',
-        COALESCE(NEW.contact_mname, ''), 
+      ), CONCAT(' ', ' '), ' ')),
+  NEW.contact_lfm_name = IF(NEW.contact_kind = 'org',
+      TRIM(COALESCE(NEW.contact_org_name, '')),
+      REPLACE(TRIM(CONCAT(
+        COALESCE(NEW.contact_lname, ''),
+        ', ',
+        NEW.contact_fname, ' ',
+        COALESCE(NEW.contact_mname, '')
+      )), CONCAT(' ', ' '), ' ')),
+  NEW.contact_rname = IF(NEW.contact_kind = 'org',
+      TRIM(COALESCE(NEW.contact_org_name, '')),
+      REPLACE(TRIM(CONCAT_WS(' ',
+        COALESCE(NEW.contact_mname, ''),
         COALESCE(NEW.contact_lname, '')
-    ));
-    
-    SET NEW.contact_name = REPLACE(full_name, '  ', ' ');
-    SET NEW.contact_lfm_name = REPLACE(lfm_name, '  ', ' ');
-    SET NEW.contact_rname = REPLACE(rname, '  ', ' ');
-END
+      )), CONCAT(' ', ' '), ' '))
 $$
 DELIMITER ;
 DELIMITER $$
-CREATE TRIGGER `contact_name_update` BEFORE UPDATE ON `contacts` FOR EACH ROW BEGIN
-    DECLARE full_name VARCHAR(255);
-    DECLARE lfm_name VARCHAR(255);
-    DECLARE rname VARCHAR(255);
-    SET full_name = CONCAT_WS(' ', 
-        NEW.contact_fname, 
-        COALESCE(NEW.contact_mname, ''), 
+CREATE TRIGGER `contact_name_update` BEFORE UPDATE ON `contacts` FOR EACH ROW SET
+  NEW.contact_name = IF(NEW.contact_kind = 'org',
+      TRIM(COALESCE(NEW.contact_org_name, '')),
+      REPLACE(CONCAT_WS(' ',
+        NEW.contact_fname,
+        COALESCE(NEW.contact_mname, ''),
         COALESCE(NEW.contact_lname, '')
-    );
-SET lfm_name = TRIM(CONCAT(
-    COALESCE(NEW.contact_lname, ''),
-    ", ",
-    NEW.contact_fname, " ",
-    COALESCE(NEW.contact_mname, '')
-));
-    SET rname = TRIM(CONCAT_WS(' ',
-        COALESCE(NEW.contact_mname, ''), 
+      ), CONCAT(' ', ' '), ' ')),
+  NEW.contact_lfm_name = IF(NEW.contact_kind = 'org',
+      TRIM(COALESCE(NEW.contact_org_name, '')),
+      REPLACE(TRIM(CONCAT(
+        COALESCE(NEW.contact_lname, ''),
+        ', ',
+        NEW.contact_fname, ' ',
+        COALESCE(NEW.contact_mname, '')
+      )), CONCAT(' ', ' '), ' ')),
+  NEW.contact_rname = IF(NEW.contact_kind = 'org',
+      TRIM(COALESCE(NEW.contact_org_name, '')),
+      REPLACE(TRIM(CONCAT_WS(' ',
+        COALESCE(NEW.contact_mname, ''),
         COALESCE(NEW.contact_lname, '')
-    ));
-    
-    SET NEW.contact_name = REPLACE(full_name, '  ', ' ');
-    SET NEW.contact_lfm_name = REPLACE(lfm_name, '  ', ' ');
-    SET NEW.contact_rname = REPLACE(rname, '  ', ' ');
-END
+      )), CONCAT(' ', ' '), ' '))
 $$
 DELIMITER ;
 
