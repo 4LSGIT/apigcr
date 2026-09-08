@@ -579,6 +579,15 @@ async function syncRoot(db, root, opts = {}) {
             root_id: root.id, path: root.path, mode: 'empty_root',
             pages: 0, files: 0, linked: 0, deleted: 0,
             note: 'path/not_found — folder not created yet',
+            // B1 (SYNC-1c): a root with no folder is a COMPLETED walk — there
+            // is nothing to fetch, so it vouches trivially. Without this key
+            // the promotion gate read `undefined !== 'complete'` as an
+            // incomplete walk and, because two roots on the live estate are
+            // permanently empty, NEVER promoted — pending deletes would have
+            // accumulated forever, silently. Deliberately absent from the
+            // stats JSON above: `stop` in stats means "why the page loop
+            // stopped", and no page loop ran.
+            stop: 'complete',
             ms: Date.now() - startedAt,
           };
         }

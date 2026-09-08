@@ -534,6 +534,12 @@ describe('syncRoot — path/not_found on a root is an EMPTY ROOT', () => {
 
     expect(out.mode).toBe('empty_root');
     expect(out.error).toBeUndefined();
+    // B1 (SYNC-1c): an empty root is a trivially COMPLETED walk and must say
+    // so. Two live roots ("Unsorted …") are permanently empty; without this
+    // key the promotion gate read them as incomplete on EVERY tick and
+    // pending deletes could never promote — SYNC-1's second half dead on
+    // arrival, silently.
+    expect(out.stop).toBe('complete');
     const write = db.find('last_sync_at = NOW()');
     expect(write.sql).toContain('last_error = NULL');
     expect(write.sql).toContain('syncing_since = NULL');
@@ -2026,6 +2032,61 @@ describe('lib/internal_functions/documents.js', () => {
     expect(out.output.pending_promoted).toBeUndefined();
     expect(out.output.pending_promotion_deferred).toMatch(/never reached/);
     expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
+  });
+
+  test('promotion RUNS with empty roots in the mix — the live estate shape (B1)', async () => {
+    // THE regression that shipped: two live roots ("Unsorted …") are
+    // permanently path/not_found, and the empty_root early return carried no
+    // `stop` key — `undefined !== 'complete'` held the gate shut on every
+    // single tick and promotion was dead on arrival. An empty root is a
+    // trivially completed walk; it must vouch, not defer.
+    const roots2 = [root({ id: 1, sync_cursor: 'c1', backfill_done: 1 }),
+                    root({ id: 5, path: '/r/unsorted' })];
+    const db = makeDb({ roots: roots2, settings: { documents_sync_enabled: '1' } });
+    db.pendingPromoted = 2;
+    dropbox.listFolderContinue.mockResolvedValue(page([], 'c2', false)); // root 1: complete
+    dropbox.listFolderPage.mockRejectedValue(dbxError(409, 'path/not_found/...')); // root 5: empty
+
+    const out = await fns.documents_sync({ sweep: false }, db);
+
+    expect(out.output.pending_promotion_deferred).toBeUndefined();
+    expect(out.output.pending_promoted).toBe(2);
+    expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeDefined();
+  });
+
+  test('promotion is DEFERRED when no roots are enabled at all (N2)', async () => {
+    // No roots means no delta, and no delta means nothing could ever have
+    // healed a stamp — vacuous-truth promotion is exactly wrong here.
+    const db = makeDb({ roots: [], settings: { documents_sync_enabled: '1' } });
+    db.pendingPromoted = 3;
+
+    const out = await fns.documents_sync({ sweep: false }, db);
+
+    expect(out.output.pending_promoted).toBeUndefined();
+    expect(out.output.pending_promotion_deferred).toMatch(/no enabled roots/);
+    expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
+  });
+
+  test('a future stop-less result shape defers with a diagnosable message, not "undefined"', async () => {
+    // Fail-closed is the right default for an unknown result shape, but
+    // "stopped on undefined" (what B1 printed before the empty_root fix)
+    // sends the reader digging through return sites. Any shape that forgets
+    // a `stop` key must defer AND say so legibly.
+    const sync = require('../services/documentSyncService');
+    const spy = jest.spyOn(sync, 'syncAll').mockResolvedValue({
+      roots: [{ root_id: 9, path: '/r9', mode: 'novel_shape', pages: 0, files: 0 }],
+      roots_considered: 1, pages_used: 0, cache_size: 0, elapsed_ms: 1,
+    });
+    try {
+      const db = makeDb({ roots: [], settings: { documents_sync_enabled: '1' } });
+      const out = await fns.documents_sync({ sweep: false }, db);
+
+      expect(out.output.pending_promoted).toBeUndefined();
+      expect(out.output.pending_promotion_deferred).toBe('root 9 stopped on an unknown state');
+      expect(db.find("SET status = 'deleted', pending_delete_at = NULL")).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('root_id targets one root and runs it EVEN IF DISABLED (explicit override)', async () => {

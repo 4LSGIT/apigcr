@@ -360,6 +360,28 @@ describe('the Sync panel — roots table', () => {
     expect(pills).toEqual(['incremental', 'empty', 'backfilling', 'disabled', 'running']);
   });
 
+  test('stamped rows read "flagged for delete", never "deleted" (SYNC-1 / D3)', async () => {
+    // stats.deleted counts rows STAMPED pending-delete — revocable until the
+    // grace sweeper promotes them. During the 2026-09-07 incident this label
+    // read "791 deleted" while all 791 rows were active and healing, on the
+    // exact panel the incident was triaged from.
+    const { window } = await boot({
+      routes: {
+        'GET /api/documents/sync-roots': ROOTS_OK([
+          syncRoot({ backfill_done: true, stats: {
+            mode: 'incremental', files: 1098, pages: 1,
+            linked: 0, deleted: 791, stop: 'time_cap', ms: 480114,
+          } }),
+        ]),
+      },
+    });
+    await openPanel(window);
+
+    const text = panelText(window);
+    expect(text).toMatch(/791 flagged for delete/);
+    expect(text).not.toMatch(/791 deleted/);
+  });
+
   test('an EMPTY root is not styled as a failure — path/not_found is legitimate', async () => {
     // Three seeded roots are created lazily by the upload / e-sign / forms
     // ladders. Marking them red would park a permanent false alarm in the

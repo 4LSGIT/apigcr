@@ -339,6 +339,53 @@ describe('via badges — whose document is this', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Pending-delete chip (SYNC-1)
+// ─────────────────────────────────────────────────────────────
+
+describe('pending-delete chip — the grace window is visible (SYNC-1)', () => {
+  const resp = (d) => ({
+    documents: [d], total: 1, limit: 25, offset: 0,
+    related: true, related_targets: TARGETS,
+  });
+
+  test('an active row with a stamp wears the chip', async () => {
+    // The stamp means "Dropbox reported this deleted; the registry is holding
+    // it visible through the grace window in case it is a mid-sync move".
+    // Without the chip a genuinely deleted file looks fine right up until it
+    // flips — the chip is what tells staff a download may already be dead.
+    const { window } = await boot({
+      responses: [resp(doc(1, { via: DIRECT_VIA, pending_delete_at: '2026-09-08T10:00:00Z' }))],
+    });
+
+    const chip = window.document.querySelector('.chip.pending-del');
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toBe('pending delete');
+    expect(chip.title).toContain('grace window');
+  });
+
+  test('a plain active row wears no chip', async () => {
+    const { window } = await boot({
+      responses: [resp(doc(1, { via: DIRECT_VIA, pending_delete_at: null }))],
+    });
+    expect(window.document.querySelector('.chip.pending-del')).toBeNull();
+  });
+
+  test('a deleted row shows its status chip, never BOTH', async () => {
+    // Promotion clears the stamp in the same write, so this shape shouldn't
+    // exist — but if it ever does, "deleted" + "pending delete" side by side
+    // reads as a contradiction. The !gone guard keeps the status chip
+    // authoritative.
+    const { window } = await boot({
+      responses: [resp(doc(1, {
+        via: DIRECT_VIA, status: 'deleted', pending_delete_at: '2026-09-08T10:00:00Z',
+      }))],
+    });
+    expect(window.document.querySelector('.chip.pending-del')).toBeNull();
+    expect(window.document.querySelector('.chip.gone')).not.toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // The "also showing" note
 // ─────────────────────────────────────────────────────────────
 

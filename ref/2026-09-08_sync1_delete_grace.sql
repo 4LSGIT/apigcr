@@ -24,11 +24,11 @@
 --    bound is real — re-adds slower than that would promote first, which is
 --    why the sweeper defers while any root's walk is incomplete. A genuine
 --    Dropbox delete reaches the UI within ~30–40 minutes instead of ~10.
---    Deliberately a COLUMN and not
---    a new status enum value: every reader filters status = 'active' by
---    EQUALITY (listDocuments, listForTarget, documents.html), so a new enum
---    value would vanish from every default listing — the exact failure this
---    exists to prevent — or force edits across every consumer.
+--    Deliberately a COLUMN and not a new status enum value: every reader
+--    filters status = 'active' by EQUALITY (listDocuments, listForTarget,
+--    documents.html), so a new enum value would vanish from every default
+--    listing — the exact failure this exists to prevent — or force edits
+--    across every consumer.
 --
 -- 2. `idx_docs_path_lower` — markDeletedByPath's prefix arm
 --    (path_lower LIKE 'folder/%') was a full scan of a TEXT column over

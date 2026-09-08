@@ -1068,10 +1068,15 @@ function rowHtml(d) {
   if (gone) chips += '<span class="chip gone">' + esc(d.status) + '</span>';
   /* SYNC-1: stamped by a Dropbox delete but inside the ~30-minute grace
      window — still active, and a move/rename's re-add cancels it silently.
-     The chip is the only surface that says "the registry heard a delete";
-     without it a genuinely deleted file looks fine right up until it flips. */
+     AS-OF-PAGE-LOAD only (N3): both the stamp and its cancellation are
+     deliberately event-silent, so no yc-sync message updates an open tab —
+     the chip can linger after a silent heal or be missing after a stamp
+     until the next refresh. The ROW is always correct; only the chip lags.
+     `.pending-del` alongside `gone` (N5): borrows the danger palette on
+     purpose — it IS a warning — while keeping the DOM honest about which
+     kind of row this is. */
   if (!gone && d.pending_delete_at) {
-    chips += '<span class="chip gone" title="Deleted in Dropbox; kept visible during a short grace window '
+    chips += '<span class="chip gone pending-del" title="Deleted in Dropbox; kept visible during a short grace window '
            + 'in case this is a move or rename mid-sync. Becomes deleted automatically if no re-add arrives.">'
            + 'pending delete</span>';
   }
