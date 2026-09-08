@@ -920,6 +920,7 @@ tests/test_report_author.sh
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/trusteeMatch.test.js
+tests/trusteesRoute.test.js
 tests/typeKeyVocabulary.test.js
 tests/unifiedEventsU2b.admin.test.js
 tests/unifiedEventsU2b.apptsFilter.test.js
