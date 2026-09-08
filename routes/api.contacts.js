@@ -95,9 +95,24 @@ router.get('/api/contacts/:id', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── CREATE ───
+//
+// Org-contacts slice 1: the shape gate is kind-aware. This route validated
+// fname+lname unconditionally, which made contactService's org path
+// unreachable over the API no matter what the service accepted. The service
+// re-validates (it is also called from the intake route and from workflows),
+// so this is a fast 400 rather than the authority.
 router.post('/api/contacts', jwtOrApiKey, async (req, res) => {
-  const { fname, lname } = req.body;
-  if (!fname || !lname) {
+  const { fname, lname, org_name } = req.body;
+  const kind = String(req.body.kind || 'person').trim().toLowerCase();
+
+  if (kind !== 'person' && kind !== 'org') {
+    return res.status(400).json({ status: 'error', message: 'kind must be "person" or "org"' });
+  }
+  if (kind === 'org') {
+    if (!org_name || !String(org_name).trim()) {
+      return res.status(400).json({ status: 'error', message: 'org_name is required when kind is "org"' });
+    }
+  } else if (!fname || !lname) {
     return res.status(400).json({ status: 'error', message: 'fname and lname are required' });
   }
 

@@ -183,6 +183,28 @@
       color: var(--text) !important;
       border-color: var(--border) !important;
     }
+
+    /* ── Kind selector (org-contacts slice 3) ───────────────────────────
+       Sits above the identity rows and swaps which of the two blocks is
+       displayed. Both blocks stay in the DOM: yc-forms.js resolves every
+       config.fields entry with querySelector at construction time, and a
+       removed node would make the hidden kind's fields permanently
+       unreadable (populate and collect both silently skip a null el).
+       Display-toggling keeps the values live and the diff honest. */
+    .ycp-kind-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .ycp-kind-row .yc-label { margin: 0; }
+    .ycp-kind-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .ycp-kind-seg button {
+      background: var(--surface);
+      color: var(--text-2);
+      border: none;
+      padding: 5px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .ycp-kind-seg button + button { border-left: 1px solid var(--border); }
+    .ycp-kind-seg button.active { background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 600; }
+    .yc-readonly .ycp-kind-seg button { cursor: default; opacity: .75; }
   </style>
 </head>
 <body>
@@ -208,10 +230,22 @@
 
 <form id="contactForm" class="yc-form">
 
-  <!-- ── Row 1: Preferred Name + Contact ID ── -->
+  <!-- ── Row 0: Kind selector (org-contacts slice 3) ── -->
+  <div class="ycp-kind-row">
+    <label class="yc-label">This contact is a</label>
+    <div class="ycp-kind-seg" id="kindSeg">
+      <button type="button" data-kind="person">Person</button>
+      <button type="button" data-kind="org">Organization</button>
+    </div>
+    <!-- The real field. Hidden input, not the buttons — yc-forms.js reads
+         and diffs `value`, and the segmented control is only its skin. -->
+    <input type="hidden" name="kind" value="person">
+  </div>
+
+  <!-- ── Row 1: Preferred Name / DBA + Contact ID ── -->
   <div class="yc-row">
     <div class="yc-field">
-      <label class="yc-label">Preferred Name</label>
+      <label class="yc-label" data-kind-label="pname">Preferred Name</label>
       <input type="text" name="pname" placeholder="Preferred name">
     </div>
     <div class="yc-field yc-field-locked">
@@ -220,8 +254,8 @@
     </div>
   </div>
 
-  <!-- ── Row 2: Name (first / middle / last) ── -->
-  <div class="yc-row">
+  <!-- ── Row 2a: PERSON name (first / middle / last) ── -->
+  <div class="yc-row" data-kind-block="person">
     <div class="yc-field">
       <label class="yc-label">First Name</label>
       <input type="text" name="fname" placeholder="First name">
@@ -233,6 +267,15 @@
     <div class="yc-field">
       <label class="yc-label">Last Name</label>
       <input type="text" name="lname" placeholder="Last name">
+    </div>
+  </div>
+
+  <!-- ── Row 2b: ORG name ── -->
+  <div class="yc-row" data-kind-block="org" style="display:none;">
+    <div class="yc-field">
+      <label class="yc-label">Organization Name</label>
+      <input type="text" name="org_name" placeholder="Legal entity name" maxlength="120">
+      <small class="yc-error"></small>
     </div>
   </div>
 
@@ -415,15 +458,15 @@
     </div>
   </template>
 
-  <!-- ── DOB + SSN ── -->
+  <!-- ── DOB + SSN (relabelled "Date formed" / "EIN" for orgs) ── -->
   <div class="yc-row">
     <div class="yc-field">
-      <label class="yc-label">Date of Birth</label>
+      <label class="yc-label" data-kind-label="dob">Date of Birth</label>
       <input type="date" name="dob">
       <small class="yc-error"></small>
     </div>
     <div class="yc-field">
-      <label class="yc-label">SSN</label>
+      <label class="yc-label" data-kind-label="ssn">SSN</label>
       <input type="text" name="ssn" placeholder="###-##-####" data-yc-mask="ssn">
       <small class="yc-error"></small>
     </div>
@@ -512,6 +555,13 @@
 
       fields: {
         contact_id:    { el: '[name="contact_id"]',    type: 'text', readonly: true },
+        // Org-contacts slice 3. `kind` is a hidden input driven by the
+        // segmented control; `org_name` lives in the org-only row. Both are
+        // always in config.fields regardless of the current kind — yc-forms.js
+        // resolves every field's element once at construction, so a field that
+        // is only registered for one kind would be unreadable in the other.
+        kind:          { el: '[name="kind"]',          type: 'text' },
+        org_name:      { el: '[name="org_name"]',      type: 'text' },
         pname:         { el: '[name="pname"]',         type: 'text' },
         fname:         { el: '[name="fname"]',         type: 'text' },
         mname:         { el: '[name="mname"]',         type: 'text' },
@@ -590,6 +640,8 @@
       // entries here. _mergeApiData passes unmapped keys through unchanged.
       apiMap: {
         'contact_id':    'contact_id',
+        'contact_kind':     'kind',
+        'contact_org_name': 'org_name',
         'contact_pname': 'pname',
         'contact_fname': 'fname',
         'contact_mname': 'mname',
@@ -605,6 +657,12 @@
       },
 
       onLoad: () => {
+        // KIND FIRST. populate() has just written the hidden `kind` input from
+        // the loaded row, so this reflects stored data — an existing org must
+        // never render as a person for the split second before a toggle.
+        // clearOther:false — this is a render, not a user switch; nothing is
+        // wiped and nothing becomes dirty.
+        applyKind(readKind(), { clearOther: false });
         // Wire per-form glue after first populate.
         bindRepeaterGlue('phones');
         bindRepeaterGlue('emails');
@@ -644,6 +702,9 @@
     form.setReadonly = function(on) {
       _origSetReadonly(on);
       applyRepeaterReadonly(on);
+      // The kind control is a pair of <button>s, not a config.fields input, so
+      // yc-forms.js's field-lock walk never reaches it.
+      document.querySelectorAll('#kindSeg button').forEach(b => { b.disabled = on; });
     };
 
     function applyRepeaterReadonly(isReadonly) {
@@ -664,6 +725,146 @@
         // Remove button — hidden by CSS (.yc-readonly selector) — no JS needed.
       });
     }
+
+    // ════════════════════════════════════════════════════════════════
+    // KIND TOGGLE (org-contacts slice 3)
+    //
+    // One contact row can be a PERSON or an ORGANIZATION. The DB triggers
+    // contact_name_insert / contact_name_update branch on contacts.contact_kind
+    // and compute the three derived name columns from a DIFFERENT source per
+    // kind — fname/mname/lname for a person, contact_org_name verbatim (no
+    // comma flip) for an org. So the kind is not cosmetic: it decides which
+    // inputs are the real ones.
+    //
+    // Both blocks stay mounted and are display-toggled rather than swapped,
+    // because yc-forms.js resolves config.fields elements ONCE at construction.
+    // A detached element makes its field silently unreadable — populate() and
+    // collect() both skip a null el without complaining.
+    // ════════════════════════════════════════════════════════════════
+
+    const KIND_LABELS = {
+      person: { pname: 'Preferred Name', dob: 'Date of Birth', ssn: 'SSN' },
+      org:    { pname: 'DBA',            dob: 'Date Formed',   ssn: 'EIN' },
+    };
+
+    /** The stored kind, normalized. Anything unrecognised reads as person —
+     *  same direction the DB trigger falls, so UI and DB agree. */
+    function readKind() {
+      const el = document.querySelector('[name="kind"]');
+      const v = String((el && el.value) || 'person').trim().toLowerCase();
+      return v === 'org' ? 'org' : 'person';
+    }
+
+    /**
+     * Render for `kind`.
+     *
+     * clearOther=true is the USER-SWITCH path: it blanks the outgoing kind's
+     * name inputs so they land in the diff and get PATCHed to ''. Without it
+     * an org would keep stale contact_fname/contact_lname that no screen shows
+     * but every export and report does. (contactService.updateContact enforces
+     * the same thing server-side; this is the half the user can see.)
+     *
+     * pname is NEVER cleared — it is Preferred Name for a person and DBA for
+     * an org, one column serving both.
+     */
+    function applyKind(kind, { clearOther = false } = {}) {
+      const k = kind === 'org' ? 'org' : 'person';
+
+      const hidden = document.querySelector('[name="kind"]');
+      if (hidden && hidden.value !== k) hidden.value = k;
+
+      document.querySelectorAll('#kindSeg button').forEach(b => {
+        b.classList.toggle('active', b.dataset.kind === k);
+      });
+
+      document.querySelectorAll('[data-kind-block]').forEach(el => {
+        el.style.display = (el.dataset.kindBlock === k) ? '' : 'none';
+      });
+
+      const labels = KIND_LABELS[k];
+      document.querySelectorAll('[data-kind-label]').forEach(el => {
+        const t = labels[el.dataset.kindLabel];
+        if (t) el.textContent = t;
+      });
+
+      // SSN ↔ EIN. Both masks are 9 digits and both strip to bare digits, so
+      // contact_ssn char(11) holds either without a storage change. Swapping
+      // the dataset keeps _stripMask coherent; swapping the validation rule
+      // makes the error message name the right thing. The blur FORMATTER is
+      // handled by the extra listener installed below — yc-forms.js closes
+      // over the mask type when it binds, so its own listener cannot be
+      // retargeted.
+      const ssnEl = document.querySelector('[name="ssn"]');
+      if (ssnEl) {
+        ssnEl.dataset.ycMask = (k === 'org') ? 'ein' : 'ssn';
+        ssnEl.placeholder    = (k === 'org') ? '##-#######' : '###-##-####';
+        if (form.config.validation.ssn) form.config.validation.ssn.mask = ssnEl.dataset.ycMask;
+        ssnEl.value = form._formatMask(ssnEl.value, ssnEl.dataset.ycMask);
+      }
+
+      if (clearOther) {
+        const wipe = (k === 'org')
+          ? ['fname', 'mname', 'lname']
+          : ['org_name'];
+        wipe.forEach(n => {
+          const el = document.querySelector(`[name="${n}"]`);
+          if (el) el.value = '';
+        });
+      }
+    }
+
+    // Segmented control → hidden input. The hidden input is what yc-forms.js
+    // diffs, so the events have to be dispatched from it, not from the button.
+    document.querySelectorAll('#kindSeg button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const next = btn.dataset.kind === 'org' ? 'org' : 'person';
+        if (next === readKind()) return;
+        applyKind(next, { clearOther: true });
+        const hidden = document.querySelector('[name="kind"]');
+        if (hidden) {
+          hidden.dispatchEvent(new Event('input',  { bubbles: true }));
+          hidden.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        reportHeight();
+      });
+    });
+
+    /**
+     * Save-time shape check, mirroring contactService.updateContact's
+     * kind-switch guard. Returns false and paints the offending field.
+     */
+    function kindGuard() {
+      const k = readKind();
+      const show = (name, msg) => {
+        const el  = document.querySelector(`[name="${name}"]`);
+        const err = el && el.parentElement && el.parentElement.querySelector('.yc-error');
+        if (err) { err.textContent = msg; err.classList.add('visible'); }
+        if (el) el.focus();
+      };
+      if (k === 'org') {
+        const v = (document.querySelector('[name="org_name"]') || {}).value || '';
+        if (!v.trim()) { show('org_name', 'Organization name is required'); return false; }
+        if (v.trim().length > 120) { show('org_name', 'Organization name must be 120 characters or fewer'); return false; }
+      } else {
+        const f = ((document.querySelector('[name="fname"]') || {}).value || '').trim();
+        const l = ((document.querySelector('[name="lname"]') || {}).value || '').trim();
+        if (!f || !l) { show(!f ? 'fname' : 'lname', 'First and last name are required'); return false; }
+      }
+      return true;
+    }
+
+    // Kind-aware blur formatter. Registered AFTER yc-forms.js's _setupMasks
+    // ran at construction, so it fires second and has the last word on the
+    // displayed value — which is the only way to retarget a mask whose type
+    // was captured in a closure.
+    (function bindKindAwareSsnMask() {
+      const ssnEl = document.querySelector('[name="ssn"]');
+      if (!ssnEl) return;
+      ssnEl.addEventListener('blur', () => {
+        ssnEl.value = form._formatMask(ssnEl.value, readKind() === 'org' ? 'ein' : 'ssn');
+      });
+    })();
 
     // ────────────────────────────────────────────────────────────────
     // CUSTOM SAVE — full override of YF's save()
@@ -688,6 +889,12 @@
       // 0. Primary guard — interactive; may mutate is_primary in-place.
       const proceed = await primaryGuard();
       if (!proceed) return;
+
+      // 0b. Kind guard. The server rejects an org with no org_name (and a
+      // person with no fname/lname) with a plain 500-shaped error, which this
+      // form's 400/409 handlers do not decorate. Catching it here gives the
+      // user the field instead of a toast.
+      if (!kindGuard()) return;
 
       // 1. Validate (top-level fields only)
       if (!this.validate()) return;

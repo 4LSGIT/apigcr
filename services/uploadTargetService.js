@@ -102,9 +102,17 @@ function _sanitizeSegment(s, max) {
   const cleaned = String(s == null ? '' : s)
     .replace(ILLEGAL_IN_NAME, '-')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    // A path SEGMENT may not end in '.' or ' '. Windows silently drops both
+    // when creating the entry, so the Dropbox desktop client and the web app
+    // disagree about the folder's name and the sync loops. Only relevant since
+    // org contacts arrived — 'Legacy Signature Properties, Inc.' is a legal
+    // entity name and its trailing period is deliberate everywhere EXCEPT
+    // here, at the last component of a path. Truncation below can expose a new
+    // trailing '.' too, so this also runs after the slice.
+    .replace(/[. ]+$/, '');
   const base = cleaned || 'Unknown';
-  return base.length <= max ? base : base.slice(0, max).trim();
+  return base.length <= max ? base : base.slice(0, max).trim().replace(/[. ]+$/, '');
 }
 
 /** Clip to `max`, marking the cut (esignAlertService convention). */

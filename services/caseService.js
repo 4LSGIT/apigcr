@@ -797,8 +797,26 @@ const DEFAULT_CASE_FOLDER_TEMPLATES = {
   },
 };
 
+/**
+ * A path SEGMENT may not end in '.' or ' ' — Windows drops both on create, so
+ * the Dropbox desktop client and the web app end up disagreeing about the
+ * folder's name. Substituted values reach here raw (a contact name, a case
+ * subtype), and since org contacts arrived one of them is a legal entity name
+ * with a deliberate trailing period: the active subfolder templates end with
+ * "{{contact_name}}", which for 'Legacy Signature Properties, Inc.' produces
+ * exactly that. Trim per segment, not per path — interior dots are fine.
+ */
+function _trimPathSegments(path) {
+  return String(path)
+    .split('/')
+    .map(seg => seg.replace(/[. ]+$/, ''))
+    .join('/');
+}
+
 function _substituteTemplate(template, values) {
-  return String(template).replace(/\{\{(\w+)\}\}/g, (m, key) => (key in values ? values[key] : m));
+  return _trimPathSegments(
+    String(template).replace(/\{\{(\w+)\}\}/g, (m, key) => (key in values ? values[key] : m))
+  );
 }
 
 async function _loadCaseFolderTemplates(db) {

@@ -755,8 +755,18 @@ function updateHeader() {
   const c = window.entityData.contact;
   if (!c) return;
 
+  // Org contacts (slice 1/3) carry BLANK contact_fname / contact_lname — the
+  // name lives in contact_org_name and the DB trigger mirrors it into
+  // contact_name. Rendering the parts would leave the header empty. Two spans
+  // rather than one so the existing markup and styling are untouched: the org
+  // name goes in the first, the second empties out.
+  if (String(c.contact_kind || 'person').toLowerCase() === 'org') {
+    E('fname').innerHTML = c.contact_name || c.contact_org_name || "";
+    E('lname').innerHTML = "";
+  } else {
   E('fname').innerHTML = c.contact_fname || "";
   E('lname').innerHTML = c.contact_lname || "";
+  }
   E('phone').innerHTML = c.contact_phone
     ? c.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
 }

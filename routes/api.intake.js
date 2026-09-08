@@ -223,6 +223,33 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
   // ── Email normalization (light — defer real normalization to the service) ──
   const trimmedEmail = (typeof email === 'string' && email.trim() !== '') ? email.trim() : null;
 
+  // ── KIND — validated HERE, before the resolve step, not in the CREATE
+  //    branch (org-contacts slice 1 fixup). Reason: an org and its officer
+  //    routinely share a phone and an email, so an org intake that entered
+  //    the value-match would resolve to the OFFICER and take the UPDATE
+  //    branch — silently patching the human instead of creating the company,
+  //    with the org fields dropped on the floor (contact_kind is not in
+  //    UPDATE_OPTIONALS, deliberately). An explicit contact_kind:'org' is
+  //    therefore treated like duplicate='duplicate': it skips matching and
+  //    goes straight to CREATE. force_contact_id combined with an org intake
+  //    falls through to the existing "not among matches" 400 — you cannot
+  //    value-match your way onto an org; select it by id and use
+  //    PATCH /api/contacts/:id instead. ──
+  const intakeKind = String(req.body.contact_kind || 'person').trim().toLowerCase();
+  if (intakeKind !== 'person' && intakeKind !== 'org') {
+    return res.status(400).json({
+      status:  "error",
+      message: 'contact_kind must be "person" or "org"',
+    });
+  }
+  const intakeOrgName = String(req.body.contact_org_name || '').trim();
+  if (intakeKind === 'org' && !intakeOrgName) {
+    return res.status(400).json({
+      status:  "error",
+      message: 'contact_org_name is required when contact_kind is "org"',
+    });
+  }
+
   // ── Phase 1: optional start_date overrides for the primary phone/email
   //    child rows (orphan-adopt create-new branch). Only consumed on the
   //    CREATE path below; validated here so a malformed value fails fast.
@@ -243,7 +270,8 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
   try {
     // ── Resolve candidates (skip when forcing CREATE or no identifiers) ──
     let matches = [];
-    if (duplicate !== "duplicate" && (normalizedPhone || trimmedEmail)) {
+    if (duplicate !== "duplicate" && intakeKind !== 'org'
+        && (normalizedPhone || trimmedEmail)) {
       const result = await contactService.resolveContactsByValue(
         req.db,
         { phone: normalizedPhone, email: trimmedEmail },
@@ -363,23 +391,36 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
     // ─────────────────────────────────────
     // CREATE branch
     // ─────────────────────────────────────
-    if (!nameForCreate) {
-      return res.status(400).json({
-        status:  "error",
-        message: "Name is required to create a contact (provide name, or firstName + lastName)",
-      });
-    }
-    if (!nameForCreate.firstName || !nameForCreate.lastName) {
-      return res.status(400).json({
-        status:  "error",
-        message: "Both firstName and lastName are required to create a contact",
-      });
+    //
+    // KIND (org-contacts slice 1). Optional passthrough, person by default —
+    // every existing caller omits contact_kind and keeps its exact behaviour.
+    // intakeKind / intakeOrgName are validated ABOVE the resolve step (see
+    // the fixup comment there): an explicit org intake never enters the
+    // value-match, so reaching this branch with intakeKind === 'org' is the
+    // only way an org is ever handled by this route — always a CREATE.
+    if (intakeKind !== 'org') {
+      if (!nameForCreate) {
+        return res.status(400).json({
+          status:  "error",
+          message: "Name is required to create a contact (provide name, or firstName + lastName)",
+        });
+      }
+      if (!nameForCreate.firstName || !nameForCreate.lastName) {
+        return res.status(400).json({
+          status:  "error",
+          message: "Both firstName and lastName are required to create a contact",
+        });
+      }
     }
 
     const created = await contactService.createContact(req.db, {
-      fname:   nameForCreate.firstName,
-      mname:   nameForCreate.middleName,
-      lname:   nameForCreate.lastName,
+      kind:     intakeKind,
+      org_name: intakeOrgName,
+      // On the org path createContact forces these blank; passing whatever
+      // the parser produced keeps one call site rather than two.
+      fname:   nameForCreate ? nameForCreate.firstName  : '',
+      mname:   nameForCreate ? nameForCreate.middleName : '',
+      lname:   nameForCreate ? nameForCreate.lastName   : '',
       phone:   normalizedPhone || '',
       email:   trimmedEmail   || '',
       address: req.body.contact_address || '',

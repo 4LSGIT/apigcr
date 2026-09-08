@@ -75,6 +75,23 @@ const DEFAULT_LOG_LIMIT = 200;
 const SSN_COLUMN = 'contact_ssn';
 
 /**
+ * The entity axis (org-contacts slice 1). Orthogonal to contact_type, which
+ * is a dirty free-text role label ('person' 950 / 'Client' 74 / '' 26 as of
+ * 2026-09-08) and is NOT the kind axis despite one of its values reading
+ * like one.
+ *
+ * contacts.contact_kind is varchar(12) and this session's sql_mode has no
+ * STRICT_TRANS_TABLES, so the column will happily store 'orgg'. This set is
+ * the only thing standing between a typo and a row whose derived names never
+ * compute. Same reason ORG_NAME_MAX is enforced here.
+ */
+const CONTACT_KINDS = new Set(['person', 'org']);
+
+/** contacts.contact_org_name is varchar(120). m3 widens the three derived
+ *  name columns to match, so 120 is now the real ceiling on both sides. */
+const ORG_NAME_MAX = 120;
+
+/**
  * Strip SSN from a contact row or array of rows.
  */
 function stripSsn(row) {
@@ -1969,6 +1986,22 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
  *
  * DB triggers auto-compute contact_name, contact_lfm_name, contact_rname.
  *
+ * KIND (org-contacts slice 1). `kind` is the entity axis and is orthogonal to
+ * `type` (contact_type), which is a dirty free-text role label and is left
+ * alone. Two shapes:
+ *
+ *   kind 'person' — fname + lname required, as always. Unchanged.
+ *   kind 'org'    — org_name required; fname/mname/lname are FORCED blank so
+ *                   the trigger's org branch is the only writer of the derived
+ *                   names. pname is NOT forced: it is Preferred Name for a
+ *                   person and DBA for an org, one column serving both, and
+ *                   the contact form's org mode writes into it. dob is left
+ *                   alone too — the form relabels it "Date formed".
+ *
+ * contact_kind is a plain varchar, and this session's sql_mode has no
+ * STRICT_TRANS_TABLES, so nothing DB-side rejects a garbage kind. The
+ * validation below is the only gate.
+ *
  * Mints contacts.contact_token (32 hex) at creation so booking links
  * ({{contacts.contact_token}}) resolve without a separate mint step.
  *
@@ -1991,6 +2024,8 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
  * @returns {{ contact_id: number, contact_name: string }}
  */
 async function createContact(db, {
+  kind     = 'person',
+  org_name = '',
   fname,
   mname  = '',
   lname,
@@ -2016,8 +2051,36 @@ async function createContact(db, {
   phone_start_date = null,
   email_start_date = null
 }, { userId = 0 } = {}) {
-  if (!fname) throw new Error('createContact requires fname');
-  if (!lname) throw new Error('createContact requires lname');
+  // ── kind gate ────────────────────────────────────────────────
+  const normalizedKind = String(kind || 'person').trim().toLowerCase();
+  if (!CONTACT_KINDS.has(normalizedKind)) {
+    throw new Error(
+      `createContact: kind must be one of ${[...CONTACT_KINDS].join(', ')} (got "${kind}")`
+    );
+  }
+
+  let orgName = String(org_name == null ? '' : org_name).trim();
+
+  if (normalizedKind === 'org') {
+    if (!orgName) throw new Error('createContact requires org_name when kind is org');
+    if (orgName.length > ORG_NAME_MAX) {
+      throw new Error(`createContact: org_name exceeds ${ORG_NAME_MAX} characters`);
+    }
+    // The trigger's org branch is the sole writer of the derived names, and
+    // a stray name part would be invisible in the UI but visible in exports.
+    fname = '';
+    mname = '';
+    lname = '';
+    // pname is deliberately NOT blanked — DBA lives there on an org.
+    // marital_status / dob need no special handling here: both already
+    // default to null in the signature, so an org that does not pass them
+    // stores NULL. `dob` is NOT forced blank when supplied — the form
+    // relabels it "Date formed" and an org legitimately has one.
+  } else {
+    if (!fname) throw new Error('createContact requires fname');
+    if (!lname) throw new Error('createContact requires lname');
+    orgName = '';
+  }
 
   const normalizedPhone   = normalizePhone(phone);
   const normalizedPhone2  = normalizePhone(phone2);
@@ -2034,14 +2097,16 @@ async function createContact(db, {
     // 1. Insert the contacts row
     const [result] = await conn.query(
       `INSERT INTO contacts
-         (contact_fname, contact_mname, contact_lname, contact_pname,
+         (contact_kind, contact_org_name,
+          contact_fname, contact_mname, contact_lname, contact_pname,
           contact_phone, contact_email, contact_type,
           contact_address, contact_city, contact_state, contact_zip,
           contact_dob, contact_marital_status,
           contact_phone2, contact_email2,
           contact_tags, contact_notes, contact_token, contact_created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
+        normalizedKind, orgName,
         fname, mname, lname, pname,
         normalizedPhone, normalizedEmail, type,
         address, city, state, zip,
@@ -2178,6 +2243,14 @@ async function createContact(db, {
  * DB trigger handles: recomputing name fields + logging changes on the
  * contacts row.
  *
+ * KIND (org-contacts slice 1): contact_kind and contact_org_name are on the
+ * whitelist. A kind switch is validated against the RESULTING row shape —
+ * → 'org' needs a non-empty contact_org_name (in this patch or already
+ * stored), → 'person' needs fname + lname. Without that guard the trigger
+ * would branch on the new kind, find nothing to compute from, and write
+ * blank derived names with no error (the columns are NOT NULL, and '' is
+ * legal under this session's non-strict sql_mode).
+ *
  * SLICE 2 DUAL-WRITE: when contact_phone / contact_email /
  * contact_address|city|state|zip appear in `fields` (and no aggregate
  * array is also supplied for that kind), the legacy single-value
@@ -2247,6 +2320,7 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   }
 
   const ALLOWED = new Set([
+    'contact_kind', 'contact_org_name',
     'contact_type', 'contact_fname', 'contact_mname', 'contact_lname',
     'contact_pname', 'contact_phone', 'contact_email',
     'contact_address', 'contact_city', 'contact_state', 'contact_zip',
@@ -2259,6 +2333,28 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   const blocked = keys.filter(k => !ALLOWED.has(k));
   if (blocked.length) {
     throw new Error(`updateContact: blocked columns: ${blocked.join(', ')}`);
+  }
+
+  // ── kind validation ──────────────────────────────────────────────
+  // contact_kind is a varchar under a non-strict sql_mode: the column accepts
+  // anything, and the name triggers branch on an exact 'org' match. A typo
+  // therefore silently lands the row in the person branch. Reject it here.
+  if ('contact_kind' in scalarFields) {
+    const k = String(scalarFields.contact_kind || '').trim().toLowerCase();
+    if (!CONTACT_KINDS.has(k)) {
+      throw new Error(
+        `updateContact: contact_kind must be one of ${[...CONTACT_KINDS].join(', ')} ` +
+        `(got "${scalarFields.contact_kind}")`
+      );
+    }
+    scalarFields.contact_kind = k;
+  }
+  if ('contact_org_name' in scalarFields) {
+    const n = String(scalarFields.contact_org_name == null ? '' : scalarFields.contact_org_name).trim();
+    if (n.length > ORG_NAME_MAX) {
+      throw new Error(`updateContact: contact_org_name exceeds ${ORG_NAME_MAX} characters`);
+    }
+    scalarFields.contact_org_name = n;
   }
 
   // Notes length — contact_notes is TEXT and truncates silently under this
@@ -2275,6 +2371,66 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   if (normalized.contact_phone2) normalized.contact_phone2 = normalizePhone(normalized.contact_phone2);
   if (normalized.contact_email)  normalized.contact_email  = normalizeEmail(normalized.contact_email);
   if (normalized.contact_email2) normalized.contact_email2 = normalizeEmail(normalized.contact_email2);
+
+  // ── KIND-SWITCH RESOLUTION (org-contacts slice 1) ─────────────────
+  //
+  // The name triggers compute the three derived columns from a DIFFERENT
+  // source per kind: fname/mname/lname for a person, contact_org_name for an
+  // org. A patch that moves the kind without supplying the incoming kind's
+  // source column therefore writes BLANK names — silently, because those
+  // columns are NOT NULL and '' is legal under this session's non-strict
+  // sql_mode. Two jobs here:
+  //
+  //   1. VALIDATE the RESULTING row, not the patch. `contact_kind:'org'`
+  //      alone is fine when contact_org_name is already stored.
+  //   2. BLANK the outgoing kind's source columns, so an org never keeps a
+  //      stale contact_fname that no screen shows but every export does.
+  //      contact_pname is deliberately NOT blanked — it is Preferred Name
+  //      for a person and DBA for an org, one column serving both.
+  //
+  // Read is outside the transaction. The failure mode of a stale read here is
+  // rejecting a patch that raced a concurrent kind change, or blanking name
+  // parts that were about to be blanked anyway — both safe, and the write
+  // itself is still transactional.
+  if ('contact_kind' in normalized || 'contact_org_name' in normalized) {
+    const [[shapeRow]] = await db.query(
+      `SELECT contact_kind, contact_org_name, contact_fname, contact_lname
+         FROM contacts WHERE contact_id = ?`,
+      [contactId]
+    );
+    if (!shapeRow) throw new Error(`Contact ${contactId} not found`);
+
+    const pick = (key, fallback) => (key in normalized
+      ? String(normalized[key] == null ? '' : normalized[key]).trim()
+      : String(fallback == null ? '' : fallback).trim());
+
+    const nextKind = 'contact_kind' in normalized
+      ? normalized.contact_kind
+      : String(shapeRow.contact_kind || 'person');
+    const nextOrg = pick('contact_org_name', shapeRow.contact_org_name);
+    const nextF   = pick('contact_fname',    shapeRow.contact_fname);
+    const nextL   = pick('contact_lname',    shapeRow.contact_lname);
+
+    if (nextKind === 'org') {
+      if (!nextOrg) {
+        throw new Error(
+          'updateContact: contact_org_name is required for an org contact ' +
+          '(supply it in the same patch, or it must already be set on the row)'
+        );
+      }
+      normalized.contact_fname = '';
+      normalized.contact_mname = '';
+      normalized.contact_lname = '';
+    } else {
+      if (!nextF || !nextL) {
+        throw new Error(
+          'updateContact: contact_fname and contact_lname are required for a person contact ' +
+          '(supply them in the same patch, or they must already be set on the row)'
+        );
+      }
+      normalized.contact_org_name = '';
+    }
+  }
 
   const finalKeys = Object.keys(normalized);
 

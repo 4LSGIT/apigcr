@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-07T22:33:36.219Z
+-- Generated: 2026-09-08T20:47:08.385Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:27b1b354410d0d9592d09fed1f84bbbe
+-- Fingerprint: sha256:651f32390338b94dccf1c94e80a9179c
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -926,6 +926,8 @@ CREATE TABLE `contact_relations` (
 DROP TABLE IF EXISTS `contacts`;
 CREATE TABLE `contacts` (
   `contact_id` int unsigned NOT NULL,
+  `contact_kind` varchar(12) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'person',
+  `contact_org_name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `contact_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_lfm_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -3768,6 +3770,7 @@ ALTER TABLE `contacts`
   ADD PRIMARY KEY (`contact_id`),
   ADD UNIQUE KEY `uq_contacts_contact_token` (`contact_token`),
   ADD KEY `idx_contact_email` (`contact_email`),
+  ADD KEY `idx_contacts_kind` (`contact_kind`),
   ADD FULLTEXT KEY `contact_name` (`contact_name`);
 
 --
