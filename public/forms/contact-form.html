@@ -193,27 +193,90 @@
        Display-toggling keeps the values live and the diff honest. */
     .ycp-kind-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
     .ycp-kind-row .yc-label { margin: 0; }
-    .ycp-kind-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-    .ycp-kind-seg button {
+    /* Track for a two-position slider.
+       A COLOURED half — tint or solid fill — cannot work here: with exactly
+       two options nothing tells you whether the colour marks the one you
+       picked or the one you didn't. So the slider physically COVERS the
+       option you did not pick. Exactly one word is ever readable, and that
+       word is the answer:  [/////] Organization  =  it's an Organization. */
+    .ycp-kind-seg {
+      position: relative;
+      /* GRID, not flex. The track is shrink-to-fit, so a flex row has no free
+         space to distribute and `flex:1` leaves the halves at their natural
+         widths (72px vs 109px — measured); two 1fr columns are equal to the
+         wider label by definition, which is what makes the pill's 50% land. */
+      display: inline-grid;
+      grid-template-columns: 1fr 1fr;
+      padding: 3px;
       background: var(--surface-sunken);
-      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    /* The cover. Absolutely positioned, so its percentages resolve against the
+       track's PADDING box: one half is calc(50% - 3px), and translateX(100%)
+       — 100% of the cover's OWN width — parks it exactly over the other half.
+       No JS measurement, and nothing to re-measure when the labels or the
+       font change.
+
+       Person always holds the left slot and Organization the right; only the
+       cover moves. It sits ABOVE the labels (z-index) and is fully OPAQUE —
+       a translucent slab would ghost the hidden word through and put both
+       words back on screen. pointer-events:none lets the click fall through
+       to the button underneath, so shoving the slider off a word selects it. */
+    .ycp-kind-cover {
+      position: absolute;
+      top: 3px; bottom: 3px; left: 3px;
+      width: calc(50% - 3px);
+      z-index: 2;
+      pointer-events: none;
+      border-radius: 6px;
+      background-color: var(--border-strong);
+      /* The grip: five hairlines, centred. Purely so the slab reads as a
+         thing you push rather than an empty box. */
+      background-image: repeating-linear-gradient(90deg, var(--surface) 0 1px, transparent 1px 4px);
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 21px 11px;
+      transform: translateX(100%);   /* person selected → cover the RIGHT half */
+    }
+    .ycp-kind-seg[data-kind="org"] .ycp-kind-cover { transform: translateX(0); }
+    /* Hovering the covered half darkens the slab. An inset shadow paints OVER
+       the opaque background, so the hidden word stays hidden — dropping
+       opacity here would leak it. */
+    .ycp-kind-seg button:not(.active):not(:disabled):hover ~ .ycp-kind-cover {
+      box-shadow: inset 0 0 0 99px rgba(0, 0, 0, .07);
+    }
+    /* Slide only AFTER the first render — .is-ready is added a frame later, so
+       a stored org paints covered-on-the-left instead of gliding across. */
+    .ycp-kind-seg.is-ready .ycp-kind-cover { transition: transform .16s cubic-bezier(.4, 0, .2, 1); }
+    @media (prefers-reduced-motion: reduce) {
+      .ycp-kind-seg.is-ready .ycp-kind-cover { transition: none; }
+    }
+
+    /* The weight stays 600 in BOTH states on purpose: a weight that changed
+       with selection would resize the track under the pill mid-slide and
+       leave it straddling the seam. */
+    .ycp-kind-seg button {
+      position: relative;
+      z-index: 1;
+      background: none;
       border: none;
       padding: 5px 14px;
       font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      color: var(--text-muted);
       cursor: pointer;
-      transition: background .12s ease, color .12s ease;
+      transition: color .12s ease;
     }
-    .ycp-kind-seg button + button { border-left: 1px solid var(--border); }
-    /* The unselected half rests a step lighter than body text (still AA on
-       --surface-sunken in both themes) and darkens back to --text-2 on hover,
-       so the pointer target reads as live without competing with the active
-       half. :disabled is read-only mode — nothing there is clickable. */
-    .ycp-kind-seg button:not(.active):not(:disabled):hover {
-      background: var(--hover);
-      color: var(--text-2);
-    }
-    .ycp-kind-seg button.active { background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 600; }
-    .yc-readonly .ycp-kind-seg button { cursor: default; opacity: .75; }
+    /* The readable half is the value, so it gets full body text. The covered
+       half's colour only matters if the cover ever fails to paint — keep it
+       legible rather than invisible, so a CSS failure degrades to the old
+       two-words state instead of a blank. Clicking the value is a no-op, so
+       only the covered half claims the pointer cursor. */
+    .ycp-kind-seg button.active { color: var(--text); cursor: default; }
+    .yc-readonly .ycp-kind-seg { opacity: .75; }
+    .yc-readonly .ycp-kind-seg button { cursor: default; }
   </style>
 </head>
 <body>
@@ -242,9 +305,14 @@
   <!-- ── Row 0: Kind selector (org-contacts slice 3) ── -->
   <div class="ycp-kind-row">
     <label class="yc-label">This contact is a</label>
-    <div class="ycp-kind-seg" id="kindSeg">
-      <button type="button" data-kind="person">Person</button>
-      <button type="button" data-kind="org">Organization</button>
+    <div class="ycp-kind-seg" id="kindSeg" data-kind="person">
+      <button type="button" data-kind="person" aria-pressed="true">Person</button>
+      <button type="button" data-kind="org" aria-pressed="false">Organization</button>
+      <!-- The slider, LAST so the hover rule can reach it as a sibling. It is
+           absolutely positioned, so document order costs it nothing in layout.
+           Decorative: hiding a word is a visual act only — the real state goes
+           to assistive tech through aria-pressed on the buttons. -->
+      <span class="ycp-kind-cover" aria-hidden="true"></span>
     </div>
     <!-- The real field. Hidden input, not the buttons — yc-forms.js reads
          and diffs `value`, and the segmented control is only its skin. -->
@@ -675,6 +743,14 @@
         // this one.
         resetKindStash();
         applyKind(readKind(), { clearOther: false });
+        // Arm the pill's slide a frame after it has painted where it belongs.
+        // Same task would let the browser see the position change and the
+        // transition in one recalc, and a stored org would glide across on
+        // load as if someone had just clicked it.
+        requestAnimationFrame(() => {
+          const seg = document.getElementById('kindSeg');
+          if (seg) seg.classList.add('is-ready');
+        });
         // Wire per-form glue after first populate.
         bindRepeaterGlue('phones');
         bindRepeaterGlue('emails');
@@ -801,8 +877,19 @@
       const hidden = document.querySelector('[name="kind"]');
       if (hidden && hidden.value !== k) hidden.value = k;
 
+      // data-kind on the track is what parks the cover (CSS owns the travel);
+      // .active and aria-pressed carry the label colour and the state
+      // assistive tech reads.
+      const seg = document.getElementById('kindSeg');
+      if (seg) seg.dataset.kind = k;
       document.querySelectorAll('#kindSeg button').forEach(b => {
-        b.classList.toggle('active', b.dataset.kind === k);
+        const on = b.dataset.kind === k;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        // The covered word is unreadable on purpose, so the tooltip is the
+        // only way to learn what is under the slider without moving it.
+        if (on) b.removeAttribute('title');
+        else    b.title = `Switch to ${b.textContent.trim()}`;
       });
 
       document.querySelectorAll('[data-kind-block]').forEach(el => {
