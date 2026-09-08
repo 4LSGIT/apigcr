@@ -748,6 +748,7 @@ tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
 tests/createTaskDedupe.test.js
+tests/dbConsoleSplitSql.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js
 tests/dbkqV12Polish.test.js

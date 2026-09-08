@@ -432,14 +432,41 @@ async function runQuery() {
 // escapes, -- and # line comments, and /* */ block comments. Leading
 // comments before a statement stay attached to that statement, which is the
 // natural behaviour for the "annotated batch" pattern.
+//
+// DELIMITER is supported because a trigger or stored-procedure body is the one
+// thing a plain semicolon splitter cannot express: BEGIN … END contains
+// semicolons that are part of ONE statement, and without DELIMITER awareness a
+// CREATE TRIGGER gets chopped into fragments and `DECLARE x VARCHAR(255)`
+// arrives at the server on its own. DELIMITER is a mysql-CLI client directive,
+// not SQL — the server has never heard of it — so it is consumed here and
+// never forwarded.
+//
+// The directive is only recognised at the start of a line, outside strings and
+// comments, which is where mysql itself requires it. It does NOT flush the
+// pending buffer: leaving buf alone is what keeps a leading comment block
+// attached to the statement that follows it, matching the behaviour above.
 function splitSql(sql) {
   const stmts = [];
   let buf = "";
+  let delim = ";";
+  let atLineStart = true;   // only whitespace seen since the last newline
   let state = "NORMAL"; // NORMAL | LCOMMENT | BCOMMENT | SQ | DQ | BT
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i], next = sql[i + 1];
     if (state === "NORMAL") {
-      if (ch === ";") { const t = buf.trim(); if (t) stmts.push(t); buf = ""; continue; }
+      if (atLineStart) {
+        const m = /^DELIMITER[ \t]+(\S+)[ \t]*(?:\r?\n|$)/i.exec(sql.slice(i));
+        if (m) { delim = m[1]; i += m[0].length - 1; atLineStart = true; continue; }
+      }
+      if (ch === "\n") { atLineStart = true; buf += ch; continue; }
+      if (!/\s/.test(ch)) atLineStart = false;
+
+      // Multi-char delimiters ($$, //) need a substring compare, not ch ===.
+      if (sql.startsWith(delim, i)) {
+        const t = buf.trim(); if (t) stmts.push(t); buf = "";
+        i += delim.length - 1;
+        continue;
+      }
       // -- requires whitespace/eof after, per MySQL grammar
       if (ch === "-" && next === "-" && (sql[i + 2] === undefined || /\s/.test(sql[i + 2]))) {
         buf += "--"; i++; state = "LCOMMENT"; continue;

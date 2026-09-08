@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-08T20:47:08.385Z
+-- Generated: 2026-09-08T21:39:35.260Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:651f32390338b94dccf1c94e80a9179c
+-- Fingerprint: sha256:87af1952c19bf022d9953c5c30a6e101
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -929,9 +929,9 @@ CREATE TABLE `contacts` (
   `contact_kind` varchar(12) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'person',
   `contact_org_name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `contact_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `contact_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `contact_lfm_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `contact_rname` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `contact_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `contact_lfm_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `contact_rname` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_fname` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_mname` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_lname` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
