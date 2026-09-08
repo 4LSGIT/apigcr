@@ -190,6 +190,14 @@
     }
     .chip.type { background: var(--info-soft); color: var(--info); }
     .chip.gone { background: var(--danger-soft); color: var(--danger); }
+    /* .chip.pending-del — SYNC-1's grace-window chip (rowHtml). Inherits the
+       danger palette from .gone ON PURPOSE: a pending delete IS a warning.
+       This rule is deliberately empty; it exists so a stylesheet audit finds
+       the selector HERE instead of concluding the markup references nothing
+       and stripping the class (which would take documentsUi.related's chip
+       tests with it). Style it only if pending ever needs to look different
+       from deleted. */
+    .chip.pending-del { }
     .chip.pub  { background: var(--warn-soft);  color: var(--warn); }
     /* PROVENANCE, not content. A `via` badge says "this row is here because of
        a RELATED record, not because it is on the thing you are looking at" —
