@@ -2728,8 +2728,9 @@
   <!-- Standing in for the feature this slot has not got yet: the easter egg
        from public/js/mascot.js, which until now could only be reached by a
        long-press of the header logo that nobody would ever find by accident.
-       First press fetches the cat, the next one opens its trick panel. -->
-  <button class="big-button" onclick="toggleMascot()" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-cat fa-2xl"></i><br><br>Cat</button>
+       First press fetches Casey, the next one opens the trick panel. The icon
+       is what says "cat" here, which is why the label can carry the name. -->
+  <button class="big-button" onclick="toggleMascot()" title="Casey the YisraCat" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-cat fa-2xl"></i><br><br>Casey</button>
   <br><br>
   <!-- What goes out, and what comes back as numbers: the message, the page it
        lands on, the links that get there, and the reporting over all of it.
@@ -3180,8 +3181,8 @@
   .pill-button:hover { border-color:#1d7fe0; }
   .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
 
-  /* The cat's trick panel. Lives inside a Swal TOAST, so it is 360px wide and
-     the cat is still moving beside it — see catPanel(). */
+  /* Casey's trick panel. Lives inside a Swal TOAST, so it is 360px wide and the
+     cat is still moving beside it — see catPanel(). */
   .cat-panel { text-align:left; font-size:13px; }
   .cat-tricks { display:flex; flex-wrap:wrap; gap:6px; }
   .cat-panel button {
@@ -3230,7 +3231,7 @@
       Swal.fire({
         icon: 'info',
         title: 'No cat here',
-        text: 'The cat sits out when your browser asks for reduced motion, or when it will not let this site remember anything.'
+        text: 'Casey sits out when your browser asks for reduced motion, or when it will not let this site remember anything.'
       });
       return;
     }
@@ -3243,12 +3244,12 @@
       Swal.fire({
         icon: 'info',
         title: 'Not enough room',
-        text: 'The cat needs a window about 900px wide to have anything to walk on. Widen this one and it will turn up — the setting is saved either way.'
+        text: 'Casey needs a window about 900px wide to have anything to walk on. Widen this one and Casey turns up — the setting is saved either way.'
       });
     }
   }
 
-  // ── The cat's trick panel ────────────────────────────────────────────
+  // ── Casey's trick panel ──────────────────────────────────────────────
   // A TOAST, deliberately. A modal Swal paints over the cat at z-1060 AND
   // freezes it (mascot.js stops its frame loop while a modal is up), so a modal
   // panel would mean pressing "fly" and watching a still cat behind a dialog.
@@ -3270,7 +3271,7 @@
       // a 340px toast would sit on its nav. Nothing is pinned bottom-right.
       // (No backdrop:false — a toast has none, and Swal warns if you pass one.)
       position: 'bottom-end',
-      title: 'The cat',
+      title: 'Casey',
       showConfirmButton: false,
       showCloseButton: true,
       html:
@@ -3278,7 +3279,7 @@
           '<div class="cat-tricks">' + tricks + '</div>' +
           '<div class="cat-panel-foot">' +
             '<button data-cat-random>Surprise me</button>' +
-            '<button data-cat-away>Send it away</button>' +
+            '<button data-cat-away>Send Casey away</button>' +
           '</div>' +
           '<div class="cat-panel-say" aria-live="polite"></div>' +
         '</div>',
@@ -3297,7 +3298,7 @@
           // climb needs a wall within reach. The console carries which; the
           // panel only has to not look broken.
           const did = b.hasAttribute('data-cat-random') ? Mascot.do() : Mascot.do(b.dataset.catDo);
-          say.textContent = did ? '' : 'Not from where it is right now — it has to be standing on something first.';
+          say.textContent = did ? '' : 'Not from there — Casey has to be standing on something first.';
         });
       }
     });

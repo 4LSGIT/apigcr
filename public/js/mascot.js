@@ -1,6 +1,10 @@
 /* public/js/mascot.js
  * ───────────────────────────────────────────────────────────────────────────────
- * THE CAT (an easter egg)
+ * CASEY, THE YISRACAT (an easter egg)
+ *
+ * Named in September 2026, and the name is load-bearing in exactly one way: it
+ * is what the Cat tile's panel, the tooltip and the introduction all call it, so
+ * change it in those three strings and here, not in one of them.
  *
  * A Win95-style desktop pet for the YisraCase shell. It wanders, sits, grooms,
  * sleeps, climbs the walls, hangs off the ceiling, falls off ledges, and — the
@@ -21,11 +25,12 @@
  * undefined. Delete the file and the tag and the tile says so politely.
  *
  * HOW YOU GET IT
- *   The Cat tile in More, or a long-press of the header logo for ~0.9s. Either
- *   one puts it away again. So does double-clicking the cat, or Mascot.off()
- *   from the console. The choice is remembered per browser in localStorage. OFF
- *   by default for everyone — a colleague who never presses the tile never sees
- *   a cat.
+ *   The Casey tile in More (a second press opens a panel of tricks, which drives
+ *   the same actions the console does), or a long-press of the header logo for
+ *   ~0.9s. Either one puts it away again. So does double-clicking the cat, or
+ *   Mascot.off() from the console. The choice is remembered per browser in
+ *   localStorage. OFF by default for everyone — a colleague who never presses
+ *   the tile never sees a cat.
  *
  * DRIVING IT FROM THE CONSOLE
  *   Mascot.list()   — every action it can be told to do, and what each needs
@@ -162,9 +167,11 @@
     // just a default, and turning it off again would cost a deploy.
     //
     // The introduction repeats EVERY page load until the person actually makes a
-    // choice, because the bubble is the only place the gesture is explained. Show
+    // choice, because the bubble is the only place the way out is explained. Show
     // it once per browser and anyone who missed it in those 14 seconds is left
-    // with an unexplained animal and no way to get rid of it. Dismissing the cat
+    // with an unexplained animal and no way to get rid of it. (Since the Cat
+    // tile landed there is a visible way out too, which is what the bubble now
+    // points at — a tile you can see beats a gesture you cannot.) Dismissing the cat
     // writes the pref, the pref ends the debut branch, and the bubble stops.
     //
     // Parsed as LOCAL time (no timezone suffix), so the window closes at the end
@@ -957,7 +964,7 @@
     if (!root || say) return;
     say = document.createElement('div');
     say.className = 'yc-say';
-    say.textContent = 'Hello! Long-press the logo to send me away — or to bring me back.';
+    say.textContent = 'Hello, I am Casey! The Cat tile under More sends me away — or brings me back.';
     root.appendChild(say);
     requestAnimationFrame(function () { if (say) say.classList.add('show'); });
     setTimeout(hideSay, 14000);
@@ -983,7 +990,7 @@
     cat = document.createElement('div');
     cat.className = 'yc-cat';
     cat.innerHTML = SVG;
-    cat.title = 'drag me · double-click to send me away';
+    cat.title = 'Casey · drag me · double-click to send me away';
     root.appendChild(cat);
     document.body.appendChild(root);
 
