@@ -2727,7 +2727,8 @@
   <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
   <!-- Standing in for the feature this slot has not got yet: the easter egg
        from public/js/mascot.js, which until now could only be reached by a
-       long-press of the header logo that nobody would ever find by accident. -->
+       long-press of the header logo that nobody would ever find by accident.
+       First press fetches the cat, the next one opens its trick panel. -->
   <button class="big-button" onclick="toggleMascot()" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-cat fa-2xl"></i><br><br>Cat</button>
   <br><br>
   <!-- What goes out, and what comes back as numbers: the message, the page it
@@ -3178,6 +3179,22 @@
   .pill-button.no-icon .pill-label { display:inline; }
   .pill-button:hover { border-color:#1d7fe0; }
   .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
+
+  /* The cat's trick panel. Lives inside a Swal TOAST, so it is 360px wide and
+     the cat is still moving beside it — see catPanel(). */
+  .cat-panel { text-align:left; font-size:13px; }
+  .cat-tricks { display:flex; flex-wrap:wrap; gap:6px; }
+  .cat-panel button {
+    padding:4px 9px; border-radius:999px; border:1px solid #b9c2cf;
+    background:transparent; color:inherit; cursor:pointer;
+    font-size:13px; line-height:1.2;
+  }
+  .cat-panel button:hover { border-color:var(--accent,#1d7fe0); }
+  .cat-panel-foot { display:flex; gap:6px; margin-top:8px; }
+  .cat-panel-foot [data-cat-away] { margin-left:auto; }
+  /* Reserved whether or not it has anything to say, so pressing a trick the cat
+     refuses does not shove the buttons up under the pointer. */
+  .cat-panel-say { min-height:1.5em; margin-top:6px; font-size:12px; opacity:.75; }
 </style>
 <script>
   function adminTask(){
@@ -3217,15 +3234,73 @@
       });
       return;
     }
-    const wasOut = Mascot.out();
+    // Out already? Then this is not a toggle any more — it is the way to the
+    // tricks, and the panel carries the button that sends it away. Nobody meets
+    // the panel before they have met the cat.
+    if (Mascot.out()) { catPanel(); return; }
     Mascot.toggle();
-    if (!wasOut && !Mascot.out()) {
+    if (!Mascot.out()) {
       Swal.fire({
         icon: 'info',
         title: 'Not enough room',
         text: 'The cat needs a window about 900px wide to have anything to walk on. Widen this one and it will turn up — the setting is saved either way.'
       });
     }
+  }
+
+  // ── The cat's trick panel ────────────────────────────────────────────
+  // A TOAST, deliberately. A modal Swal paints over the cat at z-1060 AND
+  // freezes it (mascot.js stops its frame loop while a modal is up), so a modal
+  // panel would mean pressing "fly" and watching a still cat behind a dialog.
+  // A toast takes one corner and the cat carries on next to it.
+  //
+  // The buttons are whatever Mascot.list(true) says the cat knows, so an action
+  // added to mascot.js appears here on its own. This table only softens the two
+  // or three names that do not read as instructions; a name it has never heard
+  // of still gets a button under its own name.
+  const CAT_WORDS = { idle: 'settle', fly: 'balloon', chase: 'chase me', look: 'look about' };
+
+  function catPanel() {
+    const tricks = (Mascot.list(true) || [])
+      .map(n => `<button data-cat-do="${n}">${CAT_WORDS[n] || n}</button>`).join('');
+
+    Swal.fire({
+      toast: true,
+      // bottom-END, not start: the sidebar is fixed full-height on the left and
+      // a 340px toast would sit on its nav. Nothing is pinned bottom-right.
+      // (No backdrop:false — a toast has none, and Swal warns if you pass one.)
+      position: 'bottom-end',
+      title: 'The cat',
+      showConfirmButton: false,
+      showCloseButton: true,
+      html:
+        '<div class="cat-panel">' +
+          '<div class="cat-tricks">' + tricks + '</div>' +
+          '<div class="cat-panel-foot">' +
+            '<button data-cat-random>Surprise me</button>' +
+            '<button data-cat-away>Send it away</button>' +
+          '</div>' +
+          '<div class="cat-panel-say" aria-live="polite"></div>' +
+        '</div>',
+      didOpen: (popup) => {
+        const say = popup.querySelector('.cat-panel-say');
+        popup.addEventListener('click', (e) => {
+          const b = e.target.closest('[data-cat-do],[data-cat-random],[data-cat-away]');
+          if (!b) return;
+          // It can be sent away from the logo while this sits open, and a panel
+          // of buttons for a cat that is not there is worse than no panel.
+          if (!Mascot.out()) { Swal.close(); return; }
+          if (b.hasAttribute('data-cat-away')) { Mascot.toggle(); Swal.close(); return; }
+
+          // do() answers with the action's name, or false when the cat is in no
+          // position to oblige: nine of them need it standing on something, and
+          // climb needs a wall within reach. The console carries which; the
+          // panel only has to not look broken.
+          const did = b.hasAttribute('data-cat-random') ? Mascot.do() : Mascot.do(b.dataset.catDo);
+          say.textContent = did ? '' : 'Not from where it is right now — it has to be standing on something first.';
+        });
+      }
+    });
   }
 
   // ── Big-button hover animations ── HOW TO USE ─────────────────────────

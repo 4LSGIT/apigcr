@@ -29,6 +29,9 @@
  *
  * DRIVING IT FROM THE CONSOLE
  *   Mascot.list()   — every action it can be told to do, and what each needs
+ *                     (list(true) returns the names without printing anything —
+ *                     the Cat tile's trick panel builds itself from that, so an
+ *                     action added here turns up in the panel on its own)
  *   Mascot.fly()    — …or .jump() .climb() .sleep() .hang() etc, one per action
  *   Mascot.do(name) — the same thing by name; Mascot.do() rolls a random one
  *   Mascot.debug()  — outlines the box the cat thinks it lives in
@@ -38,7 +41,7 @@
  * WHY IT CANNOT BITE YOU
  *   - z-index 900: above shell chrome (≤100), below the versionGuard bar (999)
  *     and below SweetAlert2 (1060), so a modal always covers it. It also freezes
- *     while a Swal is open.
+ *     while one is open — a toast excepted, that being a corner and not a modal.
  *   - The container is pointer-events:none; only the 36×28 cat itself takes
  *     pointer events, so it can never swallow a click meant for the app.
  *   - Paused when the tab is hidden, and while the viewport is too narrow.
@@ -850,7 +853,13 @@
     // should all cost nothing and change nothing.
     if (document.hidden) return;
     if (vw() < CFG.MIN_VW) { root.style.display = 'none'; return; }
-    if (document.body.classList.contains('swal2-shown')) return;
+    // A TOAST is not a modal, and the trick panel in the shell is one: it takes
+    // a corner rather than the screen, so freezing for it would mean pressing
+    // 'fly' and watching a still cat next to the button that asked for it.
+    // SweetAlert2 puts BOTH classes on the body for a toast, so "a modal is
+    // open" has to be spelled out rather than assumed from swal2-shown.
+    if (document.body.classList.contains('swal2-shown') &&
+       !document.body.classList.contains('swal2-toast-shown')) return;
     root.style.display = '';
 
     if (!(dt > 0)) return;
@@ -1186,12 +1195,16 @@
     // '1' while nothing is on screen.
     out: function () { return running; },
     'do': doAction,
-    list: function () {
+    // list(true) is the same list with nothing printed: a caller building a UI
+    // out of the names wants the array, not a console table every time a panel
+    // opens.
+    list: function (quiet) {
       var rows = [], names = [];
       for (var i = 0; i < ACTIONS.length; i++) {
         rows.push({ call: 'Mascot.' + ACTIONS[i].name + '()', needs: ACTIONS[i].needs, what: ACTIONS[i].what });
         names.push(ACTIONS[i].name);
       }
+      if (quiet) return names;
       try { console.table(rows); } catch (e) { console.log(rows); }
       console.log('Mascot.do("name") runs one by name · Mascot.do() rolls a random one');
       return names;
