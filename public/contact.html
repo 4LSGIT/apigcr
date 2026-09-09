@@ -1401,6 +1401,32 @@ function buildRelationTypeOptions(types, selectedValue = '') {
   return opts.join('');
 }
 
+/**
+ * Type options for the EDIT modal. Unlike the Add modal there is no
+ * `|swap` direction bit: PATCH cannot swap contact_a/contact_b, so the
+ * open contact's slot is fixed and each type is offered only in the
+ * direction that slot implies (slot A → forward_label, slot B →
+ * reverse_label). Reversing direction requires delete + re-add.
+ *
+ * If the row's current type is missing from the active catalog
+ * (deactivated after creation — grandfathered), it's prepended as a
+ * selectable "(inactive)" option so the modal still opens and saves.
+ */
+function buildEditTypeOptions(types, currentCode, isA, currentLabel) {
+  const opts = [];
+  let currentFound = false;
+  types.forEach(t => {
+    const label = isA ? t.forward_label : t.reverse_label;
+    const sel   = t.type_code === currentCode;
+    if (sel) currentFound = true;
+    opts.push(`<option value="${crelEsc(t.type_code)}"${sel ? ' selected' : ''}>${crelEsc(label)}</option>`);
+  });
+  if (!currentFound) {
+    opts.unshift(`<option value="${crelEsc(currentCode)}" selected>${crelEsc(currentLabel || currentCode)} (inactive)</option>`);
+  }
+  return opts.join('');
+}
+
 function buildVocabOptions(vocab, current = '') {
   if (!Array.isArray(vocab) || !vocab.length) return '';
   const opts = [
@@ -1642,16 +1668,31 @@ async function openEditRelationModal(id) {
     return;
   }
 
-  const t = getRelationTypeByCode(row.type_code);
-  if (!t) {
-    crelToast('error', 'Relation type missing from catalog.');
-    return;
-  }
+  // Fall back to the row's own catalog columns when the type has been
+  // deactivated since creation — the active-only cache won't have it, and
+  // the modal should still open for grandfathered rows. Vocab is unknown
+  // for that fallback shape, so status/end_reason render hidden (values
+  // are preserved because unchanged fields are never sent).
+  const t = getRelationTypeByCode(row.type_code) || {
+    type_code: row.type_code,
+    forward_label: row.forward_label,
+    reverse_label: row.reverse_label,
+    is_symmetric:  row.is_symmetric,
+    allowed_statuses: [],
+    allowed_end_reasons: [],
+  };
 
   const persp     = row.perspective || {};
   const otherName = persp.other_contact_name
     || `Contact #${persp.other_contact_id}`;
-  const typeLabelDisplay = `${persp.label || row.type_code} ${otherName}`;
+
+  // Direction is fixed: PATCH can't swap contact_a/contact_b, so the open
+  // contact's slot determines which label each type is offered under.
+  const meId = parseInt(clientID, 10);
+  const isA  = row.contact_a_id === meId;
+
+  const typeOpts = buildEditTypeOptions(
+    types, row.type_code, isA, persp.label || row.type_code);
 
   const statusOpts = (t.allowed_statuses && t.allowed_statuses.length)
     ? buildVocabOptions(t.allowed_statuses, row.status || '')
@@ -1666,8 +1707,12 @@ async function openEditRelationModal(id) {
   const html = `
     <div style="text-align:left">
       <div style="margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:6px;font-size:13px;color:var(--text-2)">
-        <div><b>${crelEsc(typeLabelDisplay)}</b></div>
-        <div style="font-size:11px;color: var(--text-muted)">Type and other contact cannot be changed.</div>
+        <div>Other contact: <b>${crelEsc(otherName)}</b></div>
+        <div style="font-size:11px;color: var(--text-muted)">Other contact cannot be changed. To reverse the direction of a relationship, delete it and re-add.</div>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Type</label>
+        <select id="crelm-type" style="width:100%;padding:6px">${typeOpts}</select>
       </div>
       <div style="margin-bottom:10px">
         <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color: var(--text-2)">
@@ -1675,11 +1720,10 @@ async function openEditRelationModal(id) {
           Active
         </label>
       </div>
-      ${statusOpts ? `
-        <div style="margin-bottom:10px">
-          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Status</label>
-          <select id="crelm-status" style="width:100%;padding:6px">${statusOpts}</select>
-        </div>` : ''}
+      <div id="crelm-status-wrap" style="margin-bottom:10px;${statusOpts ? '' : 'display:none'}">
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Status</label>
+        <select id="crelm-status" style="width:100%;padding:6px">${statusOpts}</select>
+      </div>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <div style="flex:1">
           <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Start Date</label>
@@ -1690,11 +1734,10 @@ async function openEditRelationModal(id) {
           <input type="date" id="crelm-end" value="${crelEsc(endYmd)}" style="width:100%;padding:6px">
         </div>
       </div>
-      ${endrOpts ? `
-        <div style="margin-bottom:10px">
-          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Reason</label>
-          <select id="crelm-endreason" style="width:100%;padding:6px">${endrOpts}</select>
-        </div>` : ''}
+      <div id="crelm-endreason-wrap" style="margin-bottom:10px;${endrOpts ? '' : 'display:none'}">
+        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Reason</label>
+        <select id="crelm-endreason" style="width:100%;padding:6px">${endrOpts}</select>
+      </div>
       <div style="margin-bottom:6px">
         <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Notes</label>
         <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000">${crelEsc(row.notes || '')}</textarea>
@@ -1709,12 +1752,45 @@ async function openEditRelationModal(id) {
     showCancelButton: true,
     confirmButtonText: 'Save',
     focusConfirm: false,
+    didOpen: () => {
+      // Type change → repopulate Status + End Reason against the new
+      // type's vocab (mirrors the Add modal). The row's current values are
+      // passed as `current` so switching back to the original type
+      // restores them; under any other type they simply won't match and
+      // the select falls to "— none —".
+      const typeSel = document.getElementById('crelm-type');
+      typeSel.addEventListener('change', () => {
+        const nt = getRelationTypeByCode(typeSel.value) || t;
+        const statusWrap = document.getElementById('crelm-status-wrap');
+        const statusSel  = document.getElementById('crelm-status');
+        const endrWrap   = document.getElementById('crelm-endreason-wrap');
+        const endrSel    = document.getElementById('crelm-endreason');
+        if (nt.allowed_statuses && nt.allowed_statuses.length) {
+          statusSel.innerHTML = buildVocabOptions(nt.allowed_statuses, row.status || '');
+          statusWrap.style.display = '';
+        } else {
+          statusSel.innerHTML = '';
+          statusWrap.style.display = 'none';
+        }
+        if (nt.allowed_end_reasons && nt.allowed_end_reasons.length) {
+          endrSel.innerHTML = buildVocabOptions(nt.allowed_end_reasons, row.end_reason || '');
+          endrWrap.style.display = '';
+        } else {
+          endrSel.innerHTML = '';
+          endrWrap.style.display = 'none';
+        }
+      });
+    },
     preConfirm: async () => {
       const active     = document.getElementById('crelm-active').checked ? 1 : 0;
-      const statusEl   = document.getElementById('crelm-status');
-      const endrEl     = document.getElementById('crelm-endreason');
-      const newStatus     = statusEl ? statusEl.value : (row.status || '');
-      const newEndReason  = endrEl   ? endrEl.value   : (row.end_reason || '');
+      const newType    = document.getElementById('crelm-type').value;
+      const statusWrap = document.getElementById('crelm-status-wrap');
+      const endrWrap   = document.getElementById('crelm-endreason-wrap');
+      const statusVis  = statusWrap.style.display !== 'none';
+      const endrVis    = endrWrap.style.display !== 'none';
+      // Hidden select = type has no vocab for that field → value is ''.
+      const newStatus     = statusVis ? document.getElementById('crelm-status').value     : '';
+      const newEndReason  = endrVis   ? document.getElementById('crelm-endreason').value  : '';
       const newStart   = document.getElementById('crelm-start').value || null;
       const newEnd     = document.getElementById('crelm-end').value   || null;
       const newNotes   = document.getElementById('crelm-notes').value;
@@ -1724,12 +1800,22 @@ async function openEditRelationModal(id) {
       const rowStart = crelToDateOnly(row.start_date) || null;
       const rowEnd   = crelToDateOnly(row.end_date)   || null;
       const rowActive = row.active ? 1 : 0;
+      const typeChanged = newType !== row.type_code;
 
+      if (typeChanged) {
+        patch.type_code = newType;
+        // Always send status/end_reason with a type change: the server
+        // validates merged values against the NEW type's vocab, so stale
+        // old values must be explicitly replaced (or cleared to '').
+        patch.status     = newStatus;
+        patch.end_reason = newEndReason;
+      } else {
+        if (statusVis && newStatus    !== (row.status     || '')) patch.status     = newStatus;
+        if (endrVis   && newEndReason !== (row.end_reason || '')) patch.end_reason = newEndReason;
+      }
       if (active !== rowActive)                              patch.active     = active;
       if ((newStart || null) !== rowStart)                   patch.start_date = newStart;
       if ((newEnd   || null) !== rowEnd)                     patch.end_date   = newEnd;
-      if (statusEl && newStatus    !== (row.status     || '')) patch.status     = newStatus;
-      if (endrEl   && newEndReason !== (row.end_reason || '')) patch.end_reason = newEndReason;
       if (newNotes !== (row.notes || ''))                    patch.notes      = newNotes;
 
       if (!Object.keys(patch).length) {

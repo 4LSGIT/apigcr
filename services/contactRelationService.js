@@ -527,10 +527,21 @@ async function updateRelation(db, relationId, fields) {
 
   // TODO audit slice — write a log row describing the update with diff
   // (relation_id, changed fields old→new, who, when) once audit hooks land.
-  await db.query(
-    `UPDATE contact_relations SET ${setSQL} WHERE id = ?`,
-    [...setVals, relationId]
-  );
+  try {
+    await db.query(
+      `UPDATE contact_relations SET ${setSQL} WHERE id = ?`,
+      [...setVals, relationId]
+    );
+  } catch (err) {
+    // UNIQUE KEY (contact_a_id, contact_b_id, type_code): a type_code change
+    // can collide with an existing forward row — the app-level symmetric
+    // check above only covers the (b, a, type) reverse. Map to a
+    // 400-mappable message instead of leaking the raw DB error as a 500.
+    if (err.code === 'ER_DUP_ENTRY') {
+      throw new Error('This relation already exists (same A, B, and type)');
+    }
+    throw err;
+  }
 
   const relation = await getRelation(db, relationId, current.contact_a_id);
   return { relation };

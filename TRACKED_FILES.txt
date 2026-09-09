@@ -741,6 +741,7 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/checklists.s1notes.test.js
 tests/contactOrgKind.test.js
+tests/contactRelationService.updateType.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
 tests/control.flow.test.js
