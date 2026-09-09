@@ -17,6 +17,11 @@
  * overhead, where the balloon bursts against the ledge and drops it onto it.
  * That one is rare on purpose — see the FLY_* block in CFG.
  *
+ * Poke it — a click that does not drag it anywhere — and it looks up and says
+ * something out of LINES. Only ever when asked: it never speaks on its own,
+ * because a sprite wandering the ledges is ambient and TEXT appearing unbidden
+ * over somebody's case file is not.
+ *
  * Self-contained by design: this file is the entire feature. It has no
  * dependencies (no Font Awesome, no SweetAlert, no images, no network), injects
  * its own <style> and its own inline SVG, and never reaches into the app. Two
@@ -33,6 +38,7 @@
  *   the tile never sees a cat.
  *
  * DRIVING IT FROM THE CONSOLE
+ *   Mascot.talk()   — one of its lines, the same thing a poke gets you
  *   Mascot.list()   — every action it can be told to do, and what each needs
  *                     (list(true) returns the names without printing anything —
  *                     the Cat tile's trick panel builds itself from that, so an
@@ -182,12 +188,15 @@
     // opt-in only. To remove it for real:
     //   1. The kill switch is ONE edit — delete the `else if (pref === null &&
     //      inDebut())` branch in boot(). Nothing auto-starts after that.
-    //   2. Then, at leisure, the rest is dead: CFG.DEBUT_UNTIL, DEBUT_ENDS/
-    //      inDebut(), showSay()/hideSay() and the `if (say)` block in draw(),
-    //      the `.yc-say` CSS, `say` and `autoDebut`, and the expiry check at the
-    //      top of frame().
-    //   3. KEEP toLeave() and leaveRecords — dismissal uses them, not just the
-    //      debut. Keep the three-state store too; harmless, and '0' still means
+    //   2. Then, at leisure, SOME of the rest is dead: CFG.DEBUT_UNTIL,
+    //      DEBUT_ENDS/inDebut(), showSay(), `autoDebut`, and the expiry check at
+    //      the top of frame().
+    //   3. KEEP THE BUBBLE. speak()/hideSay(), `say`/`sayTimer`, the `if (say)`
+    //      block in draw() and the `.yc-say` CSS stopped being debut scaffolding
+    //      the day a poke started producing a line — showSay() is now just one
+    //      caller of speak(), and the shortest one.
+    //      KEEP toLeave() and leaveRecords too — dismissal uses them, not just
+    //      the debut. And the three-state store; harmless, and '0' still means
     //      "this person said no" rather than "never asked".
     // Older builds left a `yc.mascot.met` key in some browsers. Nothing reads it
     // any more; it can be ignored.
@@ -205,6 +214,29 @@
   // collectTops() keeps only one ledge out of the pair.
   var PERCH_SEL = 'button, [class*="btn"], .tab, .nav-link, .chip, .pill, select, ' +
     'input[type="button"], input[type="submit"]';
+
+  // What it says when poked. House rules for adding one: keep it short enough to
+  // read at a glance in a 250px bubble, keep it in a cat's voice rather than the
+  // app's, and never let it refer to anything real — no counts, no deadlines, no
+  // names. A bubble that could be mistaken for a notification is the one way
+  // this stops being funny on someone's screen.
+  var LINES = [
+    'I have reviewed the file. It is warm.',
+    'Six minutes of grooming. Bill it.',
+    'Motion to nap. Granted.',
+    'Objection. That chair was mine.',
+    'Discovery: something under the couch.',
+    'Everything on this ledge is mine now.',
+    'Approach the bench. Bring snacks.',
+    'Counsel, you have crumbs.',
+    'Retainer: one tin. Daily.',
+    'I read the contract. It tasted fine.',
+    'Filed under: the floor.',
+    'This desk needs more sunbeam.',
+    'I have no notes.',
+    'I am not stuck. This is deliberate.',
+    'Adjourned. I am going to sleep.'
+  ];
 
   // Idle actions, with weights. This is where the personality lives.
   var IDLE_ACTS = [
@@ -260,7 +292,9 @@
   var nextHop = 0;             // clock time of the next "is there something below me"
   var fly = null;              // the balloon trip in progress: { popY, x0, t0 }
   var flyReady = 0;            // clock time the next balloon becomes possible
-  var say = null;              // the introduction bubble, debut only
+  var say = null;              // the speech bubble — the introduction, and lines
+  var sayTimer = 0;            // its expiry, held so a new line can reset it
+  var lastLine = -1;           // so it does not say the same thing twice running
   var leaveRecords = true;     // does walking off count as "sent away"?
   var autoDebut = false;       // started by the debut rather than by a person
 
@@ -916,6 +950,7 @@
       // of a dismissal has to hit a cat that is already falling away.
       grab = {
         id: e.pointerId, x: e.clientX, y: e.clientY, t: now, t0: now,
+        ox: e.clientX, oy: e.clientY,          // where the POINTER went down
         vx: 0, vy: 0, moved: false, px0: px, py0: py, ledge0: ledge
       };
       ledge = null; wall = null; rot = 0;
@@ -929,7 +964,12 @@
       grab.vx = (e.clientX - grab.x) / dt;
       grab.vy = (e.clientY - grab.y) / dt;
       grab.x = e.clientX; grab.y = e.clientY; grab.t = now;
-      if (Math.abs(e.clientX - grab.px0) > 4 || Math.abs(e.clientY - grab.py0) > 6) grab.moved = true;
+      // Measured from where the POINTER started, not from px0/py0 — those are the
+      // CAT's feet, and you grab a cat by its body. Against the feet anchor the
+      // vertical test was already ~14px out before the hand moved at all, so any
+      // jitter marked a poke as a drag and the cat got thrown instead of looking
+      // at you. Only a perfectly still click survived it.
+      if (Math.abs(e.clientX - grab.ox) > 4 || Math.abs(e.clientY - grab.oy) > 6) grab.moved = true;
       px = e.clientX;
       py = e.clientY + CFG.H * 0.45;      // dangles just below the cursor
       aim(grab.vx, 0);
@@ -946,6 +986,7 @@
         ledge = g.ledge0;
         if (ledge) { setState('idle', 'look'); stateUntil = clock + rand(1.2, 2.5); }
         else toFall(0, 0);
+        talk();                 // after the pose, so the bubble is placed against it
         return;
       }
       toFall(clamp(g.vx * 0.35, -520, 520), clamp(g.vy * 0.35, -520, 520));
@@ -955,23 +996,48 @@
   }
 
   // ── Build / teardown ─────────────────────────────────────────────────────────
-  // ── The introduction ─────────────────────────────────────────────────────────
-  // Shown on every load during the debut, until the person makes a choice.
-  // Without it the cat is just an unexplained animal on a case-management
-  // screen, and the gesture that controls it is undiscoverable — so it keeps
+  // ── The bubble ───────────────────────────────────────────────────────────────
+  // ONE bubble, reused by the introduction and by everything Casey says when
+  // poked. Holding the timer is the whole reason this is not two functions: a
+  // line that replaces another has to take the clock with it, or the first
+  // line's expiry cuts the second one short a moment after it appears.
+  function speak(text, secs) {
+    if (!root) return;
+    if (!say) {
+      say = document.createElement('div');
+      say.className = 'yc-say';
+      root.appendChild(say);
+      requestAnimationFrame(function () { if (say) say.classList.add('show'); });
+    }
+    say.textContent = text;
+    clearTimeout(sayTimer);
+    sayTimer = setTimeout(hideSay, secs * 1000);
+    draw();                    // place it now, or it fades in from the corner
+  }
+
+  // Never the same line twice running: a pet that repeats itself reads as a
+  // three-item list, however long the list actually is.
+  function talk() {
+    var i = Math.floor(Math.random() * LINES.length);
+    if (i === lastLine && LINES.length > 1) i = (i + 1) % LINES.length;
+    lastLine = i;
+    // Long lines get longer on screen, within reason.
+    speak(LINES[i], Math.min(7, 2.6 + LINES[i].length * 0.045));
+  }
+
+  // The introduction: shown on every load during the debut, until the person
+  // makes a choice. Without it the cat is just an unexplained animal on a
+  // case-management screen, and the way out is undiscoverable — so it keeps
   // offering itself rather than betting everything on one 14-second window.
   function showSay() {
-    if (!root || say) return;
-    say = document.createElement('div');
-    say.className = 'yc-say';
-    say.textContent = 'Hello, I am Casey! The Cat tile under More sends me away — or brings me back.';
-    root.appendChild(say);
-    requestAnimationFrame(function () { if (say) say.classList.add('show'); });
-    setTimeout(hideSay, 14000);
+    if (say) return;
+    speak('Hello, I am Casey! The Cat tile under More sends me away — or brings me back.', 14);
   }
 
   function hideSay() {
     if (!say) return;
+    clearTimeout(sayTimer);
+    sayTimer = 0;
     var s = say;
     say = null;
     s.classList.remove('show');
@@ -1086,6 +1152,7 @@
   var ACTIONS = [
     { name: 'walk', needs: 'ledge', what: 'set off along the ledge it is on', run: function () { toWalk(); } },
     { name: 'idle', needs: 'ledge', what: 'stop, and roll one of the idle acts', run: function () { toIdle(); } },
+    { name: 'talk', needs: 'any', what: 'say one of its lines — the same thing a poke does', run: function () { talk(); } },
     {
       name: 'jump', needs: 'ledge', what: 'drop to a lower ledge — or hop on the spot if there is none',
       run: function () {
