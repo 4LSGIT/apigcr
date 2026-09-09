@@ -22,6 +22,7 @@ lib/auth.requireAuth.js
 lib/auth.superuser.js
 lib/blankDateToNull.js
 lib/caseId.js
+lib/caseRoleResolver.js
 lib/checklistStatus.js
 lib/contactMirror.js
 lib/courtCitation.js
@@ -578,6 +579,7 @@ scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
+scripts/backfillCaseRoleIds.js
 scripts/backfill_court_event_calendars_2026_08.js
 scripts/calendarTypeOptionsSeed.js
 scripts/calendarTypeSeed.js
@@ -598,6 +600,7 @@ scripts/esign_zoho_smoke.js
 scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
 scripts/probe-db-connect.js
+scripts/seedRoleContacts.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
@@ -630,6 +633,7 @@ services/contactAddressService.js
 services/contactEmailService.js
 services/contactPhoneService.js
 services/contactRelationService.js
+services/contactRoleService.js
 services/contactService.js
 services/courtExecutor.js
 services/courtRerun.js
@@ -743,6 +747,7 @@ tests/caseUi.timeline.test.js
 tests/checklists.s1notes.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
+tests/contactRoles.slice456.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
 tests/control.flow.test.js
@@ -868,6 +873,7 @@ tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
+tests/nameKeyOrgKind.test.js
 tests/pageLanding.landingAssets.test.js
 tests/pageLanding.originsep.test.js
 tests/paramsMappingCsvList.test.js

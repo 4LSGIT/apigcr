@@ -1052,6 +1052,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         );
         curCaseRow = rows[0] || {};
       }
+      const roleColsWritten = new Set(); // slice 6: cols whose write should re-resolve a twin
       for (const [col, rawNew] of Object.entries(fields)) {
         const policy = CASE_FIELD_POLICY[col];
         if (!policy) {
@@ -1098,10 +1099,49 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
           await db.query(`UPDATE cases SET \`${col}\`=? WHERE case_id=?`, [writeVal, resolved.case_id]);
           curCaseRow[col] = writeVal; // keep in-memory consistent for later actions
         }
+        if (col === 'case_judge' || col === 'case_trustee' || col === 'case_chapter') {
+          roleColsWritten.add(col);
+        }
         pushChange('case', resolved.case_id, col, isDate ? curNorm : curNorm, writeVal);
         applied.push({ action_index: i, type, entity_type: 'case', entity_id: resolved.case_id,
           field: col, old_value: isDate ? curNorm : curNorm, new_value: writeVal });
         appliedOrIntended++;
+      }
+
+      // ── contact-role twins (slice 6) ──────────────────────────────────
+      // Derived writes, deliberately OUTSIDE pushChange/ai_change_log: the
+      // twins are a resolution of the free-text fields, not court-extracted
+      // facts — reverting the source field re-resolves them (see
+      // revertCourtActions), so logging them would only create rows the
+      // revert path must skip as unrevertable. Resolution failure writes
+      // NULL and never blocks the batch (the resolver never throws; this
+      // try/catch is belt-and-suspenders around the UPDATEs themselves).
+      // case_chapter retriggers TRUSTEE resolution here — a Ch7→Ch13
+      // conversion changes roster eligibility, and this executor is exactly
+      // where conversions land. case_number_full is never written by this
+      // path; resolveJudge reads it from `resolved` (lib/courtResolve).
+      if (!effectiveDryRun && roleColsWritten.size) {
+        try {
+          const roleResolver = require('../lib/caseRoleResolver');
+          if (roleColsWritten.has('case_judge')) {
+            const cid = await roleResolver.resolveJudge(db, {
+              case_number_full: resolved.case_number_full,
+              case_judge:       curCaseRow.case_judge,
+            });
+            await db.query(`UPDATE cases SET case_judge_contact_id=? WHERE case_id=?`,
+              [cid, resolved.case_id]);
+          }
+          if (roleColsWritten.has('case_trustee') || roleColsWritten.has('case_chapter')) {
+            const cid = await roleResolver.resolveTrustee(db, {
+              case_trustee: curCaseRow.case_trustee,
+              case_chapter: curCaseRow.case_chapter,
+            });
+            await db.query(`UPDATE cases SET case_trustee_contact_id=? WHERE case_id=?`,
+              [cid, resolved.case_id]);
+          }
+        } catch (twinErr) {
+          console.error('[courtExecutor] role-twin resolve failed (non-fatal):', twinErr.message);
+        }
       }
       continue;
     }
@@ -1300,6 +1340,9 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
 
   const reverted = [];
   const skipped = [];
+  // slice 6: cases whose case_judge / case_trustee / case_chapter were
+  // restored — their twins get re-resolved once, after the loop.
+  const roleTwinCases = new Set();
 
   const stamp = async (id) => {
     if (dryRun) return;
@@ -1339,6 +1382,9 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
       if (!dryRun) {
         const writeBack = (old_value == null || old_value === '') && (isDate || isDateTime) ? null : old_value;
         await db.query(`UPDATE cases SET \`${field}\`=? WHERE case_id=?`, [writeBack, entity_id]);
+        if (field === 'case_judge' || field === 'case_trustee' || field === 'case_chapter') {
+          roleTwinCases.add(String(entity_id));
+        }
       }
       await stamp(id);
       reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'restored' });
@@ -1482,6 +1528,34 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
 
     // ── unknown ─────────────────────────────────────────────────────────
     skipped.push({ change_log_id: id, reason: 'unrevertable' });
+  }
+
+  // ── contact-role twins (slice 6) ──────────────────────────────────────
+  // A restored case_judge / case_trustee / case_chapter re-resolves its
+  // twin from the row AS IT NOW STANDS — the twins are derived, never
+  // change-logged (see the apply branch), so restoring the source and
+  // re-deriving IS the revert. Once per case, non-fatal on failure.
+  for (const caseId of roleTwinCases) {
+    try {
+      const [[row]] = await db.query(
+        `SELECT case_judge, case_trustee, case_chapter, case_number_full
+           FROM cases WHERE case_id=? LIMIT 1`, [caseId]
+      );
+      if (!row) continue;
+      const roleResolver = require('../lib/caseRoleResolver');
+      const judgeId = await roleResolver.resolveJudge(db, {
+        case_number_full: row.case_number_full, case_judge: row.case_judge,
+      });
+      const trusteeId = await roleResolver.resolveTrustee(db, {
+        case_trustee: row.case_trustee, case_chapter: row.case_chapter,
+      });
+      await db.query(
+        `UPDATE cases SET case_judge_contact_id=?, case_trustee_contact_id=? WHERE case_id=?`,
+        [judgeId, trusteeId, caseId]
+      );
+    } catch (twinErr) {
+      console.error(`[courtExecutor] revert twin re-resolve (${caseId}) failed (non-fatal):`, twinErr.message);
+    }
   }
 
   return { dryRun, reverted, skipped };

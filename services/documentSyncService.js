@@ -1925,11 +1925,31 @@ function _segTokens(seg) {
  *
  * A name with no comma cannot be split, so every token is required: guessing
  * which half is the surname would be worse than being strict.
+ *
+ * ── WHY KIND-AWARE (org-contacts carried nit) ─────────────────────────────
+ * For an ORG, contact_lfm_name is the org name VERBATIM (the m3 trigger's org
+ * branch does no comma flip), so the comma split is a lie. The live example
+ * "Legacy Signature Properties, Inc." gets off lightly only because 'inc' is
+ * a NAME_STOPWORDS entry; an org whose post-comma part is real words —
+ * "Acme Products, Michigan Division" — would split into surname
+ * [acme, products] / given [michigan, division], making required
+ * [acme, products, michigan] (drops 'division') and, worse, letting the WEAK
+ * lane match any folder carrying just "acme products". An org has no surname
+ * at all, so org rows key on the WHOLE normalized token set: required = all
+ * tokens, and `surname` (the seed + weak-lane bar) = all tokens too, which
+ * makes the weak lane exactly as strict as the strong one — the honest
+ * behavior when there is no weaker identifying subset to fall back to.
+ * Return SHAPE is unchanged ({required, all, surname}); only the token
+ * distribution differs.
  */
-function _nameKey(lfm) {
+function _nameKey(lfm, kind) {
   const raw = String(lfm == null ? '' : lfm);
   const all = _nameTokens(raw);
   if (!all.length) return null;
+
+  if (String(kind == null ? '' : kind).trim().toLowerCase() === 'org') {
+    return { required: all, all, surname: all };
+  }
 
   const comma = raw.indexOf(',');
   if (comma === -1) return { required: all, all, surname: all.slice(0, 1) };
@@ -2190,7 +2210,7 @@ function _rankCandidates(ctx, caseRow, contacts, opts = {}) {
   // WHOLE-TOKEN equality on both sides — see _nameKey for the production
   // false positives that rule exists to stop.
   for (const ct of contacts) {
-    const key = _nameKey(ct.contact_lfm_name);
+    const key = _nameKey(ct.contact_lfm_name, ct.contact_kind);
     if (!key) continue;
     const hasAll = (set, toks) => toks.every(t => set.has(t));
     const strong = key.required.length >= 2;
@@ -2280,7 +2300,7 @@ async function relinkCandidatesBatch(db, caseIds, opts = {}) {
 
   const [contactRows] = await db.query(
     `SELECT cr.case_relate_case_id AS case_id,
-            ct.contact_name, ct.contact_lfm_name,
+            ct.contact_name, ct.contact_lfm_name, ct.contact_kind,
             cr.case_relate_type    AS rel
        FROM case_relate cr
        JOIN contacts ct ON ct.contact_id = cr.case_relate_client_id

@@ -119,13 +119,27 @@ router.patch('/api/users/:id/freebusy-calendars', jwtOrApiKey, async (req, res) 
 });
 
 // ─── JUDGES ───
-
+//
+// READ-THROUGH (contact roles slice 5): the source of truth is now
+// contact_roles (role='judge', active=1) JOIN contacts — the `judges` table
+// is no longer read here. URL and response KEYS are FROZEN: no consumer
+// exists inside public/, so callers are assumed external (legacy Apps Script
+// era) and get the exact legacy shape. Two values change meaning:
+//   judge_id   — was judges.judge_id (1..7), is now contacts.contact_id.
+//                Every known join is by name, so this is cosmetic — but a
+//                caller that PERSISTED old judge_ids would mismatch.
+//   judge_3    — now contact_roles attrs.judge_3 (seeded verbatim from the
+//                old table, lowercased).
 router.get('/api/judges', jwtOrApiKey, async (req, res) => {
   try {
-    const [rows] = await req.db.query(
-      'SELECT judge_id, judge_3, judge_name FROM judges ORDER BY judge_name ASC'
-    );
-    res.json({ judges: rows });
+    const contactRoleService = require('../services/contactRoleService');
+    const { contacts } = await contactRoleService.listContactsByRole(req.db, 'judge');
+    const judges = contacts.map(r => ({
+      judge_id:   r.contact_id,
+      judge_3:    r.attrs && r.attrs.judge_3 != null ? String(r.attrs.judge_3) : null,
+      judge_name: r.contact_name,
+    }));
+    res.json({ judges });
   } catch (err) {
     console.error('GET /api/judges error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch judges' });

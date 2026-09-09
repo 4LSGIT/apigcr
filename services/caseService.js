@@ -431,6 +431,48 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
     throw new Error(`Case ${caseId} not found`);
   }
 
+  // ── contact-role twins (slice 6) ────────────────────────────────────────
+  // When a write touches case_judge / case_number_full / case_trustee, the
+  // resolved twin (case_judge_contact_id / case_trustee_contact_id) is
+  // derived alongside from the POST-state (priorRow overlaid with this
+  // patch) via lib/caseRoleResolver — one shared implementation with
+  // courtExecutor and the backfill. Rules:
+  //   - a caller that writes the twin EXPLICITLY is respected (no auto-
+  //     resolve for that twin);
+  //   - resolution failure is NEVER an error: the resolver logs at debug and
+  //     the twin is written NULL — a filing must not bounce on a name that
+  //     didn't match;
+  //   - clearing a source field re-resolves from what remains (an emptied
+  //     case_judge with a live docket suffix still resolves — the suffix IS
+  //     the primary key).
+  // case_chapter alone does NOT retrigger trustee resolution here (spec: the
+  // three named fields); courtExecutor's conversion path handles the real-
+  // world chapter-flip case, and chapter+trustee arrive together anyway.
+  {
+    const touched = f => Object.prototype.hasOwnProperty.call(safeFields, f);
+    const wantJudge   = (touched('case_judge') || touched('case_number_full'))
+                        && !touched('case_judge_contact_id');
+    const wantTrustee = touched('case_trustee') && !touched('case_trustee_contact_id');
+    if (wantJudge || wantTrustee) {
+      const roleResolver = require('../lib/caseRoleResolver'); // lazy (convention)
+      const effective = { ...priorRow, ...safeFields };
+      if (wantJudge) {
+        safeFields.case_judge_contact_id = await roleResolver.resolveJudge(db, {
+          case_number_full: effective.case_number_full,
+          case_judge:       effective.case_judge,
+        });
+        keys.push('case_judge_contact_id');
+      }
+      if (wantTrustee) {
+        safeFields.case_trustee_contact_id = await roleResolver.resolveTrustee(db, {
+          case_trustee: effective.case_trustee,
+          case_chapter: effective.case_chapter,
+        });
+        keys.push('case_trustee_contact_id');
+      }
+    }
+  }
+
   const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
   const values = [...keys.map(k => safeFields[k]), caseId];
 
