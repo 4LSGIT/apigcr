@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-08T21:54:39.143Z
+-- Generated: 2026-09-09T11:59:14.681Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:19f11f9eaed8a220a368b6c04f210bef
+-- Fingerprint: sha256:d7a320a2be3c28cd8a94c56b7038a232
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -601,7 +601,9 @@ CREATE TABLE `cases` (
   `case_dropbox` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_primary_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_judge` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_judge_contact_id` int unsigned DEFAULT NULL,
   `case_trustee` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_trustee_contact_id` int unsigned DEFAULT NULL,
   `case_341_link` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `case_chapter` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_341_current` datetime DEFAULT NULL,
@@ -915,6 +917,38 @@ CREATE TABLE `contact_relations` (
   `created_by` int NOT NULL DEFAULT '0',
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `chk_no_self` CHECK ((`contact_a_id` <> `contact_b_id`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `contact_role_types`
+--
+
+DROP TABLE IF EXISTS `contact_role_types`;
+CREATE TABLE `contact_role_types` (
+  `role_code` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `sort_order` smallint NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `contact_roles`
+--
+
+DROP TABLE IF EXISTS `contact_roles`;
+CREATE TABLE `contact_roles` (
+  `id` int unsigned NOT NULL,
+  `contact_id` int unsigned NOT NULL,
+  `role` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `attrs` json DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `sort_order` smallint NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3685,7 +3719,9 @@ ALTER TABLE `case_stage_log`
 ALTER TABLE `cases`
   ADD PRIMARY KEY (`case_id`),
   ADD KEY `idx_cases_case_number` (`case_number`),
-  ADD KEY `idx_cases_case_number_full` (`case_number_full`);
+  ADD KEY `idx_cases_case_number_full` (`case_number_full`),
+  ADD KEY `idx_cases_judge_contact` (`case_judge_contact_id`),
+  ADD KEY `idx_cases_trustee_contact` (`case_trustee_contact_id`);
 
 --
 -- Indexes for table `checkitems`
@@ -3758,6 +3794,20 @@ ALTER TABLE `contact_relations`
   ADD UNIQUE KEY `uc_relation` (`contact_a_id`,`contact_b_id`,`type_code`),
   ADD KEY `idx_b` (`contact_b_id`),
   ADD KEY `idx_type` (`type_code`);
+
+--
+-- Indexes for table `contact_role_types`
+--
+ALTER TABLE `contact_role_types`
+  ADD PRIMARY KEY (`role_code`);
+
+--
+-- Indexes for table `contact_roles`
+--
+ALTER TABLE `contact_roles`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_contact_role` (`contact_id`,`role`),
+  ADD KEY `idx_role_active` (`role`,`active`);
 
 --
 -- Indexes for table `contacts`
@@ -4733,6 +4783,12 @@ ALTER TABLE `contact_phones`
 -- AUTO_INCREMENT for table `contact_relations`
 --
 ALTER TABLE `contact_relations`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `contact_roles`
+--
+ALTER TABLE `contact_roles`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
