@@ -2673,10 +2673,11 @@
        rows. Keep new buttons inside the row they belong to rather than
        appending to the end.
 
-       Two of the 24 are data-placeholder tiles holding rows 3 and 5 square.
-       They are the slots the next two real features take — replace one rather
-       than starting a seventh row. They carry no data-target and no onclick,
-       and ensureStrip() skips them so they never reach the pill strip.
+       Row 5's fourth tile is the cat, a toy holding that slot square until a
+       real feature wants it — replace THAT tile rather than starting a seventh
+       row. (data-placeholder, which ensureStrip() skips so a tile that opens
+       nothing never reaches the pill strip, is unused while the cat sits
+       there; keep the mechanism for the next gap in the grid.)
 
        Rows went 3-wide to 4-wide with the Theme tile. One theme per row no
        longer divides evenly across 22 features, so a row is now a task rather
@@ -2724,7 +2725,10 @@
   <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
   <button class="big-button" data-target="bookingDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:2s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
   <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
-  <button class="big-button" data-placeholder aria-disabled="true" tabindex="-1" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-hourglass-half fa-2xl"></i><br><br>Coming Soon</button>
+  <!-- Standing in for the feature this slot has not got yet: the easter egg
+       from public/js/mascot.js, which until now could only be reached by a
+       long-press of the header logo that nobody would ever find by accident. -->
+  <button class="big-button" onclick="toggleMascot()" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-cat fa-2xl"></i><br><br>Cat</button>
   <br><br>
   <!-- What goes out, and what comes back as numbers: the message, the page it
        lands on, the links that get there, and the reporting over all of it.
@@ -3194,6 +3198,36 @@
       showCloseButton: true,
     });
   }
+
+  // ── The Cat tile ─────────────────────────────────────────────────────
+  // Toggles the mascot, the same as long-pressing the logo does.
+  //
+  // mascot.js is optional in every direction: it can be deleted outright, and
+  // it removes itself when the browser asks for reduced motion or refuses
+  // localStorage. So window.Mascot is allowed to be missing, and the one way a
+  // toggle can silently fail — start() declines below a 900px viewport, where
+  // the shell is in mobile layout and there is nothing to walk along — has to
+  // read as an answer rather than as a dead button.
+  function toggleMascot() {
+    if (!window.Mascot) {
+      Swal.fire({
+        icon: 'info',
+        title: 'No cat here',
+        text: 'The cat sits out when your browser asks for reduced motion, or when it will not let this site remember anything.'
+      });
+      return;
+    }
+    const wasOut = Mascot.out();
+    Mascot.toggle();
+    if (!wasOut && !Mascot.out()) {
+      Swal.fire({
+        icon: 'info',
+        title: 'Not enough room',
+        text: 'The cat needs a window about 900px wide to have anything to walk on. Widen this one and it will turn up — the setting is saved either way.'
+      });
+    }
+  }
+
   // ── Big-button hover animations ── HOW TO USE ─────────────────────────
   // Give any .big-button a data-hover-anim of one or more Font Awesome
   // animation classes (fa-beat, fa-fade, fa-beat-fade, fa-bounce, fa-flip,

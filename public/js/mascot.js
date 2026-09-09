@@ -15,15 +15,17 @@
  *
  * Self-contained by design: this file is the entire feature. It has no
  * dependencies (no Font Awesome, no SweetAlert, no images, no network), injects
- * its own <style> and its own inline SVG, and touches exactly one line of
- * index.html — the <script> tag that loads it. Delete the file and the tag and
- * nothing else in the codebase knows it existed.
+ * its own <style> and its own inline SVG, and never reaches into the app. Two
+ * lines of index.html know it exists — the <script> tag that loads it, and the
+ * Cat tile's toggleMascot(), which is written to survive `window.Mascot` being
+ * undefined. Delete the file and the tag and the tile says so politely.
  *
  * HOW YOU GET IT
- *   Long-press the header logo for ~0.9s. Same gesture puts it away. So does
- *   double-clicking the cat, or Mascot.off() from the console. The choice is
- *   remembered per browser in localStorage. OFF by default for everyone — a
- *   colleague who never finds the gesture never sees a cat.
+ *   The Cat tile in More, or a long-press of the header logo for ~0.9s. Either
+ *   one puts it away again. So does double-clicking the cat, or Mascot.off()
+ *   from the console. The choice is remembered per browser in localStorage. OFF
+ *   by default for everyone — a colleague who never presses the tile never sees
+ *   a cat.
  *
  * DRIVING IT FROM THE CONSOLE
  *   Mascot.list()   — every action it can be told to do, and what each needs
@@ -1178,6 +1180,11 @@
     on: function () { store.set(true); start(); },
     off: function () { store.set(false); stop(); },
     toggle: toggle,
+    // Is it out right now? For a caller that wants to know whether a toggle()
+    // took — start() declines on a narrow window, and a button that gives no
+    // sign either way reads as broken. Not the stored preference: that can say
+    // '1' while nothing is on screen.
+    out: function () { return running; },
     'do': doAction,
     list: function () {
       var rows = [], names = [];
