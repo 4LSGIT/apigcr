@@ -86,6 +86,7 @@ lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/taskQueue.js
 lib/trusteeMatch.js
+lib/trusteeRoster.js
 lib/unplacehold.js
 lib/unrefPoolIdleSweeper.js
 lib/uploadTicket.js
@@ -610,6 +611,7 @@ scripts/test_email_ingest_crud.js
 scripts/test_email_ingest_suppression.sh
 scripts/typeKeyVocabulary.js
 scripts/updateRoutes.js
+scripts/verifyTrusteeReadthrough.js
 scripts/verify_strictstring_live.js
 server.js
 services/adapters/email/gmail.js
@@ -751,6 +753,7 @@ tests/contactRoles.slice456.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
 tests/control.flow.test.js
+tests/courtResolve.test.js
 tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.update.test.js
@@ -930,6 +933,7 @@ tests/test_report_author.sh
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/trusteeMatch.test.js
+tests/trusteeRoster.test.js
 tests/trusteesRoute.test.js
 tests/typeKeyVocabulary.test.js
 tests/unifiedEventsU2b.admin.test.js

@@ -7,13 +7,18 @@
 //   3. case.judge/trustee/file_date
 //   4. debtor1/2 address     including debtor2-absent -> all ''
 //   5. trustee.*             exact match, case-insensitive, no match,
-//                            non-array setting, missing case_trustee, memoization
+//                            absent/non-array roster, missing case_trustee,
+//                            memoization (slice 7: roster arrives on the ctx
+//                            under prefill._TRUSTEE_ROSTER, pre-loaded by
+//                            buildContext from lib/trusteeRoster; the
+//                            setting-era cfgJson read is gone)
 //   6. ref/templates/notice_of_bankruptcy_filing.json through the REAL
 //      validateTemplateInput with the REAL RESOLVER_NAMES
 //
-// firmConfig is mocked the way tests/esignSend.test.js does it (a jest.fn cfg),
-// because the trustee resolvers read the fe-trustees setting through cfgJson,
-// which is cfg() + JSON.parse. Mocking cfg alone therefore controls both.
+// firmConfig is mocked the way tests/esignSend.test.js does it (a jest.fn cfg)
+// for the firm.* / attorney.* resolvers. The trustee.* resolvers no longer
+// touch firmConfig (slice 7): the roster is injected per-context under the
+// exported _TRUSTEE_ROSTER symbol, exactly where buildContext puts it.
 
 jest.mock('../lib/firmConfig', () => ({
   cfg: jest.fn(() => null),
@@ -85,10 +90,19 @@ const DEBTOR2 = {
   contact_ssn: '987654321',
 };
 
-/** A fresh context per call — _trusteeEntry memoizes ON the object. */
-const ctx = (over = {}) => ({
-  caseRow: CASE_ROW, debtor1: DEBTOR1, debtor2: DEBTOR2, ...over,
-});
+/** A fresh context per call — _trusteeEntry memoizes ON the object.
+ *  `roster` mirrors buildContext: stored under the non-enumerable
+ *  _TRUSTEE_ROSTER symbol; pass null to build a ctx with NO roster
+ *  (the load-failed / contact-linked shape). */
+const ctx = (over = {}, roster = TRUSTEES) => {
+  const c = { caseRow: CASE_ROW, debtor1: DEBTOR1, debtor2: DEBTOR2, ...over };
+  if (roster !== null) {
+    Object.defineProperty(c, prefill._TRUSTEE_ROSTER, {
+      value: roster, enumerable: false, configurable: true, writable: true,
+    });
+  }
+  return c;
+};
 
 beforeEach(() => {
   cfg.mockReset();
@@ -303,16 +317,14 @@ describe('trustee resolvers', () => {
   });
 
   test('address1 blank but address2 present -> address2 alone, no leading comma', async () => {
-    cfg.mockImplementation((k) => k === 'fe-trustees'
-      ? JSON.stringify([{ name: 'Odd Entry', address1: '', address2: 'Suite 9' }]) : null);
-    const c = ctx({ caseRow: { ...CASE_ROW, case_trustee: 'Odd Entry' } });
+    const c = ctx({ caseRow: { ...CASE_ROW, case_trustee: 'Odd Entry' } },
+                  [{ name: 'Odd Entry', address1: '', address2: 'Suite 9' }]);
     expect(await R['trustee.address_street'](c)).toBe('Suite 9');
   });
 
-  test('case_trustee blank -> "" without even reading the setting', async () => {
+  test('case_trustee blank -> "" even with a roster on the ctx', async () => {
     const c = ctx({ caseRow: { ...CASE_ROW, case_trustee: '' } });
     expect(await R['trustee.name'](c)).toBe('');
-    expect(cfg).not.toHaveBeenCalledWith('fe-trustees');
   });
 
   test('no caseRow at all (a contact-linked render) -> all trustee.* empty', async () => {
@@ -324,41 +336,48 @@ describe('trustee resolvers', () => {
   });
 
   test.each([
-    ['unset setting',        null],
-    ['blank setting',        ''],
-    ['malformed JSON',       '{not json'],
-    ['a JSON object',        '{"name":"Krispen S. Carroll"}'],
-    ['a JSON string',        '"Krispen S. Carroll"'],
-    ['a JSON number',        '42'],
-  ])('non-array setting (%s) -> "" and never a throw', async (_n, raw) => {
-    cfg.mockImplementation((k) => (k === 'fe-trustees' ? raw : null));
-    const c = ctx();
+    // buildContext leaves the key ABSENT on a load failure (ctx(_, null)
+    // builds that shape); a non-array value is defensive hardening.
+    ['roster absent (load failed / never loaded)', null],
+    ['a plain object',  { name: 'Krispen S. Carroll' }],
+    ['a string',        'Krispen S. Carroll'],
+    ['a number',        42],
+  ])('absent / non-array roster (%s) -> "" and never a throw', async (_n, roster) => {
+    const c = ctx({}, roster);
     expect(await R['trustee.name'](c)).toBe('');
     expect(await R['trustee.phone'](c)).toBe('');
   });
 
   test('junk entries inside the array are skipped, not fatal', async () => {
-    cfg.mockImplementation((k) => k === 'fe-trustees'
-      ? JSON.stringify([null, 'a string', 42, { no_name: true }, TRUSTEES[0]]) : null);
-    expect(await R['trustee.name'](ctx())).toBe('Krispen S. Carroll');
+    const c = ctx({}, [null, 'a string', 42, { no_name: true }, TRUSTEES[0]]);
+    expect(await R['trustee.name'](c)).toBe('Krispen S. Carroll');
   });
 
-  test('the roster is parsed ONCE per context, not once per resolver', async () => {
-    const c = ctx();
+  test('the roster is scanned ONCE per context, not once per resolver', async () => {
+    let finds = 0;
+    const counting = TRUSTEES.map((e) => e); // fresh array we can instrument
+    const spy = new Proxy(counting, {
+      get(t, prop, recv) {
+        if (prop === 'find') finds++;
+        return Reflect.get(t, prop, recv);
+      },
+    });
+    const c = ctx({}, spy);
     await R['trustee.name'](c);
     await R['trustee.address_street'](c);
     await R['trustee.address_csz'](c);
     await R['trustee.phone'](c);
     await R['trustee.email'](c);
-    const reads = cfg.mock.calls.filter(([k]) => k === 'fe-trustees').length;
-    expect(reads).toBe(1);
+    expect(finds).toBe(1);   // memoized on the ctx after the first resolver
   });
 
-  test('the memo key is non-enumerable — it never leaks into the context', async () => {
+  test('the memo AND roster keys are non-enumerable — neither leaks into the context', async () => {
     const c = ctx();
     await R['trustee.name'](c);
     expect(Object.keys(c)).toEqual(['caseRow', 'debtor1', 'debtor2']);
-    expect(JSON.parse(JSON.stringify(c))).not.toHaveProperty('trusteeEntry');
+    const round = JSON.parse(JSON.stringify(c));
+    expect(round).not.toHaveProperty('trusteeEntry');
+    expect(round).not.toHaveProperty('trusteeRoster');
   });
 });
 

@@ -16,6 +16,9 @@ jest.mock('../services/settingsService', () => ({
   getSetting:  jest.fn(),
   getSettings: jest.fn(),
 }));
+jest.mock('../lib/trusteeRoster', () => ({
+  loadTrusteeRoster: jest.fn(),
+}));
 jest.mock('../services/taskService', () => ({
   createTask: jest.fn(),
 }));
@@ -30,6 +33,7 @@ jest.mock('../lib/domainEvents', () => ({
 }));
 
 const { getSettings }  = require('../services/settingsService');
+const { loadTrusteeRoster } = require('../lib/trusteeRoster');
 const taskService      = require('../services/taskService');
 const logService       = require('../services/logService');
 const emailService     = require('../services/emailService');
@@ -58,29 +62,30 @@ function makeDb(script) {
   };
 }
 
-const ROSTER = JSON.stringify([
-  { name: 'Michael A. Stevenson', lname: 'Stevenson', case_type: 7,  link: 'https://z/stev' },
-  { name: 'Stuart A. Gold',       lname: 'Gold',      case_type: 7,  link: 'https://z/gold' },
-  { name: 'Krispen S. Carroll',   lname: 'Carroll',   case_type: 13, link: 'https://z/car'  },
-]);
+// Slice 7: the roster arrives PARSED from lib/trusteeRoster (contacts +
+// contact_roles), each entry carrying its contact_id — the twin source.
+const ROSTER = [
+  { name: 'Michael A. Stevenson', lname: 'Stevenson', case_type: 7,  link: 'https://z/stev', contact_id: 2075 },
+  { name: 'Stuart A. Gold',       lname: 'Gold',      case_type: 7,  link: 'https://z/gold', contact_id: 2078 },
+  { name: 'Krispen S. Carroll',   lname: 'Carroll',   case_type: 13, link: 'https://z/car',  contact_id: 2085 },
+];
 
 function caseStep(row) {
   return {
-    match: /^SELECT case_id, case_trustee, case_chapter, case_341_link, case_number, case_number_full FROM cases WHERE case_id = \? LIMIT 1$/,
+    match: /^SELECT case_id, case_trustee, case_chapter, case_341_link, case_trustee_contact_id, case_number, case_number_full FROM cases WHERE case_id = \? LIMIT 1$/,
     rows: [row],
   };
 }
 const baseCase = (over = {}) => ({
   case_id: 'AB12CD34', case_trustee: 'Michael Stevenson', case_chapter: '7',
-  case_341_link: '', case_number: '26-40001', case_number_full: '26-40001-mar',
+  case_341_link: '', case_trustee_contact_id: null,
+  case_number: '26-40001', case_number_full: '26-40001-mar',
   ...over,
 });
 
 function settingsLive(live = '1', roster = ROSTER) {
-  getSettings.mockResolvedValueOnce({
-    trustee_validation_live: live,
-    'fe-trustees': roster,
-  });
+  getSettings.mockResolvedValueOnce({ trustee_validation_live: live });
+  loadTrusteeRoster.mockResolvedValueOnce(roster);
 }
 
 // Explicit in-test drain assertion; the scriptGuard global afterEach is the
@@ -97,6 +102,11 @@ describe('mock boundary contracts', () => {
     const real = jest.requireActual('../services/settingsService');
     expect(typeof real.getSettings).toBe('function');
     expect(real.getSettings.length).toBe(2);
+  });
+  test('trusteeRoster really exports loadTrusteeRoster(db)', () => {
+    const real = jest.requireActual('../lib/trusteeRoster');
+    expect(typeof real.loadTrusteeRoster).toBe('function');
+    expect(real.loadTrusteeRoster.length).toBe(1);
   });
   test('taskService really exports createTask(db, opts)', () => {
     const real = jest.requireActual('../services/taskService');
@@ -125,8 +135,8 @@ describe('live mode (trustee_validation_live=1)', () => {
     const db = makeDb([
       caseStep(baseCase()),
       {
-        match: /^UPDATE cases SET case_trustee = \?, case_341_link = \? WHERE case_id = \?$/,
-        assertParams: (p) => expect(p).toEqual(['Michael A. Stevenson', 'https://z/stev', 'AB12CD34']),
+        match: /^UPDATE cases SET case_trustee = \?, case_341_link = \?, case_trustee_contact_id = \? WHERE case_id = \?$/,
+        assertParams: (p) => expect(p).toEqual(['Michael A. Stevenson', 'https://z/stev', 2075, 'AB12CD34']),
       },
     ]);
     const r = await validate({ case_id: 'AB12CD34' }, db);
@@ -134,7 +144,7 @@ describe('live mode (trustee_validation_live=1)', () => {
     expect(r.output).toMatchObject({
       status: 'matched', method: 'lname',
       canonical: 'Michael A. Stevenson',
-      trustee_updated: true, link_updated: true, dry_run: false,
+      trustee_updated: true, link_updated: true, twin_updated: true, dry_run: false,
       alert_task_id: null,
     });
     expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
@@ -162,12 +172,13 @@ describe('live mode (trustee_validation_live=1)', () => {
   test('IDEMPOTENT: already-canonical trustee + same link → no UPDATE, no log', async () => {
     settingsLive('1');
     const db = makeDb([
-      caseStep(baseCase({ case_trustee: 'Michael A. Stevenson', case_341_link: 'https://z/stev' })),
+      caseStep(baseCase({ case_trustee: 'Michael A. Stevenson', case_341_link: 'https://z/stev',
+                          case_trustee_contact_id: 2075 })),
     ]);
     const r = await validate({ case_id: 'AB12CD34' }, db);
     drained(db);
     expect(r.output).toMatchObject({
-      status: 'matched', trustee_updated: false, link_updated: false,
+      status: 'matched', trustee_updated: false, link_updated: false, twin_updated: false,
     });
     expect(logService.createLogEntry).not.toHaveBeenCalled();
     // FIL-3: the arrival signal fires even with nothing to write — "trustee
@@ -183,7 +194,7 @@ describe('live mode (trustee_validation_live=1)', () => {
   test('link-only delta: canonical name already stored, link missing → only the link is written', async () => {
     settingsLive('1');
     const db = makeDb([
-      caseStep(baseCase({ case_trustee: 'Stuart A. Gold' })),
+      caseStep(baseCase({ case_trustee: 'Stuart A. Gold', case_trustee_contact_id: 2078 })),
       {
         match: /^UPDATE cases SET case_341_link = \? WHERE case_id = \?$/,
         assertParams: (p) => expect(p).toEqual(['https://z/gold', 'AB12CD34']),
@@ -191,7 +202,7 @@ describe('live mode (trustee_validation_live=1)', () => {
     ]);
     const r = await validate({ case_id: 'AB12CD34' }, db);
     drained(db);
-    expect(r.output).toMatchObject({ trustee_updated: false, link_updated: true, method: 'exact' });
+    expect(r.output).toMatchObject({ trustee_updated: false, link_updated: true, twin_updated: false, method: 'exact' });
   });
 
   test('live matched run with link-only delta also emits (single signal per validation)', async () => {
@@ -200,7 +211,7 @@ describe('live mode (trustee_validation_live=1)', () => {
     // changed" refactor fails a named test.
     settingsLive('1');
     const db = makeDb([
-      caseStep(baseCase({ case_trustee: 'Stuart A. Gold' })),
+      caseStep(baseCase({ case_trustee: 'Stuart A. Gold', case_trustee_contact_id: 2078 })),
       { match: /^UPDATE cases SET case_341_link = \? WHERE case_id = \?$/ },
     ]);
     await validate({ case_id: 'AB12CD34' }, db);
@@ -254,10 +265,10 @@ describe('live mode (trustee_validation_live=1)', () => {
   });
 
   test('ambiguous roster hit alerts and never writes', async () => {
-    settingsLive('1', JSON.stringify([
-      { name: 'A McDonald', lname: 'McDonald', case_type: 13, link: 'x' },
-      { name: 'B McDonald', lname: 'McDonald', case_type: 13, link: 'y' },
-    ]));
+    settingsLive('1', [
+      { name: 'A McDonald', lname: 'McDonald', case_type: 13, link: 'x', contact_id: 1 },
+      { name: 'B McDonald', lname: 'McDonald', case_type: 13, link: 'y', contact_id: 2 },
+    ]);
     taskService.createTask.mockResolvedValueOnce({ task_id: 902 });
     const db = makeDb([
       caseStep(baseCase({ case_trustee: 'McDonald', case_chapter: '13' })),
@@ -283,8 +294,8 @@ describe('live mode (trustee_validation_live=1)', () => {
     expect(r.output.status).toBe('no_trustee');
   });
 
-  test('unparseable roster → no_roster alert, no throw', async () => {
-    settingsLive('1', '{"broken":[');
+  test('empty roster (no active trustee roles) → no_roster alert, no throw', async () => {
+    settingsLive('1', []);
     taskService.createTask.mockResolvedValueOnce({ task_id: 904 });
     const db = makeDb([
       caseStep(baseCase()),
@@ -333,7 +344,7 @@ describe('dry run (gate absent/0, or dry_run param)', () => {
     expect(r.output).toMatchObject({
       status: 'matched', dry_run: true,
       trustee_updated: false, link_updated: false,
-      would_update: ['case_trustee', 'case_341_link'],
+      would_update: ['case_trustee', 'case_341_link', 'case_trustee_contact_id'],
     });
     expect(logService.createLogEntry).not.toHaveBeenCalled();
     expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
@@ -343,7 +354,8 @@ describe('dry run (gate absent/0, or dry_run param)', () => {
   });
 
   test('gate absent (null) is also dry', async () => {
-    getSettings.mockResolvedValueOnce({ trustee_validation_live: null, 'fe-trustees': ROSTER });
+    getSettings.mockResolvedValueOnce({ trustee_validation_live: null });
+    loadTrusteeRoster.mockResolvedValueOnce(ROSTER);
     const db = makeDb([caseStep(baseCase())]);
     const r = await validate({ case_id: 'AB12CD34' }, db);
     drained(db);
@@ -389,6 +401,53 @@ describe('dry run (gate absent/0, or dry_run param)', () => {
     const r = await validate({ case_id: 'AB12CD34' }, db);
     drained(db);
     expect(r.success).toBe(true);
+  });
+});
+
+// ── slice 7: the contact_id twin ───────────────────────────────────────────
+describe('case_trustee_contact_id twin (slice 7)', () => {
+  test('TWIN-ONLY delta: canonical name + link already stored, twin NULL → twin rides an UPDATE, NO log row', async () => {
+    settingsLive('1');
+    const db = makeDb([
+      caseStep(baseCase({ case_trustee: 'Michael A. Stevenson', case_341_link: 'https://z/stev' })),
+      {
+        match: /^UPDATE cases SET case_trustee_contact_id = \? WHERE case_id = \?$/,
+        assertParams: (p) => expect(p).toEqual([2075, 'AB12CD34']),
+      },
+    ]);
+    const r = await validate({ case_id: 'AB12CD34' }, db);
+    drained(db);
+    expect(r.output).toMatchObject({
+      status: 'matched', trustee_updated: false, link_updated: false, twin_updated: true,
+    });
+    // The header's idempotency promise is about what STAFF see: twin-only
+    // backstop writes are unlogged, same as courtExecutor's twin writes.
+    expect(logService.createLogEntry).not.toHaveBeenCalled();
+    // FIL-3 emission semantics unchanged: matched live run emits, once.
+    expect(domainEvents.emit).toHaveBeenCalledTimes(1);
+    expect(domainEvents.emit.mock.calls[0][1]).toBe('case.trustee_validated');
+  });
+
+  test('an entry with no usable contact_id never writes the twin (never guess)', async () => {
+    settingsLive('1', [
+      { name: 'Michael A. Stevenson', lname: 'Stevenson', case_type: 7, link: 'https://z/stev' },
+    ]);
+    const db = makeDb([
+      caseStep(baseCase({ case_trustee: 'Michael A. Stevenson', case_341_link: 'https://z/stev' })),
+      // no UPDATE step — nothing to write
+    ]);
+    const r = await validate({ case_id: 'AB12CD34' }, db);
+    drained(db);
+    expect(r.output).toMatchObject({ status: 'matched', twin_updated: false });
+  });
+
+  test('roster load failure PROPAGATES — a DB blip fails the run for retry, never a phantom no_roster alert', async () => {
+    getSettings.mockResolvedValueOnce({ trustee_validation_live: '1' });
+    loadTrusteeRoster.mockRejectedValueOnce(new Error('pool exhausted'));
+    const db = makeDb([caseStep(baseCase())]);
+    await expect(validate({ case_id: 'AB12CD34' }, db)).rejects.toThrow(/pool exhausted/);
+    expect(taskService.createTask).not.toHaveBeenCalled();
+    drained(db);
   });
 });
 

@@ -12,7 +12,13 @@
  *   emailFrom    — email sender addresses
  *   users        — active staff users (user_type = true)
  *   settings     — frontend settings map: every app_settings row keyed 'fe-*'
- *                  (prefix stripped, value JSON-parsed, raw-string fallback)
+ *                  (prefix stripped, value JSON-parsed, raw-string fallback).
+ *                  settings.trustees is OVERRIDDEN from contacts +
+ *                  contact_roles via lib/trusteeRoster (slice 7) — the
+ *                  fe-trustees setting is decommissioned; the key keeps its
+ *                  name and entry shape so casedetails-bk's dropdown and
+ *                  forms optionsFrom sources (firmData.settings.trustees)
+ *                  need no change.
  *
  * This replaces the need for separate calls to:
  *   GET /api/phone-lines
@@ -26,6 +32,7 @@
 const express     = require('express');
 const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const { loadTrusteeRoster } = require('../lib/trusteeRoster');
 
 // Fields to strip from the current user response
 const USER_STRIP = ['password', 'password_hash', 'reset_token', 'reset_expires'];
@@ -46,7 +53,8 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       [lines],
       [emails],
       [users],
-      [settingsRows]
+      [settingsRows],
+      trustees
     ] = await Promise.all([
       req.db.query('SELECT * FROM users WHERE user = ?', [userId]),
       req.db.query(
@@ -77,7 +85,14 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       //  wildcard meaning and matches the literal prefix.)
       req.db.query(
         "SELECT `key`, `value` FROM app_settings WHERE `key` LIKE 'fe-%'"
-      )
+      ),
+      // Trustee roster (slice 7) — from contacts, in the legacy entry shape.
+      // Fail-SOFT to []: this endpoint boots the entire staff shell, and a
+      // degraded trustee dropdown beats a dead app.
+      loadTrusteeRoster(req.db).catch(err => {
+        console.error('GET /api/firm-data: trustee roster load failed:', err.message);
+        return [];
+      })
     ]);
 
     const currentUser = meRows[0] ? stripUser(meRows[0]) : null;
@@ -95,6 +110,10 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       }
       settings[k] = v;
     }
+
+    // Slice 7: the roster is served from contacts regardless of whether an
+    // fe-trustees row still exists (it is deleted at decommission time).
+    settings.trustees = trustees;
 
     res.json({
       status: 'success',

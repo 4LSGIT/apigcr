@@ -148,13 +148,13 @@ router.get('/api/judges', jwtOrApiKey, async (req, res) => {
 
 // ─── TRUSTEES ───
 //
-// SOURCE OF TRUTH: app_settings 'fe-trustees' — the same JSON array the
-// settings.html editor writes and /api/firm-data ships to every staff frame
-// as window.firmData.settings.trustees. The `trustees` TABLE is retired and
-// is NOT read here (lib/internal_functions/trustee.js:8-9 says the same); it
-// lacks nothing structurally, but it is a second copy with no writer, and the
-// roster's `link` is what gets stamped onto cases.case_341_link. One roster,
-// one spelling — that is the whole point of canonicalizing against it.
+// SOURCE OF TRUTH (slice 7): contacts with a contact_roles role='trustee'
+// row, loaded through lib/trusteeRoster into the SAME entry shape the
+// fe-trustees setting used to hold — the same array /api/firm-data ships to
+// every staff frame as window.firmData.settings.trustees. The fe-trustees
+// setting and the `trustees` TABLE are both retired. The roster's `link` is
+// what gets stamped onto cases.case_341_link. One roster, one spelling —
+// that is the whole point of canonicalizing against it.
 //
 // The response shape CHANGED with this rewrite (trustee_full_name → name,
 // etc.). That was free: the old endpoint had zero callers in the repo and
@@ -179,44 +179,25 @@ router.get('/api/judges', jwtOrApiKey, async (req, res) => {
 // is gated by app_settings trustee_validation_live and raises alert tasks.
 // Do not reimplement that here.
 
-const { getSettings } = require('../services/settingsService');
 const {
   matchTrustee, validEntries, eligibleForChapter, _norm,
 } = require('../lib/trusteeMatch');
 
 /**
- * Load + parse the fe-trustees roster.
+ * Load the trustee roster (contacts + contact_roles via lib/trusteeRoster).
  *
- * Returns a STATUS rather than throwing, because the two failure modes want
- * different human responses and a bare 500 hides which one happened:
- *   'ok'          → setting present and parsed
- *   'missing'     → no fe-trustees row at all (never configured / deleted)
- *   'unparseable' → row exists but is not valid JSON (bad hand-edit)
- * Both failures yield an EMPTY list, so a dropdown degrades to empty rather
- * than to a stack trace — but the status is on the response so a caller can
- * tell "no trustees configured" from "the roster is broken", and both are
- * console.error'd for Cloud Run.
+ * roster_status is kept on the response for wire-shape stability, but the
+ * setting-era 'missing' / 'unparseable' verdicts are unreachable now — the
+ * builder either returns entries (possibly zero: no active trustee roles →
+ * an empty dropdown) or throws, and a thrown query error surfaces as the
+ * route's 500 exactly as a failed app_settings read used to.
  *
- * Deliberately NOT pushed into lib/trusteeMatch.js: that module is pure and
- * DB-free by contract, and this needs the db handle.
+ * validEntries still runs — same predicate matchTrustee uses, so the list
+ * and the matcher can never disagree about what exists.
  */
 async function loadRoster(db) {
-  const settings = await getSettings(db, ['fe-trustees']);
-  const raw = settings['fe-trustees'];
-  if (raw == null) {
-    console.error("GET /api/trustees: app_settings 'fe-trustees' is missing");
-    return { entries: [], roster_status: 'missing' };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.error("GET /api/trustees: 'fe-trustees' is not parseable JSON:", e.message);
-    return { entries: [], roster_status: 'unparseable' };
-  }
-  // validEntries drops half-typed rows; same predicate matchTrustee uses, so
-  // the list and the matcher can never disagree about what exists.
-  return { entries: validEntries(parsed), roster_status: 'ok' };
+  const { loadTrusteeRoster } = require('../lib/trusteeRoster');
+  return { entries: validEntries(await loadTrusteeRoster(db)), roster_status: 'ok' };
 }
 
 router.get('/api/trustees', jwtOrApiKey, async (req, res) => {

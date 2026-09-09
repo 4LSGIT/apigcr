@@ -519,6 +519,14 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
 //
 //   New inserts store NULL — never empty string — for any field not supplied,
 //   for consistent downstream querying.
+//
+//   Role twin at creation (slice 7): when case_number_full is supplied, its
+//   docket suffix resolves case_judge_contact_id via lib/caseRoleResolver
+//   (never-throw contract — a filing must not bounce on a suffix that
+//   doesn't match; unresolved → the column's default NULL). case_trustee has
+//   no input field on this route, so the trustee twin structurally cannot
+//   resolve at creation — it fills later via caseService.updateCase /
+//   validate_case_trustee, exactly as before.
 // ─────────────────────────────────────────
 router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
   const { contact_id, case_type, duplicate = "return" } = req.body;
@@ -644,6 +652,24 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
       }
     }
 
+    // ── Role twin (slice 7): resolve the judge from the docket suffix ──
+    // Resolved BEFORE the insert loop so it rides the INSERT itself (no
+    // second UPDATE, no window where the twin lags the row). Belt-and-
+    // suspenders try/catch around the resolver's own never-throw contract.
+    let judgeContactId = null;
+    if (caseNumberFull !== null) {
+      try {
+        const roleResolver = require('../lib/caseRoleResolver'); // lazy (convention)
+        judgeContactId = await roleResolver.resolveJudge(req.db, {
+          case_number_full: caseNumberFull,
+          case_judge: null,
+        });
+      } catch (err) {
+        console.error('POST /api/intake/case: judge twin resolve failed (non-fatal):', err.message);
+        judgeContactId = null;
+      }
+    }
+
     // ── Create new case with unique case_id ──
     let case_id;
     let inserted = false;
@@ -680,6 +706,11 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
           cols.push("case_number_full");
           vals.push("?");
           params.push(caseNumberFull);
+        }
+        if (judgeContactId !== null) {
+          cols.push("case_judge_contact_id");
+          vals.push("?");
+          params.push(judgeContactId);
         }
 
         await req.db.query(

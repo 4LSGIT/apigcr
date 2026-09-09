@@ -1,15 +1,18 @@
 // tests/trusteesRoute.test.js
 //
-// GET /api/trustees — the fe-trustees roster endpoint (list / chapter /
-// search / match). The route reads app_settings, never the retired
-// `trustees` table, and reuses lib/trusteeMatch so its chapter eligibility
-// cannot drift from the matcher's rule 0.
+// GET /api/trustees — the trustee roster endpoint (list / chapter / search /
+// match). Slice 7: the roster is built from contacts + contact_roles by
+// lib/trusteeRoster (mocked at that boundary here — the builder's own SQL is
+// covered in tests/trusteeRoster.test.js); the route still reuses
+// lib/trusteeMatch so its chapter eligibility cannot drift from rule 0.
 //
-// ROSTER below is a trimmed snapshot of the LIVE fe-trustees value, kept
-// inline in the style of tests/validateCaseTrustee.test.js. It preserves the
-// two shapes that actually bite:
-//   · the McDonald collision — same lname, case_type 12 vs 13
-//   · case_type shipped as a NUMBER (the live setting does this; the
+// ROSTER below is a trimmed snapshot of the LIVE roster, kept inline in the
+// style of tests/validateCaseTrustee.test.js. It preserves the two shapes
+// that actually bite:
+//   · the McDonald collision — same lname, case_type 12 vs 13 (post-cutover
+//     both entries carry the SAME merged contact name; the 12/13 name split
+//     is kept here because the matcher must handle either roster era)
+//   · case_type shipped as a NUMBER (the live roster does this; the
 //     eligibility compare stringifies both sides because of it)
 
 // supertest is not a dependency — express in-process over a real ephemeral
@@ -19,28 +22,27 @@ const http = require('http');
 
 jest.mock('../lib/auth.jwtOrApiKey', () =>
   jest.fn((req, _res, next) => { req.auth = { userId: 6 }; next(); }));
+jest.mock('../lib/trusteeRoster', () => ({
+  loadTrusteeRoster: jest.fn(),
+}));
+const { loadTrusteeRoster } = require('../lib/trusteeRoster');
 
-const ROSTER = JSON.stringify([
-  { name: 'Basil T. Simon',         lname: 'Simon',     case_type: 7,  link: 'https://z/simon' },
-  { name: 'Michael A. Stevenson',   lname: 'Stevenson', case_type: 7,  link: 'https://z/stev'  },
-  { name: 'Stuart A. Gold',         lname: 'Gold',      case_type: 7,  link: 'https://z/gold'  },
-  { name: 'Thomas W. McDonald',     lname: 'McDonald',  case_type: 12, link: 'https://z/mcd'   },
-  { name: 'Thomas W. Jr. McDonald', lname: 'McDonald',  case_type: 13, link: 'https://z/mcd'   },
-  { name: 'Krispen S. Carroll',     lname: 'Carroll',   case_type: 13, link: 'https://z/carr'  },
-]);
+const ROSTER = [
+  { name: 'Basil T. Simon',         lname: 'Simon',     case_type: 7,  link: 'https://z/simon', contact_id: 2066 },
+  { name: 'Michael A. Stevenson',   lname: 'Stevenson', case_type: 7,  link: 'https://z/stev',  contact_id: 2075 },
+  { name: 'Stuart A. Gold',         lname: 'Gold',      case_type: 7,  link: 'https://z/gold',  contact_id: 2078 },
+  { name: 'Thomas W. McDonald',     lname: 'McDonald',  case_type: 12, link: 'https://z/mcd',   contact_id: 2082 },
+  { name: 'Thomas W. Jr. McDonald', lname: 'McDonald',  case_type: 13, link: 'https://z/mcd',   contact_id: 2082 },
+  { name: 'Krispen S. Carroll',     lname: 'Carroll',   case_type: 13, link: 'https://z/carr',  contact_id: 2085 },
+];
 
-/** Mounts the router over a db stub serving one fe-trustees value.
- *  `undefined` = the setting row does not exist. */
-function app(rosterValue) {
+/** Mounts the router; the trusteeRoster boundary serves `roster` (an array),
+ *  or REJECTS when given an Error (the builder's query-failure contract). */
+function app(roster) {
+  if (roster instanceof Error) loadTrusteeRoster.mockRejectedValue(roster);
+  else loadTrusteeRoster.mockResolvedValue(roster);
   const a = express();
-  a.use((req, _res, next) => {
-    req.db = {
-      query: async () => [
-        rosterValue === undefined ? [] : [{ key: 'fe-trustees', value: rosterValue }],
-      ],
-    };
-    next();
-  });
+  a.use((req, _res, next) => { req.db = { query: async () => [[]] }; next(); });
   a.use(require('../routes/api.users.js'));
   return a;
 }
@@ -89,9 +91,9 @@ describe('GET /api/trustees — list modes', () => {
   });
 
   test('an entry with no case_type stays eligible for every chapter', async () => {
-    const r = (await get(app(JSON.stringify([
+    const r = (await get(app([
       { name: 'Any Chapter Trustee', lname: 'Trustee', link: 'x' },
-    ])), '/api/trustees?chapter=13')).body;
+    ]), '/api/trustees?chapter=13')).body;
     expect(r.count).toBe(1);
   });
 
@@ -157,35 +159,32 @@ describe('GET /api/trustees — match mode', () => {
   });
 });
 
-describe('GET /api/trustees — roster failure modes', () => {
-  // These paths console.error by design (Cloud Run needs to see a broken
-  // roster); silence it so a passing run stays readable.
+describe('GET /api/trustees — roster failure modes (slice 7 builder contract)', () => {
   let err;
   beforeAll(() => { err = jest.spyOn(console, 'error').mockImplementation(() => {}); });
   afterAll(() => err.mockRestore());
 
-  test('missing setting → empty list, roster_status missing, still 200', async () => {
-    const r = await get(app(undefined), '/api/trustees');
-    expect(r.status).toBe(200);
-    expect(r.body.roster_status).toBe('missing');
-    expect(r.body.count).toBe(0);
-  });
+  test('empty roster (no active trustee roles) → empty list, still 200, roster_status ok; match says no_roster', async () => {
+    const l = await get(app([]), '/api/trustees');
+    expect(l.status).toBe(200);
+    expect(l.body.roster_status).toBe('ok');
+    expect(l.body.count).toBe(0);
 
-  test('unparseable setting → roster_status unparseable; match says no_roster', async () => {
-    const l = (await get(app('{not json'), '/api/trustees')).body;
-    expect(l.roster_status).toBe('unparseable');
-    expect(l.count).toBe(0);
-
-    const m = (await get(app('{not json'), '/api/trustees?match=Simon')).body;
-    expect(m.roster_status).toBe('unparseable');
+    const m = (await get(app([]), '/api/trustees?match=Simon')).body;
     expect(m.result.status).toBe('no_roster');
   });
 
+  test('builder query failure → 500 (same surface as a failed app_settings read pre-slice)', async () => {
+    const r = await get(app(new Error('pool exhausted')), '/api/trustees');
+    expect(r.status).toBe(500);
+    expect(r.body.status).toBe('error');
+  });
+
   test('half-typed roster rows are dropped, matching what the matcher sees', async () => {
-    const r = (await get(app(JSON.stringify([
+    const r = (await get(app([
       { name: 'Real Person', lname: 'Person', case_type: 7 },
       { name: '   ' }, null, 'garbage', { lname: 'NoName' },
-    ])), '/api/trustees')).body;
+    ]), '/api/trustees')).body;
     expect(r.count).toBe(1);
     expect(r.trustees[0].name).toBe('Real Person');
   });

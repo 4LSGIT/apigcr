@@ -38,7 +38,9 @@
  *             cfgJson). firm_name / firm_attorney_name keep a literal fallback
  *             so a cleared setting degrades to the previous hardcoded value;
  *             firm_address has none — see the comment at those resolvers.
- *   trustee.* — the matched entry of the `fe-trustees` json_array setting,
+ *   trustee.* — the matched entry of the trustee roster (contacts with a
+ *             contact_roles role='trustee' row, loaded by lib/trusteeRoster
+ *             into buildContext — slice 7; formerly the fe-trustees setting),
  *             matched on cases.case_trustee. See the TRUSTEE block below for
  *             why the match is exact-name.
  *
@@ -234,6 +236,26 @@ async function buildContext(db, { linkableType, linkableId } = {}) {
   );
   ctx.debtor2 = d2 || null;
 
+  // Trustee roster (slice 7): the trustee.* resolvers are SYNC over the
+  // context, so the DB-backed roster is loaded HERE — the one async point
+  // every resolution flows through — and stashed under a non-enumerable
+  // symbol (same leak rationale as _TRUSTEE_CACHE: it must never appear in
+  // a JSON.stringify of the context). Only loaded when the case actually
+  // names a trustee. try/catch → absent: a roster read must not be able to
+  // 500 a document render (the old cfgJson never threw); the trustee block
+  // collapses instead.
+  if (caseRow.case_trustee != null && String(caseRow.case_trustee).trim()) {
+    try {
+      const { loadTrusteeRoster } = require('../lib/trusteeRoster'); // lazy
+      Object.defineProperty(ctx, _TRUSTEE_ROSTER, {
+        value: await loadTrusteeRoster(db),
+        enumerable: false, configurable: true, writable: true,
+      });
+    } catch (err) {
+      console.warn(`[ESIGN_PREFILL] trustee roster load failed (trustee.* will resolve ''): ${err.message}`);
+    }
+  }
+
   return ctx;
 }
 
@@ -330,7 +352,8 @@ const RESOLVERS = Object.freeze({
   'debtor2.ssn_masked': (ctx) => ssnMasked(ctx.debtor2),
 
   // ── G4: TRUSTEE ───────────────────────────────────────────────────────────
-  // The panel trustee's contact block, from the `fe-trustees` setting, matched
+  // The panel trustee's contact block, from the trustee roster buildContext
+  // pre-loaded onto the context (lib/trusteeRoster — slice 7), matched
   // against cases.case_trustee. Every one resolves to '' when there is no
   // match — a Chapter 7 no-asset case with no trustee yet renders a notice
   // with the trustee column collapsed, not with orphan labels.
@@ -410,7 +433,7 @@ function _addressLines() {
  * PURE and source-agnostic: it reads `city` / `state` / `zip` off whatever
  * object it is handed, which is why one function serves both the contacts row
  * (whose columns are contact_city/_state/_zip — the callers map them) and a
- * fe-trustees entry (whose keys already are city/state/zip). Callers pass the
+ * trustee roster entry (whose keys already are city/state/zip). Callers pass the
  * OBJECT; the mapping for contacts lives in _cszParts.
  *
  * Rules, in order:
@@ -424,7 +447,7 @@ function _addressLines() {
  * lone zip is still information, and the empty-value-hides-label idiom in the
  * template is what decides whether it is worth a line.
  *
- * @param {?object} src  a contacts row, a fe-trustees entry, or null
+ * @param {?object} src  a contacts row, a trustee roster entry, or null
  * @returns {string}
  */
 function composeCsz(src) {
@@ -440,7 +463,7 @@ function composeCsz(src) {
 
 /**
  * The three pieces, from either shape. contacts rows carry the contact_
- * prefix; fe-trustees entries do not. Prefixed keys win when both are present
+ * prefix; trustee roster entries do not. Prefixed keys win when both are present
  * so a contacts row that happens to have picked up a stray `city` property
  * cannot shadow its own column.
  */
@@ -476,7 +499,7 @@ function ssnMasked(contact) {
 }
 
 /**
- * The fe-trustees entry for this case's trustee, or null.
+ * The trustee roster entry for this case's trustee, or null.
  *
  * ── MATCHING IS EXACT-NAME (case-insensitive), NOT SURNAME ──────────────────
  * The roster contains BOTH 'Thomas W. McDonald' (a Chapter 12 trustee) and
@@ -493,15 +516,18 @@ function ssnMasked(contact) {
  * that should be corrected on the case rather than accommodated here. Fuzzy
  * matching would hide them forever.
  *
- * MEMOIZED on the context object, the way buildExpressionRefs is built once
- * per resolution: five trustee.* resolvers on one template would otherwise
- * parse the 6.5KB setting five times. The cache key is a non-enumerable
- * symbol so it can never leak into a JSON.stringify of the context.
+ * The roster itself is pre-loaded by buildContext under _TRUSTEE_ROSTER
+ * (slice 7 — the setting-era cfgJson read is gone). MEMOIZED on the context
+ * object, the way buildExpressionRefs is built once per resolution: five
+ * trustee.* resolvers on one template would otherwise scan the roster five
+ * times. Both keys are non-enumerable symbols so neither can leak into a
+ * JSON.stringify of the context.
  *
  * @param {object} ctx  the resolution context
  * @returns {?object}   the roster entry, or null
  */
 const _TRUSTEE_CACHE = Symbol('trusteeEntry');
+const _TRUSTEE_ROSTER = Symbol('trusteeRoster');
 
 function _trusteeEntry(ctx) {
   if (!ctx || typeof ctx !== 'object') return null;
@@ -512,10 +538,9 @@ function _trusteeEntry(ctx) {
   let entry = null;
   const wanted = s(ctx.caseRow && ctx.caseRow.case_trustee).toLowerCase();
   if (wanted) {
-    // cfgJson NEVER throws — unset, malformed, or a non-array all arrive here
-    // as something that is not an array, and a firm-identity read must not be
-    // able to 500 a document render.
-    const roster = cfgJson('fe-trustees', null);
+    // Absent / failed-load roster arrives as undefined — resolve null, never
+    // throw: a roster problem must not be able to 500 a document render.
+    const roster = ctx[_TRUSTEE_ROSTER];
     if (Array.isArray(roster)) {
       entry = roster.find(
         (e) => e && typeof e === 'object' && s(e.name).toLowerCase() === wanted
@@ -739,6 +764,9 @@ module.exports = {
   validateExpressionResolver,
   buildExpressionRefs,
   resolveExpression,
+  // slice 7 — the ctx key buildContext stores the trustee roster under
+  // (tests inject fixtures through it)
+  _TRUSTEE_ROSTER,
   // formatting — shared with sendFromTemplate (caller-override formatting)
   formatValue,
   formatPhone,
