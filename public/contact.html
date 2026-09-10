@@ -1022,6 +1022,14 @@ window.addEventListener('message', (e) => {
     const iframe = E('tabInfoIframe');
     if (iframe && e.data.height) {
       iframe.style.height = e.data.height + 'px';
+      // scrollAdjust: the form grew something ABOVE the section the user is
+      // working in (entering edit mode adds the Save button and the "+ Add"
+      // rows), which slides that section down the page. THIS document is what
+      // scrolls — the shell pins our iframe to 100vh and we size the form's to
+      // its content — so the form cannot correct for it and hands us the px it
+      // moved. Apply it AFTER the height above, or it clamps to the old,
+      // shorter document.
+      if (e.data.scrollAdjust) window.scrollBy(0, e.data.scrollAdjust);
     }
   }
 });
