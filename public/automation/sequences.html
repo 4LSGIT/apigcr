@@ -1509,10 +1509,23 @@ function seqRenderActionConfig(type, cfg) {
       </p>
     </div>`;
   }
-  if (type === 'task') return `${toggle}
-    <div class="field"><label>Title</label><input id="se-title" value="${esc(cfg.params?.title || '')}"></div>
-    <div class="field"><label>Assigned To (user ID)</label><input id="se-assigned-to" type="number" value="${esc(cfg.params?.assigned_to || '')}"></div>
-    <div class="field"><label>Description</label><textarea id="se-desc" rows="3">${esc(cfg.params?.description || '')}</textarea></div>`;
+  if (type === 'task') {
+    // Lossless round-trip (2026-09-10): create_task takes more params than this
+    // form renders (link_type / link_id / source / … — lib/internal_functions/
+    // tasks.js). Gather's old fixed literal shed them on every form-mode save —
+    // that is how template 31's draft lost its case link. Unrendered params ride
+    // a hidden field the gather merges back. assigned_to is a TEXT input because
+    // it legitimately holds {{placeholders}}; type="number" rendered those as a
+    // blank box, which re-saved as 0. Same drift the metadata editor already
+    // fixed (see tests/sequences.editor.roundtrip.test.js) — this legacy branch
+    // never inherited it.
+    const { title, assigned_to, description, ...taskExtras } = cfg.params || {};
+    return `${toggle}
+    <div class="field"><label>Title</label><input id="se-title" value="${esc(title || '')}"></div>
+    <div class="field"><label>Assigned To (user ID or {{placeholder}})</label><input id="se-assigned-to" value="${esc(assigned_to ?? '')}"></div>
+    <div class="field"><label>Description</label><textarea id="se-desc" rows="3">${esc(description || '')}</textarea></div>
+    <input type="hidden" id="se-task-extras" value="${esc(JSON.stringify(taskExtras))}">`;
+  }
   // ── Slice 3.3: webhook step ──
   // NOT retry-idempotent — receiver must tolerate duplicates. Cookbook §5.18.
   if (type === 'webhook') {
@@ -2297,8 +2310,15 @@ function seqGatherActionConfig(actionType) {
     return { function_name: 'send_email', params };
   }
   if (actionType === 'task') {
+    // se-task-extras: params the form has no widget for, stashed by the render
+    // so a form-mode save can't shed them (it did — template 31 v2). A non-
+    // numeric assigned_to is kept verbatim — it's a {{placeholder}} the
+    // resolver handles at execution time. Empty still means 0, as before.
+    const extras = tryParse('se-task-extras', {}); if (extras === 'ERROR') return null;
     const desc = val('se-desc');
-    return { function_name: 'create_task', params: { title: val('se-title'), assigned_to: parseInt(val('se-assigned-to')) || 0, ...(desc && { description: desc }) } };
+    const rawAssigned = val('se-assigned-to');
+    const assigned_to = /^\d+$/.test(rawAssigned) ? parseInt(rawAssigned, 10) : (rawAssigned || 0);
+    return { function_name: 'create_task', params: { ...extras, title: val('se-title'), assigned_to, ...(desc && { description: desc }) } };
   }
   if (actionType === 'webhook') {
     // Slice 3.3 — webhook step. URL can contain {{placeholders}}; resolver

@@ -244,3 +244,79 @@ describe('sequences.html editor — gather still coerces and still rejects', () 
     expect(ed.swalCalls[0][1]).toContain('is not valid JSON');
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Legacy `task` action type — the hand-rolled 3-field form in
+// seqRenderActionConfig, NOT the metadata-driven internal_function editor the
+// suites above cover. It shipped the exact drift this file exists to catch
+// (template 31 v2, 2026-09-10): a form-mode save rewrote assigned_to
+// '{{trigger_data.appt_with}}' → 0 (type="number" blanked the placeholder,
+// gather's `|| 0` finished it) and shed link_type / link_id / source outright
+// (fixed 3-key literal). These pin the lossless round-trip.
+const TASK_SOURCES = [
+  extractFn(SCRIPT, 'esc'),
+  extractFn(SCRIPT, 'seqRenderActionConfig'),
+  extractFn(SCRIPT, 'seqGatherActionConfig'),
+].join('\n\n');
+
+function makeTaskEditor(storedParams) {
+  const dom = new JSDOM('<body><div id="host"></div></body>');
+  const { window } = dom;
+  const swalCalls = [];
+  const ctx = vm.createContext({
+    document: window.document,
+    window,
+    Swal: { fire: (...a) => swalCalls.push(a) },
+    SEQ: { jsonMode: false },
+  });
+  vm.runInContext(TASK_SOURCES, ctx);
+  window.document.getElementById('host').innerHTML =
+    ctx.seqRenderActionConfig('task', { function_name: 'create_task', params: storedParams });
+  return {
+    swalCalls,
+    el: (id) => window.document.getElementById(id),
+    gather: () => ctx.seqGatherActionConfig('task'),
+  };
+}
+
+describe('sequences.html editor — legacy task branch', () => {
+  // Template 31 v1's real shape (the Ch11-341 manual-handling step).
+  const STORED = {
+    title: 'Ch11 341 — manual handling ({{contacts.contact_name}})',
+    source: 'seq_ch11_341',
+    link_id: '{{trigger_data.case_id}}',
+    link_type: 'case',
+    assigned_to: '{{trigger_data.appt_with}}',
+    description: 'Handle prep and reminders by hand.',
+  };
+
+  test('a {{placeholder}} assigned_to renders visibly, not as a blank number box', () => {
+    const ed = makeTaskEditor(STORED);
+    expect(ed.el('se-assigned-to').getAttribute('type')).not.toBe('number');
+    expect(ed.el('se-assigned-to').value).toBe('{{trigger_data.appt_with}}');
+  });
+
+  test('untouched round-trip keeps every param, placeholders verbatim', () => {
+    const ed = makeTaskEditor(STORED);
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg.params).toEqual(STORED);
+    expect(internalFunctions.__validateFunctionParams('create_task', cfg.params)).toBeNull();
+  });
+
+  test('editing the title does not shed link_type / link_id / source', () => {
+    const ed = makeTaskEditor(STORED);
+    ed.el('se-title').value = 'Ch. 11 341 — manual handling ({{contacts.contact_name}})';
+    const cfg = ed.gather();
+    expect(cfg.params).toEqual({ ...STORED, title: 'Ch. 11 341 — manual handling ({{contacts.contact_name}})' });
+  });
+
+  test('numeric assigned_to still coerces to a number; empty still means 0', () => {
+    const ed = makeTaskEditor({ ...STORED, assigned_to: 6 });
+    expect(ed.el('se-assigned-to').value).toBe('6');
+    expect(ed.gather().params.assigned_to).toBe(6);
+
+    ed.el('se-assigned-to').value = '';
+    expect(ed.gather().params.assigned_to).toBe(0);
+  });
+});
