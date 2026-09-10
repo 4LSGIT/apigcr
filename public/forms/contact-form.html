@@ -12,6 +12,47 @@
         integrity="sha512-Avb2QiuDEEvB4bZJYdft2mNjVShBftLdPG8FJ0V7irTLQ8Uo0qcPxh4Plq7G5tGm0rU+1SPhVotteLpBERwTkw==" crossorigin="anonymous" referrerpolicy="no-referrer">
   <link href="/css/yc-forms.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- ════════════════════════════════════════════════════════════════
+       MODAL-CONTENT CSS — its own sheet on purpose.
+
+       Modals fire through the SHELL's Swal (see the Swal binding in the
+       script below), so their markup lands in index.html's document, not
+       this one, and rules living in the block below would never reach it.
+       mirrorModalCss() copies THIS sheet's text into the top document
+       once. Everything here must therefore be self-contained and written
+       against theme.css vars, which the shell also loads.
+
+       Keep it to markup that only ever appears inside a popup.
+       ════════════════════════════════════════════════════════════════ -->
+  <style id="ycpModalCss">
+    /* History modal table */
+    .ycp-hist-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .ycp-hist-table th, .ycp-hist-table td {
+      padding: 4px 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .ycp-hist-table th { background: var(--surface-2); font-weight: 600; color: var(--text-2); }
+    .ycp-revive-btn {
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      color: var(--accent-2);
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .ycp-revive-btn:hover { background: var(--accent-soft); color: var(--accent-on-soft); }
+
+    /* Transfer modal list — readable, grouped by source contact */
+    .ycp-conflict-source { font-weight: 600; margin-top: 8px; }
+    .ycp-conflict-source:first-child { margin-top: 0; }
+    .ycp-conflict-list { margin: 4px 0 0 18px; font-size: 13px; }
+  </style>
   <style>
     /* ──────────────────────────────────────────────────────────
        Slice 3 Stage B.2 — repeater-specific styling
@@ -136,33 +177,6 @@
     .ycp-w-zip     { flex: 0 0 110px; }
     .ycp-w-grow    { flex: 1 1 auto; min-width: 180px; }
 
-    /* History modal table */
-    .ycp-hist-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    .ycp-hist-table th, .ycp-hist-table td {
-      padding: 4px 8px;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-    }
-    .ycp-hist-table th { background: var(--surface-2); font-weight: 600; color: var(--text-2); }
-    .ycp-revive-btn {
-      background: var(--surface);
-      border: 1px solid var(--accent);
-      color: var(--accent-2);
-      border-radius: 4px;
-      padding: 3px 10px;
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .ycp-revive-btn:hover { background: var(--accent-soft); color: var(--accent-on-soft); }
-
-    /* Transfer modal list — readable, grouped by source contact */
-    .ycp-conflict-source { font-weight: 600; margin-top: 8px; }
-    .ycp-conflict-source:first-child { margin-top: 0; }
-    .ycp-conflict-list { margin: 4px 0 0 18px; font-size: 13px; }
     /* SweetAlert in dark mode. This form puts THEMED markup inside its
        popups — the history table, the transfer list, the revive confirm —
        so the popup has to be a themed surface or --text-2 lands on Swal's
@@ -710,6 +724,52 @@
   if (!contactId) {
     document.body.innerHTML = '<p style="color:var(--danger);padding:20px;">Missing contact_id parameter.</p>';
   } else {
+
+    // ════════════════════════════════════════════════════════════════
+    // SWAL HOST — the shell's instance, not this iframe's.
+    //
+    // contact.html sizes this iframe to its full content height (see the
+    // iframe-resize message at the bottom of this file), so the iframe has
+    // no scrollbar of its own: its viewport IS the whole document. A
+    // position:fixed popup therefore centres on the entire form, which from
+    // a section near the bottom — Roles especially — is a long scroll up.
+    // window.top.Swal overlays the real viewport instead.
+    //
+    // This is the house idiom; checklistView.html's swal() does the same for
+    // the same reason. Shadowing the global rather than routing each call
+    // site keeps Swal.getHtmlContainer()/Swal.close() inside didOpen bound to
+    // the SAME instance that fired the popup — split them and the history
+    // modal's Revive buttons stop working.
+    //
+    // Popup markup lands in the shell's document, so anything the popups
+    // style needs to travel with them: see #ycpModalCss / mirrorModalCss().
+    // theme.css (dark .swal2-popup et al) is already loaded there.
+    //
+    // Falls back to the local copy when this page is opened unframed.
+    // ════════════════════════════════════════════════════════════════
+    const Swal = (function pickSwalHost() {
+      try {
+        if (window.top && window.top !== window && window.top.Swal) {
+          mirrorModalCss(window.top.document);
+          return window.top.Swal;
+        }
+      } catch (_) { /* cross-origin top — use ours */ }
+      return window.Swal;
+    })();
+
+    /** Copy #ycpModalCss into `doc` once, so popup markup keeps its styling
+     *  after it moves out of this document. Id-guarded: contact.html rebuilds
+     *  this iframe on every contact, and the shell's <head> outlives it. */
+    function mirrorModalCss(doc) {
+      const ID = 'ycpModalCss-mirrored';
+      if (doc.getElementById(ID)) return;
+      const src = document.getElementById('ycpModalCss');
+      if (!src) return;
+      const el = doc.createElement('style');
+      el.id = ID;
+      el.textContent = src.textContent;
+      doc.head.appendChild(el);
+    }
 
     // ─── YCForm config ──────────────────────────────────────────────
     const form = new YCForm({
