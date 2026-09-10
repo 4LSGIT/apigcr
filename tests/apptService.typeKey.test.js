@@ -134,6 +134,10 @@ function makeDb(seedRows = [], { cases = {} } = {}) {
       return [{ affectedRows: 1 }];
     }
     if (/sequence_enrollments/i.test(flat)) return [[{ activeEnrollments: 0 }]];
+    if (/^SELECT case_chapter FROM cases WHERE case_id/i.test(flat)) {          // Ch11 cascade flatten
+      const c = caseRows[params[0]];
+      return [c && c.case_chapter != null ? [{ case_chapter: c.case_chapter }] : []];
+    }
     unmatched.push(flat);
     return [[]];
   };
@@ -410,5 +414,44 @@ describe('trigger_data carries type_key (U5)', () => {
     await apptService.markNoShow(db, { appt_id: 802, enroll: true });
     await flush();
     expect(enrollment('no_show')[3].type_key).toBeNull();
+  });
+});
+
+// ── (Ch11 cascade, 2026-09-09) trigger_data carries case_chapter ─────────────
+// Flattened top-level for the same reason as type_key: sequenceEngine reads
+// cascade fields off trigger_data's top level, and a template with a specific
+// chapter filter and no trigger value is DISQUALIFIED, not skipped. Null-safe
+// when the appt has no case or the case has no chapter.
+describe('trigger_data carries case_chapter (Ch11 cascade)', () => {
+  const seqEngine = require('../lib/sequenceEngine');
+  const enrollment = (type) =>
+    seqEngine.enrollContact.mock.calls.find((c) => c[2] === type);
+
+  test('case with a chapter → chapter rides trigger_data beside type_key', async () => {
+    const db = makeDb([], { cases: { PY9ZD564: { case_chapter: '11' } } });
+    await apptService.createAppt(db, { ...BASE, appt_type: 'Pre-filing Meeting', case_id: 'PY9ZD564' });
+    await flush();
+    const call = enrollment('pre_appt');
+    expect(call).toBeDefined();
+    const triggerData = call[3];
+    expect(triggerData.case_chapter).toBe('11');
+    expect(triggerData.type_key).toBe('pre_filing'); // beside, not instead of
+    expect(db.unmatched).toEqual([]);                // chapter lookup is dispatched, not stray
+  });
+
+  test('no case → case_chapter null (no lookup), enrollment still fires', async () => {
+    const db = makeDb();
+    await apptService.createAppt(db, { ...BASE, appt_type: 'Pre-filing Meeting' });
+    await flush();
+    const triggerData = enrollment('pre_appt')[3];
+    expect(triggerData.case_chapter).toBeNull();
+    expect(db.unmatched).toEqual([]);
+  });
+
+  test('case whose chapter is unset → null, chapter-filtered templates simply cannot win', async () => {
+    const db = makeDb([], { cases: { NOCHAP01: {} } });
+    await apptService.createAppt(db, { ...BASE, appt_type: 'Pre-filing Meeting', case_id: 'NOCHAP01' });
+    await flush();
+    expect(enrollment('pre_appt')[3].case_chapter).toBeNull();
   });
 });

@@ -935,6 +935,31 @@ async function enrollApptReminderSequences(db, {
   // fields off the top level of trigger_data, and a template with a specific
   // filter and no trigger value for it is DISQUALIFIED, not skipped. Without
   // this line every pre_appt template in the U5 migration loses.
+  // case_chapter (Ch11 cascade, 2026-09-09): flattened so pre_appt templates
+  // can cascade BY CHAPTER — a Ch11 341 must not get the consumer-case
+  // reminder flow (SS: different rules; and the Zoom-link SMS is wrong for a
+  // telephonic UST meeting). Template 19 stays chapter-wildcard (unchanged
+  // for 7/13); a chapter-specific template outscores it only where its
+  // filter matches. Same DISQUALIFIED-not-skipped rule as type_key below:
+  // without this flatten, any template with a chapter filter always loses.
+  // Null-safe: no case, or a case without a chapter, flattens null — chapter-
+  // filtered templates disqualify, wildcards (T19, generic) still qualify.
+  let case_chapter = null;
+  if (case_id) {
+    try {
+      const [chRows] = await db.query(
+        'SELECT case_chapter FROM cases WHERE case_id = ? LIMIT 1', [case_id]
+      );
+      const raw = chRows && chRows[0] ? chRows[0].case_chapter : null;
+      case_chapter = (raw === undefined || raw === null || raw === '') ? null : raw;
+    } catch (err) {
+      // Same non-blocking posture as the enrollment itself: a chapter lookup
+      // failure must not block appt creation OR enrollment — it just means
+      // chapter-specific templates can't win this one.
+      console.error(`[APPT SERVICE] case_chapter lookup failed for appt ${appt_id}:`, err.message);
+    }
+  }
+
   const triggerData = {
     appt_id,
     appt_time:   appt_date_utc.toISOString(),
@@ -942,6 +967,7 @@ async function enrollApptReminderSequences(db, {
     type_key:    type_key || null,
     appt_with:   Number(appt_with),
     case_id:     case_id || null,
+    case_chapter,
     // entity_ref: the most-specific entity this appt is about, as a ready-made
     // shell query-param fragment ("case=ABC" when a case exists, else
     // "contact=123"). Templates link with {{trigger_data.entity_ref}} so a

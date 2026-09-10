@@ -173,6 +173,10 @@ function makeDb(seedRows = [], { cases = [] } = {}) {
       return [{ affectedRows: c ? 1 : 0 }];
     }
     if (/sequence_enrollments/i.test(flat)) return [[{ activeEnrollments: 0 }]];
+    if (/^SELECT case_chapter FROM cases WHERE case_id/i.test(flat)) {          // Ch11 cascade flatten (2026-09-09)
+      const c = (caseRows.find ? caseRows.find((x) => x.case_id === params[0]) : null);
+      return [c && c.case_chapter != null ? [{ case_chapter: c.case_chapter }] : []];
+    }
     unmatched.push(flat);
     return [[]];
   };
@@ -365,7 +369,11 @@ describe('flag OFF — byte-for-byte today (the string block, pinned)', () => {
     // Nothing from the singleton path leaked in.
     expect(seq.some((s) => /SELECT a\.\* FROM appts a/.test(s))).toBe(false);
     expect(seq.some((s) => /SELECT case_id, case_number/.test(s))).toBe(false);
-    expect(db.poolCalls.some((c) => /FROM cases/.test(c.sql))).toBe(false);
+    // (2026-09-09) The Ch11-cascade chapter flatten is the ONE cases query the
+    // enrollment path is allowed — everything else on cases stays forbidden.
+    expect(db.poolCalls.some((c) =>
+      /FROM cases/.test(c.sql) && !/^SELECT case_chapter FROM cases WHERE case_id/.test(c.sql)
+    )).toBe(false);
 
     // Supersession outcome + the LEGACY reason strings, byte-identical.
     expect(db.rows.get(500).appt_status).toBe('Rescheduled');
