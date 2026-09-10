@@ -2953,21 +2953,36 @@ async function runLiveTest() {
 
     let auth_config = null;
     const auth_type = E('f-auth-type').value;
+    // Keep-then-overwrite (2026-09-10): seed each config from the loaded
+    // hook's stored value when its mode is UNCHANGED, so keys this form has
+    // no widget for survive a save. Not hypothetical: the live Calendly
+    // hooks (32/40) carry scheme:'timestamped' + tolerance_seconds in
+    // auth_config — read by hookService's HMAC verify — and the old fixed
+    // literals shed both, so one Save here (even a description edit) would
+    // have broken every Calendly delivery. Same class as the sequences
+    // task-branch bug (template 31 v2). Mode switches still start clean.
+    const seedCfg = (mode, storedMode, storedCfg) => {
+      if (!activeHook || mode !== storedMode) return {};
+      const parsed = parseJson(storedCfg);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    };
     if (auth_type === 'api_key') {
-      auth_config = { key: E('f-auth-key').value, header: E('f-auth-header').value };
+      auth_config = { ...seedCfg(auth_type, activeHook?.auth_type, activeHook?.auth_config),
+        key: E('f-auth-key').value, header: E('f-auth-header').value };
     } else if (auth_type === 'hmac') {
-      auth_config = { secret: E('f-hmac-secret').value, header: E('f-hmac-header').value, algorithm: E('f-hmac-algorithm').value };
+      auth_config = { ...seedCfg(auth_type, activeHook?.auth_type, activeHook?.auth_config),
+        secret: E('f-hmac-secret').value, header: E('f-hmac-header').value, algorithm: E('f-hmac-algorithm').value };
     }
 
     const filter_mode = E('f-filter-mode').value;
     let filter_config = null;
     if (filter_mode === 'conditions') filter_config = collectFilterConditions();
-    else if (filter_mode === 'code') filter_config = { code: E('f-filter-code').value };
+    else if (filter_mode === 'code') filter_config = { ...seedCfg('code', activeHook?.filter_mode, activeHook?.filter_config), code: E('f-filter-code').value };
 
     const transform_mode = E('f-transform-mode').value;
     let transform_config = null;
     if (transform_mode === 'mapper') transform_config = collectMapperRules();
-    else if (transform_mode === 'code') transform_config = { code: E('f-transform-code').value };
+    else if (transform_mode === 'code') transform_config = { ...seedCfg('code', activeHook?.transform_mode, activeHook?.transform_config), code: E('f-transform-code').value };
 
     const payload = {
       name, slug,

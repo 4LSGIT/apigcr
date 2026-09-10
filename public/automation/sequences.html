@@ -853,7 +853,10 @@ const SEQ = {
   // (keep-then-overwrite) rather than rebuilding from {} (delete-then-restore),
   // so unknown/hidden keys survive by construction. Re-snapshotted on every
   // seqRenderEditTab. Mirrors WF.origConfig in workflows.html.
-  origConfig: null
+  origConfig: null,
+  // The edited step's action type at snapshot time — the seeding guard for
+  // the hand-rolled branches (see _seqSeedFromOrig).
+  origActionType: null
 };
 
 const SEQENROLL = {
@@ -1446,6 +1449,11 @@ function seqRenderEditTab(step) {
   // cannot represent (see SEQ.origConfig docs). Deep clone; null on failure
   // (gather then degrades to schema-only — the prior behaviour).
   SEQ.origConfig = (() => { try { return JSON.parse(JSON.stringify(cfg)); } catch { return null; } })();
+  // Companion to origConfig for the hand-rolled branches: _seqSeedFromOrig
+  // seeds only when the step's ORIGINAL action type matches the branch
+  // gathering, so an action-type switch can't graft one shape's keys onto
+  // another (the metadata path gets the same guard from function_name).
+  SEQ.origActionType = step.action_type || null;
   const strategies = ['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort'];
   document.getElementById('seq-editor-body').innerHTML = `
     <div class="field"><label>Action Type</label>
@@ -1498,6 +1506,14 @@ function seqRenderActionConfig(type, cfg) {
     <div class="field"><label>To</label><input id="se-to" value="${esc(cfg.params?.to || '{{contacts.contact_email}}')}"></div>
     <div class="field"><label>Subject</label><input id="se-subject" value="${esc(cfg.params?.subject || '')}"></div>
     <div class="field"><label>Text</label><textarea id="se-text" rows="5">${esc(cfg.params?.text || '')}</textarea></div>
+    <div class="field"><label>HTML body (optional)</label>
+      <textarea id="se-html" rows="5">${esc(cfg.params?.html || '')}</textarea>
+      <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Provide at least one of Text or HTML body. Placeholders work here too.</p>
+    </div>
+    <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+      <input type="checkbox" id="se-incl-sig" style="width:auto" ${['true', '1', 'yes'].includes(String(cfg.params?.include_signature)) ? 'checked' : ''}>
+      <label for="se-incl-sig" style="margin:0;cursor:pointer">Append the sender's stored signature</label>
+    </div>
     <div class="field">
       <label>Attachments (optional)</label>
       <textarea id="se-attach" rows="4" placeholder='[]'>${esc(attachJson)}</textarea>
@@ -2282,6 +2298,22 @@ function seqRenderConditionsTab(step) {
 // must early-return without saving). Used by both seqGatherStep (for save)
 // and seqToggleJson (to capture state across the form↔JSON flip).
 // ─────────────────────────────────────────────────────────────
+// Keep-then-overwrite seeding for the hand-rolled action branches (sms /
+// email / webhook / start_workflow) — the same preservation rule the
+// metadata gather applies via SEQ.origConfig, hoisted so EVERY branch gets
+// it (2026-09-10: the task branch's fixed literal shed link_type/link_id/
+// source — template 31 v2 — and email's shed html/include_signature; this
+// closes the whole class). Returns a deep clone of the pristine config when
+// the step's ORIGINAL action type matches the branch gathering, else {} —
+// after an action-type switch the old shape's keys must not leak into the
+// new one. The branch then overwrites every field it renders and DELETES
+// cleared optionals, so a seeded key can't survive its own widget being
+// emptied.
+function _seqSeedFromOrig(actionType) {
+  if (SEQ.origActionType !== actionType || !SEQ.origConfig) return {};
+  try { return JSON.parse(JSON.stringify(SEQ.origConfig)); } catch { return {}; }
+}
+
 function seqGatherActionConfig(actionType) {
   if (SEQ.jsonMode) {
     const raw = document.getElementById('se-config-json')?.value?.trim() ?? '';
@@ -2299,15 +2331,28 @@ function seqGatherActionConfig(actionType) {
   };
 
   if (actionType === 'sms') {
-    return { function_name: 'send_sms', params: { from: val('se-from'), to: val('se-to'), message: val('se-message') } };
+    const cfg = _seqSeedFromOrig('sms');
+    cfg.function_name = 'send_sms';
+    cfg.params = Object.assign(
+      (cfg.params && typeof cfg.params === 'object') ? cfg.params : {},
+      { from: val('se-from'), to: val('se-to'), message: val('se-message') }
+    );
+    return cfg;
   }
   if (actionType === 'email') {
-    const params = {
+    const cfg = _seqSeedFromOrig('email');
+    const params = (cfg.params && typeof cfg.params === 'object') ? cfg.params : {};
+    Object.assign(params, {
       from: val('se-from'),
       to: val('se-to'),
       subject: val('se-subject'),
       text: val('se-text'),
-    };
+    });
+    // Optional rendered fields: the form is authoritative — cleared deletes.
+    const html = val('se-html');
+    if (html) params.html = html; else delete params.html;
+    if (document.getElementById('se-incl-sig')?.checked) params.include_signature = true;
+    else delete params.include_signature; // default false — absent ≡ off
     const attachRaw = val('se-attach');
     if (attachRaw) {
       let parsed;
@@ -2317,9 +2362,13 @@ function seqGatherActionConfig(actionType) {
         Swal.fire('Error', 'Attachments must be a JSON array', 'error');
         return null;
       }
-      if (parsed.length) params.attachment_urls = parsed;
+      if (parsed.length) params.attachment_urls = parsed; else delete params.attachment_urls;
+    } else {
+      delete params.attachment_urls;
     }
-    return { function_name: 'send_email', params };
+    cfg.function_name = 'send_email';
+    cfg.params = params;
+    return cfg;
   }
   // NOTE: no 'task' branch — the task render delegates to the create_task
   // metadata body with a hidden #se-fn, so 'task' falls through to the
@@ -2336,14 +2385,16 @@ function seqGatherActionConfig(actionType) {
     const credId  = credRaw ? parseInt(credRaw) : null;
     const timeoutRaw = val('se-wh-timeout');
     const timeout_ms = timeoutRaw ? parseInt(timeoutRaw) : 30000;
-    return {
+    const cfg = _seqSeedFromOrig('webhook');
+    Object.assign(cfg, {
       method: document.getElementById('se-wh-method')?.value || 'POST',
       url,
-      ...(credId && { credential_id: credId }),
       headers: headers || {},
       body:    body    || {},
       timeout_ms,
-    };
+    });
+    if (credId) cfg.credential_id = credId; else delete cfg.credential_id;
+    return cfg;
   }
   if (actionType === 'start_workflow') {
     // Slice 3.3 — start_workflow step.
@@ -2354,12 +2405,14 @@ function seqGatherActionConfig(actionType) {
     const init_data = tryParse('se-sw-initdata', {}); if (init_data === 'ERROR') return null;
     const tieChecked = document.getElementById('se-sw-tie')?.checked;
     const overrideVal = val('se-sw-override');
-    return {
+    const cfg = _seqSeedFromOrig('start_workflow');
+    Object.assign(cfg, {
       workflow_id,
       init_data: init_data || {},
       tie_to_contact: !!tieChecked,
       contact_id_override: tieChecked ? null : (overrideVal || ''),
-    };
+    });
+    return cfg;
   }
   // internal_function — metadata-driven path with JSON fallback.
   const fnName = val('se-fn');

@@ -2335,6 +2335,7 @@ window.piToggleSidebar = piToggleSidebar;
 
   async function addAction() {
     if (ruleForm.id == null) return;
+    editingAction = null;                      // new action — nothing to seed from
     const { value } = await Swal.fire({
       title: 'Add action',
       html: buildActionForm({}),
@@ -2359,6 +2360,7 @@ window.piToggleSidebar = piToggleSidebar;
   async function editAction(i) {
     const a = ruleForm.actions[i];
     if (!a) return;
+    editingAction = a;                         // collectActionForm seeds from this
     const { value } = await Swal.fire({
       title: 'Edit action',
       html: buildActionForm(a),
@@ -2751,6 +2753,22 @@ window.piToggleSidebar = piToggleSidebar;
     return v;
   }
 
+  // Keep-then-overwrite (2026-09-10): the action being edited, stashed by
+  // editAction (null for addAction). _seedActionConfig returns a clone of
+  // its stored config when the saved action_type matches, so config keys
+  // this modal has no widget for survive an edit instead of being shed by
+  // the fixed-literal rebuild below — the class of bug that hit the
+  // sequence task form (template 31 v2) and the hooks HMAC config. Each
+  // branch still overwrites what it renders and deletes cleared optionals.
+  let editingAction = null;
+  function _seedActionConfig(actionType) {
+    const a = editingAction;
+    if (!a || a.action_type !== actionType) return {};
+    const c = (typeof a.config === 'string') ? parseJson(a.config) : a.config;
+    if (!c || typeof c !== 'object' || Array.isArray(c)) return {};
+    try { return JSON.parse(JSON.stringify(c)); } catch { return {}; }
+  }
+
   function collectActionForm() {
     const type = document.getElementById('swal-a-type').value;
     const position = Math.max(0, parseInt(document.getElementById('swal-a-position').value, 10) || 0);
@@ -2759,7 +2777,7 @@ window.piToggleSidebar = piToggleSidebar;
     if (type === 'workflow') {
       const wfId = parseInt(document.getElementById('swal-a-wf').value, 10);
       if (!Number.isInteger(wfId) || wfId <= 0) { Swal.showValidationMessage('Select a workflow'); return false; }
-      return { action_type: 'workflow', config: { workflow_id: wfId }, position, active };
+      return { action_type: 'workflow', config: { ..._seedActionConfig('workflow'), workflow_id: wfId }, position, active };
     }
 
     // Slice 9B: Forward pseudo-type → saved as an internal_function action.
@@ -2786,6 +2804,7 @@ window.piToggleSidebar = piToggleSidebar;
       return {
         action_type: 'internal_function',
         config: {
+          ..._seedActionConfig('internal_function'),
           function_name: channel === 'email' ? 'forward_as_email' : 'forward_as_sms',
           params_mapping: pm,
         },
@@ -2798,40 +2817,43 @@ window.piToggleSidebar = piToggleSidebar;
       const cidField = document.getElementById('swal-a-seq-cid').value.trim() || 'contact_id';
       const tdRaw = document.getElementById('swal-a-seq-td').value.trim();
       const triggerDataFields = tdRaw ? tdRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const seqSeed = _seedActionConfig('sequence');
       if (mode === 'id') {
         const tplId = parseInt(document.getElementById('swal-a-seq-id').value, 10);
         if (!Number.isInteger(tplId) || tplId <= 0) { Swal.showValidationMessage('Select a template'); return false; }
-        return { action_type: 'sequence', config: { template_id: tplId, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
+        delete seqSeed.template_type;          // mode switch: id wins
+        return { action_type: 'sequence', config: { ...seqSeed, template_id: tplId, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
       }
       const tt = document.getElementById('swal-a-seq-type').value.trim();
       if (!tt) { Swal.showValidationMessage('Select a template type'); return false; }
-      return { action_type: 'sequence', config: { template_type: tt, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
+      delete seqSeed.template_id;              // mode switch: type wins
+      return { action_type: 'sequence', config: { ...seqSeed, template_type: tt, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
     }
 
     if (type === 'hook') {
       const slug = document.getElementById('swal-a-hook').value.trim();
       if (!slug) { Swal.showValidationMessage('Select a hook'); return false; }
-      return { action_type: 'hook', config: { slug }, position, active };
+      return { action_type: 'hook', config: { ..._seedActionConfig('hook'), slug }, position, active };
     }
 
     if (type === 'internal_function') {
       const fn = document.getElementById('swal-a-fn').value.trim();
       if (!fn) { Swal.showValidationMessage('Select a function'); return false; }
-      return { action_type: 'internal_function', config: { function_name: fn, params_mapping: pmCollect(aPmEl()) }, position, active };
+      return { action_type: 'internal_function', config: { ..._seedActionConfig('internal_function'), function_name: fn, params_mapping: pmCollect(aPmEl()) }, position, active };
     }
 
     if (type === 'http') {
       const url = document.getElementById('swal-a-url').value.trim();
       if (!url) { Swal.showValidationMessage('HTTP actions require a URL'); return false; }
-      const cfg = {
+      const cfg = Object.assign(_seedActionConfig('http'), {
         url,
         method: document.getElementById('swal-a-method').value,
         body_mode: document.getElementById('swal-a-bodymode').value,
-      };
+      });
       const tpl = document.getElementById('swal-a-template').value;
-      if (cfg.body_mode === 'template' && tpl) cfg.body_template = tpl;
+      if (cfg.body_mode === 'template' && tpl) cfg.body_template = tpl; else delete cfg.body_template;
       const credVal = document.getElementById('swal-a-cred').value;
-      if (credVal) cfg.credential_id = parseInt(credVal, 10);
+      if (credVal) cfg.credential_id = parseInt(credVal, 10); else delete cfg.credential_id;
       return { action_type: 'http', config: cfg, position, active };
     }
 

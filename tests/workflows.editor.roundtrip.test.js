@@ -88,6 +88,8 @@ const SOURCES = [
   extractFn(SCRIPT, 'esc'),
   extractFn(SCRIPT, 'wfRenderParamField'),
   extractFn(SCRIPT, 'wfGatherConfig'),
+  extractFn(SCRIPT, 'wfRenderConfigFields'),
+  extractFn(SCRIPT, '_wfSeedFromOrig'),
 ].join('\n\n');
 
 /**
@@ -463,5 +465,89 @@ describe('paramWidgets — wf30 s15 create_task, the densest live placeholder st
     expect(ed.swalCalls).toEqual([]);
     expect(JSON.stringify(cfg.params)).toBe(JSON.stringify(WF30_S15));
     expect(internalFunctions.__validateFunctionParams('create_task', cfg.params)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Hand-rolled step types (webhook / custom_code) — keep-then-overwrite
+// seeding via WF.origConfig + WF.origStepType (2026-09-10). Same class of
+// bug sequences.html's task branch shipped (template 31 v2): a gather that
+// rebuilds config from a fixed literal sheds every key it doesn't render.
+// These drive the REAL wfRenderConfigFields → wfGatherConfig cycle.
+function makeWfBranchEditor(type, cfg) {
+  const dom = new JSDOM('<body><div id="host"></div></body>');
+  const { window } = dom;
+  const swalCalls = [];
+  const ctx = vm.createContext({
+    document: window.document,
+    window,
+    Swal: { fire: (...a) => swalCalls.push(a) },
+    FUNCTIONS: { workflow: [], meta: {} },
+    WF: {
+      jsonMode: false,
+      origConfig: JSON.parse(JSON.stringify(cfg)),
+      origStepType: type,
+    },
+    CREDENTIALS: { loaded: false, list: [] },   // webhook renders the pre-load option
+    Event: window.Event,
+    CustomEvent: window.CustomEvent,
+  });
+  vm.runInContext(PARAM_WIDGETS, ctx);
+  vm.runInContext(SOURCES, ctx);
+  const render = (t, c) => { window.document.getElementById('host').innerHTML = ctx.wfRenderConfigFields(t, c); };
+  render(type, cfg);
+  return {
+    swalCalls,
+    render,
+    el: (id) => window.document.getElementById(id),
+    gather: (t = type) => ctx.wfGatherConfig(t),
+  };
+}
+
+describe('workflows.html editor — hand-rolled branches keep-then-overwrite', () => {
+  const WEBHOOK_CFG = {
+    url: 'https://example.com/{{caseId}}',
+    method: 'PATCH',
+    credential_id: 5,
+    headers: { 'X-Key': 'v' },
+    body: { case: '{{caseId}}' },
+    timeout_ms: 20000,
+    set_vars: { hook_status: '{{this.output.status}}' },
+    _comment: 'top-level key no form renders',
+  };
+  const CODE_CFG = {
+    code: 'return input.x + 1;',
+    input: { x: '{{count}}' },
+    set_vars: { bumped: '{{this.output}}' },
+    _comment: 'kept',
+  };
+
+  test.each([
+    ['webhook', WEBHOOK_CFG],
+    ['custom_code', CODE_CFG],
+  ])('%s: untouched round-trip preserves everything', (type, stored) => {
+    const ed = makeWfBranchEditor(type, stored);
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg).toEqual(stored);
+  });
+
+  test('webhook: clearing credential/timeout deletes the keys — seeding cannot resurrect', () => {
+    const ed = makeWfBranchEditor('webhook', WEBHOOK_CFG);
+    ed.el('e-cred').innerHTML = '<option value="" selected></option>';   // "— none —" selected
+    ed.el('e-timeout').value = '';
+    const cfg = ed.gather();
+    expect(cfg.credential_id).toBeUndefined();
+    expect(cfg.timeout_ms).toBeUndefined();
+    expect(cfg._comment).toBe('top-level key no form renders');
+  });
+
+  test('step-type switch does NOT leak the old shape through the seed', () => {
+    const ed = makeWfBranchEditor('webhook', WEBHOOK_CFG);
+    ed.render('custom_code', {});                    // wfOnTypeChange passes {}
+    const cfg = ed.gather('custom_code');
+    expect(cfg.url).toBeUndefined();
+    expect(cfg._comment).toBeUndefined();
+    expect(cfg.code).toBe('');
   });
 });

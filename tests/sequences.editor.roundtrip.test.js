@@ -80,6 +80,7 @@ const SOURCES = [
   extractFn(SCRIPT, '_seqHumanizeMode'),
   extractFn(SCRIPT, 'seqRenderInternalFnBody'),
   extractFn(SCRIPT, 'seqRenderActionConfig'),
+  extractFn(SCRIPT, '_seqSeedFromOrig'),
 ].join('\n\n');
 
 function makeEditor(fnName, storedParams) {
@@ -357,5 +358,132 @@ describe('sequences.html editor — task type delegates to the create_task edito
     expect(ed.field('assigned_to').getAttribute('type')).toBe('number');
     expect(ed.field('assigned_to').value).toBe('6');
     expect(ed.gather().params.assigned_to).toBe(6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Hand-rolled action branches (sms / email / webhook / start_workflow) —
+// keep-then-overwrite seeding via SEQ.origConfig + SEQ.origActionType
+// (2026-09-10). Before this, every one of these gathers rebuilt the config
+// from a fixed literal: the task branch shipped that bug (template 31 v2 shed
+// link_type/link_id/source), and the email branch shed html /
+// include_signature the same way. These render each branch through the REAL
+// seqRenderActionConfig and pin: schema fields round-trip, out-of-schema keys
+// (future params, top-level _comment, set_vars) survive, cleared optionals
+// delete, and an action-type switch does NOT leak the old shape.
+function makeBranchEditor(actionType, cfg) {
+  const dom = new JSDOM('<body><div id="host"></div></body>');
+  const { window } = dom;
+  const swalCalls = [];
+  const ctx = vm.createContext({
+    document: window.document,
+    window,
+    P: {},                                   // no shell datalist helper → plain textarea
+    Swal: { fire: (...a) => swalCalls.push(a) },
+    FUNCTIONS: { sequence: [], meta: {} },
+    SEQ: {
+      jsonMode: false,
+      origConfig: JSON.parse(JSON.stringify(cfg)),
+      origActionType: actionType,
+    },
+    SEQ_CREDENTIALS: { loaded: false, list: [] },  // webhook renders the pre-load option
+    SEQ_WORKFLOWS:   { loaded: false, list: [] },  // start_workflow ditto
+    // sms/email "from" dropdowns come from the shell — stub with a plain
+    // input honouring the same id/value contract the gather reads.
+    fdPhoneLineSelectHtml: (id, v) => `<input id="${id}" value="${String(v ?? '').replace(/"/g, '&quot;')}">`,
+    fdEmailFromSelectHtml: (id, v) => `<input id="${id}" value="${String(v ?? '').replace(/"/g, '&quot;')}">`,
+    seqWireStartWorkflowPanel: () => {},           // panel wiring — inert in jsdom
+    setTimeout: () => {},
+    Event: window.Event,
+    CustomEvent: window.CustomEvent,
+  });
+  vm.runInContext(PARAM_WIDGETS, ctx);
+  vm.runInContext(SOURCES, ctx);
+  const render = (t, c) => { window.document.getElementById('host').innerHTML = ctx.seqRenderActionConfig(t, c); };
+  render(actionType, cfg);
+  return {
+    swalCalls,
+    render,
+    el: (id) => window.document.getElementById(id),
+    gather: (t = actionType) => ctx.seqGatherActionConfig(t),
+  };
+}
+
+describe('sequences.html editor — hand-rolled branches keep-then-overwrite', () => {
+  const EMAIL_CFG = {
+    function_name: 'send_email',
+    params: {
+      from: 'automations@4lsg.com',
+      to: '{{contacts.contact_email}}',
+      subject: 'Your 341 Meeting',
+      text: 'Plain body {{contacts.contact_fname}}',
+      html: '<b>Rich body {{contacts.contact_fname}}</b>',
+      include_signature: true,
+      attachment_urls: [{ url: 'https://example.com/fee.pdf', name: 'Fee Agreement.pdf' }],
+      future_param: 'kept',
+    },
+    _comment: 'top-level key no form renders',
+  };
+
+  const CASES = [
+    ['sms', {
+      function_name: 'send_sms',
+      params: { from: '2484179800', to: '{{contacts.contact_phone}}', message: 'Hi {{contacts.contact_fname}}', future_param: 'kept' },
+      set_vars: { sent: true },
+      _comment: 'kept',
+    }],
+    ['email', EMAIL_CFG],
+    ['webhook', {
+      method: 'PUT',
+      url: 'https://example.com/{{trigger_data.case_id}}',
+      credential_id: 3,
+      headers: { 'X-Key': 'v' },
+      body: { case: '{{trigger_data.case_id}}' },
+      timeout_ms: 15000,
+      set_vars: { hook: 'sent' },   // the sequence webhook form has no set_vars widget
+      _comment: 'kept',
+    }],
+    ['start_workflow', {
+      workflow_id: 27,
+      init_data: { contact_id: '{{trigger_data.contact_id}}' },
+      tie_to_contact: false,
+      contact_id_override: '{{trigger_data.contact_id}}',
+      _comment: 'kept',
+    }],
+  ];
+
+  test.each(CASES)('%s: untouched round-trip preserves everything', (actionType, stored) => {
+    const ed = makeBranchEditor(actionType, stored);
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg).toEqual(stored);
+  });
+
+  test('email: html and include_signature are VISIBLE widgets now', () => {
+    const ed = makeBranchEditor('email', EMAIL_CFG);
+    expect(ed.el('se-html').value).toBe(EMAIL_CFG.params.html);
+    expect(ed.el('se-incl-sig').checked).toBe(true);
+  });
+
+  test('email: clearing a rendered optional deletes it — seeding cannot resurrect', () => {
+    const ed = makeBranchEditor('email', EMAIL_CFG);
+    ed.el('se-html').value = '';
+    ed.el('se-incl-sig').checked = false;
+    ed.el('se-attach').value = '';
+    const cfg = ed.gather();
+    expect(cfg.params.html).toBeUndefined();
+    expect(cfg.params.include_signature).toBeUndefined();
+    expect(cfg.params.attachment_urls).toBeUndefined();
+    expect(cfg.params.future_param).toBe('kept');   // unrendered key still rides
+  });
+
+  test('action-type switch does NOT leak the old shape through the seed', () => {
+    const ed = makeBranchEditor('sms', CASES[0][1]);
+    ed.render('email', {});                          // seqOnActionTypeChange passes {}
+    const cfg = ed.gather('email');
+    expect(cfg.function_name).toBe('send_email');
+    expect(cfg._comment).toBeUndefined();
+    expect(cfg.set_vars).toBeUndefined();
+    expect(cfg.params.message).toBeUndefined();
   });
 });

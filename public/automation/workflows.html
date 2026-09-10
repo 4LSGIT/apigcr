@@ -615,6 +615,9 @@ const WF = {
   // rebuilding from {} (delete-then-restore), so unknown keys survive by
   // construction. Re-snapshotted on every wfRenderEditor.
   origConfig: null,
+  // The edited step's type at snapshot time — the seeding guard for the
+  // hand-rolled branches (see _wfSeedFromOrig).
+  origStepType: null,
   // Slice 2.1 — per-step tester state.
   // Map<step.id, { rows:[{key,value}], touched:bool }>. Preserves user-typed
   // variable rows across tester re-renders (step switch, tab switch).
@@ -1584,6 +1587,12 @@ function wfRenderEditor(step) {
   // represent (see WF.origConfig docs). Deep clone; null on clone failure
   // (gather then degrades to schema-only, the prior behaviour).
   WF.origConfig = (() => { try { return JSON.parse(JSON.stringify(cfg)); } catch { return null; } })();
+  // Companion to origConfig for the hand-rolled branches (webhook /
+  // custom_code): _wfSeedFromOrig seeds only when the step's ORIGINAL type
+  // matches the branch gathering, so a type switch can't graft one shape's
+  // keys onto another (the metadata path gets the same guard from
+  // function_name).
+  WF.origStepType = step.type || null;
   const strategies = ['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort'];
   document.getElementById('wf-editor-body').innerHTML = `
     <div class="field">
@@ -1964,6 +1973,18 @@ function wfToggleJson() {
   wfUpdateCredWarning();
 }
 
+// Keep-then-overwrite seeding for the hand-rolled step types (webhook /
+// custom_code) — the preservation rule the internal_function gather applies
+// via WF.origConfig, hoisted so those branches get it too (2026-09-10;
+// sequences.html's task branch shed link_type/link_id/source the same way —
+// template 31 v2). Deep clone of the pristine config when the step's
+// ORIGINAL type matches, else {}. The branch overwrites every rendered
+// field and deletes cleared optionals.
+function _wfSeedFromOrig(type) {
+  if (WF.origStepType !== type || !WF.origConfig) return {};
+  try { return JSON.parse(JSON.stringify(WF.origConfig)); } catch { return {}; }
+}
+
 function wfGatherConfig(type) {
   if (WF.jsonMode) {
     const raw = document.getElementById('e-config-json')?.value?.trim() ?? '';
@@ -1981,26 +2002,27 @@ function wfGatherConfig(type) {
   if (type === 'webhook') {
     const body = tryParse('e-body'), headers = tryParse('e-headers'), sv = tryParse('e-setvars');
     if (body === 'ERROR' || headers === 'ERROR' || sv === 'ERROR') return null;
-    const cfg = { url: val('e-url'), method: val('e-method') };
-    if (body) cfg.body = body;
-    if (headers) cfg.headers = headers;
-    if (sv) cfg.set_vars = sv;
+    const cfg = _wfSeedFromOrig('webhook');
+    cfg.url = val('e-url');
+    cfg.method = val('e-method');
+    if (body) cfg.body = body; else delete cfg.body;
+    if (headers) cfg.headers = headers; else delete cfg.headers;
+    if (sv) cfg.set_vars = sv; else delete cfg.set_vars;
 
     // Webhook credential injection slice — gather optional credential FK and
-    // timeout. Empty credential dropdown selection ⇒ omit the key entirely
-    // (route validates only when present). Timeout: empty / non-numeric ⇒
-    // omit so the engine's default (30s) applies; the field's default value
-    // is also 30000 so this is mostly a defensive fallback.
+    // timeout. Empty credential dropdown selection ⇒ DELETE the key (route
+    // validates only when present; with origConfig seeding, omit alone would
+    // let a cleared credential survive the save). Timeout: empty /
+    // non-numeric ⇒ delete so the engine's default (30s) applies; the
+    // field's default value is also 30000 so this is mostly defensive.
     const credRaw = val('e-cred');
-    if (credRaw) {
-      const credId = parseInt(credRaw, 10);
-      if (Number.isInteger(credId) && credId > 0) cfg.credential_id = credId;
-    }
+    const credId = credRaw ? parseInt(credRaw, 10) : NaN;
+    if (Number.isInteger(credId) && credId > 0) cfg.credential_id = credId;
+    else delete cfg.credential_id;
     const timeoutRaw = val('e-timeout');
-    if (timeoutRaw) {
-      const t = parseInt(timeoutRaw, 10);
-      if (Number.isInteger(t) && t > 0) cfg.timeout_ms = t;
-    }
+    const t = timeoutRaw ? parseInt(timeoutRaw, 10) : NaN;
+    if (Number.isInteger(t) && t > 0) cfg.timeout_ms = t;
+    else delete cfg.timeout_ms;
     return cfg;
   }
   if (type === 'internal_function') {
@@ -2201,8 +2223,10 @@ function wfGatherConfig(type) {
     const input = tryParse('e-input', {});
     const sv = tryParse('e-setvars');
     if (input === 'ERROR' || sv === 'ERROR') return null;
-    const cfg = { code: val('e-code'), input };
-    if (sv) cfg.set_vars = sv;
+    const cfg = _wfSeedFromOrig('custom_code');
+    cfg.code = val('e-code');
+    cfg.input = input;
+    if (sv) cfg.set_vars = sv; else delete cfg.set_vars;
     return cfg;
   }
   return {};

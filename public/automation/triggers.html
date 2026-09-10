@@ -709,15 +709,24 @@ function fmtTs(v) {
     const name = div.querySelector('.tg-a-name').value.trim() || null;
     const activeEl = div.querySelector('.tg-a-active');
     const active = activeEl ? (activeEl.checked ? 1 : 0) : 1;
-    let config = {};
     const i = Number(div.dataset.idx);
+    // Keep-then-overwrite (2026-09-10): seed config from the model's row for
+    // the SAME action_type, so keys this row-form has no widget for survive
+    // a save instead of being shed by a fixed-literal rebuild — the class of
+    // bug that hit the sequence task form (template 31 v2) and the hooks
+    // HMAC config. A type switch starts clean; rendered optionals below
+    // delete when cleared so the seed can't resurrect them.
+    const prior = editor.rule.actions[i];
+    let config = (prior && prior.action_type === t && prior.config && typeof prior.config === 'object')
+      ? JSON.parse(JSON.stringify(prior.config))
+      : {};
     if (t === 'workflow') {
       config.workflow_id = Number(div.querySelector('.tg-a-workflow')?.value);
       if (strict && !(config.workflow_id > 0)) throw new Error(`Action ${i + 1}: pick a workflow`);
     } else if (t === 'sequence') {
       config.template_id = Number(div.querySelector('.tg-a-seq')?.value);
       const cidf = div.querySelector('.tg-a-cidf')?.value.trim();
-      if (cidf) config.contact_id_field = cidf;
+      if (cidf) config.contact_id_field = cidf; else delete config.contact_id_field;
       if (strict && !(config.template_id > 0)) throw new Error(`Action ${i + 1}: pick a sequence template`);
     } else if (t === 'hook') {
       config.slug = div.querySelector('.tg-a-hook')?.value || '';
@@ -735,12 +744,14 @@ function fmtTs(v) {
         const parsed = parseJson(h);
         if (strict && !parsed) throw new Error(`Action ${i + 1}: headers is not valid JSON`);
         if (parsed) config.headers = parsed;
+      } else {
+        delete config.headers;
       }
       config.body_mode = div.querySelector('.tg-a-bodymode')?.value || 'transform_output';
       const tpl = div.querySelector('.tg-a-bodytpl')?.value;
-      if (tpl && tpl.trim()) config.body_template = tpl;
+      if (tpl && tpl.trim()) config.body_template = tpl; else delete config.body_template;
       const cred = div.querySelector('.tg-a-cred')?.value;
-      if (cred) config.credential_id = Number(cred);
+      if (cred) config.credential_id = Number(cred); else delete config.credential_id;
       if (strict && !config.url) throw new Error(`Action ${i + 1}: URL required`);
     }
     return { action_type: t, name, active, config };
