@@ -886,13 +886,9 @@
       </button>
       Query:
       <input id="tabContactsQuery" type="text" onkeypress="if (event.keyCode == 13) {tabContactsGet(0)}" />
-      filter1:
-      <select disabled>
-        <option>All</option>
-        <option>All</option>
-        <option>All</option>
-        <option>All</option>
-        <option>All</option>
+      Role:
+      <select id="tabContactsRole" style="width: auto" onchange="tabContactsGet(0)">
+        <option value="">All roles</option>
       </select>
       Filter2:
       <select disabled>
@@ -954,6 +950,10 @@
 
       const params = { limit, offset, sort_by, sort_dir };
       if (q) params.q = q;
+      // Role filter (role-forms slice). Default "" adds NOTHING to params —
+      // the default-state request stays byte-identical to pre-slice.
+      const roleSel = E("tabContactsRole");
+      if (roleSel && roleSel.value) params.role = roleSel.value;
 
       try {
         const data = await apiSend("/api/contacts", "GET", params);
@@ -1048,8 +1048,33 @@
       contactsDeb = setTimeout(() => tabContactsGet(offsets.contacts, true), 250);
     });
 
+    /* Role-filter options — loaded LAZILY on the tab's first open (the
+       shell must not pay for a catalog most sessions never filter by), and
+       only once. Failure degrades to "All roles" only: the filter is an
+       add-on, never a gate on the list itself. Fire-and-forget from
+       openContactsTab so the first tabContactsGet is not delayed. */
+    let contactsRolesLoaded = false;
+    async function tabContactsRolesLoad() {
+      if (contactsRolesLoaded) return;
+      contactsRolesLoaded = true;
+      try {
+        const data = await apiSend("/api/contact-role-types", "GET");
+        const sel = E("tabContactsRole");
+        (data.types || []).forEach((t) => {
+          const opt = document.createElement("option");
+          opt.value = t.role_code;
+          opt.textContent = t.label || t.role_code;
+          sel.appendChild(opt);
+        });
+      } catch (err) {
+        contactsRolesLoaded = false; // next open retries
+        console.warn("[contacts] role filter options failed to load:", err);
+      }
+    }
+
     /** Sole opener for the Contacts tab — sidebar item AND home button. */
     function openContactsTab() {
+      tabContactsRolesLoad();                          // no await — see above
       if (!contacts) tabContactsGet(0);                // first open: unchanged
       else if (contactsStale) { contactsStale = false; tabContactsGet(offsets.contacts, true); }
       openMainTab('tabContacts');

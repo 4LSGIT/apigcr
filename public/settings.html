@@ -144,6 +144,35 @@
 
   .loading { color: var(--text-muted); padding: 30px; text-align: center; }
 
+  /* ── Contact-role type editor (role-forms slice) ── */
+  .cr-type {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--page-bg); padding: 10px; margin-bottom: 8px;
+  }
+  .cr-type.cr-inactive { opacity: .6; }
+  .cr-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cr-head input[type=text] { flex: 1; min-width: 140px; }
+  .cr-head .cr-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; color: var(--text-muted); white-space: nowrap;
+  }
+  .cr-head input.cr-sort { flex: none; width: 58px; }
+  .cr-count { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+  .cr-fields { margin: 10px 0 0 14px; }
+  .cr-field {
+    display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px;
+    align-items: start; padding: 6px 0; border-bottom: 1px dashed var(--border);
+  }
+  .cr-field:last-of-type { border-bottom: none; }
+  .cr-field .fcol { display: flex; flex-direction: column; gap: 4px; }
+  .cr-field .fmini { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+  .cr-field select {
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 5px; padding: 6px 8px; font-size: 12px;
+  }
+  .cr-field .fbtns { display: flex; gap: 4px; padding-top: 16px; }
+  @media (max-width: 640px) { .cr-field { grid-template-columns: 1fr 1fr; } }
+
   /* ── Dropbox template editor ── */
   .tpl-stage {
     border: 1px solid var(--border); border-radius: 6px;
@@ -338,6 +367,31 @@
         <div class="btn-row">
           <button class="btn primary" id="etSave" disabled>Save Event Types</button>
           <span class="status" id="etStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Contact Roles (role-forms slice) ───────────────────── -->
+    <!-- Structured editor over /api/contact-role-types — a TABLE, not an
+         app_settings key (the retired fe-trustees editor's successor
+         surface). Per-type Save; the route's validation errors are
+         surfaced verbatim. Always shown: the table always exists. -->
+    <div class="section collapsed" id="contactRolesSection">
+      <div class="sec-head"><h2><span class="chev">▸</span>Contact Roles</h2><span class="hint" id="crHint"></span></div>
+      <div class="sec-body">
+        <p class="note">Role types power the contact form's Roles section, the Contacts-tab role filter, and every role consumer (trustee roster, judge resolution). Fields below define each role's structured attributes.</p>
+        <p class="note warn"><b>The code is permanent.</b> Every contact holding a role references it, and consumers reference it in code — deactivate a type instead of renaming or deleting it.</p>
+        <div id="crList"><p class="note">Loading…</p></div>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <label class="fld">Add Role Type</label>
+          <div class="grid2">
+            <div><label class="fld">Code (permanent — a–z, 0–9, _)</label><input type="text" id="crNewCode" class="mono" maxlength="40" placeholder="mediator"></div>
+            <div><label class="fld">Label</label><input type="text" id="crNewLabel" maxlength="60" placeholder="Mediator"></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="crAdd">+ Add Role Type</button>
+            <span class="status" id="crAddStatus"></span>
+          </div>
         </div>
       </div>
     </div>
@@ -1449,6 +1503,226 @@ function ctabApply(cfg) {
   else setStatus('ctabStatus', 'Saved — refresh to see the tab', true);
 }
 
+/* ════════════════ CONTACT ROLES EDITOR (role-forms slice) ════════════════
+   Structured editor over GET/POST/PUT /api/contact-role-types. Unlike the
+   caseTypes/eventTypes editors (one app_settings blob, whole-blob save),
+   each role type is its own DB row with its own route — so Save is
+   PER TYPE, and the route's validation errors (the attrs_schema
+   vocabulary validator joins every problem with '; ') surface verbatim
+   in that type's status span.
+
+   attrs_schema field vocabulary: { key, label, type, required?, options?,
+   placeholder? }, type ∈ text | url | number | select | multi_select.
+   OPTIONS AND NUMBER IDENTITY: the trustee chapter options are the
+   NUMBERS [7, 11, 12, 13] — a '7' string would break trusteeMatch rule 0.
+   The options box therefore parses numeric-looking CSV tokens as numbers
+   (7, 11 → numbers; ch7 → string), and accepts a raw JSON array
+   (starts with '[') as the lossless escape hatch. Options that would be
+   ambiguous in CSV form (a STRING that looks numeric, or contains a
+   comma) are DISPLAYED as JSON so a load→save round trip never
+   changes a type. */
+
+let crState = null; // [{ role_code, label, sort_order, active, fields:[…]|null, _open, _dirty }]
+
+const CR_TYPES = ['text', 'url', 'number', 'select', 'multi_select'];
+
+function crParseOptions(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (s.startsWith('[')) {
+    const arr = JSON.parse(s); // throws → surfaced by the caller
+    if (!Array.isArray(arr)) throw new Error('options JSON must be an array');
+    return arr;
+  }
+  return s.split(',').map(t => t.trim()).filter(t => t !== '')
+    .map(t => (/^-?\d+(\.\d+)?$/.test(t) ? Number(t) : t));
+}
+
+function crOptionsDisplay(opts) {
+  if (!Array.isArray(opts) || !opts.length) return '';
+  const ambiguous = opts.some(o =>
+    typeof o === 'string' && (/^-?\d+(\.\d+)?$/.test(o.trim()) || o.includes(',')));
+  return ambiguous ? JSON.stringify(opts) : opts.map(String).join(', ');
+}
+
+function crRender() {
+  const host = E('crList');
+  if (!crState) return;
+  if (!crState.length) { host.innerHTML = '<p class="note">No role types yet.</p>'; return; }
+  host.innerHTML = crState.map((t, ti) => {
+    const fields = t.fields || [];
+    const fieldRows = fields.map((f, fi) => `
+      <div class="cr-field">
+        <div class="fcol">
+          <span class="fmini">Key (permanent-ish — stored attrs keep old keys)</span>
+          <input type="text" class="mono" data-cr-f="${ti}:${fi}:key" value="${esc(f.key || '')}" maxlength="40" placeholder="zoom_link">
+          <span class="fmini">Label</span>
+          <input type="text" data-cr-f="${ti}:${fi}:label" value="${esc(f.label || '')}" placeholder="341 Zoom link">
+        </div>
+        <div class="fcol">
+          <span class="fmini">Type</span>
+          <select data-cr-f="${ti}:${fi}:type">
+            ${CR_TYPES.map(x => `<option value="${x}" ${f.type === x ? 'selected' : ''}>${x}</option>`).join('')}
+          </select>
+          <span class="fmini">Options (select types — CSV; numbers stay numbers; or JSON array)</span>
+          <input type="text" class="mono" data-cr-f="${ti}:${fi}:options" value="${esc(crOptionsDisplay(f.options))}"
+                 placeholder="7, 11, 12, 13" ${f.type === 'select' || f.type === 'multi_select' ? '' : 'disabled'}>
+          <span class="fmini">Placeholder</span>
+          <input type="text" data-cr-f="${ti}:${fi}:placeholder" value="${esc(f.placeholder || '')}">
+        </div>
+        <label class="toggle-row" style="padding-top:16px">
+          <input type="checkbox" data-cr-f="${ti}:${fi}:required" ${f.required ? 'checked' : ''}>
+          <span class="toggle-lbl">Required</span>
+        </label>
+        <div class="fbtns">
+          <button class="icon-btn" data-cr-fup="${ti}:${fi}" title="Move up">↑</button>
+          <button class="icon-btn" data-cr-fdown="${ti}:${fi}" title="Move down">↓</button>
+          <button class="icon-btn del" data-cr-fdel="${ti}:${fi}" title="Remove field">✕</button>
+        </div>
+      </div>`).join('');
+    return `
+    <div class="cr-type ${t.active ? '' : 'cr-inactive'}">
+      <div class="cr-head">
+        <input type="text" data-cr-label="${ti}" value="${esc(t.label)}" maxlength="60" title="Label">
+        <span class="cr-code" title="role_code — permanent">${esc(t.role_code)}</span>
+        <input type="number" class="cr-sort" data-cr-sort="${ti}" value="${t.sort_order | 0}" title="Sort order">
+        <label class="toggle-row"><input type="checkbox" data-cr-active="${ti}" ${t.active ? 'checked' : ''}><span class="toggle-lbl">Active</span></label>
+        <span class="cr-count">${fields.length} field${fields.length === 1 ? '' : 's'}</span>
+        <button class="btn tiny" data-cr-toggle="${ti}">${t._open ? 'Hide fields' : 'Edit fields'}</button>
+        <button class="btn tiny primary" data-cr-save="${ti}" ${t._dirty ? '' : 'disabled'}>Save</button>
+      </div>
+      <span class="status" id="crStatus${ti}"></span>
+      ${t._open ? `<div class="cr-fields">${fieldRows}
+        <button class="btn tiny" data-cr-fadd="${ti}" style="margin-top:6px">+ Add Field</button>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function crMarkDirty(ti) { crState[ti]._dirty = true; const b = document.querySelector(`[data-cr-save="${ti}"]`); if (b) b.disabled = false; }
+
+function crBind() {
+  const host = E('crList');
+  host.addEventListener('input', e => {
+    const el = e.target, d = el.dataset;
+    if (d.crLabel !== undefined) { crState[+d.crLabel].label = el.value; crMarkDirty(+d.crLabel); }
+    else if (d.crSort !== undefined) { crState[+d.crSort].sort_order = parseInt(el.value, 10) || 0; crMarkDirty(+d.crSort); }
+    else if (d.crActive !== undefined) { crState[+d.crActive].active = el.checked ? 1 : 0; crMarkDirty(+d.crActive); }
+    else if (d.crF !== undefined) {
+      const [ti, fi, prop] = d.crF.split(':');
+      const f = crState[+ti].fields[+fi];
+      if (prop === 'required') f.required = el.checked;
+      else if (prop === 'options') f._optionsRaw = el.value; // parsed at save
+      else f[prop] = el.value;
+      if (prop === 'type') { crMarkDirty(+ti); crRender(); return; } // re-render enables/disables options
+      crMarkDirty(+ti);
+    }
+  });
+  host.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const d = b.dataset;
+    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
+    if (d.crToggle !== undefined) {
+      const t = crState[+d.crToggle];
+      t._open = !t._open;
+      if (t._open && !t.fields) t.fields = [];
+      crRender();
+    } else if (d.crSave !== undefined) {
+      crSave(+d.crSave);
+    } else if (d.crFadd !== undefined) {
+      crState[+d.crFadd].fields.push({ key: '', label: '', type: 'text' });
+      crMarkDirty(+d.crFadd); crRender();
+    } else if (d.crFup !== undefined) {
+      const [ti, fi] = d.crFup.split(':').map(Number);
+      if (swap(crState[ti].fields, fi, fi - 1)) { crMarkDirty(ti); crRender(); }
+    } else if (d.crFdown !== undefined) {
+      const [ti, fi] = d.crFdown.split(':').map(Number);
+      if (swap(crState[ti].fields, fi, fi + 1)) { crMarkDirty(ti); crRender(); }
+    } else if (d.crFdel !== undefined) {
+      const [ti, fi] = d.crFdel.split(':').map(Number);
+      crState[ti].fields.splice(fi, 1);
+      crMarkDirty(ti); crRender();
+    }
+  });
+}
+
+/** crState field row → wire-shape attrs_schema entry. Throws on bad
+ *  options JSON; everything else the ROUTE validates (authoritative). */
+function crFieldOut(f) {
+  const out = { key: String(f.key || '').trim(), label: String(f.label || '').trim(), type: f.type };
+  if (f.required) out.required = true;
+  if (f.type === 'select' || f.type === 'multi_select') {
+    const raw = f._optionsRaw !== undefined ? f._optionsRaw : crOptionsDisplay(f.options);
+    out.options = crParseOptions(raw) || [];
+  }
+  const ph = String(f.placeholder || '').trim();
+  if (ph) out.placeholder = ph;
+  return out;
+}
+
+async function crSave(ti) {
+  const t = crState[ti];
+  const sid = 'crStatus' + ti;
+  let schema;
+  try {
+    schema = (t.fields && t.fields.length) ? t.fields.map(crFieldOut) : null;
+  } catch (e) {
+    return setStatus(sid, 'options: ' + (e.message || 'invalid'), false);
+  }
+  const btn = document.querySelector(`[data-cr-save="${ti}"]`);
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/contact-role-types/${encodeURIComponent(t.role_code)}`, 'PUT', {
+      label: t.label, sort_order: t.sort_order | 0, active: t.active ? 1 : 0,
+      attrs_schema: schema,
+    });
+    // Re-adopt the wire shape so the next save diff starts from what the
+    // server accepted (options text re-parsed, empty list → null).
+    t.fields = schema || [];
+    t.fields.forEach(f => { delete f._optionsRaw; });
+    t._dirty = false;
+    setStatus(sid, `"${t.role_code}" saved`, true);
+    crRender();
+  } catch (e2) {
+    if (btn) btn.disabled = false;
+    // Route validation errors verbatim — the whole point of per-type saves.
+    setStatus(sid, e2.message || 'Failed to save', false);
+  }
+}
+
+async function crCreate() {
+  const code = E('crNewCode').value.trim();
+  const label = E('crNewLabel').value.trim();
+  try {
+    await api('/api/contact-role-types', 'POST', { role_code: code, label });
+    E('crNewCode').value = ''; E('crNewLabel').value = '';
+    setStatus('crAddStatus', `"${code}" created — add its fields above`, true);
+    await crInit();
+  } catch (e) {
+    setStatus('crAddStatus', e.message || 'Failed to create', false);
+  }
+}
+
+let crBound = false;
+async function crInit() {
+  try {
+    const data = await api('/api/contact-role-types?include_inactive=true', 'GET');
+    crState = (data.types || []).map(t => ({
+      role_code: t.role_code,
+      label: t.label,
+      sort_order: t.sort_order | 0,
+      active: t.active ? 1 : 0,
+      fields: Array.isArray(t.attrs_schema) ? t.attrs_schema.map(f => ({ ...f })) : null,
+      _open: false, _dirty: false,
+    }));
+    E('crHint').textContent = `${crState.length} role type${crState.length === 1 ? '' : 's'}`;
+    crRender();
+    if (!crBound) { crBind(); crBound = true; }
+  } catch (err) {
+    E('crList').innerHTML = `<p class="note" style="color:var(--danger)">Failed to load role types: ${esc(err.message || err)}</p>`;
+  }
+}
+
 /* ════════════════ BOOT ════════════════ */
 async function init() {
   renderProfile();
@@ -1461,6 +1735,8 @@ async function init() {
   E('etSave').addEventListener('click', etSave);
   E('dtSave').addEventListener('click', dtSave);
   E('asCreate').addEventListener('click', createSetting); // bound even if GET below fails
+  E('crAdd').addEventListener('click', crCreate);
+  crInit();            // contact role types (own table + routes, fire-and-forget)
   ctabInit();          // self-only custom tab (fire-and-forget, same as freebusy)
 
   try {

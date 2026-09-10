@@ -67,6 +67,7 @@ router.get("/api/contacts", jwtOrApiKey, async (req, res) => {
       query: req.query.q || req.query.query || "",
       type: req.query.type,
       tags: req.query.tags,
+      role: req.query.role,
       sort_by: req.query.sort_by || "contact_lname",
       sort_dir: req.query.sort_dir || "ASC",
       limit: req.query.limit || 50,

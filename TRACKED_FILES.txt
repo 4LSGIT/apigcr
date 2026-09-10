@@ -472,6 +472,7 @@ routes/api.contactEmails.js
 routes/api.contactLookup.js
 routes/api.contactPhones.js
 routes/api.contactRelations.js
+routes/api.contactRoles.js
 routes/api.contacts.js
 routes/api.credentials.js
 routes/api.documents.js
@@ -749,6 +750,7 @@ tests/caseUi.timeline.test.js
 tests/checklists.s1notes.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
+tests/contactRoles.roleForms.test.js
 tests/contactRoles.slice456.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js

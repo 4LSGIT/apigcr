@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-09T11:59:14.681Z
+-- Generated: 2026-09-10T10:57:03.702Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d7a320a2be3c28cd8a94c56b7038a232
+-- Fingerprint: sha256:a45568d5765b687429b52f26437ae240
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -929,6 +929,7 @@ DROP TABLE IF EXISTS `contact_role_types`;
 CREATE TABLE `contact_role_types` (
   `role_code` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
   `label` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `attrs_schema` json DEFAULT NULL,
   `sort_order` smallint NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP

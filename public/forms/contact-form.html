@@ -277,6 +277,44 @@
     .ycp-kind-seg button.active { color: var(--text); cursor: default; }
     .yc-readonly .ycp-kind-seg { opacity: .75; }
     .yc-readonly .ycp-kind-seg button { cursor: default; }
+
+    /* ──────────────────────────────────────────────────────────
+       Role-forms slice — Roles section. Child resource with its
+       own save path; NOT part of the aggregate PATCH, autosave,
+       or dirty tracking (it lives outside #contactForm).
+       ────────────────────────────────────────────────────────── */
+    .ycr-card {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      background: var(--surface);
+    }
+    .ycr-card.ycr-inactive { opacity: 0.55; background: var(--surface-2); }
+    .ycr-card.ycr-pending  { border-style: dashed; border-color: var(--accent); }
+    .ycr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+    .ycr-title { font-weight: 600; flex: 1; }
+    .ycr-badge {
+      font-size: 11px; border: 1px solid var(--border-strong); border-radius: 4px;
+      padding: 1px 6px; color: var(--text-muted); white-space: nowrap;
+    }
+    .ycr-status { font-size: 11px; color: var(--text-muted); }
+    .ycr-head button {
+      background: none; border: 1px solid var(--border-strong); border-radius: 4px;
+      padding: 3px 10px; font-size: 12px; color: var(--text-2); cursor: pointer;
+    }
+    .ycr-head button:hover { background: var(--hover); color: var(--text); }
+    .ycr-head .ycr-save { color: var(--accent-2); border-color: var(--accent); }
+    .ycr-head .ycr-save:hover { background: var(--accent-soft); color: var(--accent-on-soft); }
+    .ycr-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; padding-top: 6px; }
+    .ycr-req { color: var(--danger); }
+    .ycr-empty { color: var(--text-muted); font-size: 12px; }
+    /* View mode: hide every mutating affordance; JS locks the inputs. */
+    .ycr-readonly .ycr-save, .ycr-readonly .ycr-remove, .ycr-readonly .ycr-reactivate,
+    .ycr-readonly .ycr-delete, .ycr-readonly .ycr-cancel, .ycr-readonly #roleAddBtn { display: none; }
+    .ycr-readonly .ycr-card input[readonly] { background: var(--surface-2); color: var(--text-2); }
+    .ycr-readonly .ycr-card input[disabled],
+    .ycr-readonly .ycr-card select[disabled] { background: var(--surface-2); color: var(--text-2); opacity: 0.7; }
   </style>
 </head>
 <body>
@@ -574,6 +612,24 @@
   </button>
 </form>
 
+<!-- ════════════════════════════════════════════════════════════════
+     ROLES (role-forms slice)
+
+     Child resource with its OWN save path (/api/contacts/:id/roles*),
+     deliberately OUTSIDE <form id="contactForm">: yc-forms.js dirty
+     tracking walks config.fields + repeaters only, and keeping these
+     inputs outside the form element keeps even its input/change
+     listeners out of the picture. Roles never ride the aggregate
+     PATCH — per-card Save is the only writer.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="yc-section" id="rolesSection" style="display:none;">
+  <div class="ycp-section-head">
+    <div class="yc-section-title"><i class="fa-solid fa-user-tag ycp-section-icon"></i>Roles</div>
+    <button type="button" class="ycp-add-inline" id="roleAddBtn">+ Role</button>
+  </div>
+  <div id="rolesList"></div>
+</div>
+
 <script src="/js/yc-forms.js"></script>
 <script>
   /**
@@ -793,6 +849,9 @@
       // The kind control is a pair of <button>s, not a config.fields input, so
       // yc-forms.js's field-lock walk never reaches it.
       document.querySelectorAll('#kindSeg button').forEach(b => { b.disabled = on; });
+      // Roles section (role-forms slice) — outside the form element, so the
+      // same walk never reaches it either.
+      applyRolesReadonly(on);
     };
 
     function applyRepeaterReadonly(isReadonly) {
@@ -1872,6 +1931,308 @@
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
       }[c]));
     }
+
+    // ════════════════════════════════════════════════════════════════
+    // ROLES SECTION (role-forms slice)
+    //
+    // Per-card save through /api/contacts/:id/roles* — never the aggregate
+    // PATCH. The section sits outside <form id="contactForm">, so dirty
+    // tracking and autosave structurally cannot see it (no re-snapshot
+    // dance needed).
+    //
+    // UNDECLARED-ATTRS CONTRACT: updateRole REPLACES the whole attrs JSON,
+    // so collectRoleAttrs merges declared-field values OVER a clone of the
+    // row's loaded attrs — keys the schema doesn't declare survive a form
+    // save byte-for-byte.
+    //
+    // NUMBER IDENTITY IS LOAD-BEARING: select/multi_select inputs carry
+    // the OPTION INDEX, never the value; collect maps index →
+    // schema.options[i]. A trustee chapter checkbox therefore writes the
+    // NUMBER 7, never the string '7' — lib/trusteeRoster explodes
+    // attrs.chapter into roster case_type entries and trusteeMatch rule 0
+    // keys on them.
+    // ════════════════════════════════════════════════════════════════
+
+    let roleTypesByCode = null; // code → type row; include_inactive so existing
+                                // rows on a retired type still render their schema
+    let roleRowsState   = null; // GET /api/contacts/:id/roles (attrs pre-parsed)
+    let rolePendingRole = null; // role code of the unsaved "+ Role" card
+
+    function rolesReadonlyNow() {
+      const f = document.querySelector('#contactForm');
+      return !!(f && f.classList.contains('yc-readonly'));
+    }
+
+    function applyRolesReadonly(on) {
+      const sec = document.getElementById('rolesSection');
+      if (!sec) return;
+      sec.classList.toggle('ycr-readonly', on);
+      // Inactive cards stay locked in BOTH modes (their own render pass
+      // disabled them); only active/pending cards follow the toggle.
+      sec.querySelectorAll('.ycr-card:not(.ycr-inactive) input:not([type="checkbox"])')
+        .forEach(el => { el.readOnly = on; });
+      sec.querySelectorAll('.ycr-card:not(.ycr-inactive) input[type="checkbox"], .ycr-card:not(.ycr-inactive) select')
+        .forEach(el => { el.disabled = on; });
+    }
+
+    async function loadRoles() {
+      try {
+        const [typesResp, rowsResp] = await Promise.all([
+          P.apiSend('/api/contact-role-types', 'GET', { include_inactive: 'true' }),
+          P.apiSend(`/api/contacts/${contactId}/roles`, 'GET'),
+        ]);
+        roleTypesByCode = {};
+        (typesResp.types || []).forEach(t => { roleTypesByCode[t.role_code] = t; });
+        roleRowsState = rowsResp.roles || [];
+        renderRoles();
+      } catch (err) {
+        console.warn('[contact-form] roles load failed:', err);
+        document.getElementById('rolesList').innerHTML =
+          `<div class="ycr-empty">Failed to load roles: ${escapeHtml(err.message || 'unknown error')}</div>`;
+      }
+      document.getElementById('rolesSection').style.display = '';
+      reportHeight();
+    }
+
+    /** One schema field → HTML. THE renderer — ~30 lines over the five-type
+     *  vocabulary, deliberately not generalized (charter). */
+    function roleFieldHtml(f, value) {
+      const req = f.required ? ' <span class="ycr-req">*</span>' : '';
+      const label = `<label class="yc-label">${escapeHtml(f.label || f.key)}${req}</label>`;
+      let inner;
+      if (f.type === 'select') {
+        const opts = ['<option value=""></option>'].concat((f.options || []).map((o, i) =>
+          `<option value="${i}"${o === value ? ' selected' : ''}>${escapeHtml(String(o))}</option>`));
+        inner = `<select data-rkey="${escapeHtml(f.key)}">${opts.join('')}</select>`;
+      } else if (f.type === 'multi_select') {
+        inner = '<div class="ycr-checks">' + (f.options || []).map((o, i) =>
+          `<label class="ycp-primary-wrap"><input type="checkbox" data-rkey="${escapeHtml(f.key)}" data-opt="${i}"${Array.isArray(value) && value.some(v => v === o) ? ' checked' : ''}> ${escapeHtml(String(o))}</label>`
+        ).join('') + '</div>';
+      } else {
+        const t = f.type === 'number' ? 'number' : (f.type === 'url' ? 'url' : 'text');
+        const ph = f.placeholder ? ` placeholder="${escapeHtml(f.placeholder)}"` : '';
+        const val = value == null ? '' : escapeHtml(String(value));
+        inner = `<input type="${t}" data-rkey="${escapeHtml(f.key)}" value="${val}"${ph}>`;
+      }
+      return `<div class="yc-field ycp-w-grow">${label}${inner}</div>`;
+    }
+
+    function roleFieldsBlock(schema, attrs) {
+      if (!schema) return '';
+      return `<div class="yc-row" style="flex-wrap:wrap">` +
+        schema.map(f => roleFieldHtml(f, (attrs || {})[f.key])).join('') + '</div>';
+    }
+
+    function renderRoles() {
+      const host = document.getElementById('rolesList');
+      const rows = roleRowsState || [];
+      let html = rows.map(r => {
+        const type = roleTypesByCode[r.role] || {};
+        const schema = Array.isArray(type.attrs_schema) ? type.attrs_schema : null;
+        const head = r.active
+          ? `${schema ? `<button type="button" class="ycr-save" data-role-save="${r.id}">Save</button>` : ''}
+             <button type="button" class="ycr-remove" data-role-remove="${r.id}" title="Remove — kept in history, can be reactivated">×</button>`
+          : `<span class="ycr-badge">Inactive</span>
+             <button type="button" class="ycr-reactivate" data-role-reactivate="${r.id}">Reactivate</button>
+             <button type="button" class="ycr-delete" data-role-delete="${r.id}" title="Permanently delete — only for roles added in error">Delete</button>`;
+        return `<div class="ycr-card${r.active ? '' : ' ycr-inactive'}" data-role-card="${r.id}">
+          <div class="ycr-head">
+            <span class="ycr-title">${escapeHtml(r.label || type.label || r.role)}</span>
+            <span class="ycr-status" data-role-status="${r.id}"></span>
+            ${head}
+          </div>
+          ${roleFieldsBlock(schema, r.attrs)}
+        </div>`;
+      }).join('');
+
+      if (rolePendingRole) {
+        const type = roleTypesByCode[rolePendingRole] || {};
+        const schema = Array.isArray(type.attrs_schema) ? type.attrs_schema : null;
+        html += `<div class="ycr-card ycr-pending" data-role-card="new">
+          <div class="ycr-head">
+            <span class="ycr-title">${escapeHtml(type.label || rolePendingRole)}</span>
+            <span class="ycr-badge">Unsaved</span>
+            <span class="ycr-status" data-role-status="new"></span>
+            <button type="button" class="ycr-save" data-role-attach="1">Save</button>
+            <button type="button" class="ycr-cancel" data-role-cancel="1">Cancel</button>
+          </div>
+          ${roleFieldsBlock(schema, {})}
+        </div>`;
+      }
+
+      if (!html) html = '<div class="ycr-empty">No roles. Use “+ Role” to add one.</div>';
+      host.innerHTML = html;
+      // Inactive rows: visible for reference, never editable in either mode.
+      host.querySelectorAll('.ycr-inactive input, .ycr-inactive select')
+        .forEach(el => { el.disabled = true; });
+      applyRolesReadonly(rolesReadonlyNow());
+      reportHeight();
+    }
+
+    function roleStatus(id, msg) {
+      const el = document.querySelector(`[data-role-status="${id}"]`);
+      if (!el) return;
+      el.textContent = msg;
+      setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
+    }
+
+    function roleErr(title, err) {
+      Swal.fire({ icon: 'error', title,
+        text: (err && err.body && err.body.message) || (err && err.message) || 'Unknown error' });
+    }
+
+    /** Declared-field values merged OVER a clone of baseAttrs — undeclared
+     *  keys survive (updateRole replaces the whole attrs object). */
+    function collectRoleAttrs(cardEl, schema, baseAttrs) {
+      const attrs = Object.assign({}, baseAttrs || {});
+      for (const f of schema || []) {
+        const els = cardEl.querySelectorAll(`[data-rkey="${f.key}"]`);
+        if (!els.length) continue;
+        if (f.type === 'multi_select') {
+          attrs[f.key] = Array.prototype.filter.call(els, el => el.checked)
+            .map(el => f.options[+el.dataset.opt]);      // index → OPTION VALUE, type intact
+        } else if (f.type === 'select') {
+          const v = els[0].value;
+          if (v === '') delete attrs[f.key];
+          else attrs[f.key] = f.options[+v];             // index → OPTION VALUE, type intact
+        } else if (f.type === 'number') {
+          const v = els[0].value.trim();
+          if (v === '') delete attrs[f.key];
+          else attrs[f.key] = Number(v);                 // a NUMBER, never '7'
+        } else {
+          attrs[f.key] = els[0].value;                   // text/url — '' stored (seeded zoom_link idiom)
+        }
+      }
+      return attrs;
+    }
+
+    function roleRequiredErrors(schema, attrs) {
+      const errs = [];
+      for (const f of schema || []) {
+        if (!f.required) continue;
+        const v = attrs[f.key];
+        if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)) {
+          errs.push(`${f.label || f.key} is required`);
+        }
+      }
+      return errs;
+    }
+
+    async function saveRoleCard(rowId) {
+      const row = (roleRowsState || []).find(r => r.id === rowId);
+      if (!row) return;
+      const type = roleTypesByCode[row.role] || {};
+      const schema = Array.isArray(type.attrs_schema) ? type.attrs_schema : null;
+      if (!schema) return; // NULL schema: no structured attrs, no Save rendered
+      const card = document.querySelector(`[data-role-card="${rowId}"]`);
+      const attrs = collectRoleAttrs(card, schema, row.attrs);
+      const missing = roleRequiredErrors(schema, attrs);
+      if (missing.length) {
+        return Swal.fire({ icon: 'error', title: 'Missing required fields',
+          html: missing.map(escapeHtml).join('<br>') });
+      }
+      try {
+        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { attrs });
+        row.attrs = attrs;
+        roleStatus(rowId, 'Saved');
+      } catch (err) { roleErr('Save failed', err); }
+    }
+
+    async function deactivateRole(rowId) {
+      if (!confirm('Remove this role? It is kept in history and can be reactivated.')) return;
+      try {
+        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { active: 0 });
+        const row = (roleRowsState || []).find(r => r.id === rowId);
+        if (row) row.active = 0;
+        renderRoles();
+      } catch (err) { roleErr('Remove failed', err); }
+    }
+
+    async function reactivateRole(rowId) {
+      try {
+        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { active: 1 });
+        const row = (roleRowsState || []).find(r => r.id === rowId);
+        if (row) row.active = 1;
+        renderRoles();
+      } catch (err) { roleErr('Reactivate failed', err); }
+    }
+
+    async function hardDeleteRole(rowId) {
+      if (!confirm('Permanently delete this role row? Only for roles added in error — use Remove otherwise.')) return;
+      try {
+        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'DELETE');
+        roleRowsState = (roleRowsState || []).filter(r => r.id !== rowId);
+        renderRoles();
+      } catch (err) { roleErr('Delete failed', err); }
+    }
+
+    async function attachPendingRole() {
+      const code = rolePendingRole;
+      if (!code) return;
+      const type = roleTypesByCode[code] || {};
+      const schema = Array.isArray(type.attrs_schema) ? type.attrs_schema : null;
+      const card = document.querySelector('[data-role-card="new"]');
+      const attrs = schema ? collectRoleAttrs(card, schema, {}) : null;
+      const missing = schema ? roleRequiredErrors(schema, attrs) : [];
+      if (missing.length) {
+        return Swal.fire({ icon: 'error', title: 'Missing required fields',
+          html: missing.map(escapeHtml).join('<br>') });
+      }
+      try {
+        await P.apiSend(`/api/contacts/${contactId}/roles`, 'POST', { role: code, attrs });
+        rolePendingRole = null;
+        await loadRoles(); // canonical re-read: row id, label, created_at
+      } catch (err) { roleErr('Add failed', err); }
+    }
+
+    document.getElementById('rolesList').addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const d = b.dataset;
+      if (d.roleSave)            saveRoleCard(+d.roleSave);
+      else if (d.roleRemove)     deactivateRole(+d.roleRemove);
+      else if (d.roleReactivate) reactivateRole(+d.roleReactivate);
+      else if (d.roleDelete)     hardDeleteRole(+d.roleDelete);
+      else if (d.roleAttach)     attachPendingRole();
+      else if (d.roleCancel)     { rolePendingRole = null; renderRoles(); }
+    });
+
+    document.getElementById('roleAddBtn').addEventListener('click', async () => {
+      if (!roleTypesByCode) return;
+      if (rolePendingRole) {
+        return Swal.fire({ icon: 'info', title: 'Finish the unsaved role first' });
+      }
+      // uk_contact_role is one row per (contact, role) INCLUDING inactive
+      // rows — those reactivate instead of re-attaching.
+      const held = new Set((roleRowsState || []).map(r => r.role));
+      const eligible = Object.values(roleTypesByCode)
+        .filter(t => t.active && !held.has(t.role_code))
+        .sort((a, b) => (a.sort_order - b.sort_order) || String(a.role_code).localeCompare(String(b.role_code)));
+      if (!eligible.length) {
+        return Swal.fire({ icon: 'info', title: 'No further roles available',
+          text: 'This contact already holds every active role type (inactive rows can be reactivated below).' });
+      }
+      const inputOptions = {};
+      eligible.forEach(t => { inputOptions[t.role_code] = t.label || t.role_code; });
+      const res = await Swal.fire({
+        title: 'Add role',
+        input: 'select',
+        inputOptions,
+        inputPlaceholder: 'Choose a role…',
+        showCancelButton: true,
+        confirmButtonText: 'Add',
+      });
+      if (!res.isConfirmed || !res.value) return;
+      rolePendingRole = res.value;
+      renderRoles();
+    });
+
+    // Boot — the house iframe pattern, though contact.html always creates
+    // this iframe after apiSend exists (form.init() relies on that too).
+    (function waitRolesBoot() {
+      if (P && P.apiSend) return loadRoles();
+      setTimeout(waitRolesBoot, 100);
+    })();
 
     form.init();
   }

@@ -1666,6 +1666,7 @@ async function listContacts(db, {
   query  = '',
   type   = null,
   tags   = null,
+  role   = null,
   sort_by  = 'c.contact_lname',
   sort_dir = 'ASC',
   limit  = 50,
@@ -1733,6 +1734,23 @@ async function listContacts(db, {
   if (tags) {
     where.push('c.contact_tags LIKE ?');
     params.push(`%${tags}%`);
+  }
+
+  // Role-forms slice: filter to contacts holding an ACTIVE contact_roles row
+  // for one role code. EXISTS (not a JOIN) so the case_relate GROUP BY row
+  // set is untouched; alias crl because `cr` is already case_relate here.
+  // idx_role_active (role, active) covers the subquery's WHERE; the
+  // contact_id probe rides uk_contact_role. Omitted/blank role → clause
+  // absent → SQL byte-identical to pre-slice (pinned in
+  // tests/contactRoles.roleForms.test.js).
+  if (role) {
+    where.push(`EXISTS (
+      SELECT 1 FROM contact_roles crl
+       WHERE crl.contact_id = c.contact_id
+         AND crl.role = ?
+         AND crl.active = 1
+    )`);
+    params.push(String(role).trim());
   }
 
   const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
