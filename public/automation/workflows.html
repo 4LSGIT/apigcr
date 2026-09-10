@@ -1835,7 +1835,13 @@ function wfRenderParamField(spec, value, visible) {
   }
   switch (spec.type) {
     case 'boolean': {
-      const checked = value === true ? 'checked' : '';
+      // Absent value renders the SPEC DEFAULT, not unchecked (2026-09-10): a
+      // checkbox has no "absent" state, so a default-true boolean stored as
+      // omitted (send_assignment_email) must render checked — otherwise an
+      // untouched save gathers unchecked → explicit false and silently flips
+      // the runtime default. Gather then materializes the default as an
+      // explicit value; semantically identical, byte-visible in the JSON.
+      const checked = (value === undefined ? spec.default === true : value === true) ? 'checked' : '';
       inputHtml = `<input type="checkbox" id="${id}" ${checked} style="width:auto">`;
       break;
     }
