@@ -283,6 +283,24 @@
        own save path; NOT part of the aggregate PATCH, autosave,
        or dirty tracking (it lives outside #contactForm).
        ────────────────────────────────────────────────────────── */
+    /* The section sits OUTSIDE <form id="contactForm">, so it never picked up
+       .yc-form's card box (max-width 950 / centred / padded) and ran the full
+       body width while the form above it stayed 950. Mirror the card here so
+       the two line up; keep the values in step with .yc-form in yc-forms.css. */
+    #rolesSection {
+      max-width: 950px;
+      margin: 16px auto 0;
+      padding: 20px;
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    @media (max-width: 600px) { #rolesSection { padding: 14px; } }
+    /* .yc-section-title's 20px top margin is meant to separate stacked
+       sections inside a card; as the card's first line it just dents the top. */
+    #rolesSection .yc-section-title { margin-top: 0; }
+
     .ycr-card {
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -309,9 +327,23 @@
     .ycr-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; padding-top: 6px; }
     .ycr-req { color: var(--danger); }
     .ycr-empty { color: var(--text-muted); font-size: 12px; }
-    /* View mode: hide every mutating affordance; JS locks the inputs. */
+    .ycr-note { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+    .ycr-status.ycr-err { color: var(--danger); }
+    /* The pending card's role picker. It replaces a modal, so it has to read as
+       the card's title line, not as a stray control tucked in the header. */
+    .ycr-picker {
+      flex: 1; min-width: 170px; max-width: 320px;
+      padding: 5px 8px; border: 1px solid var(--accent); border-radius: 4px;
+      background: var(--surface-2); color: var(--text);
+      font-family: inherit; font-size: 0.92rem; font-weight: 600;
+    }
+    .ycr-picker:focus { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+    /* View mode: hide every mutating affordance; JS locks the inputs.
+       #roleAddBtn is the exception — it stays visible and flips the form into
+       edit mode itself, so adding a role no longer means scrolling to the
+       header toggle first. */
     .ycr-readonly .ycr-save, .ycr-readonly .ycr-remove, .ycr-readonly .ycr-reactivate,
-    .ycr-readonly .ycr-delete, .ycr-readonly .ycr-cancel, .ycr-readonly #roleAddBtn { display: none; }
+    .ycr-readonly .ycr-delete, .ycr-readonly .ycr-cancel { display: none; }
     .ycr-readonly .ycr-card input[readonly] { background: var(--surface-2); color: var(--text-2); }
     .ycr-readonly .ycr-card input[disabled],
     .ycr-readonly .ycr-card select[disabled] { background: var(--surface-2); color: var(--text-2); opacity: 0.7; }
@@ -627,6 +659,11 @@
     <div class="yc-section-title"><i class="fa-solid fa-user-tag ycp-section-icon"></i>Roles</div>
     <button type="button" class="ycp-add-inline" id="roleAddBtn">+ Role</button>
   </div>
+  <!-- Inline replacement for the "nothing to add" / "finish the open one"
+       modals: a modal opens at the centre of the IFRAME, which contact.html
+       sizes to full content height, so it lands far above the section the
+       user is looking at. -->
+  <div class="ycr-note" id="roleNote" style="display:none;"></div>
   <div id="rolesList"></div>
 </div>
 
@@ -1956,7 +1993,8 @@
     let roleTypesByCode = null; // code → type row; include_inactive so existing
                                 // rows on a retired type still render their schema
     let roleRowsState   = null; // GET /api/contacts/:id/roles (attrs pre-parsed)
-    let rolePendingRole = null; // role code of the unsaved "+ Role" card
+    let rolePendingRole = null; // role code chosen in the unsaved "+ Role" card
+    let rolePendingOpen = false; // card is open; role may not be chosen yet
 
     function rolesReadonlyNow() {
       const f = document.querySelector('#contactForm');
@@ -1966,6 +2004,15 @@
     function applyRolesReadonly(on) {
       const sec = document.getElementById('rolesSection');
       if (!sec) return;
+      // View mode hides Save/Cancel, which would strand an open pending card
+      // with no way to finish or dismiss it. Drop it instead. renderRoles()
+      // calls back into here, so clear the flag BEFORE re-rendering.
+      if (on && rolePendingOpen) {
+        rolePendingOpen = false;
+        rolePendingRole = null;
+        renderRoles();
+        return;
+      }
       sec.classList.toggle('ycr-readonly', on);
       // Inactive cards stay locked in BOTH modes (their own render pass
       // disabled them); only active/pending cards follow the toggle.
@@ -2023,6 +2070,33 @@
         schema.map(f => roleFieldHtml(f, (attrs || {})[f.key])).join('') + '</div>';
     }
 
+    /** Role types this contact can still take on. uk_contact_role is one row per
+     *  (contact, role) INCLUDING inactive rows — those reactivate instead of
+     *  re-attaching, so a held code is never offered again. */
+    function eligibleRoleTypes() {
+      const held = new Set((roleRowsState || []).map(r => r.role));
+      return Object.values(roleTypesByCode || {})
+        .filter(t => t.active && !held.has(t.role_code))
+        .sort((a, b) => (a.sort_order - b.sort_order) || String(a.role_code).localeCompare(String(b.role_code)));
+    }
+
+    function pendingSchema() {
+      const type = roleTypesByCode[rolePendingRole] || {};
+      return Array.isArray(type.attrs_schema) ? type.attrs_schema : null;
+    }
+
+    /** Section-level message, inline rather than modal — see #roleNote. */
+    function roleNote(msg) {
+      const el = document.getElementById('roleNote');
+      if (!el) return;
+      el.textContent = msg;
+      el.style.display = msg ? '' : 'none';
+      reportHeight();
+      if (msg) setTimeout(() => {
+        if (el.textContent === msg) { el.textContent = ''; el.style.display = 'none'; reportHeight(); }
+      }, 5000);
+    }
+
     function renderRoles() {
       const host = document.getElementById('rolesList');
       const rows = roleRowsState || [];
@@ -2045,18 +2119,22 @@
         </div>`;
       }).join('');
 
-      if (rolePendingRole) {
-        const type = roleTypesByCode[rolePendingRole] || {};
-        const schema = Array.isArray(type.attrs_schema) ? type.attrs_schema : null;
+      // The pending card carries its OWN role picker. Choosing the role used to
+      // be a Swal modal, which lands mid-iframe — a long scroll up from the
+      // section that opened it. Inline, the choice happens where the click was.
+      if (rolePendingOpen) {
+        const opts = ['<option value="">Choose a role…</option>'].concat(
+          eligibleRoleTypes().map(t =>
+            `<option value="${escapeHtml(t.role_code)}"${t.role_code === rolePendingRole ? ' selected' : ''}>${escapeHtml(t.label || t.role_code)}</option>`));
         html += `<div class="ycr-card ycr-pending" data-role-card="new">
           <div class="ycr-head">
-            <span class="ycr-title">${escapeHtml(type.label || rolePendingRole)}</span>
+            <select class="ycr-picker" data-role-picker="1" aria-label="Role">${opts.join('')}</select>
             <span class="ycr-badge">Unsaved</span>
             <span class="ycr-status" data-role-status="new"></span>
-            <button type="button" class="ycr-save" data-role-attach="1">Save</button>
+            <button type="button" class="ycr-save" data-role-attach="1">Add</button>
             <button type="button" class="ycr-cancel" data-role-cancel="1">Cancel</button>
           </div>
-          ${roleFieldsBlock(schema, {})}
+          <div data-role-pending-fields>${rolePendingRole ? roleFieldsBlock(pendingSchema(), {}) : ''}</div>
         </div>`;
       }
 
@@ -2069,11 +2147,14 @@
       reportHeight();
     }
 
-    function roleStatus(id, msg) {
+    function roleStatus(id, msg, isErr) {
       const el = document.querySelector(`[data-role-status="${id}"]`);
       if (!el) return;
       el.textContent = msg;
-      setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
+      el.classList.toggle('ycr-err', !!isErr);
+      setTimeout(() => {
+        if (el.textContent === msg) { el.textContent = ''; el.classList.remove('ycr-err'); }
+      }, isErr ? 6000 : 2500);
     }
 
     function roleErr(title, err) {
@@ -2127,10 +2208,7 @@
       const card = document.querySelector(`[data-role-card="${rowId}"]`);
       const attrs = collectRoleAttrs(card, schema, row.attrs);
       const missing = roleRequiredErrors(schema, attrs);
-      if (missing.length) {
-        return Swal.fire({ icon: 'error', title: 'Missing required fields',
-          html: missing.map(escapeHtml).join('<br>') });
-      }
+      if (missing.length) return roleStatus(rowId, 'Required: ' + missing.join(', '), true);
       try {
         await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { attrs });
         row.attrs = attrs;
@@ -2168,18 +2246,21 @@
 
     async function attachPendingRole() {
       const code = rolePendingRole;
-      if (!code) return;
-      const type = roleTypesByCode[code] || {};
-      const schema = Array.isArray(type.attrs_schema) ? type.attrs_schema : null;
+      if (!code) {
+        const sel = document.querySelector('[data-role-picker]');
+        if (sel) sel.focus();
+        return roleStatus('new', 'Choose a role first', true);
+      }
+      const schema = pendingSchema();
       const card = document.querySelector('[data-role-card="new"]');
       const attrs = schema ? collectRoleAttrs(card, schema, {}) : null;
       const missing = schema ? roleRequiredErrors(schema, attrs) : [];
-      if (missing.length) {
-        return Swal.fire({ icon: 'error', title: 'Missing required fields',
-          html: missing.map(escapeHtml).join('<br>') });
-      }
+      // Inline, not a modal: the modal opens mid-iframe, out of sight of the
+      // card the user is filling in.
+      if (missing.length) return roleStatus('new', 'Required: ' + missing.join(', '), true);
       try {
         await P.apiSend(`/api/contacts/${contactId}/roles`, 'POST', { role: code, attrs });
+        rolePendingOpen = false;
         rolePendingRole = null;
         await loadRoles(); // canonical re-read: row id, label, created_at
       } catch (err) { roleErr('Add failed', err); }
@@ -2194,37 +2275,46 @@
       else if (d.roleReactivate) reactivateRole(+d.roleReactivate);
       else if (d.roleDelete)     hardDeleteRole(+d.roleDelete);
       else if (d.roleAttach)     attachPendingRole();
-      else if (d.roleCancel)     { rolePendingRole = null; renderRoles(); }
+      else if (d.roleCancel)     { rolePendingOpen = false; rolePendingRole = null; renderRoles(); }
     });
 
-    document.getElementById('roleAddBtn').addEventListener('click', async () => {
+    // Picking the role swaps in that type's field block. Only the pending
+    // card's body is replaced — a full renderRoles() here would discard
+    // unsaved edits in the cards above it.
+    document.getElementById('rolesList').addEventListener('change', (e) => {
+      const sel = e.target.closest('[data-role-picker]');
+      if (!sel) return;
+      rolePendingRole = sel.value || null;
+      const body = document.querySelector('[data-role-pending-fields]');
+      if (body) body.innerHTML = rolePendingRole ? roleFieldsBlock(pendingSchema(), {}) : '';
+      applyRolesReadonly(rolesReadonlyNow());
+      const first = body && body.querySelector('input, select');
+      if (first) first.focus();
+      reportHeight();
+    });
+
+    document.getElementById('roleAddBtn').addEventListener('click', () => {
       if (!roleTypesByCode) return;
-      if (rolePendingRole) {
-        return Swal.fire({ icon: 'info', title: 'Finish the unsaved role first' });
+      if (rolePendingOpen) {
+        const sel = document.querySelector('[data-role-picker]');
+        if (sel) sel.focus();
+        return roleNote('Finish or cancel the unsaved role below first.');
       }
-      // uk_contact_role is one row per (contact, role) INCLUDING inactive
-      // rows — those reactivate instead of re-attaching.
-      const held = new Set((roleRowsState || []).map(r => r.role));
-      const eligible = Object.values(roleTypesByCode)
-        .filter(t => t.active && !held.has(t.role_code))
-        .sort((a, b) => (a.sort_order - b.sort_order) || String(a.role_code).localeCompare(String(b.role_code)));
-      if (!eligible.length) {
-        return Swal.fire({ icon: 'info', title: 'No further roles available',
-          text: 'This contact already holds every active role type (inactive rows can be reactivated below).' });
+      if (!eligibleRoleTypes().length) {
+        return roleNote('This contact already holds every active role type. '
+          + 'Inactive rows below can be reactivated.');
       }
-      const inputOptions = {};
-      eligible.forEach(t => { inputOptions[t.role_code] = t.label || t.role_code; });
-      const res = await Swal.fire({
-        title: 'Add role',
-        input: 'select',
-        inputOptions,
-        inputPlaceholder: 'Choose a role…',
-        showCancelButton: true,
-        confirmButtonText: 'Add',
-      });
-      if (!res.isConfirmed || !res.value) return;
-      rolePendingRole = res.value;
+      // The button stays visible in view mode and flips the form itself, so
+      // adding a role no longer means scrolling up to the header toggle and
+      // back down. setReadonly is the wrapped one — it syncs the toggle,
+      // the Save button and the repeaters along with the roles section.
+      if (rolesReadonlyNow()) form.setReadonly(false);
+      rolePendingOpen = true;
+      rolePendingRole = null;
+      roleNote('');
       renderRoles();
+      const sel = document.querySelector('[data-role-picker]');
+      if (sel) sel.focus();
     });
 
     // Boot — the house iframe pattern, though contact.html always creates
