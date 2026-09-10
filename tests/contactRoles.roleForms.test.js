@@ -401,6 +401,44 @@ describe('listContacts role filter', () => {
     expect(p).toContain('Client');
     expect(db.calls[1].params.slice(-1)).toEqual(['trustee']);
   });
+
+  /* ROLE_NONE — the negation of the same axis. Same EXISTS shape, NOT'd and
+     with the role predicate dropped: "holds no active role", not "holds
+     something other than trustee". It contributes NO param, which is the
+     easy thing to get wrong (a stray push shifts LIMIT/OFFSET). */
+  test('ROLE_NONE → NOT EXISTS over active rows, no role param, on BOTH queries', async () => {
+    const db = captureDb();
+    await contactService.listContacts(db, { role: contactService.ROLE_NONE });
+    for (const call of db.calls) {
+      const s = call.sql.replace(/\s+/g, ' ');
+      expect(s).toMatch(/NOT EXISTS \( SELECT 1 FROM contact_roles crl WHERE crl\.contact_id = c\.contact_id AND crl\.active = 1 \)/);
+      expect(s).not.toMatch(/crl\.role = \?/);   // no code predicate at all
+      expect(s).not.toMatch(/JOIN contact_roles/);
+    }
+    expect(db.calls[0].params).toEqual([50, 0]);   // LIMIT/OFFSET only
+    expect(db.calls[1].params).toEqual([]);
+  });
+
+  test('ROLE_NONE composes with query + type, and survives whitespace', async () => {
+    const db = captureDb();
+    await contactService.listContacts(db, { query: 'smith', type: 'Client', role: ' -none ' });
+    const s = db.calls[0].sql.replace(/\s+/g, ' ');
+    expect(s).toMatch(/WHERE .*AND c\.contact_type = \? AND NOT EXISTS/);
+    expect(db.calls[0].params.slice(-3)).toEqual(['Client', 50, 0]); // no role param between type and LIMIT
+  });
+
+  /* A role_code can never contain '-' (contactRoleService SLUG_RE), so the
+     sentinel cannot be shadowed by a real role type — but an unknown code
+     must still take the positive path and simply match nothing, rather than
+     falling through to "no roles" and returning 1000 contacts. */
+  test('an unknown role code stays on the EXISTS path', async () => {
+    const db = captureDb();
+    await contactService.listContacts(db, { role: 'none' });
+    const s = db.calls[0].sql.replace(/\s+/g, ' ');
+    expect(s).toMatch(/ EXISTS \(/);
+    expect(s).not.toMatch(/NOT EXISTS/);
+    expect(db.calls[0].params).toEqual(['none', 50, 0]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────

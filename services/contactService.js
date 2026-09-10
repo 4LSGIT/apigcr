@@ -1657,6 +1657,14 @@ async function _applyAddressPlan(conn, contactId, plan, userId) {
 // ─────────────────────────────────────────────────────────────
 
 /**
+ * Sentinel `role` value meaning "holds no active role at all" — the one
+ * option in the Contacts role filter that is not a role_code. Exported so
+ * callers and tests name it instead of re-typing the literal.
+ */
+const ROLE_NONE = '-none';
+
+
+/**
  * List contacts with search, filters, and pagination.
  *
  * Search uses FULLTEXT on contact_name for text queries,
@@ -1743,14 +1751,29 @@ async function listContacts(db, {
   // contact_id probe rides uk_contact_role. Omitted/blank role → clause
   // absent → SQL byte-identical to pre-slice (pinned in
   // tests/contactRoles.roleForms.test.js).
-  if (role) {
+  //
+  // ROLE_NONE is the negation of the same axis: contacts holding NO active
+  // role row at all — today's "everyone who isn't a judge or a trustee",
+  // and automatically correct for whatever role types get added later. It
+  // rides the same `role` param (one <select>, one query key) rather than a
+  // second boolean, and its sentinel is unspellable as a real code:
+  // contactRoleService's SLUG_RE is /^[a-z0-9_]{1,40}$/, so no role_code can
+  // ever contain a '-' and collide with it.
+  const roleCode = role == null ? '' : String(role).trim();
+  if (roleCode === ROLE_NONE) {
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM contact_roles crl
+       WHERE crl.contact_id = c.contact_id
+         AND crl.active = 1
+    )`);
+  } else if (roleCode) {
     where.push(`EXISTS (
       SELECT 1 FROM contact_roles crl
        WHERE crl.contact_id = c.contact_id
          AND crl.role = ?
          AND crl.active = 1
     )`);
-    params.push(String(role).trim());
+    params.push(roleCode);
   }
 
   const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -2930,6 +2953,7 @@ async function listContactWorkflows(db, contactId, {
 }
 
 module.exports = {
+  ROLE_NONE,
   listContacts,
   getContact,
   createContact,

@@ -889,6 +889,12 @@
       Role:
       <select id="tabContactsRole" style="width: auto" onchange="tabContactsGet(0)">
         <option value="">All roles</option>
+        <!-- Both fixed options are IN THE MARKUP, not appended by
+             tabContactsRolesLoad: the catalog fetch is allowed to fail (see
+             that function), and "No roles" — the everyday "hide the judges
+             and trustees" filter — must not fail with it. "-none" is a
+             sentinel, never a role_code; contactService.ROLE_NONE. -->
+        <option value="-none">No roles</option>
       </select>
       Filter2:
       <select disabled>
