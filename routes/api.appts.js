@@ -10,6 +10,8 @@
  *                                type_key / exclude_type_key (registry identity — preferred)
  *                                unmapped=1                ("Other": type_key IS NULL, or
  *                                                           keyed outside the active meeting types)
+ *                                q                         free text — contact name, docket,
+ *                                                           appt_type label, or an exact appt id
  * GET    /api/appts/:id          single appointment (with contact, case, user)
  * PATCH  /api/appts/:id          update fields (note, case_id, etc.)
  * POST   /api/appts              create
@@ -31,7 +33,7 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
     contact_id, case_id, status, type, exclude_type, from, to, appt_with,
-    type_key, exclude_type_key, unmapped,
+    type_key, exclude_type_key, unmapped, q,
     limit = 50, offset = 0
   } = req.query;
 
@@ -109,6 +111,34 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
     params.push(...listed);
   }
   if (appt_with) { conditions.push('appts.appt_with = ?'); params.push(appt_with); }
+  // FREE-TEXT SEARCH — the one filter on this route that is not an exact match.
+  // Added for apptform2.html's picker (the screen shown when the dialog opens
+  // with no appointment id), where a human types a name rather than a key.
+  //
+  // The columns are the four a person would actually type: the contact's name,
+  // either docket spelling, and the appt_type LABEL — the drifted free text,
+  // deliberately, not type_key, because the label is what the picker RENDERS.
+  // A purely numeric term ALSO matches appt_id exactly, so pasting an id in the
+  // search box finds that one row; the id clause is omitted for non-numeric
+  // terms rather than left to MySQL's string→number coercion, which would make
+  // `appt_id = 'bob'` a silent `appt_id = 0`.
+  //
+  // No new joins: contacts and cases are already LEFT JOINed by BOTH the rows
+  // query and the count query below, which share this whereSql/params pair.
+  // users is NOT in the count query, which is why user_name is not searchable —
+  // widening to it means adding that join in two places, not one condition.
+  const qTerm = q == null ? '' : String(q).trim();
+  if (qTerm) {
+    const like = `%${qTerm}%`;
+    const numeric = /^\d+$/.test(qTerm);
+    conditions.push(
+      '(contacts.contact_name LIKE ? OR cases.case_number LIKE ?' +
+      ' OR cases.case_number_full LIKE ? OR appts.appt_type LIKE ?' +
+      (numeric ? ' OR appts.appt_id = ?' : '') + ')'
+    );
+    params.push(like, like, like, like);
+    if (numeric) params.push(parseInt(qTerm, 10));
+  }
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 

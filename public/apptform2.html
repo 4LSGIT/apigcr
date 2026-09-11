@@ -35,6 +35,17 @@
     }
     .appt-title { font-size: 1.15rem; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
     .appt-title span { color: var(--text-2); }
+    /* Title row left half: the back-to-picker button sits BEFORE the title, so
+       the status badge keeps the right edge it has always had. */
+    .appt-title-wrap { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .pk-back-btn {
+      display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+      padding: 5px 11px; border: 1px solid var(--border-strong); border-radius: 6px;
+      background: var(--surface-2); color: var(--text-2);
+      font-family: inherit; font-size: 0.76rem; font-weight: 600;
+      letter-spacing: 0.02em; cursor: pointer; transition: all 0.15s ease;
+    }
+    .pk-back-btn:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
 
     /* ── Status badge ── */
     .status-badge {
@@ -181,8 +192,91 @@
     .or-divider::before { left: 0; }
     .or-divider::after { right: 0; }
 
+    /* ── Picker (shown when no/unknown apptID) ──
+       All picker rules are prefixed .pk- and all picker JS identifiers pk*.
+       This file is iframed into the shell, which has its own global CSS — the
+       same scoping rule checklistView (.ck-) and checklistsView (.cx-) state
+       in their headers. There is no table component in yc-forms.css, so
+       .pk-table hand-rolls one; the tokens are the ones style.css's .logTable
+       uses, since this page does not load style.css. */
+    .pk-filters {
+      display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: flex-end;
+      padding: 12px 0 14px; border-bottom: 1px solid var(--border);
+    }
+    .pk-filters .yc-field { flex: 0 0 auto; margin: 0; }
+    .pk-filters .yc-field.pk-grow { flex: 1 1 220px; min-width: 180px; }
+    .pk-filters .yc-label { margin-bottom: 3px; }
+    .pk-count { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
+
+    #pkResults { max-height: 360px; overflow: auto; margin-top: 12px; border-radius: 6px; }
+    .pk-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+    .pk-table th {
+      position: sticky; top: 0; z-index: 1; text-align: left;
+      padding: 7px 9px; background: var(--accent-dark); color: var(--accent-text);
+      font-size: 0.68rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .pk-table td { padding: 7px 9px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .pk-table tbody tr { cursor: pointer; }
+    .pk-table tbody tr:nth-child(even) { background: var(--surface-2); }
+    .pk-table tbody tr:hover { background: var(--hover); }
+    .pk-table tbody tr:focus { background: var(--hover); outline: 2px solid var(--accent); outline-offset: -2px; }
+    .pk-id { font-weight: 700; color: var(--accent-2); }
+    /* Same badge, list scale. Single-class selectors, so this must stay BELOW
+       .status-badge to win on padding/size while the .status-* colors hold. */
+    .pk-pill { padding: 2px 8px; font-size: 0.64rem; white-space: nowrap; }
+
+    .pk-empty { padding: 28px 12px; text-align: center; color: var(--text-muted); font-size: 0.86rem; }
+    .pk-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding-top: 12px; }
+    .pk-pages { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .pk-page {
+      min-width: 28px; height: 28px; padding: 0 8px;
+      border: 1px solid var(--border-strong); border-radius: 5px;
+      background: var(--surface); color: var(--text-2);
+      font-family: inherit; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    .pk-page:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: var(--accent); }
+    .pk-page:disabled { opacity: 0.45; cursor: default; }
+    /* The current page is a disabled button too — there is nowhere to go — so
+       it has to win the dimming the arrows use to say "no further". */
+    .pk-page-current, .pk-page-current:disabled {
+      background: var(--accent); border-color: var(--accent);
+      color: var(--accent-text); opacity: 1;
+    }
+    /* The ellipsis is a BUTTON — it opens the jump-to-page input — so it
+       carries .pk-page too and wears the page buttons' own box. Borderless it
+       read as inert punctuation and nobody clicked it; matching boxes is the
+       whole cue that it is reachable. Only the label colour differs, marking
+       it as a range rather than a page. */
+    .pk-gap { color: var(--text-muted); letter-spacing: 1px; }
+    .pk-jump {
+      width: 66px; height: 28px; padding: 0 6px;
+      border: 1px solid var(--accent); border-radius: 5px;
+      background: var(--surface); color: var(--text);
+      font-family: inherit; font-size: 0.8rem; font-weight: 600;
+      text-align: center; outline: none;
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    /* The spinners eat half the box and the control is Enter-driven anyway.
+       type=number is kept for the numeric keypad and the min/max semantics. */
+    .pk-jump::-webkit-outer-spin-button,
+    .pk-jump::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .pk-jump { -moz-appearance: textfield; appearance: textfield; }
+    .pk-range { font-size: 0.8rem; color: var(--text-muted); }
+    .pk-size-wrap {
+      display: flex; align-items: center; gap: 5px; margin-left: auto;
+      font-size: 0.78rem; color: var(--text-muted);
+    }
+    .pk-size {
+      height: 28px; padding: 0 6px; border: 1px solid var(--border-strong);
+      border-radius: 5px; background: var(--surface); color: var(--text);
+      font-family: inherit; font-size: 0.78rem;
+    }
+
     @media (max-width: 600px) {
       .info-grid { grid-template-columns: 1fr 1fr; }
+      .pk-col-opt { display: none; }
     }
     @media (max-width: 400px) {
       .info-grid { grid-template-columns: 1fr; }
@@ -195,12 +289,81 @@
 
 <div id="loading" style="text-align:center;padding:40px;color:var(--text-muted);">Loading appointment...</div>
 
+<!-- ═══ PICKER ═══
+     Shown instead of the appointment when the dialog opens with no apptID, or
+     with one the API will not give us (deleted, mistyped, a stale link). It is
+     also reachable from the "All Appts" button on the appointment view, so the
+     two screens are a pair, not a dead end. Search is server-side: `q` on
+     GET /api/appts (routes/api.appts.js). -->
+<div id="pickerView" class="yc-form" style="display:none;">
+  <div class="appt-header">
+    <div class="appt-title">Appointments</div>
+    <span id="pkCount" class="pk-count"></span>
+  </div>
+
+  <div class="correction-banner" id="pkNotice">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <span id="pkNoticeText"></span>
+  </div>
+
+  <div class="pk-filters">
+    <div class="yc-field pk-grow">
+      <label class="yc-label" for="pkQ">Search</label>
+      <input type="text" id="pkQ" placeholder="Name, case number, type, or appt ID" autocomplete="off">
+    </div>
+    <div class="yc-field">
+      <label class="yc-label" for="pkStatus">Status</label>
+      <select id="pkStatus">
+        <option value="">All</option>
+        <option>Scheduled</option>
+        <option>Attended</option>
+        <option>No Show</option>
+        <option>Canceled</option>
+        <option>Rescheduled</option>
+      </select>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label" for="pkWith">With</label>
+      <select id="pkWith"><option value="">All</option></select>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label" for="pkTime">When</label>
+      <select id="pkTime">
+        <option>All</option>
+        <option>Before</option>
+        <option>On</option>
+        <option>After</option>
+        <option>Between</option>
+      </select>
+    </div>
+    <div class="yc-field" id="pkDate1Wrap" style="display:none;">
+      <label class="yc-label" for="pkDate1" id="pkDate1Label">Date</label>
+      <input type="date" id="pkDate1">
+    </div>
+    <div class="yc-field" id="pkDate2Wrap" style="display:none;">
+      <label class="yc-label" for="pkDate2">And</label>
+      <input type="date" id="pkDate2">
+    </div>
+    <div class="yc-field">
+      <button class="yc-btn yc-btn-primary yc-btn-sm" id="pkGo">Search</button>
+    </div>
+  </div>
+
+  <div id="pkResults"></div>
+  <div id="pkFoot" class="pk-foot"></div>
+</div>
+
 <div id="apptView" class="yc-form" style="display:none;">
 
   <!-- ═══ HEADER ═══ -->
   <div class="appt-header">
-    <div class="appt-title">
-      Appointment <span>#<span id="apptId"></span></span>
+    <div class="appt-title-wrap">
+      <button type="button" class="pk-back-btn" id="pkBackBtn" title="Browse all appointments">
+        <i class="fa-solid fa-list-ul"></i> All Appts
+      </button>
+      <div class="appt-title">
+        Appointment <span>#<span id="apptId"></span></span>
+      </div>
     </div>
     <span id="statusBadge" class="status-badge"></span>
   </div>
@@ -375,7 +538,11 @@
    notifyParent — see its marker below.) */
 const P = window.top;
 const params = new URLSearchParams(location.search);
-const apptId = params.get('apptID') || params.get('apptid');
+/* MUTABLE since the picker landed. It starts as the URL's id (the only way in
+   before), but selecting a row from the picker re-points it and every
+   `/api/appts/${apptId}` call below follows, with no reload — a reload would
+   drop the shell wait, re-fire the boot race and blank the notes frame. */
+let apptId = params.get('apptID') || params.get('apptid');
 
 const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500, timerProgressBar: true });
 let apptData = null;
@@ -445,13 +612,29 @@ async function loadAppt() {
     render();
     mountNotes();
   } catch (err) {
-    document.getElementById('loading').innerHTML = `<span style="color:var(--danger);">Failed to load appointment: ${err.message}</span>`;
+    /* Two different failures wear this one catch.
+       A failed RE-load — one of the nine post-action loadAppt() calls — has an
+       appointment already on screen, and yanking staff to the picker mid-edit
+       (a half-typed cancel note, an open reschedule panel) would be worse than
+       a briefly stale row. Toast and stay.
+       A failed FIRST load has nothing to leave up, and the usual cause is the
+       exact case the picker exists for: an id that is missing, mistyped, or
+       points at a deleted appointment. Show the picker, carrying the reason. */
+    if (apptData) {
+      Toast.fire({ icon: 'error', title: 'Could not refresh', text: err.message });
+      return;
+    }
+    showPicker(apptId
+      ? `Could not open appointment #${apptId} — ${err.message}. Pick one below.`
+      : `Could not load that appointment — ${err.message}.`);
   }
 }
 
 function render() {
   document.getElementById('loading').style.display = 'none';
+  document.getElementById('pickerView').style.display = 'none';
   document.getElementById('apptView').style.display = 'block';
+  syncShellTitle('Appointment ' + apptData.appt_id);
 
   const a = apptData;
   document.getElementById('apptId').textContent = a.appt_id;
@@ -672,16 +855,23 @@ async function doRescheduleLater() {
 
 // ─── NOTES & LISTS FRAME ───
 
-/* MOUNT ONCE. loadAppt() is called from nine places on this page — every
-   status action re-loads — and re-pointing .src on each would blow away the
-   widget's in-memory state (unsaved body drafts, the kind filter, a
-   half-typed add-item input) and re-fire its two GETs. The dataset guard is
-   the whole reason this is a separate function rather than a line in
-   render(). */
+/* MOUNT ONCE PER APPOINTMENT. loadAppt() is called from nine places on this
+   page — every status action re-loads — and re-pointing .src on each would
+   blow away the widget's in-memory state (unsaved body drafts, the kind
+   filter, a half-typed add-item input) and re-fire its two GETs. The dataset
+   guard is the whole reason this is a separate function rather than a line in
+   render().
+
+   The guard stores the APPT ID, not a '1' flag: since the picker landed, this
+   page can move to a different appointment without reloading, and a bare flag
+   would leave appointment A's notes pinned under appointment B's header. Same
+   id → still a no-op, so the nine re-loads cost nothing, as before. */
 function mountNotes() {
   const f = document.getElementById('apptNotesFrame');
-  if (f.dataset.mounted) return;
-  f.dataset.mounted = '1';
+  const key = String(apptData.appt_id);
+  if (f.dataset.mounted === key) return;
+  f.dataset.mounted = key;
+  f.style.height = '';   // the previous appointment's measured height is wrong
   f.src = '/checklistView.html?link_type=appt&link=' + encodeURIComponent(apptData.appt_id);
   // checklistView.html sizes to its own content; without this it keeps the
   // default iframe height and grows its own scrollbar inside ours. Same idiom
@@ -689,7 +879,14 @@ function mountNotes() {
   f.onload = () => { try { autoSizeNotes(f); } catch (_) {} };
 }
 
+/* Held so a remount can clear it. Only the degraded branch below sets it, but
+   one leaked 700ms interval per appointment switch — each measuring a document
+   that no longer exists — is not a thing to leave running in a dialog staff
+   keep open all day. */
+let notesFitTimer = null;
+
 function autoSizeNotes(f) {
+  if (notesFitTimer) { clearInterval(notesFitTimer); notesFitTimer = null; }
   const fit = () => {
     try {
       const h = f.contentDocument && f.contentDocument.body && f.contentDocument.body.scrollHeight;
@@ -702,7 +899,7 @@ function autoSizeNotes(f) {
   try {
     const obs = new f.contentWindow.MutationObserver(fit);
     obs.observe(f.contentDocument.body, { childList: true, subtree: true });
-  } catch (_) { setInterval(fit, 700); }
+  } catch (_) { notesFitTimer = setInterval(fit, 700); }
 }
 
 // ─── CASE LINKING ───
@@ -800,22 +997,536 @@ async function createCase() {
    frame at any depth, and every other browser tab, which the walk never
    reached. */
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   APPOINTMENT PICKER
+   ═══════════════════════════════════════════════════════════════════════════
+   The screen this page shows when it has no appointment to show. Two ways in:
+   the dialog opened without an apptID, or with one the API refused (see
+   loadAppt's catch). One way back out that staff can find on purpose — the
+   "All Appts" button in the appointment header, which is why the picker is a
+   sibling view here and not a second page.
+
+   NOTHING ABOVE THIS BLOCK CHANGED BEHAVIOUR FOR THE NORMAL PATH. Opened with
+   a good apptID — every existing caller, since the shell's showAppt() is the
+   only opener in the repo — this code never runs: loadAppt() resolves, render()
+   hides #pickerView (already hidden) and the page is what it was.
+
+   Everything here is prefixed pk / .pk- because this file is iframed into the
+   shell, the same scoping rule checklistView (.ck-) and checklistsView (.cx-)
+   state in their own headers. */
+
+/* Page size. MUTABLE — the foot's "per page" select writes it, the same lever
+   the shell's Appts tab offers on its own footer. */
+let PK_LIMIT = 25;
+let pkOffset = 0;
+let pkTotal = 0;
+let pkWired = false;
+let pkDebounce = null;
+/* Bumped by every pkSearch(); a response whose stamp is no longer the current
+   one is DROPPED rather than rendered. The search box is debounced, so a
+   second request only exists when the first is slower than the user's pause —
+   and in that race the older answer is the wrong one. A plain in-flight lock
+   would instead drop the NEWER query and leave a stale list under a search box
+   that has moved on, which is the failure staff would actually hit and could
+   not explain. */
+let pkSeq = 0;
+
+/** Read one picker control. */
+function pkEl(id) { return document.getElementById(id); }
+
+/* The shell's showAppt() titles its Swal "Appointment <id>" from the id it was
+   handed, and that title is now outlivable: this frame can move to a different
+   appointment or to the picker without the shell hearing about it. Same-origin,
+   so retitle in place — best-effort, and deliberately narrow. The regex means
+   an unrelated Swal (or no Swal at all, when this page is opened directly)
+   keeps its own title rather than being relabelled by a frame inside it. */
+function syncShellTitle(text) {
+  try {
+    const el = P.document.querySelector('.swal2-title');
+    if (el && /^Appointments?\b/.test(el.textContent || '')) el.textContent = text;
+  } catch (_) { /* cross-origin top, or no dialog — neither is an error */ }
+}
+
+/**
+ * Show the picker.
+ * @param {string} [notice] why we are here, when we arrived by failure rather
+ *   than by choice. Omitted from the "All Appts" button, so navigating on
+ *   purpose never shows a warning banner.
+ */
+function showPicker(notice) {
+  pkEl('loading').style.display = 'none';
+  pkEl('apptView').style.display = 'none';
+  pkEl('pickerView').style.display = 'block';
+
+  const banner = pkEl('pkNotice');
+  if (notice) {
+    pkEl('pkNoticeText').textContent = notice;   // text, not html — it carries an API message
+    banner.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+  }
+
+  syncShellTitle('Appointments');
+  pkWire();
+  // REFETCHED on every visit, at the page the user was on, with their filters
+  // untouched in the controls. Returning from an appointment you just marked
+  // Attended and finding it still listed as Scheduled is the whole reason not
+  // to cache the rows; keeping the offset is the reason not to reset to 0.
+  pkSearch(pkOffset);
+  pkEl('pkQ').focus();
+}
+
+/* One-time wiring for the picker's OWN controls. Deferred to the first
+   showPicker() rather than run at parse time so the normal path — open an
+   appointment, never touch the picker — pays nothing for it, not even the
+   firmData read. The "All Appts" button is deliberately NOT wired here: it
+   lives on the appointment view, where it has to work before the picker has
+   ever been shown. See the parse-time line below this function. */
+function pkWire() {
+  if (pkWired) return;
+  pkWired = true;
+
+  pkFillWith();
+
+  pkEl('pkGo').onclick = () => pkSearch(0);
+
+  // Typing searches on its own after a pause; Enter searches immediately.
+  pkEl('pkQ').addEventListener('input', () => {
+    clearTimeout(pkDebounce);
+    pkDebounce = setTimeout(() => pkSearch(0), 350);
+  });
+  pkEl('pkQ').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    clearTimeout(pkDebounce);
+    pkSearch(0);
+  });
+
+  // Every other control is a discrete choice — re-search on change, no button
+  // round-trip. #pkTime only searches when it has an answer to search WITH:
+  // switching to "Between" with both date inputs still empty would otherwise
+  // fire a no-op fetch and reset the page the user was on.
+  ['pkStatus', 'pkWith'].forEach(id => { pkEl(id).onchange = () => pkSearch(0); });
+  ['pkDate1', 'pkDate2'].forEach(id => { pkEl(id).onchange = () => pkSearch(0); });
+  pkEl('pkTime').onchange = pkTimeChange;
+}
+
+/* Parse-time, not inside pkWire(): this button is the appointment view's way
+   OUT, so it has to be live on the very first render — the common case is an
+   appointment opened straight from a link, with the picker never shown. No
+   argument, so arriving here on purpose shows no warning banner. */
+document.getElementById('pkBackBtn').onclick = () => showPicker();
+
+/* The shell owns the user list — window.firmData.users, the same source its
+   `select.userslist` populator reads — and flags who takes appointments with
+   does_appts, the identical filter the Appts tab's With select uses. Borrowed
+   through P rather than refetched, exactly as acCaseTypeMap() borrows
+   getCaseTypeMap(): that populator runs once over the SHELL document only and
+   will never touch a select in here. An unreachable shell just leaves "All",
+   which is a working filter, not a broken control. */
+function pkFillWith() {
+  let users = [];
+  try { users = (P.firmData && P.firmData.users) || []; } catch (_) { users = []; }
+  const sel = pkEl('pkWith');
+  users
+    .filter(u => u && u.does_appts)
+    .sort((a, b) => a.user - b.user)
+    .forEach(u => {
+      const o = document.createElement('option');
+      o.value = u.user;
+      o.textContent = u.user_name || ('User #' + u.user);
+      sel.appendChild(o);
+    });
+}
+
+/* Mirrors the shell's tabApptsTimeChange(): which date inputs a mode needs. */
+function pkTimeChange() {
+  const mode = pkEl('pkTime').value;
+  const two = mode === 'Between';
+  pkEl('pkDate1Wrap').style.display = mode === 'All' ? 'none' : '';
+  pkEl('pkDate2Wrap').style.display = two ? '' : 'none';
+  pkEl('pkDate1Label').textContent = two ? 'From' : mode === 'All' ? 'Date' : mode;
+  if (mode === 'All') {
+    pkEl('pkDate1').value = '';
+    pkEl('pkDate2').value = '';
+    pkSearch(0);
+    return;
+  }
+  // A mode with a date already filled can search now; an empty one waits for
+  // the date input's own onchange rather than fetching a filter nobody set.
+  if (pkEl('pkDate1').value) pkSearch(0);
+}
+
+async function pkSearch(offset) {
+  const seq = ++pkSeq;
+  pkOffset = Math.max(0, offset || 0);
+  pkEl('pkGo').disabled = true;
+
+  const results = pkEl('pkResults');
+  results.innerHTML = '';
+  const pending = document.createElement('div');
+  pending.className = 'pk-empty';
+  pending.textContent = 'Searching…';
+  results.appendChild(pending);
+  pkEl('pkFoot').innerHTML = '';
+
+  // Param names are the list endpoint's own (routes/api.appts.js) — `q` is the
+  // free-text filter added alongside this picker; the rest predate it and are
+  // the same ones the shell's tabApptsGet() sends.
+  const query = { limit: PK_LIMIT, offset: pkOffset };
+  const q = pkEl('pkQ').value.trim();
+  if (q) query.q = q;
+  const status = pkEl('pkStatus').value;
+  if (status) query.status = status;
+  const withUser = pkEl('pkWith').value;
+  if (withUser) query.appt_with = withUser;
+
+  const mode = pkEl('pkTime').value;
+  const d1 = pkEl('pkDate1').value;
+  const d2 = pkEl('pkDate2').value;
+  if (mode === 'Before' && d1) query.to = d1;
+  if (mode === 'After' && d1) query.from = d1;
+  if (mode === 'On' && d1) { query.from = d1; query.to = d1; }
+  if (mode === 'Between') { if (d1) query.from = d1; if (d2) query.to = d2; }
+
+  try {
+    const data = await P.apiSend('/api/appts', 'GET', query);
+    if (seq !== pkSeq) return;   // a later search already owns the screen
+    pkTotal = (data && data.counter) || 0;
+    const found = (data && data.appts) || [];
+    // RAN OFF THE END: the page we asked for is past the last one. Happens when
+    // the result set shrank under us — showPicker() refetches at the offset the
+    // user left on, and appointments get cancelled and filters get narrowed
+    // between visits. Land on the last real page instead of an empty grid under
+    // a pager insisting there are N results.
+    //
+    // `lastPage < pkOffset` is the TERMINATION GUARD, not a nicety. Without it,
+    // a count that disagrees with the rows — a filter the count query applies
+    // differently, a row deleted between the two queries — retargets the offset
+    // it is already on and recurses until the tab dies. Requiring the retry to
+    // move strictly backwards means it can only ever hop once.
+    const lastPage = (Math.ceil(pkTotal / PK_LIMIT) - 1) * PK_LIMIT;
+    if (!found.length && pkTotal > 0 && pkOffset > 0 && lastPage < pkOffset) {
+      return pkSearch(lastPage);
+    }
+    pkRender(found);
+  } catch (err) {
+    if (seq !== pkSeq) return;
+    pkTotal = 0;
+    results.innerHTML = '';
+    const e = document.createElement('div');
+    e.className = 'pk-empty';
+    e.style.color = 'var(--danger)';
+    e.textContent = 'Search failed: ' + ((err && err.message) || err);
+    results.appendChild(e);
+    pkEl('pkCount').textContent = '';
+  }
+
+  // Left disabled by a superseded request on purpose — the search that
+  // overtook it is still running and owns the re-enable.
+  pkEl('pkGo').disabled = false;
+}
+
+/* Rows are built as DOM with textContent rather than an innerHTML template.
+   The shell's Appts tab interpolates these same strings and has to
+   .replace(/'/g,"\\'") contact names to survive an apostrophe; there is
+   nothing to escape when the value never becomes markup. */
+function pkRender(rows) {
+  const wrap = pkEl('pkResults');
+  wrap.innerHTML = '';
+  pkEl('pkCount').textContent = pkTotal
+    ? pkTotal + (pkTotal === 1 ? ' appointment' : ' appointments')
+    : '';
+
+  if (!rows.length) {
+    const e = document.createElement('div');
+    e.className = 'pk-empty';
+    // An empty page with a NON-ZERO count is not "nothing matched" — it is a
+    // page past the end that the snap-back above could not fix (the count and
+    // the rows disagree). Say which, and keep the pager: without it the only
+    // way off a stranded page is to change a filter.
+    e.textContent = pkTotal
+      ? 'Nothing on this page — the results moved. Pick another page.'
+      : 'No appointments match these filters.';
+    wrap.appendChild(e);
+    if (pkTotal) pkRenderFoot(0);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'pk-table';
+  const head = document.createElement('thead');
+  const hr = document.createElement('tr');
+  // The last two are the first to go on a narrow dialog — see .pk-col-opt.
+  [['ID', ''], ['Date', ''], ['Time', ''], ['Contact', ''], ['Case', 'pk-col-opt'],
+   ['Type', 'pk-col-opt'], ['Status', ''], ['With', 'pk-col-opt']].forEach(([label, cls]) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    if (cls) th.className = cls;
+    hr.appendChild(th);
+  });
+  head.appendChild(hr);
+  table.appendChild(head);
+
+  const body = document.createElement('tbody');
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.tabIndex = 0;
+    tr.title = 'Open appointment #' + r.id;
+
+    const cell = (value, cls) => {
+      const td = document.createElement('td');
+      td.textContent = (value === null || value === undefined || value === '') ? '—' : String(value);
+      if (cls) td.className = cls;
+      tr.appendChild(td);
+      return td;
+    };
+
+    // `id` and `status`, not appt_id / appt_status — the LIST endpoint aliases
+    // both, unlike the single-appointment read this page's render() uses.
+    cell(r.id).className = 'pk-id';
+    cell(r.format_date);
+    cell(r.time);
+    cell(r.contact_name);
+    cell(r.case_number || r.appt_case_id, 'pk-col-opt');
+    cell(r.appt_type, 'pk-col-opt');
+
+    const st = document.createElement('td');
+    const pill = document.createElement('span');
+    pill.className = 'status-badge pk-pill ' + statusClass(r.status);
+    pill.textContent = r.status || '—';
+    st.appendChild(pill);
+    tr.appendChild(st);
+
+    cell(r.user_name || (r.appt_with ? 'User #' + r.appt_with : ''), 'pk-col-opt');
+
+    tr.onclick = () => pkSelect(r.id);
+    tr.onkeydown = (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      pkSelect(r.id);
+    };
+    body.appendChild(tr);
+  });
+
+  table.appendChild(body);
+  wrap.appendChild(table);
+  wrap.scrollTop = 0;
+  pkRenderFoot(rows.length);
+}
+
+/**
+ * Which page numbers the pager renders: the first, the last, and a window
+ * around the current one, with `null` standing in for each run it skips.
+ * Keeps the footer a fixed width whether the result set is 3 pages or 300 —
+ * the shell's Appts tab prints EVERY page number, which is fine at 4 pages and
+ * a wrapping wall of links at 90.
+ * @returns {Array<number|{from:number,to:number}>} 0-based page indexes; an
+ *   object is an ellipsis, carrying the inclusive range of pages it hides —
+ *   which is what the jump control renders as its placeholder.
+ */
+function pkPageWindow(current, pages, span = 2) {
+  const want = new Set([0, pages - 1]);
+  for (let p = current - span; p <= current + span; p++) {
+    if (p >= 0 && p < pages) want.add(p);
+  }
+  const sorted = [...want].sort((a, b) => a - b);
+  const out = [];
+  sorted.forEach((p, i) => {
+    const prev = sorted[i - 1];
+    if (i && p - prev > 1) {
+      // A run of ONE is rendered as that page, not as an ellipsis. "1 2 3 … 5"
+      // asks the user to click and type "4" to reach page 4, where a "4" button
+      // fits in the identical width. Ellipses are for runs worth collapsing.
+      if (p - prev === 2) out.push(prev + 1);
+      else out.push({ from: prev + 1, to: p - 1 });
+    }
+    out.push(p);
+  });
+  return out;
+}
+
+/**
+ * The ellipsis, which is also the jump-to-page control.
+ *
+ * WHY HERE and not a permanent "go to page" box in the footer: an ellipsis
+ * exists precisely when a run of pages is hidden, and it sits exactly where
+ * that run would be. So the affordance appears if and only if there is
+ * somewhere to jump TO, and costs no footer width when there is not.
+ *
+ * With the default span, the thresholds fall out of the window arithmetic
+ * (`window` = current ± span, plus the first and last page, with a hidden run
+ * of one filled in): at 5 pages or fewer nothing is ever hidden, wherever you
+ * stand; at 10 or more something always is; between those it depends on where
+ * you are, because the window is truncated at the ends. Generally: never below
+ * span + 4, always from 2*span + 6. tests/apptsPicker.pager.test.js pins all
+ * three bands against the formula rather than against the numbers.
+ *
+ * Click or Enter swaps the ellipsis for a number input placeholder-ed with the
+ * range it stands for ("4–87"), so the control says what it accepts.
+ */
+function pkGapControl(from, to, pages) {
+  const gap = document.createElement('button');
+  gap.type = 'button';
+  // .pk-page for the box and the hover, .pk-gap for the muted label. Sharing
+  // the page-button class is deliberate: the two must not drift apart, because
+  // looking like a page button is what says "you can click this".
+  gap.className = 'pk-page pk-gap';
+  gap.textContent = '…';
+  gap.title = `Jump to a page (${from + 1}–${to + 1} hidden here)`;
+
+  gap.onclick = () => {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'pk-jump';
+    input.min = '1';
+    input.max = String(pages);
+    input.placeholder = from === to ? String(from + 1) : `${from + 1}–${to + 1}`;
+    input.setAttribute('aria-label', `Jump to page, 1 to ${pages}`);
+
+    /* ONE-SHOT. Every exit from this input — Escape, Enter, blur, and the
+       footer rebuild a successful jump triggers — detaches a FOCUSED element,
+       and detaching a focused element fires blur, which is itself an exit.
+       Without `settled` the handler re-enters mid-mutation and replaceWith
+       throws NotFoundError ("no longer a child of this node"). Dropping onblur
+       before touching the DOM closes the same door from the other side. */
+    let settled = false;
+    const restore = () => {
+      if (settled) return;
+      settled = true;
+      input.onblur = null;
+      if (input.isConnected) input.replaceWith(gap);
+    };
+    const commit = () => {
+      if (settled) return;
+      const n = parseInt(input.value, 10);
+      // Out of range is treated as "never mind" rather than clamped: clamping
+      // a typo'd 900 to page 90 looks like the jump worked and landed wrong.
+      if (!n || n < 1 || n > pages) return restore();
+      settled = true;
+      input.onblur = null;
+      pkSearch((n - 1) * PK_LIMIT);   // rebuilds the footer, this node included
+    };
+
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); restore(); }
+    };
+    input.onblur = restore;
+
+    gap.replaceWith(input);
+    input.focus();
+  };
+
+  return gap;
+}
+
+function pkRenderFoot(shown) {
+  const foot = pkEl('pkFoot');
+  foot.innerHTML = '';
+  if (!pkTotal) return;
+
+  const pages = Math.max(1, Math.ceil(pkTotal / PK_LIMIT));
+  const current = Math.floor(pkOffset / PK_LIMIT);
+
+  const nav = document.createElement('div');
+  nav.className = 'pk-pages';
+  const btn = (label, target, { disabled = false, isCurrent = false, title = '' } = {}) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pk-page' + (isCurrent ? ' pk-page-current' : '');
+    b.textContent = label;
+    if (title) b.title = title;
+    if (isCurrent) b.setAttribute('aria-current', 'page');
+    if (disabled) b.disabled = true;
+    else b.onclick = () => pkSearch(target);
+    nav.appendChild(b);
+  };
+
+  btn('‹', (current - 1) * PK_LIMIT, { disabled: current === 0, title: 'Previous page' });
+  pkPageWindow(current, pages).forEach(p => {
+    if (typeof p === 'object') {
+      nav.appendChild(pkGapControl(p.from, p.to, pages));
+      return;
+    }
+    // Numbers are 1-based for humans, offsets are 0-based for the endpoint.
+    btn(String(p + 1), p * PK_LIMIT, { disabled: p === current, isCurrent: p === current });
+  });
+  btn('›', (current + 1) * PK_LIMIT, { disabled: current >= pages - 1, title: 'Next page' });
+  foot.appendChild(nav);
+
+  const range = document.createElement('span');
+  range.className = 'pk-range';
+  // shown === 0 only on a stranded page; "2226–2225 of 2232" reads as a bug.
+  range.textContent = shown
+    ? `${pkOffset + 1}–${pkOffset + shown} of ${pkTotal}`
+    : `0 of ${pkTotal}`;
+  foot.appendChild(range);
+
+  const sizeWrap = document.createElement('span');
+  sizeWrap.className = 'pk-size-wrap';
+  const size = document.createElement('select');
+  size.className = 'pk-size';
+  size.title = 'Rows per page';
+  [25, 50, 100, 200].forEach(n => {
+    const o = document.createElement('option');
+    o.value = String(n);
+    o.textContent = String(n);
+    size.appendChild(o);
+  });
+  size.value = String(PK_LIMIT);
+  // Back to page 1: the row the user was looking at is at a different offset
+  // under a different page size, so "stay where you are" has no honest answer.
+  // Same choice the shell's Appts tab makes (`limit=this.value;tabApptsGet(0)`).
+  size.onchange = () => { PK_LIMIT = parseInt(size.value, 10) || 25; pkSearch(0); };
+  sizeWrap.appendChild(size);
+  sizeWrap.appendChild(document.createTextNode('per page'));
+  foot.appendChild(sizeWrap);
+}
+
+/** Open one appointment from the picker, in place. */
+function pkSelect(id) {
+  apptId = String(id);
+  // CLEARED so loadAppt()'s catch reads this as a FIRST load and falls back to
+  // the picker if this row turns out to be unopenable, rather than toasting
+  // over an appointment that is no longer on screen.
+  apptData = null;
+
+  // The open panels belong to the appointment we are leaving. Their inputs are
+  // repopulated per appointment by showPanel(), but a panel left open would
+  // sit there showing the previous one's reschedule date until then.
+  document.querySelectorAll('.cancel-panel, .reschedule-panel')
+    .forEach(p => { p.style.display = 'none'; });
+
+  pkEl('pickerView').style.display = 'none';
+  pkEl('apptView').style.display = 'none';
+  const loading = pkEl('loading');
+  loading.textContent = 'Loading appointment...';
+  loading.style.display = '';
+
+  loadAppt();
+}
+
 // ─── INIT ───
 /* This document parses inside an iframe inside a Swal inside the shell, and
    can win that race: the shell may not have defined apiSend yet. Poll for it
    rather than calling loadAppt() bare — checklistView.html's boot block is the
    reference implementation of the same wait, and eventform.html's
-   efWaitForShell() is the same loop written around a missing-id guard. */
-if (!apptId) {
-  document.getElementById('loading').innerHTML = '<span style="color:var(--danger);">Missing appointment ID.</span>';
-} else {
-  (function waitForParent() {
-    try {
-      if (P && typeof P.apiSend === 'function') return loadAppt();
-    } catch (_) { /* same-origin, cannot actually throw */ }
-    setTimeout(waitForParent, 100);
-  })();
-}
+   efWaitForShell() is the same loop written around a missing-id guard.
+
+   The wait is now unconditional. It used to be skipped when the id was absent,
+   because the only thing that case did was print "Missing appointment ID." —
+   no shell needed to say that. The picker that replaced it reads the list
+   endpoint through P.apiSend and the user list off P.firmData, so the
+   no-id path needs the shell every bit as much as the id path does. */
+(function waitForParent() {
+  try {
+    if (P && typeof P.apiSend === 'function') {
+      return apptId ? loadAppt() : showPicker();
+    }
+  } catch (_) { /* same-origin, cannot actually throw */ }
+  setTimeout(waitForParent, 100);
+})();
 </script>
 </body>
 </html>

@@ -735,6 +735,8 @@ tests/applyFeSetting.test.js
 tests/apptService.lineage.test.js
 tests/apptService.typeKey.test.js
 tests/apptTypeKey.patch.test.js
+tests/apptsPicker.pager.test.js
+tests/apptsSearch.picker.test.js
 tests/calendarEvents.appt.test.js
 tests/calendarEvents.event.test.js
 tests/calendarEvents.registry.test.js
