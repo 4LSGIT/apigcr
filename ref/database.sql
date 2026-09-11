@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-10T10:57:03.702Z
+-- Generated: 2026-09-11T07:53:21.603Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a45568d5765b687429b52f26437ae240
+-- Fingerprint: sha256:5b22390a211d63115211e9caa261b0da
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3204,6 +3204,39 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `tool_versions`
+--
+
+DROP TABLE IF EXISTS `tool_versions`;
+CREATE TABLE `tool_versions` (
+  `id` int NOT NULL,
+  `tool_id` int NOT NULL,
+  `html` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `saved_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `saved_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `tools`
+--
+
+DROP TABLE IF EXISTS `tools`;
+CREATE TABLE `tools` (
+  `id` int NOT NULL,
+  `tool_key` varchar(80) COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `status` enum('draft','live') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
+  `html` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `updated_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `trigger_execution_rules`
 --
 
@@ -4506,6 +4539,20 @@ ALTER TABLE `test`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `tool_versions`
+--
+ALTER TABLE `tool_versions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_tool_versions_tool` (`tool_id`);
+
+--
+-- Indexes for table `tools`
+--
+ALTER TABLE `tools`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `tool_key` (`tool_key`);
+
+--
 -- Indexes for table `trigger_execution_rules`
 --
 ALTER TABLE `trigger_execution_rules`
@@ -5291,6 +5338,18 @@ ALTER TABLE `test`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `tool_versions`
+--
+ALTER TABLE `tool_versions`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `tools`
+--
+ALTER TABLE `tools`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `trigger_execution_rules`
 --
 ALTER TABLE `trigger_execution_rules`
@@ -5509,6 +5568,12 @@ ALTER TABLE `sequence_steps`
 --
 ALTER TABLE `sequence_template_versions`
   ADD CONSTRAINT `fk_stv_template` FOREIGN KEY (`template_id`) REFERENCES `sequence_templates` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tool_versions`
+--
+ALTER TABLE `tool_versions`
+  ADD CONSTRAINT `fk_tool_versions_tool` FOREIGN KEY (`tool_id`) REFERENCES `tools` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `trigger_execution_rules`

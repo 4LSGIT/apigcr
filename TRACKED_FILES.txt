@@ -521,6 +521,7 @@ routes/api.temp.clio.js
 routes/api.temp.dropbox.js
 routes/api.temp.ringcentral.js
 routes/api.temp.zohosign.js
+routes/api.tools.js
 routes/api.triggers.js
 routes/api.users.js
 routes/api.version.js
@@ -727,6 +728,7 @@ tests/aimatch.service.test.js
 tests/alertingStartLatency.test.js
 tests/apiAppSettings.validate.test.js
 tests/apiCalendarTypes.routes.test.js
+tests/apiTools.routes.test.js
 tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js
 tests/apptService.lineage.test.js
