@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tools</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  /* Fork of pageManager.html — palette matches redirects.html / connections.html. */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--page-bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  .panel-host { flex: 1; overflow: auto; min-height: 0; }
+  .panel { padding: 14px 16px; }
+
+  /* ── List ──────────────────────────────────────────────────── */
+  .list-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .list-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .list-header .right { display: flex; gap: 6px; align-items: center; }
+
+  table.list {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    border: 1px solid var(--border); background: var(--surface);
+  }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left;
+    vertical-align: middle;
+  }
+  table.list th {
+    background: var(--surface-2); color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
+  }
+  table.list tbody tr { cursor: pointer; }
+  table.list tbody tr:hover { background: var(--surface-2); }
+  table.list .actions-cell { white-space: nowrap; }
+  table.list .actions-cell button {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-right: 4px;
+  }
+  table.list .actions-cell button:hover { border-color: var(--accent); }
+  table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .empty-row td { color: var(--text-muted); padding: 16px; text-align: center; font-style: italic; }
+  .slug-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
+  .muted { color: var(--text-muted); }
+
+  /* ── Buttons ───────────────────────────────────────────────── */
+  .btn {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  /* Text ON --accent. --accent-text is now that near-black (#001018, 7.57:1);
+     before slice 6b it was white, which measured 2.55:1 and failed. */
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.danger:hover { background: var(--danger-fill); color: var(--fill-text); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 3px 8px; font-size: 11px; }
+
+  /* ── Badges ────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+  }
+  .badge.on  { background: var(--ok-soft);    color: var(--ok-on-soft); border-color: var(--ok); }
+  .badge.off { background: var(--surface-2);  color: var(--text-muted); border-color: var(--border); }
+
+  /* ── Instructions panel ────────────────────────────────────── */
+  details.instructions {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+    margin-bottom: 12px;
+  }
+  details.instructions summary {
+    cursor: pointer; padding: 9px 12px; font-weight: 600; color: var(--accent-2);
+    user-select: none;
+  }
+  details.instructions .body { padding: 0 14px 14px; color: var(--text-muted); line-height: 1.55; }
+  details.instructions pre {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 12px; font-size: 11.5px; white-space: pre-wrap; color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 280px; overflow: auto;
+  }
+
+  /* ── Modals (editor + preview + versions) ──────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: var(--backdrop);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 100; padding: 24px 16px; overflow: auto;
+  }
+  /* Stacking: editor (100) < versions (110) < preview (120) — preview can
+     open from the editor OR from the versions modal and must sit on top. */
+  #versions-backdrop { z-index: 110; }
+  #preview-backdrop  { z-index: 120; }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    width: 100%; max-width: 880px; padding: 20px;
+  }
+  .modal.preview-modal { max-width: 1100px; }
+  .modal h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; }
+  .field input[type="text"], .field select, .field textarea {
+    width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; font-size: 13px;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .field textarea.html-box {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; min-height: 280px; resize: vertical; white-space: pre;
+  }
+  .field .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .modal-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
+  .modal-actions .right { display: flex; gap: 8px; margin-left: auto; }
+  .modal-err {
+    display: none; background: var(--danger-soft); border: 1px solid var(--danger);
+    color: var(--danger-on-soft); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px;
+  }
+  .modal-err.show { display: block; }
+
+  .preview-frame {
+    width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 4px;
+    /* #fff stays a literal, same reasoning as pageManager: the frame renders
+       the tool's own canvas, not admin chrome. Tools that theme themselves
+       via /theme.css variables paint over it anyway. */
+    background: #fff;
+  }
+  .preview-note { font-size: 11px; color: var(--warn); margin: 6px 0 0; }
+
+  .inline-error {
+    background: var(--danger-soft); border: 1px solid var(--danger);
+    color: var(--danger-on-soft); border-radius: 4px; padding: 10px 12px; font-size: 12px;
+  }
+
+  /* ── Toast ─────────────────────────────────────────────────── */
+  .toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--surface-2); border: 1px solid var(--accent); color: var(--text);
+    padding: 8px 16px; border-radius: 6px; font-size: 12px;
+    opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="panel-host">
+  <div class="panel">
+
+    <details class="instructions" id="instructions">
+      <summary>How tools work / AI tool prompt</summary>
+      <div class="body">
+        <p>
+          Paste a complete, self-contained HTML file into a tool record. A <b>live</b> tool is served
+          at <code>/tool/&lt;key&gt;</code> on the app origin only — it dead-ends on the marketing
+          domains. Tools run inside the YisraCase shell as iframes and call the real API through the
+          parent's <code>apiSend</code>: staff pin one via <b>Settings &rarr; My Custom Tab</b> with
+          path <code>/tool/&lt;key&gt;</code> (use the <b>Copy path</b> action). Opened directly in a
+          browser tab a tool has no parent shell, so every API call fails — that's by design; there is
+          deliberately no open-in-new-tab action here.
+        </p>
+        <p style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <b style="color:var(--text)">AI prompt template</b>
+          <button class="btn small" id="copy-prompt-btn" type="button">Copy to clipboard</button>
+        </p>
+        <pre id="ai-prompt-template">Create a single, self-contained HTML5 file for an internal tool that runs
+as an iframe child of the YisraCase shell. Requirements:
+
+- One complete HTML document, all CSS and JS inline. External libraries only
+  from https://cdnjs.cloudflare.com, version-pinned. No other external
+  resources.
+- The parent window is the authenticated shell. Boot exactly like this — do
+  not fetch or manage auth yourself:
+
+    const P = window.parent;
+    (function waitForParent() {
+      if (P &amp;&amp; P.apiSend) return init();
+      setTimeout(waitForParent, 100);
+    })();
+
+  where init() is your entry point. All API calls go through
+  P.apiSend(endpoint, method, payload, extraHeaders, opts) — it returns
+  parsed JSON, attaches auth, and handles login/elevation prompting and
+  retry itself. On failure it throws an Error with .status and .body; catch
+  and surface the message.
+- Call EXISTING /api/* endpoints only. Never reimplement server logic
+  client-side, and never hardcode data, credentials, or secrets in the HTML.
+- Theme with the app's CSS variables: add
+  &lt;link rel="stylesheet" href="/theme.css"&gt; and use var(--page-bg),
+  var(--surface), var(--text), var(--text-muted), var(--border),
+  var(--accent), var(--danger), etc. instead of literal colors.
+- Optional: define window.ycBecameVisible = () =&gt; { ... } to refetch data
+  when the user re-enters the tab (the shell pings visible frames on tab
+  open; nothing fires automatically when a hidden iframe is shown).
+- Purpose / behavior of the tool: [DESCRIBE WHAT THE TOOL DOES, WHICH
+  /api/* ENDPOINTS IT READS OR WRITES, AND WHAT THE UI LOOKS LIKE]</pre>
+      </div>
+    </details>
+
+    <div id="list-region"><div class="muted" style="padding:16px;">Loading…</div></div>
+  </div>
+</div>
+
+<!-- Editor modal -->
+<div class="modal-backdrop" id="edit-backdrop">
+  <div class="modal">
+    <h3 id="modal-title">New Tool</h3>
+    <div class="modal-err" id="modal-err"></div>
+
+    <div class="grid-3">
+      <div class="field">
+        <label for="f-key">Tool key</label>
+        <input type="text" id="f-key" placeholder="fee-calculator" autocomplete="off" spellcheck="false">
+        <div class="hint">Lowercase letters, numbers, hyphens (max 80). Served at <code>/tool/&lt;key&gt;</code></div>
+      </div>
+      <div class="field">
+        <label for="f-title">Title <span style="text-transform:none">(optional)</span></label>
+        <input type="text" id="f-title" autocomplete="off">
+        <div class="hint">Display name in this list.</div>
+      </div>
+      <div class="field">
+        <label for="f-status">Status</label>
+        <select id="f-status">
+          <option value="draft">Draft</option>
+          <option value="live">Live</option>
+        </select>
+        <div class="hint">Drafts 404 at <code>/tool/&lt;key&gt;</code>.</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="f-html">Tool HTML</label>
+      <div class="muted" style="margin:2px 0 6px; padding:6px 10px; border:1px solid var(--warn); border-radius:4px; color:var(--warn);">
+        ⚠ This HTML runs unsandboxed on the app origin with the shell's
+        authenticated apiSend — treat it exactly like deployed code. Only
+        paste HTML you (or an AI run you reviewed) authored. External
+        libraries from cdnjs only, version-pinned; never embed credentials,
+        API keys, or client data in the HTML itself.
+      </div>
+      <textarea id="f-html" class="html-box" placeholder="<!DOCTYPE html> …" spellcheck="false"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn" id="f-preview-unsaved" type="button" title="Preview the HTML currently in the editor">Preview</button>
+      <div class="right">
+        <button class="btn" id="f-cancel" type="button">Cancel</button>
+        <button class="btn primary" id="f-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Versions modal -->
+<div class="modal-backdrop" id="versions-backdrop">
+  <div class="modal">
+    <h3 id="versions-title">Versions</h3>
+    <div class="modal-err" id="versions-err"></div>
+    <div id="versions-region"><div class="muted" style="padding:12px;">Loading…</div></div>
+    <div class="modal-actions">
+      <div class="right">
+        <button class="btn" id="versions-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Preview modal -->
+<div class="modal-backdrop" id="preview-backdrop">
+  <div class="modal preview-modal">
+    <h3 id="preview-title">Preview</h3>
+    <!-- DELIBERATELY no sandbox attribute (divergence from pageManager):
+         the frame must be same-origin with scripts enabled so a draft's
+         window.parent.apiSend resolves to this page's aliased real apiSend
+         and the tool is fully functional before going live. -->
+    <iframe id="preview-frame" class="preview-frame"></iframe>
+    <p class="preview-note">Preview runs the tool for real — its window.parent.apiSend is the live,
+      authenticated API. Writes made here are real writes.</p>
+    <div class="modal-actions">
+      <div class="right">
+        <button class="btn" id="preview-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ── Parent bridge ───────────────────────────────────────────
+// Same contract as customView.html / readonlyKeys.html: P is the shell.
+const P = window.parent;
+
+// apiSend relay for the preview iframe (customView.html:256 precedent, but
+// forwarding ALL five args — tools may pass extraHeaders/opts). A previewed
+// draft's `window.parent` is THIS window, so its P.apiSend resolves here and
+// lands on the shell's real auth wrapper. Closure over P, evaluated at call
+// time, so it is safe to define before the shell finishes booting.
+window.apiSend = (...args) => P.apiSend(...args);
+
+const api = (...args) => P.apiSend(...args);
+
+// ── State ───────────────────────────────────────────────────
+const state = { tools: [], editingId: null, versionsToolId: null };
+
+const TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;   // mirror of routes/api.tools.js
+
+// ── Helpers ─────────────────────────────────────────────────
+const E = (id) => document.getElementById(id);
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+function showToast(msg) {
+  const t = E('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMsg);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); showToast(okMsg); }
+    catch { showToast('Copy failed'); }
+    document.body.removeChild(ta);
+  }
+}
+function toolPath(t) {
+  return `/tool/${t.tool_key}`;
+}
+function statusBadge(t) {
+  return t.status === 'live'
+    ? '<span class="badge on">Live</span>'
+    : '<span class="badge off">Draft</span>';
+}
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return isNaN(dt.getTime()) ? '' : dt.toLocaleString();
+}
+
+// ── List ────────────────────────────────────────────────────
+async function loadTools() {
+  const region = E('list-region');
+  try {
+    const data = await api('/api/tools', 'GET');
+    state.tools = data.tools || [];
+    renderList();
+  } catch (err) {
+    region.innerHTML = `<div class="inline-error">Failed to load tools: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderList() {
+  const region = E('list-region');
+  const rows = state.tools;
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="7">No tools yet — click "+ New Tool" to add one.</td></tr>`
+    : rows.map(listRow).join('');
+
+  region.innerHTML = `
+    <div class="list-header">
+      <h2>Tools</h2>
+      <div class="right">
+        <button class="btn primary" id="new-btn">+ New Tool</button>
+      </div>
+    </div>
+    <table class="list">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Title</th>
+          <th>Status</th>
+          <th>Versions</th>
+          <th>Updated by</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+
+  E('new-btn').addEventListener('click', () => openEditor(null));
+
+  region.querySelectorAll('tr[data-id]').forEach(tr => {
+    const id = Number(tr.dataset.id);
+    tr.addEventListener('click', e => {
+      if (e.target.closest('.actions-cell')) return;
+      openEditor(id);
+    });
+    tr.querySelector('button[data-action=edit]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      openEditor(id);
+    });
+    tr.querySelector('button[data-action=preview]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      previewSaved(id);
+    });
+    tr.querySelector('button[data-action=versions]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      openVersions(id);
+    });
+    tr.querySelector('button[data-action=copy]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      const t = state.tools.find(x => x.id === id);
+      copyText(toolPath(t), 'Path copied — paste into Settings → My Custom Tab');
+    });
+    tr.querySelector('button[data-action=delete]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      deleteTool(id);
+    });
+  });
+}
+
+function listRow(t) {
+  return `
+    <tr data-id="${t.id}">
+      <td class="slug-cell">${esc(t.tool_key)}</td>
+      <td>${t.title ? esc(t.title) : '<span class="muted">—</span>'}</td>
+      <td>${statusBadge(t)}</td>
+      <td class="muted">${esc(t.version_count)}</td>
+      <td class="muted">${t.updated_by ? esc(t.updated_by) : ''}</td>
+      <td class="muted">${esc(fmtDate(t.updated_at))}</td>
+      <td class="actions-cell">
+        <button data-action="edit">Edit</button>
+        <button data-action="preview" title="Preview the saved HTML">Preview</button>
+        <button data-action="versions">Versions</button>
+        <button data-action="copy" title="Copy /tool/&lt;key&gt; for Settings → My Custom Tab">Copy path</button>
+        <button data-action="delete" class="danger">Delete</button>
+      </td>
+    </tr>
+  `;
+}
+
+// ── Editor ──────────────────────────────────────────────────
+async function openEditor(id) {
+  state.editingId = id;
+  hideErr();
+  E('modal-title').textContent = id ? 'Edit Tool' : 'New Tool';
+
+  let full = null;
+  if (id) {
+    try {
+      const data = await api(`/api/tools/${id}`, 'GET'); // full row incl. html
+      full = data.tool;
+    } catch (err) {
+      showToast('Load failed: ' + (err.message || 'unknown error'));
+      return;
+    }
+  }
+
+  E('f-key').value    = full ? full.tool_key : '';
+  E('f-title').value  = full && full.title ? full.title : '';
+  E('f-status').value = full ? full.status : 'draft';
+  E('f-html').value   = full ? full.html : '';
+
+  E('edit-backdrop').classList.add('open');
+  E('f-key').focus();
+}
+
+function closeEditor() {
+  E('edit-backdrop').classList.remove('open');
+  state.editingId = null;
+}
+function showErr(msg) { const el = E('modal-err'); el.textContent = msg; el.classList.add('show'); }
+function hideErr() { E('modal-err').classList.remove('show'); }
+
+async function saveTool() {
+  hideErr();
+  const key = E('f-key').value.trim().toLowerCase();
+  const html = E('f-html').value;
+
+  if (!key) return showErr('Tool key is required.');
+  if (!TOOL_KEY_RE.test(key)) {
+    return showErr('Tool key may contain only lowercase letters, numbers and hyphens (max 80).');
+  }
+  if (!html.trim()) return showErr('Tool HTML is required.');
+
+  const payload = {
+    tool_key: key,
+    title: E('f-title').value.trim(),
+    html,
+    status: E('f-status').value,
+  };
+
+  const saveBtn = E('f-save');
+  saveBtn.disabled = true;
+  try {
+    if (state.editingId) {
+      await api(`/api/tools/${state.editingId}`, 'PATCH', payload);
+    } else {
+      await api('/api/tools', 'POST', payload);
+    }
+    await loadTools();
+    closeEditor();
+    showToast('Saved');
+  } catch (err) {
+    // 409 dup-key and 400 validation surface inline, like pageManager.
+    showErr(err.message || 'Save failed.');
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+async function deleteTool(id) {
+  const t = state.tools.find(x => x.id === id);
+  const ok = window.confirm(
+    `Delete tool "${t ? t.tool_key : id}"? /tool/${t ? t.tool_key : '…'} will 404, ` +
+    `any custom tab pinned to it breaks, and ALL saved versions are deleted with it. This cannot be undone.`
+  );
+  if (!ok) return;
+  try {
+    await api(`/api/tools/${id}`, 'DELETE');
+    await loadTools();
+    showToast('Deleted');
+  } catch (err) {
+    showToast('Delete failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ── Preview ─────────────────────────────────────────────────
+// srcdoc, not a blob URL: both are same-origin here, but srcdoc is what the
+// fork already used, needs no object-URL lifecycle, and inherits this page's
+// base URL so the tool's root-relative /theme.css and /api/* resolve to the
+// app origin. No sandbox attribute — see the comment on the iframe.
+function openPreview(title, html) {
+  E('preview-title').textContent = title;
+  E('preview-frame').srcdoc = html;
+  E('preview-backdrop').classList.add('open');
+}
+function closePreview() {
+  E('preview-backdrop').classList.remove('open');
+  E('preview-frame').srcdoc = '';
+}
+async function previewSaved(id) {
+  try {
+    const data = await api(`/api/tools/${id}`, 'GET');
+    openPreview(`Preview — ${data.tool.tool_key}`, data.tool.html);
+  } catch (err) {
+    showToast('Preview failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ── Versions ────────────────────────────────────────────────
+function showVersionsErr(msg) { const el = E('versions-err'); el.textContent = msg; el.classList.add('show'); }
+function hideVersionsErr() { E('versions-err').classList.remove('show'); }
+
+async function openVersions(toolId) {
+  state.versionsToolId = toolId;
+  hideVersionsErr();
+  const t = state.tools.find(x => x.id === toolId);
+  E('versions-title').textContent = `Versions — ${t ? t.tool_key : toolId}`;
+  E('versions-region').innerHTML = '<div class="muted" style="padding:12px;">Loading…</div>';
+  E('versions-backdrop').classList.add('open');
+  await loadVersions();
+}
+
+async function loadVersions() {
+  const toolId = state.versionsToolId;
+  if (!toolId) return;
+  const region = E('versions-region');
+  try {
+    const data = await api(`/api/tools/${toolId}/versions`, 'GET');
+    const rows = data.versions || [];   // newest first, as the API returns
+    if (!rows.length) {
+      region.innerHTML = '<div class="muted" style="padding:12px;">No versions.</div>';
+      return;
+    }
+    region.innerHTML = `
+      <table class="list">
+        <thead>
+          <tr><th>Saved</th><th>Saved by</th><th>Size</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map((v, i) => `
+            <tr data-vid="${v.id}" style="cursor:default;">
+              <td class="muted">${esc(fmtDate(v.saved_at))}${i === 0 ? ' <span class="badge on" title="Newest version — equals the tool\u2019s current HTML">current</span>' : ''}</td>
+              <td class="muted">${v.saved_by ? esc(v.saved_by) : ''}</td>
+              <td class="muted">${esc(v.html_length)} chars</td>
+              <td class="actions-cell">
+                <button data-action="view">View</button>
+                <button data-action="restore"${i === 0 ? ' disabled title="Already the current HTML"' : ''}>Restore</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    region.querySelectorAll('tr[data-vid]').forEach(tr => {
+      const vid = Number(tr.dataset.vid);
+      tr.querySelector('button[data-action=view]')?.addEventListener('click', () => viewVersion(vid));
+      tr.querySelector('button[data-action=restore]')?.addEventListener('click', () => restoreVersion(vid));
+    });
+  } catch (err) {
+    region.innerHTML = `<div class="inline-error">Failed to load versions: ${esc(err.message)}</div>`;
+  }
+}
+
+function closeVersions() {
+  E('versions-backdrop').classList.remove('open');
+  state.versionsToolId = null;
+}
+
+async function viewVersion(vid) {
+  hideVersionsErr();
+  try {
+    const data = await api(`/api/tools/${state.versionsToolId}/versions/${vid}`, 'GET');
+    const t = state.tools.find(x => x.id === state.versionsToolId);
+    openPreview(`Version ${esc(fmtDate(data.version.saved_at))} — ${t ? t.tool_key : ''} (read-only)`, data.version.html);
+  } catch (err) {
+    showVersionsErr('View failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+async function restoreVersion(vid) {
+  hideVersionsErr();
+  const t = state.tools.find(x => x.id === state.versionsToolId);
+  const ok = window.confirm(
+    `Restore this version of "${t ? t.tool_key : ''}"? The tool's current HTML is replaced ` +
+    `(the current HTML itself stays in the version history, so this is reversible).`
+  );
+  if (!ok) return;
+  try {
+    const data = await api(`/api/tools/${state.versionsToolId}/restore/${vid}`, 'POST', {});
+    showToast('Restored');
+    await loadTools();       // version_count / updated_at moved
+    await loadVersions();    // a new version row was appended
+    // If the editor is open on this tool, sync it to the restored html so a
+    // subsequent Save doesn't silently re-save the pre-restore editor buffer.
+    if (state.editingId === state.versionsToolId && data.tool) {
+      E('f-html').value   = data.tool.html;
+      E('f-status').value = data.tool.status;
+      E('f-title').value  = data.tool.title || '';
+      E('f-key').value    = data.tool.tool_key;
+    }
+  } catch (err) {
+    showVersionsErr('Restore failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ── Init / wiring ───────────────────────────────────────────
+function init() {
+  E('f-cancel').addEventListener('click', closeEditor);
+  E('f-save').addEventListener('click', saveTool);
+  E('f-preview-unsaved').addEventListener('click', () => {
+    const html = E('f-html').value;
+    if (!html.trim()) return showErr('Nothing to preview — paste HTML first.');
+    openPreview('Preview — unsaved editor contents', html);
+  });
+  E('preview-close').addEventListener('click', closePreview);
+  E('versions-close').addEventListener('click', closeVersions);
+  E('edit-backdrop').addEventListener('click', e => {
+    if (e.target === E('edit-backdrop')) closeEditor();
+  });
+  E('preview-backdrop').addEventListener('click', e => {
+    if (e.target === E('preview-backdrop')) closePreview();
+  });
+  E('versions-backdrop').addEventListener('click', e => {
+    if (e.target === E('versions-backdrop')) closeVersions();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    // Top-of-stack first: preview > versions > editor.
+    if (E('preview-backdrop').classList.contains('open')) return closePreview();
+    if (E('versions-backdrop').classList.contains('open')) return closeVersions();
+    if (E('edit-backdrop').classList.contains('open')) return closeEditor();
+  });
+  E('copy-prompt-btn').addEventListener('click', () => {
+    // textContent gives back the un-escaped template (real < > chars).
+    copyText(E('ai-prompt-template').textContent, 'Prompt copied');
+  });
+
+  loadTools();
+}
+
+// ── Boot ────────────────────────────────────────────────────
+// Runs LAST, same TDZ caution as the fork: if the parent is already ready
+// this calls init() synchronously, which touches the consts above.
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+
+</body>
+</html>

@@ -317,6 +317,7 @@ public/tasks.html
 public/theme.css
 public/themeCustom.html
 public/themeSync.js
+public/toolManager.html
 public/users.html
 public/videoManager.html
 ref/2026-07-19_esign_phase1c.sql
