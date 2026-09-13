@@ -6,6 +6,7 @@
 <title>System Alerts</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/ycPager.js"></script>
 <style>
   html, body { margin:0; padding:0; height:100%; background:var(--page-bg); color:var(--text);
     font-family:-apple-system, Segoe UI, Roboto, sans-serif; font-size:13px; }
@@ -107,11 +108,9 @@
   .row-actions button:hover { border-color:var(--accent); }
 
   .empty { padding:30px; color:var(--text-muted); text-align:center; }
-  .pager { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--surface);
-    border-top:1px solid var(--border); font-size:11px; color:var(--text-muted); }
-  .pager button { background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:4px;
-    padding:3px 10px; cursor:pointer; font-size:11px; }
-  .pager button:disabled { opacity:.4; cursor:not-allowed; }
+  /* Pager buttons/text come from the shared pager (/js/ycPager.js); this
+     rule is only the bar the strip sits in. */
+  .pager { padding:6px 10px; background:var(--surface); border-top:1px solid var(--border); }
 </style>
 </head>
 <body>
@@ -162,11 +161,7 @@
     <div class="empty" id="emptyMsg" style="display:none">No alerts match the current filters. 🎉</div>
   </div>
 
-  <div class="pager">
-    <button id="pgPrev" disabled>‹ Prev</button>
-    <span id="pgInfo"></span>
-    <button id="pgNext" disabled>Next ›</button>
-  </div>
+  <div class="pager" id="pgFoot"></div>
 </div>
 
 <script>
@@ -195,7 +190,9 @@ let authed = false;
 
 // ── state ────────────────────────────────────────────────────────────────────
 const E = (id) => document.getElementById(id);
-const LIMIT = 100;
+// Page size — remembered per-surface (store key 'systemAlerts'); the footer's
+// select writes it back through the same store.
+let LIMIT = YcPager.getLimit('systemAlerts', 100);
 let offset = 0, total = 0, rows = [], selected = new Set(), expanded = null;
 let autoTimer = null, sourcesLoaded = false;
 
@@ -255,10 +252,12 @@ function render() {
     });
   });
   syncButtons();
-  E("pgInfo").textContent = total
-    ? `${offset + 1}–${Math.min(offset + rows.length, total)} of ${total}` : "0 results";
-  E("pgPrev").disabled = offset <= 0;
-  E("pgNext").disabled = offset + LIMIT >= total;
+  YcPager.renderFooter(E("pgFoot"), {
+    total, limit: LIMIT, offset, shown: rows.length,
+    onPage: (p) => { offset = p * LIMIT; load(); },
+    persistKey: 'systemAlerts',
+    onLimit: (n) => { LIMIT = n; offset = 0; load(); },
+  });
 }
 
 function detailRow(r) {
@@ -364,8 +363,6 @@ E("selAll").addEventListener("change", (e) => {
   e.target.checked ? rows.forEach((r) => selected.add(r.id)) : selected.clear();
   render();
 });
-E("pgPrev").addEventListener("click", () => { offset = Math.max(0, offset - LIMIT); load(); });
-E("pgNext").addEventListener("click", () => { offset += LIMIT; load(); });
 E("autoRefresh").addEventListener("change", (e) => {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   if (e.target.checked) autoTimer = setInterval(load, 60_000);
