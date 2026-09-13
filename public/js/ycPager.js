@@ -304,11 +304,27 @@
   }
 
   /**
+   * Whether the user is mid-jump inside `el` — the ellipsis has been swapped
+   * for its number input and that input holds focus. Polling consumers
+   * (workflow executions, sequence enrollments, the case/contact widget)
+   * rebuild their footers on a timer; a rebuild at that moment would yank the
+   * input out from under the typing. Skipping one refresh is invisible;
+   * losing the half-typed jump target is not — so both renderers no-op while
+   * a jump is in progress and the next tick catches the footer up.
+   */
+  function jumpInProgress(el) {
+    var doc = el.ownerDocument;
+    var a = doc && doc.activeElement;
+    return !!(a && a.classList && a.classList.contains('yc-jump') && el.contains(a));
+  }
+
+  /**
    * Just the ‹ 1 2 … n › strip, into `el` (cleared first).
    * opts: { total, limit, offset, onPage } — onPage gets a 0-based page index.
    */
   function renderPages(el, opts) {
     ensureStyles();
+    if (jumpInProgress(el)) return;
     var doc = el.ownerDocument;
     el.innerHTML = '';
     el.classList.add('yc-pager-pages');
@@ -350,6 +366,7 @@
   /** The full footer strip. See the header comment for opts. */
   function renderFooter(el, opts) {
     ensureStyles();
+    if (jumpInProgress(el)) return;
     var doc = el.ownerDocument;
     el.innerHTML = '';
     el.classList.add('yc-pager');

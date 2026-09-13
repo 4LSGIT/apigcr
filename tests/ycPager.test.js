@@ -295,6 +295,27 @@ describe('renderPages DOM', () => {
     expect(jumps).toEqual([41]);
   });
 
+  test('a poll re-render cannot yank the jump input mid-typing', () => {
+    // Workflow executions / sequence enrollments rebuild their footer on a
+    // 5s poll. While the jump input holds focus, a re-render must no-op —
+    // the half-typed page number outranks one refresh of the counts.
+    const el = host();
+    renderPages(el, { total: 900, limit: 10, offset: 0, onPage: () => {} });
+    el.querySelector('.yc-gap').onclick();
+    const input = el.querySelector('.yc-jump');
+    input.focus();
+    expect(el.ownerDocument.activeElement).toBe(input);
+
+    renderPages(el, { total: 910, limit: 10, offset: 0, onPage: () => {} });
+    expect(el.querySelector('.yc-jump')).toBe(input);   // untouched, same node
+
+    // Once the jump settles (Escape here), the next render goes through.
+    input.onkeydown({ key: 'Escape', preventDefault: () => {} });
+    renderPages(el, { total: 910, limit: 10, offset: 0, onPage: () => {} });
+    expect(el.querySelector('.yc-jump')).toBeNull();
+    expect(el.querySelector('.yc-gap')).not.toBeNull();
+  });
+
   test('Escape restores the ellipsis without jumping', () => {
     const el = host();
     const jumps = [];

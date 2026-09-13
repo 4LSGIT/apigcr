@@ -100,28 +100,9 @@
   margin: 6px 0;
 }
 
-.cseq-pagination,
-.cwf-pagination {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0 4px;
-  font-size: 12px;
-  color: var(--text-2);
-}
-.cseq-pagination button,
-.cwf-pagination button {
-  padding: 3px 10px;
-  font-size: 11px;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  background: var(--surface);
-  cursor: pointer;
-  color: var(--text-2);
-}
-.cseq-pagination button:disabled,
-.cwf-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* (The .cseq-pagination / .cwf-pagination rules that used to sit here were
+   dead — the automations widget moved to automation/automationsWidget.html
+   and no matching markup remained in this file.) */
 
 /* Status badges — sequence.status enum (active, completed, cancelled). */
 .cseq-status-badge {

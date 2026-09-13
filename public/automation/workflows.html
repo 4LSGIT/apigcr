@@ -9,6 +9,7 @@
   <script src="/automation/fnPicker.js"></script>
   <script src="/automation/esignTplPanel.js"></script>
   <script src="/automation/paramWidgets.js"></script>
+  <script src="/js/ycPager.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
@@ -494,7 +495,7 @@
         </thead>
         <tbody id="wf-exec-tbody"></tbody>
       </table>
-      <div id="wf-exec-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--text-muted)"></div>
+      <div id="wf-exec-pagination" style="margin-top:12px"></div>
     </div>
     <div class="editor-foot" id="wf-editor-foot" style="display:none">
       <button class="btn btn-primary" style="flex:1" onclick="wfStepSave()">
@@ -636,7 +637,7 @@ const WF = {
 
 const WFEX = {
   offset:     0,
-  limit:      50,
+  limit:      YcPager.getLimit('wfExec', 50),   // per-surface remembered size
   total:      0,
   pollTimer:  null,
   targetWfId: null,
@@ -3497,6 +3498,11 @@ async function loadWorkflowExecutions() {
     count.textContent = `${WFEX.total} total execution${WFEX.total === 1 ? '' : 's'}`;
 
     if (!rows.length) {
+      // Offset past the end (the set shrank, or the size select grew the
+      // page) — land on the last real page instead of an empty table.
+      // snapBackOffset only ever moves strictly backwards, so this cannot loop.
+      const back = YcPager.snapBackOffset(WFEX.total, WFEX.limit, WFEX.offset);
+      if (back >= 0) { WFEX.offset = back; return loadWorkflowExecutions(); }
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No executions yet.</td></tr>';
       pager.innerHTML = '';
       stopWfExecPolling();
@@ -3504,7 +3510,7 @@ async function loadWorkflowExecutions() {
     }
 
     tbody.innerHTML = renderWfExecRows(rows);
-    pager.innerHTML = renderWfExecPager(rows.length);
+    renderWfExecPager(rows.length);
 
     // Polling decision: if any visible row is non-terminal, poll.
     const anyActive = rows.some(ex => !WFEX_TERMINAL.has(ex.status));
@@ -3534,27 +3540,19 @@ function renderWfExecRows(rows) {
   }).join('');
 }
 
+/* The shared pager (/js/ycPager.js) draws into #wf-exec-pagination directly —
+   this replaced a prev/next-only strip, which at ~9k executions meant paging
+   50 at a time with no way to jump. The module skips the rebuild while its
+   jump input is focused, so the 5s poll re-render cannot yank it mid-typing. */
 function renderWfExecPager(visibleCount) {
-  const from = WFEX.offset + 1;
-  const to   = WFEX.offset + visibleCount;
-  const hasPrev = WFEX.offset > 0;
-  const hasNext = WFEX.offset + WFEX.limit < WFEX.total;
-  return `
-    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasPrev ? '' : 'disabled'} onclick="wfExecPrevPage()">‹ Previous</button>
-    <span>Showing ${from}–${to} of ${WFEX.total}</span>
-    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasNext ? '' : 'disabled'} onclick="wfExecNextPage()">Next ›</button>
-  `;
-}
-
-function wfExecPrevPage() {
-  WFEX.offset = Math.max(0, WFEX.offset - WFEX.limit);
-  loadWorkflowExecutions();
-}
-
-function wfExecNextPage() {
-  if (WFEX.offset + WFEX.limit >= WFEX.total) return;
-  WFEX.offset += WFEX.limit;
-  loadWorkflowExecutions();
+  const pager = document.getElementById('wf-exec-pagination');
+  if (!pager) return;
+  YcPager.renderFooter(pager, {
+    total: WFEX.total, limit: WFEX.limit, offset: WFEX.offset, shown: visibleCount,
+    onPage: (p) => { WFEX.offset = p * WFEX.limit; loadWorkflowExecutions(); },
+    persistKey: 'wfExec',
+    onLimit: (n) => { WFEX.limit = n; WFEX.offset = 0; loadWorkflowExecutions(); },
+  });
 }
 
 async function viewWorkflowExecution(id) {
@@ -3942,7 +3940,7 @@ function startWfExecPolling() {
       }
 
       tbody.innerHTML = renderWfExecRows(rows);
-      pager.innerHTML = renderWfExecPager(rows.length);
+      renderWfExecPager(rows.length);
 
       // Stop if nothing is active anymore.
       const anyActive = rows.some(ex => !WFEX_TERMINAL.has(ex.status));
@@ -4412,8 +4410,6 @@ window.wfRunTest                = wfRunTest;
 window.wfRunPreview             = wfRunPreview;
 window.wfRunWorkflow            = wfRunWorkflow;
 window.loadWorkflowExecutions   = loadWorkflowExecutions;
-window.wfExecPrevPage           = wfExecPrevPage;
-window.wfExecNextPage           = wfExecNextPage;
 window.viewWorkflowExecution    = viewWorkflowExecution;
 window.cancelWorkflowExecution  = cancelWorkflowExecution;
 window.wfResumeExecution        = wfResumeExecution;
