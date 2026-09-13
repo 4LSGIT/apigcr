@@ -283,6 +283,7 @@ public/js/versionGuard.js
 public/js/videoInsert.js
 public/js/yc-forms.js
 public/js/yc-sync.js
+public/js/ycPager.js
 public/manage.html
 public/manuals.html
 public/pageManager.html
@@ -735,7 +736,6 @@ tests/applyFeSetting.test.js
 tests/apptService.lineage.test.js
 tests/apptService.typeKey.test.js
 tests/apptTypeKey.patch.test.js
-tests/apptsPicker.pager.test.js
 tests/apptsSearch.picker.test.js
 tests/calendarEvents.appt.test.js
 tests/calendarEvents.event.test.js
@@ -970,5 +970,6 @@ tests/videoLanding.rateLimit.test.js
 tests/workflows.editor.roundtrip.test.js
 tests/workflows.ensureDraft.test.js
 tests/workflows.reorder.state.test.js
+tests/ycPager.test.js
 tests/ycSync.test.js
 views/v.html
