@@ -10,6 +10,7 @@
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
+  <script src="/js/ycPager.js"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
@@ -108,28 +109,13 @@
   margin: 6px 0;
 }
 
+/* The shared pager (/js/ycPager.js) styles its own buttons; these two rules
+   only centre the strip inside the widget and keep its breathing room. */
 .cseq-pagination,
 .cwf-pagination {
-  display: flex;
   justify-content: center;
-  align-items: center;
-  gap: 10px;
   padding: 8px 0 4px;
-  font-size: 12px;
-  color: var(--text-2);
 }
-.cseq-pagination button,
-.cwf-pagination button {
-  padding: 3px 10px;
-  font-size: 11px;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  background: var(--surface);
-  cursor: pointer;
-  color: var(--text-2);
-}
-.cseq-pagination button:disabled,
-.cwf-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Status badges — sequence.status enum (active, completed, cancelled). */
 .cseq-status-badge {
@@ -606,7 +592,7 @@ async function loadSequences() {
     }
 
     tbody.innerHTML = renderSequenceRows(rows);
-    pager.innerHTML = renderSeqPager(rows.length);
+    renderSeqPager(rows.length);
 
     const anySeqActive = rows.some(r =>
       !CSEQ_TERMINAL.has(String(r.status).toLowerCase())
@@ -672,27 +658,18 @@ function renderSequenceRows(rows) {
   }).join('');
 }
 
+/* The shared pager (/js/ycPager.js), lean: numbers + range only — this is an
+   embedded widget, so no size select. Still hides entirely when everything
+   fits on one page, exactly as before. The module skips its own rebuild
+   while the jump input is focused, so the poll tick cannot yank it. */
 function renderSeqPager(visibleCount) {
-  if (CSEQ.total <= CSEQ.limit && CSEQ.offset === 0) return '';
-  const from    = CSEQ.offset + 1;
-  const to      = CSEQ.offset + visibleCount;
-  const hasPrev = CSEQ.offset > 0;
-  const hasNext = CSEQ.offset + CSEQ.limit < CSEQ.total;
-  return `
-    <button type="button" ${hasPrev ? '' : 'disabled'} onclick="sequencesPrevPage()">‹ Previous</button>
-    <span>Showing ${from}–${to} of ${CSEQ.total}</span>
-    <button type="button" ${hasNext ? '' : 'disabled'} onclick="sequencesNextPage()">Next ›</button>
-  `;
-}
-
-function sequencesPrevPage() {
-  CSEQ.offset = Math.max(0, CSEQ.offset - CSEQ.limit);
-  loadSequences();
-}
-function sequencesNextPage() {
-  if (CSEQ.offset + CSEQ.limit >= CSEQ.total) return;
-  CSEQ.offset += CSEQ.limit;
-  loadSequences();
+  const pager = E('cseq-pagination');
+  if (!pager) return;
+  if (CSEQ.total <= CSEQ.limit && CSEQ.offset === 0) { pager.innerHTML = ''; return; }
+  YcPager.renderFooter(pager, {
+    total: CSEQ.total, limit: CSEQ.limit, offset: CSEQ.offset, shown: visibleCount,
+    onPage: (p) => { CSEQ.offset = p * CSEQ.limit; loadSequences(); },
+  });
 }
 
 // Scope toggle — drives BOTH sections via reloadAutomations().
@@ -753,7 +730,7 @@ async function loadWorkflows() {
     }
 
     tbody.innerHTML = renderWorkflowRows(rows);
-    pager.innerHTML = renderWfPager(rows.length);
+    renderWfPager(rows.length);
 
     const anyWfActive = rows.some(r =>
       !CWF_TERMINAL.has(String(r.status).toLowerCase())
@@ -805,27 +782,15 @@ function renderWorkflowRows(rows) {
   }).join('');
 }
 
+/* Mirrors renderSeqPager exactly, as the two sections always have. */
 function renderWfPager(visibleCount) {
-  if (CWF.total <= CWF.limit && CWF.offset === 0) return '';
-  const from    = CWF.offset + 1;
-  const to      = CWF.offset + visibleCount;
-  const hasPrev = CWF.offset > 0;
-  const hasNext = CWF.offset + CWF.limit < CWF.total;
-  return `
-    <button type="button" ${hasPrev ? '' : 'disabled'} onclick="workflowsPrevPage()">‹ Previous</button>
-    <span>Showing ${from}–${to} of ${CWF.total}</span>
-    <button type="button" ${hasNext ? '' : 'disabled'} onclick="workflowsNextPage()">Next ›</button>
-  `;
-}
-
-function workflowsPrevPage() {
-  CWF.offset = Math.max(0, CWF.offset - CWF.limit);
-  loadWorkflows();
-}
-function workflowsNextPage() {
-  if (CWF.offset + CWF.limit >= CWF.total) return;
-  CWF.offset += CWF.limit;
-  loadWorkflows();
+  const pager = E('cwf-pagination');
+  if (!pager) return;
+  if (CWF.total <= CWF.limit && CWF.offset === 0) { pager.innerHTML = ''; return; }
+  YcPager.renderFooter(pager, {
+    total: CWF.total, limit: CWF.limit, offset: CWF.offset, shown: visibleCount,
+    onPage: (p) => { CWF.offset = p * CWF.limit; loadWorkflows(); },
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1354,7 +1319,7 @@ function startAutomationPolling() {
             table.style.display = '';
             empty.style.display = 'none';
             tbody.innerHTML = renderSequenceRows(rows);
-            pager.innerHTML = renderSeqPager(rows.length);
+            renderSeqPager(rows.length);
           }
         }
       }
@@ -1387,7 +1352,7 @@ function startAutomationPolling() {
             table.style.display = '';
             empty.style.display = 'none';
             tbody.innerHTML = renderWorkflowRows(rows);
-            pager.innerHTML = renderWfPager(rows.length);
+            renderWfPager(rows.length);
           }
         }
       }

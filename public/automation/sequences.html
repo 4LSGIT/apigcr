@@ -9,6 +9,7 @@
   <script src="/automation/fnPicker.js"></script>
   <script src="/automation/esignTplPanel.js"></script>
   <script src="/automation/paramWidgets.js"></script>
+  <script src="/js/ycPager.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
@@ -733,8 +734,7 @@
         </thead>
         <tbody id="seq-enroll-tbody"></tbody>
       </table>
-      <div id="seq-enroll-pagination"
-           style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--text-muted)"></div>
+      <div id="seq-enroll-pagination" style="margin-top:12px"></div>
     </div>
     <div class="editor-foot" id="seq-editor-foot" style="display:none">
       <button class="btn btn-primary" style="flex:1" onclick="seqStepSave()">
@@ -861,7 +861,7 @@ const SEQ = {
 
 const SEQENROLL = {
   offset:     0,
-  limit:      50,
+  limit:      YcPager.getLimit('seqEnroll', 50),   // per-surface remembered size
   total:      0,
   pollTimer:  null,
   targetTemplateId: null,
@@ -4070,6 +4070,11 @@ async function loadSequenceEnrollments() {
     count.textContent = `${SEQENROLL.total} total enrollment${SEQENROLL.total === 1 ? '' : 's'}`;
 
     if (!rows.length) {
+      // Offset past the end (the set shrank, or the size select grew the
+      // page) — land on the last real page instead of an empty table.
+      // snapBackOffset only ever moves strictly backwards, so this cannot loop.
+      const back = YcPager.snapBackOffset(SEQENROLL.total, SEQENROLL.limit, SEQENROLL.offset);
+      if (back >= 0) { SEQENROLL.offset = back; return loadSequenceEnrollments(); }
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No enrollments yet.</td></tr>';
       pager.innerHTML = '';
       stopSeqEnrollPolling();
@@ -4077,7 +4082,7 @@ async function loadSequenceEnrollments() {
     }
 
     tbody.innerHTML = renderSeqEnrollRows(rows);
-    pager.innerHTML = renderSeqEnrollPager(rows.length);
+    renderSeqEnrollPager(rows.length);
 
     // Polling decision: if any visible row is non-terminal (status === 'active'), poll.
     const anyActive = rows.some(en => !SEQENROLL_TERMINAL.has(en.status));
@@ -4403,27 +4408,19 @@ function seqPreviewRelTime(ms) {
   return past ? `${bodyStr} ago` : `in ${bodyStr}`;
 }
 
+/* The shared pager (/js/ycPager.js) draws into #seq-enroll-pagination — the
+   renderWfExecPager twin in workflows.html made the same conversion. The
+   module skips the rebuild while its jump input is focused, so the 5s poll
+   re-render cannot yank it mid-typing. */
 function renderSeqEnrollPager(visibleCount) {
-  const from = SEQENROLL.offset + 1;
-  const to   = SEQENROLL.offset + visibleCount;
-  const hasPrev = SEQENROLL.offset > 0;
-  const hasNext = SEQENROLL.offset + SEQENROLL.limit < SEQENROLL.total;
-  return `
-    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasPrev ? '' : 'disabled'} onclick="seqEnrollPrevPage()">‹ Previous</button>
-    <span>Showing ${from}–${to} of ${SEQENROLL.total}</span>
-    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasNext ? '' : 'disabled'} onclick="seqEnrollNextPage()">Next ›</button>
-  `;
-}
-
-function seqEnrollPrevPage() {
-  SEQENROLL.offset = Math.max(0, SEQENROLL.offset - SEQENROLL.limit);
-  loadSequenceEnrollments();
-}
-
-function seqEnrollNextPage() {
-  if (SEQENROLL.offset + SEQENROLL.limit >= SEQENROLL.total) return;
-  SEQENROLL.offset += SEQENROLL.limit;
-  loadSequenceEnrollments();
+  const pager = document.getElementById('seq-enroll-pagination');
+  if (!pager) return;
+  YcPager.renderFooter(pager, {
+    total: SEQENROLL.total, limit: SEQENROLL.limit, offset: SEQENROLL.offset, shown: visibleCount,
+    onPage: (p) => { SEQENROLL.offset = p * SEQENROLL.limit; loadSequenceEnrollments(); },
+    persistKey: 'seqEnroll',
+    onLimit: (n) => { SEQENROLL.limit = n; SEQENROLL.offset = 0; loadSequenceEnrollments(); },
+  });
 }
 
 async function viewSequenceEnrollment(id) {
@@ -4774,7 +4771,7 @@ function startSeqEnrollPolling() {
       }
 
       tbody.innerHTML = renderSeqEnrollRows(rows);
-      pager.innerHTML = renderSeqEnrollPager(rows.length);
+      renderSeqEnrollPager(rows.length);
 
       // Stop if nothing is active anymore.
       const anyActive = rows.some(en => !SEQENROLL_TERMINAL.has(en.status));
@@ -5393,8 +5390,6 @@ window.seqToggleJson              = seqToggleJson;
 window.seqOnTimingTypeChange      = seqOnTimingTypeChange;
 window.seqOnDelayModeChange       = seqOnDelayModeChange;
 window.loadSequenceEnrollments    = loadSequenceEnrollments;
-window.seqEnrollPrevPage          = seqEnrollPrevPage;
-window.seqEnrollNextPage          = seqEnrollNextPage;
 window.viewSequenceEnrollment     = viewSequenceEnrollment;
 window.seqOpenPreviewForm         = seqOpenPreviewForm;
 window.seqPreviewEnrollment       = seqPreviewEnrollment;

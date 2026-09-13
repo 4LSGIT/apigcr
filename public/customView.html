@@ -73,6 +73,7 @@
 -->
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/ycPager.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -201,13 +202,7 @@
     <thead id="thead"></thead>
     <tbody id="tbody"></tbody>
   </table></div>
-  <div class="row" style="justify-content: space-between; margin-top: 8px;">
-    <div id="pageInfo" class="muted small"></div>
-    <div class="row">
-      <button class="ghost" id="pgPrev" onclick="page(-1)">&laquo; Prev</button>
-      <button class="ghost" id="pgNext" onclick="page(1)">Next &raquo;</button>
-    </div>
-  </div>
+  <div id="pgFoot" style="margin-top: 8px;"></div>
   <div id="vCaveats" style="margin-top: 10px;"></div>
   <details id="sqlDetails" class="hidden">
     <summary class="muted small">Show the SQL behind this view</summary>
@@ -237,7 +232,10 @@
 "use strict";
 const P = window.parent;
 const RC = window.ReportCharts;
-const PAGE_SIZE = 100;
+// Page size — remembered per-surface (store key 'customView'); the footer's
+// select writes it back. Paging here is a CLIENT-SIDE slice of the already-
+// fetched rows, so a size change just re-renders.
+let PAGE_SIZE = YcPager.getLimit('customView', 100);
 
 // Renderer-owned action registry: type → addFile kind. `copy` is special-cased,
 // and `open_form` (modal form) is handled by its own branch throughout.
@@ -548,13 +546,13 @@ function renderTable() {
     "<tr>" + displayCols.map(c => cellHtml(row, c, start + ri)).join("") + "</tr>"
   ).join("");
 
-  // Pager
-  const total = rows.length;
-  const from = total ? start + 1 : 0;
-  const to = Math.min(start + PAGE_SIZE, total);
-  E("pageInfo").textContent = total > PAGE_SIZE ? `${from}–${to} of ${total}` : `${total} rows`;
-  E("pgPrev").disabled = pageNo === 0;
-  E("pgNext").disabled = to >= total;
+  // Pager — the shared footer (/js/ycPager.js) over the client-side slice.
+  YcPager.renderFooter(E("pgFoot"), {
+    total: rows.length, limit: PAGE_SIZE, offset: start, shown: slice.length,
+    onPage: (p) => { pageNo = p; renderTable(); },
+    persistKey: 'customView',
+    onLimit: (n) => { PAGE_SIZE = n; pageNo = 0; renderTable(); },
+  });
 }
 
 function displayValue(v, c) {
@@ -667,11 +665,6 @@ document.addEventListener("keydown", (ev) => {
 });
 
 // ── Paging / CSV ────────────────────────────────────────────────────────────
-
-function page(d) {
-  pageNo = Math.max(0, pageNo + d);
-  renderTable();
-}
 
 function exportCsv() {
   if (!lastResult || !lastResult.rows) return;

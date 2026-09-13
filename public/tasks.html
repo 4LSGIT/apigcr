@@ -10,6 +10,7 @@
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
+  <script src="/js/ycPager.js"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
@@ -100,24 +101,10 @@
     .tk-empty { text-align: center; color: var(--text-muted); padding: 18px 6px !important; }
     #tkLoad { padding: 14px; }
 
-    /* ── Footer: pagination CSS rescoped from scripts.js's #logTableFoot ──
-       (the injected styles there are scoped to that id — see B-11/F14). */
-    #tasksTableFoot {
-      display: flex; flex-wrap: wrap; align-items: center;
-      gap: 0.6em; padding: 0.6em 0; font-size: 0.95em;
-    }
-    #tasksTableFoot .sep { color: var(--border); margin: 0 0.15em; user-select: none; }
-    #tasksTableFoot .log-pagination { display: inline-flex; align-items: center; gap: 0.35em; }
-    #tasksTableFoot .log-pagination a { text-decoration: none; padding: 0.15em 0.5em; border-radius: 3px; }
-    #tasksTableFoot .log-pagination a:hover { background: var(--surface-2); text-decoration: underline; }
-    #tasksTableFoot .log-pagination strong { padding: 0.15em 0.5em; background: var(--surface-2); border-radius: 3px; font-weight: bold; }
-    #tasksTableFoot .log-pagination-ellipsis { color: var(--text-muted); padding: 0 0.1em; }
-    #tasksTableFoot .logPageInput {
-      width: 4.5em; text-align: center; font-weight: bold; padding: 0.15em 0.3em;
-      border: 1px solid var(--border); border-radius: 3px; -moz-appearance: textfield; appearance: textfield;
-    }
-    #tasksTableFoot .logPageInput::-webkit-outer-spin-button,
-    #tasksTableFoot .logPageInput::-webkit-inner-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
+    /* ── Footer ── the shared pager (/js/ycPager.js) styles itself with the
+       .yc-pager* classes it injects; the rescoped #logTableFoot copy that
+       used to live here (B-11/F14) went with the id-scoping that forced it. */
+    #tasksTableFoot { padding: 0.6em 0; }
 
     /* ── Responsive: progressive column hiding (B-7) ─────────────────────── */
     @media (max-width: 900px) { .col-by, .col-created { display: none; } }
@@ -283,7 +270,7 @@ const linkId   = qp.get('link_id')   || '';
 const isEntity = !!(linkType || linkId);
 const entityOk = LINK_TYPES.includes(linkType) && !!linkId;
 
-let limit  = parseInt(getTabPref('tasks', 'limit', 100), 10) || 100;
+let limit  = parseInt(YcPager.getLimit('tasks', 100), 10) || 100;
 let offset = 0;
 let taskRows = [];               // last-loaded list, for modals/bulk
 const selected = new Set();      // bulk-selected task ids
@@ -632,15 +619,17 @@ function renderRows(total) {
       <td class="col-created">${created}</td>`;
   });
 
-  // Footer — shared ellipsis pager (fixes the exact-multiple off-by-one for
-  // free) + limit select persisted per-tab, no longer the shared global (B-12).
-  renderEventsFooter(foot, total, limit, offset, taskRows.length,
-    (p) => fetchTasks((p - 1) * limit),
-    (newLimit) => {
-      limit = parseInt(newLimit, 10) || 100;
-      setTabPref('tasks', 'limit', limit);
-      fetchTasks(0);
-    });
+  // Footer — the shared pager directly (js/ycPager.js): windowed numbers +
+  // ellipsis-jump, per-page select remembered under its own surface key
+  // ('tasks' — the store's legacy fallback still reads the old
+  // yc.tasks.limit pref, so nobody's saved size resets), Print.
+  YcPager.renderFooter(foot, {
+    total, limit, offset, shown: taskRows.length,
+    onPage: (p) => fetchTasks(p * limit),
+    persistKey: 'tasks',
+    onLimit: (n) => { limit = n; fetchTasks(0); },
+    onPrint: true,
+  });
 }
 
 // Linked-to navigation — the shell's addFile opens the case/contact file.

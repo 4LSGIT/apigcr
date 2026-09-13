@@ -61,6 +61,7 @@
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
+  <script src="/js/ycPager.js"></script>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
        build than the one this tab booted on. Started at the bottom of the boot
@@ -726,6 +727,10 @@
      */
     async function tabCasesGet(offset, silent = false) {
       offsets.cases = offset;
+      // This tab's own page size (store key 'cases'). Shadows the shared
+      // `limit` global on purpose — that global is the Logs tab's lever now,
+      // where the five tabs used to move it for each other.
+      const limit = YcPager.getLimit('cases', 100);
       E("tabCasesLoad").style.display = "block";
 
       const q = E("tabCasesQuery").value;
@@ -783,23 +788,16 @@
         <td>${C.close}</td>`;
           });
 
-          // Pagination
-          foot.innerHTML = offset > 0
-            ? `<a href="#" onclick="tabCasesGet(${offset - limit})">&lt;</a> ` : "";
-          for (let i = 1; data.total >= (i - 1) * limit; i++) {
-            foot.innerHTML += offset / limit + 1 == i
-              ? `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">[${i}]</a> `
-              : `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">${i}</a> `;
-          }
-          foot.innerHTML += offset + limit < data.total
-            ? `<a href="#" onclick="tabCasesGet(${offset + limit})">&gt;</a> ` : "";
-          foot.innerHTML += ` | Results ${offset + 1}–${offset + cases.length} of ${data.total}
-              <select style="width:auto" onchange="limit=this.value;tabCasesGet(0)">
-                <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
-                <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
-                <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
-                <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
-              </select> | <button onclick="window.print()">Print</button>`;
+          // Pagination — the shared footer (js/ycPager.js). The print-every-
+          // page loop this replaces also rendered a phantom empty page
+          // whenever the total was an exact multiple of the page size.
+          YcPager.renderFooter(foot, {
+            total: data.total, limit, offset, shown: cases.length,
+            onPage: (p) => tabCasesGet(p * limit),
+            persistKey: 'cases',
+            onLimit: () => tabCasesGet(0),   // refetch re-reads the store
+            onPrint: true,
+          });
         } else if (!silent) {
           Toast.fire({ icon: "error", title: "No cases found!" });
         }
@@ -942,6 +940,8 @@
      */
     async function tabContactsGet(offset, silent = false) {
       offsets.contacts = offset;
+      // Own page size, same shape as tabCasesGet (store key 'contacts').
+      const limit = YcPager.getLimit('contacts', 100);
       E("tabContactsLoad").style.display = "block";
 
       const q = E("tabContactsQuery").value;
@@ -991,23 +991,15 @@
             <td>${contact.dob || ""}</td>`;
           });
 
-          // Pagination
-          foot.innerHTML = offset > 0
-            ? `<a href="#" onclick="tabContactsGet(${offset - limit})">&lt;</a> ` : "";
-          for (let i = 1; data.total >= (i - 1) * limit; i++) {
-            foot.innerHTML += offset / limit + 1 == i
-              ? `<a href="#" onclick="tabContactsGet(${(i - 1) * limit})">[${i}]</a> `
-              : `<a href="#" onclick="tabContactsGet(${(i - 1) * limit})">${i}</a> `;
-          }
-          foot.innerHTML += offset + limit < data.total
-            ? `<a href="#" onclick="tabContactsGet(${offset + limit})">&gt;</a> ` : "";
-          foot.innerHTML += ` | Results ${offset + 1}–${offset + contacts.length} of ${data.total}
-          <select style="width:auto" onchange="limit=this.value;tabContactsGet(0)">
-            <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
-            <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
-            <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
-            <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
-          </select> | <button onclick="window.print()">Print</button>`;
+          // Pagination — the shared footer (js/ycPager.js), same shape and
+          // same off-by-one fix as the Cases tab's.
+          YcPager.renderFooter(foot, {
+            total: data.total, limit, offset, shown: contacts.length,
+            onPage: (p) => tabContactsGet(p * limit),
+            persistKey: 'contacts',
+            onLimit: () => tabContactsGet(0),
+            onPrint: true,
+          });
         } else if (!silent) {
           Toast.fire({ icon: "error", title: "No contacts found!" });
         }
@@ -1695,6 +1687,8 @@
      */
     async function tabEventsGet(offset, silent = false) {
       offsets.events = offset;
+      // Own page size, same shape as tabCasesGet (store key 'events').
+      const limit = YcPager.getLimit('events', 100);
       E("tabEventsButton").disabled = true;
       E("tabEventsLoad").style.display = "block";
 
@@ -1795,10 +1789,15 @@
             row.innerHTML += `<td>${buttons.join(" ")}</td>`;
           });
 
-          // Footer — log-style pagination + meta + limit + print.
-          renderEventsFooter(foot, total, limit, offset, events.length,
-            (p) => tabEventsGet((p - 1) * limit),
-            (newLimit) => { limit = newLimit; tabEventsGet(0); });
+          // Footer — the shared pager (js/ycPager.js), page size remembered
+          // under this tab's own key instead of moving the shared global.
+          YcPager.renderFooter(foot, {
+            total, limit, offset, shown: events.length,
+            onPage: (p) => tabEventsGet(p * limit),
+            persistKey: 'events',
+            onLimit: () => tabEventsGet(0),
+            onPrint: true,
+          });
         } else {
           events = "";
           foot.innerHTML = "";
@@ -2017,6 +2016,8 @@
       // lands. Same shape and same reasoning as pipelineBoard's boardLastLoad.
       apptsLastLoad = Date.now();
       offsets.appts = offset;
+      // Own page size, same shape as tabCasesGet (store key 'appts').
+      const limit = YcPager.getLimit('appts', 100);
       E("tabApptsButton").disabled = true;
       E("tabApptsLoad").style.display = "block";
 
@@ -2099,23 +2100,16 @@
             row.innerHTML += `<td>${buttons.join(" ")}</td>`;
           });
 
-          // Pagination
-          foot.innerHTML = offset > 0
-            ? `<a href="#" onclick="tabApptsGet(${offset - limit})">&lt;</a> ` : "";
-          for (let i = 1; data.counter >= (i - 1) * limit; i++) {
-            foot.innerHTML += offset / limit + 1 == i
-              ? `<a href="#" onclick="tabApptsGet(${(i - 1) * limit})">[${i}]</a> `
-              : `<a href="#" onclick="tabApptsGet(${(i - 1) * limit})">${i}</a> `;
-          }
-          foot.innerHTML += offset + limit < data.counter
-            ? `<a href="#" onclick="tabApptsGet(${offset + limit})">&gt;</a> ` : "";
-          foot.innerHTML += ` | Results ${offset + 1}–${offset + appts.length} of ${data.counter}
-          <select style="width:auto" onchange="limit=this.value;tabApptsGet(0)">
-            <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
-            <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
-            <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
-            <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
-          </select> | <button onclick="window.print()">Print</button>`;
+          // Pagination — the shared footer (js/ycPager.js), same shape and
+          // same off-by-one fix as the Cases tab's. This list's total arrives
+          // as `counter`, not `total` — the endpoint's own name for it.
+          YcPager.renderFooter(foot, {
+            total: data.counter, limit, offset, shown: appts.length,
+            onPage: (p) => tabApptsGet(p * limit),
+            persistKey: 'appts',
+            onLimit: () => tabApptsGet(0),
+            onPrint: true,
+          });
         } else if (!silent) {
           Toast.fire({ icon: "error", title: "No appointments found!" });
         }
@@ -3517,6 +3511,10 @@
     });
     // Top-level state used across tab handlers
     user = {};
+    // The Logs tab's page size — and only the Logs tab's, since the other
+    // list tabs each read their own from YcPager's per-surface store. Still
+    // the pref renderLogFooter writes, and case.html/contact.html read the
+    // same key, so every log table moves on one lever by design.
     limit = parseInt(getTabPref('log','limit',100),10) || 100;
     fileCounter = 1;
     cases = "";

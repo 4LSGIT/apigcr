@@ -88,6 +88,39 @@ Anything that moves a pixel — font sizes, control heights, padding — is the
 density arc, not the colour arc. Colour changes are invisible when they are
 right; metric changes re-wrap text on pages nobody opened during review.
 
+## Lists that paginate
+
+One pager for the whole app: `/js/ycPager.js` (the pager arc, Sep 2026).
+Never hand-roll a footer and never copy the module into a page — three
+verbatim copies of the old pager is how the arc started.
+
+- Load it with `<script src="/js/ycPager.js">` in the head, **before
+  `scripts.js`** where the page loads that (`renderLogFooter` renders through
+  it).
+- `YcPager.renderFooter(el, opts)` draws the strip; `onPage(p)` hands back a
+  **0-based page index** — offset callers do `p * limit`, page-param callers
+  `p + 1`. Optional slots: `sizes`/`onLimit` (per-page select), `expand`,
+  `onPrint`, `onExport`. `renderPages` is the bare ‹ 1 2 … n › strip.
+- Page-size memory: read `YcPager.getLimit('<key>', <default>)` at boot and
+  pass `persistKey: '<key>'` — one localStorage map (`yc.pager.limits`), one
+  key per surface, so every list remembers its own size. Pick a fresh key for
+  a new surface: **`grep -rn "getLimit(" public/` lists the taken ones** —
+  every consumer reads at boot, whereas a `persistKey` grep misses the two
+  ingest pages, which write through `YcPager.setLimit(...)` from their
+  toolbar Limit selects instead of the footer. The one deliberate exception:
+  the log tables (index/case/contact) share `yc.log.limit` — one lever for
+  every log table, by design.
+- Empty page but a non-zero count? `YcPager.snapBackOffset(total, limit,
+  offset)` → refetch at the returned offset when ≥ 0. It only ever moves
+  strictly backwards, so it cannot loop.
+- Do **not** convert load-more / keyset feeds (api-key log, form-builder
+  history, triggers), activity.html's time-cursor fan-out, or capped lists
+  whose footer says "narrow the window" — offset paging is the module's
+  contract, and those surfaces reject it on purpose.
+
+The long version is the module's own header; behavior is pinned in
+`tests/ycPager.test.js`.
+
 ## Check it
 
 Open the page in the shell, toggle dark, toggle back. Then:

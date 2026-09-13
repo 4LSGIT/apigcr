@@ -6,6 +6,7 @@
   <title>Asset Manager</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/js/ycPager.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
@@ -289,41 +290,9 @@
     .state.err { color: var(--danger); }
     .state .sub { font-size: 12px; margin-top: 6px; }
 
-    /* ── Pagination ─────────────────────────────────── */
-    #pager {
-      margin-top: 18px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    #pager .range {
-      color: var(--text-muted);
-      font-size: 12px;
-      margin-right: 8px;
-    }
-    #pager .page-btn {
-      min-width: 30px;
-      height: 30px;
-      padding: 0 8px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      border-radius: 5px;
-      cursor: pointer;
-      color: var(--text-2);
-      font-size: 12px;
-      font-family: inherit;
-    }
-    #pager .page-btn:hover:not(:disabled) { background: var(--page-bg); }
-    #pager .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    #pager .page-btn.active {
-      background: var(--accent);
-      color: var(--accent-text);
-      border-color: var(--accent);
-      font-weight: 600;
-    }
-    #pager .ellipsis { color: var(--text-muted); padding: 0 2px; }
+    /* ── Pagination ── drawn and styled by the shared pager (/js/ycPager.js);
+       only the strip's spacing is this page's. */
+    #pager { margin-top: 18px; }
 
     .swal2-popup { font-size: 13px !important; }
     .swal-lbl { font-weight: 600; font-size: 12px; color: var(--text-2); display: block; }
@@ -498,7 +467,7 @@ const state = {
   assets:      [],
   total:       0,
   page:        1,       // 1-indexed
-  pageSize:    30,
+  pageSize:    YcPager.getLimit('assets', 30),   // per-surface remembered size
   q:           '',
   collection:  '',      // '' = All
   mime:        '',      // '' = All ; 'image/' prefix ; 'application/pdf' exact
@@ -664,37 +633,21 @@ function replaceCard(a) {
 // ════════════════════════════════════════════════════════════════════════════
 // Pagination
 // ════════════════════════════════════════════════════════════════════════════
+/* The shared pager (/js/ycPager.js) — this page's hand-rolled windowed strip
+   was the ancestor documents.html transcribed; both now draw the module's
+   footer. gotoPage keeps its name, 1-based contract, clamp, and the smooth
+   scroll to the top of the grid. */
 function renderPagination() {
   const pager = E('pager');
-  const total = state.total;
-  if (!total) { pager.innerHTML = ''; return; }
-
-  const maxPage = Math.max(1, Math.ceil(total / state.pageSize));
-  const cur     = state.page;
-  const start   = (cur - 1) * state.pageSize + 1;
-  const end     = Math.min(cur * state.pageSize, total);
-
-  // Windowed page numbers: first, last, and a +/-2 window around current,
-  // with ellipses for gaps.
-  const nums = new Set([1, maxPage, cur, cur - 1, cur - 2, cur + 1, cur + 2]);
-  const pages = [...nums].filter(n => n >= 1 && n <= maxPage).sort((a, b) => a - b);
-
-  let html = '<span class="range">' + start + '–' + end + ' of ' + total + '</span>';
-  html += '<button class="page-btn" ' + (cur <= 1 ? 'disabled' : '')
-        + ' onclick="gotoPage(' + (cur - 1) + ')"><i class="fa-solid fa-chevron-left"></i></button>';
-
-  let prev = 0;
-  for (const n of pages) {
-    if (n - prev > 1) html += '<span class="ellipsis">…</span>';
-    html += '<button class="page-btn ' + (n === cur ? 'active' : '') + '" '
-          + 'onclick="gotoPage(' + n + ')">' + n + '</button>';
-    prev = n;
-  }
-
-  html += '<button class="page-btn" ' + (cur >= maxPage ? 'disabled' : '')
-        + ' onclick="gotoPage(' + (cur + 1) + ')"><i class="fa-solid fa-chevron-right"></i></button>';
-
-  pager.innerHTML = html;
+  if (!state.total) { pager.innerHTML = ''; return; }
+  YcPager.renderFooter(pager, {
+    total: state.total, limit: state.pageSize,
+    offset: (state.page - 1) * state.pageSize,
+    shown: state.assets.length,
+    onPage: (p) => gotoPage(p + 1),
+    persistKey: 'assets',
+    onLimit: (n) => { state.pageSize = n; state.page = 1; fetchAssets(); },
+  });
 }
 
 function gotoPage(n) {

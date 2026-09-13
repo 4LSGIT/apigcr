@@ -11,6 +11,7 @@
        parse-time SyntaxError that would kill this page's whole inline block.
        diag.js declares nothing at top level. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
+  <script src="/js/ycPager.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/automation/fnPicker.js"></script>
   <script src="/automation/paramsMapping.js"></script>
@@ -297,28 +298,13 @@
     .oc-err  { color: var(--danger); word-break: break-word; }
     .oc-res  { color: var(--text-2); word-break: break-word; }
 
-    /* Footer (pagination strip — ported from scripts.js log idiom) */
+    /* Footer (pagination strip — the shared pager, /js/ycPager.js, draws the
+       buttons and range text; this rule is just the strip's own box) */
     .exec-footer {
       flex-shrink: 0; background: var(--surface);
       border-top: 1px solid var(--border);
       padding: 8px 14px; display: flex; align-items: center;
       gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-2);
-    }
-    .exec-footer .sep { color: var(--border); margin: 0 2px; }
-    .log-pagination { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-    .log-pagination a {
-      color: var(--info); text-decoration: none; padding: 2px 7px;
-      border-radius: 4px; font-size: 12px;
-    }
-    .log-pagination a:hover { background: var(--accent-soft); }
-    .log-pagination strong {
-      padding: 2px 8px; border-radius: 4px; background: var(--accent);
-      color: var(--accent-text); font-size: 12px;
-    }
-    .log-pagination-ellipsis { color: var(--text-muted); padding: 0 2px; }
-    .log-pagination .logPageInput {
-      width: 48px; padding: 2px 4px; font-size: 12px; text-align: center;
-      border: 1px solid var(--info); border-radius: 4px;
     }
 
     /* Status chips */
@@ -789,6 +775,7 @@
         <div class="tb-group">
           <label>Limit</label>
           <select id="pi-limit" onchange="piLimitChanged(this.value)">
+            <option value="25">25</option>
             <option value="50">50</option>
             <option value="100">100</option>
             <option value="200">200</option>
@@ -834,10 +821,11 @@
 // detail. NO editors (3.3 = suppression editor, 3.4 = rule editor).
 //
 // EXECUTIONS layout: center full-width table (400+ rows), toolbar
-// (status filter + limit + log-style windowed pager + "Showing N–M
-// of T"), row click → right-hand drawer. Pager algorithm is PORTED
-// from scripts.js renderLogPagination — the shell's copy isn't reachable
-// from inside the iframe (P exposes only apiSend/firmData/setTopbarButtons/fd*).
+// (status filter + limit), footer = the shared pager (/js/ycPager.js,
+// loaded by this page's own script tag — it exists precisely because
+// scripts.js isn't reachable from inside this iframe; this file used to
+// carry a verbatim port of renderLogPagination for that reason), row
+// click → right-hand drawer.
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
@@ -908,7 +896,8 @@ window.piToggleSidebar = piToggleSidebar;
     //               CURRENT page, returned by the list endpoint. Replaced
     //               wholesale on every fetch — never merge, or a renamed or
     //               deleted rule would keep rendering its stale name forever.
-    executions:   { loaded: false, rows: [], offset: 0, limit: 50, total: 0, status: '',
+    executions:   { loaded: false, rows: [], offset: 0,
+                    limit: YcPager.getLimit('phoneIngest', 50), total: 0, status: '',
                     rule: '', actionStatus: '', names: {}, selId: null },
   };
 
@@ -3067,23 +3056,17 @@ window.piToggleSidebar = piToggleSidebar;
     renderExecFooter();
   }
 
-  // Footer: ported log-style windowed pager + "Showing N–M of T".
+  // Footer: the shared pager (/js/ycPager.js) — windowed numbers, the
+  // ellipsis-as-jump control, prev/next — plus its X–Y-of-Z range text.
+  // The Limit select stays in the toolbar above, so no onLimit here.
   function renderExecFooter() {
     const c = cache.executions;
     const foot = E('pi-exec-footer');
     foot.style.display = 'flex';
-    foot.innerHTML = '';
-
-    const pagWrap = document.createElement('span');
-    pagWrap.className = 'log-pagination';
-    foot.appendChild(pagWrap);
-    renderLogPagination(pagWrap, c.total, c.limit, c.offset, (p) => piJumpPage(p));
-
-    const shownStart = c.total === 0 ? 0 : c.offset + 1;
-    const shownEnd = Math.min(c.total, c.offset + c.rows.length);
-    const metaSpan = document.createElement('span');
-    metaSpan.innerHTML = `<span class="sep">|</span> Showing ${shownStart}–${shownEnd} of ${c.total}`;
-    foot.appendChild(metaSpan);
+    YcPager.renderFooter(foot, {
+      total: c.total, limit: c.limit, offset: c.offset, shown: c.rows.length,
+      onPage: (p) => piJumpPage(p + 1),   // piJumpPage clamps and is 1-based
+    });
   }
 
   // jumpFn: 1-based page → offset, re-fetch
@@ -3106,11 +3089,14 @@ window.piToggleSidebar = piToggleSidebar;
   function piLimitChanged(val) {
     const c = cache.executions;
     const n = parseInt(val, 10);
-    if (!isNaN(n) && n > 0) c.limit = n;
+    if (!isNaN(n) && n > 0) { c.limit = n; YcPager.setLimit('phoneIngest', n); }
     c.offset = 0; c.loaded = false; c.selId = null;
     loadExecutions(true);
   }
   window.piLimitChanged = piLimitChanged;
+  // Reflect the remembered page size onto the toolbar select at boot; the
+  // post-fetch reconcile keeps it honest thereafter (server clamps included).
+  if (E('pi-limit')) E('pi-limit').value = String(cache.executions.limit);
 
   // T8 — Rule / Action filters. Both reset paging and clear the selection,
   // exactly like the status filter: the selected row is very unlikely to
@@ -3187,61 +3173,6 @@ window.piToggleSidebar = piToggleSidebar;
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && E('pi-drawer').classList.contains('open')) piCloseDrawer();
   });
-
-  // ════════════════════════════════════════════════════════════════
-  // PORTED PAGER — renderLogPagination (from scripts.js, May 2026).
-  // Verbatim algorithm: ≤7 pages = list all; >7 = {1,2 … cur±2 … last-1,
-  // last} with a number input on the current page. jumpFn = 1-based page.
-  // ════════════════════════════════════════════════════════════════
-  function renderLogPagination(containerEl, total, limit, offset, jumpFn) {
-    containerEl.innerHTML = '';
-    if (!total || total < 0) total = 0;
-    if (!limit || limit < 1) limit = 1;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const current = Math.min(totalPages, Math.max(1, Math.floor(offset / limit) + 1));
-    const parts = [];
-
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) {
-        parts.push(i === current ? `<strong>${i}</strong>` : `<a href="#" data-page="${i}">${i}</a>`);
-      }
-    } else {
-      const pages = new Set([1, 2, totalPages - 1, totalPages]);
-      for (let p = current - 2; p <= current + 2; p++) if (p >= 1 && p <= totalPages) pages.add(p);
-      const sorted = [...pages].sort((a, b) => a - b);
-      let prev = 0;
-      for (const p of sorted) {
-        if (prev && p > prev + 1) parts.push(`<span class="log-pagination-ellipsis">…</span>`);
-        if (p === current) {
-          parts.push(`<input type="number" min="1" max="${totalPages}" value="${current}" class="logPageInput" aria-label="Jump to page">`);
-        } else {
-          parts.push(`<a href="#" data-page="${p}">${p}</a>`);
-        }
-        prev = p;
-      }
-    }
-    containerEl.innerHTML = parts.join(' ');
-
-    containerEl.querySelectorAll('a[data-page]').forEach(a => {
-      a.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        const p = parseInt(a.getAttribute('data-page'), 10);
-        if (!isNaN(p)) jumpFn(p);
-      });
-    });
-    const input = containerEl.querySelector('.logPageInput');
-    if (input) {
-      const submit = () => {
-        let p = parseInt(input.value, 10);
-        if (isNaN(p)) { input.value = current; return; }
-        p = Math.max(1, Math.min(totalPages, p));
-        if (p !== current) jumpFn(p); else input.value = current;
-      };
-      input.addEventListener('keypress', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } });
-      input.addEventListener('blur', submit);
-      input.addEventListener('focus', () => input.select());
-    }
-  }
 
   // ════════════════════════════════════════════════════════════════
   // SELECTION DISPATCH

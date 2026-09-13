@@ -9,6 +9,7 @@
   <!-- Diagnostics ring buffer. Loaded BEFORE anything that can throw. -->
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
+  <script src="/js/ycPager.js"></script>
   <!-- theme.css + themeSync MUST be blocking and MUST precede this page's own
        <style> block (ref/THEME-HANDOFF-v2.md). themeSync sets
        html[data-theme] pre-paint and follows window.top live at any depth, so
@@ -241,28 +242,9 @@
     .state.err { color: var(--danger); }
     .state .sub { font-size: var(--fs-sm); margin-top: 6px; }
 
-    /* ── Pagination ─────────────────────────────────── */
-    #pager {
-      margin-top: var(--gap-lg);
-      display: flex; align-items: center; justify-content: center;
-      gap: var(--gap-sm); flex-wrap: wrap;
-    }
-    #pager .range { color: var(--text-muted); font-size: var(--fs-sm); margin-right: 6px; }
-    #pager .page-btn {
-      min-width: 28px; height: 28px; padding: 0 8px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      border-radius: var(--radius-sm);
-      cursor: pointer; color: var(--text-2);
-      font-size: var(--fs-sm); font-family: inherit;
-    }
-    #pager .page-btn:hover:not(:disabled) { background: var(--page-bg); }
-    #pager .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    #pager .page-btn.active {
-      background: var(--accent); color: var(--accent-text);
-      border-color: var(--accent); font-weight: 600;
-    }
-    #pager .ellipsis { color: var(--text-muted); padding: 0 2px; }
+    /* ── Pagination ── drawn and styled by the shared pager (/js/ycPager.js);
+       only the strip's spacing is this page's. */
+    #pager { margin-top: var(--gap-lg); }
 
     /* ── Viewer overlay ─────────────────────────────────────────────────
        Hand-rolled rather than a Swal: a PDF needs a full-height <iframe>,
@@ -783,7 +765,9 @@ var state = {
   docs:     [],
   total:    0,
   page:     1,                       // 1-indexed
-  pageSize: SCOPED ? 25 : 30,
+  // Scoped widgets stay fixed at 25 — an embedded list gets no size lever.
+  // The global tab remembers its own size (per-surface store key 'documents').
+  pageSize: SCOPED ? 25 : YcPager.getLimit('documents', 30),
   q:        '',
   doc_type: '',
   ext:      '',                      // '' or a CSV of extensions
@@ -1185,38 +1169,30 @@ function renderFacetHints() {
 // ════════════════════════════════════════════════════════════════════════════
 // Pagination
 // ════════════════════════════════════════════════════════════════════════════
+/* The shared pager (/js/ycPager.js) — this was the ES5 transcription of
+   assetManager.html's strip; both now draw the module's footer. gotoPage
+   keeps its name, 1-based contract, clamp, and the smooth scroll (the
+   documentsUi suites drive window.gotoPage directly). */
 function renderPagination() {
   var pager = E('pager');
-  var total = state.total;
-  if (!total) { pager.innerHTML = ''; return; }
-
-  var maxPage = Math.max(1, Math.ceil(total / state.pageSize));
-  if (maxPage === 1) { pager.innerHTML = ''; return; }
-
-  var cur   = state.page;
-  var start = (cur - 1) * state.pageSize + 1;
-  var end   = Math.min(cur * state.pageSize, total);
-
-  var nums = [1, maxPage, cur, cur - 1, cur - 2, cur + 1, cur + 2]
-    .filter(function (n, i, a) { return n >= 1 && n <= maxPage && a.indexOf(n) === i; })
-    .sort(function (a, b) { return a - b; });
-
-  var html = '<span class="range">' + start + '–' + end + ' of ' + total + '</span>';
-  html += '<button class="page-btn" ' + (cur <= 1 ? 'disabled' : '')
-        + ' onclick="gotoPage(' + (cur - 1) + ')"><i class="fa-solid fa-chevron-left"></i></button>';
-
-  var prev = 0;
-  nums.forEach(function (n) {
-    if (n - prev > 1) html += '<span class="ellipsis">…</span>';
-    html += '<button class="page-btn ' + (n === cur ? 'active' : '') + '" '
-          + 'onclick="gotoPage(' + n + ')">' + n + '</button>';
-    prev = n;
-  });
-
-  html += '<button class="page-btn" ' + (cur >= maxPage ? 'disabled' : '')
-        + ' onclick="gotoPage(' + (cur + 1) + ')"><i class="fa-solid fa-chevron-right"></i></button>';
-
-  pager.innerHTML = html;
+  if (!state.total) { pager.innerHTML = ''; return; }
+  var maxPage = Math.max(1, Math.ceil(state.total / state.pageSize));
+  // Scoped widget: still no chrome when everything fits on one page — an
+  // embedded list stays bare. The GLOBAL tab now always shows the strip:
+  // its size select has to live somewhere, and at six figures of documents
+  // a single page does not really happen.
+  if (SCOPED && maxPage === 1) { pager.innerHTML = ''; return; }
+  var opts = {
+    total: state.total, limit: state.pageSize,
+    offset: (state.page - 1) * state.pageSize,
+    shown: state.docs.length,
+    onPage: function (p) { window.gotoPage(p + 1); },
+  };
+  if (!SCOPED) {
+    opts.persistKey = 'documents';
+    opts.onLimit = function (n) { state.pageSize = n; state.page = 1; fetchDocs(); };
+  }
+  YcPager.renderFooter(pager, opts);
 }
 
 window.gotoPage = function (n) {

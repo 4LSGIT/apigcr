@@ -727,8 +727,9 @@ function normPhoneIngest(r) {
 //   hook      created_at     · sequence executed_at · trigger created_at
 //   ingest    created_at
 //
-// PAGING (T7 Part B). Offset paging (the renderWfExecPager pattern in
-// workflows.html) does NOT port here: it pages ONE source with a server
+// PAGING (T7 Part B). Offset paging (workflows.html's execution pager —
+// now the shared /js/ycPager.js footer) does NOT port here: it pages ONE
+// source with a server
 // total; a shared offset over seven sources advancing at different rates
 // silently skips rows. Instead each source keeps a TIME CURSOR = the
 // oldest value of its filter column fetched so far, and "Load older"

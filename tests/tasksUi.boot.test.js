@@ -19,8 +19,8 @@
  *
  * The harness stubs only what the SHELL provides (apiSend, firmData, user,
  * body for the theme observer) plus the handful of globals tasks.html gets
- * from /scripts.js (E, Toast, Swal, getTabPref/setTabPref, renderEventsFooter).
- * Everything else is the real file, inline script and all.
+ * from /scripts.js (E, Toast, Swal, getTabPref/setTabPref) and /js/ycPager.js
+ * (YcPager). Everything else is the real file, inline script and all.
  *
  *   npx jest tests/tasksUi.boot.test.js
  */
@@ -96,11 +96,15 @@ async function boot({ search = '', tasks = [mkTask()], warmShell = true } = {}) 
     window.addFile  = () => {};
   }
 
-  // ── Globals tasks.html gets from /scripts.js (not loaded here). ──────────
+  // ── Globals tasks.html gets from /scripts.js and /js/ycPager.js (neither
+  //    loaded here). getLimit answers the default, mirroring an empty store. ──
   window.E = (id) => window.document.getElementById(id);
   window.getTabPref = (t, k, d) => d;
   window.setTabPref = () => {};
-  window.renderEventsFooter = () => {};
+  window.YcPager = {
+    getLimit: (k, d) => d, setLimit: () => {},
+    renderFooter: () => {}, renderPages: () => {},
+  };
   window.Toast = { fire: () => {} };
   window.Swal = { fire: async () => ({ isConfirmed: false }), close: () => {}, showLoading: () => {}, update: () => {} };
 

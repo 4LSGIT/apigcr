@@ -10,6 +10,7 @@
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="/css/yc-forms.css" rel="stylesheet">
+  <script src="/js/ycPager.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <style>
     body { padding: 16px; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -227,52 +228,10 @@
     .pk-pill { padding: 2px 8px; font-size: 0.64rem; white-space: nowrap; }
 
     .pk-empty { padding: 28px 12px; text-align: center; color: var(--text-muted); font-size: 0.86rem; }
-    .pk-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding-top: 12px; }
-    .pk-pages { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-    .pk-page {
-      min-width: 28px; height: 28px; padding: 0 8px;
-      border: 1px solid var(--border-strong); border-radius: 5px;
-      background: var(--surface); color: var(--text-2);
-      font-family: inherit; font-size: 0.8rem; font-weight: 600;
-      cursor: pointer; transition: all 0.15s ease;
-    }
-    .pk-page:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: var(--accent); }
-    .pk-page:disabled { opacity: 0.45; cursor: default; }
-    /* The current page is a disabled button too — there is nowhere to go — so
-       it has to win the dimming the arrows use to say "no further". */
-    .pk-page-current, .pk-page-current:disabled {
-      background: var(--accent); border-color: var(--accent);
-      color: var(--accent-text); opacity: 1;
-    }
-    /* The ellipsis is a BUTTON — it opens the jump-to-page input — so it
-       carries .pk-page too and wears the page buttons' own box. Borderless it
-       read as inert punctuation and nobody clicked it; matching boxes is the
-       whole cue that it is reachable. Only the label colour differs, marking
-       it as a range rather than a page. */
-    .pk-gap { color: var(--text-muted); letter-spacing: 1px; }
-    .pk-jump {
-      width: 66px; height: 28px; padding: 0 6px;
-      border: 1px solid var(--accent); border-radius: 5px;
-      background: var(--surface); color: var(--text);
-      font-family: inherit; font-size: 0.8rem; font-weight: 600;
-      text-align: center; outline: none;
-      box-shadow: 0 0 0 3px var(--accent-soft);
-    }
-    /* The spinners eat half the box and the control is Enter-driven anyway.
-       type=number is kept for the numeric keypad and the min/max semantics. */
-    .pk-jump::-webkit-outer-spin-button,
-    .pk-jump::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-    .pk-jump { -moz-appearance: textfield; appearance: textfield; }
-    .pk-range { font-size: 0.8rem; color: var(--text-muted); }
-    .pk-size-wrap {
-      display: flex; align-items: center; gap: 5px; margin-left: auto;
-      font-size: 0.78rem; color: var(--text-muted);
-    }
-    .pk-size {
-      height: 28px; padding: 0 6px; border: 1px solid var(--border-strong);
-      border-radius: 5px; background: var(--surface); color: var(--text);
-      font-family: inherit; font-size: 0.78rem;
-    }
+    /* The footer's own look — buttons, jump input, size select — comes from
+       /js/ycPager.js (this pager was the donor for that module); only the
+       spacing above it is this page's. */
+    .pk-foot { padding-top: 12px; }
 
     @media (max-width: 600px) {
       .info-grid { grid-template-columns: 1fr 1fr; }
@@ -1015,9 +974,10 @@ async function createCase() {
    shell, the same scoping rule checklistView (.ck-) and checklistsView (.cx-)
    state in their own headers. */
 
-/* Page size. MUTABLE — the foot's "per page" select writes it, the same lever
-   the shell's Appts tab offers on its own footer. */
-let PK_LIMIT = 25;
+/* Page size. MUTABLE — the foot's "per page" select writes it, remembered
+   per-surface in YcPager's store (key 'apptPicker') so this picker's size is
+   its own, not shared with any other list's. */
+let PK_LIMIT = YcPager.getLimit('apptPicker', 25);
 let pkOffset = 0;
 let pkTotal = 0;
 let pkWired = false;
@@ -1198,16 +1158,12 @@ async function pkSearch(offset) {
     // the result set shrank under us — showPicker() refetches at the offset the
     // user left on, and appointments get cancelled and filters get narrowed
     // between visits. Land on the last real page instead of an empty grid under
-    // a pager insisting there are N results.
-    //
-    // `lastPage < pkOffset` is the TERMINATION GUARD, not a nicety. Without it,
-    // a count that disagrees with the rows — a filter the count query applies
-    // differently, a row deleted between the two queries — retargets the offset
-    // it is already on and recurses until the tab dies. Requiring the retry to
-    // move strictly backwards means it can only ever hop once.
-    const lastPage = (Math.ceil(pkTotal / PK_LIMIT) - 1) * PK_LIMIT;
-    if (!found.length && pkTotal > 0 && pkOffset > 0 && lastPage < pkOffset) {
-      return pkSearch(lastPage);
+    // a pager insisting there are N results. snapBackOffset's -1 (stay put) is
+    // the termination guard: the retry only ever moves strictly backwards, so
+    // it can only hop once even when the count and the rows disagree.
+    const back = YcPager.snapBackOffset(pkTotal, PK_LIMIT, pkOffset);
+    if (!found.length && back >= 0) {
+      return pkSearch(back);
     }
     pkRender(found);
   } catch (err) {
@@ -1315,173 +1271,19 @@ function pkRender(rows) {
   pkRenderFoot(rows.length);
 }
 
-/**
- * Which page numbers the pager renders: the first, the last, and a window
- * around the current one, with `null` standing in for each run it skips.
- * Keeps the footer a fixed width whether the result set is 3 pages or 300 —
- * the shell's Appts tab prints EVERY page number, which is fine at 4 pages and
- * a wrapping wall of links at 90.
- * @returns {Array<number|{from:number,to:number}>} 0-based page indexes; an
- *   object is an ellipsis, carrying the inclusive range of pages it hides —
- *   which is what the jump control renders as its placeholder.
- */
-function pkPageWindow(current, pages, span = 2) {
-  const want = new Set([0, pages - 1]);
-  for (let p = current - span; p <= current + span; p++) {
-    if (p >= 0 && p < pages) want.add(p);
-  }
-  const sorted = [...want].sort((a, b) => a - b);
-  const out = [];
-  sorted.forEach((p, i) => {
-    const prev = sorted[i - 1];
-    if (i && p - prev > 1) {
-      // A run of ONE is rendered as that page, not as an ellipsis. "1 2 3 … 5"
-      // asks the user to click and type "4" to reach page 4, where a "4" button
-      // fits in the identical width. Ellipses are for runs worth collapsing.
-      if (p - prev === 2) out.push(prev + 1);
-      else out.push({ from: prev + 1, to: p - 1 });
-    }
-    out.push(p);
-  });
-  return out;
-}
-
-/**
- * The ellipsis, which is also the jump-to-page control.
- *
- * WHY HERE and not a permanent "go to page" box in the footer: an ellipsis
- * exists precisely when a run of pages is hidden, and it sits exactly where
- * that run would be. So the affordance appears if and only if there is
- * somewhere to jump TO, and costs no footer width when there is not.
- *
- * With the default span, the thresholds fall out of the window arithmetic
- * (`window` = current ± span, plus the first and last page, with a hidden run
- * of one filled in): at 5 pages or fewer nothing is ever hidden, wherever you
- * stand; at 10 or more something always is; between those it depends on where
- * you are, because the window is truncated at the ends. Generally: never below
- * span + 4, always from 2*span + 6. tests/apptsPicker.pager.test.js pins all
- * three bands against the formula rather than against the numbers.
- *
- * Click or Enter swaps the ellipsis for a number input placeholder-ed with the
- * range it stands for ("4–87"), so the control says what it accepts.
- */
-function pkGapControl(from, to, pages) {
-  const gap = document.createElement('button');
-  gap.type = 'button';
-  // .pk-page for the box and the hover, .pk-gap for the muted label. Sharing
-  // the page-button class is deliberate: the two must not drift apart, because
-  // looking like a page button is what says "you can click this".
-  gap.className = 'pk-page pk-gap';
-  gap.textContent = '…';
-  gap.title = `Jump to a page (${from + 1}–${to + 1} hidden here)`;
-
-  gap.onclick = () => {
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.className = 'pk-jump';
-    input.min = '1';
-    input.max = String(pages);
-    input.placeholder = from === to ? String(from + 1) : `${from + 1}–${to + 1}`;
-    input.setAttribute('aria-label', `Jump to page, 1 to ${pages}`);
-
-    /* ONE-SHOT. Every exit from this input — Escape, Enter, blur, and the
-       footer rebuild a successful jump triggers — detaches a FOCUSED element,
-       and detaching a focused element fires blur, which is itself an exit.
-       Without `settled` the handler re-enters mid-mutation and replaceWith
-       throws NotFoundError ("no longer a child of this node"). Dropping onblur
-       before touching the DOM closes the same door from the other side. */
-    let settled = false;
-    const restore = () => {
-      if (settled) return;
-      settled = true;
-      input.onblur = null;
-      if (input.isConnected) input.replaceWith(gap);
-    };
-    const commit = () => {
-      if (settled) return;
-      const n = parseInt(input.value, 10);
-      // Out of range is treated as "never mind" rather than clamped: clamping
-      // a typo'd 900 to page 90 looks like the jump worked and landed wrong.
-      if (!n || n < 1 || n > pages) return restore();
-      settled = true;
-      input.onblur = null;
-      pkSearch((n - 1) * PK_LIMIT);   // rebuilds the footer, this node included
-    };
-
-    input.onkeydown = (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      else if (e.key === 'Escape') { e.preventDefault(); restore(); }
-    };
-    input.onblur = restore;
-
-    gap.replaceWith(input);
-    input.focus();
-  };
-
-  return gap;
-}
-
+/* The footer is the shared pager (/js/ycPager.js — this picker's own pager,
+   extracted; tests/ycPager.test.js pins the window math and jump bands).
+   onPage hands back a 0-based page index; the endpoint wants an offset. */
 function pkRenderFoot(shown) {
-  const foot = pkEl('pkFoot');
-  foot.innerHTML = '';
-  if (!pkTotal) return;
-
-  const pages = Math.max(1, Math.ceil(pkTotal / PK_LIMIT));
-  const current = Math.floor(pkOffset / PK_LIMIT);
-
-  const nav = document.createElement('div');
-  nav.className = 'pk-pages';
-  const btn = (label, target, { disabled = false, isCurrent = false, title = '' } = {}) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'pk-page' + (isCurrent ? ' pk-page-current' : '');
-    b.textContent = label;
-    if (title) b.title = title;
-    if (isCurrent) b.setAttribute('aria-current', 'page');
-    if (disabled) b.disabled = true;
-    else b.onclick = () => pkSearch(target);
-    nav.appendChild(b);
-  };
-
-  btn('‹', (current - 1) * PK_LIMIT, { disabled: current === 0, title: 'Previous page' });
-  pkPageWindow(current, pages).forEach(p => {
-    if (typeof p === 'object') {
-      nav.appendChild(pkGapControl(p.from, p.to, pages));
-      return;
-    }
-    // Numbers are 1-based for humans, offsets are 0-based for the endpoint.
-    btn(String(p + 1), p * PK_LIMIT, { disabled: p === current, isCurrent: p === current });
+  YcPager.renderFooter(pkEl('pkFoot'), {
+    total: pkTotal, limit: PK_LIMIT, offset: pkOffset, shown,
+    onPage: (p) => pkSearch(p * PK_LIMIT),
+    persistKey: 'apptPicker',
+    // Back to page 1: the row the user was looking at is at a different
+    // offset under a different page size, so "stay where you are" has no
+    // honest answer.
+    onLimit: (n) => { PK_LIMIT = n || 25; pkSearch(0); },
   });
-  btn('›', (current + 1) * PK_LIMIT, { disabled: current >= pages - 1, title: 'Next page' });
-  foot.appendChild(nav);
-
-  const range = document.createElement('span');
-  range.className = 'pk-range';
-  // shown === 0 only on a stranded page; "2226–2225 of 2232" reads as a bug.
-  range.textContent = shown
-    ? `${pkOffset + 1}–${pkOffset + shown} of ${pkTotal}`
-    : `0 of ${pkTotal}`;
-  foot.appendChild(range);
-
-  const sizeWrap = document.createElement('span');
-  sizeWrap.className = 'pk-size-wrap';
-  const size = document.createElement('select');
-  size.className = 'pk-size';
-  size.title = 'Rows per page';
-  [25, 50, 100, 200].forEach(n => {
-    const o = document.createElement('option');
-    o.value = String(n);
-    o.textContent = String(n);
-    size.appendChild(o);
-  });
-  size.value = String(PK_LIMIT);
-  // Back to page 1: the row the user was looking at is at a different offset
-  // under a different page size, so "stay where you are" has no honest answer.
-  // Same choice the shell's Appts tab makes (`limit=this.value;tabApptsGet(0)`).
-  size.onchange = () => { PK_LIMIT = parseInt(size.value, 10) || 25; pkSearch(0); };
-  sizeWrap.appendChild(size);
-  sizeWrap.appendChild(document.createTextNode('per page'));
-  foot.appendChild(sizeWrap);
 }
 
 /** Open one appointment from the picker, in place. */

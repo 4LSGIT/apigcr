@@ -372,6 +372,12 @@ function sortSelect(element) {
 
    Iframe pages use P.apiSend (parent's auth wrapper). Top-level pages have
    P === window, so P.apiSend === window.apiSend.
+
+   renderLogFooter renders through the shared pager, so every page that calls
+   it must load /js/ycPager.js BEFORE this file (index.html, case.html,
+   contact.html and tasks.html all carry the tag). The dependency is call-time
+   only — a page that loads scripts.js for its other helpers and never renders
+   a log footer owes nothing.
    ────────────────────────────────────────────────────────────────────────── */
 
 /* Inject styles once per document (top-level + each iframe gets its own copy). */
@@ -422,129 +428,12 @@ function sortSelect(element) {
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    #logTableFoot {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 0.6em;
-      padding: 0.6em 0;
-      font-size: 0.95em;
-    }
-    /* A glyph acting as a rule, so it takes a border colour rather than a
-       text one -- --text-muted would read as another list item. */
-    #logTableFoot .sep {
-      color: var(--border-strong);
-      margin: 0 0.15em;
-      user-select: none;
-    }
-    #logTableFoot .log-pagination {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35em;
-    }
-    #logTableFoot .log-pagination a {
-      text-decoration: none;
-      padding: 0.15em 0.5em;
-      border-radius: 3px;
-    }
-    #logTableFoot .log-pagination a:hover {
-      background: var(--hover);
-      text-decoration: underline;
-    }
-    #logTableFoot .log-pagination strong {
-      padding: 0.15em 0.5em;
-      background: var(--surface-2);
-      color: var(--text);
-      border-radius: 3px;
-      font-weight: bold;
-    }
-    #logTableFoot .log-pagination-ellipsis {
-      color: var(--text-muted);
-      padding: 0 0.1em;
-    }
-    #logTableFoot .logPageInput {
-      width: 4.5em;
-      text-align: center;
-      font-weight: bold;
-      padding: 0.15em 0.3em;
-      border: 1px solid var(--border-strong);
-      background: var(--surface);
-      color: var(--text);
-      border-radius: 3px;
-      -moz-appearance: textfield;
-    }
-    #logTableFoot .logPageInput::-webkit-outer-spin-button,
-    #logTableFoot .logPageInput::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
-    /* Toggle label (wraps switch + text) */
-    #logTableFoot .log-expand-toggle {
-      cursor: pointer;
-      user-select: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5em;
-    }
-    /* CSS-only toggle switch — pure visual, replaces a plain checkbox */
-    .log-switch {
-      position: relative;
-      display: inline-block;
-      width: 32px;
-      height: 18px;
-      vertical-align: middle;
-      flex: 0 0 auto;
-    }
-    .log-switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-      margin: 0;
-      position: absolute;
-    }
-    .log-switch-slider {
-      position: absolute;
-      cursor: pointer;
-      inset: 0;
-      /* Track, OFF. --border-strong keeps the light look and lifts the dark
-         one; the knob below stays literal white on purpose -- it has to read
-         against the track in BOTH modes, so it is mode-independent by design,
-         exactly like --fill-text but for a shape rather than a label.
-         The knob measures 1.35 on this track in light (it was 1.44 on #ccc)
-         and 8.94 in dark; the light figure is under SC 1.4.11 and was before
-         this change too. Reported, not silently retuned. */
-      background-color: var(--border-strong);
-      transition: background-color 0.15s;
-      border-radius: 18px;
-    }
-    .log-switch-slider::before {
-      position: absolute;
-      content: "";
-      height: 14px;
-      width: 14px;
-      left: 2px;
-      bottom: 2px;
-      background-color: white;
-      transition: transform 0.15s;
-      border-radius: 50%;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-    }
-    /* Track, ON. --accent is the fill token; the white knob measures 2.55 on
-       it (it was 2.90 on #4a90e2). Reaching 3:1 would mean giving this one
-       switch a different blue from every other primary control, which is the
-       inconsistency the arc exists to remove. Reported. */
-    .log-switch input:checked + .log-switch-slider {
-      background-color: var(--accent);
-    }
-    .log-switch input:checked + .log-switch-slider::before {
-      transform: translateX(14px);
-    }
-    .log-switch input:focus-visible + .log-switch-slider {
-      box-shadow: 0 0 0 2px var(--accent);
-    }
-    #logTableFoot button {
-      padding: 0.2em 0.7em;
-    }
+    /* Footer chrome (pager buttons, size select, expand switch, Print/Export)
+       lives in /js/ycPager.js now — the .yc-pager* classes it injects replaced
+       the #logTableFoot-scoped rules that used to sit here. Scoping to the id
+       is also why tasks.html once carried a rescoped copy; the class does not
+       have that problem. */
+    #logTableFoot { padding: 0.6em 0; }
 
     /* Scoped reset for the export dialog — neutralises any global
        \`input { width: 200px; ... }\` rule that would otherwise stretch
@@ -913,75 +802,11 @@ async function showLogDetails(logId) {
   }
 }
 
-/* Ellipsis-windowed log pagination — NO « » arrows (per spec).
-     • Compact mode (totalPages ≤ 7): all pages, bold current, no input.
-     • Ellipsis mode (>7):            first 2 + last 2 + window ±2 around
-                                       current; current is <input>; gaps
-                                       between groups shown as `…`.
-   Click on any number → jumpFn(page). Enter/blur in input → jumpFn(page),
-   clamped to [1, totalPages]. */
-function renderLogPagination(containerEl, total, limit, offset, jumpFn) {
-  containerEl.innerHTML = '';
-  if (!total || total < 0) total = 0;
-  if (!limit || limit < 1) limit = 1;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const current = Math.min(totalPages, Math.max(1, Math.floor(offset / limit) + 1));
-
-  const parts = [];
-
-  if (totalPages <= 7) {
-    for (let i = 1; i <= totalPages; i++) {
-      parts.push(i === current
-        ? `<strong>${i}</strong>`
-        : `<a href="#" data-page="${i}">${i}</a>`);
-    }
-  } else {
-    const pages = new Set([1, 2, totalPages - 1, totalPages]);
-    for (let p = current - 2; p <= current + 2; p++) {
-      if (p >= 1 && p <= totalPages) pages.add(p);
-    }
-    const sorted = [...pages].sort((a, b) => a - b);
-    let prev = 0;
-    for (const p of sorted) {
-      if (prev && p > prev + 1) parts.push(`<span class="log-pagination-ellipsis">…</span>`);
-      if (p === current) {
-        parts.push(
-          `<input type="number" min="1" max="${totalPages}" value="${current}"
-                  class="logPageInput" aria-label="Jump to page">`
-        );
-      } else {
-        parts.push(`<a href="#" data-page="${p}">${p}</a>`);
-      }
-      prev = p;
-    }
-  }
-
-  containerEl.innerHTML = parts.join(' ');
-
-  containerEl.querySelectorAll('a[data-page]').forEach(a => {
-    a.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      const p = parseInt(a.getAttribute('data-page'), 10);
-      if (!isNaN(p)) jumpFn(p);
-    });
-  });
-
-  const input = containerEl.querySelector('.logPageInput');
-  if (input) {
-    const submit = () => {
-      let p = parseInt(input.value, 10);
-      if (isNaN(p)) { input.value = current; return; }
-      p = Math.max(1, Math.min(totalPages, p));
-      if (p !== current) jumpFn(p);
-      else input.value = current;
-    };
-    input.addEventListener('keypress', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
-    });
-    input.addEventListener('blur', submit);
-    input.addEventListener('focus', () => input.select());
-  }
-}
+/* renderLogPagination used to live here — the ellipsis-windowed pager that
+   emailIngest/phoneIngest each ported a copy of. The engine is now
+   YcPager.renderPages (/js/ycPager.js), which renderLogFooter below calls
+   through YcPager.renderFooter; the old "no « » arrows (per spec)" rule is
+   deliberately retired with it — the shared pager has arrows everywhere. */
 
 /* Toggle the data-column collapse class on the log table and persist
    to yc.log.expand. Wired by renderLogFooter to the checkbox it injects. */
@@ -998,107 +823,52 @@ function toggleLogDataExpand() {
   setTabPref('log', 'expand', cb.checked ? 'true' : 'false');
 }
 
-/* Render the full log-table footer: pagination | meta | limit | toggle | print + export.
-   `exportFn` is optional — omit to hide the Export button. */
-function renderLogFooter(containerEl, data, limit, offset, jumpFn, exportFn) {
-  containerEl.innerHTML = '';
+/* Render the full log-table footer: pagination | range | limit | toggle | print + export.
+   `exportFn` is optional — omit to hide the Export button. jumpFn(pageNum) is
+   1-based, as it always was; the shared pager hands back 0-based indexes and
+   the +1 lives here so no caller changes.
 
+   The 'log' page size stays on its original pref (yc.log.limit via
+   setTabPref) rather than the module's per-surface map: every consumer of
+   this footer — index Logs, case.html, contact.html — already reads that
+   pref at boot, and the three ARE one surface on purpose (the same lever
+   everywhere a log table appears). */
+function renderLogFooter(containerEl, data, curLimit, offset, jumpFn, exportFn) {
   const total = data.total || 0;
-  const shownStart = total === 0 ? 0 : offset + 1;
-  const shownEnd = Math.min(total, offset + ((data.entries && data.entries.length) || 0));
 
-  // 1. Pagination
-  const pagWrap = document.createElement('span');
-  pagWrap.className = 'log-pagination';
-  containerEl.appendChild(pagWrap);
-  renderLogPagination(pagWrap, total, limit, offset, jumpFn);
-
-  // 2. Showing N-M of T
-  const meta = document.createElement('span');
-  meta.innerHTML = `<span class="sep">|</span> Showing ${shownStart}–${shownEnd} of ${total}`;
-  containerEl.appendChild(meta);
-
-  // 3. Limit dropdown — pref-backed (yc.log.limit)
-  const limitWrap = document.createElement('span');
-  limitWrap.innerHTML = `<span class="sep">|</span> Limit
-    <select style="width:auto" onchange="setTabPref('log','limit',this.value);limit=this.value;tabLogGet(0)">
-      <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
-      <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
-      <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
-      <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
-    </select>`;
-  containerEl.appendChild(limitWrap);
-
-  // 4. Expand toggle — CSS switch; pref-backed (yc.log.expand).
-  // Read pref on every render and reflect on the table class so the source
-  // of truth is the pref, not the in-DOM class. Toggle handler writes back.
+  // Expand pref — read on every render and reflected onto the table class so
+  // the source of truth is the pref, not the in-DOM class. The switch's
+  // change handler (toggleLogDataExpand) writes back and clears per-cell
+  // overrides; the module only draws the control.
   const tbl = E('logTable');
   const isExpanded = getTabPref('log', 'expand', 'false') === 'true';
   if (tbl) tbl.classList.toggle('log-data-expanded', isExpanded);
-  const toggleWrap = document.createElement('span');
-  toggleWrap.innerHTML = `<span class="sep">|</span>
-    <label class="log-expand-toggle" title="Expand data rows in the log table">
-      <span class="log-switch">
-        <input type="checkbox" id="logExpandData" ${isExpanded ? 'checked' : ''}>
-        <span class="log-switch-slider"></span>
-      </span>
-      <span>Expand rows</span>
-    </label>`;
-  containerEl.appendChild(toggleWrap);
-  const cb = containerEl.querySelector('#logExpandData');
-  if (cb) cb.addEventListener('change', toggleLogDataExpand);
 
-  // 5. Print + Export buttons
-  const btnWrap = document.createElement('span');
-  btnWrap.innerHTML = `<span class="sep">|</span>
-    <button type="button" class="log-print-btn">Print</button>
-    ${exportFn ? '<button type="button" class="log-export-btn">Export</button>' : ''}`;
-  containerEl.appendChild(btnWrap);
-  containerEl.querySelector('.log-print-btn')
-    .addEventListener('click', () => window.print());
-  if (exportFn) {
-    containerEl.querySelector('.log-export-btn').addEventListener('click', exportFn);
-  }
+  YcPager.renderFooter(containerEl, {
+    total, limit: Number(curLimit), offset,
+    shown: (data.entries && data.entries.length) || 0,
+    onPage: (p) => jumpFn(p + 1),
+    onLimit: (n) => {
+      setTabPref('log', 'limit', n);
+      // Bare on purpose: resolves to the CALLING PAGE's global `limit` (the
+      // shared lever this footer's inline handler always wrote); the renamed
+      // parameter above is what keeps it from being shadowed here.
+      limit = n;
+      tabLogGet(0);
+    },
+    expand: {
+      label: 'Expand rows', title: 'Expand data rows in the log table',
+      checked: isExpanded, inputId: 'logExpandData',
+      onChange: toggleLogDataExpand,
+    },
+    onPrint: true,
+    onExport: exportFn || null,
+  });
 }
 
-/* Footer for the Events tab — log-style pagination (reuses renderLogPagination)
-   plus a "Showing N–M of T" meta, a limit dropdown, and Print. Deliberately
-   leaner than renderLogFooter (no expand toggle / export). jumpFn(pageNum) is
-   1-based; limitChange(newLimit) lets the caller re-fetch at a new page size. */
-function renderEventsFooter(containerEl, total, limit, offset, shownCount, jumpFn, limitChange) {
-  containerEl.innerHTML = '';
-  total = total || 0;
-  const shownStart = total === 0 ? 0 : offset + 1;
-  const shownEnd = Math.min(total, offset + (shownCount || 0));
-
-  const pagWrap = document.createElement('span');
-  pagWrap.className = 'log-pagination';
-  containerEl.appendChild(pagWrap);
-  renderLogPagination(pagWrap, total, limit, offset, jumpFn);
-
-  const meta = document.createElement('span');
-  meta.innerHTML = `<span class="sep">|</span> Showing ${shownStart}–${shownEnd} of ${total}`;
-  containerEl.appendChild(meta);
-
-  const limitWrap = document.createElement('span');
-  limitWrap.innerHTML = `<span class="sep">|</span> Limit
-    <select style="width:auto">
-      <option value="50"  ${limit == 50 ? 'selected' : ''}>50</option>
-      <option value="100" ${limit == 100 ? 'selected' : ''}>100</option>
-      <option value="200" ${limit == 200 ? 'selected' : ''}>200</option>
-      <option value="500" ${limit == 500 ? 'selected' : ''}>500</option>
-    </select>`;
-  containerEl.appendChild(limitWrap);
-  const limSel = limitWrap.querySelector('select');
-  if (limSel && typeof limitChange === 'function') {
-    limSel.addEventListener('change', () => limitChange(limSel.value));
-  }
-
-  const btnWrap = document.createElement('span');
-  btnWrap.innerHTML = `<span class="sep">|</span> <button type="button" class="log-print-btn">Print</button>`;
-  containerEl.appendChild(btnWrap);
-  btnWrap.querySelector('.log-print-btn').addEventListener('click', () => window.print());
-}
+/* renderEventsFooter is gone: its two callers (the shell's Events tab,
+   tasks.html) call YcPager.renderFooter directly — the wrapper only existed
+   to share renderLogPagination, which lives in the module now. */
 
 /* CSV export — three-step flow:
      1. Probe (limit=1) to learn the total under current filters.

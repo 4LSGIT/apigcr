@@ -63,6 +63,7 @@ const bcPolyfill = require('./helpers/bcPolyfill');
 const ROOT   = path.join(__dirname, '..');
 const HTML   = fs.readFileSync(path.join(ROOT, 'public/documents.html'), 'utf8');
 const YCSYNC = fs.readFileSync(path.join(ROOT, 'public/js/yc-sync.js'), 'utf8');
+const YCPAGER = fs.readFileSync(path.join(ROOT, 'public/js/ycPager.js'), 'utf8');
 
 const DOMS = [];
 const TEARDOWNS = [];
@@ -142,6 +143,7 @@ async function boot({ responses = [], routes = {}, query = '', swal = {} } = {})
 
   TEARDOWNS.push(bcPolyfill.install(window));
   window.eval(YCSYNC);
+  window.eval(YCPAGER);   // the page's pager renders through it
 
   const noComments = HTML.replace(/<!--[\s\S]*?-->/g, '');
   window.document.body.innerHTML =
