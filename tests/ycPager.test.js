@@ -222,10 +222,11 @@ describe('the per-surface limit store', () => {
 });
 
 /* ── DOM output ──────────────────────────────────────────────────────────
-   jsdom, but the module was loaded in Node with no window: ensureStyles
-   no-ops (no global document) and every builder works off el.ownerDocument.
-   Handlers are assigned as element properties, so tests invoke them
-   directly with the two fields they read (key, preventDefault). */
+   jsdom. The module was loaded in Node with no window, but everything —
+   builders AND ensureStyles — works off el.ownerDocument, so each host()
+   document gets its own #yc-pager-styles injected exactly as a browser
+   frame would. Handlers are assigned as element properties, so tests invoke
+   them directly with the two fields they read (key, preventDefault). */
 
 function host() {
   const dom = new JSDOM('<!doctype html><body><div id="foot"></div></body>');

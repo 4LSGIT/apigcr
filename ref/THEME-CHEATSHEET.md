@@ -104,9 +104,12 @@ verbatim copies of the old pager is how the arc started.
 - Page-size memory: read `YcPager.getLimit('<key>', <default>)` at boot and
   pass `persistKey: '<key>'` — one localStorage map (`yc.pager.limits`), one
   key per surface, so every list remembers its own size. Pick a fresh key for
-  a new surface (`grep persistKey public/` lists the taken ones). The one
-  deliberate exception: the log tables (index/case/contact) share
-  `yc.log.limit` — one lever for every log table, by design.
+  a new surface: **`grep -rn "getLimit(" public/` lists the taken ones** —
+  every consumer reads at boot, whereas a `persistKey` grep misses the two
+  ingest pages, which write through `YcPager.setLimit(...)` from their
+  toolbar Limit selects instead of the footer. The one deliberate exception:
+  the log tables (index/case/contact) share `yc.log.limit` — one lever for
+  every log table, by design.
 - Empty page but a non-zero count? `YcPager.snapBackOffset(total, limit,
   offset)` → refetch at the returned offset when ≥ 0. It only ever moves
   strictly backwards, so it cannot loop.
