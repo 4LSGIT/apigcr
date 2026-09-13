@@ -373,11 +373,11 @@ function sortSelect(element) {
    Iframe pages use P.apiSend (parent's auth wrapper). Top-level pages have
    P === window, so P.apiSend === window.apiSend.
 
-   The two footers below render through the shared pager, so every page that
-   calls them must load /js/ycPager.js BEFORE this file (index.html, case.html,
-   contact.html, tasks.html all do). The dependency is call-time only — a page
-   that loads scripts.js for its other helpers and never renders a log/events
-   footer owes nothing.
+   renderLogFooter renders through the shared pager, so every page that calls
+   it must load /js/ycPager.js BEFORE this file (index.html, case.html,
+   contact.html and tasks.html all carry the tag). The dependency is call-time
+   only — a page that loads scripts.js for its other helpers and never renders
+   a log footer owes nothing.
    ────────────────────────────────────────────────────────────────────────── */
 
 /* Inject styles once per document (top-level + each iframe gets its own copy). */
@@ -804,7 +804,7 @@ async function showLogDetails(logId) {
 
 /* renderLogPagination used to live here — the ellipsis-windowed pager that
    emailIngest/phoneIngest each ported a copy of. The engine is now
-   YcPager.renderPages (/js/ycPager.js), which the two footers below call
+   YcPager.renderPages (/js/ycPager.js), which renderLogFooter below calls
    through YcPager.renderFooter; the old "no « » arrows (per spec)" rule is
    deliberately retired with it — the shared pager has arrows everywhere. */
 
@@ -866,18 +866,9 @@ function renderLogFooter(containerEl, data, curLimit, offset, jumpFn, exportFn) 
   });
 }
 
-/* Footer for the Events tab — pagination + range + limit + Print. Deliberately
-   leaner than renderLogFooter (no expand toggle / export). jumpFn(pageNum) is
-   1-based; limitChange(newLimit) lets the caller re-fetch at a new page size
-   and own where (or whether) the size is remembered. */
-function renderEventsFooter(containerEl, total, curLimit, offset, shownCount, jumpFn, limitChange) {
-  YcPager.renderFooter(containerEl, {
-    total: total || 0, limit: Number(curLimit), offset, shown: shownCount || 0,
-    onPage: (p) => jumpFn(p + 1),
-    onLimit: (n) => { if (typeof limitChange === 'function') limitChange(n); },
-    onPrint: true,
-  });
-}
+/* renderEventsFooter is gone: its two callers (the shell's Events tab,
+   tasks.html) call YcPager.renderFooter directly — the wrapper only existed
+   to share renderLogPagination, which lives in the module now. */
 
 /* CSV export — three-step flow:
      1. Probe (limit=1) to learn the total under current filters.
