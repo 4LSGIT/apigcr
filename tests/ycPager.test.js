@@ -295,6 +295,30 @@ describe('renderPages DOM', () => {
     expect(jumps).toEqual([41]);
   });
 
+  test('a COMMITTED jump rebuilds the footer it came from', () => {
+    // The rebuild-guard's one legitimate exception. commit() must detach the
+    // input BEFORE handing off to onJump: a synchronous consumer (customView
+    // re-slices in place) re-renders inside that call, and with the focused
+    // input still attached the guard would swallow exactly the render the
+    // jump exists to cause — rows on page 42 under a footer stuck on page 1
+    // with the input sitting open.
+    const el = host();
+    let offset = 0;
+    const render = () => renderFooter(el, {
+      total: 900, limit: 10, offset, shown: 10,
+      onPage: (p) => { offset = p * 10; render(); },
+    });
+    render();
+    el.querySelector('.yc-gap').onclick();
+    const input = el.querySelector('.yc-jump');
+    input.focus();
+    input.value = '42';
+    input.onkeydown({ key: 'Enter', preventDefault: () => {} });
+    expect(offset).toBe(410);
+    expect(el.querySelector('.yc-jump')).toBeNull();
+    expect(el.querySelector('.yc-page-current').textContent).toBe('42');
+  });
+
   test('a poll re-render cannot yank the jump input mid-typing', () => {
     // Workflow executions / sequence enrollments rebuild their footer on a
     // 5s poll. While the jump input holds focus, a re-render must no-op —

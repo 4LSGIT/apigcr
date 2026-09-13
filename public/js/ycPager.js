@@ -19,8 +19,10 @@
  * not an id. scripts.js scoped the old footer styles to #logTableFoot, and the
  * price was a rescoped copy in tasks.html (#tasksTableFoot) and another in
  * each ingest page. A class costs nothing and composes with any container.
- * Controls are 28px tall — theme.css's --ctl-h — so the density arc gets this
- * footer for free.
+ * Controls are a literal 28px tall — the same value theme.css's --ctl-h
+ * carries, kept literal on purpose: wiring a density token has a second file
+ * (the themeCustom UNUSED list, per the density-arc rule), and that wiring is
+ * a density-arc slice's call, not this module's.
  *
  * PAGE-SIZE MEMORY. One localStorage entry, `yc.pager.limits`, holds a JSON
  * map of surface-key → rows-per-page, so every list remembers its own size
@@ -151,9 +153,11 @@
 
   /* ── styles, injected once per document ────────────────────────────────── */
 
-  function ensureStyles() {
-    var doc = global.document;
-    if (!doc || doc.getElementById('yc-pager-styles')) return;
+  /* Injected into the document the TARGET ELEMENT lives in, not this copy's
+     own global — so a renderer handed a node from another document (a test
+     harness, some future cross-frame use) styles the document it drew in. */
+  function ensureStyles(doc) {
+    if (!doc || !doc.head || doc.getElementById('yc-pager-styles')) return;
     var style = doc.createElement('style');
     style.id = 'yc-pager-styles';
     style.textContent = '\n' +
@@ -287,6 +291,12 @@
         if (!n || n < 1 || n > pages) return restore();
         settled = true;
         input.onblur = null;
+        // Detach BEFORE handing off. onJump re-renders this footer (a
+        // synchronous consumer does it inside this very call), and the
+        // rebuild-guard would read a still-attached, still-focused input as
+        // a jump in progress and swallow exactly the render the jump exists
+        // to cause. The jump is settled here; the input's job is done.
+        if (input.isConnected) input.replaceWith(gap);
         onJump(n - 1);               // rebuilds the footer, this node included
       };
 
@@ -323,7 +333,7 @@
    * opts: { total, limit, offset, onPage } — onPage gets a 0-based page index.
    */
   function renderPages(el, opts) {
-    ensureStyles();
+    ensureStyles(el.ownerDocument);
     if (jumpInProgress(el)) return;
     var doc = el.ownerDocument;
     el.innerHTML = '';
@@ -365,7 +375,7 @@
 
   /** The full footer strip. See the header comment for opts. */
   function renderFooter(el, opts) {
-    ensureStyles();
+    ensureStyles(el.ownerDocument);
     if (jumpInProgress(el)) return;
     var doc = el.ownerDocument;
     el.innerHTML = '';
