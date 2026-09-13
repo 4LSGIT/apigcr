@@ -68,6 +68,7 @@ const bcPolyfill = require('./helpers/bcPolyfill');
 const ROOT   = path.join(__dirname, '..');
 const HTML   = fs.readFileSync(path.join(ROOT, 'public/documents.html'), 'utf8');
 const YCSYNC = fs.readFileSync(path.join(ROOT, 'public/js/yc-sync.js'), 'utf8');
+const YCPAGER = fs.readFileSync(path.join(ROOT, 'public/js/ycPager.js'), 'utf8');
 
 const DOMS = [];
 const TEARDOWNS = [];
@@ -152,6 +153,7 @@ async function boot({ responses = [], query = `?link_type=case&link_id=${CASE_ID
   // The bus lives in the WIDGET's realm — that is the frame under test.
   TEARDOWNS.push(bcPolyfill.install(window));
   window.eval(YCSYNC);
+  window.eval(YCPAGER);   // the page's pager renders through it
 
   // Markup first (the inline block touches the DOM at top level), comments
   // stripped so a `<script>` MENTIONED in a comment cannot split a block.
