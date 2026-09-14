@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-09-07T00:42:11.912Z_  
-_667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL: 2_
+_Generated 2026-09-14T18:50:01.286Z_  
+_684 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 264, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -154,6 +154,9 @@ _667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL:
 | POST | `/api/contact-relations` | `jwtOrApiKey` | — |
 | DELETE | `/api/contact-relations/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/contact-relations/:id` | `jwtOrApiKey` | — |
+| GET | `/api/contact-role-types` | `jwtOrApiKey` | — |
+| POST | `/api/contact-role-types` | `jwtOrApiKey` | — |
+| PUT | `/api/contact-role-types/:code` | `jwtOrApiKey` | — |
 | GET | `/api/contacts` | `jwtOrApiKey` | — |
 | POST | `/api/contacts` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id` | `jwtOrApiKey` | — |
@@ -166,6 +169,10 @@ _667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL:
 | GET | `/api/contacts/:id/log` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/phones` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/relations` | `jwtOrApiKey` | — |
+| GET | `/api/contacts/:id/roles` | `jwtOrApiKey` | — |
+| POST | `/api/contacts/:id/roles` | `jwtOrApiKey` | — |
+| DELETE | `/api/contacts/:id/roles/:roleRowId` | `jwtOrApiKey` | — |
+| PATCH | `/api/contacts/:id/roles/:roleRowId` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/sequences` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/tasks` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/workflows` | `jwtOrApiKey` | — |
@@ -514,6 +521,15 @@ _667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL:
 | POST | `/api/temp/ringcentral/request` | `readonlyApiKeyAuth` | — |
 | GET | `/api/temp/ringcentral/whoami` | `readonlyApiKeyAuth` | — |
 | POST | `/api/temp/zohosign/request` | `readonlyApiKeyAuth` | — |
+| GET | `/api/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| DELETE | `/api/tools/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/tools/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| PATCH | `/api/tools/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/tools/:id/restore/:vid` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/tools/:id/versions` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| DELETE | `/api/tools/:id/versions/:vid` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/tools/:id/versions/:vid` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/triggers/events` | `jwtOrApiKey` | — |
 | GET | `/api/triggers/executions` | `jwtOrApiKey` | — |
 | GET | `/api/triggers/executions/:id` | `jwtOrApiKey` | — |
@@ -874,6 +890,12 @@ _667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL:
 |--------|------|-------------|---------|
 | GET | `/test-alert-bom` | — | — |
 
+## /tool
+
+| Method | Path | Middlewares | Handler |
+|--------|------|-------------|---------|
+| GET | `/tool/:key` | — | — |
+
 ## /unplacehold
 
 | Method | Path | Middlewares | Handler |
@@ -922,4 +944,4 @@ _667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL:
 
 ---
 
-_667 routes total — DELETE: 53, GET: 275, PATCH: 43, POST: 260, PUT: 34, _ALL: 2_
+_684 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 264, PUT: 35, _ALL: 2_
