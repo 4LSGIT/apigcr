@@ -127,6 +127,7 @@ The rest, in no particular order:
 
 - Readonly SQL: `POST https://app.4lsg.com/api/readonly/sql` `{sql, params?}`, header `X-Readonly-Api-Key` (session key from Fred — never commit one). SELECT/SHOW/DESCRIBE/EXPLAIN; CTEs blocked — use subqueries. Targeted queries over table dumps.
 - Scratch (cross-session notes): `PUT/DELETE /api/scratch/:ns/:k` `{v, meta?}`; read from `rw_scratch` via the SQL endpoint. Manager state lives in `ns=fred`.
+- IT alert (push a finding to Fred without a human round-trip): `POST /api/alert/it` `{subject, message, severity?}`, same `X-Readonly-Api-Key` header. Delivery is DERIVED from severity — `info`/`warn` email IT, `critical` also SMS; a `channel` key is a 400. Message is plain text (escaped, no sanitizer). Synchronous: a failed send is a 502, not a silent swallow. 10/hour per key — fold overflow into one digest. Use it for things that are actually burning, not status updates.
 - Remote agents fetch the repo fresh: `curl -sL "https://codeload.github.com/4LSGIT/apigcr/tar.gz/refs/heads/main?cb=$(date +%s)"`. Never trust raw.githubusercontent for current state.
 
 ## Two one-way doors

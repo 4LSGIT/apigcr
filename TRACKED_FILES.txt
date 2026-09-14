@@ -582,6 +582,7 @@ routes/test_wf_advance.js
 routes/unplacehold.js
 routes/videoLanding.js
 routes/workflows.js
+scratch-browser.patch
 scripts/Courtapprovetest.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
