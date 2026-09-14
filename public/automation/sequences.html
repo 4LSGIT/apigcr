@@ -750,7 +750,7 @@
 // SEQUENCES SUB-PAGE
 //
 // Shell communication:
-//   - P.apiSend(...)                      — relayed to a.html
+//   - P.apiSend(...)                      — relayed to index.html
 //   - P.fdPhoneLineSelectHtml(...)        — shell helper
 //   - P.fdPhoneLineMmsSelectHtml(...)     — shell helper (MMS-capable lines only)
 //   - P.fdEmailFromSelectHtml(...)        — shell helper
@@ -814,7 +814,7 @@ function togglePanelLeft(btn) {
 window.togglePanelLeft = togglePanelLeft;
 
 // Shell firmData helpers — bound to parent frame so they pick up
-// whatever a.html currently has in window.firmData.
+// whatever index.html currently has in window.firmData.
 const fdPhoneLineSelectHtml    = (id, val) => P.fdPhoneLineSelectHtml(id, val);
 const fdPhoneLineMmsSelectHtml = (id, val) => P.fdPhoneLineMmsSelectHtml(id, val);
 const fdEmailFromSelectHtml    = (id, val) => P.fdEmailFromSelectHtml(id, val);

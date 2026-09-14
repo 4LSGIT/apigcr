@@ -152,7 +152,7 @@
 //       firmData helpers).
 //
 // Sub-pages are iframes; they communicate with the shell only via:
-//   - window.parent.apiSend(...)                     (relay to a.html)
+//   - window.parent.apiSend(...)                     (relay to index.html)
 //   - window.parent.firmData                         (live getter)
 //   - window.parent.fdPhoneLines() etc.              (helpers)
 //   - window.parent.fdPhoneLineSelectHtml() etc.     (select/datalist builders)
@@ -166,7 +166,7 @@
 
 // ── Parent bridges ─────────────────────────────────────────────
 // apiSend: relay. Sub-pages call window.parent.apiSend(...). We
-// forward to a.html's apiSend. Function declaration so it's
+// forward to index.html's apiSend. Function declaration so it's
 // globally accessible via window.apiSend.
 function apiSend(...args) {
   return window.parent.apiSend(...args);
@@ -174,7 +174,7 @@ function apiSend(...args) {
 
 // firmData: live getter. Returns the parent's firmData object by
 // reference, so any read picks up the current state (including
-// any future re-assignment in a.html). Sub-pages read it as
+// any future re-assignment in index.html). Sub-pages read it as
 // window.parent.firmData.
 Object.defineProperty(window, 'firmData', {
   get()  { return window.parent ? window.parent.firmData : undefined; },
@@ -405,7 +405,7 @@ function renderShellStructure() {
 
 // ── Tab switching + lazy-load ──────────────────────────────────
 //
-// Mirrors a.html's tabMore pattern: data-src → src on first
+// Mirrors index.html's tabMore pattern: data-src → src on first
 // activation; subsequent activations just toggle display.
 function switchSubPage(id) {
   const page = SUB_PAGES.find(p => p.id === id);

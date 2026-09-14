@@ -52,7 +52,7 @@
   }
 
   function getApiSend() {
-    // Parent shell (a.html / index.html) exposes apiSend on window.
+    // Parent shell (index.html) exposes apiSend on window.
     return window.parent && window.parent.apiSend;
   }
 

@@ -362,7 +362,7 @@ function sortSelect(element) {
 
 /* ──────────────────────────────────────────────────────────────────────────
    Log tab shared helpers (Slice B.3 + B.4)
-   Used by a.html, b.html, contact.html, case.html.
+   Used by index.html, contact.html, case.html.
 
    Calling contract — each caller defines:
      • tabLogGet(offset)     — refreshes the log table at the given offset
@@ -1056,7 +1056,7 @@ function downloadFile(content, filename, mimeType) {
    (ContactPicker, newContact, OrphanAdoptDialog) + shared helpers.
 
    These live here (not in a shell) so they're usable from the shell
-   (a.html / b.html) and, in the future, from iframes. All network calls
+   (index.html) and, in the future, from iframes. All network calls
    go through P.apiSend: in the shell P === window so P.apiSend ===
    window.apiSend; in an iframe P === parent and P.apiSend is the parent's
    auth wrapper (iframes also alias window.apiSend = P.apiSend).

@@ -5,7 +5,7 @@
  *
  * GET /api/system-status
  *
- * Read-only health snapshot consumed by the shell banner (a.html / b.html):
+ * Read-only health snapshot consumed by the shell banner (index.html):
  *   - process-jobs poller heartbeat freshness  (app_settings 'process_jobs_last_heartbeat_at')
  *   - error sweep freshness                    (app_settings 'alert_last_sweep_at' —
  *     written by lib/alerting.js ONLY on fully-successful non-dry sweeps; that

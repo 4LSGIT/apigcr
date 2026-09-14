@@ -8,7 +8,7 @@
 //
 // All routes ride normal JWT auth (jwtOrApiKey → req.auth.userId). No custom
 // header gate: auth comes in on apiSend's bearer token. Page is meant to be
-// mounted inside the shell (a.html/b.html) so window.top.apiSend exists.
+// mounted inside the shell (index.html) so window.top.apiSend exists.
 //
 // Routes (absolute paths; the readdirSync loop app.use()s this router at root):
 //   GET  /api/court-preview/prompt           → prompt + model prefill
