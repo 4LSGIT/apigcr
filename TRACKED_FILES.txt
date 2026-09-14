@@ -325,7 +325,6 @@ public/videoManager.html
 ref/2026-07-27_test_quick_notes_slice2_definition.json
 ref/2026-08-03_issn_tabs_definition.json
 ref/2026-08-14_intake_cards_definition.json
-ref/2026-08-26_pipeline_r15_rules.sql
 ref/2026-09-04_dbkq_coverage.md
 ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-06_dbkq_definition.v1.2.json
@@ -409,6 +408,7 @@ ref/migrations/2026-08-20_checklists_event_link_type.sql
 ref/migrations/2026-08-20_issue_reports.sql
 ref/migrations/2026-08-22_ingest_matched_rules_index.sql
 ref/migrations/2026-08-25_pipeline_lane.sql
+ref/migrations/2026-08-26_pipeline_r15_rules.sql
 ref/migrations/2026-08-26_pipeline_r2_requirements.sql
 ref/migrations/2026-08-27_documents_external_id_bin.sql
 ref/migrations/2026-08-27_unified_events_e0a.sql

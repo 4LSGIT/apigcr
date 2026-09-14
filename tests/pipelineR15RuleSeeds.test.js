@@ -6,7 +6,8 @@
 // WHAT THIS FILE IS FOR
 // ---------------------
 // The advances R1.5 deleted from code did not vanish — they MOVED into
-// ref/2026-08-26_pipeline_r15_rules.sql as trigger_rule_actions.config JSON.
+// ref/migrations/2026-08-26_pipeline_r15_rules.sql as
+// trigger_rule_actions.config JSON.
 // That JSON is data, so nothing in the normal build ever type-checks it, and
 // the failure mode when it is wrong is the worst kind: the Aug 2026 rule-12
 // postmortem established that a malformed csvList guard makes a rule report
@@ -22,7 +23,7 @@
 //      the SQL, without updating the other. The literals below and the SQL
 //      file must be read together; that is the point.
 //
-// KEEP IN SYNC WITH: ref/2026-08-26_pipeline_r15_rules.sql
+// KEEP IN SYNC WITH: ref/migrations/2026-08-26_pipeline_r15_rules.sql
 //
 // Run:
 //   npx jest tests/pipelineR15RuleSeeds.test.js
@@ -38,7 +39,8 @@ const { EVENT_TYPES } = require('../services/triggerService');
 const validateParamsMapping = internalFunctions.__validateParamsMapping;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE SEEDS — copied verbatim from ref/2026-08-26_pipeline_r15_rules.sql.
+// THE SEEDS — copied verbatim from
+// ref/migrations/2026-08-26_pipeline_r15_rules.sql.
 //
 // In the SQL these are JSON string literals inside the config column, with
 // single quotes doubled for MySQL ('' → '). Un-doubled here, which is what
@@ -225,9 +227,10 @@ describe('the seed check is not vacuous', () => {
 // mismatch surfaces here rather than in production six weeks later.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('ref/2026-08-26_pipeline_r15_rules.sql matches the literals above', () => {
+describe('the r15_rules migration matches the literals above', () => {
   const sql = require('fs').readFileSync(
-    require('path').join(__dirname, '..', 'ref', '2026-08-26_pipeline_r15_rules.sql'), 'utf8'
+    require('path').join(__dirname, '..', 'ref', 'migrations',
+                         '2026-08-26_pipeline_r15_rules.sql'), 'utf8'
   );
 
   test.each(RULES.map((r) => [r.name, r]))('%s — rule name and event appear', (name, rule) => {

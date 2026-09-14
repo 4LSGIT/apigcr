@@ -1,6 +1,6 @@
 -- ============================================================
 -- Pipeline R1.5 — stage keys move from code to data
--- ref/2026-08-26_pipeline_r15_rules.sql
+-- ref/migrations/2026-08-26_pipeline_r15_rules.sql
 --
 -- Run ONCE, BEFORE deploying the R1.5 code (migration → code order).
 -- Prereq: the T1, T3/T4 and R4 trigger migrations are already applied.
