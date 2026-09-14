@@ -2,6 +2,7 @@
 .githooks/pre-commit
 .github/workflows/node.js.yml
 .gitignore
+CLAUDE.md
 Dockerfile
 Dockerfile.base
 TRACKED_FILES.txt
