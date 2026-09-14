@@ -4,6 +4,50 @@ Living doc. Deferred work, design ideas, and known cleanups — not active devel
 
 ---
 
+## YC 3.0 direction (2026-09-14)
+
+Early direction only — v2 work continues; nothing here is active development.
+Direction being explored: a domain-agnostic platform; multi-tenancy is a v3
+maybe at most — explicitly not v2. Generic architecture, vertical
+go-to-market (legal first). Principles, not commitments.
+
+- **Customization moves from code to data.** This is the real v3 shift, more
+  than tenancy. Every customizable feature = schema-validated config + a
+  renderer/executor, versioned with undo. Forms renderer, settings, views,
+  and trigger rules already fit this shape. "Ask AI" buttons then come nearly
+  free: AI emits config that must pass the validator — never code or raw SQL.
+  Inner-platform guard: only make configurable what a real second tenant
+  demonstrably needs; hardcode the rest until proven.
+- **Terminology is a display layer.** case/matter/sale/order is a per-tenant
+  label map in settings. No schema renames; tables stay `cases`.
+- **Tenancy model (if multi-tenancy ever happens): leaning DB-per-tenant**
+  (not shared-schema tenant_id). Buys: per-tenant AI RO keys safe by
+  construction, per-tenant backup/restore, contained migration blast radius,
+  eliminates the missed-WHERE cross-tenant leak bug class. Costs: migration
+  fan-out (script it), small control-plane DB for provisioning/cross-tenant
+  admin. Supersedes the tenant_id-column item under SaaS-readiness below.
+- **Evolve, don't rewrite.** Strangler: make v2 progressively v3-shaped
+  (terminology layer, config-as-data subsystem by subsystem, event-bus
+  unification), 4LSG as tenant zero; tenancy extraction happens only if/when
+  a real tenant #2 exists. Corollary: MySQL stays. Postgres only becomes
+  right if a fresh codebase ever wins (RLS, JSONB indexing, transactional
+  DDL, native schemas).
+- **Automation unification: one event bus.** Everything emits events;
+  triggers subscribe; tasks/sequences/workflows are just subscribers. Kills
+  the "multiple ways to cause things" confusion.
+- **Tenant-defined fields:** JSON column + field-definitions table + indexed
+  generated columns for hot fields. Never EAV.
+- **Billing (unbuilt): agnostic core** — billables → invoices → payments,
+  processor drivers. Flag: trust accounting (IOLTA) is the one genuinely
+  non-generic legal requirement — table stakes for the legal vertical,
+  skippable elsewhere.
+- **Driver pattern extends** beyond SMS/email/calendar (SaaS-readiness below)
+  to payments, storage, e-sign, telephony.
+- **SU landing pages** (get-clio-code-style tools served at the app domain):
+  sandboxed plugin surface, SU-only, arbitrary-code risk acknowledged.
+
+---
+
 ## SaaS-readiness (deferred indefinitely)
 
 Abstractions that would matter for offering YC to a second firm. Not relevant to 4LSG-only operation. Each can be picked up independently when a second customer is real.
@@ -14,7 +58,7 @@ Abstractions that would matter for offering YC to a second firm. Not relevant to
 
 - **Public-page templating.** `/public/*.html` is hardcoded with 4LSG branding, logos, copy. SaaS deployment would need a template layer (Handlebars or similar) reading per-tenant config — name, logo URL, color tokens, custom domain. Custom-page authoring is an entirely separate problem deferred even further.
 
-- **Multi-tenancy decision.** Even if you stay one-firm-per-deployment, decide before any of the above whether `phone_lines`, `email_credentials`, `credentials`, `contacts`, etc. get a `tenant_id` column. Adding it to clean tables now is cheap; retrofitting later is expensive. Plausible within ~2 years → add as `NOT NULL DEFAULT 1` now.
+- **Multi-tenancy decision.** Even if you stay one-firm-per-deployment, decide before any of the above whether `phone_lines`, `email_credentials`, `credentials`, `contacts`, etc. get a `tenant_id` column. Adding it to clean tables now is cheap; retrofitting later is expensive. Plausible within ~2 years → add as `NOT NULL DEFAULT 1` now. **Decision 2026-09-14: hold — do NOT add tenant_id columns.** Multi-tenancy is not happening in v2 and is only a maybe for v3, where the lean is DB-per-tenant (no tenant_id columns needed either way).
 
 ---
 
