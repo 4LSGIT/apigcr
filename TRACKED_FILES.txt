@@ -322,9 +322,6 @@ public/themeSync.js
 public/toolManager.html
 public/users.html
 public/videoManager.html
-ref/2026-07-27_test_quick_notes_slice2_definition.json
-ref/2026-08-03_issn_tabs_definition.json
-ref/2026-08-14_intake_cards_definition.json
 ref/2026-09-04_dbkq_coverage.md
 ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-06_dbkq_definition.v1.2.json
@@ -824,6 +821,9 @@ tests/filePlacementService.test.js
 tests/firmConfig.test.js
 tests/firmConfigCoverage.test.js
 tests/fixtures/calendar_item_types.seed.json
+tests/fixtures/intake_cards_definition.json
+tests/fixtures/quick_notes_slice2_definition.json
+tests/fixtures/slice26/issn_tabs_definition.json
 tests/fixtures/slice26/legacy_case_details_bk2.js
 tests/fixtures/slice26/legacy_notes_341.js
 tests/fixtures/slice26/tpl5_code.js
