@@ -89,8 +89,8 @@ history — it is cited but was never committed:
 Restore it here or drop the citation; right now the trail dead-ends.
 
 `AI_CONTEXT.md` was on this list until 2026-09-14, when it landed at
-`ref/AI_CONTEXT.md`. The "AI_CONTEXT §N" citations in `services/gcalService.js`,
-`services/dropboxService.js`, `services/esign/zohoSignProvider.js` and
-`routes/api.temp.zohosign.js` now resolve. Two callers still name the file
-`YISRACASE_AI_CONTEXT.md` — `ref/plans.md` and `startup/dbReadonly.js` — and
-should be renamed on their next edit.
+`ref/AI_CONTEXT.md` and every citation to it was repointed: the "AI_CONTEXT §N"
+form in `services/gcalService.js`, `services/dropboxService.js`,
+`services/esign/zohoSignProvider.js` and `routes/api.temp.zohosign.js`, and the
+old `YISRACASE_AI_CONTEXT.md` filename in `ref/plans.md`,
+`startup/dbReadonly.js` and `manual/03-YisraFlow/README.md`.

@@ -77,7 +77,7 @@ Active surfaces with known next steps.
 
 - **Route handler naming.** `scripts/updateRoutes.js` writes `ref/routes.md` — a grep-able access-control matrix with middleware and handler columns per route. Handlers passed as inline arrows (`router.get('/x', mw, (req, res) => {...})`) show as `<anonymous>` in the handler column; named function declarations, `const`-bound arrows, and named function expressions all get picked up by `Function.prototype.name`. When you touch a route file for any reason, name the handlers in it — verb+noun matching URL semantics (`getCases`, `createWorkflow`, `cancelExecution`). No dedicated naming pass. Worst-offender files visible by skimming `ref/routes.md` for sections heavy on `—` in the Handler column. Pairs with the `requireAuth` self-naming convention (see Slice 1 of the client portal work) — together they make `ref/routes.md` a navigable auth + routing map.
 
-- **Documentation drift sweeps.** Periodically diff `manual/`, `13-cookbook.md`, and `YISRACASE_AI_CONTEXT.md` against actual code. Drift accumulates.
+- **Documentation drift sweeps.** Periodically diff `manual/`, `manual/03-YisraFlow/13-cookbook.md`, and `ref/AI_CONTEXT.md` against actual code. Drift accumulates.
 
 ---
 

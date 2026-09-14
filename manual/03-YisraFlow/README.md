@@ -46,4 +46,4 @@ Each chapter opens with a short **For operators** section — plain-English summ
 
 ## Companion documents
 
-- **YISRACASE_AI_CONTEXT.md** — the broader system context (auth, services, conventions, pending work). Not engine-specific.
+- **`ref/AI_CONTEXT.md`** — the broader system context (auth, services, conventions, pending work). Not engine-specific.

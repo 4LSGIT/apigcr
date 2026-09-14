@@ -137,9 +137,9 @@ module.exports = promisePool;
 //      --   DROP USER '<obfuscated>'@'<egress-ip>';
 //      FLUSH PRIVILEGES;
 //
-// 6. REMOVE the AI-CONTEXT section. Search YISRACASE_AI_CONTEXT.md for
-//    "READONLY DATABASE ACCESS" and delete that section. Same for
-//    YISRAFLOW_COOKBOOK.md if it ever picks up an entry.
+// 6. REMOVE the AI-CONTEXT section. Delete "## 22. AI SESSION DB ACCESS
+//    (READONLY + SCRATCH)" from ref/AI_CONTEXT.md. Same for
+//    manual/03-YisraFlow/13-cookbook.md if it ever picks up an entry.
 //
 // 7. The rows in admin_audit_log under tool='readonlyKeys' and tool='db_readonly'
 //    are historical audit data — DO NOT delete. They survive subsystem removal.
