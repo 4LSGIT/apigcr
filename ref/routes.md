@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-09-14T19:24:51.679Z_  
-_685 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_
+_Generated 2026-09-14T21:15:55.763Z_  
+_688 routes total — DELETE: 57, GET: 284, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -47,6 +47,9 @@ _685 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 265, PUT: 35, _ALL:
 | Method | Path | Middlewares | Handler |
 |--------|------|-------------|---------|
 | GET | `/api` | — | — |
+| GET | `/api/admin/scratch` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| DELETE | `/api/admin/scratch/:ns/:k` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/admin/scratch/:ns/:k` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/admin/users` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/admin/users` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/admin/users/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -945,4 +948,4 @@ _685 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 265, PUT: 35, _ALL:
 
 ---
 
-_685 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_
+_688 routes total — DELETE: 57, GET: 284, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_

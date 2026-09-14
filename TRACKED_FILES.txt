@@ -307,6 +307,7 @@ public/readonlyKeys.html
 public/redirects.html
 public/reports.html
 public/reset-password.html
+public/scratchBrowser.html
 public/scripts.js
 public/sendingform-bk.html
 public/sendingform.html
@@ -458,6 +459,7 @@ routes/admin.elevate.js
 routes/admin.systemAlerts.js
 routes/admin.users.js
 routes/alert-test.js
+routes/api.adminScratch.js
 routes/api.ai.js
 routes/api.alertIt.js
 routes/api.appSettings.js
@@ -582,7 +584,6 @@ routes/test_wf_advance.js
 routes/unplacehold.js
 routes/videoLanding.js
 routes/workflows.js
-scratch-browser.patch
 scripts/Courtapprovetest.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js

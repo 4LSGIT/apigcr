@@ -8,8 +8,10 @@
 //   DELETE /api/scratch/:ns/:k         delete one
 //   DELETE /api/scratch/:ns?confirm=1  wipe namespace
 //
-// Reads go through /api/readonly/sql against the rw_scratch table —
-// no separate read endpoint needed.
+// Reads go through /api/readonly/sql against the rw_scratch table — no read
+// endpoint is needed HERE. Staff reading scratch in the browser go through
+// routes/api.adminScratch.js instead (SU guard chain, staff JWT). Keep the two
+// separate: different auth, different audience, different audit table.
 //
 // Table-escape protection:
 //   Every SQL statement in this file is a fixed string. The table name

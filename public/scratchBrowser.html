@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scratch Browser</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--page-bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  body { padding: 12px; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  .muted { color: var(--text-muted); font-size: 11px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  button {
+    background: var(--accent); color: var(--accent-text); border: none;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  button:hover { opacity: .85; }
+  /* --fill-text explicitly: the base `button` rule sets --accent-text, which is
+     near-black and fails contrast on --danger-fill. Inherited, not typed. */
+  button.danger { background: var(--danger-fill); color: var(--fill-text); }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: .45; cursor: default; }
+
+  input, select {
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 4px; font-size: 12px; font-family: inherit;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin-bottom: 12px;
+  }
+
+  .split { display: flex; gap: 12px; align-items: flex-start; }
+  .split > .left  { flex: 1 1 420px; min-width: 0; }
+  .split > .right { flex: 1 1 460px; min-width: 0; }
+  @media (max-width: 900px) { .split { flex-direction: column; } .split > * { width: 100%; } }
+
+  .list-wrap { max-height: 62vh; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: var(--page-bg); }
+  tbody tr.sel td { background: var(--page-bg); box-shadow: inset 2px 0 0 var(--accent); }
+  .ns-cell { color: var(--text-muted); }
+  .big { color: var(--warn-text); }
+
+  pre.value {
+    margin: 0; padding: 10px; border-radius: 4px; overflow: auto;
+    max-height: 52vh; background: var(--page-bg); border: 1px solid var(--border);
+    font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  }
+  .stat { display: inline-block; margin-right: 14px; }
+  .stat b { font-variant-numeric: tabular-nums; }
+  .err { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<h2>Scratch Browser</h2>
+<p class="muted" id="totals">Loading&hellip;</p>
+
+<div class="panel">
+  <div class="row">
+    <input id="q" type="search" placeholder="Filter namespace or key&hellip;" style="flex:1 1 220px;min-width:0;">
+    <select id="nsPick"><option value="">All namespaces</option></select>
+    <button class="ghost" id="refresh" type="button">Refresh</button>
+  </div>
+</div>
+
+<div class="split">
+  <div class="left panel">
+    <div class="list-wrap">
+      <table>
+        <thead>
+          <tr><th>Key</th><th class="num">Size</th><th class="num">Age</th></tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="3" class="muted" style="text-align:center;padding:20px;">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="right panel">
+    <div class="row" style="margin-bottom:8px;">
+      <strong id="selKey" class="mono" style="flex:1 1 auto;min-width:0;word-break:break-all;">Nothing selected</strong>
+      <button class="ghost" id="copy" type="button" disabled>Copy</button>
+      <button class="danger" id="del" type="button" disabled>Delete</button>
+    </div>
+    <p class="muted" id="selMeta"></p>
+    <pre class="value" id="value">Pick a key on the left to read its value.</pre>
+  </div>
+</div>
+
+<script>
+  const P = window.parent;
+
+  // Iframe boot: the pane can load before the shell's apiSend exists.
+  (function waitForParent() {
+    if (P && P.apiSend) return init();
+    setTimeout(waitForParent, 100);
+  })();
+
+  let KEYS = [];
+  let sel = null;
+
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+
+  const kb = n => {
+    n = Number(n) || 0;
+    return n >= 1024 ? (n / 1024).toFixed(n >= 10240 ? 0 : 1) + " KB" : n + " B";
+  };
+
+  function init() {
+    document.getElementById("refresh").addEventListener("click", load);
+    document.getElementById("q").addEventListener("input", render);
+    document.getElementById("nsPick").addEventListener("change", render);
+    document.getElementById("copy").addEventListener("click", copyValue);
+    document.getElementById("del").addEventListener("click", delSelected);
+    load();
+  }
+
+  async function load() {
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = `<tr><td colspan="3" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    try {
+      const data = await P.apiSend("/api/admin/scratch", "GET");
+      KEYS = data.keys || [];
+      const t = data.totals || {};
+      document.getElementById("totals").innerHTML =
+        `<span class="stat"><b>${t.keys ?? KEYS.length}</b> keys</span>` +
+        `<span class="stat"><b>${t.namespaces ?? ""}</b> namespaces</span>` +
+        `<span class="stat"><b>${kb(t.bytes)}</b> total</span>`;
+
+      const pick = document.getElementById("nsPick");
+      const cur = pick.value;
+      const namespaces = [...new Set(KEYS.map(r => r.ns))].sort();
+      pick.innerHTML = `<option value="">All namespaces</option>` +
+        namespaces.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+      pick.value = namespaces.includes(cur) ? cur : "";
+
+      render();
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="3" class="err" style="padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+    }
+  }
+
+  function visible() {
+    const q = document.getElementById("q").value.trim().toLowerCase();
+    const ns = document.getElementById("nsPick").value;
+    return KEYS.filter(r =>
+      (!ns || r.ns === ns) &&
+      (!q || (r.ns + "/" + r.k).toLowerCase().includes(q)));
+  }
+
+  function render() {
+    const rows = visible();
+    const tbody = document.getElementById("tbody");
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="3" class="muted" style="text-align:center;padding:20px;">No keys match.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(r => {
+      const id = r.ns + "/" + r.k;
+      const big = Number(r.len) > 20000 ? " big" : "";
+      return `<tr data-id="${esc(id)}" class="${sel === id ? "sel" : ""}">
+        <td class="mono"><span class="ns-cell">${esc(r.ns)}/</span>${esc(r.k)}</td>
+        <td class="num${big}">${kb(r.len)}</td>
+        <td class="num muted">${r.age_days}d</td>
+      </tr>`;
+    }).join("");
+
+    tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+      tr.addEventListener("click", () => openKey(tr.dataset.id));
+    });
+  }
+
+  async function openKey(id) {
+    sel = id;
+    render();
+    const [ns, ...rest] = id.split("/");
+    const k = rest.join("/");
+    document.getElementById("selKey").textContent = id;
+    document.getElementById("value").textContent = "Loading…";
+    document.getElementById("copy").disabled = true;
+    document.getElementById("del").disabled = true;
+    try {
+      const data = await P.apiSend(
+        `/api/admin/scratch/${encodeURIComponent(ns)}/${encodeURIComponent(k)}`, "GET");
+      const e = data.entry;
+      document.getElementById("selMeta").textContent =
+        `${kb(e.len)} · updated ${new Date(e.updated_at).toLocaleString()} · created ${new Date(e.created_at).toLocaleString()}`;
+      document.getElementById("value").textContent = pretty(e.v);
+      document.getElementById("copy").disabled = false;
+      document.getElementById("del").disabled = false;
+    } catch (err) {
+      document.getElementById("selMeta").textContent = "";
+      document.getElementById("value").innerHTML = `<span class="err">Error: ${esc(err.message)}</span>`;
+    }
+  }
+
+  /** Most values are JSON, some are plain prose, some are JSON-in-a-string. */
+  function pretty(v) {
+    if (v == null) return "(null)";
+    let s = String(v);
+    for (let i = 0; i < 2; i++) {
+      try {
+        const parsed = JSON.parse(s);
+        if (typeof parsed === "string") { s = parsed; continue; }
+        return JSON.stringify(parsed, null, 2);
+      } catch (e) { return s; }
+    }
+    return s;
+  }
+
+  async function copyValue() {
+    const btn = document.getElementById("copy");
+    try {
+      await navigator.clipboard.writeText(document.getElementById("value").textContent);
+      btn.textContent = "Copied";
+    } catch (e) {
+      btn.textContent = "Select manually";
+    }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1400);
+  }
+
+  async function delSelected() {
+    if (!sel) return;
+    // Native confirm, not Swal: a second Swal.fire() replaces whatever the
+    // shell already has open (single-instance constraint).
+    if (!confirm(`Delete scratch key "${sel}"?\n\nThis cannot be undone.`)) return;
+    const [ns, ...rest] = sel.split("/");
+    const k = rest.join("/");
+    const btn = document.getElementById("del");
+    btn.disabled = true;
+    try {
+      await P.apiSend(
+        `/api/admin/scratch/${encodeURIComponent(ns)}/${encodeURIComponent(k)}`, "DELETE");
+      sel = null;
+      document.getElementById("selKey").textContent = "Nothing selected";
+      document.getElementById("selMeta").textContent = "";
+      document.getElementById("value").textContent = "Deleted.";
+      document.getElementById("copy").disabled = true;
+      await load();
+    } catch (err) {
+      document.getElementById("value").innerHTML = `<span class="err">Delete failed: ${esc(err.message)}</span>`;
+      btn.disabled = false;
+    }
+  }
+</script>
+</body>
+</html>

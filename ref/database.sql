@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-14T14:00:31.868Z
+-- Generated: 2026-09-14T21:35:27.031Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:4601094486dc5c6791f8225c07336302
+-- Fingerprint: sha256:e976952e53d521c5a3c94bfb35e0ef5c
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1601,6 +1601,7 @@ CREATE TABLE `email_log` (
   `subject` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `attachments` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `delivery_info` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'Outbound SMTP only: JSON of what the transport said at handoff — {response, accepted, rejected, envelope}, or {error, responseCode, response, command} on the FAILED path. A row WITHOUT this proves nothing about delivery: it means the relay returned 250 and no more. response holds the relay queue id, the only handle that traces the message further. rejected can be non-empty on a RESOLVED send (nodemailer does not throw if one recipient was accepted). NULL for inbound/ingest rows and non-SMTP adapters.',
   `processed_at` datetime NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
