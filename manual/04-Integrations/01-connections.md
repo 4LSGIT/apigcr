@@ -2,7 +2,8 @@
 
 YisraCase's "Connections" system manages firm-wide credentials used by outbound HTTP requests in YisraFlow (hooks, workflows, sequences, scheduled jobs) and by the admin API Tester.
 
-Hosted at `/connections.html`, accessible from the SU section in `a.html`. Admin-only — non-SU users get "Admin only" on load.
+Hosted at `/connections.html`, loaded as a lazy iframe from the Admin tab in
+`index.html` (the **Connections (SU)** button). Admin-only — non-SU users get "Admin only" on load.
 
 ## What it stores
 
@@ -29,7 +30,7 @@ Per-sender SMTP config (`host`/`port`/`user`/`pass`/`secure`/`from_name`) plus `
 
 ```
                           ┌─────────────────────────┐
-                          │  public/connections.html │  (admin UI, in a.html SU section)
+                          │  public/connections.html │  (admin UI, Admin tab)
                           └────────────┬─────────────┘
                                        │
               ┌────────────────────────┼─────────────────────────────┐

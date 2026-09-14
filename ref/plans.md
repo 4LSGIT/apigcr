@@ -72,7 +72,13 @@ Active surfaces with known next steps.
 
 - **Remaining YisraForms.** ISSN (tabs + repeaters, snapshot mode) and Detailed Questionnaire (JSON-only storage, most complex). The biggest remaining YisraForms work.
 
-- **Legacy frontend retirement.** Old `index.html` and any `/db` raw-SQL endpoints stay alive during gradual migration. Once Phase 6 completes and the new frontend is verified, these all come out together.
+- **Legacy frontend retirement.** `index.html` IS the current shell and is not
+  going anywhere — `a.html` never shipped, and the v1/v2 split it implied does not
+  exist. What is actually queued for retirement: the pre-iframe panes the shell
+  still loads directly (`case.html`, `contact.html` and the Phase 6 stragglers),
+  and the `/db` raw-SQL endpoint (`routes/dbQuery.js`). These come out as Phase 6
+  converts each pane; the security cleanups below are blocked on that, not on a
+  shell swap.
 
 ---
 

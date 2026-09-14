@@ -4,7 +4,7 @@ Sends arbitrary HTTP requests **from the YisraCase server** and shows you the
 response. Because the request originates server-side, it can use the firm's
 stored credentials and reach systems that only trust our server.
 
-**Where:** More → **API Tester**. SU only.
+**Where:** Admin → **API Tester**. SU only.
 
 ## What it's for
 

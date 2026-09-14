@@ -2,7 +2,7 @@
 # Last updated: 2026-09-14 — compressed to skeleton form (~900 lines from ~3,100); §0 deltas folded into body; per-column facts moved to schema COMMENTs in ref/database.sql
 
 <!-- ================= CURRENCY ================= -->
-<!-- Reviewed-through: 2026-09-14 full compression pass. This doc is a       -->
+<!-- Reviewed-through: 8f6f5c3 (docs review #1, 2026-09-14). This doc is a   -->
 <!-- SKELETON: what each subsystem is + the non-guessable invariants +       -->
 <!-- pointers. Depth lives in manual/, schema truth in ref/database.sql      -->
 <!-- (read its COMMENTs), route truth in ref/routes.md, working rules in     -->
@@ -10,6 +10,8 @@
 <!-- KNOWN MISSING SECTIONS (debt: docs/20260914_coverage_gaps): e-sign,     -->
 <!-- portal, YisraForms/templates, reports, pipeline engine, document sync,  -->
 <!-- booking landings. manual/ is authoritative for those meanwhile.        -->
+<!-- CONSCIOUS DEFERRALS (review #1): the seven sections above --            -->
+<!-- large, one arc of their own. Tools (29) is fully filed.                 -->
 <!-- Doc-debt queue: scratch ns=docs. File doc≠code divergences there at    -->
 <!-- discovery; the weekly docs review (DOCS_REVIEW.md) drains it and       -->
 <!-- updates this block.                                                     -->
@@ -762,3 +764,53 @@ mirroring email.
 `phone_log_suppressions`, `phone_ingest_executions`. The firm-number cache
 has a reset hook (`resetFirmNumberCache`) re-exported through the internal
 function registry for tests.
+
+## ═══════════════════════════════════════════════════════════════
+## 29. TOOLS — SU-AUTHORED, DB-STORED PAGES
+## ═══════════════════════════════════════════════════════════════
+
+Internal HTML utilities stored in the DB and served on the app origin. An SU
+authors a page in the manager; it is served at `/tool/<key>` and runs as an
+iframe child of the shell on the parent's `apiSend` — the same runtime
+contract as `public/customView.html`.
+
+Code: `routes/api.tools.js` — **its header block is the contract; read it
+before changing anything here.** UI `public/toolManager.html` (Admin tab →
+Tools (SU)). Manual `manual/08-Admin-Tools/06-tools.md`. Tests
+`tests/apiTools.routes.test.js`.
+
+### Tables
+- `tools` — `tool_key` varchar(80) UNIQUE (`/^[a-z0-9-]{1,80}$/`), `title`,
+  `status` enum('draft','live'), `html` mediumtext, `updated_by` varchar(100).
+- `tool_versions` — save history, FK → `tools` ON DELETE CASCADE.
+
+No migration is filed for either table: plain DDL, wholly captured by
+`ref/database.sql` (retention rule in `ref/README.md`). Absence of a file in
+`ref/migrations/` is not evidence the change never happened.
+
+### Invariants — do not soften
+1. **Same-origin is deliberate.** A tool is authored code, not user content.
+   The boundary is *who may write the table*, not what the HTML may do. Never
+   reason about a tool body as if it were untrusted input, and never "fix"
+   this by sandboxing the output.
+2. **`/tool/*` and `/api/tools/*` stay OFF the `routes/pageLanding.js`
+   allowlist**, so they dead-end on the landing host. Locked by test. Nothing
+   in this subsystem touches the `pages` table or the landing-host system.
+3. **Write path is SU-only with step-up.** Every `/api/tools/*` route carries
+   `superuserOnlyFor('tools')` — JWT-only + SU + `X-SU-Elevation` + per-tool
+   rate limit; API keys are refused 403. `superuserOnlyFor` audits only
+   REJECTIONS, so each successful create/update/delete/restore audits itself
+   via `auditAdminAction` (same pattern as `admin.systemAlerts.js`). Reads
+   are not audited.
+4. **Serve path is public and unauthenticated.** `GET /tool/:key` is gated
+   only by `status='live'` — a draft 404s. Treat a live tool's body as
+   readable by anyone holding the URL. 404 is plain text, deliberately not
+   the `deadPage` firm-site redirect: an internal utility URL is not
+   marketing surface.
+5. **Versioning (single source of truth).** On any save where `html` is
+   provided AND differs from stored, a `tool_versions` row is appended with
+   the NEW html — so the newest row always equals `tools.html` and restore is
+   literally "copy row N back". A title/status-only PATCH appends nothing; a
+   no-op restore appends nothing; deleting the newest version row is a 400.
+   The append is non-transactional by house style — a crash between the two
+   statements loses one history row, never the tool.

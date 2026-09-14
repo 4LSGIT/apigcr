@@ -4,7 +4,7 @@ Short-lived API keys that grant **read-only** SQL access to the database from
 outside YisraCase — for scripts, integrations, or an AI assistant that needs to
 look at data without any ability to change it.
 
-**Where:** More → **Readonly Keys**. SU only (humans only — these endpoints
+**Where:** Admin → **Readonly Keys**. SU only (humans only — these endpoints
 can't be reached with an API key, to avoid bootstrapping more access from less).
 
 ## What a key can do

@@ -3,7 +3,7 @@
 An interactive MySQL console against the live database, for super-users. It
 replaces the old `/db-jwt` tool for interactive use.
 
-**Where:** More → **DB Console**. SU only.
+**Where:** Admin → **DB Console**. SU only.
 
 ## What it does
 

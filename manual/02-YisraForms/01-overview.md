@@ -24,7 +24,7 @@ Every form uses two shared files — `yc-forms.css` for styling and `yc-forms.js
 Forms are loaded as iframes inside parent pages like `contact.html`, `case.html`, or any other page that needs an editable form.
 
 ```
-a.html  (has apiSend, firmData, entityData relay)
+index.html  (the shell — defines apiSend, firmData, entityData)
   └─ contact.html  (window.apiSend = P.apiSend; window.firmData = P.firmData)
        └─ forms/contact-form.html  (uses P.apiSend for all API calls)
 ```

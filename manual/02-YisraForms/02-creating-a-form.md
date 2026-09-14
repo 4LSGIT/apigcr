@@ -137,7 +137,7 @@ See [03-ycform-config.md](03-ycform-config.md) for every option.
 In the parent (e.g., `case.html`):
 
 ```js
-// Relay apiSend and firmData from a.html (near top of script)
+// Relay apiSend and firmData from the shell, index.html (near top of script)
 window.apiSend  = P.apiSend;
 window.firmData = P.firmData;
 

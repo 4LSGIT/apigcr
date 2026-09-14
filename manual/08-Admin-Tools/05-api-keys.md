@@ -2,7 +2,7 @@
 
 ## For operators
 
-**More → API Keys (SU).** Two different things live here:
+**Admin → API Keys (SU).** Two different things live here:
 
 - **External keys** — one per system that calls us (Pabbly, an adapter, a
   script). Mint, label, revoke, and see usage.

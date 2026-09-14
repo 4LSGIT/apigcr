@@ -97,7 +97,7 @@ Every log entry records `log_by` — the user ID of whoever (or whatever process
 
 ## Managing Users
 
-User accounts are managed from the Admin tab (**More → Users (SU)**). For
+User accounts are managed from the Admin tab (**Admin → Users (SU)**). For
 security, passwords are hashed with bcrypt into `password_hash` and are never
 stored or displayed in plain text. Password resets go through `reset_token` /
 `reset_expires` rather than an admin ever seeing a password.

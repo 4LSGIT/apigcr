@@ -3,7 +3,7 @@
 ## For operators
 
 The red banner across the top of the app is counting **open system alerts**.
-This screen is where you clear it: **More → System Alerts (SU)**.
+This screen is where you clear it: **Admin → System Alerts (SU)**.
 
 ### Why it doesn't clear itself
 
