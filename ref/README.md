@@ -7,6 +7,11 @@ Reference material that lives next to the code. Three tiers:
   hook). **Never hand-edit.**
 - `routes.md` — auto-generated route inventory (`node scripts/updateRoutes.js`).
 - `SCHEMA_CONVENTIONS.md`, `plans.md`, `SETUP_cloud_tasks.md` — living reference.
+- `AI_CONTEXT.md` — deep context for AI sessions. Read its CURRENCY header
+  first: §0 carries the newest deltas and OVERRIDES the body sections where
+  they conflict, so a section found by grep alone can be out of date.
+- `DOCS_REVIEW.md` — the weekly procedure that keeps `AI_CONTEXT.md` and
+  `manual/` honest. Its input is the doc-debt queue in scratch `ns=docs`.
 - Design contracts still canonical for shipped subsystems:
   `FORM_TEMPLATE_SCHEMA_V1.md`, `EXTERNAL_FORMS_DESIGN.md`,
   `EXTERNAL_CODE_CSS_DECISION.md`, `UNIFIED_EVENTS_DESIGN_V0_5.md`,
@@ -75,14 +80,17 @@ files move.
   `tests/esignPrefill.notice.test.js`.
 
 ## Known dangling references
-Two files this tree is expected to contain do not exist and have no git
-history — they are cited but were never committed:
+One file this tree is expected to contain does not exist and has no git
+history — it is cited but was never committed:
 
-- `AI_CONTEXT.md` — the deep-context doc for AI sessions. Cited as
-  "AI_CONTEXT §21" from `services/gcalService.js`, `services/dropboxService.js`,
-  `services/esign/zohoSignProvider.js`, `routes/api.temp.zohosign.js`, and as
-  `YISRACASE_AI_CONTEXT.md` from `ref/plans.md` and `startup/dbReadonly.js`.
 - `streak-schema.sql` — the external Streak schema `gas.js` feeds. Cited from
   `routes/api.streak.js`.
 
-Restore them here or drop the citations; right now the trail dead-ends.
+Restore it here or drop the citation; right now the trail dead-ends.
+
+`AI_CONTEXT.md` was on this list until 2026-09-14, when it landed at
+`ref/AI_CONTEXT.md`. The "AI_CONTEXT §N" citations in `services/gcalService.js`,
+`services/dropboxService.js`, `services/esign/zohoSignProvider.js` and
+`routes/api.temp.zohosign.js` now resolve. Two callers still name the file
+`YISRACASE_AI_CONTEXT.md` — `ref/plans.md` and `startup/dbReadonly.js` — and
+should be renamed on their next edit.
