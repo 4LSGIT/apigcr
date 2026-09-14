@@ -1,0 +1,72 @@
+-- ============================================================
+-- email_log.delivery_info — make post-acceptance email loss diagnosable
+-- ref/migrations/2026-09-15_email_log_delivery_info.sql
+--
+-- Run ONCE, BEFORE deploying the code that writes it (migration → code order).
+--
+-- ── WHY ─────────────────────────────────────────────────────────────────────
+-- services/adapters/email/smtp.js writes its email_log row immediately after
+-- nodemailer's transporter.sendMail resolves, and discards everything the SMTP
+-- server said. A row in email_log therefore proves only that the relay
+-- returned 250 on the handoff — NOT that the message was delivered.
+--
+-- 2026-09-14 smoke test of POST /api/alert/it: four alerts sent, all four
+-- logged as successes with real message-ids, only ONE present in it@4lsg.com
+-- by rfc822msgid lookup. The other three were accepted by
+-- gcam1191.siteground.biz and then went nowhere visible. Nothing recorded the
+-- queue id SiteGround handed back, so there was nothing left to trace with.
+--
+-- info.response carries that queue id ("250 2.0.0 Ok: queued as <id>"), and
+-- info.rejected carries per-recipient rejections that nodemailer does NOT
+-- throw on when at least one recipient was accepted. Both are now persisted.
+--
+-- ── SHAPE ───────────────────────────────────────────────────────────────────
+-- TEXT, NULL. NULL is the normal value for every pre-existing row and for
+-- every source that is not an outbound SMTP send (the gmail-firm ingest, the
+-- gmail and pabbly adapters). No index — this is forensic, read by id or by a
+-- short date scan.
+--
+-- ── ORDER OF OPERATIONS ─────────────────────────────────────────────────────
+--   1. THIS FILE.      Inert on its own: nothing reads or writes the column
+--                      until the backend deploy. Existing INSERTs keep working
+--                      untouched because every one of them names its columns.
+--   2. Deploy backend. smtp.js starts populating it.
+--   3. No frontend changes.
+--
+-- DO NOT REVERSE. If the code ships first, every outbound-smtp INSERT hits an
+-- unknown column and fails — and logEmail() swallows its own errors by design
+-- (fire-and-forget .catch), so mail would keep sending while email_log
+-- silently stopped recording it. That failure mode is quiet, which is exactly
+-- the thing this migration exists to stop.
+--
+-- ── IDEMPOTENT? NO ──────────────────────────────────────────────────────────
+-- Re-running errors with ER_DUP_FIELDNAME. Harmless, but check first:
+--   SHOW COLUMNS FROM email_log LIKE 'delivery_info';
+--
+-- ── ROLLBACK ────────────────────────────────────────────────────────────────
+--   ALTER TABLE email_log DROP COLUMN delivery_info;
+-- Safe in both directions: all five INSERT sites name their columns
+-- explicitly — verified 2026-09-14 across routes/logs.js,
+-- services/emailIngestService.js and the smtp / gmail / pabbly adapters — so
+-- neither adding nor dropping this column breaks a writer. The one
+-- `SELECT * FROM email_log` (services/emailIngestExecutionsService.js) hands
+-- the whole row to an executions viewer, where an extra null key is additive.
+--
+-- ── VERIFY ──────────────────────────────────────────────────────────────────
+-- BEFORE (expect zero rows):
+--   SHOW COLUMNS FROM email_log LIKE 'delivery_info';
+--
+-- AFTER (expect one row: TEXT, YES nullable, no default):
+--   SHOW COLUMNS FROM email_log LIKE 'delivery_info';
+--
+-- AFTER THE DEPLOY — the first real outbound send should carry a queue id:
+--   SELECT id, subject, delivery_info
+--     FROM email_log
+--    WHERE source = 'outbound-smtp' AND delivery_info IS NOT NULL
+--    ORDER BY id DESC LIMIT 5;
+-- ============================================================
+
+ALTER TABLE email_log
+  ADD COLUMN `delivery_info` TEXT COLLATE utf8mb4_general_ci NULL
+  COMMENT 'Outbound SMTP only: JSON of what the transport said at handoff — {response, accepted, rejected, envelope}, or {error, responseCode, response, command} on the FAILED path. A row WITHOUT this proves nothing about delivery: it means the relay returned 250 and no more. response holds the relay queue id, the only handle that traces the message further. rejected can be non-empty on a RESOLVED send (nodemailer does not throw if one recipient was accepted). NULL for inbound/ingest rows and non-SMTP adapters.'
+  AFTER `attachments`;
