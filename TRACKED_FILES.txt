@@ -326,10 +326,6 @@ ref/2026-07-27_test_quick_notes_slice2_definition.json
 ref/2026-08-03_issn_tabs_definition.json
 ref/2026-08-14_intake_cards_definition.json
 ref/2026-08-26_pipeline_r15_rules.sql
-ref/2026-09-01_unified_events_e0b.sql
-ref/2026-09-01_unified_events_u2.sql
-ref/2026-09-02_unified_events_u2b.sql
-ref/2026-09-02_unified_events_u8.sql
 ref/2026-09-04_dbkq_coverage.md
 ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-06_dbkq_definition.v1.2.json
@@ -422,10 +418,14 @@ ref/migrations/2026-08-31_wf40_subject_form_name.sql
 ref/migrations/2026-09-01_bk_worksheet.sql
 ref/migrations/2026-09-01_g2_document_generate.sql
 ref/migrations/2026-09-01_g4_notice_automation.sql
+ref/migrations/2026-09-01_unified_events_e0b.sql
+ref/migrations/2026-09-01_unified_events_u2.sql
 ref/migrations/2026-09-01_unified_events_u3.sql
 ref/migrations/2026-09-01_unified_events_u5.sql
 ref/migrations/2026-09-01_unified_events_u6b.sql
 ref/migrations/2026-09-02_g4_2_notice_precheck.sql
+ref/migrations/2026-09-02_unified_events_u2b.sql
+ref/migrations/2026-09-02_unified_events_u8.sql
 ref/migrations/2026-09-03_capture_before_publish.sql
 ref/migrations/2026-09-03_unified_events_u6c.sql
 ref/migrations/2026-09-06_FIL1_trustee_validation.sql

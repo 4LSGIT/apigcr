@@ -7,7 +7,8 @@
  *   block 'seed'      calendar_item_types rows            ← scripts/calendarTypeSeed.js
  *   block 'backfill'  events/appts.type_key UPDATEs        ← scripts/typeKeyVocabulary.js
  *                     + the five E0b kind statements       ← embedded verbatim (asserted
- *                                                            against ref/2026-09-01_unified_events_e0b.sql)
+ *                                                            against
+ *                                                            ref/migrations/2026-09-01_unified_events_e0b.sql)
  *
  * WHY GENERATED. E1 derives type_key at read time from
  * scripts/typeKeyVocabulary.js (E1's vocabulary, frozen and moved there at U3).
@@ -44,9 +45,10 @@ const fs   = require('fs');
 const path = require('path');
 
 const ROOT           = path.join(__dirname, '..');
-const MIGRATION_PATH = path.join(ROOT, 'ref', '2026-09-01_unified_events_u2.sql');
-const E0B_PATH       = path.join(ROOT, 'ref', '2026-09-01_unified_events_e0b.sql');
-const E0A_PATH       = path.join(ROOT, 'ref', 'migrations', '2026-08-27_unified_events_e0a.sql');
+const MIG            = (name) => path.join(ROOT, 'ref', 'migrations', name);
+const MIGRATION_PATH = MIG('2026-09-01_unified_events_u2.sql');
+const E0B_PATH       = MIG('2026-09-01_unified_events_e0b.sql');
+const E0A_PATH       = MIG('2026-08-27_unified_events_e0a.sql');
 const FIXTURE_PATH   = path.join(ROOT, 'tests', 'fixtures', 'calendar_item_types.seed.json');
 
 const { SEED, COLUMNS, seedRows } = require('./calendarTypeSeed');
@@ -114,7 +116,7 @@ const OVERRIDE_RAW_TYPE = {
  * The five bulk `kind` statements from U1/E0b, VERBATIM. Re-run here for rows
  * created between the E0b apply and the U2 backend deploy (write paths do not
  * set kind until U2). tests/genTypeKeyBackfill.test.js asserts each statement
- * appears byte-for-byte in ref/2026-09-01_unified_events_e0b.sql.
+ * appears byte-for-byte in ref/migrations/2026-09-01_unified_events_e0b.sql.
  */
 const E0B_KIND_STATEMENTS = [
 `UPDATE events SET kind = 'hearing'
@@ -203,7 +205,8 @@ function generateBackfillSql() {
 
   // ── E0b kind statements, verbatim ──
   out.push('-- events.kind for rows created between the E0b apply and the U2 backend deploy —');
-  out.push('-- the five U1/E0b bulk statements VERBATIM (ref/2026-09-01_unified_events_e0b.sql)');
+  out.push('-- the five U1/E0b bulk statements VERBATIM '
+         + '(ref/migrations/2026-09-01_unified_events_e0b.sql)');
   for (const s of E0B_KIND_STATEMENTS) {
     out.push(s);
     out.push('');

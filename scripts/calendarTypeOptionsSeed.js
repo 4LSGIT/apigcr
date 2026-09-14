@@ -3,7 +3,8 @@
 /**
  * calendar_type_options — the U2b SEED, as data (Unified Events U2b).
  *
- * This is the same row set ref/2026-09-02_unified_events_u2b.sql inserts. It
+ * This is the same row set ref/migrations/2026-09-02_unified_events_u2b.sql
+ * inserts. It
  * is NOT a runtime source — the table is — and it is deliberately NOT merged
  * into scripts/calendarTypeSeed.js, whose column list is the INSERT column
  * order scripts/genTypeKeyBackfill.js emits for calendar_item_types.

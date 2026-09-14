@@ -677,11 +677,12 @@ describe('the catalog entry', () => {
 // the sort of thing a later hand-edit of the migration would quietly change.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('ref/2026-09-02_unified_events_u8.sql', () => {
+describe('ref/migrations/2026-09-02_unified_events_u8.sql', () => {
   const fs   = require('fs');
   const path = require('path');
   const SQL  = fs.readFileSync(
-    path.join(__dirname, '..', 'ref', '2026-09-02_unified_events_u8.sql'), 'utf8');
+    path.join(__dirname, '..', 'ref', 'migrations',
+              '2026-09-02_unified_events_u8.sql'), 'utf8');
   const norm = SQL.replace(/\s+/g, ' ');
 
   test('the claim table keys on all four columns, item_date included', () => {

@@ -1,4 +1,4 @@
--- ref/2026-09-02_unified_events_u2b.sql
+-- ref/migrations/2026-09-02_unified_events_u2b.sql
 --
 -- UNIFIED EVENTS U2b — picker OPTIONS for the item-type registry
 -- Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §3.3.2 (A1), §7.

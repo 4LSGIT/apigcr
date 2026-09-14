@@ -5,7 +5,8 @@
  *
  *   services/calendarTypeService.listOptions / loadOptions / _primeOptions
  *   routes/api.calendarTypes.js  GET /api/calendar-types/options
- *   ref/2026-09-02_unified_events_u2b.sql ⇄ scripts/calendarTypeOptionsSeed.js
+ *   ref/migrations/2026-09-02_unified_events_u2b.sql
+ *     ⇄ scripts/calendarTypeOptionsSeed.js
  *
  * The seed-parity block is the slice's acceptance test: resolving the seed
  * against surface=new_client / follow_up must reproduce the two <option>
@@ -186,7 +187,9 @@ describe('GET /api/calendar-types/options', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('seed parity', () => {
-  const SQL = fs.readFileSync(path.join(__dirname, '..', 'ref', '2026-09-02_unified_events_u2b.sql'), 'utf8');
+  const SQL = fs.readFileSync(
+    path.join(__dirname, '..', 'ref', 'migrations',
+              '2026-09-02_unified_events_u2b.sql'), 'utf8');
 
   test('the migration seeds exactly OPTIONS_SEED (type, length, surfaces, sort_order)', () => {
     const re = /\('([a-z0-9_]+)',\s*NULL,\s*(\d+),\s*CAST\('(\[[^\]]*\])' AS JSON\),\s*(\d+)\)/g;

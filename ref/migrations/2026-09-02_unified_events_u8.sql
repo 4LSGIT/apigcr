@@ -1,4 +1,4 @@
--- ref/2026-09-02_unified_events_u8.sql
+-- ref/migrations/2026-09-02_unified_events_u8.sql
 --
 -- UNIFIED EVENTS U8 — `calendar.approaching`: per-type offsets + the claim table
 -- Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §3.2 (amendment A6),

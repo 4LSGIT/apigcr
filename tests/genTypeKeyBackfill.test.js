@@ -7,7 +7,8 @@
  * scripts/calendarTypeSeed.js and scripts/typeKeyVocabulary.js (E1's vocabulary,
  * frozen and moved out of the service at U3). This suite regenerates
  * both and asserts BYTE-EQUALITY with what is committed in
- * ref/2026-09-01_unified_events_u2.sql and tests/fixtures/calendar_item_types.seed.json.
+ * ref/migrations/2026-09-01_unified_events_u2.sql and
+ * tests/fixtures/calendar_item_types.seed.json.
  *
  * If it fails after an intentional change:
  *   node scripts/genTypeKeyBackfill.js --write

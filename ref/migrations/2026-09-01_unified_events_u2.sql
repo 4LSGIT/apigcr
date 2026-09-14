@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2026-09-01 — Unified Events U2: item-type registry + type_key on appts/events
--- ref/2026-09-01_unified_events_u2.sql
+-- ref/migrations/2026-09-01_unified_events_u2.sql
 --
 -- Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §3.3 (A1), §3.3.2, §7 (U2),
 -- §7.1, Appendix A. Worker: Fable. Slice owner: CAL. Rulings 2026-09-01 (Fred):
@@ -252,7 +252,7 @@ UPDATE appts SET type_key = 'tax_consult' WHERE type_key IS NULL AND appt_type =
 UPDATE appts SET type_key = 'test' WHERE type_key IS NULL AND appt_type IN ('test', 'test appt', 'test2 appt', 'test3 appt', 'test appointment', 'pizza party', 'bug hunting session', 'repetitive session');
 
 -- events.kind for rows created between the E0b apply and the U2 backend deploy —
--- the five U1/E0b bulk statements VERBATIM (ref/2026-09-01_unified_events_e0b.sql)
+-- the five U1/E0b bulk statements VERBATIM (ref/migrations/2026-09-01_unified_events_e0b.sql)
 UPDATE events SET kind = 'hearing'
  WHERE kind IS NULL
    AND event_type IN ('Confirmation Hearing','confirmation_hearing','Hearing',

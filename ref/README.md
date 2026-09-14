@@ -28,17 +28,20 @@ Reference material that lives next to the code. Three tiers:
   | `2026-08-03_issn_tabs_definition.json` | `tests/formBuilder_slice26.test.js`, `tests/formRender.slice26.test.js` |
   | `2026-08-14_intake_cards_definition.json` | `tests/formRender.x6card.test.js` |
   | `2026-08-26_pipeline_r15_rules.sql` | `tests/pipelineR15RuleSeeds.test.js` |
-  | `2026-09-01_unified_events_e0b.sql` | `scripts/genTypeKeyBackfill.js` (`E0B_PATH`) |
-  | `2026-09-01_unified_events_u2.sql` | `scripts/genTypeKeyBackfill.js` (`MIGRATION_PATH`), its test |
-  | `2026-09-02_unified_events_u2b.sql` | `scripts/calendarTypeOptionsSeed.js`, `tests/unifiedEventsU2b.options.test.js` |
-  | `2026-09-02_unified_events_u8.sql` | `tests/unifiedEventsU8.approaching.test.js` |
   | `2026-09-04_dbkq_coverage.md`, `2026-09-04_dbkq_definition.v1.json`, `dbkq_source_2026-09-04.html` | `scripts/dbkq_convert.js`, `scripts/dbkq_verify.js` |
   | `2026-09-06_dbkq_definition.v1.2.json`, `dbkq_live_definition_2026-09-06.json` | `scripts/dbkq_v12_polish.js`, `tests/dbkqV12Polish.test.js` |
 
-  `2026-08-27_unified_events_e0a.sql` is the exception: it moved to
-  `migrations/` and `genTypeKeyBackfill.js` names it explicitly as `E0A_PATH`.
-  Don't re-derive it from `E0B_PATH` by string surgery — that is what broke
-  when the two split.
+  Being read by a test is **not** on its own a reason to pin a file here. The
+  whole unified-events series lives in `migrations/`, where it belongs by kind,
+  and the four readers name it there — `genTypeKeyBackfill.js` resolves its
+  three paths through a `MIG()` helper, and the U2b/U8 suites spell out
+  `ref/migrations/` in their `path.join`. Pin a file only when something
+  genuinely cannot follow it, and prefer fixing the reader.
+
+  Corollary: never derive one migration's path from another's by string
+  surgery. `genTypeKeyBackfill.js` used to build the E0a path by replacing the
+  E0b filename inside `E0B_PATH`; the moment the two sat in different
+  directories the suite stopped loading. Each path gets its own constant.
 
 ## migrations/ — applied, historical
 Every dated `.sql` and definition-JSON payload that has already been applied to
