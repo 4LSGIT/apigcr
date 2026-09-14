@@ -47,7 +47,8 @@ const ROOT = path.join(__dirname, '..');
 const SCAN_DIRS = ['routes', 'lib', 'services', 'scripts'];
 
 // ── Exempt statements, identified by a distinctive substring ────────────────
-// Every entry needs an audit class + reason (see ref/AUTOMATION_VERSIONING_AUDIT.md).
+// Every entry needs an audit class + reason (see
+// ref/archive/AUTOMATION_VERSIONING_AUDIT.md).
 const EXEMPT = [
   { // routes/workflows.js DELETE /workflows/:id — whole-entity delete
     match: 'DELETE FROM workflow_steps WHERE workflow_id = ?',

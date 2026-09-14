@@ -1,4 +1,4 @@
--- ref/2026-09-01_g4_notice_automation.sql
+-- ref/migrations/2026-09-01_g4_notice_automation.sql
 --
 -- G4 — "Notice of Filing -> client": generate the Notice of Bankruptcy Filing
 -- from its contract_templates row and email it to the primary debtor whenever a

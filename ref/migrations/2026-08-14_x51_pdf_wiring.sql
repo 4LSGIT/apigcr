@@ -1,4 +1,4 @@
--- ref/2026-08-14_x51_pdf_wiring.sql
+-- ref/migrations/2026-08-14_x51_pdf_wiring.sql
 --
 -- X5.1 — wire render_submission_pdf into wf40 (the shared form-notify
 -- workflow), give form PDFs their own unsorted Dropbox bin, and fix a live

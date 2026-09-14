@@ -82,7 +82,8 @@ describe('schema conventions (ref/database.sql)', () => {
     // If this failed: the table was created with `DEFAULT CHARSET=utf8mb4`
     // and no COLLATE. Fix with
     //   ALTER TABLE <t> CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-    // then re-run `npm run db:ref`. See ref/2026-08-17_collation_normalize.sql.
+    // then re-run `npm run db:ref`. See
+    // ref/migrations/2026-08-17_collation_normalize.sql.
   });
 });
 

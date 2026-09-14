@@ -1,6 +1,6 @@
 # YisraCase density arc — plan (v2, measured)
 
-Supersedes `ref/DENSITY-ARC-CHARTER.md`. That charter was written from the
+Supersedes `ref/archive/DENSITY-ARC-CHARTER.md`. That charter was written from the
 mockup. This one was written after measuring the repo, and **two of its three
 core assumptions were wrong.**
 

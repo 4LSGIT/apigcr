@@ -6,7 +6,7 @@
 -- Prereq: the T1, T3/T4 and R4 trigger migrations are already applied.
 --
 -- NO session variables / no LAST_INSERT_ID across statements — the runner
--- executes each statement on its own connection (ref/migration_trigger_R4.sql
+-- executes each statement on its own connection (ref/migrations/migration_trigger_R4.sql
 -- header; the T3/T4 migration used SET @rule_id = LAST_INSERT_ID(), do NOT
 -- copy that pattern). The action INSERTs below resolve their rule_id with an
 -- INSERT … SELECT against trigger_rules.name instead, which is

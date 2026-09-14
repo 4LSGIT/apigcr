@@ -1,6 +1,6 @@
 -- ============================================================
 -- Trigger System — case.stage_aged: record of applied + corrections
--- ref/2026-08-17_trigger_stage_aged.sql
+-- ref/migrations/2026-08-17_trigger_stage_aged.sql
 --
 -- HISTORY: Sections A and B below were ALREADY APPLIED to production on
 -- 2026-08-17 (verified live by independent review: table exists with 0
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS case_stage_aged_emitted (
 -- idx_case exists to serve ("what have we emitted for case X") threw
 -- "Illegal mix of collations". Free at 0 rows; expensive never.
 --
--- SUPERSEDED: ref/2026-08-17_collation_normalize.sql has since run and
+-- SUPERSEDED: ref/migrations/2026-08-17_collation_normalize.sql has since run and
 -- CONVERTed all 26 off-default tables to general_ci — this table (whole-table,
 -- not just case_id) plus trigger_executions and trigger_execution_rules, which
 -- carried the same 0900_ai_ci default. That closes the wider class; nothing

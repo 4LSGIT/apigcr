@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2026-09-01 — Unified Events U6b: appts gain the event anchor shape (A3a)
--- ref/2026-09-01_unified_events_u6b.sql
+-- ref/migrations/2026-09-01_unified_events_u6b.sql
 --
 -- Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §3.4.1 (A3/A3a), §3.6,
 -- §7 (U6b), §7.1 (live-safety rules). Worker: Fable. Slice owner: CAL.

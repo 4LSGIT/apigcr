@@ -13,10 +13,10 @@
  * lib/portalCardEngine.renderCards — the configurable replacement for the
  * previously hardcoded payment + 341 cards. The 341 card's GATES (BK-only,
  * past-date suppression) now live SOLELY in the engine's conditions (the
- * seeded meeting341 row — ref/2026-08-07_portal_cards_e1.sql translates the
- * shipped gates exactly); this service no longer applies them. Double-gating
- * hides bugs — the engine decides whether the 341 card appears, and
- * formatMeeting341 below is a pure FORMATTER included when (and only when)
+ * seeded meeting341 row — ref/migrations/2026-08-07_portal_cards_e1.sql
+ * translates the shipped gates exactly); this service no longer applies them.
+ * Double-gating hides bugs — the engine decides whether the 341 card appears,
+ * and formatMeeting341 below is a pure FORMATTER included when (and only when)
  * that card passed. Parity with pre-E1 output is pinned by
  * tests/portalCardEngine.test.js.
  *
@@ -113,7 +113,7 @@ function deriveDocket(caseRow) {
  * S2.1 (D8), reshaped by E1: the client-facing 341 block — now a pure
  * FORMATTER. The former gates (BK-exclusivity, past-date suppression) moved
  * VERBATIM onto the meeting341 card's engine conditions
- * (ref/2026-08-07_portal_cards_e1.sql — the single place they live;
+ * (ref/migrations/2026-08-07_portal_cards_e1.sql — the single place they live;
  * double-gating hides bugs, per the E1 ruling). getCaseView calls this only
  * after the engine has passed the card; parity with the pre-E1 gated output
  * is pinned by tests/portalCardEngine.test.js.

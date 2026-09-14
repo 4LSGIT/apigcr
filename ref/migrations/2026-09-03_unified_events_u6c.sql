@@ -1,6 +1,6 @@
 -- ============================================================================
 -- UNIFIED EVENTS U6c — events.event_status gains 'Rescheduled'
--- ref/2026-09-03_unified_events_u6c.sql
+-- ref/migrations/2026-09-03_unified_events_u6c.sql
 --
 -- WHY (Fred, 2026-09-03, overruling v0.5 §3.4's "supersession is the pointer,
 -- never a status"):

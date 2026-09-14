@@ -1,7 +1,7 @@
 -- ============================================================================
 -- Origin separation (2026-08-16) — settings rows + DB page content edits
 -- Companion to: routes/pageLanding.js host router, lib/firmConfig.js keys,
---               ref/ORIGIN_SEPARATION_ROLLOUT.md (ordering + DNS steps).
+--               ref/archive/ORIGIN_SEPARATION_ROLLOUT.md (ordering + DNS steps).
 --
 -- DB-console rules: every statement is single-statement-self-contained.
 -- All statements are idempotent (INSERT IGNORE / REPLACE()-with-gone-source).

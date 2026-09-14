@@ -1,4 +1,4 @@
--- ref/2026-08-19_step_version_defaults_0.sql
+-- ref/migrations/2026-08-19_step_version_defaults_0.sql
 --
 -- Versioning fixpack (review IV.F3) — the last two version columns the
 -- 08-19 default fixpacks skipped: the STEP-ROW version columns.

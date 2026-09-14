@@ -12,7 +12,7 @@
 # never writes to report_definitions.
 #
 # Prereqs:
-#   - Migration ref/2026-07-28_reports.sql applied
+#   - Migration ref/migrations/2026-07-28_reports.sql applied
 #   - Slice 1-3 code deployed
 #   - A superuser JWT (draft is SU-only)
 #

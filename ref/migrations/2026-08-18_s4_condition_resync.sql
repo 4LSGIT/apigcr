@@ -1,4 +1,4 @@
--- ref/2026-08-18_s4_condition_resync.sql
+-- ref/migrations/2026-08-18_s4_condition_resync.sql
 --
 -- Automation versioning S4 — template_condition re-sync (closes the S2/S3
 -- drift window flagged in review).

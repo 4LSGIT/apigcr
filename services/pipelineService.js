@@ -26,8 +26,9 @@
  *     stage config (config JSON stays unread in v1).
  *
  * Schema: pipeline_templates / pipeline_stages / case_stage_log —
- * ref/2026-08-02_pipeline_engine_slice_a.sql (Slice A, shipped 2026-08-02);
- * pipeline_stages.lane — ref/2026-08-25_pipeline_lane.sql (R1).
+ * ref/migrations/2026-08-02_pipeline_engine_slice_a.sql (Slice A, shipped
+ * 2026-08-02); pipeline_stages.lane —
+ * ref/migrations/2026-08-25_pipeline_lane.sql (R1).
  *
  * R1 — THE LANE AXIS. pipeline_stages is a flat ordered list, so an off-ramp
  * (no_show, dead_lead, dismissed, appeal, …) can only be given a

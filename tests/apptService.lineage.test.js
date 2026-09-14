@@ -29,7 +29,7 @@
  *   source 'client'). That is a deliberate stand-in, not the route itself:
  *   this is a service unit test. If manage.js ever stops passing
  *   hook_rescheduled_from, THIS FILE WILL STILL PASS — the guard for that is
- *   the live gate in ref/2026-08-27_unified_events_e0a.sql.
+ *   the live gate in ref/migrations/2026-08-27_unified_events_e0a.sql.
  *
  * ── STUB POSTURE ────────────────────────────────────────────────────────────
  *   No DB, no network. `db` is a SQL-matching router (the makeDb idiom from

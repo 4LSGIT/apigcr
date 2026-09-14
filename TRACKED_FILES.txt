@@ -335,6 +335,7 @@ ref/2026-09-06_dbkq_definition.v1.2.json
 ref/EXTERNAL_CODE_CSS_DECISION.md
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md
+ref/README.md
 ref/SCHEMA_CONVENTIONS.md
 ref/SETUP_cloud_tasks.md
 ref/THEME-CHEATSHEET.md

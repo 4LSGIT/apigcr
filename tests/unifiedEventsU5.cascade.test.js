@@ -3,8 +3,9 @@
 /**
  * Unified Events U5 — the sequence cascade after the consumer cutover.
  *
- * The migration (ref/2026-09-01_unified_events_u5.sql) moves four templates'
- * filters from `appt_type` labels to `type_key` registry keys and puts
+ * The migration (ref/migrations/2026-09-01_unified_events_u5.sql) moves four
+ * templates' filters from `appt_type` labels to `type_key` registry keys and
+ * puts
  * `type_key` AHEAD of `appt_type` in priority_fields. apptService flattens
  * `type_key` into both trigger_data payloads. This file pins the pair, because
  * they only work together:

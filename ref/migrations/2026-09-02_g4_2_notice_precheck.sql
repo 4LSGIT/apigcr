@@ -1,4 +1,4 @@
--- ref/2026-09-02_g4_2_notice_precheck.sql
+-- ref/migrations/2026-09-02_g4_2_notice_precheck.sql
 --
 -- G4.2 — check BEFORE rendering, and stop blocking the notice on a blank
 -- street address.

@@ -1,7 +1,7 @@
--- ref/2026-08-19_pin_column_defaults_0.sql
+-- ref/migrations/2026-08-19_pin_column_defaults_0.sql
 --
 -- Versioning fixpack (review III.F3) — carry the fail-safe-default reasoning
--- of ref/2026-08-19_current_version_default_0.sql down to the two RUNTIME PIN
+-- of ref/migrations/2026-08-19_current_version_default_0.sql down to the two RUNTIME PIN
 -- columns it left behind.
 --
 -- WHY: workflow_executions.workflow_version and

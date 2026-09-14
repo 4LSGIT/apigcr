@@ -1,7 +1,7 @@
 # DBKQ cutover runbook — JotForm → YisraForm
 
 **Slice:** D3. **Written:** 2026-09-04. **Run by:** Fred.
-Companion doc: `ref/2026-09-04_dbkq_workflow_spec.md` (the workflow and the
+Companion doc: `ref/archive/2026-09-04_dbkq_workflow_spec.md` (the workflow and the
 `onSubmit` block this runbook installs).
 
 Readonly SQL for every verification step:

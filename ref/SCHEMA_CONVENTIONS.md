@@ -47,7 +47,7 @@ to reach 26 is not a trade. One collation beats the best collation.
 **Enforced by** `tests/schemaConventions.test.js`, which lints
 `ref/database.sql` in CI. If you add a table, run `npm run db:ref` and the
 test will tell you before the join does. Normalization migration:
-`ref/2026-08-17_collation_normalize.sql`.
+`ref/migrations/2026-08-17_collation_normalize.sql`.
 
 ## `sql_mode` has no `STRICT_TRANS_TABLES`
 

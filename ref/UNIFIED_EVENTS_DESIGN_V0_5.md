@@ -572,14 +572,14 @@ widening to `'event'|'any'` is adapter work, folded into U5.
 **Shipped:** **E0a** — `events.kind`, `events.superseded_by_event_id`, `events.supersede_reason`,
 `appts.rescheduled_from_appt_id` + the `rescheduleAppt` write, and the 31-row dedup
 reclassification backfill (`reason='duplicate'`; every artifact has exactly one live twin,
-verified). SQL: `ref/2026-08-27_unified_events_e0a.sql`. **E1** — `caseEventService`,
+verified). SQL: `ref/migrations/2026-08-27_unified_events_e0a.sql`. **E1** — `caseEventService`,
 `routes/api.caseEvents.js`, `case.html` tabTimeline, three-way link audit; **E1b** — the
 `link_type:'none'` read filter on `eventService.listEvents`. Landed 2026-09-01.
 **U1** — `ref/2026-09-01_unified_events_e0b.sql`: `events.kind` by type plus the four hand-fixes;
 applied and verified 2026-09-01. **U2** — `ref/2026-09-01_unified_events_u2.sql` + backend +
 frontend: the registry, `type_key` on both tables, the generated backfill, `calendarTypeService`,
 `GET /api/calendar-types` and the eventform picker; deployed and verified the same day.
-**U3** — `ref/2026-09-01_unified_events_u3.sql` + `caseEventService`: column-is-truth at
+**U3** — `ref/migrations/2026-09-01_unified_events_u3.sql` + `caseEventService`: column-is-truth at
 `_deriveKeys`, the frozen `scripts/typeKeyVocabulary.js`, `events.event_resolution`,
 `state`/`resolution`, opt-in `includeAttendees`, and the appt half of the link audit; deployed and
 verified the same day. **U4** — `apptService`, `eventService`, `triggerService` + three test
@@ -751,7 +751,7 @@ angle rides on this line: the engine is case-type- and firm-agnostic; a firm is 
 Reported by U2, recorded rather than worked around:
 
 - **`ai_match_types.item_type` vs the registry:** the commented example row in
-  `ref/2026-08-10_ai_match_registry.sql` uses `item_type '341_meeting'`; the registry key is
+  `ref/migrations/2026-08-10_ai_match_registry.sql` uses `item_type '341_meeting'`; the registry key is
   `meeting_341`. U2's guard test (`tests/aiMatchTypes.registry.test.js` — every non-NULL
   `item_type` exists in the registry) fails if that row is uncommented as-is. Fix the comment when
   U7 touches the file.

@@ -54,8 +54,9 @@
  * with the param bound as a NUMBER — see the load-bearing comment at the
  * predicate itself. MEMBER OF (not JSON_CONTAINS) is chosen because it is
  * the form the optimizer can satisfy from a multi-valued index; see
- * ref/2026-08-22_ingest_matched_rules_index.sql, which is OPTIONAL — without
- * it this is a full scan (~420ms at 16k rows, fine for an admin surface).
+ * ref/migrations/2026-08-22_ingest_matched_rules_index.sql, which is OPTIONAL —
+ * without it this is a full scan (~420ms at 16k rows, fine for an admin
+ * surface).
  *
  * opts.action_status — executions carrying an action_outcomes entry with
  * that status. SCOPED TO rule_id when rule_id is also supplied (i.e. "this
@@ -214,10 +215,10 @@ async function list(db, opts = {}) {
   //
   // `? MEMBER OF (col->'$.path')` is deliberately the exact shape MySQL
   // documents as multi-valued-index-eligible, so the optional index in
-  // ref/2026-08-22_ingest_matched_rules_index.sql is picked up with no code
-  // change. A CAST(? AS UNSIGNED) wrapper would work too but is not needed
-  // once the param is a number, and wrapping the probe is the kind of thing
-  // that quietly costs you the index. Leave it bare.
+  // ref/migrations/2026-08-22_ingest_matched_rules_index.sql is picked up with
+  // no code change. A CAST(? AS UNSIGNED) wrapper would work too but is not
+  // needed once the param is a number, and wrapping the probe is the kind of
+  // thing that quietly costs you the index. Leave it bare.
   const ruleId = Number(opts.rule_id);
   const hasRuleId = Number.isInteger(ruleId) && ruleId > 0;
   if (hasRuleId) {

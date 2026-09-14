@@ -1,4 +1,4 @@
--- ref/2026-09-01_g2_document_generate.sql
+-- ref/migrations/2026-09-01_g2_document_generate.sql
 --
 -- G2 — "generate a document from a template", the non-esign twin of
 -- send-from-template. Two columns on contract_templates and one settings row.

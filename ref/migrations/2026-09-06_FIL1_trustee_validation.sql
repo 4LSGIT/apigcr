@@ -1,4 +1,4 @@
--- ref/2026-09-06_FIL1_trustee_validation.sql
+-- ref/migrations/2026-09-06_FIL1_trustee_validation.sql
 --
 -- FIL-1 Phase 2 — trustee validation wiring. Every statement is STANDALONE
 -- (DB console runs each on its own pooled connection: no session variables,

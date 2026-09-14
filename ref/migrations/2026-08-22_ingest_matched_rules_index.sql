@@ -3,7 +3,7 @@
 --      is a range read instead of a full JSON scan
 --
 -- ⚠ THIS MIGRATION IS OPTIONAL. Unlike
--- ref/2026-08-19_ingest_action_failure_count.sql — whose generated column
+-- ref/migrations/2026-08-19_ingest_action_failure_count.sql — whose generated column
 -- the executions services SELECT by name, so a code-first deploy 500s every
 -- executions list — nothing here is referenced by name anywhere in the
 -- application. The `rule_id` filter is written as

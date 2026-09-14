@@ -1,4 +1,4 @@
--- ref/2026-08-19_current_version_default_0.sql
+-- ref/migrations/2026-08-19_current_version_default_0.sql
 --
 -- Versioning fixpack (final review F2) — flip the fail-safe direction of
 -- `current_version`'s column default from 1 to 0.

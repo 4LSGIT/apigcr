@@ -346,7 +346,7 @@ inside b and prettifies it.
 unlink route — mistakes are a manual SQL fix. `linked_by` comes from the auth
 principal, never the request body (test-locked). New columns
 `form_submissions.linked_by` / `linked_at`
-(ref/2026-08-13_form_submissions_linkage.sql); NULL `linked_by` + non-empty
+(ref/migrations/2026-08-13_form_submissions_linkage.sql); NULL `linked_by` + non-empty
 `link_type` reads as "linked at submit time".
 
 **Submission view = a render.html mode, not a second renderer.**
@@ -484,7 +484,7 @@ context corrections.**
 
 6. **Arc-level notes recorded with this slice:** Phase D (SMS cutover) is
    **deferred with no timeline** (staged SQL stays at
-   `ref/2026-08-13_phase_d_sms_cutover.sql`; whoever fires it re-verifies the
+   `ref/migrations/2026-08-13_phase_d_sms_cutover.sql`; whoever fires it re-verifies the
    9 sequence_steps rows first), and the supermanager's mid-September
    Jotform-chain retirement condition is **suspended** until Phase D actually
    fires — the chain still carries live traffic.
@@ -575,7 +575,7 @@ Fred's four rulings 2026-08-14.
    `public/formInbox.html` + `public/forms/submissionsWidget.html` (buttons),
    `tests/formpdf.x51.test.js` (15) + `tests/formpdf.x5.test.js` (retargeted),
    manual 02/11, 02/15, 03/05, 03/06, and
-   `ref/2026-08-14_x51_pdf_wiring.sql`.
+   `ref/migrations/2026-08-14_x51_pdf_wiring.sql`.
 
 ---
 
@@ -864,7 +864,7 @@ BINDING: card + tabs mutually exclusive at `validateDefinition`.**
    byte-identically (no live definition carries the key).
 
 **X6 closes the arc's chartered slices.** Remaining on the external arc:
-Phase D (SMS cutover — staged at `ref/2026-08-13_phase_d_sms_cutover.sql`,
+Phase D (SMS cutover — staged at `ref/migrations/2026-08-13_phase_d_sms_cutover.sql`,
 deferred, no timeline) and two DECLINED futures (file/image upload — needs
 its own chartered security review; externally-addressed receipt emails — an
 open-relay channel on an unauthed endpoint).

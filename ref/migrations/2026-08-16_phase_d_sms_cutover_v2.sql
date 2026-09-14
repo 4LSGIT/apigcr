@@ -2,7 +2,7 @@
 -- Phase D v2: SMS intake-link cutover — RETARGETED to the landing origin
 --   go.4lsg.com/intake?id=<case_id>  →  https://4lsg.com/p/form?f=intake&case_id=<case_id>
 --
--- SUPERSEDES ref/2026-08-13_phase_d_sms_cutover.sql (which targeted
+-- SUPERSEDES ref/migrations/2026-08-13_phase_d_sms_cutover.sql (which targeted
 -- app.4lsg.com/p/form). Rationale, decided with Fred 2026-08-16: system
 -- links use the /p prefix on the landing host (his stated preference —
 -- "cleanest"), the host is 4 chars shorter than app.4lsg.com AND the link no
@@ -49,4 +49,4 @@ SELECT id FROM sequence_steps WHERE template_id IN (20,22) AND action_config LIK
 -- UPDATE sequence_steps SET action_config = REPLACE(action_config, 'https://4lsg.com/p/form?f=intake&case_id=', 'https://go.4lsg.com/intake?id=') WHERE id IN (71,73,75,78);
 -- UPDATE sequence_steps SET action_config = REPLACE(action_config, 'https://4lsg.com/p/form?f=intake&case_id=', 'go.4lsg.com/intake?id=') WHERE id IN (84,85,87,89,92);
 -- (Byte-exact pre-cut message text: see the BACKUP block in
---  ref/2026-08-13_phase_d_sms_cutover.sql — unchanged, still authoritative.)
+--  ref/migrations/2026-08-13_phase_d_sms_cutover.sql — unchanged, still authoritative.)

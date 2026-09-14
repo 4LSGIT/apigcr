@@ -623,7 +623,7 @@ if (type === "Bankruptcy") {
 
 The non-`-bk` files are the **fallback** branch for case types that do not have
 their own. This is a bankruptcy firm, so `-bk` is what staff open every day.
-`ref/ORIGIN_SEPARATION_ROLLOUT.md:455` already said so. Both were fully
+`ref/archive/ORIGIN_SEPARATION_ROLLOUT.md:455` already said so. Both were fully
 converted in slice 9.
 
 The general lesson, and it generalises past this file: **a filename is not

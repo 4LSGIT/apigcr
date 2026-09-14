@@ -63,7 +63,7 @@
  * (`task_link_type IS NULL AND task_link != ''` is matched against
  * cases.case_number), so neither can be overloaded. A dedicated
  * `tasks.task_dedupe_key varchar(64)` column is added instead — see
- * ref/2026-08-16_task_dedupe_key.sql.
+ * ref/migrations/2026-08-16_task_dedupe_key.sql.
  *
  * WHY THE KEY IS STAMPED BY A SEPARATE UPDATE rather than passed through
  * createTask: if the migration has not landed, an INSERT naming a missing
@@ -293,7 +293,7 @@ async function _stampKey(db, taskId, key) {
     console.error(
       `[ESIGN ALERT] could not stamp dedupe key "${key}" on task #${taskId} ` +
       `(${err && err.message}) — the task stands but will not dedupe. ` +
-      `Has ref/2026-08-16_task_dedupe_key.sql been applied?`
+      `Has ref/migrations/2026-08-16_task_dedupe_key.sql been applied?`
     );
     return false;
   }

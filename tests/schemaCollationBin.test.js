@@ -1,8 +1,9 @@
 // tests/schemaCollationBin.test.js — Dropbox ids are case-SENSITIVE base64url.
 // general_ci merged 3,000+ distinct files into shared rows before anyone saw
 // an error (2026-08-27). This is invisible at write time by construction —
-// hence a schema lint, not a runtime check. Fix + fallout: ref/documents_s2_hotfix.sql
-// and the S2 rollout report; the repair is
+// hence a schema lint, not a runtime check. Fix + fallout:
+// ref/migrations/documents_s2_hotfix.sql and the S2 rollout report; the repair
+// is
 //   ALTER TABLE <t> MODIFY <col> VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin …
 // followed by `npm run db:ref` so this test lints a current dump.
 //

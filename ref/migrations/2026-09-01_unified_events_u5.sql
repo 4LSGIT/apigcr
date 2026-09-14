@@ -1,4 +1,4 @@
--- ref/2026-09-01_unified_events_u5.sql
+-- ref/migrations/2026-09-01_unified_events_u5.sql
 --
 -- UNIFIED EVENTS U5 — consumer cutover: type strings → type_key
 -- Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §1 A1, §3.3, §6.1, §7.

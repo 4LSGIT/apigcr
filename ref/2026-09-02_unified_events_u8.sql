@@ -57,7 +57,7 @@
 -- setting real offsets — see manual/03-YisraFlow/15-triggers.md).
 --
 -- Rollback at the bottom, commented, including the court_item_reminders
--- re-creation SQL from the U0-era schema (ref/2026-08-10_ai_match_registry.sql).
+-- re-creation SQL from the U0-era schema (ref/migrations/2026-08-10_ai_match_registry.sql).
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ DROP TABLE IF EXISTS court_item_reminders;
 -- ALTER TABLE calendar_item_types DROP COLUMN approaching_offsets;
 --
 -- court_item_reminders, as it stood before this migration (from the U0-era
--- ref/2026-08-10_ai_match_registry.sql; 0 rows, so there is no data to restore):
+-- ref/migrations/2026-08-10_ai_match_registry.sql; 0 rows, so there is no data to restore):
 --
 -- CREATE TABLE court_item_reminders (
 --   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,

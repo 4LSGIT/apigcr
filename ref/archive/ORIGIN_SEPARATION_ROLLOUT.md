@@ -3,8 +3,8 @@
 Charter: `ref/EXTERNAL_CODE_CSS_DECISION.md` (residual #1 → resolved here).
 Code: `routes/pageLanding.js` (host router), `lib/firmConfig.js` (keys),
 `lib/auth.superuser.js` + `routes/admin.elevate.js` + `public/index.html`
-(step-up). SQL: `ref/2026-08-16_origin_separation.sql`,
-`ref/2026-08-16_phase_d_sms_cutover_v2.sql` (gated).
+(step-up). SQL: `ref/migrations/2026-08-16_origin_separation.sql`,
+`ref/migrations/2026-08-16_phase_d_sms_cutover_v2.sql` (gated).
 Tests: `tests/pageLanding.originsep.test.js`, `tests/su.stepup.test.js`.
 
 ## Decisions (ratified with Fred 2026-08-16)
@@ -53,7 +53,7 @@ behavior is byte-identical to pre-slice EXCEPT rider B: SU tools start
 demanding step-up immediately after this deploy. If that must wait, set
 `SU_STEPUP=0` on the Cloud Run revision and remove it later.
 
-**Step 1 — SQL, part 1** (`ref/2026-08-16_origin_separation.sql`): settings
+**Step 1 — SQL, part 1** (`ref/migrations/2026-08-16_origin_separation.sql`): settings
 rows (`landing_hosts='4lsg.com'`, `landing_redirect='0'`) + the two page
 content edits. Redirects stay OFF; the landing gate is armed but the domain
 doesn't resolve to us yet.
@@ -111,7 +111,7 @@ render (`/forms/render.html` without `ext=1`) still serves on the app host;
 `POST /p/...` still answers on the app host.
 
 **Step 7 (later, separately gated) — Phase D v2**
-(`ref/2026-08-16_phase_d_sms_cutover_v2.sql`): supermanager approval, then
+(`ref/migrations/2026-08-16_phase_d_sms_cutover_v2.sql`): supermanager approval, then
 run. Old go.4lsg.com links keep working through the short.io chain until its
 separate retirement.
 
@@ -179,7 +179,7 @@ drop `www.4lsg.com` from `landing_hosts`. Never the other order.
   `http://legalsolutions.group`, delete the eight A/AAAA), remove the Cloud
   Run mapping, and only THEN blank `landing_hosts`. Never blank it while the
   mapping stands — an unlisted-but-mapped host serves the FULL app.
-- **Page content:** inverse REPLACEs in `ref/2026-08-16_origin_separation.sql`.
+- **Page content:** inverse REPLACEs in `ref/migrations/2026-08-16_origin_separation.sql`.
 - **Phase D v2:** inverse REPLACEs in its own file.
 
 ## Deliberately not done (with reasons)
@@ -206,7 +206,7 @@ Code: `routes/pageLanding.js` (allowlist, `isMigratedPath`, `isCredentialedPath`
 `lib/rateLimiter.js` (stale-comment correction),
 `public/{index.html,scripts.js,campaign.html,bookingviewsmanager.html}`
 (hard-coded default link hosts).
-SQL: `ref/2026-08-16_booking_landing.sql`.
+SQL: `ref/migrations/2026-08-16_booking_landing.sql`.
 Tests: `tests/pageLanding.originsep.test.js` (extended, not forked).
 
 ## Why — stated at its real size
@@ -299,7 +299,7 @@ complete rather than be dead-ended. Test-locked.
    `app.4lsg.com/book/*` and `/m/*` start 302ing to `4lsg.com`.
 3. **Frontend deploy.** The four `public/` files only change *default* copy
    offered to staff — nothing already sent or already saved changes.
-4. **`ref/2026-08-16_booking_landing.sql`** — read the verify-BEFORE block
+4. **`ref/migrations/2026-08-16_booking_landing.sql`** — read the verify-BEFORE block
    first. All three settings rows are `is_editable = 1`, so a human may have
    edited them since; a `REPLACE()` whose source string is gone is a silent
    no-op, which is safe but means you must confirm the after-state.
@@ -325,7 +325,7 @@ complete rather than be dead-ended. Test-locked.
   and `/m`; the landing host keeps serving them in parallel, so nothing
   breaks in either direction. This is the safe first move.
 - **Content:** inverse `REPLACE`s in
-  `ref/2026-08-16_booking_landing.sql` § 4, plus reverting the four `public/`
+  `ref/migrations/2026-08-16_booking_landing.sql` § 4, plus reverting the four `public/`
   files. **Order matters on a full teardown:** content edits point at
   `4lsg.com`, so revert them BEFORE unmapping DNS — the mirror of the existing
   "never blank `landing_hosts` while the mapping stands" rule.
@@ -373,7 +373,7 @@ Code: `routes/pageLanding.js` (allowlist: `V_ROUTE_RE`, `API_V_POST_RE`;
 `isMigratedPath`), `routes/videoLanding.js` (og:url pin, docs),
 `public/{videoManager.html,js/videoInsert.js,sendingform-bk.html}`
 (link-minting defaults).
-SQL: `ref/2026-08-17_video_landing.sql`.
+SQL: `ref/migrations/2026-08-17_video_landing.sql`.
 Tests: `tests/pageLanding.originsep.test.js` (extended, not forked).
 Prereq patch (ships FIRST, alone): the action-URL scheme allowlist —
 `services/videoService.js` + `routes/videoLanding.js` +
@@ -460,7 +460,7 @@ not re-tell booking as security. They are different slices for a reason.
 
 1. **Ship the scheme-allowlist patch first, alone.** It has no dependency on
    this slice and protects the app host immediately.
-2. **SQL is optional and can run any time** (`ref/2026-08-17_video_landing.sql`
+2. **SQL is optional and can run any time** (`ref/migrations/2026-08-17_video_landing.sql`
    — three sequence-step rows; read its verify-BEFORE block first). Missed
    rows degrade to one extra 302 hop, never a break. Sent history
    (log rows, campaigns 104/105) is deliberately untouched — see the file
@@ -489,7 +489,7 @@ not re-tell booking as security. They are different slices for a reason.
 - **Code:** `landing_redirect='0'` (≤60 s) — the app host stops 302ing `/v/*`;
   the landing host keeps serving it in parallel. The scheme-allowlist patch is
   independent and stays.
-- **Content:** inverse `REPLACE`s in `ref/2026-08-17_video_landing.sql` § 3,
+- **Content:** inverse `REPLACE`s in `ref/migrations/2026-08-17_video_landing.sql` § 3,
   plus reverting the three `public/` files. On a full teardown revert content
   BEFORE unmapping DNS (standing rule).
 
@@ -605,7 +605,7 @@ links work directly, and both hosts serve every route.
 Ships as TWO commits, in this order:
 
 **1. `contacts.booking_token` → `contacts.contact_token`** (pure rename, zero
-behavior change). SQL: `ref/2026-08-17_contact_token_rename.sql`. Code:
+behavior change). SQL: `ref/migrations/2026-08-17_contact_token_rename.sql`. Code:
 `routes/booking.js`, `services/contactService.js`, `lib/domainEvents.js`,
 `lib/reportSchema/manifest.js`, `public/campaign.html`, `ref/database.sql`,
 plus comments in `routes/pageLanding.js` and a fixture in
@@ -664,7 +664,7 @@ Unlike every other slice here, the rename's SQL and code are **coupled**: old
 code queries `booking_token` by name, so between the ALTER and the backend
 deploy, booking-link minting throws. Run the ALTER immediately before the
 backend deploy (seconds-long window, affects link minting only — not booking
-itself). `ref/2026-08-17_contact_token_rename.sql` § 2 documents a
+itself). `ref/migrations/2026-08-17_contact_token_rename.sql` § 2 documents a
 generated-column shim if even that is unacceptable. Then `npm run db:ref`.
 
 Order: ALTER → backend → `npm run db:ref` → frontend.

@@ -28,7 +28,7 @@ ALTER TABLE sequence_enrollments
 -- Resolution ladder at send time: template.reminders_off → OFF;
 -- template.reminder_seq_id → that; else THIS setting; else OFF.
 -- Empty value = no firm default (reminders off unless a template names one).
--- Same INSERT shape as ref/2026-07-19_esign_phase1c.sql's settings.
+-- Same INSERT shape as ref/migrations/2026-07-19_esign_phase1c.sql's settings.
 
 INSERT INTO app_settings
   (`key`, `value`, is_secret, is_editable, category, label, description, `type`, sort_order)

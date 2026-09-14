@@ -220,7 +220,7 @@ router.post('/p/:slug', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Origin separation (2026-08-16, ref/ORIGIN_SEPARATION_ROLLOUT.md)
+// Origin separation (2026-08-16, ref/archive/ORIGIN_SEPARATION_ROLLOUT.md)
 //
 // WHY: everything staff-authorable-and-public (landing pages, external form
 // templates carrying code/css/hooks since the 2026-08-16 reversal) executes

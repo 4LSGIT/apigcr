@@ -94,8 +94,9 @@ const requirementDetectors = require('./requirementDetectors');
 // CONSTANTS / HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Column widths (ref/2026-08-02_pipeline_engine_slice_a.sql). Validated here
-// with 400s because the session's lax sql_mode would otherwise clip silently.
+// Column widths (ref/migrations/2026-08-02_pipeline_engine_slice_a.sql).
+// Validated here with 400s because the session's lax sql_mode would otherwise
+// clip silently.
 const MAX_NAME         = 100;  // pipeline_templates.name varchar(100)
 const MAX_TYPE         = 40;   // case_type / case_subtype varchar(40)
 const MAX_INTERNAL     = 50;   // HARD CAP — cases.case_status contract, NOT the varchar(100) column
@@ -115,9 +116,9 @@ const LANES       = new Set(['main', 'offramp']);
 const STAGE_KEY_RE = /^[a-z0-9_]{1,50}$/;
 
 // (R2) pipeline_stage_requirements widths + enums
-// (ref/2026-08-26_pipeline_r2_requirements.sql). Validated in JS with 400s —
-// the session's lax sql_mode would clip strings and coerce bad enums to ''
-// silently.
+// (ref/migrations/2026-08-26_pipeline_r2_requirements.sql). Validated in JS
+// with 400s — the session's lax sql_mode would clip strings and coerce bad
+// enums to '' silently.
 const REQ_KEY_RE        = /^[a-z0-9_]{1,60}$/;
 const MAX_REQ_LABEL     = 120;  // internal_label / client_label varchar(120)
 const MAX_REQ_HINT      = 255;  // hint varchar(255)

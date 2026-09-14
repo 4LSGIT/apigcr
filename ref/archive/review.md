@@ -64,7 +64,7 @@ All 33 V2 route files correctly enforce `jwtOrApiKey`. Three patterns in use, al
 
 These are *not* a.html blockers — a.html never calls them — but they're live, externally reachable, and use patterns we'd want gone regardless of the V1/V2 story. Each has an external integration we need to identify before deleting.
 
-**Caller-ID trap is live.** [lib/legacyTrap.js](../lib/legacyTrap.js) is a fire-and-forget middleware that inserts every request into `legacy_route_log` (route, ip, user_agent, query, body, headers). See [ref/legacy-trap-schema.sql](legacy-trap-schema.sql) for the table. Review the log to fingerprint callers, then retire each route.
+**Caller-ID trap is live.** [lib/legacyTrap.js](../lib/legacyTrap.js) is a fire-and-forget middleware that inserts every request into `legacy_route_log` (route, ip, user_agent, query, body, headers). See [ref/archive/legacy-trap-schema.sql](legacy-trap-schema.sql) for the table. Review the log to fingerprint callers, then retire each route.
 
 | # | Route | Risk | V2 replacement | Trap |
 |---|-------|------|----------------|------|
@@ -187,7 +187,7 @@ Split into three buckets:
 4. Delete `index.html` and the V1-only pages (`caseV1.html`, `contactV1.html`, `appt.html`, `apptform.html`, `contactform.html`). Watch logs for 404s on `/caseV1`, `/contactV1`, `/appt` for ~a week.
 
 **Security cleanup (in progress — trap is collecting data):**
-5. ~~Install caller-ID trap on legacy routes.~~ **Done** (commit `eacddba`) — see §3. Run [ref/legacy-trap-schema.sql](legacy-trap-schema.sql) to create `legacy_route_log`, then wait ~14 days.
+5. ~~Install caller-ID trap on legacy routes.~~ **Done** (commit `eacddba`) — see §3. Run [ref/archive/legacy-trap-schema.sql](legacy-trap-schema.sql) to create `legacy_route_log`, then wait ~14 days.
 6. Review trap log per route (`SELECT route, COUNT(*), MIN(ts), MAX(ts) FROM legacy_route_log GROUP BY route`). For each trapped route:
    - Identify callers from `body_json` / `ip` / `user_agent`
    - Migrate them to the V2 replacement (see §3 table)

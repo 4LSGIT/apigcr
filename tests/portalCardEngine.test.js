@@ -120,8 +120,8 @@ function wallDate(firmLocalDt, hhmm = '10:00') {
 const todayFirm = () => DateTime.now().setZone(FIRM_TZ).startOf('day');
 
 // The seeded meeting341 conditions — KEEP IN SYNC with
-// ref/2026-08-07_portal_cards_e1.sql (the migration is the deployable copy;
-// this literal is the test's).
+// ref/migrations/2026-08-07_portal_cards_e1.sql (the migration is the
+// deployable copy; this literal is the test's).
 const MEETING341_CONDITIONS = {
   mode: 'rules',
   match: 'all',
@@ -140,9 +140,9 @@ const MEETING341_CONDITIONS = {
 // query result, so array order must mirror the SQL order):
 //   docsNav(sort 2, id 3) → callback(sort 4, id 4) → payment(sort 10, id 1)
 //   → meeting341(sort 10, id 2).
-// E1 rows: ref/2026-08-07_portal_cards_e1.sql (payment first → lower id).
-// R2 rows: ref/2026-08-09_portal_r1_r2.sql (nav cards, sorted AHEAD of
-// payment to mirror the pre-R2 hardcoded visual order). KEEP IN SYNC.
+// E1 rows: ref/migrations/2026-08-07_portal_cards_e1.sql (payment first → lower
+// id). R2 rows: ref/migrations/2026-08-09_portal_r1_r2.sql (nav cards, sorted
+// AHEAD of payment to mirror the pre-R2 hardcoded visual order). KEEP IN SYNC.
 function seedCards() {
   return [
     cardRow({

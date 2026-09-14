@@ -2,10 +2,10 @@
 -- Booking + manage on the landing host (2026-08-16) — content edits only
 -- Companion to: routes/pageLanding.js (allowlist + isMigratedPath + robots),
 --               routes/booking.js (/b/:slug alias),
---               ref/ORIGIN_SEPARATION_ROLLOUT.md § "Follow-up slice".
+--               ref/archive/ORIGIN_SEPARATION_ROLLOUT.md § "Follow-up slice".
 --
 -- NO settings rows are added by this file. landing_hosts / landing_redirect
--- already exist (ref/2026-08-16_origin_separation.sql) and are unchanged; the
+-- already exist (ref/migrations/2026-08-16_origin_separation.sql) and are unchanged; the
 -- code slice extends what those two knobs cover. Verified live 2026-08-16:
 --   landing_hosts='4lsg.com', landing_redirect='1'  (i.e. rollout step 6 done)
 --
@@ -69,7 +69,7 @@ UPDATE app_settings SET `value` = REPLACE(`value`, 'https://app.4lsg.com/book/',
 
 
 -- ── 2. pages — the deferred page-2 iframe ───────────────────────────────────
--- ref/2026-08-16_origin_separation.sql deliberately skipped this one because
+-- ref/migrations/2026-08-16_origin_separation.sql deliberately skipped this one because
 -- booking was still app-host-only. Now it is not, so finish the job the same
 -- way pages 3 and 4 were done: absolute → relative, so the embed is
 -- same-origin with its parent on WHICHEVER host serves the page.

@@ -53,8 +53,8 @@
  * status='suppressed' while carrying
  * action_outcomes[0].error = "internal_function delivery failed:
  * certificate has expired". Backed by the generated column + index from
- * ref/2026-08-19_ingest_action_failure_count.sql; without that migration
- * this filter and the action_failure_count projection both throw
+ * ref/migrations/2026-08-19_ingest_action_failure_count.sql; without that
+ * migration this filter and the action_failure_count projection both throw
  * ER_BAD_FIELD_ERROR.
  *
  * action_failure_count is ALWAYS in the projection (slim and full).
@@ -202,10 +202,10 @@ async function list(db, opts = {}) {
   //
   // `? MEMBER OF (col->'$.path')` is deliberately the exact shape MySQL
   // documents as multi-valued-index-eligible, so the optional index in
-  // ref/2026-08-22_ingest_matched_rules_index.sql is picked up with no code
-  // change. A CAST(? AS UNSIGNED) wrapper would work too but is not needed
-  // once the param is a number, and wrapping the probe is the kind of thing
-  // that quietly costs you the index. Leave it bare.
+  // ref/migrations/2026-08-22_ingest_matched_rules_index.sql is picked up with
+  // no code change. A CAST(? AS UNSIGNED) wrapper would work too but is not
+  // needed once the param is a number, and wrapping the probe is the kind of
+  // thing that quietly costs you the index. Leave it bare.
   const ruleId = Number(opts.rule_id);
   const hasRuleId = Number.isInteger(ruleId) && ruleId > 0;
   if (hasRuleId) {

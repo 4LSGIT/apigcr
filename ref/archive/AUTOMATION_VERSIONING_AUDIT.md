@@ -125,7 +125,7 @@ context-site assertions).
 | lib/internal_functions/index.js:354 | comment | COMMENT |
 
 ## Deploy invariants (M7)
-1. Migration (`ref/2026-08-18_automation_versioning.sql`) completes immediately before the
+1. Migration (`ref/migrations/2026-08-18_automation_versioning.sql`) completes immediately before the
    S2 deploy.
 2. S2 ships **every** conversion in this table in one deploy — no partial read conversion.
 3. Nothing may create a version > 1 until S3/S4: `ensureDraft` and the publish endpoints

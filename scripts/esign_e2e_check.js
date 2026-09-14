@@ -144,8 +144,8 @@ async function runConfig() {
   esign_webhook_token is NOT SET.
 
   The endpoint fails CLOSED, so every delivery from Zoho is 401 until this
-  exists. Apply ref/2026-07-19_esign_phase1c.sql, which generates one with
-  RANDOM_BYTES(32), then re-run this command.
+  exists. Apply ref/migrations/2026-07-19_esign_phase1c.sql, which generates
+  one with RANDOM_BYTES(32), then re-run this command.
 `);
     return 1;
   }

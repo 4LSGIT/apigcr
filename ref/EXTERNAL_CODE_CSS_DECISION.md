@@ -2,7 +2,7 @@
 
 **Dates:** 2026-08-16 (two rounds, same day). **Decided by:** delegated Claude
 session + Fred, who reversed the first round's external ban after two
-arguments (below). **Ships with:** `ref/2026-08-16_form_dev_role.sql`,
+arguments (below). **Ships with:** `ref/migrations/2026-08-16_form_dev_role.sql`,
 `lib/auth.formDev.js`, service/route gates, builder warnings,
 `external.appearance`. **Chartered next:** origin separation + SU step-up
 (see the worker prompt Fred holds).
@@ -81,7 +81,7 @@ browser-enforced policy if ever wanted.
 1. **Staff-initiated JWT snatch via /p pages or external form code** on
    app.4lsg.com: ~~accepted pending ORIGIN SEPARATION (chartered)~~ —
    **RESOLVED 2026-08-16** by the origin-separation slice
-   (`ref/ORIGIN_SEPARATION_ROLLOUT.md`): /p, root-slug pages, /f, ext
+   (`ref/archive/ORIGIN_SEPARATION_ROLLOUT.md`): /p, root-slug pages, /f, ext
    render, /api/ext (and /r) serve from the landing origin `4lsg.com`;
    localStorage is origin-scoped, so the staff JWT is unreachable from
    anything staff-authorable-and-public, and the landing host structurally
@@ -104,7 +104,7 @@ browser-enforced policy if ever wanted.
 
 ## Rollout / revert
 
-- Deploy order: `ref/2026-08-16_form_dev_role.sql` → backend → frontend.
+- Deploy order: `ref/migrations/2026-08-16_form_dev_role.sql` → backend → frontend.
 - Non-IT staff lose: editing code/hooks/css VALUES on templates, and
   exposing templates externally. Everything else — including landing-page
   authoring and appearance styling — unchanged or newly opened.

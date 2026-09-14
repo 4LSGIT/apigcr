@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2026-08-27 — Unified Events E0a: schema atoms + dedup backfill
--- ref/2026-08-27_unified_events_e0a.sql
+-- ref/migrations/2026-08-27_unified_events_e0a.sql
 --
 -- Governing design: UNIFIED_EVENTS_DESIGN_V0_5.md §3.4, §7 (was V0_4.md; same section numbers).
 --
@@ -51,7 +51,7 @@
 --
 --   No session variables, no LAST_INSERT_ID, no cross-statement transaction.
 --   Each statement is standalone and may run on its own pooled connection
---   (DB-console convention — ref/migration_trigger_R4.sql header; the T3/T4
+--   (DB-console convention — ref/migrations/migration_trigger_R4.sql header; the T3/T4
 --   migration used SET @x = LAST_INSERT_ID(), do NOT copy that pattern).
 --
 -- ── RE-RUN SAFETY ───────────────────────────────────────────────────────────

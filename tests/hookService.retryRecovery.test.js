@@ -204,5 +204,5 @@ test("'this needed a retry' survives in hook_delivery_logs.attempts", async () =
   // Which is why clearing the execution's error text loses nothing: the
   // durable "a retry happened here" signal lives on the delivery log, and it
   // is also the witness the backfill migration keys off
-  // (ref/2026-08-19_hook_recovered_retry_error_backfill.sql).
+  // (ref/migrations/2026-08-19_hook_recovered_retry_error_backfill.sql).
 });

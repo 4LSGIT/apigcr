@@ -86,9 +86,10 @@ function settings() { return require('./settingsService'); }
 // Read per call so live edits of the app_url setting apply without redeploy.
 const APP_URL = () => require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com';
 // Client/recipient-facing action links (/t/:token) live on the PUBLIC landing
-// host as of 2026-08-17 — see ref/ORIGIN_SEPARATION_ROLLOUT.md. APP_URL stays
-// for STAFF-shell deep links (?contact= / ?case=), which only resolve on the
-// app origin. Keeping both named makes the choice explicit at each call site.
+// host as of 2026-08-17 — see ref/archive/ORIGIN_SEPARATION_ROLLOUT.md. APP_URL
+// stays for STAFF-shell deep links (?contact= / ?case=), which only resolve on
+// the app origin. Keeping both named makes the choice explicit at each call
+// site.
 const PUBLIC_URL = () => require('../lib/firmConfig').publicUrl();
 
 /**

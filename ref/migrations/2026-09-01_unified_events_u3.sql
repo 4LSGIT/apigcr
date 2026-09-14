@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2026-09-01 — Unified Events U3: events.event_resolution
--- ref/2026-09-01_unified_events_u3.sql
+-- ref/migrations/2026-09-01_unified_events_u3.sql
 --
 -- Governing design: ref/UNIFIED_EVENTS_DESIGN_V0_5.md §3.7 (A7 — status /
 -- resolution model), §7 (U3), §7.1 (live-safety rules). Worker: Opus.

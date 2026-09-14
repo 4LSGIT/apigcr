@@ -104,8 +104,8 @@ current behavior.
 - **S0** ✅ shipped in this bundle — reorder route relocated above `:stepNumber`
   (routes/sequences.js), + `tests/sequences.routeOrder.test.js` (verified: fails on
   pristine main, passes on fixed).
-- **S1** ✅ — `ref/2026-08-18_automation_versioning.sql`,
-  `ref/AUTOMATION_VERSIONING_AUDIT.md`.
+- **S1** ✅ — `ref/migrations/2026-08-18_automation_versioning.sql`,
+  `ref/archive/AUTOMATION_VERSIONING_AUDIT.md`.
 - **S2** ✅ — all read/write conversions per the audit; full jest suite green (3529
   pass; one pre-existing skip); `tests/esignReminders.test.js` positional assertions
   updated for the new enrollment column order.
@@ -121,7 +121,7 @@ current behavior.
 ## Deploy order for this bundle
 1. **S0 now** (independent): deploy `routes/sequences.js` + new route-order test. No
    migration needed.
-2. **Migration** `ref/2026-08-18_automation_versioning.sql`, run to completion in the
+2. **Migration** `ref/migrations/2026-08-18_automation_versioning.sql`, run to completion in the
    console, immediately followed by —
 3. **S2 deploy** (all remaining files in this bundle).
 Nothing in S2 changes behavior at version 1; rollback = revert deploy (columns/tables

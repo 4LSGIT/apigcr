@@ -43,7 +43,7 @@ Credentials accepted at the external routes, in v1 order of arrival:
 > "48-bit crypto-random (crypto.randomBytes(6) b64url)", describing code that does not
 > exist. The real generator is `lib/caseId.js`. The figure is corrected inline above;
 > the online-guessing derivation this arc depends on (as distinct from `caseId.js`'s
-> collision reasoning) is in `ref/X2_DESIGN_AMENDMENTS.md` §E, along with why
+> collision reasoning) is in `ref/archive/X2_DESIGN_AMENDMENTS.md` §E, along with why
 > `/api/ext/*` revokes the globally-applied wildcard CORS grant. Two further §2/§5.2.3/§6
 > wording amendments are pending there for the supermanager; only this number was
 > corrected in place, because a wrong security parameter in the governing contract is

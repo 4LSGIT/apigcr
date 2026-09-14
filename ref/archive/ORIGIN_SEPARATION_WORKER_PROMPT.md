@@ -128,7 +128,7 @@ Known hardcodes from the repo copy of the form-host page
 (`ref/pages/form.html`, and therefore probably the DB row): `FORM_BASE =
 'https://app.4lsg.com/f/'` — the DB page HTML needs a one-line edit at
 cutover. **Interaction with Phase D:** the staged SMS-cutover SQL
-(`ref/2026-08-13_phase_d_sms_cutover.sql`) targets `app.4lsg.com/p/form` —
+(`ref/migrations/2026-08-13_phase_d_sms_cutover.sql`) targets `app.4lsg.com/p/form` —
 retarget it to the new host or explicitly defer; say which.
 
 ### A4. Things that will bite

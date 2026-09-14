@@ -13,7 +13,7 @@
 -- never captures.
 --
 -- RUN THIS BEFORE DEPLOYING THE CODE PATCH — same reasoning as
--- ref/s7_migration.sql: this deployment's sql_mode lacks STRICT_TRANS_TABLES,
+-- ref/migrations/s7_migration.sql: this deployment's sql_mode lacks STRICT_TRANS_TABLES,
 -- so writing 'captured' to the un-widened enum does NOT error, it silently
 -- coerces to ''.
 --

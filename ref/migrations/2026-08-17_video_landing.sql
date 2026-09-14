@@ -4,7 +4,7 @@
 --               routes/videoLanding.js (og:url pin),
 --               public/{videoManager.html,js/videoInsert.js,sendingform-bk.html}
 --               (link-minting defaults),
---               ref/ORIGIN_SEPARATION_ROLLOUT.md § "Video landing slice".
+--               ref/archive/ORIGIN_SEPARATION_ROLLOUT.md § "Video landing slice".
 --
 -- NO settings rows are added by this file. landing_hosts / landing_redirect
 -- already exist and are unchanged; the code slice extends what those two

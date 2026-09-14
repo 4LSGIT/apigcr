@@ -1,4 +1,4 @@
--- ref/2026-08-31_wf40_subject_form_name.sql
+-- ref/migrations/2026-08-31_wf40_subject_form_name.sql
 --
 -- wf40 ("Form Submission Notify", the SHARED onSubmit workflow) — put the
 -- FORM'S NAME in the notification subject.
