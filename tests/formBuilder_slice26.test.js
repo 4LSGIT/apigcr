@@ -30,7 +30,8 @@ const { JSDOM } = require('jsdom');
 const ROOT = path.join(__dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'public/formBuilder.html'), 'utf8');
 const svc  = require(path.join(ROOT, 'services/formTemplateService.js'));
-const ISSN_DEF = JSON.parse(fs.readFileSync(path.join(ROOT, 'ref/2026-08-03_issn_tabs_definition.json'), 'utf8'));
+const ISSN_DEF = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'fixtures/slice26', 'issn_tabs_definition.json'), 'utf8'));
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const DOMS = [];

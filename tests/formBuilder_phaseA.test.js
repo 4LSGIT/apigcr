@@ -13,7 +13,7 @@ const { JSDOM } = require('jsdom');
 const ROOT = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'public/formBuilder.html'), 'utf8');
 const fixtureDef = JSON.parse(fs.readFileSync(
-  path.join(ROOT, 'ref/2026-07-27_test_quick_notes_slice2_definition.json'), 'utf8'));
+  path.join(__dirname, 'fixtures', 'quick_notes_slice2_definition.json'), 'utf8'));
 
 const ROW = {
   id: 1, form_key: 'test_quick_notes', title: 'Quick Notes (Test)', link_type: 'case',

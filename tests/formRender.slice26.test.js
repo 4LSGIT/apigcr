@@ -50,7 +50,7 @@ const TPL5_CODE        = fs.readFileSync(FX('tpl5_code.js'), 'utf8');
 const TPL6_CODE        = fs.readFileSync(FX('tpl6_code.js'), 'utf8');
 const TPL5_DEF         = JSON.parse(fs.readFileSync(FX('tpl5_draft_definition.json'), 'utf8'));
 const TPL6_DEF         = JSON.parse(fs.readFileSync(FX('tpl6_draft_definition.json'), 'utf8'));
-const ISSN_DEF         = JSON.parse(fs.readFileSync(path.join(ROOT, 'ref/2026-08-03_issn_tabs_definition.json'), 'utf8'));
+const ISSN_DEF         = JSON.parse(fs.readFileSync(FX('issn_tabs_definition.json'), 'utf8'));
 
 class TestLoader extends ResourceLoader {
   fetch(url) {

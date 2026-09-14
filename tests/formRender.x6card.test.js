@@ -863,13 +863,13 @@ describe('V validator + projection', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// I — the re-authored intake fixture (ref/2026-08-14_intake_cards_definition
+// I — the re-authored intake fixture (tests/fixtures/intake_cards_definition
 //     .json): the actual X6 deliverable, pinned end to end
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('I intake card fixture', () => {
   const INTAKE = JSON.parse(fs.readFileSync(
-    path.join(ROOT, 'ref/2026-08-14_intake_cards_definition.json'), 'utf8'));
+    path.join(__dirname, 'fixtures', 'intake_cards_definition.json'), 'utf8'));
 
   test('validates, refuses nothing externally, keeps every input field', () => {
     expect(() => svc.validateDefinition(INTAKE)).not.toThrow();

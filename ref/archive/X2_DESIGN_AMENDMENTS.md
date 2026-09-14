@@ -880,7 +880,7 @@ Delivered with the slice, after Fred's answers ("draft the intake re-author"
 - **`questionNames` vs `fieldNames`** split (§R.2), **all-questions-hidden
   card skip** (§R.4a), **numbered review rows with per-row Edit** (§R.5),
   and **label-derived dot tooltips** for untitled cards.
-- **`ref/2026-08-14_intake_cards_definition.json`** — the live intake (id 8,
+- **`tests/fixtures/intake_cards_definition.json`** — the live intake (id 8,
   published, public) re-authored into 11 one-question sections, `layout:
   "card"`, conditionals promoted to section level. Verified against the live
   definition: **`fieldSignature` IDENTICAL** (so publishing it does NOT bump

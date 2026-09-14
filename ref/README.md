@@ -17,31 +17,27 @@ Reference material that lives next to the code. Three tiers:
   removing lines invalidates those citations.
 - `artifact-registry-cleanup-policy.json` — GCP artifact-registry retention
   policy, applied out-of-band.
-- **Pinned artifacts** — dated files that are neither schema changes nor
-  living reference: fixtures a test loads, and the inputs and outputs of the
-  dbkq scripts. They are dated like migrations and are easy to mistake for
-  them. Before moving anything dated that still sits at root, run
-  `grep -rn "ref/<name>" tests/ scripts/`.
+- **dbkq script I/O** — a captured source page, the definitions the converter
+  generates from it, and the coverage report. Dated like migrations and easy to
+  mistake for them, but nothing here was ever applied to the DB:
 
-  | File | Read by |
+  | File | Used by |
   |---|---|
-  | `2026-07-27_test_quick_notes_slice2_definition.json` | `tests/formBuilder_phase{A,B,C}.test.js`, `tests/formRender.slice2.test.js` |
-  | `2026-08-03_issn_tabs_definition.json` | `tests/formBuilder_slice26.test.js`, `tests/formRender.slice26.test.js` |
-  | `2026-08-14_intake_cards_definition.json` | `tests/formRender.x6card.test.js` |
   | `2026-09-04_dbkq_coverage.md`, `2026-09-04_dbkq_definition.v1.json`, `dbkq_source_2026-09-04.html` | `scripts/dbkq_convert.js`, `scripts/dbkq_verify.js` |
   | `2026-09-06_dbkq_definition.v1.2.json`, `dbkq_live_definition_2026-09-06.json` | `scripts/dbkq_v12_polish.js`, `tests/dbkqV12Polish.test.js` |
 
-  Being read by a test is **not** what earns a place on this list — every
-  applied migration that a test reads lives in `migrations/` and the test names
-  it there. `genTypeKeyBackfill.js` resolves its three paths through a `MIG()`
-  helper; the U2b, U8 and r15_rules suites spell out `ref/migrations/` in their
-  `path.join`. What keeps a file here is being the wrong KIND for either other
-  tier. When in doubt, move it and fix the reader.
+  This is the only dated material left at root, and the rule that put it here
+  is KIND, not who reads it. Applied migrations go to `migrations/` even when a
+  test loads one — `genTypeKeyBackfill.js` reaches them through a `MIG()`
+  helper, and the U2b, U8 and r15_rules suites spell out `ref/migrations/` in
+  their `path.join`. Test fixtures go to `tests/fixtures/` and are not
+  reference material at all. If a new file is neither, it lands here; if it is
+  one of the two, move it and fix the reader.
 
-  Corollary: never derive one migration's path from another's by string
-  surgery. `genTypeKeyBackfill.js` used to build the E0a path by replacing the
-  E0b filename inside `E0B_PATH`; the moment the two sat in different
-  directories the suite stopped loading. Each path gets its own constant.
+  Corollary: never derive one file's path from another's by string surgery.
+  `genTypeKeyBackfill.js` used to build the E0a path by replacing the E0b
+  filename inside `E0B_PATH`; the moment the two sat in different directories
+  the suite stopped loading. Each path gets its own constant.
 
 ## migrations/ — applied, historical
 Every dated `.sql` and definition-JSON payload that has already been applied to
