@@ -77,8 +77,43 @@ Active surfaces with known next steps.
 
 - **Route handler naming.** `scripts/updateRoutes.js` writes `ref/routes.md` — a grep-able access-control matrix with middleware and handler columns per route. Handlers passed as inline arrows (`router.get('/x', mw, (req, res) => {...})`) show as `<anonymous>` in the handler column; named function declarations, `const`-bound arrows, and named function expressions all get picked up by `Function.prototype.name`. When you touch a route file for any reason, name the handlers in it — verb+noun matching URL semantics (`getCases`, `createWorkflow`, `cancelExecution`). No dedicated naming pass. Worst-offender files visible by skimming `ref/routes.md` for sections heavy on `—` in the Handler column. Pairs with the `requireAuth` self-naming convention (see Slice 1 of the client portal work) — together they make `ref/routes.md` a navigable auth + routing map.
 
-- **Documentation drift sweeps.** Periodically diff `manual/`, `manual/03-YisraFlow/13-cookbook.md`, and `ref/AI_CONTEXT.md` against actual code. Drift accumulates.
+- **Documentation currency** now has a mechanism (2026-09-14): doc≠code divergences are filed to scratch `ns=docs` at discovery; the weekly docs review (`ref/DOCS_REVIEW.md`) drains the queue and updates `ref/AI_CONTEXT.md`'s currency header. No more ad-hoc drift sweeps.
+
+---
+---
+
+## Carried from AI_CONTEXT §14 retirement (2026-09-14)
+
+Still-live items from the old PENDING/TODO section; verified against code/prod
+before carrying (campaign_results UNIQUE key, Pabbly→Trello swap, and the
+role-convention item were confirmed done and dropped).
+
+- **Login rate limit 100 → 10** (`routes/auth.login.js` — comment says "change
+  to 10 in production"; still 100).
+- **Audit-log hygiene:** one-time cleanup of pre-redaction `jwt_api_audit_log`
+  rows (contain Bearer tokens) + 30-day retention cron for `jwt_api_audit_log`
+  and `query_log`.
+- **Sequence templates:** audit `sequence_templates`/`sequence_steps` for
+  duplicate `:placeholders` (resolver now throws on DB errors — behavior change).
+- **newAppt Swal wiring:** `does_appts` filter + staff dropdown in the appt
+  creation Swals on case2/contact2 (drafts reference `u.user_does_appts`,
+  should be `u.does_appts`).
+- **contact-form.html ApiError refactor:** drop `doRawPatch` +
+  `findAuthWindow`, read `err.body`/`err.status` from stock `apiSend`.
+- **Slice 3 B.2.b polish backlog:** rename row-level `name="notes"` in
+  repeater templates (latent collision); per-row 400 error highlighting;
+  "Revive" button in history modal; last-row-removal warning; inline as-you-type
+  repeater validation.
+- **`contact_phone2`/`contact_email2` cleanup** (Fred): migrate the 1–2
+  affected contacts into child tables, then retire the columns.
+- **Checklist → task completion hook** — seam identified in
+  `computeAndSaveStatus`.
+- **Dropbox direct API** for the `docReq.html` uploader (replaces JotForm
+  placeholder).
+- **YisraHook v1.3 extras** (beyond the v1.1 bullet above): response
+  transforms, per-target `no_retry` flag for non-idempotent internal_function
+  targets.
 
 ---
 
-*Last updated: 2026-05-17*
+*Last updated: 2026-09-14*
