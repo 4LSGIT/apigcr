@@ -8,7 +8,12 @@
 #    that is the connection handshake plus the fingerprint queries, paid whether
 #    or not the schema moved. The full dump only runs when the fingerprint
 #    actually differs.
-# 2. Refresh TRACKED_FILES.txt (local, instant, always synchronous).
+# 2. Refresh ref/routes.md. Runs CONCURRENTLY with step 1: it needs no DB
+#    (it just requires every routes/*.js into a throwaway express app and walks
+#    the stack), takes ~0.3s, and is pure CPU — so it overlaps the ~4s the schema
+#    check spends on its connection handshake and costs no extra commit
+#    latency. It rewrites the file only when the route table really changed.
+# 3. Refresh TRACKED_FILES.txt (local, instant, always synchronous).
 #
 # TEMPORARY (2026-08-10): the default used to be BACKGROUND — no commit latency,
 # but a schema change landed one commit late, which is how the ai_match_sets /
@@ -16,6 +21,7 @@
 # back to "async" below to restore the old behaviour.
 #
 # Skip the schema step:             SKIP_SCHEMA_DUMP=1 git commit -m "..."
+# Skip the routes step:             SKIP_ROUTES_DUMP=1 git commit -m "..."
 # Background it for one commit:     SCHEMA_DUMP_ASYNC=1 git commit -m "..."
 #   ^ use when the DB is slow or unreachable and you just want to commit.
 
@@ -23,6 +29,15 @@
 SCHEMA_DUMP_MODE="sync"
 [ -n "$SCHEMA_DUMP_ASYNC" ] && SCHEMA_DUMP_MODE="async"
 [ -n "$SCHEMA_DUMP_SYNC" ]  && SCHEMA_DUMP_MODE="sync"
+
+# Kick routes.md off FIRST so it runs under the schema check's handshake wait.
+# Its stdout is discarded: requiring the route modules prints their own boot
+# chatter (routes/_aitest.js, routes/badge*) that --quiet cannot reach.
+ROUTES_PID=""
+if [ -z "$SKIP_ROUTES_DUMP" ] && [ -f scripts/updateRoutes.js ] && command -v node >/dev/null 2>&1; then
+  node scripts/updateRoutes.js --quiet >/dev/null 2>&1 &
+  ROUTES_PID=$!
+fi
 
 if [ -z "$SKIP_SCHEMA_DUMP" ] && [ -f scripts/dump-schema.js ] && command -v node >/dev/null 2>&1; then
   if [ "$SCHEMA_DUMP_MODE" = "sync" ]; then
@@ -39,6 +54,17 @@ if [ -z "$SKIP_SCHEMA_DUMP" ] && [ -f scripts/dump-schema.js ] && command -v nod
       ( node scripts/dump-schema.js --quiet >/dev/null 2>&1; rmdir "$LOCK" 2>/dev/null ) &
     fi
   fi
+fi
+
+if [ -n "$ROUTES_PID" ]; then
+  # Its output is discarded, so a crash (a routes/*.js that throws at require)
+  # would otherwise leave ref/routes.md silently stale and still exit 0 — the
+  # exact one-commit-late drift this hook exists to prevent. Warn loudly.
+  if ! wait "$ROUTES_PID"; then
+    echo "pre-commit: updateRoutes FAILED — ref/routes.md may be stale." >&2
+    echo "            see why: node scripts/updateRoutes.js --no-write" >&2
+  fi
+  [ -f ref/routes.md ] && git add ref/routes.md
 fi
 
 git ls-files > TRACKED_FILES.txt

@@ -3,6 +3,14 @@
 //   node scripts/updateRoutes.js              # log + write ref/routes.md
 //   node scripts/updateRoutes.js --no-write   # log only
 //   node scripts/updateRoutes.js --quiet      # write only, no console
+//   node scripts/updateRoutes.js --check      # report drift, write nothing (exit 1 if drifted)
+//
+// WRITE POLICY: the file is only rewritten when the route table actually
+// changed. The `_Generated <iso>_` line moves on every run, so an
+// unconditional write would put a one-line ref/routes.md diff in EVERY commit
+// once this runs from .githooks/pre-commit. Comparison therefore ignores that
+// line — same reasoning as the fingerprint check in scripts/dump-schema.js,
+// just cheaper: this script needs no DB, so there is nothing to fingerprint.
 require('dotenv').config();
 
 const express = require('express');
@@ -106,6 +114,12 @@ function toMarkdown(app, routes) {
 const args = new Set(process.argv.slice(2));
 const skipWrite = args.has('--no-write');
 const quiet = args.has('--quiet');
+const checkOnly = args.has('--check');
+
+/** Everything but the volatile `_Generated <iso>_` line. */
+function stable(md) {
+  return md.split('\n').filter((l) => !l.startsWith('_Generated ')).join('\n');
+}
 
 const app = express();
 const routesPath = path.join(__dirname, '..', 'routes');
@@ -131,11 +145,28 @@ if (!quiet) {
   console.log(`\n${formatSummary(summary)}`);
 }
 
-if (!skipWrite) {
+if (!skipWrite || checkOnly) {
   const outPath = path.join(__dirname, '..', 'ref', 'routes.md');
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, toMarkdown(app, routes));
-  if (!quiet) console.log(`Written to ${outPath}`);
+  const next = toMarkdown(app, routes);
+  const prev = fs.existsSync(outPath) ? fs.readFileSync(outPath, 'utf8') : null;
+  const changed = prev === null || stable(prev) !== stable(next);
+
+  if (checkOnly) {
+    if (changed) {
+      console.error('ref/routes.md is stale — run: node scripts/updateRoutes.js');
+      process.exit(1);
+    }
+    if (!quiet) console.log('ref/routes.md is current.');
+    process.exit(0);
+  }
+
+  if (changed) {
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, next);
+    if (!quiet) console.log(`Written to ${outPath}`);
+  } else if (!quiet) {
+    console.log('ref/routes.md unchanged — not rewritten.');
+  }
 }
 
 process.exit(0);
