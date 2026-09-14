@@ -107,6 +107,7 @@ module.exports = promisePool;
 //      routes/api.readonly.js
 //      routes/api.readonlyKeys.js
 //      routes/api.scratch.js            (if scratch subsystem was added)
+//      routes/api.alertIt.js            (IT alert endpoint — rides this auth)
 //      public/readonlyKeys.html
 //
 // 3. REVERT public/b.html (or whichever is the live shell at the time):

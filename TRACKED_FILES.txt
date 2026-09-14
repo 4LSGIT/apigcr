@@ -459,6 +459,7 @@ routes/admin.systemAlerts.js
 routes/admin.users.js
 routes/alert-test.js
 routes/api.ai.js
+routes/api.alertIt.js
 routes/api.appSettings.js
 routes/api.appts.js
 routes/api.assets.js
@@ -730,6 +731,7 @@ tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js
 tests/aimatch.service.test.js
 tests/alertingStartLatency.test.js
+tests/apiAlertIt.routes.test.js
 tests/apiAppSettings.validate.test.js
 tests/apiCalendarTypes.routes.test.js
 tests/apiTools.routes.test.js

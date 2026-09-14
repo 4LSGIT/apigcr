@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-09-14T18:50:01.286Z_  
-_684 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 264, PUT: 35, _ALL: 2_
+_Generated 2026-09-14T19:24:51.679Z_  
+_685 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -54,6 +54,7 @@ _684 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 264, PUT: 35, _ALL:
 | POST | `/api/admin/users/:id/enable` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/admin/users/:id/set-password` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/ai/file` | `jwtOrApiKey`, `uploadSingle` | — |
+| POST | `/api/alert/it` | `readonlyApiKeyAuth` | — |
 | GET | `/api/api-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/api-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/api-keys/:id/log` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -944,4 +945,4 @@ _684 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 264, PUT: 35, _ALL:
 
 ---
 
-_684 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 264, PUT: 35, _ALL: 2_
+_685 routes total — DELETE: 56, GET: 282, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_
