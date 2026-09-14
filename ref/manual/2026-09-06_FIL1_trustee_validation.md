@@ -5,7 +5,7 @@
 1. **Deploy code first**: `lib/trusteeMatch.js`, `lib/internal_functions/trustee.js`
    (auto-registers via the directory scan — no entry-point edit). A trigger rule
    naming an unregistered function errors on every 341 notice, so code before SQL.
-2. **Run** `ref/2026-09-06_FIL1_trustee_validation.sql` (3 standalone statements).
+2. **Run** `ref/migrations/2026-09-06_FIL1_trustee_validation.sql` (3 standalone statements).
 3. Nothing else. The rule is live-but-dry immediately.
 
 ## B. Dry-run test (before arming)

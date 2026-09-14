@@ -102,7 +102,7 @@ copy the client actually received, not a re-render that might differ.
 
 | File | What it added |
 |---|---|
-| `ref/2026-07-19_esign_phase1c.sql` | Data layer, audit trail |
-| `ref/2026-07-20_esign_phase2e.sql` | Signer-class placement field types |
-| `ref/2026-07-21_esign_phase3.sql` | Reminders, sequence wiring |
-| `ref/2026-07-22_esign_webhook_hmac.sql` | Webhook authenticity |
+| `ref/migrations/2026-07-19_esign_phase1c.sql` | Data layer, audit trail |
+| `ref/migrations/2026-07-20_esign_phase2e.sql` | Signer-class placement field types |
+| `ref/migrations/2026-07-21_esign_phase3.sql` | Reminders, sequence wiring |
+| `ref/migrations/2026-07-22_esign_webhook_hmac.sql` | Webhook authenticity |

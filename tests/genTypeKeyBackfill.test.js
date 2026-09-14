@@ -27,7 +27,7 @@ const { SEED, seedRows } = require('../scripts/calendarTypeSeed');
 
 const migration = fs.readFileSync(gen.MIGRATION_PATH, 'utf8');
 const e0b       = fs.readFileSync(gen.E0B_PATH, 'utf8');
-const e0a       = fs.readFileSync(gen.E0B_PATH.replace('2026-09-01_unified_events_e0b', '2026-08-27_unified_events_e0a'), 'utf8');
+const e0a       = fs.readFileSync(gen.E0A_PATH, 'utf8');
 
 describe('generated blocks are byte-identical to the committed migration', () => {
   test('seed block', () => {

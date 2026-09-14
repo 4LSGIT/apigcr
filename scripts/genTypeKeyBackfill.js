@@ -46,6 +46,7 @@ const path = require('path');
 const ROOT           = path.join(__dirname, '..');
 const MIGRATION_PATH = path.join(ROOT, 'ref', '2026-09-01_unified_events_u2.sql');
 const E0B_PATH       = path.join(ROOT, 'ref', '2026-09-01_unified_events_e0b.sql');
+const E0A_PATH       = path.join(ROOT, 'ref', 'migrations', '2026-08-27_unified_events_e0a.sql');
 const FIXTURE_PATH   = path.join(ROOT, 'tests', 'fixtures', 'calendar_item_types.seed.json');
 
 const { SEED, COLUMNS, seedRows } = require('./calendarTypeSeed');
@@ -265,6 +266,7 @@ module.exports = {
   OVERRIDE_RAW_TYPE,
   MIGRATION_PATH,
   E0B_PATH,
+  E0A_PATH,
   FIXTURE_PATH,
 };
 

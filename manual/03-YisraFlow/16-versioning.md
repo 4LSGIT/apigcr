@@ -1,6 +1,6 @@
 # 16 — Definition Versioning (Draft → Publish)
 
-*Shipped 2026-08-18 (slices S0–S6 + fixpacks). Applies to workflow definitions and sequence templates. Migration file: `ref/2026-08-18_automation_versioning.sql`; condition re-sync: `ref/2026-08-18_s4_condition_resync.sql`.*
+*Shipped 2026-08-18 (slices S0–S6 + fixpacks). Applies to workflow definitions and sequence templates. Migration file: `ref/migrations/2026-08-18_automation_versioning.sql`; condition re-sync: `ref/migrations/2026-08-18_s4_condition_resync.sql`.*
 
 ## For operators
 

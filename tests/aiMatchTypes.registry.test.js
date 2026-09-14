@@ -8,7 +8,7 @@
  * INSERT INTO ai_match_types in ref/*.sql that names an item_type must name a
  * registry key.
  *
- * NOTE for U7: ref/2026-08-10_ai_match_registry.sql carries a COMMENTED-OUT
+ * NOTE for U7: ref/migrations/2026-08-10_ai_match_registry.sql carries a COMMENTED-OUT
  * example row with item_type '341_meeting'. That is NOT the registry key —
  * the key is 'meeting_341' (Appendix A). Uncommenting it as-is fails here.
  *
@@ -24,11 +24,23 @@ const { SEED } = require('../scripts/calendarTypeSeed');
 const REF = path.join(__dirname, '..', 'ref');
 const REGISTRY_KEYS = new Set(SEED.map((r) => r[0]));
 
-/** Active (non-comment) INSERT INTO ai_match_types statements across ref/*.sql. */
+/** Every .sql under ref/, recursively — the seeds live in ref/migrations/ now. */
+function refSqlFiles(dir = REF) {
+  const out = [];
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...refSqlFiles(full));
+    else if (e.name.endsWith('.sql') && e.name !== 'database.sql') out.push(full);
+  }
+  return out;
+}
+
+/** Active (non-comment) INSERT INTO ai_match_types statements across ref/**\/*.sql. */
 function activeInserts() {
   const out = [];
-  for (const f of fs.readdirSync(REF).filter((n) => n.endsWith('.sql') && n !== 'database.sql')) {
-    const code = fs.readFileSync(path.join(REF, f), 'utf8')
+  for (const full of refSqlFiles()) {
+    const f = path.relative(REF, full);
+    const code = fs.readFileSync(full, 'utf8')
       .split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
     for (const m of code.matchAll(/INSERT INTO ai_match_types\s*\(([^)]*)\)([\s\S]*?);/gi)) {
       out.push({ file: f, cols: m[1].split(',').map((s) => s.trim()), body: m[2] });

@@ -96,7 +96,7 @@ Everything then funnels into **`processStatusChange()`**, the choke point that
 both the webhook and the reconciliation job call. See
 [chapter 1](01-overview.md) for why it's exported rather than reimplemented.
 
-Webhook authenticity is HMAC-verified (`ref/2026-07-22_esign_webhook_hmac.sql`).
+Webhook authenticity is HMAC-verified (`ref/migrations/2026-07-22_esign_webhook_hmac.sql`).
 
 A log-writing hook is wired at module load and turns audit events into `log`
 rows, so the signature trail shows up in the ordinary activity history.
