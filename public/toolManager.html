@@ -48,6 +48,8 @@
   }
   table.list .actions-cell button:hover { border-color: var(--accent); }
   table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  table.list .actions-cell button:disabled { opacity: 0.5; cursor: not-allowed; }
+  table.list .actions-cell button:disabled:hover { border-color: var(--border); color: var(--text); }
   .empty-row td { color: var(--text-muted); padding: 16px; text-align: center; font-style: italic; }
   .slug-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
   .muted { color: var(--text-muted); }
@@ -607,6 +609,7 @@ async function loadVersions() {
               <td class="actions-cell">
                 <button data-action="view">View</button>
                 <button data-action="restore"${i === 0 ? ' disabled title="Already the current HTML"' : ''}>Restore</button>
+                <button data-action="delete-version" class="danger"${i === 0 ? ' disabled title="Cannot delete the current version"' : ''}>Delete</button>
               </td>
             </tr>
           `).join('')}
@@ -617,6 +620,7 @@ async function loadVersions() {
       const vid = Number(tr.dataset.vid);
       tr.querySelector('button[data-action=view]')?.addEventListener('click', () => viewVersion(vid));
       tr.querySelector('button[data-action=restore]')?.addEventListener('click', () => restoreVersion(vid));
+      tr.querySelector('button[data-action=delete-version]')?.addEventListener('click', () => deleteVersion(rows.find(r => r.id === vid)));
     });
   } catch (err) {
     region.innerHTML = `<div class="inline-error">Failed to load versions: ${esc(err.message)}</div>`;
@@ -662,6 +666,26 @@ async function restoreVersion(vid) {
     }
   } catch (err) {
     showVersionsErr('Restore failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+async function deleteVersion(v) {
+  hideVersionsErr();
+  if (!v) return;
+  const ok = window.confirm(
+    `Delete the version saved ${fmtDate(v.saved_at)}${v.saved_by ? ` by ${v.saved_by}` : ''}? ` +
+    `This cannot be undone.`
+  );
+  if (!ok) return;
+  try {
+    await api(`/api/tools/${state.versionsToolId}/versions/${v.id}`, 'DELETE');
+    showToast('Version deleted');
+    await loadTools();       // version_count changed
+    await loadVersions();    // the row is gone
+  } catch (err) {
+    // Includes the server's 400 'Cannot delete the current version' if a
+    // stale list lets a delete through — the surface is the same either way.
+    showVersionsErr('Delete failed: ' + (err.message || 'unknown error'));
   }
 }
 

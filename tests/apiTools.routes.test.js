@@ -15,6 +15,10 @@
 //     same-html PATCH does not; restore copies the html back and appends.
 //   - Duplicate tool_key → 409; invalid tool_key → 400; mixed-case
 //     tool_key input is lowercased on create.
+//   - Per-version delete (S3): vid must be scoped to the tool (else 404);
+//     the newest row (MAX(id) — equals tools.html) is not deletable (400),
+//     so a tool always keeps >= 1 version row and the newest-row-equals-
+//     current-html invariant survives any sequence of deletes.
 //
 // Harness: real superuserOnlyFor chain (JWTs + elevation, same as
 // tests/su.stepup.test.js) over a pattern-matching stateful fake db.
@@ -116,11 +120,23 @@ const db = {
         .map((v) => ({ id: v.id, saved_by: v.saved_by, saved_at: v.saved_at, html_length: v.html.length }));
       return [rows];
     }
-    if (/^SELECT id, tool_id, html(?:, saved_by, saved_at)? FROM tool_versions WHERE id = \? AND tool_id = \?/i.test(s)) {
+    if (/^SELECT id, tool_id(?:, html)?(?:, saved_by, saved_at)? FROM tool_versions WHERE id = \? AND tool_id = \?/i.test(s)) {
       const v = versions.find(
         (x) => x.id === Number(params[0]) && x.tool_id === Number(params[1])
       );
       return [v ? [{ ...v }] : []];
+    }
+
+    if (/^SELECT MAX\(id\) AS maxId FROM tool_versions WHERE tool_id = \?/i.test(s)) {
+      const ids = versions.filter((v) => v.tool_id === Number(params[0])).map((v) => v.id);
+      return [[{ maxId: ids.length ? Math.max(...ids) : null }]];
+    }
+    if (/^DELETE FROM tool_versions WHERE id = \? AND tool_id = \?/i.test(s)) {
+      const before = versions.length;
+      versions = versions.filter(
+        (v) => !(v.id === Number(params[0]) && v.tool_id === Number(params[1]))
+      );
+      return [{ affectedRows: before - versions.length }];
     }
 
     throw new Error('apiTools test db: unscripted query: ' + s);
@@ -367,5 +383,88 @@ describe('CRUD + version append convention (NEW html appended)', () => {
     // per-action audit rows (tool column is params[0] in auditAdminAction's insert)
     const toolsAudits = auditRows.filter((p) => p[0] === 'tools');
     expect(toolsAudits.length).toBeGreaterThanOrEqual(2); // create + delete at minimum
+  });
+});
+
+// ── S3: per-version delete ──────────────────────────────────────────────────
+describe('DELETE /api/tools/:id/versions/:vid', () => {
+  test('404 on missing tool, on a vid scoped to a different tool, and on a missing vid', async () => {
+    const a = await createTool({ tool_key: 'tool-a' });
+    const b = await createTool({ tool_key: 'tool-b', html: '<p>b</p>' });
+    await su(`/api/tools/${b.id}`, { method: 'PATCH', body: { html: '<p>b2</p>' } });
+    const bVers = (await (await su(`/api/tools/${b.id}/versions`)).json()).versions;
+    const bOldest = bVers[bVers.length - 1]; // deletable in b's own scope
+
+    expect((await su(`/api/tools/999/versions/${bOldest.id}`, { method: 'DELETE' })).status).toBe(404);
+    // b's vid through a's path → scoped 404, and the row survives
+    expect((await su(`/api/tools/${a.id}/versions/${bOldest.id}`, { method: 'DELETE' })).status).toBe(404);
+    expect((await (await su(`/api/tools/${b.id}/versions`)).json()).versions).toHaveLength(2);
+    // nonexistent vid on a real tool → 404
+    expect((await su(`/api/tools/${a.id}/versions/9999`, { method: 'DELETE' })).status).toBe(404);
+  });
+
+  test("newest row (MAX(id)) → 400 'Cannot delete the current version'", async () => {
+    const t = await createTool();                                                       // v1
+    await su(`/api/tools/${t.id}`, { method: 'PATCH', body: { html: '<h1>v2</h1>' } }); // v2
+    const vers = (await (await su(`/api/tools/${t.id}/versions`)).json()).versions;
+    expect(vers).toHaveLength(2);
+
+    const res = await su(`/api/tools/${t.id}/versions/${vers[0].id}`, { method: 'DELETE' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ status: 'error', message: 'Cannot delete the current version' });
+    expect((await (await su(`/api/tools/${t.id}/versions`)).json()).versions).toHaveLength(2);
+
+    // a single-version tool: its only row IS the newest → 400 too
+    const solo = await createTool({ tool_key: 'solo', html: '<p>s</p>' });
+    const soloVers = (await (await su(`/api/tools/${solo.id}/versions`)).json()).versions;
+    expect((await su(`/api/tools/${solo.id}/versions/${soloVers[0].id}`, { method: 'DELETE' })).status).toBe(400);
+  });
+
+  test('older row deletes, version_count drops, and the action is audited', async () => {
+    const t = await createTool();                                                       // v1
+    await su(`/api/tools/${t.id}`, { method: 'PATCH', body: { html: '<h1>v2</h1>' } }); // v2
+    const vers = (await (await su(`/api/tools/${t.id}/versions`)).json()).versions;
+    const oldest = vers[vers.length - 1];
+
+    const res = await su(`/api/tools/${t.id}/versions/${oldest.id}`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'success' });
+
+    const after = (await (await su(`/api/tools/${t.id}/versions`)).json()).versions;
+    expect(after).toHaveLength(1);
+    expect(after.find((v) => v.id === oldest.id)).toBeUndefined();
+
+    const list = (await (await su('/api/tools')).json()).tools;
+    expect(list.find((x) => x.id === t.id).version_count).toBe(1);
+
+    const deleteAudits = auditRows
+      .filter((p) => p[0] === 'tools' && p[10])
+      .map((p) => JSON.parse(p[10]))
+      .filter((d) => d.action === 'delete_version');
+    expect(deleteAudits).toHaveLength(1);
+    expect(deleteAudits[0]).toMatchObject({ tool_id: t.id, version_id: oldest.id });
+  });
+
+  test('after deleting all older rows, exactly one remains and it equals the current html', async () => {
+    const t = await createTool();                                                       // v1
+    await su(`/api/tools/${t.id}`, { method: 'PATCH', body: { html: '<h1>v2</h1>' } }); // v2
+    await su(`/api/tools/${t.id}`, { method: 'PATCH', body: { html: '<h1>v3</h1>' } }); // v3
+    let vers = (await (await su(`/api/tools/${t.id}/versions`)).json()).versions;
+    expect(vers).toHaveLength(3);
+
+    // delete everything except index 0 (newest first)
+    for (const v of vers.slice(1)) {
+      expect((await su(`/api/tools/${t.id}/versions/${v.id}`, { method: 'DELETE' })).status).toBe(200);
+    }
+
+    vers = (await (await su(`/api/tools/${t.id}/versions`)).json()).versions;
+    expect(vers).toHaveLength(1);
+    const remaining = (await (await su(`/api/tools/${t.id}/versions/${vers[0].id}`)).json()).version;
+    const tool = (await (await su(`/api/tools/${t.id}`)).json()).tool;
+    expect(remaining.html).toBe('<h1>v3</h1>');
+    expect(remaining.html).toBe(tool.html); // newest-row-equals-current-html survives the purge
+
+    // and the survivor is still the undeletable newest row
+    expect((await su(`/api/tools/${t.id}/versions/${vers[0].id}`, { method: 'DELETE' })).status).toBe(400);
   });
 });

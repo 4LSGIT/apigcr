@@ -24,6 +24,7 @@
  *   DELETE /api/tools/:id                 — delete (tool_versions cascade via FK)
  *   GET    /api/tools/:id/versions        — list (id, saved_by, saved_at, html_length)
  *   GET    /api/tools/:id/versions/:vid   — one full version
+ *   DELETE /api/tools/:id/versions/:vid   — delete one saved version (newest row → 400)
  *   POST   /api/tools/:id/restore/:vid    — copy that version's html back into the tool
  *
  * VERSIONING CONVENTION (single source of truth, do not vary):
@@ -311,6 +312,43 @@ router.get('/api/tools/:id/versions/:vid', guard, async (req, res) => {
   } catch (err) {
     console.error('GET /api/tools/:id/versions/:vid error:', err);
     res.status(500).json(errBody('Failed to fetch version'));
+  }
+});
+
+// VERSIONS — delete one saved version (scoped to the tool, like the GET
+// above). The NEWEST row (MAX(id) per tool — the row that equals tools.html
+// per the convention above) is NOT deletable: removing it would break the
+// newest-row-equals-current-html invariant that restore, the versions
+// modal's "current" badge, and this route's own check all rely on. So a
+// tool always keeps at least one version row.
+router.delete('/api/tools/:id/versions/:vid', guard, async (req, res) => {
+  try {
+    const tool = await getTool(req.db, req.params.id);
+    if (!tool) return res.status(404).json(errBody('Tool not found'));
+
+    const [[ver]] = await req.db.query(
+      `SELECT id, tool_id FROM tool_versions WHERE id = ? AND tool_id = ?`,
+      [req.params.vid, tool.id]
+    );
+    if (!ver) return res.status(404).json(errBody('Version not found'));
+
+    const [[{ maxId }]] = await req.db.query(
+      `SELECT MAX(id) AS maxId FROM tool_versions WHERE tool_id = ?`,
+      [tool.id]
+    );
+    if (ver.id === maxId) {
+      return res.status(400).json(errBody('Cannot delete the current version'));
+    }
+
+    await req.db.query(
+      `DELETE FROM tool_versions WHERE id = ? AND tool_id = ?`,
+      [ver.id, tool.id]
+    );
+    await audit(req, 'delete_version', { tool_id: tool.id, version_id: ver.id });
+    res.json({ status: 'success' });
+  } catch (err) {
+    console.error('DELETE /api/tools/:id/versions/:vid error:', err);
+    res.status(500).json(errBody('Failed to delete version'));
   }
 });
 
