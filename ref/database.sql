@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-11T07:53:21.603Z
+-- Generated: 2026-09-14T14:00:31.868Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:5b22390a211d63115211e9caa261b0da
+-- Fingerprint: sha256:4601094486dc5c6791f8225c07336302
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -242,7 +242,7 @@ CREATE TABLE `appts` (
   `appt_length` tinyint DEFAULT NULL,
   `appt_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `appt_status` enum('Attended','No Show','Rescheduled','Canceled','Scheduled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `appt_date` datetime NOT NULL,
+  `appt_date` datetime NOT NULL COMMENT 'Firm-local NAIVE datetime (America/Detroit). Pool runs UTC — use CONVERT_TZ/DATE_FORMAT, Luxon server-side',
   `appt_date_utc` datetime DEFAULT NULL,
   `appt_gcal` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_ref_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -436,7 +436,7 @@ CREATE TABLE `campaigns` (
 DROP TABLE IF EXISTS `case_folder_cache`;
 CREATE TABLE `case_folder_cache` (
   `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `folder_external_id` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
+  `folder_external_id` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'utf8mb4_bin ON PURPOSE — case-sensitive Dropbox folder id; pairs with documents.external_id',
   `path_lower` text COLLATE utf8mb4_general_ci,
   `path_display` text COLLATE utf8mb4_general_ci,
   `resolve_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -556,7 +556,7 @@ CREATE TABLE `case_stage_log` (
 DROP TABLE IF EXISTS `cases`;
 CREATE TABLE `cases` (
   `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `case_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'OPAQUE free text server-side; docket-shape parsing is client-only (BK-specific). Collision check = equality',
   `case_number_full` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_caption` varchar(150) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_our_role` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -600,9 +600,9 @@ CREATE TABLE `cases` (
   `case_source_ref` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_dropbox` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_primary_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_judge` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_judge` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. case_judge_contact_id fills on match / NULLs on miss; resolution never blocks a write',
   `case_judge_contact_id` int unsigned DEFAULT NULL,
-  `case_trustee` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_trustee` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. Twin: case_trustee_contact_id. Seeded vocab = fe-trustees setting (trustees TABLE is dead)',
   `case_trustee_contact_id` int unsigned DEFAULT NULL,
   `case_341_link` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `case_chapter` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -961,7 +961,7 @@ CREATE TABLE `contact_roles` (
 DROP TABLE IF EXISTS `contacts`;
 CREATE TABLE `contacts` (
   `contact_id` int unsigned NOT NULL,
-  `contact_kind` varchar(12) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'person',
+  `contact_kind` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'person' COMMENT 'ENTITY axis: person|org. contact_type is a dirty free-text role label — never overload it; roles live in contact_roles',
   `contact_org_name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `contact_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -978,7 +978,7 @@ CREATE TABLE `contacts` (
   `contact_state` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_zip` char(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_dob` date DEFAULT NULL,
-  `contact_ssn` char(11) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `contact_ssn` char(11) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'SSN for persons, EIN for orgs BY DESIGN — inherits masking AND the resolver block (templates cannot emit it)',
   `contact_marital_status` enum('Single','Married','Separated','Divorced','Widowed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `contact_tags` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -1222,7 +1222,7 @@ DROP TABLE IF EXISTS `court_ai_log`;
 CREATE TABLE `court_ai_log` (
   `id` int NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `message_id` varchar(190) COLLATE utf8mb4_general_ci NOT NULL,
+  `message_id` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Collation differs from email_log.message_id — joins need explicit COLLATE utf8mb4_general_ci on this side',
   `ai_call_id` int DEFAULT NULL,
   `dry_run` tinyint(1) NOT NULL DEFAULT '1',
   `classification` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1398,7 +1398,7 @@ DROP TABLE IF EXISTS `documents`;
 CREATE TABLE `documents` (
   `id` bigint unsigned NOT NULL,
   `source` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'dropbox',
-  `external_id` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `external_id` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'utf8mb4_bin ON PURPOSE — Dropbox ids are case-sensitive; never normalize this collation',
   `name` varchar(512) COLLATE utf8mb4_general_ci NOT NULL,
   `path` text COLLATE utf8mb4_general_ci,
   `path_lower` text COLLATE utf8mb4_general_ci,
@@ -1439,7 +1439,7 @@ CREATE TABLE `domain_event_queue` (
   `completed_at` datetime DEFAULT NULL,
   `error_message` text COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Scheduling AUTHORITY for split-phase trigger dispatch; the Cloud Task is only a doorbell';
 
 -- --------------------------------------------------------
 
@@ -3338,7 +3338,7 @@ CREATE TABLE `trustees` (
   `trustee_zip` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `trustee_email` varchar(28) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `trustee_phone` varchar(14) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='DEAD — do not read. fe-trustees app_setting is authoritative (this table truncates names at varchar(22))';
 
 -- --------------------------------------------------------
 
