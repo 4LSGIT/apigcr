@@ -11,6 +11,72 @@ production data — correctness beats speed.
 - Trust code over documentation. Read the actual file before making a claim.
 - Surgical edits only: match existing style, touch nothing outside the task.
 - Report structural divergences from spec before proceeding — never code around them.
+- Push back when Fred is wrong. He wants a working system, not validation.
+
+## How we build
+
+Work runs in **arcs** (a feature/fix effort) cut into **slices** — each slice
+independently deployable and scope-bounded. Three execution models; Fred
+picks per task:
+
+1. **Direct** — focused, single-context tasks: the session executes itself.
+2. **Manager–worker** — a manager session plans, verifies, and writes worker
+   prompts; separate worker sessions execute; Fred shuttles prompts/reports
+   and makes all final calls. Workers report BEFORE shipping: judgment calls
+   within spec latitude flagged explicitly; structural divergences stop work
+   pending a ruling. Managers keep arc state in scratch (see Scratch below).
+3. **Arc executor + reviewer** — one session (often Fable) executes the whole
+   arc end-to-end; an independent session (usually Opus) reviews at
+   checkpoints or at the end. The reviewer gets the spec + the actual diff
+   and verifies from the code, not from the executor's summary.
+
+Gates beyond Commands & gates below, every model:
+- Verification-first: ground claims about schema, rows, or behavior in the
+  live DB and actual source before writing code or prompts.
+- Scripted edits are anchored: `assert src.count(old) == 1` before every
+  replace. Complete files (not fragments) for non-trivial edits.
+- New test assertions are mutation-checked (break the code, watch the test
+  fail); no mocking the module under test; real-engine harnesses preferred.
+
+## Living documentation — the standing rule
+
+These docs are LIVING. Every arc is expected to leave them better; **an arc
+is not closed until its learnings are filed and its `fred/<arc>_state`
+scratch key reflects the close.**
+
+- **At discovery:** doc says X, code does Y → file it, don't work around it:
+  `PUT /api/scratch/docs/<YYYYMMDD>_<slug>` with
+  `{"v":"{\"file\":…,\"section\":…,\"says\":…,\"actually\":…}"}`. 30 seconds.
+- **At arc close**, route each earned learning to its ONE home:
+
+| Learning | Home |
+|---|---|
+| Cross-cutting invariant, method, pitfall | this file (keep it lean) |
+| Column/table fact or landmine | schema COMMENT via migration → flows into `ref/database.sql` |
+| Subsystem contract/invariant | its `ref/AI_CONTEXT.md` section (register density: what + invariants + pointers) |
+| Operator-facing behavior | its `manual/` chapter (update the section README TOC) |
+| Deferred idea / known cleanup | `ref/plans.md` |
+| Applied migration / definition payload | `ref/migrations/` (dated) |
+| Dead working doc | `ref/archive/` |
+
+- Never duplicate: AI_CONTEXT points at the manual and the generated files;
+  the fastest-rotting doc is the one that restates another.
+- The weekly docs review (`ref/DOCS_REVIEW.md`) drains the debt queue, folds
+  deltas, audits scratch, and reports. Told the docs are wrong? They probably
+  are — fix or file, never shrug.
+
+## Scratch — fast-moving state
+
+Committed docs hold what's DURABLE; scratch holds what's IN MOTION.
+Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
+
+- `fred/<arc>_state` — the arc's working state, written for a cold reader:
+  goal, current slice, decisions made, open questions, next step. **This is
+  how a fresh manager self-boots on a long arc** — update at session end and
+  after every major decision, not just at arc close.
+- `docs/*` — the doc-debt queue (above) + `review_<date>` run records.
+- Session-scoped keys die with their arc (the docs review sweep flags stale
+  ones); durable conclusions graduate OUT of scratch via the table above.
 
 ## Map
 

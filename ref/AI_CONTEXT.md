@@ -285,9 +285,10 @@ Status values are Title Case with spaces ('No Show', 'Canceled' one L).
 
 ## 12. FRONTEND ARCHITECTURE
 
-**Shell:** `a.html` (current; `index.html` legacy, retirement in
-plans.md). Owns JWT auth + `apiSend()` — apiSend MUST stay in the shell;
-iframes use `const P = window.parent; P.apiSend(...)`.
+**Shell:** `public/index.html` is the ONLY top-level shell (the other 55
+HTML files are panes it loads in iframes; some, like `case.html` /
+`contact.html`, nest their own). It owns JWT auth + `apiSend()` — apiSend
+MUST stay in the shell; iframes use `const P = window.parent; P.apiSend(...)`.
 `apiSend(endpoint, method='GET', payload=null, extraHeaders={})` → parsed
 JSON (204 → null); re-login + one retry on 401; **non-2xx throws `ApiError`**
 (`.message .status .statusText .body .url .method`) — structured 4xx callers
@@ -590,17 +591,21 @@ auto-drop when poster/GIF absent. Depth: manual 11-YisraVideo.
 
 ## 25. SCHEMA REF AUTO-GENERATION
 
-`ref/database.sql` regenerates itself: pre-commit hook runs
-`scripts/dump-schema.js` detached (change lands next commit; `git add .`
-picks it up). A structural fingerprint (8 information_schema queries,
-volatile fields excluded) gates the full dump — no diff churn.
-Commands: `npm run db:ref` (`--force`, `--check`, `--timing`);
-`SKIP_SCHEMA_DUMP=1` / `SCHEMA_DUMP_SYNC=1` env toggles on commit. DB
-failure warns and exits 0. Known: ~4s connection open from residential IPs
-(SiteGround reverse-DNS) — Cloud Run unaffected; don't "fix" pool timeouts
-for it. **Schema COMMENTs are the annotation channel** — landmine notes go
-into the live DB via migration and flow into the dump (see
-2026-09-14_schema_comment_backfill.sql).
+`ref/database.sql` regenerates itself: the pre-commit hook runs
+`scripts/dump-schema.js` SYNCHRONOUSLY by default (~4s per commit; the
+schema change lands in the SAME commit — the old detached default missed
+`court_item_*` by 14 seconds). `SCHEMA_DUMP_ASYNC=1` backgrounds it for one
+commit; `SKIP_SCHEMA_DUMP=1` skips it (`SCHEMA_DUMP_SYNC=1` still forces
+sync — a no-op unless the hook default is flipped back). A structural
+fingerprint (7 information_schema queries + a `database()` probe, volatile
+fields excluded) gates the full dump — no diff churn. Commands:
+`npm run db:ref` (`--force`, `--check`, `--timing`). DB failure warns and
+exits 0. The hook does NOT touch `ref/routes.md` — regenerate that by hand
+(`node scripts/updateRoutes.js`). Known: ~4s connection open from
+residential IPs (SiteGround reverse-DNS) — Cloud Run unaffected; don't
+"fix" pool timeouts for it. **Schema COMMENTs are the annotation channel**
+— landmine notes go into the live DB via migration and flow into the dump
+(see 2026-09-14_schema_comment_backfill.sql).
 
 ## ═══════════════════════════════════════════════════════════════
 ## 26. TRIGGER SYSTEM — DOMAIN EVENTS
