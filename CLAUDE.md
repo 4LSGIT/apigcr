@@ -56,7 +56,7 @@ scratch key reflects the close.**
 | Subsystem contract/invariant | its `ref/AI_CONTEXT.md` section (register density: what + invariants + pointers) |
 | Operator-facing behavior | its `manual/` chapter (update the section README TOC) |
 | Deferred idea / known cleanup | `ref/plans.md` |
-| Applied migration / definition payload | `ref/migrations/` (dated) |
+| Applied migration / definition payload | `ref/migrations/` (dated) — only what outlives `ref/database.sql` |
 | Dead working doc | `ref/archive/` |
 
 - Never duplicate: AI_CONTEXT points at the manual and the generated files;

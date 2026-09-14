@@ -45,13 +45,22 @@ Reference material that lives next to the code. Three tiers:
   the suite stopped loading. Each path gets its own constant.
 
 ## migrations/ — applied, historical
-Every dated `.sql` and definition-JSON payload that has already been applied to
-the live DB. The filename date is the applied date. These are records, not
+Dated `.sql` and definition-JSON payloads already applied to the live DB and
+worth keeping. The filename date is the applied date. These are records, not
 templates — several predate automation versioning and are unsafe to copy
 (see `manual/03-YisraFlow/16-versioning.md`). Current schema truth is
 `database.sql`.
 
-New migrations: land here as `YYYY-MM-DD_name.sql` once applied.
+**Not every applied migration is kept, and not every one needs to be.** Keep it
+when it records something `database.sql` cannot: a one-time data backfill or
+transform, a definition payload, a rationale worth re-reading, or a file a test
+or script loads. Plain DDL whose entire result is visible in the schema dump —
+add a column, add an index, widen a varchar — has already been captured by the
+dump and can be dropped once applied. The corollary: the absence of a file here
+is not evidence a change never happened; `database.sql` is, and git history
+holds the rest. When unsure, keep it — deleting one a guard walks breaks tests.
+
+New migrations: land here as `YYYY-MM-DD_name.sql` once applied, if kept.
 
 Two guards walk this directory rather than a fixed path, so seeds stay covered
 wherever they sit: `tests/aiMatchTypes.registry.test.js` recurses all of
