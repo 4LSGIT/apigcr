@@ -10,15 +10,49 @@
 -- server said. A row in email_log therefore proves only that the relay
 -- returned 250 on the handoff — NOT that the message was delivered.
 --
--- 2026-09-14 smoke test of POST /api/alert/it: four alerts sent, all four
--- logged as successes with real message-ids, only ONE present in it@4lsg.com
--- by rfc822msgid lookup. The other three were accepted by
--- gcam1191.siteground.biz and then went nowhere visible. Nothing recorded the
--- queue id SiteGround handed back, so there was nothing left to trace with.
+-- That gap is what this column closes. info.response carries the relay's queue
+-- id (SiteGround runs Exim: "250 OK id=1x6Ek5-000000000Rq-0KNk"), which is the
+-- only handle that traces a message after it leaves this process. info.rejected
+-- carries per-recipient rejections that nodemailer does NOT throw on when at
+-- least one recipient was accepted — a genuinely silent partial failure.
 --
--- info.response carries that queue id ("250 2.0.0 Ok: queued as <id>"), and
--- info.rejected carries per-recipient rejections that nodemailer does NOT
--- throw on when at least one recipient was accepted. Both are now persisted.
+-- ── HISTORICAL NOTE — READ BEFORE RE-RUNNING THIS INVESTIGATION ─────────────
+-- This column was written during a 2026-09-14 smoke test of POST /api/alert/it
+-- that appeared to lose messages. NOTHING WAS LOST. Of the seven test messages
+-- sent that day, four were filed to the IT label and THREE WENT TO SPAM.
+--
+-- Root cause of the spam filing, read straight off the headers Google wrote on
+-- one of the spam-foldered messages:
+--
+--     dkim=permerror (no key for signature)
+--          header.i=@metrodetroitbankruptcylaw.com header.s=default
+--     spf=pass
+--     dmarc=pass (p=NONE sp=NONE dis=NONE)
+--
+-- SiteGround signs every outgoing message as d=metrodetroitbankruptcylaw.com
+-- s=default, but the matching public key was never published:
+-- default._domainkey.metrodetroitbankruptcylaw.com does not exist (the zone is
+-- on Cloudflare). Google therefore sees a BROKEN signature, which scores worse
+-- than no signature at all. SPF and DMARC both PASS, so every check anyone
+-- would think to run looks healthy — which is exactly why this hid. The fix is
+-- one Cloudflare TXT record carrying the key from SiteGround Site Tools →
+-- Email → Authentication. Nothing in this repo can fix it.
+--
+-- Second trap, which cost more time than the first: GMAIL'S SEARCH INDEX on
+-- it@4lsg.com lagged delivery by up to ELEVEN HOURS, and `in:anywhere` /
+-- includeTrash queries never surfaced the spam folder at all. rfc822msgid:
+-- lookups came back empty for messages Gmail had already accepted and filed.
+-- Two separate "confirmed lost" conclusions were drawn from those empty
+-- results. Both were wrong.
+--
+-- So: an empty Gmail search result is NOT evidence of non-delivery at any
+-- elapsed time, and NOT evidence that a message is out of spam. Check
+-- internalDate on the message itself, or open the folder in the Gmail UI.
+--
+-- The column below is worth having on its own merits — the queue id and the
+-- rejected list are real diagnostics that cost nothing. But it did NOT
+-- diagnose this incident, and no post-250 message loss has ever been
+-- demonstrated on this path.
 --
 -- ── SHAPE ───────────────────────────────────────────────────────────────────
 -- TEXT, NULL. NULL is the normal value for every pre-existing row and for

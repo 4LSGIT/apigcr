@@ -17,10 +17,11 @@
 // email_log.delivery_info — WHAT A ROW DOES AND DOESN'T PROVE:
 //   The row is written as soon as transporter.sendMail RESOLVES. That means
 //   the relay returned 250 on the handoff and nothing more — it is NOT
-//   evidence of delivery. A 2026-09-14 smoke test of POST /api/alert/it sent
-//   four alerts, logged four successes with real message-ids, and only one
-//   of them ever reached the recipient mailbox; the discarded SMTP response
-//   was the only thing that could have traced the other three.
+//   evidence of delivery — the message can still be spam-foldered, deferred,
+//   or bounced after the fact, and none of that comes back through this call.
+//   (A 2026-09-14 smoke test looked like message loss and was not: three of
+//   seven went to SPAM because the sending domain publishes no DKIM key for
+//   the selector it signs with. See the migration below for the full writeup.)
 //   So every row now carries delivery_info: info.response (which holds the
 //   relay's queue id), plus accepted / rejected / envelope. `rejected` is the
 //   one that hides — nodemailer RESOLVES when at least one recipient is

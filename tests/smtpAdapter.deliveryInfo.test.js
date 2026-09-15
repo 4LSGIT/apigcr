@@ -2,9 +2,8 @@
 //
 // Guards the 2026-09-15 delivery_info slice: services/adapters/email/smtp.js
 // must PERSIST what the SMTP relay said, because an email_log row on its own
-// proves only that the relay took the handoff. The smoke test that motivated
-// this had four "successful" sends and one delivered message, and the
-// discarded info.response was the only thing that could have traced the rest.
+// proves only that the relay took the handoff — not that anything was
+// delivered, and not that it escaped the recipient's spam folder.
 //
 // nodemailer and credentialCrypto are mocked (dependencies, not the module
 // under test); the adapter itself runs for real against a fake db that records
