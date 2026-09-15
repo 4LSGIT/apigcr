@@ -36,12 +36,19 @@
  *     tune: { FLY_LIFT: 260 },  // optional CFG overrides; unnamed knobs keep
  *                               // the engine defaults. Z is off limits — the
  *                               // z-order promise below is not per-skin.
- *     can: ['walk','fly',…],    // which engine STATES this skin may enter.
- *                               // Omitted = all. ACCEPTED BUT NOT YET ENFORCED
- *                               // (that lands with the first skin that needs
- *                               // it — a floor-only Roomba). Declare it now so
- *                               // the smoke test holds you to styling exactly
- *                               // what you claim.
+ *     can: ['walk','hop',…],    // which engine STATES this skin may enter.
+ *                               // Omitted = all of them. ENFORCED at the
+ *                               // entry points for the optional states —
+ *                               // climb, hang, chase, hop (with crouch) and
+ *                               // the inflate/float/pop ascent — and in the
+ *                               // console/panel, where a gated action is
+ *                               // simply not offered: list() leaves it out
+ *                               // and do() answers that it is not in this
+ *                               // form's repertoire. The core six — walk,
+ *                               // idle, fall, land, drag, leave — cannot be
+ *                               // opted out of, and register() holds a `can`
+ *                               // to listing them (plus hop⇒crouch, and the
+ *                               // ascent as all-three-or-none).
  *     acts: [ ['sit',26], ['sleep',14,{face:1,dur:[4,9],cmdDur:[6,12]}] ],
  *                               // the idle repertoire, weighted. The optional
  *                               // third slot: face pins the sprite direction
@@ -260,7 +267,8 @@
   // `rowdy` will mark the obtrusive ones. The default skin leads the list.
   var MANIFEST = [
     { id: 'casey', name: 'Casey', blurb: 'A ginger cat. Walks the ledges, naps on your case list.' },
-    { id: 'casey95', name: 'Casey-95', blurb: 'A Win95 robot cat. The same moves in button-grey plate — and a jetpack.' }
+    { id: 'casey95', name: 'Casey-95', blurb: 'A Win95 robot cat. The same moves in button-grey plate — and a jetpack.' },
+    { id: 'roomba', name: 'Roomba', blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.' }
   ];
 
   // Elements inside the open page that are chunky enough to stand on.
@@ -566,6 +574,12 @@
   // robot froze blankly when poked — the smoke test now holds every skin to it.
   function attn() { return (skin && skin.lookAct) || 'look'; }
 
+  // The capability mask. A skin without `can` may do everything; a skin with
+  // one may only enter the states it lists. This is checked where a gated
+  // state is ENTERED — tryFly/tryHop, the climb and hang branches, the chase
+  // roll — so the ambient behaviour and the console pass through one gate.
+  function allowed(s) { return !skin || !skin.can || skin.can.indexOf(s) !== -1; }
+
   function toWalk() {
     setState('walk');
     stateUntil = clock + rand(2.4, 7);
@@ -604,6 +618,7 @@
   // clipped is one it can stand on, and landing early on the way to a lower
   // perch is just a cat changing its mind.
   function tryHop(dirX) {
+    if (!allowed('hop')) return false;
     var best = null, bestX = 0, bestCost = 1e9;
     for (var i = 0; i < ledges.length; i++) {
       var l = ledges[i];
@@ -654,6 +669,7 @@
   // to the top and falls all the way back down has done a trick with no payoff
   // at the end of it.
   function tryFly(force) {
+    if (!allowed('float')) return false;
     var pad = CFG.FLY_SWAY + 10;      // sway, plus room for the drift off the pop
     var roof = CFG.FLY_HEAD;          // feet here ⇒ the crown is at the top of the window
     var maxGap = CFG.FLY_MAX_VY * CFG.FLY_MAX_SECS;
@@ -734,7 +750,7 @@
     px = dirX > 0 ? ledge.x2 - 1 : ledge.x1 + 1;
     var w = wallNear(px, py);
     var roll = Math.random();
-    if (w && roll < 0.42) { toClimb(w, true); return; }        // up the wall
+    if (w && allowed('climb') && roll < 0.42) { toClimb(w, true); return; }   // up the wall
     if (roll < 0.72) {                                          // think better of it
       face = -face;
       px -= dirX * 3;      // step clear, or next frame lands on this edge again
@@ -838,7 +854,7 @@
       // pet just stepped off — which is how it ended up here.
       if (up && py <= w.y1 + 1) {
         py = w.y1 + 1;
-        if (w.ceil) {
+        if (w.ceil && allowed('hang')) {
           // The strip under the header is a real surface, and this is the only
           // route to it once the pet has left the one it drops onto at start().
           // Hanging unconditionally meant a cat that walked off it early could
@@ -886,7 +902,7 @@
       if (px < bounds.left + 6 || px > bounds.right - 6) {
         px = clamp(px, bounds.left + 6, bounds.right - 6);
         var wcl = wallNear(px, bounds.top + 4);
-        if (wcl) toClimb(wcl, false); else face = -face;
+        if (wcl && allowed('climb')) toClimb(wcl, false); else face = -face;
         return;
       }
       if (clock >= stateUntil) {
@@ -926,7 +942,7 @@
       // Occasionally it notices the cursor instead of settling down.
       var fresh = clock - mouse.t < 4 && mouse.x > ledge.x1 && mouse.x < ledge.x2 &&
         Math.abs(mouse.y - py) < 160 && Math.abs(mouse.x - px) > 40;
-      if (fresh && Math.random() < 0.3) { setState('chase'); stateUntil = clock + 4; }
+      if (fresh && allowed('chase') && Math.random() < 0.3) { setState('chase'); stateUntil = clock + 4; }
       else toIdle();
     }
   }
@@ -1204,6 +1220,18 @@
       def.geom && def.geom.W > 0 && def.geom.H > 0 && def.geom.FLY_HEAD >= 0 &&
       def.acts && def.acts.length && def.lines && def.lines.length &&
       def.svg && def.css;
+    // A `can` mask has its own shape rules: the core six are not optional (a
+    // pet that cannot fall or leave breaks the physics and the exit), a hop
+    // needs its crouch, and the ascent is three states or none — half an
+    // ascent is a pet that inflates and then teleports.
+    if (ok && def.can) {
+      var CORE = ['walk', 'idle', 'fall', 'land', 'drag', 'leave'];
+      var has = function (s) { return def.can.indexOf(s) !== -1; };
+      ok = def.can.length > 0;
+      for (var c = 0; c < CORE.length && ok; c++) ok = has(CORE[c]);
+      if (ok && has('hop') !== has('crouch')) ok = false;
+      if (ok && (has('inflate') !== has('float') || has('float') !== has('pop'))) ok = false;
+    }
     if (!ok) {
       console.warn('[Mascot] register() refused a malformed skin', def && def.id);
       return false;
@@ -1397,7 +1425,7 @@
     { name: 'idle', needs: 'ledge', what: 'stop, and roll one of the idle acts', run: function () { toIdle(); } },
     { name: 'talk', needs: 'any', what: 'say one of its lines — the same thing a poke does', run: function () { talk(); } },
     {
-      name: 'jump', needs: 'ledge', what: 'drop to a lower ledge — or hop on the spot if there is none',
+      name: 'jump', needs: 'ledge', gate: 'hop', what: 'drop to a lower ledge — or hop on the spot if there is none',
       run: function () {
         var d = fwd().x * face >= 0 ? 1 : -1;
         if (tryHop(d) || tryHop(-d)) return;
@@ -1409,11 +1437,11 @@
       }
     },
     {
-      name: 'fly', needs: 'ledge', what: 'the ascent. Ignores the cooldown, and tops out on the ceiling if nothing is overhead',
+      name: 'fly', needs: 'ledge', gate: 'float', what: 'the ascent. Ignores the cooldown, and tops out on the ceiling if nothing is overhead',
       run: function () { if (!tryFly(true)) return 'no room above it to rise'; }
     },
     {
-      name: 'climb', needs: 'any', what: 'take the nearest wall and go up it',
+      name: 'climb', needs: 'any', gate: 'climb', what: 'take the nearest wall and go up it',
       run: function () {
         var best = null, gap = 1e9;
         for (var i = 0; i < walls.length; i++) {
@@ -1427,7 +1455,7 @@
       }
     },
     {
-      name: 'hang', needs: 'any', what: 'hang from the ceiling (cheats — it does not walk there)',
+      name: 'hang', needs: 'any', gate: 'hang', what: 'hang from the ceiling (cheats — it does not walk there)',
       run: function () {
         ledge = null; wall = null; fly = null;
         rot = 180; py = bounds.top;
@@ -1449,7 +1477,7 @@
       }
     },
     {
-      name: 'chase', needs: 'ledge', what: 'run at the cursor',
+      name: 'chase', needs: 'ledge', gate: 'chase', what: 'run at the cursor',
       run: function () {
         if (mouse.x < 0) return 'move the mouse first — it has not seen the cursor yet';
         setState('chase');
@@ -1504,14 +1532,34 @@
     return null;
   }
 
+  // The actions this FORM can be asked for: the table minus anything whose
+  // gate the skin's `can` shuts. list(), the panel it feeds, and the random
+  // roll all draw from this, so a Roomba's panel simply has no fly button
+  // rather than a fly button that apologises.
+  function openActions() {
+    var out = [];
+    for (var i = 0; i < ACTIONS.length; i++) {
+      if (ACTIONS[i].gate && !allowed(ACTIONS[i].gate)) continue;
+      out.push(ACTIONS[i]);
+    }
+    return out;
+  }
+
   function doAction(name) {
     if (!running || !cat) {
       console.warn('[Mascot] not out — Mascot.on(), or long-press the logo');
       return false;
     }
-    if (name == null) name = ACTIONS[Math.floor(Math.random() * ACTIONS.length)].name;
+    if (name == null) {
+      var open = openActions();
+      name = open[Math.floor(Math.random() * open.length)].name;
+    }
     var a = findAction(name);
     if (!a) { console.warn('[Mascot] no action "' + name + '" — try Mascot.list()'); return false; }
+    if (a.gate && !allowed(a.gate)) {
+      console.warn('[Mascot] ' + a.name + ' is not in this form\'s repertoire');
+      return false;
+    }
     // 'drag' and every airborne state have no ledge, so this one test covers all
     // the ways the pet can be in no position to oblige.
     if (a.needs === 'ledge' && !ledge) {
@@ -1538,10 +1586,10 @@
     // out of the names wants the array, not a console table every time a panel
     // opens.
     list: function (quiet) {
-      var rows = [], names = [];
-      for (var i = 0; i < ACTIONS.length; i++) {
-        rows.push({ call: 'Mascot.' + ACTIONS[i].name + '()', needs: ACTIONS[i].needs, what: ACTIONS[i].what });
-        names.push(ACTIONS[i].name);
+      var rows = [], names = [], open = openActions();
+      for (var i = 0; i < open.length; i++) {
+        rows.push({ call: 'Mascot.' + open[i].name + '()', needs: open[i].needs, what: open[i].what });
+        names.push(open[i].name);
       }
       if (quiet) return names;
       try { console.table(rows); } catch (e) { console.log(rows); }

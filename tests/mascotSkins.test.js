@@ -28,7 +28,11 @@
 //   4. Mascot.STATES matches the setState() call sites in the source, so the
 //      published vocabulary cannot drift from the code;
 //   5. skin resolution: default, stored-choice, malformed-storage, and a
-//      registry-backed setSkin() round trip.
+//      registry-backed setSkin() round trip;
+//   6. the `can` mask: register() validates its shape, the console/panel
+//      repertoire shrinks to match, and the ambient entry points carry their
+//      gates (asserted against the source, since the ambient paths are
+//      Math.random-driven).
 //
 // Run:
 //   npx jest tests/mascotSkins.test.js
@@ -61,7 +65,7 @@ const BASE_ACTION_NAMES = ['walk', 'idle', 'talk', 'jump', 'fly', 'climb', 'hang
  *  we wait with it. */
 async function bootWindow({ storedSkin } = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>',
-    { url: 'https://app.test/', runScripts: 'outside-only' });
+    { url: 'https://app.test/', runScripts: 'outside-only', pretendToBeVisual: true });
   if (storedSkin !== undefined) dom.window.localStorage.setItem('yc.mascot.skin', storedSkin);
   dom.window.eval(ENGINE_SRC);
   if (dom.window.document.readyState === 'loading') {
@@ -141,9 +145,64 @@ describe('mascot engine', () => {
     expect(win.Mascot.out()).toBe(false);
   });
 
-  test('the manifest offers casey and casey95, casey first', async () => {
+  test('the manifest offers all three forms, casey first', async () => {
     const ids = (await bootWindow()).Mascot.skins().map(s => s.id);
-    expect(ids).toEqual(['casey', 'casey95']);
+    expect(ids).toEqual(['casey', 'casey95', 'roomba']);
+  });
+
+  test('register() validates a can mask', async () => {
+    const win = await bootWindow();
+    const base = { name: 'X', geom: { W: 10, H: 10, FLY_HEAD: 10 }, acts: [['sit', 1]], lines: ['.'], svg: '<svg/>', css: [] };
+    const CORE = ['walk', 'idle', 'fall', 'land', 'drag', 'leave'];
+    expect(win.Mascot.register({ ...base, id: 'ok-can', can: [...CORE] })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'no-core', can: ['walk', 'idle'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'half-hop', can: [...CORE, 'hop'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'half-ascent', can: [...CORE, 'inflate', 'float'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'full-ascent', can: [...CORE, 'inflate', 'float', 'pop'] })).toBe(true);
+  });
+
+  test('a can-masked form gates the console and shrinks the repertoire', async () => {
+    const { win } = await bootWithSkins();
+    // finally-guarded: this test runs a REAL instance (rAF and all), and a
+    // failing expect must still stop the loop and close the window, or the
+    // leaked rAF keeps jest alive forever and a red test reads as a hang.
+    try {
+      // Casey first: the whole repertoire is on offer, and hang (needs: any)
+      // takes even mid-fall.
+      win.Mascot.setSkin('casey');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+      expect(win.Mascot.list(true)).toEqual(
+        expect.arrayContaining(['fly', 'climb', 'hang', 'jump', 'chase']));
+      expect(win.Mascot.do('hang')).toBe('hang');
+      // Switch to the Roomba mid-run: setSkin restarts it, the gates shut, and
+      // the panel's source of buttons no longer offers what it cannot do.
+      win.Mascot.setSkin('roomba');
+      expect(win.Mascot.out()).toBe(true);
+      const open = win.Mascot.list(true);
+      for (const gated of ['fly', 'climb', 'hang', 'jump']) {
+        expect(open).not.toContain(gated);
+        expect(win.Mascot.do(gated)).toBe(false);
+      }
+      expect(open).toContain('chase');     // chase IS in its can
+      expect(open).toContain('whirr');     // and its own acts came with it
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  });
+
+  test('ambient entry points carry the can gates', () => {
+    // The console refuses via each action's `gate`; the AMBIENT paths refuse
+    // inside the primitives, which roll Math.random and cannot be driven from
+    // a test. These counts are that contract — remove a gate and this is what
+    // notices.
+    const count = re => (ENGINE_SRC.match(re) || []).length;
+    expect(count(/allowed\('float'\)/g)).toBe(1);   // tryFly
+    expect(count(/allowed\('hop'\)/g)).toBe(1);     // tryHop
+    expect(count(/allowed\('climb'\)/g)).toBe(2);   // atEdge + the hang walk
+    expect(count(/allowed\('hang'\)/g)).toBe(1);    // climb-top ceiling branch
+    expect(count(/allowed\('chase'\)/g)).toBe(1);   // walk's cursor-notice
   });
 });
 
@@ -154,8 +213,8 @@ describe('every registered skin honours the contract', () => {
     STATES = win.Mascot.STATES;
   });
 
-  test('both shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95']);
+  test('all shipped skins registered', () => {
+    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'roomba']);
   });
 
   for (const f of SKIN_FILES) {
