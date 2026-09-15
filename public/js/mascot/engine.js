@@ -291,6 +291,7 @@
     { id: 'casey95', name: 'Casey-95', blurb: 'A Win95 robot cat. The same moves in button-grey plate — and a jetpack.' },
     { id: 'roomba', name: 'Roomba', blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.' },
     { id: 'ghost', name: 'Ghost', blurb: 'A ghost. Ignores gravity, respects the modals.' },
+    { id: 'ufo', name: 'UFO', blurb: 'A flying saucer. Hovers, warps, abducts the odd cow.' },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.

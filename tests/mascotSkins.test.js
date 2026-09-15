@@ -148,7 +148,7 @@ describe('mascot engine', () => {
 
   test('the picker offers the visible forms; hidden ones stay off it', async () => {
     const ids = (await bootWindow()).Mascot.skins().map(s => s.id);
-    expect(ids).toEqual(['casey', 'casey95', 'roomba', 'ghost']);
+    expect(ids).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo']);
     expect(ids).not.toContain('menorah');       // hidden: seasonal/console only
   });
 
@@ -290,7 +290,7 @@ describe('every registered skin honours the contract', () => {
   });
 
   test('all shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba']);
+    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba', 'ufo']);
   });
 
   for (const f of SKIN_FILES) {
