@@ -28,7 +28,7 @@
 //   4. Mascot.STATES matches the setState() call sites in the source, so the
 //      published vocabulary cannot drift from the code;
 //   5. skin resolution: default, stored-choice, malformed-storage, and a
-//      registry-backed setSkin() round trip with its announce event.
+//      registry-backed setSkin() round trip.
 //
 // Run:
 //   npx jest tests/mascotSkins.test.js
@@ -123,10 +123,8 @@ describe('mascot engine', () => {
     expect((await bootWindow({ storedSkin: '{{{' })).Mascot.skin().id).toBe('casey');
   });
 
-  test('setSkin() switches, persists {id,at}, and announces', async () => {
+  test('setSkin() switches and persists {id,at}', async () => {
     const { win } = await bootWithSkins();    // registry warm → no network path
-    const heard = [];
-    win.document.addEventListener('yc:mascot-skin', e => heard.push(e.detail.id));
     let answered = null;
     win.Mascot.setSkin('casey95', ok => { answered = ok; });
     expect(answered).toBe(true);
@@ -135,7 +133,6 @@ describe('mascot engine', () => {
     const stored = JSON.parse(win.localStorage.getItem('yc.mascot.skin'));
     expect(stored.id).toBe('casey95');
     expect(typeof stored.at).toBe('number');
-    expect(heard).toContain('casey95');
     // …and the picker flags the switch.
     const cur = win.Mascot.skins().filter(s => s.current).map(s => s.id);
     expect(cur).toEqual(['casey95']);

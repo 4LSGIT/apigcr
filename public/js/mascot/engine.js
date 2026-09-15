@@ -15,6 +15,10 @@
  * `cat.dataset.act`, and everything visible about the animal comes from a SKIN,
  * a data object registered from /js/mascot/skins/<id>.js. Casey the ginger cat
  * is the reference skin; Casey-95 the robot is the proof there can be two.
+ * And it is always the same CASEY — one cat, many FORMS: a skin is what Casey
+ * turns up as, not a different animal. So the tile, the panel and the tooltip
+ * say "Casey" whichever skin is active, and a skin's `name` only ever labels
+ * its card in the form picker.
  * (They used to be an 84KB copy-paste fork of each other. Measured before the
  * merge: 1030 raw diff lines, of which ~25 were engine logic — the rest was the
  * artwork this contract now carries.)
@@ -22,7 +26,8 @@
  * ── THE SKIN CONTRACT ────────────────────────────────────────────────────────
  *   Mascot.register({
  *     id: 'casey',              // matches the file name under skins/
- *     name: 'Casey',            // what the tile, panel and tooltip call it
+ *     name: 'Casey',            // labels this form's card in the picker ONLY —
+ *                               // the pet itself is called Casey everywhere
  *     blurb: 'A ginger cat.',   // one picker line; a rowdy skin says so HERE
  *     geom: { W: 36, H: 28, FLY_HEAD: 52 },
  *                               // sprite box, and how far the tallest thing
@@ -89,8 +94,9 @@
  *   and `yc.mascot2.on` behind in some browsers; nothing reads either.
  *
  * HOW YOU GET IT
- *   The mascot tile in More (a second press opens the trick panel, which now
- *   carries the skin picker too), or a long-press of the header logo for ~0.9s.
+ *   The Casey tile in More (a second press opens the trick panel; its
+ *   "Change form…" button opens the form picker), or a long-press of the
+ *   header logo for ~0.9s.
  *   Either one puts it away again. So does double-clicking the animal, or
  *   Mascot.off() from the console. The choice is remembered per browser in
  *   localStorage. OFF by default for everyone — a colleague who never presses
@@ -1142,7 +1148,8 @@
     cat = document.createElement('div');
     cat.className = 'yc-cat';
     cat.innerHTML = svgOf(skin);
-    cat.title = skin.name + ' · drag me · double-click to send me away';
+    // Always Casey, whatever the form — identity is not the skin's to rename.
+    cat.title = 'Casey · drag me · double-click to send me away';
     root.appendChild(cat);
     document.body.appendChild(root);
 
@@ -1253,7 +1260,6 @@
     CFG = mergeCfgFor(skin);
     lastLine = -1;
     rebuildActions();
-    announce();
   }
 
   // Resolve → load (falling back to the default skin) → apply. The fallback
@@ -1310,15 +1316,6 @@
       blurb: d.blurb || m.blurb || '',
       words: d.words || {}
     };
-  }
-
-  // The More tile follows the skin by listening for this; fired at boot and on
-  // every switch, whether or not the pet is out. Broadcast, not a reach-in: the
-  // engine still touches nothing of the app's.
-  function announce() {
-    try {
-      document.dispatchEvent(new CustomEvent('yc:mascot-skin', { detail: skinInfo() }));
-    } catch (e) { }
   }
 
   // The summon path shared by boot, the tile and the logo: resolve which pet,
@@ -1622,10 +1619,9 @@
 
   function boot() {
     wireTrigger();
-    // Resolve which pet this browser gets before anything downloads, and say
-    // so — the More tile relabels itself off this even when the pet is off.
+    // Resolve which form this browser gets before anything downloads, so
+    // Mascot.skin() and skins() answer correctly before the first summon.
     curId = resolveSkinId();
-    announce();
     if (store.pref() === '1') summon();          // asked for it, last time
     // Wired once, at boot rather than per build(), so on/off cycles don't stack
     // up duplicate listeners. It only feeds the occasional cursor chase.
