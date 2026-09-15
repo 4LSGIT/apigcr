@@ -60,6 +60,11 @@
       POP_MS: 0.3            // the flame-out and the smoke, before it starts falling
     },
 
+    // The full original vocabulary — everything but the noclip pair, same as
+    // Casey and for the same reason: an omitted `can` means ALL states.
+    can: ['walk', 'idle', 'chase', 'climb', 'hang', 'fall', 'hop', 'crouch',
+      'land', 'drag', 'inflate', 'float', 'pop', 'leave'],
+
     // Idle repertoire: look → scan, groom → oil, scratch → glitch, and standby
     // where the cat sleeps — sided like sleep is, so the charging bolt is never
     // mirrored, and long the same way.

@@ -34,6 +34,13 @@
 
     // No tune: the engine defaults are Casey's numbers.
 
+    // The full original vocabulary — everything but the noclip pair, which
+    // arrived after the cat and is not a cat thing. Declared because an
+    // omitted `can` means ALL states, which would oblige this css to style a
+    // drift it never enters.
+    can: ['walk', 'idle', 'chase', 'climb', 'hang', 'fall', 'hop', 'crouch',
+      'land', 'drag', 'inflate', 'float', 'pop', 'leave'],
+
     // Idle repertoire, with weights. This is where the personality lives.
     // sleep is sided — a sleeping cat always faces right, so the floating z's
     // are never mirrored — and runs long, both ambiently and from the console.

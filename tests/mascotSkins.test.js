@@ -55,7 +55,8 @@ const SKIN_FILES = fs.readdirSync(SKINS_DIR).filter(f => f.endsWith('.js')).sort
 const STATES_NEEDING_CSS = states => states.filter(s => s !== 'leave');
 
 // The engine's non-idle action names (the idle ones come from each skin).
-const BASE_ACTION_NAMES = ['walk', 'idle', 'talk', 'jump', 'fly', 'climb', 'hang', 'fall', 'chase', 'flip'];
+const BASE_ACTION_NAMES = ['walk', 'idle', 'talk', 'jump', 'fly', 'climb', 'hang', 'fall',
+  'chase', 'drift', 'blink', 'flip'];
 
 /** A real window with the real engine evaluated in it.
  *  runScripts:'outside-only' is load-bearing: without it window.eval runs in
@@ -147,7 +148,7 @@ describe('mascot engine', () => {
 
   test('the picker offers the visible forms; hidden ones stay off it', async () => {
     const ids = (await bootWindow()).Mascot.skins().map(s => s.id);
-    expect(ids).toEqual(['casey', 'casey95', 'roomba']);
+    expect(ids).toEqual(['casey', 'casey95', 'roomba', 'ghost']);
     expect(ids).not.toContain('menorah');       // hidden: seasonal/console only
   });
 
@@ -169,6 +170,8 @@ describe('mascot engine', () => {
     expect(win.Mascot.register({ ...base, id: 'half-hop', can: [...CORE, 'hop'] })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'half-ascent', can: [...CORE, 'inflate', 'float'] })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'full-ascent', can: [...CORE, 'inflate', 'float', 'pop'] })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'blink-no-drift', can: [...CORE, 'blink'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'drift-only', can: [...CORE, 'drift'] })).toBe(true);
   });
 
   test('a can-masked form gates the console and shrinks the repertoire', async () => {
@@ -182,9 +185,14 @@ describe('mascot engine', () => {
       win.Mascot.setSkin('casey');
       win.Mascot.on();
       expect(win.Mascot.out()).toBe(true);
-      expect(win.Mascot.list(true)).toEqual(
+      const caseyList = win.Mascot.list(true);
+      expect(caseyList).toEqual(
         expect.arrayContaining(['fly', 'climb', 'hang', 'jump', 'chase']));
+      // …but not the noclip pair: the cat's can predates it, deliberately.
+      expect(caseyList).not.toContain('drift');
+      expect(caseyList).not.toContain('blink');
       expect(win.Mascot.do('hang')).toBe('hang');
+      expect(win.Mascot.do('drift')).toBe(false);
       // Switch to the Roomba mid-run: setSkin restarts it, the gates shut, and
       // the panel's source of buttons no longer offers what it cannot do.
       win.Mascot.setSkin('roomba');
@@ -196,6 +204,13 @@ describe('mascot engine', () => {
       }
       expect(open).toContain('chase');     // chase IS in its can
       expect(open).toContain('whirr');     // and its own acts came with it
+      // And the ghost gets the pair the others are denied.
+      win.Mascot.setSkin('ghost');
+      const spectral = win.Mascot.list(true);
+      expect(spectral).toEqual(expect.arrayContaining(['drift', 'blink']));
+      expect(spectral).not.toContain('climb');
+      expect(win.Mascot.do('drift')).toBe('drift');
+      expect(win.Mascot.do('blink')).toBe('blink');
     } finally {
       win.Mascot.off();
       win.close();
@@ -222,6 +237,8 @@ describe('mascot engine', () => {
     expect(count(/allowed\('climb'\)/g)).toBe(2);   // atEdge + the hang walk
     expect(count(/allowed\('hang'\)/g)).toBe(1);    // climb-top ceiling branch
     expect(count(/allowed\('chase'\)/g)).toBe(1);   // walk's cursor-notice
+    expect(count(/allowed\('drift'\)/g)).toBe(2);   // toIdle roll + airborne poke
+    expect(count(/allowed\('blink'\)/g)).toBe(1);   // drift's end-of-wander roll
   });
 });
 
@@ -273,7 +290,7 @@ describe('every registered skin honours the contract', () => {
   });
 
   test('all shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'menorah', 'roomba']);
+    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba']);
   });
 
   for (const f of SKIN_FILES) {

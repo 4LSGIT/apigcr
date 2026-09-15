@@ -39,8 +39,11 @@
  *     can: ['walk','hop',…],    // which engine STATES this skin may enter.
  *                               // Omitted = all of them. ENFORCED at the
  *                               // entry points for the optional states —
- *                               // climb, hang, chase, hop (with crouch) and
- *                               // the inflate/float/pop ascent — and in the
+ *                               // climb, hang, chase, hop (with crouch),
+ *                               // the inflate/float/pop ascent, and the
+ *                               // noclip pair drift/blink (blink needs
+ *                               // drift; drifting also needs DRIFT_CHANCE
+ *                               // tuned above zero) — and in the
  *                               // console/panel, where a gated action is
  *                               // simply not offered: list() leaves it out
  *                               // and do() answers that it is not in this
@@ -253,7 +256,15 @@
     FLY_MAX_VY: 95,        // px/s ceiling on the rise. A balloon is not a rocket.
     FLY_SWAY: 9,           // px of side-to-side drift, about the launch column
     INFLATE_MS: 0.95,      // wind-up: the balloon filling / the turbine spooling
-    POP_MS: 0.22           // the ending, before it starts falling
+    POP_MS: 0.22,          // the ending, before it starts falling
+
+    // THE NOCLIP PAIR — drift (gravity-off wander) and blink (the teleport).
+    // Off for everything earthbound: a skin opts in by listing both in `can`
+    // AND tuning DRIFT_CHANCE up. BLINK_MS is the whole fade-out — the skin's
+    // css owns what the fade looks like; the engine only owns when the sprite
+    // is somewhere else.
+    DRIFT_CHANCE: 0,       // per settle-down, like FLY_CHANCE
+    BLINK_MS: 0.5          // s gone between fading out and turning up elsewhere
   };
 
   // Storage and loading are engine constants, not tunables — a skin must not be
@@ -265,9 +276,11 @@
 
   // Every state the engine can set — the vocabulary skins style against.
   // setState() is the only writer of dataset.state, so this list and the
-  // setState call sites are held equal by the smoke test.
+  // setState call sites are held equal by the smoke test. drift and blink are
+  // the noclip pair (a ghost's wander and teleport) — entered only by skins
+  // that list them in `can` and tune DRIFT_CHANCE above zero.
   var STATES = ['walk', 'idle', 'chase', 'climb', 'hang', 'fall', 'hop',
-    'crouch', 'land', 'drag', 'inflate', 'float', 'pop', 'leave'];
+    'crouch', 'land', 'drag', 'inflate', 'float', 'pop', 'drift', 'blink', 'leave'];
 
   // ── The manifest ─────────────────────────────────────────────────────────────
   // What the picker offers, renderable before any skin file downloads. `hidden`
@@ -277,6 +290,7 @@
     { id: 'casey', name: 'Casey', blurb: 'A ginger cat. Walks the ledges, naps on your case list.' },
     { id: 'casey95', name: 'Casey-95', blurb: 'A Win95 robot cat. The same moves in button-grey plate — and a jetpack.' },
     { id: 'roomba', name: 'Roomba', blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.' },
+    { id: 'ghost', name: 'Ghost', blurb: 'A ghost. Ignores gravity, respects the modals.' },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -380,6 +394,7 @@
   var nextHop = 0;             // clock time of the next "is there something below me"
   var fly = null;              // the ascent in progress: { popY, x0, t0 }
   var flyReady = 0;            // clock time the next ascent becomes possible
+  var driftSeed = 0;           // phase offset so no two drifts trace one path
   var say = null;              // the speech bubble
   var sayTimer = 0;            // its expiry, held so a new line can reset it
   var lastLine = -1;           // so it does not say the same thing twice running
@@ -627,6 +642,8 @@
     // it on a timer instead meant the timer usually elapsed mid-walk and the
     // chance was silently thrown away, which makes the real frequency a fiction.
     if (clock >= flyReady && Math.random() < CFG.FLY_CHANCE && tryFly(false)) return;
+    // The noclip skins lift off instead — the same settle-moment decision.
+    if (allowed('drift') && Math.random() < CFG.DRIFT_CHANCE) { toDrift(); return; }
     setState('idle', pick(skin.acts));
     var o = actOpt(act);
     if (o.face) face = o.face;
@@ -750,6 +767,29 @@
     stateUntil = clock + CFG.POP_MS;
   }
 
+  // ── The noclip pair ──────────────────────────────────────────────────────────
+  // Drift is wander with gravity off — a ghost does not stand ON things so
+  // much as near them; blink is the teleport: fade out (the skin's css owns
+  // the fade), be elsewhere, fade back in. Both end in ordinary states, so
+  // everything else — the drag, the leave, the freeze under modals — works on
+  // a noclip skin unchanged.
+  function toDrift() {
+    ledge = null; wall = null; rot = 0;
+    hop = null; hopFloor = -1e9; fly = null;
+    driftSeed = Math.random() * 100;
+    vx = rand(-12, 12); vy = rand(-8, 8);
+    setState('drift');
+    stateUntil = clock + rand(4, 9);
+  }
+
+  function toBlink() {
+    ledge = null; wall = null; rot = 0;
+    hop = null; hopFloor = -1e9; fly = null;
+    vx = 0; vy = 0;
+    setState('blink');
+    stateUntil = clock + CFG.BLINK_MS;
+  }
+
   // `record` false means "stop being here", not "the user said no".
   function toLeave(record) {
     leaveRecords = record !== false;
@@ -864,6 +904,39 @@
       // is sized to absorb exactly that. Make it bigger and the pet starts
       // missing the ledge it just spent six seconds floating up to.
       if (clock >= stateUntil) toFall(rand(-16, 16), 15);
+      return;
+    }
+
+    if (state === 'drift') {
+      // A slow figure-of-nothing: velocity eases toward a wandering target,
+      // so the path curves instead of jittering. No gravity in here — this
+      // branch sits above fall/hop for the same reason float does.
+      var ease = Math.min(1, dt * 1.2);
+      vx += (Math.sin(clock * 0.8 + driftSeed) * 16 - vx) * ease;
+      vy += (Math.cos(clock * 0.53 + driftSeed * 2) * 11 - vy) * ease;
+      px = clamp(px + vx * dt, bounds.left + 10, bounds.right - 10);
+      py = clamp(py + vy * dt, bounds.top + 16, bounds.bottom - 4);
+      aim(vx, 0);
+      if (clock >= stateUntil) {
+        if (allowed('blink') && Math.random() < 0.4) { toBlink(); return; }
+        // …or sink back to the world: an ordinary fall, which for a skin this
+        // floaty (they tune GRAVITY down) is a feather drop onto whatever is
+        // below. That reuses the whole landing path, same trick as the pop.
+        toFall(vx * 0.4, 0);
+      }
+      return;
+    }
+
+    if (state === 'blink') {
+      if (clock < stateUntil) return;      // mid-fade — the css owns the look
+      // Reappear somewhere else: usually a random spot, sometimes right by
+      // the cursor, which is the better joke.
+      var nearMouse = mouse.x > 0 && clock - mouse.t < 5 && Math.random() < 0.4;
+      px = nearMouse ? clamp(mouse.x + rand(-30, 30), bounds.left + 10, bounds.right - 10)
+        : rand(bounds.left + 20, bounds.right - 20);
+      py = nearMouse ? clamp(mouse.y - rand(10, 40), bounds.top + 16, bounds.bottom - 10)
+        : rand(bounds.top + 20, bounds.bottom - 30);
+      toDrift();
       return;
     }
 
@@ -1096,6 +1169,7 @@
         px = g.px0; py = g.py0; rot = 0;
         ledge = g.ledge0;
         if (ledge) { setState('idle', attn()); stateUntil = clock + rand(1.2, 2.5); }
+        else if (allowed('drift')) toDrift();  // a poked ghost hangs in the air
         else toFall(0, 0);
         talk();                 // after the pose, so the bubble is placed against it
         return;
@@ -1266,6 +1340,7 @@
       for (var c = 0; c < CORE.length && ok; c++) ok = has(CORE[c]);
       if (ok && has('hop') !== has('crouch')) ok = false;
       if (ok && (has('inflate') !== has('float') || has('float') !== has('pop'))) ok = false;
+      if (ok && has('blink') && !has('drift')) ok = false;   // a blink lands in a drift
     }
     if (!ok) {
       console.warn('[Mascot] register() refused a malformed skin', def && def.id);
@@ -1615,6 +1690,14 @@
         setState('chase');
         stateUntil = clock + 4;
       }
+    },
+    {
+      name: 'drift', needs: 'any', gate: 'drift', what: 'lift off and wander — gravity is a suggestion',
+      run: function () { toDrift(); }
+    },
+    {
+      name: 'blink', needs: 'any', gate: 'blink', what: 'vanish, and turn up somewhere else',
+      run: function () { toBlink(); }
     },
     { name: 'flip', needs: 'any', what: 'turn around', run: function () { face = -face; } }
   ];
