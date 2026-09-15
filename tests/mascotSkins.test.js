@@ -145,9 +145,19 @@ describe('mascot engine', () => {
     expect(win.Mascot.out()).toBe(false);
   });
 
-  test('the manifest offers all three forms, casey first', async () => {
+  test('the picker offers the visible forms; hidden ones stay off it', async () => {
     const ids = (await bootWindow()).Mascot.skins().map(s => s.id);
     expect(ids).toEqual(['casey', 'casey95', 'roomba']);
+    expect(ids).not.toContain('menorah');       // hidden: seasonal/console only
+  });
+
+  test('a hidden form still loads, applies, and marks no picker card current', async () => {
+    const { win } = await bootWithSkins();      // registry warm → no network path
+    let ok = null;
+    win.Mascot.setSkin('menorah', v => { ok = v; });
+    expect(ok).toBe(true);
+    expect(win.Mascot.skin().id).toBe('menorah');
+    expect(win.Mascot.skins().every(s => !s.current)).toBe(true);
   });
 
   test('register() validates a can mask', async () => {
@@ -192,6 +202,15 @@ describe('mascot engine', () => {
     }
   });
 
+  test('the menorah lights one more candle per night', async () => {
+    const { defs } = await bootWithSkins();
+    const flames = day => (defs.menorah.svg({ SEASONAL_DAY: day }).match(/class="m9-flame/g) || []).length;
+    expect(flames(0)).toBe(2);    // night 1: shamash + one
+    expect(flames(3)).toBe(5);
+    expect(flames(7)).toBe(9);    // night 8: the full set
+    expect(flames(-1)).toBe(9);   // out of season = full dress (the portrait)
+  });
+
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
     // inside the primitives, which roll Math.random and cannot be driven from
@@ -206,6 +225,46 @@ describe('mascot engine', () => {
   });
 });
 
+describe('seasonal resolution', () => {
+  // Dates below are ground truth, cross-checked against Intl's own hebrew
+  // calendar in V8 on 2026-09-15: Hanukkah 5787 first candle the evening of
+  // 2026-12-04 (25 Kislev = Dec 5 civil), 5788's on 2027-12-24; Yom Kippur
+  // 5787 = 2026-09-21 (10 Tishri — Intl's spelling); Tisha B'Av 5786 =
+  // 2026-07-23 (9 Av).
+
+  test('the verdict: nights, the 18:00 rule, sit-outs, quiet days', async () => {
+    const win = await bootWindow();
+    const S = d => win.Mascot.season(d);
+    expect(S('2026-12-05T12:00:00')).toMatchObject({ id: 'menorah', sitOut: false });
+    expect(S('2026-12-05T12:00:00').window).toMatchObject({ id: 'menorah', day: 1 });
+    expect(S('2026-12-04T19:30:00').window).toMatchObject({ id: 'menorah', day: 1 });  // sunset-ish, not midnight
+    expect(S('2026-12-04T12:00:00').window).toBe(null);                                // too early on erev
+    expect(S('2026-12-12T12:00:00').window).toMatchObject({ day: 8 });
+    expect(S('2026-12-13T12:00:00').window).toBe(null);                                // over
+    // The solemn days sit the pet out — and still resolve the underlying
+    // form, because an explicit summon that day brings that form.
+    expect(S('2026-09-21T12:00:00')).toMatchObject({ id: 'casey', sitOut: true });     // Yom Kippur
+    expect(S('2026-07-23T12:00:00').sitOut).toBe(true);                                // Tisha B'Av
+    // An ordinary day is nobody's window.
+    expect(S('2026-09-15T12:00:00')).toMatchObject({ id: 'casey', sitOut: false, window: null });
+  });
+
+  test('a choice made during a window overrides it — that window only', async () => {
+    // Chose casey95 on night 2 → nights 3–8 stay casey95…
+    const at = new Date('2026-12-06T20:00:00').getTime();
+    let win = await bootWindow({ storedSkin: JSON.stringify({ id: 'casey95', at }) });
+    expect(win.Mascot.season('2026-12-08T12:00:00')).toMatchObject({ id: 'casey95', window: null });
+    // …a choice made BEFORE the window does not override it…
+    const before = new Date('2026-11-01T12:00:00').getTime();
+    win = await bootWindow({ storedSkin: JSON.stringify({ id: 'casey95', at: before }) });
+    expect(win.Mascot.season('2026-12-08T12:00:00').id).toBe('menorah');
+    // …and it never leaks into the NEXT instance: a year later, the menorah
+    // forces again over the same stored record.
+    win = await bootWindow({ storedSkin: JSON.stringify({ id: 'casey95', at }) });
+    expect(win.Mascot.season('2027-12-26T12:00:00').id).toBe('menorah');
+  });
+});
+
 describe('every registered skin honours the contract', () => {
   let win, defs, STATES;
   beforeAll(async () => {
@@ -214,7 +273,7 @@ describe('every registered skin honours the contract', () => {
   });
 
   test('all shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'roomba']);
+    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'menorah', 'roomba']);
   });
 
   for (const f of SKIN_FILES) {

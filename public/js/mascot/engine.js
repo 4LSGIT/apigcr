@@ -100,6 +100,13 @@
  *   without overwriting the stored choice. Older builds left `yc.mascot.met`
  *   and `yc.mascot2.on` behind in some browsers; nothing reads either.
  *
+ *   SEASONS sit on top of that (the SEASONAL table below): a window can force
+ *   a form — the menorah, one candle more per night — or force a quiet
+ *   absence on the solemn days (id: null). The user always wins per-window:
+ *   picking a skin during a window, or explicitly summoning through a
+ *   sit-out, overrides that window and only that window. Mascot.season()
+ *   explains today's verdict from the console.
+ *
  * HOW YOU GET IT
  *   The Casey tile in More (a second press opens the trick panel; its
  *   "Change form…" button opens the form picker), or a long-press of the
@@ -121,6 +128,7 @@
  *   Mascot.do(name)    — the same thing by name; Mascot.do() rolls a random one
  *   Mascot.skins()     — the picker's list; Mascot.skin() the one that is on
  *   Mascot.setSkin(id) — switch (tears down, lazy-loads, drops the new one in)
+ *   Mascot.season(d?)  — today's (or any date's) seasonal verdict, and why
  *   Mascot.register(d) — a skin pasted straight into the console works too:
  *                        register it, then Mascot.setSkin(its id)
  *   Mascot.debug()     — outlines the box the mascot thinks it lives in
@@ -268,7 +276,34 @@
   var MANIFEST = [
     { id: 'casey', name: 'Casey', blurb: 'A ginger cat. Walks the ledges, naps on your case list.' },
     { id: 'casey95', name: 'Casey-95', blurb: 'A Win95 robot cat. The same moves in button-grey plate — and a jetpack.' },
-    { id: 'roomba', name: 'Roomba', blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.' }
+    { id: 'roomba', name: 'Roomba', blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.' },
+    // hidden: real, but never in the picker — reachable only by being
+    // seasonally forced, or from the console. The menorah must not be
+    // pickable in July.
+    { id: 'menorah', name: 'Menorah', blurb: 'Eight nights of lights. Turns up when it is time.', hidden: true }
+  ];
+
+  // ── The seasonal table ───────────────────────────────────────────────────────
+  // Windows that FORCE a form (or a quiet absence — id: null) unless the user
+  // changed skin during that same window; resolveSkin() holds the precedence.
+  // `from` is 'MM-DD' (local civil date) or 'hebrew:<day> <Month>' with the
+  // month spelled EXACTLY as Intl's en-u-ca-hebrew calendar spells it —
+  // 'Tishri', not 'Tishrei'; 'Adar II' in leap years. (Spellings verified in
+  // V8, 2026-09-15; Safari/Firefox spot-check pending. An unmatched spelling
+  // fails SOFT: the window simply never fires.)
+  // A window naming a skin that is not registered or listed also fails soft.
+  // Holiday entries are added WITH their skins — the UFO gets July 4th when
+  // the UFO exists.
+  var SEASONAL = [
+    // The solemn days. A playful mascot is tonally wrong on a fast day, so
+    // the pet sits these out: it does not auto-appear, and no dialog explains
+    // why — a quiet absence reads as respect, a cartoon does not. Someone who
+    // EXPLICITLY summons it that day has made their own call: that summon
+    // works, and counts as the day's override (see summon()).
+    { id: null, from: 'hebrew:10 Tishri', days: 1 },     // Yom Kippur
+    { id: null, from: 'hebrew:9 Av', days: 1 },          // Tisha B'Av
+    // Hanukkah — the headline one: a candle per night via CFG.SEASONAL_DAY.
+    { id: 'menorah', from: 'hebrew:25 Kislev', days: 8 }
   ];
 
   // Elements inside the open page that are chunky enough to stand on.
@@ -1254,6 +1289,7 @@
     } else {
       out.W = 36; out.H = 28; out.FLY_HEAD = 52;
     }
+    out.SEASONAL_DAY = -1;       // applySkin() fills this for a forced skin
     return out;
   }
 
@@ -1286,6 +1322,12 @@
     skin = REG[id];
     curId = id;
     CFG = mergeCfgFor(skin);
+    // A seasonally-forced skin learns which day of its window this is — how
+    // the menorah knows tonight's candle count. -1 otherwise, and a skin
+    // summoned out of season shows its full-dress state (svg functions treat
+    // -1 as "all of it": the portrait is the finale, not night one).
+    var s = seasonNow(new Date());
+    if (s && s.entry.id === id) CFG.SEASONAL_DAY = s.day;
     lastLine = -1;
     rebuildActions();
   }
@@ -1306,13 +1348,94 @@
     });
   }
 
-  // The stored choice, if it still names something real; the default otherwise.
-  function resolveSkinId() {
-    var rec = skinStore.get();
+  // ── Seasonal resolution ──────────────────────────────────────────────────────
+  // Hebrew dates via Intl's built-in hebrew calendar — no dependency. Two
+  // gotchas, both deliberate:
+  //   · Hebrew days begin at SUNSET and Intl rolls at local midnight.
+  //     Advancing the Hebrew date at 18:00 local is one line and closer to
+  //     right. Do not "fix" this as a bug.
+  //   · Kislev is 29 or 30 days depending on the year, so "night N" is never
+  //     arithmetic on a day-of-month: seasonalDay() steps BACK a civil day at
+  //     a time until it hits the window's first day (max `days` steps), which
+  //     is always correct and needs no month-length table.
+  var HEB_FMT = null;
+  function hebrewDate(d) {
+    try {
+      if (!HEB_FMT) HEB_FMT = new Intl.DateTimeFormat('en-u-ca-hebrew', { day: 'numeric', month: 'long' });
+      var parts = HEB_FMT.formatToParts(new Date(d.getTime() + 6 * 3600 * 1000));
+      var out = {};
+      for (var i = 0; i < parts.length; i++) out[parts[i].type] = parts[i].value;
+      return out.day + ' ' + out.month;            // '25 Kislev' · '10 Tishri'
+    } catch (e) { return ''; }     // no hebrew calendar → hebrew windows fail soft
+  }
+
+  function onFrom(w, d) {
+    if (w.from.slice(0, 7) === 'hebrew:') return hebrewDate(d) === w.from.slice(7);
+    var mm = d.getMonth() + 1, dd = d.getDate();
+    return ((mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd) === w.from;
+  }
+
+  // Which day (0-based) of window `w` contains `now` — or -1.
+  function seasonalDay(w, now) {
+    for (var k = 0; k < w.days; k++) {
+      if (onFrom(w, new Date(now.getTime() - k * 86400000))) return k;
+    }
+    return -1;
+  }
+
+  // The active window at `now`; first hit in table order wins.
+  function seasonNow(now) {
+    for (var i = 0; i < SEASONAL.length; i++) {
+      var day = seasonalDay(SEASONAL[i], now);
+      if (day !== -1) return { entry: SEASONAL[i], day: day };
+    }
+    return null;
+  }
+
+  // Did the user pick a skin DURING this window? Then the user wins — per
+  // window, not forever: switching away from the menorah on night 2 does not
+  // stop a future window from forcing. (The plan stated this as `at >=
+  // window.from`; "`at` falls inside THIS instance of the window" is the same
+  // rule without reconstructing a start timestamp across the 18:00 boundary —
+  // the recency check pins it to this instance, with a day of slop for that
+  // boundary, and last year's choice is months older than any window is long.)
+  function overridden(s, rec, now) {
+    if (!rec || !rec.at) return false;
+    if (now.getTime() - rec.at > (s.entry.days + 1) * 86400000) return false;
+    return seasonalDay(s.entry, new Date(rec.at)) !== -1;
+  }
+
+  function storedOr(rec) {
     var id = rec && rec.id;
     if (id && (REG[id] || findManifest(id))) return id;
     return DEFAULT_ID;
   }
+
+  // The full verdict: which skin now, and why. `when` is for the console and
+  // the tests; the boot path calls it with nothing.
+  //   1. a seasonal window containing now, unless the user overrode it during
+  //      this window;
+  //   2. the stored skin id, if it still names something real;
+  //   3. the default.
+  function resolveSkin(when) {
+    var now = when ? new Date(when) : new Date();
+    var rec = skinStore.get();
+    var s = seasonNow(now);
+    if (s && !overridden(s, rec, now)) {
+      if (s.entry.id === null) {
+        // A sit-out day. The id is still resolved — it is what an explicit
+        // summon (the user's override) brings out.
+        return { id: storedOr(rec), sitOut: true, seasonal: s };
+      }
+      if (REG[s.entry.id] || findManifest(s.entry.id)) {
+        return { id: s.entry.id, sitOut: false, seasonal: s };
+      }
+      // A window naming a skin that does not exist falls through to normal.
+    }
+    return { id: storedOr(rec), sitOut: false, seasonal: null };
+  }
+
+  function resolveSkinId() { return resolveSkin().id; }
 
   // One mascot on screen at a time: switching tears down and rebuilds, and the
   // new pet drops in from the top the way a summoned one does. The choice is
@@ -1349,9 +1472,18 @@
   // The summon path shared by boot, the tile and the logo: resolve which pet,
   // load it if need be, start. The verdict callback is for the tile — with the
   // skin cached it answers synchronously, on first load it answers when the
-  // file does.
-  function summon(cb) {
-    activate(resolveSkinId(), function (ok) {
+  // file does. `explicit` marks a person asking right now (tile, logo,
+  // Mascot.on()) as opposed to the boot path replaying a stored preference —
+  // the difference only matters on a sit-out day.
+  function summon(cb, explicit) {
+    var r = resolveSkin();
+    if (r.sitOut) {
+      if (!explicit) return;               // the quiet absence — see SEASONAL
+      // An explicit summon on a sit-out day is the user's call to make, and
+      // it stamps the override so the rest of the day behaves normally.
+      skinStore.set(r.id);
+    }
+    activate(r.id, function (ok) {
       if (!ok) { if (cb) cb('no-skin'); return; }
       start();
       if (cb) cb(running ? 'on' : 'narrow');
@@ -1409,7 +1541,7 @@
   function toggle(cb) {
     if (running) { toLeave(true); if (cb) cb('off'); return; }
     store.set(true);
-    summon(cb);
+    summon(cb, true);
   }
 
   // ── Console control ──────────────────────────────────────────────────────────
@@ -1573,7 +1705,7 @@
   }
 
   window.Mascot = {
-    on: function () { store.set(true); summon(); },
+    on: function () { store.set(true); summon(null, true); },
     off: function () { store.set(false); stop(); },
     toggle: toggle,
     // Is it out right now? For a caller that wants to know whether a toggle()
@@ -1612,6 +1744,17 @@
     },
     skin: skinInfo,
     setSkin: setSkin,
+    // Why is (or isn't) the pet what it is today: the seasonal verdict, for
+    // now or for any date you hand it — Mascot.season('2026-12-05'). `day` in
+    // the window is 1-based, the way a person counts nights.
+    season: function (when) {
+      var r = resolveSkin(when);
+      var s = r.seasonal;
+      return {
+        id: r.id, sitOut: r.sitOut,
+        window: s ? { id: s.entry.id, from: s.entry.from, days: s.entry.days, day: s.day + 1 } : null
+      };
+    },
     // The picker's portrait: the skin's own SVG in its neutral pose, which the
     // contract asks every skin to design standing. Loads the file if need be;
     // answers null if it will not come.
