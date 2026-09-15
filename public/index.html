@@ -67,17 +67,17 @@
        build than the one this tab booted on. Started at the bottom of the boot
        script (VersionGuard.start()). See public/js/versionGuard.js. -->
   <script src="/js/versionGuard.js"></script>
-  <!-- EASTER EGG — remove this one line (and public/js/mascot.js) to disable.
-       A Win95-style desktop pet, summoned by long-pressing the header logo.
-       Entirely self-contained — no deps, no assets, no network, no server side.
+  <!-- EASTER EGG — remove this one line (and public/js/mascot/) to disable.
+       A Win95-style desktop pet, summoned by long-pressing the header logo or
+       from the mascot tile under More. Entirely self-contained — no deps, no
+       assets, no network, no server side — and opt-in only: it never appears
+       for anyone who has not asked for it.
 
-       NOTE — DEBUT: until 2026-08-27 it comes out on its own for anyone who has
-       not made a choice about it, and introduces itself on every page load until
-       they actually send it away. After that date it is opt-in only, with no
-       action needed: the window is a hard date and the code goes inert on its
-       own. To pull the debut out early or clean it up,
-       see the DEBUT_UNTIL block near the top of public/js/mascot.js. -->
-  <script defer src="/js/mascot.js"></script>
+       engine.js is the animal-blind half — physics, platform scanning, the
+       state machine, the console/panel API. WHICH animal is a skin, lazy-loaded
+       from /js/mascot/skins/<id>.js when one is summoned or picked in the trick
+       panel. The skin contract lives in the header of engine.js. -->
+  <script defer src="/js/mascot/engine.js"></script>
   <!-- Token sheet loads immediately BEFORE style.css. style.css still wins
        the body font-family, but as of the density arc (D2/1) it sets
        var(--ui) — the same stack theme.css puts on body — so the ordering no
@@ -2751,11 +2751,13 @@
   <button class="big-button" data-target="bookingDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:2s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
   <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
   <!-- Standing in for the feature this slot has not got yet: the easter egg
-       from public/js/mascot.js, which until now could only be reached by a
+       from public/js/mascot/, which until now could only be reached by a
        long-press of the header logo that nobody would ever find by accident.
-       First press fetches Casey, the next one opens the trick panel. The icon
-       is what says "cat" here, which is why the label can carry the name. -->
-  <button class="big-button" onclick="toggleMascot()" title="Casey the YisraCat" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-cat fa-2xl"></i><br><br>Casey</button>
+       First press fetches the mascot, the next one opens the trick panel. The
+       label and tooltip follow the active skin: the engine announces it on the
+       yc:mascot-skin event whether or not the pet is out (listener below, by
+       catPanel), so "Casey" in the markup is just the default skin's name. -->
+  <button id="mascotTile" class="big-button" onclick="toggleMascot()" title="Casey the YisraCat" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-cat fa-2xl"></i><br><br><span class="mascot-tile-name">Casey</span></button>
   <br><br>
   <!-- What goes out, and what comes back as numbers: the message, the page it
        lands on, the links that get there, and the reporting over all of it.
@@ -3216,8 +3218,8 @@
   .pill-button:hover { border-color:#1d7fe0; }
   .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
 
-  /* Casey's trick panel. Lives inside a Swal TOAST, so it is 360px wide and the
-     cat is still moving beside it — see catPanel(). */
+  /* The mascot's trick panel. Lives inside a Swal TOAST, so it is 360px wide
+     and the pet is still moving beside it — see catPanel(). */
   .cat-panel { text-align:left; font-size:13px; }
   .cat-tricks { display:flex; flex-wrap:wrap; gap:6px; }
   .cat-panel button {
@@ -3231,6 +3233,13 @@
   /* Reserved whether or not it has anything to say, so pressing a trick the cat
      refuses does not shove the buttons up under the pointer. */
   .cat-panel-say { min-height:1.5em; margin-top:6px; font-size:12px; opacity:.75; }
+  /* The skin picker row, above the tricks. Portraits are each skin's own SVG
+     in its neutral pose, filled in as the skin files arrive; the row renders
+     (and works) before any of them do. */
+  .cat-skins { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .cat-skins button { display:inline-flex; align-items:center; gap:6px; }
+  .cat-skins button svg { width:24px; height:19px; display:block; }
+  .cat-skins button.active { background:var(--accent,#1d7fe0); border-color:var(--accent,#1d7fe0); color:#fff; }
 </style>
 <script>
   function adminTask(){
@@ -3252,53 +3261,68 @@
     });
   }
 
-  // ── The Cat tile ─────────────────────────────────────────────────────
+  // ── The mascot tile ──────────────────────────────────────────────────
   // Toggles the mascot, the same as long-pressing the logo does.
   //
-  // mascot.js is optional in every direction: it can be deleted outright, and
+  // The engine is optional in every direction: it can be deleted outright, and
   // it removes itself when the browser asks for reduced motion or refuses
-  // localStorage. So window.Mascot is allowed to be missing, and the one way a
-  // toggle can silently fail — start() declines below a 900px viewport, where
-  // the shell is in mobile layout and there is nothing to walk along — has to
-  // read as an answer rather than as a dead button.
+  // localStorage. So window.Mascot is allowed to be missing, and the ways a
+  // toggle can quietly fail — start() declines below a 900px viewport, and a
+  // first summon has to fetch the skin file — have to read as answers rather
+  // than as a dead button. That is what toggle's callback is for; with the
+  // skin already cached it answers synchronously.
   function toggleMascot() {
     if (!window.Mascot) {
       Swal.fire({
         icon: 'info',
         title: 'No cat here',
-        text: 'Casey sits out when your browser asks for reduced motion, or when it will not let this site remember anything.'
+        text: 'The mascot sits out when your browser asks for reduced motion, or when it will not let this site remember anything.'
       });
       return;
     }
     // Out already? Then this is not a toggle any more — it is the way to the
     // tricks, and the panel carries the button that sends it away. Nobody meets
-    // the panel before they have met the cat.
+    // the panel before they have met the pet.
     if (Mascot.out()) { catPanel(); return; }
-    Mascot.toggle();
-    if (!Mascot.out()) {
-      Swal.fire({
-        icon: 'info',
-        title: 'Not enough room',
-        text: 'Casey needs a window about 900px wide to have anything to walk on. Widen this one and Casey turns up — the setting is saved either way.'
-      });
-    }
+    Mascot.toggle((res) => {
+      if (res === 'narrow') {
+        const name = (Mascot.skin() || {}).name || 'The mascot';
+        Swal.fire({
+          icon: 'info',
+          title: 'Not enough room',
+          text: name + ' needs a window about 900px wide to have anything to walk on. Widen this one and it turns up — the setting is saved either way.'
+        });
+      } else if (res === 'no-skin') {
+        Swal.fire({
+          icon: 'info',
+          title: 'No mascot today',
+          text: 'Its skin file did not load. The console will say why; a reload usually fixes it.'
+        });
+      }
+    });
   }
 
-  // ── Casey's trick panel ──────────────────────────────────────────────
-  // A TOAST, deliberately. A modal Swal paints over the cat at z-1060 AND
-  // freezes it (mascot.js stops its frame loop while a modal is up), so a modal
-  // panel would mean pressing "fly" and watching a still cat behind a dialog.
-  // A toast takes one corner and the cat carries on next to it.
+  // ── The mascot's trick panel ─────────────────────────────────────────
+  // A TOAST, deliberately. A modal Swal paints over the pet at z-1060 AND
+  // freezes it (the engine stops its frame loop while a modal is up), so a
+  // modal panel would mean pressing "fly" and watching a still cat behind a
+  // dialog. A toast takes one corner and the pet carries on next to it.
   //
-  // The buttons are whatever Mascot.list(true) says the cat knows, so an action
-  // added to mascot.js appears here on its own. This table only softens the two
-  // or three names that do not read as instructions; a name it has never heard
-  // of still gets a button under its own name.
-  const CAT_WORDS = { idle: 'settle', fly: 'balloon', chase: 'chase me', look: 'look about' };
-
+  // The buttons are whatever Mascot.list(true) says the pet knows, so an
+  // action added to the engine or a skin appears here on its own. The skin's
+  // `words` table only softens the two or three names that do not read as
+  // instructions; a name it has never heard of still gets a button under its
+  // own name. The skin row above the tricks is the picker — switching tears
+  // the pet down, drops the new one in, and reopens this panel rebuilt (one
+  // Swal at a time: re-firing replaces the toast, which is what we want).
   function catPanel() {
+    const info = Mascot.skin() || {};
+    const words = info.words || {};
+    const name = info.name || 'Casey';
     const tricks = (Mascot.list(true) || [])
-      .map(n => `<button data-cat-do="${n}">${CAT_WORDS[n] || n}</button>`).join('');
+      .map(n => `<button data-cat-do="${n}">${words[n] || n}</button>`).join('');
+    const skins = (Mascot.skins() || [])
+      .map(s => `<button data-cat-skin="${s.id}" title="${s.blurb}"${s.current ? ' class="active"' : ''}><span data-skin-portrait="${s.id}"></span>${s.name}</button>`).join('');
 
     Swal.fire({
       toast: true,
@@ -3306,38 +3330,63 @@
       // a 340px toast would sit on its nav. Nothing is pinned bottom-right.
       // (No backdrop:false — a toast has none, and Swal warns if you pass one.)
       position: 'bottom-end',
-      title: 'Casey',
+      title: name,
       showConfirmButton: false,
       showCloseButton: true,
       html:
         '<div class="cat-panel">' +
+          '<div class="cat-skins">' + skins + '</div>' +
           '<div class="cat-tricks">' + tricks + '</div>' +
           '<div class="cat-panel-foot">' +
             '<button data-cat-random>Surprise me</button>' +
-            '<button data-cat-away>Send Casey away</button>' +
+            '<button data-cat-away>Send ' + name + ' away</button>' +
           '</div>' +
           '<div class="cat-panel-say" aria-live="polite"></div>' +
         '</div>',
       didOpen: (popup) => {
+        // Portraits arrive as each skin file does; the buttons already work.
+        popup.querySelectorAll('[data-skin-portrait]').forEach(el => {
+          Mascot.portrait(el.dataset.skinPortrait, svg => { if (svg) el.innerHTML = svg; });
+        });
         const say = popup.querySelector('.cat-panel-say');
         popup.addEventListener('click', (e) => {
-          const b = e.target.closest('[data-cat-do],[data-cat-random],[data-cat-away]');
+          const b = e.target.closest('[data-cat-do],[data-cat-random],[data-cat-away],[data-cat-skin]');
           if (!b) return;
           // It can be sent away from the logo while this sits open, and a panel
-          // of buttons for a cat that is not there is worse than no panel.
+          // of buttons for a pet that is not there is worse than no panel.
           if (!Mascot.out()) { Swal.close(); return; }
           if (b.hasAttribute('data-cat-away')) { Mascot.toggle(); Swal.close(); return; }
+          if (b.hasAttribute('data-cat-skin')) {
+            const id = b.dataset.catSkin;
+            if (id === (Mascot.skin() || {}).id) return;
+            Mascot.setSkin(id, ok => {
+              if (ok) { catPanel(); return; }
+              say.textContent = 'That skin did not load — still ' + name + '.';
+            });
+            return;
+          }
 
-          // do() answers with the action's name, or false when the cat is in no
+          // do() answers with the action's name, or false when the pet is in no
           // position to oblige: nine of them need it standing on something, and
           // climb needs a wall within reach. The console carries which; the
           // panel only has to not look broken.
           const did = b.hasAttribute('data-cat-random') ? Mascot.do() : Mascot.do(b.dataset.catDo);
-          say.textContent = did ? '' : 'Not from there — Casey has to be standing on something first.';
+          say.textContent = did ? '' : 'Not from there — ' + name + ' has to be standing on something first.';
         });
       }
     });
   }
+
+  // The More tile follows the skin. The engine broadcasts yc:mascot-skin at
+  // boot and on every switch — even while the pet is off — and survives being
+  // deleted: no event, and the tile just keeps saying Casey.
+  document.addEventListener('yc:mascot-skin', (e) => {
+    const tile = document.getElementById('mascotTile');
+    if (!tile || !e.detail) return;
+    const label = tile.querySelector('.mascot-tile-name');
+    if (label && e.detail.name) label.textContent = e.detail.name;
+    if (e.detail.name) tile.title = e.detail.name + (e.detail.blurb ? ' — ' + e.detail.blurb : '');
+  });
 
   // ── Big-button hover animations ── HOW TO USE ─────────────────────────
   // Give any .big-button a data-hover-anim of one or more Font Awesome

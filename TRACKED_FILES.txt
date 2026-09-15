@@ -278,8 +278,9 @@ public/index.html
 public/issueReports.html
 public/js/assetpicker.js
 public/js/diag.js
-public/js/mascot.js
-public/js/mascot2.js
+public/js/mascot/engine.js
+public/js/mascot/skins/casey.js
+public/js/mascot/skins/casey95.js
 public/js/reportCharts.js
 public/js/versionGuard.js
 public/js/videoInsert.js
@@ -891,6 +892,7 @@ tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
 tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
+tests/mascotSkins.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
 tests/nameKeyOrgKind.test.js
