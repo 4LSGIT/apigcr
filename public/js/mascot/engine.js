@@ -121,6 +121,20 @@
                                // Keep poses small: shoving an element over
                                // its neighbour would cover a control, which
                                // is the one thing this must never do.
+     graffiti: { texts: ['BOO', …],
+                                // what it writes. The LOUD prank: big, over
+                                // your content, and unmissable — which is why
+                                // it keeps every world-object promise (never
+                                // clickable, capped, faded on a clock) and the
+                                // undo this arc gives everything the pet does
+                                // to your page: pressing it wipes it off
+                                // (.yc-obj-wipe lands on it — animate the rub).
+                 max: 3, life: 25,
+                 svg: function (CFG, text, tilt, w, h) { … } },
+                                // the engine picks the words, the spot and the
+                                // angle; the skin owns the HAND it is written
+                                // in. Needs no `can` entry — scrawling is not
+                                // a state, it is something left behind.
      web: { ringS: 3.2,        // s per ring while weaving
  *            stages: 12,        // ring cap — growth stops, the tending never
  *                               // does: it builds until somebody breaks it
@@ -389,7 +403,8 @@
                            // stash it in the corner hoard
 
     // THE HAUNT SET — for skins with `haunt` gear. Off by default.
-    HAUNT_CHANCE: 0        // per settle-down: lean on the nearest real thing
+    HAUNT_CHANCE: 0,       // per settle-down: lean on the nearest real thing
+    GRAFFITI_CHANCE: 0     // per settle-down: write on the screen
   };
 
   // Storage and loading are engine constants, not tunables — a skin must not be
@@ -424,9 +439,9 @@
     { id: 'spider', name: 'Spider', blurb: 'Roams the page, rappels down silk, webs over anything until you break it.', rowdy: true },
     { id: 'bat', name: 'Bat', blurb: 'Hunts your cursor anywhere on screen, then hangs from it like a branch.' },
     { id: 'goose', name: 'Goose', blurb: 'Tracks mud, honks, and pockets bits of your page. Click her loot to undo.', rowdy: true },
-    { id: 'poltergeist', name: 'Poltergeist', blurb: 'Leaves things crooked. Press whatever it tilted to straighten it.', rowdy: true },
+    { id: 'poltergeist', name: 'Poltergeist', blurb: 'Scrawls on your screen and knocks things crooked. Press them to undo.', rowdy: true },
     { id: 'moth', name: 'Moth', blurb: 'Drawn to the light. Follows whatever field you are typing in.' },
-    { id: 'dog', name: 'Dog', blurb: 'Brings you the ball. Move the mouse and it brings it there instead.' },
+    { id: 'dog', name: 'Dog', blurb: 'Throw the ball — press it and drag. It will bring it back to you.' },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -649,6 +664,10 @@
         h(e);                              // h() has already translated the coords
         clickLoot(mouse.x, mouse.y);
       }, { passive: true });
+      doc.addEventListener('pointerup', function (e) {
+        h(e);
+        releaseThrow(mouse.x, mouse.y);
+      }, { passive: true });
     } catch (e) { }
   }
 
@@ -839,6 +858,12 @@
     var mission = !!(plannedWeave || heist);
     // Bringing it to you means bringing it to where you ARE, so the last leg
     // re-aims every frame. Move the mouse and it changes course mid-trot.
+    // …and on the way OUT it chases the ball itself, which may still be
+    // bouncing across the floor from the throw.
+    if (heist && heist.phase === 'to' && heist.target && heist.target.live) {
+      var lv = heist.target.live();
+      if (lv) { heist.x = lv.x; heist.y = lv.y; roam.tx = lv.x; roam.ty = lv.y; }
+    }
     if (heist && heist.phase === 'back' && skin.heist && skin.heist.to === 'cursor') {
       var d2 = destPoint();
       heist.x = d2.x; heist.y = d2.y;
@@ -909,6 +934,7 @@
     if (allowed('lamp') && Math.random() < CFG.LAMP_CHANCE && toLamp()) return;
     if (skin.heist && Math.random() < CFG.HEIST_CHANCE && startHeist()) return;
     if (skin.haunt && Math.random() < CFG.HAUNT_CHANCE && startHaunt()) return;
+    if (skin.graffiti && Math.random() < CFG.GRAFFITI_CHANCE && startGraffiti()) return;
     setState('idle', pick(skin.acts));
     var o = actOpt(act);
     if (o.face) face = o.face;
@@ -1597,6 +1623,7 @@
     draw();
     if (skin.trail) maybeTrail();
     if (skin.web) breakWebs();
+    if (flying) flyObjs(dt);
   }
 
   // ── Drag ─────────────────────────────────────────────────────────────────────
@@ -1698,7 +1725,17 @@
     el.style.opacity = '1';
     el.style.transition = 'opacity ' + (life * 0.4).toFixed(1) + 's ease ' + (life * 0.6).toFixed(1) + 's';
     root.appendChild(el);
-    requestAnimationFrame(function () { el.style.opacity = '0'; });
+    // A forced style flush, NOT a requestAnimationFrame. Setting the target
+    // opacity from a rAF callback races the element's first style
+    // computation: lose that race and the two values collapse into one, the
+    // transition never runs, and the object snaps straight to invisible
+    // instead of living out its life. That race is real — every world object
+    // this engine has ever dropped was one scheduling decision away from
+    // being unseeable, and in a headless browser it loses it every single
+    // time. Reading offsetWidth makes the starting opacity real first, which
+    // is the entire job.
+    void el.offsetWidth;
+    el.style.opacity = '0';
     var o = { el: el, kind: kind, data: data || null, breaking: false, timer: 0 };
     o.timer = setTimeout(function () {
       var i2 = objs.indexOf(o);
@@ -1717,6 +1754,8 @@
     // here rather than at each of those call sites is what makes "the page
     // always gets its icon back" true by construction.
     if (o.data && o.data.take) { o.data.take.restore(); o.data.take = null; }
+    if (o.fly) { o.fly = null; flying--; }
+    if (aiming && aiming.o === o) aiming = null;
     o.el.remove();
     objs.splice(i, 1);
   }
@@ -1894,6 +1933,10 @@
     var html = best.el.innerHTML, mine = best;
     return {
       x: best.data.x, y: best.data.y,
+      // where it is NOW — a thrown ball is still moving
+      live: function () {
+        return objs.indexOf(mine) === -1 ? null : { x: mine.data.x, y: mine.data.y };
+      },
       make: function () {
         var sp = document.createElement('span');
         sp.innerHTML = html;               // its own, from one frame ago
@@ -1977,6 +2020,53 @@
     }
     if (!got) got = hunt(document, 0, 0);
     return got;
+  }
+
+  // ── Graffiti ─────────────────────────────────────────────────────────────────
+  // The loud one. A tilt is a prank; writing across somebody's screen is the
+  // chaos the rowdy badge is actually promising. It lands on the world-object
+  // layer with every promise that layer makes — it cannot take a click, it is
+  // capped, it fades on a clock — plus the one this arc has added to
+  // everything the pet does to your page: pressing it wipes it off.
+  //
+  // The engine places it and owns its life; the SKIN draws it, because what a
+  // given form scrawls (and in what hand) is entirely that form's business.
+  function startGraffiti() {
+    var g = skin.graffiti;
+    if (!g) return false;
+    var w = Math.min(420, Math.max(180, (bounds.right - bounds.left) * 0.42));
+    var h = 92;
+    var lo = bounds.left + w / 2 + 10, hi = Math.max(lo, bounds.right - w / 2 - 10);
+    var tp = bounds.top + h / 2 + 10, bt = Math.max(tp, bounds.bottom - h / 2 - 10);
+    // Somewhere it will actually be read, fully on the screen, and NOT on top
+    // of the last one — two scrawls in the same place are not twice as rude,
+    // they are one illegible smear. Try a few spots and take the first clear
+    // one, or the roomiest if the screen is already covered.
+    var x = 0, y = 0, best = -1, i, k;
+    for (k = 0; k < 14; k++) {
+      var cx = rand(lo, hi), cy = rand(tp, bt), worst = 1e9;
+      for (i = 0; i < objs.length; i++) {
+        var o2 = objs[i];
+        if (o2.kind !== 'graffiti' || !o2.data) continue;
+        var ox4 = Math.abs(cx - o2.data.x) / w, oy4 = Math.abs(cy - o2.data.y) / h;
+        worst = Math.min(worst, Math.max(ox4, oy4));
+      }
+      if (worst > best) { best = worst; x = cx; y = cy; }
+      if (worst >= 1) break;                       // clear of everything: done
+    }
+    // …and not the word that is already up there. Two OBJECTIONs on one
+    // screen looks like a bug; two different words look like a vandal.
+    var up = {}, pool = [];
+    for (i = 0; i < objs.length; i++) {
+      if (objs[i].kind === 'graffiti' && objs[i].data) up[objs[i].data.text] = 1;
+    }
+    for (i = 0; i < g.texts.length; i++) if (!up[g.texts[i]]) pool.push(g.texts[i]);
+    if (!pool.length) pool = g.texts;
+    var text = pool[Math.floor(Math.random() * pool.length)];
+    var tilt = rand(-9, 9);
+    if (!dropObj('graffiti', x, y, g.svg(CFG, text, tilt, w, h), g.life, g.max,
+      { x: x, y: y, w: w, h: h, text: text })) return false;
+    return true;
   }
 
   function startHaunt() {
@@ -2299,12 +2389,114 @@
     }
     for (var i = objs.length - 1; i >= 0; i--) {
       var o = objs[i];
-      if (o.kind !== 'loot' || o.breaking || !o.data) continue;
-      var dx = x - o.data.x, dy = y - o.data.y;
-      if (dx * dx + dy * dy > o.data.r * o.data.r) continue;
-      returnLoot(o);
-      return;                            // one per click: a hoard is undone piece by piece
+      if (o.breaking || !o.data) continue;
+      if (o.kind === 'loot') {
+        var dx = x - o.data.x, dy = y - o.data.y;
+        if (dx * dx + dy * dy > o.data.r * o.data.r) continue;
+        // A FETCHER's ball is not yours to take back — it was never taken.
+        // Pressing it picks it up to THROW: drag and let go, or just let go
+        // where you are for a lob. A hoarder's loot still comes home.
+        if (skin.heist && skin.heist.to === 'cursor') {
+          aiming = { o: o, x0: x, y0: y };
+          return;
+        }
+        returnLoot(o);
+        return;                          // one per click: a hoard is undone piece by piece
+      }
+      if (o.kind === 'graffiti') {
+        // A box rather than a radius — scrawl is wide and short, and the
+        // whole of it should rub out, not just its middle.
+        if (Math.abs(x - o.data.x) > o.data.w / 2) continue;
+        if (Math.abs(y - o.data.y) > o.data.h / 2) continue;
+        wipeObj(o);
+        return;
+      }
     }
+  }
+
+  // ── Thrown things ────────────────────────────────────────────────────────────
+  // Until now every world object stayed exactly where it was dropped. A ball
+  // you can throw needs one that does not: pick it up with a press, fling it,
+  // and it arcs, bounces and rolls to a stop — at which point it is an
+  // ordinary bit of loot again, lying wherever it ended up, for the dog to go
+  // and get. `flying` is a plain count so the frame loop pays nothing at all
+  // on every other form.
+  var flying = 0;
+
+  function flyObjs(dt) {
+    for (var i = 0; i < objs.length; i++) {
+      var o = objs[i];
+      if (!o.fly) continue;
+      var f = o.fly;
+      f.vy += 1500 * dt;                          // it is a ball, not a feather
+      o.data.x += f.vx * dt;
+      o.data.y += f.vy * dt;
+      f.spin += f.vx * dt * 1.6;
+      // the walls and the floor
+      if (o.data.x < bounds.left + 8) { o.data.x = bounds.left + 8; f.vx = Math.abs(f.vx) * 0.5; }
+      if (o.data.x > bounds.right - 8) { o.data.x = bounds.right - 8; f.vx = -Math.abs(f.vx) * 0.5; }
+      if (o.data.y > bounds.bottom - 10) {
+        o.data.y = bounds.bottom - 10;
+        f.vy = -Math.abs(f.vy) * 0.42;            // bounce, losing most of it
+        f.vx *= 0.72;                             // and scrub along the ground
+        if (Math.abs(f.vy) < 60) f.vy = 0;
+      }
+      if (o.data.y < bounds.top + 8) { o.data.y = bounds.top + 8; f.vy = Math.abs(f.vy) * 0.4; }
+      o.el.style.transform = 'translate3d(' + Math.round(o.data.x) + 'px,' +
+        Math.round(o.data.y) + 'px,0) rotate(' + Math.round(f.spin) + 'deg)';
+      // settled: it is just loot again, and the dog knows where it is
+      if (f.vy === 0 && Math.abs(f.vx) < 26) {
+        o.el.classList.remove('yc-obj-thrown');
+        o.fly = null;
+        flying--;
+      }
+    }
+  }
+
+  var aiming = null;       // { o, x0, y0 } — a ball held, waiting to be let go
+
+  // Let go. A real drag throws along it; a plain press lobs the ball away
+  // from the pet, so a click still counts as a throw.
+  function releaseThrow(x, y) {
+    if (!aiming) return;
+    var a = aiming; aiming = null;
+    if (objs.indexOf(a.o) === -1) return;
+    var dx = x - a.x0, dy = y - a.y0;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 12) {
+      var away = a.o.data.x >= px ? 1 : -1;
+      throwObj(a.o, away * rand(240, 400), rand(-560, -420));
+      return;
+    }
+    var sp = Math.min(1500, d * 7);
+    throwObj(a.o, dx / d * sp, dy / d * sp - 140);   // a little loft, always
+  }
+
+  function throwObj(o, vx, vy) {
+    if (o.fly) return;
+    // A thrown ball has outstayed its fade — give it its life back, or it
+    // blinks out mid-air.
+    clearTimeout(o.timer);
+    o.el.style.transition = 'none';
+    o.el.style.opacity = '1';
+    o.el.classList.add('yc-obj-thrown');
+    o.fly = { vx: vx, vy: vy, spin: 0 };
+    flying++;
+    o.timer = setTimeout(function () {
+      var j = objs.indexOf(o);
+      if (j !== -1) removeObj(j);
+    }, 300000);
+  }
+
+  // Rubbed out: the skin animates .yc-obj-wipe, the engine takes it away.
+  function wipeObj(o) {
+    o.breaking = true;
+    clearTimeout(o.timer);
+    o.el.classList.add('yc-obj-wipe');
+    o.timer = setTimeout(function () {
+      var j = objs.indexOf(o);
+      if (j !== -1) removeObj(j);
+    }, 430);
   }
 
   // ── The lamp ─────────────────────────────────────────────────────────────────
@@ -2703,6 +2895,15 @@
     }
     // upright is a roam variant — without roam there is nothing to vary.
     if (ok && def.upright && !def.roam) ok = false;
+    // The graffiti kit: something to write, a ceiling, a clock, and a hand.
+    if (ok && def.graffiti) {
+      var gf = def.graffiti;
+      ok = !!gf.texts && gf.texts.length > 0 && gf.max > 0 && gf.life > 0 &&
+        typeof gf.svg === 'function';
+      for (var gi = 0; ok && gi < gf.texts.length; gi++) {
+        ok = typeof gf.texts[gi] === 'string' && gf.texts[gi].length > 0;
+      }
+    }
     // The haunt kit: a ceiling, a clock, and at least one pose to strike.
     if (ok && def.haunt) {
       ok = def.haunt.max > 0 && def.haunt.life > 0 &&
@@ -3089,6 +3290,11 @@
       run: function () { if (!startHaunt()) return 'nothing near it worth disturbing'; }
     },
     {
+      name: 'scrawl', needs: 'any', when: function () { return !!(skin && skin.graffiti); },
+      what: 'write on your screen — press it to wipe it off',
+      run: function () { if (!startGraffiti()) return 'nowhere to write'; }
+    },
+    {
       name: 'drift', needs: 'any', gate: 'drift', what: 'lift off and wander — gravity is a suggestion',
       run: function () { toDrift(); }
     },
@@ -3322,6 +3528,10 @@
       track(e);
       clickLoot(e.clientX, e.clientY);
     }, { passive: true });
+    document.addEventListener('pointerup', function (e) {
+      releaseThrow(e.clientX, e.clientY);
+    }, { passive: true });
+    document.addEventListener('pointercancel', function () { aiming = null; }, { passive: true });
     window.addEventListener('resize', function () { lastScan = -1e9; });
   }
   // NOTE: boot() is called at the very BOTTOM of this file, not here — the

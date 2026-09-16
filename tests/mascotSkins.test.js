@@ -56,7 +56,7 @@ const STATES_NEEDING_CSS = states => states.filter(s => s !== 'leave');
 
 // The engine's non-idle action names (the idle ones come from each skin).
 const BASE_ACTION_NAMES = ['walk', 'idle', 'talk', 'jump', 'fly', 'climb', 'hang', 'fall',
-  'chase', 'weave', 'rappel', 'drift', 'blink', 'pursue', 'steal', 'haunt', 'lamp', 'flip'];
+  'chase', 'weave', 'rappel', 'drift', 'blink', 'pursue', 'steal', 'haunt', 'scrawl', 'lamp', 'flip'];
 
 /** A real window with the real engine evaluated in it.
  *  runScripts:'outside-only' is load-bearing: without it window.eval runs in
@@ -350,6 +350,23 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('tiler');
       win.Mascot.on();
+
+      // Put it in open floor first. The next web is PLOTTED at 1.7x the last
+      // one's radius and then clamped inside the bounds, so a first web that
+      // happens to land against an edge has its neighbour squeezed back on
+      // top of it and the spacing assertion below stops describing anything.
+      // (It flaked exactly that way: 8px apart, against a floor of 12.) Set
+      // it down in the middle, the same gesture the rappel test uses.
+      const catEl = win.document.querySelector('.yc-cat');
+      const midX = Math.round(win.innerWidth / 2), midY = Math.round(win.innerHeight / 2);
+      catEl.dispatchEvent(new win.MouseEvent('pointerdown',
+        { clientX: win.Mascot.debug().cat.x, clientY: win.Mascot.debug().cat.y, bubbles: true }));
+      catEl.dispatchEvent(new win.MouseEvent('pointermove', { clientX: midX, clientY: midY, bubbles: true }));
+      await new Promise(r => setTimeout(r, 60));
+      catEl.dispatchEvent(new win.MouseEvent('pointermove', { clientX: midX, clientY: midY, bubbles: true }));
+      catEl.dispatchEvent(new win.MouseEvent('pointerup', { clientX: midX, clientY: midY, bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));
+
       expect(win.Mascot.do('weave')).toBe('weave');
       // The web finishes in ~0.6s; the tiler then leaves it standing, walks
       // to a plot at slight overlap, and breaks ground on the next.
@@ -403,6 +420,22 @@ describe('mascot engine', () => {
       ENGINE_SRC.indexOf('function cascadeFrom'));
     expect(breakWebsSrc).toContain('fr = focusRect();');
     expect(breakWebsSrc).toContain('nextFocusCheck = clock + 0.8;');
+  });
+
+  test('a dropped object fades rather than snapping — the mechanism, pinned', () => {
+    // Browser-only: jsdom runs no transitions, so this is pinned in source
+    // like the keyboard clause. dropObj must force a STYLE FLUSH between the
+    // starting opacity and the target one. Doing it from a requestAnimationFrame
+    // races the element's first style computation — lose that race and the two
+    // values collapse, no transition runs, and the object is invisible from
+    // the moment it is created. Every world object in this engine was doing
+    // exactly that, and a headless browser loses the race every time.
+    const dropSrc = ENGINE_SRC.slice(
+      ENGINE_SRC.indexOf('function dropObj'),
+      ENGINE_SRC.indexOf('function removeObj'));
+    expect(dropSrc).toContain('void el.offsetWidth;');
+    expect(dropSrc).toContain("el.style.opacity = '0';");
+    expect(dropSrc).not.toMatch(/requestAnimationFrame\s*\(/);   // the CALL, not the word
   });
 
   test('a stolen word is a copy, text only — the mechanism, pinned', () => {
@@ -863,7 +896,15 @@ describe('mascot engine', () => {
       }
       made[0].style.transform = 'translateX(3px)';   // the page's own
 
-      win.Mascot.setSkin('poltergeist');
+      // A ceiling of its OWN rather than the shipped poltergeist's: how many
+      // things that form leaves crooked is a tuning choice and moves with
+      // taste, while "the ceiling is obeyed" is the contract under test.
+      win.Mascot.register({
+        id: 'haunter', name: 'Haunter', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        haunt: { max: 3, life: 12, sel: 'button', poses: ['rotate(-8deg)', 'scaleX(-1)'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('haunter');
       win.Mascot.on();
 
       // max is 3: the fourth request finds nothing left it is allowed to touch.
@@ -1060,6 +1101,173 @@ describe('mascot engine', () => {
     }
   }, 30000);
 
+  test('graffiti goes on the screen, and a press rubs it off', async () => {
+    const { win, defs } = await bootWithSkins();
+    try {
+      win.Mascot.setSkin('poltergeist');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+      expect(win.Mascot.list(true)).toContain('scrawl');
+
+      expect(win.Mascot.do('scrawl')).toBe('scrawl');
+      const tag = win.document.querySelector('#yc-mascot .yc-obj-graffiti');
+      expect(tag).toBeTruthy();
+      // …written in the skin's hand, with one of the skin's own words
+      const text = tag.querySelector('text');
+      expect(text).toBeTruthy();
+      expect(defs.poltergeist.graffiti.texts).toContain(text.textContent);
+      // …and on the never-clickable contract like everything else it leaves
+      expect(win.getComputedStyle(tag).pointerEvents).toBe('none');
+
+      const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(tag.style.transform);
+      const gx = Number(m[1]), gy = Number(m[2]);
+      expect(gx).toBeGreaterThan(0);
+      expect(gx).toBeLessThan(win.innerWidth);
+
+      // A press well away from it leaves it alone…
+      win.document.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: 5, clientY: 5 }));
+      expect(tag.classList.contains('yc-obj-wipe')).toBe(false);
+      // …and a press ON it rubs it out. A BOX, not a radius: scrawl is wide
+      // and short, so its far end has to count as much as its middle.
+      win.document.dispatchEvent(new win.MouseEvent('pointerdown',
+        { clientX: gx + 150, clientY: gy }));
+      expect(tag.classList.contains('yc-obj-wipe')).toBe(true);
+      const t0 = Date.now();
+      while (Date.now() - t0 < 3000 && tag.isConnected) {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(tag.isConnected).toBe(false);
+    } finally {
+      win.Mascot.off();
+      expect(win.document.querySelectorAll('.yc-obj-graffiti').length).toBe(0);
+      win.close();
+    }
+  }, 20000);
+
+  test('you can throw the ball, and it is chased where it lands', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.register({
+        id: 'thrower', name: 'Thrower', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 420, HEIST_CHANCE: 0 },
+        heist: { to: 'cursor', props: ['<svg width="10" height="10"><circle cx="5" cy="5" r="5"/></svg>'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('thrower');
+      win.Mascot.on();
+      win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 300, clientY: 300 }));
+      expect(win.Mascot.do('steal')).toBe('steal');
+
+      // wait for the ball to be delivered and set down
+      let t0 = Date.now(), ball = null;
+      while (Date.now() - t0 < 9000 && !ball) {
+        await new Promise(r => setTimeout(r, 80));
+        ball = win.document.querySelector('#yc-mascot .yc-obj-loot');
+      }
+      expect(ball).toBeTruthy();
+      const at = t => { const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(t); return [Number(m[1]), Number(m[2])]; };
+      const [bx0, by0] = at(ball.style.transform);
+
+      // THE THROW: press on it and drag away. A fetcher's ball is not
+      // "returned" like stolen loot — it is picked up to be thrown.
+      win.document.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: bx0, clientY: by0 }));
+      expect(ball.classList.contains('yc-obj-return')).toBe(false);   // not taken back
+      win.document.dispatchEvent(new win.MouseEvent('pointerup',
+        { clientX: bx0 + 160, clientY: by0 - 40 }));
+      expect(ball.classList.contains('yc-obj-thrown')).toBe(true);
+
+      // it travels…
+      await new Promise(r => setTimeout(r, 260));
+      const [bx1] = at(ball.style.transform);
+      expect(Math.abs(bx1 - bx0)).toBeGreaterThan(20);
+
+      // …and comes to rest on the floor rather than sailing off the screen
+      t0 = Date.now();
+      while (Date.now() - t0 < 6000 && ball.classList.contains('yc-obj-thrown')) {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(ball.classList.contains('yc-obj-thrown')).toBe(false);
+      const [bx2, by2] = at(ball.style.transform);
+      expect(bx2).toBeGreaterThan(0);
+      expect(bx2).toBeLessThan(win.innerWidth);
+      expect(by2).toBeLessThan(win.innerHeight);
+      expect(by2).toBeGreaterThan(win.innerHeight - 120);            // it fell
+
+      // and the dog goes and gets THAT ball, wherever it ended up
+      expect(win.Mascot.do('steal')).toBe('steal');
+      const catEl = win.document.querySelector('.yc-cat');
+      t0 = Date.now();
+      while (Date.now() - t0 < 9000 && catEl.dataset.carry !== '1') {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(catEl.dataset.carry).toBe('1');
+      expect(win.document.querySelectorAll('#yc-mascot .yc-obj-loot').length).toBe(0);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 40000);
+
+  test('a ball still in the air is chased to where it lands, not to where it was', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.register({
+        id: 'chaser', name: 'Chaser', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 300, HEIST_CHANCE: 0 },
+        heist: { to: 'cursor', props: ['<svg width="10" height="10"><circle cx="5" cy="5" r="5"/></svg>'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('chaser');
+      win.Mascot.on();
+      win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 160, clientY: 200 }));
+      expect(win.Mascot.do('steal')).toBe('steal');
+
+      const at = t => { const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(t); return [Number(m[1]), Number(m[2])]; };
+      const catEl = win.document.querySelector('.yc-cat');
+      let t0 = Date.now(), ball = null;
+      while (Date.now() - t0 < 9000 && !ball) {
+        await new Promise(r => setTimeout(r, 60));
+        ball = win.document.querySelector('#yc-mascot .yc-obj-loot');
+      }
+      expect(ball).toBeTruthy();
+      const [bx0, by0] = at(ball.style.transform);
+
+      // Hurl it right across the screen…
+      win.document.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: bx0, clientY: by0 }));
+      win.document.dispatchEvent(new win.MouseEvent('pointerup',
+        { clientX: bx0 + 340, clientY: by0 - 90 }));
+      expect(ball.classList.contains('yc-obj-thrown')).toBe(true);
+
+      // Let it get clear first — the dog is standing on the delivery spot and
+      // would otherwise grab the ball before it had gone anywhere.
+      await new Promise(r => setTimeout(r, 150));
+      const atSteal = at(ball.style.transform);
+
+      // …and send the dog WHILE IT IS STILL MOVING. The out leg re-aims at
+      // the ball's live position every frame, so it should end up standing
+      // over wherever the ball actually stopped — not over the spot the ball
+      // happened to occupy at the moment it was sent.
+      expect(win.Mascot.do('steal')).toBe('steal');
+      let seen = [bx0, by0];
+      t0 = Date.now();
+      while (Date.now() - t0 < 14000 && catEl.dataset.carry !== '1') {
+        await new Promise(r => setTimeout(r, 30));
+        if (ball.isConnected) seen = at(ball.style.transform);
+      }
+      expect(catEl.dataset.carry).toBe('1');
+      // the ball kept travelling after the dog was sent…
+      expect(Math.hypot(seen[0] - atSteal[0], seen[1] - atSteal[1])).toBeGreaterThan(90);
+      // …and the dog is standing where it ENDED UP, not where it was aimed
+      const p = win.Mascot.debug().cat;
+      expect(Math.hypot(p.x - seen[0], p.y - seen[1])).toBeLessThan(70);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 40000);
+
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
     // inside the primitives, which roll Math.random and cannot be driven from
@@ -1081,6 +1289,7 @@ describe('mascot engine', () => {
     // is pinned the same way by its one chance roll
     expect(count(/Math\.random\(\) < CFG\.HEIST_CHANCE/g)).toBe(1);   // toIdle roll
     expect(count(/Math\.random\(\) < CFG\.HAUNT_CHANCE/g)).toBe(1);   // toIdle roll
+    expect(count(/Math\.random\(\) < CFG\.GRAFFITI_CHANCE/g)).toBe(1);  // toIdle roll
     expect(count(/allowed\('lamp'\)/g)).toBe(1);   // toIdle roll
     // A real steal is undone from exactly ONE place — the door every loot
     // object leaves by. More than one call site here means some exit has
