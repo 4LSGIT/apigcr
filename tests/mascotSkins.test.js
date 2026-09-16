@@ -616,6 +616,134 @@ describe('mascot engine', () => {
     }
   }, 25000);
 
+  test('a real steal takes the icon, and a click gives it back', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      // jsdom has no layout, so the icon hunt (which needs real rects) would
+      // never find anything. Give ONE planted icon a rect of its own — a
+      // surgical double, so scan() and everything else still see jsdom's
+      // usual zeros.
+      const icon = win.document.createElement('i');
+      icon.className = 'fa-solid fa-landmark';
+      win.document.body.appendChild(icon);
+      const rect = { left: 300, top: 300, right: 316, bottom: 316, width: 16, height: 16, x: 300, y: 300 };
+      Object.defineProperty(icon, 'getBoundingClientRect', { value: () => rect });
+      Object.defineProperty(icon, 'getClientRects', { value: () => [rect] });
+
+      win.Mascot.register({
+        id: 'magpie', name: 'Magpie', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 420, HEIST_CHANCE: 0 },
+        heist: { props: ['<svg width="10" height="10"><rect width="10" height="10"/></svg>'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('magpie');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+
+      // Pin the roll ONLY across target selection (r < 0.45 → icon first);
+      // the physics afterwards get their real randomness back.
+      const realRandom = win.Math.random;
+      win.Math.random = () => 0.1;
+      expect(win.Mascot.do('steal')).toBe('steal');
+      win.Math.random = realRandom;
+
+      // Leg one, the theft: the page's icon goes invisible — by OPACITY, so
+      // it is still laid out and still able to take the click it may itself
+      // be the target of (§2: visual, never input).
+      let t0 = Date.now();
+      while (Date.now() - t0 < 8000 && icon.style.opacity !== '0') {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(icon.style.opacity).toBe('0');
+      // …and what she is carrying is a REBUILT <i> — FA's own class tokens and
+      // nothing else crossed over from the page.
+      const beak = win.document.querySelector('#yc-mascot .yc-carried i');
+      expect(beak).toBeTruthy();
+      expect(beak.className).toBe('fa-solid fa-landmark');
+      expect(beak.attributes.length).toBeLessThanOrEqual(2);      // class, maybe style
+
+      // Leg two: it reaches the hoard, still missing from the page.
+      t0 = Date.now();
+      let loot = null;
+      while (Date.now() - t0 < 8000 && !loot) {
+        loot = win.document.querySelector('#yc-mascot .yc-obj-loot');
+        if (!loot) await new Promise(r => setTimeout(r, 80));
+      }
+      expect(loot).toBeTruthy();
+      expect(icon.style.opacity).toBe('0');
+      const lm = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(loot.style.transform);
+
+      // THE UNDO: press on it. No listener on the loot — a coordinate test,
+      // so the very same press still reaches whatever sits underneath.
+      win.document.dispatchEvent(new win.MouseEvent('pointerdown',
+        { clientX: Number(lm[1]), clientY: Number(lm[2]) }));
+      expect(loot.classList.contains('yc-obj-return')).toBe(true);   // it flies home…
+      t0 = Date.now();
+      while (Date.now() - t0 < 3000 && loot.isConnected) {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(loot.isConnected).toBe(false);
+      expect(icon.style.opacity).toBe('');        // …and the page has it back
+
+      // And it is a CYCLE, not a one-shot: the restore has to leave the icon
+      // exactly as stealable as it was, or a returned icon quietly becomes
+      // untouchable — the same bookkeeping slip that, missed the other way,
+      // leaves one invisible forever.
+      win.Math.random = () => 0.1;
+      expect(win.Mascot.do('steal')).toBe('steal');
+      win.Math.random = realRandom;
+      t0 = Date.now();
+      while (Date.now() - t0 < 8000 && icon.style.opacity !== '0') {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(icon.style.opacity).toBe('0');
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 25000);
+
+  test('every exit returns what was stolen — teardown included', async () => {
+    const { win } = await bootWithSkins();
+    let icon;
+    try {
+      icon = win.document.createElement('i');
+      icon.className = 'fa-solid fa-gavel';
+      win.document.body.appendChild(icon);
+      const rect = { left: 260, top: 260, right: 276, bottom: 276, width: 16, height: 16, x: 260, y: 260 };
+      Object.defineProperty(icon, 'getBoundingClientRect', { value: () => rect });
+      Object.defineProperty(icon, 'getClientRects', { value: () => [rect] });
+
+      win.Mascot.register({
+        id: 'magpie2', name: 'Magpie2', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 420, HEIST_CHANCE: 0 },
+        heist: { props: ['<svg width="10" height="10"><rect width="10" height="10"/></svg>'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('magpie2');
+      win.Mascot.on();
+      const realRandom = win.Math.random;
+      win.Math.random = () => 0.1;
+      expect(win.Mascot.do('steal')).toBe('steal');
+      win.Math.random = realRandom;
+
+      const t0 = Date.now();
+      while (Date.now() - t0 < 8000 && icon.style.opacity !== '0') {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(icon.style.opacity).toBe('0');
+    } finally {
+      // Sent away mid-heist — carrying it, or with it already in the corner.
+      // Either way the page is whole again the moment she is gone.
+      win.Mascot.off();
+      expect(icon.style.opacity).toBe('');
+      expect(win.document.querySelectorAll('#yc-mascot .yc-obj').length).toBe(0);
+      win.close();
+    }
+  }, 20000);
+
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
     // inside the primitives, which roll Math.random and cannot be driven from
@@ -636,6 +764,12 @@ describe('mascot engine', () => {
     // the heist gates on the GEAR rather than a state, so its ambient entry
     // is pinned the same way by its one chance roll
     expect(count(/Math\.random\(\) < CFG\.HEIST_CHANCE/g)).toBe(1);   // toIdle roll
+    // A real steal is undone from exactly ONE place — the door every loot
+    // object leaves by. More than one call site here means some exit has
+    // grown its own copy, which is how a page ends up permanently missing
+    // an icon.
+    expect(count(/\.take\.restore\(\)/g)).toBe(1);                    // inside removeObj
+    expect(ENGINE_SRC).toMatch(/function removeObj[\s\S]{0,400}\.take\.restore\(\)/);
   });
 });
 

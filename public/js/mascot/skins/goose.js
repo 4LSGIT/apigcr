@@ -8,11 +8,18 @@
  * run — no perch in its can, so the catch is the engine's other ending: it
  * pulls up nose-to-cursor and HONKS in its face; and the heist gear, which is
  * the heart of the bit. On a whim (or the 'steal' command) she walks off, IDs
- * something worth having — one of the props in her kit, or a word right off
- * the page — and waddles it back to her corner, where the hoard grows pile by
- * pile until the fade clock or a shortage of floor intervenes. The page keeps
- * its words (a theft is a visual copy, text only); nothing she drops can ever
- * take a click; and send-her-away works instantly mid-anything, loot and all.
+ * something worth having and waddles it back to her corner, where the hoard
+ * grows pile by pile. Three kinds of worth having:
+ *   · AN ICON off the page — a REAL theft. The icon goes invisible where it
+ *     sits and turns up in her corner, and the page has a hole in it until
+ *     somebody makes her give it back.
+ *   · A WORD off the page — a visual copy, text only; the page keeps its own.
+ *   · A PROP from her kit, when the page offers nothing she fancies.
+ * The undo is the obvious one: CLICK THE LOOT. A real steal flies home and
+ * the icon comes back; a copy just stops existing. Everything she drops is
+ * still on the never-clickable contract — the click is a coordinate test, so
+ * it reaches the page underneath too — and send-her-away works instantly
+ * mid-anything, returning every stolen thing on the way out.
  *
  * Clumsy, entitled, unrepentant. She is not sorry. She was never sorry.
  *
@@ -27,7 +34,7 @@
   window.Mascot.register({
     id: 'goose',
     name: 'Goose',
-    blurb: 'A goose. Tracks mud, chases your cursor to honk at it, and steals things for its corner hoard. Rowdy.',
+    blurb: 'A goose. Tracks mud, honks at your cursor, and steals words and icons off the page for her corner hoard. Click her loot to get it back. Rowdy.',
 
     // Tall for the neck. No ascent in `can`, so FLY_HEAD is the sprite's own
     // height per the contract's convention.
@@ -249,7 +256,23 @@
       '[data-act="flap"] .g-neck{transform:rotate(-8deg)}',
 
       /* the letterhead, dropped from the body centre down to the feet */
-      '.yc-obj-trail{margin-left:-6px;margin-top:8px}'
+      '.yc-obj-trail{margin-left:-6px;margin-top:8px}',
+
+      /* THE HOARD. Loot is centred on where she dropped it and sits at a
+         careless angle, because she did not set it down so much as let go. */
+      '.yc-obj-loot{margin-left:-9px;margin-top:-9px;transform-origin:50% 50%}',
+      '.yc-obj-loot>*{display:inline-block;transform:rotate(-7deg)}',
+      '.yc-obj-loot:nth-child(2n)>*{transform:rotate(9deg)}',
+      '.yc-obj-loot:nth-child(3n)>*{transform:rotate(-3deg)}',
+
+      /* Given back. The engine flies a REAL steal home and owns its transform,
+         so this side only fades — otherwise the two would fight. */
+      '.yc-obj-return{filter:drop-shadow(0 0 4px rgba(255,255,255,.7))}',
+      /* A copy was never anywhere: it just stops being. This one is all ours. */
+      '@keyframes ycg-poof{0%{transform:scale(1) rotate(0);opacity:.95}' +
+      '55%{transform:scale(1.35) rotate(-6deg);opacity:.5}' +
+      '100%{transform:scale(.4) rotate(6deg);opacity:0}}',
+      '.yc-obj-poof>*{animation:ycg-poof .4s ease-out forwards}'
     ]
   });
 })();

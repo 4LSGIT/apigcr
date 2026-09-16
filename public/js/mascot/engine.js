@@ -384,7 +384,7 @@
     // opt-in, honestly labelled, and easy to kill, per §2.
     { id: 'spider', name: 'Spider', blurb: 'A spider. Roams the whole page, rappels down silk, and builds a web until you break it. Rowdy.', rowdy: true },
     { id: 'bat', name: 'Bat', blurb: 'A bat. Hunts your cursor across the whole screen, catches it, and hangs from it like a branch.' },
-    { id: 'goose', name: 'Goose', blurb: 'A goose. Tracks mud, chases your cursor to honk at it, and steals things for its corner hoard. Rowdy.', rowdy: true },
+    { id: 'goose', name: 'Goose', blurb: 'A goose. Tracks mud, honks at your cursor, and steals words and icons off the page for her corner hoard. Click her loot to get it back. Rowdy.', rowdy: true },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -603,7 +603,10 @@
         } catch (err) { }
       };
       doc.addEventListener('pointermove', h, { passive: true });
-      doc.addEventListener('pointerdown', h, { passive: true });
+      doc.addEventListener('pointerdown', function (e) {
+        h(e);                              // h() has already translated the coords
+        clickLoot(mouse.x, mouse.y);
+      }, { passive: true });
     } catch (e) { }
   }
 
@@ -809,7 +812,7 @@
         if (heist.phase === 'to') {
           // the grab: whatever it came for is in the beak now, and the only
           // remaining business in the world is the corner
-          grabLoot(heist.make);
+          grabLoot(heist.target);
           var s = stashPoint();
           heist = { phase: 'back', x: s.x, y: s.y };
           roam.tx = s.x; roam.ty = s.y;
@@ -1558,7 +1561,7 @@
   // keeps any decoration from ever swallowing a click (the §2a rule), the cap,
   // and the fade-and-removal clock.
   function dropObj(kind, x, y, html, life, max, data) {
-    if (!root) return;
+    if (!root) return false;
     // Per-KIND cap: a trail budget and a web budget never eat each other.
     var count = 0, oldest = -1;
     for (var i = 0; i < objs.length; i++) {
@@ -1583,12 +1586,18 @@
       if (i2 !== -1) removeObj(i2);
     }, life * 1000);
     objs.push(o);
+    return true;
   }
 
   function removeObj(i) {
     var o = objs[i];
     if (!o) return;
     clearTimeout(o.timer);
+    // THE ONE DOOR every loot object leaves by — the fade clock, the cap
+    // evicting the oldest, a click, send-away, teardown. Putting the undo
+    // here rather than at each of those call sites is what makes "the page
+    // always gets its icon back" true by construction.
+    if (o.data && o.data.take) { o.data.take.restore(); o.data.take = null; }
     o.el.remove();
     objs.splice(i, 1);
   }
@@ -1723,14 +1732,142 @@
   // textContent on both sides so markup can never ride along, and the loot is
   // a world object with every .yc-obj promise (no pointer events, a cap, a
   // fade clock — though a long one: a hoard is the point).
-  var heist = null;        // { phase: 'to'|'back', x, y, make? }
+  var heist = null;        // { phase: 'to'|'back', x, y, target? }
   var carried = null;      // the element in the beak right now
+  var carriedTake = null;  // …and the undo for it, if it was a REAL steal
   var stashSide = 1;       // -1 left corner, +1 right; chosen once per outing
 
   function stashPoint() {
     return {
       x: stashSide < 0 ? bounds.left + 34 : bounds.right - 34,
       y: bounds.bottom - 26
+    };
+  }
+
+  // ── Real theft ───────────────────────────────────────────────────────────────
+  // The word heist takes a COPY. This one takes the thing itself: an icon off
+  // the page goes invisible and turns up in the hoard, and the page has a hole
+  // in it until she is made to give it back.
+  //
+  // Three rules keep that inside §2, which permits obtrusive-visual-and-
+  // temporal but never obtrusive-input:
+  //   1. OPACITY, never visibility or display. An icon is very often the click
+  //      target itself (<i class="fa-trash" onclick=…>); visibility:hidden
+  //      would stop it taking that click, and display:none would reflow the
+  //      page around it. At opacity 0 the element is still laid out, still
+  //      hit-testable, still keyboard-reachable — only invisible.
+  //   2. Every exit restores. The undo lives in removeObj(), which is the one
+  //      door every loot object leaves by: the fade clock, the cap evicting
+  //      the oldest, a click, send-away, teardown.
+  //   3. A hard ceiling on how much of the real page can be missing at once.
+  var MAX_REAL = 3;
+  // FA's own class tokens, and nothing else: a rebuilt <i> carries these and
+  // no other attribute, child or text — the same no-foreign-markup guarantee
+  // the word heist gets from textContent.
+  var FA_TOKEN = /^fa[srlbdtk]?$|^fa-[a-z0-9-]+$/;
+
+  function faClasses(el) {
+    var tag = (el.tagName || '').toLowerCase(), out = [], i;
+    // FA's svg-with-js mode replaces the <i> with an <svg> that names the icon
+    // it drew; rebuild the <i> the CSS mode would have had.
+    if (tag === 'svg') {
+      var pre = el.getAttribute('data-prefix'), ic = el.getAttribute('data-icon');
+      if (pre && ic && FA_TOKEN.test(pre) && /^[a-z0-9-]+$/.test(ic)) return [pre, 'fa-' + ic];
+      return [];
+    }
+    var cl = el.getAttribute('class') || '';
+    var parts = cl.split(/\s+/);
+    for (i = 0; i < parts.length; i++) {
+      if (parts[i] && FA_TOKEN.test(parts[i])) out.push(parts[i]);
+    }
+    // 'fa-solid' alone is a style with no glyph — it has to name an icon too.
+    return out.length > 1 ? out : [];
+  }
+
+  function realSteals() {
+    var n = carriedTake ? 1 : 0;
+    for (var i = 0; i < objs.length; i++) if (objs[i].data && objs[i].data.take) n++;
+    return n;
+  }
+
+  // An icon worth taking. Anything inside the pet's own layer or the trick
+  // panel is off limits — she is not stealing her own loot, and the buttons
+  // that control her stay legible.
+  function findIconTarget() {
+    if (realSteals() >= MAX_REAL) return null;
+    function hunt(doc, ox, oy, frame) {
+      try {
+        var els = doc.querySelectorAll('i[class*="fa-"],svg.svg-inline--fa');
+        var picks = [], i;
+        for (i = 0; i < els.length && picks.length < 40; i++) {
+          var el = els[i];
+          if (el.__ycStolen) continue;                       // already in the hoard
+          if (el.closest && (el.closest('#yc-mascot') || el.closest('.swal2-container'))) continue;
+          if (!el.getClientRects().length) continue;
+          var cls = faClasses(el);
+          if (!cls.length) continue;
+          var r = el.getBoundingClientRect();
+          if (r.width < 6 || r.height < 6 || r.width > 80) continue;
+          var x = ox + r.left + r.width / 2, y = oy + r.top + r.height / 2;
+          if (x < bounds.left + 12 || x > bounds.right - 12 ||
+            y < bounds.top + 14 || y > bounds.bottom - 8) continue;
+          picks.push({ el: el, cls: cls, x: x, y: y, frame: frame });
+        }
+        return picks.length ? picks[Math.floor(Math.random() * picks.length)] : null;
+      } catch (e) { return null; }
+    }
+    var got = null, f = contentFrame();
+    if (f) {
+      try {
+        var fb = f.getBoundingClientRect();
+        if (f.contentDocument) got = hunt(f.contentDocument, fb.left, fb.top, f);
+      } catch (e) { }
+    }
+    if (!got) got = hunt(document, 0, 0, null);
+    if (!got) return null;
+
+    var victim = got.el, cls = got.cls, frame = got.frame;
+    var tint = '';
+    try {
+      // the victim's OWN view — it may live in the content frame's document
+      var vw2 = victim.ownerDocument && victim.ownerDocument.defaultView;
+      tint = ((vw2 || window).getComputedStyle(victim) || {}).color || '';
+    } catch (e) { }
+    return {
+      x: got.x, y: got.y,
+      make: function () {
+        var i2 = document.createElement('i');
+        i2.className = cls.join(' ');        // FA TOKENS ONLY — nothing else crosses
+        if (tint) i2.style.color = tint;     // …and its colour, so the steal looks like the theft
+        return i2;
+      },
+      // Called at the moment of the grab, not when the job is plotted: she has
+      // to actually get there, and the page may have moved on in between.
+      take: function () {
+        if (!victim.isConnected || victim.__ycStolen) return null;
+        var was = victim.style.opacity;
+        victim.__ycStolen = 1;
+        victim.style.opacity = '0';
+        return {
+          // where it belongs, recomputed live — the page scrolls, the layout reflows
+          where: function () {
+            try {
+              if (!victim.isConnected) return null;
+              var r2 = victim.getBoundingClientRect();
+              if (!r2.width && !r2.height) return null;
+              var ox2 = 0, oy2 = 0;
+              if (frame) { var fr2 = frame.getBoundingClientRect(); ox2 = fr2.left; oy2 = fr2.top; }
+              return { x: ox2 + r2.left + r2.width / 2, y: oy2 + r2.top + r2.height / 2 };
+            } catch (e) { return null; }
+          },
+          restore: function () {
+            try {
+              victim.style.opacity = was;
+              victim.__ycStolen = 0;
+            } catch (e) { }
+          }
+        };
+      }
     };
   }
 
@@ -1778,45 +1915,120 @@
     };
   }
 
+  function propTarget() {
+    var props = skin.heist.props;
+    var svg = props[Math.floor(Math.random() * props.length)];
+    return {
+      // props are simply "lying around": an unremarkable spot becomes, on
+      // arrival, the place this envelope always was
+      x: rand(bounds.left + 40, bounds.right - 40),
+      y: rand(bounds.top + 40, bounds.bottom - 40),
+      make: function () {
+        var el = document.createElement('span');
+        el.innerHTML = svg;           // skin-authored, like a trail's art
+        return el;
+      }
+    };
+  }
+
   function startHeist() {
     if (!skin.heist || heist || carried) return false;
-    var t = Math.random() < 0.5 ? findWordTarget() : null;
-    if (!t) {
-      var props = skin.heist.props;
-      var svg = props[Math.floor(Math.random() * props.length)];
-      t = {
-        // props are simply "lying around": an unremarkable spot becomes, on
-        // arrival, the place this envelope always was
-        x: rand(bounds.left + 40, bounds.right - 40),
-        y: rand(bounds.top + 40, bounds.bottom - 40),
-        make: function () {
-          var el = document.createElement('span');
-          el.innerHTML = svg;           // skin-authored, like a trail's art
-          return el;
-        }
-      };
-    }
-    heist = { phase: 'to', x: t.x, y: t.y, make: t.make };
+    // What she fancies today: usually the real thing, often a word, and
+    // otherwise whatever is lying around — with the page hunts falling back
+    // to props, because a page with no icons and no headings still owes her
+    // something.
+    var r = Math.random();
+    var order = r < 0.45 ? [findIconTarget, findWordTarget]
+      : r < 0.75 ? [findWordTarget, findIconTarget] : [];
+    var t = null;
+    for (var i = 0; i < order.length && !t; i++) t = order[i]();
+    if (!t) t = propTarget();
+    heist = { phase: 'to', x: t.x, y: t.y, target: t };
     toWalk();
     return true;
   }
 
-  function grabLoot(make) {
+  function grabLoot(t) {
     carried = document.createElement('div');
     carried.className = 'yc-obj yc-carried';
-    carried.appendChild(make());
+    carried.appendChild(t.make());
     root.appendChild(carried);
     cat.dataset.carry = '1';
+    // THE THEFT ITSELF, for the kinds that have one — done on arrival, so
+    // what she takes is what was there when she got there.
+    carriedTake = t.take ? t.take() : null;
   }
 
   // The loot lands wherever the carrier stands — normally the hoard, but
   // clearPranks drops it mid-heist too (a grabbed thief drops the goods).
   function dropLoot() {
     if (!carried) return;
-    dropObj('loot', px + rand(-14, 14), py + rand(-12, 4), carried.innerHTML, 600, 14);
+    var lx = px + rand(-14, 14), ly = py + rand(-12, 4);
+    var placed = dropObj('loot', lx, ly, carried.innerHTML, 300, 14,
+      { x: lx, y: ly, r: 16, take: carriedTake });
+    // If the world layer is already gone there is nowhere to put it, and the
+    // loot object that would have carried the undo never exists. A theft must
+    // never outlive the pet, so it ends here instead.
+    if (!placed && carriedTake) carriedTake.restore();
     carried.remove();
     carried = null;
+    carriedTake = null;
     if (cat) cat.removeAttribute('data-carry');
+  }
+
+  // ── Giving it back ───────────────────────────────────────────────────────────
+  // There is no "unsteal" gesture to learn: you click the thing. The click is
+  // a COORDINATE test against the loot's own position — the same trick the
+  // webs' break uses, and for the same reason. Loot never takes pointer
+  // events, so the click also reaches whatever is underneath it; nothing the
+  // pet drops can ever swallow one.
+  function returnLoot(o) {
+    o.breaking = true;
+    clearTimeout(o.timer);
+    var home = o.data.take && o.data.take.where();
+    if (home) {
+      // a real steal goes HOME: the engine flies it back (so the skin never
+      // has to know where home is), and the icon reappears as it lands
+      o.el.classList.add('yc-obj-return');
+      o.el.style.transition = 'transform .42s cubic-bezier(.3,.85,.4,1),opacity .42s ease';
+      o.el.style.transform =
+        'translate3d(' + Math.round(home.x) + 'px,' + Math.round(home.y) + 'px,0) scale(.55)';
+      o.el.style.opacity = '0';
+    } else {
+      // a copy was never anywhere. It simply stops being.
+      o.el.classList.add('yc-obj-poof');
+    }
+    o.timer = setTimeout(function () {
+      var j = objs.indexOf(o);
+      if (j !== -1) removeObj(j);        // …and removeObj is where the undo lives
+    }, 430);
+  }
+
+  function clickLoot(x, y) {
+    if (!running || !root) return;
+    // Caught red-handed: clicking what is in the beak takes it straight back,
+    // and the job dies with it.
+    if (carried) {
+      var bx = px + face * (CFG.W / 2 + 4), by = py - CFG.H * 0.22;
+      if ((x - bx) * (x - bx) + (y - by) * (y - by) < 324) {
+        if (carriedTake) carriedTake.restore();
+        carried.remove();
+        carried = null; carriedTake = null;
+        if (cat) cat.removeAttribute('data-carry');
+        heist = null;
+        setState('idle', attn());        // outrage
+        stateUntil = clock + rand(1.2, 2.2);
+        return;
+      }
+    }
+    for (var i = objs.length - 1; i >= 0; i--) {
+      var o = objs[i];
+      if (o.kind !== 'loot' || o.breaking || !o.data) continue;
+      var dx = x - o.data.x, dy = y - o.data.y;
+      if (dx * dx + dy * dy > o.data.r * o.data.r) continue;
+      returnLoot(o);
+      return;                            // one per click: a hoard is undone piece by piece
+    }
   }
 
   // ── Pursuit ──────────────────────────────────────────────────────────────────
@@ -1994,6 +2206,12 @@
       '.yc-word{display:inline-block;font:600 12px/1.35 system-ui,"Segoe UI",sans-serif;',
       'color:#3A3F4A;background:rgba(255,253,246,.92);padding:0 4px;border-radius:3px;',
       'box-shadow:0 1px 2px rgba(0,0,0,.22);white-space:nowrap}',
+      // a stolen icon keeps its own colour but not the page's font sizing —
+      // an inherited 2rem glyph in the beak would be a different joke
+      '.yc-obj i,.yc-carried i{font-size:15px;line-height:1;display:inline-block}',
+      // what is in the beak rides ABOVE the pet (.yc-cat is z:2); everything
+      // already dropped stays behind her at the world-object z:1
+      '.yc-carried{z-index:3;will-change:transform}',
       // the rappel line: engine-owned, engine-styled, cut by the pointer
       '.yc-thread{position:absolute;left:0;top:0;z-index:1;width:2px;margin-left:-1px;',
       'background:linear-gradient(rgba(185,194,207,.9),rgba(185,194,207,.45));',
@@ -2725,7 +2943,12 @@
       mouse.x = e.clientX; mouse.y = e.clientY; mouse.t = clock;
     };
     document.addEventListener('pointermove', track, { passive: true });
-    document.addEventListener('pointerdown', track, { passive: true });
+    // …and a press is also how stolen goods are reclaimed: a coordinate test,
+    // never a listener on the loot, so the same press still reaches the page.
+    document.addEventListener('pointerdown', function (e) {
+      track(e);
+      clickLoot(e.clientX, e.clientY);
+    }, { passive: true });
     window.addEventListener('resize', function () { lastScan = -1e9; });
   }
   // NOTE: boot() is called at the very BOTTOM of this file, not here — the
