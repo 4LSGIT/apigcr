@@ -56,7 +56,7 @@ const STATES_NEEDING_CSS = states => states.filter(s => s !== 'leave');
 
 // The engine's non-idle action names (the idle ones come from each skin).
 const BASE_ACTION_NAMES = ['walk', 'idle', 'talk', 'jump', 'fly', 'climb', 'hang', 'fall',
-  'chase', 'drift', 'blink', 'flip'];
+  'chase', 'weave', 'rappel', 'drift', 'blink', 'flip'];
 
 /** A real window with the real engine evaluated in it.
  *  runScripts:'outside-only' is load-bearing: without it window.eval runs in
@@ -178,49 +178,59 @@ describe('mascot engine', () => {
     expect(win.Mascot.register({ ...base, id: 'bad-trail', trail: { every: 0, life: 6, max: 40, svg: '<svg/>' } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'capless-trail', trail: { every: 10, life: 6, svg: '<svg/>' } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'ok-trail', trail: { every: 10, life: 6, max: 40, svg: '<svg/>' } })).toBe(true);
-    // …and a web keeps §2a's: odds, life, cap, break radius, a rect, and a
-    // spinning act that actually exists.
-    const okWeb = { chance: 0.5, life: 45, max: 5, w: 30, h: 26, breakR: 18, svg: '<svg/>' };
-    expect(win.Mascot.register({ ...base, id: 'ok-web', web: okWeb })).toBe(true);
-    expect(win.Mascot.register({ ...base, id: 'wild-web', web: { ...okWeb, chance: 2 } })).toBe(false);
-    expect(win.Mascot.register({ ...base, id: 'capless-web', web: { ...okWeb, max: 0 } })).toBe(false);
-    expect(win.Mascot.register({ ...base, id: 'unbreakable-web', web: { ...okWeb, breakR: 0 } })).toBe(false);
-    expect(win.Mascot.register({ ...base, id: 'ghost-act-web', web: { ...okWeb, act: 'weave' } })).toBe(false);
-    expect(win.Mascot.register({ ...base, id: 'sit-act-web', web: { ...okWeb, act: 'sit' } })).toBe(true);
+    // …and a web keeps §2a's: a ring clock, a ring cap, a lifetime, a web
+    // cap, a growing break radius, and a STAGE FUNCTION for its art. The
+    // weave/rappel states demand the floor plan (roam) to stand on.
+    const okWeb = { ringS: 3, stages: 12, life: 120, max: 3, breakR0: 8, breakDr: 4.6, svg: () => '<svg/>' };
+    expect(win.Mascot.register({ ...base, id: 'ok-web2', roam: true, web: okWeb })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'stringy-web', roam: true, web: { ...okWeb, svg: '<svg/>' } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'ringless-web', roam: true, web: { ...okWeb, ringS: 0 } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'weave-no-web', roam: true, can: [...CORE, 'weave'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'weave-no-roam', web: okWeb, can: [...CORE, 'weave'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'rappel-no-roam', can: [...CORE, 'rappel'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'full-roamer', roam: true, web: okWeb, can: [...CORE, 'weave', 'rappel'] })).toBe(true);
   });
 
-  test('webs spawn after the sit and break at the pointer (§2a)', async () => {
+  test('a roamer crawls the floor plan, weaves until broken, rappels until cut', async () => {
     const { win } = await bootWithSkins();
     // finally-guarded live-physics test, like the trail's.
     try {
       win.Mascot.register({
-        id: 'webby', name: 'Webby', geom: { W: 10, H: 10, FLY_HEAD: 10 },
-        acts: [['sit', 1]], lines: ['.'], svg: '<svg/>', css: [],
+        id: 'roamy', name: 'Roamy', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true,
+        can: ['walk', 'idle', 'fall', 'land', 'drag', 'leave', 'rappel', 'weave'],
+        acts: [['rest', 1]], lookAct: 'rest', lines: ['.'], svg: '<svg/>', css: [],
         web: {
-          chance: 1, life: 30, max: 3, w: 20, h: 16, breakR: 24,
-          svg: '<svg width="20" height="16"><circle cx="10" cy="8" r="7" fill="none" stroke="#888"/></svg>'
+          ringS: 0.4, stages: 4, life: 30, max: 2, breakR0: 10, breakDr: 4,
+          svg: (c, stage) => '<svg width="120" height="120" viewBox="0 0 120 120">' +
+            '<circle cx="60" cy="60" r="' + (4 + stage * 4) + '" fill="none" stroke="#888"/></svg>'
         }
       });
-      win.Mascot.setSkin('webby');
+      win.Mascot.setSkin('roamy');
       win.Mascot.on();
-      // Land first — the idle command refuses until there is footing.
-      let t0 = Date.now();
-      while (Date.now() - t0 < 6000 && win.Mascot.do('idle') === false) {
-        await new Promise(r => setTimeout(r, 120));
-      }
-      // The sit ends on its own clock and, at chance 1, leaves a web.
-      t0 = Date.now();
-      let web = null;
-      while (Date.now() - t0 < 9000 && !web) {
-        web = win.document.querySelector('#yc-mascot .yc-obj-web');
-        if (!web) await new Promise(r => setTimeout(r, 150));
-      }
+      expect(win.Mascot.out()).toBe(true);
+
+      // 1. it MOVES with no ledges consulted — top view, the page is the floor
+      const p0 = win.Mascot.debug().cat;
+      await new Promise(r => setTimeout(r, 1200));
+      const p1 = win.Mascot.debug().cat;
+      expect(Math.abs(p1.x - p0.x) + Math.abs(p1.y - p0.y)).toBeGreaterThan(4);
+
+      // 2. weave on command; the web then GROWS on its own clock
+      expect(win.Mascot.do('weave')).toBe('weave');
+      const web = win.document.querySelector('#yc-mascot .yc-obj-web');
       expect(web).toBeTruthy();
-      // §2a: the POINTER coming near breaks it — a distance test, no pointer
-      // events anywhere near the web itself.
+      expect(web.dataset.stage).toBe('1');
+      let t0 = Date.now();
+      while (Date.now() - t0 < 4000 && Number(web.dataset.stage) < 2) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      expect(Number(web.dataset.stage)).toBeGreaterThanOrEqual(2);
+
+      // 3. §2a: the POINTER near it breaks it, and the weaver scatters
       const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(web.style.transform);
-      const cx = Number(m[1]), cy = Number(m[2]) - 8;      // h/2 = 8
-      win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: cx, clientY: cy }));
+      win.document.dispatchEvent(new win.MouseEvent('pointermove',
+        { clientX: Number(m[1]), clientY: Number(m[2]) }));
       t0 = Date.now();
       let broke = false;
       while (Date.now() - t0 < 3000 && !broke) {
@@ -228,17 +238,48 @@ describe('mascot engine', () => {
         if (!broke) await new Promise(r => setTimeout(r, 100));
       }
       expect(broke).toBe(true);
+      t0 = Date.now();
+      while (Date.now() - t0 < 3000 && win.Mascot.debug().cat.state === 'weave') {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      expect(win.Mascot.debug().cat.state).not.toBe('weave');
+
+      // 4. rappel: an engine-owned line, cut by the pointer touching it.
+      // (It refuses too near the bottom edge — let the roam wander it into
+      // an eligible spot.)
+      t0 = Date.now();
+      let started = false;
+      while (Date.now() - t0 < 6000 && !started) {
+        started = win.Mascot.do('rappel') === 'rappel';
+        if (!started) await new Promise(r => setTimeout(r, 150));
+      }
+      expect(started).toBe(true);
+      const thread = win.document.querySelector('#yc-mascot .yc-thread');
+      expect(thread).toBeTruthy();
+      await new Promise(r => setTimeout(r, 500));
+      const tm = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(thread.style.transform);
+      win.document.dispatchEvent(new win.MouseEvent('pointermove',
+        { clientX: Number(tm[1]), clientY: Number(tm[2]) + 25 }));
+      t0 = Date.now();
+      let cut = false;
+      while (Date.now() - t0 < 3000 && !cut) {
+        cut = !thread.isConnected || thread.classList.contains('yc-thread-snap');
+        if (!cut) await new Promise(r => setTimeout(r, 100));
+      }
+      expect(cut).toBe(true);
     } finally {
       win.Mascot.off();
       win.close();
     }
-  }, 25000);
+  }, 30000);
 
-  test('the web spawn veto is present for browsers to enforce', () => {
-    // jsdom has no layout, so the never-over-an-input veto cannot be
-    // exercised here — pin its presence and its single wiring instead.
-    expect(ENGINE_SRC).toContain("querySelectorAll('input, select, textarea')");
-    expect((ENGINE_SRC.match(/webTouchesField\(/g) || []).length).toBe(2);   // def + its one call
+  test('the keyboard clause is present for browsers to enforce', () => {
+    // Webs may grow over ANYTHING — the pointer breaks them on the way in.
+    // The one path with no pointer is the keyboard, so a web over the FOCUSED
+    // field breaks by itself. Layout-dependent, so jsdom cannot exercise it —
+    // pin the mechanism and its single wiring instead.
+    expect(ENGINE_SRC).toContain('function focusRect');
+    expect((ENGINE_SRC.match(/focusRect\(\)/g) || []).length).toBe(2);   // def + its one call in breakWebs
   });
 
   test('a trailing form actually leaves the trail behind it', async () => {
@@ -296,7 +337,7 @@ describe('mascot engine', () => {
       // must win (CSS 2.1 §6.4.2). Pin the LIVE stylesheet instead: the rule
       // that disarms this rect is present on the page it is on.
       const sheet = win.document.getElementById('yc-mascot-style').textContent;
-      expect(sheet).toContain('.yc-obj,.yc-obj *{pointer-events:none!important}');
+      expect(sheet).toContain('.yc-obj,.yc-obj *,.yc-thread{pointer-events:none!important}');
     } finally {
       win.Mascot.off();
       win.close();
@@ -346,6 +387,24 @@ describe('mascot engine', () => {
     }
   });
 
+  test('rehearse() dresses a form live without touching any stored state', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.rehearse('menorah', 3);        // registry warm → synchronous
+      expect(win.Mascot.out()).toBe(true);
+      expect(win.Mascot.skin().id).toBe('menorah');
+      // The LIVE sprite carries night 3: shamash + three candles.
+      const flames = win.document.querySelector('.yc-cat').innerHTML.match(/class="m9-flame/g);
+      expect(flames.length).toBe(4);
+      // …and neither the stored choice nor the on/off pref moved.
+      expect(win.localStorage.getItem('yc.mascot.skin')).toBe(null);
+      expect(win.localStorage.getItem('yc.mascot.on')).toBe(null);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  });
+
   test('the menorah lights one more candle per night', async () => {
     const { defs } = await bootWithSkins();
     const flames = day => (defs.menorah.svg({ SEASONAL_DAY: day }).match(/class="m9-flame/g) || []).length;
@@ -368,6 +427,8 @@ describe('mascot engine', () => {
     expect(count(/allowed\('chase'\)/g)).toBe(1);   // walk's cursor-notice
     expect(count(/allowed\('drift'\)/g)).toBe(2);   // toIdle roll + airborne poke
     expect(count(/allowed\('blink'\)/g)).toBe(1);   // drift's end-of-wander roll
+    expect(count(/allowed\('weave'\)/g)).toBe(1);   // toIdle roll
+    expect(count(/allowed\('rappel'\)/g)).toBe(1);  // toIdle roll
   });
 });
 

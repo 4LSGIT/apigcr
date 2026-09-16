@@ -61,23 +61,41 @@
  *     lookAct: 'scan',          // which act is "it noticed you" — a poke, a
  *                               // caught chase. Default 'look'; must name one
  *                               // of the acts.
- *     web: { chance: .35,       // optional: odds a finished sit leaves a web
- *            act: 'spin',       // …only after this idle act, if named
- *            life: 45,          // s before it fades out on its own
- *            max: 5,            // hard cap; oldest goes first
- *            w: 30, h: 26,      // the web's rect: spawn veto + break centre
- *            breakR: 18,        // px — the POINTER coming this close breaks
- *                               // it. That is §2a's whole implementation: a
- *                               // distance test against the cursor the
- *                               // engine already tracks, so a web never has
- *                               // pointer events, a touch tap breaks it on
- *                               // first contact, and a same-frame
+ *     roam: true,               // TOP VIEW: the page is the floor. `walk`
+ *                               // becomes a free 2D crawl anywhere in the
+ *                               // content box (edges preferred, nothing
+ *                               // required), a throw SLIDES and tumbles to a
+ *                               // stop instead of falling, the sprite spawns
+ *                               // in place and ROTATES to its heading —
+ *                               // design the art facing +x. Required by the
+ *                               // rappel and weave states.
+ *     web: { ringS: 3.2,        // s per ring while weaving
+ *            stages: 12,        // ring cap — growth stops, the tending never
+ *                               // does: it builds until somebody breaks it
+ *            life: 120,         // s an abandoned web lingers before fading
+ *            max: 3,            // webs on screen; oldest goes first
+ *            breakR0: 8, breakDr: 4.6,
+ *                               // break radius: base + per-ring. §2a's whole
+ *                               // implementation: the POINTER coming that
+ *                               // close breaks it — a distance test against
+ *                               // the cursor the engine already tracks, so a
+ *                               // web never has pointer events, a touch tap
+ *                               // breaks on first contact, and a same-frame
  *                               // move-and-click cannot slip through a web
  *                               // that was never clickable at all.
- *            svg: '<svg…>' },   // the web; .yc-obj-break lands on it when it
- *                               // breaks (style the snap). Never spawns
- *                               // where its rect touches an input, select,
- *                               // textarea, or the focused element.
+ *            svg: function (CFG, stage) { … } },
+ *                               // the web at `stage` rings inside ONE fixed
+ *                               // viewBox (growth happens within it, so the
+ *                               // element never moves). Webs may grow over
+ *                               // ANYTHING — reaching what one covers means
+ *                               // moving the pointer there, which breaks it
+ *                               // on the way in — so keep breakR0+breakDr
+ *                               // covering the full visual radius. The one
+ *                               // exception: a web overlapping the KEYBOARD-
+ *                               // focused field breaks on its own, so a tab
+ *                               // user is never typing under silk.
+ *                               // .yc-obj-break lands on a broken web —
+ *                               // style the snap.
  *     trail: { every: 10,       // optional: px of travel between droppings
  *              life: 6,         // s before one is gone — the engine fades it
  *                               // out over the last stretch of that
@@ -160,6 +178,9 @@
  *   Mascot.skins()     — the picker's list; Mascot.skin() the one that is on
  *   Mascot.setSkin(id) — switch (tears down, lazy-loads, drops the new one in)
  *   Mascot.season(d?)  — today's (or any date's) seasonal verdict, and why
+ *   Mascot.rehearse(id, day?) — try any form, hidden ones included, without
+ *                        touching the stored choice; day dresses a seasonal
+ *                        skin for night N. Reload to snap back.
  *   Mascot.register(d) — a skin pasted straight into the console works too:
  *                        register it, then Mascot.setSkin(its id)
  *   Mascot.debug()     — outlines the box the mascot thinks it lives in
@@ -292,7 +313,13 @@
     // css owns what the fade looks like; the engine only owns when the sprite
     // is somewhere else.
     DRIFT_CHANCE: 0,       // per settle-down, like FLY_CHANCE
-    BLINK_MS: 0.5          // s gone between fading out and turning up elsewhere
+    BLINK_MS: 0.5,         // s gone between fading out and turning up elsewhere
+
+    // THE ROAM SET — for skins with `roam: true` (top view, the page is the
+    // floor). All off by default; a roaming skin tunes them up.
+    RAPPEL: 75,            // px/s down the silk
+    WEAVE_CHANCE: 0,       // per settle-down: stop and start building a web
+    RAPPEL_CHANCE: 0       // per settle-down: let down a line and ride it
   };
 
   // Storage and loading are engine constants, not tunables — a skin must not be
@@ -308,7 +335,8 @@
   // the noclip pair (a ghost's wander and teleport) — entered only by skins
   // that list them in `can` and tune DRIFT_CHANCE above zero.
   var STATES = ['walk', 'idle', 'chase', 'climb', 'hang', 'fall', 'hop',
-    'crouch', 'land', 'drag', 'inflate', 'float', 'pop', 'drift', 'blink', 'leave'];
+    'crouch', 'land', 'drag', 'inflate', 'float', 'pop', 'drift', 'blink',
+    'rappel', 'weave', 'leave'];
 
   // ── The manifest ─────────────────────────────────────────────────────────────
   // What the picker offers, renderable before any skin file downloads. `hidden`
@@ -323,7 +351,7 @@
     { id: 'snail', name: 'Snail', blurb: 'A snail. Unhurried, and it signs its work.' },
     // rowdy: the picker badges it and the blurb says so plainly — it is
     // opt-in, honestly labelled, and easy to kill, per §2.
-    { id: 'spider', name: 'Spider', blurb: 'A spider. Spins webs where you work — one touch of the pointer breaks them. Rowdy.', rowdy: true },
+    { id: 'spider', name: 'Spider', blurb: 'A spider. Roams the whole page, rappels down silk, and builds a web until you break it. Rowdy.', rowdy: true },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -695,6 +723,54 @@
     setState('walk');
     stateUntil = clock + rand(2.4, 7);
     nextHop = clock + rand(CFG.HOP_EVERY[0], CFG.HOP_EVERY[1]);
+    if (skin && skin.roam) { pickRoamTarget(); roam.moveUntil = 0; roam.pauseUntil = 0; }
+  }
+
+  // ── Roam ─────────────────────────────────────────────────────────────────────
+  // For skins with roam:true the page is the floor: walk is a free 2D crawl.
+  // The character is in the CADENCE — bursts and dead stops, targets that are
+  // sometimes an edge to follow (spiders are thigmotactic; the furniture tops
+  // scan() already finds are the edges), and sometimes wherever the person is
+  // working, which is the bothering clause of the brief.
+  var roam = { tx: 0, ty: 0, moveUntil: 0, pauseUntil: 0 };
+
+  function pickRoamTarget() {
+    var r = Math.random();
+    if (r < 0.3 && mouse.x > 0 && clock - mouse.t < 6) {
+      roam.tx = clamp(mouse.x + rand(-90, 90), bounds.left + 14, bounds.right - 14);
+      roam.ty = clamp(mouse.y + rand(-70, 70), bounds.top + 14, bounds.bottom - 8);
+    } else if (r < 0.55 && ledges.length > 2) {
+      var l = ledges[2 + Math.floor(Math.random() * (ledges.length - 2))];
+      roam.tx = clamp(rand(l.x1, l.x2), bounds.left + 14, bounds.right - 14);
+      roam.ty = clamp(l.y - 2, bounds.top + 14, bounds.bottom - 8);
+    } else {
+      roam.tx = rand(bounds.left + 14, bounds.right - 14);
+      roam.ty = rand(bounds.top + 14, bounds.bottom - 8);
+    }
+  }
+
+  function roamWalk(dt) {
+    if (clock < roam.pauseUntil) {
+      if (clock >= stateUntil) toIdle();
+      return;
+    }
+    if (clock >= roam.moveUntil) {
+      if (Math.random() < 0.45) roam.pauseUntil = clock + rand(0.15, 0.8);
+      roam.moveUntil = clock + rand(0.35, 1.1);
+      if (Math.random() < 0.25) pickRoamTarget();
+    }
+    var dx = roam.tx - px, dy = roam.ty - py;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 10) {
+      pickRoamTarget();
+      if (clock >= stateUntil) toIdle();
+      return;
+    }
+    px = clamp(px + dx / d * CFG.WALK * dt, bounds.left + 10, bounds.right - 10);
+    py = clamp(py + dy / d * CFG.WALK * dt, bounds.top + 12, bounds.bottom - 6);
+    rot = Math.atan2(dy, dx) * 180 / Math.PI;
+    face = 1;
+    if (clock >= stateUntil) toIdle();
   }
 
   function toIdle() {
@@ -703,8 +779,11 @@
     // it on a timer instead meant the timer usually elapsed mid-walk and the
     // chance was silently thrown away, which makes the real frequency a fiction.
     if (clock >= flyReady && Math.random() < CFG.FLY_CHANCE && tryFly(false)) return;
-    // The noclip skins lift off instead — the same settle-moment decision.
+    // The noclip skins lift off instead — the same settle-moment decision —
+    // and the roamers roll their pranks here too.
     if (allowed('drift') && Math.random() < CFG.DRIFT_CHANCE) { toDrift(); return; }
+    if (allowed('weave') && Math.random() < CFG.WEAVE_CHANCE && startWeave()) return;
+    if (allowed('rappel') && Math.random() < CFG.RAPPEL_CHANCE && toRappel()) return;
     setState('idle', pick(skin.acts));
     var o = actOpt(act);
     if (o.face) face = o.face;
@@ -856,6 +935,7 @@
     leaveRecords = record !== false;
     grab = null;
     fly = null;
+    clearPranks();
     rot = 0;
     face = px < mid() ? -1 : 1;
     hideSay();
@@ -1002,6 +1082,22 @@
     }
 
     if (state === 'fall' || state === 'hop') {
+      if (skin.roam) {
+        // Top view: a thrown thing has nowhere to fall TO — it slides and
+        // tumbles across the floor plan until friction wins, and lands where
+        // it stops.
+        px = clamp(px + vx * dt, bounds.left + 8, bounds.right - 8);
+        py = clamp(py + vy * dt, bounds.top + 10, bounds.bottom - 4);
+        var fr = Math.pow(0.06, dt);
+        vx *= fr; vy *= fr;
+        rot += 520 * dt * (vx >= 0 ? 1 : -1);
+        if (vx * vx + vy * vy < 400) {
+          vx = 0; vy = 0;
+          setState('land');
+          stateUntil = clock + 0.22;
+        }
+        return;
+      }
       vy = Math.min(vy + CFG.GRAVITY * dt, CFG.TERMINAL);
       var y0 = py;
       px += vx * dt;
@@ -1082,9 +1178,47 @@
     }
 
     if (state === 'idle') {
-      if (clock >= stateUntil) {
-        if (skin.web) maybeWeb();      // a web is what a finished sit leaves
-        toWalk();
+      if (clock >= stateUntil) toWalk();
+      return;
+    }
+
+    if (state === 'weave') {
+      // The spinner turns as it works. Rings arrive on the clock until the
+      // cap; the TENDING has no cap — it builds and holds until the pointer
+      // breaks it (breakWebs marks the object; this branch reacts).
+      rot += 46 * dt;
+      if (!weaving || weaving.o.breaking || objs.indexOf(weaving.o) === -1) {
+        weaving = null;
+        vx = rand(-170, 170); vy = rand(-120, 120);     // startled — scatter
+        setState('fall');
+        return;
+      }
+      var ww = skin.web;
+      if (weaving.stage < ww.stages && clock >= weaving.next) {
+        weaving.stage++;
+        weaving.o.el.innerHTML = ww.svg(CFG, weaving.stage);
+        weaving.o.el.dataset.stage = String(weaving.stage);
+        weaving.o.data.breakR = ww.breakR0 + weaving.stage * ww.breakDr;
+        weaving.next = clock + ww.ringS;
+      }
+      return;
+    }
+
+    if (state === 'rappel') {
+      py += CFG.RAPPEL * dt;
+      px = rappel.x + Math.sin(clock * 2.1) * 2;
+      rot = 90;                                  // head down the page
+      positionThread();
+      // §2a for the line: the pointer touching it anywhere along its length
+      // cuts it, and the rider tumbles.
+      if (mouse.x > 0 && Math.abs(mouse.x - rappel.x) < 7 &&
+        mouse.y > rappel.y0 - 4 && mouse.y < py) {
+        cutThread(true);
+        return;
+      }
+      if (py - rappel.y0 >= rappel.len || py >= bounds.bottom - 8) {
+        cutThread(false);
+        return;
       }
       return;
     }
@@ -1101,7 +1235,8 @@
       return;
     }
 
-    // walk
+    // walk — and for a roam skin, the walk IS the crawl: no ledge consulted.
+    if (skin.roam) { roamWalk(dt); return; }
     if (!ledge) { toFall(0, 0); return; }
     var f2 = fwd();
     px += f2.x * face * CFG.WALK * dt;
@@ -1127,7 +1262,9 @@
       'translate3d(' + px.toFixed(1) + 'px,' + py.toFixed(1) + 'px,0)' +
       ' rotate(' + rot + 'deg)' +
       ' scaleX(' + face + ')' +
-      ' translate(' + (-CFG.W / 2) + 'px,' + (-CFG.H) + 'px)';
+      // side view anchors at the FEET; top view at the CENTRE, because a
+      // rotating disc pivots about itself
+      ' translate(' + (-CFG.W / 2) + 'px,' + (skin && skin.roam ? -CFG.H / 2 : -CFG.H) + 'px)';
 
     if (say) {
       var bw = say.offsetWidth || 200, bh = say.offsetHeight || 34;
@@ -1204,6 +1341,7 @@
         vx: 0, vy: 0, moved: false, px0: px, py0: py, ledge0: ledge
       };
       ledge = null; wall = null; rot = 0;
+      clearPranks();                           // a picked-up weaver stops weaving
       setState('drag');
       cat.classList.add('yc-grabbed');
     });
@@ -1221,7 +1359,8 @@
       // at you. Only a perfectly still click survived it.
       if (Math.abs(e.clientX - grab.ox) > 4 || Math.abs(e.clientY - grab.oy) > 6) grab.moved = true;
       px = e.clientX;
-      py = e.clientY + CFG.H * 0.45;      // dangles just below the cursor
+      // a side-view pet dangles below the hand; a top-view one is just under it
+      py = e.clientY + (skin && skin.roam ? 2 : CFG.H * 0.45);
       aim(grab.vx, 0);
       draw();
     });
@@ -1234,7 +1373,7 @@
       if (!g.moved && performance.now() - g.t0 < 350) {
         px = g.px0; py = g.py0; rot = 0;
         ledge = g.ledge0;
-        if (ledge) { setState('idle', attn()); stateUntil = clock + rand(1.2, 2.5); }
+        if (ledge || (skin && skin.roam)) { setState('idle', attn()); stateUntil = clock + rand(1.2, 2.5); }
         else if (allowed('drift')) toDrift();  // a poked ghost hangs in the air
         else toFall(0, 0);
         talk();                 // after the pose, so the bubble is placed against it
@@ -1304,46 +1443,102 @@
     dropObj('trail', px, py, t.svg, t.life, t.max);
   }
 
-  // A web never lands where someone is working: its rect must not touch an
-  // input, select, textarea, or whatever holds focus — in the shell OR the
-  // open page. Layout-dependent, so this is a browsers-only guard (jsdom has
-  // no layout); the smoke test pins its presence in the source instead.
-  function webTouchesField(x1, y1, x2, y2) {
-    function hits(doc, ox, oy) {
+  // Webs may sit over ANYTHING — the ruling: a web is never clickable, and
+  // reaching whatever it covers means moving the pointer there, which breaks
+  // it on the way in. The one person that argument misses is the keyboard
+  // user, who tabs into a covered field without ever moving the mouse — so a
+  // web that overlaps the FOCUSED field breaks by itself (checked on a slow
+  // throttle in breakWebs; layout-dependent, so browsers enforce it and the
+  // smoke test pins its presence).
+  function focusRect() {
+    function grab(doc, ox, oy) {
       try {
-        var els = doc.querySelectorAll('input, select, textarea');
-        var list = [], k;
-        for (k = 0; k < els.length && k < 120; k++) list.push(els[k]);
-        if (doc.activeElement && doc.activeElement !== doc.body) list.push(doc.activeElement);
-        for (k = 0; k < list.length; k++) {
-          var r = list[k].getBoundingClientRect();
-          if (!r.width && !r.height) continue;
-          if (x1 < ox + r.right && x2 > ox + r.left && y1 < oy + r.bottom && y2 > oy + r.top) return true;
-        }
-      } catch (e) { }
-      return false;
+        var a = doc.activeElement;
+        if (!a) return null;
+        var tag = (a.tagName || '').toLowerCase();
+        if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') return null;
+        var r = a.getBoundingClientRect();
+        if (!r.width && !r.height) return null;
+        return { x1: ox + r.left, y1: oy + r.top, x2: ox + r.right, y2: oy + r.bottom };
+      } catch (e) { return null; }
     }
-    if (hits(document, 0, 0)) return true;
+    var got = grab(document, 0, 0);
+    if (got) return got;
     var f = contentFrame();
     if (f) {
       try {
         var fb = f.getBoundingClientRect();
-        if (f.contentDocument && hits(f.contentDocument, fb.left, fb.top)) return true;
+        if (f.contentDocument) return grab(f.contentDocument, fb.left, fb.top);
       } catch (e) { }
     }
-    return false;
+    return null;
   }
 
-  // A web is what a finished sit leaves behind — rolled when an idle period
-  // ends, optionally only after the skin's named spinning act.
-  function maybeWeb() {
+  // ── Weaving ──────────────────────────────────────────────────────────────────
+  // The web is not an event, it is a PROJECT: the pet settles on a spot and
+  // builds outward from it, a ring at a time, until the pointer breaks it —
+  // growth pausing (never pushing) at the edge of any field someone is using.
+  var weaving = null;      // { o: the web object, stage, next: clock of next ring }
+
+  function startWeave() {
     var w = skin.web;
-    if (!w || !ledge) return;
-    if (w.act && act !== w.act) return;
-    if (Math.random() >= w.chance) return;
-    if (webTouchesField(px - w.w / 2, py - w.h, px + w.w / 2, py)) return;
-    dropObj('web', px, py, typeof w.svg === 'function' ? w.svg(CFG) : w.svg, w.life, w.max,
-      { cx: px, cy: py - w.h / 2, breakR: w.breakR });
+    if (!w) return false;
+    dropObj('web', px, py, w.svg(CFG, 1), w.life, w.max,
+      { cx: px, cy: py, breakR: w.breakR0 + w.breakDr });
+    var o = objs[objs.length - 1];
+    if (!o || o.kind !== 'web') return false;
+    o.el.dataset.stage = '1';
+    weaving = { o: o, stage: 1, next: clock + w.ringS };
+    vx = 0; vy = 0;
+    setState('weave');
+    return true;
+  }
+
+  // ── Rappelling ───────────────────────────────────────────────────────────────
+  // A line down the page from wherever it stood, ridden at RAPPEL px/s. The
+  // LINE is on the webs' contract: never clickable, and the pointer touching
+  // it cuts it — at which point whatever was riding it tumbles.
+  var rappel = null;       // { x, y0, len, el }
+
+  function toRappel() {
+    if (py > bounds.bottom - 120) return false;
+    var el = document.createElement('div');
+    el.className = 'yc-thread';
+    root.appendChild(el);
+    rappel = { x: px, y0: py, len: rand(90, Math.max(100, bounds.bottom - 24 - py)), el: el };
+    vx = 0; vy = 0;
+    setState('rappel');
+    return true;
+  }
+
+  function positionThread() {
+    if (!rappel) return;
+    var h = Math.max(0, (py - CFG.H / 2) - rappel.y0);
+    rappel.el.style.transform = 'translate3d(' + Math.round(rappel.x) + 'px,' + Math.round(rappel.y0) + 'px,0)';
+    rappel.el.style.height = Math.round(h) + 'px';
+  }
+
+  function cutThread(snapped) {
+    if (!rappel) return;
+    var el = rappel.el;
+    el.classList.add('yc-thread-snap');
+    setTimeout(function () { el.remove(); }, 300);
+    rappel = null;
+    if (snapped) {
+      // cut out from under it: tumble off sideways
+      vx = rand(-170, 170); vy = rand(-60, 140);
+      setState('fall');
+    } else {
+      setState('land');
+      stateUntil = clock + 0.22;
+    }
+  }
+
+  // Every way out of a prank mid-prank: the web stays (fading on its own
+  // clock), the thread does not, and neither leaves a handle behind.
+  function clearPranks() {
+    weaving = null;
+    if (rappel) { rappel.el.remove(); rappel = null; }
   }
 
   // §2a's enforcement, all of it: a web breaks when the POINTER comes near —
@@ -1352,22 +1547,38 @@
   // swallow; a touch tap breaks on first contact because pointerdown feeds
   // the same tracker; and a fast move-and-click inside one frame cannot slip
   // through a thing that was never clickable.
+  var nextFocusCheck = 0;
+  function breakOne(o) {
+    o.breaking = true;
+    clearTimeout(o.timer);
+    o.el.classList.add('yc-obj-break');
+    o.timer = setTimeout(function () {
+      var j = objs.indexOf(o);
+      if (j !== -1) removeObj(j);
+    }, 450);
+  }
+
   function breakWebs() {
-    if (mouse.x < 0) return;
+    // the keyboard clause, on a slow throttle: a web over the focused field
+    // breaks without the mouse ever moving
+    var fr = null;
+    if (clock >= nextFocusCheck) {
+      nextFocusCheck = clock + 0.8;
+      fr = focusRect();
+    }
     for (var i = objs.length - 1; i >= 0; i--) {
       var o = objs[i];
       if (o.kind !== 'web' || o.breaking || !o.data) continue;
+      var R = o.data.breakR;
+      if (fr && o.data.cx + R > fr.x1 && o.data.cx - R < fr.x2 &&
+        o.data.cy + R > fr.y1 && o.data.cy - R < fr.y2) {
+        breakOne(o);
+        continue;
+      }
+      if (mouse.x < 0) continue;
       var dx = mouse.x - o.data.cx, dy = mouse.y - o.data.cy;
-      if (dx * dx + dy * dy > o.data.breakR * o.data.breakR) continue;
-      o.breaking = true;
-      clearTimeout(o.timer);
-      o.el.classList.add('yc-obj-break');
-      (function (ob) {
-        ob.timer = setTimeout(function () {
-          var j = objs.indexOf(ob);
-          if (j !== -1) removeObj(j);
-        }, 450);
-      })(o);
+      if (dx * dx + dy * dy > R * R) continue;
+      breakOne(o);
     }
   }
 
@@ -1449,9 +1660,14 @@
       // RE-ENABLE it (that is how .yc-cat takes clicks inside this very
       // container). The !important wildcard is what makes a decoration's
       // markup unable to do the same, even on purpose.
-      '.yc-obj,.yc-obj *{pointer-events:none!important}',
+      '.yc-obj,.yc-obj *,.yc-thread{pointer-events:none!important}',
       '.yc-obj{position:absolute;left:0;top:0;will-change:opacity}',
       '.yc-obj svg{display:block;overflow:visible}',
+      // the rappel line: engine-owned, engine-styled, cut by the pointer
+      '.yc-thread{position:absolute;left:0;top:0;width:2px;margin-left:-1px;',
+      'background:linear-gradient(rgba(185,194,207,.9),rgba(185,194,207,.45));',
+      'transition:opacity .2s ease}',
+      '.yc-thread-snap{opacity:0}',
       /* the trigger: the logo visibly charges while you hold it */
       '.hdr-logo.yc-charging{transform:scale(.86);opacity:.6;',
       'transition:transform ' + CFG.HOLD_MS + 'ms ease-in,opacity ' + CFG.HOLD_MS + 'ms ease-in;}'
@@ -1494,9 +1710,19 @@
     fly = null;
     flyReady = CFG.FLY_FIRST;      // it has to be here a while before it gets ideas
     lastTrail.x = -1e9; lastTrail.y = -1e9;
-    px = bounds.left + (bounds.right - bounds.left) * rand(0.35, 0.65);
-    py = bounds.top - 40;
-    toFall(rand(-20, 20), 0);            // drops in from off the top
+    if (skin.roam) {
+      // top view: nothing to drop in FROM — it turns up somewhere on the
+      // floor plan, mid-scurry, as though it was always there
+      px = rand(bounds.left + 30, bounds.right - 30);
+      py = rand(bounds.top + 30, bounds.bottom - 30);
+      rot = rand(0, 360); face = 1; vx = 0; vy = 0;
+      setState('land');
+      stateUntil = clock + 0.22;
+    } else {
+      px = bounds.left + (bounds.right - bounds.left) * rand(0.35, 0.65);
+      py = bounds.top - 40;
+      toFall(rand(-20, 20), 0);          // drops in from off the top
+    }
     draw();
     last = performance.now();
     raf = requestAnimationFrame(frame);
@@ -1511,6 +1737,7 @@
     // node and the first poke of the new pet would say nothing.
     if (sayTimer) clearTimeout(sayTimer);
     say = null; sayTimer = 0;
+    clearPranks();
     clearObjs();      // their elements die with root, but their timers do not
     if (root) { root.remove(); root = null; cat = null; }
     if (styleEl) { styleEl.remove(); styleEl = null; }
@@ -1543,22 +1770,19 @@
       if (ok && has('hop') !== has('crouch')) ok = false;
       if (ok && (has('inflate') !== has('float') || has('float') !== has('pop'))) ok = false;
       if (ok && has('blink') && !has('drift')) ok = false;   // a blink lands in a drift
+      if (ok && has('weave') && !(def.web && def.roam)) ok = false;   // weaving needs a web, and the floor plan
+      if (ok && has('rappel') && !def.roam) ok = false;              // rappelling is a top-view trick
     }
     // A trail keeps its own promises: real spacing, a finite life, a cap.
     if (ok && def.trail) {
       ok = def.trail.every > 0 && def.trail.life > 0 && def.trail.max > 0 && !!def.trail.svg;
     }
-    // …and a web keeps §2a's: real odds, a finite life, a cap, a break
-    // radius, a rect for the spawn veto, and a spinning act that exists.
+    // …and a web keeps §2a's: a ring clock, a ring cap, a lifetime, a web
+    // cap, and a break radius that grows with the rings.
     if (ok && def.web) {
       var wb = def.web;
-      ok = wb.chance > 0 && wb.chance <= 1 && wb.life > 0 && wb.max > 0 &&
-        wb.breakR > 0 && wb.w > 0 && wb.h > 0 && !!wb.svg;
-      if (ok && wb.act) {
-        var found = false;
-        for (var a2 = 0; a2 < def.acts.length; a2++) if (def.acts[a2][0] === wb.act) found = true;
-        ok = found;
-      }
+      ok = wb.ringS > 0 && wb.stages > 0 && wb.life > 0 && wb.max > 0 &&
+        wb.breakR0 > 0 && wb.breakDr >= 0 && typeof wb.svg === 'function';
     }
     if (!ok) {
       console.warn('[Mascot] register() refused a malformed skin', def && def.id);
@@ -1910,6 +2134,14 @@
       }
     },
     {
+      name: 'weave', needs: 'any', gate: 'weave', what: 'settle in and build a web until somebody breaks it',
+      run: function () { if (!startWeave()) return 'no web in this form'; }
+    },
+    {
+      name: 'rappel', needs: 'any', gate: 'rappel', what: 'let down a line and ride it down the page',
+      run: function () { if (!toRappel()) return 'not enough page below'; }
+    },
+    {
       name: 'drift', needs: 'any', gate: 'drift', what: 'lift off and wander — gravity is a suggestion',
       run: function () { toDrift(); }
     },
@@ -2045,6 +2277,20 @@
     },
     skin: skinInfo,
     setSkin: setSkin,
+    // The fitting room: apply a form RIGHT NOW without touching the stored
+    // choice or the on/off preference, optionally dressed for night N of its
+    // seasonal window — Mascot.rehearse('menorah', 3) is three candles in
+    // July. Console-only by design; a reload snaps everything back to what
+    // the resolver really says.
+    rehearse: function (id, day) {
+      injectSkin(String(id), function (ok) {
+        if (!ok) { console.warn('[Mascot] rehearse: skin "' + id + '" did not load'); return; }
+        if (running) stop();
+        applySkin(id);
+        if (day != null) CFG.SEASONAL_DAY = Math.max(0, (day | 0) - 1);
+        start();
+      });
+    },
     // Why is (or isn't) the pet what it is today: the seasonal verdict, for
     // now or for any date you hand it — Mascot.season('2026-12-05'). `day` in
     // the window is 1-based, the way a person counts nights.

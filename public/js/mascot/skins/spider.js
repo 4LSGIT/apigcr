@@ -1,21 +1,26 @@
 /* public/js/mascot/skins/spider.js
  * ───────────────────────────────────────────────────────────────────────────────
- * CASEY, SPIDER FORM — the rowdy one
+ * CASEY, SPIDER FORM — the rowdy one, mark II
  *
- * The skin the §2a argument was about, built on the terms that ended it:
- * its webs are world objects, so they can NEVER take a click (the engine's
- * !important wildcard), they are capped and they fade on a clock, they never
- * spawn over an input or the focused element, and they break the moment the
- * pointer touches them — a distance test against the cursor the engine
- * already tracks, which also means a touch tap breaks one on first contact.
- * Rowdy, and it says so: the manifest flags it, the picker badges it, and
- * the blurb warns in plain words before anyone chooses it. Send-it-away
- * still works instantly, mid-web — teardown takes the whole layer.
+ * TOP VIEW, unlike every other form: the others live IN the page, side-on
+ * along its ledges — the spider crawls ON it, as though the screen were the
+ * floor and it had gotten in somehow. That is `roam: true`: free 2D travel in
+ * scurry-and-freeze bursts, edges preferred (spiders are thigmotactic; the
+ * furniture tops the engine already scans are its edges) but nothing
+ * required, and a drift toward wherever the pointer is working, because the
+ * brief for this form is CHAOS — it is supposed to bother you.
  *
- * Otherwise it is the best mover in the catalogue: fastest climber, a
- * skittering chase, real jumps (a jumping spider, taxonomically defensible),
- * and it descends on a visible thread whenever it is airborne, because a
- * spider that merely falls is just a raisin with legs.
+ * Its two pranks, both on the never-clickable contract:
+ *   · RAPPEL — it anchors a line and rides it down the page; the pointer
+ *     touching the silk anywhere cuts it and the spider tumbles.
+ *   · WEAVE — it settles on a spot, turning as it works, and builds a web
+ *     outward a ring at a time, over ANYTHING, until the pointer breaks it —
+ *     the web's break radius always covers its rings, so reaching whatever it
+ *     covers destroys it on the way in, and a web over the keyboard-focused
+ *     field breaks by itself. Then it scatters, sulks, and starts elsewhere.
+ *
+ * Rowdy and labelled: the manifest flags it, the picker badges it, the blurb
+ * warns in plain words. Send-it-away still works instantly mid-anything.
  *
  * See the header of /js/mascot/engine.js for the full skin contract.
  */
@@ -28,50 +33,61 @@
   window.Mascot.register({
     id: 'spider',
     name: 'Spider',
-    blurb: 'A spider. Spins webs where you work — one touch of the pointer breaks them. Rowdy.',
+    blurb: 'A spider. Roams the whole page, rappels down silk, and builds a web until you break it. Rowdy.',
 
-    // Small and wide. No ascent in `can`, so FLY_HEAD is the sprite's own
-    // height per the contract's convention.
-    geom: { W: 24, H: 12, FLY_HEAD: 12 },
+    // A square-ish box, because a top-view sprite rotates about its centre.
+    // FLY_HEAD is the sprite's own size per the convention; no ascent here.
+    geom: { W: 22, H: 22, FLY_HEAD: 22 },
+
+    roam: true,
 
     tune: {
-      WALK: 40,
-      CLIMB: 72,             // the best climber in the building
-      HANGSPEED: 44,         // the ceiling is its second floor
-      CHASE: 110,            // the skitter
-      GRAVITY: 650           // it descends on silk, it does not plummet
+      WALK: 85,              // the scurry (the cadence supplies the chaos)
+      RAPPEL: 78,
+      WEAVE_CHANCE: 0.45,    // settling usually means business
+      RAPPEL_CHANCE: 0.3
     },
 
-    // Everything with feet: walks, climbs, hangs, jumps, chases. No ascent
-    // (it has thread for that story) and no noclip (it is EXTREMELY clipped —
-    // surfaces are its entire personality).
-    can: ['walk', 'idle', 'chase', 'climb', 'hang', 'fall', 'hop', 'crouch',
-      'land', 'drag', 'leave'],
+    // The roam set: no ledges to fall off, no walls to climb — the whole
+    // page is floor. fall is the thrown-and-sliding tumble.
+    can: ['walk', 'idle', 'fall', 'land', 'drag', 'leave', 'rappel', 'weave'],
 
     acts: [
-      ['rest', 22], ['spin', 26], ['twitch', 20], ['tap', 16]
+      ['rest', 24], ['twitch', 24], ['tap', 20]
     ],
 
     // When it notices you, it twitches. Of course it does.
     lookAct: 'twitch',
 
-    // The webs. Only a finished `spin` leaves one, at most a third of the
-    // time, five on screen, fading out over three quarters of a minute — and
-    // the engine holds the §2a lines above.
+    // The ever-growing web: ~3s a ring, a dozen rings tops, then it tends the
+    // finished work until somebody breaks it. Fixed 120-viewBox — growth
+    // happens inside, so the element never moves — and the break radius keeps
+    // ahead of the outermost ring (§2a: mouse-over anywhere on it kills it).
     web: {
-      chance: 0.35,
-      act: 'spin',
-      life: 45,
-      max: 5,
-      w: 30, h: 26,
-      breakR: 18,
-      svg: '<svg width="30" height="26" viewBox="0 0 30 26">' +
-        '<g fill="none" stroke="#B9C2CF" stroke-width=".6" opacity=".65">' +
-        '<path d="M15 24 V2 M15 24 L4 6 M15 24 L26 6 M15 24 L1.5 16 M15 24 L28.5 16"/>' +
-        '<path d="M11 17.5 Q15 15.6 19 17.5 M8 12.4 Q15 9.2 22 12.4 M5.6 7.6 Q15 3 24.4 7.6"/>' +
-        '</g>' +
-        '<circle cx="15" cy="21" r=".9" fill="#B9C2CF" opacity=".7"/>' +
-        '</svg>'
+      ringS: 3.0,
+      stages: 12,
+      life: 120,
+      max: 3,
+      breakR0: 8,
+      breakDr: 4.6,
+      svg: function (CFG, stage) {
+        var s = '<svg width="120" height="120" viewBox="0 0 120 120">' +
+          '<g fill="none" stroke="#B9C2CF" stroke-width=".7" opacity=".62">';
+        var r = 6 + stage * 4.4, k, a;
+        // twelve spokes out to the current edge
+        var spokes = '';
+        for (k = 0; k < 12; k++) {
+          a = k * Math.PI / 6;
+          spokes += 'M60 60 L' + (60 + Math.cos(a) * r).toFixed(1) + ' ' + (60 + Math.sin(a) * r).toFixed(1) + ' ';
+        }
+        s += '<path d="' + spokes + '"/>';
+        // one ring per stage
+        for (k = 1; k <= stage; k++) {
+          s += '<circle cx="60" cy="60" r="' + (2 + k * 4.4).toFixed(1) + '"/>';
+        }
+        s += '</g><circle cx="60" cy="60" r="1.1" fill="#B9C2CF" opacity=".7"/></svg>';
+        return s;
+      }
     },
 
     lines: [
@@ -84,7 +100,7 @@
       'I never miss a deadline. I hang from them.',
       'Settlement web: everything sticks.',
       'The small print is mine. I spun it.',
-      'The ceiling is just my second floor.',
+      'Your screen is my floor plan.',
       'I sublet the corners.',
       'Startled? That was a scheduled descent.',
       'Motion practice: all eight, in order.',
@@ -92,106 +108,87 @@
       'Adjourned. Mind the web on your way out.'
     ],
 
-    words: { idle: 'settle', chase: 'chase me', spin: 'spin a web', tap: 'drum', twitch: 'twitch' },
+    words: { idle: 'settle', weave: 'spin a web', rappel: 'drop a line', tap: 'drum', twitch: 'twitch' },
 
     // ── The sprite ─────────────────────────────────────────────────────────────
-    // 24×12, side view, facing right, feet on the bottom edge: abdomen aft,
-    // cephalothorax fore, four leg GROUPS (near/far, fore/aft — eight legs,
-    // four pivots, which is all a 24px spider can articulate), and a silk
-    // thread overhead that only the airborne states reveal.
+    // 22×22 from above, facing +x (the engine rotates it to its heading):
+    // abdomen aft, cephalothorax fore, eight legs in two alternating gait
+    // groups — the tripod illusion at four pivots, which is all 22px carries.
     svg:
-      '<svg class="p-svg" viewBox="0 0 24 12" width="24" height="12" aria-hidden="true" focusable="false">' +
+      '<svg class="p-svg" viewBox="0 0 22 22" width="22" height="22" aria-hidden="true" focusable="false">' +
       '<g class="p-all">' +
-      '<path class="p-thread" d="M16 4 V-42" stroke="#B9C2CF" stroke-width=".6" opacity="0"/>' +
-      // far legs first, a shade darker
-      '<g class="p-leg p-lB">' +
-      '<path d="M9 7.5 L5.5 4.6 L2.6 6.8 M11 8 L9 4 L5.8 3.4" fill="none" stroke="#26262E" stroke-width="1" stroke-linecap="round"/>' +
+      // gait group A: front-left, mid-right, rear-left pattern
+      '<g class="p-ga">' +
+      '<path d="M13.5 9.4 L16.4 5.6 L20.4 4.2 M11.6 9 L11 4.6 L13.4 1.6 M13.5 12.6 L16.4 16.4 L20.4 17.8 M9.7 13.3 L6.6 17 L3 18.2"' +
+      ' fill="none" stroke="#2F2F38" stroke-width="1.05" stroke-linecap="round"/>' +
       '</g>' +
-      '<g class="p-leg p-lD">' +
-      '<path d="M15.5 7.5 L18.5 4.2 L21.8 5 M14 8 L16.8 3.6 L20 2.8" fill="none" stroke="#26262E" stroke-width="1" stroke-linecap="round"/>' +
+      // gait group B: the alternates
+      '<g class="p-gb">' +
+      '<path d="M13.5 8.6 L15.2 4.2 L18.2 2 M9.7 8.7 L6.6 5 L3 3.8 M13.5 13.4 L15.2 17.8 L18.2 20 M11.6 13 L11 17.4 L13.4 20.4"' +
+      ' fill="none" stroke="#26262E" stroke-width="1.05" stroke-linecap="round"/>' +
       '</g>' +
-      // the body: abdomen, cephalothorax, eyes, fangs
-      '<ellipse class="p-abd" cx="8.2" cy="6.6" rx="5" ry="3.9" fill="#3A3A44" stroke="#1D1D24" stroke-width=".6"/>' +
-      '<path d="M5.4 4.6 q2.6 -1.6 5.4 -.2" fill="none" stroke="#4E4E5A" stroke-width=".9" stroke-linecap="round"/>' +
-      '<circle class="p-head" cx="15.6" cy="7.4" r="2.9" fill="#3A3A44" stroke="#1D1D24" stroke-width=".6"/>' +
-      '<circle class="p-eye" cx="17" cy="6.6" r=".55" fill="#FF6B4A"/>' +
-      '<circle class="p-eye" cx="17.8" cy="7.6" r=".45" fill="#FF6B4A"/>' +
-      '<path d="M17.6 9.2 l.7 1.1 M18.4 8.6 l.9 .9" stroke="#1D1D24" stroke-width=".6" stroke-linecap="round"/>' +
-      // near legs over the body
-      '<g class="p-leg p-lA">' +
-      '<path d="M10 8.5 L6.5 6 L3 9 M12 9 L10 5.4 L6.4 5.6" fill="none" stroke="#2F2F38" stroke-width="1.1" stroke-linecap="round"/>' +
-      '</g>' +
-      '<g class="p-leg p-lC">' +
-      '<path d="M16.5 9 L19.5 6.2 L23 7.6 M15 9.3 L18 5.4 L21.6 4.4" fill="none" stroke="#2F2F38" stroke-width="1.1" stroke-linecap="round"/>' +
-      '</g>' +
+      // the body over the leg roots
+      '<ellipse class="p-abd" cx="7.4" cy="11" rx="5" ry="4.1" fill="#3A3A44" stroke="#1D1D24" stroke-width=".6"/>' +
+      '<path d="M4.4 9 q3 -1.6 6 0 M4.4 13 q3 1.6 6 0" fill="none" stroke="#4E4E5A" stroke-width=".8" stroke-linecap="round"/>' +
+      '<circle class="p-head" cx="14.2" cy="11" r="3" fill="#3A3A44" stroke="#1D1D24" stroke-width=".6"/>' +
+      '<circle class="p-eye" cx="16.2" cy="10" r=".55" fill="#FF6B4A"/>' +
+      '<circle class="p-eye" cx="16.2" cy="12" r=".55" fill="#FF6B4A"/>' +
+      '<path d="M16.9 10.6 l1.4 -.4 M16.9 11.4 l1.4 .4" stroke="#1D1D24" stroke-width=".55" stroke-linecap="round"/>' +
+      '<circle cx="4.6" cy="11" r=".7" fill="#26262E"/>' +          /* spinneret */
       '</g></svg>',
 
     // ── Styles ─────────────────────────────────────────────────────────────────
-    // The scuttle is four leg groups in alternating pairs, stepped — a spider
-    // does not ease. The thread appears only while airborne, which turns every
-    // fall and every carried dangle into a descent.
+    // The engine drives position and heading; the css supplies the gait and
+    // the nerves. Everything stepped — a spider does not ease.
     css: [
-      '.p-all{transform-origin:12px 12px;transition:transform .14s steps(2,end)}',
-      '.p-lA{transform-origin:10px 8.5px}.p-lB{transform-origin:9px 7.5px}',
-      '.p-lC{transform-origin:16.5px 9px}.p-lD{transform-origin:15.5px 7.5px}',
-      '.p-leg{transition:transform .14s steps(2,end)}',
-      '.p-thread{transition:opacity .15s ease}',
-
-      /* the scuttle: A+D against B+C, fast and stepped */
-      '@keyframes ycp-legA{0%,49%{transform:rotate(9deg)}50%,100%{transform:rotate(-9deg)}}',
-      '@keyframes ycp-legB{0%,49%{transform:rotate(-9deg)}50%,100%{transform:rotate(9deg)}}',
-      '[data-state="walk"] .p-lA,[data-state="walk"] .p-lD,',
-      '[data-state="climb"] .p-lA,[data-state="climb"] .p-lD,',
-      '[data-state="hang"] .p-lA,[data-state="hang"] .p-lD{animation:ycp-legA .18s infinite}',
-      '[data-state="walk"] .p-lB,[data-state="walk"] .p-lC,',
-      '[data-state="climb"] .p-lB,[data-state="climb"] .p-lC,',
-      '[data-state="hang"] .p-lB,[data-state="hang"] .p-lC{animation:ycp-legB .18s infinite}',
-      '[data-state="chase"] .p-lA,[data-state="chase"] .p-lD{animation:ycp-legA .1s infinite}',
-      '[data-state="chase"] .p-lB,[data-state="chase"] .p-lC{animation:ycp-legB .1s infinite}',
-      '[data-state="idle"] .p-abd{animation:ycp-breathe 1.6s ease-in-out infinite}',
-      '@keyframes ycp-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}',
+      '.p-all{transform-origin:11px 11px;transition:transform .12s steps(2,end)}',
+      '.p-ga,.p-gb{transform-origin:11px 11px;transition:transform .12s steps(2,end)}',
       '.p-abd{transform-box:fill-box;transform-origin:50% 50%}',
 
-      /* airborne: the thread shows, the legs reach — a descent, not a fall */
-      '[data-state="fall"] .p-thread{opacity:.8}',
-      '[data-state="fall"] .p-lA,[data-state="fall"] .p-lB{transform:rotate(-16deg)}',
-      '[data-state="fall"] .p-lC,[data-state="fall"] .p-lD{transform:rotate(16deg)}',
+      /* the scuttle: the two gait groups shear against each other */
+      '@keyframes ycp-ga{0%,49%{transform:rotate(4deg)}50%,100%{transform:rotate(-4deg)}}',
+      '@keyframes ycp-gb{0%,49%{transform:rotate(-4deg)}50%,100%{transform:rotate(4deg)}}',
+      '[data-state="walk"] .p-ga{animation:ycp-ga .14s infinite}',
+      '[data-state="walk"] .p-gb{animation:ycp-gb .14s infinite}',
 
-      /* the gather and the spring */
-      '[data-state="crouch"] .p-all{transform:translateY(2px) scaleY(.72) scaleX(1.12)}',
-      '[data-state="hop"] .p-lA,[data-state="hop"] .p-lB{transform:rotate(-22deg)}',
-      '[data-state="hop"] .p-lC,[data-state="hop"] .p-lD{transform:rotate(22deg)}',
-      '[data-state="hop"] .p-all{transform:scaleY(1.08) scaleX(.94)}',
+      /* idle: mostly still, which from a spider is somehow worse */
+      '@keyframes ycp-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}',
+      '[data-state="idle"] .p-abd{animation:ycp-breathe 1.5s ease-in-out infinite}',
+
+      /* thrown: legs flare while the engine tumbles the whole sprite */
+      '[data-state="fall"] .p-ga{transform:rotate(10deg) scale(1.08)}',
+      '[data-state="fall"] .p-gb{transform:rotate(-10deg) scale(1.08)}',
 
       /* the landing */
-      '@keyframes ycp-land{0%{transform:scaleY(.7) scaleX(1.2)}55%{transform:scaleY(1.06) scaleX(.96)}100%{transform:none}}',
+      '@keyframes ycp-land{0%{transform:scale(.8)}55%{transform:scale(1.07)}100%{transform:none}}',
       '[data-state="land"] .p-all{animation:ycp-land .2s steps(3,end)}',
 
-      /* carried: dangling on its own silk, mildly patient about it */
-      '[data-state="drag"] .p-thread{opacity:.8}',
-      '@keyframes ycp-dangle{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(10deg)}}',
-      '[data-state="drag"] .p-leg{animation:ycp-dangle .4s ease-in-out infinite}',
+      /* carried: all eight objecting at once */
+      '@keyframes ycp-wiggle{0%,100%{transform:rotate(6deg)}50%{transform:rotate(-6deg)}}',
+      '[data-state="drag"] .p-ga{animation:ycp-wiggle .12s infinite}',
+      '[data-state="drag"] .p-gb{animation:ycp-wiggle .12s infinite .06s}',
+
+      /* rappelling: legs drawn in, riding the line the engine draws */
+      '[data-state="rappel"] .p-ga{transform:rotate(2deg) scale(.82)}',
+      '[data-state="rappel"] .p-gb{transform:rotate(-2deg) scale(.82)}',
+      '[data-state="rappel"] .p-abd{animation:ycp-breathe 1s ease-in-out infinite}',
+
+      /* weaving: the engine turns the whole spider; the legs work the silk
+         and the abdomen pumps it out */
+      '[data-state="weave"] .p-ga{animation:ycp-ga .22s infinite}',
+      '[data-state="weave"] .p-gb{animation:ycp-gb .22s infinite}',
+      '[data-state="weave"] .p-abd{animation:ycp-breathe .55s ease-in-out infinite}',
 
       /* idle repertoire */
-      '[data-act="rest"] .p-leg{transform:rotate(0)}',
-      '[data-act="rest"] .p-all{transform:translateY(1px)}',
-      /* spin — the busywork that (sometimes) leaves a web behind */
-      '@keyframes ycp-spinL{0%,100%{transform:rotate(-14deg)}25%{transform:rotate(10deg)}50%{transform:rotate(-6deg)}75%{transform:rotate(14deg)}}',
-      '[data-act="spin"] .p-lA{animation:ycp-spinL .32s steps(2,end) infinite}',
-      '[data-act="spin"] .p-lC{animation:ycp-spinL .32s steps(2,end) infinite .16s}',
-      '[data-act="spin"] .p-abd{animation:ycp-breathe .5s ease-in-out infinite}',
-      /* twitch — noticed you */
-      '@keyframes ycp-rear{0%,100%{transform:rotate(0)}30%,60%{transform:rotate(-9deg) translateY(-.6px)}}',
+      '[data-act="rest"] .p-ga,[data-act="rest"] .p-gb{transform:scale(.94)}',
+      '@keyframes ycp-rear{0%,100%{transform:rotate(0)}30%,60%{transform:rotate(-8deg) scale(1.05)}}',
       '[data-act="twitch"] .p-all{animation:ycp-rear 1.1s steps(3,end) infinite}',
-      /* tap — the front legs drum on the ledge */
-      '@keyframes ycp-tap{0%,100%{transform:rotate(0)}50%{transform:rotate(13deg)}}',
-      '[data-act="tap"] .p-lC{animation:ycp-tap .16s steps(2,end) infinite}',
-      '[data-act="tap"] .p-lD{animation:ycp-tap .16s steps(2,end) infinite .08s}',
+      '@keyframes ycp-tap{0%,100%{transform:rotate(0)}50%{transform:rotate(6deg)}}',
+      '[data-act="tap"] .p-ga{animation:ycp-tap .15s steps(2,end) infinite}',
 
-      /* the webs: anchored on the ledge above the spawn point; the break is
-         one sharp snap outward, then gone */
-      '.yc-obj-web{margin-left:-15px;margin-top:-26px}',
-      '@keyframes ycp-snap{0%{transform:scale(1);opacity:.9}100%{transform:scale(1.3);opacity:0}}',
+      /* the webs: centred on the weaving spot; the break is one sharp snap */
+      '.yc-obj-web{margin-left:-60px;margin-top:-60px}',
+      '@keyframes ycp-snap{0%{transform:scale(1);opacity:.9}100%{transform:scale(1.28);opacity:0}}',
       '.yc-obj-break svg{animation:ycp-snap .3s ease-out forwards}'
     ]
   });
