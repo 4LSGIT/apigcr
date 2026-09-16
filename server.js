@@ -19,6 +19,33 @@ var corsOptions = {
 app.use(cors(corsOptions));
 app.set('trust proxy', 1);//google cloud run
 
+// Response compression. Nothing in front of app.4lsg.com compresses (requests
+// hit Cloud Run's Google Frontend directly, and GFE passes bodies through
+// as-is), so without this every byte ships identity-encoded — index.html alone
+// is 267 KB where br gets it to ~75 KB. Mounted before everything that writes
+// a body so it wraps res for static AND API responses.
+//
+// Scope is deliberately EVERYTHING compressible, JSON APIs included. The
+// BREACH pattern needs ambient credentials (cookies) so an attacker can force
+// a victim's browser to replay authenticated requests with varied reflected
+// input; this app has no auth cookies at all (Bearer JWT / x-api-key headers
+// only — see lib/auth.jwtOrApiKey.js), so that precondition is absent and
+// excluding /api would just forfeit the biggest wins (list JSON compresses
+// ~95%).
+//
+// The defaults do the right thing for the exceptions:
+//   - content-type filter (mime-db "compressible") skips application/pdf,
+//     image/*, application/octet-stream — so the raw-document and form-PDF
+//     routes that set a manual Content-Length (routes/api.documents.js,
+//     routes/api.forms.js) pass through byte-identical, headers intact;
+//   - threshold: responses under 1 KB are left alone;
+//   - Cache-Control: no-transform is honored;
+//   - Accept-Encoding negotiation: br (quality 4) when offered, else gzip,
+//     else identity, with Vary: Accept-Encoding set.
+// No SSE / streaming responses exist in this app (verified 2026-09-16), so
+// the classic "compression buffers my EventSource" footgun does not apply.
+app.use(require("compression")());
+
 // Stamp EVERY response (API and static) with the build this instance is running,
 // plus the force-reload floor if one is set. The browser shell records the build
 // it booted on and shows an "update available" banner when the two diverge — or
