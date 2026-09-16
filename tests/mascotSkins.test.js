@@ -56,7 +56,7 @@ const STATES_NEEDING_CSS = states => states.filter(s => s !== 'leave');
 
 // The engine's non-idle action names (the idle ones come from each skin).
 const BASE_ACTION_NAMES = ['walk', 'idle', 'talk', 'jump', 'fly', 'climb', 'hang', 'fall',
-  'chase', 'weave', 'rappel', 'drift', 'blink', 'pursue', 'flip'];
+  'chase', 'weave', 'rappel', 'drift', 'blink', 'pursue', 'steal', 'flip'];
 
 /** A real window with the real engine evaluated in it.
  *  runScripts:'outside-only' is load-bearing: without it window.eval runs in
@@ -148,10 +148,10 @@ describe('mascot engine', () => {
 
   test('the picker offers the visible forms; hidden ones stay off it', async () => {
     const skins = (await bootWindow()).Mascot.skins();
-    expect(skins.map(s => s.id)).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo', 'snail', 'spider', 'bat']);
+    expect(skins.map(s => s.id)).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo', 'snail', 'spider', 'bat', 'goose']);
     expect(skins.map(s => s.id)).not.toContain('menorah');   // hidden: seasonal/console only
     // §2's honesty rule: exactly the obtrusive one carries the rowdy flag.
-    expect(skins.filter(s => s.rowdy).map(s => s.id)).toEqual(['spider']);
+    expect(skins.filter(s => s.rowdy).map(s => s.id)).toEqual(['spider', 'goose']);
   });
 
   test('a hidden form still loads, applies, and marks no picker card current', async () => {
@@ -194,6 +194,15 @@ describe('mascot engine', () => {
     expect(win.Mascot.register({ ...base, id: 'weave-no-roam', web: okWeb, can: [...CORE, 'weave'] })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'rappel-no-roam', can: [...CORE, 'rappel'] })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'full-roamer', roam: true, web: okWeb, can: [...CORE, 'weave', 'rappel'] })).toBe(true);
+    // …and the thief's kit: heists run on the roam machinery, and an empty
+    // kit would strand the prop half of every job. upright, likewise, is a
+    // roam variant — without roam there is nothing to vary.
+    expect(win.Mascot.register({ ...base, id: 'heist-no-roam', heist: { props: ['<svg/>'] } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'heist-bare-kit', roam: true, heist: { props: [] } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'heist-junk-kit', roam: true, heist: { props: ['<svg/>', 7] } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'ok-thief', roam: true, heist: { props: ['<svg/>'] } })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'upright-no-roam', upright: true })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'ok-upright', roam: true, upright: true })).toBe(true);
   });
 
   test('a roamer crawls the floor plan, weaves until broken, rappels until cut', async () => {
@@ -346,6 +355,23 @@ describe('mascot engine', () => {
     // pin the mechanism and its single wiring instead.
     expect(ENGINE_SRC).toContain('function focusRect');
     expect((ENGINE_SRC.match(/focusRect\(\)/g) || []).length).toBe(2);   // def + its one call in breakWebs
+  });
+
+  test('a stolen word is a copy, text only — the mechanism, pinned', () => {
+    // The word heist reads the page and builds its copy through textContent
+    // on BOTH sides, so markup can never ride along and the page is never
+    // written to. Element rects are what pick the target, and jsdom has
+    // none — so like the keyboard clause, the mechanism is pinned in source
+    // and browsers exercise it: the copy is born from textContent…
+    expect(ENGINE_SRC).toMatch(/span\.textContent = word/);
+    // …and the heist machinery never writes into a document other than its
+    // own loot elements: the only innerHTML between findWordTarget and
+    // dropLoot is the skin-authored prop svg and the carried→loot handoff.
+    const heistSrc = ENGINE_SRC.slice(
+      ENGINE_SRC.indexOf('function findWordTarget'),
+      ENGINE_SRC.indexOf('function dropLoot'));
+    expect((heistSrc.match(/innerHTML/g) || []).length).toBe(1);         // the prop svg
+    expect(heistSrc).toContain('el.innerHTML = svg');
   });
 
   test('a trailing form actually leaves the trail behind it', async () => {
@@ -525,6 +551,71 @@ describe('mascot engine', () => {
     }
   }, 20000);
 
+  test('a thief steals on command and the loot lands in the corner hoard', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      // Forms without the gear never even see the button: the steal action
+      // carries a `when`, so a cat's panel has no steal to apologise for.
+      win.Mascot.setSkin('casey');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+      expect(win.Mascot.list(true)).not.toContain('steal');
+      expect(win.Mascot.do('steal')).toBe(false);
+
+      // A fast test thief, so the two walk legs fit a test's patience.
+      // (jsdom has no element rects, so the word target always comes up
+      // empty and the prop path runs — deterministically, which suits.)
+      win.Mascot.register({
+        id: 'grabby', name: 'Grabby', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 420, HEIST_CHANCE: 0 },      // command-driven only
+        heist: { props: ['<svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" fill="#888"/></svg>'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('grabby');
+      expect(win.Mascot.out()).toBe(true);
+      expect(win.Mascot.list(true)).toContain('steal');
+      expect(win.Mascot.do('steal')).toBe('steal');
+
+      // Leg one: it walks to the spot and the loot appears in the beak —
+      // and, the upright contract, it walks WITHOUT rotating to its heading.
+      let t0 = Date.now();
+      let carrying = false, maxRot = 0;
+      const catEl = win.document.querySelector('.yc-cat');
+      const rotOf = () => Math.abs(win.Mascot.debug().cat.rot || 0);
+      while (Date.now() - t0 < 8000 && !carrying) {
+        maxRot = Math.max(maxRot, rotOf());
+        carrying = catEl.dataset.carry === '1';
+        if (!carrying) await new Promise(r => setTimeout(r, 100));
+      }
+      expect(carrying).toBe(true);
+      expect(win.document.querySelector('#yc-mascot .yc-carried')).toBeTruthy();
+
+      // Leg two: the hoard. The loot object lands by a bottom corner, the
+      // beak is empty again, and — the .yc-obj contract — it can't be clicked.
+      t0 = Date.now();
+      let loot = null;
+      while (Date.now() - t0 < 8000 && !loot) {
+        maxRot = Math.max(maxRot, rotOf());
+        loot = win.document.querySelector('#yc-mascot .yc-obj-loot');
+        if (!loot) await new Promise(r => setTimeout(r, 100));
+      }
+      expect(maxRot).toBeLessThan(1);
+      expect(loot).toBeTruthy();
+      const lm = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(loot.style.transform);
+      const lx = Number(lm[1]), ly = Number(lm[2]);
+      const nearLeft = Math.abs(lx - 34) < 60;
+      const nearRight = Math.abs(lx - (win.innerWidth - 34)) < 60;
+      expect(nearLeft || nearRight).toBe(true);
+      expect(Math.abs(ly - (win.innerHeight - 26))).toBeLessThan(45);
+      expect(catEl.hasAttribute('data-carry')).toBe(false);
+      expect(win.document.querySelector('#yc-mascot .yc-carried')).toBe(null);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 25000);
+
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
     // inside the primitives, which roll Math.random and cannot be driven from
@@ -542,6 +633,9 @@ describe('mascot engine', () => {
     expect(count(/allowed\('rappel'\)/g)).toBe(1);  // toIdle roll
     expect(count(/allowed\('pursue'\)/g)).toBe(1);  // toIdle roll
     expect(count(/allowed\('perch'\)/g)).toBe(1);   // the catch, inside pursue
+    // the heist gates on the GEAR rather than a state, so its ambient entry
+    // is pinned the same way by its one chance roll
+    expect(count(/Math\.random\(\) < CFG\.HEIST_CHANCE/g)).toBe(1);   // toIdle roll
   });
 });
 
@@ -593,7 +687,7 @@ describe('every registered skin honours the contract', () => {
   });
 
   test('all shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['bat', 'casey', 'casey95', 'ghost', 'menorah', 'roomba', 'snail', 'spider', 'ufo']);
+    expect(Object.keys(defs).sort()).toEqual(['bat', 'casey', 'casey95', 'ghost', 'goose', 'menorah', 'roomba', 'snail', 'spider', 'ufo']);
   });
 
   for (const f of SKIN_FILES) {

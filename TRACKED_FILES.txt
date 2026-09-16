@@ -283,6 +283,7 @@ public/js/mascot/skins/bat.js
 public/js/mascot/skins/casey.js
 public/js/mascot/skins/casey95.js
 public/js/mascot/skins/ghost.js
+public/js/mascot/skins/goose.js
 public/js/mascot/skins/menorah.js
 public/js/mascot/skins/roomba.js
 public/js/mascot/skins/snail.js

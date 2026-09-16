@@ -69,6 +69,26 @@
  *                               // in place and ROTATES to its heading —
  *                               // design the art facing +x. Required by the
  *                               // rappel and weave states.
+ *     upright: true,            // roam variant: SIDE-PROFILE roaming (the
+ *                               // desktop-goose stance). The sprite never
+ *                               // rotates to heading — it stays upright and
+ *                               // FLIPS to face its travel — and a throw
+ *                               // slides to a stop without the tumble spin.
+ *                               // Design the art facing +x. Needs roam.
+ *     heist: { props: ['<svg…>', …] },
+ *                               // the thief's kit: with this, the form runs
+ *                               // HEISTS (HEIST_CHANCE per settle-down, or
+ *                               // the 'steal' command): it walks to a spot,
+ *                               // takes something — one of these prop svgs,
+ *                               // or a visual COPY of a word off the page
+ *                               // (copy only, text only: built through
+ *                               // textContent, so markup can never ride
+ *                               // along and the page is never touched) —
+ *                               // carries it in the beak (data-carry="1" on
+ *                               // the pet while it does) and stashes it in
+ *                               // its corner hoard as a 'loot' world object
+ *                               // (engine-capped, engine-faded, never
+ *                               // clickable like every .yc-obj). Needs roam.
  *     web: { ringS: 3.2,        // s per ring while weaving
  *            stages: 12,        // ring cap — growth stops, the tending never
  *                               // does: it builds until somebody breaks it
@@ -326,7 +346,11 @@
     // from the pointer as though it were a branch, until it moves away) or,
     // for skins without perch, a told-you-so on the spot.
     PURSUE: 240,           // px/s of pursuit
-    PURSUE_CHANCE: 0       // per settle-down, when the cursor is fresh
+    PURSUE_CHANCE: 0,      // per settle-down, when the cursor is fresh
+
+    // THE THIEF SET — for skins with `heist` gear. Off by default.
+    HEIST_CHANCE: 0        // per settle-down: walk somewhere, take something,
+                           // stash it in the corner hoard
   };
 
   // Storage and loading are engine constants, not tunables — a skin must not be
@@ -360,6 +384,7 @@
     // opt-in, honestly labelled, and easy to kill, per §2.
     { id: 'spider', name: 'Spider', blurb: 'A spider. Roams the whole page, rappels down silk, and builds a web until you break it. Rowdy.', rowdy: true },
     { id: 'bat', name: 'Bat', blurb: 'A bat. Hunts your cursor across the whole screen, catches it, and hangs from it like a branch.' },
+    { id: 'goose', name: 'Goose', blurb: 'A goose. Tracks mud, chases your cursor to honk at it, and steals things for its corner hoard. Rowdy.', rowdy: true },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -733,9 +758,10 @@
     stateUntil = clock + rand(2.4, 7);
     nextHop = clock + rand(CFG.HOP_EVERY[0], CFG.HOP_EVERY[1]);
     if (skin && skin.roam) {
-      // on a mission (a plotted next web), the walk goes THERE; otherwise
-      // wherever the whim says
-      if (plannedWeave) { roam.tx = plannedWeave.x; roam.ty = plannedWeave.y; }
+      // on a mission (a heist leg, a plotted next web), the walk goes THERE;
+      // otherwise wherever the whim says
+      if (heist) { roam.tx = heist.x; roam.ty = heist.y; }
+      else if (plannedWeave) { roam.tx = plannedWeave.x; roam.ty = plannedWeave.y; }
       else pickRoamTarget();
       roam.moveUntil = 0; roam.pauseUntil = 0;
     }
@@ -765,19 +791,38 @@
   }
 
   function roamWalk(dt) {
+    var mission = !!(plannedWeave || heist);
     if (clock < roam.pauseUntil) {
-      if (clock >= stateUntil && !plannedWeave) toIdle();
+      if (clock >= stateUntil && !mission) toIdle();
       return;
     }
     if (clock >= roam.moveUntil) {
       if (Math.random() < 0.45) roam.pauseUntil = clock + rand(0.15, 0.8);
       roam.moveUntil = clock + rand(0.35, 1.1);
       // whim retargets only when there is no mission
-      if (!plannedWeave && Math.random() < 0.25) pickRoamTarget();
+      if (!mission && Math.random() < 0.25) pickRoamTarget();
     }
     var dx = roam.tx - px, dy = roam.ty - py;
     var d = Math.sqrt(dx * dx + dy * dy);
     if (d < 10) {
+      if (heist) {
+        if (heist.phase === 'to') {
+          // the grab: whatever it came for is in the beak now, and the only
+          // remaining business in the world is the corner
+          grabLoot(heist.make);
+          var s = stashPoint();
+          heist = { phase: 'back', x: s.x, y: s.y };
+          roam.tx = s.x; roam.ty = s.y;
+          roam.pauseUntil = clock + 0.5;             // a beat of gloating
+          return;
+        }
+        // the stash: the loot joins the hoard, and it admires its work
+        heist = null;
+        dropLoot();
+        setState('idle', attn());
+        stateUntil = clock + rand(1.2, 2.4);
+        return;
+      }
       if (plannedWeave) {
         // arrived at the plot: break ground on the next web straight away
         plannedWeave = null;
@@ -789,10 +834,10 @@
     }
     px = clamp(px + dx / d * CFG.WALK * dt, bounds.left + 10, bounds.right - 10);
     py = clamp(py + dy / d * CFG.WALK * dt, bounds.top + 12, bounds.bottom - 6);
-    rot = Math.atan2(dy, dx) * 180 / Math.PI;
-    face = 1;
+    if (skin.upright) { rot = 0; aim(dx, 0); }       // the waddle keeps its feet
+    else { rot = Math.atan2(dy, dx) * 180 / Math.PI; face = 1; }
     if (clock >= stateUntil) {
-      if (plannedWeave) stateUntil = clock + 2;      // missions don't dawdle
+      if (mission) stateUntil = clock + 2;           // missions don't dawdle
       else toIdle();
     }
   }
@@ -809,6 +854,7 @@
     if (allowed('weave') && Math.random() < CFG.WEAVE_CHANCE && startWeave()) return;
     if (allowed('rappel') && Math.random() < CFG.RAPPEL_CHANCE && toRappel()) return;
     if (allowed('pursue') && clock - mouse.t < 5 && Math.random() < CFG.PURSUE_CHANCE && toPursue()) return;
+    if (skin.heist && Math.random() < CFG.HEIST_CHANCE && startHeist()) return;
     setState('idle', pick(skin.acts));
     var o = actOpt(act);
     if (o.face) face = o.face;
@@ -1139,7 +1185,9 @@
         py = clamp(py + vy * dt, bounds.top + 10, bounds.bottom - 4);
         var fr = Math.pow(0.06, dt);
         vx *= fr; vy *= fr;
-        rot += 520 * dt * (vx >= 0 ? 1 : -1);
+        // upright roamers keep their feet: the skid without the spin (the
+        // skin's fall pose supplies the flailing)
+        if (!skin.upright) rot += 520 * dt * (vx >= 0 ? 1 : -1);
         if (vx * vx + vy * vy < 400) {
           vx = 0; vy = 0;
           setState('land');
@@ -1374,6 +1422,13 @@
       // side view anchors at the FEET; top view at the CENTRE, because a
       // rotating disc pivots about itself
       ' translate(' + (-CFG.W / 2) + 'px,' + (skin && skin.roam ? -CFG.H / 2 : -CFG.H) + 'px)';
+
+    // the loot rides the beak: just ahead of the face, a little above centre
+    if (carried) {
+      carried.style.transform =
+        'translate3d(' + (px + face * (CFG.W / 2 + 4)).toFixed(1) + 'px,' +
+        (py - CFG.H * 0.22).toFixed(1) + 'px,0) translate(-50%,-50%)';
+    }
 
     if (say) {
       var bw = say.offsetWidth || 200, bh = say.offsetHeight || 34;
@@ -1654,6 +1709,114 @@
     weaving = null;
     plannedWeave = null;
     if (rappel) { rappel.el.remove(); rappel = null; }
+    // a grabbed (or leaving, or stopped) thief drops the goods on the spot
+    heist = null;
+    dropLoot();
+  }
+
+  // ── The heist ────────────────────────────────────────────────────────────────
+  // For skins with `heist` gear: a two-leg walk mission on the roam machinery
+  // (the same no-dawdling wiring as a plotted web). Leg one goes to a spot and
+  // takes something — a prop from the skin's kit, or a visual COPY of a word
+  // off the page; leg two carries it to the corner and adds it to the hoard.
+  // The page itself is never touched: a stolen word is a copy, built through
+  // textContent on both sides so markup can never ride along, and the loot is
+  // a world object with every .yc-obj promise (no pointer events, a cap, a
+  // fade clock — though a long one: a hoard is the point).
+  var heist = null;        // { phase: 'to'|'back', x, y, make? }
+  var carried = null;      // the element in the beak right now
+  var stashSide = 1;       // -1 left corner, +1 right; chosen once per outing
+
+  function stashPoint() {
+    return {
+      x: stashSide < 0 ? bounds.left + 34 : bounds.right - 34,
+      y: bounds.bottom - 26
+    };
+  }
+
+  // A word worth taking: the open page's headings, labels and buttons first
+  // (that is where the good words are), the shell's own as the fallback.
+  // Only ever READ — the copy is what gets stolen.
+  function findWordTarget() {
+    function hunt(doc, ox, oy) {
+      try {
+        var els = doc.querySelectorAll('h1,h2,h3,th,label,button');
+        var picks = [];
+        for (var i = 0; i < els.length && picks.length < 40; i++) {
+          var el = els[i];
+          if (!el.getClientRects().length) continue;
+          var word = (el.textContent || '').trim().split(/\s+/)[0] || '';
+          if (word.length < 3 || word.length > 14) continue;
+          var r = el.getBoundingClientRect();
+          var x = ox + r.left + Math.min(30, r.width / 2);
+          var y = oy + r.top + r.height / 2;
+          if (x < bounds.left + 12 || x > bounds.right - 12 ||
+            y < bounds.top + 14 || y > bounds.bottom - 8) continue;
+          picks.push({ x: x, y: y, word: word });
+        }
+        return picks.length ? picks[Math.floor(Math.random() * picks.length)] : null;
+      } catch (e) { return null; }
+    }
+    var got = null, f = contentFrame();
+    if (f) {
+      try {
+        var fb = f.getBoundingClientRect();
+        if (f.contentDocument) got = hunt(f.contentDocument, fb.left, fb.top);
+      } catch (e) { }
+    }
+    if (!got) got = hunt(document, 0, 0);
+    if (!got) return null;
+    var word = got.word;
+    return {
+      x: got.x, y: got.y,
+      make: function () {
+        var span = document.createElement('span');
+        span.className = 'yc-word';
+        span.textContent = word;      // TEXT ONLY — this is the safety, whole
+        return span;
+      }
+    };
+  }
+
+  function startHeist() {
+    if (!skin.heist || heist || carried) return false;
+    var t = Math.random() < 0.5 ? findWordTarget() : null;
+    if (!t) {
+      var props = skin.heist.props;
+      var svg = props[Math.floor(Math.random() * props.length)];
+      t = {
+        // props are simply "lying around": an unremarkable spot becomes, on
+        // arrival, the place this envelope always was
+        x: rand(bounds.left + 40, bounds.right - 40),
+        y: rand(bounds.top + 40, bounds.bottom - 40),
+        make: function () {
+          var el = document.createElement('span');
+          el.innerHTML = svg;           // skin-authored, like a trail's art
+          return el;
+        }
+      };
+    }
+    heist = { phase: 'to', x: t.x, y: t.y, make: t.make };
+    toWalk();
+    return true;
+  }
+
+  function grabLoot(make) {
+    carried = document.createElement('div');
+    carried.className = 'yc-obj yc-carried';
+    carried.appendChild(make());
+    root.appendChild(carried);
+    cat.dataset.carry = '1';
+  }
+
+  // The loot lands wherever the carrier stands — normally the hoard, but
+  // clearPranks drops it mid-heist too (a grabbed thief drops the goods).
+  function dropLoot() {
+    if (!carried) return;
+    dropObj('loot', px + rand(-14, 14), py + rand(-12, 4), carried.innerHTML, 600, 14);
+    carried.remove();
+    carried = null;
+    if (cat) cat.removeAttribute('data-carry');
   }
 
   // ── Pursuit ──────────────────────────────────────────────────────────────────
@@ -1826,6 +1989,11 @@
       '.yc-obj,.yc-obj *,.yc-thread{pointer-events:none!important}',
       '.yc-obj{position:absolute;left:0;top:0;z-index:1;will-change:opacity}',
       '.yc-obj svg{display:block;overflow:visible}',
+      // a stolen word: engine-styled so every thief's word-loot reads the
+      // same — a little paper scrap of a thing
+      '.yc-word{display:inline-block;font:600 12px/1.35 system-ui,"Segoe UI",sans-serif;',
+      'color:#3A3F4A;background:rgba(255,253,246,.92);padding:0 4px;border-radius:3px;',
+      'box-shadow:0 1px 2px rgba(0,0,0,.22);white-space:nowrap}',
       // the rappel line: engine-owned, engine-styled, cut by the pointer
       '.yc-thread{position:absolute;left:0;top:0;z-index:1;width:2px;margin-left:-1px;',
       'background:linear-gradient(rgba(185,194,207,.9),rgba(185,194,207,.45));',
@@ -1878,7 +2046,10 @@
       // floor plan, mid-scurry, as though it was always there
       px = rand(bounds.left + 30, bounds.right - 30);
       py = rand(bounds.top + 30, bounds.bottom - 30);
-      rot = rand(0, 360); face = 1; vx = 0; vy = 0;
+      if (skin.upright) { rot = 0; face = Math.random() < 0.5 ? -1 : 1; }
+      else { rot = rand(0, 360); face = 1; }
+      vx = 0; vy = 0;
+      stashSide = Math.random() < 0.5 ? -1 : 1;      // the hoard corner, chosen once per outing
       setState('land');
       stateUntil = clock + 0.22;
     } else {
@@ -1948,6 +2119,16 @@
       ok = wb.ringS > 0 && wb.stages > 0 && wb.life > 0 && wb.max > 0 &&
         wb.breakR0 > 0 && wb.breakDr >= 0 && typeof wb.svg === 'function';
     }
+    // The thief's kit: heists run on the roam machinery, and an empty kit
+    // would strand the prop half of every job.
+    if (ok && def.heist) {
+      ok = !!def.roam && !!def.heist.props && def.heist.props.length > 0;
+      for (var hp = 0; ok && hp < def.heist.props.length; hp++) {
+        ok = typeof def.heist.props[hp] === 'string';
+      }
+    }
+    // upright is a roam variant — without roam there is nothing to vary.
+    if (ok && def.upright && !def.roam) ok = false;
     if (!ok) {
       console.warn('[Mascot] register() refused a malformed skin', def && def.id);
       return false;
@@ -2310,6 +2491,13 @@
       run: function () { if (!toPursue()) return 'move the mouse first — it has not seen the cursor yet'; }
     },
     {
+      // `when` rather than a gate: stealing is not a state, it is a walk with
+      // intent, so what decides is the heist gear rather than the can mask.
+      name: 'steal', needs: 'any', when: function () { return !!(skin && skin.heist); },
+      what: 'nick something — a word, a prop — and add it to the hoard',
+      run: function () { if (!startHeist()) return 'already on a job'; }
+    },
+    {
       name: 'drift', needs: 'any', gate: 'drift', what: 'lift off and wander — gravity is a suggestion',
       run: function () { toDrift(); }
     },
@@ -2373,6 +2561,7 @@
     var out = [];
     for (var i = 0; i < ACTIONS.length; i++) {
       if (ACTIONS[i].gate && !allowed(ACTIONS[i].gate)) continue;
+      if (ACTIONS[i].when && !ACTIONS[i].when()) continue;
       out.push(ACTIONS[i]);
     }
     return out;
@@ -2389,7 +2578,7 @@
     }
     var a = findAction(name);
     if (!a) { console.warn('[Mascot] no action "' + name + '" — try Mascot.list()'); return false; }
-    if (a.gate && !allowed(a.gate)) {
+    if ((a.gate && !allowed(a.gate)) || (a.when && !a.when())) {
       console.warn('[Mascot] ' + a.name + ' is not in this form\'s repertoire');
       return false;
     }
