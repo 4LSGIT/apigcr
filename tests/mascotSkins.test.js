@@ -34,6 +34,50 @@
 //      gates (asserted against the source, since the ambient paths are
 //      Math.random-driven).
 //
+// FAST FORWARD — why the behavioural tests open with Mascot.speed(8).
+//
+// The engine animates on real requestAnimationFrame, so a test that waits for
+// a heist or a fetch to finish waits in WALL CLOCK. Twenty tests did, and they
+// were the whole suite: 20 of 132 tests accounted for 74.6s of 75.2s, which
+// made this file the critical path of `npm test` for the entire repo — the
+// other 232 suites finished in about 26s and then queued behind this one.
+//
+// Mascot.speed(n) is the engine's own workbench control (capped at 8, running
+// up to 8 sub-steps per frame — real fast-forward, not a coarser timestep, so
+// the physics is unchanged). Turning it on after Mascot.on() costs nothing and
+// cuts the file to ~20s.
+//
+// Two tests own their speed and must NOT be fast-forwarded — they are the ones
+// testing speed() itself. Two others run at 4 rather than 8 and are NOT
+// considered numbers, they are known loose ends:
+//   · the fetcher (~line 1099) — at 8 it burns its timeout waiting for
+//     data-carry, undiagnosed past that;
+//   · the tiler/weave test (~line 366) — at 8 its web-spacing window [12,40]
+//     goes over the top (seen at 45.7). That window is tuned to a plotted
+//     spacing of 1.7R and had already been re-tuned once for its LOWER bound;
+//     whether R itself moves with the clock was not chased down.
+// Both deserve a proper look from whoever owns the arc. Lowering the speed
+// bought stability at the cost of about a second, which was the right trade
+// here and is NOT a precedent for the next one.
+//
+// Fast-forward does not create flakes, but it EXPOSES them: it packs world
+// objects closer together and covers eight times the ground between polls, so
+// any test that sleeps a fixed time and hopes, or that asserts a boundary the
+// engine only usually honours, starts failing. Four assertions across two
+// tests did, and all four were fixed at the cause rather than by slowing back
+// down — each carries its own note:
+//   · weave's precondition — slept 400ms and hoped it had landed; now retries
+//     until the action takes.
+//   · the mud patch radius — asserted the engine's full 70 when only 70-26=44
+//     is guaranteed; now 40.
+//   · the mud scatter — asserted min(gaps) < 10, a coin flip; now max(gaps) >
+//     30, which the unscattered case cannot reach.
+//   · the mud press anchor — pressed mud[0], sometimes out on its own; now the
+//     densest neighbourhood.
+// Every one of those was a test that had been passing on luck, not a
+// regression. If a test here starts flaking, look for that shape FIRST;
+// lowering the speed hides the bug rather than answering it.
+//
 // Run:
 //   npx jest tests/mascotSkins.test.js
 
@@ -246,6 +290,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('roamy');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
 
       // 1. it MOVES with no ledges consulted — top view, the page is the floor.
@@ -362,6 +407,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('tiler');
       win.Mascot.on();
+      win.Mascot.speed(4);           // 4, not 8 — see the note at the top of this file
 
       // Put it in open floor first. The next web is PLOTTED at 1.7x the last
       // one's radius and then clamped inside the bounds, so a first web that
@@ -377,9 +423,18 @@ describe('mascot engine', () => {
       await new Promise(r => setTimeout(r, 60));
       catEl.dispatchEvent(new win.MouseEvent('pointermove', { clientX: midX, clientY: midY, bubbles: true }));
       catEl.dispatchEvent(new win.MouseEvent('pointerup', { clientX: midX, clientY: midY, bubbles: true }));
-      await new Promise(r => setTimeout(r, 400));
-
-      expect(win.Mascot.do('weave')).toBe('weave');
+      // Ask until it can answer, rather than sleeping and hoping. `weave`
+      // needs it standing on something, and a set-down leaves it falling; at
+      // fast-forward it covers eight times the ground between polls, so a
+      // fixed wait lands on a ledge or in mid-air by luck. A refusal is a
+      // no-op, so retrying costs nothing.
+      let wove = false;
+      const tReady = Date.now();
+      while (Date.now() - tReady < 6000 && !wove) {
+        wove = win.Mascot.do('weave') === 'weave';
+        if (!wove) await new Promise(r => setTimeout(r, 40));
+      }
+      expect(wove).toBe(true);
       // The web finishes in ~0.6s; the tiler then leaves it standing, walks
       // to a plot at slight overlap, and breaks ground on the next.
       let t0 = Date.now();
@@ -476,6 +531,7 @@ describe('mascot engine', () => {
     try {
       win.Mascot.setSkin('snail');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
       const t0 = Date.now();
       let seen = null;
@@ -510,6 +566,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('sneak');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       const t0 = Date.now();
       let rect = null;
       while (Date.now() - t0 < 9000 && !rect) {
@@ -604,6 +661,7 @@ describe('mascot engine', () => {
     try {
       win.Mascot.setSkin('bat');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
 
       // Before any pointer has been seen there is nothing to hunt — the
@@ -651,6 +709,7 @@ describe('mascot engine', () => {
       // carries a `when`, so a cat's panel has no steal to apologise for.
       win.Mascot.setSkin('casey');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
       expect(win.Mascot.list(true)).not.toContain('steal');
       expect(win.Mascot.do('steal')).toBe(false);
@@ -732,6 +791,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('magpie');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
 
       // Pin the roll ONLY across target selection (r < 0.45 → icon first);
@@ -817,6 +877,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('magpie2');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       const realRandom = win.Math.random;
       win.Math.random = () => 0.1;
       expect(win.Mascot.do('steal')).toBe('steal');
@@ -960,6 +1021,7 @@ describe('mascot engine', () => {
       };
       win.Mascot.setSkin('moth');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
 
       // Nothing lit at all yet: no focused field, and nothing with a
@@ -1046,6 +1108,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('retriever0');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.do('steal')).toBe('steal');      // no pointermove, ever
 
       let t0 = Date.now(), ball = null;
@@ -1077,6 +1140,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('retriever');
       win.Mascot.on();
+      win.Mascot.speed(4);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
 
       // Tell it where the cursor is, then send it.
@@ -1129,6 +1193,7 @@ describe('mascot engine', () => {
     try {
       win.Mascot.setSkin('poltergeist');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
       expect(win.Mascot.list(true)).toContain('scrawl');
 
@@ -1195,6 +1260,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('thrower');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 300, clientY: 300 }));
       expect(win.Mascot.do('steal')).toBe('steal');
 
@@ -1264,6 +1330,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('rclick');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 260, clientY: 240 }));
       expect(win.Mascot.do('steal')).toBe('steal');
 
@@ -1304,6 +1371,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('chaser');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 160, clientY: 200 }));
       expect(win.Mascot.do('steal')).toBe('steal');
 
@@ -1454,6 +1522,7 @@ describe('mascot engine', () => {
 
       win.Mascot.setSkin('poltergeist');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
 
       // ── it does not tidy up after itself ──────────────────────────────
       expect(win.Mascot.do('scrawl')).toBe('scrawl');
@@ -1517,14 +1586,18 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('mudlark');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
 
       // Real frames: it falls in, lands, and starts walking mud about.
       const prints = () => Array.from(win.document.querySelectorAll('#yc-mascot .yc-obj-trail'));
       const t0 = Date.now();
-      while (Date.now() - t0 < 14000 && prints().length < 10) await new Promise(r => setTimeout(r, 100));
+      // 30, not 10: the scatter assertion below reads the SPREAD of the gaps,
+      // and a spread wants a sample. Still well under the trail's cap of 90,
+      // so nothing is evicted out from under the press.
+      while (Date.now() - t0 < 14000 && prints().length < 30) await new Promise(r => setTimeout(r, 100));
       const mud = prints();
-      expect(mud.length).toBeGreaterThanOrEqual(10);
+      expect(mud.length).toBeGreaterThanOrEqual(30);
 
       // life 0 → no fade to sit through and no removal clock. (Asserted on the
       // elements, as the scrawl is: "still here after N seconds" is a slower
@@ -1538,23 +1611,56 @@ describe('mascot engine', () => {
         const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(el.style.transform);
         return { x: Number(m[1]), y: Number(m[2]) };
       };
-      // SCATTER. The spacing rule alone can only ever put prints `every` or
-      // more apart — it drops one the moment the pet has walked that far. So
-      // a gap SHORTER than `every` can only have come from the jitter, and
-      // without the jitter this line is what fails. (It is also the proof
-      // that the drawn position and the undo position are the same position:
-      // every assertion below presses where a print was actually drawn.)
-      const at = posOf(mud[0]);
+      // SCATTER — asserted as an upper bound the unscattered case CANNOT
+      // reach, not as a short gap it merely usually beats.
+      //
+      // Unjittered, a gap is bounded: the drop fires the moment the pet is
+      // `every` (10) from the last one, having moved at most one dt-capped
+      // step first (engine clamps dt to 0.05, so WALK 200 → 10px). Ten plus
+      // ten is 20, full stop. A gap past 30 can therefore only have come from
+      // the jitter, whatever the frame timing did.
+      //
+      // The old form asserted min(gaps) < 10 — "some pair landed closer than
+      // the spacing rule allows". True on average and false often enough to
+      // matter: jitter is rand(-18,18) PER AXIS on each print independently,
+      // so a gap is a 10px step plus a ~20px random vector, which usually
+      // LENGTHENS it. Every gap clearing 10 is an ordinary roll of the dice,
+      // and it came up on a clean tree. This direction cannot do that.
       const gaps = mud.slice(1).map((p, i) => {
         const a = posOf(mud[i]), b = posOf(p);
         return Math.hypot(b.x - a.x, b.y - a.y);
       });
-      expect(Math.min(...gaps)).toBeLessThan(10);
+      expect(Math.max(...gaps)).toBeGreaterThan(30);
 
-      const near = mud.filter(p => {
+      // 40, not the engine's own 70. The press does not centre the patch on
+      // the print you aimed at: it centres it on whichever print it FINDS
+      // under the cursor (hit radius 26, see the trail's dropObj), and then
+      // clears everything within 70 of THAT one. So the anchor can sit up to
+      // 26px off, and only prints within 70-26 = 44 of the press are wiped no
+      // matter which one answered. Asserting the full 70 asserts something
+      // merely usually true — it held at real time because the prints were
+      // sparse enough that `at` always answered for itself, and it started
+      // failing one run in three the moment fast-forward packed them in.
+      // 40 leaves margin for that and for posOf reading a ROUNDED transform
+      // against the engine's exact stored centre.
+      // Press the BUSIEST print, not the first one. mud[0] is wherever the pet
+      // happened to lay its first print, which the jitter sometimes leaves out
+      // on its own — and with the radius down at 40 that turned "a streak is
+      // several prints" into a coin flip of its own (it came up 2 under full
+      // -file load). The densest neighbourhood is deterministic given the
+      // prints on screen, and it is the honest place to test a patch wipe.
+      // The 44px guarantee survives the move: the anchor the engine picks is
+      // within 26 of the press, so a print within 40 of the press is at most
+      // 66 from that anchor, still inside its 70.
+      let at = null, near = [];
+      for (const p of mud) {
         const q = posOf(p);
-        return (q.x - at.x) * (q.x - at.x) + (q.y - at.y) * (q.y - at.y) <= 70 * 70;
-      });
+        const group = mud.filter(o => {
+          const s = posOf(o);
+          return (s.x - q.x) * (s.x - q.x) + (s.y - q.y) * (s.y - q.y) <= 40 * 40;
+        });
+        if (group.length > near.length) { at = q; near = group; }
+      }
       // Prints land ten pixels apart, so a streak is several of them — and an
       // undo worth having takes the streak, not one smear at a time.
       expect(near.length).toBeGreaterThanOrEqual(3);
@@ -1595,6 +1701,7 @@ describe('mascot engine', () => {
       });
       win.Mascot.setSkin('magpie');
       win.Mascot.on();
+      win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
       expect(win.Mascot.out()).toBe(true);
 
       const hoard = () => Array.from(win.document.querySelectorAll('#yc-mascot .yc-obj-loot'));
