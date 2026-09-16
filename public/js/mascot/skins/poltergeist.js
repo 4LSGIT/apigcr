@@ -32,7 +32,7 @@
   window.Mascot.register({
     id: 'poltergeist',
     name: 'Poltergeist',
-    blurb: 'Scrawls on your screen and knocks things crooked. Press them to undo.',
+    blurb: 'Scrawls on your screen and knocks things crooked, and never stops. Right-click to undo.',
 
     geom: { W: 32, H: 38, FLY_HEAD: 38 },
 
@@ -54,8 +54,12 @@
     // heading is the point. They are still transforms, so everything stays
     // clickable exactly where it looks, and a press puts it right.
     haunt: {
-      max: 5,
-      life: 12,
+      // NOTHING IT DOES EXPIRES. Left alone it keeps going until the screen
+      // is a wreck; the ceiling only decides how big a wreck, because at the
+      // cap the oldest thing straightens up to make room for the next. The
+      // way out is a right-click, which is always there and never misfires.
+      max: 14,
+      life: 0,
       sel: 'button,.card,.big-button,tr,th,h1,h2,h3,img,.panel,.tile,label',
       poses: [
         'rotate(-8deg)',
@@ -72,8 +76,8 @@
 
     // The loud one. Short, legible, and plainly the pet rather than the app.
     graffiti: {
-      max: 3,
-      life: 150,             // it is meant to be lived with, not glimpsed
+      max: 9,
+      life: 0,               // stays until it is rubbed out
       texts: [
         'BOO', 'MINE NOW', 'OBJECTION', 'WONKY', 'I WAS HERE',
         'ADJOURNED', 'TILT', 'NICE DESK', 'SO DUSTY', 'RUDE'
@@ -127,14 +131,17 @@
     words: {
       idle: 'settle', drift: 'seep about', blink: 'flicker',
       haunt: 'knock something crooked', scrawl: 'write on my screen',
+      // (both undone by a right-click on the thing itself)
       cackle: 'cackle', loom: 'loom', stare: 'stare', juggle: 'juggle'
     },
 
     // ── The sprite ─────────────────────────────────────────────────────────────
-    // 32×38, facing +x. A JESTER, not a bedsheet: the cap is the whole
-    // difference at portrait size, so it is the most saturated thing here and
-    // it flops about. Two stubby arms, because a poltergeist gestures at what
-    // it has just ruined, and a hem that is properly torn.
+    // 32×38, facing +x. A JESTER, not a bedsheet, told by two things: the
+    // CAP (the most saturated thing in the file, because colour is what
+    // separates it from the ghost at portrait size) and the TAIL — it tapers
+    // to a hooked curl like something poured out of a bottle, where a ghost
+    // ends in a wavy flat hem. Two stubby arms, because a poltergeist
+    // gestures at what it has just ruined.
     svg:
       '<svg class="pg-svg" viewBox="0 0 32 38" width="32" height="38" aria-hidden="true" focusable="false">' +
       '<defs>' +
@@ -146,16 +153,32 @@
       '</defs>' +
       '<g class="pg-all">' +
 
-      // ── the sheet, with a torn hem ───────────────────────────────────────
+      // ── the body: a GENIE TAIL, not a hem ────────────────────────────────
+      // This is the silhouette difference. A ghost ends in a wavy flat hem
+      // and reads as a sheet with something under it; this narrows from the
+      // shoulders into a single tapering tail that hooks round on itself,
+      // like something being poured out of a bottle. Nothing about it touches
+      // the floor, which is the other half of the impression.
       '<g class="pg-veil">' +
-      '<path class="pg-body" d="M16 10 C22.6 10 26 15 26 21 C26 25 27.4 28.4 26.4 32' +
-      ' C25.6 35 23.4 32.2 21.6 34.4 C19.8 36.6 17 37 15.2 35 C13.4 33 11.2 36 9.6 33.2' +
-      ' C8 30.4 9.4 26 9.4 21 C9.4 15 9.4 10 16 10 Z"' +
+      '<path class="pg-body" d="M16 9.6' +
+      ' C22.6 9.6 26.3 14.5 26.2 20.8' +           /* right shoulder, down */
+      ' C26.1 24.6 25.2 27.6 23.4 30.2' +          /* right flank drawing in */
+      ' C21.8 32.5 20 34.4 18.2 35.8' +            /* the taper */
+      ' C16.6 37.1 14.8 37.9 13.3 37.4' +          /* out to the tip */
+      ' C11.8 36.9 11.3 35.2 12.3 34.1' +          /* the hook turns under */
+      ' C13.2 33.1 14.8 33.3 15.3 34.4' +          /* …and curls back up */
+      ' C15.6 35.1 15.3 35.8 14.7 36' +            /* the little inner return */
+      ' C15.9 35.4 17 34.2 17.6 32.6' +            /* inside edge, climbing */
+      ' C15.6 32.2 13.2 30.6 11.7 28.2' +
+      ' C10.3 26 9.7 23.4 9.8 20.8' +
+      ' C9.9 14.5 9.4 9.6 16 9.6 Z"' +
       ' fill="url(#pgBody)" stroke="#456E9B" stroke-width=".7" stroke-linejoin="round"/>' +
       // the two little arms
-      '<path class="pg-armL" d="M9.8 20.6 C6.6 20 4.8 21.6 4.2 24" fill="none"' +
+      // kept a stroke-width clear of the viewBox edges: an svg clips at its
+      // own box by default, and at 3.2 wide a tip at x=31.2 loses its cap
+      '<path class="pg-armL" d="M10 20.4 C7 19.9 5.4 21.4 4.9 23.4" fill="none"' +
       ' stroke="#9FBEE4" stroke-width="3.2" stroke-linecap="round"/>' +
-      '<path class="pg-armR" d="M25.6 20.6 C28.8 20 30.6 21.6 31.2 24" fill="none"' +
+      '<path class="pg-armR" d="M25.4 20.4 C28.4 19.9 30 21.4 30.5 23.4" fill="none"' +
       ' stroke="#9FBEE4" stroke-width="3.2" stroke-linecap="round"/>' +
       '</g>' +
 
@@ -207,7 +230,7 @@
       '.pg-face{transform-origin:16px 21px;transition:transform .25s ease}',
       '.pg-cap{transform-origin:16px 11px;transition:transform .25s ease}',
       '.pg-hornL{transform-origin:13.6px 9.6px}.pg-hornR{transform-origin:18.4px 9.6px}',
-      '.pg-armL{transform-origin:9.8px 20.6px}.pg-armR{transform-origin:25.6px 20.6px}',
+      '.pg-armL{transform-origin:10px 20.4px}.pg-armR{transform-origin:25.4px 20.4px}',
       '.pg-armL,.pg-armR{transition:transform .2s ease}',
 
       /* the bells never quite settle */

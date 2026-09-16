@@ -439,7 +439,7 @@
     { id: 'spider', name: 'Spider', blurb: 'Roams the page, rappels down silk, webs over anything until you break it.', rowdy: true },
     { id: 'bat', name: 'Bat', blurb: 'Hunts your cursor anywhere on screen, then hangs from it like a branch.' },
     { id: 'goose', name: 'Goose', blurb: 'Tracks mud, honks, and pockets bits of your page. Click her loot to undo.', rowdy: true },
-    { id: 'poltergeist', name: 'Poltergeist', blurb: 'Scrawls on your screen and knocks things crooked. Press them to undo.', rowdy: true },
+    { id: 'poltergeist', name: 'Poltergeist', blurb: 'Scrawls on your screen and knocks things crooked, and never stops. Right-click to undo.', rowdy: true },
     { id: 'moth', name: 'Moth', blurb: 'Drawn to the light. Follows whatever field you are typing in.' },
     { id: 'dog', name: 'Dog', blurb: 'Throw the ball — press it and drag. It will bring it back to you.' },
     // hidden: real, but never in the picker — reachable only by being
@@ -678,6 +678,10 @@
         h(e);
         releaseThrow(mouse.x, mouse.y);
       }, { passive: true });
+      doc.addEventListener('contextmenu', function (e) {
+        h(e);                              // h() has already translated the coords
+        if (undoAt(mouse.x, mouse.y, true)) e.preventDefault();
+      });
     } catch (e) { }
   }
 
@@ -1746,10 +1750,15 @@
     el.innerHTML = html;
     el.style.transform = 'translate3d(' + Math.round(x) + 'px,' + Math.round(y) + 'px,0)';
     // The engine owns the fade: fully there for the first stretch of life,
-    // gone by the end. Armed a frame late so the transition actually runs.
+    // gone by the end. LIFE 0 MEANS IT DOES NOT GO — no fade, no clock, it
+    // stays until the cap evicts it, somebody undoes it, or the pet leaves.
+    // That is what lets a form actually wreck a screen if nobody stops it,
+    // rather than tidying up after itself while you are looking away.
     el.style.opacity = '1';
-    el.style.transition = 'opacity ' + scaled(life * 0.4).toFixed(1) + 's ease ' +
-      scaled(life * 0.6).toFixed(1) + 's';
+    if (life > 0) {
+      el.style.transition = 'opacity ' + scaled(life * 0.4).toFixed(1) + 's ease ' +
+        scaled(life * 0.6).toFixed(1) + 's';
+    }
     root.appendChild(el);
     // A forced style flush, NOT a requestAnimationFrame. Setting the target
     // opacity from a rAF callback races the element's first style
@@ -1761,12 +1770,14 @@
     // time. Reading offsetWidth makes the starting opacity real first, which
     // is the entire job.
     void el.offsetWidth;
-    el.style.opacity = '0';
     var o = { el: el, kind: kind, data: data || null, breaking: false, timer: 0 };
-    o.timer = setTimeout(function () {
-      var i2 = objs.indexOf(o);
-      if (i2 !== -1) removeObj(i2);
-    }, scaled(life) * 1000);
+    if (life > 0) {
+      el.style.opacity = '0';
+      o.timer = setTimeout(function () {
+        var i2 = objs.indexOf(o);
+        if (i2 !== -1) removeObj(i2);
+      }, scaled(life) * 1000);
+    }
     objs.push(o);
     return true;
   }
@@ -2015,7 +2026,6 @@
   // doing rather than a page that wobbles by itself.
   function findHauntTarget() {
     var h = skin.haunt;
-    if (haunts.length >= h.max) return null;
     function hunt(doc, ox, oy) {
       try {
         var els = doc.querySelectorAll(h.sel || 'button,.card,tr,th,h1,h2,h3,img,.big-button');
@@ -2097,16 +2107,24 @@
 
   function startHaunt() {
     if (!skin.haunt) return false;
+    var h = skin.haunt;
+    // Choose the victim BEFORE making room. At the ceiling the oldest one
+    // straightens up rather than the pet giving up — but evicting first hands
+    // that element straight back to the search, which picks the NEAREST thing
+    // and would therefore just re-crook the one it had only now released,
+    // over and over, while the rest of the page stayed untouched.
     var el = findHauntTarget();
     if (!el) return false;
-    var h = skin.haunt;
+    while (haunts.length >= h.max) unhaunt(haunts[0]);
     var pose = h.poses[Math.floor(Math.random() * h.poses.length)];
     var rec = { el: el, wasT: el.style.transform, wasTr: el.style.transition, timer: 0 };
     el.__ycHaunted = 1;
     el.style.transition = 'transform .45s cubic-bezier(.3,1.5,.5,1)';
     el.style.transform = (rec.wasT ? rec.wasT + ' ' : '') + pose;
     el.classList.add('yc-haunted');
-    rec.timer = setTimeout(function () { unhaunt(rec); }, scaled(h.life) * 1000);
+    // life 0: it stays crooked until you put it right (or the cap, or the
+    // pet leaving) — same contract as the scrawl.
+    if (h.life > 0) rec.timer = setTimeout(function () { unhaunt(rec); }, scaled(h.life) * 1000);
     haunts.push(rec);
     return true;
   }
@@ -2395,12 +2413,17 @@
     return false;
   }
 
-  function clickLoot(x, y) {
-    if (!running || !root) return;
-    clickHaunt(x, y);
+  // Everything the pet has done to your page, undone one piece at a time.
+  // `right` marks the context-menu route, which differs in exactly two ways:
+  // it never picks a ball up to throw (that is a left-hand gesture), and it
+  // never snatches from the beak. Returns whether it undid anything, which is
+  // what lets the right-click handler decide about the menu.
+  function undoAt(x, y, right) {
+    if (!running || !root) return false;
+    if (clickHaunt(x, y)) return true;
     // Caught red-handed: clicking what is in the beak takes it straight back,
     // and the job dies with it.
-    if (carried) {
+    if (carried && !right) {
       var bx = px + face * (CFG.W / 2 + 4), by = py - CFG.H * 0.22;
       if ((x - bx) * (x - bx) + (y - by) * (y - by) < 324) {
         if (carriedTake) carriedTake.restore();
@@ -2410,7 +2433,7 @@
         heist = null;
         setState('idle', attn());        // outrage
         stateUntil = clock + rand(1.2, 2.2);
-        return;
+        return true;
       }
     }
     for (var i = objs.length - 1; i >= 0; i--) {
@@ -2422,12 +2445,12 @@
         // A FETCHER's ball is not yours to take back — it was never taken.
         // Pressing it picks it up to THROW: drag and let go, or just let go
         // where you are for a lob. A hoarder's loot still comes home.
-        if (skin.heist && skin.heist.to === 'cursor') {
+        if (skin.heist && skin.heist.to === 'cursor' && !right) {
           aiming = { o: o, x0: x, y0: y };
-          return;
+          return true;
         }
         returnLoot(o);
-        return;                          // one per click: a hoard is undone piece by piece
+        return true;                     // one per click: a hoard is undone piece by piece
       }
       if (o.kind === 'graffiti') {
         // A box rather than a radius — scrawl is wide and short, and the
@@ -2435,10 +2458,13 @@
         if (Math.abs(x - o.data.x) > o.data.w / 2) continue;
         if (Math.abs(y - o.data.y) > o.data.h / 2) continue;
         wipeObj(o);
-        return;
+        return true;
       }
     }
+    return false;
   }
+
+  function clickLoot(x, y) { undoAt(x, y, false); }
 
   // ── Thrown things ────────────────────────────────────────────────────────────
   // Until now every world object stayed exactly where it was dropped. A ball
@@ -2924,7 +2950,7 @@
     // The graffiti kit: something to write, a ceiling, a clock, and a hand.
     if (ok && def.graffiti) {
       var gf = def.graffiti;
-      ok = !!gf.texts && gf.texts.length > 0 && gf.max > 0 && gf.life > 0 &&
+      ok = !!gf.texts && gf.texts.length > 0 && gf.max > 0 && gf.life >= 0 &&
         typeof gf.svg === 'function';
       for (var gi = 0; ok && gi < gf.texts.length; gi++) {
         ok = typeof gf.texts[gi] === 'string' && gf.texts[gi].length > 0;
@@ -2932,7 +2958,9 @@
     }
     // The haunt kit: a ceiling, a clock, and at least one pose to strike.
     if (ok && def.haunt) {
-      ok = def.haunt.max > 0 && def.haunt.life > 0 &&
+      // life 0 is legal and means "until somebody undoes it"; a NEGATIVE
+      // life is a typo, and a cap is never optional.
+      ok = def.haunt.max > 0 && def.haunt.life >= 0 &&
         !!def.haunt.poses && def.haunt.poses.length > 0;
       for (var hq = 0; ok && hq < def.haunt.poses.length; hq++) {
         ok = typeof def.haunt.poses[hq] === 'string';
@@ -3585,6 +3613,15 @@
       releaseThrow(e.clientX, e.clientY);
     }, { passive: true });
     document.addEventListener('pointercancel', function () { aiming = null; }, { passive: true });
+    // THE ESCAPE HATCH. Nothing the pet leaves behind expires on its own any
+    // more, so there has to be an undo that cannot misfire — and a left press
+    // also does whatever the page underneath it does, which is fine for one
+    // scrawl and tiresome for twenty. A right-click undoes and nothing else.
+    // The menu is suppressed ONLY when the click actually landed on something
+    // the pet did; anywhere else the browser behaves completely normally.
+    document.addEventListener('contextmenu', function (e) {
+      if (undoAt(e.clientX, e.clientY, true)) e.preventDefault();
+    });
     window.addEventListener('resize', function () { lastScan = -1e9; });
   }
   // NOTE: boot() is called at the very BOTTOM of this file, not here — the

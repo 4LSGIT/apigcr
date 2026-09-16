@@ -212,7 +212,10 @@ describe('mascot engine', () => {
     const okHaunt = { max: 3, life: 12, poses: ['rotate(-3deg)'] };
     expect(win.Mascot.register({ ...base, id: 'ok-haunter', haunt: okHaunt })).toBe(true);
     expect(win.Mascot.register({ ...base, id: 'capless-haunt', haunt: { ...okHaunt, max: 0 } })).toBe(false);
-    expect(win.Mascot.register({ ...base, id: 'eternal-haunt', haunt: { ...okHaunt, life: 0 } })).toBe(false);
+    // life 0 is LEGAL and means "until somebody undoes it" — the ceiling is
+    // what bounds it, not a clock. A negative life is still a typo.
+    expect(win.Mascot.register({ ...base, id: 'eternal-haunt', haunt: { ...okHaunt, life: 0 } })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'negative-haunt', haunt: { ...okHaunt, life: -1 } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'poseless-haunt', haunt: { ...okHaunt, poses: [] } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'junk-poses', haunt: { ...okHaunt, poses: ['rotate(1deg)', 7] } })).toBe(false);
   });
@@ -907,12 +910,23 @@ describe('mascot engine', () => {
       win.Mascot.setSkin('haunter');
       win.Mascot.on();
 
-      // max is 3: the fourth request finds nothing left it is allowed to touch.
+      // The ceiling EVICTS, it does not refuse. A form that stops
+      // misbehaving once it has done three things is not chaos, it is a
+      // quota — so the fourth request lets the oldest one straighten up and
+      // goes ahead anyway, and the count holds at the cap forever.
+      const hauntedNow = () => made.filter(e => e.classList.contains('yc-haunted'));
+      expect(win.Mascot.do('haunt')).toBe('haunt');
+      const first = hauntedNow()[0];
+      const firstWas = first === made[0] ? 'translateX(3px)' : '';
       expect(win.Mascot.do('haunt')).toBe('haunt');
       expect(win.Mascot.do('haunt')).toBe('haunt');
-      expect(win.Mascot.do('haunt')).toBe('haunt');
-      expect(win.Mascot.do('haunt')).toBe(false);
-      expect(made.filter(e => e.classList.contains('yc-haunted')).length).toBe(3);
+      expect(hauntedNow().length).toBe(3);
+      expect(first.classList.contains('yc-haunted')).toBe(true);
+
+      expect(win.Mascot.do('haunt')).toBe('haunt');      // evicts, never refuses
+      expect(hauntedNow().length).toBe(3);
+      expect(first.classList.contains('yc-haunted')).toBe(false);
+      expect(first.style.transform).toBe(firstWas);      // and put back exactly
 
     } finally {
       win.Mascot.off();
@@ -1209,6 +1223,50 @@ describe('mascot engine', () => {
     }
   }, 40000);
 
+  test('a right-click is not a throw', async () => {
+    // The two gestures share a target and must not share a meaning: a left
+    // press on a fetcher's ball picks it up to throw, a right-click is the
+    // undo. If the right-hand route fell through to the aiming branch, the
+    // next pointerup anywhere would fling a ball the user never picked up.
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.register({
+        id: 'rclick', name: 'RClick', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 420, HEIST_CHANCE: 0 },
+        heist: { to: 'cursor', props: ['<svg width="10" height="10"><circle cx="5" cy="5" r="5"/></svg>'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('rclick');
+      win.Mascot.on();
+      win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 260, clientY: 240 }));
+      expect(win.Mascot.do('steal')).toBe('steal');
+
+      let t0 = Date.now(), ball = null;
+      while (Date.now() - t0 < 9000 && !ball) {
+        await new Promise(r => setTimeout(r, 70));
+        ball = win.document.querySelector('#yc-mascot .yc-obj-loot');
+      }
+      expect(ball).toBeTruthy();
+      const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(ball.style.transform);
+      const bx = Number(m[1]), by = Number(m[2]);
+
+      const e = new win.MouseEvent('contextmenu', { clientX: bx, clientY: by, cancelable: true, bubbles: true });
+      win.document.dispatchEvent(e);
+      expect(e.defaultPrevented).toBe(true);
+      expect(ball.classList.contains('yc-obj-poof')).toBe(true);   // taken away…
+      expect(ball.classList.contains('yc-obj-thrown')).toBe(false);
+
+      // …and emphatically not left cocked: a later release throws nothing.
+      win.document.dispatchEvent(new win.MouseEvent('pointerup',
+        { clientX: bx + 200, clientY: by - 60 }));
+      expect(ball.classList.contains('yc-obj-thrown')).toBe(false);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 25000);
+
   test('a ball still in the air is chased to where it lands, not to where it was', async () => {
     const { win } = await bootWithSkins();
     try {
@@ -1358,6 +1416,62 @@ describe('mascot engine', () => {
     // …and at real time it is still very much there
     expect(await mk(1)).toBe(false);
   }, 30000);
+
+  test('chaos with no clock on it: nothing expires, and a right-click is the way out', async () => {
+    const { win } = await bootWithSkins();
+    let victim;
+    try {
+      victim = win.document.createElement('button');
+      win.document.body.appendChild(victim);
+      const r = { left: 300, top: 260, right: 420, bottom: 296, width: 120, height: 36, x: 300, y: 260 };
+      Object.defineProperty(victim, 'getBoundingClientRect', { value: () => r });
+      Object.defineProperty(victim, 'getClientRects', { value: () => [r] });
+
+      win.Mascot.setSkin('poltergeist');
+      win.Mascot.on();
+
+      // ── it does not tidy up after itself ──────────────────────────────
+      expect(win.Mascot.do('scrawl')).toBe('scrawl');
+      const tag = win.document.querySelector('#yc-mascot .yc-obj-graffiti');
+      expect(tag).toBeTruthy();
+      // life 0 → no fade to sit through and no removal clock to wait for.
+      // (Asserted on the element rather than by waiting: "it is still here
+      // after N seconds" is a slower way of proving less.)
+      expect(tag.style.opacity).toBe('1');
+      expect(tag.style.transition).toBe('');
+
+      expect(win.Mascot.do('haunt')).toBe('haunt');
+      expect(victim.classList.contains('yc-haunted')).toBe(true);
+      await new Promise(res => setTimeout(res, 900));
+      expect(tag.isConnected).toBe(true);                       // still there…
+      expect(victim.classList.contains('yc-haunted')).toBe(true); // …and still crooked
+
+      // ── the escape hatch ──────────────────────────────────────────────
+      // A right-click on the crooked thing puts it right AND swallows the
+      // context menu — but only because it landed on something the pet did.
+      const rc = (x, y) => {
+        const e = new win.MouseEvent('contextmenu', { clientX: x, clientY: y, cancelable: true, bubbles: true });
+        win.document.dispatchEvent(e);
+        return e.defaultPrevented;
+      };
+      expect(rc(360, 278)).toBe(true);
+      expect(victim.classList.contains('yc-haunted')).toBe(false);
+      expect(victim.style.transform).toBe('');
+
+      // …the scrawl goes the same way…
+      const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(tag.style.transform);
+      expect(rc(Number(m[1]), Number(m[2]))).toBe(true);
+      expect(tag.classList.contains('yc-obj-wipe')).toBe(true);
+
+      // …and a right-click on ordinary page gets an ordinary context menu,
+      // which is the part that stops this being obnoxious.
+      expect(rc(4, 4)).toBe(false);
+    } finally {
+      win.Mascot.off();
+      expect(victim.classList.contains('yc-haunted')).toBe(false);
+      win.close();
+    }
+  }, 20000);
 
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
