@@ -2,14 +2,28 @@
  * ───────────────────────────────────────────────────────────────────────────────
  * CASEY, GOOSE FORM — the menace
  *
- * The other rowdy one, and rowdy differently: the spider decorates, the goose
- * TAKES. Upright roaming (side profile, never rotating — a goose keeps its
- * feet) anywhere on the page, tracking mud the whole way; PURSUE at a honking
- * run — no perch in its can, so the catch is the engine's other ending: it
- * pulls up nose-to-cursor and HONKS in its face; and the heist gear, which is
- * the heart of the bit. On a whim (or the 'steal' command) she walks off, IDs
- * something worth having and waddles it back to her corner, where the hoard
- * grows pile by pile. Three kinds of worth having:
+ * The other rowdy one, and rowdy differently. The poltergeist is a vandal: it
+ * stops, picks something, and ruins it on purpose. This one is a MENACE, and
+ * the difference is that she does not stop — she wrecks what she happens to be
+ * walking through, tracks mud over the rest, and takes anything portable home.
+ *
+ * NOTHING SHE DOES WEARS OFF. The mud does not dry, the hoard does not fade,
+ * and what she knocks over stays knocked over. Left alone for ten minutes the
+ * screen is hers. Every piece of it is undone by a right-click — a print wipes
+ * its whole muddy patch, a knocked thing stands back up, loot comes home — and
+ * sending her away clears the lot at once.
+ *
+ * Upright roaming (side profile, never rotating — a goose keeps her feet)
+ * anywhere on the page; PURSUE at a honking run — no perch in her can, so the
+ * catch is the engine's other ending: she pulls up nose-to-cursor and HONKS in
+ * its face. THE BARGE is the new one: every 0.4s of walking she may knock over
+ * whatever she is nearest to, which is how a goose ruins a room — not by
+ * choosing, but by going through it.
+ *
+ * And the heist, which is still the heart of the bit. On a whim (or the
+ * 'steal' command) she walks off, IDs something worth having and waddles it
+ * back to her corner, where the hoard grows pile by pile. Three kinds of worth
+ * having:
  *   · AN ICON off the page — a REAL theft. The icon goes invisible where it
  *     sits and turns up in her corner, and the page has a hole in it until
  *     somebody makes her give it back.
@@ -34,7 +48,7 @@
   window.Mascot.register({
     id: 'goose',
     name: 'Goose',
-    blurb: 'Tracks mud, honks, and pockets bits of your page. Click her loot to undo.',
+    blurb: 'Mud everywhere, knocks things flying, and pockets your page. None of it wears off. Right-click to undo.',
 
     // Tall for the neck. No ascent in `can`, so FLY_HEAD is the sprite's own
     // height per the contract's convention.
@@ -46,12 +60,35 @@
     tune: {
       WALK: 55,              // a committed waddle
       PURSUE: 150,           // the honking run — outrun it, mostly, barely
-      PURSUE_CHANCE: 0.4,
-      HEIST_CHANCE: 0.4      // she is mostly here to acquire
+      PURSUE_CHANCE: 0.35,
+      HEIST_CHANCE: 0.5,     // she is mostly here to acquire
+      HAUNT_CHANCE: 0.3,     // …and to knock the rest of it over
+      BARGE_CHANCE: 0.16     // per 0.4s of walking: whatever is in the way
     },
 
     // The upright-roam set plus the hunt. No perch: her catch is the honk.
     can: ['walk', 'idle', 'fall', 'land', 'drag', 'leave', 'pursue'],
+
+    // KNOCKING THINGS OVER, goose-style. Where the poltergeist leaves a
+    // thing crooked and hanging, these all read as SHOVED — off its shelf,
+    // onto its side, out of the way. Same contract: transforms only, so it
+    // is still clickable exactly where it looks, and a right-click stands it
+    // back up. Nothing expires; the cap is what bounds the wreckage.
+    haunt: {
+      max: 10,
+      life: 0,
+      sel: 'button,.card,.big-button,tr,th,img,.panel,.tile,label,h2,h3',
+      poses: [
+        'translateY(16px) rotate(9deg)',       // shoved off its perch
+        'translateY(13px) rotate(-11deg)',
+        'rotate(-24deg) translateY(8px)',      // knocked onto its side
+        'rotate(21deg) translateY(6px)',
+        'translateX(-22px) rotate(-6deg)',     // barged out of the way
+        'translateX(24px) rotate(5deg)',
+        'rotate(-38deg) translate(-10px,12px)',
+        'scale(.88) rotate(14deg) translateY(10px)'
+      ]
+    },
 
     acts: [
       ['honk', 30], ['glare', 22], ['preen', 22], ['flap', 18]
@@ -69,6 +106,8 @@
       'That word was just lying there.',
       'The hoard is not up for negotiation.',
       'Muddy prints are my letterhead.',
+      'It was upright when I got here. Allegedly.',
+      'I do not knock things over. I pass through.',
       'Objection! HONK.',
       'Your cursor owes me a honk.',
       'I do my best work uninvited.',
@@ -80,23 +119,44 @@
 
     words: {
       idle: 'settle', pursue: 'chase down my cursor', steal: 'steal something',
+      haunt: 'knock something over',
       honk: 'HONK', glare: 'glare', preen: 'preen', flap: 'flap about'
     },
 
-    // The letterhead: webbed prints, alternating, gone in a few seconds.
+    // The letterhead. It does NOT dry. Walk her around for ten minutes and
+    // the floor is hers; right-click any print to wipe that whole patch.
+    //
+    // Each drop is a PAIR of webbed feet, one ahead of the other, and the
+    // pair is thrown a few pixels off the walk line (see `jitter`). Both of
+    // those are the difference between mud and a dotted border: an unjittered
+    // single print, laid on a straight walk leg, comes out looking like CSS.
+    // The foot is a three-toed fan with the toe tips sitting proud of the
+    // webbing — at 24px that reads as a bird and not as a paw, which matters
+    // in a catalogue that also has a dog in it.
     trail: {
       every: 16,
-      life: 9,
-      max: 30,
-      svg: '<svg width="12" height="9" viewBox="0 0 12 9">' +
-        '<g fill="#8B6B4A" opacity=".5">' +
-        '<path d="M1.6 1 L5 1 L3.3 4.4 Z M2.2 1.4 L3.3 3.4 M4.4 1.4 L3.3 3.4" stroke="#7A5C3E" stroke-width=".4"/>' +
-        '<path d="M7 4.5 L10.4 4.5 L8.7 7.9 Z M7.6 4.9 L8.7 6.9 M9.8 4.9 L8.7 6.9" stroke="#7A5C3E" stroke-width=".4"/>' +
-        '</g></svg>'
+      jitter: 11,
+      life: 0,
+      max: 90,
+      svg: (function () {
+        var FAN = '<path d="M4.6 7.8 L0.9 1.9 Q2.75 3.5 4.6 1.5 Q6.45 3.5 8.3 1.9 Z"/>';
+        var TOES = '<circle cx="0.9" cy="1.9" r=".9"/>' +
+          '<circle cx="4.6" cy="1.35" r=".9"/>' +
+          '<circle cx="8.3" cy="1.9" r=".9"/>';
+        var foot = FAN + TOES;
+        return '<svg width="24" height="17" viewBox="0 0 24 17">' +
+          '<g fill="#6A4A2C" opacity=".6">' +
+          '<g transform="translate(0.6,8) rotate(-15 4.6 4)">' + foot + '</g>' +
+          '<g transform="translate(12.4,0.6) rotate(13 4.6 4)">' + foot + '</g>' +
+          '</g></svg>';
+      }())
     },
 
-    // The kit. Props are things an office simply has, until it simply doesn't.
+    // THE HOARD, and it does not fade either. Sixty things in a corner is
+    // a goose's idea of a job well done; each one comes back on a click.
     heist: {
+      life: 0,
+      max: 60,
       props: [
         // an envelope
         '<svg width="18" height="12" viewBox="0 0 18 12">' +

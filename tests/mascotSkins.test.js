@@ -182,8 +182,17 @@ describe('mascot engine', () => {
     expect(win.Mascot.register({ ...base, id: 'pursue-only', can: [...CORE, 'pursue'] })).toBe(true);
     // …and a trail keeps its promises: spacing, a finite life, a cap, art.
     expect(win.Mascot.register({ ...base, id: 'bad-trail', trail: { every: 0, life: 6, max: 40, svg: '<svg/>' } })).toBe(false);
+    // a trail may be permanent too — mud that never dries is a real choice
+    expect(win.Mascot.register({ ...base, id: 'wet-trail', trail: { every: 10, life: 0, max: 40, svg: '<svg/>' } })).toBe(true);
     expect(win.Mascot.register({ ...base, id: 'capless-trail', trail: { every: 10, life: 6, svg: '<svg/>' } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'ok-trail', trail: { every: 10, life: 6, max: 40, svg: '<svg/>' } })).toBe(true);
+    // jitter is optional, but a negative or non-numeric scatter is a bug that
+    // would otherwise only show up as prints landing somewhere surprising
+    const jt = { every: 10, life: 6, max: 40, svg: '<svg/>' };
+    expect(win.Mascot.register({ ...base, id: 'jitter-trail', trail: { ...jt, jitter: 9 } })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'jitter0-trail', trail: { ...jt, jitter: 0 } })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'neg-jitter', trail: { ...jt, jitter: -4 } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'wordy-jitter', trail: { ...jt, jitter: '9' } })).toBe(false);
     // …and a web keeps §2a's: a ring clock, a ring cap, a lifetime, a web
     // cap, a growing break radius, and a STAGE FUNCTION for its art. The
     // weave/rappel states demand the floor plan (roam) to stand on.
@@ -1141,6 +1150,22 @@ describe('mascot engine', () => {
       // A press well away from it leaves it alone…
       win.document.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: 5, clientY: 5 }));
       expect(tag.classList.contains('yc-obj-wipe')).toBe(false);
+
+      // …and so does one that is away in only ONE axis. Both of these are
+      // needed to prove there is a box at all: the test is a pair of
+      // comparisons, and a comparison against a MISSING coordinate does not
+      // fail — NaN > n is false, so the box silently becomes infinite in
+      // that direction and starts rubbing out scrawl the pointer never
+      // touched. A press far away in both axes cannot tell the difference.
+      const art = tag.querySelector('svg');
+      const gw = Number(art.getAttribute('width')), gh = Number(art.getAttribute('height'));
+      expect(gw).toBeGreaterThan(0);
+      expect(gh).toBeGreaterThan(0);
+      win.document.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: gx, clientY: gy + gh }));
+      expect(tag.classList.contains('yc-obj-wipe')).toBe(false);
+      win.document.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: gx + gw, clientY: gy }));
+      expect(tag.classList.contains('yc-obj-wipe')).toBe(false);
+
       // …and a press ON it rubs it out. A BOX, not a radius: scrawl is wide
       // and short, so its far end has to count as much as its middle.
       win.document.dispatchEvent(new win.MouseEvent('pointerdown',
@@ -1285,7 +1310,7 @@ describe('mascot engine', () => {
       const at = t => { const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(t); return [Number(m[1]), Number(m[2])]; };
       const catEl = win.document.querySelector('.yc-cat');
       let t0 = Date.now(), ball = null;
-      while (Date.now() - t0 < 9000 && !ball) {
+      while (Date.now() - t0 < 16000 && !ball) {
         await new Promise(r => setTimeout(r, 60));
         ball = win.document.querySelector('#yc-mascot .yc-obj-loot');
       }
@@ -1324,7 +1349,7 @@ describe('mascot engine', () => {
       win.Mascot.off();
       win.close();
     }
-  }, 40000);
+  }, 55000);
 
   test('fast forward stretches the clock — and stays off every user-facing surface', async () => {
     const { win } = await bootWithSkins();
@@ -1473,6 +1498,171 @@ describe('mascot engine', () => {
     }
   }, 20000);
 
+  test('mud that never dries comes off by the PATCH, and the press still lands', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      // The goose's mud, in miniature: prints close together, scattered off
+      // the walk line, and no clock on any of them. Deliberately unhurried —
+      // a permanent trail is capped, and a fast one would evict the very
+      // prints this test is about to press.
+      win.Mascot.register({
+        id: 'mudlark', name: 'Mudlark', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 200 },
+        trail: {
+          every: 10, jitter: 18, life: 0, max: 90,
+          svg: '<svg width="8" height="6" viewBox="0 0 8 6"><ellipse cx="4" cy="3" rx="4" ry="3" fill="#6b4f2a"/></svg>'
+        },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('mudlark');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+
+      // Real frames: it falls in, lands, and starts walking mud about.
+      const prints = () => Array.from(win.document.querySelectorAll('#yc-mascot .yc-obj-trail'));
+      const t0 = Date.now();
+      while (Date.now() - t0 < 14000 && prints().length < 10) await new Promise(r => setTimeout(r, 100));
+      const mud = prints();
+      expect(mud.length).toBeGreaterThanOrEqual(10);
+
+      // life 0 → no fade to sit through and no removal clock. (Asserted on the
+      // elements, as the scrawl is: "still here after N seconds" is a slower
+      // way of proving less.)
+      mud.forEach(p => {
+        expect(p.style.opacity).toBe('1');
+        expect(p.style.transition).toBe('');
+      });
+
+      const posOf = el => {
+        const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(el.style.transform);
+        return { x: Number(m[1]), y: Number(m[2]) };
+      };
+      // SCATTER. The spacing rule alone can only ever put prints `every` or
+      // more apart — it drops one the moment the pet has walked that far. So
+      // a gap SHORTER than `every` can only have come from the jitter, and
+      // without the jitter this line is what fails. (It is also the proof
+      // that the drawn position and the undo position are the same position:
+      // every assertion below presses where a print was actually drawn.)
+      const at = posOf(mud[0]);
+      const gaps = mud.slice(1).map((p, i) => {
+        const a = posOf(mud[i]), b = posOf(p);
+        return Math.hypot(b.x - a.x, b.y - a.y);
+      });
+      expect(Math.min(...gaps)).toBeLessThan(10);
+
+      const near = mud.filter(p => {
+        const q = posOf(p);
+        return (q.x - at.x) * (q.x - at.x) + (q.y - at.y) * (q.y - at.y) <= 70 * 70;
+      });
+      // Prints land ten pixels apart, so a streak is several of them — and an
+      // undo worth having takes the streak, not one smear at a time.
+      expect(near.length).toBeGreaterThanOrEqual(3);
+
+      // Does the page still get the press? A document-level listener added
+      // AFTER the engine's own is the test: swallow the event and this never
+      // runs. (§2: obtrusive is visual and temporal, never input.)
+      let pageSaw = 0;
+      win.document.addEventListener('pointerdown', () => { pageSaw++; });
+      const ev = new win.MouseEvent('pointerdown',
+        { clientX: at.x, clientY: at.y, cancelable: true, bubbles: true });
+      win.document.dispatchEvent(ev);
+
+      near.forEach(p => expect(p.classList.contains('yc-obj-wipe')).toBe(true));
+      expect(pageSaw).toBe(1);
+      expect(ev.defaultPrevented).toBe(false);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 28000);
+
+  test('a hoard keeps its own clock and its own ceiling', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      // A ceiling of ONE, so the eviction this test is about takes two heists
+      // rather than fifteen. The engine's own default is 14 — a skin that
+      // cannot move it is a skin whose hoard is not its own.
+      win.Mascot.register({
+        id: 'magpie', name: 'Magpie', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 420, HEIST_CHANCE: 0 },     // command-driven only
+        heist: {
+          life: 0, max: 1,
+          props: ['<svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" fill="#888"/></svg>']
+        },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('magpie');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+
+      const hoard = () => Array.from(win.document.querySelectorAll('#yc-mascot .yc-obj-loot'));
+      const waitFor = async (fn, ms) => {
+        const t = Date.now();
+        while (Date.now() - t < ms && !fn()) await new Promise(r => setTimeout(r, 100));
+        return fn();
+      };
+
+      expect(win.Mascot.do('steal')).toBe('steal');
+      expect(await waitFor(() => hoard().length === 1, 14000)).toBe(true);
+      const first = hoard()[0];
+      // life 0 → the hoard does not evaporate while you are looking away.
+      expect(first.style.opacity).toBe('1');
+      expect(first.style.transition).toBe('');
+
+      // Second heist, same ceiling: the oldest piece goes to make room. With
+      // the skin's ceiling ignored this would be a hoard of two.
+      expect(win.Mascot.do('steal')).toBe('steal');
+      expect(await waitFor(() => !first.isConnected, 14000)).toBe(true);
+      expect(hoard().length).toBe(1);
+      expect(hoard()[0]).not.toBe(first);
+    } finally {
+      win.Mascot.off();
+      expect(win.document.querySelectorAll('.yc-obj').length).toBe(0);
+      win.close();
+    }
+  }, 45000);
+
+  test('the barge: a menace ruins what it walks past, unasked', async () => {
+    const { win } = await bootWithSkins();
+    let victim;
+    try {
+      // jsdom has no layout, so the haunt search needs a rect to find. One
+      // piece of furniture, dead centre, where a roamer will come past it.
+      victim = win.document.createElement('button');
+      win.document.body.appendChild(victim);
+      const r = { left: 380, top: 300, right: 500, bottom: 340, width: 120, height: 40, x: 380, y: 300 };
+      Object.defineProperty(victim, 'getBoundingClientRect', { value: () => r });
+      Object.defineProperty(victim, 'getClientRects', { value: () => [r] });
+
+      // No settle-down prank at all: HAUNT_CHANCE is 0, so anything that gets
+      // knocked over here was knocked over from the WALK. That is the barge,
+      // and it is the whole difference between a vandal and a menace.
+      win.Mascot.register({
+        id: 'barger', name: 'Barger', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true, upright: true,
+        tune: { WALK: 260, HAUNT_CHANCE: 0, BARGE_CHANCE: 1 },
+        haunt: { max: 4, life: 0, sel: 'button', poses: ['rotate(20deg)'] },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('barger');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+
+      const t0 = Date.now();
+      while (Date.now() - t0 < 14000 && !victim.classList.contains('yc-haunted')) {
+        await new Promise(r2 => setTimeout(r2, 100));
+      }
+      expect(victim.classList.contains('yc-haunted')).toBe(true);
+      expect(victim.style.transform).toContain('rotate(20deg)');
+    } finally {
+      win.Mascot.off();
+      expect(victim.classList.contains('yc-haunted')).toBe(false);
+      win.close();
+    }
+  }, 28000);
+
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
     // inside the primitives, which roll Math.random and cannot be driven from
@@ -1495,6 +1685,9 @@ describe('mascot engine', () => {
     expect(count(/Math\.random\(\) < CFG\.HEIST_CHANCE/g)).toBe(1);   // toIdle roll
     expect(count(/Math\.random\(\) < CFG\.HAUNT_CHANCE/g)).toBe(1);   // toIdle roll
     expect(count(/Math\.random\(\) < CFG\.GRAFFITI_CHANCE/g)).toBe(1);  // toIdle roll
+    // the barge is the one ambient prank that fires from the WALK rather
+    // than from a settle-down, which is the whole of its character
+    expect(count(/Math\.random\(\) < CFG\.BARGE_CHANCE/g)).toBe(1);     // roamWalk
     expect(count(/allowed\('lamp'\)/g)).toBe(1);   // toIdle roll
     // A real steal is undone from exactly ONE place — the door every loot
     // object leaves by. More than one call site here means some exit has

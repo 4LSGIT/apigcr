@@ -404,6 +404,9 @@
 
     // THE HAUNT SET — for skins with `haunt` gear. Off by default.
     HAUNT_CHANCE: 0,       // per settle-down: lean on the nearest real thing
+    BARGE_CHANCE: 0,       // per 0.4s of WALKING: knock over whatever it is
+                           // blundering past. The difference between a vandal
+                           // (who stops to do it) and a menace (who does not).
     GRAFFITI_CHANCE: 0     // per settle-down: write on the screen
   };
 
@@ -438,7 +441,7 @@
     // opt-in, honestly labelled, and easy to kill, per §2.
     { id: 'spider', name: 'Spider', blurb: 'Roams the page, rappels down silk, webs over anything until you break it.', rowdy: true },
     { id: 'bat', name: 'Bat', blurb: 'Hunts your cursor anywhere on screen, then hangs from it like a branch.' },
-    { id: 'goose', name: 'Goose', blurb: 'Tracks mud, honks, and pockets bits of your page. Click her loot to undo.', rowdy: true },
+    { id: 'goose', name: 'Goose', blurb: 'Mud everywhere, knocks things flying, and pockets your page. None of it wears off. Right-click to undo.', rowdy: true },
     { id: 'poltergeist', name: 'Poltergeist', blurb: 'Scrawls on your screen and knocks things crooked, and never stops. Right-click to undo.', rowdy: true },
     { id: 'moth', name: 'Moth', blurb: 'Drawn to the light. Follows whatever field you are typing in.' },
     { id: 'dog', name: 'Dog', blurb: 'Throw the ball — press it and drag. It will bring it back to you.' },
@@ -852,6 +855,7 @@
   // scan() already finds are the edges), and sometimes wherever the person is
   // working, which is the bothering clause of the brief.
   var roam = { tx: 0, ty: 0, moveUntil: 0, pauseUntil: 0 };
+  var nextBarge = 0;
 
   function pickRoamTarget() {
     var r = Math.random();
@@ -927,6 +931,15 @@
     py = clamp(py + dy / d * CFG.WALK * dt, bounds.top + 12, bounds.bottom - 6);
     if (skin.upright) { rot = 0; aim(dx, 0); }       // the waddle keeps its feet
     else { rot = Math.atan2(dy, dx) * 180 / Math.PI; face = 1; }
+    // THE BARGE. The poltergeist stops and chooses something to ruin; this
+    // one ruins whatever it happens to be walking through, which is a
+    // different kind of menace and the only kind a goose is. startHaunt()
+    // takes the NEAREST thing, and while walking the nearest thing is
+    // whatever she is barrelling past right now.
+    if (skin.haunt && clock >= nextBarge) {
+      nextBarge = clock + 0.4;
+      if (Math.random() < CFG.BARGE_CHANCE) startHaunt();
+    }
     if (clock >= stateUntil) {
       if (mission) stateUntil = clock + 2;           // missions don't dawdle
       else toIdle();
@@ -1771,6 +1784,14 @@
     // is the entire job.
     void el.offsetWidth;
     var o = { el: el, kind: kind, data: data || null, breaking: false, timer: 0 };
+    // WHERE IT IS is not the caller's to repeat. Every undo in this engine is
+    // a coordinate test against o.data.x/y, and every caller used to pass that
+    // position a second time inside `data` — two copies of one fact, which is
+    // one copy too many: let them drift and a print is clickable somewhere it
+    // is not drawn. The drop point is the only position there is, so it is
+    // stamped here. (A web also keeps cx/cy: it reads that point as the centre
+    // its orbit and its ripple turn about, which is a different job.)
+    if (o.data) { o.data.x = x; o.data.y = y; }
     if (life > 0) {
       el.style.opacity = '0';
       o.timer = setTimeout(function () {
@@ -1809,7 +1830,18 @@
     var dx = px - lastTrail.x, dy = py - lastTrail.y;
     if (dx * dx + dy * dy < t.every * t.every) return;
     lastTrail.x = px; lastTrail.y = py;
-    dropObj('trail', px, py, t.svg, t.life, t.max);
+    // JITTER scatters the print off the walk line. A pet walks straight legs
+    // between targets, so an unscattered trail comes out a RULED DOTTED LINE —
+    // which the eye files as a border, not as mess, and mess was the point.
+    // The spacing anchor above stays on the true path, so the scatter is per
+    // print and never compounds into drift.
+    var j = t.jitter || 0;
+    var tx = j ? px + rand(-j, j) : px;
+    var ty = j ? py + rand(-j, j) : py;
+    // A permanent trail has to be undoable, and an undo needs a press radius
+    // to test against — a fading one never needed one. dropObj stamps the
+    // position itself, so the radius is all there is to say.
+    dropObj('trail', tx, ty, t.svg, t.life, t.max, t.life > 0 ? null : { r: 26 });
   }
 
   // Webs may sit over ANYTHING — the ruling: a web is never clickable, and
@@ -2101,7 +2133,7 @@
     var text = pool[Math.floor(Math.random() * pool.length)];
     var tilt = rand(-9, 9);
     if (!dropObj('graffiti', x, y, g.svg(CFG, text, tilt, w, h), g.life, g.max,
-      { x: x, y: y, w: w, h: h, text: text })) return false;
+      { w: w, h: h, text: text })) return false;
     return true;
   }
 
@@ -2354,8 +2386,10 @@
   function dropLoot() {
     if (!carried) return;
     var lx = px + rand(-14, 14), ly = py + rand(-12, 4);
-    var placed = dropObj('loot', lx, ly, carried.innerHTML, 300, 14,
-      { x: lx, y: ly, r: 16, take: carriedTake });
+    var g = skin.heist;
+    var placed = dropObj('loot', lx, ly, carried.innerHTML,
+      g.life === undefined ? 300 : g.life, g.max || 14,
+      { r: 16, take: carriedTake });
     // If the world layer is already gone there is nowhere to put it, and the
     // loot object that would have carried the undo never exists. A theft must
     // never outlive the pet, so it ends here instead.
@@ -2451,6 +2485,21 @@
         }
         returnLoot(o);
         return true;                     // one per click: a hoard is undone piece by piece
+      }
+      if (o.kind === 'trail') {
+        // Mud that never dries needs an undo that is not forty clicks. One
+        // press clears the whole PATCH around it — which is also how a
+        // person would actually think about wiping a floor.
+        if (!o.data.r) continue;
+        var tdx = x - o.data.x, tdy = y - o.data.y;
+        if (tdx * tdx + tdy * tdy > o.data.r * o.data.r) continue;
+        for (var j = objs.length - 1; j >= 0; j--) {
+          var t2 = objs[j];
+          if (t2.kind !== 'trail' || t2.breaking || !t2.data) continue;
+          var ux = t2.data.x - o.data.x, uy = t2.data.y - o.data.y;
+          if (ux * ux + uy * uy <= 70 * 70) wipeObj(t2);
+        }
+        return true;
       }
       if (o.kind === 'graffiti') {
         // A box rather than a radius — scrawl is wide and short, and the
@@ -2924,7 +2973,11 @@
     }
     // A trail keeps its own promises: real spacing, a finite life, a cap.
     if (ok && def.trail) {
-      ok = def.trail.every > 0 && def.trail.life > 0 && def.trail.max > 0 && !!def.trail.svg;
+      // life 0 is legal here as well: mud that never dries is a real
+      // choice, and the cap plus the patch-wipe below keep it answerable.
+      ok = def.trail.every > 0 && def.trail.life >= 0 && def.trail.max > 0 && !!def.trail.svg &&
+        (def.trail.jitter === undefined ||
+          (typeof def.trail.jitter === 'number' && def.trail.jitter >= 0));
     }
     // …and a web keeps §2a's: a ring clock, a ring cap, a lifetime, a web
     // cap, and a break radius that grows with the rings.
