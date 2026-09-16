@@ -3247,6 +3247,11 @@
   .cat-form-card.active { border-color:var(--accent,#1d7fe0); box-shadow:inset 0 0 0 1px var(--accent,#1d7fe0); }
   .cat-form-name { font-weight:600; }
   .cat-form-blurb { font-size:11.5px; opacity:.7; text-align:center; line-height:1.35; }
+  /* The rowdy badge — §2's honesty rule: an obtrusive form is labelled where
+     it is chosen, before it is chosen. */
+  .cat-form-rowdy { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase;
+    color:#c26a1b; border:1px solid #c26a1b; border-radius:999px; padding:0 5px;
+    margin-left:4px; vertical-align:1px; }
   .cat-form-say { min-height:1.4em; margin-top:8px; font-size:12px; opacity:.75; }
 </style>
 <script>
@@ -3381,7 +3386,7 @@
       .map(s =>
         `<button class="cat-form-card${s.current ? ' active' : ''}" data-cat-pick="${s.id}">` +
           `<span data-form-portrait="${s.id}"></span>` +
-          `<span class="cat-form-name">${s.name}</span>` +
+          `<span class="cat-form-name">${s.name}${s.rowdy ? ' <span class="cat-form-rowdy">rowdy</span>' : ''}</span>` +
           `<span class="cat-form-blurb">${s.blurb}</span>` +
         `</button>`).join('');
 

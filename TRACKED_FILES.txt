@@ -285,6 +285,7 @@ public/js/mascot/skins/ghost.js
 public/js/mascot/skins/menorah.js
 public/js/mascot/skins/roomba.js
 public/js/mascot/skins/snail.js
+public/js/mascot/skins/spider.js
 public/js/mascot/skins/ufo.js
 public/js/reportCharts.js
 public/js/versionGuard.js

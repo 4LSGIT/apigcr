@@ -61,6 +61,23 @@
  *     lookAct: 'scan',          // which act is "it noticed you" — a poke, a
  *                               // caught chase. Default 'look'; must name one
  *                               // of the acts.
+ *     web: { chance: .35,       // optional: odds a finished sit leaves a web
+ *            act: 'spin',       // …only after this idle act, if named
+ *            life: 45,          // s before it fades out on its own
+ *            max: 5,            // hard cap; oldest goes first
+ *            w: 30, h: 26,      // the web's rect: spawn veto + break centre
+ *            breakR: 18,        // px — the POINTER coming this close breaks
+ *                               // it. That is §2a's whole implementation: a
+ *                               // distance test against the cursor the
+ *                               // engine already tracks, so a web never has
+ *                               // pointer events, a touch tap breaks it on
+ *                               // first contact, and a same-frame
+ *                               // move-and-click cannot slip through a web
+ *                               // that was never clickable at all.
+ *            svg: '<svg…>' },   // the web; .yc-obj-break lands on it when it
+ *                               // breaks (style the snap). Never spawns
+ *                               // where its rect touches an input, select,
+ *                               // textarea, or the focused element.
  *     trail: { every: 10,       // optional: px of travel between droppings
  *              life: 6,         // s before one is gone — the engine fades it
  *                               // out over the last stretch of that
@@ -304,6 +321,9 @@
     { id: 'ghost', name: 'Ghost', blurb: 'A ghost. Ignores gravity, respects the modals.' },
     { id: 'ufo', name: 'UFO', blurb: 'A flying saucer. Hovers, warps, abducts the odd cow.' },
     { id: 'snail', name: 'Snail', blurb: 'A snail. Unhurried, and it signs its work.' },
+    // rowdy: the picker badges it and the blurb says so plainly — it is
+    // opt-in, honestly labelled, and easy to kill, per §2.
+    { id: 'spider', name: 'Spider', blurb: 'A spider. Spins webs where you work — one touch of the pointer breaks them. Rowdy.', rowdy: true },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -467,6 +487,7 @@
     var left = 0, top = 0, right = W, bottom = H;
     var f = contentFrame();
     if (f) {
+      wireFrameMouse(f);
       var fr = f.getBoundingClientRect();
       if (fr.width > 200 && fr.height > 120) {
         left = Math.max(0, fr.left); top = Math.max(0, fr.top);
@@ -498,6 +519,30 @@
 
     ledges = L;
     walls = A;
+  }
+
+  // The pointer tracker is frame-blind by default: events inside the content
+  // iframe never bubble to the parent document, so the cursor-chase — and the
+  // §2a web break — went dark over the very page the pet walks on. This wires
+  // the tracker into the open page's own document, coordinates translated by
+  // the frame's offset, idempotently per document (a navigation makes a fresh
+  // document, which simply gets wired on the next scan).
+  function wireFrameMouse(f) {
+    try {
+      var doc = f.contentDocument;
+      if (!doc || doc.__ycMouse) return;
+      doc.__ycMouse = 1;
+      var h = function (e) {
+        try {
+          var fb = f.getBoundingClientRect();
+          mouse.x = fb.left + e.clientX;
+          mouse.y = fb.top + e.clientY;
+          mouse.t = clock;
+        } catch (err) { }
+      };
+      doc.addEventListener('pointermove', h, { passive: true });
+      doc.addEventListener('pointerdown', h, { passive: true });
+    } catch (e) { }
   }
 
   // The largest visible iframe in the open tab — the page the user is looking at.
@@ -1037,7 +1082,10 @@
     }
 
     if (state === 'idle') {
-      if (clock >= stateUntil) toWalk();
+      if (clock >= stateUntil) {
+        if (skin.web) maybeWeb();      // a web is what a finished sit leaves
+        toWalk();
+      }
       return;
     }
 
@@ -1125,6 +1173,7 @@
     if (!running || !cat) return;
     draw();
     if (skin.trail) maybeTrail();
+    if (skin.web) breakWebs();
   }
 
   // ── Drag ─────────────────────────────────────────────────────────────────────
@@ -1205,9 +1254,16 @@
   // not the skin — owns three things about them: the pointer-events:none that
   // keeps any decoration from ever swallowing a click (the §2a rule), the cap,
   // and the fade-and-removal clock.
-  function dropObj(kind, x, y, html, life, max) {
+  function dropObj(kind, x, y, html, life, max, data) {
     if (!root) return;
-    while (objs.length >= max) removeObj(0);
+    // Per-KIND cap: a trail budget and a web budget never eat each other.
+    var count = 0, oldest = -1;
+    for (var i = 0; i < objs.length; i++) {
+      if (objs[i].kind !== kind) continue;
+      count++;
+      if (oldest === -1) oldest = i;
+    }
+    if (count >= max) removeObj(oldest);
     var el = document.createElement('div');
     el.className = 'yc-obj yc-obj-' + kind;
     el.innerHTML = html;
@@ -1218,10 +1274,10 @@
     el.style.transition = 'opacity ' + (life * 0.4).toFixed(1) + 's ease ' + (life * 0.6).toFixed(1) + 's';
     root.appendChild(el);
     requestAnimationFrame(function () { el.style.opacity = '0'; });
-    var o = { el: el, timer: 0 };
+    var o = { el: el, kind: kind, data: data || null, breaking: false, timer: 0 };
     o.timer = setTimeout(function () {
-      var i = objs.indexOf(o);
-      if (i !== -1) removeObj(i);
+      var i2 = objs.indexOf(o);
+      if (i2 !== -1) removeObj(i2);
     }, life * 1000);
     objs.push(o);
   }
@@ -1246,6 +1302,73 @@
     if (dx * dx + dy * dy < t.every * t.every) return;
     lastTrail.x = px; lastTrail.y = py;
     dropObj('trail', px, py, t.svg, t.life, t.max);
+  }
+
+  // A web never lands where someone is working: its rect must not touch an
+  // input, select, textarea, or whatever holds focus — in the shell OR the
+  // open page. Layout-dependent, so this is a browsers-only guard (jsdom has
+  // no layout); the smoke test pins its presence in the source instead.
+  function webTouchesField(x1, y1, x2, y2) {
+    function hits(doc, ox, oy) {
+      try {
+        var els = doc.querySelectorAll('input, select, textarea');
+        var list = [], k;
+        for (k = 0; k < els.length && k < 120; k++) list.push(els[k]);
+        if (doc.activeElement && doc.activeElement !== doc.body) list.push(doc.activeElement);
+        for (k = 0; k < list.length; k++) {
+          var r = list[k].getBoundingClientRect();
+          if (!r.width && !r.height) continue;
+          if (x1 < ox + r.right && x2 > ox + r.left && y1 < oy + r.bottom && y2 > oy + r.top) return true;
+        }
+      } catch (e) { }
+      return false;
+    }
+    if (hits(document, 0, 0)) return true;
+    var f = contentFrame();
+    if (f) {
+      try {
+        var fb = f.getBoundingClientRect();
+        if (f.contentDocument && hits(f.contentDocument, fb.left, fb.top)) return true;
+      } catch (e) { }
+    }
+    return false;
+  }
+
+  // A web is what a finished sit leaves behind — rolled when an idle period
+  // ends, optionally only after the skin's named spinning act.
+  function maybeWeb() {
+    var w = skin.web;
+    if (!w || !ledge) return;
+    if (w.act && act !== w.act) return;
+    if (Math.random() >= w.chance) return;
+    if (webTouchesField(px - w.w / 2, py - w.h, px + w.w / 2, py)) return;
+    dropObj('web', px, py, typeof w.svg === 'function' ? w.svg(CFG) : w.svg, w.life, w.max,
+      { cx: px, cy: py - w.h / 2, breakR: w.breakR });
+  }
+
+  // §2a's enforcement, all of it: a web breaks when the POINTER comes near —
+  // a distance test against the tracked cursor, run each frame over at most
+  // `max` webs. No web ever has pointer events, so there is no click to
+  // swallow; a touch tap breaks on first contact because pointerdown feeds
+  // the same tracker; and a fast move-and-click inside one frame cannot slip
+  // through a thing that was never clickable.
+  function breakWebs() {
+    if (mouse.x < 0) return;
+    for (var i = objs.length - 1; i >= 0; i--) {
+      var o = objs[i];
+      if (o.kind !== 'web' || o.breaking || !o.data) continue;
+      var dx = mouse.x - o.data.cx, dy = mouse.y - o.data.cy;
+      if (dx * dx + dy * dy > o.data.breakR * o.data.breakR) continue;
+      o.breaking = true;
+      clearTimeout(o.timer);
+      o.el.classList.add('yc-obj-break');
+      (function (ob) {
+        ob.timer = setTimeout(function () {
+          var j = objs.indexOf(ob);
+          if (j !== -1) removeObj(j);
+        }, 450);
+      })(o);
+    }
   }
 
   // ── The bubble ───────────────────────────────────────────────────────────────
@@ -1424,6 +1547,18 @@
     // A trail keeps its own promises: real spacing, a finite life, a cap.
     if (ok && def.trail) {
       ok = def.trail.every > 0 && def.trail.life > 0 && def.trail.max > 0 && !!def.trail.svg;
+    }
+    // …and a web keeps §2a's: real odds, a finite life, a cap, a break
+    // radius, a rect for the spawn veto, and a spinning act that exists.
+    if (ok && def.web) {
+      var wb = def.web;
+      ok = wb.chance > 0 && wb.chance <= 1 && wb.life > 0 && wb.max > 0 &&
+        wb.breakR > 0 && wb.w > 0 && wb.h > 0 && !!wb.svg;
+      if (ok && wb.act) {
+        var found = false;
+        for (var a2 = 0; a2 < def.acts.length; a2++) if (def.acts[a2][0] === wb.act) found = true;
+        ok = found;
+      }
     }
     if (!ok) {
       console.warn('[Mascot] register() refused a malformed skin', def && def.id);
@@ -1980,11 +2115,14 @@
     // Mascot.skin() and skins() answer correctly before the first summon.
     curId = resolveSkinId();
     if (store.pref() === '1') summon();          // asked for it, last time
-    // Wired once, at boot rather than per build(), so on/off cycles don't stack
-    // up duplicate listeners. It only feeds the occasional cursor chase.
-    document.addEventListener('pointermove', function (e) {
+    // Wired once, at boot rather than per build(), so on/off cycles don't
+    // stack up duplicate listeners. It feeds the cursor chase and the web
+    // break; pointerdown too, so a touch tap counts as contact (§2a).
+    var track = function (e) {
       mouse.x = e.clientX; mouse.y = e.clientY; mouse.t = clock;
-    }, { passive: true });
+    };
+    document.addEventListener('pointermove', track, { passive: true });
+    document.addEventListener('pointerdown', track, { passive: true });
     window.addEventListener('resize', function () { lastScan = -1e9; });
   }
   // NOTE: boot() is called at the very BOTTOM of this file, not here — the

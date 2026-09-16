@@ -147,9 +147,11 @@ describe('mascot engine', () => {
   });
 
   test('the picker offers the visible forms; hidden ones stay off it', async () => {
-    const ids = (await bootWindow()).Mascot.skins().map(s => s.id);
-    expect(ids).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo', 'snail']);
-    expect(ids).not.toContain('menorah');       // hidden: seasonal/console only
+    const skins = (await bootWindow()).Mascot.skins();
+    expect(skins.map(s => s.id)).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo', 'snail', 'spider']);
+    expect(skins.map(s => s.id)).not.toContain('menorah');   // hidden: seasonal/console only
+    // §2's honesty rule: exactly the obtrusive one carries the rowdy flag.
+    expect(skins.filter(s => s.rowdy).map(s => s.id)).toEqual(['spider']);
   });
 
   test('a hidden form still loads, applies, and marks no picker card current', async () => {
@@ -176,6 +178,67 @@ describe('mascot engine', () => {
     expect(win.Mascot.register({ ...base, id: 'bad-trail', trail: { every: 0, life: 6, max: 40, svg: '<svg/>' } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'capless-trail', trail: { every: 10, life: 6, svg: '<svg/>' } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'ok-trail', trail: { every: 10, life: 6, max: 40, svg: '<svg/>' } })).toBe(true);
+    // …and a web keeps §2a's: odds, life, cap, break radius, a rect, and a
+    // spinning act that actually exists.
+    const okWeb = { chance: 0.5, life: 45, max: 5, w: 30, h: 26, breakR: 18, svg: '<svg/>' };
+    expect(win.Mascot.register({ ...base, id: 'ok-web', web: okWeb })).toBe(true);
+    expect(win.Mascot.register({ ...base, id: 'wild-web', web: { ...okWeb, chance: 2 } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'capless-web', web: { ...okWeb, max: 0 } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'unbreakable-web', web: { ...okWeb, breakR: 0 } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'ghost-act-web', web: { ...okWeb, act: 'weave' } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'sit-act-web', web: { ...okWeb, act: 'sit' } })).toBe(true);
+  });
+
+  test('webs spawn after the sit and break at the pointer (§2a)', async () => {
+    const { win } = await bootWithSkins();
+    // finally-guarded live-physics test, like the trail's.
+    try {
+      win.Mascot.register({
+        id: 'webby', name: 'Webby', geom: { W: 10, H: 10, FLY_HEAD: 10 },
+        acts: [['sit', 1]], lines: ['.'], svg: '<svg/>', css: [],
+        web: {
+          chance: 1, life: 30, max: 3, w: 20, h: 16, breakR: 24,
+          svg: '<svg width="20" height="16"><circle cx="10" cy="8" r="7" fill="none" stroke="#888"/></svg>'
+        }
+      });
+      win.Mascot.setSkin('webby');
+      win.Mascot.on();
+      // Land first — the idle command refuses until there is footing.
+      let t0 = Date.now();
+      while (Date.now() - t0 < 6000 && win.Mascot.do('idle') === false) {
+        await new Promise(r => setTimeout(r, 120));
+      }
+      // The sit ends on its own clock and, at chance 1, leaves a web.
+      t0 = Date.now();
+      let web = null;
+      while (Date.now() - t0 < 9000 && !web) {
+        web = win.document.querySelector('#yc-mascot .yc-obj-web');
+        if (!web) await new Promise(r => setTimeout(r, 150));
+      }
+      expect(web).toBeTruthy();
+      // §2a: the POINTER coming near breaks it — a distance test, no pointer
+      // events anywhere near the web itself.
+      const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(web.style.transform);
+      const cx = Number(m[1]), cy = Number(m[2]) - 8;      // h/2 = 8
+      win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: cx, clientY: cy }));
+      t0 = Date.now();
+      let broke = false;
+      while (Date.now() - t0 < 3000 && !broke) {
+        broke = web.classList.contains('yc-obj-break') || !web.isConnected;
+        if (!broke) await new Promise(r => setTimeout(r, 100));
+      }
+      expect(broke).toBe(true);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 25000);
+
+  test('the web spawn veto is present for browsers to enforce', () => {
+    // jsdom has no layout, so the never-over-an-input veto cannot be
+    // exercised here — pin its presence and its single wiring instead.
+    expect(ENGINE_SRC).toContain("querySelectorAll('input, select, textarea')");
+    expect((ENGINE_SRC.match(/webTouchesField\(/g) || []).length).toBe(2);   // def + its one call
   });
 
   test('a trailing form actually leaves the trail behind it', async () => {
@@ -356,7 +419,7 @@ describe('every registered skin honours the contract', () => {
   });
 
   test('all shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba', 'snail', 'ufo']);
+    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba', 'snail', 'spider', 'ufo']);
   });
 
   for (const f of SKIN_FILES) {
