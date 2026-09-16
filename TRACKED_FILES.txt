@@ -279,6 +279,7 @@ public/issueReports.html
 public/js/assetpicker.js
 public/js/diag.js
 public/js/mascot/engine.js
+public/js/mascot/skins/bat.js
 public/js/mascot/skins/casey.js
 public/js/mascot/skins/casey95.js
 public/js/mascot/skins/ghost.js

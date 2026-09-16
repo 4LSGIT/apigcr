@@ -319,7 +319,14 @@
     // floor). All off by default; a roaming skin tunes them up.
     RAPPEL: 75,            // px/s down the silk
     WEAVE_CHANCE: 0,       // per settle-down: stop and start building a web
-    RAPPEL_CHANCE: 0       // per settle-down: let down a line and ride it
+    RAPPEL_CHANCE: 0,      // per settle-down: let down a line and ride it
+
+    // THE CHASER SET — pursue is the chase that never gives up: full-screen
+    // flight straight at the cursor, and on the catch either a PERCH (hung
+    // from the pointer as though it were a branch, until it moves away) or,
+    // for skins without perch, a told-you-so on the spot.
+    PURSUE: 240,           // px/s of pursuit
+    PURSUE_CHANCE: 0       // per settle-down, when the cursor is fresh
   };
 
   // Storage and loading are engine constants, not tunables — a skin must not be
@@ -336,7 +343,7 @@
   // that list them in `can` and tune DRIFT_CHANCE above zero.
   var STATES = ['walk', 'idle', 'chase', 'climb', 'hang', 'fall', 'hop',
     'crouch', 'land', 'drag', 'inflate', 'float', 'pop', 'drift', 'blink',
-    'rappel', 'weave', 'leave'];
+    'rappel', 'weave', 'pursue', 'perch', 'leave'];
 
   // ── The manifest ─────────────────────────────────────────────────────────────
   // What the picker offers, renderable before any skin file downloads. `hidden`
@@ -352,6 +359,7 @@
     // rowdy: the picker badges it and the blurb says so plainly — it is
     // opt-in, honestly labelled, and easy to kill, per §2.
     { id: 'spider', name: 'Spider', blurb: 'A spider. Roams the whole page, rappels down silk, and builds a web until you break it. Rowdy.', rowdy: true },
+    { id: 'bat', name: 'Bat', blurb: 'A bat. Hunts your cursor across the whole screen, catches it, and hangs from it like a branch.' },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -456,6 +464,7 @@
   var fly = null;              // the ascent in progress: { popY, x0, t0 }
   var flyReady = 0;            // clock time the next ascent becomes possible
   var driftSeed = 0;           // phase offset so no two drifts trace one path
+  var driftUp = false;         // the roost run: drift's climb-to-the-ceiling exit
   var say = null;              // the speech bubble
   var sayTimer = 0;            // its expiry, held so a new line can reset it
   var lastLine = -1;           // so it does not say the same thing twice running
@@ -799,6 +808,7 @@
     if (allowed('drift') && Math.random() < CFG.DRIFT_CHANCE) { toDrift(); return; }
     if (allowed('weave') && Math.random() < CFG.WEAVE_CHANCE && startWeave()) return;
     if (allowed('rappel') && Math.random() < CFG.RAPPEL_CHANCE && toRappel()) return;
+    if (allowed('pursue') && clock - mouse.t < 5 && Math.random() < CFG.PURSUE_CHANCE && toPursue()) return;
     setState('idle', pick(skin.acts));
     var o = actOpt(act);
     if (o.face) face = o.face;
@@ -932,6 +942,7 @@
     ledge = null; wall = null; rot = 0;
     hop = null; hopFloor = -1e9; fly = null;
     driftSeed = Math.random() * 100;
+    driftUp = false;
     vx = rand(-12, 12); vy = rand(-8, 8);
     setState('drift');
     stateUntil = clock + rand(4, 9);
@@ -1064,16 +1075,39 @@
     }
 
     if (state === 'drift') {
+      var ease = Math.min(1, dt * 1.2);
+      // The ROOST RUN: a drifter that can hang sometimes ends its wander by
+      // climbing the air all the way to the top of the window and latching on
+      // upside down — this is how a bat reaches the rafters without ever
+      // touching a wall. Committed once begun: no expiry, the ceiling is the
+      // exit, and the -72 target means it converges from any height.
+      if (driftUp) {
+        vx += (Math.sin(clock * 0.8 + driftSeed) * 22 - vx) * ease;
+        vy += (-72 - vy) * ease;
+        px = clamp(px + vx * dt, bounds.left + 10, bounds.right - 10);
+        py = Math.max(py + vy * dt, bounds.top + 16);
+        aim(vx, 0);
+        if (py <= bounds.top + 18) {
+          driftUp = false;
+          ledge = null; wall = null;
+          rot = 180; py = bounds.top;
+          px = clamp(px, bounds.left + 8, bounds.right - 8);
+          aim(px > mid() ? -1 : 1, 0);
+          setState('hang');
+          stateUntil = clock + rand(4, 10);
+        }
+        return;
+      }
       // A slow figure-of-nothing: velocity eases toward a wandering target,
       // so the path curves instead of jittering. No gravity in here — this
       // branch sits above fall/hop for the same reason float does.
-      var ease = Math.min(1, dt * 1.2);
       vx += (Math.sin(clock * 0.8 + driftSeed) * 16 - vx) * ease;
       vy += (Math.cos(clock * 0.53 + driftSeed * 2) * 11 - vy) * ease;
       px = clamp(px + vx * dt, bounds.left + 10, bounds.right - 10);
       py = clamp(py + vy * dt, bounds.top + 16, bounds.bottom - 4);
       aim(vx, 0);
       if (clock >= stateUntil) {
+        if (allowed('hang') && Math.random() < 0.5) { driftUp = true; return; }
         if (allowed('blink') && Math.random() < 0.4) { toBlink(); return; }
         // …or sink back to the world: an ordinary fall, which for a skin this
         // floaty (they tune GRAVITY down) is a feather drop onto whatever is
@@ -1235,6 +1269,47 @@
           toWalk();
         }
       }
+      return;
+    }
+
+    if (state === 'pursue') {
+      if (mouse.x < 0 || clock - mouse.t > 6) { toFall(vx * 0.25, 0); return; }
+      var ptx = mouse.x, pty = mouse.y + 6;
+      var pdx = ptx - px, pdy = pty - py;
+      var pd = Math.sqrt(pdx * pdx + pdy * pdy);
+      if (pd < 14) {
+        perchAt.x = mouse.x; perchAt.y = mouse.y;
+        if (allowed('perch')) {
+          // hung from the pointer as though it were a branch: claws at the
+          // cursor, body below (the skin's css turns it over)
+          px = perchAt.x;
+          py = perchAt.y + CFG.H + 2;
+          vx = 0; vy = 0;
+          setState('perch');
+        } else {
+          // caught it, nothing to hang from: a look, and back to its day
+          setState('idle', attn());
+          stateUntil = clock + rand(1.2, 2.2);
+        }
+        return;
+      }
+      // homing with a flap wobble — banking falls out of the easing
+      var pk = Math.min(1, dt * 2.2);
+      vx += (pdx / pd * CFG.PURSUE - vx) * pk;
+      vy += (pdy / pd * CFG.PURSUE - vy) * pk;
+      vy += Math.sin(clock * 9) * 40 * dt;
+      px = clamp(px + vx * dt, bounds.left + 8, bounds.right - 8);
+      py = clamp(py + vy * dt, bounds.top + 10, bounds.bottom - 6);
+      aim(vx, 0);
+      rot = 0;
+      return;
+    }
+
+    if (state === 'perch') {
+      // parked on the catch point until the cursor moves off — then the
+      // whole game starts again. Relentless is the brief.
+      var qdx = mouse.x - perchAt.x, qdy = mouse.y - perchAt.y;
+      if (qdx * qdx + qdy * qdy > 3600) toPursue();
       return;
     }
 
@@ -1581,6 +1656,23 @@
     if (rappel) { rappel.el.remove(); rappel = null; }
   }
 
+  // ── Pursuit ──────────────────────────────────────────────────────────────────
+  // The chase that never gives up: airborne homing on the cursor, wherever it
+  // goes, however long it takes. The catch depends on the skin: with 'perch'
+  // in its can it PERCHES at the catch point — hung upside down, the pointer
+  // for a branch — until the cursor moves off; without it, it stops, gives
+  // the cursor a look, and resumes its day. Interest lapses only when the
+  // cursor has been still for a long six seconds mid-flight.
+  var perchAt = { x: 0, y: 0 };
+
+  function toPursue() {
+    if (mouse.x < 0) return false;
+    ledge = null; wall = null; rot = 0;
+    hop = null; hopFloor = -1e9; fly = null;
+    setState('pursue');
+    return true;
+  }
+
   // §2a's enforcement, all of it: a web breaks when the POINTER comes near —
   // a distance test against the tracked cursor, run each frame over at most
   // `max` webs. No web ever has pointer events, so there is no click to
@@ -1843,6 +1935,7 @@
       if (ok && has('blink') && !has('drift')) ok = false;   // a blink lands in a drift
       if (ok && has('weave') && !(def.web && def.roam)) ok = false;   // weaving needs a web, and the floor plan
       if (ok && has('rappel') && !def.roam) ok = false;              // rappelling is a top-view trick
+      if (ok && has('perch') && !has('pursue')) ok = false;          // a perch is where a pursuit ends
     }
     // A trail keeps its own promises: real spacing, a finite life, a cap.
     if (ok && def.trail) {
@@ -2211,6 +2304,10 @@
     {
       name: 'rappel', needs: 'any', gate: 'rappel', what: 'let down a line and ride it down the page',
       run: function () { if (!toRappel()) return 'not enough page below'; }
+    },
+    {
+      name: 'pursue', needs: 'any', gate: 'pursue', what: 'hunt the cursor down, however far it runs',
+      run: function () { if (!toPursue()) return 'move the mouse first — it has not seen the cursor yet'; }
     },
     {
       name: 'drift', needs: 'any', gate: 'drift', what: 'lift off and wander — gravity is a suggestion',

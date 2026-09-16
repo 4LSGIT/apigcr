@@ -56,7 +56,7 @@ const STATES_NEEDING_CSS = states => states.filter(s => s !== 'leave');
 
 // The engine's non-idle action names (the idle ones come from each skin).
 const BASE_ACTION_NAMES = ['walk', 'idle', 'talk', 'jump', 'fly', 'climb', 'hang', 'fall',
-  'chase', 'weave', 'rappel', 'drift', 'blink', 'flip'];
+  'chase', 'weave', 'rappel', 'drift', 'blink', 'pursue', 'flip'];
 
 /** A real window with the real engine evaluated in it.
  *  runScripts:'outside-only' is load-bearing: without it window.eval runs in
@@ -148,7 +148,7 @@ describe('mascot engine', () => {
 
   test('the picker offers the visible forms; hidden ones stay off it', async () => {
     const skins = (await bootWindow()).Mascot.skins();
-    expect(skins.map(s => s.id)).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo', 'snail', 'spider']);
+    expect(skins.map(s => s.id)).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo', 'snail', 'spider', 'bat']);
     expect(skins.map(s => s.id)).not.toContain('menorah');   // hidden: seasonal/console only
     // §2's honesty rule: exactly the obtrusive one carries the rowdy flag.
     expect(skins.filter(s => s.rowdy).map(s => s.id)).toEqual(['spider']);
@@ -174,6 +174,11 @@ describe('mascot engine', () => {
     expect(win.Mascot.register({ ...base, id: 'full-ascent', can: [...CORE, 'inflate', 'float', 'pop'] })).toBe(true);
     expect(win.Mascot.register({ ...base, id: 'blink-no-drift', can: [...CORE, 'blink'] })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'drift-only', can: [...CORE, 'drift'] })).toBe(true);
+    // a perch is where a pursuit ends — it cannot exist without one…
+    expect(win.Mascot.register({ ...base, id: 'perch-no-pursue', can: [...CORE, 'perch'] })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'full-hunter', can: [...CORE, 'pursue', 'perch'] })).toBe(true);
+    // …but a pursuit without a perch is legal: the catch just ends in a gloat.
+    expect(win.Mascot.register({ ...base, id: 'pursue-only', can: [...CORE, 'pursue'] })).toBe(true);
     // …and a trail keeps its promises: spacing, a finite life, a cap, art.
     expect(win.Mascot.register({ ...base, id: 'bad-trail', trail: { every: 0, life: 6, max: 40, svg: '<svg/>' } })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'capless-trail', trail: { every: 10, life: 6, svg: '<svg/>' } })).toBe(false);
@@ -475,6 +480,51 @@ describe('mascot engine', () => {
     expect(flames(-1)).toBe(9);   // out of season = full dress (the portrait)
   });
 
+  test('the pursuit never gives up, and the catch is a perch', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.setSkin('bat');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+
+      // Before any pointer has been seen there is nothing to hunt — the
+      // action refuses (run() returns a why-string, so do() reports false).
+      expect(win.Mascot.do('pursue')).toBe(false);
+
+      // Show it a cursor ~120px from wherever it spawned, then send it.
+      const at = win.Mascot.debug().cat;
+      const mx = Math.max(30, Math.min(win.innerWidth - 30, at.x + 120));
+      const my = Math.max(30, Math.min(win.innerHeight - 60, at.y - 80));
+      win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: mx, clientY: my }));
+      expect(win.Mascot.do('pursue')).toBe('pursue');
+      expect(win.Mascot.debug().cat.state).toBe('pursue');
+
+      // The catch: homing flight ends within 14px of the cursor, and a form
+      // with 'perch' swings under it and hangs — pinned at the pointer, feet
+      // up (the anchor sits one sprite-height below, per the engine).
+      let t0 = Date.now();
+      while (Date.now() - t0 < 5000 && win.Mascot.debug().cat.state !== 'perch') {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      const hung = win.Mascot.debug().cat;
+      expect(hung.state).toBe('perch');
+      expect(Math.abs(hung.x - mx)).toBeLessThan(2);
+      expect(Math.abs(hung.y - (my + 16 + 2))).toBeLessThan(2);   // bat geom.H = 16
+
+      // The branch flies off (>60px) — the bat simply resumes the hunt.
+      win.document.dispatchEvent(new win.MouseEvent('pointermove',
+        { clientX: Math.max(30, mx - 200), clientY: my }));
+      t0 = Date.now();
+      while (Date.now() - t0 < 3000 && win.Mascot.debug().cat.state !== 'pursue') {
+        await new Promise(r => setTimeout(r, 80));
+      }
+      expect(win.Mascot.debug().cat.state).toBe('pursue');
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 20000);
+
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
     // inside the primitives, which roll Math.random and cannot be driven from
@@ -484,12 +534,14 @@ describe('mascot engine', () => {
     expect(count(/allowed\('float'\)/g)).toBe(1);   // tryFly
     expect(count(/allowed\('hop'\)/g)).toBe(1);     // tryHop
     expect(count(/allowed\('climb'\)/g)).toBe(2);   // atEdge + the hang walk
-    expect(count(/allowed\('hang'\)/g)).toBe(1);    // climb-top ceiling branch
+    expect(count(/allowed\('hang'\)/g)).toBe(2);    // climb-top branch + drift's roost run
     expect(count(/allowed\('chase'\)/g)).toBe(1);   // walk's cursor-notice
     expect(count(/allowed\('drift'\)/g)).toBe(2);   // toIdle roll + airborne poke
     expect(count(/allowed\('blink'\)/g)).toBe(1);   // drift's end-of-wander roll
     expect(count(/allowed\('weave'\)/g)).toBe(1);   // toIdle roll
     expect(count(/allowed\('rappel'\)/g)).toBe(1);  // toIdle roll
+    expect(count(/allowed\('pursue'\)/g)).toBe(1);  // toIdle roll
+    expect(count(/allowed\('perch'\)/g)).toBe(1);   // the catch, inside pursue
   });
 });
 
@@ -541,7 +593,7 @@ describe('every registered skin honours the contract', () => {
   });
 
   test('all shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba', 'snail', 'spider', 'ufo']);
+    expect(Object.keys(defs).sort()).toEqual(['bat', 'casey', 'casey95', 'ghost', 'menorah', 'roomba', 'snail', 'spider', 'ufo']);
   });
 
   for (const f of SKIN_FILES) {
