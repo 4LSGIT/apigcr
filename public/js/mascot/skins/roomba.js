@@ -26,7 +26,7 @@
   window.Mascot.register({
     id: 'roomba',
     name: 'Roomba',
-    blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.',
+    blurb: 'Floor only. The ledges are safe; the crumbs are not.',
 
     // A low disc. FLY_HEAD is moot (no ascent in `can`) but the contract wants
     // the sprite's own height there, so it gets it.

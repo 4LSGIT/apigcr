@@ -26,7 +26,7 @@
   window.Mascot.register({
     id: 'snail',
     name: 'Snail',
-    blurb: 'A snail. Unhurried, and it signs its work.',
+    blurb: 'Unhurried, and it signs its work.',
 
     // Low and small. No ascent in `can`, so FLY_HEAD is the sprite's own
     // height per the contract's convention.

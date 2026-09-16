@@ -28,7 +28,12 @@
  *     id: 'casey',              // matches the file name under skins/
  *     name: 'Casey',            // labels this form's card in the picker ONLY —
  *                               // the pet itself is called Casey everywhere
- *     blurb: 'A ginger cat.',   // one picker line; a rowdy skin says so HERE
+ *     blurb: 'Walks the ledges.',
+ *                               // ONE picker line, shown under the name —
+ *                               // so it need not repeat the name, and a
+ *                               // rowdy form need not say 'rowdy' (the
+ *                               // picker badges that itself). Say what it
+ *                               // DOES; the card clamps at three lines.
  *     geom: { W: 36, H: 28, FLY_HEAD: 52 },
  *                               // sprite box, and how far the tallest thing
  *                               // (balloon crown, robot ears) rises above the
@@ -374,17 +379,17 @@
   // (when it arrives with the seasonal skins) keeps an entry out of the picker;
   // `rowdy` will mark the obtrusive ones. The default skin leads the list.
   var MANIFEST = [
-    { id: 'casey', name: 'Casey', blurb: 'A ginger cat. Walks the ledges, naps on your case list.' },
-    { id: 'casey95', name: 'Casey-95', blurb: 'A Win95 robot cat. The same moves in button-grey plate — and a jetpack.' },
-    { id: 'roomba', name: 'Roomba', blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.' },
-    { id: 'ghost', name: 'Ghost', blurb: 'A ghost. Ignores gravity, respects the modals.' },
-    { id: 'ufo', name: 'UFO', blurb: 'A flying saucer. Hovers, warps, abducts the odd cow.' },
-    { id: 'snail', name: 'Snail', blurb: 'A snail. Unhurried, and it signs its work.' },
-    // rowdy: the picker badges it and the blurb says so plainly — it is
+    { id: 'casey', name: 'Casey', blurb: 'Walks the ledges, naps on your case list.' },
+    { id: 'casey95', name: 'Casey-95', blurb: 'The same cat in button-grey plate — and a jetpack.' },
+    { id: 'roomba', name: 'Roomba', blurb: 'Floor only. The ledges are safe; the crumbs are not.' },
+    { id: 'ghost', name: 'Ghost', blurb: 'Ignores gravity, respects the modals.' },
+    { id: 'ufo', name: 'UFO', blurb: 'Hovers, warps, abducts the odd cow.' },
+    { id: 'snail', name: 'Snail', blurb: 'Unhurried, and it signs its work.' },
+    // rowdy: the picker badges it, and the blurb says plainly what it does — it is
     // opt-in, honestly labelled, and easy to kill, per §2.
-    { id: 'spider', name: 'Spider', blurb: 'A spider. Roams the whole page, rappels down silk, and builds a web until you break it. Rowdy.', rowdy: true },
-    { id: 'bat', name: 'Bat', blurb: 'A bat. Hunts your cursor across the whole screen, catches it, and hangs from it like a branch.' },
-    { id: 'goose', name: 'Goose', blurb: 'A goose. Tracks mud, honks at your cursor, and steals words and icons off the page for her corner hoard. Click her loot to get it back. Rowdy.', rowdy: true },
+    { id: 'spider', name: 'Spider', blurb: 'Roams the page, rappels down silk, webs over anything until you break it.', rowdy: true },
+    { id: 'bat', name: 'Bat', blurb: 'Hunts your cursor anywhere on screen, then hangs from it like a branch.' },
+    { id: 'goose', name: 'Goose', blurb: 'Tracks mud, honks, and pockets bits of your page. Click her loot to undo.', rowdy: true },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.

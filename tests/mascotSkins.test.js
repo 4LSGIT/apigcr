@@ -224,11 +224,21 @@ describe('mascot engine', () => {
       win.Mascot.on();
       expect(win.Mascot.out()).toBe(true);
 
-      // 1. it MOVES with no ledges consulted — top view, the page is the floor
+      // 1. it MOVES with no ledges consulted — top view, the page is the floor.
+      // POLLED, not sampled across a fixed window: the roam cadence is
+      // deliberately scurry-and-freeze (pauses to 0.8s, and a reached target
+      // means an idle act of up to 4.5s), so any fixed window can legitimately
+      // contain no travel at all — which is exactly how this flaked twice
+      // under a loaded full-suite run. A roamer that cannot manage 4px in
+      // eight seconds is broken; one that is mid-freeze is not.
       const p0 = win.Mascot.debug().cat;
-      await new Promise(r => setTimeout(r, 1200));
-      const p1 = win.Mascot.debug().cat;
-      expect(Math.abs(p1.x - p0.x) + Math.abs(p1.y - p0.y)).toBeGreaterThan(4);
+      let travelled = 0, tMove = Date.now();
+      while (Date.now() - tMove < 8000 && travelled <= 4) {
+        await new Promise(r => setTimeout(r, 120));
+        const p1 = win.Mascot.debug().cat;
+        travelled = Math.abs(p1.x - p0.x) + Math.abs(p1.y - p0.y);
+      }
+      expect(travelled).toBeGreaterThan(4);
 
       // 2. weave on command; the web then GROWS on its own clock
       expect(win.Mascot.do('weave')).toBe('weave');
@@ -265,8 +275,27 @@ describe('mascot engine', () => {
       expect(win.Mascot.debug().cat.state).not.toBe('weave');
 
       // 4. rappel: an engine-owned line, cut by the pointer touching it.
-      // (It refuses too near the bottom edge — let the roam wander it into
-      // an eligible spot.)
+      // toRappel() refuses within 120px of the bottom — there is no page left
+      // to descend. Waiting for the wander to leave that band is a BET, and
+      // one this test lost about one run in eight: the cadence can sit out a
+      // multi-second idle down there. So put it where the trick is legal, by
+      // the same gesture a person would use — pick it up and set it down. The
+      // second pointermove to the same spot zeroes the throw velocity, so it
+      // is placed rather than flung.
+      const catEl = win.document.querySelector('.yc-cat');
+      const dropX = Math.round(win.innerWidth / 2), dropY = 150;
+      catEl.dispatchEvent(new win.MouseEvent('pointerdown',
+        { clientX: win.Mascot.debug().cat.x, clientY: win.Mascot.debug().cat.y, bubbles: true }));
+      catEl.dispatchEvent(new win.MouseEvent('pointermove',
+        { clientX: dropX, clientY: dropY, bubbles: true }));
+      await new Promise(r => setTimeout(r, 60));
+      catEl.dispatchEvent(new win.MouseEvent('pointermove',
+        { clientX: dropX, clientY: dropY, bubbles: true }));
+      catEl.dispatchEvent(new win.MouseEvent('pointerup',
+        { clientX: dropX, clientY: dropY, bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));      // let the set-down settle
+      expect(win.Mascot.debug().cat.y).toBeLessThan(win.innerHeight - 120);
+
       t0 = Date.now();
       let started = false;
       while (Date.now() - t0 < 6000 && !started) {

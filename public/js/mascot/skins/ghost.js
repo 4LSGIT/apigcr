@@ -29,7 +29,7 @@
   window.Mascot.register({
     id: 'ghost',
     name: 'Ghost',
-    blurb: 'A ghost. Ignores gravity, respects the modals.',
+    blurb: 'Ignores gravity, respects the modals.',
 
     // A tallish sheet; the hem is the foot line. No ascent in `can`, so
     // FLY_HEAD is the sprite's own height per the contract's convention —

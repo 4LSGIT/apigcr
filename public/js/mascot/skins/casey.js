@@ -25,7 +25,7 @@
   window.Mascot.register({
     id: 'casey',
     name: 'Casey',
-    blurb: 'A ginger cat. Walks the ledges, naps on your case list.',
+    blurb: 'Walks the ledges, naps on your case list.',
 
     // 36×28, feet on the bottom edge. FLY_HEAD is the balloon's crown: it lives
     // ABOVE the viewBox, at y −23.8, i.e. 52px above the feet at y 28. Change

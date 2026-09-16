@@ -33,7 +33,7 @@
   window.Mascot.register({
     id: 'spider',
     name: 'Spider',
-    blurb: 'A spider. Roams the whole page, rappels down silk, and builds a web until you break it. Rowdy.',
+    blurb: 'Roams the page, rappels down silk, webs over anything until you break it.',
 
     // A square-ish box, because a top-view sprite rotates about its centre.
     // FLY_HEAD is the sprite's own size per the convention; no ascent here.

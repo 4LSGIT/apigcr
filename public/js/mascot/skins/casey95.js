@@ -37,7 +37,7 @@
   window.Mascot.register({
     id: 'casey95',
     name: 'Casey-95',
-    blurb: 'A Win95 robot cat. The same moves in button-grey plate — and a jetpack.',
+    blurb: 'The same cat in button-grey plate — and a jetpack.',
 
     // Same 36×28 box and the same pivots as Casey (hips at y 18.5, neck at
     // 25,12, tail root at 6,15), so every pose the physics asks for still means

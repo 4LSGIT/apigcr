@@ -34,7 +34,7 @@
   window.Mascot.register({
     id: 'goose',
     name: 'Goose',
-    blurb: 'A goose. Tracks mud, honks at your cursor, and steals words and icons off the page for her corner hoard. Click her loot to get it back. Rowdy.',
+    blurb: 'Tracks mud, honks, and pockets bits of your page. Click her loot to undo.',
 
     // Tall for the neck. No ascent in `can`, so FLY_HEAD is the sprite's own
     // height per the contract's convention.

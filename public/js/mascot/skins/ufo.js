@@ -30,7 +30,7 @@
   window.Mascot.register({
     id: 'ufo',
     name: 'UFO',
-    blurb: 'A flying saucer. Hovers, warps, abducts the odd cow.',
+    blurb: 'Hovers, warps, abducts the odd cow.',
 
     // A low saucer; the hull's underside is the foot line, and nothing sticks
     // up past the dome, so FLY_HEAD is the sprite's own height — the strip

@@ -27,7 +27,7 @@
   window.Mascot.register({
     id: 'bat',
     name: 'Bat',
-    blurb: 'A bat. Hunts your cursor across the whole screen, catches it, and hangs from it like a branch.',
+    blurb: 'Hunts your cursor anywhere on screen, then hangs from it like a branch.',
 
     // Wide for the wingspan, short in the body. No ascent set in `can`, so
     // FLY_HEAD is the sprite's own height per the contract's convention.
