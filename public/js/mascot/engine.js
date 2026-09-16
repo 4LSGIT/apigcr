@@ -545,6 +545,16 @@
   var nextHop = 0;             // clock time of the next "is there something below me"
   var fly = null;              // the ascent in progress: { popY, x0, t0 }
   var flyReady = 0;            // clock time the next ascent becomes possible
+  // FAST FORWARD. Deliberately NOT in CFG: a skin must not be able to tune it,
+  // and it has to survive a skin switch (CFG is rebuilt per skin). 1 is real
+  // time; above that the pet's whole world runs faster, which is the only
+  // practical way to watch an ambient behaviour that rolls once per settle-down.
+  var speed = 1;
+  // Object lifetimes are wall-clock (setTimeout, css transitions) rather than
+  // engine-clock, so they need scaling by hand or a fast-forwarded web outlives
+  // the test watching it.
+  function scaled(sec) { return sec / speed; }
+
   var driftSeed = 0;           // phase offset so no two drifts trace one path
   var driftUp = false;         // the roost run: drift's climb-to-the-ceiling exit
   var say = null;              // the speech bubble
@@ -1617,13 +1627,28 @@
         state === 'land' || state === 'crouch' || state === 'inflate') refoot();
     }
 
-    update(dt);
-    // 'leave' tears everything down from inside update(), so the pet may be gone.
-    if (!running || !cat) return;
+    // Fast forward runs WHOLE EXTRA STEPS rather than a bigger dt: at 8x a
+    // single 0.4s step would tunnel the pet through floors, past ledges and
+    // out of every distance test in here. Slow motion can just shrink dt,
+    // which is always safe.
+    var steps = 1, sub = dt;
+    if (speed < 1) sub = dt * speed;
+    else if (speed > 1) steps = Math.min(8, Math.round(speed));
+    for (var st = 0; st < steps; st++) {
+      update(sub);
+      // 'leave' tears everything down from inside update(), so the pet may be gone.
+      if (!running || !cat) return;
+      // The trail is gated on DISTANCE, so it belongs inside the loop: left
+      // outside it, a fast-forwarded pet covers eight steps of ground and
+      // drops one dab for the lot, and the signature thins out to nothing at
+      // exactly the speed you would use to go looking at it.
+      if (skin.trail) maybeTrail();
+    }
     draw();
-    if (skin.trail) maybeTrail();
+    // These two are about where the POINTER is, which does not change between
+    // sub-steps, so once a frame is both correct and cheaper.
     if (skin.web) breakWebs();
-    if (flying) flyObjs(dt);
+    if (flying) flyObjs(dt * (speed > 1 ? steps : speed));
   }
 
   // ── Drag ─────────────────────────────────────────────────────────────────────
@@ -1723,7 +1748,8 @@
     // The engine owns the fade: fully there for the first stretch of life,
     // gone by the end. Armed a frame late so the transition actually runs.
     el.style.opacity = '1';
-    el.style.transition = 'opacity ' + (life * 0.4).toFixed(1) + 's ease ' + (life * 0.6).toFixed(1) + 's';
+    el.style.transition = 'opacity ' + scaled(life * 0.4).toFixed(1) + 's ease ' +
+      scaled(life * 0.6).toFixed(1) + 's';
     root.appendChild(el);
     // A forced style flush, NOT a requestAnimationFrame. Setting the target
     // opacity from a rAF callback races the element's first style
@@ -1740,7 +1766,7 @@
     o.timer = setTimeout(function () {
       var i2 = objs.indexOf(o);
       if (i2 !== -1) removeObj(i2);
-    }, life * 1000);
+    }, scaled(life) * 1000);
     objs.push(o);
     return true;
   }
@@ -2080,7 +2106,7 @@
     el.style.transition = 'transform .45s cubic-bezier(.3,1.5,.5,1)';
     el.style.transform = (rec.wasT ? rec.wasT + ' ' : '') + pose;
     el.classList.add('yc-haunted');
-    rec.timer = setTimeout(function () { unhaunt(rec); }, h.life * 1000);
+    rec.timer = setTimeout(function () { unhaunt(rec); }, scaled(h.life) * 1000);
     haunts.push(rec);
     return true;
   }
@@ -3416,6 +3442,29 @@
       return names;
     },
 
+    // ── Fast forward (WORKBENCH ONLY) ──
+    // Most of what this pet does is decided by a roll taken once per
+    // settle-down, which at real time means sitting and waiting to find out
+    // whether a behaviour works. This stretches the engine's clock instead:
+    // pranks, timers, chases, and the lifetimes of everything it leaves
+    // behind. The sprite's own css animations keep running at real speed —
+    // they belong to the browser, not to us — so a fast-forwarded pet gets
+    // about quickly while still walking at a normal-looking pace.
+    //
+    // NOT FOR THE PEOPLE USING THE APP. There is no button for it, it is off
+    // Mascot.list()'s help, it is not an action so it can never reach the
+    // trick panel, and it is deliberately NOT persisted — a reload is real
+    // time again, so nobody can leave the firm's pet stuck at 8x. It is a
+    // line to type in the console while working on a form, and nothing else.
+    speed: function (n) {
+      if (n === undefined) return speed;
+      speed = clamp(Number(n) || 1, 0.1, 8);
+      console.log('[Mascot] speed ×' + speed +
+        (speed > 1 ? ' — fast forward. Mascot.speed(1) for real time.'
+          : speed < 1 ? ' — slow motion.' : ' — real time.'));
+      return speed;
+    },
+
     // ── Skins ──
     register: register,
     // The picker's list: manifest order, hidden entries left out, the current
@@ -3490,6 +3539,10 @@
         skin: curId,
         bounds: bounds,
         cat: { state: state, x: Math.round(px), y: Math.round(py), rot: rot },
+        // the engine's own clock, which fast forward stretches — the honest
+        // way to see whether Mascot.speed() is doing anything
+        clock: Math.round(clock * 10) / 10,
+        speed: speed,
         // Seconds until an ascent is possible again. 0 means the only thing left
         // between you and one is the roll in toIdle() and something to fly to.
         flyIn: Math.max(0, Math.round(flyReady - clock)),

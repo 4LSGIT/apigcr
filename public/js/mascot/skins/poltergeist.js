@@ -73,7 +73,7 @@
     // The loud one. Short, legible, and plainly the pet rather than the app.
     graffiti: {
       max: 3,
-      life: 25,
+      life: 150,             // it is meant to be lived with, not glimpsed
       texts: [
         'BOO', 'MINE NOW', 'OBJECTION', 'WONKY', 'I WAS HERE',
         'ADJOURNED', 'TILT', 'NICE DESK', 'SO DUSTY', 'RUDE'
@@ -139,9 +139,9 @@
       '<svg class="pg-svg" viewBox="0 0 32 38" width="32" height="38" aria-hidden="true" focusable="false">' +
       '<defs>' +
       '<radialGradient id="pgBody" cx="50%" cy="38%" r="66%">' +
-      '<stop offset="0%" stop-color="#FBFAFF" stop-opacity=".97"/>' +
-      '<stop offset="66%" stop-color="#DCD6F0" stop-opacity=".9"/>' +
-      '<stop offset="100%" stop-color="#B7AED6" stop-opacity=".78"/>' +
+      '<stop offset="0%" stop-color="#E4F0FF" stop-opacity=".97"/>' +
+      '<stop offset="58%" stop-color="#9FBEE4" stop-opacity=".93"/>' +
+      '<stop offset="100%" stop-color="#6A8CBC" stop-opacity=".85"/>' +
       '</radialGradient>' +
       '</defs>' +
       '<g class="pg-all">' +
@@ -151,12 +151,12 @@
       '<path class="pg-body" d="M16 10 C22.6 10 26 15 26 21 C26 25 27.4 28.4 26.4 32' +
       ' C25.6 35 23.4 32.2 21.6 34.4 C19.8 36.6 17 37 15.2 35 C13.4 33 11.2 36 9.6 33.2' +
       ' C8 30.4 9.4 26 9.4 21 C9.4 15 9.4 10 16 10 Z"' +
-      ' fill="url(#pgBody)" stroke="#8B82AE" stroke-width=".7" stroke-linejoin="round"/>' +
+      ' fill="url(#pgBody)" stroke="#456E9B" stroke-width=".7" stroke-linejoin="round"/>' +
       // the two little arms
       '<path class="pg-armL" d="M9.8 20.6 C6.6 20 4.8 21.6 4.2 24" fill="none"' +
-      ' stroke="#DCD6F0" stroke-width="3.2" stroke-linecap="round"/>' +
+      ' stroke="#9FBEE4" stroke-width="3.2" stroke-linecap="round"/>' +
       '<path class="pg-armR" d="M25.6 20.6 C28.8 20 30.6 21.6 31.2 24" fill="none"' +
-      ' stroke="#DCD6F0" stroke-width="3.2" stroke-linecap="round"/>' +
+      ' stroke="#9FBEE4" stroke-width="3.2" stroke-linecap="round"/>' +
       '</g>' +
 
       // ── the face: crooked, delighted, too many teeth ──────────────────────
@@ -167,8 +167,8 @@
       '<circle cx="13.3" cy="17.7" r=".72" fill="#FFFFFF"/>' +
       '<circle cx="20.1" cy="17.4" r=".5" fill="#FFFFFF"/>' +
       // brows, one up one down
-      '<path d="M10 15 q2.6 -1.6 5.2 -.5" fill="none" stroke="#6E6590" stroke-width=".85" stroke-linecap="round"/>' +
-      '<path d="M17.8 14.2 q2.4 .3 4 1.7" fill="none" stroke="#6E6590" stroke-width=".85" stroke-linecap="round"/>' +
+      '<path d="M10 15 q2.6 -1.6 5.2 -.5" fill="none" stroke="#3E5C82" stroke-width=".85" stroke-linecap="round"/>' +
+      '<path d="M17.8 14.2 q2.4 .3 4 1.7" fill="none" stroke="#3E5C82" stroke-width=".85" stroke-linecap="round"/>' +
       // THE GRIN
       '<path class="pg-grin" d="M10.6 24.2 C13.6 29.2 19.4 29.2 22.2 24.4 Z" fill="#241C33"/>' +
       '<path d="M12.6 25.6 l1.5 2.2 l1.4 -2.2 Z M16.2 25.7 l1.4 2.3 l1.4 -2.3 Z"' +

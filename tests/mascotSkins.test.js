@@ -1268,6 +1268,97 @@ describe('mascot engine', () => {
     }
   }, 40000);
 
+  test('fast forward stretches the clock — and stays off every user-facing surface', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.setSkin('casey');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+      expect(win.Mascot.speed()).toBe(1);
+
+      // It is NOT an action, so it cannot show up in the trick panel, cannot
+      // be rolled by a random do(), and has no button anywhere. A workbench
+      // tool that a person using the app can trip over is a support call.
+      expect(win.Mascot.list(true)).not.toContain('speed');
+      expect(win.Mascot.do('speed')).toBe(false);
+
+      const c0 = win.Mascot.debug().clock;
+      await new Promise(r => setTimeout(r, 700));
+      const real = win.Mascot.debug().clock - c0;
+      expect(real).toBeGreaterThan(0);
+
+      expect(win.Mascot.speed(6)).toBe(6);
+      const c1 = win.Mascot.debug().clock;
+      await new Promise(r => setTimeout(r, 700));
+      const fast = win.Mascot.debug().clock - c1;
+      // Generous margin: jsdom's rAF cadence is lumpy, and the claim under
+      // test is "meaningfully faster", not a precise multiple.
+      expect(fast).toBeGreaterThan(real * 3);
+
+      // clamped at both ends, and nonsense falls back to real time
+      expect(win.Mascot.speed(999)).toBe(8);
+      expect(win.Mascot.speed(0.01)).toBe(0.1);
+      expect(win.Mascot.speed(0)).toBe(1);
+      expect(win.Mascot.speed('nonsense')).toBe(1);
+
+      // …and a SKIN cannot reach it. It is not a CFG knob precisely so that
+      // `tune` cannot touch it and a skin switch cannot reset it. The same
+      // guard is what keeps a skin off Z — the z-order promise in the
+      // engine's header is the engine's to keep, not a skin's to tune.
+      win.Mascot.speed(4);
+      win.Mascot.register({
+        id: 'speedy', name: 'Speedy', geom: { W: 10, H: 10, FLY_HEAD: 10 },
+        tune: { SPEED: 8, speed: 8, Z: 5, BOGUS: 99 },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('speedy');
+      expect(win.Mascot.speed()).toBe(4);       // the skin changed nothing…
+      expect(win.Mascot.debug().speed).toBe(4); // …and the switch kept it
+      const sheet = win.document.getElementById('yc-mascot-style').textContent;
+      expect(sheet).toContain('z-index:900;');  // …and Z is still the engine's
+      expect(sheet).not.toContain('z-index:5;');
+    } finally {
+      win.Mascot.speed(1);
+      win.Mascot.off();
+      win.close();
+    }
+  }, 20000);
+
+  test('fast forward shortens what the pet leaves behind, too', async () => {
+    // Object lifetimes are wall-clock — setTimeout and css transitions — not
+    // engine-clock, so they only follow the fast forward if something scales
+    // them by hand. Without that, a fast-forwarded pet produces pranks at 8x
+    // and then waits out their lifetimes at 1x, which is the opposite of
+    // useful for the person trying to watch one.
+    const mk = async (speed) => {
+      const { win } = await bootWithSkins();
+      win.Mascot.register({
+        id: 'tagger', name: 'Tagger', geom: { W: 10, H: 10, FLY_HEAD: 10 },
+        graffiti: {
+          max: 2, life: 6, texts: ['X'],
+          svg: () => '<svg width="20" height="20" viewBox="0 0 20 20"><text x="2" y="14">X</text></svg>'
+        },
+        acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
+      });
+      win.Mascot.setSkin('tagger');
+      win.Mascot.on();
+      win.Mascot.speed(speed);
+      expect(win.Mascot.do('scrawl')).toBe('scrawl');
+      const tag = win.document.querySelector('#yc-mascot .yc-obj-graffiti');
+      expect(tag).toBeTruthy();
+      await new Promise(r => setTimeout(r, 1700));
+      const gone = !tag.isConnected;
+      win.Mascot.speed(1);
+      win.Mascot.off();
+      win.close();
+      return gone;
+    };
+    // a 6s life at 8x is gone inside a second…
+    expect(await mk(8)).toBe(true);
+    // …and at real time it is still very much there
+    expect(await mk(1)).toBe(false);
+  }, 30000);
+
   test('ambient entry points carry the can gates', () => {
     // The console refuses via each action's `gate`; the AMBIENT paths refuse
     // inside the primitives, which roll Math.random and cannot be driven from
