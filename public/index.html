@@ -3238,7 +3238,12 @@
      here — unlike the tricks, which stay in the toast so Casey is visible
      doing them. Portraits are each skin's own SVG in its neutral pose, filled
      in as the skin files arrive; the cards render (and work) before any do. */
-  .cat-form-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(126px,1fr)); gap:6px; }
+  /* FOUR columns, stated rather than inferred. auto-fill derives the count
+     from the modal's inner width, which is Swal's padding box and not a
+     number this stylesheet knows — so the gallery's shape depended on
+     arithmetic done somewhere else. Twelve forms are a clean 4x3 like this,
+     and a thirteenth simply starts a fourth row. */
+  .cat-form-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
   .cat-form-card { display:flex; flex-direction:column; align-items:center; gap:2px; padding:7px 5px 6px;
     border:1px solid #b9c2cf; border-radius:7px; background:transparent; color:inherit;
     cursor:pointer; font-size:12px; }
@@ -3409,7 +3414,7 @@
       // Wider than the default 32em so the smaller cards buy columns rather
       // than whitespace. Safe: the pet never runs below MIN_VW (900px), so
       // this modal is never opened on a narrow viewport.
-      width: '42em',
+      width: '36em',
       showConfirmButton: false,
       showCloseButton: true,
       html:

@@ -80,7 +80,18 @@
  *                               // FLIPS to face its travel — and a throw
  *                               // slides to a stop without the tumble spin.
  *                               // Design the art facing +x. Needs roam.
- *     heist: { props: ['<svg…>', …] },
+ *     heist: { props: ['<svg…>', …],
+              to: 'stash' },   // WHERE AN ERRAND ENDS, and the only real
+                               // difference between a thief and a retriever.
+                               // 'stash' (the default) is the pet's own
+                               // corner hoard; 'cursor' brings the thing to
+                               // YOU and drops it at your feet — re-aimed
+                               // every frame, so moving the mouse changes its
+                               // course mid-trot. A 'cursor' errand also goes
+                               // for loot already on the floor before making
+                               // anything new (a dog fetches the ball it has)
+                               // and never takes words or icons off the page:
+                               // fetching is not stealing.
  *                               // the thief's kit: with this, the form runs
  *                               // HEISTS (HEIST_CHANCE per settle-down, or
  *                               // the 'steal' command): it walks to a spot,
@@ -94,7 +105,23 @@
  *                               // its corner hoard as a 'loot' world object
  *                               // (engine-capped, engine-faded, never
  *                               // clickable like every .yc-obj). Needs roam.
- *     web: { ringS: 3.2,        // s per ring while weaving
+ *     haunt: { max: 3,          // how much of the page may be crooked at once
+              life: 12,        // s before a disturbed thing rights itself
+              sel: 'button,.card',
+                               // what counts as furniture worth leaning on
+              poses: ['rotate(-3deg)', …] },
+                               // TRANSFORMS ONLY, and small ones. Hit-testing
+                               // follows a transform, so a tilted button is
+                               // still clickable exactly where it now looks
+                               // (§2: visual, never input) and nothing
+                               // reflows around it. The engine applies one,
+                               // adds .yc-haunted for the skin to animate,
+                               // and undoes it through ONE door — a timer, a
+                               // press on the thing, a grab, or send-away.
+                               // Keep poses small: shoving an element over
+                               // its neighbour would cover a control, which
+                               // is the one thing this must never do.
+     web: { ringS: 3.2,        // s per ring while weaving
  *            stages: 12,        // ring cap — growth stops, the tending never
  *                               // does: it builds until somebody breaks it
  *            life: 120,         // s an abandoned web lingers before fading
@@ -353,9 +380,16 @@
     PURSUE: 240,           // px/s of pursuit
     PURSUE_CHANCE: 0,      // per settle-down, when the cursor is fresh
 
+    // THE LAMP SET — for skins that are drawn to light. Off by default.
+    LAMP: 190,             // px/s toward it
+    LAMP_CHANCE: 0,        // per settle-down
+
     // THE THIEF SET — for skins with `heist` gear. Off by default.
-    HEIST_CHANCE: 0        // per settle-down: walk somewhere, take something,
+    HEIST_CHANCE: 0,       // per settle-down: walk somewhere, take something,
                            // stash it in the corner hoard
+
+    // THE HAUNT SET — for skins with `haunt` gear. Off by default.
+    HAUNT_CHANCE: 0        // per settle-down: lean on the nearest real thing
   };
 
   // Storage and loading are engine constants, not tunables — a skin must not be
@@ -372,7 +406,7 @@
   // that list them in `can` and tune DRIFT_CHANCE above zero.
   var STATES = ['walk', 'idle', 'chase', 'climb', 'hang', 'fall', 'hop',
     'crouch', 'land', 'drag', 'inflate', 'float', 'pop', 'drift', 'blink',
-    'rappel', 'weave', 'pursue', 'perch', 'leave'];
+    'rappel', 'weave', 'pursue', 'perch', 'lamp', 'leave'];
 
   // ── The manifest ─────────────────────────────────────────────────────────────
   // What the picker offers, renderable before any skin file downloads. `hidden`
@@ -390,6 +424,9 @@
     { id: 'spider', name: 'Spider', blurb: 'Roams the page, rappels down silk, webs over anything until you break it.', rowdy: true },
     { id: 'bat', name: 'Bat', blurb: 'Hunts your cursor anywhere on screen, then hangs from it like a branch.' },
     { id: 'goose', name: 'Goose', blurb: 'Tracks mud, honks, and pockets bits of your page. Click her loot to undo.', rowdy: true },
+    { id: 'poltergeist', name: 'Poltergeist', blurb: 'Leaves things crooked. Press whatever it tilted to straighten it.', rowdy: true },
+    { id: 'moth', name: 'Moth', blurb: 'Drawn to the light. Follows whatever field you are typing in.' },
+    { id: 'dog', name: 'Dog', blurb: 'Brings you the ball. Move the mouse and it brings it there instead.' },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -800,6 +837,13 @@
 
   function roamWalk(dt) {
     var mission = !!(plannedWeave || heist);
+    // Bringing it to you means bringing it to where you ARE, so the last leg
+    // re-aims every frame. Move the mouse and it changes course mid-trot.
+    if (heist && heist.phase === 'back' && skin.heist && skin.heist.to === 'cursor') {
+      var d2 = destPoint();
+      heist.x = d2.x; heist.y = d2.y;
+      roam.tx = d2.x; roam.ty = d2.y;
+    }
     if (clock < roam.pauseUntil) {
       if (clock >= stateUntil && !mission) toIdle();
       return;
@@ -818,7 +862,7 @@
           // the grab: whatever it came for is in the beak now, and the only
           // remaining business in the world is the corner
           grabLoot(heist.target);
-          var s = stashPoint();
+          var s = destPoint();
           heist = { phase: 'back', x: s.x, y: s.y };
           roam.tx = s.x; roam.ty = s.y;
           roam.pauseUntil = clock + 0.5;             // a beat of gloating
@@ -862,7 +906,9 @@
     if (allowed('weave') && Math.random() < CFG.WEAVE_CHANCE && startWeave()) return;
     if (allowed('rappel') && Math.random() < CFG.RAPPEL_CHANCE && toRappel()) return;
     if (allowed('pursue') && clock - mouse.t < 5 && Math.random() < CFG.PURSUE_CHANCE && toPursue()) return;
+    if (allowed('lamp') && Math.random() < CFG.LAMP_CHANCE && toLamp()) return;
     if (skin.heist && Math.random() < CFG.HEIST_CHANCE && startHeist()) return;
+    if (skin.haunt && Math.random() < CFG.HAUNT_CHANCE && startHaunt()) return;
     setState('idle', pick(skin.acts));
     var o = actOpt(act);
     if (o.face) face = o.face;
@@ -1361,6 +1407,74 @@
       return;
     }
 
+    if (state === 'lamp') {
+      if (!lamp) { toFall(0, 0); return; }
+      // The light moves: you tab to the next field, the page scrolls. Re-ask
+      // on a slow throttle so it FOLLOWS your focus around the form.
+      if (clock >= lamp.until) {
+        lamp.until = clock + 0.5;
+        var fresh = lampRect();
+        if (!fresh) { lamp = null; if (!allowed('drift')) { toFall(0, 0); return; } toDrift(); return; }
+        lamp.cx = (fresh.x1 + fresh.x2) / 2; lamp.cy = (fresh.y1 + fresh.y2) / 2;
+        lamp.hw = (fresh.x2 - fresh.x1) / 2; lamp.hh = (fresh.y2 - fresh.y1) / 2;
+      }
+      // An erratic circuit of it — the angle jitters and sometimes reverses,
+      // because nothing about this is a smooth orbit.
+      lamp.theta += lamp.spin * dt * rand(1.1, 2.3);
+      if (Math.random() < dt * 0.6) lamp.spin = -lamp.spin;
+      var ax = lamp.hw + 16, ay = lamp.hh + 14;
+      var tx = lamp.cx + Math.cos(lamp.theta) * ax;
+      var ty = lamp.cy + Math.sin(lamp.theta) * ay;
+      var lk = Math.min(1, dt * 3.2);
+      vx += ((tx - px) * 2.4 - vx) * lk;
+      vy += ((ty - py) * 2.4 - vy) * lk;
+      // the flutter: it never flies straight at anything
+      vx += Math.sin(clock * 17) * 70 * dt;
+      vy += Math.cos(clock * 13.5) * 60 * dt;
+      var lv = Math.sqrt(vx * vx + vy * vy);
+      if (lv > CFG.LAMP) { vx = vx / lv * CFG.LAMP; vy = vy / lv * CFG.LAMP; }
+      px = clamp(px + vx * dt, bounds.left + 8, bounds.right - 8);
+      py = clamp(py + vy * dt, bounds.top + 10, bounds.bottom - 6);
+      // THE §2 LINE, and it is drawn on the BODY rather than on the orbit it
+      // is aiming for. Guarding the target is not the same promise: the moth
+      // eases toward that point and flutters around it, so overshoot alone
+      // could still land it on the words you are typing. This cannot — it is
+      // applied last, after everything that moves it, so "never on your text"
+      // holds however the physics came out. (An ellipse around a wide, short
+      // field also dips back inside it near the corners, which is what makes
+      // the aim unsafe in the first place.)
+      var gx = lamp.hw + 6, gy = lamp.hh + 6;
+      var dxl = px - lamp.cx, dyl = py - lamp.cy;
+      if (Math.abs(dxl) < gx && Math.abs(dyl) < gy) {
+        // Four ways out of the box; take the nearest one the WINDOW can
+        // actually hold. Pushing to the nearest edge alone would shove it off
+        // screen whenever the lit field is up against one — this runs after
+        // the bounds clamp, so it is the last word on where the moth is.
+        var outs = [
+          [lamp.cx - gx, py], [lamp.cx + gx, py],
+          [px, lamp.cy - gy], [px, lamp.cy + gy]
+        ];
+        var pick2 = null, pd = 1e9;
+        for (var oi = 0; oi < 4; oi++) {
+          var ox3 = outs[oi][0], oy3 = outs[oi][1];
+          if (ox3 < bounds.left + 8 || ox3 > bounds.right - 8) continue;
+          if (oy3 < bounds.top + 10 || oy3 > bounds.bottom - 6) continue;
+          var dd = (ox3 - px) * (ox3 - px) + (oy3 - py) * (oy3 - py);
+          if (dd < pd) { pd = dd; pick2 = outs[oi]; }
+        }
+        // Nothing valid means the lit thing fills the window, and there is no
+        // honest answer — leave it be rather than teleport it somewhere silly.
+        if (pick2) { px = pick2[0]; py = pick2[1]; }
+      }
+      aim(vx, 0);
+      rot = 0;
+      if (clock >= stateUntil) {           // it gets distracted, eventually
+        lamp = null;
+        if (allowed('drift')) toDrift(); else toFall(0, 0);
+      }
+      return;
+    }
+
     if (state === 'perch') {
       // parked on the catch point until the cursor moves off — then the
       // whole game starts again. Relentless is the brief.
@@ -1614,7 +1728,8 @@
   // stops leaving them.
   function maybeTrail() {
     var t = skin.trail;
-    if (state !== 'walk' && state !== 'chase' && state !== 'climb' && state !== 'hang') return;
+    if (state !== 'walk' && state !== 'chase' && state !== 'climb' && state !== 'hang' &&
+      state !== 'drift' && state !== 'lamp') return;
     var dx = px - lastTrail.x, dy = py - lastTrail.y;
     if (dx * dx + dy * dy < t.every * t.every) return;
     lastTrail.x = px; lastTrail.y = py;
@@ -1723,9 +1838,12 @@
     weaving = null;
     plannedWeave = null;
     if (rappel) { rappel.el.remove(); rappel = null; }
-    // a grabbed (or leaving, or stopped) thief drops the goods on the spot
+    // a grabbed (or leaving, or stopped) thief drops the goods on the spot,
+    // and everything it left crooked stands up straight again
     heist = null;
+    lamp = null;
     dropLoot();
+    clearHaunts();
   }
 
   // ── The heist ────────────────────────────────────────────────────────────────
@@ -1747,6 +1865,134 @@
       x: stashSide < 0 ? bounds.left + 34 : bounds.right - 34,
       y: bounds.bottom - 26
     };
+  }
+
+  // Where the carried thing is going. A hoarder takes it to its corner; a
+  // FETCHER brings it to you, which is the same errand with the other ending
+  // — and the whole difference between a goose and a dog.
+  function destPoint() {
+    if (skin.heist && skin.heist.to === 'cursor' && mouse.x > 0) {
+      return {
+        x: clamp(mouse.x, bounds.left + 20, bounds.right - 20),
+        y: clamp(mouse.y + 16, bounds.top + 20, bounds.bottom - 14)
+      };
+    }
+    return stashPoint();
+  }
+
+  // A fetcher goes for the ball it already has. Without this it would make a
+  // new one every time and the floor would slowly fill with tennis balls.
+  function findLootTarget() {
+    var best = null, bd = 1e9, i;
+    for (i = 0; i < objs.length; i++) {
+      var o = objs[i];
+      if (o.kind !== 'loot' || o.breaking || !o.data) continue;
+      var d = (o.data.x - px) * (o.data.x - px) + (o.data.y - py) * (o.data.y - py);
+      if (d < bd) { bd = d; best = o; }
+    }
+    if (!best) return null;
+    var html = best.el.innerHTML, mine = best;
+    return {
+      x: best.data.x, y: best.data.y,
+      make: function () {
+        var sp = document.createElement('span');
+        sp.innerHTML = html;               // its own, from one frame ago
+        return sp;
+      },
+      take: function () {
+        var j = objs.indexOf(mine);
+        if (j !== -1) removeObj(j);        // in the mouth now, not on the floor
+        return null;                       // nothing of yours to give back
+      }
+    };
+  }
+
+  // ── Haunting ─────────────────────────────────────────────────────────────────
+  // The steal takes a thing off the page. This DISTURBS one and leaves it
+  // there: a card leaning, a heading skewed, a button sitting six pixels
+  // wrong. It rights itself — on its own clock, or the moment you press it,
+  // or the instant the pet is grabbed or sent away.
+  //
+  // §2 again, and the same three rules, with one addition of its own:
+  //   1. TRANSFORM only. Hit-testing follows a transform, so a tilted button
+  //      is still clickable exactly where it now looks — nothing moves out
+  //      from under a click, and nothing reflows the page around it. (Every
+  //      other way of leaning an element — margin, position, rotate via a
+  //      layout property — fails one of those two.)
+  //   2. One undo door: unhaunt(). The timer, the press, and every exit all
+  //      go through it, so "the page always straightens up" holds by
+  //      construction.
+  //   3. A ceiling on how much of the page is crooked at once.
+  //   …and 4: poses stay SMALL. A big throw would push an element over its
+  //      neighbour, and covering a control is the one thing the tilt must
+  //      never do.
+  var haunts = [];         // [{ el, wasT, wasTr, timer }]
+
+  function unhaunt(h) {
+    var i = haunts.indexOf(h);
+    if (i !== -1) haunts.splice(i, 1);
+    clearTimeout(h.timer);
+    try {
+      h.el.style.transition = h.wasTr;
+      h.el.style.transform = h.wasT;
+      h.el.__ycHaunted = 0;
+      h.el.classList.remove('yc-haunted');
+    } catch (e) { }
+  }
+
+  function clearHaunts() { while (haunts.length) unhaunt(haunts[0]); }
+
+  // Something worth disturbing, and near the pet — so it reads as the pet's
+  // doing rather than a page that wobbles by itself.
+  function findHauntTarget() {
+    var h = skin.haunt;
+    if (haunts.length >= h.max) return null;
+    function hunt(doc, ox, oy) {
+      try {
+        var els = doc.querySelectorAll(h.sel || 'button,.card,tr,th,h1,h2,h3,img,.big-button');
+        var best = null, bestD = 1e9, n = Math.min(els.length, CFG.SCAN_ELS);
+        for (var i = 0; i < n; i++) {
+          var el = els[i];
+          if (el.__ycHaunted) continue;
+          if (el.closest && (el.closest('#yc-mascot') || el.closest('.swal2-container'))) continue;
+          if (!el.getClientRects().length) continue;
+          var r = el.getBoundingClientRect();
+          // big enough to read as furniture, small enough not to BE the page
+          if (r.width < 28 || r.height < 14) continue;
+          if (r.width > 900 || r.height > 500) continue;
+          var cx = ox + r.left + r.width / 2, cy = oy + r.top + r.height / 2;
+          if (cx < bounds.left || cx > bounds.right || cy < bounds.top || cy > bounds.bottom) continue;
+          var d = (cx - px) * (cx - px) + (cy - py) * (cy - py);
+          if (d < bestD) { bestD = d; best = el; }
+        }
+        return best;
+      } catch (e) { return null; }
+    }
+    var got = null, f = contentFrame();
+    if (f) {
+      try {
+        var fb = f.getBoundingClientRect();
+        if (f.contentDocument) got = hunt(f.contentDocument, fb.left, fb.top);
+      } catch (e) { }
+    }
+    if (!got) got = hunt(document, 0, 0);
+    return got;
+  }
+
+  function startHaunt() {
+    if (!skin.haunt) return false;
+    var el = findHauntTarget();
+    if (!el) return false;
+    var h = skin.haunt;
+    var pose = h.poses[Math.floor(Math.random() * h.poses.length)];
+    var rec = { el: el, wasT: el.style.transform, wasTr: el.style.transition, timer: 0 };
+    el.__ycHaunted = 1;
+    el.style.transition = 'transform .45s cubic-bezier(.3,1.5,.5,1)';
+    el.style.transform = (rec.wasT ? rec.wasT + ' ' : '') + pose;
+    el.classList.add('yc-haunted');
+    rec.timer = setTimeout(function () { unhaunt(rec); }, h.life * 1000);
+    haunts.push(rec);
+    return true;
   }
 
   // ── Real theft ───────────────────────────────────────────────────────────────
@@ -1942,11 +2188,16 @@
     // otherwise whatever is lying around — with the page hunts falling back
     // to props, because a page with no icons and no headings still owes her
     // something.
-    var r = Math.random();
-    var order = r < 0.45 ? [findIconTarget, findWordTarget]
-      : r < 0.75 ? [findWordTarget, findIconTarget] : [];
     var t = null;
-    for (var i = 0; i < order.length && !t; i++) t = order[i]();
+    if (skin.heist.to === 'cursor') {
+      // A fetcher does not take your things apart. Its own ball, or a new one.
+      t = findLootTarget();
+    } else {
+      var r = Math.random();
+      var order = r < 0.45 ? [findIconTarget, findWordTarget]
+        : r < 0.75 ? [findWordTarget, findIconTarget] : [];
+      for (var i = 0; i < order.length && !t; i++) t = order[i]();
+    }
     if (!t) t = propTarget();
     heist = { phase: 'to', x: t.x, y: t.y, target: t };
     toWalk();
@@ -2009,8 +2260,28 @@
     }, 430);
   }
 
+  // A press on something crooked straightens it. Same contract as the loot:
+  // a coordinate test, no listener on the victim, so the press still does
+  // whatever it was going to do to the page.
+  function clickHaunt(x, y) {
+    for (var i = haunts.length - 1; i >= 0; i--) {
+      var h = haunts[i], r;
+      try { r = h.el.getBoundingClientRect(); } catch (e) { continue; }
+      var ox = 0, oy = 0, f = contentFrame();
+      // a haunted element inside the content frame reports frame coordinates
+      if (f && h.el.ownerDocument !== document) {
+        try { var fb = f.getBoundingClientRect(); ox = fb.left; oy = fb.top; } catch (e) { }
+      }
+      if (x < ox + r.left || x > ox + r.right || y < oy + r.top || y > oy + r.bottom) continue;
+      unhaunt(h);
+      return true;
+    }
+    return false;
+  }
+
   function clickLoot(x, y) {
     if (!running || !root) return;
+    clickHaunt(x, y);
     // Caught red-handed: clicking what is in the beak takes it straight back,
     // and the job dies with it.
     if (carried) {
@@ -2034,6 +2305,82 @@
       returnLoot(o);
       return;                            // one per click: a hoard is undone piece by piece
     }
+  }
+
+  // ── The lamp ─────────────────────────────────────────────────────────────────
+  // Some things are drawn to light, and in an app the light is wherever you
+  // are working: the field you are typing in. focusRect() already knows how to
+  // find that — it was built so a web over the focused input breaks itself —
+  // and this is the same knowledge used for the opposite purpose. Nothing
+  // focused? Then the brightest large thing on screen, which is a real answer
+  // and not a fallback: a moth in a dark room goes to the lightest wall.
+  //
+  // It orbits the OUTSIDE of whatever it finds. That is not decoration: a moth
+  // sitting in the middle of the field you are typing in would be covering
+  // your text, and §2 draws the line exactly there.
+  var lamp = null;         // { cx, cy, hw, hh, theta, spin, until }
+  var brightAt = -1e9, brightCache = null;
+
+  function luminance(css) {
+    var m = /rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:[, /]+([\d.]+))?/.exec(css || '');
+    if (!m) return -1;
+    if (m[4] !== undefined && Number(m[4]) < 0.35) return -1;   // effectively transparent
+    return 0.2126 * Number(m[1]) + 0.7152 * Number(m[2]) + 0.0722 * Number(m[3]);
+  }
+
+  // The lightest sizeable thing in view. Cached: this walks real styles, and
+  // the answer does not change between blinks of an eye.
+  function brightestRect() {
+    if (clock - brightAt < 3 && brightCache) return brightCache;
+    brightAt = clock;
+    brightCache = null;
+    function hunt(doc, ox, oy) {
+      try {
+        var els = doc.querySelectorAll('input,textarea,select,button,.card,td,th,h1,h2,.panel,.tile');
+        var best = null, bestL = 40, n = Math.min(els.length, 160);
+        for (var i = 0; i < n; i++) {
+          var el = els[i];
+          if (el.closest && el.closest('#yc-mascot')) continue;
+          if (!el.getClientRects().length) continue;
+          var r = el.getBoundingClientRect();
+          if (r.width < 40 || r.height < 16) continue;
+          var view = el.ownerDocument && el.ownerDocument.defaultView;
+          var L = luminance(((view || window).getComputedStyle(el) || {}).backgroundColor);
+          if (L <= bestL) continue;
+          bestL = L;
+          best = { x1: ox + r.left, y1: oy + r.top, x2: ox + r.right, y2: oy + r.bottom };
+        }
+        return best;
+      } catch (e) { return null; }
+    }
+    var f = contentFrame();
+    if (f) {
+      try {
+        var fb = f.getBoundingClientRect();
+        if (f.contentDocument) brightCache = hunt(f.contentDocument, fb.left, fb.top);
+      } catch (e) { }
+    }
+    if (!brightCache) brightCache = hunt(document, 0, 0);
+    return brightCache;
+  }
+
+  function lampRect() { return focusRect() || brightestRect(); }
+
+  function toLamp() {
+    var r = lampRect();
+    if (!r) return false;
+    ledge = null; wall = null; rot = 0;
+    hop = null; hopFloor = -1e9; fly = null;
+    lamp = {
+      cx: (r.x1 + r.x2) / 2, cy: (r.y1 + r.y2) / 2,
+      hw: (r.x2 - r.x1) / 2, hh: (r.y2 - r.y1) / 2,
+      theta: rand(0, Math.PI * 2),
+      spin: Math.random() < 0.5 ? -1 : 1,
+      until: 0
+    };
+    setState('lamp');
+    stateUntil = clock + rand(7, 16);
+    return true;
   }
 
   // ── Pursuit ──────────────────────────────────────────────────────────────────
@@ -2349,9 +2696,21 @@
       for (var hp = 0; ok && hp < def.heist.props.length; hp++) {
         ok = typeof def.heist.props[hp] === 'string';
       }
+      // …and it has to deliver somewhere the engine knows about
+      if (ok && def.heist.to !== undefined) {
+        ok = def.heist.to === 'stash' || def.heist.to === 'cursor';
+      }
     }
     // upright is a roam variant — without roam there is nothing to vary.
     if (ok && def.upright && !def.roam) ok = false;
+    // The haunt kit: a ceiling, a clock, and at least one pose to strike.
+    if (ok && def.haunt) {
+      ok = def.haunt.max > 0 && def.haunt.life > 0 &&
+        !!def.haunt.poses && def.haunt.poses.length > 0;
+      for (var hq = 0; ok && hq < def.haunt.poses.length; hq++) {
+        ok = typeof def.haunt.poses[hq] === 'string';
+      }
+    }
     if (!ok) {
       console.warn('[Mascot] register() refused a malformed skin', def && def.id);
       return false;
@@ -2719,6 +3078,15 @@
       name: 'steal', needs: 'any', when: function () { return !!(skin && skin.heist); },
       what: 'nick something — a word, a prop — and add it to the hoard',
       run: function () { if (!startHeist()) return 'already on a job'; }
+    },
+    {
+      name: 'lamp', needs: 'any', gate: 'lamp', what: 'go to the light — whatever you are typing in',
+      run: function () { if (!toLamp()) return 'nothing lit to go to'; }
+    },
+    {
+      name: 'haunt', needs: 'any', when: function () { return !!(skin && skin.haunt); },
+      what: 'lean on the nearest real thing — press it to straighten it',
+      run: function () { if (!startHaunt()) return 'nothing near it worth disturbing'; }
     },
     {
       name: 'drift', needs: 'any', gate: 'drift', what: 'lift off and wander — gravity is a suggestion',
