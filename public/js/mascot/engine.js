@@ -61,6 +61,17 @@
  *     lookAct: 'scan',          // which act is "it noticed you" — a poke, a
  *                               // caught chase. Default 'look'; must name one
  *                               // of the acts.
+ *     trail: { every: 10,       // optional: px of travel between droppings
+ *              life: 6,         // s before one is gone — the engine fades it
+ *                               // out over the last stretch of that
+ *              max: 40,         // hard cap; the oldest goes first
+ *              svg: '<svg…>' }, // one dropping (offset it with css on
+ *                               // .yc-obj-trail). Left while walking,
+ *                               // chasing, climbing or hanging. World
+ *                               // objects NEVER take pointer events — that
+ *                               // is the engine's rule (.yc-obj), not the
+ *                               // skin's choice, and it is what keeps every
+ *                               // decoration unable to swallow a click.
  *     lines: [ … ],             // what it says when poked. House rules: short
  *                               // enough for a 250px bubble, in the animal's
  *                               // voice, never anything real — no counts, no
@@ -292,6 +303,7 @@
     { id: 'roomba', name: 'Roomba', blurb: 'A robot vacuum. Keeps to the floor — the ledges are safe, the crumbs are not.' },
     { id: 'ghost', name: 'Ghost', blurb: 'A ghost. Ignores gravity, respects the modals.' },
     { id: 'ufo', name: 'UFO', blurb: 'A flying saucer. Hovers, warps, abducts the odd cow.' },
+    { id: 'snail', name: 'Snail', blurb: 'A snail. Unhurried, and it signs its work.' },
     // hidden: real, but never in the picker — reachable only by being
     // seasonally forced, or from the console. The menorah must not be
     // pickable in July.
@@ -400,6 +412,9 @@
   var sayTimer = 0;            // its expiry, held so a new line can reset it
   var lastLine = -1;           // so it does not say the same thing twice running
   var leaveRecords = true;     // does walking off count as "sent away"?
+
+  var objs = [];               // world objects (trail droppings, one day webs)
+  var lastTrail = { x: -1e9, y: -1e9 };
 
   var ledges = [], walls = [], lastScan = -1e9;
   // The visible content box, set by scan(). Everything positional is relative to
@@ -1109,6 +1124,7 @@
     // 'leave' tears everything down from inside update(), so the pet may be gone.
     if (!running || !cat) return;
     draw();
+    if (skin.trail) maybeTrail();
   }
 
   // ── Drag ─────────────────────────────────────────────────────────────────────
@@ -1179,6 +1195,57 @@
     }
     cat.addEventListener('pointerup', release);
     cat.addEventListener('pointercancel', release);
+  }
+
+  // ── World objects ────────────────────────────────────────────────────────────
+  // Things the pet leaves behind in the world: a snail's trail today, webs one
+  // day. They live inside #yc-mascot (so teardown takes them for free), they
+  // are positioned in the same viewport space as the pet (they do not follow a
+  // scrolling page — a fading decoration does not need to), and the engine —
+  // not the skin — owns three things about them: the pointer-events:none that
+  // keeps any decoration from ever swallowing a click (the §2a rule), the cap,
+  // and the fade-and-removal clock.
+  function dropObj(kind, x, y, html, life, max) {
+    if (!root) return;
+    while (objs.length >= max) removeObj(0);
+    var el = document.createElement('div');
+    el.className = 'yc-obj yc-obj-' + kind;
+    el.innerHTML = html;
+    el.style.transform = 'translate3d(' + Math.round(x) + 'px,' + Math.round(y) + 'px,0)';
+    // The engine owns the fade: fully there for the first stretch of life,
+    // gone by the end. Armed a frame late so the transition actually runs.
+    el.style.opacity = '1';
+    el.style.transition = 'opacity ' + (life * 0.4).toFixed(1) + 's ease ' + (life * 0.6).toFixed(1) + 's';
+    root.appendChild(el);
+    requestAnimationFrame(function () { el.style.opacity = '0'; });
+    var o = { el: el, timer: 0 };
+    o.timer = setTimeout(function () {
+      var i = objs.indexOf(o);
+      if (i !== -1) removeObj(i);
+    }, life * 1000);
+    objs.push(o);
+  }
+
+  function removeObj(i) {
+    var o = objs[i];
+    if (!o) return;
+    clearTimeout(o.timer);
+    o.el.remove();
+    objs.splice(i, 1);
+  }
+
+  function clearObjs() { while (objs.length) removeObj(0); }
+
+  // The trail: every `every` px of travel in a grounded state, one dropping
+  // at the feet. Distance-gated rather than time-gated, so a pet that stops
+  // stops leaving them.
+  function maybeTrail() {
+    var t = skin.trail;
+    if (state !== 'walk' && state !== 'chase' && state !== 'climb' && state !== 'hang') return;
+    var dx = px - lastTrail.x, dy = py - lastTrail.y;
+    if (dx * dx + dy * dy < t.every * t.every) return;
+    lastTrail.x = px; lastTrail.y = py;
+    dropObj('trail', px, py, t.svg, t.life, t.max);
   }
 
   // ── The bubble ───────────────────────────────────────────────────────────────
@@ -1253,6 +1320,15 @@
       'html[data-theme="dark"] .yc-cat{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.08)}',
       '.yc-cat svg{display:block;overflow:visible}',
       '.yc-cat g,.yc-cat path,.yc-cat rect,.yc-cat circle,.yc-cat text{transform-box:view-box}',
+      // World objects. The §2a rule made structural — and the wildcard with
+      // !important is the load-bearing half: pointer-events INHERITS, so the
+      // container's none already covers a plain child, but a child can
+      // RE-ENABLE it (that is how .yc-cat takes clicks inside this very
+      // container). The !important wildcard is what makes a decoration's
+      // markup unable to do the same, even on purpose.
+      '.yc-obj,.yc-obj *{pointer-events:none!important}',
+      '.yc-obj{position:absolute;left:0;top:0;will-change:opacity}',
+      '.yc-obj svg{display:block;overflow:visible}',
       /* the trigger: the logo visibly charges while you hold it */
       '.hdr-logo.yc-charging{transform:scale(.86);opacity:.6;',
       'transition:transform ' + CFG.HOLD_MS + 'ms ease-in,opacity ' + CFG.HOLD_MS + 'ms ease-in;}'
@@ -1294,6 +1370,7 @@
     clock = 0;
     fly = null;
     flyReady = CFG.FLY_FIRST;      // it has to be here a while before it gets ideas
+    lastTrail.x = -1e9; lastTrail.y = -1e9;
     px = bounds.left + (bounds.right - bounds.left) * rand(0.35, 0.65);
     py = bounds.top - 40;
     toFall(rand(-20, 20), 0);            // drops in from off the top
@@ -1311,6 +1388,7 @@
     // node and the first poke of the new pet would say nothing.
     if (sayTimer) clearTimeout(sayTimer);
     say = null; sayTimer = 0;
+    clearObjs();      // their elements die with root, but their timers do not
     if (root) { root.remove(); root = null; cat = null; }
     if (styleEl) { styleEl.remove(); styleEl = null; }
     grab = null;
@@ -1342,6 +1420,10 @@
       if (ok && has('hop') !== has('crouch')) ok = false;
       if (ok && (has('inflate') !== has('float') || has('float') !== has('pop'))) ok = false;
       if (ok && has('blink') && !has('drift')) ok = false;   // a blink lands in a drift
+    }
+    // A trail keeps its own promises: real spacing, a finite life, a cap.
+    if (ok && def.trail) {
+      ok = def.trail.every > 0 && def.trail.life > 0 && def.trail.max > 0 && !!def.trail.svg;
     }
     if (!ok) {
       console.warn('[Mascot] register() refused a malformed skin', def && def.id);

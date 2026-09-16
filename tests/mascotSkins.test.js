@@ -148,7 +148,7 @@ describe('mascot engine', () => {
 
   test('the picker offers the visible forms; hidden ones stay off it', async () => {
     const ids = (await bootWindow()).Mascot.skins().map(s => s.id);
-    expect(ids).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo']);
+    expect(ids).toEqual(['casey', 'casey95', 'roomba', 'ghost', 'ufo', 'snail']);
     expect(ids).not.toContain('menorah');       // hidden: seasonal/console only
   });
 
@@ -172,7 +172,73 @@ describe('mascot engine', () => {
     expect(win.Mascot.register({ ...base, id: 'full-ascent', can: [...CORE, 'inflate', 'float', 'pop'] })).toBe(true);
     expect(win.Mascot.register({ ...base, id: 'blink-no-drift', can: [...CORE, 'blink'] })).toBe(false);
     expect(win.Mascot.register({ ...base, id: 'drift-only', can: [...CORE, 'drift'] })).toBe(true);
+    // …and a trail keeps its promises: spacing, a finite life, a cap, art.
+    expect(win.Mascot.register({ ...base, id: 'bad-trail', trail: { every: 0, life: 6, max: 40, svg: '<svg/>' } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'capless-trail', trail: { every: 10, life: 6, svg: '<svg/>' } })).toBe(false);
+    expect(win.Mascot.register({ ...base, id: 'ok-trail', trail: { every: 10, life: 6, max: 40, svg: '<svg/>' } })).toBe(true);
   });
+
+  test('a trailing form actually leaves the trail behind it', async () => {
+    const { win } = await bootWithSkins();
+    // finally-guarded like the gate test: this one runs real physics — the
+    // snail falls in, lands on the floor, sets off walking, and the engine's
+    // world-object layer should start dropping .yc-obj-trail elements inside
+    // #yc-mascot. Slow pet, real frames: give it time.
+    try {
+      win.Mascot.setSkin('snail');
+      win.Mascot.on();
+      expect(win.Mascot.out()).toBe(true);
+      const t0 = Date.now();
+      let seen = null;
+      while (Date.now() - t0 < 9000 && !seen) {
+        seen = win.document.querySelector('#yc-mascot .yc-obj-trail');
+        if (!seen) await new Promise(r => setTimeout(r, 150));
+      }
+      expect(seen).toBeTruthy();
+      expect(win.getComputedStyle(seen).pointerEvents).toBe('none');
+    } finally {
+      win.Mascot.off();
+      // teardown clears the layer with everything else
+      expect(win.document.querySelectorAll('.yc-obj').length).toBe(0);
+      win.close();
+    }
+  }, 15000);
+
+  test('the object layer disarms even hostile markup (§2a)', async () => {
+    // pointer-events INHERITS, and a child can re-enable it — so a plain
+    // "none on the wrapper" is not a guarantee, and the engine's wildcard
+    // !important rule is. This registers a skin whose dropping TRIES to take
+    // clicks, and asserts the engine wins.
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.register({
+        id: 'sneak', name: 'Sneak', geom: { W: 10, H: 10, FLY_HEAD: 10 },
+        acts: [['sit', 1]], lines: ['.'], svg: '<svg/>', css: [],
+        trail: {
+          every: 8, life: 6, max: 10,
+          svg: '<svg width="8" height="4"><rect width="8" height="4" style="pointer-events:auto"/></svg>'
+        }
+      });
+      win.Mascot.setSkin('sneak');
+      win.Mascot.on();
+      const t0 = Date.now();
+      let rect = null;
+      while (Date.now() - t0 < 9000 && !rect) {
+        rect = win.document.querySelector('.yc-obj-trail rect');
+        if (!rect) await new Promise(r => setTimeout(r, 150));
+      }
+      expect(rect).toBeTruthy();
+      // jsdom's cascade does not rank author-!important above inline styles,
+      // so the computed value cannot be asserted here — in real browsers it
+      // must win (CSS 2.1 §6.4.2). Pin the LIVE stylesheet instead: the rule
+      // that disarms this rect is present on the page it is on.
+      const sheet = win.document.getElementById('yc-mascot-style').textContent;
+      expect(sheet).toContain('.yc-obj,.yc-obj *{pointer-events:none!important}');
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 15000);
 
   test('a can-masked form gates the console and shrinks the repertoire', async () => {
     const { win } = await bootWithSkins();
@@ -290,7 +356,7 @@ describe('every registered skin honours the contract', () => {
   });
 
   test('all shipped skins registered', () => {
-    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba', 'ufo']);
+    expect(Object.keys(defs).sort()).toEqual(['casey', 'casey95', 'ghost', 'menorah', 'roomba', 'snail', 'ufo']);
   });
 
   for (const f of SKIN_FILES) {
