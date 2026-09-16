@@ -66,8 +66,8 @@
     web: {
       ringS: 3.0,
       stages: 12,
-      life: 120,
-      max: 3,
+      life: 420,             // long enough that the coverage really tiles
+      max: 24,               // …across a whole screen, before the cap bites
       breakR0: 8,
       breakDr: 4.6,
       svg: function (CFG, stage) {

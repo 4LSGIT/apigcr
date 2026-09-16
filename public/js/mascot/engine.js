@@ -723,7 +723,13 @@
     setState('walk');
     stateUntil = clock + rand(2.4, 7);
     nextHop = clock + rand(CFG.HOP_EVERY[0], CFG.HOP_EVERY[1]);
-    if (skin && skin.roam) { pickRoamTarget(); roam.moveUntil = 0; roam.pauseUntil = 0; }
+    if (skin && skin.roam) {
+      // on a mission (a plotted next web), the walk goes THERE; otherwise
+      // wherever the whim says
+      if (plannedWeave) { roam.tx = plannedWeave.x; roam.ty = plannedWeave.y; }
+      else pickRoamTarget();
+      roam.moveUntil = 0; roam.pauseUntil = 0;
+    }
   }
 
   // ── Roam ─────────────────────────────────────────────────────────────────────
@@ -751,17 +757,23 @@
 
   function roamWalk(dt) {
     if (clock < roam.pauseUntil) {
-      if (clock >= stateUntil) toIdle();
+      if (clock >= stateUntil && !plannedWeave) toIdle();
       return;
     }
     if (clock >= roam.moveUntil) {
       if (Math.random() < 0.45) roam.pauseUntil = clock + rand(0.15, 0.8);
       roam.moveUntil = clock + rand(0.35, 1.1);
-      if (Math.random() < 0.25) pickRoamTarget();
+      // whim retargets only when there is no mission
+      if (!plannedWeave && Math.random() < 0.25) pickRoamTarget();
     }
     var dx = roam.tx - px, dy = roam.ty - py;
     var d = Math.sqrt(dx * dx + dy * dy);
     if (d < 10) {
+      if (plannedWeave) {
+        // arrived at the plot: break ground on the next web straight away
+        plannedWeave = null;
+        if (startWeave()) return;
+      }
       pickRoamTarget();
       if (clock >= stateUntil) toIdle();
       return;
@@ -770,7 +782,10 @@
     py = clamp(py + dy / d * CFG.WALK * dt, bounds.top + 12, bounds.bottom - 6);
     rot = Math.atan2(dy, dx) * 180 / Math.PI;
     face = 1;
-    if (clock >= stateUntil) toIdle();
+    if (clock >= stateUntil) {
+      if (plannedWeave) stateUntil = clock + 2;      // missions don't dawdle
+      else toIdle();
+    }
   }
 
   function toIdle() {
@@ -1183,23 +1198,42 @@
     }
 
     if (state === 'weave') {
-      // The spinner turns as it works. Rings arrive on the clock until the
-      // cap; the TENDING has no cap — it builds and holds until the pointer
-      // breaks it (breakWebs marks the object; this branch reacts).
-      rot += 46 * dt;
       if (!weaving || weaving.o.breaking || objs.indexOf(weaving.o) === -1) {
         weaving = null;
+        plannedWeave = null;                            // the chain breaks too
         vx = rand(-170, 170); vy = rand(-120, 120);     // startled — scatter
         setState('fall');
         return;
       }
+      // It works ON the web, not under it: orbiting the growing rim at a
+      // steady rim speed, headed along the tangent — which is where the silk
+      // is actually going down.
+      var orbitR = Math.max(5, weaving.o.data.breakR - 5);
+      weaving.theta += (30 / orbitR) * dt;
+      px = weaving.o.data.cx + Math.cos(weaving.theta) * orbitR;
+      py = weaving.o.data.cy + Math.sin(weaving.theta) * orbitR;
+      rot = weaving.theta * 180 / Math.PI + 90;
+      face = 1;
       var ww = skin.web;
-      if (weaving.stage < ww.stages && clock >= weaving.next) {
-        weaving.stage++;
-        weaving.o.el.innerHTML = ww.svg(CFG, weaving.stage);
-        weaving.o.el.dataset.stage = String(weaving.stage);
-        weaving.o.data.breakR = ww.breakR0 + weaving.stage * ww.breakDr;
-        weaving.next = clock + ww.ringS;
+      if (clock >= weaving.next) {
+        if (weaving.stage < ww.stages) {
+          weaving.stage++;
+          weaving.o.el.innerHTML = ww.svg(CFG, weaving.stage);
+          weaving.o.el.dataset.stage = String(weaving.stage);
+          weaving.o.data.breakR = ww.breakR0 + weaving.stage * ww.breakDr;
+          weaving.next = clock + ww.ringS;
+        } else {
+          // FINISHED. Leave it standing and plot the next one at slight
+          // overlap, so the coverage tiles outward across the screen.
+          var fr2 = weaving.o.data.breakR;
+          var ang = rand(0, Math.PI * 2);
+          plannedWeave = {
+            x: clamp(weaving.o.data.cx + Math.cos(ang) * fr2 * 1.7, bounds.left + 40, bounds.right - 40),
+            y: clamp(weaving.o.data.cy + Math.sin(ang) * fr2 * 1.7, bounds.top + 40, bounds.bottom - 30)
+          };
+          weaving = null;
+          toWalk();
+        }
       }
       return;
     }
@@ -1488,11 +1522,16 @@
     var o = objs[objs.length - 1];
     if (!o || o.kind !== 'web') return false;
     o.el.dataset.stage = '1';
-    weaving = { o: o, stage: 1, next: clock + w.ringS };
+    weaving = { o: o, stage: 1, next: clock + w.ringS, theta: rand(0, Math.PI * 2) };
     vx = 0; vy = 0;
     setState('weave');
     return true;
   }
+
+  // Where the NEXT web goes once this one is finished: a plot at slight
+  // overlap with the last, so the coverage tiles — wait long enough and the
+  // whole screen is silk. Cleared by clearPranks with everything else.
+  var plannedWeave = null;
 
   // ── Rappelling ───────────────────────────────────────────────────────────────
   // A line down the page from wherever it stood, ridden at RAPPEL px/s. The
@@ -1538,6 +1577,7 @@
   // clock), the thread does not, and neither leaves a handle behind.
   function clearPranks() {
     weaving = null;
+    plannedWeave = null;
     if (rappel) { rappel.el.remove(); rappel = null; }
   }
 
@@ -1579,6 +1619,35 @@
       var dx = mouse.x - o.data.cx, dy = mouse.y - o.data.cy;
       if (dx * dx + dy * dy > R * R) continue;
       breakOne(o);
+      // Mostly one at a time; sometimes the whole neighbourhood goes — a
+      // ripple through every OVERLAPPING web, a generation at a time.
+      if (Math.random() < 0.35) cascadeFrom(o);
+    }
+  }
+
+  function cascadeFrom(seed) {
+    var frontier = [seed], depth = 0;
+    while (frontier.length && depth < 12) {
+      depth++;
+      var next = [], i, j;
+      for (i = 0; i < objs.length; i++) {
+        var o = objs[i];
+        if (o.kind !== 'web' || o.breaking || !o.data) continue;
+        for (j = 0; j < frontier.length; j++) {
+          var f = frontier[j];
+          var dx = o.data.cx - f.data.cx, dy = o.data.cy - f.data.cy;
+          var rr = o.data.breakR + f.data.breakR;
+          if (dx * dx + dy * dy <= rr * rr) { next.push(o); break; }
+        }
+      }
+      for (i = 0; i < next.length; i++) {
+        (function (ob, dly) {
+          setTimeout(function () {
+            if (!ob.breaking && objs.indexOf(ob) !== -1) breakOne(ob);
+          }, dly);
+        })(next[i], depth * 70);
+      }
+      frontier = next;
     }
   }
 
@@ -1631,7 +1700,9 @@
     return [
       '#yc-mascot{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:' + CFG.Z + ';}',
       '@media print{#yc-mascot{display:none!important}}',
-      '.yc-cat{position:absolute;left:0;top:0;width:' + CFG.W + 'px;height:' + CFG.H + 'px;',
+      // z-index 2: the pet rides ON TOP of anything it leaves in the world —
+      // a weaver on its web, never under it (objects sit at 1, below).
+      '.yc-cat{position:absolute;left:0;top:0;z-index:2;width:' + CFG.W + 'px;height:' + CFG.H + 'px;',
       // LOAD-BEARING. draw() composes rotate/scaleX about the element's origin;
       // the CSS default of 50% 50% pivots about the sprite's centre instead and
       // throws the pet 32px off its anchor — invisibly at rot:0, but every climb
@@ -1661,10 +1732,10 @@
       // container). The !important wildcard is what makes a decoration's
       // markup unable to do the same, even on purpose.
       '.yc-obj,.yc-obj *,.yc-thread{pointer-events:none!important}',
-      '.yc-obj{position:absolute;left:0;top:0;will-change:opacity}',
+      '.yc-obj{position:absolute;left:0;top:0;z-index:1;will-change:opacity}',
       '.yc-obj svg{display:block;overflow:visible}',
       // the rappel line: engine-owned, engine-styled, cut by the pointer
-      '.yc-thread{position:absolute;left:0;top:0;width:2px;margin-left:-1px;',
+      '.yc-thread{position:absolute;left:0;top:0;z-index:1;width:2px;margin-left:-1px;',
       'background:linear-gradient(rgba(185,194,207,.9),rgba(185,194,207,.45));',
       'transition:opacity .2s ease}',
       '.yc-thread-snap{opacity:0}',

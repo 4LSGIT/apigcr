@@ -201,7 +201,7 @@ describe('mascot engine', () => {
         can: ['walk', 'idle', 'fall', 'land', 'drag', 'leave', 'rappel', 'weave'],
         acts: [['rest', 1]], lookAct: 'rest', lines: ['.'], svg: '<svg/>', css: [],
         web: {
-          ringS: 0.4, stages: 4, life: 30, max: 2, breakR0: 10, breakDr: 4,
+          ringS: 0.4, stages: 8, life: 30, max: 4, breakR0: 10, breakDr: 4,
           svg: (c, stage) => '<svg width="120" height="120" viewBox="0 0 120 120">' +
             '<circle cx="60" cy="60" r="' + (4 + stage * 4) + '" fill="none" stroke="#888"/></svg>'
         }
@@ -221,6 +221,12 @@ describe('mascot engine', () => {
       const web = win.document.querySelector('#yc-mascot .yc-obj-web');
       expect(web).toBeTruthy();
       expect(web.dataset.stage).toBe('1');
+      // …and it rides ON the web while it works: orbiting the rim, not
+      // pinned under the centre.
+      await new Promise(r => setTimeout(r, 350));
+      const wm = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(web.style.transform);
+      const rider = win.Mascot.debug().cat;
+      expect(Math.hypot(rider.x - Number(wm[1]), rider.y - Number(wm[2]))).toBeGreaterThan(3);
       let t0 = Date.now();
       while (Date.now() - t0 < 4000 && Number(web.dataset.stage) < 2) {
         await new Promise(r => setTimeout(r, 100));
@@ -272,6 +278,61 @@ describe('mascot engine', () => {
       win.close();
     }
   }, 30000);
+
+  test('a finished web starts the next one at overlap — and breaks can ripple', async () => {
+    const { win } = await bootWithSkins();
+    try {
+      win.Mascot.register({
+        id: 'tiler', name: 'Tiler', geom: { W: 12, H: 12, FLY_HEAD: 12 },
+        roam: true,
+        can: ['walk', 'idle', 'fall', 'land', 'drag', 'leave', 'weave'],
+        acts: [['rest', 1]], lookAct: 'rest', lines: ['.'], svg: '<svg/>', css: [],
+        web: {
+          ringS: 0.3, stages: 2, life: 60, max: 6, breakR0: 10, breakDr: 4,
+          svg: (c, stage) => '<svg width="120" height="120" viewBox="0 0 120 120">' +
+            '<circle cx="60" cy="60" r="' + (4 + stage * 4) + '" fill="none" stroke="#888"/></svg>'
+        }
+      });
+      win.Mascot.setSkin('tiler');
+      win.Mascot.on();
+      expect(win.Mascot.do('weave')).toBe('weave');
+      // The web finishes in ~0.6s; the tiler then leaves it standing, walks
+      // to a plot at slight overlap, and breaks ground on the next.
+      let t0 = Date.now();
+      let webs = [];
+      while (Date.now() - t0 < 8000 && webs.length < 2) {
+        webs = [...win.document.querySelectorAll('#yc-mascot .yc-obj-web')];
+        if (webs.length < 2) await new Promise(r => setTimeout(r, 120));
+      }
+      expect(webs.length).toBeGreaterThanOrEqual(2);
+      const c = webs.slice(0, 2).map(w => {
+        const m = /translate3d\((-?\d+)px, ?(-?\d+)px/.exec(w.style.transform);
+        return { x: Number(m[1]), y: Number(m[2]) };
+      });
+      const d = Math.hypot(c[0].x - c[1].x, c[0].y - c[1].y);
+      // finished radius = 10 + 2*4 = 18 → planned spacing 1.7R ≈ 31: apart,
+      // but overlapping (< R+R = 36, with slop for the bounds clamp)
+      expect(d).toBeGreaterThan(12);
+      expect(d).toBeLessThan(40);
+      // The ripple: force the cascade roll and break web #1 — the overlapping
+      // neighbour goes with it, a beat later.
+      const realRandom = win.Math.random;
+      win.Math.random = () => 0.1;
+      win.document.dispatchEvent(new win.MouseEvent('pointermove', { clientX: c[0].x, clientY: c[0].y }));
+      t0 = Date.now();
+      let bothGone = false;
+      while (Date.now() - t0 < 4000 && !bothGone) {
+        bothGone = webs.slice(0, 2).every(w =>
+          !w.isConnected || w.classList.contains('yc-obj-break'));
+        if (!bothGone) await new Promise(r => setTimeout(r, 100));
+      }
+      win.Math.random = realRandom;
+      expect(bothGone).toBe(true);
+    } finally {
+      win.Mascot.off();
+      win.close();
+    }
+  }, 25000);
 
   test('the keyboard clause is present for browsers to enforce', () => {
     // Webs may grow over ANYTHING — the pointer breaks them on the way in.
