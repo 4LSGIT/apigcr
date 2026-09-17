@@ -22,6 +22,10 @@
  *      isControlStep's comment in lib/workflow_engine.js).
  *   4. A real render: selecting a branch step marks its targets and cuts the
  *      connector under it.
+ *   5. The jump wires — lane packing, path shape, and which wires exist for a
+ *      selection. jsdom has no layout engine, so every measured offset is 0;
+ *      geometry is therefore asserted against the pure helpers and the render
+ *      assertions stay structural (how many wires, of which direction).
  *
  * MECHANICS
  * Same approach as workflows.reorder.state.test.js — brace-match the functions
@@ -99,6 +103,8 @@ const FN_NAMES = [
   'esc', 'trimUrl',
   '_wfHasKey', '_wfClassifyTarget', '_wfCondText',
   'wfStepEdges', 'wfEdgesFallThrough', '_wfEdgeChip',
+  '_wfWireGeom', '_wfWirePath', '_wfCardAnchorY', '_wfAssignLanes',
+  'wfDrawWires', 'wfToggleEndWires', 'wfHotWire', 'wfWatchWires',
   'renderWfCanvas', 'wfStepCardHTML',
 ];
 const SOURCES = FN_NAMES.map(n => extractFn(SCRIPT, n)).join('\n\n');
@@ -324,5 +330,277 @@ describe('renderWfCanvas', () => {
     h.call('renderWfCanvas');
     expect(h.document.querySelectorAll('.step-card.is-target').length).toBe(0);
     expect(h.document.querySelectorAll('.badge-in').length).toBe(0);
+  });
+});
+
+
+describe('jump wires', () => {
+  const G = H.call('_wfWireGeom');
+
+  describe('_wfWirePath', () => {
+    test('leaves the card edge and ends on the target border', () => {
+      const d = H.call('_wfWirePath', 40, 300, G.lanes[0]);
+      expect(d.startsWith(`M ${G.gutter} 40`)).toBe(true);
+      // The marker's refX sits on the arrow tip, so the path must end ON the
+      // border for the tip to touch the card. (It used to stop head-short too,
+      // leaving every tip floating 7px off the card — and lane-0 wires doubled
+      // back, flipping their auto-oriented arrowheads away from the card.)
+      expect(d.trim().endsWith(`L ${G.gutter} 300`)).toBe(true);
+      expect(d).toContain(`${G.lanes[0]}`);
+    });
+
+    test('elbows the other way for a backward jump', () => {
+      const down = H.call('_wfWirePath', 40, 300, G.lanes[0]);
+      const up   = H.call('_wfWirePath', 300, 40, G.lanes[0]);
+      expect(down).toContain(`Q ${G.lanes[0]} 40 ${G.lanes[0]} ${40 + G.r}`);
+      expect(up).toContain(`Q ${G.lanes[0]} 300 ${G.lanes[0]} ${300 - G.r}`);
+    });
+
+    test('squares off when there is no room for two elbows', () => {
+      const d = H.call('_wfWirePath', 100, 102, G.lanes[0]);
+      expect(d).not.toContain('Q');
+    });
+
+    test('the approach segment always moves toward the card', () => {
+      // orient=auto points the arrowhead along the final segment, so it must
+      // run +x into the card from every lane, the innermost included.
+      expect(G.gutter).toBeGreaterThan(Math.max(...G.lanes) + G.r);
+    });
+  });
+
+  describe('_wfAssignLanes', () => {
+    const mk = (y1, y2) => ({ y1, y2 });
+
+    test('disjoint spans share the innermost lane', () => {
+      const w = [mk(0, 50), mk(200, 250)];
+      H.call('_wfAssignLanes', w);
+      expect(w.map(x => x.laneX)).toEqual([G.lanes[0], G.lanes[0]]);
+    });
+
+    test('overlapping spans get their own lanes, shortest innermost', () => {
+      const long = mk(0, 400), short = mk(10, 60);
+      H.call('_wfAssignLanes', [long, short]);
+      expect(short.laneX).toBe(G.lanes[0]);
+      expect(long.laneX).toBe(G.lanes[1]);
+    });
+
+    test('more overlaps than lanes reuse the outermost rather than overflow', () => {
+      const w = Array.from({ length: G.lanes.length + 2 }, (_, i) => mk(0, 400 + i));
+      H.call('_wfAssignLanes', w);
+      expect(w.every(x => G.lanes.includes(x.laneX))).toBe(true);
+      expect(w[w.length - 1].laneX).toBe(G.lanes[G.lanes.length - 1]);
+    });
+  });
+
+  describe('wfDrawWires', () => {
+    //  2 evaluate_condition → 4 / 7 ;  6 set_next → 2 (loops back onto step 2)
+    const steps = () => [
+      mkStep(1, 'send_sms', { to: '1', message: 'hi' }),
+      mkStep(2, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: 4, else: 7 }),
+      mkStep(3, 'send_sms', { to: '1', message: 'a' }),
+      mkStep(4, 'send_sms', { to: '1', message: 'b' }),
+      mkStep(5, 'send_sms', { to: '1', message: 'c' }),
+      mkStep(6, 'set_next', { value: 2 }),
+      mkStep(7, 'send_sms', { to: '1', message: 'd' }),
+    ];
+    const draw = idx => {
+      const h = makeHarness(steps());
+      h.WF.activeStepIdx = idx;
+      if (idx != null) h.WF.activeStepId = h.WF.steps[idx].id;
+      h.call('renderWfCanvas');
+      return h;
+    };
+    const wires = h => [...h.document.querySelectorAll('.flow-wires .wire')]
+      .map(p => p.getAttribute('data-wire'));
+
+    test('no selection draws no wire layer at all', () => {
+      expect(draw(null).document.querySelector('.flow-wires')).toBeNull();
+    });
+
+    test('a selected step draws its outgoing jumps and the ones landing on it', () => {
+      // Step 2 goes to 4 and 7, and is jumped to by step 6.
+      expect(wires(draw(1)).sort()).toEqual(['in:6', 'out:4', 'out:7']);
+    });
+
+    test('inbound wires are marked so they can recede', () => {
+      const h = draw(1);
+      const dirs = {};
+      h.document.querySelectorAll('.flow-wires .wire').forEach(p => {
+        dirs[p.getAttribute('data-wire')] = p.getAttribute('class');
+      });
+      expect(dirs['out:4']).toContain('dir-out');
+      expect(dirs['in:6']).toContain('dir-in');
+    });
+
+    test('an ordinary step with no jumps either way draws nothing', () => {
+      expect(draw(2).document.querySelector('.flow-wires')).toBeNull();
+    });
+
+    test('every wire carries the arrow marker', () => {
+      const h = draw(1);
+      expect(h.document.querySelector('.flow-wires marker#wf-wire-head')).not.toBeNull();
+      h.document.querySelectorAll('.flow-wires .wire').forEach(p => {
+        expect(p.getAttribute('marker-end')).toBe('url(#wf-wire-head)');
+      });
+    });
+
+    test('a self-loop gets a chip but no wire', () => {
+      // Step 3 jumps to itself — a curve from a card back to the same card
+      // says nothing the chip does not.
+      const h = makeHarness([
+        mkStep(1, 'send_sms', { to: '1', message: 'hi' }),
+        mkStep(2, 'send_sms', { to: '1', message: 'x' }),
+        mkStep(3, 'set_next', { value: 3 }),
+      ]);
+      h.WF.activeStepIdx = 2;
+      h.WF.activeStepId = h.WF.steps[2].id;
+      h.call('renderWfCanvas');
+      expect(h.document.querySelector('.flow-wires')).toBeNull();
+      expect(h.document.querySelectorAll('.step-card')[2].querySelector('.tg-chip').textContent.trim())
+        .toBe('jump to 3');
+    });
+
+    test('redrawing replaces the layer instead of stacking layers', () => {
+      const h = draw(1);
+      h.call('wfDrawWires');
+      h.call('wfDrawWires');
+      expect(h.document.querySelectorAll('.flow-wires').length).toBe(1);
+    });
+
+    test("hover handlers live only on the selected card's chips", () => {
+      // Step 6 also names a jump target; hovering its chip while step 2 is
+      // selected must not light up step 2's wires.
+      const h = draw(1);
+      const cards = h.document.querySelectorAll('.step-card');
+      expect(cards[1].innerHTML).toContain('wfHotWire');
+      expect(cards[5].innerHTML).not.toContain('wfHotWire');
+    });
+
+    test('an `end` edge draws one muted wire into the end terminal', () => {
+      // Step 2's omitted else means END for evaluate_condition, not
+      // fall-through (control steps never advance sequentially).
+      const h = makeHarness([
+        mkStep(1, 'send_sms', { to: '1', message: 'hi' }),
+        mkStep(2, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: 1 }),
+      ]);
+      h.WF.activeStepIdx = 1;
+      h.WF.activeStepId = h.WF.steps[1].id;
+      h.call('renderWfCanvas');
+      expect(h.document.querySelector('.end-terminal')).not.toBeNull();
+      const end = h.document.querySelector('.flow-wires .wire[data-wire="end"]');
+      expect(end).not.toBeNull();
+      expect(end.getAttribute('class')).toContain('kind-end');
+      expect(end.getAttribute('marker-end')).toBe('url(#wf-wire-head-end)');
+      // End wires ride the reserved bus lane, not a packed jump lane.
+      expect(end.getAttribute('d')).toContain(`L ${G.bus} `);
+    });
+
+    test('several branches ending the workflow collapse into ONE end wire', () => {
+      const h = makeHarness([
+        mkStep(1, 'send_sms', { to: '1', message: 'hi' }),
+        mkStep(2, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: null, else: null }),
+      ]);
+      h.WF.activeStepIdx = 1;
+      h.WF.activeStepId = h.WF.steps[1].id;
+      h.call('renderWfCanvas');
+      expect(h.document.querySelectorAll('.flow-wires .wire[data-wire="end"]').length).toBe(1);
+    });
+
+    test('the terminal toggle draws end wires for EVERY ending step, selection or not', () => {
+      // Steps 2 and 3 can end the workflow (omitted else; set_next null).
+      const h = makeHarness([
+        mkStep(1, 'send_sms', { to: '1', message: 'hi' }),
+        mkStep(2, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: 1 }),
+        mkStep(3, 'set_next', { value: null }),
+      ]);
+      h.call('renderWfCanvas');
+      expect(h.document.querySelector('.flow-wires')).toBeNull();   // nothing selected, mode off
+      h.call('wfToggleEndWires');
+      expect(h.document.querySelectorAll('.flow-wires .wire[data-wire="end"]').length).toBe(2);
+      expect(h.document.querySelector('.end-terminal').classList.contains('active')).toBe(true);
+      h.call('wfToggleEndWires');
+      expect(h.document.querySelector('.flow-wires')).toBeNull();
+      expect(h.document.querySelector('.end-terminal').classList.contains('active')).toBe(false);
+    });
+
+    test('a selected ending step is not double-drawn while the toggle is on', () => {
+      const h = makeHarness([
+        mkStep(1, 'send_sms', { to: '1', message: 'hi' }),
+        mkStep(2, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: 1 }),
+        mkStep(3, 'set_next', { value: null }),
+      ]);
+      h.WF.activeStepIdx = 1;
+      h.WF.activeStepId = h.WF.steps[1].id;
+      h.call('renderWfCanvas');
+      h.call('wfToggleEndWires');
+      // Step 2 contributes once, step 3 once — not step 2 twice.
+      expect(h.document.querySelectorAll('.flow-wires .wire[data-wire="end"]').length).toBe(2);
+    });
+
+    test('the toggle survives a re-render', () => {
+      const h = makeHarness([
+        mkStep(1, 'send_sms', { to: '1', message: 'hi' }),
+        mkStep(2, 'set_next', { value: null }),
+      ]);
+      h.call('renderWfCanvas');
+      h.call('wfToggleEndWires');
+      h.call('renderWfCanvas');
+      expect(h.document.querySelectorAll('.flow-wires .wire[data-wire="end"]').length).toBe(1);
+      expect(h.document.querySelector('.end-terminal').classList.contains('active')).toBe(true);
+    });
+  });
+
+  describe('wfHotWire', () => {
+    test('isolates one wire and clears again', () => {
+      const h = makeHarness([
+        mkStep(1, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: 2, else: 3 }),
+        mkStep(2, 'send_sms', { to: '1', message: 'a' }),
+        mkStep(3, 'send_sms', { to: '1', message: 'b' }),
+      ]);
+      h.WF.activeStepIdx = 0;
+      h.WF.activeStepId = h.WF.steps[0].id;
+      h.call('renderWfCanvas');
+      const svg = h.document.querySelector('.flow-wires');
+
+      h.call('wfHotWire', 'out:3');
+      expect(svg.classList.contains('has-hot')).toBe(true);
+      expect(svg.querySelector('.wire[data-wire="out:3"]').classList.contains('is-hot')).toBe(true);
+      expect(svg.querySelector('.wire[data-wire="out:2"]').classList.contains('is-hot')).toBe(false);
+
+      h.call('wfHotWire', null);
+      expect(svg.classList.contains('has-hot')).toBe(false);
+      expect(svg.querySelectorAll('.wire.is-hot').length).toBe(0);
+    });
+
+    test("hovering 'end' lights every end wire at once", () => {
+      const h = makeHarness([
+        mkStep(1, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: 2 }),
+        mkStep(2, 'send_sms', { to: '1', message: 'a' }),
+        mkStep(3, 'set_next', { value: null }),
+      ]);
+      h.WF.activeStepIdx = 0;
+      h.WF.activeStepId = h.WF.steps[0].id;
+      h.call('renderWfCanvas');
+      h.call('wfToggleEndWires');
+      h.call('wfHotWire', 'end');
+      const svg = h.document.querySelector('.flow-wires');
+      expect(svg.classList.contains('has-hot')).toBe(true);
+      const ends = [...svg.querySelectorAll('.wire[data-wire="end"]')];
+      expect(ends.length).toBe(2);
+      ends.forEach(p => expect(p.classList.contains('is-hot')).toBe(true));
+    });
+
+    test('a chip naming no drawn wire leaves everything alone', () => {
+      const h = makeHarness([
+        mkStep(1, 'evaluate_condition', { variable: 'x', operator: '==', value: 1, then: 2, else: 3 }),
+        mkStep(2, 'send_sms', { to: '1', message: 'a' }),
+        mkStep(3, 'send_sms', { to: '1', message: 'b' }),
+      ]);
+      h.WF.activeStepIdx = 0;
+      h.WF.activeStepId = h.WF.steps[0].id;
+      h.call('renderWfCanvas');
+      h.call('wfHotWire', 'out:99');
+      expect(h.document.querySelector('.flow-wires').classList.contains('has-hot')).toBe(false);
+    });
   });
 });

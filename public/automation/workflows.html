@@ -201,7 +201,33 @@
     /* ══════════════════════════════════════════════
        STEP CANVAS
        ══════════════════════════════════════════════ */
-    .step-flow { display: flex; flex-direction: column; }
+    /* The left padding is the wire gutter (see .flow-wires). It is permanent
+       rather than added on selection, so cards never resize when you click. */
+    .step-flow { display: flex; flex-direction: column; position: relative; padding-left: 28px; }
+
+    /* ── Jump wires ───────────────────────────────────────────────
+       The chips NAME a step's targets; the wires SHOW them. Only the selected
+       step is drawn — a workflow-wide web is unreadable, three or four curves
+       are not. The <svg> lives inside .step-flow, so it scrolls with the cards
+       and needs no scroll sync. */
+    .flow-wires { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+    .flow-wires .wire {
+      fill: none; stroke: var(--cat-purple); stroke-width: 2;
+      stroke-linecap: round; stroke-linejoin: round; opacity: 0.85;
+      transition: opacity 0.12s, stroke-width 0.12s;
+    }
+    /* Inbound jumps are drawn too, but recede — they are context for the
+       selected step, not its behaviour. */
+    .flow-wires .wire.dir-in { opacity: 0.42; stroke-dasharray: 5 4; }
+    .flow-wires .wire-head { fill: var(--cat-purple); }
+    /* `end` wires run in the end chip's muted grey into the end terminal at
+       the bottom of the canvas. They all share the outermost gutter lane (the
+       end "bus") and overdraw into one rail, so their opacity must be 1. */
+    .flow-wires .wire.kind-end { stroke: var(--text-muted); opacity: 1; }
+    .flow-wires .wire-head-end { fill: var(--text-muted); }
+    /* Hovering a chip isolates the one wire it names. */
+    .flow-wires.has-hot .wire { opacity: 0.12; }
+    .flow-wires.has-hot .wire.is-hot { opacity: 1; stroke-width: 3; }
 
     .step-connector {
       padding: 0 0 0 28px; height: 22px;
@@ -342,6 +368,18 @@
       border: 1px solid var(--warn); border-radius: 6px;
       padding: 4px 9px; margin-bottom: 8px;
     }
+
+    /* The end terminal: where the workflow's `end` wires land, and the
+       click target that draws them for EVERY step that can end the workflow. */
+    .end-terminal {
+      display: flex; align-items: center; gap: 7px; width: fit-content;
+      margin: 2px 0 10px; padding: 5px 12px;
+      border: 1px dashed var(--border); border-radius: 999px;
+      color: var(--text-muted); font-size: 12px; cursor: pointer;
+      transition: all 0.15s; user-select: none;
+    }
+    .end-terminal:hover { border-color: var(--text-muted); }
+    .end-terminal.active { border-style: solid; border-color: var(--text-muted); background: var(--surface-2); }
 
     .add-step-btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -1661,17 +1699,19 @@ function wfEdgesFallThrough(edges, step) {
 
 // One chip. `known` is the set of live step_numbers, so a jump to a step that
 // was deleted out from under the config reads as broken instead of valid.
-function _wfEdgeChip(e, known) {
+// `hot` — only the SELECTED card's chips drive the wire layer on hover;
+// other cards' chips name the same step numbers but not the drawn wires.
+function _wfEdgeChip(e, known, hot) {
   const lab   = `<span class="tg-lab">${esc(e.label)}</span>`;
   const title = t => ` title="${esc(t)}"`;
   const hint  = e.hint ? ` — ${e.hint}` : '';
   switch (e.kind) {
     case 'step':
       return known.has(e.step)
-        ? `<button type="button" class="tg-chip tg-step" data-goto="${e.step}"${title(`Go to step ${e.step}${hint}`)} onclick="event.stopPropagation();wfGotoStepNum(${e.step})">${lab} <b>${e.step}</b></button>`
+        ? `<button type="button" class="tg-chip tg-step" data-goto="${e.step}"${title(`Go to step ${e.step}${hint}`)} onclick="event.stopPropagation();wfGotoStepNum(${e.step})"${hot ? ` onmouseenter="wfHotWire('out:${e.step}')" onmouseleave="wfHotWire(null)"` : ''}>${lab} <b>${e.step}</b></button>`
         : `<span class="tg-chip tg-bad"${title(`Step ${e.step} no longer exists${hint}`)}>${lab} <b>${e.step}</b> <i class="fa-solid fa-triangle-exclamation"></i></span>`;
     case 'end':
-      return `<span class="tg-chip tg-end"${title(`Ends the workflow normally${hint}`)}>${lab} <b>end</b></span>`;
+      return `<span class="tg-chip tg-end"${title(`Ends the workflow normally${hint}`)}${hot ? ` onmouseenter="wfHotWire('end')" onmouseleave="wfHotWire(null)"` : ''}>${lab} <b>end</b></span>`;
     case 'cancel':
       return `<span class="tg-chip tg-cancel"${title(`Terminates the execution as cancelled${hint}`)}>${lab} <b>cancel</b></span>`;
     case 'fail':
@@ -1696,6 +1736,185 @@ function wfGotoStepNum(num) {
     const cards = document.querySelectorAll('.step-card');
     if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, 40);
+}
+
+// ── Jump wires ───────────────────────────────────────────────────
+// wfStepEdges() says where a step goes; these draw it. Only the SELECTED
+// step's jumps are drawn (its own, plus the ones landing on it) — every jump
+// at once is the spaghetti this deliberately avoids.
+//
+// The <svg> is absolutely positioned inside .step-flow, which is the scrolled
+// CONTENT, so the wires scroll with the cards for free. Geometry is measured
+// from the live DOM after each render; a ResizeObserver redraws when the panel
+// or the font changes card heights underneath them.
+
+// Gutter geometry in px from .step-flow's left edge (its padding-left IS the
+// gutter). Lane 0 hugs the cards; longer jumps are pushed outward. `bus` is
+// reserved for `end` wires — they all share it, merging into one rail.
+function _wfWireGeom() {
+  return { gutter: 28, lanes: [21, 15, 9], bus: 3, r: 4 };
+}
+
+// Orthogonal path with rounded elbows: leave the source card's left edge, run
+// along a gutter lane, come back in at the target. The path ends ON the card
+// border: the marker's refX sits on the arrow tip, so the head runs back over
+// the wire's last few px instead of punching through the card.
+function _wfWirePath(sy, ty, laneX) {
+  const g = _wfWireGeom();
+  const x0 = g.gutter;
+  const end = x0;
+  const dir = ty >= sy ? 1 : -1;
+  // Too little vertical room for two elbows — square it off instead.
+  if (Math.abs(ty - sy) < g.r * 2 + 1) {
+    return `M ${x0} ${sy} L ${laneX} ${sy} L ${laneX} ${ty} L ${end} ${ty}`;
+  }
+  return [
+    `M ${x0} ${sy}`,
+    `L ${laneX + g.r} ${sy}`,
+    `Q ${laneX} ${sy} ${laneX} ${sy + g.r * dir}`,
+    `L ${laneX} ${ty - g.r * dir}`,
+    `Q ${laneX} ${ty} ${laneX + g.r} ${ty}`,
+    `L ${end} ${ty}`,
+  ].join(' ');
+}
+
+// Where a wire touches a card: the centre of its step-number circle, in
+// .step-flow coordinates. .step-card is position:relative, so the badge's own
+// offsetTop is card-relative and the two add up.
+function _wfCardAnchorY(card) {
+  const num = card.querySelector('.step-num');
+  return card.offsetTop + (num ? num.offsetTop + num.offsetHeight / 2 : card.offsetHeight / 2);
+}
+
+// Greedy lane packing: shortest spans first, so they take the lane closest to
+// the cards and long jumps sweep the outside. Two wires share a lane only when
+// their vertical spans don't overlap.
+function _wfAssignLanes(wires) {
+  const g = _wfWireGeom();
+  const lanes = [];
+  wires.slice().sort((a, b) => (a.y2 - a.y1) - (b.y2 - b.y1)).forEach(w => {
+    let k = lanes.findIndex(spans => spans.every(([c, d]) => w.y2 < c - 8 || w.y1 > d + 8));
+    if (k === -1) { k = lanes.length; lanes.push([]); }
+    lanes[k].push([w.y1, w.y2]);
+    w.laneX = g.lanes[Math.min(k, g.lanes.length - 1)];
+  });
+  return wires;
+}
+
+// Rebuild the wire layer for the current selection. Safe to call on every
+// render — it removes the previous layer first and no-ops with no selection.
+function wfDrawWires() {
+  const flow = document.querySelector('#wf-canvas-body .step-flow');
+  if (!flow) return;
+  const prev = flow.querySelector('.flow-wires');
+  if (prev) prev.remove();
+
+  const cards = flow.querySelectorAll('.step-card');
+  if (cards.length !== WF.steps.length) return;   // mid-render, nothing to measure
+  const active = (WF.activeStepIdx != null && WF.steps[WF.activeStepIdx] !== undefined)
+    ? WF.activeStepIdx : null;
+
+  const idxOf = new Map(WF.steps.map((s, i) => [Number(s.step_number), i]));
+  const specs = [];
+  // `end` sources: the selected step's end edge, plus — with the terminal
+  // toggled on — every step that can end the workflow. One wire per source,
+  // all keyed 'end', all on the shared bus lane, all landing on the terminal.
+  // cancel/fail are aborts, not flow — chips only. A self-loop gets no wire —
+  // a curve from a card back to itself says less than the chip already does.
+  const endSrc = new Set();
+  if (active != null) {
+    const selfNum = Number(WF.steps[active].step_number);
+    // Outgoing.
+    wfStepEdges(WF.steps[active]).forEach(e => {
+      if (e.kind === 'end') { endSrc.add(active); return; }
+      const ti = e.kind === 'step' ? idxOf.get(e.step) : undefined;
+      if (ti === undefined || ti === active) return;
+      specs.push({ from: active, to: ti, dir: 'out', key: `out:${e.step}` });
+    });
+    // Incoming.
+    WF.steps.forEach((s, i) => {
+      if (i === active) return;
+      if (wfStepEdges(s).some(e => e.kind === 'step' && e.step === selfNum)) {
+        specs.push({ from: i, to: active, dir: 'in', key: `in:${s.step_number}` });
+      }
+    });
+  }
+  if (WF.showEndWires) {
+    WF.steps.forEach((s, i) => {
+      if (wfStepEdges(s).some(e => e.kind === 'end')) endSrc.add(i);
+    });
+  }
+  endSrc.forEach(i => specs.push({ from: i, end: true, key: 'end' }));
+  if (!specs.length) return;
+
+  const anchors = [...cards].map(_wfCardAnchorY);
+  const term = flow.querySelector('.end-terminal');
+  const endY = term ? term.offsetTop + term.offsetHeight / 2
+                    : Math.max((flow.scrollHeight || 0) - 8, 0);
+  specs.forEach(w => {
+    w.sy = anchors[w.from];
+    w.ty = w.end ? Math.max(endY, w.sy) : anchors[w.to];
+    w.y1 = Math.min(w.sy, w.ty);
+    w.y2 = Math.max(w.sy, w.ty);
+  });
+  _wfAssignLanes(specs.filter(w => !w.end));
+  const busX = _wfWireGeom().bus;
+  specs.forEach(w => { if (w.end) w.laneX = busX; });
+
+  const g = _wfWireGeom();
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'flow-wires');
+  svg.setAttribute('width', String(g.gutter));
+  svg.setAttribute('height', String(flow.scrollHeight || 0));
+  svg.setAttribute('aria-hidden', 'true');
+  // Arrow marker. refX sits on the tip so the path's end point IS the tip.
+  svg.innerHTML =
+    `<defs><marker id="wf-wire-head" markerWidth="7" markerHeight="7" refX="7" refY="3.5"
+       orient="auto" markerUnits="userSpaceOnUse">
+       <path class="wire-head" d="M0,0.6 L7,3.5 L0,6.4 Z"></path></marker>
+     <marker id="wf-wire-head-end" markerWidth="7" markerHeight="7" refX="7" refY="3.5"
+       orient="auto" markerUnits="userSpaceOnUse">
+       <path class="wire-head-end" d="M0,0.6 L7,3.5 L0,6.4 Z"></path></marker></defs>` +
+    specs.map(w =>
+      `<path class="wire ${w.end ? 'kind-end' : `dir-${w.dir}`}" data-wire="${w.key}"
+             d="${_wfWirePath(w.sy, w.ty, w.laneX)}"
+             marker-end="url(#wf-wire-head${w.end ? '-end' : ''})"></path>`
+    ).join('');
+  flow.appendChild(svg);
+}
+
+// Chip hover isolates the wire that chip names; null clears it.
+// The end terminal's click: draw the end wires of EVERY step that can end
+// the workflow. The one whole-canvas overlay that stays readable, because all
+// end wires share the bus lane and the same target — a rail, not a web.
+function wfToggleEndWires() {
+  WF.showEndWires = !WF.showEndWires;
+  const t = document.querySelector('#wf-canvas-body .end-terminal');
+  if (t) t.classList.toggle('active', !!WF.showEndWires);
+  wfDrawWires();
+}
+
+function wfHotWire(key) {
+  const svg = document.querySelector('#wf-canvas-body .flow-wires');
+  if (!svg) return;
+  svg.querySelectorAll('.is-hot').forEach(p => p.classList.remove('is-hot'));
+  const hits = key ? svg.querySelectorAll(`[data-wire="${key}"]`) : [];
+  svg.classList.toggle('has-hot', hits.length > 0);
+  hits.forEach(p => p.classList.add('is-hot'));
+}
+
+// Card heights move when the panel is dragged or a webfont lands, and the
+// wires are measured in px — so redraw instead of leaving them pointing at
+// where the cards used to be. Installed once.
+function wfWatchWires() {
+  if (WF._wireObserver || typeof ResizeObserver === 'undefined') return;
+  const body = document.getElementById('wf-canvas-body');
+  if (!body) return;
+  WF._wireObserver = new ResizeObserver(() => wfDrawWires());
+  WF._wireObserver.observe(body);
+  // Icon fonts land after the first measurement and nudge card heights without
+  // resizing the container, so the observer never sees it. One redraw settles it.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => wfDrawWires());
 }
 
 function renderWfCanvas() {
@@ -1742,8 +1961,11 @@ function renderWfCanvas() {
   });
   const last = WF.steps[WF.steps.length - 1];
   items.push(`<div class="step-connector${wfEdgesFallThrough(edgesByIdx[edgesByIdx.length - 1], last) ? '' : ' is-cut'}"><i class="fa-solid fa-arrow-down" style="opacity:0.25"></i></div>`);
+  items.push(`<div class="end-terminal${WF.showEndWires ? ' active' : ''}" title="The workflow ends here. Click to show every step that can end it." onclick="wfToggleEndWires()" onmouseenter="wfHotWire('end')" onmouseleave="wfHotWire(null)"><i class="fa-regular fa-circle-dot"></i> end</div>`);
   items.push(`<button class="add-step-btn" onclick="wfStepNew()"><i class="fa-solid fa-plus"></i> Add Step</button>`);
   body.innerHTML = `<div class="step-flow">${items.join('')}</div>`;
+  wfDrawWires();
+  wfWatchWires();
 }
 
 function wfStepCardHTML(step, idx, edges, ctx) {
@@ -1771,11 +1993,11 @@ function wfStepCardHTML(step, idx, edges, ctx) {
   // is exactly the flow the flat list hides. The inbound row is selection-only.
   const flowRows = [];
   if (edges.length) {
-    flowRows.push(`<div class="step-targets"><span class="tg-lead">goes to</span>${edges.map(e => _wfEdgeChip(e, ctx.known)).join('')}</div>`);
+    flowRows.push(`<div class="step-targets"><span class="tg-lead">goes to</span>${edges.map(e => _wfEdgeChip(e, ctx.known, isActive)).join('')}</div>`);
   }
   if (isActive && ctx.inbound.length) {
     flowRows.push(`<div class="step-targets"><span class="tg-lead">jumped to from</span>${ctx.inbound.map(s =>
-      `<button type="button" class="tg-chip tg-step" data-goto="${s.num}" title="Step ${s.num} jumps here (${esc(s.label)})" onclick="event.stopPropagation();wfGotoStepNum(${s.num})"><i class="fa-solid fa-arrow-turn-up"></i> <b>${s.num}</b> <span class="tg-lab">${esc(s.label)}</span></button>`
+      `<button type="button" class="tg-chip tg-step" data-goto="${s.num}" title="Step ${s.num} jumps here (${esc(s.label)})" onclick="event.stopPropagation();wfGotoStepNum(${s.num})" onmouseenter="wfHotWire('in:${s.num}')" onmouseleave="wfHotWire(null)"><i class="fa-solid fa-arrow-turn-up"></i> <b>${s.num}</b> <span class="tg-lab">${esc(s.label)}</span></button>`
     ).join('')}</div>`);
   }
   return `

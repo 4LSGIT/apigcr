@@ -179,13 +179,24 @@ canvas says so. Three things tell you where control actually goes:
   at run time shows the placeholder itself (`jump to ⤭ {{jump_to}}`) because
   nothing can know where it lands until the run. A chip pointing at a step
   that no longer exists turns red with a ⚠ — that execution will fail.
-- **Selecting a step** outlines every card it can jump to in purple and tags
-  each one with the path that reaches it (`↳ if yes`). The selected card also
-  grows a `JUMPED TO FROM` row listing the steps that jump *at* it — the fast
-  way to answer "what else lands here before I move this step?" Clicking any
-  step chip selects and scrolls to that step.
+- **Selecting a step** draws its jumps as curves down the left gutter and
+  outlines every card it can reach in purple, tagged with the path that gets
+  there (`↳ if yes`). Only the selected step is ever drawn — a whole
+  workflow's jumps at once is unreadable, three or four is not. Solid curves
+  are the step's own jumps; faint dashed ones are jumps landing *on* it, and
+  those are also listed in a `JUMPED TO FROM` row on the card — the fast way
+  to answer "what else lands here before I move this step?" Hovering a chip
+  isolates the one curve it names; clicking it selects and scrolls to that
+  step.
 
-Chips are read-only: edit targets in the step editor on the right.
+Chips and curves are read-only: edit targets in the step editor on the right.
+A step that jumps to *itself* gets a chip but no curve — a loop from a card
+back to the same card says nothing the chip doesn't. An `end` target IS drawn:
+one muted curve down the gutter into the `◉ end` terminal at the bottom of the
+canvas, however many of the step's branches end. Clicking that terminal draws
+the end curves of EVERY step that can end the workflow — they share one outer
+lane, merging into a single rail rather than a web — and clicking it again
+clears them. `cancel` and `fail` are aborts, not flow, and stay chips.
 
 #### Branching — `evaluate_condition`
 ```json
