@@ -778,6 +778,7 @@ tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
 tests/contactRoles.roleForms.test.js
 tests/contactRoles.slice456.test.js
+tests/contactScalarValueDemote.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
 tests/control.flow.test.js

@@ -132,8 +132,11 @@ function normalizeEmail(email) {
  * Behavior:
  *   - newPhone === current primary-active phone for this contact → no-op
  *   - newPhone is non-empty:
- *       * end existing primary-active row (if any) as 'replaced'
- *         (same-contact reason — reserve 'transferred' for cross-contact)
+ *       * DEMOTE the existing primary-active row (is_primary = 0) and
+ *         leave it ACTIVE — see "Demote, don't end" below
+ *       * if this contact already holds newPhone on an active row, just
+ *         PROMOTE that row (uk_phone_active forbids a second active row
+ *         for the same value, so a re-adopt must not INSERT)
  *       * if newPhone is active on ANOTHER contact, end that row as
  *         'transferred' and recompute that contact's mirror (force=true
  *         semantics — legacy never asks for confirmation)
@@ -143,6 +146,28 @@ function normalizeEmail(email) {
  *       * end the existing primary-active row as 'ended'
  *       * recompute mirror (writes '' to contacts.contact_phone, but
  *         the outer UPDATE already did that — no-op)
+ *
+ * Demote, don't end (2026-09):
+ * A scalar contact_phone write means "this is the number to use now" — it
+ * does NOT mean the old number is dead. The callers are unattended: the
+ * intake upsert (services/intakeService.js, behind intake_contact and
+ * POST /api/intake/contact) writes whatever a website form or a workflow
+ * supplied, matched to an existing contact by ONE of phone/email. Ending
+ * the prior number there destroyed a reachable number of record — and with
+ * it the inbound-comms match for calls and SMS still arriving on it — on
+ * the strength of an anonymous form submission. Demoting keeps every number
+ * we have ever been given reachable and attributable, and moves only the
+ * "call this one" flag. Explicit removal remains available and explicit:
+ * clearing the scalar to '' ends the row as 'ended', and the aggregate
+ * `phones` reconciler (the contact editor's authoritative path) still ends
+ * and end-replaces rows the user actually removed or edited.
+ *
+ * Cost, accepted deliberately: fixing a MISTYPED number through the scalar
+ * path now leaves the typo active-but-not-primary instead of ended. Ending
+ * it is a one-click job in the contact editor, which is the surface that
+ * knows the difference between "wrong number" and "new number". The scalar
+ * path does not, and guessing wrong in the destructive direction is the
+ * worse failure.
  *
  * Constraint note: this propagator relies on the Slice 2 Stage 1
  * revision migration (contact_multivalue_relax_unique.up.sql) having
@@ -158,9 +183,11 @@ function normalizeEmail(email) {
  * The donor's end_date is set to yesterday (DATE_SUB(CURDATE(), INTERVAL 1 DAY))
  * to guarantee no same-day ownership overlap with the recipient. This applies
  * ONLY to the cross-contact collision branch below (end_reason = 'transferred').
- * Same-contact end paths in this function (end_reason = 'replaced' for value
- * change, 'ended' for clearing the scalar) keep CURDATE() — they cannot
- * cause cross-contact overlap.
+ * The one same-contact end path left in this function ('ended', for clearing
+ * the scalar) keeps CURDATE() — it cannot cause cross-contact overlap. The
+ * value-change path no longer ends anything (see "Demote, don't end"), so
+ * end_reason 'replaced' is now written only by the aggregate reconciler's
+ * end-replace step, never from a scalar write.
  *
  * Edge case: a row created today and transferred today produces end_date = today - 1
  * while start_date = today (i.e., end_date < start_date). This is intentional —
@@ -190,15 +217,40 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
   if (newPhone) {
     if (primary && primary.phone === newPhone) return;
 
-    // End existing primary-active as 'replaced' (same-contact reason)
+    // Demote the existing primary-active row — do NOT end it. The old
+    // number stays reachable and keeps matching inbound calls/SMS; only
+    // the "call this one" flag moves. See "Demote, don't end" above.
     if (primary) {
       await conn.query(
         `UPDATE contact_phones
-            SET end_date = CURDATE(), is_primary = 0,
-                end_reason = 'replaced', updated_by = ?
+            SET is_primary = 0, updated_by = ?
           WHERE id = ?`,
         [updatedBy, primary.id]
       );
+    }
+
+    // Re-adopt: because the demote above leaves prior numbers ACTIVE, this
+    // contact may already hold newPhone on an active non-primary row (A → B
+    // → A through the scalar path). uk_phone_active is UNIQUE on
+    // (phone WHERE end_date IS NULL) table-wide, so INSERTing a second
+    // active row for the same value would be rejected — promote the row we
+    // already have instead. It cannot be the primary: that case returned at
+    // the top of this branch.
+    const [[mine]] = await conn.query(
+      `SELECT id FROM contact_phones
+        WHERE contact_id = ? AND phone = ? AND end_date IS NULL
+        LIMIT 1`,
+      [cid, newPhone]
+    );
+    if (mine) {
+      await conn.query(
+        `UPDATE contact_phones
+            SET is_primary = 1, updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, mine.id]
+      );
+      await recomputePrimaryPhone(conn, cid);
+      return;
     }
 
     // force=true: end any other contact's active claim on this phone
@@ -272,9 +324,11 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
  * The donor's end_date is set to yesterday (DATE_SUB(CURDATE(), INTERVAL 1 DAY))
  * to guarantee no same-day ownership overlap with the recipient. This applies
  * ONLY to the cross-contact collision branch below (end_reason = 'transferred').
- * Same-contact end paths in this function (end_reason = 'replaced' for value
- * change, 'ended' for clearing the scalar) keep CURDATE() — they cannot
- * cause cross-contact overlap.
+ * The one same-contact end path left in this function ('ended', for clearing
+ * the scalar) keeps CURDATE() — it cannot cause cross-contact overlap. The
+ * value-change path no longer ends anything (see "Demote, don't end"), so
+ * end_reason 'replaced' is now written only by the aggregate reconciler's
+ * end-replace step, never from a scalar write.
  *
  * Edge case: a row created today and transferred today produces end_date = today - 1
  * while start_date = today (i.e., end_date < start_date). This is intentional —
@@ -304,14 +358,35 @@ async function _propagateEmail(conn, contactId, newEmail, updatedBy) {
   if (newEmail) {
     if (primary && primary.email === newEmail) return;
 
+    // Demote, don't end — see _propagatePhone's JSDoc. The old address
+    // stays active so inbound mail still attributes to this contact.
     if (primary) {
       await conn.query(
         `UPDATE contact_emails
-            SET end_date = CURDATE(), is_primary = 0,
-                end_reason = 'replaced', updated_by = ?
+            SET is_primary = 0, updated_by = ?
           WHERE id = ?`,
         [updatedBy, primary.id]
       );
+    }
+
+    // Re-adopt: uk_email_active is UNIQUE on (email WHERE end_date IS NULL)
+    // table-wide, and demoted rows stay active, so promote an address this
+    // contact already holds rather than INSERTing a duplicate active row.
+    const [[mine]] = await conn.query(
+      `SELECT id FROM contact_emails
+        WHERE contact_id = ? AND email = ? AND end_date IS NULL
+        LIMIT 1`,
+      [cid, newEmail]
+    );
+    if (mine) {
+      await conn.query(
+        `UPDATE contact_emails
+            SET is_primary = 1, updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, mine.id]
+      );
+      await recomputePrimaryEmail(conn, cid);
+      return;
     }
 
     const [[collision]] = await conn.query(
