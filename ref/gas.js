@@ -322,6 +322,31 @@ function buildCanonicalEnvelope(message) {
     }
   }
 
+  // Envelope recipient from Delivered-To. Gmail stamps Delivered-To on every
+  // RECEIVED message with the actual receiving address (plus-tags intact).
+  // This is the closest thing to the SMTP envelope recipient Gmail exposes,
+  // and it covers inbound Bcc'd mail — where To: omits us and getBcc() is
+  // empty (Gmail never reveals that we were Bcc'd on received mail) — which
+  // previously failed receiver validation and was dropped. Absent only on
+  // mail this mailbox SENT, where the getBcc() fallback above applies.
+  const deliveredTo = (function () {
+    const raw = getH('delivered-to');
+    if (!raw) return null;
+    const parsed = parseAddressList(raw);
+    return (parsed.length > 0 && parsed[0].email) ? parsed[0].email : null;
+  })();
+  let envLocalPart = null, envPlusTag = null, envDomain = null;
+  if (deliveredTo) {
+    const at = deliveredTo.lastIndexOf('@');
+    if (at > 0) {
+      const lp = deliveredTo.substring(0, at);
+      envDomain = deliveredTo.substring(at + 1) || null;
+      const plus = lp.indexOf('+');
+      envLocalPart = plus >= 0 ? lp.substring(0, plus) : lp;
+      envPlusTag   = plus >= 0 ? lp.substring(plus + 1) : null;
+    }
+  }
+
   const fromOne = fromList.length > 0 ? fromList[0] : { name: '', email: '' };
 
   const authResultsRaw = getH('authentication-results');
@@ -378,13 +403,14 @@ function buildCanonicalEnvelope(message) {
     kind:            'email',
 
     envelope: {
-      // Gmail doesn't expose the SMTP envelope (Exim env vars) — receiver
-      // tolerates nulls and falls back to header-derived addresses.
+      // Gmail doesn't expose the true SMTP envelope (Exim env vars), but
+      // Delivered-To is the receiving address for inbound mail — see above.
+      // Null (with the getBcc() fallback covering To:) only on sent mail.
       sender:              null,
-      recipient:           null,
-      local_part:          null,
-      plus_tag:            null,
-      domain:              null,
+      recipient:           deliveredTo,
+      local_part:          envLocalPart,
+      plus_tag:            envPlusTag,
+      domain:              envDomain,
       exim_message_id:     null,
       exim_local_part_raw: null,
       exim_domain_raw:     null
