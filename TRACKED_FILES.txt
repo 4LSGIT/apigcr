@@ -625,6 +625,7 @@ scripts/esign_zoho_smoke.js
 scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
 scripts/probe-db-connect.js
+scripts/reviveScalarReplacedValues.js
 scripts/seedRoleContacts.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js

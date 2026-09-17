@@ -198,13 +198,27 @@ function normalizeEmail(email) {
  * No CHECK constraint exists on (end_date >= start_date) and none should be added
  * without first deciding whether to backfill or to remove same-day-transfer artifacts.
  *
+ * Cross-contact transfers are gated on `force` (2026-09):
+ * This function used to end another contact's active claim UNCONDITIONALLY,
+ * despite a comment reading "force=true: …" — updateContact's force flag was
+ * never passed down. PATCH /api/contacts/:id therefore transferred a phone
+ * off another contact silently, while the aggregate `phones` path on the very
+ * same request answered 409 with a conflict payload for the identical
+ * situation. The flag now reaches here, and a collision under force=false
+ * throws the SAME `.conflicts` shape the aggregate planner throws, so the
+ * route's existing 409 branch and the UI's transfer modal cover both paths.
+ *
  * @param {object} conn      - transaction connection
  * @param {number} contactId
  * @param {string} newPhone  - already normalized (10 digits) or '' to clear
  * @param {number} updatedBy
+ * @param {object} [opts]
+ * @param {boolean} [opts.force=false] - true: end another contact's active
+ *                  claim on this value (transfer). false: throw with
+ *                  `.conflicts` and write nothing.
  * @returns {Promise<void>}
  */
-async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
+async function _propagatePhone(conn, contactId, newPhone, updatedBy, { force = false } = {}) {
   const cid = parseInt(contactId, 10);
 
   const [[primary]] = await conn.query(
@@ -253,12 +267,30 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
       return;
     }
 
-    // force=true: end any other contact's active claim on this phone
+    // Another contact's active claim on this value. force=true ends it
+    // (transfer); force=false refuses the whole write — see the JSDoc.
     const [[collision]] = await conn.query(
-      `SELECT id, contact_id FROM contact_phones
-        WHERE phone = ? AND end_date IS NULL AND contact_id <> ?`,
+      `SELECT cp.id, cp.contact_id, c.contact_name
+         FROM contact_phones cp
+         JOIN contacts c ON c.contact_id = cp.contact_id
+        WHERE cp.phone = ? AND cp.end_date IS NULL AND cp.contact_id <> ?`,
       [newPhone, cid]
     );
+    if (collision && !force) {
+      // Same shape _planPhones throws, so routes/api.contacts.js's `.conflicts`
+      // branch answers 409 with the payload the transfer modal already reads.
+      const e = new Error(
+        'Cross-contact conflict on 1 value(s) — retry with ?force=true to transfer'
+      );
+      e.conflicts = [{
+        kind:              'phone',
+        from_contact_id:   collision.contact_id,
+        from_contact_name: collision.contact_name,
+        phone:             newPhone,
+        closed_phone_id:   collision.id,
+      }];
+      throw e;
+    }
     if (collision) {
       // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to
       // guarantee no same-day ownership overlap with the recipient.
@@ -339,13 +371,17 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
  * No CHECK constraint exists on (end_date >= start_date) and none should be added
  * without first deciding whether to backfill or to remove same-day-transfer artifacts.
  *
+ * Cross-contact transfers are gated on `force` — see _propagatePhone's JSDoc.
+ *
  * @param {object} conn
  * @param {number} contactId
  * @param {string} newEmail  - already normalized (trim+lowercased) or '' to clear
  * @param {number} updatedBy
+ * @param {object} [opts]
+ * @param {boolean} [opts.force=false]
  * @returns {Promise<void>}
  */
-async function _propagateEmail(conn, contactId, newEmail, updatedBy) {
+async function _propagateEmail(conn, contactId, newEmail, updatedBy, { force = false } = {}) {
   const cid = parseInt(contactId, 10);
 
   const [[primary]] = await conn.query(
@@ -390,10 +426,25 @@ async function _propagateEmail(conn, contactId, newEmail, updatedBy) {
     }
 
     const [[collision]] = await conn.query(
-      `SELECT id, contact_id FROM contact_emails
-        WHERE email = ? AND end_date IS NULL AND contact_id <> ?`,
+      `SELECT ce.id, ce.contact_id, c.contact_name
+         FROM contact_emails ce
+         JOIN contacts c ON c.contact_id = ce.contact_id
+        WHERE ce.email = ? AND ce.end_date IS NULL AND ce.contact_id <> ?`,
       [newEmail, cid]
     );
+    if (collision && !force) {
+      const e = new Error(
+        'Cross-contact conflict on 1 value(s) — retry with ?force=true to transfer'
+      );
+      e.conflicts = [{
+        kind:              'email',
+        from_contact_id:   collision.contact_id,
+        from_contact_name: collision.contact_name,
+        email:             newEmail,
+        closed_email_id:   collision.id,
+      }];
+      throw e;
+    }
     if (collision) {
       // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to
       // guarantee no same-day ownership overlap with the recipient.
@@ -2587,10 +2638,10 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
 
     // 2. Legacy propagation — SKIP each kind when its aggregate counterpart is supplied
     if ('contact_phone' in normalized && !hasPhones) {
-      await _propagatePhone(conn, contactId, normalized.contact_phone || '', userId);
+      await _propagatePhone(conn, contactId, normalized.contact_phone || '', userId, { force });
     }
     if ('contact_email' in normalized && !hasEmails) {
-      await _propagateEmail(conn, contactId, normalized.contact_email || '', userId);
+      await _propagateEmail(conn, contactId, normalized.contact_email || '', userId, { force });
     }
     const addrKeys = ['contact_address', 'contact_city', 'contact_state', 'contact_zip'];
     if (addrKeys.some(k => k in normalized) && !hasAddresses) {

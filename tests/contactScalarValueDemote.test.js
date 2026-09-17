@@ -78,9 +78,9 @@ function stubDb({ primary = null, readopt = null, collision = null } = {}) {
       return [primary ? [primary] : []];
     }
 
-    // Cross-contact collision check.
-    if (/FROM contact_phones WHERE phone = \?/i.test(s) ||
-        /FROM contact_emails WHERE email = \?/i.test(s)) {
+    // Cross-contact collision check (joins contacts for the donor's name).
+    if (/FROM contact_phones cp JOIN contacts c/i.test(s) ||
+        /FROM contact_emails ce JOIN contacts c/i.test(s)) {
       return [collision ? [collision] : []];
     }
 
@@ -162,18 +162,73 @@ describe('scalar contact_phone → demote, do not end', () => {
     expect(ended.sql).toMatch(/end_date = CURDATE\(\)/);
   });
 
-  test('a cross-contact collision still transfers (donor ends yesterday)', async () => {
+  test('a cross-contact collision under force:true still transfers (donor ends yesterday)', async () => {
     const db = stubDb({
       primary:   { id: 7, phone: OLD_PHONE },
-      collision: { id: 91, contact_id: 77 },
+      collision: { id: 91, contact_id: 77, contact_name: 'Donor Dave' },
     });
 
-    await contactService.updateContact(db, CID, { contact_phone: NEW_PHONE }, { userId: 3 });
+    await contactService.updateContact(
+      db, CID, { contact_phone: NEW_PHONE }, { userId: 3, force: true }
+    );
 
     const donorEnd = childWrites(db, 'phones')
       .find(w => /end_reason = 'transferred'/.test(w.sql));
     expect(donorEnd).toBeDefined();
     expect(donorEnd.sql).toMatch(/DATE_SUB\(CURDATE\(\), INTERVAL 1 DAY\)/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The scalar path used to transfer REGARDLESS of force: updateContact never
+// passed the flag down, so PATCH /api/contacts/:id took a phone off another
+// contact with no 409 and no modal — while the aggregate `phones` array on
+// the very same request answered 409 for the identical collision.
+// ─────────────────────────────────────────────────────────────
+
+describe('cross-contact collision is gated on force', () => {
+  test('phone: force:false throws the aggregate planner\'s .conflicts shape', async () => {
+    const db = stubDb({
+      primary:   { id: 7, phone: OLD_PHONE },
+      collision: { id: 91, contact_id: 77, contact_name: 'Donor Dave' },
+    });
+
+    expect.assertions(6);
+    try {
+      await contactService.updateContact(db, CID, { contact_phone: NEW_PHONE }, { userId: 3 });
+    } catch (err) {
+      // routes/api.contacts.js keys its 409 branch off `.conflicts`.
+      expect(Array.isArray(err.conflicts)).toBe(true);
+      expect(err.conflicts[0].kind).toBe('phone');
+      expect(err.conflicts[0].from_contact_id).toBe(77);
+      expect(err.conflicts[0].from_contact_name).toBe('Donor Dave');
+      expect(err.conflicts[0].closed_phone_id).toBe(91);
+      // Nothing written to the donor.
+      expect(db.writes.some(w => /end_reason = 'transferred'/.test(w.sql))).toBe(false);
+    }
+  });
+
+  test('email: same gate, same shape', async () => {
+    const db = stubDb({
+      primary:   { id: 11, email: OLD_EMAIL },
+      collision: { id: 91, contact_id: 77, contact_name: 'Donor Dave' },
+    });
+
+    expect.assertions(3);
+    try {
+      await contactService.updateContact(db, CID, { contact_email: NEW_EMAIL }, { userId: 3 });
+    } catch (err) {
+      expect(err.conflicts[0].kind).toBe('email');
+      expect(err.conflicts[0].closed_email_id).toBe(91);
+      expect(db.writes.some(w => /end_reason = 'transferred'/.test(w.sql))).toBe(false);
+    }
+  });
+
+  test('no collision + force:false is unaffected', async () => {
+    const db = stubDb({ primary: { id: 7, phone: OLD_PHONE }, collision: null });
+    await expect(
+      contactService.updateContact(db, CID, { contact_phone: NEW_PHONE }, { userId: 3 })
+    ).resolves.toBeDefined();
   });
 });
 

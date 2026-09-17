@@ -305,7 +305,16 @@ async function intakeContact(db, body = {}, { forceContactId = null } = {}) {
     // in updateFields either way. If that ever breaks, updateContact throws
     // "updateContact requires at least one field" and surfaces as an
     // infrastructure error.
-    await contactService.updateContact(db, targetContactId, updateFields);
+    // force: true — preserve the intake path's historical behavior now that
+    // contactService gates scalar cross-contact transfers on this flag.
+    // Unattended intake cannot actually reach a collision: a value active on
+    // ANOTHER contact makes that contact a second match, so resolveContacts-
+    // ByValue returns 2 and we exit as 'diverged' long before here. The flag
+    // matters only on the force_contact_id path, where a human has already
+    // picked WHICH contact this person is — and that answer implies the value
+    // moves with them. If that ever stops being the right default, the fix is
+    // a 'conflict' outcome on intakeContact, not a silent force:false.
+    await contactService.updateContact(db, targetContactId, updateFields, { force: true });
 
     const [[updated]] = await db.query(
       'SELECT contact_name FROM contacts WHERE contact_id = ?',
