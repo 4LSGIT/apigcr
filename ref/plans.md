@@ -160,6 +160,11 @@ role-convention item were confirmed done and dropped).
   `computeAndSaveStatus`.
 - **Dropbox direct API** for the `docReq.html` uploader (replaces JotForm
   placeholder).
+- **Fold `_wfNextRef` into `_wfClassifyTarget`** (`public/automation/workflows.html`):
+  the Explain view and the step canvas now each carry their own copy of the
+  engine's next_step sentinel table (`end`/`null`/`''`/`cancel`/`fail`/digits).
+  One classifier returning a kind, with the two call sites rendering it, would
+  keep them from drifting apart from `normalizeNextStep()` independently.
 - **YisraHook v1.3 extras** (beyond the v1.1 bullet above): response
   transforms, per-target `no_retry` flag for non-idempotent internal_function
   targets.

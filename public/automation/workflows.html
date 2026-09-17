@@ -208,6 +208,60 @@
       color: var(--text-muted); font-size: 16px; display: flex; align-items: center;
     }
 
+    /* A step that redirects the engine never hands off to the card below it,
+       so it gets a dashed stub instead of an arrow — the arrow is a claim
+       about control flow and for a control step it is usually false. */
+    .step-connector.is-cut { justify-content: flex-start; }
+    .step-connector.is-cut .cut-rule {
+      width: 0; height: 100%; margin-left: 6px;
+      border-left: 2px dashed var(--text-muted); opacity: 0.4;
+    }
+
+    /* ── "Goes to" strip ──────────────────────────────────────────
+       Control steps (set_next, evaluate_condition, foreach, the waits,
+       request_decision) jump somewhere other than the next card, and in a
+       flat list that jump is invisible. Every step that names a target gets
+       chips spelling the targets out; selecting the step also lights up the
+       cards it points at (.is-target) and lists the jumps that land on it. */
+    .step-targets {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+      margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--border);
+    }
+    .tg-lead {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--text-muted); margin-right: 2px;
+    }
+    .tg-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      border: 1px solid var(--border); background: var(--page-bg);
+      border-radius: 4px; padding: 2px 6px;
+      font-size: 11px; line-height: 1.45; color: var(--text-2);
+      max-width: 100%; white-space: nowrap;
+    }
+    .tg-chip .tg-lab { color: var(--text-muted); }
+    .tg-chip b { font-weight: 700; }
+    button.tg-chip { cursor: pointer; font-family: inherit; }
+    button.tg-chip:hover { border-color: var(--cat-purple); }
+    button.tg-chip:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+    .tg-step   { color: var(--cat-purple); }
+    .tg-end    { color: var(--text-muted); }
+    .tg-cancel { color: var(--warn);   background: var(--warn-soft);   border-color: transparent; }
+    .tg-fail   { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+    /* A computed target ({{jump_to}}) is only known at run time — it reads as
+       a placeholder, not a step number, so it never looks like a real edge. */
+    .tg-var    { color: var(--accent-on-soft); background: var(--accent-soft); border-color: transparent; }
+    .tg-var .tg-ref {
+      font-family: ui-monospace, Menlo, monospace;
+      display: inline-block; max-width: 170px;
+      overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
+    }
+    .tg-bad    { color: var(--danger); border-color: var(--danger); }
+
+    /* Cards the selected step can jump to. .active wins on a self-loop. */
+    .step-card.is-target { border-color: var(--cat-purple); }
+    .step-card.active.is-target { border-color: var(--info); }
+    .badge-in { background: var(--surface-2); color: var(--cat-purple); }
+
     .step-card {
       background: var(--surface); border: 2px solid var(--border);
       border-radius: 10px; padding: 11px 13px;
@@ -1471,26 +1525,228 @@ function wfSyncActiveStep() {
   if (!WF.editingNew) wfClearEditor();
 }
 
+// ══════════════════════════════════════════════════════════════════
+// STEP FLOW GRAPH — where a step can actually go next
+// ══════════════════════════════════════════════════════════════════
+//
+// The canvas is a flat vertical list and drew a ↓ between every pair of
+// cards. That arrow is a claim about control flow, and for a control step it
+// is usually FALSE: evaluate_condition, set_next, foreach and the waits
+// redirect the engine, so the card below them may never run.
+//
+// wfStepEdges() reads the config and returns the step's real outgoing edges.
+// One source feeds all three affordances, so they can't disagree: the
+// connector (arrow vs dashed stub), the per-card "goes to" chips, and the
+// highlight on the cards the SELECTED step points at.
+//
+// The producer list mirrors lib/workflow_engine.js normalizeNextStep():
+// set_next.value, evaluate_condition then / else / branches[].then,
+// foreach.end_step (plus its implicit fall into the loop body),
+// request_decision.nextStep, and the wait_for / schedule_resume /
+// wait_until_time targets. A function that newly gains __meta.controlFlow
+// needs a case added here — tests/workflows.flowgraph.test.js asserts the two
+// lists stay together.
+
+function _wfHasKey(o, k) { return Object.prototype.hasOwnProperty.call(o || {}, k); }
+
+// Classify one target value the way the engine does. Mirrors
+// normalizeNextStep() + _wfNextRef()'s sentinel handling, with one addition:
+// a value still carrying a {{placeholder}} is 'var' — resolved at run time,
+// so the canvas can say "computed" instead of inventing an edge.
+// → { kind: 'step'|'end'|'cancel'|'fail'|'var'|'bad', step?, raw? }
+function _wfClassifyTarget(val) {
+  if (val === null || val === undefined) return { kind: 'end' };
+  if (typeof val === 'number') {
+    return (Number.isInteger(val) && val > 0) ? { kind: 'step', step: val } : { kind: 'bad', raw: val };
+  }
+  if (typeof val === 'string') {
+    const raw = val.trim();
+    if (raw.includes('{{')) return { kind: 'var', raw };
+    const s = raw.toLowerCase();
+    if (s === '' || s === 'end' || s === 'null') return { kind: 'end' };
+    if (s === 'cancel') return { kind: 'cancel' };
+    if (s === 'fail')   return { kind: 'fail' };
+    if (/^\d+$/.test(s)) {
+      const n = parseInt(s, 10);
+      return n > 0 ? { kind: 'step', step: n } : { kind: 'bad', raw: val };
+    }
+  }
+  return { kind: 'bad', raw: val };
+}
+
+// Human-readable form of one evaluate_condition branch/condition set, used as
+// the chip's tooltip so the chip itself can stay short.
+function _wfCondText(c) {
+  if (!c) return '';
+  const one = x => `${x && x.variable != null ? x.variable : '?'} ${x && x.operator ? x.operator : ''} ${
+    x && x.value !== undefined ? JSON.stringify(x.value) : ''}`.replace(/\s+$/, '');
+  if (Array.isArray(c.conditions) && c.conditions.length) {
+    return c.conditions.map(one).join(c.match === 'any' ? ' OR ' : ' AND ');
+  }
+  return c.variable != null ? one(c) : '';
+}
+
+// A step's explicit outgoing edges → [{ label, kind, step?, raw?, hint? }].
+// An empty list means "no redirect" — the engine advances sequentially.
+function wfStepEdges(step) {
+  if (!step || step.type !== 'internal_function') return [];
+  const cfg  = step.config || {};
+  const p    = cfg.params  || {};
+  const num  = Number(step.step_number);
+  const out  = [];
+  const push = (label, val, hint) => {
+    const e = Object.assign({ label }, _wfClassifyTarget(val));
+    if (hint) e.hint = hint;
+    out.push(e);
+  };
+
+  switch (cfg.function_name) {
+    case 'set_next':
+      // An OMITTED value returns next_step:undefined, which the engine reads
+      // as a silent fall-through — NOT as "end". Only a present key is an edge.
+      if (_wfHasKey(p, 'value')) push('jump to', p.value);
+      break;
+
+    case 'evaluate_condition':
+      if (Array.isArray(p.branches) && p.branches.length) {
+        p.branches.forEach((b, i) => {
+          const hint = _wfCondText(b);
+          if (!b || !_wfHasKey(b, 'then')) out.push({ label: `branch ${i + 1}`, kind: 'bad', hint });
+          else push(`branch ${i + 1}`, b.then, hint);
+        });
+        push('no match', _wfHasKey(p, 'else') ? p.else : null);
+      } else {
+        const hint = _wfCondText(p);
+        if (_wfHasKey(p, 'then')) push('if yes', p.then, hint);
+        // Omitted else is not a fall-through: control steps never advance
+        // sequentially, so a missing else ends the workflow.
+        push('if no', _wfHasKey(p, 'else') ? p.else : null, hint);
+      }
+      break;
+
+    case 'foreach':
+      // The loop body IS the following step — the one implicit edge worth
+      // drawing, because it pairs with end_step to explain the shape.
+      if (Number.isFinite(num)) out.push({ label: 'each item', kind: 'step', step: num + 1 });
+      if (_wfHasKey(p, 'end_step')) push('when done', p.end_step);
+      break;
+
+    case 'request_decision':
+      // Absent nextStep = resume at the next step; the connector covers that.
+      if (_wfHasKey(p, 'nextStep') && p.nextStep != null) push('after answer', p.nextStep);
+      break;
+
+    case 'schedule_resume':
+    case 'wait_for':
+      if (_wfHasKey(p, 'nextStep')) push('then', p.nextStep);
+      if (_wfHasKey(p, 'skipToStep') && p.skipToStep != null) push('if skipped', p.skipToStep);
+      break;
+
+    case 'wait_until_time':
+      if (_wfHasKey(p, 'nextStep')) push('then', p.nextStep);
+      break;
+  }
+  return out;
+}
+
+// Does control actually reach the card below this one? True when the step
+// names no target at all (the ordinary case), or when one of its targets IS
+// the next step. A computed ({{var}}) target is not a fall-through: the
+// engine takes whatever it resolves to, which is a jump either way.
+function wfEdgesFallThrough(edges, step) {
+  if (!edges.length) return true;
+  const next = Number(step.step_number) + 1;
+  return edges.some(e => e.kind === 'step' && e.step === next);
+}
+
+// One chip. `known` is the set of live step_numbers, so a jump to a step that
+// was deleted out from under the config reads as broken instead of valid.
+function _wfEdgeChip(e, known) {
+  const lab   = `<span class="tg-lab">${esc(e.label)}</span>`;
+  const title = t => ` title="${esc(t)}"`;
+  const hint  = e.hint ? ` — ${e.hint}` : '';
+  switch (e.kind) {
+    case 'step':
+      return known.has(e.step)
+        ? `<button type="button" class="tg-chip tg-step" data-goto="${e.step}"${title(`Go to step ${e.step}${hint}`)} onclick="event.stopPropagation();wfGotoStepNum(${e.step})">${lab} <b>${e.step}</b></button>`
+        : `<span class="tg-chip tg-bad"${title(`Step ${e.step} no longer exists${hint}`)}>${lab} <b>${e.step}</b> <i class="fa-solid fa-triangle-exclamation"></i></span>`;
+    case 'end':
+      return `<span class="tg-chip tg-end"${title(`Ends the workflow normally${hint}`)}>${lab} <b>end</b></span>`;
+    case 'cancel':
+      return `<span class="tg-chip tg-cancel"${title(`Terminates the execution as cancelled${hint}`)}>${lab} <b>cancel</b></span>`;
+    case 'fail':
+      return `<span class="tg-chip tg-fail"${title(`Terminates the execution as failed${hint}`)}>${lab} <b>fail</b></span>`;
+    case 'var':
+      return `<span class="tg-chip tg-var"${title(`Target is computed at run time from ${e.raw}${hint}`)}>${lab} <i class="fa-solid fa-shuffle"></i> <span class="tg-ref">${esc(e.raw)}</span></span>`;
+    default:
+      return `<span class="tg-chip tg-bad"${title(`Not a usable target${hint} — the engine fails the execution`)}>${lab} <i class="fa-solid fa-triangle-exclamation"></i> ?</span>`;
+  }
+}
+
+// Select the card carrying a step_number and scroll it into view — what every
+// step chip clicks through to.
+function wfGotoStepNum(num) {
+  const idx = WF.steps.findIndex(s => Number(s.step_number) === Number(num));
+  if (idx < 0) {
+    Swal.fire({ icon: 'warning', title: `Step ${num} not found`, text: 'This jump points at a step that no longer exists.' });
+    return;
+  }
+  wfSelectStep(idx);
+  setTimeout(() => {
+    const cards = document.querySelectorAll('.step-card');
+    if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 40);
+}
+
 function renderWfCanvas() {
   const body = document.getElementById('wf-canvas-body');
   if (!WF.steps.length) {
     body.innerHTML = `<button class="add-step-btn" onclick="wfStepNew()"><i class="fa-solid fa-plus"></i> Add First Step</button>`;
     return;
   }
+  // One pass over the flow graph feeds the connectors, the chips and the
+  // target highlight.
+  const edgesByIdx = WF.steps.map(wfStepEdges);
+  const known      = new Set(WF.steps.map(s => Number(s.step_number)));
+  const active     = WF.activeStepIdx;
+
+  // Selection context: which steps the active step jumps to (and under what
+  // label), and which steps jump AT it. Inbound is explicit jumps only —
+  // plain sequential entry is already drawn by the connector above the card.
+  const targets = new Map();   // step_number → edge label
+  const inbound = [];          // [{ num, label }]
+  if (active != null && WF.steps[active]) {
+    edgesByIdx[active].forEach(e => {
+      if (e.kind === 'step' && known.has(e.step) && !targets.has(e.step)) targets.set(e.step, e.label);
+    });
+    const selfNum = Number(WF.steps[active].step_number);
+    WF.steps.forEach((s, i) => {
+      if (i === active) return;
+      const hit = edgesByIdx[i].find(e => e.kind === 'step' && e.step === selfNum);
+      if (hit) inbound.push({ num: s.step_number, label: hit.label });
+    });
+  }
+
   const items = [];
   if (WF.pendingMove || WF.moveCommit) {
     items.push(`<div class="reorder-pending"><i class="fa-solid fa-spinner spin"></i> Saving new order…</div>`);
   }
   WF.steps.forEach((step, idx) => {
-    if (idx > 0) items.push(`<div class="step-connector"><i class="fa-solid fa-arrow-down"></i></div>`);
-    items.push(wfStepCardHTML(step, idx));
+    if (idx > 0) {
+      const prev = WF.steps[idx - 1];
+      items.push(wfEdgesFallThrough(edgesByIdx[idx - 1], prev)
+        ? `<div class="step-connector" title="Step ${prev.step_number} continues to step ${step.step_number}"><i class="fa-solid fa-arrow-down"></i></div>`
+        : `<div class="step-connector is-cut" title="Step ${prev.step_number} always jumps — it never continues to step ${step.step_number}"><span class="cut-rule"></span></div>`);
+    }
+    items.push(wfStepCardHTML(step, idx, edgesByIdx[idx], { known, targets, inbound }));
   });
-  items.push(`<div class="step-connector"><i class="fa-solid fa-arrow-down" style="opacity:0.25"></i></div>`);
+  const last = WF.steps[WF.steps.length - 1];
+  items.push(`<div class="step-connector${wfEdgesFallThrough(edgesByIdx[edgesByIdx.length - 1], last) ? '' : ' is-cut'}"><i class="fa-solid fa-arrow-down" style="opacity:0.25"></i></div>`);
   items.push(`<button class="add-step-btn" onclick="wfStepNew()"><i class="fa-solid fa-plus"></i> Add Step</button>`);
   body.innerHTML = `<div class="step-flow">${items.join('')}</div>`;
 }
 
-function wfStepCardHTML(step, idx) {
+function wfStepCardHTML(step, idx, edges, ctx) {
   const cfg = step.config || {};
   const isActive = WF.activeStepIdx === idx;
   const typeIcons = { webhook: 'fa-globe', internal_function: 'fa-bolt', custom_code: 'fa-code' };
@@ -1506,8 +1762,24 @@ function wfStepCardHTML(step, idx) {
   if (ep.strategy && ep.strategy !== 'ignore') badges.push(`<span class="badge ${ep.strategy.includes('abort') ? 'badge-abort' : 'badge-retry'}">${ep.strategy}</span>`);
   if (['set_next', 'evaluate_condition'].includes(cfg.function_name)) badges.push(`<span class="badge badge-branch"><i class="fa-solid fa-code-branch"></i> branch</span>`);
   if (['wait_for', 'schedule_resume', 'wait_until_time'].includes(cfg.function_name)) badges.push(`<span class="badge badge-delay"><i class="fa-regular fa-clock"></i> delay</span>`);
+  // Inbound marker: this card is one of the SELECTED step's jump targets.
+  const inLabel = ctx.targets.get(Number(step.step_number));
+  if (inLabel !== undefined) {
+    badges.push(`<span class="badge badge-in" title="The selected step jumps here (${esc(inLabel)})"><i class="fa-solid fa-arrow-turn-down"></i> ${esc(inLabel)}</span>`);
+  }
+  // "Goes to" strip — always shown when the step names a target, because that
+  // is exactly the flow the flat list hides. The inbound row is selection-only.
+  const flowRows = [];
+  if (edges.length) {
+    flowRows.push(`<div class="step-targets"><span class="tg-lead">goes to</span>${edges.map(e => _wfEdgeChip(e, ctx.known)).join('')}</div>`);
+  }
+  if (isActive && ctx.inbound.length) {
+    flowRows.push(`<div class="step-targets"><span class="tg-lead">jumped to from</span>${ctx.inbound.map(s =>
+      `<button type="button" class="tg-chip tg-step" data-goto="${s.num}" title="Step ${s.num} jumps here (${esc(s.label)})" onclick="event.stopPropagation();wfGotoStepNum(${s.num})"><i class="fa-solid fa-arrow-turn-up"></i> <b>${s.num}</b> <span class="tg-lab">${esc(s.label)}</span></button>`
+    ).join('')}</div>`);
+  }
   return `
-    <div class="step-card${isActive ? ' active' : ''}" onclick="wfSelectStep(${idx})">
+    <div class="step-card${isActive ? ' active' : ''}${inLabel !== undefined ? ' is-target' : ''}" onclick="wfSelectStep(${idx})">
       <div class="step-card-head">
         <div class="step-num">${step.step_number}</div>
         <div class="step-type-icon type-${step.type}"><i class="fa-solid ${typeIcons[step.type] || 'fa-circle'}"></i></div>
@@ -1518,6 +1790,7 @@ function wfStepCardHTML(step, idx) {
         <div class="step-badges">${badges.join('')}${step.note ? `<span class="badge" title="${esc(step.note)}" style="cursor:help"><i class="fa-regular fa-note-sticky"></i></span>` : ''}</div>
         <div class="step-id-tag">id ${step.id ?? '—'}</div>
       </div>
+      ${flowRows.join('')}
       ${isActive ? `
       <div class="step-card-actions">
         <button class="step-act" data-move="up" title="Move up (Alt+↑)"
@@ -1539,7 +1812,6 @@ function wfStepCardHTML(step, idx) {
           <i class="fa-solid fa-trash"></i> Delete</button>
       </div>` : ''}</div>`;
 }
-
 function wfSelectStep(idx) {
   WF.activeStepIdx = idx;
   WF.activeStepId  = WF.steps[idx]?.id ?? null;

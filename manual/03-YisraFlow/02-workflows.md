@@ -163,6 +163,30 @@ The last expression evaluated is returned as `{{this}}`.
 
 ### Control flow
 
+#### Reading control flow on the canvas
+
+The step canvas is a flat vertical list, so a jump is invisible unless the
+canvas says so. Three things tell you where control actually goes:
+
+- **The connector between two cards.** A solid **↓** means the upper step
+  really does hand off to the one below it. A **dashed stub** means it never
+  does — the step always jumps somewhere else, so the card underneath is just
+  the next one in the list, not the next one to run.
+- **The `GOES TO` strip** on any step that names a target: one chip per
+  outgoing path (`if yes 4`, `if no 7`, `each item 5`, `when done 8`,
+  `then 9`, `if skipped 11`, `jump to 4`). Terminal outcomes read as
+  **end** / **cancel** / **fail** rather than a step number. A target computed
+  at run time shows the placeholder itself (`jump to ⤭ {{jump_to}}`) because
+  nothing can know where it lands until the run. A chip pointing at a step
+  that no longer exists turns red with a ⚠ — that execution will fail.
+- **Selecting a step** outlines every card it can jump to in purple and tags
+  each one with the path that reaches it (`↳ if yes`). The selected card also
+  grows a `JUMPED TO FROM` row listing the steps that jump *at* it — the fast
+  way to answer "what else lands here before I move this step?" Clicking any
+  step chip selects and scrolls to that step.
+
+Chips are read-only: edit targets in the step editor on the right.
+
 #### Branching — `evaluate_condition`
 ```json
 {
