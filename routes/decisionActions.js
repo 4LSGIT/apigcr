@@ -157,6 +157,20 @@ function questionBlock(row, color = INDIGO) {
     </div>`;
 }
 
+/** Optional context block — decision_requests.context_html, rendered RAW.
+ *  Trust contract: this is workflow-config-authored HTML (request_decision's
+ *  context_html param, same standing as email_html); producers pre-escape any
+ *  untrusted values. Null/blank → renders nothing. */
+function contextBlock(row) {
+  const ctx = row && row.context_html;
+  if (ctx == null || String(ctx).trim() === '') return '';
+  return `
+    <div style="margin:0 0 18px;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;
+                border-radius:4px;font-size:14px;color:#111827;line-height:1.5">
+      ${ctx}
+    </div>`;
+}
+
 function optionLabel(row, value) {
   const opt = row.options.find(o => o && o.value === value);
   return opt ? opt.label : value;
@@ -181,6 +195,7 @@ function respondedPage(row, { justNow = false } = {}) {
         : 'This decision has already been answered.'}
     </p>
     ${questionBlock(row, GREEN)}
+    ${contextBlock(row)}
     <p style="margin:0;font-size:14px;color:#374151">
       Recorded response: <strong style="color:${GREEN}">${htmlEscape(label)}</strong>${when ? ` <span style="color:${GREY}">(${htmlEscape(when)})</span>` : ''}
     </p>`);
@@ -194,7 +209,8 @@ function expiredPage(row) {
       ${htmlEscape(fmtFirmTime(row.expires_at))}. The workflow has continued with its default action,
       so responses can no longer be recorded here.
     </p>
-    ${questionBlock(row, GREY)}`);
+    ${questionBlock(row, GREY)}
+    ${contextBlock(row)}`);
 }
 
 function cancelledPage(row) {
@@ -286,6 +302,7 @@ router.get(`/d/${TOKEN_PATTERN}`, async (req, res) => {
         and the workflow continues with it.
       </p>
       ${questionBlock(row)}
+      ${contextBlock(row)}
       <form method="POST" action="${base}/respond" style="margin:20px 0 0">
         ${buttons}
       </form>
@@ -333,6 +350,7 @@ router.get(`/d/${TOKEN_PATTERN}/${VALUE_PATTERN}`, async (req, res) => {
     const body = `
       <h2 style="margin:0 0 8px;font-size:22px;color:#111827">Confirm your response</h2>
       ${questionBlock(row)}
+      ${contextBlock(row)}
       <p style="margin:0 0 18px;font-size:15px;color:#374151">
         You selected: <strong style="color:${INDIGO};font-size:16px">${htmlEscape(opt.label)}</strong>
       </p>

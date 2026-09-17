@@ -446,6 +446,7 @@ ref/migrations/2026-09-06_FIL1_trustee_validation.sql
 ref/migrations/2026-09-06_manage_selfservice_policy.sql
 ref/migrations/2026-09-08_sync1_delete_grace.sql
 ref/migrations/2026-09-15_email_log_delivery_info.sql
+ref/migrations/2026-09-17_decision_context_html.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql

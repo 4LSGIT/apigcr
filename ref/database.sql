@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-14T21:35:27.031Z
+-- Generated: 2026-09-17T15:42:18.408Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:e976952e53d521c5a3c94bfb35e0ef5c
+-- Fingerprint: sha256:e72652d35f779a85e60e9db72fb5375d
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1325,6 +1325,7 @@ CREATE TABLE `decision_requests` (
   `recipient_email` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `recipient_phone` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `question` text COLLATE utf8mb4_general_ci NOT NULL,
+  `context_html` mediumtext COLLATE utf8mb4_general_ci,
   `options` json NOT NULL,
   `result_var` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
   `timeout_value` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
