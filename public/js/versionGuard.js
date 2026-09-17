@@ -17,7 +17,10 @@
  *   A small pill, bottom-right: "Update available — Reload". NON-DISMISSABLE:
  *   no ✕, no "Later". The only thing that removes it is a reload. Nothing is ever
  *   taken from the user — but they can't quietly decide to keep running last
- *   month's code either.
+ *   month's code either. What they DO get to decide is where it sits: clicking
+ *   the pill's body (not the Reload button) walks it round the four corners,
+ *   remembered per browser. Out of the way of whatever it covers, never out
+ *   of sight.
  *
  * HARD — opt-in per incident, via app_settings.min_client_build.
  *   A non-blocking banner with a live countdown, then the page reloads ITSELF.
@@ -551,24 +554,65 @@
   }
 
   // ── The bottom-right stack (pill + recovery card share it) ──────────────────
+  /**
+   * The stack is fixed to one of the four corners. Bottom-right is the default;
+   * the pill's body click walks it on (see showSoftPill), and the choice is
+   * remembered per browser — the pill is the one piece of UI the user cannot
+   * dismiss, so "not on top of THAT" has to stay available to them.
+   *
+   * The top corners clear the header: Z_STACK is above the shell chrome, so a
+   * plain top:14px would park the card ON the header bar.
+   */
+  var CORNER_KEY = "ycVgCorner";
+  var CORNERS = ["br", "bl", "tl", "tr"];
+  var CORNER_POS = {
+    br: ["right:14px", "bottom:14px", "align-items:flex-end"],
+    bl: ["left:14px", "bottom:14px", "align-items:flex-start"],
+    tl: ["left:14px", "top:calc(var(--header-h) + 14px)", "align-items:flex-start"],
+    tr: ["right:14px", "top:calc(var(--header-h) + 14px)", "align-items:flex-end"],
+  };
+
+  function readCorner() {
+    try {
+      var c = localStorage.getItem(CORNER_KEY);
+      return CORNER_POS[c] ? c : CORNERS[0];
+    } catch (_) {
+      return CORNERS[0];
+    }
+  }
+
+  function applyCorner(c) {
+    var el = document.getElementById("vgStack");
+    if (!el) return;
+    el.style.cssText = [
+      "position:fixed",
+      "z-index:" + Z_STACK,
+      "display:flex",
+      "flex-direction:column",
+      "gap:8px",
+      "pointer-events:none",
+    ]
+      .concat(CORNER_POS[c] || CORNER_POS[CORNERS[0]])
+      .join(";");
+  }
+
+  function nextCorner() {
+    var c = CORNERS[(CORNERS.indexOf(readCorner()) + 1) % CORNERS.length];
+    try {
+      localStorage.setItem(CORNER_KEY, c);
+    } catch (_) {}
+    applyCorner(c);
+    return c;
+  }
+
   function stack() {
     var el = document.getElementById("vgStack");
     if (el) return el;
     if (!document.body) return null;
     el = document.createElement("div");
     el.id = "vgStack";
-    el.style.cssText = [
-      "position:fixed",
-      "right:14px",
-      "bottom:14px",
-      "z-index:" + Z_STACK,
-      "display:flex",
-      "flex-direction:column",
-      "gap:8px",
-      "align-items:flex-end",
-      "pointer-events:none",
-    ].join(";");
     document.body.appendChild(el);
+    applyCorner(readCorner());
     return el;
   }
 
@@ -639,6 +683,8 @@
     pill.id = "vgPill";
     pill.setAttribute("role", "status");
     pill.style.cssText = cardStyle(ACCENT);
+    pill.style.cursor = "pointer";
+    pill.title = "Click to move this to another corner";
     pill.innerHTML =
       "<div>" +
       '<div style="font-weight:700;white-space:nowrap">' +
@@ -653,6 +699,14 @@
       'cursor:pointer;padding:6px 12px;white-space:nowrap;margin-left:auto">Reload</button>';
     host.appendChild(pill);
     updateSoftPill();
+
+    // Anywhere but the Reload button moves the whole stack on a corner. The
+    // pointer cursor and the tooltip are the only affordance it gets — a
+    // "move" control would read as the dismiss button this deliberately lacks.
+    pill.addEventListener("click", function (e) {
+      if (e.target && e.target.closest && e.target.closest("button")) return;
+      nextCorner();
+    });
 
     document.getElementById("vgReload").addEventListener("click", function () {
       if (hasUnsavedWork()) {
