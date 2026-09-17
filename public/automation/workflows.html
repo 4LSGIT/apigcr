@@ -396,16 +396,25 @@
       padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
     }
     .wf-step-history-table .step-error-cell {
-      color: var(--danger); font-size: 11px; max-width: 280px; overflow-wrap: break-word;
+      color: var(--danger); font-size: 11px; max-width: 100%; overflow-wrap: break-word;
     }
-    /* Detail column: the disclosure <pre>s hold pretty-printed JSON whose long
-       lines would otherwise drive the auto table layout and blow the modal out
-       sideways when a disclosure is opened. Cap the cell (sequences.html gets
-       this for free via .step-error-cell on its detail td) and wrap the JSON so
-       it scrolls vertically inside the pre rather than horizontally. */
-    .wf-step-history-table td.step-detail-cell { max-width: 440px; }
+    /* Error / resolved-config / output ride in a full-width sub-row under their
+       step, not in a sixth column: the JSON blobs need the whole 980px, and a
+       narrow Detail column both wasted the rest of the row and (with
+       white-space:pre) drove the auto table layout, blowing the modal out
+       sideways whenever a disclosure was opened. pre-wrap + overflow-wrap keep
+       any line from doing that again. */
+    .wf-step-history-table th.sh-spacer { width: 100%; }
+    /* Keep the five data columns on one line so the spacer soaks up the slack —
+       but not on a phone-width pane, where their combined ~460px would put the
+       modal body into a horizontal scroll. */
+    @media (min-width: 560px) {
+      .wf-step-history-table tr:not(.step-detail-row) > td { white-space: nowrap; }
+    }
+    .wf-step-history-table tr.has-detail > td { border-bottom: none; padding-bottom: 2px; }
+    .wf-step-history-table tr.step-detail-row > td { padding: 0 8px 8px 24px; }
     .wf-step-history-table .step-detail-pre {
-      max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere;
+      max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere;
     }
 
     /* Utilities */
@@ -3613,17 +3622,17 @@ async function viewWorkflowExecution(id) {
       if (!isEmptyish(h.output_data)) {
         detailCell += disclosure('output', h.output_data);
       }
-      if (!detailCell) detailCell = '—';
 
       return `
-        <tr>
+        <tr${detailCell ? ' class="has-detail"' : ''}>
           <td>${h.step_number ?? '—'}</td>
           <td>${fn}</td>
           <td>${wfExecStatusBadge(h.status)}</td>
           <td>${h.duration_ms != null ? h.duration_ms + ' ms' : '—'}</td>
           <td class="text-sm">${wfExecFmtDate(h.executed_at)}</td>
-          <td class="step-detail-cell">${detailCell}</td>
+          <td></td>
         </tr>
+        ${detailCell ? `<tr class="step-detail-row"><td colspan="6">${detailCell}</td></tr>` : ''}
       `;
     }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--text-muted);text-align:center">No steps executed.</td></tr>';
 
@@ -3686,7 +3695,7 @@ async function viewWorkflowExecution(id) {
                 <th>Status</th>
                 <th>Duration</th>
                 <th>Executed</th>
-                <th>Detail</th>
+                <th class="sh-spacer"></th>
               </tr>
             </thead>
             <tbody>${historyRowsHtml}</tbody>
