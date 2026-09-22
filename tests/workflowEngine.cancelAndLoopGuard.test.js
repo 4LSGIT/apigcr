@@ -327,10 +327,11 @@ describe('runaway-loop guard', () => {
     // Sized 2026-09-22 against the live corpus: of 38 published workflows only
     // wf27 (every pass pauses on request_decision / wait_for) and wf39 (foreach)
     // jump backwards at all, and no published graph has a pause-free cycle.
-    // 10 caps a runaway's side effects at 11 passes (the incident produced ~240
-    // per execution) while a short loop that slips past the publish gate
-    // (dynamic target, pre-gate version) still finishes.
-    expect(LOOP_GUARD_MAX_BACKJUMPS).toBe(10);
+    // 20 (Fred's call, up from the initial 10) caps a runaway's side effects
+    // at 21 passes (the incident produced ~240 per execution) while a short
+    // loop that slips past the publish gate (dynamic target, pre-gate
+    // version) still finishes.
+    expect(LOOP_GUARD_MAX_BACKJUMPS).toBe(20);
     // Forgiven foreach loop-backs between pauses: ≥ one full hard-max foreach
     // (500) with room for modest nesting; bounds a runaway THROUGH a foreach.
     expect(LOOP_GUARD_MAX_FOREACH_PASSES).toBe(1000);

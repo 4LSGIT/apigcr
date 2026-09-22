@@ -27,7 +27,8 @@
  *   2. Merge variable (result_var = chosen value) — BEFORE flipping the
  *      execution, so even a boundary race with the timeout resume branches
  *      on the response value.
- *   3. Delete the pending timeout workflow_resume job.
+ *   3. Guarded flip to 'active' at resume_step, THEN delete the pending
+ *      timeout workflow_resume job (order matters — see step 3 below).
  *   4. Guarded flip   (delayed → active at resume_step) + detached advance.
  *   5. Complete paired task, write outcome log (both best-effort).
  *
@@ -420,17 +421,25 @@ router.post(`/d/${TOKEN_PATTERN}/respond`, async (req, res) => {
     //    race with the timeout resume then still branches on this value.
     await mergeVariables(row.workflow_execution_id, { [row.result_var]: value }, db);
 
-    // 3. Kill the pending timeout resume so it can't fire later.
-    await db.query(
-      `DELETE FROM scheduled_jobs
-        WHERE type = 'workflow_resume' AND workflow_execution_id = ? AND status = 'pending'`,
-      [row.workflow_execution_id]
-    );
-
-    // 4. Guarded flip + detached advance. affectedRows=0 means the execution
-    //    isn't waiting anymore (operator moved it, or a boundary race) — the
-    //    response is still recorded; the variable merge above already made it
-    //    visible to whatever runs next.
+    // 3. Guarded flip FIRST, delete the timeout resume SECOND — reordered
+    //    2026-09-22. The engine parks a pausing run inside one transaction
+    //    (workflow_engine.parkWithResume: status='delayed' + resume-job
+    //    INSERT, row lock held throughout). With the old order (delete →
+    //    flip), a response landing inside that window deleted nothing (the
+    //    job wasn't committed yet), then the flip blocked on the row lock
+    //    and won after commit — leaving the timeout job alive to fire later
+    //    and re-run the post-decision path. Flipping first serializes on the
+    //    same row lock, so by the time the flip returns the park is
+    //    committed and the delete sees its job.
+    //
+    //    affectedRows=0 means the execution isn't waiting anymore (operator
+    //    moved it, cancelled, or the timeout resume already ran) — the
+    //    response is still recorded; the variable merge above already made
+    //    it visible to whatever runs next. The delete is GATED on the flip:
+    //    when we didn't take ownership of resuming, any pending
+    //    workflow_resume rows belong to whatever the run is doing now (a
+    //    self-continue of an already-resumed run, say) and deleting them
+    //    would strand it.
     const [flip] = await db.query(
       `UPDATE workflow_executions
           SET status = 'active', current_step_number = ?, updated_at = NOW()
@@ -439,6 +448,13 @@ router.post(`/d/${TOKEN_PATTERN}/respond`, async (req, res) => {
     );
 
     if (flip.affectedRows === 1) {
+      // 4. Kill the pending timeout resume so it can't fire later — ours to
+      //    kill now that the flip claimed the resume.
+      await db.query(
+        `DELETE FROM scheduled_jobs
+          WHERE type = 'workflow_resume' AND workflow_execution_id = ? AND status = 'pending'`,
+        [row.workflow_execution_id]
+      );
       (async () => {
         try {
           const result = await advanceWorkflow(row.workflow_execution_id, db);

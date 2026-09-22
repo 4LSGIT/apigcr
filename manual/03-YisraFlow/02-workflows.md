@@ -378,7 +378,7 @@ emails in 9½ minutes. Two layers enforce the rule:
     outer loop for more.
   - A loop-back whose cursor did **not** move — the foreach threw and the
     default `ignore` policy fell into the body — counts like any other jump.
-  - Jump 11 without a pause (`LOOP_GUARD_MAX_BACKJUMPS = 10`), or foreach
+  - Jump 21 without a pause (`LOOP_GUARD_MAX_BACKJUMPS = 20`), or foreach
     pass 1,001, fails the jumping step with a readable error, fails the
     execution, clears the guard (so a resume after fixing the workflow starts
     fresh), and raises a critical `runaway_loop` alert (immediate IT email).

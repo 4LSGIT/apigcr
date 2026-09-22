@@ -794,6 +794,7 @@ tests/dbConsoleSplitSql.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js
 tests/dbkqV12Polish.test.js
+tests/decisionResume.order.test.js
 tests/documentGenerateFn.test.js
 tests/documentGenerateService.test.js
 tests/documentIngest.s4.test.js

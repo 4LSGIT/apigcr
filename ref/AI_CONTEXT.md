@@ -225,7 +225,7 @@ invocation, then self-schedules continuation. Deferred steps become
 `status='processing'` — a cancel halts a running invocation at the next step
 boundary. **Loops:** every pass must pause (wait ≥1 min / request_decision)
 or loop back onto a foreach. Publish rejects other cycles (versionDiff
-`findPauseFreeCycles`); at runtime the 11th back-jump without a pause, or
+`findPauseFreeCycles`); at runtime the 21st back-jump without a pause, or
 foreach pass 1,001, fails the run + critical alert (manual/03-YisraFlow/02
 § Loop protection). Versioning (draft/publish) per
 `manual/03-YisraFlow/16` — workflows + sequences only, NOT trigger rules.
