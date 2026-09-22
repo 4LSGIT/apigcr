@@ -91,20 +91,36 @@ POST /workflows/:id/start
         │
         └─ PHASE 2: Step loop, up to 20 steps per invocation
               │
-              ├─ load step → resolve placeholders → execute
+              ├─ load step → status still 'processing'? (else halt) → resolve → execute
               ├─ merge set_vars into variables
               ├─ insert workflow_execution_steps row (success or failed)
               │
+              ├─ backward jump? → runaway-loop guard (see Loop protection)
+              │
               ├─ delayed_until set?
-              │     → schedule workflow_resume job → status='delayed' → return
+              │     → one txn: status='delayed' + workflow_resume job → return
+              │
+              ├─ advance step pointer — guarded on status='processing':
+              │     row cancelled/moved meanwhile? → halt here, return 'halted'
               │
               ├─ 20 steps reached?
-              │     → schedule self-continue → status='active' → return
+              │     → one txn: status='active' + self-continue job (+1s) → return
               │
               └─ no more steps?
                     → markCompleted → status='completed' (or 'completed_with_errors'
                       if any step failed under 'ignore' policy)
 ```
+
+Every status write inside PHASE 2 (`delayed`, `active`, `held`, and the
+terminal statuses) is guarded `WHERE status = 'processing'`, and the status is
+re-read before each step. A row moved out of `processing` — the cancel route,
+above all — is never overwritten: the invocation finishes at most the step in
+flight and stops. The delay and self-continue hand-offs park the status and
+insert the resume job in one transaction (`parkWithResume`), so a resume job
+never exists while the invocation still holds its `processing` soft lock.
+(Before 2026-09-22 these writes were unconditional, so a cancel landing
+mid-invocation let the batch keep firing steps and was then undone by the
+self-continue / delay write.)
 
 ### Execution statuses
 
@@ -116,8 +132,8 @@ POST /workflows/:id/start
 | `delayed` | Waiting for a `workflow_resume` scheduled job to fire |
 | `completed` | All steps finished, none failed |
 | `completed_with_errors` | Finished, but one or more steps failed with `ignore` policy |
-| `failed` | Stopped by `abort` / `retry_then_abort` policy, or top-level `advanceWorkflow` exception |
-| `cancelled` | Cancelled via `POST /executions/:id/cancel` (requires non-empty `cancel_reason`) |
+| `failed` | Stopped by `abort` / `retry_then_abort` policy, the runaway-loop guard, or a top-level `advanceWorkflow` exception |
+| `cancelled` | Cancelled via `POST /executions/:id/cancel` (body `{ reason }`, ≥3 chars, stored in `cancel_reason`). A run that is mid-invocation finishes the step in flight and halts at that boundary. |
 
 ### Step types
 
@@ -292,7 +308,7 @@ Every time the engine reaches the foreach step it does exactly one of two things
 
 Step output is `{ done, index, count }`.
 
-**Why it cannot run away.** The engine has no global loop protection: `MAX_STEPS_PER_INVOCATION = 20` schedules a self-continue rather than failing, so an unbounded loop would reschedule forever. `foreach` bounds the list at `max_items` up front, and keeps its cursor `{i, n}` in a real workflow variable that `mergeVariables` persists after every step. The cursor is monotonic — every visit either advances `i` or exits — so the loop terminates in ≤ n+1 visits, and a loop body spanning several self-continue invocations resumes at the right index instead of restarting. If the source list's **length** changes mid-loop the step throws; the list must be loop-stable.
+**Why it cannot run away.** `MAX_STEPS_PER_INVOCATION = 20` schedules a self-continue rather than failing, and the runaway-loop guard (below) does not count a loop-back while the foreach cursor is advancing — so `foreach` bounds itself. It bounds the list at `max_items` up front, and keeps its cursor `{i, n}` in a real workflow variable that `mergeVariables` persists after every step. The cursor is monotonic — every visit either advances `i` or exits — so the loop terminates in ≤ n+1 visits, and a loop body spanning several self-continue invocations resumes at the right index instead of restarting. If the source list's **length** changes mid-loop the step throws; the list must be loop-stable.
 
 **Gotchas**
 
@@ -325,6 +341,50 @@ Workflow-only.
 ```
 
 Resume at the next occurrence of the given time.
+
+#### Loop protection
+
+A loop is legitimate when every pass either **pauses** — `wait_for` /
+`schedule_resume` / `wait_until_time` of at least a minute, or
+`request_decision` — or **loops back onto a foreach step**. Anything else
+repeats every self-continue hop (~1–2 s) and re-runs its side effects each
+pass. The 2026-09-22 wf27 v6 incident: a duplicated block made step 43 jump
+back to 36 → 39 (`create_task`), and two executions created 480 tasks +
+emails in 9½ minutes. Two layers enforce the rule:
+
+- **Publish gate** (`lib/versionDiff.js` `findPauseFreeCycles`): publishing
+  is blocked when the step graph has a cycle with no pausing step in it.
+  Control steps contribute only their literal targets (they never fall
+  through); other steps fall through to the next step. A jump **onto** a
+  foreach from later in the workflow is its loop-back and is allowed; the
+  foreach step itself still counts as part of the graph, so an outer loop
+  that runs through a foreach and jumps back above it, or a body that jumps
+  back to a setup step instead of onto the foreach, is blocked. Blind spots,
+  covered by the runtime guard: non-literal targets (`{{jump_to}}`), the
+  `wait_for` / `schedule_resume` skip path, waits shorter than a minute, and a
+  foreach that throws on every visit.
+- **Runtime guard** (`workflow_engine.js` `checkLoopGuard`), state in the
+  execution variable `__loop_guard`:
+  - Every jump to a step number ≤ the current one counts — a control target,
+    or the resume target of a wait shorter than a minute (`LOOP_GUARD_MIN_PAUSE_MS`;
+    seconds-long and past-dated waits resume almost at once).
+  - A wait of a minute or more, or a `request_decision`, resets the guard.
+  - A loop-back onto a foreach whose cursor advanced is a real iteration: not
+    counted, and the count returns to its value when that loop started, so
+    each item — the first included — may detour and jump back within itself.
+    Those forgiven loop-backs have their own budget between pauses
+    (`LOOP_GUARD_MAX_FOREACH_PASSES = 1000`): pause-free foreach work,
+    nested loops included, is capped at 1,000 passes — put a wait in the
+    outer loop for more.
+  - A loop-back whose cursor did **not** move — the foreach threw and the
+    default `ignore` policy fell into the body — counts like any other jump.
+  - Jump 11 without a pause (`LOOP_GUARD_MAX_BACKJUMPS = 10`), or foreach
+    pass 1,001, fails the jumping step with a readable error, fails the
+    execution, clears the guard (so a resume after fixing the workflow starts
+    fresh), and raises a critical `runaway_loop` alert (immediate IT email).
+- Bounded pause-free loops (counter, pagination, immediate retry) are
+  rejected at publish too — use a foreach, or a `wait_for` of at least a
+  minute.
 
 ### Contact-tying a workflow execution
 
@@ -374,7 +434,7 @@ GET  /workflows/:id/executions          executions for one workflow
 GET  /executions                        list all executions (filterable by status, workflow_id, search)
 GET  /executions/:id                    current state + variables
 GET  /executions/:id?history=true       full step-by-step history
-POST /executions/:id/cancel             emergency cancel; requires { cancel_reason } (≥3 chars)
+POST /executions/:id/cancel             emergency cancel; requires { reason } (≥3 chars) → cancel_reason
 ```
 
 For contact-tied executions, also:

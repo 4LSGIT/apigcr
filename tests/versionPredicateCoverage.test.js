@@ -168,9 +168,11 @@ describe('context-construction sites carry the pinned version (review D6)', () =
   test('loadWorkflowStep takes version as an explicit parameter and guards it', () => {
     expect(wfEngineSrc).toMatch(/function loadWorkflowStep\(workflowId, stepNumber, version, db\)/);
     expect(wfEngineSrc).toMatch(/loadWorkflowStep: version must be a positive integer/);
-    // Both callers pass the execution's pinned version.
+    // Every caller passes the execution's pinned version: advanceWorkflow,
+    // executeSingleStep, and checkLoopGuard (reads the back-jump target's
+    // function — 2026-09-22 runaway-loop guard).
     const calls = wfEngineSrc.match(/loadWorkflowStep\(execution\.workflow_id[^)]*\)/g) || [];
-    expect(calls.length).toBe(2);
+    expect(calls.length).toBe(3);
     for (const c of calls) expect(c).toMatch(/execution\.workflow_version/);
   });
 

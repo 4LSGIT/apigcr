@@ -320,3 +320,221 @@ describe('validateWorkflowDraft — publish gate (O5)', () => {
     expect(v.errors.join(' ')).toMatch(/targets step 4, outside 1\.\.2/);
   });
 });
+
+
+// ── Pause-free cycle gate (2026-09-22, wf27 v6 runaway) ────────────────────
+// V6 is the CONTROL-FLOW SHAPE of the live wf27 v6 draft that looped: each
+// row is [step_number, function_name | 'custom_code', branch-target params].
+// Payload params are stripped (they carry lead-routing content and don't
+// affect the graph). Steps 40-47 are the appended duplicate of 32-39.
+const V6 = [
+  [1, 'custom_code'],
+  [2, 'query_ai'],
+  [3, 'evaluate_condition', {"then": 25, "else": 4}],
+  [4, 'evaluate_condition', {"then": 5, "else": 6}],
+  [5, 'set_var'],
+  [6, 'intake_contact'],
+  [7, 'evaluate_condition', {"else": 27, "branches": [{"then": 8}, {"then": 8}]}],
+  [8, 'intake_case'],
+  [9, 'custom_code'],
+  [10, 'evaluate_condition', {"then": 39, "else": 11}],
+  [11, 'business_deadline'],
+  [12, 'request_decision', {"nextStep": 13}],
+  [13, 'evaluate_condition', {"else": 31, "branches": [{"then": 14}, {"then": 16}, {"then": 19}, {"then": 22}, {"then": 23}, {"then": 29}]}],
+  [14, 'advance_stage'],
+  [15, 'set_next', {"value": "end"}],
+  [16, 'advance_stage'],
+  [17, 'set_var'],
+  [18, 'set_next', {"value": 32}],
+  [19, 'advance_stage'],
+  [20, 'set_var'],
+  [21, 'set_next', {"value": 32}],
+  [22, 'wait_for', {"nextStep": 20, "duration": "1d"}],
+  [23, 'advance_stage'],
+  [24, 'set_next', {"value": "end"}],
+  [25, 'send_email'],
+  [26, 'set_next', {"value": "end"}],
+  [27, 'create_task'],
+  [28, 'set_next', {"value": "end"}],
+  [29, 'create_task'],
+  [30, 'set_next', {"value": "end"}],
+  [31, 'set_var'],
+  [32, 'get_appointments'],
+  [33, 'get_appointments'],
+  [34, 'query_db'],
+  [35, 'evaluate_condition', {"branches": [{"then": 37}, {"then": 37}, {"then": 36}, {"then": 36}, {"then": 36}]}],
+  [36, 'evaluate_condition', {"then": 39, "else": 9}],
+  [37, 'advance_stage'],
+  [38, 'set_next', {"value": "end"}],
+  [39, 'create_task'],
+  [40, 'get_appointments'],
+  [41, 'get_appointments'],
+  [42, 'query_db'],
+  [43, 'evaluate_condition', {"branches": [{"then": 37}, {"then": 37}, {"then": 36}, {"then": 36}, {"then": 36}]}],
+  [44, 'evaluate_condition', {"then": 39, "else": 9}],
+  [45, 'advance_stage'],
+  [46, 'set_next', {"value": "end"}],
+  [47, 'create_task'],
+];
+function shapeSteps(rows) {
+  return rows.map(([n, fn, params]) => fn === 'custom_code'
+    ? step(n, { type: 'custom_code', config: JSON.stringify({ code: '({})' }) })
+    : step(n, { config: JSON.stringify({ function_name: fn, params: params || {} }) }));
+}
+const cycleErrors = (v) => v.errors.filter((e) => /form a loop with no pause/.test(e));
+
+describe('validateWorkflowDraft — pause-free cycle gate', () => {
+  test('wf27 v6 (the incident) is blocked, naming the runaway steps and the jump back', () => {
+    const errs = cycleErrors(validateWorkflowDraft(shapeSteps(V6), OPTS));
+    expect(errs).toHaveLength(1);
+    // 36 → 39 (create_task) → 40…43 → 36, plus 36 →else 9 → 10 →cap 39 → … → 36
+    expect(errs[0]).toMatch(/^steps 9, 10, 36, 39, 40, 41, 42, 43 form a loop/);
+    expect(errs[0]).toMatch(/43→36/);
+  });
+
+  test('wf27 v7 (v6 minus the duplicate block) passes', () => {
+    expect(validateWorkflowDraft(shapeSteps(V6.slice(0, 39)), OPTS).errors).toEqual([]);
+  });
+
+  test('an SCC that contains a pause elsewhere is NOT enough — the inner pause-free cycle is still found', () => {
+    // 1 → 2 (decision) → 3 ⇄ 4: {1..4} is one SCC containing request_decision,
+    // but 3 → 4 → 3 never passes through it.
+    const steps = [
+      step(1),
+      step(2, { config: JSON.stringify({ function_name: 'request_decision', params: { nextStep: 3 } }) }),
+      step(3),
+      step(4, { config: JSON.stringify({ function_name: 'evaluate_condition', params: { variable: 'x', operator: '==', value: 1, then: 1, else: 3 } }) }),
+    ];
+    const errs = cycleErrors(validateWorkflowDraft(steps, OPTS));
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toMatch(/^steps 3, 4 form a loop/);
+  });
+
+  test('fall-through into a set_next back-jump is blocked', () => {
+    const steps = [step(1), step(2, { config: JSON.stringify({ function_name: 'set_next', params: { value: 1 } }) })];
+    expect(cycleErrors(validateWorkflowDraft(steps, OPTS))[0]).toMatch(/^steps 1, 2 form a loop .*2→1/);
+  });
+
+  test('a set_next self-loop is blocked', () => {
+    const steps = [step(1, { config: JSON.stringify({ function_name: 'set_next', params: { value: 1 } }) })];
+    expect(cycleErrors(validateWorkflowDraft(steps, OPTS))[0]).toMatch(/^steps 1 form a loop .*1→1/);
+  });
+
+  test('evaluate_condition branches[].then back-edges count', () => {
+    const steps = [
+      step(1),
+      step(2, { config: JSON.stringify({ function_name: 'evaluate_condition', params: { branches: [{ variable: 'x', operator: '==', value: 1, then: 3 }, { variable: 'x', operator: '==', value: 2, then: 1 }] } }) }),
+      step(3),
+    ];
+    expect(cycleErrors(validateWorkflowDraft(steps, OPTS))).toHaveLength(1);
+  });
+
+  test('a wait inside the loop makes it legitimate', () => {
+    const steps = [
+      step(1),
+      step(2, { config: JSON.stringify({ function_name: 'wait_for', params: { duration: '1d', nextStep: 3 } }) }),
+      step(3, { config: JSON.stringify({ function_name: 'set_next', params: { value: 1 } }) }),
+    ];
+    expect(validateWorkflowDraft(steps, OPTS).errors).toEqual([]);
+  });
+
+  test('a foreach loop-back is legitimate (live wf39 shape)', () => {
+    const steps = [
+      step(1),
+      step(2, { config: JSON.stringify({ function_name: 'foreach', params: { list: '{{items}}', item_var: 'it', end_step: 5 } }) }),
+      step(3),
+      step(4, { config: JSON.stringify({ function_name: 'set_next', params: { value: 2 } }) }),
+      step(5),
+    ];
+    expect(validateWorkflowDraft(steps, OPTS).errors).toEqual([]);
+  });
+
+  test('an outer loop that runs through a foreach and jumps back above it is blocked', () => {
+    // Each pass restarts the whole list — the foreach cursor bounds nothing here.
+    const steps = [
+      step(1),
+      step(2, { config: JSON.stringify({ function_name: 'foreach', params: { list: '{{items}}', item_var: 'it', end_step: 5 } }) }),
+      step(3),
+      step(4, { config: JSON.stringify({ function_name: 'set_next', params: { value: 2 } }) }),
+      step(5, { config: JSON.stringify({ function_name: 'set_next', params: { value: 1 } }) }),
+    ];
+    expect(cycleErrors(validateWorkflowDraft(steps, OPTS))[0]).toMatch(/^steps 1, 2, 5 form a loop .*5→1/);
+  });
+
+  test('a foreach body that jumps back to a setup step (not onto the foreach) is blocked', () => {
+    const steps = [
+      step(1),
+      step(2, { config: JSON.stringify({ function_name: 'foreach', params: { list: '{{items}}', item_var: 'it', end_step: 5 } }) }),
+      step(3),
+      step(4, { config: JSON.stringify({ function_name: 'set_next', params: { value: 1 } }) }),
+      step(5),
+    ];
+    expect(cycleErrors(validateWorkflowDraft(steps, OPTS))[0]).toMatch(/^steps 1, 2, 3, 4 form a loop/);
+  });
+
+  test('nested foreach loops pass', () => {
+    const steps = [
+      step(1, { config: JSON.stringify({ function_name: 'foreach', params: { list: '{{o}}', item_var: 'o', end_step: 6 } }) }),
+      step(2, { config: JSON.stringify({ function_name: 'foreach', params: { list: '{{i}}', item_var: 'i', end_step: 5 } }) }),
+      step(3),
+      step(4, { config: JSON.stringify({ function_name: 'set_next', params: { value: 2 } }) }),
+      step(5, { config: JSON.stringify({ function_name: 'set_next', params: { value: 1 } }) }),
+      step(6),
+    ];
+    expect(validateWorkflowDraft(steps, OPTS).errors).toEqual([]);
+  });
+
+  test('control steps never fall through — an evaluate_condition with no else does not reach the next step', () => {
+    // 1 →then 3 (no else = end); 2 → 1 would only be a loop if 1 fell through to 2.
+    const steps = [
+      step(1, { config: JSON.stringify({ function_name: 'evaluate_condition', params: { variable: 'x', operator: '==', value: 1, then: 3 } }) }),
+      step(2, { config: JSON.stringify({ function_name: 'set_next', params: { value: 1 } }) }),
+      step(3),
+    ];
+    expect(cycleErrors(validateWorkflowDraft(steps, OPTS))).toEqual([]);
+  });
+
+  test('branch mode ignores a leftover top-level then — no false edge', () => {
+    // control.js: in branch mode only branches[].then / else are ever taken.
+    const steps = [
+      step(1),
+      step(2, { config: JSON.stringify({ function_name: 'evaluate_condition', params: {
+        then: 1,                                               // stale, never taken
+        branches: [{ variable: 'x', operator: '==', value: 1, then: 3 }], else: 3,
+      } }) }),
+      step(3),
+    ];
+    expect(cycleErrors(validateWorkflowDraft(steps, OPTS))).toEqual([]);
+  });
+
+  test('non-literal targets add no edge (still just the existing warning)', () => {
+    const steps = [step(1), step(2, { config: JSON.stringify({ function_name: 'set_next', params: { value: '{{jump_to}}' } }) })];
+    const v = validateWorkflowDraft(steps, OPTS);
+    expect(v.errors).toEqual([]);
+    expect(v.warnings.join(' ')).toMatch(/non-literal/);
+  });
+});
+
+describe('PAUSE_FUNCTIONS is exactly the set of functions that can return delayed_until', () => {
+  const { PAUSE_FUNCTIONS } = require('../lib/versionDiff');
+  const fnDir = path.join(__dirname, '..', 'lib', 'internal_functions');
+
+  test('source scan: every fns.X that returns delayed_until is listed, and nothing else', () => {
+    const found = new Set();
+    for (const f of fs.readdirSync(fnDir).filter((x) => x.endsWith('.js'))) {
+      const src = fs.readFileSync(path.join(fnDir, f), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments
+        .replace(/(^|[^:])\/\/.*$/gm, '$1'); // line comments (not URLs)
+      const parts = src.split(/^fns\.(\w+)\s*=/m);  // [pre, name1, body1, name2, body2, …]
+      for (let i = 1; i < parts.length; i += 2) {
+        if (/\bdelayed_until\s*:/.test(parts[i + 1])) found.add(parts[i]);
+      }
+    }
+    expect([...found].sort()).toEqual([...PAUSE_FUNCTIONS].sort());
+  });
+
+  test('every listed name is a registered internal function', () => {
+    const registry = require('../lib/internal_functions');
+    for (const name of PAUSE_FUNCTIONS) expect(typeof registry[name]).toBe('function');
+  });
+});

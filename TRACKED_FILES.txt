@@ -998,6 +998,7 @@ tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
+tests/workflowEngine.cancelAndLoopGuard.test.js
 tests/workflows.editor.roundtrip.test.js
 tests/workflows.ensureDraft.test.js
 tests/workflows.flowgraph.test.js

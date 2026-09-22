@@ -216,11 +216,18 @@ Variables: `{{name}}` (init_data/set_vars), `{{this.output.field}}`,
 Steps: `{type, config:{function_name, params, set_vars}, error_policy}`;
 policies `ignore` (default) | `abort` | `retry_then_ignore` |
 `retry_then_abort`.
-**isControlStep rule:** only `evaluate_condition`, `set_next`, and
-`schedule_resume` have their next_step honored — omitting `schedule_resume`
-from that set makes skipped blocks fire immediately. Max 20 steps per
+**isControlStep rule:** a function's next_step is honored only when its
+`__meta.controlFlow` is true (evaluate_condition, set_next, foreach,
+request_decision, schedule_resume, wait_for) — pinned with
+`BRANCH_TARGET_PARAMS` by tests/control.flow.test.js. Max 20 steps per
 invocation, then self-schedules continuation. Deferred steps become
-`workflow_resume` jobs. Versioning (draft/publish) per
+`workflow_resume` jobs. In-loop status writes are guarded on
+`status='processing'` — a cancel halts a running invocation at the next step
+boundary. **Loops:** every pass must pause (wait ≥1 min / request_decision)
+or loop back onto a foreach. Publish rejects other cycles (versionDiff
+`findPauseFreeCycles`); at runtime the 11th back-jump without a pause, or
+foreach pass 1,001, fails the run + critical alert (manual/03-YisraFlow/02
+§ Loop protection). Versioning (draft/publish) per
 `manual/03-YisraFlow/16` — workflows + sequences only, NOT trigger rules.
 
 ## 7. SEQUENCE ENGINE

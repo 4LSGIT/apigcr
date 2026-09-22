@@ -37,6 +37,12 @@ Gates beyond Commands & gates below, every model:
   replace. Complete files (not fragments) for non-trivial edits.
 - New test assertions are mutation-checked (break the code, watch the test
   fail); no mocking the module under test; real-engine harnesses preferred.
+- Console scripts that mutate automation definitions (workflow / sequence
+  steps via `apiSend`) assert the base they expect (step count + labels)
+  before writing, and assert the resulting draft before publishing — a
+  printed draft-diff is not a check. wf27 v6 (2026-09-22): a "PUT 1–31,
+  POST-append 32–39" script run against a 39-step base shipped a duplicated
+  block → runaway loop, 480 tasks + emails.
 
 ## Living documentation — the standing rule
 
