@@ -108,6 +108,9 @@
 //     `{ subject: "" }` would resolve to `getByPath(output, '')` → undefined
 //     at dispatch (lib/actionDispatchers.resolveParamsMapping), i.e. a param
 //     silently forced to undefined.
+//     A value that is exactly a JSON number/true/false/null (or parses as a
+//     JSON object/array) is stored as that JSON value, not a string — the
+//     inverse of how pmRender displays non-string values (_parseValue).
 //     NOTE the emptiness TEST trims but the STORED value does not — a quoted
 //     literal space ("' '") survives, exactly as before.
 //     Provenance and the undeclared warning are both IGNORED here: a seeded row
@@ -157,7 +160,7 @@
   const SEED_KEY = 'pmSeeded';
 
   const DEFAULT_DATALIST_ID = 'pm-source-datalist';
-  const VALUE_PLACEHOLDER   = "field  or  a.b.c  or  'literal'";
+  const VALUE_PLACEHOLDER   = "field  or  a.b.c  or  'literal'  or  22 / true";
 
   // Literals, not var(--red)/var(--amber): the required marker was already a
   // literal #ef4444 because the host pages do not all define the same custom
@@ -251,6 +254,33 @@
     if (typeof value === 'string') return value;
     if (value == null) return '';
     return JSON.stringify(value);
+  }
+
+  // The inverse of _display, applied at collect time. Without it the round
+  // trip was lossy: a stored `"assigned_to": 22` painted as the text "22" and
+  // came back as the STRING "22" — a dot-path lookup of key "22" on the
+  // transform output → undefined at dispatch. That silently broke trigger rule
+  // 19's create_task on the first UI re-save after it was authored (live
+  // 2026-09-22: "create_task requires assigned_to").
+  //
+  // So a cell holding exactly a JSON number / true / false / null, or text
+  // that parses as a JSON object/array, is stored as that JSON value. None of
+  // these is a meaningful dot-path (transform outputs are objects with named
+  // keys; array-index paths are unsupported), so nothing legitimate is lost.
+  // Leading-zero digit strings ("007") are NOT numbers in JSON and stay text.
+  // Everything else — dot-paths, 'quoted' literals, '$' — is stored verbatim,
+  // untrimmed, exactly as before.
+  const JSON_SCALAR_RE = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+  function _parseValue(raw) {
+    const s = String(raw).trim();
+    if (JSON_SCALAR_RE.test(s)) return Number(s);
+    if (s === 'true')  return true;
+    if (s === 'false') return false;
+    if (s === 'null')  return null;
+    if ((s[0] === '{' && s[s.length - 1] === '}') || (s[0] === '[' && s[s.length - 1] === ']')) {
+      try { return JSON.parse(s); } catch (_) { /* not JSON → plain text */ }
+    }
+    return raw;
   }
 
   // Enum hint for the value input's placeholder. Truncates on a `|` boundary so
@@ -420,7 +450,7 @@
     for (const [key, val] of _readRows(containerEl)) {
       if (!key) continue;                       // no key → scaffold row
       if (String(val).trim() === '') continue;  // no value → unfilled seed row
-      mapping[key] = val;
+      mapping[key] = _parseValue(val);          // inverse of _display — see there
     }
     return mapping;
   };

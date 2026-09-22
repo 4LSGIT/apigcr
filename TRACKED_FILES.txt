@@ -915,6 +915,7 @@ tests/multipartBody.test.js
 tests/nameKeyOrgKind.test.js
 tests/pageLanding.landingAssets.test.js
 tests/pageLanding.originsep.test.js
+tests/paramsMappingBareScalar.test.js
 tests/paramsMappingCsvList.test.js
 tests/pdfRender.test.js
 tests/pdfRenderIntegration.test.js

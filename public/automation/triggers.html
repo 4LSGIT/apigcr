@@ -446,7 +446,7 @@ function fmtTs(v) {
             <button class="tg-btn" onclick="tgAddAction()"><i class="fa-solid fa-plus"></i> Add action</button>
           </div>
           <div id="tg-actions"></div>
-          <div class="tg-hint">Actions run in order. Params-mapping values: plain text = dot-path into the (transformed) envelope; 'quoted' = literal; $ = the whole object.</div>
+          <div class="tg-hint">Actions run in order. Params-mapping values: plain text = dot-path into the (transformed) envelope; 'quoted' = literal string; a bare number / true / false = that JSON value; $ = the whole object.</div>
         </div>
 
         <div class="tg-card" id="tg-history-card" style="display:none">
