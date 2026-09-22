@@ -253,18 +253,33 @@ Call any of the built-in functions directly (see chapter 5).
   "config": {
     "function_name": "create_task",
     "params_mapping": {
-      "task_to":      "user_id",
-      "task_about":   { "template": "New lead from {{body.source}}" },
-      "task_link_id": "contact_id"
+      "assigned_to": 22,
+      "title":       "task_title",
+      "source":      "'intake'",
+      "link_type":   "'contact'",
+      "link_id":     "contact_id"
     }
   }
 }
 ```
 
-`params_mapping` builds the function's params from the transform output:
-- String value → dot-path into transform output
-- `{ "template": "..." }` → resolved template string
-- `{ "value": ... }` → literal
+`params_mapping` builds the function's params from the transform output
+(resolver: `resolveParamsMapping` in lib/actionDispatchers.js, mirrored in
+services/hookService.js — same rules on every params_mapping surface):
+- `'quoted'` string → literal (exactly one outer single-quote pair stripped)
+- the exact string `$` → the whole transform output object
+- any other string → dot-path into transform output (`contact.id`)
+- any non-string JSON value (number, boolean, object, array) → passed through
+  as-is — this is how numeric params like `assigned_to` are written
+
+There is NO template form. A composed string ("New lead from …") is built in
+the transform (mapper `template` rule, or code) and referenced by dot-path.
+
+A bare-scalar STRING (`"22"`, `"true"`, `"null"`) is a dot-path lookup of a
+key literally named that — undefined in every real config — and is rejected
+at save time since 2026-09-22 (`__validateParamsMapping`; the trigger-rule-19
+postmortem: a lossy editor round trip had turned stored numbers into strings,
+silently breaking `create_task` while sibling actions kept succeeding).
 
 **Not inherently idempotent.** Functions with side effects (`create_task`, `send_sms`, `create_appointment`) will be invoked again on retry. Make hooks targeting these functions safe-to-retry, or accept that transient failures may cause duplicate actions. See *Retry semantics* below.
 

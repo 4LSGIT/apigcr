@@ -1553,6 +1553,8 @@ Bare strings are ALWAYS field lookups. If you want a literal, wrap in single quo
 
 Dot-paths (`"contact.id"`) ARE supported — same resolver as hookMapper's `from` rules. Array-index syntax (`items[0]`) is not — flatten via a transform rule first.
 
+Since 2026-09-22 this is enforced at save time: a bare-scalar STRING (`"22"`, `"true"`, `"null"`) is rejected by `__validateParamsMapping` on every params_mapping surface (trigger actions, email-ingest actions, hook targets) — it could only ever be a dot-path to a key named `22`, i.e. undefined. Store the JSON value, or `"'22'"` if the literal string is truly meant. The automation editors' value cells also round-trip JSON scalars/objects losslessly now (`_parseValue`, the inverse of `_display`); before the fix a UI re-save silently stringified stored numbers — the trigger-rule-19 postmortem (`tests/paramsMappingBareScalar.test.js`).
+
 ### 5.21 `workflow_executions` Has Four INSERT Sites
 
 A new execution row is created in four places:
