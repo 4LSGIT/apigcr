@@ -1,4 +1,12 @@
-body{font-family: var(--ui)}
+/* S4b: body joins the density scale. At the default (--fs: 16px) this equals
+   the UA size these pages already rendered — zero measured delta — but it is
+   what lets a density preset move table and body text, which nothing else
+   reaches: cells inherit and declare no size of their own. Side effect,
+   measured before shipping: an explicit body size suppresses the bare-
+   monospace 13px UA quirk — harmless here because every pre/code on these
+   pages is inline-sized or inside a swal popup (swal2 sizes its popup
+   explicitly), verified by harness diff 2026-09-23. */
+body{font-family: var(--ui); font-size: var(--fs)}
 
 .tab {
   display: inline-block;
@@ -238,14 +246,21 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
   /* Restated rather than inherited so the table keeps its family even when a
      page re-declares body's. Same stack as body now — see theme.css --ui. */
   font-family: var(--ui);
+  /* Size is restated too, but for a different enemy: case.html and
+     contact.html have no doctype, and in quirks mode tables do NOT inherit
+     font-size — body's var(--fs) died at the table boundary there (16px at
+     any density; measured 2026-09-23). An explicit declaration bypasses the
+     quirks reset; on standards pages it equals what inheritance gives, so
+     nothing moves at default either way. */
+  font-size: var(--fs);
   border-collapse: collapse;
   width: 100%;
 }
-/* The one change in this slice anyone will notice. Cells DO inherit the
-   page's 16px -- unlike the controls above -- so the row box is padding plus a
-   19.2px line, and the padding is the only lever this slice is allowed to
-   pull. 8px -> --pad-cell takes a 20-row table with single-line cells from
-   736px to 652px -- 4px off each of the 21 row boxes, header included. */
+/* Cells inherit body's font-size, and since S4b body declares var(--fs) —
+   so table text rides the density presets through inheritance alone; no rule
+   here needs to name it. Cell padding is --pad-cell (S2): at the 16px
+   default, 8px -> --pad-cell took a 20-row single-line table from 736px to
+   652px, 4px off each of the 21 row boxes, header included. */
 .logTable td, .logTable th {
   border: 1px solid var(--border);
   padding: var(--pad-cell);
