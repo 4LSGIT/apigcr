@@ -34,8 +34,12 @@
    themeCustom.html lets a user set their own value for any token in theme.css.
    The overrides live in localStorage under `yc-theme-vars`, per mode:
 
-     { "v":1, "preset":"warm-paper",
+     { "v":1, "preset":"warm-paper", "density":"compact",
        "light": { "--accent":"#b5651d" }, "dark": { "--surface":"#101018" } }
+
+   `preset` and `density` are themeCustom.html's bookkeeping (which card is
+   lit on each axis); this file reads only the mode objects and must keep
+   ignoring unknown top-level keys.
 
    They are applied here, and only here, because this file is the one thing that
    already runs pre-paint in every in-arc page. A second script would mean
