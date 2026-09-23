@@ -47,6 +47,17 @@ body. Governing migrations in `ref/migrations/`.*
 - **SYNC-1 delete grace (09-08):** `documents.pending_delete_at` — provider
   delete stamps instead of flipping status; re-add clears; sweeper finalizes
   after grace. Fixes the 09-07 vanish-and-refill incident.
+- **UDS density presets (09-23):** the `yc-theme-vars` localStorage store is
+  two-axis — `preset` (palette) and `density` (compact/comfortable), density
+  values written into BOTH mode sets. Axis membership is the ONE regex
+  `/^--(fs|ctl-h|pad|gap)/` in `themeCustom.html`; `applyPreset`/`applyDensity`
+  each rebuild only their own axis's keys. `scripts/checkThemePresets.js`
+  lifts `PRESETS` only — density values must stay out of it. `style.css`
+  `body` and `.logTable` carry `font-size: var(--fs)` (the table restatement
+  is load-bearing: `case.html`/`contact.html` are quirks-mode, no doctype,
+  and quirks tables don't inherit font-size — flip filed in `ref/plans.md`);
+  `.tab-row` caps at `max(850px, 53.125em)`. Depth: `ref/THEME-CHEATSHEET.md`;
+  mode stays per-device, server-side roaming parked for ui_config (S5).
 
 ## 1. SYSTEM OVERVIEW
 
