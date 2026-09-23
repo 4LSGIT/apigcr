@@ -199,10 +199,11 @@
   --cat-indigo-fill: #4338ca;
   --cat-pink-fill: #be185d;
 
-  /* ── ADDED: density scale (measured off the mockup) ──────────────────
-     Optional in the colour pass, mandatory in the density pass. These are
-     the numbers that make the app read as one compact UI rather than nine
-     different ones. Frequency in the mockup is in the comments. */
+  /* ── ADDED: density scale ─────────────────────────────────────────────
+     Defaults are the app's measured reality on style.css pages (16px base,
+     UDS S1, 2026-09-23), not the mockup. The mockup's compact values live
+     on as the Compact density preset (S4). The "N uses" counts below are
+     how often each role appeared in the mockup, not consumers here. */
   --fs: 16px;        /* base — 46 uses */
   --fs-sm: 14px;     /* secondary / meta — 15 uses */
   --fs-xs: 12px;     /* badges, counts — 5 uses */
