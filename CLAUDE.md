@@ -96,7 +96,7 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
 
 ## Commands & gates
 
-- `npm test` — jest; 232 suites / ~7,120 tests in ~25s. Run before and after any change; CI runs the same.
+- `npm test` — jest; 237 suites / ~7,250 tests in ~25s. Run before and after any change; CI runs the same.
   Behavioural suites that animate (the mascot's) must fast-forward their own clock rather than wait in wall
   clock — one such file put the whole run at 70s before it did. See the header of `tests/mascotSkins.test.js`.
 - `node --check <file>` on every modified JS file, including inline `<script>` blocks extracted from HTML.
