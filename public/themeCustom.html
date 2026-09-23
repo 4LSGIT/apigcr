@@ -457,7 +457,11 @@ const DENSITY = {
   compact: {
     /* The density mockup's numbers. S1 moved the theme.css defaults up to
        the app's measured 16px reality; this preset is the mockup preserved —
-       picking it restores documents.html exactly as it rendered before S1. */
+       picking it returns documents.html to its pre-S1 rendering with ONE
+       deliberate exception: --pad-btn. That default was 12px 12px before S1
+       and did not move, so .btn there takes the ruled compact 7px 12px
+       rather than returning to 12px ("7px was too squished" — Fred, but
+       compact is compact). Its height/--fs-sm do return exactly. */
     '--fs': '12.5px', '--fs-sm': '11.5px', '--fs-xs': '10.5px',
     '--fs-lg': '14px', '--fs-title': '19px',
     '--ctl-h': '28px', '--ctl-h-lg': '32px',
