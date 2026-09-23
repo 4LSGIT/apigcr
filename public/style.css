@@ -33,7 +33,15 @@ body{font-family: var(--ui); font-size: var(--fs)}
   flex-wrap: wrap;
   gap: 3px;
   justify-content: center;
-  max-width: 850px;
+  /* 850px was tuned for 14px tabs (case.html row 1 needs 826px, bkButtons
+     803px — tight on purpose). Under the Comfortable density preset tabs are
+     15.5px, rows need 883/864px, and the tail wrapped into orphaned stretched
+     bars (S4b checkpoint, 2026-09-23). The em leg scales the cap with body's
+     var(--fs): 53.125em = exactly 850px at the 16px default, ~956px under
+     Comfortable — measured, every row single-line again. max() is
+     load-bearing, not styleflair: Compact rows still need 729px, so a cap
+     that SHRANK with the scale (664px) would wrap what fits today. */
+  max-width: max(850px, 53.125em);
   margin: 0 auto;
   padding: 0 4px;
   box-sizing: border-box;
