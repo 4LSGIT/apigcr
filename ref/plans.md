@@ -168,7 +168,14 @@ role-convention item were confirmed done and dropped).
 - **YisraHook v1.3 extras** (beyond the v1.1 bullet above): response
   transforms, per-target `no_retry` flag for non-idempotent internal_function
   targets.
+- **case.html / contact.html missing `<!DOCTYPE html>`** (found UDS S4b,
+  2026-09-23): both render in quirks mode. Bit once already — quirks tables
+  don't inherit font-size, so density presets missed their logTables until
+  `.logTable` restated `font-size: var(--fs)` in style.css. Adding the
+  doctype flips them to standards mode with wide layout blast radius
+  (box model, percentage heights); needs its own slice with full harness
+  before/after, not a drive-by.
 
 ---
 
-*Last updated: 2026-09-14*
+*Last updated: 2026-09-23*
