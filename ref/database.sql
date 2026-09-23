@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-17T15:42:18.408Z
+-- Generated: 2026-09-23T20:23:32.094Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:e72652d35f779a85e60e9db72fb5375d
+-- Fingerprint: sha256:ad52e854af7b7e88ef95252c76f5e39c
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1953,19 +1953,6 @@ CREATE TABLE `job_results` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `judges`
---
-
-DROP TABLE IF EXISTS `judges`;
-CREATE TABLE `judges` (
-  `judge_id` tinyint unsigned NOT NULL,
-  `judge_3` char(3) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `judge_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
 -- Table structure for table `jwt_api_audit_log`
 --
 
@@ -3322,29 +3309,6 @@ CREATE TABLE `trigger_rules` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `trustees`
---
-
-DROP TABLE IF EXISTS `trustees`;
-CREATE TABLE `trustees` (
-  `trustee_id` int NOT NULL,
-  `trustee_full_name` varchar(22) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_link` varchar(73) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_lname` varchar(11) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_URL20ready` varchar(28) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_case_type` tinyint NOT NULL,
-  `trustee_address1` varchar(27) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_address2` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `trustee_city` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_state` varchar(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_zip` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_email` varchar(28) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `trustee_phone` varchar(14) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='DEAD — do not read. fe-trustees app_setting is authoritative (this table truncates names at varchar(22))';
-
--- --------------------------------------------------------
-
---
 -- Table structure for table `user_availability`
 --
 
@@ -4143,12 +4107,6 @@ ALTER TABLE `job_results`
   ADD KEY `idx_job` (`job_id`);
 
 --
--- Indexes for table `judges`
---
-ALTER TABLE `judges`
-  ADD PRIMARY KEY (`judge_id`);
-
---
 -- Indexes for table `jwt_api_audit_log`
 --
 ALTER TABLE `jwt_api_audit_log`
@@ -4587,12 +4545,6 @@ ALTER TABLE `trigger_rule_actions`
 ALTER TABLE `trigger_rules`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_event_active` (`event_type`,`active`,`position`);
-
---
--- Indexes for table `trustees`
---
-ALTER TABLE `trustees`
-  ADD PRIMARY KEY (`trustee_id`);
 
 --
 -- Indexes for table `user_availability`
@@ -5046,12 +4998,6 @@ ALTER TABLE `job_results`
   MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT for table `judges`
---
-ALTER TABLE `judges`
-  MODIFY `judge_id` tinyint unsigned NOT NULL AUTO_INCREMENT;
-
---
 -- AUTO_INCREMENT for table `jwt_api_audit_log`
 --
 ALTER TABLE `jwt_api_audit_log`
@@ -5374,12 +5320,6 @@ ALTER TABLE `trigger_rule_actions`
 --
 ALTER TABLE `trigger_rules`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `trustees`
---
-ALTER TABLE `trustees`
-  MODIFY `trustee_id` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `user_availability`
