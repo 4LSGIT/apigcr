@@ -218,13 +218,15 @@ the next person has to find it again.
 | `--logout-color` | `#d9534f` / `#ff7670` | `--danger` |
 | `--logout-hover-bg` | `#fdecea` / `#3a1f1f` | `--danger-soft` |
 
-**`--header-h` stays at 56px.** `theme.css` ships the shell's current value.
-The mockup's 52px is correct and is where this lands, but it is a metric
-change and moves in charter §8. Do not take it here.
+**`--header-h` is 52px** — density D1 shipped the mockup value the earlier
+version of this paragraph parked (UDS arc, 2026-09-23). The shell's iframe
+heights track the token (`calc(100vh - var(--header-h))`), so retunes stay
+one-line.
 
-*(This paragraph previously said the opposite. It was written before the §0.1
-metric rule existed and was not propagated. The charter is authoritative; if
-these two ever disagree again, stop and report rather than picking one.)*
+*(Third edition of this paragraph. The charter's §8 parking note is now
+itself historical — its outcome block and `THEME-CHEATSHEET.md` carry the
+current truth; if docs disagree again, stop and report rather than picking
+one.)*
 
 ## 7. `--pb-*` — pipelineBoard.html
 
