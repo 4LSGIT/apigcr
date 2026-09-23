@@ -37,6 +37,10 @@ Gates beyond Commands & gates below, every model:
   replace. Complete files (not fragments) for non-trivial edits.
 - New test assertions are mutation-checked (break the code, watch the test
   fail); no mocking the module under test; real-engine harnesses preferred.
+- A harness that PRINTS an anomaly instead of asserting it is not a gate.
+  UDS S4 (2026-09-23): a 288-check matrix logged leftover other-mode keys as
+  a `note:` line. That residue WAS the bug, and it shipped through the gate,
+  the checkpoint report and the reviewer packet before a reviewer caught it.
 - Console scripts that mutate automation definitions (workflow / sequence
   steps via `apiSend`) assert the base they expect (step count + labels)
   before writing, and assert the resulting draft before publishing — a

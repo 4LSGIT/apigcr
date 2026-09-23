@@ -51,8 +51,12 @@ body. Governing migrations in `ref/migrations/`.*
   two-axis — `preset` (palette) and `density` (compact/comfortable), density
   values written into BOTH mode sets. Axis membership is the ONE regex
   `/^--(fs|ctl-h|pad|gap)/` in `themeCustom.html`; `applyPreset`/`applyDensity`
-  each rebuild only their own axis's keys. `scripts/checkThemePresets.js`
-  lifts `PRESETS` only — density values must stay out of it. `style.css`
+  each rebuild only their own axis's keys. A token theme.css does NOT restate
+  under `[data-theme="dark"]` is mode-shared (`isShared`): writers put it in
+  both sets and `resetMode` sweeps it from both — it emptied one set only
+  until 2026-09-23, so the page reported a state the app was not in.
+  `scripts/checkThemePresets.js` lifts `PRESETS` only — density values must
+  stay out of it. In `style.css`,
   `body` and `.logTable` carry `font-size: var(--fs)` (the table restatement
   is load-bearing: `case.html`/`contact.html` are quirks-mode, no doctype,
   and quirks tables don't inherit font-size — flip filed in `ref/plans.md`);
