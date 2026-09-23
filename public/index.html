@@ -229,7 +229,10 @@
     #appSidebar .sb-item {
       display: flex; align-items: center; gap: 12px;
       padding: 9px 18px; cursor: pointer;
-      color: var(--text); font-size: 14px;
+      /* var(--fs-sm) = the 14px this always was, but it now rides the density
+         presets (S4b). The icon/badge/caret/label literals around it have no
+         exact token and stay put — deliberate, not missed. */
+      color: var(--text); font-size: var(--fs-sm);
       border-left: 3px solid transparent;
       white-space: nowrap; user-select: none;
     }
