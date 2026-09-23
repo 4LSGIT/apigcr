@@ -175,6 +175,11 @@ role-convention item were confirmed done and dropped).
   doctype flips them to standards mode with wide layout blast radius
   (box model, percentage heights); needs its own slice with full harness
   before/after, not a drive-by.
+- **`manual/` has no theme/appearance chapter** (noted at UDS close,
+  2026-09-23): the Theme page — palette presets, the density row, the
+  Advanced token editor, `?notheme=1` recovery — is operator-facing and
+  undocumented. One chapter under an existing section (+ README TOC row)
+  covers it; `ref/THEME-CHEATSHEET.md` is the developer side, not this.
 
 ---
 
