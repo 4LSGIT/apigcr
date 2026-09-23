@@ -58,12 +58,18 @@
 
     .three-panel { flex: 1; overflow: hidden; display: flex; }
 
+    /* .panel-left is CHROME — a navigation rail on the shell sidebar's own
+       tokens (--sidebar-bg, --border, --hover, --accent-soft), so it follows
+       the theme in both modes. --code-bg/--code-fg are the code-surface pair
+       (dark in both modes, for <pre>/JSON blocks); chrome never takes them.
+       Dimmed text is --text-muted, not opacity on --text — opacity over a
+       light rail fails AA. (Until C13 this rail was --code-bg-2; that was wrong.) */
     .panel-left {
       width: 220px; min-width: 220px;
-      background: var(--code-bg-2);
-      color: var(--code-fg);   /* children inherit the rail, not --text */
+      background: var(--sidebar-bg);
+      color: var(--text);
       display: flex; flex-direction: column;
-      border-right: 1px solid var(--border-strong);
+      border-right: 1px solid var(--border);
       transition: width 0.15s, min-width 0.15s;
     }
     .panel-left.collapsed { width: 40px; min-width: 40px; }
@@ -73,32 +79,32 @@
     .panel-left.collapsed .panel-left-head { justify-content: center; }
 
     .panel-collapse-btn {
-      background: none; border: none; color: var(--code-fg); opacity: .6;
+      background: none; border: none; color: var(--text-muted);
       cursor: pointer; padding: 2px 4px; font-size: 12px; flex-shrink: 0;
       transition: color 0.12s;
     }
-    .panel-collapse-btn:hover { color: var(--code-fg); opacity: 1; }
+    .panel-collapse-btn:hover { color: var(--text); }
 
     .panel-left-head {
       padding: 10px 12px;
-      border-bottom: 1px solid var(--border-strong);
+      border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 6px;
     }
 
     .panel-left-search {
-      flex: 1; background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.1);
+      flex: 1; background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 5px; padding: 5px 9px;
-      color: var(--code-fg); font-size: 12px; outline: none;
+      color: var(--text); font-size: 12px; outline: none;
     }
-    .panel-left-search::placeholder { color: var(--code-fg); opacity: .55; }
+    .panel-left-search::placeholder { color: var(--text-muted); opacity: 1; }
     .panel-left-search:focus { border-color: var(--info); }
 
     /* "Show inactive" toggle row beneath the search box */
     .panel-left-filter {
       display: flex; align-items: center; gap: 6px;
       padding: 7px 12px 0;
-      font-size: 11px; color: var(--code-fg); opacity: .6;
+      font-size: 11px; color: var(--text-muted);
       user-select: none;
     }
     .panel-left-filter label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -111,30 +117,37 @@
       padding: 9px 12px; cursor: pointer;
       border-left: 3px solid transparent;
       transition: all 0.12s;
-      border-bottom: 1px solid var(--border-strong);
+      border-bottom: 1px solid var(--border);
     }
-    .left-item:hover { background: rgba(255,255,255,0.05); }
+    .left-item:hover { background: var(--hover); }
     .left-item.active { border-left-color: var(--info); background: var(--accent-soft); }
 
     .left-item-name {
-      color: var(--code-fg); font-size: 13px; font-weight: 500;
+      color: var(--text); font-size: 13px; font-weight: 500;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .left-item.active .left-item-name { color: var(--code-fg); }
-    .left-item-meta { color: var(--code-fg); opacity: .55; font-size: 11px; margin-top: 2px; }
+    .left-item.active .left-item-name { color: var(--accent-on-soft); }
+    .left-item-meta { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+    /* Dark only: on the dark accent tint / hover wash --text-muted drops to
+       3.78 / 4.43; --text-2 holds 5.94 / 6.97. Not light, where --text-2 is
+       the LIGHTER token and would cost margin (5.14 -> 4.62). */
+    html[data-theme="dark"] .left-item:hover .left-item-meta,
+    html[data-theme="dark"] .left-item.active .left-item-meta { color: var(--text-2); }
 
     .left-item-actions { display: none; gap: 4px; margin-top: 5px; }
     .left-item.active .left-item-actions { display: flex; }
 
     .left-act {
-      background: rgba(255,255,255,0.08); border: none;
-      color: var(--code-fg); opacity: .7; border-radius: 4px;
+      background: var(--surface); border: none;
+      color: var(--text-2); border-radius: 4px;
       padding: 3px 7px; font-size: 11px; cursor: pointer; transition: all 0.12s;
     }
-    .left-act:hover { background: rgba(255,255,255,0.15); color: var(--code-fg); }
+    /* Chips only show on the selected row; --hover would sink them into its
+       tint (1.02), so hover steps the icon, not the fill. */
+    .left-act:hover { color: var(--text); }
     .left-act.danger:hover { background: var(--danger-soft); color: var(--danger); }
 
-    .panel-left-foot { padding: 10px 12px; border-top: 1px solid var(--border-strong); }
+    .panel-left-foot { padding: 10px 12px; border-top: 1px solid var(--border); }
 
     .panel-mid {
       flex: 1; display: flex; flex-direction: column;
@@ -534,7 +547,7 @@
       <label><input type="checkbox" id="wf-show-inactive" onchange="wfToggleInactive(this.checked)"> Show inactive</label>
     </div>
     <div class="panel-left-list" id="wf-list">
-      <div style="padding:16px;color:var(--code-fg);opacity:.55;font-size:12px">Loading…</div>
+      <div style="padding:16px;color:var(--text-muted);font-size:12px">Loading…</div>
     </div>
     <div class="panel-left-foot">
       <button class="btn btn-primary" style="width:100%;font-size:12px" onclick="wfNew()">
@@ -1445,13 +1458,13 @@ function wfToggleInactive(checked) {
 function renderWfList() {
   const el = document.getElementById('wf-list');
   if (!WF.filtered.length) {
-    el.innerHTML = '<div style="padding:16px;color:var(--code-fg);opacity:.55;font-size:12px">No workflows.</div>';
+    el.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:12px">No workflows.</div>';
     return;
   }
   el.innerHTML = WF.filtered.map(wf => `
     <div class="left-item${wf.id === WF.activeWfId ? ' active' : ''}" onclick="selectWorkflow(${wf.id})">
       <div class="left-item-name">${esc(wf.name)}</div>
-      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}${wf.active ? '' : ' · <span style="color:var(--danger)">inactive</span>'}${wf.draft_version != null ? ' · <span style="color:var(--warn)">draft</span>' : (!wf.current_version ? ' · <span style="color:var(--text-muted)">unpublished</span>' : '')}</div>
+      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}${wf.active ? '' : ' · <span style="color:var(--danger)">inactive</span>'}${wf.draft_version != null ? ' · <span style="color:var(--warn)">draft</span>' : (!wf.current_version ? ' · unpublished' : '')}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();wfEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();wfDuplicate()"><i class="fa-regular fa-copy"></i></button>
