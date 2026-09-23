@@ -203,19 +203,21 @@
      Optional in the colour pass, mandatory in the density pass. These are
      the numbers that make the app read as one compact UI rather than nine
      different ones. Frequency in the mockup is in the comments. */
-  --fs: 12.5px;      /* base — 46 uses */
-  --fs-sm: 11.5px;   /* secondary / meta — 15 uses */
-  --fs-xs: 10.5px;   /* badges, counts — 5 uses */
-  --fs-lg: 14px;     /* section headings — 20 uses */
-  --fs-title: 19px;  /* page title — 1 use */
+  --fs: 16px;        /* base — 46 uses */
+  --fs-sm: 14px;     /* secondary / meta — 15 uses */
+  --fs-xs: 12px;     /* badges, counts — 5 uses */
+  --fs-lg: 18px;     /* section headings — 20 uses */
+  --fs-title: 24px;  /* page title — 1 use */
 
-  --ctl-h: 28px;     /* inputs, selects, table-row buttons */
-  --ctl-h-lg: 32px;  /* toolbar / primary buttons */
+  --ctl-h: 36px;     /* inputs, selects, table-row buttons */
+  --ctl-h-lg: 40px;  /* toolbar / primary buttons */
 
   --pad-cell: 6px 8px;    /* table cells — 33 uses */
-  --pad-btn: 12px 12px;/*7px 12px; */   /* buttons — 15 uses */
-  --pad-card: 13px;       /* card interiors — 6 uses */
-  --pad-panel: 18px 20px; /* outer panels — 4 uses */
+  --pad-btn: 12px 12px;   /* buttons — 15 uses. Ruled 2026-09-23: 12px vertical
+                             stays ("7px was too squished"); 7px 12px is the
+                             Compact preset's value (S4). */
+  --pad-card: 16px;       /* card interiors — 6 uses */
+  --pad-panel: 22px 24px; /* outer panels — 4 uses */
 
   --gap-sm: 6px;
   --gap: 8px;
