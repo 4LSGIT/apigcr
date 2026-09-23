@@ -130,6 +130,7 @@ The rest, in no particular order:
 - Cloud Tasks delivers at-least-once — every handler needs a dedup key / idempotency.
 - Sync bus: handlers triggered by a bus message must never emit on the same bus. Dirty-fence echo stamps go at fetch START, not completion.
 - Module resolution: `require('./internal_functions')` resolves to its `index.js` — adding function files needs no consumer updates.
+- `case.html` and `contact.html` render in quirks mode (no doctype): tables there don't inherit `font-size` — declare it on the table (`.logTable` does). Expect other quirks (box model) until the doctype slice in `ref/plans.md` lands.
 
 ## AI session data access
 
