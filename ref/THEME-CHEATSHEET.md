@@ -77,16 +77,27 @@ If something seems missing, it probably is not:
 - **a hover for a fill** → `filter: brightness(0.92)`
 - **a chip background** → `--surface-2`, never `--border` (that measures 4.30 and fails)
 
-## Two things not to touch
+## Density is live — size in tokens too
 
-Both are held for the density arc, on purpose:
+The density arc (UDS, closed 2026-09-23) put the metric scale in play. Both
+holds this section used to park are shipped (`--header-h` is 52px; Arial is
+`var(--ui)` everywhere), `body` is `font-size: var(--fs)`, and users pick
+Compact / Default / Comfortable on the Theme page — a second axis beside the
+palette presets (state rules in `themeCustom.html`'s header; the density
+axis is the ONE regex `/^--(fs|ctl-h|pad|gap)/` defined there).
 
-- `font-family: Arial` in `style.css` and `css/yc-forms.css`
-- `--header-h: 56px`
-
-Anything that moves a pixel — font sizes, control heights, padding — is the
-density arc, not the colour arc. Colour changes are invisible when they are
-right; metric changes re-wrap text on pages nobody opened during review.
+- New UI states sizes in tokens — `--fs`/`--fs-sm`/`--fs-xs`/`--fs-lg`,
+  `--ctl-h`, `--pad-cell`/`--pad-btn`, `--gap*` — or just inherits. A
+  hardcoded px font-size is frozen out of the user's density choice.
+- A width tuned to fit N things at the default size must grow with the
+  scale: `max-width: max(850px, 53.125em)` (`.tab-row`, style.css) is the
+  pattern. `max()`, not a bare em — Compact must never shrink what fits
+  today (its rows still need 86% of the default width; fixed paddings and
+  gaps don't scale).
+- **`case.html` and `contact.html` render in quirks mode** (no doctype):
+  tables there do NOT inherit font-size, so a table that should ride the
+  scale declares it on the table element itself (`.logTable` does).
+  Standards-flip is a filed slice — `ref/plans.md`.
 
 ## Lists that paginate
 
