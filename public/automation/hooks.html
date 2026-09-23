@@ -2650,10 +2650,10 @@ window.togglePanelLeft = togglePanelLeft;
             <p style="margin-top:8px"><b>Filter passed:</b> ${ex.filter_passed === null ? '—' : ex.filter_passed ? 'Yes' : 'No'}</p>
             ${ex.error ? `<p style="margin-top:8px;color:var(--danger)"><b>Error:</b> ${esc(ex.error)}</p>` : ''}
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Raw Input</summary>
-              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.raw_input), null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.raw_input), null, 2))}</pre>
             </details>
             <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Transform Output</summary>
-              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.transform_output), null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.transform_output), null, 2))}</pre>
             </details>
             ${(ex.delivery_logs || []).length ? `
               <h4 style="margin-top:14px;font-size:13px">Delivery Logs</h4>
