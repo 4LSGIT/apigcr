@@ -551,7 +551,28 @@ function applyDensity(key) {
   save();
 }
 
-function resetMode() { store[mode] = {}; store.preset = null; store.density = null; save(); }
+/* "Reset this mode" also clears the OTHER mode's shared keys. A token
+   theme.css does not restate under dark is mode-independent by design, so
+   every writer above puts it in both sets — and a reset that emptied only
+   one set left a value on screen that this page said was gone: with Compact
+   on, resetting light left dark still rendering Compact under a Density row
+   reading "Default" (Opus review finding 1, 2026-09-23). The same split hit
+   --radius long before density existed, which is why this sweeps by
+   isShared rather than by the density regex.
+   It reads the OTHER set, not this one, so a store already split by the old
+   behaviour heals on the next reset. Mode-SPECIFIC keys there are left
+   alone — those are the ones that legitimately differ per mode. Note that
+   --accent/--accent-dark count as shared (theme.css does not restate them),
+   so a palette preset's accent goes too; the preset name is being nulled
+   anyway, and half a preset outliving its own name is the bug. */
+function resetMode() {
+  const other = mode === 'light' ? 'dark' : 'light';
+  for (const n of Object.keys(store[other])) if (isShared(n)) delete store[other][n];
+  store[mode] = {};
+  store.preset = null;
+  store.density = null;
+  save();
+}
 function resetAll()  { store = { v: 1, preset: null, density: null, light: {}, dark: {} }; save(); }
 
 /* ── values ─────────────────────────────────────────────────────────── */
