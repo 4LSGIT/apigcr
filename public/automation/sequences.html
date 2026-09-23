@@ -4482,7 +4482,7 @@ async function viewSequenceEnrollment(id) {
             const prefix = (detailCell === '—') ? '' : detailCell;
             detailCell = prefix + `
               <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:var(--text-2)">resolved config</summary>
-                <pre style="background:var(--text);color:var(--code-fg);padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(cfgJson)}</pre>
+                <pre style="background:var(--code-bg);color:var(--code-fg);padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(cfgJson)}</pre>
               </details>`;
           }
 
@@ -4533,7 +4533,7 @@ async function viewSequenceEnrollment(id) {
 
           ${triggerObj ? `
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Trigger Data</summary>
-              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(triggerObj, null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(triggerObj, null, 2))}</pre>
             </details>
           ` : ''}
 
