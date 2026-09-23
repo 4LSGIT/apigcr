@@ -105,6 +105,21 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
    resizing pickers elsewhere. */
 #acc-picker-mount .cp-input { width: 100%; }
 
+/* S1 consistency: controls join the page scale (16px --ui). :where() keeps
+   this at 0,0,1 so page-local class rules and swal2 still win. */
+input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
+  font-family: var(--ui);
+  font-size: var(--fs);
+}
+/* Tabs are navigation chrome, not form controls. At --fs (16px) the case.html
+   strip lost a tab per row and orphaned "Refresh" / "Detailed Questionnaire"
+   into stretched bars -- Fred ruled it awful (S1, 2026-09-23). --fs-sm is the
+   nearest token to their historic 13.33px UA size and still rides the density
+   presets. 0,1,0 beats the 0,0,1 rule above regardless of order. */
+.tab, .campaign-tab-button {
+  font-size: var(--fs-sm);
+}
+
 /* ── datetime-local inside a SweetAlert2 popup ────────────────────────────
    The global rule above (0,2,1) also outranks swal2's own
    `div:where(.swal2-container) input:where(.swal2-input) { width:auto }`
@@ -164,19 +179,12 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   display: inline-block;
   font-size: 12px;
 }
-/* --pad-btn, not --pad-cell, and the measurement does not decide it -- both
-   fit and they land either side of the target. The widest real label is
-   "Create Dropbox Folder" at 135.6px; a <button> takes the UA's 2px border, so
-   the 170px border-box holds 166px, and the label gets:
-
-     old  10px 20px  ->  126px content, margin -9.6  -> WRAPS, box 54px
-     --pad-cell      ->  150px content, margin +14.4 -> 1 line, box 31px
-     --pad-btn       ->  142px content, margin  +6.4 -> 1 line, box 33px
-
-   --ctl-h-lg is 32px, so --pad-cell is 1px under it and --pad-btn 1px over.
-   The tie goes to role: --pad-btn is the button token, and --pad-cell on a
-   primary button would leave nothing distinguishing it from a table cell. The
-   two labels that wrapped to two lines at 126px both unwrap either way. */
+/* --pad-btn, not --pad-cell: the button token; --pad-cell on a primary button
+   would leave nothing distinguishing it from a table cell. Width fits the
+   widest real label on ONE line -- Fred ruled out 2-line buttons (S1,
+   2026-09-23). "Create Dropbox Folder" measures 164.3px at 16px var(--ui);
+   200px border-box minus 24px padding and 4px UA border leaves 172px of
+   content. Measured on the harness (all 43 real labels), not computed. */
 .big-button {
   display: inline-block;
   padding: var(--pad-btn);
@@ -185,7 +193,7 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   text-decoration: none;
   border-radius: 3px;
   transition: background-color 0.3s ease;
-  width: 170px;
+  width: 200px;
 }
 .big-button:hover {
   background-color: var(--accent-dark);
