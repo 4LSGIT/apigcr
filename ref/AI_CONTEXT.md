@@ -133,8 +133,9 @@ Relationships: `contact_relations` + `contact_relation_types` catalog
 **Cases:** `case_number`/`case_number_full` opaque free text (docket parsing
 client-only). `case_judge`/`case_trustee` free text AUTHORITATIVE with
 `*_contact_id` twins (fill on match, NULL on miss, never block a write).
-Judge resolution keys on docket suffix → `judges.judge_3`; trustee vocab =
-`fe-trustees` setting (`trustees` table dead). `bk_*` columns deliberately
+Judge resolution keys on docket suffix → the judge role's `judge_3` attr; trustee
+vocab = the contact roster (`contact_roles` role rows via `lib/trusteeRoster`;
+`fe-trustees` setting and `judges`/`trustees` tables removed 2026-09-24). `bk_*` columns deliberately
 loose (sheet parity) — don't tighten. `case_relate` links contacts
 (Primary/Secondary/Other/Bystander); portal visibility requires
 Primary|Secondary.

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-23T20:23:32.094Z
+-- Generated: 2026-09-23T23:40:10.075Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:ad52e854af7b7e88ef95252c76f5e39c
+-- Fingerprint: sha256:b11f19f0850ae2359a6161bb5e1bc801
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -602,7 +602,7 @@ CREATE TABLE `cases` (
   `case_primary_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_judge` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. case_judge_contact_id fills on match / NULLs on miss; resolution never blocks a write',
   `case_judge_contact_id` int unsigned DEFAULT NULL,
-  `case_trustee` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. Twin: case_trustee_contact_id. Seeded vocab = fe-trustees setting (trustees TABLE is dead)',
+  `case_trustee` varchar(100) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. Twin: case_trustee_contact_id. Canonical vocab = trustee roster (contacts with Trustee role; lib/trusteeRoster)',
   `case_trustee_contact_id` int unsigned DEFAULT NULL,
   `case_341_link` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `case_chapter` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,

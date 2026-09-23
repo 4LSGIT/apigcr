@@ -919,7 +919,7 @@ The whitelist of allowed tables matches the resolver's whitelist — see chapter
 
 #### `insert_db`
 
-Parameterized single-row INSERT from a JSON descriptor — no raw SQL. Whitelisted tables with insert:true only (rw_scratch, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses, judges, trustees). app_settings is update-only (create keys in the DB console); tasks is update-only (use create_task). PK / auto_increment / generated / timestamp columns are never settable. Duplicate-key collisions throw.
+Parameterized single-row INSERT from a JSON descriptor — no raw SQL. Whitelisted tables with insert:true only (rw_scratch, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). app_settings is update-only (create keys in the DB console); tasks is update-only (use create_task). PK / auto_increment / generated / timestamp columns are never settable. Duplicate-key collisions throw.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
@@ -942,7 +942,7 @@ Example:
 
 #### `update_db`
 
-Parameterized UPDATE from a JSON descriptor — no raw SQL. Whitelisted tables only (app_settings, rw_scratch, tasks, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses, judges, trustees). WHERE is mandatory, restricted to identity columns, and LIKE is excluded. max_rows defaults to 1 — the UPDATE is REFUSED if the where clause matches more rows than that. PK / auto_increment / generated / created_at / updated_at columns are never settable. From ingest-rule actions and hook targets use the flat set_column/set_value + where_column/where_value form — their params_mapping does not recurse into nested objects.
+Parameterized UPDATE from a JSON descriptor — no raw SQL. Whitelisted tables only (app_settings, rw_scratch, tasks, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). WHERE is mandatory, restricted to identity columns, and LIKE is excluded. max_rows defaults to 1 — the UPDATE is REFUSED if the where clause matches more rows than that. PK / auto_increment / generated / created_at / updated_at columns are never settable. From ingest-rule actions and hook targets use the flat set_column/set_value + where_column/where_value form — their params_mapping does not recurse into nested objects.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
@@ -1585,7 +1585,9 @@ The court-mail pipeline's automation surface. Docket extraction itself runs off 
 
 #### `validate_case_trustee`
 
-Validate cases.case_trustee against the fe-trustees roster (app_settings). On a match: canonicalize the stored trustee to the exact roster spelling and set cases.case_341_link from the roster Zoom link. On no-match/ambiguous/chapter-mismatch: create a deduped alert task (never guesses). Gated by app_settings trustee_validation_live — absent/'0' forces dry-run (no case writes; alert routed to dry_run_alert_to; summary email sent).
+Validate cases.case_trustee against the trustee roster (contacts with a contact_roles role='trustee' row, via lib/trusteeRoster). On a match: canonicalize
+the stored trustee to the exact roster spelling, set cases.case_341_link from
+the roster Zoom link, and stamp case_trustee_contact_id. On no-match/ambiguous/chapter-mismatch: create a deduped alert task (never guesses). Gated by app_settings trustee_validation_live — absent/'0' forces dry-run (no case writes; alert routed to dry_run_alert_to; summary email sent).
 
 | Param | Type | Required | Description |
 |---|---|---|---|
