@@ -5,7 +5,13 @@
    measured before shipping: an explicit body size suppresses the bare-
    monospace 13px UA quirk — harmless here because every pre/code on these
    pages is inline-sized or inside a swal popup (swal2 sizes its popup
-   explicitly), verified by harness diff 2026-09-23. */
+   explicitly), verified by harness diff 2026-09-23.
+   Consequence worth knowing before anyone reports it as a bug: "identical at
+   default" means identical to a 16px UA default. This pins px where the UA
+   used `medium`, so a user who raised their browser's default font size no
+   longer gets it on body or table text. S1 already did this to controls, so
+   the page is at least self-consistent; the density presets are the lever we
+   give that user instead. */
 body{font-family: var(--ui); font-size: var(--fs)}
 
 .tab {
