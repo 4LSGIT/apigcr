@@ -446,8 +446,12 @@ ref/migrations/2026-09-03_unified_events_u6c.sql
 ref/migrations/2026-09-06_FIL1_trustee_validation.sql
 ref/migrations/2026-09-06_manage_selfservice_policy.sql
 ref/migrations/2026-09-08_sync1_delete_grace.sql
+ref/migrations/2026-09-09_case_role_twins_m5.sql
+ref/migrations/2026-09-09_contact_roles_m4.sql
+ref/migrations/2026-09-10_role_attrs_schema_m7.sql
 ref/migrations/2026-09-15_email_log_delivery_info.sql
 ref/migrations/2026-09-17_decision_context_html.sql
+ref/migrations/2026-09-23_trustee_judge_decommission_m6.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql

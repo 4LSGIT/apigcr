@@ -1,169 +1,167 @@
 // scripts/verifyTrusteeReadthrough.js
 //
 /**
- * Slice 7 cutover confidence gate — READ-ONLY.
+ * Trustee roster sanity check — READ-ONLY.
  *
- * Loads the LIVE fe-trustees setting value AND builds the roster from
- * contacts + contact_roles (lib/trusteeRoster — the exact code every 7A
- * consumer reads through), then deep-diffs entry-by-entry, keyed on
- * (contact_id, case_type).
+ * HISTORY: through slice 7A this script deep-diffed lib/trusteeRoster's
+ * output against the fe-trustees app_setting (the cutover confidence gate).
+ * Slice 7B / m6 (2026-09-23) deleted that setting and dropped the trustees /
+ * judges tables, so the setting side of the diff no longer exists. Rewritten
+ * (same slice) as a loader-vs-contact_roles check: it re-derives the expected
+ * roster from an INDEPENDENT query over contact_roles × contacts and diffs
+ * lib/trusteeRoster.loadTrusteeRoster's output against it, entry by entry.
  *
- * Fred runs this BEFORE deploying 7A. Expected output: every diff classified
- * KNOWN-DELIBERATE, zero UNEXPECTED. The deliberate classes (verified live
- * 2026-09-09; see lib/trusteeRoster.js header):
+ * WHAT IT CATCHES
+ *   - a loader regression (SQL, field mapping, chapter explosion, ordering)
+ *     against the raw tables every consumer ultimately depends on;
+ *   - structural data problems: a trustee role with no chapters (matches
+ *     EVERY chapter per trusteeMatch rule 0 — usually a data-entry miss),
+ *     a missing 341 zoom_link, a role row whose contact join is broken.
  *
- *   phone-format   setting '(313) 962-6400' vs contacts '3139626400' —
- *                  same digits; esign formats digits back to the setting
- *                  form, so trustee.phone tokens are byte-identical.
- *   address-recombine  the seed joined address1 + ', ' + address2 into
- *                  contacts.contact_address; the builder serves that as
- *                  address1 with address2 ''. Deliberate iff the joined
- *                  setting value equals the built address1 — then esign's
- *                  trustee.address_street (which joins a1/a2 with ', ')
- *                  renders byte-identical.
- *   email-case     createContact lowercased the address. Cosmetic.
- *   name-drift     contact_name is the name source now. The two known
- *                  drifts: 'Caouette, Melissa A.' → 'Melissa A. Caouette';
- *                  'Thomas W. Jr. McDonald' → 'Thomas W. McDonald' (merged
- *                  pair). ZERO live cases carry either old spelling
- *                  (verified against every distinct cases.case_trustee), so
- *                  these list as KNOWN-DELIBERATE but are still printed
- *                  loudly — eyeball them.
- *
- * Anything else prints UNEXPECTED and the script exits 1. After m6 runs,
- * the deactivated 'Trustee Namee' shows as setting-only — that is the m6
- * delta, reported as such.
- *
- * Also proves the consumer-derived values: for every matched pair it
- * recomputes the four esign trustee.* projections (name, address_street,
- * address_csz, phone-formatted) from BOTH sides and diffs those — the
- * token-level equivalence that actually lands on documents.
+ * Chapterless roles and missing links print as WARN (they are legal states
+ * the loader handles by design); any mapping/count/order mismatch prints
+ * MISMATCH and the script exits 1.
  *
  * USAGE:  node scripts/verifyTrusteeReadthrough.js
- * Writes nothing. Exit 0 = clean (only known-deliberate diffs); 1 = look.
+ * Writes nothing. Exit 0 = loader agrees with the tables; 1 = look.
  */
 
 'use strict';
 
-const KNOWN_NAME_DRIFT = {
-  // old setting name → expected contact_name (verified live 2026-09-09)
-  'Caouette, Melissa A.': 'Melissa A. Caouette',
-  'Thomas W. Jr. McDonald': 'Thomas W. McDonald',
-};
-
-const FIELDS = ['name', 'lname', 'case_type', 'link', 'email', 'phone',
-                'address1', 'address2', 'city', 'state', 'zip'];
-
 const s = (v) => String(v == null ? '' : v);
-const digits = (v) => s(v).replace(/\D/g, '');
-const joinAddr = (a1, a2) => {
-  const x = s(a1).trim(); const y = s(a2).trim();
-  return x ? (y ? `${x}, ${y}` : x) : y;
-};
-// esign projections, transcribed from esignPrefillService (kept tiny and
-// local — this script must not import a service that mocks poorly in ops).
-const fmtPhone = (raw) => {
-  const d = digits(raw);
-  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : s(raw).trim();
-};
-const csz = (e) => {
-  const city = s(e.city).trim(), st = s(e.state).trim(), zip = s(e.zip).trim();
-  let head = city && st ? `${city}, ${st}` : (city || st);
-  if (!head) return zip;
-  return zip ? `${head} ${zip}` : head;
-};
 
-function classify(field, sv, bv) {
-  // address1/address2 are classified PAIRWISE by the caller (addrEquiv) —
-  // by the time this runs, an address diff is not the known recombination.
-  if (field === 'phone' && digits(sv) === digits(bv)) return 'phone-format';
-  if (field === 'email' && s(sv).toLowerCase() === s(bv).toLowerCase()) return 'email-case';
-  if (field === 'name' && KNOWN_NAME_DRIFT[s(sv).trim()] === s(bv).trim()) return 'name-drift';
-  return 'UNEXPECTED';
+/** attrs JSON column → object (mysql2 usually pre-parses; normalize). */
+function attrsOf(v) {
+  if (v == null) return {};
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v) || {}; } catch (_) { return {}; }
+}
+
+/** attrs.chapter → array of scalar chapters ([null] when absent). Kept as an
+ *  INDEPENDENT transcription — do not import lib/trusteeRoster's _chapters,
+ *  or the check proves the loader against itself. */
+function chaptersOf(attrsVal) {
+  const ch = attrsOf(attrsVal).chapter;
+  if (ch == null || ch === '') return [null];
+  return Array.isArray(ch) ? (ch.length ? ch : [null]) : [ch];
+}
+
+/** Expected legacy-shaped entry from a raw row + one chapter — the SOURCE
+ *  MAPPING from lib/trusteeRoster's header, transcribed independently. */
+function expectedEntry(row, chapter) {
+  const attrs = attrsOf(row.attrs);
+  return {
+    name:       s(row.contact_name),
+    lname:      s(row.contact_lname),
+    case_type:  chapter == null ? null : chapter,
+    link:       s(attrs.zoom_link),
+    email:      s(row.contact_email),
+    phone:      s(row.contact_phone),
+    address1:   s(row.contact_address),
+    address2:   '',
+    city:       s(row.contact_city),
+    state:      s(row.contact_state),
+    zip:        s(row.contact_zip),
+    contact_id: row.contact_id,
+  };
 }
 
 async function main(db) {
   const { loadTrusteeRoster } = require('../lib/trusteeRoster');
-  const { getSetting } = require('../services/settingsService');
 
-  const raw = await getSetting(db, 'fe-trustees');
-  let setting = [];
-  let settingState = 'ok';
-  if (raw == null) settingState = 'missing (m6 already ran?)';
-  else {
-    try { setting = JSON.parse(raw); } catch (e) { settingState = `unparseable: ${e.message}`; }
-    if (!Array.isArray(setting)) { setting = []; settingState = 'not an array'; }
-  }
+  // Independent read: same tables, deliberately its own SQL text.
+  const [rawRows] = await db.query(
+    `SELECT cr.contact_id, cr.attrs, cr.active,
+            c.contact_name, c.contact_lname, c.contact_email, c.contact_phone,
+            c.contact_address, c.contact_city, c.contact_state, c.contact_zip
+       FROM contact_roles cr
+       LEFT JOIN contacts c ON c.contact_id = cr.contact_id
+      WHERE cr.role = 'trustee'`
+  );
+  const activeRows = rawRows.filter((r) => Number(r.active) === 1);
 
   const built = await loadTrusteeRoster(db);
 
   console.log(`\n=== verifyTrusteeReadthrough — READ-ONLY ===`);
-  console.log(`setting entries: ${setting.length} (${settingState})`);
-  console.log(`built entries:   ${built.length} (contact_roles role='trustee' active=1, chapters exploded)\n`);
+  console.log(`contact_roles role='trustee': ${rawRows.length} row(s), ${activeRows.length} active`);
+  console.log(`built entries:                ${built.length} (chapters exploded)\n`);
+
+  let mismatch = 0;
+  let warns = 0;
+
+  // Expected entries from the independent read, in the loader's documented
+  // order: name (ci), then numeric case_type, then contact_id.
+  const expected = [];
+  for (const row of activeRows) {
+    if (row.contact_name == null) {
+      console.log(`MISMATCH  contact_roles.contact_id=${row.contact_id} has NO contacts row (broken join)`);
+      mismatch++;
+      continue;
+    }
+    const chs = chaptersOf(row.attrs);
+    if (chs.length === 1 && chs[0] == null) {
+      console.log(`WARN      ${row.contact_id} '${s(row.contact_name)}' — no chapters on the role card (matches EVERY chapter per rule 0)`);
+      warns++;
+    }
+    if (!s(attrsOf(row.attrs).zoom_link).trim()) {
+      console.log(`WARN      ${row.contact_id} '${s(row.contact_name)}' — no 341 zoom_link on the role card`);
+      warns++;
+    }
+    for (const ch of chs) expected.push(expectedEntry(row, ch));
+  }
+  expected.sort((a, b) =>
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase()) ||
+    (Number(a.case_type) || 0) - (Number(b.case_type) || 0) ||
+    (a.contact_id || 0) - (b.contact_id || 0));
+
+  if (expected.length !== built.length) {
+    console.log(`MISMATCH  entry count: expected ${expected.length} from the tables, loader built ${built.length}`);
+    mismatch++;
+  }
 
   const key = (e) => `${e.contact_id}|${e.case_type}`;
   const builtBy = new Map(built.map((e) => [key(e), e]));
-  const settingBy = new Map(setting.map((e) => [key(e), e]));
+  if (builtBy.size !== built.length) {
+    console.log(`MISMATCH  loader emitted duplicate (contact_id, case_type) keys`);
+    mismatch++;
+  }
 
-  let unexpected = 0;
-  const counts = {};
-
-  for (const se of setting) {
-    const be = builtBy.get(key(se));
+  for (const ee of expected) {
+    const be = builtBy.get(key(ee));
     if (!be) {
-      console.log(`SETTING-ONLY  ${key(se)}  '${se.name}'` +
-        `  (deliberate iff this is the m6 Namee deactivation)`);
-      unexpected += s(se.name).trim() === 'Trustee Namee' ? 0 : 1;
+      console.log(`MISMATCH  ${key(ee)} '${ee.name}' — expected from the tables, absent from the loader`);
+      mismatch++;
       continue;
     }
-    const diffs = [];
-    // address recombination is a PAIR property — check it once per entry
-    const addrEquiv = joinAddr(se.address1, se.address2) === s(be.address1).trim() && s(be.address2) === '';
-    for (const f of FIELDS) {
-      const sv = se[f]; const bv = be[f];
-      if (String(sv ?? '') === String(bv ?? '')) continue;
-      if ((f === 'address1' || f === 'address2') && addrEquiv) {
-        counts['address-recombine'] = (counts['address-recombine'] || 0) + 1;
-        continue;
-      }
-      const cls = classify(f, sv, bv);
-      counts[cls] = (counts[cls] || 0) + 1;
-      if (cls === 'UNEXPECTED') unexpected++;
-      diffs.push(`  ${cls.padEnd(18)} ${f}: setting=${JSON.stringify(sv)}  built=${JSON.stringify(bv)}`);
-    }
-    // consumer-token equivalence — what actually lands on documents
-    const tok = [
-      ['trustee.name',           s(be.name).trim(),                    s(se.name).trim()],
-      ['trustee.address_street', joinAddr(be.address1, be.address2),   joinAddr(se.address1, se.address2)],
-      ['trustee.address_csz',    csz(be),                              csz(se)],
-      ['trustee.phone',          fmtPhone(be.phone),                   fmtPhone(se.phone)],
-    ];
-    const tokDiffs = tok.filter(([, b, sv2]) => b !== sv2);
-    if (diffs.length || tokDiffs.length) {
-      console.log(`${key(se)}  '${se.name}':`);
-      diffs.forEach((d) => console.log(d));
-      for (const [name2, b, sv2] of tokDiffs) {
-        const ok = name2 === 'trustee.name' && KNOWN_NAME_DRIFT[sv2] === b;
-        if (!ok) unexpected++;
-        console.log(`  ${ok ? 'name-drift        ' : 'TOKEN-UNEXPECTED  '}${name2}: setting→${JSON.stringify(sv2)}  built→${JSON.stringify(b)}`);
+    for (const f of Object.keys(ee)) {
+      if (String(ee[f] ?? '') !== String(be[f] ?? '')) {
+        console.log(`MISMATCH  ${key(ee)} '${ee.name}' field ${f}: tables=${JSON.stringify(ee[f])}  loader=${JSON.stringify(be[f])}`);
+        mismatch++;
       }
     }
   }
-
+  const expectedBy = new Set(expected.map(key));
   for (const be of built) {
-    if (!settingBy.has(key(be))) {
-      console.log(`BUILT-ONLY    ${key(be)}  '${be.name}'  — a trustee role exists with no setting entry`);
-      unexpected++;
+    if (!expectedBy.has(key(be))) {
+      console.log(`MISMATCH  ${key(be)} '${be.name}' — loader entry with no matching active role row`);
+      mismatch++;
     }
+  }
+
+  // Order check — position-by-position on the keys.
+  const orderOff = built.findIndex((be, i) => expected[i] && key(expected[i]) !== key(be));
+  if (mismatch === 0 && orderOff !== -1) {
+    console.log(`MISMATCH  ordering diverges at position ${orderOff} (expected ${key(expected[orderOff])}, got ${key(built[orderOff])})`);
+    mismatch++;
   }
 
   console.log(`\n── summary ──`);
-  for (const [k, v] of Object.entries(counts)) console.log(`  ${k.padEnd(18)} ${v} field diff(s)`);
-  console.log(`  UNEXPECTED total   ${unexpected}`);
-  console.log(unexpected === 0
-    ? `\nCLEAN — every difference is a known-deliberate class. 7A is safe to deploy.\n`
-    : `\nNOT CLEAN — resolve the UNEXPECTED lines before deploying 7A.\n`);
-  return unexpected;
+  console.log(`  WARN       ${warns}`);
+  console.log(`  MISMATCH   ${mismatch}`);
+  console.log(mismatch === 0
+    ? `\nCLEAN — the loader agrees with contact_roles × contacts.\n`
+    : `\nNOT CLEAN — resolve the MISMATCH lines (loader regression or broken role data).\n`);
+  return mismatch;
 }
 
 if (require.main === module) {
@@ -174,4 +172,4 @@ if (require.main === module) {
     .catch((err) => { console.error('\nFATAL:', err.message); process.exit(1); });
 }
 
-module.exports = { main, _classify: classify, _joinAddr: joinAddr, _fmtPhone: fmtPhone };
+module.exports = { main, _chaptersOf: chaptersOf, _expectedEntry: expectedEntry };

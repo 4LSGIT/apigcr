@@ -106,8 +106,10 @@ const ctx = (over = {}, roster = TRUSTEES) => {
 
 beforeEach(() => {
   cfg.mockReset();
-  cfg.mockImplementation((key) =>
-    key === 'fe-trustees' ? JSON.stringify(TRUSTEES) : null);
+  // Every key resolves null by default. (Pre-slice-7 this stubbed the
+  // fe-trustees setting; the trustee roster now arrives on the ctx under
+  // _TRUSTEE_ROSTER, so firmConfig serves nothing trustee-related.)
+  cfg.mockImplementation(() => null);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +131,7 @@ describe('composeCsz', () => {
     expect(composeCsz(src)).toBe(expected);
   });
 
-  test('the same function serves a fe-trustees entry (unprefixed keys)', () => {
+  test('the same function serves a trustee roster entry (unprefixed keys)', () => {
     expect(composeCsz({ city: 'Detroit', state: 'MI', zip: '48226' })).toBe('Detroit, MI 48226');
     expect(composeCsz({ city: 'Oxford', state: 'MI', zip: '' })).toBe('Oxford, MI');
   });

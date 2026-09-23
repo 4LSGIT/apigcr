@@ -187,7 +187,7 @@ describe('applyFeSetting — parsing', () => {
       ['fe-lead_sources',  '["Referral","Google"]'],
       ['fe-firm_phone',    '2485551212'],
       ['fe-firm_site_url', 'https://4lsg.com'],
-      ['fe-trustees',      '{"broken":['],
+      ['fe-broken-json',   '{"broken":['],
       ['fe-blank',         ''],
     ];
     const w = mkWindow({ settings: {} });

@@ -619,10 +619,13 @@
     };
 
     // ── Trustee dropdown + 341-link auto-fill ──
-    // Source of truth is firmData.settings.trustees (app_settings 'fe-trustees',
-    // editable in Settings → Trustees). The selected trustee's `link` is written
-    // to the hidden case_341_link field, which the appointment automation (T19)
-    // reads as the 341 meeting link.
+    // Source of truth is firmData.settings.trustees — the contact roster
+    // (contacts holding the Trustee role in contact_roles, served by
+    // lib/trusteeRoster through /api/firm-data). To add a trustee, open or
+    // create their contact and add the Trustee role; chapters and the 341
+    // Zoom link live on the role card. The selected trustee's `link` is
+    // written to the hidden case_341_link field, which the appointment
+    // automation (T19) reads as the 341 meeting link.
     const T_GROUP_LABEL = { 7: 'Chapter 7', 13: 'Chapter 13', 12: 'Chapter 12' };
     const trusteeList    = () => (P.firmData && P.firmData.settings && P.firmData.settings.trustees) || [];
     const trusteeSelect  = () => document.querySelector('[name="case_trustee"]');
@@ -684,12 +687,12 @@
       if (!name) { hint.textContent = ''; hint.style.color = ''; return; }
       const t = findTrustee(name);
       if (!t) {
-        hint.textContent = 'Not in trustee list — 341 link not auto-set. Pick a listed trustee, or add them in Settings → Trustees.';
+        hint.textContent = 'Not in the trustee roster — 341 link not auto-set. Pick a listed trustee, or open/create their contact and add the Trustee role.';
         hint.style.color = 'var(--danger)';
         return;
       }
       hint.style.color = '';
-      hint.textContent = t.link ? '341 link auto-set from trustee' : '⚠ This trustee has no 341 link on file';
+      hint.textContent = t.link ? '341 link auto-set from trustee' : '⚠ This trustee has no 341 link on file — add the 341 Zoom link on their contact’s Trustee role';
     }
 
     // User changed the trustee:

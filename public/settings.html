@@ -474,12 +474,6 @@ const api = (path, method = 'GET', data) => window.top.apiSend(path, method, dat
 const CUSTOM = {
   'fe-case_types':                 'caseTypes',
   'fe-event_types':                'eventTypes',
-  // fe-trustees: RETIRED (slice 7). The trustee roster is served from
-  // contacts + contact_roles (lib/trusteeRoster); trustees are edited as
-  // contacts now. 'retired' suppresses ANY editor for the key — until the
-  // decommission migration deletes the row, a rendered editor would write a
-  // value nothing reads (a silent no-op trap).
-  'fe-trustees':                   'retired',
   'dropbox_case_folder_templates': 'dropboxTpl'
 };
 
