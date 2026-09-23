@@ -688,6 +688,17 @@ mistaken for a regression introduced by this work.
 
 ## 8. Density pass (separate arc — do not start until §6 step 10 is done)
 
+> **OUTCOME (UDS arc, closed 2026-09-23) — this section is historical.**
+> Both parked items shipped (D1 `--header-h` 52px, D2 Arial → `var(--ui)`),
+> and the pass ran differently than sketched below: token defaults were
+> retuned UP to the app's measured 16px reality (the mockup's compact values
+> live on as the Compact preset), the scale was wired at equal computed
+> value (S2 `style.css`, S3 `css/yc-forms.css`, S4b `body`/`.logTable`/
+> `.tab-row`/shell), and density ships as a per-user preset row on the Theme
+> page (S4) — not a `theme-base.css` opt-in layer, which was never built.
+> Current truth: `ref/THEME-CHEATSHEET.md`; mechanics: `themeCustom.html`
+> and `themeSync.js` headers.
+
 Colour unification alone does not make the app compact. It makes it *consistent*.
 Compactness needs the type and control scale actually applied, and that is a
 layout change on every page — much higher regression risk than colour.
