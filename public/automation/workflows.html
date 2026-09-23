@@ -4110,7 +4110,7 @@ async function viewWorkflowExecution(id) {
       // output disclosures. Pattern mirrors sequences.html action_config_resolved.
       const disclosure = (label, obj) => `
               <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:var(--text-2)">${label}</summary>
-                <pre class="step-detail-pre" style="background:var(--text);color:var(--code-fg);padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(JSON.stringify(obj, null, 2))}</pre>
+                <pre class="step-detail-pre" style="background:var(--code-bg);color:var(--code-fg);padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(JSON.stringify(obj, null, 2))}</pre>
               </details>`;
       const isNonEmptyObj = (v) => v != null && typeof v === 'object' && Object.keys(v).length > 0;
       // output_data may also be a primitive (executeJob can return strings/
@@ -4183,13 +4183,13 @@ async function viewWorkflowExecution(id) {
 
           ${initDataObj ? `
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Init Data</summary>
-              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(initDataObj, null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(initDataObj, null, 2))}</pre>
             </details>
           ` : ''}
 
           ${variablesObj ? `
             <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Variables</summary>
-              <pre style="background:var(--text);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(variablesObj, null, 2))}</pre>
+              <pre style="background:var(--code-bg);color:var(--code-fg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(variablesObj, null, 2))}</pre>
             </details>
           ` : ''}
 
