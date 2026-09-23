@@ -93,8 +93,13 @@
     /* --accent, not --info: a fill. --info has no fill partner. */
     .btn-primary { background: var(--accent); color: var(--accent-text); }
     .btn-primary:hover:not(:disabled) { background: var(--info-dark); }
-    .btn-ghost { background: transparent; color: var(--code-fg); border: 1px solid var(--border-strong); }
-    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border-strong); }
+    .btn-ghost:hover:not(:disabled) { background: var(--hover); }
+    /* #topbar sits on --code-bg, dark in BOTH modes, so its ghosts keep the
+       fixed-light pair. Scoped: #syncPanel (on --surface) also uses .btn-ghost,
+       and --code-fg there was near-white on white in light (1.23). */
+    #topbar .btn-ghost { color: var(--code-fg); }
+    #topbar .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
     .btn-outline {
       background: var(--surface); color: var(--text);
       border: 1px solid var(--border);
