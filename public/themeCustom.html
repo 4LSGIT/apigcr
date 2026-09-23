@@ -185,6 +185,15 @@
     </div>
     <div class="cards" id="cards"></div>
   </div>
+  <div class="panel">
+    <h2>Density</h2>
+    <div class="muted" style="margin-bottom:10px;">
+      How much fits on screen. Density is its own choice — it combines with
+      whichever theme is picked above, and follows the same rules: this browser
+      only, in both light and dark.
+    </div>
+    <div class="cards" id="densityCards"></div>
+  </div>
 </section>
 
 <!-- ── ADVANCED ────────────────────────────────────────────────────────── -->
@@ -274,6 +283,15 @@ function readStock() {
 const STOCK = readStock();
 const NAMES = Object.keys(STOCK).sort();
 
+/* ── the density axis ───────────────────────────────────────────────────
+   ONE regex decides which tokens are density. The Advanced-tab grouping and
+   every state transition below (applyPreset, applyDensity, setVar) share it —
+   a second copy that drifted would let a token be palette on one path and
+   density on another, which is how the two axes would start clobbering each
+   other. */
+const DENSITY_KEY = /^--(fs|ctl-h|pad|gap)/;
+const isDensityKey = n => DENSITY_KEY.test(n);
+
 /* ── grouping ───────────────────────────────────────────────────────────
    Ordered, with a catch-all last: a token added to theme.css tomorrow lands
    in "Other" rather than vanishing off the page. */
@@ -288,26 +306,25 @@ const GROUPS = [
   ['Code',        /^--code/],
   ['Effects',     /^--(shadow|backdrop|radius)/],
   ['Typography',  /^--(ui|mono)$/],
-  ['Density',     /^--(fs|ctl-h|pad|gap)/],
+  ['Density',     DENSITY_KEY],
   ['Other',       /./],
 ];
 
 /* Defined in theme.css but not referenced by a single var() anywhere in the
    repo, so editing them changes nothing on screen today. Shown, but in their
    own collapsed group — mixing dead knobs in with live ones makes the page
-   look broken. The list shrinks as the density arc wires them up; regenerate
-   with:
+   look broken. Down from 17 after S2/S3 wired style.css and yc-forms.css onto
+   the scale (UDS, 2026-09-23). The four density stragglers here are still
+   written by the DENSITY presets below — no consumer yet, but a future one
+   inherits the preset's value. Regenerate with (quote the globs — unquoted,
+   zsh eats them and every token prints):
 
      for t in $(grep -oE '^\s*--[a-z0-9-]+\s*:' public/theme.css | tr -d ' :' | sort -u); do
-       [ "$(grep -rF "var($t)" public --include=*.html --include=*.css --include=*.js | wc -l)" -eq 0 ] && echo "$t"
+       [ "$(grep -rF "var($t)" public --include='*.html' --include='*.css' --include='*.js' | wc -l)" -eq 0 ] && echo "$t"
      done
 */
 const UNUSED = new Set([
-  '--fs', '--fs-sm', '--fs-xs', '--fs-lg', '--fs-title',
-  '--ctl-h', '--ctl-h-lg',
-  '--gap', '--gap-sm', '--gap-lg',
-  '--pad-card', '--pad-panel',
-  '--radius-sm', '--mono',
+  '--fs-title', '--ctl-h-lg', '--pad-card', '--pad-panel',
   '--cat-purple-fill', '--cat-teal-fill', '--cat-pink-fill',
 ]);
 
@@ -339,13 +356,15 @@ const PAIRS = [
   ['--code-fg', '--code-bg'], ['--code-fg', '--code-bg-2'],
 ];
 
-/* ── presets ────────────────────────────────────────────────────────────
+/* ── palette presets ────────────────────────────────────────────────────
    Every pair in PAIRS was measured at AA or better in both modes before these
    landed; scripts/checkThemePresets.js re-measures them from this file.
 
-   Nothing here touches the density scale: --fs* and friends are in UNUSED, so
-   a "Larger text" preset would be a button that does nothing. It becomes the
-   obvious fifth preset the moment the density arc wires them. */
+   Density is deliberately NOT a fifth entry here — it is the DENSITY
+   structure below, its own axis with its own row of cards. applyPreset()
+   rebuilds the palette side of both mode sets, so a density entry in PRESETS
+   could never coexist with a palette: picking one would erase the other, and
+   the point is to hold one of each. */
 const PRESETS = {
   'high-contrast': {
     label: 'High contrast',
@@ -422,6 +441,39 @@ const PRESETS = {
   },
 };
 
+/* ── density presets ────────────────────────────────────────────────────
+   The other axis. A single flat object per key — every density token is
+   mode-shared (none is restated under html[data-theme="dark"]), so
+   applyDensity() writes the same values into BOTH mode sets, exactly as
+   setVar() does for any shared token. Deltas only: a token whose preset
+   value equals the theme.css default is omitted, matching how the palette
+   presets store only what they change.
+
+   Kept out of PRESETS on purpose. scripts/checkThemePresets.js lifts PRESETS
+   from this file and runs every value through contrast measurement — lengths
+   are not colours, and this separate structure is what keeps them out of the
+   checker's arithmetic. */
+const DENSITY = {
+  compact: {
+    /* The density mockup's numbers. S1 moved the theme.css defaults up to
+       the app's measured 16px reality; this preset is the mockup preserved —
+       picking it restores documents.html exactly as it rendered before S1. */
+    '--fs': '12.5px', '--fs-sm': '11.5px', '--fs-xs': '10.5px',
+    '--fs-lg': '14px', '--fs-title': '19px',
+    '--ctl-h': '28px', '--ctl-h-lg': '32px',
+    '--pad-btn': '7px 12px', '--pad-card': '13px', '--pad-panel': '18px 20px',
+  },
+  comfortable: {
+    /* ~112% type, one step more air on every pad and gap. */
+    '--fs': '18px', '--fs-sm': '15.5px', '--fs-xs': '13.5px',
+    '--fs-lg': '20px', '--fs-title': '26px',
+    '--ctl-h': '40px', '--ctl-h-lg': '44px',
+    '--pad-btn': '14px 14px', '--pad-cell': '8px 10px',
+    '--pad-card': '18px', '--pad-panel': '24px 26px',
+    '--gap-sm': '8px', '--gap': '10px', '--gap-lg': '16px',
+  },
+};
+
 /* ── store ──────────────────────────────────────────────────────────── */
 function load() {
   let o = null;
@@ -430,6 +482,7 @@ function load() {
   return {
     v: 1,
     preset: typeof o.preset === 'string' ? o.preset : null,
+    density: typeof o.density === 'string' ? o.density : null,
     light: (o.light && typeof o.light === 'object') ? o.light : {},
     dark: (o.dark && typeof o.dark === 'object') ? o.dark : {},
   };
@@ -458,25 +511,44 @@ function setVar(n, v) {
     if (v === null || v === '') delete store[m][n];
     else store[m][n] = v;
   }
-  store.preset = null;               // hand-edited — no longer any preset
+  // Hand-edited — the axis this token belongs to no longer matches any named
+  // preset. Only that axis: tweaking --fs must not un-pick Warm Paper, and
+  // tweaking --accent must not un-pick Compact.
+  if (isDensityKey(n)) store.density = null;
+  else store.preset = null;
   save();
 }
 
+/* applyPreset and applyDensity are mirrors: each rebuilds ONLY its own axis's
+   keys inside both mode sets and leaves the other axis's keys and name alone.
+   That is the whole two-axis contract — a palette pick and a density pick
+   must survive each other in either order. */
 function applyPreset(key) {
   key = key || null;
   if (store.preset === key) key = null;   // clicking the card in use turns it off
   store = load();
-  store.light = {}; store.dark = {};
-  if (key && PRESETS[key]) {
-    store.light = Object.assign({}, PRESETS[key].light);
-    store.dark = Object.assign({}, PRESETS[key].dark);
+  for (const m of ['light', 'dark']) {
+    for (const n of Object.keys(store[m])) if (!isDensityKey(n)) delete store[m][n];
+    if (key && PRESETS[key]) Object.assign(store[m], PRESETS[key][m]);
   }
   store.preset = key || null;
   save();
 }
 
-function resetMode() { store[mode] = {}; store.preset = null; save(); }
-function resetAll()  { store = { v: 1, preset: null, light: {}, dark: {} }; save(); }
+function applyDensity(key) {
+  key = key || null;
+  if (store.density === key) key = null;  // clicking the card in use turns it off
+  store = load();
+  for (const m of ['light', 'dark']) {
+    for (const n of Object.keys(store[m])) if (isDensityKey(n)) delete store[m][n];
+    if (key && DENSITY[key]) Object.assign(store[m], DENSITY[key]);
+  }
+  store.density = key || null;
+  save();
+}
+
+function resetMode() { store[mode] = {}; store.preset = null; store.density = null; save(); }
+function resetAll()  { store = { v: 1, preset: null, density: null, light: {}, dark: {} }; save(); }
 
 /* ── values ─────────────────────────────────────────────────────────── */
 let mode = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
@@ -571,6 +643,7 @@ let shut = {};                            // collapsed groups, by title
 
 function render() {
   renderCards();
+  renderDensityCards();
   renderRows();
   renderFails();
   $('modeWord').textContent = mode;
@@ -603,6 +676,41 @@ function renderCards() {
     </button>`;
   }).join('');
 }
+/* Density cards are the opposite of the palette cards on purpose: colours
+   come from live var() references — the palette in force — and only the mock
+   metrics differ, because size is the one thing these three exist to compare.
+   The metric literals are hand-tuned miniatures, not the DENSITY values: a
+   96px swatch cannot render a 36px control honestly, it can only stay in
+   proportion. */
+function renderDensityCards() {
+  const defs = [
+    ['compact',     'Compact',     'Tighter — more on screen',
+      'font-size:7.5px;padding:4px 5px;', 'font-size:6.5px;padding:1px 5px;margin-top:3px;'],
+    ['',            'Default',     'The size the app ships at', '', ''],
+    ['comfortable', 'Comfortable', 'Bigger text, more air',
+      'font-size:11px;padding:8px 9px;', 'font-size:9.5px;padding:3px 9px;margin-top:6px;'],
+  ];
+  $('densityCards').innerHTML = defs.map(([k, label, note, cardCss, btnCss]) => {
+    const on = (store.density || '') === k;
+    return `<button class="card ${on ? 'on' : ''}" onclick="applyDensity('${k}')">
+      <div class="sw" style="background:var(--page-bg)">
+        <div class="sw-hd" style="background:var(--surface);border-bottom:1px solid var(--border)"></div>
+        <div class="sw-body">
+          <div class="sw-card" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);${cardCss}">
+            Case #24-1183
+            <div style="color:var(--text-muted)">Hearing 9:30 AM</div>
+            <span class="sw-btn" style="background:var(--accent);color:var(--accent-text);border-radius:var(--radius);${btnCss}">Open</span>
+          </div>
+        </div>
+      </div>
+      <div class="card-ft">
+        <b>${esc(label)}</b>
+        <span class="${on ? 'active' : ''}">${on ? 'In use' : esc(note)}</span>
+      </div>
+    </button>`;
+  }).join('');
+}
+
 /* The palette a preset WOULD produce — built from theme.css plus that preset,
    and deliberately blind to whatever is currently applied. Reading through
    resolve()/effective() here instead meant every card previewed the theme in
