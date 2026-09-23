@@ -110,16 +110,18 @@
     /* ── Supp/Rules content host (left list + right detail) ── */
     .three-panel { flex: 1; overflow: hidden; display: flex; }
 
-    /* .panel-left is a --code-bg-2 rail: dark in BOTH modes by design. Its
-       text derives from --code-fg so it tracks the rail, and the few
-       rgba(255,255,255,.05-.1) tints below are hover/field washes ON that
-       fixed-dark surface — mode-independent for the same reason the rail is. */
+    /* .panel-left is CHROME — a navigation rail on the shell sidebar's own
+       tokens (--sidebar-bg, --border, --hover, --accent-soft), so it follows
+       the theme in both modes. --code-bg/--code-fg are the code-surface pair
+       (dark in both modes, for <pre>/JSON blocks); chrome never takes them.
+       Dimmed text is --text-muted, not opacity on --text — opacity over a
+       light rail fails AA. (Until C13 this rail was --code-bg-2; that was wrong.) */
     .panel-left {
       width: 280px; min-width: 280px;
-      background: var(--code-bg-2);
-      color: var(--code-fg);   /* children inherit the rail, not --text */
+      background: var(--sidebar-bg);
+      color: var(--text);
       display: flex; flex-direction: column;
-      border-right: 1px solid var(--border-strong);
+      border-right: 1px solid var(--border);
       transition: width 0.15s, min-width 0.15s;
     }
     /* Hide the sidebar entirely on the Executions tab */
@@ -130,50 +132,55 @@
 
     .panel-left-head {
       padding: 10px 12px;
-      border-bottom: 1px solid var(--border-strong);
+      border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 6px;
     }
     .panel-left-head .ph-title {
-      flex: 1; color: var(--code-fg); font-size: 12px;
+      flex: 1; color: var(--text); font-size: 12px;
       font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
 
     .panel-left-tools {
-      padding: 8px 10px; border-bottom: 1px solid var(--border-strong);
+      padding: 8px 10px; border-bottom: 1px solid var(--border);
     }
     .ei-tool-input {
-      width: 100%; background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.1);
+      width: 100%; background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 5px; padding: 5px 9px;
-      color: var(--code-fg); font-size: 12px; outline: none;
+      color: var(--text); font-size: 12px; outline: none;
     }
-    .ei-tool-input::placeholder { color: var(--code-fg); opacity: .55; }
+    .ei-tool-input::placeholder { color: var(--text-muted); opacity: 1; }
     .ei-tool-input:focus { border-color: var(--info); }
 
     .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
-    .panel-left-loading { padding: 16px; color: var(--code-fg); opacity: .55; font-size: 12px; }
-    .panel-left-empty { padding: 20px 12px; color: var(--code-fg); opacity: .55; font-size: 12px; text-align: center; }
+    .panel-left-loading { padding: 16px; color: var(--text-muted); font-size: 12px; }
+    .panel-left-empty { padding: 20px 12px; color: var(--text-muted); font-size: 12px; text-align: center; }
     .panel-left-error { padding: 16px; color: var(--danger); font-size: 12px; }
 
     .left-item {
       padding: 9px 12px; cursor: pointer;
       border-left: 3px solid transparent;
       transition: all 0.12s;
-      border-bottom: 1px solid var(--border-strong);
+      border-bottom: 1px solid var(--border);
     }
-    .left-item:hover { background: rgba(255,255,255,0.05); }
+    .left-item:hover { background: var(--hover); }
     .left-item.active { border-left-color: var(--info); background: var(--accent-soft); }
     .left-item-name {
-      color: var(--code-fg); font-size: 13px; font-weight: 500;
+      color: var(--text); font-size: 13px; font-weight: 500;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       display: flex; align-items: center; gap: 6px;
     }
-    .left-item.active .left-item-name { color: var(--code-fg); }
+    .left-item.active .left-item-name { color: var(--accent-on-soft); }
     .left-item-meta {
-      color: var(--code-fg); opacity: .5; font-size: 11px; margin-top: 3px;
+      color: var(--text-muted); font-size: 11px; margin-top: 3px;
       display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
     }
+    /* Dark only: on the dark accent tint / hover wash --text-muted drops to
+       3.78 / 4.43; --text-2 holds 5.94 / 6.97. Not light, where --text-2 is
+       the LIGHTER token and would cost margin (5.14 -> 4.62). */
+    html[data-theme="dark"] .left-item:hover .left-item-meta,
+    html[data-theme="dark"] .left-item.active .left-item-meta { color: var(--text-2); }
     .left-item-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
     .badge-active   { background: var(--ok-soft); color: var(--ok); }
     .badge-inactive { background: var(--danger-soft); color: var(--danger); }
