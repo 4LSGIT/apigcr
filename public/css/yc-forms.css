@@ -27,6 +27,18 @@
  */
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ROOT SCALE (UDS S3) — wire the sheet's rem values to the density tokens
+   ═══════════════════════════════════════════════════════════════════════════
+   The documents.html pattern: at the default --fs (16px) this equals the UA
+   root, so every computed value in the sheet is unchanged (harness-verified
+   zero-diff) — and under a density preset every rem below scales with it in
+   one move. Known, accepted trade: a user who changed their BROWSER default
+   font size gets pinned to the token instead (browser zoom is unaffected).
+   Degrades safely: without theme.css the var() is unresolved and font-size
+   falls back to the UA default — exactly the pre-S3 behavior. */
+html { font-size: var(--fs); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
    LINKS — re-assert theme.css's decision over Bootstrap
    ═══════════════════════════════════════════════════════════════════════════
    theme.css sets `a { color: var(--accent-2) }`, but it has to load FIRST
@@ -78,7 +90,7 @@ body {
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--gap);
   max-width: 950px;
   margin-left: auto;
   margin-right: auto;
@@ -101,7 +113,7 @@ body {
   color: var(--text-muted);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--gap-sm);
 }
 
 .yc-save-status .spinner {
@@ -223,7 +235,7 @@ body {
   margin-bottom: 12px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--gap);
   font-size: 0.85rem;
   color: var(--info);
   font-weight: 500;
@@ -252,7 +264,7 @@ body {
 .yc-check-grid label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--gap-sm);
   font-size: 0.88rem;
   color: var(--text);
   cursor: pointer;
@@ -272,7 +284,7 @@ body {
 
 .yc-check-grid .yc-other-text input {
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--pad-cell);
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 0.88rem;
@@ -562,7 +574,7 @@ body {
 
 .yc-radio-group.yc-vertical {
   flex-direction: column;
-  gap: 8px;
+  gap: var(--gap);
   align-items: flex-start;
 }
 
@@ -581,7 +593,7 @@ body {
 .yc-radio-group label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--gap-sm);
   cursor: pointer;
   font-size: 0.92rem;
   color: var(--text);
@@ -614,7 +626,7 @@ body {
 .yc-check {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--gap);
   margin-top: 4px;
 }
 
@@ -633,7 +645,7 @@ body {
 .yc-check-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--gap-sm);
 }
 
 .yc-readonly .yc-check input[type="checkbox"] {
@@ -648,8 +660,8 @@ body {
 .yc-tags-wrap {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--gap-sm);
+  padding: var(--pad-cell);
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--surface-2);
@@ -942,7 +954,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
+  gap: var(--gap-sm);
   margin: 12px 0 0;
 }
 
@@ -1011,7 +1023,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--gap);
   font-weight: 600;
   margin-bottom: 4px;
 }
@@ -1104,7 +1116,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--gap-sm);
   padding: 8px;
   border: 2px dashed var(--border);
   border-radius: 6px;
@@ -1135,7 +1147,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--gap-sm);
   padding: 8px 16px;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -1214,7 +1226,7 @@ body {
 
   .yc-radio-group {
     flex-direction: column;
-    gap: 8px;
+    gap: var(--gap);
   }
 
   .yc-radio-group.yc-radio-grid {
