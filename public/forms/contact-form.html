@@ -648,6 +648,25 @@
 </form>
 
 <!-- ════════════════════════════════════════════════════════════════
+     CUSTOM FIELDS (custom-fields arc S4)
+     Admin-defined fields from `field_defs`, rendered by the shared
+     /js/yc-custom-fields.js. Hidden until that module finds at least one
+     ACTIVE def for contacts — a firm with none never sees this panel, and
+     a registry it cannot read leaves it hidden rather than breaking the
+     record.
+     Placed between the form and Roles (Fred, 2026-09-25). Like Roles below
+     it, this section lives OUTSIDE the <form> and never
+     rides the aggregate PATCH: its own Save sends only the cf_ keys that
+     changed. Design: ref/CUSTOM_FIELDS_DESIGN.md §7 S4.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="yc-section" id="customFieldsSection" style="display:none;">
+  <div class="ycp-section-head">
+    <div class="yc-section-title"><i class="fa-solid fa-table-columns ycp-section-icon"></i>Custom Fields</div>
+  </div>
+  <div id="customFieldsList"></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
      ROLES (role-forms slice)
 
      Child resource with its OWN save path (/api/contacts/:id/roles*),
@@ -663,24 +682,6 @@
     <button type="button" class="ycp-add-inline" id="roleAddBtn">+ Role</button>
   </div>
   <div id="rolesList"></div>
-</div>
-
-<!-- ════════════════════════════════════════════════════════════════
-     CUSTOM FIELDS (custom-fields arc S4)
-     Admin-defined fields from `field_defs`, rendered by the shared
-     /js/yc-custom-fields.js. Hidden until that module finds at least one
-     ACTIVE def for contacts — a firm with none never sees this panel, and
-     a registry it cannot read leaves it hidden rather than breaking the
-     record.
-     Like Roles above it, this section lives OUTSIDE the <form> and never
-     rides the aggregate PATCH: its own Save sends only the cf_ keys that
-     changed. Design: ref/CUSTOM_FIELDS_DESIGN.md §7 S4.
-     ════════════════════════════════════════════════════════════════ -->
-<div class="yc-section" id="customFieldsSection" style="display:none;">
-  <div class="ycp-section-head">
-    <div class="yc-section-title"><i class="fa-solid fa-table-columns ycp-section-icon"></i>Custom Fields</div>
-  </div>
-  <div id="customFieldsList"></div>
 </div>
 
 <script src="/js/yc-forms.js"></script>
