@@ -998,6 +998,7 @@ tests/unifiedEventsU8.approaching.test.js
 tests/unifiedEventsU9.eventform.test.js
 tests/unifiedEventsU9.range.test.js
 tests/unifiedEventsU9.shell.test.js
+tests/updateContactFnDelegation.test.js
 tests/validateCaseTrustee.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
