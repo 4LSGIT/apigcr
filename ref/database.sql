@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-24T07:54:48.551Z
+-- Generated: 2026-09-24T09:18:23.385Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:15b662a034887828e039d60952a3d7b2
+-- Fingerprint: sha256:fcb0508efa8681958ab0b3b86ea66912
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1691,6 +1691,29 @@ CREATE TABLE `feature_requests` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `field_defs`
+--
+
+DROP TABLE IF EXISTS `field_defs`;
+CREATE TABLE `field_defs` (
+  `id` int unsigned NOT NULL,
+  `entity` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'case | contact (v1 set; app-validated — sql_mode is non-strict). IMMUTABLE after create.',
+  `field_key` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '^cf_[a-z][a-z0-9_]{1,60}$ — becomes the JSON path in <entity>.custom (S2) AND the VIRTUAL column name on the entity table (S3). IMMUTABLE after create; must not collide with a real column (checked at create).',
+  `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `field_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'text | number | date | select | multiselect | boolean (v1 set; app-validated). Drives the S3 virtual column type (design doc §2 type map).',
+  `options` json DEFAULT NULL COMMENT 'select/multiselect ONLY (NULL otherwise): [{"value","label"}]. value is the STORED form — byte-sensitive under MEMBER OF, so values are not labels. Unique case-insensitively.',
+  `validation` json DEFAULT NULL COMMENT 'v1 keys: required, max_len, pattern (text), min, max (number). Enforced at write time from S2; S1 only stores it.',
+  `show_when` json DEFAULT NULL COMMENT 'Conditional display. STORED, NOT EVALUATED until S4 — an object, otherwise uninterpreted.',
+  `indexed` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Promotion flag for the S3 reconciler (secondary index on the virtual column). Not writable through the v1 API.',
+  `sort_order` smallint NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'active=0 is RETIREMENT — there is no hard delete. Values already stored under the key persist in the JSON by design.',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Custom-fields registry (ref/CUSTOM_FIELDS_DESIGN.md). Single source of truth for admin-defined fields; read through services/fieldDefService.js (cached).';
 
 -- --------------------------------------------------------
 
@@ -4015,6 +4038,13 @@ ALTER TABLE `feature_requests`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `field_defs`
+--
+ALTER TABLE `field_defs`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_field_defs_entity_key` (`entity`,`field_key`);
+
+--
 -- Indexes for table `firm_blocks`
 --
 ALTER TABLE `firm_blocks`
@@ -4923,6 +4953,12 @@ ALTER TABLE `feature_request_votes`
 -- AUTO_INCREMENT for table `feature_requests`
 --
 ALTER TABLE `feature_requests`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `field_defs`
+--
+ALTER TABLE `field_defs`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
