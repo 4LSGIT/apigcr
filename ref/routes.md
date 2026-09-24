@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-09-14T21:15:55.763Z_  
-_688 routes total — DELETE: 57, GET: 284, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_
+_Generated 2026-09-24T08:42:57.972Z_  
+_693 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 268, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -304,6 +304,11 @@ _688 routes total — DELETE: 57, GET: 284, PATCH: 45, POST: 265, PUT: 35, _ALL:
 | GET | `/api/feature-requests/:id/comments` | `jwtOrApiKey` | — |
 | POST | `/api/feature-requests/:id/comments` | `jwtOrApiKey` | — |
 | POST | `/api/feature-requests/:id/vote` | `jwtOrApiKey` | — |
+| GET | `/api/field-defs` | `jwtOrApiKey` | — |
+| POST | `/api/field-defs` | `jwtOrApiKey` | — |
+| PATCH | `/api/field-defs/:id` | `jwtOrApiKey` | — |
+| POST | `/api/field-defs/:id/deactivate` | `jwtOrApiKey` | — |
+| POST | `/api/field-defs/:id/reactivate` | `jwtOrApiKey` | — |
 | GET | `/api/firm-blocks` | `jwtOrApiKey` | — |
 | POST | `/api/firm-blocks` | `jwtOrApiKey` | — |
 | DELETE | `/api/firm-blocks/:id` | `jwtOrApiKey` | — |
@@ -948,4 +953,4 @@ _688 routes total — DELETE: 57, GET: 284, PATCH: 45, POST: 265, PUT: 35, _ALL:
 
 ---
 
-_688 routes total — DELETE: 57, GET: 284, PATCH: 45, POST: 265, PUT: 35, _ALL: 2_
+_693 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 268, PUT: 35, _ALL: 2_
