@@ -161,6 +161,7 @@ manual/05-Subsystems/09-issue-reports.md
 manual/05-Subsystems/10-court-pipeline.md
 manual/05-Subsystems/11-calendar-types.md
 manual/05-Subsystems/12-calendar-tab.md
+manual/05-Subsystems/13-custom-fields.md
 manual/05-Subsystems/README.md
 manual/06-Client-Facing/01-overview.md
 manual/06-Client-Facing/02-client-portal.md

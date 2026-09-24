@@ -3,6 +3,7 @@
 **Status: DESIGN RATIFIED 2026-09-22 · S0 SHIPPED 2026-09-24 @ `e340356` · S1 BUILT 2026-09-24 (migration + deploy pending)**
 Living doc — update the Status line and the §7 slice table as slices ship. Doc≠code divergences found mid-work go to the docs-debt queue (scratch `ns=docs`), per house rule.
 Manager boot state: scratch `ns=fred`, key `customfields_state`.
+Operator chapter: `manual/05-Subsystems/13-custom-fields.md` — every slice that changes what staff see extends it.
 Provenance: two-instance design debate 2026-09-19 → 2026-09-22; all load-bearing claims verified against repo + live DB. Ratified by Fred 2026-09-22.
 
 ## 1. Decision
