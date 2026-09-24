@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-24T11:09:15.320Z
+-- Generated: 2026-09-24T20:19:53.408Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:49d04bea9495de389df90f24516ec78b
+-- Fingerprint: sha256:d50b94c66539879f0d269d6fc7618477
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1704,7 +1704,7 @@ DROP TABLE IF EXISTS `field_defs`;
 CREATE TABLE `field_defs` (
   `id` int unsigned NOT NULL,
   `entity` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'case | contact (v1 set; app-validated — sql_mode is non-strict). IMMUTABLE after create.',
-  `field_key` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '^cf_[a-z][a-z0-9_]{1,60}$ — becomes the JSON path in <entity>.custom (S2) AND the VIRTUAL column name on the entity table (S3). IMMUTABLE after create; must not collide with a real column (checked at create).',
+  `field_key` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '^cf_[a-z][a-z0-9_]{1,56}$ (60 chars max, so the S3 index name idx_<key> fits MySQL''s 64-char identifier cap) — the JSON path in <entity>.custom AND the VIRTUAL column name on the entity table (the S3 reconciler creates it). IMMUTABLE after create; must not collide with a real column (checked at create).',
   `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `field_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'text | number | date | select | multiselect | boolean (v1 set; app-validated). Drives the S3 virtual column type (design doc §2 type map).',
   `options` json DEFAULT NULL COMMENT 'select/multiselect ONLY (NULL otherwise): [{"value","label"}]. value is the STORED form — byte-sensitive under MEMBER OF, so values are not labels. Unique case-insensitively.',
