@@ -859,6 +859,7 @@ tests/executionVersionStamp.test.js
 tests/extforms.d1drafts.test.js
 tests/extforms.x2.test.js
 tests/f_route.x21.test.js
+tests/fieldDefs.cfg1.test.js
 tests/fieldDefs.s1.test.js
 tests/filePlacementService.test.js
 tests/firmConfig.test.js

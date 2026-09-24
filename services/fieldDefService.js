@@ -6,7 +6,8 @@
  *
  * The `field_defs` registry — single source of truth for admin-defined
  * fields (ref/CUSTOM_FIELDS_DESIGN.md §2–§3). S1: read API + cache,
- * validation, and the CRUD the settings editor drives. S2: value validation
+ * validation, and the CRUD the Fields editor drives (public/caseconfig/
+ * fields.html since CFG-1). S2: value validation
  * and the write-chokepoint helpers (see VALUES below); S4's renderers will
  * read the registry through listActive / getByKey.
  *
@@ -228,9 +229,10 @@ function _jsonIn(v, name, errs) {
  * `active` (S2) is the option's RETIRE flag (design doc §3): a retired option
  * is hidden from pickers but still labels the records that hold it, and
  * writes still accept it. Omitted → the stored state for that same value
- * (priorOptions), else true for a new value. NOT a flat "default true": the
- * settings editor round-trips {value, label} only, so defaulting there would
- * silently reactivate every retired option on each save.
+ * (priorOptions), else true for a new value. NOT a flat "default true": an
+ * editor or API caller that round-trips {value, label} only would otherwise
+ * silently reactivate every retired option on each save (the S1 settings
+ * editor did exactly that; the CFG-1 Fields editor sends active explicitly).
  */
 function _checkOptions(options, fieldType, errs, priorOptions) {
   const wants = OPTION_TYPES.includes(fieldType);
@@ -553,14 +555,42 @@ async function setActive(db, id, active, { actor = null } = {}) {
 // ─────────────────────────────────────────────────────────────
 // Post-data probes (S2) — the only reads of <entity>.custom outside the
 // chokepoint. Existence checks via JSON_CONTAINS*, never `->>` (§3). An
-// unindexed scan of ~1k rows; only a def PATCH pays it.
+// unindexed scan of ~1k rows; only a def PATCH (or the editor's usage
+// read) pays it.
 // ─────────────────────────────────────────────────────────────
+
+/** THE record-holds-a-value predicate (`?` binds the '$.<key>' path).
+ *  Defined once so the S2 type-lock probe and the CFG-1 usage counts can
+ *  never disagree: exists (LIMIT 1) and COUNT are two aggregates over this
+ *  one definition. JSON null is never stored (§3), so path-exists = has
+ *  data. */
+const KEY_DATA_SQL = `JSON_CONTAINS_PATH(custom, 'one', ?)`;
 
 async function _keyHasData(conn, table, path) {
   const [rows] = await conn.query(
-    `SELECT 1 AS hit FROM \`${table}\` WHERE JSON_CONTAINS_PATH(custom, 'one', ?) LIMIT 1`, [path]
+    `SELECT 1 AS hit FROM \`${table}\` WHERE ${KEY_DATA_SQL} LIMIT 1`, [path]
   );
   return !!(rows && rows.length);
+}
+
+/**
+ * Per-field record counts for an entity — { field_key: count } over every
+ * def incl. inactive (values persist through retirement). Powers the Fields
+ * editor's usage badges (CFG-1): count > 0 renders field_type locked, and
+ * because the count and the updateDef type-lock read the same KEY_DATA_SQL,
+ * the badge and the 409 cannot disagree. One COUNT per def — the registry
+ * is small and only the editor pays it.
+ */
+async function usageCounts(db, entity) {
+  const table = ENTITY_TABLES[_assertEntity(entity)];
+  const usage = {};
+  for (const def of await listAll(db, entity)) {
+    const [[row]] = await db.query(
+      `SELECT COUNT(*) AS n FROM \`${table}\` WHERE ${KEY_DATA_SQL}`, [`$.${def.field_key}`]
+    );
+    usage[def.field_key] = row ? Number(row.n) || 0 : 0;
+  }
+  return usage;
 }
 
 /** JSON_CONTAINS is true for a select scalar equal to the value AND for a
@@ -859,6 +889,7 @@ module.exports = {
   createDef,
   updateDef,
   setActive,
+  usageCounts,
   // S2 — values + the write chokepoint
   validateValue,
   splitCustomFields,

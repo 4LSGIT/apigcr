@@ -4,10 +4,15 @@
  * Custom-field definitions API (custom-fields arc S1; audit + reconcile S3)
  * routes/api.fieldDefs.js
  *
- * Backs the settings.html "Custom Fields" editor. Logic, validation and the
- * cache live in services/fieldDefService.js; this file is the HTTP mapper.
+ * Backs the YisraCase Config Fields editor (public/caseconfig/fields.html;
+ * the settings.html section it replaced was removed in CFG-1). Logic,
+ * validation and the cache live in services/fieldDefService.js; this file is
+ * the HTTP mapper.
  *
  *   GET  /api/field-defs?entity=case|contact    every def incl. inactive (editor list)
+ *   GET  /api/field-defs/usage?entity=          { field_key: count } — records holding
+ *                                               a value, every def incl. inactive
+ *                                               (CFG-1: the Fields editor's badges)
  *   POST /api/field-defs                        create { entity, field_key, label,
  *                                               field_type, options?, validation?,
  *                                               show_when?, sort_order?, active? }
@@ -83,6 +88,16 @@ router.get('/api/field-defs', jwtOrApiKey, async (req, res) => {
     const defs = await svc.listAll(req.db, req.query.entity);
     res.json({ status: 'success', defs });
   } catch (err) { fail(res, 'list', err); }
+});
+
+// ─── GET /api/field-defs/usage?entity= ───
+// Counts share the service's KEY_DATA_SQL predicate with the updateDef
+// type-lock, so a count > 0 here is exactly the state that 409s there.
+router.get('/api/field-defs/usage', jwtOrApiKey, async (req, res) => {
+  try {
+    const usage = await svc.usageCounts(req.db, req.query.entity);
+    res.json({ status: 'success', usage });
+  } catch (err) { fail(res, 'usage', err); }
 });
 
 // ─── POST /api/field-defs ───

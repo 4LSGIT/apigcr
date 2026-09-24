@@ -105,14 +105,7 @@
   .note { color: var(--text-muted); font-size: 11.5px; margin: 0 0 10px; }
   .note.warn { color: var(--warn); }
 
-  /* ── Type editor ── */
-  .type-card {
-    border: 1px solid var(--border); border-radius: 6px;
-    background: var(--page-bg); padding: 10px; margin-bottom: 8px;
-  }
-  .type-head { display: flex; align-items: center; gap: 6px; }
-  .type-head input { flex: 1; }
-  .sub-list { margin: 8px 0 0 18px; }
+  /* ── Event-type / folder-template rows ── */
   .sub-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
   .sub-row input { flex: 1; }
   .icon-btn {
@@ -172,21 +165,6 @@
   }
   .cr-field .fbtns { display: flex; gap: 4px; padding-top: 16px; }
   @media (max-width: 640px) { .cr-field { grid-template-columns: 1fr 1fr; } }
-
-  /* ── Custom-field editor (custom-fields arc S1) — reuses the .cr-* card ── */
-  .cf-sel {
-    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 5px; padding: 6px 8px; font-size: 12px;
-  }
-  .cr-head input.cf-sort { flex: none; width: 58px; min-width: 0; }
-  .cf-opt { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
-  .cf-opt input[type=text] { flex: 1; }
-  .cf-valid { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 10px 0 4px; }
-  .cf-valid .cf-vf { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
-  .cf-valid .cf-vf input[type=text] { width: 90px; }
-  .cf-valid .cf-vf input.cf-pattern { width: 180px; }
-  .cf-ro { color: var(--text-muted); font-size: 11px; margin-top: 8px; }
-  .cf-keyhint { display: block; font-size: 10.5px; margin-top: 2px; min-height: 13px; }
 
   /* ── Dropbox template editor ── */
   .tpl-stage {
@@ -358,24 +336,26 @@
       </div>
     </div>
 
-    <!-- ── Case Types ─────────────────────────────────────────── -->
-    <div class="section collapsed" id="caseTypesSection" style="display:none">
-      <div class="sec-head"><h2><span class="chev">▸</span>Case Types</h2><span class="hint" id="ctUpdated"></span></div>
-      <div class="sec-body">
-        <p class="note warn">Renaming or removing a type/subtype does <b>not</b> update existing cases — they keep their old value.</p>
-        <div id="ctList"></div>
-        <button class="btn" id="ctAddType">+ Add Type</button>
-        <div class="btn-row">
-          <button class="btn primary" id="ctSave" disabled>Save Case Types</button>
-          <span class="status" id="ctStatus"></span>
-        </div>
-      </div>
-    </div>
+    <!-- ── Case Types — MOVED (CFG-1) ─────────────────────────── -->
+    <!-- The editor is YisraCase Config → Types & Subtypes
+         (caseconfig/types.html): it runs usage checks and offers the
+         template repoint; the copy that lived here wrote fe-case_types
+         blind and could strand pipeline templates. fe-case_types stays
+         excluded from the generic Firm Settings sections via CUSTOM
+         below — one editor per setting, never two. -->
+    <p class="note" style="padding:2px 4px">Case Types moved to <b>YisraCase Config → Types &amp; Subtypes</b> (More → YisraCase Config).</p>
 
-    <!-- ── Event Types ────────────────────────────────────────── -->
+    <!-- ── Event Types (legacy fallback list) ─────────────────── -->
+    <!-- Parked here on purpose (CFG-1): NOT vocabulary. The calendar-type
+         registry (YisraCase Config → Calendar Types) is the primary;
+         eventform.html falls back to fe-event_types only when the registry
+         is unreachable/empty, and scripts.js still ships it via
+         /api/firm-data. Live in degraded mode — keep it functional. -->
     <div class="section collapsed" id="eventTypesSection" style="display:none">
-      <div class="sec-head"><h2><span class="chev">▸</span>Event Types</h2><span class="hint" id="etUpdated"></span></div>
+      <div class="sec-head"><h2><span class="chev">▸</span>Event Types (legacy fallback list)</h2><span class="hint" id="etUpdated"></span></div>
       <div class="sec-body">
+        <p class="note">This list is used <b>only</b> when the calendar-type registry is unreachable or empty —
+           the real event-type vocabulary lives in <b>YisraCase Config → Calendar Types</b>.</p>
         <p class="note warn">Renaming or removing an event type does <b>not</b> update existing events — they keep their old value.</p>
         <div id="etList"></div>
         <button class="btn" id="etAdd">+ Add Event Type</button>
@@ -411,31 +391,11 @@
       </div>
     </div>
 
-    <!-- ── Custom Fields (custom-fields arc S1) ───────────────── -->
-    <!-- Editor over /api/field-defs (the field_defs registry), cloned from
-         Contact Roles above: per-field Save, route validation errors
-         surfaced verbatim. Definitions only in S1 — nothing renders or
-         stores custom values yet. Always shown: the table always exists. -->
-    <div class="section collapsed" id="customFieldsSection">
-      <div class="sec-head"><h2><span class="chev">▸</span>Custom Fields</h2><span class="hint" id="cfHint"></span></div>
-      <div class="sec-body" id="cfBody">
-        <p class="note">Firm-defined fields on cases and contacts. This defines the fields; showing them on the case and contact forms comes in a later release.</p>
-        <p class="note warn"><b>The key is permanent.</b> It becomes the field's storage name and its SQL column name — deactivate a field instead of renaming it. There is no delete.</p>
-        <div class="radios">
-          <label><input type="radio" name="cfEntity" value="case" checked> Cases</label>
-          <label><input type="radio" name="cfEntity" value="contact"> Contacts</label>
-        </div>
-        <div id="cfList" style="margin-top:10px"><p class="note">Loading…</p></div>
-        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-          <label class="fld" id="cfAddLbl">Add Custom Field — Cases</label>
-          <div id="cfNew"></div>
-          <div class="btn-row">
-            <button class="btn" id="cfAdd">+ Add Field</button>
-            <span class="status" id="cfAddStatus"></span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- ── Custom Fields — MOVED (CFG-1) ──────────────────────── -->
+    <!-- The editor is YisraCase Config → Fields
+         (caseconfig/fields.html) — it adds the usage badges, the option
+         retire toggle and drag ordering the S1 section here never had. -->
+    <p class="note" style="padding:2px 4px">Custom Fields moved to <b>YisraCase Config → Fields</b> (More → YisraCase Config).</p>
 
     <!-- ── Dropbox Folder Templates ───────────────────────────── -->
     <div class="section collapsed" id="dropboxTplSection" style="display:none">
@@ -511,9 +471,13 @@ const api = (path, method = 'GET', data) => window.top.apiSend(path, method, dat
 /* ── Custom editors: key → dedicated section above ──────────────
    Everything else editable renders as a typed row in a dynamic
    per-category section, driven entirely by server metadata
-   (category / label / description / type / sort_order). */
+   (category / label / description / type / sort_order).
+   'caseConfig' = edited ONLY in YisraCase Config (CFG-1): no section
+   here AND never a generic row below — a blind edit of fe-case_types
+   from this page strands pipeline templates (no usage check, no
+   template repoint). One editor per setting, never two. */
 const CUSTOM = {
-  'fe-case_types':                 'caseTypes',
+  'fe-case_types':                 'caseConfig',
   'fe-event_types':                'eventTypes',
   'dropbox_case_folder_templates': 'dropboxTpl'
 };
@@ -753,130 +717,6 @@ async function savePassword() {
   } finally {
     E('pwSave').disabled = false;
   }
-}
-
-/* ════════════════ CASE TYPES EDITOR ════════════════
-   fe-case_types: { "Type": ["Subtype", ...], ... }
-   State: ordered array [{ name, subs: [...] }] — object key insertion
-   order is preserved on serialize. Values are kept VERBATIM (no trim);
-   whitespace-only names are treated as empty for validation. */
-let ctState = null;        // working copy
-let ctOriginalNames = [];  // for removed/renamed warning on save
-
-function ctMarkDirty() { E('ctSave').disabled = false; }
-
-function ctRender() {
-  const host = E('ctList');
-  host.innerHTML = '';
-  ctState.forEach((t, ti) => {
-    const card = document.createElement('div');
-    card.className = 'type-card';
-    card.innerHTML = `
-      <div class="type-head">
-        <input type="text" data-ct-type="${ti}" value="${esc(t.name)}" placeholder="Type name">
-        <button class="icon-btn" data-ct-up="${ti}" title="Move up">↑</button>
-        <button class="icon-btn" data-ct-down="${ti}" title="Move down">↓</button>
-        <button class="icon-btn del" data-ct-del="${ti}" title="Delete type">✕</button>
-      </div>
-      <div class="sub-list">
-        ${t.subs.map((s, si) => `
-          <div class="sub-row">
-            <input type="text" data-ct-sub="${ti}:${si}" value="${esc(s)}" placeholder="Subtype name">
-            <button class="icon-btn" data-ct-subup="${ti}:${si}" title="Move up">↑</button>
-            <button class="icon-btn" data-ct-subdown="${ti}:${si}" title="Move down">↓</button>
-            <button class="icon-btn del" data-ct-subdel="${ti}:${si}" title="Delete subtype">✕</button>
-          </div>`).join('')}
-        <button class="btn tiny" data-ct-addsub="${ti}">+ Subtype</button>
-      </div>`;
-    host.appendChild(card);
-  });
-}
-
-function ctBind() {
-  E('ctList').addEventListener('input', e => {
-    const inp = e.target;
-    if (inp.dataset.ctType !== undefined) {
-      ctState[+inp.dataset.ctType].name = inp.value; // verbatim — no trim
-      ctMarkDirty();
-    } else if (inp.dataset.ctSub !== undefined) {
-      const [ti, si] = inp.dataset.ctSub.split(':').map(Number);
-      ctState[ti].subs[si] = inp.value; // verbatim — no trim
-      ctMarkDirty();
-    }
-  });
-  E('ctList').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    const d = b.dataset;
-    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
-    let changed = false;
-    if (d.ctUp !== undefined)        changed = swap(ctState, +d.ctUp, +d.ctUp - 1);
-    else if (d.ctDown !== undefined) changed = swap(ctState, +d.ctDown, +d.ctDown + 1);
-    else if (d.ctDel !== undefined)  { ctState.splice(+d.ctDel, 1); changed = true; }
-    else if (d.ctAddsub !== undefined) { ctState[+d.ctAddsub].subs.push(''); changed = true; }
-    else if (d.ctSubup !== undefined)   { const [ti, si] = d.ctSubup.split(':').map(Number);   changed = swap(ctState[ti].subs, si, si - 1); }
-    else if (d.ctSubdown !== undefined) { const [ti, si] = d.ctSubdown.split(':').map(Number); changed = swap(ctState[ti].subs, si, si + 1); }
-    else if (d.ctSubdel !== undefined)  { const [ti, si] = d.ctSubdel.split(':').map(Number);  ctState[ti].subs.splice(si, 1); changed = true; }
-    if (changed) { ctMarkDirty(); ctRender(); }
-  });
-  E('ctAddType').addEventListener('click', () => { ctState.push({ name: '', subs: [] }); ctMarkDirty(); ctRender(); });
-}
-
-function ctValidate() {
-  const names = ctState.map(t => t.name);
-  if (names.some(n => !n.trim())) return 'Type names cannot be empty';
-  if (new Set(names).size !== names.length) return 'Duplicate type names are not allowed';
-  for (const t of ctState) {
-    if (t.subs.some(s => !s.trim())) return `Subtype names cannot be empty (under "${t.name}")`;
-    if (new Set(t.subs).size !== t.subs.length) return `Duplicate subtypes under "${t.name}"`;
-  }
-  return null;
-}
-
-async function ctSave() {
-  const err = ctValidate();
-  if (err) return setStatus('ctStatus', err, false);
-
-  // Warn about names that existed before and are now gone (removed or renamed)
-  const nowNames = new Set();
-  ctState.forEach(t => { nowNames.add('T:' + t.name); t.subs.forEach(s => nowNames.add('S:' + t.name + '|' + s)); });
-  const gone = ctOriginalNames.filter(n => !nowNames.has(n)).map(n => n.replace(/^T:/, '').replace(/^S:[^|]*\|/, ''));
-  if (gone.length && !confirm(
-    `These types/subtypes were removed or renamed:\n  ${[...new Set(gone)].join(', ')}\n\nExisting cases keep their old value. Save anyway?`
-  )) return;
-
-  const obj = {};
-  ctState.forEach(t => { obj[t.name] = t.subs.slice(); });
-
-  E('ctSave').disabled = true;
-  try {
-    const data = await api('/api/app-settings/fe-case_types', 'PUT', { value: JSON.stringify(obj) });
-    ctOriginalNames = [...nowNames];
-    E('ctUpdated').textContent = fmtDate(data.setting?.updated_at);
-    setStatus('ctStatus', 'Case types saved', true);
-    window.top.loadFirmData?.(); // refresh dropdown sources shell-wide
-  } catch (e2) {
-    E('ctSave').disabled = false;
-    setStatus('ctStatus', e2.message || 'Failed to save', false);
-  }
-}
-
-function ctInit(rawValue, updatedAt) {
-  let map;
-  try { map = JSON.parse(rawValue); } catch { map = null; }
-  if (!map || Array.isArray(map) || typeof map !== 'object') {
-    // Unexpected shape — fall back to a raw scalar row so it's still fixable
-    rawJsonAddRow('fe-case_types', rawValue, updatedAt, 'Case Types (raw — unexpected format)');
-    return;
-  }
-  ctState = Object.entries(map).map(([name, subs]) => ({
-    name, subs: Array.isArray(subs) ? subs.map(String) : []
-  }));
-  ctOriginalNames = [];
-  ctState.forEach(t => { ctOriginalNames.push('T:' + t.name); t.subs.forEach(s => ctOriginalNames.push('S:' + t.name + '|' + s)); });
-  E('ctUpdated').textContent = fmtDate(updatedAt);
-  E('caseTypesSection').style.display = '';
-  ctRender();
-  ctBind();
 }
 
 /* ════════════════ EVENT TYPES EDITOR ════════════════
@@ -1233,7 +1073,9 @@ async function createSetting() {
       'key: 1-100 chars of letters, digits, _ or -, starting with a letter or digit', false);
   }
   if (rowMeta[key]) {
-    return setStatus('asStatus', `"${key}" already exists — edit it in its section above`, false);
+    return setStatus('asStatus', CUSTOM[key] === 'caseConfig'
+      ? `"${key}" already exists — edit it in YisraCase Config (More → YisraCase Config)`
+      : `"${key}" already exists — edit it in its section above`, false);
   }
   const type  = E('asType').value;
   const value = E('asValue').value; // VERBATIM — no trimming
@@ -1758,333 +1600,6 @@ async function crInit() {
   }
 }
 
-/* ════════════════ CUSTOM FIELDS EDITOR (custom-fields arc S1) ════════════════
-   Editor over GET/POST/PATCH /api/field-defs + /:id/deactivate|reactivate,
-   cloned from the Contact Roles editor above: per-field Save, the route's
-   validation errors (every problem joined with '; ') surface verbatim in
-   that field's status span. The entity radios switch registries.
-
-   field_key is PERMANENT — the JSON path (S2) and the SQL column name (S3).
-   The Add form suggests it from the label (cf_ + slug) until the key box is
-   edited by hand; on existing fields it is display-only. No delete:
-   Deactivate is retirement. `indexed` is read-only (S3 reconciler).
-   show_when is stored but has no editor until S4 — Save never sends it, so
-   a value set through the API survives edits here.
-
-   OPTION VALUES ARE THE STORED FORM: a new option's value follows its label
-   until typed by hand; values loaded from the server never auto-change. */
-
-const CF_TYPES = ['text', 'number', 'date', 'select', 'multiselect', 'boolean'];
-const CF_OPTION_TYPES = ['select', 'multiselect'];
-// Mirrors fieldDefService.KEY_RE (pinned equal by test) — the server is authoritative.
-const CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
-const CF_VALIDATION_FOR = { required: CF_TYPES, max_len: ['text'], pattern: ['text'], min: ['number'], max: ['number'] };
-
-let cfEntity = 'case';
-let cfState = null;   // [{ id, field_key, label, field_type, options:[{value,label,_vt}], validation, show_when, indexed, sort_order, active, _open, _dirty }]
-let cfNew = null;     // the Add form's draft
-let cfLoadTok = 0;    // drops out-of-order list responses on rapid entity switches
-
-function cfBlank() {
-  return { label: '', field_key: '', _keyTouched: false, field_type: 'text', options: [], validation: {}, sort_order: '' };
-}
-
-function cfSlug(s) {
-  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-}
-
-/** Label → suggested key: cf_ + slug, leading non-letters dropped, ≤ 60 chars. */
-function cfSuggestKey(label) {
-  const s = cfSlug(label).replace(/^[^a-z]+/, '');
-  return s ? ('cf_' + s).slice(0, 60) : '';
-}
-
-function cfTarget(i) { return i === 'n' ? cfNew : cfState[+i]; }
-
-function cfEntityPlural() { return cfEntity === 'case' ? 'Cases' : 'Contacts'; }
-
-/** Options builder + validation controls — shared by field cards and the Add form. */
-function cfEditorBody(t, i) {
-  const v = t.validation || {};
-  const numIn = (k, label) => `<span class="cf-vf">${label}
-    <input type="text" class="mono" inputmode="decimal" data-cf-v="${i}:${k}" value="${esc(v[k] ?? '')}"></span>`;
-  const opts = !CF_OPTION_TYPES.includes(t.field_type) ? '' : `
-    <span class="fmini">Options — the value is what gets stored (keep it stable); the label is what staff see</span>
-    ${t.options.map((o, oi) => `
-      <div class="cf-opt">
-        <input type="text" class="mono" data-cf-ov="${i}:${oi}" value="${esc(o.value)}" placeholder="value">
-        <input type="text" data-cf-ol="${i}:${oi}" value="${esc(o.label)}" placeholder="Label">
-        <button class="icon-btn" data-cf-oup="${i}:${oi}" title="Move up">↑</button>
-        <button class="icon-btn" data-cf-odown="${i}:${oi}" title="Move down">↓</button>
-        <button class="icon-btn del" data-cf-odel="${i}:${oi}" title="Remove option">✕</button>
-      </div>`).join('')}
-    <button class="btn tiny" data-cf-oadd="${i}">+ Add Option</button>`;
-  const valid = [`<label class="toggle-row"><input type="checkbox" data-cf-v="${i}:required" ${v.required ? 'checked' : ''}><span class="toggle-lbl">Required</span></label>`];
-  if (t.field_type === 'text') {
-    valid.push(numIn('max_len', 'Max length'));
-    valid.push(`<span class="cf-vf">Pattern <input type="text" class="mono cf-pattern" data-cf-v="${i}:pattern" value="${esc(v.pattern ?? '')}" placeholder="regex (optional)"></span>`);
-  }
-  if (t.field_type === 'number') { valid.push(numIn('min', 'Min')); valid.push(numIn('max', 'Max')); }
-  return `${opts}<div class="cf-valid">${valid.join('')}</div>`;
-}
-
-function cfRender() {
-  const host = E('cfList');
-  if (!cfState) return;
-  if (!cfState.length) { host.innerHTML = `<p class="note">No custom fields on ${cfEntityPlural().toLowerCase()} yet.</p>`; return; }
-  host.innerHTML = cfState.map((t, i) => `
-    <div class="cr-type ${t.active ? '' : 'cr-inactive'}">
-      <div class="cr-head">
-        <input type="text" data-cf-label="${i}" value="${esc(t.label)}" maxlength="100" title="Label">
-        <span class="cr-code" title="field_key — permanent">${esc(t.field_key)}</span>
-        <select class="cf-sel" data-cf-type="${i}" title="Type">
-          ${CF_TYPES.map(x => `<option value="${x}" ${t.field_type === x ? 'selected' : ''}>${x}</option>`).join('')}
-        </select>
-        <input type="text" class="mono cf-sort" inputmode="numeric" data-cf-sort="${i}" value="${esc(t.sort_order)}" title="Sort order">
-        <span class="cr-count">${t.active ? 'active' : 'inactive'}</span>
-        <button class="btn tiny" data-cf-toggle="${i}">${t._open ? 'Hide' : 'Edit'}</button>
-        <button class="btn tiny ${t.active ? 'danger' : ''}" data-cf-act="${i}">${t.active ? 'Deactivate' : 'Reactivate'}</button>
-        <button class="btn tiny primary" data-cf-save="${i}" ${t._dirty ? '' : 'disabled'}>Save</button>
-      </div>
-      <span class="status" id="cfStatus${i}"></span>
-      ${t._open ? `<div class="cr-fields">
-        ${cfEditorBody(t, i)}
-        <div class="cf-ro">Indexed: <b>${t.indexed ? 'yes' : 'no'}</b> — managed by the reconciler${t.show_when
-          ? ` · Show when: <span class="mono">${esc(JSON.stringify(t.show_when))}</span> (stored; no editor yet)` : ''}</div>
-      </div>` : ''}
-    </div>`).join('');
-}
-
-function cfRenderNew() {
-  const t = cfNew;
-  E('cfAddLbl').textContent = `Add Custom Field — ${cfEntityPlural()}`;
-  E('cfNew').innerHTML = `
-    <div class="grid2">
-      <div><label class="fld">Label</label><input type="text" data-cf-label="n" value="${esc(t.label)}" maxlength="100" placeholder="Clio matter"></div>
-      <div><label class="fld">Key (permanent — cf_ + a–z, 0–9, _)</label>
-        <input type="text" class="mono" data-cf-key="n" value="${esc(t.field_key)}" maxlength="60" placeholder="cf_clio_matter" spellcheck="false">
-        <span class="cf-keyhint" id="cfKeyHint"></span></div>
-      <div><label class="fld">Type</label>
-        <select class="cf-sel" data-cf-type="n">
-          ${CF_TYPES.map(x => `<option value="${x}" ${t.field_type === x ? 'selected' : ''}>${x}</option>`).join('')}
-        </select></div>
-      <div><label class="fld">Sort Order</label><input type="text" class="mono" inputmode="numeric" data-cf-sort="n" value="${esc(t.sort_order)}" placeholder="0"></div>
-    </div>
-    <div class="cr-fields" style="margin-left:0">${cfEditorBody(t, 'n')}</div>`;
-  cfKeyHint();
-}
-
-function cfKeyHint() {
-  const el = E('cfKeyHint');
-  if (!el) return;
-  const k = cfNew.field_key, ok = CF_KEY_RE.test(k);
-  el.textContent = !k ? '' : ok ? '✓ valid key' : 'must be cf_ + a letter + 1–56 of a–z, 0–9, _ (60 characters at most)';
-  el.style.color = ok ? 'var(--ok)' : 'var(--warn)';
-}
-
-function cfMarkDirty(i) {
-  if (i === 'n') return;
-  cfState[+i]._dirty = true;
-  const b = document.querySelector(`[data-cf-save="${i}"]`);
-  if (b) b.disabled = false;
-}
-
-function cfRerender(i) {
-  cfMarkDirty(i);
-  if (i === 'n') cfRenderNew(); else cfRender();
-}
-
-/** Draft → wire shape. Inapplicable validation keys are dropped (the route would 400 them). */
-function cfOptionsOut(t) {
-  return CF_OPTION_TYPES.includes(t.field_type)
-    ? t.options.map(o => ({ value: String(o.value || '').trim(), label: String(o.label || '').trim() }))
-    : null;
-}
-function cfValidationOut(t) {
-  const v = t.validation || {}, out = {};
-  for (const [k, types] of Object.entries(CF_VALIDATION_FOR)) {
-    if (!types.includes(t.field_type) || v[k] === undefined || v[k] === '' || v[k] === false) continue;
-    out[k] = v[k];
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-function cfBind() {
-  const root = E('cfBody');
-  root.addEventListener('change', e => {
-    if (e.target.name !== 'cfEntity') return;
-    if (cfState && cfState.some(t => t._dirty) && !confirm('Discard unsaved custom-field edits?')) {
-      e.target.checked = false;
-      const prev = root.querySelector(`input[name="cfEntity"][value="${cfEntity}"]`);
-      if (prev) prev.checked = true;
-      return;
-    }
-    cfEntity = e.target.value;
-    cfRenderNew();
-    cfLoad();
-  });
-  root.addEventListener('input', e => {
-    const el = e.target, d = el.dataset;
-    if (d.cfLabel !== undefined) {
-      const t = cfTarget(d.cfLabel);
-      t.label = el.value;
-      if (d.cfLabel === 'n' && !t._keyTouched) {
-        t.field_key = cfSuggestKey(el.value);
-        const k = root.querySelector('[data-cf-key="n"]');
-        if (k) k.value = t.field_key;
-        cfKeyHint();
-      }
-      cfMarkDirty(d.cfLabel);
-    } else if (d.cfKey !== undefined) {
-      cfNew.field_key = el.value.trim();
-      cfNew._keyTouched = cfNew.field_key !== ''; // clearing the box resumes the suggestion
-      cfKeyHint();
-    } else if (d.cfType !== undefined) {
-      const t = cfTarget(d.cfType);
-      t.field_type = el.value;
-      if (CF_OPTION_TYPES.includes(t.field_type) && !t.options.length) t.options.push({ value: '', label: '', _vt: false });
-      cfRerender(d.cfType);
-    } else if (d.cfSort !== undefined) {
-      cfTarget(d.cfSort).sort_order = el.value;
-      cfMarkDirty(d.cfSort);
-    } else if (d.cfOv !== undefined) {
-      const [i, oi] = d.cfOv.split(':');
-      const o = cfTarget(i).options[+oi];
-      o.value = el.value; o._vt = el.value !== '';
-      cfMarkDirty(i);
-    } else if (d.cfOl !== undefined) {
-      const [i, oi] = d.cfOl.split(':');
-      const o = cfTarget(i).options[+oi];
-      o.label = el.value;
-      if (!o._vt) {
-        o.value = cfSlug(el.value);
-        const vEl = root.querySelector(`[data-cf-ov="${i}:${oi}"]`);
-        if (vEl) vEl.value = o.value;
-      }
-      cfMarkDirty(i);
-    } else if (d.cfV !== undefined) {
-      const [i, k] = d.cfV.split(':');
-      const t = cfTarget(i);
-      t.validation = t.validation || {};
-      if (k === 'required') t.validation.required = el.checked;
-      else if (k === 'pattern') t.validation.pattern = el.value;
-      else t.validation[k] = el.value.trim() === '' ? undefined : Number(el.value); // NaN → null on the wire → the route names it
-      cfMarkDirty(i);
-    }
-  });
-  root.addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    const d = b.dataset;
-    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
-    const io = s => { const [i, oi] = s.split(':'); return [i, +oi]; };
-    if (d.cfToggle !== undefined) {
-      const t = cfState[+d.cfToggle]; t._open = !t._open; cfRender();
-    } else if (d.cfSave !== undefined) {
-      cfSave(+d.cfSave);
-    } else if (d.cfAct !== undefined) {
-      cfSetActive(+d.cfAct);
-    } else if (d.cfOadd !== undefined) {
-      cfTarget(d.cfOadd).options.push({ value: '', label: '', _vt: false });
-      cfRerender(d.cfOadd);
-    } else if (d.cfOup !== undefined) {
-      const [i, oi] = io(d.cfOup);
-      if (swap(cfTarget(i).options, oi, oi - 1)) cfRerender(i);
-    } else if (d.cfOdown !== undefined) {
-      const [i, oi] = io(d.cfOdown);
-      if (swap(cfTarget(i).options, oi, oi + 1)) cfRerender(i);
-    } else if (d.cfOdel !== undefined) {
-      const [i, oi] = io(d.cfOdel);
-      cfTarget(i).options.splice(oi, 1);
-      cfRerender(i);
-    }
-  });
-}
-
-async function cfSave(i) {
-  const t = cfState[i];
-  const btn = document.querySelector(`[data-cf-save="${i}"]`);
-  if (btn) btn.disabled = true;
-  try {
-    // show_when deliberately absent — see the header note.
-    await api(`/api/field-defs/${t.id}`, 'PATCH', {
-      label: t.label, field_type: t.field_type, sort_order: t.sort_order,
-      options: cfOptionsOut(t), validation: cfValidationOut(t),
-    });
-    // Re-adopt what the server accepted, then re-sort the way the server orders.
-    t.label = t.label.trim();
-    t.options = (cfOptionsOut(t) || []).map(o => ({ ...o, _vt: true }));
-    t.validation = { ...(cfValidationOut(t) || {}) };
-    t.sort_order = parseInt(t.sort_order, 10) || 0;
-    t._dirty = false;
-    cfState.sort((a, b) => ((a.sort_order | 0) - (b.sort_order | 0)) || (a.id - b.id));
-    cfRender();
-    setStatus('cfStatus' + cfState.indexOf(t), `"${t.field_key}" saved`, true);
-  } catch (e2) {
-    if (btn) btn.disabled = false;
-    setStatus('cfStatus' + i, e2.message || 'Failed to save', false); // route validation errors verbatim
-  }
-}
-
-async function cfSetActive(i) {
-  const t = cfState[i];
-  const verb = t.active ? 'deactivate' : 'reactivate';
-  try {
-    await api(`/api/field-defs/${t.id}/${verb}`, 'POST');
-    t.active = t.active ? 0 : 1;
-    cfRender(); // unsaved edits on the card are kept
-    E('cfHint').textContent = `${cfState.filter(x => x.active).length} active on ${cfEntityPlural().toLowerCase()}`;
-    setStatus('cfStatus' + i, `"${t.field_key}" ${verb}d`, true);
-  } catch (e) {
-    setStatus('cfStatus' + i, e.message || `Failed to ${verb}`, false);
-  }
-}
-
-async function cfCreate() {
-  const t = cfNew;
-  try {
-    const r = await api('/api/field-defs', 'POST', {
-      entity: cfEntity, field_key: t.field_key, label: t.label.trim(), field_type: t.field_type,
-      sort_order: t.sort_order, options: cfOptionsOut(t), validation: cfValidationOut(t),
-    });
-    cfNew = cfBlank();
-    cfRenderNew();
-    setStatus('cfAddStatus', `"${r.field_key}" created`, true);
-    await cfLoad();
-  } catch (e) {
-    setStatus('cfAddStatus', e.message || 'Failed to create', false);
-  }
-}
-
-async function cfLoad() {
-  const tok = ++cfLoadTok;
-  E('cfList').innerHTML = '<p class="note">Loading…</p>';
-  try {
-    const data = await api('/api/field-defs', 'GET', { entity: cfEntity });
-    if (tok !== cfLoadTok) return;
-    cfState = (data.defs || []).map(d => ({
-      id: d.id, field_key: d.field_key, label: d.label, field_type: d.field_type,
-      options: (d.options || []).map(o => ({ value: o.value, label: o.label, _vt: true })),
-      validation: { ...(d.validation || {}) }, show_when: d.show_when,
-      indexed: d.indexed ? 1 : 0, sort_order: d.sort_order | 0, active: d.active ? 1 : 0,
-      _open: false, _dirty: false,
-    }));
-    E('cfHint').textContent = `${cfState.filter(x => x.active).length} active on ${cfEntityPlural().toLowerCase()}`;
-    cfRender();
-  } catch (err) {
-    if (tok !== cfLoadTok) return;
-    cfState = null;
-    E('cfList').innerHTML = `<p class="note" style="color:var(--danger)">Failed to load custom fields: ${esc(err.message || err)}</p>`;
-  }
-}
-
-function cfInit() {
-  cfNew = cfBlank();
-  cfRenderNew();
-  cfBind();
-  cfLoad();
-}
-
 /* ════════════════ BOOT ════════════════ */
 async function init() {
   renderProfile();
@@ -2093,14 +1608,11 @@ async function init() {
   E('fbSave').addEventListener('click', saveFreebusyCals);
   loadFreebusyCals(); // self-only booking calendars (fire-and-forget)
   E('pwSave').addEventListener('click', savePassword);
-  E('ctSave').addEventListener('click', ctSave);
   E('etSave').addEventListener('click', etSave);
   E('dtSave').addEventListener('click', dtSave);
   E('asCreate').addEventListener('click', createSetting); // bound even if GET below fails
   E('crAdd').addEventListener('click', crCreate);
   crInit();            // contact role types (own table + routes, fire-and-forget)
-  E('cfAdd').addEventListener('click', cfCreate);
-  cfInit();            // custom field defs (own table + routes, fire-and-forget)
   ctabInit();          // self-only custom tab (fire-and-forget, same as freebusy)
 
   try {
@@ -2124,8 +1636,8 @@ async function init() {
     for (const row of rows) {
       const custom = CUSTOM[row.key];
       if (custom === 'retired')         continue; // decommissioned key — no editor
-      if (custom === 'caseTypes')       ctInit(row.value, row.updated_at);
-      else if (custom === 'eventTypes') etInit(row.value, row.updated_at);
+      if (custom === 'caseConfig')      continue; // edited only in YisraCase Config — never a generic row
+      if (custom === 'eventTypes')      etInit(row.value, row.updated_at);
       else if (custom === 'dropboxTpl') dtInit(row.value, row.updated_at);
       else                              settingRow(row);
     }

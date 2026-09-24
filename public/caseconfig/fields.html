@@ -3,41 +3,718 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Case Fields</title>
+  <title>Custom Fields</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
+    /* ══════════════════════════════════════════════
+       FIELDS SUB-PAGE — self-contained styles.
+       Shared tokens duplicated from the shell (house pattern).
+       ══════════════════════════════════════════════ */
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px; background: var(--page-bg); height: 100vh; overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; color: var(--text); background: var(--page-bg);
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
     }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn-danger-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--danger); }
+    .btn-danger-outline:hover { background: var(--danger-soft); border-color: var(--danger); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.tiny { padding: 3px 9px; font-size: 11px; }
+
+    .toolbar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      font-size: 12px; color: var(--text-2); flex-wrap: wrap;
+    }
+    .toolbar i.fa-circle-info { color: var(--text-muted); }
+
+    .entity-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+    .entity-tabs .etab {
+      border: none; background: var(--surface); color: var(--text-2);
+      padding: 5px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .entity-tabs .etab + .etab { border-left: 1px solid var(--border); }
+    .entity-tabs .etab.active { background: var(--accent); color: var(--accent-text); }
+
+    #scroller { flex: 1; overflow-y: auto; padding: 16px; }
+    #cfList, #addCard { max-width: 860px; }
+
+    .cf-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; margin-bottom: 10px; padding: 10px 12px;
+    }
+    .cf-card.cf-inactive { opacity: .6; }
+    .cf-card.dragging { opacity: .45; }
+    .cf-card.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
+    .cf-card.drop-after  { box-shadow: 0 2px 0 0 var(--accent); }
+
+    .cf-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .cf-head input[type=text] { flex: 1; min-width: 140px; }
+    .drag-handle { color: var(--text-muted); cursor: grab; padding: 2px 4px; flex-shrink: 0; }
+    .drag-handle:active { cursor: grabbing; }
+    .cf-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px; color: var(--text-2); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px;
+      white-space: nowrap;
+    }
+    .cf-sel {
+      font-size: 12px; padding: 4px 6px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--surface); color: var(--text);
+    }
+    .type-lock { color: var(--warn); font-size: 11px; cursor: help; }
+    .chip {
+      font-size: 10.5px; font-weight: 600; border-radius: 9px; padding: 2px 8px;
+      white-space: nowrap;
+    }
+    .chip-usage  { background: var(--warn-soft); color: var(--warn); }
+    .chip-muted  { background: var(--surface-2); color: var(--text-muted); font-weight: 500; }
+    .chip-idx    { background: var(--ok-soft); color: var(--ok); }
+    .chip-off    { background: var(--danger-soft); color: var(--danger); }
+    .cf-sortno { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; cursor: default; }
+
+    input[type=text] {
+      font-size: 13px; padding: 5px 8px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--surface); color: var(--text);
+    }
+    input[type=text]:focus { outline: none; border-color: var(--accent); }
+    input[type=text][readonly] { background: var(--surface-2); color: var(--text-2); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+    .icon-btn {
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 6px; width: 24px; height: 24px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text-2); font-size: 11px; flex-shrink: 0; transition: all 0.12s;
+    }
+    .icon-btn:hover { background: var(--page-bg); }
+    .icon-btn.del:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+
+    .cf-fields { margin: 10px 0 0 26px; }
+    .fmini { display: block; font-size: 11px; color: var(--text-muted); margin: 6px 0 5px; }
+    .cf-opt { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+    .cf-opt input[type=text] { flex: 1; }
+    .cf-opt.opt-retired input[type=text] { opacity: .55; }
+    .opt-frozen { color: var(--warn); font-size: 11px; cursor: help; flex-shrink: 0; }
+    .cf-valid { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 10px 0 4px; }
+    .cf-valid .cf-vf { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
+    .cf-valid .cf-vf input[type=text] { width: 90px; }
+    .cf-valid .cf-vf input.cf-pattern { width: 180px; }
+    .toggle-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+    .cf-ro { color: var(--text-muted); font-size: 11px; margin-top: 8px; }
+
+    .status { font-size: 12px; margin-left: 6px; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--danger); }
+
+    #addCard {
+      background: var(--surface); border: 1px dashed var(--border);
+      border-radius: 10px; margin-top: 16px; padding: 12px 14px;
+    }
+    #addCard h3 { font-size: 13px; margin-bottom: 8px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+    .fld { display: block; font-size: 11px; font-weight: 600; color: var(--text-2); margin-bottom: 3px; }
+    .grid2 input[type=text], .grid2 select { width: 100%; }
+    .cf-keyhint { display: block; font-size: 10.5px; margin-top: 2px; min-height: 13px; }
+    .note-warn { font-size: 11.5px; color: var(--warn); margin: 4px 0 8px; }
+
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      color: var(--text-muted); gap: 10px; text-align: center;
+      color: var(--text-muted); gap: 10px; text-align: center; padding: 40px 0;
     }
     .empty-state i { font-size: 36px; opacity: 0.25; }
-    .empty-state .sub { font-size: 12px; color: var(--text-2); max-width: 380px; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
 <body>
 
-<div class="empty-state">
-  <i class="fa-solid fa-table-columns"></i>
-  <div>Reserved for the field-registry build</div>
-  <div class="sub">Case field configuration will live here in a future slice.</div>
+<div class="toolbar">
+  <i class="fa-solid fa-circle-info"></i>
+  <span>Firm-defined fields on cases and contacts. <b>The key is permanent</b> — it becomes the
+        storage name and the SQL column name; deactivate a field instead of renaming it. No delete.
+        Drag <i class="fa-solid fa-grip-vertical"></i> to reorder.</span>
+  <span style="flex:1"></span>
+  <span class="status" id="cfListStatus"></span>
+  <div class="entity-tabs" id="cfEntityTabs">
+    <button class="etab active" data-cf-entity="case">Cases</button>
+    <button class="etab" data-cf-entity="contact">Contacts</button>
+  </div>
+  <button class="btn btn-primary" onclick="onNew()"><i class="fa-solid fa-plus"></i> New Field</button>
+</div>
+
+<div id="scroller">
+  <div id="cfList">
+    <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
+  </div>
+
+  <div id="addCard">
+    <h3 id="cfAddLbl">Add Custom Field — Cases</h3>
+    <div class="note-warn"><i class="fa-solid fa-triangle-exclamation"></i>
+      Keys are permanent: once the field is created its key never changes.</div>
+    <div id="cfNew"></div>
+    <div style="margin-top:10px">
+      <button class="btn btn-primary" id="cfAdd" onclick="cfCreate()"><i class="fa-solid fa-plus"></i> Add Field</button>
+      <span class="status" id="cfAddStatus"></span>
+    </div>
+  </div>
 </div>
 
 <script>
-// Placeholder panel only — no shell communication beyond the boot
-// handshake (declares no topbar buttons so the shell shows none).
+// ═══════════════════════════════════════════════════════════════
+// FIELDS SUB-PAGE (YisraCase Config manager) — custom-fields CFG-1
+//
+// The field_defs editor over GET/POST/PATCH /api/field-defs +
+// /:id/deactivate|reactivate + GET /api/field-defs/usage. Supersedes
+// the settings.html S1 section (deleted in CFG-1); the schema-builder
+// card layout and the per-card Save are kept from it, so the surface
+// staff know carries over.
+//
+// What this page adds over S1:
+//   · entity tabs (Cases | Contacts) instead of radios
+//   · drag-to-reorder (or the arrows) — position IS sort_order; only
+//     rows whose number changed are PATCHed, one gesture = one batch
+//   · usage badges from /api/field-defs/usage. count > 0 renders the
+//     type locked — the endpoint shares the service's KEY_DATA_SQL
+//     predicate with the updateDef type-lock, so badge and 409 agree
+//   · per-option retire/reactivate (S2 made retire API-only). Options
+//     always round-trip {value, label, active} — the shown state is
+//     the sent state, so a retired option stays retired across saves
+//   · frozen-value guard: once the FIELD has any data, every persisted
+//     option's value is shown frozen and delete is withdrawn (retire
+//     remains). Per-option usage isn't exposed, so this over-freezes
+//     the unused options of a data-holding field on purpose — the
+//     server stays authoritative and its 409s surface verbatim below.
+//
+// field_key is PERMANENT — the JSON path (S2) and the SQL column name
+// (S3). The Add form suggests it from the label (cf_ + slug) until the
+// key box is edited by hand; on existing fields it is display-only.
+// No delete: Deactivate is retirement. `indexed` is read-only (S3
+// reconciler) and n/a for multiselect (JSON column, never indexed).
+// show_when has NO UI here (S4) and Save never sends it, so a value
+// set through the API survives edits (the S1 contract, kept).
+//
+// Errors (409 lock messages included) render verbatim in the inline
+// status spans — never a dialog.
+//
+// Shell protocol: P.apiSend relay; lifecycle hooks onShow/onRefresh/
+// onNew exposed on window; topbar buttons via P.setTopbarButtons.
+// ═══════════════════════════════════════════════════════════════
+
 const P = window.parent;
-function onShow() { P.setTopbarButtons({}); }
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function setStatus(id, msg, ok) {
+  const el = E(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+  if (ok) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3000);
+}
+
+// ── UI mirrors — pinned equal to fieldDefService's constants by
+//    tests/fieldDefs.s1.test.js §7. The server is authoritative. ──
+const CF_TYPES = ['text', 'number', 'date', 'select', 'multiselect', 'boolean'];
+const CF_OPTION_TYPES = ['select', 'multiselect'];
+const CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
+const CF_VALIDATION_FOR = { required: CF_TYPES, max_len: ['text'], pattern: ['text'], min: ['number'], max: ['number'] };
+
+// ── State ──────────────────────────────────────────────────────
+let cfEntity = 'case';
+let cfState = null;   // [{ id, field_key, label, field_type, options:[{value,label,active,_vt,_persisted}], validation, indexed, sort_order, active, _open, _dirty }]
+let cfUsage = {};     // field_key → count of records holding a value
+let cfNew = null;     // the Add form's draft
+let cfLoaded = false;
+let cfLoadTok = 0;    // drops out-of-order list responses on rapid entity switches
+
+function cfBlank() {
+  return { label: '', field_key: '', _keyTouched: false, field_type: 'text', options: [], validation: {} };
+}
+
+function cfSlug(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+/** Label → suggested key: cf_ + slug, leading non-letters dropped, ≤ 60 chars. */
+function cfSuggestKey(label) {
+  const s = cfSlug(label).replace(/^[^a-z]+/, '');
+  return s ? ('cf_' + s).slice(0, 60) : '';
+}
+
+function cfTarget(i) { return i === 'n' ? cfNew : cfState[+i]; }
+
+function cfEntityPlural() { return cfEntity === 'case' ? 'Cases' : 'Contacts'; }
+
+const usageOf = t => cfUsage[t.field_key] || 0;
+
+// ── Editor body (options + validation) — field cards and the Add form ──
+function cfEditorBody(t, i) {
+  const v = t.validation || {};
+  const fieldUsed = i !== 'n' && usageOf(t) > 0;
+  const numIn = (k, label) => `<span class="cf-vf">${label}
+    <input type="text" class="mono" inputmode="decimal" data-cf-v="${i}:${k}" value="${esc(v[k] ?? '')}"></span>`;
+  const opts = !CF_OPTION_TYPES.includes(t.field_type) ? '' : `
+    <span class="fmini">Options — the value is what gets stored (keep it stable); the label is what staff see.
+      Retired options are hidden from pickers but still label the records that hold them.</span>
+    ${t.options.map((o, oi) => {
+      const frozen = fieldUsed && o._persisted;
+      const retired = o.active === false;
+      return `
+      <div class="cf-opt ${retired ? 'opt-retired' : ''}">
+        ${frozen ? `<span class="opt-frozen" title="This field holds data, so persisted option values are frozen — retire instead of removing. The value is what stored records match on."><i class="fa-solid fa-lock"></i></span>` : ''}
+        <input type="text" class="mono" data-cf-ov="${i}:${oi}" value="${esc(o.value)}" placeholder="value" ${frozen ? 'readonly' : ''}>
+        <input type="text" data-cf-ol="${i}:${oi}" value="${esc(o.label)}" placeholder="Label">
+        ${retired ? '<span class="chip chip-off">retired</span>' : ''}
+        ${o._persisted ? `<button class="btn tiny ${retired ? '' : 'btn-danger-outline'}" data-cf-oretire="${i}:${oi}"
+            title="${retired ? 'Show this option in pickers again' : 'Hide from pickers; stored records keep it'}">${retired ? 'Reactivate' : 'Retire'}</button>` : ''}
+        <button class="icon-btn" data-cf-oup="${i}:${oi}" title="Move up">↑</button>
+        <button class="icon-btn" data-cf-odown="${i}:${oi}" title="Move down">↓</button>
+        ${frozen ? '' : `<button class="icon-btn del" data-cf-odel="${i}:${oi}" title="Remove option (the save is refused if records hold this value — retire instead)">✕</button>`}
+      </div>`;
+    }).join('')}
+    <button class="btn tiny btn-outline" data-cf-oadd="${i}">+ Add Option</button>`;
+  const valid = [`<label class="toggle-row"><input type="checkbox" data-cf-v="${i}:required" ${v.required ? 'checked' : ''}><span>Required</span></label>`];
+  if (t.field_type === 'text') {
+    valid.push(numIn('max_len', 'Max length'));
+    valid.push(`<span class="cf-vf">Pattern <input type="text" class="mono cf-pattern" data-cf-v="${i}:pattern" value="${esc(v.pattern ?? '')}" placeholder="regex (optional)"></span>`);
+  }
+  if (t.field_type === 'number') { valid.push(numIn('min', 'Min')); valid.push(numIn('max', 'Max')); }
+  return `${opts}<div class="cf-valid">${valid.join('')}</div>`;
+}
+
+// ── Render ─────────────────────────────────────────────────────
+function cfRender() {
+  const host = E('cfList');
+  if (!cfState) return;
+  if (!cfState.length) {
+    host.innerHTML = `<div class="empty-state"><i class="fa-solid fa-table-columns"></i>
+      <div>No custom fields on ${cfEntityPlural().toLowerCase()} yet</div></div>`;
+    return;
+  }
+  host.innerHTML = cfState.map((t, i) => {
+    const n = usageOf(t);
+    const locked = n > 0;
+    const idxChip = (t.field_type !== 'multiselect' && t.indexed)
+      ? '<span class="chip chip-idx" title="The reconciler keeps an index on this field&#39;s column">indexed</span>' : '';
+    return `
+    <div class="cf-card ${t.active ? '' : 'cf-inactive'}" data-cf-idx="${i}">
+      <div class="cf-head">
+        <span class="drag-handle" draggable="true" data-cf-drag="${i}" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span>
+        <input type="text" data-cf-label="${i}" value="${esc(t.label)}" maxlength="100" title="Label">
+        <span class="cf-code" title="field_key — keys are permanent">${esc(t.field_key)}</span>
+        <select class="cf-sel" data-cf-type="${i}" title="Type" ${locked ? 'disabled' : ''}>
+          ${CF_TYPES.map(x => `<option value="${x}" ${t.field_type === x ? 'selected' : ''}>${x}</option>`).join('')}
+        </select>
+        ${locked ? `<span class="type-lock" title="Type is locked: ${n} record${n === 1 ? '' : 's'} hold a value. To change it, create a new field and copy the values across."><i class="fa-solid fa-lock"></i></span>` : ''}
+        ${locked ? `<span class="chip chip-usage" title="Records holding a value">${n} record${n === 1 ? '' : 's'}</span>`
+                 : '<span class="chip chip-muted">unused</span>'}
+        ${idxChip}
+        <span class="cf-sortno" title="sort_order — set by position, drag to change">#${t.sort_order | 0}</span>
+        <span class="chip ${t.active ? 'chip-muted' : 'chip-off'}">${t.active ? 'active' : 'inactive'}</span>
+        <button class="icon-btn" data-cf-up="${i}" title="Move up">↑</button>
+        <button class="icon-btn" data-cf-down="${i}" title="Move down">↓</button>
+        <button class="btn tiny btn-outline" data-cf-toggle="${i}">${t._open ? 'Hide' : 'Edit'}</button>
+        <button class="btn tiny ${t.active ? 'btn-danger-outline' : 'btn-outline'}" data-cf-act="${i}">${t.active ? 'Deactivate' : 'Reactivate'}</button>
+        <button class="btn tiny btn-primary" data-cf-save="${i}" ${t._dirty ? '' : 'disabled'}>Save</button>
+      </div>
+      <span class="status" id="cfStatus${i}"></span>
+      ${t._open ? `<div class="cf-fields">
+        ${cfEditorBody(t, i)}
+        <div class="cf-ro">${t.field_type === 'multiselect'
+          ? 'Indexed: <b>n/a</b> — a multiselect column is JSON and is never indexed'
+          : `Indexed: <b>${t.indexed ? 'yes' : 'no'}</b> — managed by the reconciler`}</div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function cfRenderNew() {
+  const t = cfNew;
+  E('cfAddLbl').textContent = `Add Custom Field — ${cfEntityPlural()}`;
+  E('cfNew').innerHTML = `
+    <div class="grid2">
+      <div><label class="fld">Label</label><input type="text" data-cf-label="n" value="${esc(t.label)}" maxlength="100" placeholder="Clio matter"></div>
+      <div><label class="fld">Key (permanent — cf_ + a–z, 0–9, _)</label>
+        <input type="text" class="mono" data-cf-key="n" value="${esc(t.field_key)}" maxlength="60" placeholder="cf_clio_matter" spellcheck="false">
+        <span class="cf-keyhint" id="cfKeyHint"></span></div>
+      <div><label class="fld">Type</label>
+        <select class="cf-sel" data-cf-type="n">
+          ${CF_TYPES.map(x => `<option value="${x}" ${t.field_type === x ? 'selected' : ''}>${x}</option>`).join('')}
+        </select></div>
+      <div></div>
+    </div>
+    <div class="cf-fields" style="margin-left:0">${cfEditorBody(t, 'n')}</div>`;
+  cfKeyHint();
+}
+
+function cfKeyHint() {
+  const el = E('cfKeyHint');
+  if (!el) return;
+  const k = cfNew.field_key, ok = CF_KEY_RE.test(k);
+  el.textContent = !k ? '' : ok ? '✓ valid key' : 'must be cf_ + a letter + 1–56 of a–z, 0–9, _ (60 characters at most)';
+  el.style.color = ok ? 'var(--ok)' : 'var(--warn)';
+}
+
+function cfMarkDirty(i) {
+  if (i === 'n') return;
+  cfState[+i]._dirty = true;
+  const b = document.querySelector(`[data-cf-save="${i}"]`);
+  if (b) b.disabled = false;
+}
+
+function cfRerender(i) {
+  cfMarkDirty(i);
+  if (i === 'n') cfRenderNew(); else cfRender();
+}
+
+/** Draft → wire shape. Options always carry `active` — the shown state is the
+ *  sent state (this is what makes the retire toggle work). Inapplicable
+ *  validation keys are dropped (the route would 400 them). */
+function cfOptionsOut(t) {
+  return CF_OPTION_TYPES.includes(t.field_type)
+    ? t.options.map(o => ({ value: String(o.value || '').trim(), label: String(o.label || '').trim(), active: o.active !== false }))
+    : null;
+}
+function cfValidationOut(t) {
+  const v = t.validation || {}, out = {};
+  for (const [k, types] of Object.entries(CF_VALIDATION_FOR)) {
+    if (!types.includes(t.field_type) || v[k] === undefined || v[k] === '' || v[k] === false) continue;
+    out[k] = v[k];
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// ── Event delegation ───────────────────────────────────────────
+function cfBind() {
+  const root = document.body;
+
+  E('cfEntityTabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-cf-entity]');
+    if (!b || b.dataset.cfEntity === cfEntity) return;
+    if (cfState && cfState.some(t => t._dirty) && !confirm('Discard unsaved custom-field edits?')) return;
+    cfEntity = b.dataset.cfEntity;
+    document.querySelectorAll('#cfEntityTabs .etab').forEach(x =>
+      x.classList.toggle('active', x.dataset.cfEntity === cfEntity));
+    cfNew = cfBlank();
+    cfRenderNew();
+    cfLoad();
+  });
+
+  root.addEventListener('input', e => {
+    const el = e.target, d = el.dataset;
+    if (d.cfLabel !== undefined) {
+      const t = cfTarget(d.cfLabel);
+      t.label = el.value;
+      if (d.cfLabel === 'n' && !t._keyTouched) {
+        t.field_key = cfSuggestKey(el.value);
+        const k = root.querySelector('[data-cf-key="n"]');
+        if (k) k.value = t.field_key;
+        cfKeyHint();
+      }
+      cfMarkDirty(d.cfLabel);
+    } else if (d.cfKey !== undefined) {
+      cfNew.field_key = el.value.trim();
+      cfNew._keyTouched = cfNew.field_key !== ''; // clearing the box resumes the suggestion
+      cfKeyHint();
+    } else if (d.cfType !== undefined) {
+      const t = cfTarget(d.cfType);
+      t.field_type = el.value;
+      if (CF_OPTION_TYPES.includes(t.field_type) && !t.options.length) {
+        t.options.push({ value: '', label: '', active: true, _vt: false, _persisted: false });
+      }
+      cfRerender(d.cfType);
+    } else if (d.cfOv !== undefined) {
+      const [i, oi] = d.cfOv.split(':');
+      const o = cfTarget(i).options[+oi];
+      o.value = el.value; o._vt = el.value !== '';
+      cfMarkDirty(i);
+    } else if (d.cfOl !== undefined) {
+      const [i, oi] = d.cfOl.split(':');
+      const o = cfTarget(i).options[+oi];
+      o.label = el.value;
+      if (!o._vt) {
+        o.value = cfSlug(el.value);
+        const vEl = root.querySelector(`[data-cf-ov="${i}:${oi}"]`);
+        if (vEl) vEl.value = o.value;
+      }
+      cfMarkDirty(i);
+    } else if (d.cfV !== undefined) {
+      const [i, k] = d.cfV.split(':');
+      const t = cfTarget(i);
+      t.validation = t.validation || {};
+      if (k === 'required') t.validation.required = el.checked;
+      else if (k === 'pattern') t.validation.pattern = el.value;
+      else t.validation[k] = el.value.trim() === '' ? undefined : Number(el.value); // NaN → null on the wire → the route names it
+      cfMarkDirty(i);
+    }
+  });
+
+  root.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const d = b.dataset;
+    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
+    const io = s => { const [i, oi] = s.split(':'); return [i, +oi]; };
+    if (d.cfToggle !== undefined) {
+      const t = cfState[+d.cfToggle]; t._open = !t._open; cfRender();
+    } else if (d.cfSave !== undefined) {
+      cfSave(+d.cfSave);
+    } else if (d.cfAct !== undefined) {
+      cfSetActive(+d.cfAct);
+    } else if (d.cfUp !== undefined) {
+      moveField(+d.cfUp, -1);
+    } else if (d.cfDown !== undefined) {
+      moveField(+d.cfDown, 1);
+    } else if (d.cfOadd !== undefined) {
+      cfTarget(d.cfOadd).options.push({ value: '', label: '', active: true, _vt: false, _persisted: false });
+      cfRerender(d.cfOadd);
+    } else if (d.cfOretire !== undefined) {
+      const [i, oi] = io(d.cfOretire);
+      const o = cfTarget(i).options[oi];
+      o.active = o.active === false;   // toggle
+      cfRerender(i);
+    } else if (d.cfOup !== undefined) {
+      const [i, oi] = io(d.cfOup);
+      if (swap(cfTarget(i).options, oi, oi - 1)) cfRerender(i);
+    } else if (d.cfOdown !== undefined) {
+      const [i, oi] = io(d.cfOdown);
+      if (swap(cfTarget(i).options, oi, oi + 1)) cfRerender(i);
+    } else if (d.cfOdel !== undefined) {
+      const [i, oi] = io(d.cfOdel);
+      cfTarget(i).options.splice(oi, 1);
+      cfRerender(i);
+    }
+  });
+
+  bindDrag();
+}
+
+// ── Reorder — drag or arrows; position IS sort_order ───────────
+let dragIdx = null;
+
+function bindDrag() {
+  const host = E('cfList');
+  host.addEventListener('dragstart', e => {
+    const h = e.target.closest('[data-cf-drag]');
+    if (!h) { e.preventDefault(); return; }
+    dragIdx = +h.dataset.cfDrag;
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(dragIdx)); } catch (_) {}
+    h.closest('.cf-card').classList.add('dragging');
+  });
+  host.addEventListener('dragover', e => {
+    if (dragIdx === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    host.querySelectorAll('.cf-card').forEach(c => c.classList.remove('drop-before', 'drop-after'));
+    const card = e.target.closest('.cf-card');
+    if (!card || +card.dataset.cfIdx === dragIdx) return;
+    const r = card.getBoundingClientRect();
+    card.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+  });
+  host.addEventListener('drop', e => {
+    if (dragIdx === null) return;
+    e.preventDefault();
+    const card = e.target.closest('.cf-card');
+    const from = dragIdx;
+    dragIdx = null;
+    if (!card) return cfRender();
+    const r = card.getBoundingClientRect();
+    let to = +card.dataset.cfIdx + (e.clientY < r.top + r.height / 2 ? 0 : 1);
+    if (to > from) to--;
+    if (to === from || to < 0 || to >= cfState.length) return cfRender();
+    const [f] = cfState.splice(from, 1);
+    cfState.splice(to, 0, f);
+    cfRender();
+    persistOrder();
+  });
+  host.addEventListener('dragend', () => { if (dragIdx !== null) { dragIdx = null; cfRender(); } });
+}
+
+function moveField(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= cfState.length) return;
+  [cfState[i], cfState[j]] = [cfState[j], cfState[i]];
+  cfRender();
+  persistOrder();
+}
+
+let orderBusy = false;
+let orderQueued = false;
+
+/** sort_order = position index. Only rows whose number changed are PATCHed —
+ *  one gesture, one batch (sequential: the registry is small and each PATCH
+ *  row-locks its def). No bulk endpoint exists; each PATCH sends only
+ *  sort_order, so unsaved card edits stay local. A gesture landing while a
+ *  batch is in flight is QUEUED, not dropped: the finally re-runs, and the
+ *  re-run's diff sweeps up whatever moved meanwhile. */
+async function persistOrder() {
+  if (orderBusy) { orderQueued = true; return; }
+  const patches = [];
+  cfState.forEach((t, i) => { if (t.sort_order !== i) { t.sort_order = i; patches.push(t); } });
+  if (!patches.length) return;
+  orderBusy = true;
+  try {
+    for (const t of patches) {
+      await api(`/api/field-defs/${t.id}`, 'PATCH', { sort_order: t.sort_order });
+    }
+    cfRender();
+    setStatus('cfListStatus', `Order saved (${patches.length} field${patches.length === 1 ? '' : 's'} renumbered)`, true);
+  } catch (e) {
+    setStatus('cfListStatus', e.message || 'Failed to save the order', false);
+    await cfLoad();   // re-sync with the server's truth
+  } finally {
+    orderBusy = false;
+    if (orderQueued) { orderQueued = false; persistOrder(); }
+  }
+}
+
+// ── Mutations ──────────────────────────────────────────────────
+async function cfSave(i) {
+  const t = cfState[i];
+  const btn = document.querySelector(`[data-cf-save="${i}"]`);
+  if (btn) btn.disabled = true;
+  try {
+    // show_when deliberately absent — see the header note.
+    await api(`/api/field-defs/${t.id}`, 'PATCH', {
+      label: t.label, field_type: t.field_type, sort_order: t.sort_order,
+      options: cfOptionsOut(t), validation: cfValidationOut(t),
+    });
+    // Re-adopt what the server accepted.
+    t.label = t.label.trim();
+    t.options = (cfOptionsOut(t) || []).map(o => ({ ...o, _vt: true, _persisted: true }));
+    t.validation = { ...(cfValidationOut(t) || {}) };
+    t._dirty = false;
+    cfRender();
+    setStatus('cfStatus' + i, `"${t.field_key}" saved`, true);
+  } catch (e2) {
+    if (btn) btn.disabled = false;
+    setStatus('cfStatus' + i, e2.message || 'Failed to save', false); // 400/409 verbatim — inline, never a dialog
+  }
+}
+
+async function cfSetActive(i) {
+  const t = cfState[i];
+  const verb = t.active ? 'deactivate' : 'reactivate';
+  try {
+    await api(`/api/field-defs/${t.id}/${verb}`, 'POST');
+    t.active = t.active ? 0 : 1;
+    cfRender(); // unsaved edits on the card are kept
+    setStatus('cfStatus' + i, `"${t.field_key}" ${verb}d`, true);
+  } catch (e) {
+    setStatus('cfStatus' + i, e.message || `Failed to ${verb}`, false);
+  }
+}
+
+async function cfCreate() {
+  const t = cfNew;
+  // Append after the current tail — the server orders by sort_order, id.
+  const nextSort = cfState && cfState.length ? Math.max(...cfState.map(x => x.sort_order | 0)) + 1 : 0;
+  try {
+    const r = await api('/api/field-defs', 'POST', {
+      entity: cfEntity, field_key: t.field_key, label: t.label.trim(), field_type: t.field_type,
+      sort_order: nextSort, options: cfOptionsOut(t), validation: cfValidationOut(t),
+    });
+    cfNew = cfBlank();
+    cfRenderNew();
+    setStatus('cfAddStatus', `"${r.field_key}" created`, true);
+    await cfLoad();
+  } catch (e) {
+    setStatus('cfAddStatus', e.message || 'Failed to create', false);
+  }
+}
+
+// ── Load ───────────────────────────────────────────────────────
+async function cfLoad() {
+  const tok = ++cfLoadTok;
+  E('cfList').innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>';
+  try {
+    const [data, usage] = await Promise.all([
+      api('/api/field-defs', 'GET', { entity: cfEntity }),
+      api('/api/field-defs/usage', 'GET', { entity: cfEntity }),
+    ]);
+    if (tok !== cfLoadTok) return;
+    cfUsage = (usage && usage.usage) || {};
+    cfState = (data.defs || []).map(d => ({
+      id: d.id, field_key: d.field_key, label: d.label, field_type: d.field_type,
+      options: (d.options || []).map(o => ({ value: o.value, label: o.label, active: o.active !== false, _vt: true, _persisted: true })),
+      validation: { ...(d.validation || {}) },
+      indexed: d.indexed ? 1 : 0, sort_order: d.sort_order | 0, active: d.active ? 1 : 0,
+      _open: false, _dirty: false,
+    }));
+    cfLoaded = true;
+    cfRender();
+  } catch (err) {
+    if (tok !== cfLoadTok) return;
+    cfState = null;
+    E('cfList').innerHTML = `<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i>
+      <div>Failed to load custom fields: ${esc(err.message || err)}</div></div>`;
+  }
+}
+
+// ── Lifecycle ──────────────────────────────────────────────────
+function cfInit() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  cfNew = cfBlank();
+  cfRenderNew();
+  cfBind();
+  cfLoad();
+}
+
+function onShow() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  // Auto-refresh on tab return, but never over unsaved card edits — the
+  // types.html idiom this copies holds no dirty state; this page does.
+  // An explicit Refresh (with its confirm) is always available.
+  if (cfLoaded && !(cfState && cfState.some(t => t._dirty))) cfLoad();
+}
+function onHide()    {}
+function onRefresh() {
+  if (cfState && cfState.some(t => t._dirty) && !confirm('Discard unsaved custom-field edits?')) return;
+  cfLoad();
+}
+function onNew() {
+  E('addCard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const lbl = document.querySelector('[data-cf-label="n"]');
+  if (lbl) lbl.focus();
+}
+
 window.onShow = onShow;
+window.onHide = onHide;
+window.onRefresh = onRefresh;
+window.onNew = onNew;
+window.cfCreate = cfCreate;
+
+// ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {
-  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') return;
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return cfInit();
+  }
   setTimeout(waitForShell, 50);
 })();
 </script>

@@ -296,7 +296,7 @@ const EVENT_TYPES = {
       "FILTER data.offset_days WITH equals, NEVER >= — every configured rung fires separately, exactly as " +
       "data.threshold_days works on case.stage_aged. Moving an item's date re-arms all of its rungs for the " +
       "new date. source is 'system', actor.user_id is 0. Emits nothing until a type is given offsets in " +
-      "Case Config → Calendar Types.",
+      "YisraCase Config → Calendar Types.",
     fields: [
       ...COMMON_FIELDS, ...CALENDAR_DATA_FIELDS,
       { path: 'data.offset_days', label: 'The configured rung, in days before the item (0 = on the day)' },

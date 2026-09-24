@@ -24,13 +24,13 @@ pipeline runs on exactly the same engine with different stages.
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| **Pipeline** (template) | An ordered set of stages for one kind of case. The firm has five: Intake, Chapter 7, Chapter 13, Adversary Proceeding, Civil Litigation. | Case Config → Pipelines |
-| **Stage** | One position on a pipeline. Has a key (`consult_booked`), an internal label ("Consult booked"), a client label ("Consultation scheduled"), and a lane. | Case Config → Pipelines |
+| **Pipeline** (template) | An ordered set of stages for one kind of case. The firm has five: Intake, Chapter 7, Chapter 13, Adversary Proceeding, Civil Litigation. | YisraCase Config → Pipelines |
+| **Stage** | One position on a pipeline. Has a key (`consult_booked`), an internal label ("Consult booked"), a client label ("Consultation scheduled"), and a lane. | YisraCase Config → Pipelines |
 | **Lane** | `main` = the happy path; `offramp` = a side exit (no-show, not interested, dead lead, dismissed, appeal). Off-ramps never appear as "upcoming" for a case that isn't on one. | per stage |
 | **Terminal** | A stage nothing follows (dead lead, closed). Independent of lane. | per stage |
 | **Phase** | Which *kind* of pipeline a case is on: `intake` (funnel) or `case` (matter). Flips automatically at retention — see *The hand-off*. | `cases.pipeline_phase` (system-managed) |
 | **Bucket** | The legacy five-value Case Stage field (Open / Pending / Filed / Concluded / Closed) described in [Matters](03-matters.md). Every pipeline stage maps to one bucket and sets it on advance. | `cases.case_stage` |
-| **Requirement** | A derived work item attached to a stage. | Case Config → Pipelines → stage → Requirements |
+| **Requirement** | A derived work item attached to a stage. | YisraCase Config → Pipelines → stage → Requirements |
 | **Override** | A staff decision that overrides derivation for one case: "not applicable," or "done" for something the system can't see. | Steps panel on the case |
 | **Projection** | For a lead, the *likely next* pipeline's stages shown greyed as "typical next steps," before the lead is retained. | portal and Steps panel |
 
@@ -75,7 +75,7 @@ history).
 > **The Intake pipeline carries an *inactive* `retained` stage. Do not activate it.** It reads
 > like an oversight; it is load-bearing. Because resolution prefers the pipeline the case is
 > currently on, an *active* `retained` on Intake would win, the phase would never flip, and
-> every retention would strand on the Intake pipeline. Case Config refuses (with a 409) to
+> every retention would strand on the Intake pipeline. YisraCase Config refuses (with a 409) to
 > activate any stage key that is active on both an intake and a matter pipeline — that refusal
 > is this rule enforced. The inactive row is used, read-only, as the generic "typical next steps"
 > tail for leads whose subtype isn't known yet.
@@ -188,7 +188,7 @@ the numeric stage-id form the control accepts — that is the documented route, 
 A Kanban view: one column per stage in pipeline order, a dashed divider, then the off-ramp
 columns. Cases with no history yet sit in an *unstaged* bucket. Pick the pipeline at the top.
 
-### Case Config → Pipelines (admin)
+### YisraCase Config → Pipelines (admin)
 
 Create and edit pipelines and stages: order, keys, labels, bucket mapping, lane, terminal,
 client visibility, the default rec text. Each stage expands to its requirements sub-editor
@@ -278,11 +278,11 @@ the survivor's is kept.
 |---|---|---|
 | A lead's timeline shows nothing after "Agreement sent" | No matter pipeline resolves — the lead has no chapter/subtype yet | Set the subtype; until then the generic "Retained" placeholder is correct |
 | Advance to an Intake stage fails with 400 on a retained case | The matter pipeline has no Intake keys; resolution is by the pipeline the case is on | Use the numeric stage id in the advance control |
-| Case Config won't let you activate a stage | Its key is active on a pipeline of the other role (the hand-off rule) | Rename the key, or leave it inactive — never force it |
+| YisraCase Config won't let you activate a stage | Its key is active on a pipeline of the other role (the hand-off rule) | Rename the key, or leave it inactive — never force it |
 | A requirement never becomes done | Its detector's basis isn't happening (e.g. the checklist isn't being completed) | Change the detector, or override it per case; don't expect staff marking |
 | Requirement key rename refused | A case has an override on that key | Clear the override(s) first |
 | Status text changed by itself | An advance ran; the stage's status label overwrote it | Expected — set status via the stage, or accept the overwrite |
-| A client sees "Active now" on the wrong step | Ordering is stage order, then requirement order, first required client-owned outstanding step | Reorder requirements in Case Config, or set the owner to `staff` |
+| A client sees "Active now" on the wrong step | Ordering is stage order, then requirement order, first required client-owned outstanding step | Reorder requirements in YisraCase Config, or set the owner to `staff` |
 
 ---
 

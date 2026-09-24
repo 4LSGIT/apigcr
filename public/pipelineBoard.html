@@ -183,7 +183,7 @@ async function init() {
     const d = await api('/api/pipeline-admin/templates', 'GET');
     templates = (d.templates || []).filter(t => t.active);
     if (!templates.length) {
-      showMsg('No active pipeline templates. Create one in Case Config → Pipelines.');
+      showMsg('No active pipeline templates. Create one in YisraCase Config → Pipelines.');
       return;
     }
     E('pb-template').innerHTML = templates.map(t =>

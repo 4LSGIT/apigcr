@@ -1,6 +1,7 @@
 # 13 — Custom Fields
 
-**Where:** Sidebar → Settings → **Custom Fields**.
+**Where:** More → **YisraCase Config** → the **Fields** tab (moved there from
+the Settings page in CFG-1 — one editor per setting, never two).
 **Table:** `field_defs`.
 **Design:** `ref/CUSTOM_FIELDS_DESIGN.md` — a living doc; its §7 table says which
 parts of the feature have shipped. This chapter grows as they do.
@@ -8,7 +9,7 @@ parts of the feature have shipped. This chapter grows as they do.
 ## For operators
 
 Custom fields are the firm's own fields on cases and contacts — a Clio matter
-number, a referral source — added from a settings screen instead of by a
+number, a referral source — added from a config screen instead of by a
 developer.
 
 **What works today:** this screen *defines* fields, and fields can *hold
@@ -21,7 +22,7 @@ safe: it changes nothing anyone else sees.
 
 ### Adding a field
 
-1. Pick **Cases** or **Contacts** at the top of the section.
+1. Pick the **Cases** or **Contacts** tab at the top.
 2. Type the **label** — what staff will see. The **key** fills itself in from
    the label (`Clio matter` → `cf_clio_matter`). Change it if you like, but
    once the field is created **the key is permanent**.
@@ -40,22 +41,27 @@ safe: it changes nothing anyone else sees.
 ### Changing and retiring fields
 
 - **Edit** on a field's card opens its options and validation. Label, type,
-  sort order, options and validation can all change; press that card's
-  **Save**. The key never changes — to "rename" one, deactivate it and create
-  a new field.
-- **Once any record holds a value, two things lock** (the save is refused
-  with a message saying so):
+  options and validation can all change; press that card's **Save**. The key
+  never changes — to "rename" one, deactivate it and create a new field.
+- **Reordering:** drag a card by its handle (or use the arrows). The order
+  saves immediately — there is no separate sort-order box; position is the
+  order.
+- **Usage badges:** each card shows how many records hold a value (or
+  *unused*). The count and the locks below come from the same check, so what
+  the badge says is what the save will enforce.
+- **Once any record holds a value, two things lock** (the editor shows them
+  locked, and the save is refused with a message if forced another way):
   - the **type** — changing it would silently change how every stored value
     compares. To really change a type, create a new field and have the values
     copied across.
-  - each **option value** that some record holds — the stored value is what
-    everything matches on. Its *label* can still change freely. An option no
-    record uses can be deleted outright.
-- **Retiring an option** instead of deleting it keeps the records that hold it
-  readable and hides it from pickers. The editor has no retire switch yet —
-  it's set through the API (`"active": false` on the option; see `options`
-  under *Columns worth knowing* below). Saving the card from the editor keeps
-  a retired option retired.
+  - each **option value** — the stored value is what everything matches on.
+    The editor freezes the values of a field that holds data (a lock icon
+    marks them); their *labels* still change freely. On a field with no data,
+    values and options stay fully editable and deletable.
+- **Retiring an option** (the **Retire** button on its row) keeps the records
+  that hold it readable and hides it from pickers; **Reactivate** brings it
+  back. Retired options show dimmed with a *retired* chip, and saving the
+  card keeps them retired.
 - **Deactivate** retires a field. There is no delete. **Reactivate** brings it
   back exactly as it was. Values already stored stay stored; while the field
   is inactive nothing can write it, and its column is removed (it comes back
@@ -144,8 +150,9 @@ The server enforces these; the screen just helps you meet them.
 | `ref/migrations/2026-09-24_field_defs.sql` | The table. Column COMMENTs carry the invariants. |
 | `services/fieldDefService.js` | Validation, the cached read API, create / update / activate. |
 | `routes/api.fieldDefs.js` | HTTP mapper. |
-| `public/settings.html` | The Custom Fields section (`cf*` functions). |
+| `public/caseconfig/fields.html` | The Fields tab of YisraCase Config (`cf*` functions) — the editor since CFG-1. |
 | `tests/fieldDefs.s1.test.js` | Key regex, collision, shape, immutability, cache, gating, UI↔service pins. |
+| `tests/fieldDefs.cfg1.test.js` | CFG-1: the usage endpoint, predicate parity, the settings.html deletions, the rename. |
 | `ref/migrations/2026-09-24_custom_columns.sql` | S2: `cases.custom` + `contacts.custom`. A table rebuild (ALGORITHM=COPY) — see its header. |
 | `services/caseService.js` / `services/contactService.js` | `updateCase` / `updateContact` — the only writers of `custom`. |
 | `tests/customFields.s2.test.js` | Value rules, the one-UPDATE composition, per-key changes, post-data locks, containment, the `custom` JSON-path grep (allowlists the reconciler). |
@@ -163,6 +170,7 @@ editor this one was cloned from. Envelope `{ status: 'success', … }` /
 | Route | Does |
 |---|---|
 | `GET /api/field-defs?entity=` | Every def for the entity (`case` or `contact`), inactive included, ordered `sort_order, id`. |
+| `GET /api/field-defs/usage?entity=` | `{ field_key: count }` of records holding a value, every def incl. inactive. Shares the type-lock's data-exists predicate, so the editor's badges and the 409s below always agree. |
 | `POST /api/field-defs` | Create → `201 { id, entity, field_key }`. Duplicate key → `409`. |
 | `PATCH /api/field-defs/:id` | `label`, `field_type`, `options`, `validation`, `show_when`, `sort_order`. The **merged** row is validated whole, so select → text needs `options: null` in the same patch. |
 | `POST /api/field-defs/:id/deactivate` · `/reactivate` | `active` 0 / 1. Idempotent. |
@@ -273,8 +281,9 @@ registry: for every **active** def, a VIRTUAL generated column named exactly
 
 - `options` — `[{ value, label, active }]`, select / multiselect only, NULL
   otherwise. `active: false` retires an option. An option sent WITHOUT
-  `active` keeps its stored state (the editor round-trips `{value, label}`
-  only); a new one defaults to `true`.
+  `active` keeps its stored state (so an API caller that round-trips
+  `{value, label}` can't silently reactivate anything); a new one defaults to
+  `true`. The Fields editor always sends the state its toggle shows.
 - `validation` — the v1 keys above; `max_len`, `pattern`, `min`, `max` are
   enforced on every write. `required` is not (renderers own it).
 - `show_when` — conditional display, **stored but not yet evaluated**. The

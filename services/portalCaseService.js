@@ -404,7 +404,7 @@ function buildNextSteps(pipeline, resolved) {
       // Config hole — never fall back to internal_label (portal invariant).
       console.warn(
         `[portalCaseService] client-visible requirement "${r.requirement_key}" has no ` +
-        `client_label — step dropped from the portal card (staff: set one in Case Config)`
+        `client_label — step dropped from the portal card (staff: set one in YisraCase Config)`
       );
       continue;
     }

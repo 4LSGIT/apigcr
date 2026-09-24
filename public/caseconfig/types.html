@@ -97,7 +97,7 @@
 
 <div class="toolbar">
   <i class="fa-solid fa-circle-info"></i>
-  <span>Edits the shared <b>fe-case_types</b> setting — the same data the Settings tab edits.
+  <span>The one editor for the <b>fe-case_types</b> vocabulary (the old Settings-page copy is gone).
         Renames can update pipeline templates; existing cases always keep their old value.</span>
   <span style="flex:1"></span>
   <button class="btn btn-primary" onclick="addType()"><i class="fa-solid fa-plus"></i> New Type</button>
@@ -112,17 +112,17 @@
 // TYPES & SUBTYPES SUB-PAGE (Case Config manager)
 //
 // ONE combined editor for both levels — the fe-case_types blob
-// ({"Type":["Subtype",...]}) is a single app_settings row and both
-// this page and settings.html write it through the SAME endpoints
-// (GET /api/app-settings, PUT /api/app-settings/fe-case_types).
-// There is deliberately NO second store and NO server-side cache.
+// ({"Type":["Subtype",...]}) is a single app_settings row, edited
+// ONLY here since CFG-1 deleted the settings.html copy (that copy
+// had no usage check and no template repoint — a rename from there
+// stranded pipeline templates). There is deliberately NO second
+// store and NO server-side cache.
 //
-// Persistence model (differs from settings.html's dirty+Save on
-// purpose): every mutation re-fetches the blob fresh, applies the
-// one change, and PUTs immediately. That keeps this page and
-// settings.html from clobbering each other's unsaved work, and it
-// lets the rename/delete flows (usage lookups, template updates)
-// commit atomically per action.
+// Persistence model: every mutation re-fetches the blob fresh,
+// applies the one change, and PUTs immediately. Two open copies of
+// this page can't clobber each other's unsaved work, and the
+// rename/delete flows (usage lookups, template updates) commit
+// atomically per action.
 //
 // Rename flow:  usage counts via GET /api/pipeline-admin/usage →
 //   warn; optionally PUT each matching pipeline template to the new
@@ -159,7 +159,7 @@ async function fetchBlob() {
   let map;
   try { map = JSON.parse(row.value); } catch { map = null; }
   if (!map || Array.isArray(map) || typeof map !== 'object') {
-    throw new Error('fe-case_types is not a {"Type":["Subtype",...]} object — fix it in Settings first');
+    throw new Error('fe-case_types is not a {"Type":["Subtype",...]} object — fix the app_settings row via the DB console first');
   }
   return Object.entries(map).map(([name, subs]) => ({
     name, subs: Array.isArray(subs) ? subs.map(String) : []

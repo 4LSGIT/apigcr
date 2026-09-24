@@ -44,7 +44,7 @@ Sorted by start time, ascending; **all-day rows come first within their day**.
 
 - **What** — the item's label, with its `type_key` muted beside it. A row with
   no registry type reads *unmapped* rather than showing a blank; mint it in
-  *Case Config → Calendar Types*.
+  *YisraCase Config → Calendar Types*.
 - **Attached to** — the case, contact or docket, as a link where there is
   something to open. A docket with no matching case yet is plain text and says
   so: it resolves by itself the moment that case is created.

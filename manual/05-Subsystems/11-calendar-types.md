@@ -1,6 +1,6 @@
 # Calendar Types — the item-type registry and picker options
 
-**Where:** More → Case Config → **Calendar Types** tab.
+**Where:** More → YisraCase Config → **Calendar Types** tab.
 **Tables:** `calendar_item_types` (identity), `calendar_type_options` (what pickers offer).
 **Design:** `ref/UNIFIED_EVENTS_DESIGN_V0_5.md` §3.3 (A1). Shipped in Unified Events U2 (read layer) and U2b (this page + options).
 
@@ -130,7 +130,7 @@ Three fixed entries bracket the list:
 *Other* is the complement of the list, computed on the server from the same
 registry the dropdown reads. So an appointment keyed to a hearing type, or to a
 type someone later deactivated, is always reachable from exactly one entry —
-nothing falls between the options, and adding a meeting type in Case Config
+nothing falls between the options, and adding a meeting type in YisraCase Config
 moves it out of *Other* on the next cache turn.
 
 ## Unmapped types (footer)

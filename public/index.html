@@ -1520,7 +1520,7 @@
             // an unmapped row rather than just as a string.
             const label = calxEsc(r.title || '(untitled)')
               + (r.type_key ? ' <span class="calx-key">' + calxEsc(r.type_key) + '</span>'
-                            : ' <span class="calx-key" title="no registry type — mint one in Case Config → Calendar Types">unmapped</span>');
+                            : ' <span class="calx-key" title="no registry type — mint one in YisraCase Config → Calendar Types">unmapped</span>');
             row.innerHTML =
               '<td class="calx-when">' + calxWhen(r) + '</td>' +
               '<td class="calx-kind"><i class="fa-solid ' + icon + '"></i> ' + calxEsc(kind) + '</td>' +
@@ -2743,7 +2743,7 @@
   <br><br>
   <!-- How a case is shaped: its fields, the steps on it, what runs on it by
        itself, and the saved views you read it back through. -->
-  <button class="big-button" data-target="caseConfigDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sliders fa-2xl"></i><br><br>Case Config</button>
+  <button class="big-button" data-target="caseConfigDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sliders fa-2xl"></i><br><br>YisraCase Config</button>
   <button class="big-button" data-target="checklistsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.8s"><i class="fa-solid fa-list-check fa-2xl"></i><br><br>Notes &amp; Lists</button>
   <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-robot fa-2xl"></i><br><br>Automations</button>
   <button class="big-button" data-target="viewsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.2s"><i class="fa-solid fa-table-list fa-2xl"></i><br><br>Views</button>

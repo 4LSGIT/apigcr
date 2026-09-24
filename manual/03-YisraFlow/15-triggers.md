@@ -348,7 +348,7 @@ Two pieces of configuration, in two places, and they are independent:
 
 | Piece | Where | Says |
 |---|---|---|
-| `approaching_offsets` | Case Config → **Calendar Types** → a type's editor | *when* the event fires for items of that type — e.g. `7, 1` = seven days out and again the day before. Empty = never. |
+| `approaching_offsets` | YisraCase Config → **Calendar Types** → a type's editor | *when* the event fires for items of that type — e.g. `7, 1` = seven days out and again the day before. Empty = never. |
 | the rule | YisraFlow → **Triggers** | *what happens* when it fires |
 
 **Every type ships with no offsets**, so the job emits nothing until somebody sets one. Set the offsets and the event starts firing whether or not a rule is listening (harmless, just wasted rows) — so **create the rules first, then the offsets**.
@@ -369,7 +369,7 @@ Scheduling lives in data, not in a deploy: Scheduled Jobs → `internal_function
 Order of operations for turning reminders on:
 
 1. Write the rule(s) on `calendar.approaching`, filtering `data.type_key` and `data.offset_days`.
-2. Set `approaching_offsets` on the type in Case Config.
+2. Set `approaching_offsets` on the type in YisraCase Config.
 3. `emit_calendar_approaching { "dry_run": true }` in apiTester — check `would_emit` looks like the items you expect.
 4. Create the nightly scheduled job.
 

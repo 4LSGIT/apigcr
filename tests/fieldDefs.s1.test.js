@@ -2,7 +2,9 @@
 //
 /**
  * Custom-fields arc S1 — services/fieldDefService.js, routes/api.fieldDefs.js,
- * and the settings.html "Custom Fields" editor contract.
+ * and the Fields editor contract (public/caseconfig/fields.html since CFG-1;
+ * the settings.html section it grew up in is gone — tests/fieldDefs.cfg1.test.js
+ * guards the deletion and the usage endpoint).
  *
  * Proof obligations:
  *
@@ -22,8 +24,8 @@
  *      the TTL); a bump during an in-flight load is not overwritten by it.
  *   6. ROUTES: inventory; the same auth middleware stack as the contact-role-
  *      type routes; 400/404/409 mapping; 500 never leaks DB text.
- *   7. settings.html: inline scripts parse; the UI's key regex / type list /
- *      validation map are pinned equal to the service's.
+ *   7. caseconfig/fields.html: inline scripts parse; the UI's key regex /
+ *      type list / validation map are pinned equal to the service's.
  *
  * No real MySQL in this repo's test run: the db is the house dispatch-on-SQL-
  * text stub (an in-memory registry world), never scripted result arrays. The
@@ -544,6 +546,7 @@ describe('routes/api.fieldDefs.js', () => {
   test('inventory — no DELETE route', () => {
     expect(routesOf(router).map(r => `${r.methods.join(',').toUpperCase()} ${r.path}`)).toEqual([
       'GET /api/field-defs',
+      'GET /api/field-defs/usage',        // CFG-1 — tests/fieldDefs.cfg1.test.js
       'POST /api/field-defs',
       'PATCH /api/field-defs/:id',
       'POST /api/field-defs/:id/deactivate',
@@ -628,26 +631,29 @@ describe('routes/api.fieldDefs.js', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// 7. settings.html editor contract
+// 7. caseconfig/fields.html editor contract (moved from settings.html
+//    in CFG-1 — same pins, new surface)
 // ─────────────────────────────────────────────────────────────
 
-describe('settings.html Custom Fields editor', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'public/settings.html'), 'utf8');
+describe('caseconfig/fields.html Fields editor', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public/caseconfig/fields.html'), 'utf8');
 
   test('inline scripts pass node --check', () => {
     const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
     expect(blocks.length).toBeGreaterThan(0);
     blocks.forEach((block, i) => {
-      const tmp = path.join(os.tmpdir(), `fielddefs-settings-${process.pid}-${i}.js`);
+      const tmp = path.join(os.tmpdir(), `fielddefs-fields-${process.pid}-${i}.js`);
       fs.writeFileSync(tmp, block);
       try { execFileSync('node', ['--check', tmp], { stdio: 'pipe' }); }
       finally { fs.unlinkSync(tmp); }
     });
   });
 
-  test('carries the section, the table routes, and the permanence warning', () => {
-    expect(html).toMatch(/id="customFieldsSection"/);
+  test('carries the entity tabs, the table routes, and the permanence warning', () => {
+    expect(html).toMatch(/data-cf-entity="case"/);
+    expect(html).toMatch(/data-cf-entity="contact"/);
     expect(html).toMatch(/api\('\/api\/field-defs', 'GET', \{ entity: cfEntity \}\)/);
+    expect(html).toMatch(/api\('\/api\/field-defs\/usage', 'GET', \{ entity: cfEntity \}\)/);
     expect(html).toMatch(/\/api\/field-defs\/\$\{t\.id\}\/\$\{verb\}/);
     expect(html).toMatch(/The key is permanent/);
     expect(html).toMatch(/cfInit\(\);/);
@@ -672,5 +678,16 @@ describe('settings.html Custom Fields editor', () => {
     const save = html.match(/async function cfSave\(i\) \{([\s\S]*?)\n\}/)[1];
     expect(save).toMatch(/'PATCH'/);
     expect(save).not.toMatch(/show_when\s*:/);
+  });
+
+  test('options round-trip active — the retire toggle is real (CFG-1)', () => {
+    // The wire shape always carries the shown state; dropping `active` here
+    // would silently reactivate every retired option on each save (the
+    // service keeps stored state only for options that OMIT the key).
+    const out = html.match(/function cfOptionsOut\(t\) \{([\s\S]*?)\n\}/)[1];
+    expect(out).toMatch(/active: o\.active !== false/);
+    // The per-option toggle exists and flips the flag.
+    expect(html).toMatch(/data-cf-oretire/);
+    expect(html).toMatch(/o\.active = o\.active === false;/);
   });
 });

@@ -76,7 +76,7 @@ they live behind **More Features**, and the section READMEs refer to that as
 "the **More** menu." What you'll find there:
 
 - **Staff tools** — Reports, Views, Documents, Video Manager, Redirects Manager,
-  Asset Manager, Form Builder, Form Inbox, Campaigns, Case Config, Court
+  Asset Manager, Form Builder, Form Inbox, Campaigns, YisraCase Config, Court
   Preview, Feature Requests, Support Inbox, Signatures, Automations, Manuals
   (this manual). Covered in [05-Subsystems](../05-Subsystems/),
   [02-YisraForms](../02-YisraForms/), [03-YisraFlow](../03-YisraFlow/) and
