@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-23T23:40:10.075Z
+-- Generated: 2026-09-24T07:54:48.551Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:b11f19f0850ae2359a6161bb5e1bc801
+-- Fingerprint: sha256:15b662a034887828e039d60952a3d7b2
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -978,7 +978,7 @@ CREATE TABLE `contacts` (
   `contact_state` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_zip` char(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_dob` date DEFAULT NULL,
-  `contact_ssn` char(11) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'SSN for persons, EIN for orgs BY DESIGN — inherits masking AND the resolver block (templates cannot emit it)',
+  `contact_ssn` char(11) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'SSN for persons, EIN for orgs BY DESIGN — one column, two meanings; branch on contact_kind. Ordinary readable/writable column since the 2026-09-24 ruling (staff, resolver, esign templates, reports). Still refused by portal cards (client-facing) and stripped from domain-event envelopes (they outlive the row). NOT NULL but usually empty; format inconsistent (both 123456789 and 123-45-6789 occur) — strip non-digits before comparing.',
   `contact_marital_status` enum('Single','Married','Separated','Divorced','Widowed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `contact_tags` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
