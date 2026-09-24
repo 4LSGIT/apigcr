@@ -453,6 +453,7 @@ ref/migrations/2026-09-10_role_attrs_schema_m7.sql
 ref/migrations/2026-09-15_email_log_delivery_info.sql
 ref/migrations/2026-09-17_decision_context_html.sql
 ref/migrations/2026-09-23_trustee_judge_decommission_m6.sql
+ref/migrations/2026-09-24_contact_ssn_comment.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -950,6 +951,7 @@ tests/prefillFieldsUi.test.js
 tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/refreshonmiss.k3.test.js
+tests/reportSchemaDenylist.test.js
 tests/requirementService.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.doorbell.test.js
