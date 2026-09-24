@@ -1,6 +1,6 @@
 # Custom Fields — Design & Pilot (living doc)
 
-**Status: DESIGN RATIFIED 2026-09-22 · S0 SHIPPED 2026-09-24 @ `e340356` · S1 SHIPPED 2026-09-24 @ `9bdc995` · S2 SHIPPED 2026-09-24 @ `45ac909` · S3 SHIPPED 2026-09-24 @ `e6e262a` · CFG-1 BUILT 2026-09-24 (ships in this commit — Fields tab of the renamed YisraCase Config shell, `GET /api/field-defs/usage`, settings.html Case Types + Custom Fields editors deleted; stamp the hash at close)**
+**Status: DESIGN RATIFIED 2026-09-22 · S0 SHIPPED 2026-09-24 @ `e340356` · S1 SHIPPED 2026-09-24 @ `9bdc995` · S2 SHIPPED 2026-09-24 @ `45ac909` · S3 SHIPPED 2026-09-24 @ `e6e262a` · CFG-1 SHIPPED 2026-09-24 @ `0a0aa76` (live in rev `svpcac-01575-kqg` — Fields tab of the renamed YisraCase Config shell, `GET /api/field-defs/usage`, settings.html Case Types + Custom Fields editors deleted)**
 Living doc — update the Status line and the §7 slice table as slices ship. Doc≠code divergences found mid-work go to the docs-debt queue (scratch `ns=docs`), per house rule.
 Manager boot state: scratch `ns=fred`, key `customfields_state`.
 Operator chapter: `manual/05-Subsystems/13-custom-fields.md` — every slice that changes what staff see extends it.
