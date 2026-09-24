@@ -20,9 +20,13 @@
  *     `contact_phone` reaching contact_phones are things the old inline UPDATE
  *     could not do; if someone reinstates raw SQL here, both stop happening
  *     and no other test notices.
- *   - The contact_ssn strip is the ONLY thing keeping SSN off the automation
- *     surface: it is on the service whitelist (the staff routes write it), so
- *     a dropped `delete` would silently make SSN writable from a workflow.
+ *   - contact_ssn is an ORDINARY writable column, and is pinned as such. It
+ *     was stripped here for about ten minutes on 2026-09-24; Fred reversed it
+ *     (a bankruptcy firm puts the SSN on Form 121 and staff read it all day).
+ *     Pinned so the next reader does not "harden" it back by reflex. What
+ *     stays closed is elsewhere and narrower: domainEvents strips SSN from
+ *     envelopes, which persist independently of the contact, and portal cards
+ *     may never carry it — those go to clients, not staff.
  *   - The scalar-only gate: the service hands phones/emails/addresses arrays to
  *     the aggregate reconcilers, which END child rows. Nothing could reach that
  *     path from a workflow before this slice, and a missing gate here would
@@ -188,10 +192,10 @@ describe('update_contact — delegates to contactService.updateContact', () => {
 // contact_ssn — stripped, silently
 // ─────────────────────────────────────────────────────────────
 
-describe('update_contact — contact_ssn is stripped', () => {
-  test('SSN is dropped and the sibling fields still land', async () => {
-    // contact_ssn IS on the service whitelist — this strip is the only thing
-    // keeping it off the automation surface.
+describe('update_contact — contact_ssn is an ordinary writable column', () => {
+  test('SSN lands on the row alongside its siblings', async () => {
+    // Reversed 2026-09-24: this function briefly stripped contact_ssn. A strip
+    // re-added here fails this test, which is the point of pinning it.
     const db = stubDb({ row: PERSON });
 
     const out = await fns.update_contact({
@@ -200,24 +204,28 @@ describe('update_contact — contact_ssn is stripped', () => {
     }, db);
 
     const m = updateMap(db.updates[0]);
-    expect(m).not.toHaveProperty('contact_ssn');
-    expect(db.updates[0].params).not.toContain('123-45-6789');
+    expect(m.contact_ssn).toBe('123-45-6789');
     expect(m.contact_tags).toBe('intake-complete');
-    expect(out.output.updated_fields).toEqual(['contact_tags']);
+    expect(out.output.updated_fields).toEqual(['contact_ssn', 'contact_tags']);
   });
 
-  test('SSN alone leaves nothing to write', async () => {
+  test('SSN on its own is a complete write, not an empty one', async () => {
     const db = stubDb({ row: PERSON });
-    await expect(
-      fns.update_contact({ contact_id: CID, fields: { contact_ssn: '123456789' } }, db)
-    ).rejects.toThrow('update_contact: no writable fields');
-    expect(db.updates).toHaveLength(0);
+
+    const out = await fns.update_contact(
+      { contact_id: CID, fields: { contact_ssn: '123456789' } }, db);
+
+    expect(db.updates).toHaveLength(1);
+    expect(updateMap(db.updates[0]).contact_ssn).toBe('123456789');
+    expect(out.output.updated_fields).toEqual(['contact_ssn']);
   });
 
-  test('the caller’s params object is not mutated by the strip', async () => {
-    const params = { contact_id: CID, fields: { contact_ssn: '123456789', contact_tags: 'vip' } };
+  test('the caller’s params object is not mutated', async () => {
+    // The old inline function assigned back into `fields`; neither this
+    // adapter nor the service may.
+    const params = { contact_id: CID, fields: { contact_kind: ' ORG ', contact_org_name: 'Acme LLC' } };
     await fns.update_contact(params, stubDb({ row: PERSON }));
-    expect(params.fields.contact_ssn).toBe('123456789');
+    expect(params.fields.contact_kind).toBe(' ORG ');
   });
 });
 
@@ -239,8 +247,8 @@ describe('update_contact — aggregates are rejected', () => {
   });
 
   test('an aggregate array is reported even when it is the only key', async () => {
-    // Checked BEFORE the ssn strip, so the error names the real problem
-    // instead of "no writable fields".
+    // The error names the real problem rather than falling through to the
+    // service's generic whitelist message.
     const db = stubDb({ row: PERSON });
     await expect(
       fns.update_contact({ contact_id: CID, fields: { phones: [] } }, db)
