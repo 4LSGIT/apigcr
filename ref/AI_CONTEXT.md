@@ -23,6 +23,25 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **SSN is an ordinary column (09-24):** `contacts.contact_ssn` stopped being
+  special. Removed: `resolverService.BLOCKED_COLUMNS.contacts`, the
+  `contact_ssn` / `contact_dob` entries in `lib/reportSchema/manifest.js`
+  `DENIED_COLUMNS`, the strip in `update_contact`, and the omission from
+  `lookup_contact`'s SELECT. `contactService.stripSsn` turned out to be DEAD
+  CODE — defined, exported, imported by caseService, called nowhere — so the
+  "never returned by any function in this service" header rule had been false
+  for some time; `getContact` returns it via `SELECT *`, `getCase`'s clients
+  include via `SELECT co.*`, and `public/case.html` renders it in the Clients
+  table. Rationale: the firm files Form 121 and staff read the number all day.
+  STILL REFUSED, for reasons that are NOT secrecy-from-staff — do not "fix"
+  these: `lib/portalCardEngine.js` (its own deny-by-default whitelist; those
+  values reach a CLIENT browser), `lib/domainEvents.js` (envelopes persist
+  independently of the contact row), and the external-forms prefill ceiling
+  (public unauthenticated endpoint). `listContacts` still omits it — payload
+  size, not secrecy. New modifiers `ssn_mask` (`xxx-xx-6789`) and `ssn_last4`,
+  added to BOTH chains (`services/resolverService.js`, `lib/unplacehold.js`)
+  and matching `esignPrefillService.ssnMasked`. Column COMMENT corrected by
+  `ref/migrations/2026-09-24_contact_ssn_comment.sql`.
 - **G2 document generation (09-01):** `contract_templates.purpose`
   ('esign'|'generate'|'both') + `file_subfolder`;
   `services/documentGenerateService.js`; internal fn

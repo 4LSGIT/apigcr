@@ -112,8 +112,12 @@ the template service rejects it at save time with `ESIGN_BAD_RESOLVER`.
 | `firm` | `name`, `phone`, `email`, `website`, `address`, `address_line1`, `address_line2` |
 | `attorney` | `name` |
 
-There is no full-SSN resolver, only `ssn_last4` and `ssn_masked` — the full
-number cannot be placed on a document through this path at all.
+`ssn_last4` and `ssn_masked` are the short forms most documents want. They
+are no longer the only path: since the 2026-09-24 ruling an expression
+resolver can reach the column directly with `{{contacts.contact_ssn}}` and
+get all nine digits — which is what Form 121 needs. Both render the masked
+form identically (`xxx-xx-6789`), so the same number never looks different
+on two documents.
 
 Formatting helpers (`formatPhone`, `formatDate`, `formatMoney`, `formatNumber`)
 normalize output so two templates don't render the same value differently.

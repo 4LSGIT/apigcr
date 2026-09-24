@@ -87,9 +87,13 @@ Anything else is "soft unresolved" — placeholder stays as-is, doesn't error.
 
 | Table | Column | Reason |
 |---|---|---|
-| `contacts` | `contact_ssn` | Sensitive |
-| `users` | `password` | Sensitive |
-| `users` | `password_hash` | Sensitive |
+| `users` | `password` | Credential material |
+| `users` | `password_hash` | Credential material |
+
+`contacts.contact_ssn` was on this list until 2026-09-24 and is not any more.
+It resolves like any other column; use `|ssn_mask` or `|ssn_last4` when you
+want the short form. The client portal still refuses it through its own
+separate whitelist, which this table does not govern.
 
 A reference to a blocked column **hard-fails** with `errorType: 'security'`. Different from unknown tables.
 
@@ -103,6 +107,8 @@ Pipe one or more modifiers after the field reference:
 | `time:FORMAT` | `{{appts.appt_date\|time:h:mma}}` | `2:00pm` |
 | `phone` | `{{contacts.contact_phone\|phone}}` | `(313) 555-1234` |
 | `email_mask` | `{{contacts.contact_email\|email_mask}}` | `s***@example.com` |
+| `ssn_mask` | `{{contacts.contact_ssn\|ssn_mask}}` | `xxx-xx-6789` |
+| `ssn_last4` | `{{contacts.contact_ssn\|ssn_last4}}` | `6789` |
 | `upper` | `{{contacts.contact_fname\|upper}}` | `STUART` |
 | `lower` | `{{contacts.contact_fname\|lower}}` | `stuart` |
 | `cap` | `{{contacts.contact_fname\|cap}}` | `Stuart` |

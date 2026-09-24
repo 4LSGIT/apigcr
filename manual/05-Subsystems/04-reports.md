@@ -243,8 +243,15 @@ answer:
   open, file and close dates.
 - **Money.** No billing or payments data is in the reporting set. Revenue, fees
   collected and accounts receivable can't be reported on.
-- **Client SSNs or dates of birth, or any password or access token.** These are
-  permanently blocked, in every form, including through an alias or a subquery.
+- **Passwords and access tokens.** Permanently blocked, in every form,
+  including through an alias, a subquery or a backtick.
+
+Client SSNs and dates of birth used to be on that list and came off it on
+2026-09-24 — a report that cannot show a date of birth cannot answer ordinary
+questions. Two traps if you report on them: `contact_ssn` is NOT NULL but
+usually empty, so filter on `contact_ssn <> ''` rather than `IS NOT NULL`, and
+its format is inconsistent (both `123456789` and `123-45-6789` occur), so
+strip non-digits before comparing. `contact_dob` is NULL on most rows.
 
 If you ask for one of these, the AI will refuse and tell you why. That refusal is
 correct — take it at face value rather than rephrasing until something slips

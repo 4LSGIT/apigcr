@@ -575,7 +575,7 @@ Fetch a contact by ID. Returns the row as `output`.
 |---|---|---|---|
 | `contact_id` | string | yes (placeholderAllowed) | |
 
-Output shape: a `contacts` row with all non-blocked columns. `contact_ssn` is excluded (blocked column).
+Output shape: a `contacts` row with all non-blocked columns, `contact_ssn` included (2026-09-24 ruling). Whatever you map out of it with `set_vars` is recorded in the step log.
 
 #### `update_contact`
 
@@ -600,7 +600,9 @@ contact_tags, contact_notes, contact_clio_id, contact_phone2, contact_email2
 - `contact_created` (set once at insert)
 - `contact_updated` (auto-managed)
 
-Note: `contact_ssn` *is* in the writable allowlist — contradicting the resolver's blocklist. The resolver blocks reading SSN; this function allows writing it. Intentional asymmetry: automations might need to ingest an SSN from a form submission, but no automation should be allowed to read one back out.
+Note: `contact_ssn` is writable here and readable through `lookup_contact`. It was briefly stripped from this function on 2026-09-24 and the strip was reversed the same day: the firm files Form 121, staff read the number all day, and there was no sense in the automation surface being the one place that could not touch it.
+
+This function is a thin adapter over `contactService.updateContact` — the service owns the column whitelist, the contact-kind guards, propagation to the child phone/email/address rows, and the `contact.updated` event. Two things it will not accept: `phones` / `emails` / `addresses` arrays (scalar columns only), and a cross-contact phone or email collision, which throws rather than quietly moving the value off the other contact.
 
 DB triggers `contact_name_update` (recomputes derived names) and `after_contact_update` (auto-logs to `log` table) fire automatically — no need to log manually from the function.
 
@@ -1866,7 +1868,7 @@ internalFunctions.__validateParamsAgainstMeta(name, params)   // → null on suc
 
 1. **`set_test_var` is callable in production.** It's not a real function but it's not gated. Don't put it in production workflow templates.
 2. **`format_string` is workflow-only and stores into `output_var`.** Sequences should use the universal resolver via the action_config (placeholders are resolved automatically before the action runs). If you need string formatting in a sequence, build it into the message text directly.
-3. **`update_contact` and `update_appointment` blocklists differ from the resolver blocklist.** The resolver blocks *reading* SSN; `update_contact` allows *writing* it. The intent is automations can ingest sensitive data from forms but can't read it back out.
+3. **SSN is no longer special (2026-09-24).** This entry used to describe an asymmetry where the resolver blocked *reading* SSN while `update_contact` allowed *writing* it. Both halves are gone: `resolverService.BLOCKED_COLUMNS` no longer lists `contact_ssn`, `lookup_contact` returns it, and reports can select it. What still refuses it does so for reasons that are not secrecy-from-staff — the client portal and domain-event envelopes.
 4. **`{{}}` placeholders work everywhere `placeholderAllowed: true` is set on the param.** Where it's not set, the value is taken literally — useful for `function_name` selectors, enum fields, etc.
 5. **`get_appointments` and `query_db` both have a `format` param** — use `count` to just get the row count, `first` (query_db only) for a single row, `html_rows` for an HTML-formatted block ready for an email.
 6. **`evaluate_condition` `else: null` ends the workflow** — same as `set_next` with `null`. Useful for "if condition fails, we're done."
