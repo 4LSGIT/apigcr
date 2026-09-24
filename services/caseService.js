@@ -36,7 +36,6 @@
  */
 
 const crypto = require('crypto');
-const { stripSsn } = require('./contactService');
 const logService = require('./logService');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
 const { assertNoteLengths } = require('../lib/noteLimits');

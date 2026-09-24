@@ -92,15 +92,23 @@ describe('validateExpressionResolver', () => {
       .toThrow(expect.objectContaining({ code: 'ESIGN_BAD_RESOLVER' }));
   });
 
-  test('blocked column (contact_ssn) → ESIGN_BAD_RESOLVER', () => {
-    expect(() => prefill.validateExpressionResolver('{{contacts.contact_ssn}}'))
+  test('blocked column (users.password) → ESIGN_BAD_RESOLVER', () => {
+    expect(() => prefill.validateExpressionResolver('{{users.password}}'))
       .toThrow(expect.objectContaining({ code: 'ESIGN_BAD_RESOLVER' }));
   });
 
   test('blocked column inside a nested default is still caught', () => {
     expect(() => prefill.validateExpressionResolver(
-      '{{contacts.contact_fname|default:{{contacts.contact_ssn}}}}'
+      '{{contacts.contact_fname|default:{{users.password_hash}}}}'
     )).toThrow(expect.objectContaining({ code: 'ESIGN_BAD_RESOLVER' }));
+  });
+
+  test('contacts.contact_ssn is ACCEPTED — it stopped being a blocked column', () => {
+    // 2026-09-24 ruling: SSN is an ordinary column. The firm files Form 121,
+    // which wants all nine digits, so a template author may reach it. The
+    // mechanism is still pinned by the users.password cases above.
+    expect(() => prefill.validateExpressionResolver(
+      '{{contacts.contact_ssn}}')).not.toThrow();
   });
 
   test('trigger_data → ESIGN_BAD_RESOLVER (no trigger at send time)', () => {
@@ -263,9 +271,16 @@ describe('save-time expression validation', () => {
 
   test('expression with blocked column rejected at save', () => {
     expect(() => templateService.validateTemplateInput(
-      templateInput({ prefillSchema: [schemaEntry({ resolver: '{{contacts.contact_ssn}}' })] }),
+      templateInput({ prefillSchema: [schemaEntry({ resolver: '{{users.password}}' })] }),
       RESOLVER_NAMES
     )).toThrow(expect.objectContaining({ code: 'ESIGN_BAD_RESOLVER' }));
+  });
+
+  test('an SSN expression now SAVES — 2026-09-24 ruling', () => {
+    expect(() => templateService.validateTemplateInput(
+      templateInput({ prefillSchema: [schemaEntry({ resolver: '{{contacts.contact_ssn}}' })] }),
+      RESOLVER_NAMES
+    )).not.toThrow();
   });
 });
 

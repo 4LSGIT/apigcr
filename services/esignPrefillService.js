@@ -328,18 +328,17 @@ const RESOLVERS = Object.freeze({
   'debtor2.address_street': (ctx) => s(ctx.debtor2 && ctx.debtor2.contact_address),
   'debtor2.address_csz':    (ctx) => composeCsz(ctx.debtor2),
 
-  // ── G4: SSN — LAST FOUR ONLY, BY DESIGN ───────────────────────────────────
-  // There is no full-SSN resolver and there must not be one. A notice of
-  // filing carries the masked form because that is what the recipient needs to
-  // identify the case; a template author who could reach the other nine digits
-  // could put them on any document, and the whole point of a bespoke resolver
-  // over a dot-path eval is that the reachable set is a list somebody chose.
+  // ── G4: SSN — LAST FOUR AND MASKED, AS CONVENIENCES ───────────────────────
+  // These two keys exist because almost every document that wants an SSN wants
+  // the short form: a notice of filing carries the masked value because that is
+  // what the recipient needs to identify the case.
   //
-  // resolverService.BLOCKED_COLUMNS.contacts = ['contact_ssn'] refuses the
-  // column to EXPRESSION resolvers for the same reason. These two functions
-  // are the only sanctioned path to any part of an SSN in the template layer;
-  // if a future document needs more, that is a decision somebody makes on
-  // purpose, in this file, with a comment saying why.
+  // They are no longer the ONLY path. resolverService.BLOCKED_COLUMNS stopped
+  // refusing contacts.contact_ssn on 2026-09-24 (Fred's ruling — the firm files
+  // Form 121, which wants all nine digits), so a template author can now write
+  // {{contacts.contact_ssn}} in an expression resolver and get the full number.
+  // That is deliberate: the reachable set is still a list somebody chose, and
+  // somebody chose to put the full column in it.
   //
   // Digits-only first: the column is char(11) and staff type it both ways
   // ('123-45-6789' and '123456789'). Anything that does not yield at least

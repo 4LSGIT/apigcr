@@ -33,6 +33,8 @@
 //   date:FORMAT / time:FORMAT / datetime:FORMAT
 //   phone           → (123) 456-7890
 //   email_mask      → t***@e*****.com
+//   ssn_mask        → ***-**-6789
+//   ssn_last4       → 6789
 //   upper/uppercase, lower/lowercase, cap/capitalize
 //
 // FORMAT TOKENS: YYYY MM MMMM MMM DD D Do DoW dddd ddd HH hh h mm ss A
@@ -56,9 +58,16 @@ const ALLOWED_TABLES = [
   'sequence_templates',
 ];
 
+// contacts USED to block contact_ssn. Removed 2026-09-24 on Fred's ruling:
+// the firm files Form 121, staff read the number all day, and the resolver
+// was the one surface pretending otherwise while case.html rendered it in a
+// table and getContact returned it via SELECT *. Treat it as an ordinary
+// column here. What still refuses SSN does so for reasons that are not
+// secrecy-from-staff: lib/portalCardEngine.js (its own deny-by-default
+// whitelist — those values land in a CLIENT browser) and lib/domainEvents.js
+// (envelopes persist independently of the contact row).
 const BLOCKED_COLUMNS = {
-  contacts: ['contact_ssn'],
-  users:    ['password', 'password_hash'],
+  users: ['password', 'password_hash'],
 };
 
 // ─────────────────────────────────────────────────────────────

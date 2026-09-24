@@ -11,7 +11,10 @@
  * Important:
  *   - contact_name, contact_lfm_name, contact_rname are trigger-computed
  *     from fname/mname/lname — never write to them directly
- *   - contact_ssn is NEVER returned by any function in this service
+ *   - contact_ssn is an ordinary column: getContact returns it (SELECT *),
+ *     listContacts does not (named columns — the bulk-fetch carve-out, a
+ *     payload-size choice, not a secrecy one). See AI_CONTEXT on the 2026-09-24
+ *     SSN ruling before "hardening" either one.
  *   - The after_contact_update trigger auto-logs changes — don't double-log
  *   - contact_phone is char(10) — normalize input (strip formatting)
  *   - contact_email is lowercased on write — equality is case-insensitive
@@ -72,7 +75,6 @@ const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
 
 const DEFAULT_LOG_LIMIT = 200;
-const SSN_COLUMN = 'contact_ssn';
 
 /**
  * The entity axis (org-contacts slice 1). Orthogonal to contact_type, which
@@ -90,16 +92,6 @@ const CONTACT_KINDS = new Set(['person', 'org']);
 /** contacts.contact_org_name is varchar(120). m3 widens the three derived
  *  name columns to match, so 120 is now the real ceiling on both sides. */
 const ORG_NAME_MAX = 120;
-
-/**
- * Strip SSN from a contact row or array of rows.
- */
-function stripSsn(row) {
-  if (!row) return row;
-  if (Array.isArray(row)) return row.map(r => stripSsn(r));
-  const { [SSN_COLUMN]: _ssn, ...clean } = row;
-  return clean;
-}
 
 /**
  * Normalize a phone number to 10 digits.
@@ -3088,6 +3080,5 @@ module.exports = {
   normalizeEmail,
   listContactSequences,
   listContactWorkflows,
-  stripSsn,
   resolveContactsByValue,
 };
