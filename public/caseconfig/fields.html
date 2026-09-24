@@ -115,6 +115,18 @@
     .cf-valid .cf-vf { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
     .cf-valid .cf-vf input[type=text] { width: 90px; }
     .cf-valid .cf-vf input.cf-pattern { width: 180px; }
+    /* show_when builder (S4) */
+    .cf-sw { margin: 4px 0 2px; }
+    .cf-sw-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .cf-sw-row input[type=text] { width: 170px; }
+    .cf-sw-row .cf-sw-list {
+      width: 190px; font-size: 13px; padding: 5px 8px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--surface); color: var(--text);
+      font-family: inherit; resize: vertical;
+    }
+    .cf-sw-row select { width: auto; }
+    .cf-sw-raw { margin: 4px 0 0; padding: 5px 7px; font-size: 11px; background: var(--surface-2);
+                 border: 1px solid var(--border); border-radius: 4px; overflow-x: auto; }
     .toggle-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
     .cf-ro { color: var(--text-muted); font-size: 11px; margin-top: 8px; }
 
@@ -180,6 +192,12 @@
   </div>
 </div>
 
+<!-- The record-side renderer. Loaded here ONLY for its show_when v1 parser
+     and operator list: the builder below and the renderer must agree on what
+     "a v1 condition" is, byte for byte, or this editor would happily save a
+     condition the record page then refuses to evaluate. One definition,
+     imported — not a second copy to drift. (custom-fields arc S4) -->
+<script src="/js/yc-custom-fields.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
 // FIELDS SUB-PAGE (YisraCase Config manager) — custom-fields CFG-1
@@ -211,8 +229,14 @@
 // key box is edited by hand; on existing fields it is display-only.
 // No delete: Deactivate is retirement. `indexed` is read-only (S3
 // reconciler) and n/a for multiselect (JSON column, never indexed).
-// show_when has NO UI here (S4) and Save never sends it, so a value
-// set through the API survives edits (the S1 contract, kept).
+// show_when (S4) has a SINGLE-CONDITION builder — {field, op, value},
+// the v1 vocabulary the record-side renderer evaluates. The S1 contract
+// that an API-set value survives an edit is KEPT, narrowed to where it
+// still matters: a stored condition this builder cannot represent (a
+// shape from some later vocabulary) is shown as read-only "advanced",
+// and Save OMITS show_when from the PATCH exactly as it always did, so
+// the stored value is untouched. Only a condition the builder can round-
+// trip is ever written back.
 //
 // Errors (409 lock messages included) render verbatim in the inline
 // status spans — never a dialog.
@@ -252,8 +276,22 @@ let cfNew = null;     // the Add form's draft
 let cfLoaded = false;
 let cfLoadTok = 0;    // drops out-of-order list responses on rapid entity switches
 
+/** show_when v1 (S4) — operators taken from the renderer, never re-listed. */
+const CF_SW_OPS = (window.YCCustomFields && window.YCCustomFields.SHOW_WHEN_OPS) || [];
+const CF_SW_LABELS = {
+  eq: 'is', ne: 'is not', in: 'is one of', not_empty: 'is filled in', empty: 'is empty',
+};
+/** The two operators that take no value (the renderer rejects one that does). */
+const CF_SW_NOVALUE = ['empty', 'not_empty'];
+
 function cfBlank() {
-  return { label: '', field_key: '', _keyTouched: false, field_type: 'text', options: [], validation: {} };
+  return {
+    label: '', field_key: '', _keyTouched: false, field_type: 'text', options: [], validation: {},
+    // show_when: the parsed v1 condition, or null for "always show".
+    // _swOpaque: the stored value is a shape this builder can't represent —
+    // it is shown read-only and Save omits the key so the server keeps it.
+    show_when: null, _swOpaque: null,
+  };
 }
 
 function cfSlug(s) {
@@ -305,7 +343,109 @@ function cfEditorBody(t, i) {
     valid.push(`<span class="cf-vf">Pattern <input type="text" class="mono cf-pattern" data-cf-v="${i}:pattern" value="${esc(v.pattern ?? '')}" placeholder="regex (optional)"></span>`);
   }
   if (t.field_type === 'number') { valid.push(numIn('min', 'Min')); valid.push(numIn('max', 'Max')); }
-  return `${opts}<div class="cf-valid">${valid.join('')}</div>`;
+  return `${opts}<div class="cf-valid">${valid.join('')}</div>${cfShowWhenBody(t, i)}`;
+}
+
+/** The show_when builder (S4) — ONE condition, the v1 vocabulary. */
+function cfShowWhenBody(t, i) {
+  // The renderer script didn't load (404, blocked): we don't know the
+  // vocabulary, so we must not offer to edit it. cfShowWhenOut returns
+  // undefined in the same case, so Save omits the key and nothing stored is
+  // touched — degrade to CFG-1's behaviour exactly.
+  if (!CF_SW_OPS.length) return '';
+  if (t._swOpaque) {
+    return `<div class="cf-sw">
+      <span class="fmini">Show this field only when… — this field has an <b>advanced condition</b>
+        set through the API that this editor can't display. It is left exactly as stored, and saving
+        this card will not change it.</span>
+      <pre class="cf-sw-raw mono">${esc(JSON.stringify(t._swOpaque))}</pre>
+    </div>`;
+  }
+  const c = t.show_when || null;
+  const noValue = c && CF_SW_NOVALUE.includes(c.op);
+  const others = (cfState || []).filter(x => x.field_key !== t.field_key).map(x => x.field_key);
+  return `<div class="cf-sw">
+    <span class="fmini">Show this field only when… — leave the first box empty to always show it.
+      The field can be any column on this ${cfEntity} or another custom field's key.</span>
+    <div class="cf-sw-row">
+      <input type="text" class="mono" list="cfSwFields${i}" data-cf-sw="${i}:field"
+             value="${esc(c ? c.field : '')}" placeholder="field or cf_key">
+      <datalist id="cfSwFields${i}">${others.map(k => `<option value="${esc(k)}"></option>`).join('')}</datalist>
+      <select class="cf-sel" data-cf-sw="${i}:op">
+        ${CF_SW_OPS.map(op => `<option value="${op}"${c && c.op === op ? ' selected' : ''}>${esc(CF_SW_LABELS[op] || op)}</option>`).join('')}
+      </select>
+      ${c && c.op === 'in'
+        ? `<textarea class="cf-sw-list" data-cf-sw="${i}:value" rows="3"
+             placeholder="one value per line">${esc(cfSwValueIn(c))}</textarea>`
+        : `<input type="text" data-cf-sw="${i}:value" value="${esc(cfSwValueIn(c))}"
+             placeholder="value" ${noValue ? 'disabled' : ''}>`}
+    </div>
+  </div>`;
+}
+
+/**
+ * Stored show_when → editor state. The parse is the RENDERER's, so "the
+ * builder can show it" and "the record page will act on it" are the same
+ * question with one answer.
+ * @returns {{show_when, _swOpaque}} _swOpaque non-null ⇒ read-only + omit on save
+ */
+function cfShowWhenIn(stored, key) {
+  if (stored == null) return { show_when: null, _swOpaque: null };
+  const parsed = window.YCCustomFields
+    ? window.YCCustomFields.parseShowWhen(stored, key)
+    : null;
+  return parsed
+    ? { show_when: parsed, _swOpaque: null }
+    : { show_when: null, _swOpaque: stored };
+}
+
+/** Repaint after a change that alters the card's SHAPE (today: the show_when
+ *  operator, which decides whether a value box exists at all). Keystrokes
+ *  never come through here — a re-render mid-word takes the caret with it. */
+function cfRerenderCard(i) { if (i === 'n') cfRenderNew(); else cfRender(); }
+
+/** The condition's value for its control: `in` is one value per LINE. */
+function cfSwValueIn(c) {
+  if (!c || CF_SW_NOVALUE.includes(c.op)) return '';
+  if (c.op === 'in') return cfSwLines(c.value).join('\n');
+  return c.value == null ? '' : String(c.value);
+}
+
+/**
+ * Draft → wire shape for show_when.
+ * @returns the condition, null to clear it, or `undefined` meaning OMIT the
+ *          key entirely — the S1 contract for a value this editor can't
+ *          represent (an API-set advanced condition survives the save).
+ */
+function cfShowWhenOut(t) {
+  if (t._swOpaque || !CF_SW_OPS.length) return undefined;
+  const c = t.show_when;
+  const field = c && String(c.field || '').trim();
+  if (!field) return null;                       // no field → no condition
+  const op = CF_SW_OPS.includes(c.op) ? c.op : 'eq';
+  if (CF_SW_NOVALUE.includes(op)) return { field, op };
+  if (op === 'in') {
+    // ONE VALUE PER LINE, never comma-separated: an option value is opaque
+    // free text and may legitimately contain a comma ("Smith, Jones LLP"),
+    // which a comma split would quietly tear into two values that match
+    // nothing. The textarea is what makes this unambiguous.
+    const list = cfSwLines(c.value);
+    // Refuse rather than clear. `in` with nothing to match can never be true
+    // — a field hidden forever — and returning null here would DELETE the
+    // condition the admin was halfway through editing.
+    if (!list.length) {
+      throw new Error('Show only when: "is one of" needs at least one value (one per line).');
+    }
+    return { field, op, value: list };
+  }
+  const raw = c.value == null ? '' : String(c.value);
+  return { field, op, value: raw };
+}
+
+/** The `in` textarea → its values. One per line, blanks dropped, order kept. */
+function cfSwLines(v) {
+  if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
+  return String(v == null ? '' : v).split('\n').map(s => s.trim()).filter(Boolean);
 }
 
 // ── Render ─────────────────────────────────────────────────────
@@ -472,6 +612,17 @@ function cfBind() {
       else if (k === 'pattern') t.validation.pattern = el.value;
       else t.validation[k] = el.value.trim() === '' ? undefined : Number(el.value); // NaN → null on the wire → the route names it
       cfMarkDirty(i);
+    } else if (d.cfSw !== undefined) {
+      const [i, k] = d.cfSw.split(':');
+      const t = cfTarget(i);
+      t.show_when = t.show_when || { field: '', op: 'eq', value: '' };
+      t.show_when[k] = el.value;
+      cfMarkDirty(i);
+      // The op decides whether a value is even legal, so the row re-renders
+      // on that one change (the value box enables/disables, and the `in`
+      // placeholder changes). A keystroke in field/value never re-renders —
+      // it would take the caret with it.
+      if (k === 'op') cfRerenderCard(i);
     }
   });
 
@@ -600,15 +751,21 @@ async function cfSave(i) {
   const btn = document.querySelector(`[data-cf-save="${i}"]`);
   if (btn) btn.disabled = true;
   try {
-    // show_when deliberately absent — see the header note.
-    await api(`/api/field-defs/${t.id}`, 'PATCH', {
+    const body = {
       label: t.label, field_type: t.field_type, sort_order: t.sort_order,
       options: cfOptionsOut(t), validation: cfValidationOut(t),
-    });
+    };
+    // OMITTED, not nulled, when the stored condition is one this builder
+    // can't represent — updateDef only writes the keys a patch carries, so
+    // an absent show_when leaves the stored value alone. See the header note.
+    const sw = cfShowWhenOut(t);
+    if (sw !== undefined) body.show_when = sw;
+    await api(`/api/field-defs/${t.id}`, 'PATCH', body);
     // Re-adopt what the server accepted.
     t.label = t.label.trim();
     t.options = (cfOptionsOut(t) || []).map(o => ({ ...o, _vt: true, _persisted: true }));
     t.validation = { ...(cfValidationOut(t) || {}) };
+    if (sw !== undefined) t.show_when = sw;
     t._dirty = false;
     cfRender();
     setStatus('cfStatus' + i, `"${t.field_key}" saved`, true);
@@ -636,9 +793,14 @@ async function cfCreate() {
   // Append after the current tail — the server orders by sort_order, id.
   const nextSort = cfState && cfState.length ? Math.max(...cfState.map(x => x.sort_order | 0)) + 1 : 0;
   try {
+    // A new field can't be opaque, but the builder can still be unavailable
+    // (renderer script missing) — then the key is omitted, not nulled. An
+    // incomplete condition throws, and the catch shows it inline.
+    const sw = cfShowWhenOut(t);
     const r = await api('/api/field-defs', 'POST', {
       entity: cfEntity, field_key: t.field_key, label: t.label.trim(), field_type: t.field_type,
       sort_order: nextSort, options: cfOptionsOut(t), validation: cfValidationOut(t),
+      ...(sw === undefined ? {} : { show_when: sw }),
     });
     cfNew = cfBlank();
     cfRenderNew();
@@ -664,6 +826,10 @@ async function cfLoad() {
       id: d.id, field_key: d.field_key, label: d.label, field_type: d.field_type,
       options: (d.options || []).map(o => ({ value: o.value, label: o.label, active: o.active !== false, _vt: true, _persisted: true })),
       validation: { ...(d.validation || {}) },
+      // show_when (S4): the shared parser decides whether the builder can
+      // represent this. Anything it can't is kept verbatim in _swOpaque,
+      // shown read-only, and omitted from the next save.
+      ...cfShowWhenIn(d.show_when, d.field_key),
       indexed: d.indexed ? 1 : 0, sort_order: d.sort_order | 0, active: d.active ? 1 : 0,
       _open: false, _dirty: false,
     }));

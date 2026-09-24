@@ -58,6 +58,7 @@
 const aiService = require("./aiService");
 const reportService = require("./reportService");
 const { validateSql, validateParams } = require("../lib/reportSchema/validator");
+const customFields = require("../lib/reportSchema/customFieldsAppendix");
 
 const MAX_ATTEMPTS = 2;          // initial + one repair
 const AI_TIMEOUT_MS = 60000;     // 4.5k-token prompt with a long JSON body
@@ -289,6 +290,15 @@ async function draft(db, { question, base = null, instruction = null, userId = n
   const attempts = [];
   let carry = { previous: null, previousError: null, previousRowCount: null };
 
+  // The manifest is embedded in the report_build descriptor at module load;
+  // admin-defined custom fields can't be (staff create them at runtime, with
+  // no deploy), so they ride systemAppend. Built ONCE per author() call so a
+  // repair turn reasons about the same schema its first attempt saw — an
+  // admin adding a field mid-repair must not change the rules underneath the
+  // model. '' when the firm has defined none, which is the common case.
+  // Custom-fields arc S4; see lib/reportSchema/customFieldsAppendix.js.
+  const customFieldContext = await customFields.toPromptContext(db);
+
   for (let n = 1; n <= MAX_ATTEMPTS; n++) {
     const userInput = buildUserInput({
       question: q,
@@ -302,6 +312,7 @@ async function draft(db, { question, base = null, instruction = null, userId = n
     const ai = await aiService.call(db, {
       promptKey: "report_build",
       userInput,
+      systemAppend: customFieldContext || null,
       outputType: "json",
       timeout_ms: AI_TIMEOUT_MS,
       consumerRef: "report_author",

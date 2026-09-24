@@ -21,6 +21,7 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/js/ycPager.js"></script>
+  <script src="/js/yc-custom-fields.js"></script>
   <script src="/scripts.js"></script>
     <link rel="stylesheet" href="/theme.css">
     <script src="/themeSync.js"></script>
@@ -251,6 +252,26 @@
         maxlength="40"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_source:this.value}).then(()=>Toast.fire({icon:'success',title:'Lead source updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><datalist id="leadSourceList"></datalist><br><br>
+    </div><br>
+    <!-- ── Custom Fields (custom-fields arc S4) ─────────────────────
+         Admin-defined fields from `field_defs`, rendered by the shared
+         /js/yc-custom-fields.js — the same module the contact form
+         mounts, so a field looks and behaves identically on both
+         records. Hidden until that module finds at least one ACTIVE
+         case def; a firm with none never sees this box, and a registry
+         it cannot read leaves it hidden rather than breaking the page.
+
+         Sits directly under the core Overview box, above Pipeline: the
+         fields ARE overview data, and staff should not hunt for them in
+         a tab. Unlike the inputs above — which PATCH one column on
+         `onchange` — this section batches, because `validation.required`
+         and `show_when` are section-level rules and a per-field write
+         cannot express either. Its Save sends only the cf_ keys that
+         changed. Design: ref/CUSTOM_FIELDS_DESIGN.md §7 S4.
+         ──────────────────────────────────────────────────────────── -->
+    <div id="cfSection" style="margin:0 auto;max-width:650px;border:3px solid var(--border);display:none">
+      <div style="font-weight:600;padding:6px 8px 0">Custom Fields</div>
+      <div id="cfList" style="padding:8px"></div>
     </div><br>
     <!-- ── Pipeline (Slice C1) ──────────────────────────────────────
          POSITION-ONLY widget: timeline of case_stage_log (via
@@ -1679,6 +1700,38 @@ function updateHeader() {
     resizeTextarea(notesEl);
   }
   E("alertsDiv").textContent = c.case_alerts || "";
+  loadCustomFields(c);
+}
+
+/* ── Custom Fields (S4) ──────────────────────────────────────
+ * The section is /js/yc-custom-fields.js; this is the mount. Called from
+ * updateHeader, so it repaints with every other overview field — the module
+ * itself refuses to clobber a half-typed edit on a repaint (same fence as
+ * the notes textarea above), which is what makes that safe.
+ *
+ * Fire-and-forget on purpose: it degrades to a hidden section by itself, and
+ * nothing else on this page should wait on the field registry.
+ */
+let customFields = null;
+function loadCustomFields(c) {
+  if (!c || !window.YCCustomFields) return;
+  if (!customFields) {
+    customFields = YCCustomFields.create({
+      entity:    'case',
+      host:      E("cfList"),
+      section:   E("cfSection"),
+      apiSend:   (...a) => P.apiSend(...a),
+      patchPath: `/api/cases/${caseID}`,
+      // The Overview inputs above Toast on every write; a custom-field save
+      // is the same kind of event, so it says so the same way. The inline
+      // status in the section carries the failure text verbatim.
+      onSaved:   (keys) => Toast.fire({
+        icon: 'success',
+        title: keys.length === 1 ? 'Field updated' : `${keys.length} fields updated`,
+      }),
+    });
+  }
+  customFields.load(c).catch(() => {});
 }
 
 /* DIRTY IS A COMPARISON, NOT A LATCH.

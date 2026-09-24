@@ -145,6 +145,8 @@ Active surfaces with known next steps.
 
 ## Operational
 
+- **Case field edits reach no log at all.** Found while ruling the custom-fields S4 log question (2026-09-25) and confirmed: `caseService.updateCase` writes no log row, and there is no `after_case_update` trigger — `cases` carries only `trg_cases_ct_compat_ins/upd`, which are case-type compatibility, not logging. So changing `case_status`, `case_stage`, `case_rec`, a date or anything else on a case leaves no trace in the case's log, while the equivalent edit on a contact does (the `after_contact_update` trigger covers 17 named columns). The only `type:'update'` row a case ever gets is the `mergeCases` snapshot. S4 deliberately did NOT half-close this — writing cf_ log rows on cases would have made admin-defined fields better-logged than every built-in column. Closing it properly means an app-side write in `updateCase`, which every case writer then inherits (`routes/api.cases.js`, `courtReview`, `update_case`, the inline Overview `onchange` handlers in `case.html`), so it is its own slice with its own volume question — a busy case would gain a log row per keystroke-ish save. Decide extend-vs-accept deliberately; don't let it ride into an unrelated change.
+
 - **Cloud Scheduler interval.** Currently 5 minutes (set conservatively at launch). Drop to ~30 seconds when comfortable. Pure GCP config change, no code.
 
 - **Single-instance vs multi-instance Cloud Run rate-limiting.** Bottleneck limiters in `ringcentralService` are per-process — multiple instances each have their own limiter and don't coordinate. Latent issue at current volume. Future fix is Cloud Tasks per-credential queues; design captured in the shelved driver doc §2.10. Don't act unless rate-limit failures actually surface.

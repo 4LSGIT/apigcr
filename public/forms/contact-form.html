@@ -665,7 +665,26 @@
   <div id="rolesList"></div>
 </div>
 
+<!-- ════════════════════════════════════════════════════════════════
+     CUSTOM FIELDS (custom-fields arc S4)
+     Admin-defined fields from `field_defs`, rendered by the shared
+     /js/yc-custom-fields.js. Hidden until that module finds at least one
+     ACTIVE def for contacts — a firm with none never sees this panel, and
+     a registry it cannot read leaves it hidden rather than breaking the
+     record.
+     Like Roles above it, this section lives OUTSIDE the <form> and never
+     rides the aggregate PATCH: its own Save sends only the cf_ keys that
+     changed. Design: ref/CUSTOM_FIELDS_DESIGN.md §7 S4.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="yc-section" id="customFieldsSection" style="display:none;">
+  <div class="ycp-section-head">
+    <div class="yc-section-title"><i class="fa-solid fa-table-columns ycp-section-icon"></i>Custom Fields</div>
+  </div>
+  <div id="customFieldsList"></div>
+</div>
+
 <script src="/js/yc-forms.js"></script>
+<script src="/js/yc-custom-fields.js"></script>
 <script>
   /**
    * Slice 3 Stage B.2 — contact-form.html
@@ -704,6 +723,31 @@
   const P = window.parent;
   const params = new URLSearchParams(location.search);
   const contactId = params.get('contact_id');
+
+  /**
+   * API column → form-field name. Repeater arrays land under the same key on
+   * both sides (phones/emails/addresses), so they need no entries; yc-forms'
+   * _mergeApiData passes every unmapped key through unchanged, which is why
+   * `custom` and the cf_ columns survive it.
+   *
+   * HOISTED out of the YCForm config (custom-fields S4) because the Custom
+   * Fields section needs to read it too: `onLoad` receives the MAPPED row, and
+   * a show_when condition names a real column, so the section maps the nine
+   * renames back before evaluating one. Two copies of this list would drift.
+   */
+  const CONTACT_API_MAP = {
+    'contact_id':       'contact_id',
+    'contact_kind':     'kind',
+    'contact_org_name': 'org_name',
+    'contact_pname':    'pname',
+    'contact_fname':    'fname',
+    'contact_mname':    'mname',
+    'contact_lname':    'lname',
+    'contact_dob':      'dob',
+    'contact_ssn':      'ssn',
+    'contact_tags':     'tags',
+    // contact_notes maps to itself — omitted (apiMap fallback uses key as-is).
+  };
 
   if (!contactId) {
     document.body.innerHTML = '<p style="color:var(--danger);padding:20px;">Missing contact_id parameter.</p>';
@@ -852,25 +896,19 @@
       // API column → form-field name. Repeater arrays land under the same
       // key on both sides (phones/emails/addresses), so they don't need
       // entries here. _mergeApiData passes unmapped keys through unchanged.
-      apiMap: {
-        'contact_id':    'contact_id',
-        'contact_kind':     'kind',
-        'contact_org_name': 'org_name',
-        'contact_pname': 'pname',
-        'contact_fname': 'fname',
-        'contact_mname': 'mname',
-        'contact_lname': 'lname',
-        'contact_dob':   'dob',
-        'contact_ssn':   'ssn',
-        'contact_tags':  'tags',
-        // contact_notes maps to itself — omitted (apiMap fallback uses key as-is).
-      },
+      apiMap: CONTACT_API_MAP,
 
       onSubmit: {
         patch: { method: 'PATCH', url: '/api/contacts/{linkId}' },
       },
 
-      onLoad: () => {
+      onLoad: (data) => {
+        // Custom Fields (S4). `data` is the loaded contacts row with apiMap
+        // applied — unmapped keys pass through, so `custom` and S3's virtual
+        // cf_ columns are both intact, and yc-custom-fields prefers the bag.
+        // Awaiting is pointless (it degrades to hidden on its own) and would
+        // hold up the rest of this hook, so it is fire-and-forget.
+        loadCustomFields(data);
         // KIND FIRST. populate() has just written the hidden `kind` input from
         // the loaded row, so this reflects stored data — an existing org must
         // never render as a person for the split second before a toggle.
@@ -933,6 +971,8 @@
       // Roles section (role-forms slice) — outside the form element, so the
       // same walk never reaches it either.
       applyRolesReadonly(on);
+      // Custom Fields (S4) — outside the form element too, same reason.
+      applyCustomFieldsReadonly(on);
     };
 
     function applyRepeaterReadonly(isReadonly) {
@@ -2365,6 +2405,54 @@
       rolePendingRole = res.value;
       renderRoles();
     });
+
+    // ── Custom Fields (S4) ──────────────────────────────────────────
+    // The whole section is /js/yc-custom-fields.js; this is the mount.
+    // Created lazily so a contact with no active defs costs one GET that
+    // the module caches for the life of the frame.
+    let customFields = null;
+
+    /**
+     * The row as the API SPELLS IT. `onLoad` hands us the form's data source,
+     * which has already been through apiMap — so `contact_kind` arrives as
+     * `kind`, `contact_fname` as `fname`, and so on for all nine mapped
+     * columns. A `show_when` condition names a COLUMN (`contact_kind`), which
+     * would never have resolved here. Both spellings are offered: the
+     * renderer's lookup finds whichever the admin wrote.
+     * (`custom` and the cf_ columns are unmapped, so they pass through as-is.)
+     */
+    function apiShapedRow(data) {
+      const row = { ...(data || {}) };
+      for (const [apiName, formName] of Object.entries(CONTACT_API_MAP)) {
+        if (formName in row && !(apiName in row)) row[apiName] = row[formName];
+      }
+      return row;
+    }
+
+    async function loadCustomFields(row) {
+      if (!P || !P.apiSend || !window.YCCustomFields) return;
+      if (!customFields) {
+        customFields = YCCustomFields.create({
+          entity:    'contact',
+          host:      document.getElementById('customFieldsList'),
+          section:   document.getElementById('customFieldsSection'),
+          apiSend:   (...a) => P.apiSend(...a),
+          patchPath: `/api/contacts/${contactId}`,
+          // A THUNK, not a boolean: this form toggles between view and edit
+          // mode, and a boolean read once at create time would strand the
+          // section in whichever state the page happened to be in.
+          readOnly:  rolesReadonlyNow,
+          onSaved:   () => { reportHeight(); },
+        });
+      }
+      await customFields.load(apiShapedRow(row));
+      applyCustomFieldsReadonly(rolesReadonlyNow());
+      reportHeight();
+    }
+
+    function applyCustomFieldsReadonly(on) {
+      if (customFields) customFields.setReadonly(on);
+    }
 
     // Boot — the house iframe pattern, though contact.html always creates
     // this iframe after apiSend exists (form.init() relies on that too).

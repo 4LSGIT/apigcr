@@ -314,6 +314,14 @@ async function logCall(db, row) {
  * @param {string} [opts.promptKey]    registry key (resolves system/model/etc)
  * @param {string} [opts.inlineSystem] system text when no promptKey
  * @param {object} [opts.vars]         {{var}} substitutions for the system text
+ * @param {string|null} [opts.systemAppend] extra system text appended after
+ *                                     substitution — for schema context that
+ *                                     is GENERATED per request and so cannot
+ *                                     be embedded in the descriptor at module
+ *                                     load (report_build's admin-defined
+ *                                     custom fields, custom-fields arc S4).
+ *                                     Omitted → the descriptor's own text,
+ *                                     unchanged.
  * @param {string|null} [opts.userInput] user-supplied data; wrapped in
  *                                       <untrusted_user_input> when present
  * @param {Array} [opts.attachments]   files to attach as multimodal content
@@ -350,6 +358,7 @@ async function call(db, {
   promptKey,
   inlineSystem,
   vars = {},
+  systemAppend = null,
   userInput = null,
   attachments,
   model,
@@ -427,6 +436,16 @@ async function call(db, {
 
   // ---- Build system + user content ----
   systemText = substituteVars(systemText || '', vars);
+
+  // Caller-supplied system text appended AFTER substitution, never before:
+  // an appendix is generated from data (report_build's custom-field list is
+  // built from admin-authored labels), and data must not be able to smuggle
+  // in a {{var}} that then gets expanded. Absent → the prompt is byte-for-
+  // byte what the descriptor declares, which is why this is an append rather
+  // than a {{schema_appendix}} placeholder: a caller that forgets a var
+  // ships the literal braces to the model (substituteVars leaves unknown
+  // vars intact), a caller that forgets this ships today's prompt.
+  if (systemAppend) systemText = `${systemText}\n\n${systemAppend}`;
 
   let userText = '';
   if (userInput != null) {

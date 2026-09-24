@@ -23,6 +23,40 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Custom fields are live end to end (09-25, arc S0–S4 + CFG-1):** admin-defined
+  fields on cases and contacts. `field_defs` is the registry; values live in
+  one JSON column per entity (`cases.custom`, `contacts.custom`); a reconciler
+  keeps one typed **VIRTUAL generated column named exactly the `field_key`**
+  (always `cf_*`) per active def. Design: `ref/CUSTOM_FIELDS_DESIGN.md`
+  (living; §7 says what shipped). Operators: `manual/05-Subsystems/13-custom-fields.md`.
+  What a session touching unrelated code needs to know:
+  - **`SELECT *` on `cases`/`contacts` now carries `cf_` columns** you did not
+    write and cannot write — they are generated. Never UPDATE one (ER 3105);
+    `mergeCases` skips them via `GENERATION_EXPRESSION <> ''`.
+  - **The raw `custom` bag never travels whole**: it is on the domainEvents
+    scrub list, `resolverService.BLOCKED_COLUMNS`, the report `DENIED_COLUMNS`,
+    `query_db`, and stripped from the petition egress. Only NAMED `cf_`
+    columns ride those surfaces. Do not "fix" that by adding the bag back.
+  - **Never read or compare `custom->>'$.k'` in SQL** — the virtual column is
+    the only comparison surface (a matching functional index can silently flip
+    raw `->>` results; measured). `tests/customFields.s2.test.js` greps
+    `lib/ services/ routes/` for it, comments included.
+  - **The only writers** are `caseService.updateCase` / `contactService.updateContact`;
+    `fieldDefService.splitCustomFields` + `customAssignment` compose one
+    `JSON_SET`/`JSON_REMOVE` into the same UPDATE as the core columns.
+  - **`validation.required` is enforced ONLY by the renderer**
+    (`public/js/yc-custom-fields.js`), never the chokepoint — a partial PATCH
+    that omits a required key must succeed.
+  - **Reports:** `lib/reportSchema/manifest.js` stays hand-maintained; the
+    custom fields are appended per request by
+    `lib/reportSchema/customFieldsAppendix.js` through the new
+    `aiService.call({ systemAppend })` option.
+  - **Log:** a cf_ change on a CONTACT writes an app-side row from inside
+    `updateContact`'s transaction, shaped like `after_contact_update`'s.
+    Cases write none — `updateCase` logs no core-column edit either, and there
+    is no `after_case_update` trigger (`ref/plans.md`).
+  - Registry is EMPTY in prod as of 09-25: the mechanism ships, S5 creates the
+    first fields.
 - **SSN is an ordinary column (09-24):** `contacts.contact_ssn` stopped being
   special. Removed: `resolverService.BLOCKED_COLUMNS.contacts`, the
   `contact_ssn` / `contact_dob` entries in `lib/reportSchema/manifest.js`

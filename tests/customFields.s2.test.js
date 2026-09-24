@@ -160,7 +160,8 @@ function world({ defs = DEFS(), cases = {}, contacts = {} } = {}) {
   const state = {
     defs: defs.map(d => ({ ...d, options: d.options && clone(d.options), validation: d.validation && clone(d.validation) })),
     cases: clone(cases), contacts: clone(contacts),
-    updates: [], events: [], log: [], defUpdates: [],
+    // `log` is the SQL trace; `logs` is the log TABLE (S4's cf_ rows).
+    updates: [], events: [], log: [], logs: [], defUpdates: [],
   };
   const query = async (sql, params = []) => {
     const s = norm(sql);
@@ -238,6 +239,17 @@ function world({ defs = DEFS(), cases = {}, contacts = {} } = {}) {
     if (/^INSERT INTO domain_event_queue/.test(s)) {
       state.events.push({ type: params[0], envelope: JSON.parse(params[2]) });
       return [{ insertId: state.events.length }];
+    }
+
+    // ── log rows — S4's cf_ log row goes through the real logService, so
+    //    the world has to accept its INSERT. Param order is logService's.
+    if (/^INSERT INTO log/.test(s)) {
+      state.logs.push({
+        log_type: params[0], log_link: params[1], log_link_type: params[2],
+        log_link_id: params[3], log_by: params[6],
+        log_data: params[7] ? JSON.parse(params[7]) : null,
+      });
+      return [{ insertId: state.logs.length }];
     }
 
     throw new Error('world: unscripted query — ' + s);

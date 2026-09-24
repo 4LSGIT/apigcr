@@ -529,8 +529,49 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
   // automation convention).
   //
   // cf_ changes are per key from the pre-read's `custom` (never the bag —
-  // domainEvents strips `custom` from `data`, and cf_ values are not overlaid
-  // onto `data` either: S3's virtual columns bring them into SELECT * whole).
+  // domainEvents strips `custom` from `data`).
+  //
+  // The cf_ OVERLAY (S4, 2026-09-25). `data` is a post-state approximation
+  // built as priorRow-overlaid-with-what-we-wrote, and S3's virtual cf_
+  // columns ride priorRow's `SELECT *` — so without this, `data.cf_x` carried
+  // the value from BEFORE the write while every core column carried the value
+  // after it. A rule author reading `data.cf_x` on a case would have matched
+  // the old value, silently. (`changes.cf_x.to` was correct throughout.)
+  //
+  // READ BACK, never composed in JS. The obvious fix — overlay `customSets` —
+  // is wrong in a way that is easy to miss: it puts the JSON-shaped value in
+  // `data` (a JS number, `true`, 'YYYY-MM-DD'), while `contact.updated`
+  // re-fetches with SELECT * and therefore carries the DRIVER-COERCED column
+  // ('1234.5000' for DECIMAL, 1 for TINYINT, a Date for DATE). Measured on
+  // 8.4.11. Trigger conditions compare with String(), so `data.cf_rush eq 1`
+  // would then match on contacts and not on cases. Reading the generated
+  // columns back makes the two entities byte-identical, and keeps the type
+  // map in ONE place — the reconciler's expression, evaluated by the engine.
+  //
+  // Core columns are deliberately NOT re-read: that would change `data` for
+  // every existing rule (from "what we wrote" to "what the row holds"), which
+  // is a semantics change S4 has no mandate for.
+  //
+  // Never fatal. A def deactivated between the split and here means the
+  // reconciler may already have dropped the column; the envelope is
+  // fire-and-forget and must not take the committed write down with it.
+  let customPost = {};
+  if (customKeys.length) {
+    for (const [k, v] of Object.entries(customSets)) customPost[k] = v;
+    for (const k of customRemoves) customPost[k] = null;
+    try {
+      const safe = customKeys.filter(k => fieldDefs.KEY_RE.test(k));
+      if (safe.length) {
+        const [[post]] = await db.query(
+          `SELECT ${safe.map(k => `\`${k}\``).join(', ')} FROM cases WHERE case_id = ?`, [caseId]
+        );
+        if (post) customPost = { ...customPost, ...post };
+      }
+    } catch (err) {
+      console.warn(`[CASE SERVICE] cf_ post-read for the envelope failed: ${err.message}`);
+    }
+  }
+
   const changes = {
     ...domainEvents.buildChanges(priorRow, safeFields, keys),
     ...fieldDefs.buildCustomChanges(priorRow.custom, customSets, customRemoves),
@@ -541,7 +582,7 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
       case_id: String(caseId),
       ...(userId != null ? { actor: { user_id: userId } } : {}),
       ...(source != null ? { source } : {}),
-      data: { ...priorRow, ...safeFields },
+      data: { ...priorRow, ...safeFields, ...customPost },
       changes,
       extra: { updated_fields: updatedFields },
     });

@@ -12,13 +12,20 @@ Custom fields are the firm's own fields on cases and contacts — a Clio matter
 number, a referral source — added from a config screen instead of by a
 developer.
 
-**What works today:** this screen *defines* fields, and fields can *hold
-values* — written by automations (`update_case`, `update_contact`) and by the
-API. Each active field is also kept as a read-only column of the same name on
-the cases or contacts table, which the system adds and removes by itself (see
-*Columns* below). Nothing *displays* fields yet: the case and contact forms,
-reports, and placeholders pick them up in later releases. Defining a field is
-safe: it changes nothing anyone else sees.
+**What works today:** everything. Define a field here and it shows up by
+itself — on the case and contact records for staff to fill in, in reports, in
+trigger conditions and in document and message templates. Nobody writes any
+code for a new field. Automations (`update_case`, `update_contact`) and the
+API write values too. Each active field is also kept as a read-only column of
+the same name on the cases or contacts table, which the system adds and
+removes by itself (see *Columns* below).
+
+See **Using a field** below for the walkthrough from "add a field" to "it's in
+a report".
+
+> **The firm has no custom fields defined yet.** Adding the first one is safe
+> and reversible — deactivate it and every trace disappears from the screens
+> again, with the stored values kept.
 
 ### Adding a field
 
@@ -35,14 +42,78 @@ safe: it changes nothing anyone else sees.
    is what everything matches on.
 5. Optional **validation**: *Required* on any type; *Max length* (up to 255)
    and *Pattern* (a regular expression) on text; *Min* and *Max* on numbers.
-6. **+ Add Field.** If something's wrong, the message under the button names
+   *Required* means **required on the record screen** — see *Using a field*.
+6. Optional **Show this field only when…** — leave the first box empty and the
+   field always shows. Fill it in and the field appears on the record only
+   when the condition holds:
+   - the **field** box takes any column on that record (`case_chapter`,
+     `contact_kind`) or another custom field's key (`cf_band`). The list
+     suggests your other custom fields; you can type any column name.
+   - the **test** is *is* / *is not* / *is one of* / *is filled in* / *is
+     empty*. *is one of* takes **one value per line** — not a comma list,
+     because an option value may itself contain a comma.
+   - for a multiselect source, *is* and *is one of* ask whether that option is
+     **among** the ones picked.
+   - for a yes/no source, write `true` or `false`.
+   - it is a display rule, not a privacy one: a hidden field's value is still
+     in the record, still reportable and still in templates.
+7. **+ Add Field.** If something's wrong, the message under the button names
    every problem at once.
+
+### Using a field
+
+Once a field is active it appears everywhere by itself. A worked example — a
+*Referral source* on contacts:
+
+1. **Define it.** More → YisraCase Config → Fields → **Contacts** tab. Label
+   `Referral source`, key fills in as `cf_referral_source`, type `select`,
+   options `google` / `friend` / `attorney` with friendly labels. **+ Add
+   Field.**
+2. **See it on the record.** Open any contact. Under *Roles* there is now a
+   **Custom Fields** panel with a *Referral source* dropdown. On a case the
+   panel sits under the Overview box, above Pipeline. Pick a value and press
+   **Save** — it saves only the custom fields you changed, and nothing else on
+   the record.
+   - If something is wrong (a value too long, an option that no longer
+     exists), the message appears right under the fields, in the server's own
+     words. Nothing is saved until it is right.
+   - Fields marked **Required** must be filled in before that Save goes
+     through. A field hidden by its *show only when* condition is not
+     required while it is hidden.
+   - A **yes/no** field is a dropdown with three choices — blank, Yes, No —
+     not a tickbox, because "No" and "never answered" are different answers
+     and a tickbox can only tell you one of them.
+   - The panel is only there when the firm has at least one active field for
+     that record type. With none defined, there is no panel at all.
+3. **Report on it.** More → Reports → ask for what you want in plain English.
+   The report author already knows the field exists, what type it is and which
+   option values it accepts — it is told about every active custom field on
+   every request, so "how many contacts came from Google this year" just
+   works. A report written by hand can use `cf_referral_source` like any
+   column.
+4. **Trigger on it.** In a trigger rule's conditions, match on
+   `changes.cf_referral_source.to` to fire when the field is *set to*
+   something, or on `data.cf_referral_source` for the value the record now
+   holds.
+5. **Put it in a template.** `{{contacts.cf_referral_source}}` in an email,
+   SMS or document works like any other column, including a fallback:
+   `{{contacts.cf_referral_source|default:not recorded}}`.
+6. **See who changed it.** A custom-field edit on a **contact** appears in
+   that contact's log as an update entry naming each key that changed, the
+   same way a change to a built-in contact field does. Case records don't log
+   field edits at all — custom or built-in — so a case's custom-field changes
+   are visible in automations and reports, not in its log.
 
 ### Changing and retiring fields
 
-- **Edit** on a field's card opens its options and validation. Label, type,
-  options and validation can all change; press that card's **Save**. The key
-  never changes — to "rename" one, deactivate it and create a new field.
+- **Edit** on a field's card opens its options, validation and show-only-when
+  condition. Label, type, options, validation and the condition can all
+  change; press that card's **Save**. The key never changes — to "rename" one,
+  deactivate it and create a new field.
+- **An advanced condition set through the API** that this screen can't draw is
+  shown read-only, as the stored text, with a note saying so. Saving the card
+  leaves it exactly as it is — the editor never overwrites a condition it
+  can't display.
 - **Reordering:** drag a card by its handle (or use the arrows). The order
   saves immediately — there is no separate sort-order box; position is the
   order.
@@ -111,8 +182,10 @@ the same shape. What each type accepts:
 - **Retired options** are still accepted — a record re-saved with a retired
   value must not fail. Pickers hide them; the API does not.
 - **Required** is not checked on writes — an update that doesn't mention a
-  required field must not fail. The forms will enforce it when they show
-  custom fields.
+  required field must not fail, or every automation would break the moment
+  someone ticks *Required*. It is enforced where a person is filling the
+  field in: the Custom Fields panel on the record blocks its Save until every
+  visible required field has a value.
 - **Refused, with every problem named at once:** a key no field has, a field
   that is deactivated, a value that breaks the type's rules, and `custom`
   itself (the column that stores all the values — only individual keys are
@@ -138,6 +211,10 @@ The server enforces these; the screen just helps you meet them.
   min and max on numbers, min no bigger than max, and the pattern must be a
   valid regular expression. Switching a field's type drops options and
   validation that no longer apply when you save.
+- **Show-only-when is one condition** — a field, a test, and a value. There is
+  no *and* / *or*, and no nesting. A condition that isn't one of those five
+  tests is ignored and the field simply always shows (with a note in the
+  browser console for a developer).
 
 ---
 
@@ -160,6 +237,10 @@ The server enforces these; the screen just helps you meet them.
 | `startup/init.js` | S3: one reconcile per instance boot. |
 | `ref/migrations/2026-09-24_field_key_comment.sql` | S3: the `field_key` COMMENT follows the 60-char key rule (comment only). |
 | `tests/customFields.s3.test.js` | Reconciler plan / idempotence / lock / MDL / audit, trigger rules, the route, the 255 caps, case-merge and petition riders. |
+| `public/js/yc-custom-fields.js` | S4: THE renderer. The Custom Fields section on both records — typed inputs, `show_when` v1, the `required` gate, the changed-keys-only save. Also CommonJS, so its pure halves are unit-testable. |
+| `public/case.html` / `public/forms/contact-form.html` | S4 mount points (`cfSection` under the Overview box; `customFieldsSection` after Roles). Neither rides an aggregate form save. |
+| `lib/reportSchema/customFieldsAppendix.js` | S4: the registry-driven appendix to the (hand-maintained) report manifest, merged into the report author's prompt per request via `aiService`'s `systemAppend`. |
+| `tests/customFields.s4.test.js` | S4: normalisation from both carriers, the `show_when` truth table, the required gate, retired-option display, the log rows, the envelope read-back, the trigger/placeholder/report demonstrations, the appendix. |
 
 ### API
 
@@ -277,6 +358,71 @@ registry: for every **active** def, a VIRTUAL generated column named exactly
   code versions with different specs would each retype the other's columns on
   their next run.
 
+### Consumers (S4)
+
+Three of the five needed no plumbing — the virtual columns had already made
+them work, and S4 only proves and pins them.
+
+- **The record sections** are one module, `public/js/yc-custom-fields.js`,
+  mounted twice. It reads the record payload the page already loaded (both
+  `GET` routes are `SELECT *`, so the bag and the cf_ columns both ride
+  along). `normalizeValue` folds either carrier to one value — the bag holds
+  what the chokepoint stored, the columns arrive driver-coerced (DECIMAL as a
+  string, TINYINT as 1/0, DATE as an ISO string) — so either works.
+  - **The COLUMN wins**, with the bag as the fallback when a row has no such
+    column yet. They agree on a freshly fetched row, and disagree after a
+    sync-bus message: the sniff emits the PATCH body and the host
+    `Object.assign`s it onto its cached row, so the column is current and the
+    bag is whatever the last full GET returned. Bag-first made a just-saved
+    value visibly revert on the next repaint.
+  - Dates are read in **UTC** components. The pool runs `timezone:'Z'`, so a
+    DATE is built at UTC midnight; local components are a day early anywhere
+    west of UTC — which is every staff machine here, and no machine east of
+    it, so the bug is invisible to half the people who could introduce it.
+  - The contact form hands the section an **apiMap-renamed** row
+    (`contact_kind` → `kind`), so it maps the nine renames back before
+    evaluating a `show_when`; a condition can name either spelling.
+  - Zero active defs ⇒ nothing renders. A failed registry read ⇒ hidden,
+    `console.warn`, no throw. A record page must never break on this panel.
+  - A repaint (a sibling form saving, a bus message) **never clobbers an
+    unsaved edit**, and never steals focus — same comparison fence as the
+    case-notes textarea, plus an `activeElement` check, because a re-render
+    replaces the section wholesale.
+  - The save sends only the keys whose value changed, and shows the
+    chokepoint's 400/409 verbatim, inline. It never re-implements a
+    validation rule; `maxlength` on text is a typing aid, not a gate.
+- **Reports:** `lib/reportSchema/manifest.js` stays hand-maintained — it
+  carries semantics no introspection recovers. Admin-defined fields can't be
+  in it (staff create them with no deploy), so they are rendered per request
+  by `customFieldsAppendix.js` and appended to the author's system prompt via
+  `aiService.call({ systemAppend })`. There is no separate cache: the def
+  cache IS the cache. `systemAppend` is an append, not a `{{var}}`, precisely
+  so a caller that forgets it ships today's prompt rather than literal
+  braces.
+- **Trigger conditions** and **placeholders** needed no code. The condition
+  evaluator resolves any dot-path into the envelope, and the resolver's
+  `^\w+$` identifier check passes a `cf_` name.
+  - `case.updated`'s `data` is built as "the pre-read row overlaid with what
+    we wrote", and cf_ values live in `custom`, which is not overlaid — so
+    until S4 `data.cf_x` was the value from **before** the write while
+    `contact.updated` (which re-fetches post-commit) already had the new one.
+    `updateCase` now **reads the written cf_ columns back** after its UPDATE,
+    rather than overlaying the JSON values: `data.cf_x` must be the column's
+    shape (`'1234.5000'`, `1`, an ISO date) because that is what the contact
+    re-fetch carries, and conditions compare with `String()`. Guarded and
+    never fatal. Core columns are not re-read — that would change `data` for
+    every existing rule. `changes.cf_x.to` holds the JSON value and was
+    correct on both sides throughout.
+- **The log** (closes the §9 open item): a cf_ change on a **contact** writes
+  one app-side `logService.createLogEntry` row from inside `updateContact`'s
+  transaction, shaped like `after_contact_update`'s (`previous_<key>` /
+  `new_<key>`) so the existing log view renders it with no change. The two
+  writers cannot double-log: the trigger compares 17 named columns and
+  `custom` is not one of them, so a cf_-only save leaves it with nothing to
+  say. **Cases write no row** — `updateCase` logs no core-column edit either
+  (there is no `after_case_update`), so custom fields are exactly as logged
+  as core columns there. The case-log gap is its own job (`ref/plans.md`).
+
 ### Columns worth knowing
 
 - `options` — `[{ value, label, active }]`, select / multiselect only, NULL
@@ -286,9 +432,19 @@ registry: for every **active** def, a VIRTUAL generated column named exactly
   `true`. The Fields editor always sends the state its toggle shows.
 - `validation` — the v1 keys above; `max_len`, `pattern`, `min`, `max` are
   enforced on every write. `required` is not (renderers own it).
-- `show_when` — conditional display, **stored but not yet evaluated**. The
-  screen has no editor for it and never sends it on Save, so a value set
-  through the API survives edits here.
+- `show_when` — conditional display, evaluated **client-side only**, by
+  `public/js/yc-custom-fields.js`. v1 is one condition:
+  `{ field, op, value }` with `op` one of `eq` / `ne` / `in` / `not_empty` /
+  `empty`; `field` is a same-entity core column or a `cf_` key; `in` takes an
+  array. Comparison follows `services/hookFilter.js` (string equality), with
+  two refinements: a boolean source compares as a boolean, and a multiselect
+  source tests membership. Anything that is not exactly that shape is stored
+  untouched, treated as "always show", and console-warned — a later
+  vocabulary must never be half-evaluated by v1. The Fields editor builds a
+  v1 condition and sends it; a stored shape it cannot represent is shown
+  read-only and **omitted** from the PATCH, which is what preserves it (the
+  service only writes the keys a patch carries). It is not a security
+  boundary: the value is still in the API payload and still queryable.
 - `indexed` — honoured by the reconciler (`idx_<key>`; ignored for
   multiselect); the API refuses to change it — a developer sets it in SQL,
   then runs `POST /api/field-defs/reconcile`.

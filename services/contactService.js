@@ -113,6 +113,23 @@ function normalizeEmail(email) {
   return String(email).trim().toLowerCase();
 }
 
+/**
+ * One custom-field value → the text that goes in a log row (S4).
+ *
+ * The log is prose a staff member reads, and `after_contact_update` writes
+ * raw column values, so this matches it: a cleared key reads as '' exactly
+ * as a cleared core column does. Only the two JSON-native shapes need a
+ * decision — an array (multiselect) joins on ', ' rather than rendering as
+ * JSON, and a boolean spells itself out. The stored identity is unchanged;
+ * this is display text only.
+ */
+function _customLogText(v) {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.join(', ');
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  return String(v);
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // Internal dual-write helpers (Slice 2)
@@ -2706,6 +2723,51 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
       ...((emailResult && emailResult.transferred_from) || []),
     ];
 
+    const customChanges =
+      fieldDefs.buildCustomChanges(priorRow && priorRow.custom, customSets, customRemoves);
+
+    // 5b. CUSTOM-FIELD LOG ROW (S4, ref/CUSTOM_FIELDS_DESIGN.md §9 —
+    // "contact log view coverage for custom edits", closed here).
+    //
+    // The `after_contact_update` DB trigger is what puts a core-column edit
+    // in the contact's log, and it compares 17 NAMED columns — `custom` is
+    // not one of them (verified in ref/database.sql). So a cf_-only save
+    // bumps contact_updated, fires the trigger, and the trigger finds
+    // nothing changed: `IF JSON_LENGTH(log_data) > 1` is false and it writes
+    // no row. That is the gap; this is its app-side complement, and the two
+    // CANNOT double-log — they read disjoint sets of columns.
+    //
+    // Shape deliberately mirrors the trigger's so the log view renders a
+    // custom edit exactly like a core one with no renderer change: ONE row
+    // per save, log_data carrying `previous_<key>` / `new_<key>` per changed
+    // key (logService folds it into the generic one-row-per-key render).
+    // `by` is the real actor, not the trigger's hard-coded 1.
+    //
+    // Inside the transaction on `conn`: the row must appear if and only if
+    // the write committed, which is the trigger's own semantics. A pure-DB
+    // insert, so the withTransaction retry is safe — a retried attempt was
+    // rolled back with everything else.
+    //
+    // Cases have NO counterpart: updateCase writes no log row for core
+    // columns either (there is no after_case_update trigger), so custom
+    // fields are exactly as logged as core columns there — ruled 2026-09-25.
+    // The case-side log gap is its own job; see ref/plans.md.
+    const changedCustomKeys = Object.keys(customChanges);
+    if (changedCustomKeys.length) {
+      const logData = {};
+      for (const k of changedCustomKeys) {
+        logData[`previous_${k}`] = _customLogText(customChanges[k].from);
+        logData[`new_${k}`]      = _customLogText(customChanges[k].to);
+      }
+      await logService.createLogEntry(conn, {
+        type: 'update',
+        link_type: 'contact',
+        link_id: String(contactId),
+        by: userId,
+        data: logData,
+      });
+    }
+
     const resp = {
       contact_id: parseInt(contactId, 10),
       updated_fields: [...finalKeys, ...customKeys],
@@ -2713,7 +2775,7 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
       // diff per key too (S2); never a `custom` entry.
       changes: {
         ...domainEvents.buildChanges(priorRow, normalized, finalKeys),
-        ...fieldDefs.buildCustomChanges(priorRow && priorRow.custom, customSets, customRemoves),
+        ...customChanges,
       },
     };
     if (hasPhones)    resp.phones_changed    = phoneResult.phones_changed;

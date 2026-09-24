@@ -926,8 +926,10 @@ The whitelist of allowed tables matches the resolver's whitelist — see chapter
 
 Some columns never come back, even through `["*"]`: `users.password` /
 `password_hash`, and `cases.custom` / `contacts.custom` — the custom-field
-values bag, which is never handed out whole (custom fields become their own
-named columns in a later release).
+values bag, which is never handed out whole. The individual custom fields DO
+come back: each active one is its own named `cf_*` column on the table, so
+`["*"]` includes them and you can select one by name. See
+[Custom Fields](../05-Subsystems/13-custom-fields.md).
 
 #### `insert_db`
 

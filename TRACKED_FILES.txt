@@ -78,6 +78,7 @@ lib/parseName.js
 lib/portalCardEngine.js
 lib/rateLimiter.js
 lib/rawBodyFallback.js
+lib/reportSchema/customFieldsAppendix.js
 lib/reportSchema/manifest.js
 lib/reportSchema/validator.js
 lib/responseObserver.js
@@ -297,6 +298,7 @@ public/js/mascot/skins/ufo.js
 public/js/reportCharts.js
 public/js/versionGuard.js
 public/js/videoInsert.js
+public/js/yc-custom-fields.js
 public/js/yc-forms.js
 public/js/yc-sync.js
 public/js/ycPager.js
@@ -805,6 +807,7 @@ tests/courtexecutor.update.test.js
 tests/createTaskDedupe.test.js
 tests/customFields.s2.test.js
 tests/customFields.s3.test.js
+tests/customFields.s4.test.js
 tests/dbConsoleSplitSql.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js
