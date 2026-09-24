@@ -4,6 +4,37 @@ Living doc. Deferred work, design ideas, and known cleanups — not active devel
 
 ---
 
+## Settings vs Config (2026-09-24)
+
+Two operator surfaces, ratified:
+
+- **My Settings** (settings.html, slimmed): personal — account, password, signature,
+  custom tab.
+- **YisraCase Config** (caseConfigManager.html, renamed from "Case Config"): every
+  firm-wide vocabulary editor as a first-class tab — types/subtypes, pipelines,
+  calendar types, custom fields (CFG-1), contact roles (CFG-2), eventually contact
+  relation types. Rule of admission: **Config gets definitions that have no manager of
+  their own** — checklists and form templates are content with their own authoring
+  surfaces and stay there. One editor per setting, never two (CFG-1 deletes the
+  settings.html Case Types editor: it writes fe-case_types with no usage check or
+  template repoint, unlike caseconfig/types.html — a live footgun, not just clutter).
+
+PENDING (parallel session; do not bake in):
+- CFG-3: whether app_settings category sections become a "Firm Settings" tab in the
+  Config shell, and how tool-grouped settings split between tool managers and that
+  tab. Gate finding (2026-09-24): PUT/POST /api/app-settings/* is `jwtOrApiKey` +
+  per-row `is_editable` — no role tier exists; moving knobs into a role-gated shell is
+  an access-control change and needs its own ruling.
+- Machine-state rows (sweep watermarks, counters, rc_subscriptions…) are a fourth
+  kind — automation-minted runtime state hiding behind is_editable=0, which ALSO means
+  "SU-only boundary" (landing_hosts). Likely: separate flag + read-only diagnostics
+  view. Don't design against is_editable semantics meanwhile.
+- Collision: ui-custom arc decided "the tenant admin tool is just the role-gated
+  firm-settings editor" — that editor and the Config shell must converge on ONE
+  surface.
+
+---
+
 ## YC 3.0 direction (2026-09-14)
 
 Early direction only — v2 work continues; nothing here is active development.
