@@ -1,14 +1,14 @@
 // services/fieldDefService.js
 //
 /**
- * Field Definition Service (custom-fields arc S1)
+ * Field Definition Service (custom-fields arc S1, values S2)
  * services/fieldDefService.js
  *
  * The `field_defs` registry — single source of truth for admin-defined
- * fields (ref/CUSTOM_FIELDS_DESIGN.md §2–§3). S1 scope: read API + cache,
- * validation, and the CRUD the settings editor drives. Nothing consumes the
- * registry yet; S2's write chokepoint and S4's renderers will read it
- * through listActive / getByKey.
+ * fields (ref/CUSTOM_FIELDS_DESIGN.md §2–§3). S1: read API + cache,
+ * validation, and the CRUD the settings editor drives. S2: value validation
+ * and the write-chokepoint helpers (see VALUES below); S4's renderers will
+ * read the registry through listActive / getByKey.
  *
  * Shape follows contactRoleService (pure logic, no HTTP; validation throws
  * Error with a user-presentable .message) — with calendarTypeAdminService's
@@ -34,6 +34,26 @@
  * and bump() only reaches the instance that took the write. Other instances
  * converge within TTL_MS — same posture as calendarTypeService and
  * lib/apiKeys. Defs change rarely; consumers must not pay a query per write.
+ *
+ * ── VALUES (S2) ─────────────────────────────────────────────────────────────
+ * <entity>.custom holds the values, one JSON key per def. The two service
+ * chokepoints (caseService.updateCase, contactService.updateContact) are the
+ * only writers, and both go through the helpers at the bottom of this file:
+ *   splitCustomFields   cf_ keys out of the payload, each validated against
+ *                       its ACTIVE def (validateValue) — unknown/retired → 400
+ *   customAssignment    one `custom = JSON_REMOVE(JSON_SET(custom, …), …)`
+ *                       clause, composed INTO the caller's single UPDATE
+ *   buildCustomChanges  per-key {from,to} — never a `custom` entry
+ * Design doc §3 rules these enforce: never read-modify-write the bag in JS
+ * (a concurrent form save + executor write would lose one); never store JSON
+ * null (clear = JSON_REMOVE); nothing reads a key back out of the bag in SQL
+ * with ->> / JSON_EXTRACT (the S3 virtual column is the only comparison
+ * surface — tests/customFields.s2.test.js greps lib/ services/ routes/ for
+ * it, comments included, so don't write the operator next to the column
+ * name even in prose). `validation.required` is NOT enforced here: a
+ * partial PATCH omitting a required field must not fail; renderers own it
+ * (S4).
+ * updateDef enforces §3's post-data locks: field_type, and option values.
  *
  * Usage:
  *   const fieldDefs = require('../services/fieldDefService');
@@ -126,12 +146,14 @@ function _assertEntity(entity) {
 // ─────────────────────────────────────────────────────────────
 
 let _gen = 0;
-const _cache = new Map(); // entity → { at, rows: frozen[], byKey: Map }
+const _cache = new Map();    // entity → { at, rows: frozen[], byKey: Map }
+const _colCache = new Map(); // entity → { at, set } — writableColumns (S2)
 
-/** Invalidate every entity's cached defs on this instance. */
+/** Invalidate every entity's cached defs (and column lists) on this instance. */
 function bump() {
   _gen++;
   _cache.clear();
+  _colCache.clear();
 }
 
 async function _load(db, entity) {
@@ -184,7 +206,15 @@ function _jsonIn(v, name, errs) {
   catch (_) { errs.push(`${name} must be valid JSON`); return undefined; }
 }
 
-function _checkOptions(options, fieldType, errs) {
+/**
+ * `active` (S2) is the option's RETIRE flag (design doc §3): a retired option
+ * is hidden from pickers but still labels the records that hold it, and
+ * writes still accept it. Omitted → the stored state for that same value
+ * (priorOptions), else true for a new value. NOT a flat "default true": the
+ * settings editor round-trips {value, label} only, so defaulting there would
+ * silently reactivate every retired option on each save.
+ */
+function _checkOptions(options, fieldType, errs, priorOptions) {
   const wants = OPTION_TYPES.includes(fieldType);
   if (!wants) {
     if (options != null) errs.push('options is only allowed for select / multiselect fields');
@@ -194,13 +224,15 @@ function _checkOptions(options, fieldType, errs) {
     errs.push(`options is required for ${fieldType} and must be a non-empty array`);
     return null;
   }
+  const prior = new Map((Array.isArray(priorOptions) ? priorOptions : [])
+    .filter(_isPlainObject).map(o => [o.value, o]));
   const out = [];
   const seen = new Set();
   options.forEach((o, i) => {
     const at = `options[${i}]`;
     if (!_isPlainObject(o)) { errs.push(`${at} must be an object {value, label}`); return; }
     Object.keys(o).forEach(k => {
-      if (k !== 'value' && k !== 'label') errs.push(`${at}: unknown property "${k}"`);
+      if (k !== 'value' && k !== 'label' && k !== 'active') errs.push(`${at}: unknown property "${k}"`);
     });
     // value is the STORED form: MEMBER OF is byte-sensitive and the S3
     // select column is utf8mb4_general_ci (case-insensitive, PAD SPACE) —
@@ -217,7 +249,16 @@ function _checkOptions(options, fieldType, errs) {
     }
     const lbl = typeof o.label === 'string' ? o.label.trim() : '';
     if (!lbl) errs.push(`${at}.label is required`);
-    out.push({ value: v, label: lbl });
+    let active = true;
+    if (o.active === undefined) {
+      const was = prior.get(v);
+      active = was ? was.active !== false : true;
+    } else if (typeof o.active !== 'boolean') {
+      errs.push(`${at}.active must be true or false`);
+    } else {
+      active = o.active;
+    }
+    out.push({ value: v, label: lbl, active });
   });
   return out;
 }
@@ -280,11 +321,13 @@ async function assertNoColumnCollision(db, entity, fieldKey) {
  * isCreate=false (PATCH, called with the merged row) skips both DB checks on
  * purpose: the key is immutable, and after S3 it IS a column on the entity
  * table — re-checking would reject every edit of a live field.
+ * priorOptions (PATCH only) is the stored options array — an option that
+ * omits `active` keeps its stored state (see _checkOptions).
  *
  * @returns normalized { entity, field_key, label, field_type, options,
  *          validation, show_when, sort_order, active }
  */
-async function validateDef(db, def = {}, { isCreate = true } = {}) {
+async function validateDef(db, def = {}, { isCreate = true, priorOptions = null } = {}) {
   const errs = [];
   const d = def || {};
 
@@ -305,7 +348,7 @@ async function validateDef(db, def = {}, { isCreate = true } = {}) {
   if (!typeOk) errs.push(`field_type must be one of ${FIELD_TYPES.join(', ')}`);
 
   const rawOptions = _jsonIn(d.options, 'options', errs);
-  const options = typeOk ? _checkOptions(rawOptions, fieldType, errs) : null;
+  const options = typeOk ? _checkOptions(rawOptions, fieldType, errs, priorOptions) : null;
 
   const rawValidation = _jsonIn(d.validation, 'validation', errs);
   const validation = typeOk ? _checkValidation(rawValidation, fieldType, errs) : null;
@@ -391,6 +434,17 @@ const PATCHABLE = ['label', 'field_type', 'options', 'validation', 'show_when', 
  * PUT idiom). active has its own verbs (setActive). The merged row is
  * validated whole — changing select → text requires options: null in the
  * same patch. Row-locked so two editors can't validate against a stale row.
+ *
+ * POST-DATA LOCKS (S2, design doc §3) — 409, checked inside the row lock
+ * against the stored JSON (existence probes only; never `->>`):
+ *   - field_type is frozen once ANY record holds a value under the key. The
+ *     escape hatch is a new field plus one UPDATE copying values across.
+ *   - an option VALUE is frozen once any record holds it. Options are
+ *     matched by value, so a "rename" and a removal look the same: the old
+ *     value is gone from the array. Gone + unused = hard delete (fine);
+ *     gone + used = rejected with the retire hint (active: false).
+ * Residual, accepted: a def edited while another instance's cache (TTL_MS)
+ * still holds the old def can let one write validate against the old shape.
  */
 async function updateDef(db, id, patch = {}) {
   const n = parseInt(id, 10);
@@ -418,7 +472,27 @@ async function updateDef(db, id, patch = {}) {
     }
     const merged = { ...row };
     for (const k of present) merged[k] = p[k];
-    const def = await validateDef(conn, merged, { isCreate: false });
+    const def = await validateDef(conn, merged, { isCreate: false, priorOptions: row.options });
+
+    const table = ENTITY_TABLES[row.entity];
+    const path = `$.${row.field_key}`;
+    if (def.field_type !== row.field_type && await _keyHasData(conn, table, path)) {
+      throw _err(409,
+        `field_type is locked: records already hold a value for ${row.field_key}. ` +
+        'Create a new field and copy the values across instead of changing the type.');
+    }
+    if (present.includes('options') && def.field_type === row.field_type && OPTION_TYPES.includes(row.field_type)) {
+      const kept = new Set((def.options || []).map(o => o.value));
+      const gone = (row.options || []).map(o => o && o.value).filter(v => typeof v === 'string' && !kept.has(v));
+      const used = [];
+      for (const v of gone) if (await _optionHasData(conn, table, path, v)) used.push(v);
+      if (used.length) {
+        throw _err(409,
+          `option value${used.length > 1 ? 's' : ''} ${used.map(v => `"${v}"`).join(', ')} ` +
+          `${used.length > 1 ? 'are' : 'is'} held by existing records and cannot be removed or changed — ` +
+          'keep the option and retire it instead ("active": false hides it from pickers)');
+      }
+    }
 
     const sets = present.map(k => `${k} = ?`);
     const args = present.map(k => (['options', 'validation', 'show_when'].includes(k) ? _json(def[k]) : def[k]));
@@ -441,6 +515,296 @@ async function setActive(db, id, active) {
   return { id: n, active: active ? 1 : 0 };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Post-data probes (S2) — the only reads of <entity>.custom outside the
+// chokepoint. Existence checks via JSON_CONTAINS*, never `->>` (§3). An
+// unindexed scan of ~1k rows; only a def PATCH pays it.
+// ─────────────────────────────────────────────────────────────
+
+async function _keyHasData(conn, table, path) {
+  const [rows] = await conn.query(
+    `SELECT 1 AS hit FROM \`${table}\` WHERE JSON_CONTAINS_PATH(custom, 'one', ?) LIMIT 1`, [path]
+  );
+  return !!(rows && rows.length);
+}
+
+/** JSON_CONTAINS is true for a select scalar equal to the value AND for a
+ *  multiselect array holding it — one probe serves both stored shapes. */
+async function _optionHasData(conn, table, path, value) {
+  const [rows] = await conn.query(
+    `SELECT 1 AS hit FROM \`${table}\` WHERE JSON_CONTAINS(custom, CAST(? AS JSON), ?) LIMIT 1`,
+    [JSON.stringify(value), path]
+  );
+  return !!(rows && rows.length);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Values (S2) — validateValue + the chokepoint helpers
+// ─────────────────────────────────────────────────────────────
+
+/** DECIMAL(18,4) bound — number's S3 virtual column type (design doc §2). A
+ *  bigger value would store fine in JSON and read back clamped in SQL.
+ *  EXCLUSIVE 1e14: the column max 99999999999999.9999 is not a JS double
+ *  (it rounds to exactly 1e14), so `> max` would let 1e14 through. */
+const NUMBER_ABS_LIMIT = 1e14;
+const NUMERIC_RE = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A select/multiselect input → the canonical stored option value, or null.
+ *  Exact match first, then case-insensitive: values are unique case-
+ *  insensitively (validateDef), so the fold is unambiguous, and storing the
+ *  canonical spelling keeps MEMBER OF (byte-sensitive) honest. Active and
+ *  retired options both match (§3). */
+function _optionValue(def, raw) {
+  let s = null;
+  if (typeof raw === 'string') s = raw.trim();
+  else if (typeof raw === 'number' && Number.isFinite(raw)) s = String(raw);
+  if (!s) return null;
+  const opts = Array.isArray(def.options) ? def.options : [];
+  const hit = opts.find(o => o.value === s)
+           || opts.find(o => String(o.value).toLowerCase() === s.toLowerCase());
+  return hit ? hit.value : null;
+}
+
+function _optionList(def) {
+  return (Array.isArray(def.options) ? def.options : []).map(o => o.value).join(', ');
+}
+
+/**
+ * Validate + normalize one value for a def (design doc §2 type map).
+ *
+ * @returns {{ ok: true, value }} — value null means CLEAR (the key is
+ *          JSON_REMOVEd; JSON null is never stored) — or
+ *          {{ ok: false, error }} with the key named in the message.
+ *
+ * Clear: null / undefined / '' on any type, [] on multiselect.
+ * text: a string (a finite number is taken as its text); max_len counts
+ *   characters; pattern must match the WHOLE value (the HTML input
+ *   `pattern` semantics a renderer will use), not a substring.
+ * number: a finite number or a plain decimal string; stored as a JSON
+ *   number; min / max; |n| within DECIMAL(18,4).
+ * date: 'YYYY-MM-DD', a real calendar date, year 1000+ (MySQL DATE).
+ * boolean: true/false, 1/0, '1'/'0', 'true'/'false' (any case) → true/false.
+ * select: one option value (active or retired); unknown rejected.
+ * multiselect: an array of option values (active or retired), no repeats;
+ *   stored in the def's option order so an equal set diffs as unchanged.
+ * validation.required is deliberately NOT checked (renderers own it, S4).
+ */
+function validateValue(def, raw) {
+  const key = def && def.field_key;
+  const bad = msg => ({ ok: false, error: `${key}: ${msg}` });
+  if (!def) return { ok: false, error: 'no field definition' };
+
+  if (raw === null || raw === undefined || raw === ''
+      || (def.field_type === 'multiselect' && Array.isArray(raw) && raw.length === 0)) {
+    return { ok: true, value: null };
+  }
+  const v = _isPlainObject(def.validation) ? def.validation : {};
+
+  switch (def.field_type) {
+    case 'text': {
+      const s = typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : raw;
+      if (typeof s !== 'string') return bad('must be text');
+      const len = Array.from(s).length;
+      if (Number.isInteger(v.max_len) && len > v.max_len) {
+        return bad(`must be ${v.max_len} characters or fewer (got ${len})`);
+      }
+      if (typeof v.pattern === 'string' && v.pattern) {
+        let re;
+        try { re = new RegExp(`^(?:${v.pattern})$`); }
+        catch (_) { return bad('the field\'s validation pattern is not a valid regular expression'); }
+        if (!re.test(s)) return bad(`must match the pattern ${v.pattern}`);
+      }
+      return { ok: true, value: s };
+    }
+
+    case 'number': {
+      let n;
+      if (typeof raw === 'number') n = raw;
+      else if (typeof raw === 'string' && NUMERIC_RE.test(raw.trim())) n = Number(raw.trim());
+      else return bad('must be a number');
+      if (!Number.isFinite(n)) return bad('must be a finite number');
+      if (Math.abs(n) >= NUMBER_ABS_LIMIT) return bad('must be between -99999999999999.9999 and 99999999999999.9999');
+      if (typeof v.min === 'number' && n < v.min) return bad(`must be at least ${v.min}`);
+      if (typeof v.max === 'number' && n > v.max) return bad(`must be at most ${v.max}`);
+      return { ok: true, value: n === 0 ? 0 : n }; // -0 → 0
+    }
+
+    case 'date': {
+      const s = typeof raw === 'string' ? raw.trim() : '';
+      const m = DATE_RE.exec(s);
+      if (!m) return bad('must be a date written YYYY-MM-DD');
+      const y = +m[1], mo = +m[2], d = +m[3];
+      const dt = new Date(Date.UTC(y, mo - 1, d));
+      if (y < 1000 || dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) {
+        return bad(`"${s}" is not a real calendar date`);
+      }
+      return { ok: true, value: s };
+    }
+
+    case 'boolean': {
+      const b = typeof raw === 'string' ? raw.trim().toLowerCase() : raw;
+      if (b === true || b === 1 || b === '1' || b === 'true') return { ok: true, value: true };
+      if (b === false || b === 0 || b === '0' || b === 'false') return { ok: true, value: false };
+      return bad('must be true or false');
+    }
+
+    case 'select': {
+      const val = _optionValue(def, raw);
+      if (val == null) return bad(`${JSON.stringify(raw)} is not one of its options (${_optionList(def)})`);
+      return { ok: true, value: val };
+    }
+
+    case 'multiselect': {
+      if (!Array.isArray(raw)) return bad('must be an array of option values');
+      const picked = new Set();
+      const errs = [];
+      for (const item of raw) {
+        const val = _optionValue(def, item);
+        if (val == null) errs.push(`${JSON.stringify(item)} is not one of its options (${_optionList(def)})`);
+        else if (picked.has(val)) errs.push(`"${val}" is listed twice`);
+        else picked.add(val);
+      }
+      if (errs.length) return bad(errs.join(', '));
+      return { ok: true, value: def.options.map(o => o.value).filter(x => picked.has(x)) };
+    }
+
+    default:
+      return bad(`has an unsupported field_type "${def.field_type}"`);
+  }
+}
+
+/** Custom-namespace test. Case-insensitive: MySQL column names are, so after
+ *  S3 a `CF_X` key must never reach the column path and hit the virtual
+ *  column — it lands here and fails as an unknown field instead. */
+const CF_PREFIX_RE = /^cf_/i;
+
+/**
+ * Partition an update payload into core columns and cf_ keys — THE shared
+ * front half of both chokepoints (caseService.updateCase,
+ * contactService.updateContact). Every cf_ key must name an ACTIVE def on the
+ * entity and carry a valid value; `custom` itself is never a writable key.
+ * All problems are collected and thrown together (400, joined with '; ').
+ *
+ * The core keys are returned untouched — each service keeps its own core
+ * gate (cases: the real-column set; contacts: its ALLOWED list).
+ *
+ * @returns {{ coreFields: object,
+ *             customSets: {[key]: value},  // JSON_SET, validated + normalized
+ *             customRemoves: string[],      // JSON_REMOVE (cleared keys)
+ *             customKeys: string[] }}       // every cf_ key written, input order
+ */
+async function splitCustomFields(db, entity, fields) {
+  _assertEntity(entity);
+  const coreFields = {};
+  const customSets = {};
+  const customRemoves = [];
+  const customKeys = [];
+  const errs = [];
+  const cfKeys = [];
+
+  for (const k of Object.keys(fields || {})) {
+    if (k.toLowerCase() === 'custom') errs.push('custom is not writable as a whole — write individual cf_ keys');
+    else if (CF_PREFIX_RE.test(k)) cfKeys.push(k);
+    else coreFields[k] = fields[k];
+  }
+
+  const unknown = [];
+  const inactive = [];
+  for (const k of cfKeys) {
+    const def = await getByKey(db, entity, k, { includeInactive: true });
+    if (!def) { unknown.push(k); continue; }
+    if (!def.active) { inactive.push(k); continue; }
+    const r = validateValue(def, fields[k]);
+    if (!r.ok) { errs.push(r.error); continue; }
+    customKeys.push(k);
+    if (r.value === null) customRemoves.push(k);
+    else customSets[k] = r.value;
+  }
+  if (inactive.length) errs.unshift(`inactive custom field(s) on ${entity}: ${inactive.join(', ')} — reactivate the field before writing it`);
+  if (unknown.length)  errs.unshift(`unknown custom field(s) on ${entity}: ${unknown.join(', ')}`);
+
+  if (errs.length) throw _err(400, errs.join('; '));
+  return { coreFields, customSets, customRemoves, customKeys };
+}
+
+/**
+ * The ONE assignment that writes custom values, for the caller to append to
+ * its single UPDATE's SET list (§3: same statement as the core columns; the
+ * bag is never read-modify-written in JS). Paths and values are bound
+ * parameters; every value goes through CAST(? AS JSON) of its JSON text so a
+ * boolean stays a JSON boolean and an array a JSON array (a bare `?` would
+ * bind true as 1 and an array as a SQL list).
+ *
+ * @returns {{ sql: string, params: any[] } | null} null when nothing to write
+ */
+function customAssignment(customSets, customRemoves) {
+  const sets = Object.keys(customSets || {});
+  const removes = customRemoves || [];
+  if (!sets.length && !removes.length) return null;
+  for (const k of [...sets, ...removes]) {
+    if (!KEY_RE.test(k)) throw _err(500, `customAssignment: refusing malformed key "${k}"`);
+  }
+  let expr = '`custom`';
+  const params = [];
+  if (sets.length) {
+    expr = `JSON_SET(${expr}, ${sets.map(() => '?, CAST(? AS JSON)').join(', ')})`;
+    for (const k of sets) params.push(`$.${k}`, JSON.stringify(customSets[k]));
+  }
+  if (removes.length) {
+    expr = `JSON_REMOVE(${expr}, ${removes.map(() => '?').join(', ')})`;
+    for (const k of removes) params.push(`$.${k}`);
+  }
+  return { sql: `\`custom\` = ${expr}`, params };
+}
+
+/**
+ * Per-key { from, to } for the cf_ keys just written — merged by the services
+ * into the same `changes` map as their core columns. Compared as JSON text,
+ * never through domainEvents' _diffNorm (String() of an array/object is
+ * useless). Unchanged keys are omitted; a clear of an absent key is no change.
+ *
+ * @param {object|string|null} priorCustom  the row's custom BEFORE the write
+ */
+function buildCustomChanges(priorCustom, customSets, customRemoves) {
+  const p = _parseJson(priorCustom);
+  const prior = _isPlainObject(p) ? p : {};
+  const has = k => Object.prototype.hasOwnProperty.call(prior, k) && prior[k] !== null;
+  const changes = {};
+  for (const [k, to] of Object.entries(customSets || {})) {
+    const from = has(k) ? prior[k] : null;
+    if (JSON.stringify(from) !== JSON.stringify(to)) changes[k] = { from, to };
+  }
+  for (const k of customRemoves || []) {
+    if (has(k)) changes[k] = { from: prior[k], to: null };
+  }
+  return changes;
+}
+
+/**
+ * Lower-cased set of the entity table's WRITABLE real columns — generated
+ * columns (S3's cf_ virtuals among them) and `custom` excluded. caseService
+ * uses it to reject keys that are neither a column nor a cf_ key. Cached like
+ * the defs (TTL_MS, cleared by bump()). An empty read throws rather than
+ * rejecting every column as unknown.
+ */
+async function writableColumns(db, entity) {
+  const table = ENTITY_TABLES[_assertEntity(entity)];
+  const hit = _colCache.get(entity);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.set;
+  const gen = _gen;
+  const [rows] = await db.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND GENERATION_EXPRESSION = ''`,
+    [table]
+  );
+  const set = new Set((rows || []).map(r => String(r.COLUMN_NAME).toLowerCase()));
+  set.delete('custom');
+  if (!set.size) throw _err(500, `could not read the column list for ${table}`);
+  if (gen === _gen) _colCache.set(entity, { at: Date.now(), set });
+  return set;
+}
+
 module.exports = {
   ENTITIES,
   ENTITY_TABLES,
@@ -457,4 +821,10 @@ module.exports = {
   createDef,
   updateDef,
   setActive,
+  // S2 — values + the write chokepoint
+  validateValue,
+  splitCustomFields,
+  customAssignment,
+  buildCustomChanges,
+  writableColumns,
 };

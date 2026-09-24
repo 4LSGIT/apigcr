@@ -73,6 +73,7 @@ const crypto = require('crypto');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
 const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
+const fieldDefs = require('./fieldDefService'); // custom fields S2 — cf_ write chokepoint
 
 const DEFAULT_LOG_LIMIT = 200;
 
@@ -2398,7 +2399,8 @@ async function createContact(db, {
 /**
  * Update one or more fields on a contact.
  *
- * Whitelist enforced — blocks PK, SSN, and trigger-computed fields.
+ * Whitelist enforced — blocks the PK and trigger-computed fields (contact_ssn
+ * is an ordinary writable column since the 2026-09-24 ruling).
  * DB trigger handles: recomputing name fields + logging changes on the
  * contacts row.
  *
@@ -2430,6 +2432,15 @@ async function createContact(db, {
  * `contact_phone2` / `contact_email2` write to the legacy columns only;
  * they are NOT propagated to child tables (vestigial).
  *
+ * CUSTOM FIELDS (S2, ref/CUSTOM_FIELDS_DESIGN.md §3): cf_ keys never meet the
+ * ALLOWED list — fieldDefs.splitCustomFields takes them out first (each must
+ * name an ACTIVE contact def and carry a valid value — 400 otherwise) and
+ * they are written as ONE `custom = JSON_REMOVE(JSON_SET(custom, …), …)`
+ * clause inside the same scalar UPDATE (which now runs for a cf_-only patch
+ * too). `custom` itself is never a writable key. updated_fields / changes
+ * name the cf_ keys individually; the old values come from adding `custom`
+ * to the in-transaction diff pre-read.
+ *
  * The whole operation runs in a transaction so the contacts UPDATE,
  * legacy propagation (where applicable), and aggregate reconcilers land
  * atomically.
@@ -2447,15 +2458,21 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
     throw new Error('updateContact requires at least one field');
   }
 
+  // Custom fields (S2): cf_ keys leave here, validated; the rest of this
+  // function sees only coreFields.
+  const { coreFields, customSets, customRemoves, customKeys } =
+    await fieldDefs.splitCustomFields(db, 'contact', fields);
+  const customSql = fieldDefs.customAssignment(customSets, customRemoves);
+
   // Detect aggregate arrays. Use hasOwnProperty so `phones: []` (empty
   // array, "end all current") is distinguishable from `phones` absent.
-  const hasPhones    = Object.prototype.hasOwnProperty.call(fields, 'phones');
-  const hasEmails    = Object.prototype.hasOwnProperty.call(fields, 'emails');
-  const hasAddresses = Object.prototype.hasOwnProperty.call(fields, 'addresses');
+  const hasPhones    = Object.prototype.hasOwnProperty.call(coreFields, 'phones');
+  const hasEmails    = Object.prototype.hasOwnProperty.call(coreFields, 'emails');
+  const hasAddresses = Object.prototype.hasOwnProperty.call(coreFields, 'addresses');
 
-  const phones    = hasPhones    ? fields.phones    : undefined;
-  const emails    = hasEmails    ? fields.emails    : undefined;
-  const addresses = hasAddresses ? fields.addresses : undefined;
+  const phones    = hasPhones    ? coreFields.phones    : undefined;
+  const emails    = hasEmails    ? coreFields.emails    : undefined;
+  const addresses = hasAddresses ? coreFields.addresses : undefined;
 
   if (hasPhones    && !Array.isArray(phones))    throw new Error('phones must be an array');
   if (hasEmails    && !Array.isArray(emails))    throw new Error('emails must be an array');
@@ -2465,7 +2482,7 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   // mirror scalars — the reconciler is authoritative and the scalar
   // would be silently overridden by the mirror recompute anyway. Keep
   // contact_phone2 / contact_email2 (vestigial; not governed by aggregates).
-  const scalarFields = { ...fields };
+  const scalarFields = { ...coreFields };
   delete scalarFields.phones;
   delete scalarFields.emails;
   delete scalarFields.addresses;
@@ -2596,22 +2613,30 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   const out = await db.withTransaction(async (conn) => {
 
     // (Trigger T3) Pre-read the columns being written for the change diff.
+    // `custom` joins it when cf_ keys are written (S2) — for the per-key
+    // `changes` old values only; it never reaches the response.
     let priorRow = null;
-    if (finalKeys.length > 0) {
+    const priorCols = [...finalKeys.map(k => `\`${k}\``), ...(customSql ? ['`custom`'] : [])];
+    if (priorCols.length > 0) {
       const [[p]] = await conn.query(
-        `SELECT ${finalKeys.map(k => `\`${k}\``).join(', ')} FROM contacts WHERE contact_id = ?`,
+        `SELECT ${priorCols.join(', ')} FROM contacts WHERE contact_id = ?`,
         [contactId]
       );
       priorRow = p || null;
     }
 
-    // 1. Scalar UPDATE on contacts (if any scalar fields remain)
-    if (finalKeys.length > 0) {
-      const setClauses = finalKeys.map(k => `\`${k}\` = ?`).join(', ');
-      const values = [...finalKeys.map(k => normalized[k]), contactId];
+    // 1. Scalar UPDATE on contacts (if any scalar fields — or cf_ keys — remain).
+    //    ONE statement: core columns, then the custom assignment.
+    if (finalKeys.length > 0 || customSql) {
+      const setClauses = finalKeys.map(k => `\`${k}\` = ?`);
+      const values = finalKeys.map(k => normalized[k]);
+      if (customSql) {
+        setClauses.push(customSql.sql);
+        values.push(...customSql.params);
+      }
       const [result] = await conn.query(
-        `UPDATE contacts SET ${setClauses}, contact_updated = NOW() WHERE contact_id = ?`,
-        values
+        `UPDATE contacts SET ${setClauses.join(', ')}, contact_updated = NOW() WHERE contact_id = ?`,
+        [...values, contactId]
       );
       if (result.affectedRows === 0) {
         throw new Error(`Contact ${contactId} not found`);
@@ -2683,9 +2708,13 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
 
     const resp = {
       contact_id: parseInt(contactId, 10),
-      updated_fields: finalKeys,
-      // (Trigger T3) per-scalar-field {from,to} diff — additive key.
-      changes: domainEvents.buildChanges(priorRow, normalized, finalKeys),
+      updated_fields: [...finalKeys, ...customKeys],
+      // (Trigger T3) per-scalar-field {from,to} diff — additive key. cf_ keys
+      // diff per key too (S2); never a `custom` entry.
+      changes: {
+        ...domainEvents.buildChanges(priorRow, normalized, finalKeys),
+        ...fieldDefs.buildCustomChanges(priorRow && priorRow.custom, customSets, customRemoves),
+      },
     };
     if (hasPhones)    resp.phones_changed    = phoneResult.phones_changed;
     if (hasEmails)    resp.emails_changed    = emailResult.emails_changed;

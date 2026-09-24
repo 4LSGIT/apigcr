@@ -40,6 +40,7 @@ const logService = require('./logService');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
 const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
+const fieldDefs = require('./fieldDefService'); // custom fields S2 — cf_ write chokepoint
 // Merge consolidation recomputes the survivor's docs-checklist status. Shared
 // with routes/api.checklists.js — one copy of the rule, see the lib.
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
@@ -374,8 +375,16 @@ async function getCase(db, caseId, include = '', {
 /**
  * Update one or more fields on a case.
  *
- * The cases table has many BK-specific columns — we allow most of them.
- * Only the PK is blocked.
+ * The cases table has many BK-specific columns — every REAL column except the
+ * PK is writable. A key that is neither a real column nor a cf_ key is
+ * rejected up front (400) instead of reaching MySQL as an unknown column.
+ *
+ * CUSTOM FIELDS (S2, ref/CUSTOM_FIELDS_DESIGN.md §3): cf_ keys are split off
+ * by fieldDefs.splitCustomFields (each must name an ACTIVE case def and carry
+ * a valid value — 400 otherwise) and written as ONE `custom = JSON_REMOVE(
+ * JSON_SET(custom, …), …)` clause inside the same UPDATE as the core columns.
+ * `custom` itself is never a writable key. updated_fields / changes name the
+ * cf_ keys individually; the string `custom` appears in neither.
  *
  * @param {object} db
  * @param {string} caseId
@@ -393,11 +402,16 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
     throw new Error('updateCase requires at least one field');
   }
 
-  // Block only the PK — everything else on this table is editable
+  // Custom fields (S2): cf_ keys leave the column path here, validated.
+  const { coreFields, customSets, customRemoves, customKeys } =
+    await fieldDefs.splitCustomFields(db, 'case', fields);
+
+  // Block only the PK among real columns. Lower-cased: MySQL column names are
+  // case-insensitive, so `CASE_ID` names the PK too.
   const BLOCKED = new Set(['case_id']);
 
-  const keys = Object.keys(fields);
-  const blocked = keys.filter(k => BLOCKED.has(k));
+  const keys = Object.keys(coreFields);
+  const blocked = keys.filter(k => BLOCKED.has(k.toLowerCase()));
   if (blocked.length) {
     throw new Error(`updateCase: blocked columns: ${blocked.join(', ')}`);
   }
@@ -409,17 +423,30 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
     }
   }
 
+  // Unknown keys (S2): neither a real column nor a cf_ key. Before S2 these
+  // reached MySQL and failed there as ER_BAD_FIELD_ERROR (a 500 carrying SQL
+  // text); now they are a 400 naming every offender.
+  if (keys.length) {
+    const columns = await fieldDefs.writableColumns(db, 'case');
+    const unknown = keys.filter(k => !columns.has(k.toLowerCase()));
+    if (unknown.length) {
+      const e = new Error(`updateCase: unknown column(s): ${unknown.join(', ')}`);
+      e.status = 400;
+      throw e;
+    }
+  }
+
   // Notes length. case_notes and 341_notes are TEXT, and this session's
   // sql_mode has no STRICT_TRANS_TABLES — an oversized value would be
   // truncated silently and reported as a success. Throws with status 400.
   // The merge concat further down is deliberately exempt; see lib/noteLimits.js.
-  assertNoteLengths(fields);
+  assertNoteLengths(coreFields);
 
   // Blank date -> NULL. This UPDATE writes caller values verbatim, and the
   // session sql_mode has no STRICT_TRANS_TABLES, so '' on a DATE column would
   // silently become '0000-00-00' — which reads back as 1899-11-30 and is then
   // indistinguishable from a real date. See lib/blankDateToNull.js.
-  const safeFields = blankDatesToNull('cases', fields);
+  const safeFields = blankDatesToNull('cases', coreFields);
 
   // (Trigger T3) Pre-read the full row for the change diff + envelope
   // snapshot. One PK read — cheap; also upgrades the not-found detection.
@@ -472,12 +499,19 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
     }
   }
 
-  const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
-  const values = [...keys.map(k => safeFields[k]), caseId];
+  // ONE statement: core columns first (bound in `keys` order — callers index
+  // params by updated_fields position), then the custom assignment.
+  const setClauses = keys.map(k => `\`${k}\` = ?`);
+  const values = keys.map(k => safeFields[k]);
+  const customSql = fieldDefs.customAssignment(customSets, customRemoves);
+  if (customSql) {
+    setClauses.push(customSql.sql);
+    values.push(...customSql.params);
+  }
 
   const [result] = await db.query(
-    `UPDATE cases SET ${setClauses} WHERE case_id = ?`,
-    values
+    `UPDATE cases SET ${setClauses.join(', ')} WHERE case_id = ?`,
+    [...values, caseId]
   );
 
   if (result.affectedRows === 0) {
@@ -493,7 +527,15 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
   // "system did it" and "we don't know who did it" must stay distinguishable
   // to a rule author. userId 0 IS meaningful when passed explicitly (the
   // automation convention).
-  const changes = domainEvents.buildChanges(priorRow, safeFields, keys);
+  //
+  // cf_ changes are per key from the pre-read's `custom` (never the bag —
+  // domainEvents strips `custom` from `data`, and cf_ values are not overlaid
+  // onto `data` either: S3's virtual columns bring them into SELECT * whole).
+  const changes = {
+    ...domainEvents.buildChanges(priorRow, safeFields, keys),
+    ...fieldDefs.buildCustomChanges(priorRow.custom, customSets, customRemoves),
+  };
+  const updatedFields = [...keys, ...customKeys];
   if (Object.keys(changes).length) {
     domainEvents.emit(db, 'case.updated', {
       case_id: String(caseId),
@@ -501,11 +543,11 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
       ...(source != null ? { source } : {}),
       data: { ...priorRow, ...safeFields },
       changes,
-      extra: { updated_fields: keys },
+      extra: { updated_fields: updatedFields },
     });
   }
 
-  return { case_id: caseId, updated_fields: keys, changes };
+  return { case_id: caseId, updated_fields: updatedFields, changes };
 }
 
 

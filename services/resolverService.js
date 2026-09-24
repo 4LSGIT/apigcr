@@ -66,8 +66,16 @@ const ALLOWED_TABLES = [
 // secrecy-from-staff: lib/portalCardEngine.js (its own deny-by-default
 // whitelist — those values land in a CLIENT browser) and lib/domainEvents.js
 // (envelopes persist independently of the contact row).
+//
+// cases.custom / contacts.custom (custom-fields S2) are blocked for a
+// different reason again: the raw JSON bag never travels whole (design doc
+// §3) — a placeholder would print it as [object Object] at best. Individual
+// fields become resolvable as named cf_ columns once S3's virtual columns
+// exist.
 const BLOCKED_COLUMNS = {
   users: ['password', 'password_hash'],
+  cases: ['custom'],
+  contacts: ['custom'],
 };
 
 // ─────────────────────────────────────────────────────────────

@@ -310,6 +310,11 @@ describe('caseService.updateCase — role twins (slice 6)', () => {
       query: async (sql, params = []) => {
         const s = String(sql).replace(/\s+/g, ' ');
         if (/^SELECT \* FROM cases WHERE case_id/.test(s)) return [[priorRow]];
+        // custom-fields S2: updateCase rejects keys that are not real columns,
+        // reading the writable set from information_schema (cached).
+        if (/FROM information_schema\.COLUMNS/.test(s)) {
+          return [[...Object.keys(PRIOR), 'case_stage'].map(c => ({ COLUMN_NAME: c }))];
+        }
         if (/^UPDATE cases SET/.test(s)) { updates.push({ s, params }); return [{ affectedRows: 1 }]; }
         // resolver: suffix pass
         if (/JSON_EXTRACT\(cr\.attrs/.test(s)) {

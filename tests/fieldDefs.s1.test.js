@@ -80,6 +80,9 @@ function worldDb({ rows = [], columns = COLUMNS, raceDup = false } = {}) {
       const r = state.rows.find(x => x.entity === params[0] && x.field_key === params[1]);
       return [r ? [{ id: r.id }] : []];
     }
+    // S2 post-data locks probe the entity table on a field_type / options
+    // change. This world holds no case/contact rows — so never any data.
+    if (/^SELECT 1 AS hit FROM `(cases|contacts)` WHERE JSON_CONTAINS/.test(s)) return [[]];
     if (/FROM information_schema\.COLUMNS WHERE TABLE_SCHEMA = DATABASE\(\) AND TABLE_NAME = \? AND COLUMN_NAME = \?/.test(s)) {
       const hit = (columns[params[0]] || []).find(c => c.toLowerCase() === String(params[1]).toLowerCase());
       return [hit ? [{ COLUMN_NAME: hit }] : []];
@@ -295,14 +298,15 @@ describe('validateDef shape', () => {
 
   test('valid select: options normalized (labels trimmed), values untouched', async () => {
     const out = await v({ field_type: 'select', options: [{ value: 'open', label: ' Open ' }, { value: 'Closed-2', label: 'Closed' }] });
-    expect(out.options).toEqual([{ value: 'open', label: 'Open' }, { value: 'Closed-2', label: 'Closed' }]);
+    // S2: options gain `active` (the retire flag) — a new option defaults true.
+    expect(out.options).toEqual([{ value: 'open', label: 'Open', active: true }, { value: 'Closed-2', label: 'Closed', active: true }]);
   });
 
   test('options / validation / show_when accept JSON text; {} validation → null; show_when stored verbatim', async () => {
     const sw = { field: 'cf_other', equals: 'x', nested: { any: [1, 2] } };
     const out = await v({ field_type: 'multiselect', options: '[{"value":"a","label":"A"}]',
       validation: {}, show_when: JSON.stringify(sw) });
-    expect(out.options).toEqual([{ value: 'a', label: 'A' }]);
+    expect(out.options).toEqual([{ value: 'a', label: 'A', active: true }]);
     expect(out.validation).toBeNull();
     expect(out.show_when).toEqual(sw);
   });
@@ -326,7 +330,7 @@ describe('mutations', () => {
     expect(r).toEqual({ id: 100, entity: 'contact', field_key: 'cf_clio_id' });
     const ins = db.state.log.find(q => /^INSERT/.test(q.s));
     expect(ins.params).toEqual(['contact', 'cf_clio_id', 'Clio ID', 'select',
-      '[{"value":"a","label":"A"}]', '{"required":true}', null, 0, 1]);
+      '[{"value":"a","label":"A","active":true}]', '{"required":true}', null, 0, 1]);
   });
 
   test('duplicate key → clean 409, never raw ER_DUP_ENTRY (pre-check AND the race)', async () => {

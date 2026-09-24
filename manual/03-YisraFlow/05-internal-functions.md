@@ -588,11 +588,16 @@ Update one or more fields on a contact row. Whitelisted columns only.
 
 **Allowed columns:**
 ```
+contact_kind, contact_org_name,
 contact_type, contact_fname, contact_mname, contact_lname, contact_pname,
 contact_phone, contact_email, contact_address, contact_city, contact_state,
 contact_zip, contact_dob, contact_marital_status, contact_ssn,
 contact_tags, contact_notes, contact_clio_id, contact_phone2, contact_email2
 ```
+
+**Plus custom fields:** any ACTIVE contact custom field by key (`cf_…`),
+validated by the service against the field registry — see
+[Custom Fields](../05-Subsystems/13-custom-fields.md#writing-values).
 
 **Blocked columns** (auto-managed or sensitive):
 - `contact_id` (PK, immutable)
@@ -919,6 +924,11 @@ JSON-descriptor SQL query against a whitelisted set of tables. Replaces the unsa
 
 The whitelist of allowed tables matches the resolver's whitelist — see chapter 6.
 
+Some columns never come back, even through `["*"]`: `users.password` /
+`password_hash`, and `cases.custom` / `contacts.custom` — the custom-field
+values bag, which is never handed out whole (custom fields become their own
+named columns in a later release).
+
 #### `insert_db`
 
 Parameterized single-row INSERT from a JSON descriptor — no raw SQL. Whitelisted tables with insert:true only (rw_scratch, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). app_settings is update-only (create keys in the DB console); tasks is update-only (use create_task). PK / auto_increment / generated / timestamp columns are never settable. Duplicate-key collisions throw.
@@ -1198,12 +1208,19 @@ fires twice does not double-log.
 
 #### `update_case`
 
-Update one or more fields on a case row. Whitelisted columns only — non-whitelisted columns are rejected at runtime with the blocked names (see ALLOWED in update_case: docket, dates, stage/status/chapter, 341 fields, docs/forms, judge/trustee, clio, notes). case_number / case_number_full are opaque strings — no shape validation.
+Update one or more fields on a case row. Whitelisted columns only — non-whitelisted columns are rejected at runtime with the blocked names (see ALLOWED in update_case: docket, dates, stage/status/chapter, 341 fields, docs/forms, judge/trustee, clio, notes). Also accepts the case's ACTIVE custom fields by key (cf_…); each value is validated against its field type — unknown or retired keys are rejected; null or "" clears one. case_number / case_number_full are opaque strings — no shape validation.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
 | `case_id` | string | yes (placeholderAllowed) |  |
-| `fields` | object | yes | Column → value pairs. Whitelist enforced at runtime. |
+| `fields` | object | yes | Column → value pairs, plus cf_ custom-field keys. Whitelist and custom-field registry enforced at runtime. |
+
+Two gates, one per kind of key: core columns must be on the function's
+whitelist (`pipeline_phase` and `case_341_link` joined it with custom-fields
+S2 — both were always writable through `PATCH /api/cases/:id`); `cf_` keys are
+not listed anywhere here — `caseService.updateCase` checks each against the
+field registry. Value rules, clearing and retired options:
+[Custom Fields](../05-Subsystems/13-custom-fields.md#writing-values).
 
 Example:
 ```json
