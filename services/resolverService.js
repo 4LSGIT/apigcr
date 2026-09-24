@@ -230,6 +230,22 @@ function formatPhone(value) {
   return value;
 }
 
+// SSN formatters. Format matches esignPrefillService.ssnMasked exactly
+// ('xxx-xx-6789') — the same number must not render two ways depending on
+// which layer printed it. Fewer than four digits yields '' rather than a
+// partial mask: 'xxx-xx-' with nothing after it is worse than a blank the
+// template collapses. Generic like `phone` — applied to whatever value the
+// placeholder resolved to, SSN-shaped or not.
+function ssnLast4(value) {
+  const digits = String(value == null ? '' : value).replace(/\D/g, '');
+  return digits.length >= 4 ? digits.slice(-4) : '';
+}
+
+function ssnMask(value) {
+  const last4 = ssnLast4(value);
+  return last4 ? `xxx-xx-${last4}` : '';
+}
+
 function maskEmail(email) {
   if (!email || !email.includes('@')) return email;
   const [local, domain] = email.split('@');
@@ -609,6 +625,10 @@ async function resolve({ db, text, refs = {}, strict = false }) {
         value = formatPhone(value);
       } else if (mod === 'email_mask') {
         value = maskEmail(String(value));
+      } else if (mod === 'ssn_mask') {
+        value = ssnMask(value);
+      } else if (mod === 'ssn_last4') {
+        value = ssnLast4(value);
       } else if (['upper','uppercase','lower','lowercase','cap','capitalize'].includes(mod)) {
         value = applyTextTransform(String(value), mod);
       }

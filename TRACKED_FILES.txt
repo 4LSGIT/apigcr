@@ -964,6 +964,7 @@ tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js
 tests/sequences.routeOrder.test.js
 tests/smtpAdapter.deliveryInfo.test.js
+tests/ssnModifiers.test.js
 tests/su.stepup.test.js
 tests/taskQueue.accel.test.js
 tests/taskService.status.test.js
