@@ -1716,8 +1716,8 @@ async function crSave(ti) {
     t.fields = schema || [];
     t.fields.forEach(f => { delete f._optionsRaw; });
     t._dirty = false;
+    crRender(); // BEFORE setStatus — crRender rebuilds the (empty) status span
     setStatus(sid, `"${t.role_code}" saved`, true);
-    crRender();
   } catch (e2) {
     if (btn) btn.disabled = false;
     // Route validation errors verbatim — the whole point of per-type saves.
