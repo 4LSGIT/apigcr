@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-09-24T08:42:57.972Z_  
-_693 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 268, PUT: 35, _ALL: 2_
+_Generated 2026-09-24T20:09:14.270Z_  
+_694 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 269, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -309,6 +309,7 @@ _693 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 268, PUT: 35, _ALL:
 | PATCH | `/api/field-defs/:id` | `jwtOrApiKey` | — |
 | POST | `/api/field-defs/:id/deactivate` | `jwtOrApiKey` | — |
 | POST | `/api/field-defs/:id/reactivate` | `jwtOrApiKey` | — |
+| POST | `/api/field-defs/reconcile` | `jwtOrApiKey` | — |
 | GET | `/api/firm-blocks` | `jwtOrApiKey` | — |
 | POST | `/api/firm-blocks` | `jwtOrApiKey` | — |
 | DELETE | `/api/firm-blocks/:id` | `jwtOrApiKey` | — |
@@ -953,4 +954,4 @@ _693 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 268, PUT: 35, _ALL:
 
 ---
 
-_693 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 268, PUT: 35, _ALL: 2_
+_694 routes total — DELETE: 57, GET: 285, PATCH: 46, POST: 269, PUT: 35, _ALL: 2_

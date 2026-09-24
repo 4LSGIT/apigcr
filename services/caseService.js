@@ -1427,6 +1427,8 @@ async function listCaseWorkflows(db, caseId, {
  *   docket:   { adopted: {col: value} },
  *   fields:   { filled: [col…], survivor_wins: [{column,survivor,loser}…],
  *               conflicts: [{column,survivor,loser}…] },   // blocking set
+ *             // custom-fields keys appear as 'custom.<key>' in filled and
+ *             // conflicts (S3); generated columns never appear at all
  *   notes_appended, alerts_appended, dropbox_noted,
  *   children: { table: rowCount, … , '<table>_dropped': rowCount,
  *               case_relate_deduped, checklists_consolidated,
@@ -1467,6 +1469,19 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     e.code = 'MERGE_NOT_FOUND';
     throw e;
   }
+
+  // Generated columns (custom-fields S3's cf_ VIRTUAL columns, and any future
+  // one) ride along in `SELECT *` but cannot be written — `UPDATE` on one is
+  // ERROR 3105. Read FRESH on every merge, never cached: a set that predates
+  // a reconcile would miss the column it just added, which is exactly that
+  // 3105. GENERATION_EXPRESSION, not EXTRA LIKE '%GENERATED%' — the latter
+  // also matches DEFAULT_GENERATED (`custom` itself, every CURRENT_TIMESTAMP
+  // default). Merges are rare manual actions; one read is nothing.
+  const [genRows] = await db.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cases' AND GENERATION_EXPRESSION <> ''`
+  );
+  const GENERATED = new Set((genRows || []).map(r => String(r.COLUMN_NAME).toLowerCase()));
 
   // ── helpers ──
   const isEmpty = (v) => v === null || v === undefined || v === '' || v === 0;
@@ -1525,13 +1540,16 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   // ── field merge plan (additive) ──
   // Special-cased out of the generic pass:
   //   case_id (PK), docket cols (above), notes/alerts (concat),
-  //   dropbox (keep + note).
+  //   dropbox (keep + note), generated columns (above — unwritable),
+  //   custom (the custom-fields bag — merged per key below; String() of two
+  //   objects is '[object Object]' both sides, so the generic pass would call
+  //   every pair equal and silently drop the loser's values).
   //   pipeline_phase (T8): system-managed lifecycle column, NOT NULL on both
   //   sides, so a cross-phase merge (the canonical one: a duplicate lead
   //   absorbed into a retained case) would otherwise land in `conflicts` and
   //   409 on a column the user cannot see or reason about. Resolved below.
   const SKIP = new Set(['case_id', ...DOCKET_COLS, 'case_notes', 'case_alerts', 'case_dropbox',
-    'pipeline_phase']);
+    'pipeline_phase', 'custom']);
   // Survivor-wins BY DESIGN — differ on ~every real pair; never blocking.
   const SILENT_SURVIVOR_WINS = new Set(['case_stage', 'case_status', 'case_open_date']);
 
@@ -1539,7 +1557,7 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   const survivorWins  = [];   // reported, non-blocking
   const conflicts     = [];   // blocking (unless force)
   for (const col of Object.keys(loser)) {
-    if (SKIP.has(col)) continue;
+    if (SKIP.has(col) || GENERATED.has(col.toLowerCase())) continue;
     const sv = survivor[col];
     const lv = loser[col];
     if (isEmpty(lv)) continue;
@@ -1557,6 +1575,37 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   // the intake funnel.
   if (norm(loser.pipeline_phase) === 'case' && norm(survivor.pipeline_phase) !== 'case') {
     filled.pipeline_phase = 'case';
+  }
+
+  // ── custom-fields bag (S3; design doc §9 ruling) ──
+  // Per key, the generic pass's semantics exactly: absent on the survivor →
+  // fill; equal → skip; different → a CONFLICT (column 'custom.<key>'), so a
+  // cf_ key blocks like any unlisted core column and `force` keeps the
+  // survivor's value. No survivor-wins set and no JSON_MERGE_PATCH (that is
+  // silent survivor-wins by construction). "Absent" is the missing key — JSON
+  // null is never stored (§3), and 0 / false / '' are values here, unlike the
+  // generic isEmpty. Values compare as JSON text (multiselect arrays are
+  // stored in option order, so equal sets are equal text). Fills are written
+  // with fieldDefs.customAssignment in the SAME UPDATE as the core fills;
+  // retired defs' keys merge too (values persist in JSON by design). A key
+  // that fails KEY_RE can't have come through the chokepoint and can't go
+  // back through it — reported as a conflict rather than a 500.
+  const bagOf = (v) => {
+    let o = v;
+    if (typeof o === 'string') { try { o = JSON.parse(o); } catch { o = null; } }
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+  };
+  const sBag = bagOf(survivor.custom);
+  const lBag = bagOf(loser.custom);
+  const customFills = {};
+  for (const key of Object.keys(lBag)) {
+    const lv = lBag[key];
+    if (lv === null || lv === undefined) continue;
+    const sv = Object.prototype.hasOwnProperty.call(sBag, key) && sBag[key] !== null ? sBag[key] : null;
+    if (!fieldDefs.KEY_RE.test(key)) { conflicts.push({ column: `custom.${key}`, survivor: sv, loser: lv }); continue; }
+    if (sv === null) { customFills[key] = lv; continue; }
+    if (JSON.stringify(sv) === JSON.stringify(lv)) continue;
+    conflicts.push({ column: `custom.${key}`, survivor: sv, loser: lv });
   }
 
   // ── notes / alerts / dropbox plan ──
@@ -1855,13 +1904,17 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
         AND sr.case_relate_type      = lr.case_relate_type
       WHERE lr.case_relate_case_id = ?`;
 
+  // Every fill decided (core + dropbox + custom keys) — built here, after the
+  // dropbox plan above can still add to `filled`.
+  const filledList = [...Object.keys(filled), ...Object.keys(customFills).map(k => `custom.${k}`)];
+
   const plan = {
     dry_run: dryRun,
     survivor_id: survivorId,
     loser_id: loserId,
     docket: { adopted: adopt },
     fields: {
-      filled: Object.keys(filled),
+      filled: filledList,
       survivor_wins: survivorWins,
       conflicts,
     },
@@ -2069,6 +2122,8 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     }
     if (notesAppend)  { setParts.push('`case_notes` = CONCAT(IFNULL(`case_notes`, \'\'), ?)');   setVals.push(notesAppend); }
     if (alertsAppend) { setParts.push('`case_alerts` = CONCAT(IFNULL(`case_alerts`, \'\'), ?)'); setVals.push(alertsAppend); }
+    const customSql = fieldDefs.customAssignment(customFills, []);
+    if (customSql) { setParts.push(customSql.sql); setVals.push(...customSql.params); }
     if (setParts.length) {
       await conn.query(
         `UPDATE cases SET ${setParts.join(', ')} WHERE case_id = ?`,
@@ -2089,13 +2144,13 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
         `${loser.case_number_full || loser.case_number ? ` (${loser.case_number_full || loser.case_number})` : ''}` +
         ` into ${survivorId}. ` +
         `Moved: ${Object.entries(plan.children).map(([t, n]) => `${t}=${n}`).join(', ')}. ` +
-        `Filled: ${Object.keys(filled).join(', ') || 'none'}.` +
+        `Filled: ${filledList.join(', ') || 'none'}.` +
         (conflicts.length ? ` Forced past conflicts on: ${conflicts.map(c => c.column).join(', ')}.` : ''),
       extra: {
         merge: {
           loser_snapshot: loser,        // full row — Date objects serialize as ISO
           adopted: adopt,
-          filled: Object.keys(filled),
+          filled: filledList,
           survivor_wins: survivorWins,
           forced_conflicts: conflicts,
           children: plan.children,

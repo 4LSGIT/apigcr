@@ -6,7 +6,7 @@
  *
  * Proof obligations:
  *
- *   1. KEY REGEX: the design-doc §3 pattern ^cf_[a-z][a-z0-9_]{1,60}$, as an
+ *   1. KEY REGEX: the design-doc §3 pattern ^cf_[a-z][a-z0-9_]{1,56}$, as an
  *      accept/reject table AND through validateDef (the real gate). It already
  *      excludes every real (non-generated) column of cases + contacts — read
  *      from ref/database.sql, not a hand-kept list.
@@ -34,6 +34,10 @@
 
 jest.mock('../lib/auth.jwtOrApiKey', () =>
   jest.fn((req, _res, next) => { req.auth = { userId: 6 }; next(); }));
+// S3: mutations fire the column reconciler after bump(). Its behavior is
+// tests/customFields.s3.test.js's subject; here it would only run DDL reads
+// against the registry world.
+jest.mock('../services/fieldDefReconciler', () => ({ scheduleReconcile: jest.fn(), reconcile: jest.fn() }));
 
 const fs = require('fs');
 const os = require('os');
@@ -149,16 +153,20 @@ beforeEach(() => { svc.bump(); jest.restoreAllMocks(); });
 // ─────────────────────────────────────────────────────────────
 
 describe('field_key regex (design doc §3)', () => {
-  const max64 = 'cf_a' + 'b'.repeat(60);
-  const over65 = 'cf_a' + 'b'.repeat(61);
+  const max60 = 'cf_a' + 'b'.repeat(56);
+  const over61 = 'cf_a' + 'b'.repeat(57);
 
   test('boundary lengths are what the pattern says', () => {
-    expect(max64).toHaveLength(64);   // MySQL's identifier limit — S3's column name
-    expect(over65).toHaveLength(65);
+    // 60, not 64 (S3): the reconciler's index is `idx_<key>`, and 4 + 60 is
+    // exactly MySQL's 64-char identifier limit — a 64-char key's index name
+    // would be ERROR 1059 at reconcile time.
+    expect(max60).toHaveLength(60);
+    expect(`idx_${max60}`).toHaveLength(64);
+    expect(over61).toHaveLength(61);
   });
 
   test.each([
-    ['cf_xy'], ['cf_clio_matter'], ['cf_a1'], ['cf_a_'], ['cf_x__y'], [max64],
+    ['cf_xy'], ['cf_clio_matter'], ['cf_a1'], ['cf_a_'], ['cf_x__y'], [max60],
   ])('accepts %s', (k) => {
     expect(svc.KEY_RE.test(k)).toBe(true);
   });
@@ -168,19 +176,19 @@ describe('field_key regex (design doc §3)', () => {
   test.each([
     ['cf_x'], ['cf_X'], ['cf_Xy'], ['CF_ab'], ['cf-1'], ['cf-ab'], ['cf_1x'], ['cf__x'],
     ['cf_'], [''], ['case_id'], ['custom'], ['contact_email'], ['cfab'], [' cf_ab'], ['cf_ab '],
-    ['cf_a-b'], ['cf_a.b'], [over65],
+    ['cf_a-b'], ['cf_a.b'], [over61],
   ])('rejects %j', (k) => {
     expect(svc.KEY_RE.test(k)).toBe(false);
   });
 
   test('validateDef enforces it (the real gate, not just the exported constant)', async () => {
     const db = worldDb();
-    for (const k of ['cf_X', 'cf-1', 'case_id', 'custom', over65, 'cf_x']) {
+    for (const k of ['cf_X', 'cf-1', 'case_id', 'custom', over61, 'cf_x']) {
       await rejects(svc.validateDef(db, { entity: 'case', field_key: k, label: 'L', field_type: 'text' }),
         400, /field_key must match/);
     }
-    const ok = await svc.validateDef(db, { entity: 'case', field_key: max64, label: 'L', field_type: 'text' });
-    expect(ok.field_key).toBe(max64);
+    const ok = await svc.validateDef(db, { entity: 'case', field_key: max60, label: 'L', field_type: 'text' });
+    expect(ok.field_key).toBe(max60);
     expect(db.state.tx).toEqual([]); // no transaction on the validate path
   });
 
@@ -540,6 +548,7 @@ describe('routes/api.fieldDefs.js', () => {
       'PATCH /api/field-defs/:id',
       'POST /api/field-defs/:id/deactivate',
       'POST /api/field-defs/:id/reactivate',
+      'POST /api/field-defs/reconcile',   // S3 — tests/customFields.s3.test.js
     ]);
   });
 

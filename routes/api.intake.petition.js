@@ -144,6 +144,16 @@ async function findContactsByName(db, parsed) {
 /**
  * Fetch full contact rows by id (for get_contacts). Returns a Map id→row.
  * Used only when the caller opts in, so Pabbly et al. don't need a second fetch.
+ *
+ * `custom` (the custom-fields JSON bag) is STRIPPED: this is external egress —
+ * containment surface #5 (ref/CUSTOM_FIELDS_DESIGN.md §9). The bag never
+ * travels whole; the named cf_ VIRTUAL columns `SELECT *` returns (S3) are
+ * the sanctioned per-field form and do go out.
+ *
+ * `contact_ssn` is deliberately NOT stripped. Fred's ruling 2026-09-24: this
+ * payload feeds Form 121 / petition-prep workproduct, the staff use the SSN
+ * ruling opened (design doc §10). It is scoped to THIS payload only and sets
+ * no precedent — every other outbound flow stays structurally closed.
  */
 async function fetchContacts(db, ids) {
   const clean = [...new Set(ids.filter(id => Number.isInteger(id)))];
@@ -153,7 +163,7 @@ async function fetchContacts(db, ids) {
     `SELECT * FROM contacts WHERE contact_id IN (${placeholders})`,
     clean
   );
-  return new Map(rows.map(r => [r.contact_id, r]));
+  return new Map(rows.map(({ custom, ...r }) => [r.contact_id, r]));
 }
 
 /**

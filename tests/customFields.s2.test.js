@@ -32,6 +32,10 @@
  *      out of `custom` with the JSON path operators (design doc §3). The
  *      scan includes comments on purpose — prose that spells the operator
  *      next to the column name is a copy-paste template for the real thing.
+ *      ONE deliberate exception (S3): services/fieldDefReconciler.js builds
+ *      the VIRTUAL column expressions — the sanctioned read that everything
+ *      else compares through. Allowlisted by path; an allowlisted file that
+ *      stops matching fails the test, so the list can't go stale.
  *
  * Harness: the house dispatch-on-SQL-text world — cases / contacts /
  * field_defs rows in memory, and an UPDATE interpreter for exactly the shape
@@ -55,6 +59,9 @@ jest.mock('../lib/taskQueue', () => ({
 }));
 jest.mock('../lib/alerting', () => ({ alert: jest.fn(async () => {}) }));
 jest.mock('../services/gContactsService', () => ({ pushContact: jest.fn(async () => {}) }));
+// S3: def mutations fire the column reconciler after bump() — its own suite
+// is tests/customFields.s3.test.js; here it would only issue DDL reads.
+jest.mock('../services/fieldDefReconciler', () => ({ scheduleReconcile: jest.fn(), reconcile: jest.fn() }));
 
 const fs = require('fs');
 const path = require('path');
@@ -812,15 +819,26 @@ describe('design doc §3: no JSON-path reads of `custom` in shipped code', () =>
     }
   });
 
-  test('lib/ services/ routes/ have zero hits', () => {
+  // The reconciler's generation expressions ARE the virtual columns — the one
+  // place a JSON-path read of `custom` belongs (design doc §2 "SQL surface").
+  // Adding a file here is a design decision, not a test fix.
+  const ALLOWLIST = ['services/fieldDefReconciler.js'];
+
+  test('lib/ services/ routes/ have zero hits outside the allowlist', () => {
     const hits = [];
+    const allowedHits = new Map(ALLOWLIST.map(f => [f, 0]));
     for (const dir of ['lib', 'services', 'routes']) {
       for (const f of walk(path.join(ROOT, dir))) {
+        const rel = path.relative(ROOT, f).split(path.sep).join('/');
         fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
-          if (PATTERNS.some(re => re.test(line))) hits.push(`${path.relative(ROOT, f)}:${i + 1}: ${line.trim()}`);
+          if (!PATTERNS.some(re => re.test(line))) return;
+          if (allowedHits.has(rel)) allowedHits.set(rel, allowedHits.get(rel) + 1);
+          else hits.push(`${rel}:${i + 1}: ${line.trim()}`);
         });
       }
     }
     expect(hits).toEqual([]);
+    // a stale allowlist entry is a hole: every listed file must still match
+    for (const [f, n] of allowedHits) expect([f, n > 0]).toEqual([f, true]);
   });
 });

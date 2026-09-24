@@ -19,9 +19,17 @@
 //
 // warmup() never throws, no-ops when CLOUD_TASKS_LOCATION is unset, and is
 // deliberately NOT awaited: a slow metadata server must not delay serving.
+//
+// Custom-field column reconcile (custom-fields S3): brings the cf_ VIRTUAL
+// columns in line with field_defs once per instance boot — the backstop for a
+// post-mutation run that failed or was skipped. Also not awaited; the first
+// query waits for the pool, an empty registry is a three-read no-op, and a
+// sibling instance booting at the same moment just waits its turn on the
+// named lock (services/fieldDefReconciler.js).
 
-module.exports = async function init(_db) {
+module.exports = async function init(db) {
   require('../lib/taskQueue').warmup();
+  require('../services/fieldDefReconciler').scheduleReconcile(db, { trigger: 'boot' });
 };
 
 // ── Legacy RingCentral cleanup checklist (still pending) ──

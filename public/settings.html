@@ -1777,7 +1777,7 @@ async function crInit() {
 const CF_TYPES = ['text', 'number', 'date', 'select', 'multiselect', 'boolean'];
 const CF_OPTION_TYPES = ['select', 'multiselect'];
 // Mirrors fieldDefService.KEY_RE (pinned equal by test) — the server is authoritative.
-const CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,60}$/;
+const CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
 const CF_VALIDATION_FOR = { required: CF_TYPES, max_len: ['text'], pattern: ['text'], min: ['number'], max: ['number'] };
 
 let cfEntity = 'case';
@@ -1794,10 +1794,10 @@ function cfSlug(s) {
     .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
-/** Label → suggested key: cf_ + slug, leading non-letters dropped, ≤ 64 chars. */
+/** Label → suggested key: cf_ + slug, leading non-letters dropped, ≤ 60 chars. */
 function cfSuggestKey(label) {
   const s = cfSlug(label).replace(/^[^a-z]+/, '');
-  return s ? ('cf_' + s).slice(0, 64) : '';
+  return s ? ('cf_' + s).slice(0, 60) : '';
 }
 
 function cfTarget(i) { return i === 'n' ? cfNew : cfState[+i]; }
@@ -1850,7 +1850,7 @@ function cfRender() {
       <span class="status" id="cfStatus${i}"></span>
       ${t._open ? `<div class="cr-fields">
         ${cfEditorBody(t, i)}
-        <div class="cf-ro">Indexed: <b>${t.indexed ? 'yes' : 'no'}</b> — managed by the reconciler (S3)${t.show_when
+        <div class="cf-ro">Indexed: <b>${t.indexed ? 'yes' : 'no'}</b> — managed by the reconciler${t.show_when
           ? ` · Show when: <span class="mono">${esc(JSON.stringify(t.show_when))}</span> (stored; no editor yet)` : ''}</div>
       </div>` : ''}
     </div>`).join('');
@@ -1863,7 +1863,7 @@ function cfRenderNew() {
     <div class="grid2">
       <div><label class="fld">Label</label><input type="text" data-cf-label="n" value="${esc(t.label)}" maxlength="100" placeholder="Clio matter"></div>
       <div><label class="fld">Key (permanent — cf_ + a–z, 0–9, _)</label>
-        <input type="text" class="mono" data-cf-key="n" value="${esc(t.field_key)}" maxlength="64" placeholder="cf_clio_matter" spellcheck="false">
+        <input type="text" class="mono" data-cf-key="n" value="${esc(t.field_key)}" maxlength="60" placeholder="cf_clio_matter" spellcheck="false">
         <span class="cf-keyhint" id="cfKeyHint"></span></div>
       <div><label class="fld">Type</label>
         <select class="cf-sel" data-cf-type="n">
@@ -1879,7 +1879,7 @@ function cfKeyHint() {
   const el = E('cfKeyHint');
   if (!el) return;
   const k = cfNew.field_key, ok = CF_KEY_RE.test(k);
-  el.textContent = !k ? '' : ok ? '✓ valid key' : 'must be cf_ + a letter + 1–60 of a–z, 0–9, _';
+  el.textContent = !k ? '' : ok ? '✓ valid key' : 'must be cf_ + a letter + 1–56 of a–z, 0–9, _ (60 characters at most)';
   el.style.color = ok ? 'var(--ok)' : 'var(--warn)';
 }
 

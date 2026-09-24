@@ -1,7 +1,7 @@
 // services/fieldDefService.js
 //
 /**
- * Field Definition Service (custom-fields arc S1, values S2)
+ * Field Definition Service (custom-fields arc S1, values S2, columns S3)
  * services/fieldDefService.js
  *
  * The `field_defs` registry — single source of truth for admin-defined
@@ -22,6 +22,14 @@
  * path in <entity>.custom (S2) and the VIRTUAL column name on the entity
  * table (S3); renames are a v2 non-feature. There is no delete — active = 0
  * is retirement (values stored under the key persist in the JSON by design).
+ *
+ * ── COLUMN SURFACE (S3) ─────────────────────────────────────────────────────
+ * services/fieldDefReconciler.js owns the DDL. The mutations that can change
+ * the column surface — createDef, setActive (either way), and an updateDef
+ * that changed field_type — call scheduleReconcile right after bump(),
+ * fire-and-forget; label / options / validation / sort_order edits don't.
+ * Pass { actor } (the route's audit context) so the reconcile's own
+ * admin_audit_log row names who caused it.
  *
  * ── CACHE ───────────────────────────────────────────────────────────────────
  * In-process Map, entity → every def row (active and inactive), frozen.
@@ -72,8 +80,18 @@ const ENTITIES = Object.freeze(Object.keys(ENTITY_TABLES));
 const FIELD_TYPES = Object.freeze(['text', 'number', 'date', 'select', 'multiselect', 'boolean']);
 const OPTION_TYPES = Object.freeze(['select', 'multiselect']);
 
-/** Design doc §3. 64 chars max = MySQL's identifier limit (the S3 column name). */
-const KEY_RE = /^cf_[a-z][a-z0-9_]{1,60}$/;
+/** Design doc §3. 60 chars max, so the S3 index name `idx_<key>` tops out at
+ *  exactly MySQL's 64-char identifier limit (the old {1,60} allowed 64-char
+ *  keys → 68-char index names → ERROR 1059 at reconcile time). */
+const KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
+
+/** Width of the S3 VARCHAR column for text + select (fieldDefReconciler
+ *  COLUMN_SPECS). Text values and option values are capped to it at write /
+ *  def time — the NUMBER_ABS_LIMIT argument: a longer value would store fine
+ *  in JSON and read back NULL from the column. Also the row-size budget:
+ *  virtual columns count toward InnoDB's 65,535-byte row limit (measured:
+ *  cases fits ~47 of these, contacts ~58). */
+const STRING_MAX_LEN = 255;
 
 /** v1 validation vocabulary: key → field types it applies to. */
 const VALIDATION_KEYS = Object.freeze({
@@ -240,6 +258,8 @@ function _checkOptions(options, fieldType, errs, priorOptions) {
     const v = o.value;
     if (typeof v !== 'string' || v === '') {
       errs.push(`${at}.value must be a non-empty string`);
+    } else if (Array.from(v).length > STRING_MAX_LEN) {
+      errs.push(`${at}.value must be ${STRING_MAX_LEN} characters or fewer`);
     } else if (v.trim() !== v) {
       errs.push(`${at}.value must not start or end with whitespace`);
     } else if (seen.has(v.toLowerCase())) {
@@ -279,7 +299,9 @@ function _checkValidation(validation, fieldType, errs) {
       continue;
     }
     if (k === 'required' && typeof v !== 'boolean') errs.push('validation.required must be true or false');
-    if (k === 'max_len' && !(Number.isInteger(v) && v >= 1)) errs.push('validation.max_len must be a positive integer');
+    if (k === 'max_len' && !(Number.isInteger(v) && v >= 1 && v <= STRING_MAX_LEN)) {
+      errs.push(`validation.max_len must be a whole number from 1 to ${STRING_MAX_LEN}`);
+    }
     if ((k === 'min' || k === 'max') && !(typeof v === 'number' && Number.isFinite(v))) {
       errs.push(`validation.${k} must be a number`);
     }
@@ -336,7 +358,7 @@ async function validateDef(db, def = {}, { isCreate = true, priorOptions = null 
 
   const fieldKey = String(d.field_key == null ? '' : d.field_key).trim();
   if (!KEY_RE.test(fieldKey)) {
-    errs.push('field_key must match ^cf_[a-z][a-z0-9_]{1,60}$ (cf_ + a letter + 1–60 of a–z, 0–9, _)');
+    errs.push('field_key must match ^cf_[a-z][a-z0-9_]{1,56}$ (cf_ + a letter + 1–56 of a–z, 0–9, _ — 60 characters at most)');
   }
 
   const label = String(d.label == null ? '' : d.label).trim();
@@ -394,6 +416,12 @@ async function validateDef(db, def = {}, { isCreate = true, priorOptions = null 
 
 const _json = v => (v == null ? null : JSON.stringify(v));
 
+/** Post-bump() column-surface hook (S3). Lazy require: the reconciler requires
+ *  this module. Fire-and-forget — the reconciler alerts on its own failures. */
+function _reconcileSoon(db, trigger, actor) {
+  require('./fieldDefReconciler').scheduleReconcile(db, { trigger, actor: actor || null });
+}
+
 /** `indexed` belongs to the S3 reconciler; the v1 API never writes it. */
 function _assertIndexedUntouched(body, current) {
   if (body.indexed !== undefined && (body.indexed ? 1 : 0) !== current) {
@@ -402,7 +430,7 @@ function _assertIndexedUntouched(body, current) {
 }
 
 /** Create a def. @returns {{ id, entity, field_key }} */
-async function createDef(db, body = {}) {
+async function createDef(db, body = {}, { actor = null } = {}) {
   const b = body || {};
   _assertIndexedUntouched(b, 0);
   const def = await validateDef(db, b, { isCreate: true });
@@ -415,6 +443,7 @@ async function createDef(db, body = {}) {
        _json(def.validation), _json(def.show_when), def.sort_order, def.active]
     );
     bump();
+    _reconcileSoon(db, 'create', actor);
     return { id: result.insertId, entity: def.entity, field_key: def.field_key };
   } catch (err) {
     // The pre-check in validateDef can lose a race; the UNIQUE key cannot.
@@ -445,12 +474,14 @@ const PATCHABLE = ['label', 'field_type', 'options', 'validation', 'show_when', 
  *     gone + used = rejected with the retire hint (active: false).
  * Residual, accepted: a def edited while another instance's cache (TTL_MS)
  * still holds the old def can let one write validate against the old shape.
+ * A changed field_type retypes the column (S3) — reconciled after commit.
  */
-async function updateDef(db, id, patch = {}) {
+async function updateDef(db, id, patch = {}, { actor = null } = {}) {
   const n = parseInt(id, 10);
   if (!Number.isInteger(n)) throw _err(400, 'id must be an integer');
   const p = patch || {};
 
+  let typeChanged = false;
   const result = await withTransaction(db, async (conn) => {
     const [[raw]] = await conn.query(`${SELECT_COLS} WHERE id = ? LIMIT 1 FOR UPDATE`, [n]);
     if (!raw) throw _err(404, `field def ${n} not found`);
@@ -497,14 +528,17 @@ async function updateDef(db, id, patch = {}) {
     const sets = present.map(k => `${k} = ?`);
     const args = present.map(k => (['options', 'validation', 'show_when'].includes(k) ? _json(def[k]) : def[k]));
     await conn.query(`UPDATE field_defs SET ${sets.join(', ')} WHERE id = ?`, [...args, n]);
+    typeChanged = def.field_type !== row.field_type;
     return { id: n, entity: row.entity, field_key: row.field_key };
   });
   bump();
+  if (typeChanged) _reconcileSoon(db, 'update', actor);
   return result;
 }
 
-/** Deactivate (retire) or reactivate a def. Idempotent. */
-async function setActive(db, id, active) {
+/** Deactivate (retire) or reactivate a def. Idempotent. Either way the
+ *  column surface may change (S3: a retired def's column is dropped). */
+async function setActive(db, id, active, { actor = null } = {}) {
   const n = parseInt(id, 10);
   if (!Number.isInteger(n)) throw _err(400, 'id must be an integer');
   const [result] = await db.query(
@@ -512,6 +546,7 @@ async function setActive(db, id, active) {
   );
   if (!result.affectedRows) throw _err(404, `field def ${n} not found`);
   bump();
+  _reconcileSoon(db, active ? 'reactivate' : 'deactivate', actor);
   return { id: n, active: active ? 1 : 0 };
 }
 
@@ -578,9 +613,10 @@ function _optionList(def) {
  *          {{ ok: false, error }} with the key named in the message.
  *
  * Clear: null / undefined / '' on any type, [] on multiselect.
- * text: a string (a finite number is taken as its text); max_len counts
- *   characters; pattern must match the WHOLE value (the HTML input
- *   `pattern` semantics a renderer will use), not a substring.
+ * text: a string (a finite number is taken as its text); at most
+ *   STRING_MAX_LEN characters whatever the def says (the S3 column width);
+ *   max_len counts characters; pattern must match the WHOLE value (the HTML
+ *   input `pattern` semantics a renderer will use), not a substring.
  * number: a finite number or a plain decimal string; stored as a JSON
  *   number; min / max; |n| within DECIMAL(18,4).
  * date: 'YYYY-MM-DD', a real calendar date, year 1000+ (MySQL DATE).
@@ -606,6 +642,7 @@ function validateValue(def, raw) {
       const s = typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : raw;
       if (typeof s !== 'string') return bad('must be text');
       const len = Array.from(s).length;
+      if (len > STRING_MAX_LEN) return bad(`must be ${STRING_MAX_LEN} characters or fewer (got ${len})`);
       if (Number.isInteger(v.max_len) && len > v.max_len) {
         return bad(`must be ${v.max_len} characters or fewer (got ${len})`);
       }
@@ -810,6 +847,7 @@ module.exports = {
   ENTITY_TABLES,
   FIELD_TYPES,
   KEY_RE,
+  STRING_MAX_LEN,
   VALIDATION_KEYS,
   TTL_MS,
   bump,

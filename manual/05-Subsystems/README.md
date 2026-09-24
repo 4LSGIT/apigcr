@@ -24,7 +24,7 @@ requests, landing pages — moved to [06-Client-Facing](../06-Client-Facing/).
 | 10 | [10-court-pipeline.md](10-court-pipeline.md) | The court email pipeline — the review queue and its openness rule, the Court Preview tuning tool, and the registry-driven parser v2 being built alongside. |
 | 11 | [11-calendar-types.md](11-calendar-types.md) | The calendar item-type registry — appointment/event types, their keys, and which staff pickers offer them at which lengths. (More → Case Config → Calendar Types) |
 | 12 | [12-calendar-tab.md](12-calendar-tab.md) | The unified Calendar tab — appointments and events in one list over a date window, its filters, its state/resolution badges, and the deadline outcome prompts. (Sidebar → Calendar) |
-| 13 | [13-custom-fields.md](13-custom-fields.md) | Firm-defined fields on cases and contacts — the field registry, its editor, and the rules keys and options follow. Definitions only so far; forms and reports pick them up later. (Settings → Custom Fields) |
+| 13 | [13-custom-fields.md](13-custom-fields.md) | Firm-defined fields on cases and contacts — the field registry, its editor, and the rules keys and options follow. Automations and the API write values; each active field also gets its own read-only column; forms and reports pick them up later. (Settings → Custom Fields) |
 
 > **Reports and Views are the same system.** One saved SQL definition, one
 > curated schema, one set of guards — a report renders it as a number, a view
