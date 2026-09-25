@@ -2481,6 +2481,25 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
     await fieldDefs.splitCustomFields(db, 'contact', fields);
   const customSql = fieldDefs.customAssignment(customSets, customRemoves);
 
+  // ── S5-A write freeze (ref/CUSTOM_FIELDS_DESIGN.md §7 S5) ──────────────
+  // `contact_clio_id` migrated into the custom bag as `cf_clio_id`
+  // (ref/migrations/2026-09-25_clio_pilot_backfill.sql). The column still
+  // EXISTS and still READS for the soak, but nothing may write it again:
+  // a write here and a write to the cf_ key would diverge with no way to
+  // tell which is current. Checked on coreFields (before the aggregate
+  // strip) so it fires the same way whichever shape the caller sent.
+  // Phase B drops the column and takes it off the ALLOWED list, after which
+  // the list itself rejects the key — DELETE THIS BLOCK IN S5-B.
+  const FROZEN_COLUMNS = new Map([['contact_clio_id', 'cf_clio_id']]);
+  const frozenKeys = Object.keys(coreFields).filter(k => FROZEN_COLUMNS.has(k.toLowerCase()));
+  if (frozenKeys.length) {
+    const e = new Error(
+      `updateContact: ${frozenKeys.map(k => `"${k}" is retired — write "${FROZEN_COLUMNS.get(k.toLowerCase())}" instead`).join('; ')}`
+    );
+    e.status = 400;
+    throw e;
+  }
+
   // Detect aggregate arrays. Use hasOwnProperty so `phones: []` (empty
   // array, "end all current") is distinguishable from `phones` absent.
   const hasPhones    = Object.prototype.hasOwnProperty.call(coreFields, 'phones');

@@ -416,6 +416,23 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
     throw new Error(`updateCase: blocked columns: ${blocked.join(', ')}`);
   }
 
+  // ── S5-A write freeze (ref/CUSTOM_FIELDS_DESIGN.md §7 S5) ──────────────
+  // `clio_matter` migrated into the custom bag as `cf_clio_matter`
+  // (ref/migrations/2026-09-25_clio_pilot_backfill.sql). The column still
+  // EXISTS and still READS for the soak, but nothing may write it again:
+  // a write here and a write to the cf_ key would diverge with no way to
+  // tell which is current. Phase B drops the column, and the unknown-column
+  // rejection below then covers this for free — DELETE THIS BLOCK IN S5-B.
+  const FROZEN = new Map([['clio_matter', 'cf_clio_matter']]);
+  const frozen = keys.filter(k => FROZEN.has(k.toLowerCase()));
+  if (frozen.length) {
+    const e = new Error(
+      `updateCase: ${frozen.map(k => `"${k}" is retired — write "${FROZEN.get(k.toLowerCase())}" instead`).join('; ')}`
+    );
+    e.status = 400;
+    throw e;
+  }
+
   // Validate all keys are actual column names (basic safety)
   for (const k of keys) {
     if (!/^[\w]+$/.test(k)) {

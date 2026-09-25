@@ -31,9 +31,13 @@
  *     the aggregate reconcilers, which END child rows. Nothing could reach that
  *     path from a workflow before this slice, and a missing gate here would
  *     open it silently.
- *   - wf37 step 28 writes contacts.contact_clio_id through this function and
- *     step 8 reads it back (live production workflow; the only automation
- *     caller of update_contact as of 2026-09-24). It is pinned by shape.
+ *   - wf37 step 28 writes the contact's Clio id through this function and
+ *     step 8 reads it back (the only automation caller of update_contact as
+ *     of 2026-09-24). Pinned by shape. Custom fields S5-A repointed both
+ *     steps onto `cf_clio_id`: the `contact_clio_id` column is FROZEN at the
+ *     chokepoint from 2026-09-25 and dropped in S5-B, so the pin now covers
+ *     BOTH halves — the cf_ write lands, and the old column's write is
+ *     refused with an error naming the cf_ key.
  *
  * ── STUB CONVENTION ────────────────────────────────────────────────────────
  *
@@ -58,13 +62,20 @@ const CID = 3175;
  * cross-contact collision probe in _propagatePhone; everything else answers
  * with the least interesting shape that lets the code reach its return.
  */
-function stubDb({ row = null, collision = null } = {}) {
+function stubDb({ row = null, collision = null, defs = [] } = {}) {
   const updates = [];
   const seen    = [];
 
   const query = async (sql, params = []) => {
     const s = String(sql).replace(/\s+/g, ' ').trim();
     seen.push(s);
+
+    // The custom-fields registry (S2+). Empty by default — only the S5 tests
+    // below need a def, and an empty registry is what every other test here
+    // assumes when it sends core columns.
+    if (/FROM field_defs WHERE entity = \?/.test(s)) {
+      return [defs.filter(d => d.entity === params[0])];
+    }
 
     if (/^UPDATE contacts SET/i.test(s)) {
       updates.push({ sql: s, params });
@@ -316,20 +327,45 @@ describe('update_contact — service-side guards still fire through the fn', () 
 // wf37 — the one live automation caller
 // ─────────────────────────────────────────────────────────────
 
-describe('update_contact — wf37 step 28 shape', () => {
-  test('{contact_clio_id} lands on the row and comes back in updated_fields', async () => {
-    // Live workflow 37 step 28 writes {{clioContactId}} here; step 8 reads
-    // contacts.contact_clio_id back through query_db.
-    const db = stubDb({ row: PERSON });
+describe('update_contact — wf37 step 28 shape (S5: the Clio id is a custom field)', () => {
+  // Custom fields S5-A (2026-09-25) moved the Clio id out of the
+  // `contact_clio_id` column and into the registry as `cf_clio_id`; wf37 step
+  // 28 was repointed with it and step 8 now reads the cf_ column back. The
+  // column still exists and still reads through the soak, but it is FROZEN —
+  // see ref/CUSTOM_FIELDS_DESIGN.md §7 S5 and tests/customFields.s5.test.js.
+  const CLIO_DEF = {
+    id: 2, entity: 'contact', field_key: 'cf_clio_id', label: 'Clio Contact ID',
+    field_type: 'text', options: null, validation: null, show_when: null,
+    indexed: 0, sort_order: 10, active: 1,
+  };
+
+  test('{cf_clio_id} lands in the custom bag and comes back in updated_fields', async () => {
+    const db = stubDb({ row: PERSON, defs: [CLIO_DEF] });
 
     const out = await fns.update_contact(
-      { contact_id: CID, fields: { contact_clio_id: 'clio-88213' } }, db);
+      { contact_id: CID, fields: { cf_clio_id: 'clio-88213' } }, db);
 
-    expect(updateMap(db.updates[0]).contact_clio_id).toBe('clio-88213');
-    expect(out.output.updated_fields).toEqual(['contact_clio_id']);
+    // One UPDATE, the value inside the single JSON_SET clause — never a
+    // read-modify-write of the bag (design doc §3).
+    const { sql, params } = db.updates[0];
+    expect(sql).toContain('`custom` = JSON_SET(`custom`, ?, CAST(? AS JSON))');
+    expect(params).toEqual(expect.arrayContaining(['$.cf_clio_id', '"clio-88213"']));
+    expect(out.output.updated_fields).toEqual(['cf_clio_id']);
     // The kind guard costs a pre-read; an ordinary field edit must not pay it.
     expect(db.seen.filter(s =>
       /SELECT contact_kind, contact_org_name, contact_fname, contact_lname/i.test(s)
     )).toHaveLength(0);
+  });
+
+  test('{contact_clio_id} is now REFUSED, with an error naming the cf_ key', async () => {
+    // The freeze, from the automation's side: the old shape must fail loudly
+    // rather than write a column nothing reads any more.
+    const db = stubDb({ row: PERSON, defs: [CLIO_DEF] });
+
+    await expect(fns.update_contact(
+      { contact_id: CID, fields: { contact_clio_id: 'clio-88213' } }, db)
+    ).rejects.toThrow(/"contact_clio_id" is retired — write "cf_clio_id" instead/);
+
+    expect(db.updates).toHaveLength(0);
   });
 });

@@ -23,9 +23,12 @@ removes by itself (see *Columns* below).
 See **Using a field** below for the walkthrough from "add a field" to "it's in
 a report".
 
-> **The firm has no custom fields defined yet.** Adding the first one is safe
-> and reversible — deactivate it and every trace disappears from the screens
-> again, with the stored values kept.
+> **The firm's first two fields are the Clio ids** — **Clio Matter ID** on
+> cases and **Clio Contact ID** on contacts, migrated out of hidden database
+> columns on 2026-09-25. They were never on any screen before; they are now,
+> and staff can edit them. Everything else is still yours to add: doing so is
+> safe and reversible — deactivate a field and every trace disappears from the
+> screens again, with the stored values kept.
 
 ### Adding a field
 
@@ -422,6 +425,79 @@ them work, and S4 only proves and pins them.
   say. **Cases write no row** — `updateCase` logs no core-column edit either
   (there is no `after_case_update`), so custom fields are exactly as logged
   as core columns there. The case-log gap is its own job (`ref/plans.md`).
+
+### Retiring a column into a custom field (S5)
+
+The pilot migration, and the **template for retiring any surplus column**.
+Done once for real on 2026-09-25: `cases.clio_matter` (240 values) and
+`contacts.contact_clio_id` (245) became `cf_clio_matter` and `cf_clio_id`;
+`cases.case_clio_id` (0 values) was dropped outright. The design doc's §7 S5
+row is the ruling; this is the procedure.
+
+The names could NOT be kept: `field_key` must match `^cf_`, and the registry
+refuses a key that collides with a real column. So every consumer moves too,
+which is why the census comes first.
+
+**Phase A — migrate and freeze. Nothing is destroyed.**
+
+1. **Census, before any write.** Sweep the repo AND the live config tables for
+   the column name: `workflow_steps`, `sequence_steps`, `trigger_rules` +
+   `trigger_rule_actions`, `report_definitions` (+versions), `portal_cards`,
+   `contract_templates`, the `email_ingest_*` / `phone_ingest_*` rules and
+   actions, `hooks` / `hook_targets`, `form_templates`, and the `tools` table.
+   Escape the `_` in a `LIKE` or `clio_matter` also matches `clioXmatter`.
+   Classify every hit as repoint-now / clean-up-later / **no-op** — and take
+   the no-ops seriously. Two of the six live hits in this migration were a
+   step's prose *note* and a `create_log` payload whose JSON key happened to
+   be `clio_matter`; "fixing" the second would have corrupted every log row
+   the workflow writes. Also check the DB triggers in `ref/database.sql`
+   (`grep`), which no config sweep will show you.
+2. **Create the def** with `fieldDefService.createDef` — never a raw INSERT,
+   which skips validation, the audit row and the reconcile that builds the
+   column. `scripts/customFieldsS5Seed.js` is the worked example. Then
+   **prove the virtual column exists** in `information_schema` before going on.
+3. **Backfill** with one UPDATE per field:
+   `SET custom = JSON_SET(custom, '$.cf_key', old_col) WHERE old_col <> ''`.
+   Raw SQL on purpose — no events, no log rows, and (on contacts) no
+   `contact_updated` bump, so the Google drift sweep stays quiet. `<> ''`
+   matters: an empty source must leave the key **absent**, which is how "no
+   value" is spelled here.
+4. **Verify against the virtual column, not the JSON path** — that proves
+   storage, extraction, width and collation in one go:
+   `COUNT(old <> '')` = `COUNT(cf_ IS NOT NULL)`, and
+   `SELECT COUNT(*) … WHERE NOT (cf_key <=> NULLIF(old_col,''))` = 0.
+   Run **both**. The counts alone are not a gate: swap two rows and the
+   totals still balance while the values are on the wrong records — only the
+   `<=>` query catches that.
+5. **Repoint the consumers** the census found. Workflow steps go through
+   asserted `apiSend` scripts that check the current config before writing and
+   the whole resulting draft before publishing
+   (`scripts/customFieldsS5Wf37Repoint.js`); trigger-rule *actions* must be
+   edited in the UI, because the editor DELETE+REINSERTs them and any SQL
+   patch keyed on an action id silently does nothing.
+6. **Freeze the old column at the chokepoint.** It keeps reading; it stops
+   accepting writes, with an error that names the new key
+   (`"clio_matter" is retired — write "cf_clio_matter" instead`). This is
+   what makes drift impossible during the soak: one write to each side and
+   nobody can tell which value is current.
+7. **Soak.** As long as you like — nothing is lost while both copies exist.
+
+**Phase B — drop. This one is one-way.**
+
+8. **Rebuild any DB trigger that names the column, in the same migration and
+   BEFORE the drop.** `ALTER TABLE … DROP COLUMN` succeeds happily while a
+   trigger still references the column, and then *every* write to that table
+   fails with `ERROR 1054 Unknown column 'x' in 'OLD'`. Verified on 8.4.11:
+   dropping `contact_clio_id` with `after_contact_update` untouched broke
+   every contact update; rebuilding the trigger first, then dropping, works.
+9. **Drop the column**, then remove the freeze (unknown-column rejection now
+   covers it), the fn ALLOWED-list entries, the report-manifest entry, and
+   whatever the census marked clean-up-later.
+10. `node scripts/dump-schema.js` and `npm run db:ref:check`.
+
+On `contacts`, a column drop is a **table rebuild** — its FULLTEXT index on
+`contact_name` rules out the metadata-only path. At ~1,100 rows that is
+sub-second, but it takes the table's metadata lock, so pick a quiet minute.
 
 ### Columns worth knowing
 

@@ -314,7 +314,7 @@ const EVENT_TYPES = {
       { path: 'data.contact_phone', label: 'Primary phone' },
       { path: 'data.contact_email', label: 'Primary email' },
       { path: 'data.contact_tags',  label: 'Tags' },
-      { path: 'data.contact_clio_id', label: 'Clio id' },
+      { path: 'data.cf_clio_id',    label: 'Clio id (custom field)' },
     ],
   },
   'contact.updated': {
