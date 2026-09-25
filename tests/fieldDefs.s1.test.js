@@ -264,7 +264,7 @@ describe('validateDef shape', () => {
   test('valid text def → normalized', async () => {
     await expect(v({ label: '  Clio matter ', sort_order: '5' })).resolves.toEqual({
       entity: 'case', field_key: 'cf_ab', label: 'Clio matter', field_type: 'text', options: null,
-      validation: null, show_when: null, sort_order: 5, active: 1,
+      validation: null, show_when: null, default_value: null, sort_order: 5, active: 1,
     });
   });
 
@@ -339,8 +339,9 @@ describe('mutations', () => {
       field_type: 'select', options: [{ value: 'a', label: 'A' }], validation: { required: true } });
     expect(r).toEqual({ id: 100, entity: 'contact', field_key: 'cf_clio_id' });
     const ins = db.state.log.find(q => /^INSERT/.test(q.s));
+    // …, show_when, default_value (S6 — no default given), sort_order, active
     expect(ins.params).toEqual(['contact', 'cf_clio_id', 'Clio ID', 'select',
-      '[{"value":"a","label":"A","active":true}]', '{"required":true}', null, 0, 1]);
+      '[{"value":"a","label":"A","active":true}]', '{"required":true}', null, null, 0, 1]);
   });
 
   test('duplicate key → clean 409, never raw ER_DUP_ENTRY (pre-check AND the race)', async () => {

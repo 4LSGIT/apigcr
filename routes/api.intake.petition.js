@@ -67,8 +67,8 @@ const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { parseName } = require("../lib/parseName");
-const { generateCaseId } = require("../lib/caseId");
 const contactService = require("../services/contactService");
+const caseService = require("../services/caseService"); // custom-fields S6-B — THE case INSERT
 const pipelineService = require("../services/pipelineService");
 const domainEvents = require("../lib/domainEvents"); // Trigger T3
 
@@ -433,25 +433,24 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
       await ensureRelate(req.db, caseId, contactId, "Primary");
     } else {
       // ── CREATE a new Filed case ──
+      //
+      // caseService.createCase is THE case INSERT (S6-B): it mints the id,
+      // retries on collision, gates the columns, and stamps the S6
+      // custom-field defaults. Deliberately not reached from the "STAMP the
+      // waiting case" branch above — that UPDATEs a case that already exists,
+      // and a default applies at birth only.
       action = "created";
-      let inserted = false, attempts = 0;
-      while (!inserted && attempts < 10) {
-        caseId = generateCaseId();
-        attempts++;
-        try {
-          await req.db.query(
-            `INSERT INTO cases
-               (case_id, case_open_date, case_file_date, case_type, case_subtype, case_chapter, case_stage, case_status, case_number)
-             VALUES
-               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, ?, 'Filed', 'Filed', ?)`,
-            [caseId, ...fileDateParam, caseType, caseSubtype, chapter, caseNumber]
-          );
-          inserted = true;
-        } catch (err) {
-          if (err.code !== "ER_DUP_ENTRY") throw err;
-        }
-      }
-      if (!inserted) throw new Error("Failed to generate unique case ID after 10 attempts");
+      const created = await caseService.createCase(req.db, {
+        case_open_date: caseService.NOW_FIRM,
+        case_file_date: fileDate || caseService.NOW_FIRM,
+        case_type:      caseType,
+        case_subtype:   caseSubtype,
+        case_chapter:   chapter,
+        case_stage:     "Filed",
+        case_status:    "Filed",
+        case_number:    caseNumber,
+      });
+      caseId = created.case_id;
       await ensureRelate(req.db, caseId, contactId, "Primary");
 
       // Trigger: case.created (fire-and-forget). The 'filed' stage advance
@@ -466,6 +465,9 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
           case_subtype: caseSubtype ?? null,
           case_chapter: chapter ?? null,
           case_number:  caseNumber ?? null,
+          // Stamped defaults (S6-B), in the COLUMN's shape — so this envelope
+          // and contact.created agree for every type. Additive only.
+          ...created.custom_fields,
         },
       });
     }

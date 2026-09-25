@@ -64,6 +64,18 @@
  * (S4).
  * updateDef enforces §3's post-data locks: field_type, and option values.
  *
+ * ── DEFAULTS (S6) ───────────────────────────────────────────────────────────
+ * `default_value` is an optional per-def value stamped into a NEW record's
+ * `custom` ONCE, at creation, and never consulted again:
+ *   defaultsObject      active defs with a default → { cf_key: value }
+ *   customCreateValue   that object → the `custom` value for a create INSERT
+ * Validated at DEF SAVE (validateDef → _checkDefault) through the same
+ * validateValue a written value goes through, so a stored default always
+ * satisfies its own field. NEVER retroactive, and never render-time for an
+ * existing record — a form showing a value the DB doesn't hold is a lie
+ * surface. Stamped regardless of `show_when` (data, not display). NULL means
+ * "no default"; there is no "default to clear".
+ *
  * Usage:
  *   const fieldDefs = require('../services/fieldDefService');
  *   const defs = await fieldDefs.listActive(db, 'case');
@@ -110,7 +122,8 @@ const TTL_MS = 60 * 1000;
 
 const SELECT_COLS =
   `SELECT id, entity, field_key, label, field_type, options, validation,
-          show_when, indexed, sort_order, active, created_at, updated_at
+          show_when, default_value, indexed, sort_order, active,
+          created_at, updated_at
      FROM field_defs`;
 
 // ─────────────────────────────────────────────────────────────
@@ -123,11 +136,36 @@ function _err(status, message) {
   return e;
 }
 
-/** JSON column → value|null regardless of driver behavior. */
+/** JSON column → value|null regardless of driver behavior. For the columns
+ *  that hold an OBJECT or ARRAY (options, validation, show_when); the string
+ *  branch is defensive there, since the driver parses them already. NOT for
+ *  default_value — see _defaultIn. */
 function _parseJson(v) {
   if (v == null) return null;
   if (typeof v === 'object') return v;
   try { return JSON.parse(v); } catch (_) { return null; }
+}
+
+/**
+ * default_value (S6) out of the DB — AS-IS, deliberately not through
+ * _parseJson. This is the one JSON column here that holds a SCALAR, and
+ * mysql2 has already parsed it into the right JS type.
+ *
+ * Measured on MySQL 8.4.11 with this repo's mysql2 (3.24.3; the pool sets no
+ * `jsonStrings` and no `typeCast`, so the text-protocol parser runs
+ * packet.parseJson): a JSON string comes back a JS string, a JSON number a
+ * number, a JSON boolean a boolean, a JSON array an array — '123' stays the
+ * STRING '123' and '0001234' keeps its leading zeros.
+ *
+ * Re-parsing would therefore be silent data loss, and the four shapes that
+ * matter most all break (measured): _parseJson('abc') → null, so a text
+ * default vanishes; _parseJson('0001234') → null, the pilot's own shape;
+ * _parseJson('2026-09-25') → null, every date default; and _parseJson('123')
+ * → the NUMBER 123, retyping a text default on the way out. Only `undefined`
+ * needs folding, to the same null the column's absence means.
+ */
+function _defaultIn(v) {
+  return v === undefined ? null : v;
 }
 
 function _isPlainObject(v) {
@@ -137,11 +175,12 @@ function _isPlainObject(v) {
 function _shape(r) {
   return {
     ...r,
-    options:    _parseJson(r.options),
-    validation: _parseJson(r.validation),
-    show_when:  _parseJson(r.show_when),
-    indexed:    r.indexed ? 1 : 0,
-    active:     r.active ? 1 : 0,
+    options:       _parseJson(r.options),
+    validation:    _parseJson(r.validation),
+    show_when:     _parseJson(r.show_when),
+    default_value: _defaultIn(r.default_value),   // S6 — scalar, read as-is
+    indexed:       r.indexed ? 1 : 0,
+    active:        r.active ? 1 : 0,
   };
 }
 
@@ -338,6 +377,53 @@ async function assertNoColumnCollision(db, entity, fieldKey) {
 }
 
 /**
+ * default_value (S6) — validate + normalize one def's default against the def
+ * it belongs to (design doc §3 "Defaults"). Runs LAST in validateDef, against
+ * the already-normalized field_type / options / validation, so the default is
+ * judged by exactly the rules a written value is: one call to validateValue,
+ * never a second copy of the type table.
+ *
+ * null / undefined / '' (and [] on multiselect) → null, meaning THIS FIELD HAS
+ * NO DEFAULT. That is also how a default is cleared, and clearing is allowed
+ * whenever — a default touches no stored record, so there is no post-data lock
+ * on it (unlike field_type and option values).
+ *
+ * THE ONE ASYMMETRY, deliberate: a select / multiselect default must name an
+ * ACTIVE option HERE, at def-save time — offering staff a default that pickers
+ * hide would be incoherent. But validateValue accepts active OR retired (§3:
+ * rejecting retired would force a read-before-write and break the one-UPDATE
+ * write rule), so a default stored while its option was active KEEPS WORKING
+ * at stamp time after that option is retired. Nothing degrades: the value
+ * still labels records, it is just no longer offerable as a new default. The
+ * next save of that def is what surfaces it, as a 400 naming the option.
+ */
+function _checkDefault(raw, def, errs) {
+  const r = validateValue(def, raw);
+  if (!r.ok) {
+    // validateValue names the field_key; here the offending input is the
+    // DEFAULT, so say so or the editor's message reads like a value error.
+    errs.push(`default_value: ${r.error}`);
+    return null;
+  }
+  if (r.value === null) return null;               // no default / cleared
+
+  if (OPTION_TYPES.includes(def.field_type)) {
+    const active = new Set((def.options || [])
+      .filter(o => o && o.active !== false).map(o => o.value));
+    const picked = Array.isArray(r.value) ? r.value : [r.value];
+    const retired = picked.filter(v => !active.has(v));
+    if (retired.length) {
+      errs.push(
+        `default_value: ${retired.map(v => `"${v}"`).join(', ')} ` +
+        `${retired.length > 1 ? 'are' : 'is'} retired — a default must be an option staff can still pick ` +
+        '(reactivate it, or choose another; records already holding it are unaffected)');
+      return null;
+    }
+  }
+  return r.value;
+}
+
+/**
  * Validate (and normalize) a whole def. Every shape problem is collected and
  * joined with '; ' so the editor can show them verbatim; then, on create
  * only, the registry duplicate check and the column-collision check run.
@@ -349,7 +435,7 @@ async function assertNoColumnCollision(db, entity, fieldKey) {
  * omits `active` keeps its stored state (see _checkOptions).
  *
  * @returns normalized { entity, field_key, label, field_type, options,
- *          validation, show_when, sort_order, active }
+ *          validation, show_when, default_value, sort_order, active }
  */
 async function validateDef(db, def = {}, { isCreate = true, priorOptions = null } = {}) {
   const errs = [];
@@ -389,6 +475,23 @@ async function validateDef(db, def = {}, { isCreate = true, priorOptions = null 
     }
   }
 
+  // default_value (S6) — LAST, so it is judged against the normalized type,
+  // options and validation above. Deliberately NOT through _jsonIn: a default
+  // is a VALUE, not a JSON-encoded structure, so a text default of "abc"
+  // arrives as the plain string "abc" (which _jsonIn would reject as invalid
+  // JSON) and a multiselect default as a real array — the same spelling the
+  // write chokepoint takes.
+  //
+  // Skipped when what it would be judged against is itself broken (an
+  // unknown field_type, or an options array that failed): checking against a
+  // half-known def would add a second, misleading error to the same message.
+  // Unrelated problems (a missing label) do NOT skip it — this file collects
+  // every shape problem into one message on purpose.
+  const canJudgeDefault = typeOk && !(OPTION_TYPES.includes(fieldType) && !options);
+  const defaultValue = canJudgeDefault
+    ? _checkDefault(d.default_value, { field_key: fieldKey, field_type: fieldType, options, validation }, errs)
+    : null;
+
   if (errs.length) throw _err(400, errs.join('; '));
 
   if (isCreate) {
@@ -407,6 +510,7 @@ async function validateDef(db, def = {}, { isCreate = true, priorOptions = null 
     options,
     validation,
     show_when:  showWhen == null ? null : showWhen,
+    default_value: defaultValue,
     sort_order: sortOrder,
     active:     d.active === undefined ? 1 : (d.active ? 1 : 0),
   };
@@ -439,10 +543,12 @@ async function createDef(db, body = {}, { actor = null } = {}) {
   try {
     const [result] = await db.query(
       `INSERT INTO field_defs
-         (entity, field_key, label, field_type, options, validation, show_when, sort_order, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (entity, field_key, label, field_type, options, validation, show_when,
+          default_value, sort_order, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [def.entity, def.field_key, def.label, def.field_type, _json(def.options),
-       _json(def.validation), _json(def.show_when), def.sort_order, def.active]
+       _json(def.validation), _json(def.show_when), _json(def.default_value),
+       def.sort_order, def.active]
     );
     bump();
     _reconcileSoon(db, 'create', actor);
@@ -456,15 +562,28 @@ async function createDef(db, body = {}, { actor = null } = {}) {
   }
 }
 
-const PATCHABLE = ['label', 'field_type', 'options', 'validation', 'show_when', 'sort_order'];
+const PATCHABLE = ['label', 'field_type', 'options', 'validation', 'show_when',
+                   'default_value', 'sort_order'];
+
+/** The PATCHABLE keys stored as JSON text rather than a bare bind. */
+const JSON_COLS = ['options', 'validation', 'show_when', 'default_value'];
 
 /**
  * Partial update of label / field_type / options / validation / show_when /
- * sort_order. entity and field_key are immutable (a body carrying either
- * with a DIFFERENT value is a 400; the same value is a no-op, the roles
- * PUT idiom). active has its own verbs (setActive). The merged row is
+ * default_value / sort_order. entity and field_key are immutable (a body
+ * carrying either with a DIFFERENT value is a 400; the same value is a no-op,
+ * the roles PUT idiom). active has its own verbs (setActive). The merged row is
  * validated whole — changing select → text requires options: null in the
  * same patch. Row-locked so two editors can't validate against a stale row.
+ *
+ * DEFAULTS (S6) ride that whole-row validation, and it is load-bearing: a
+ * patch that omits default_value keeps the STORED one and re-validates it
+ * against the patch's type and options. So a retype whose stored default no
+ * longer fits (text "abc" → number), or an options edit that removes or
+ * RETIRES the option a default names, is refused with a 400 naming the
+ * default — the admin clears or fixes it in the same patch. There is no
+ * post-data lock on default_value itself (setting or clearing one touches no
+ * stored record), so it is editable whenever the rest of the def is.
  *
  * POST-DATA LOCKS (S2, design doc §3) — 409, checked inside the row lock
  * against the stored JSON (existence probes only; never `->>`):
@@ -527,8 +646,21 @@ async function updateDef(db, id, patch = {}, { actor = null } = {}) {
       }
     }
 
-    const sets = present.map(k => `${k} = ?`);
-    const args = present.map(k => (['options', 'validation', 'show_when'].includes(k) ? _json(def[k]) : def[k]));
+    // What actually gets written. Normally exactly the keys the patch carried
+    // — but a patch that changes field_type can RE-NORMALIZE the stored default
+    // without naming it (a text default '0001234' on a field becoming `number`
+    // validates as the number 1234), and leaving the old spelling in the column
+    // would stamp a JSON string into a number field's key, disagreeing with its
+    // DECIMAL(18,4) virtual column. So the normalized default is persisted
+    // whenever it differs: the stored def is always in its canonical form.
+    const written = [...present];
+    if (!present.includes('default_value')
+        && JSON.stringify(def.default_value) !== JSON.stringify(row.default_value)) {
+      written.push('default_value');
+    }
+
+    const sets = written.map(k => `${k} = ?`);
+    const args = written.map(k => (JSON_COLS.includes(k) ? _json(def[k]) : def[k]));
     await conn.query(`UPDATE field_defs SET ${sets.join(', ')} WHERE id = ?`, [...args, n]);
     typeChanged = def.field_type !== row.field_type;
     return { id: n, entity: row.entity, field_key: row.field_key };
@@ -848,6 +980,107 @@ function buildCustomChanges(priorCustom, customSets, customRemoves) {
   return changes;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Defaults (S6) — the create-time stamp
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * The defaults to stamp into a NEW record's `custom` — { cf_key: value } over
+ * the entity's ACTIVE defs that carry one, in registry order. `{}` when none
+ * do, which is the overwhelmingly common case.
+ *
+ * WHERE IT IS CONSUMED (design doc §3 "Defaults", ruled 2026-09-25). The
+ * create paths were deliberately left untouched by S2's create-then-patch
+ * fence; S6 is that fence opening for exactly this one purpose, at the three
+ * sites that insert a record:
+ *   · contactService.createContact — the ONLY `INSERT INTO contacts` in the
+ *     codebase, so every contact entrance (API, both intake routes, the
+ *     petition's two debtors, booking's find-or-create) gets defaults free.
+ *   · intakeService.intakeCase          — `POST /api/intake/case`, intake_case
+ *   · routes/api.intake.petition.js     — its own create branch ONLY
+ * There is no caseService.createCase to converge those last two on (S6 report,
+ * 2026-09-25) — hence one definition here and two call sites there, rather
+ * than two copies of the composition.
+ *
+ * NEVER RETROACTIVE, and that is the whole point: this is read at creation and
+ * never again. A def that gains or changes a default affects future creates
+ * only; existing records keep whatever they hold, including nothing. Applying
+ * a new default to old records is a deliberate one-off UPDATE (the S5
+ * pattern), never something a def edit sets off.
+ *
+ * `show_when` is NOT consulted — a default is data, display is display. A
+ * field hidden on the form still gets its default, still reports, still
+ * triggers.
+ *
+ * The values are the stored defaults, already validated against their own def
+ * at save time (validateDef → _checkDefault), so they need no re-validation
+ * here: this returns JSON-ready values in the exact shape the chokepoint
+ * writes. Reads ride listActive, so it is cached with the def cache and costs
+ * no query per create.
+ */
+async function defaultsObject(db, entity) {
+  const out = {};
+  for (const def of await listActive(db, entity)) {
+    if (def.default_value !== null && def.default_value !== undefined) {
+      out[def.field_key] = def.default_value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Refuse an explicit cf_ key in a CREATE payload (S6) — the shared half of the
+ * create-then-patch fence, so `createCase` and `createContact` can't drift.
+ *
+ * Both create paths take a fixed field set, so before S6 a cf_ key handed to
+ * either was SILENTLY DROPPED (`createContact` destructures a fixed parameter
+ * list; the case INSERTs built fixed column lists). With defaults arriving,
+ * silence gets worse than nothing: the caller would receive the DEFAULT where
+ * they asked for their own value. So it fails loudly and names the key.
+ *
+ * Scoped to the cf_ namespace on purpose. `POST /api/contacts` hands `req.body`
+ * to createContact wholesale, and rejecting stray non-cf_ keys would be a
+ * behaviour break with nothing to do with custom fields.
+ *
+ * @param {object} fields  the create payload
+ * @param {string} fn      the function name, for the message
+ * @param {string} where   where the caller should write the value instead
+ */
+function assertNoCustomAtCreate(fields, fn, where) {
+  const cf = Object.keys(fields || {}).filter(k => CF_PREFIX_RE.test(k));
+  if (!cf.length) return;
+  const e = new Error(
+    `${fn} does not accept custom fields (${cf.join(', ')}) — ` +
+    `create the record, then ${where} with the cf_ keys`);
+  e.status = 400;
+  throw e;
+}
+
+/**
+ * A defaults object → the `custom` column's value for a create INSERT, as JSON
+ * text for a bound `?` (the column is JSON, so MySQL parses the string on
+ * assignment — the same coercion _json relies on for options/validation).
+ *
+ * ONE WRITE, NO FOLLOW-UP UPDATE (§3): the caller puts `custom` in its own
+ * INSERT column list, so the row is born with its defaults. A create-then-
+ * UPDATE would emit a second event, bump timestamps, and leave a window in
+ * which the record exists without them.
+ *
+ * Returns null when there is nothing to stamp — the caller then omits `custom`
+ * from its column list entirely and the column's own
+ * `NOT NULL DEFAULT (JSON_OBJECT())` supplies `{}`, exactly as before S6.
+ * Every key is KEY_RE-guarded on the way out: these become JSON paths, and a
+ * malformed one is a programming error worth a 500, not a silent bad row.
+ */
+function customCreateValue(defaults) {
+  const keys = Object.keys(defaults || {});
+  if (!keys.length) return null;
+  for (const k of keys) {
+    if (!KEY_RE.test(k)) throw _err(500, `customCreateValue: refusing malformed key "${k}"`);
+  }
+  return JSON.stringify(defaults);
+}
+
 /**
  * Lower-cased set of the entity table's WRITABLE real columns — generated
  * columns (S3's cf_ virtuals among them) and `custom` excluded. caseService
@@ -896,4 +1129,8 @@ module.exports = {
   customAssignment,
   buildCustomChanges,
   writableColumns,
+  // S6 — create-time defaults
+  defaultsObject,
+  customCreateValue,
+  assertNoCustomAtCreate,
 };

@@ -461,6 +461,8 @@ ref/migrations/2026-09-24_custom_columns.sql
 ref/migrations/2026-09-24_field_defs.sql
 ref/migrations/2026-09-24_field_key_comment.sql
 ref/migrations/2026-09-25_clio_pilot_backfill.sql
+ref/migrations/2026-09-25_field_defs_default_value.sql
+ref/migrations/2026-09-25_field_defs_default_value_comment.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -812,6 +814,7 @@ tests/customFields.s2.test.js
 tests/customFields.s3.test.js
 tests/customFields.s4.test.js
 tests/customFields.s5.test.js
+tests/customFields.s6.test.js
 tests/dbConsoleSplitSql.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbTransientRetry.test.js

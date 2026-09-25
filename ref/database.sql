@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-25T00:37:14.070Z
+-- Generated: 2026-09-25T08:06:36.326Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:18e7f4010d7d5c543d70c1e584eb98b5
+-- Fingerprint: sha256:ba404bcb708094d9746c65be31f1980f
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1716,7 +1716,8 @@ CREATE TABLE `field_defs` (
   `sort_order` smallint NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'active=0 is RETIREMENT — there is no hard delete. Values already stored under the key persist in the JSON by design.',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `default_value` json DEFAULT NULL COMMENT 'Optional value stamped into <entity>.custom ONCE, at record creation, by the two create chokepoints: contactService.createContact and caseService.createCase (the only INSERT INTO contacts / INTO cases in the codebase) — ref/CUSTOM_FIELDS_DESIGN.md §3. NEVER retroactive (a def gaining or changing a default affects future creates only; backfilling existing records is a deliberate one-off UPDATE). Stamped regardless of show_when (data, not display). NULL = no default; there is no "default to clear". Validated at def save through validateValue against the merged def, so a stored default always satisfies its own field; select/multiselect defaults must name an ACTIVE option at save time, though a later-retired option keeps working (writes accept retired). Holds the JSON value itself — JSON string for text/date/select, number, boolean, or ARRAY for multiselect.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Custom-fields registry (ref/CUSTOM_FIELDS_DESIGN.md). Single source of truth for admin-defined fields; read through services/fieldDefService.js (cached).';
 
 -- --------------------------------------------------------

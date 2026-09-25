@@ -60,7 +60,10 @@ a report".
    - for a yes/no source, write `true` or `false`.
    - it is a display rule, not a privacy one: a hidden field's value is still
      in the record, still reportable and still in templates.
-7. **+ Add Field.** If something's wrong, the message under the button names
+7. Optional **Default** — a value stamped onto **new** records of that kind as
+   they are created. See *Defaults* below; the one thing to know here is that
+   it never changes a record that already exists.
+8. **+ Add Field.** If something's wrong, the message under the button names
    every problem at once.
 
 ### Using a field
@@ -146,6 +149,60 @@ Once a field is active it appears everywhere by itself. A worked example — a
 - **Every add, edit, deactivate and reactivate is recorded** in the admin audit
   log, with who did it.
 
+### Defaults
+
+A field can carry a **Default** — a value written onto **new** records of that
+kind at the moment they are created. Set it in the field's **Edit** panel; the
+box matches the type (a dropdown of the options for `select`, a date picker for
+`date`, Yes/No for a boolean). Leave it empty for no default, and blank it again
+to remove one.
+
+**What a default does**
+
+- A case or contact created from then on is born holding that value, exactly as
+  if someone had typed it in. It is in the record, in reports, in templates and
+  in automation conditions from the first moment.
+- It applies however the record was created — the contact screen, an intake
+  form, a website submission, a booking, a workflow, the petition import.
+- It applies even to a field hidden by *Show this field only when…*. A default
+  is about the data, not the screen. (That is deliberate: the alternative is a
+  value that exists or not depending on an unrelated field's state.)
+
+**What a default does NOT do — read this one**
+
+- **It never touches records that already exist.** Adding a default today does
+  nothing to the cases and contacts already in the system, and neither does
+  changing or removing one. Those records keep whatever they hold, including
+  nothing at all. This is the single most common surprise: setting a default
+  does *not* fill in the blanks you were hoping to fill.
+  If you want existing records filled in too, that is a separate one-off job —
+  ask for it, and it gets done as a deliberate data change with a record of
+  what it touched. There is no button for it, on purpose.
+- **It is not a "required" substitute.** A default gives a starting value;
+  *Required* makes someone confirm one. You can use both.
+- **It cannot mean "clear this field".** A default is a value. Emptying the box
+  removes the default; it does not make new records blank a field.
+
+**Rules the screen enforces**
+
+- The default has to be a legal value for its own field — the right type, a
+  real date, inside the field's own Max length / Min / Max / Pattern, within
+  255 characters. If it isn't, the save is refused with a message naming the
+  default.
+- For `select` / `multiselect` the dropdown offers **active** options only: a
+  default staff can't pick makes no sense. If you **retire** the option a
+  default currently points at, that save is refused — clear the default in the
+  same save and it goes through. An option retired *after* it was made the
+  default keeps working on new records; it simply can't be chosen as a new one.
+- Changing a field's **type** while its default no longer fits is refused the
+  same way (clear the default in the same save). A default that still fits is
+  converted — a text default of `0001234` on a field becoming `number` becomes
+  `1234`, zeros and all gone. If the leading zeros matter, keep the field
+  `text`.
+- A default can be set, changed or cleared at **any** time, including on a
+  field that already holds data on thousands of records — because it changes
+  none of them.
+
 ### Merging cases
 
 When two cases are merged, custom fields follow the same rules as every other
@@ -214,6 +271,11 @@ The server enforces these; the screen just helps you meet them.
   min and max on numbers, min no bigger than max, and the pattern must be a
   valid regular expression. Switching a field's type drops options and
   validation that no longer apply when you save.
+- **Defaults are validated as values.** A default must pass every rule its own
+  field applies to a typed-in value, and for `select`/`multiselect` it must name
+  an option that is still **active**. Unlike the type and the option values, a
+  default carries **no lock** — it can be set, changed or cleared at any time,
+  because doing so changes no stored record.
 - **Show-only-when is one condition** — a field, a test, and a value. There is
   no *and* / *or*, and no nesting. A condition that isn't one of those five
   tests is ignored and the field simply always shows (with a note in the
@@ -243,6 +305,11 @@ The server enforces these; the screen just helps you meet them.
 | `public/js/yc-custom-fields.js` | S4: THE renderer. The Custom Fields section on both records — typed inputs, `show_when` v1, the `required` gate, the changed-keys-only save. Also CommonJS, so its pure halves are unit-testable. |
 | `public/case.html` / `public/forms/contact-form.html` | S4 mount points (`cfSection` under the Overview box; `customFieldsSection` after Roles). Neither rides an aggregate form save. |
 | `lib/reportSchema/customFieldsAppendix.js` | S4: the registry-driven appendix to the (hand-maintained) report manifest, merged into the report author's prompt per request via `aiService`'s `systemAppend`. |
+| `ref/migrations/2026-09-25_field_defs_default_value.sql` | S6: `field_defs.default_value`. Plain nullable JSON, `ALGORITHM=INSTANT`; the COMMENT carries the semantics. |
+| `ref/migrations/2026-09-25_field_defs_default_value_comment.sql` | S6-B: the COMMENT names the chokepoints after the extraction (comment only). |
+| `services/caseService.js` | S6-B: `createCase` — **the only `INSERT INTO cases`**. Mints the id, retries on collision, gates the columns, stamps the defaults, reads the cf_ columns back for the envelope. Plus `NOW_FIRM`, the firm-local-now sentinel. |
+| `services/intakeService.js` / `routes/api.intake.petition.js` | The two case create CALLERS. Each keeps its own linking, log row and `case.created` emit, spreading the returned `custom_fields` into that envelope's `data`. The petition route's *other* branch UPDATEs an existing case and deliberately does not stamp. |
+| `tests/customFields.s6.test.js` | S6: the scalar-JSON reader trap, def-save validation incl. the active-option rule, merged-row re-validation, `defaultsObject`/`customCreateValue`, the createContact stamp + the cf_-at-create refusal, never-retroactive, the two case sites, and the create-site greps. |
 | `tests/customFields.s4.test.js` | S4: normalisation from both carriers, the `show_when` truth table, the required gate, retired-option display, the log rows, the envelope read-back, the trigger/placeholder/report demonstrations, the appendix. |
 
 ### API
@@ -256,7 +323,7 @@ editor this one was cloned from. Envelope `{ status: 'success', … }` /
 | `GET /api/field-defs?entity=` | Every def for the entity (`case` or `contact`), inactive included, ordered `sort_order, id`. |
 | `GET /api/field-defs/usage?entity=` | `{ field_key: count }` of records holding a value, every def incl. inactive. Shares the type-lock's data-exists predicate, so the editor's badges and the 409s below always agree. |
 | `POST /api/field-defs` | Create → `201 { id, entity, field_key }`. Duplicate key → `409`. |
-| `PATCH /api/field-defs/:id` | `label`, `field_type`, `options`, `validation`, `show_when`, `sort_order`. The **merged** row is validated whole, so select → text needs `options: null` in the same patch. |
+| `PATCH /api/field-defs/:id` | `label`, `field_type`, `options`, `validation`, `show_when`, `default_value`, `sort_order`. The **merged** row is validated whole, so select → text needs `options: null` in the same patch — and a patch that leaves `default_value` out still re-validates the STORED default against the new type and options (S6). |
 | `POST /api/field-defs/:id/deactivate` · `/reactivate` | `active` 0 / 1. Idempotent. |
 | `POST /api/field-defs/reconcile` | Runs the column reconciler now and waits: `200 { result }` (`status` `ok` / `noop` / `dry_run`, `plan`, `executed`, `skipped`, `conflicts`); `409` another run held the lock through the retry; `500` a statement failed — `result.failed` names it with MySQL's error code, the full message is in the system alert. Body `{ "dry_run": true }` plans without executing. |
 
@@ -498,6 +565,84 @@ which is why the census comes first.
 On `contacts`, a column drop is a **table rebuild** — its FULLTEXT index on
 `contact_name` rules out the metadata-only path. At ~1,100 rows that is
 sub-second, but it takes the table's metadata lock, so pick a quiet minute.
+
+### Defaults — the create-time stamp (S6)
+
+`field_defs.default_value` (JSON, nullable) holds an optional value **stamped
+once, into a new record's `custom`, by the create services** — and never
+consulted again. Design doc §3 "Defaults" is the ruling; the four halves:
+stamped at creation only, never retroactive, stamped regardless of `show_when`,
+and a default is a value (NULL = no default; there is no "default to clear").
+
+**Validated at def save,** by `_checkDefault` → the same `validateValue` a
+written value goes through, against the **merged** def. So `updateDef` refuses a
+retype or an options edit that would orphan the stored default, naming
+`default_value` in the 400. One rule is not `validateValue`'s: a
+select/multiselect default must name an **active** option. That is asymmetric
+with writes, which accept active *or* retired (§3) — so a default stored while
+its option was active keeps stamping after the retire; it just can't be set as a
+new one. A patch that re-normalizes the default persists it even without naming
+it, so the stored def is always canonical (otherwise a `number` field could keep
+the JSON string `"0001234"` and stamp it into a `DECIMAL(18,4)` column).
+
+**Read AS-IS.** This is the one JSON column here that holds a *scalar*, and
+mysql2 has already parsed it. Running it through the reader the other JSON
+columns use (`_parseJson`) is silent data loss — measured on 8.4.11: `'abc'` →
+null, `'0001234'` → null, `'2026-09-25'` → null, `'123'` → the *number* `123`.
+Hence `_defaultIn`, and the mutation check in `tests/customFields.s6.test.js`
+that demonstrates all four.
+
+**Where it is stamped.** `fieldDefService.defaultsObject(db, entity)` →
+`{cf_key: value}` over active defs that have one (cached with the def cache, so
+no query per create); `customCreateValue(obj)` → the JSON text for a bound `?`,
+or `null` when there is nothing to stamp (the caller then omits `custom` and the
+column's own `DEFAULT (JSON_OBJECT())` supplies `{}`, byte-identical to the
+pre-S6 statement). Composed **into the create INSERT** — one write, no follow-up
+UPDATE, so the row is born with its defaults and `contact.created`'s post-commit
+`SELECT *` picks up the virtual columns free.
+
+Two chokepoints, one per entity, each the only INSERT into its table — both
+pinned by a test that fails if a second appears:
+
+| Entity | Chokepoint | Reached from |
+|---|---|---|
+| contact | `contactService.createContact` | The API, both intake routes, the petition's two debtors, booking's find-or-create. |
+| case | `caseService.createCase` | `intakeService.intakeCase` (`POST /api/intake/case`, `intake_case`) and the petition route's create branch — **that branch only**; its sibling UPDATEs a case that already exists, and stamping there would be the retroactive write the ruling forbids. |
+
+`createCase` was extracted in S6-B (2026-09-25) precisely because the case side
+had no chokepoint and S6 would otherwise have written the stamp twice. It owns
+the id, the collision retry, the column gate, the write safeties `updateCase`
+applies, the stamp, and the envelope read-back. It deliberately does **not**
+own linking, the log row or the `case.created` emit — the two callers differ
+there, and moving the emit would fire it before the link exists and drop
+`extra.case_relate_id` from a live envelope.
+
+**`undefined` omits a column; `null` writes NULL** — and that is not a
+nicety. `cases` is mostly NOT NULL with no DB default, and a single-row INSERT
+of an explicit NULL into such a column is an error *even under this session's
+permissive sql_mode* (measured under production's exact mode). Omitting is the
+only way to get the implicit default.
+
+**Creation envelopes.** `contact.created` carries the stamped values free — it
+is a post-commit `SELECT *`. `case.created` is hand-built, so `createCase`
+returns the values **read back from the generated columns** and each caller
+spreads them into `data`. That read-back is what makes `data.cf_x` mean the
+same thing on both events (a boolean is `1`/`0` on each). Additive only, and
+never fatal.
+
+**The create fence stays shut.** An explicit `cf_` key passed to
+`createContact` is a **400 naming the key**, telling the caller to PATCH after
+create. Before S6 it was silently dropped (the function destructures a fixed
+parameter list); with defaults arriving, silence would have become worse than
+nothing — the caller would get the *default* where they asked for their own
+value. Non-`cf_` stray keys are still ignored exactly as before, because
+`POST /api/contacts` hands `req.body` over wholesale.
+
+**Not built, deliberately:** nothing prefills a default into a form before the
+record exists. The census found no create-time form that renders custom fields
+(the case page needs a case; the contact form PATCHes a contact id), and a form
+showing a value the database doesn't hold is the lie surface the ruling closed.
+The renderer has no notion of `default_value` at all, and a test pins that.
 
 ### Columns worth knowing
 

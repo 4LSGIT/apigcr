@@ -56,7 +56,6 @@
 'use strict';
 
 const { parseName }      = require('../lib/parseName');
-const { generateCaseId } = require('../lib/caseId');
 const caseService        = require('./caseService');
 const contactService     = require('./contactService');
 const domainEvents       = require('../lib/domainEvents'); // Trigger T3
@@ -517,59 +516,24 @@ async function intakeCase(db, body = {}, { allowBlankType = false } = {}) {
     }
   }
 
-  // ── Create new case with unique case_id ──
-  let case_id;
-  let inserted = false;
-  let attempts = 0;
-
-  while (!inserted && attempts < 10) {
-    case_id = generateCaseId();
-    attempts++;
-
-    try {
-      // Columns NOT listed rely on implicit defaults — the cases table is
-      // mostly NOT-NULL with no DB defaults, which works only because the
-      // session sql_mode is non-strict (STRICT_TRANS_TABLES absent). Do NOT
-      // add strict mode without giving these columns real defaults first.
-      const cols = ["case_id", "case_open_date", "case_type"];
-      const vals = ["?", "CONVERT_TZ(NOW(), 'UTC', 'America/New_York')", "?"];
-      const params = [case_id, caseType];
-
-      if (caseSubtype !== null) {
-        cols.push("case_subtype");
-        vals.push("?");
-        params.push(caseSubtype);
-      }
-      if (caseNumber !== null) {
-        cols.push("case_number");
-        vals.push("?");
-        params.push(caseNumber);
-      }
-      if (caseNumberFull !== null) {
-        cols.push("case_number_full");
-        vals.push("?");
-        params.push(caseNumberFull);
-      }
-      if (judgeContactId !== null) {
-        cols.push("case_judge_contact_id");
-        vals.push("?");
-        params.push(judgeContactId);
-      }
-
-      await db.query(
-        `INSERT INTO cases (${cols.join(", ")}) VALUES (${vals.join(", ")})`,
-        params
-      );
-      inserted = true;
-    } catch (err) {
-      if (err.code !== "ER_DUP_ENTRY") throw err;
-      // Collision — retry with new ID
-    }
-  }
-
-  if (!inserted) {
-    throw new Error("Failed to generate unique case ID after 10 attempts");
-  }
+  // ── Create the case ──
+  //
+  // caseService.createCase is THE case INSERT (S6-B): it mints the id, retries
+  // on collision, gates the columns, and stamps the S6 custom-field defaults.
+  // Columns NOT passed rely on implicit defaults — the cases table is mostly
+  // NOT-NULL with no DB defaults, which works only because the session
+  // sql_mode is non-strict (STRICT_TRANS_TABLES absent). Do NOT add strict
+  // mode without giving these columns real defaults first; that is why the
+  // optional four are spread in rather than passed as nulls.
+  const created = await caseService.createCase(db, {
+    case_open_date: caseService.NOW_FIRM,
+    case_type: caseType,
+    ...(caseSubtype    !== null ? { case_subtype: caseSubtype }             : {}),
+    ...(caseNumber     !== null ? { case_number: caseNumber }               : {}),
+    ...(caseNumberFull !== null ? { case_number_full: caseNumberFull }      : {}),
+    ...(judgeContactId !== null ? { case_judge_contact_id: judgeContactId } : {}),
+  });
+  const case_id = created.case_id;
 
   // ── Create case_relate link ──
   const [relateResult] = await db.query(
@@ -602,6 +566,12 @@ async function intakeCase(db, body = {}, { allowBlankType = false } = {}) {
       case_subtype:     caseSubtype ?? null,
       case_number:      caseNumber ?? null,
       case_number_full: caseNumberFull ?? null,
+      // Stamped custom-field defaults (S6-B), in the COLUMN's shape so this
+      // envelope and contact.created agree for every type. ADDITIVE ONLY —
+      // the core keys above keep their exact spelling and presence, because
+      // live rule "New intake case → lead" matches on not_exists over two of
+      // them. {} when nothing is defaulted.
+      ...created.custom_fields,
     },
     extra: { case_relate_id: relateResult.insertId },
   });

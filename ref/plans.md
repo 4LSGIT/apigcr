@@ -68,7 +68,7 @@ go-to-market (legal first). Principles, not commitments.
   the "multiple ways to cause things" confusion.
 - **Tenant-defined fields:** JSON column + field-definitions table + indexed
   generated columns for hot fields. Never EAV. Design ratified 2026-09-22
-  → `ref/CUSTOM_FIELDS_DESIGN.md` (living doc; v2 pilot S0–S5 in flight).
+  → `ref/CUSTOM_FIELDS_DESIGN.md` (living doc; v2 pilot S0–S6 built, S5-B gated on a soak).
 - **Billing (unbuilt): agnostic core** — billables → invoices → payments,
   processor drivers. Flag: trust accounting (IOLTA) is the one genuinely
   non-generic legal requirement — table stakes for the legal vertical,
@@ -144,6 +144,21 @@ Active surfaces with known next steps.
 ---
 
 ## Operational
+
+- **Case creation's remaining gaps (the chokepoint itself is now closed).**
+  `caseService.createCase` was extracted 2026-09-25 (Fred's ruling, custom-fields
+  S6-B) and is the only `INSERT INTO cases` in the repo, guarded by a test. What
+  it deliberately did NOT absorb, because the two callers genuinely differ, is
+  still open: (a) **no transaction** — `intakeService.intakeCase` writes `cases`,
+  `case_relate` and `log` as three autocommitted statements on the pool, so a
+  failure between them leaves a case with no Primary link; closing that means
+  absorbing the linking, which changes the petition route's idempotent
+  `ensureRelate` semantics. (b) **No log row on the petition path**, where intake
+  writes one — the two creation paths disagree about whether a case birth is
+  logged at all. (c) **`case.created` is still a hand-built `data` subset** on
+  both callers (custom fields now ride it, S6-B, but no core column was added);
+  a live rule matches on `not_exists` over two of its keys, so any change there
+  is a behaviour change, not a cleanup. Do these as their own slice.
 
 - **Case field edits reach no log at all.** Found while ruling the custom-fields S4 log question (2026-09-25) and confirmed: `caseService.updateCase` writes no log row, and there is no `after_case_update` trigger — `cases` carries only `trg_cases_ct_compat_ins/upd`, which are case-type compatibility, not logging. So changing `case_status`, `case_stage`, `case_rec`, a date or anything else on a case leaves no trace in the case's log, while the equivalent edit on a contact does (the `after_contact_update` trigger covers 17 named columns). The only `type:'update'` row a case ever gets is the `mergeCases` snapshot. S4 deliberately did NOT half-close this — writing cf_ log rows on cases would have made admin-defined fields better-logged than every built-in column. Closing it properly means an app-side write in `updateCase`, which every case writer then inherits (`routes/api.cases.js`, `courtReview`, `update_case`, the inline Overview `onchange` handlers in `case.html`), so it is its own slice with its own volume question — a busy case would gain a log row per keystroke-ish save. Decide extend-vs-accept deliberately; don't let it ride into an unrelated change.
 

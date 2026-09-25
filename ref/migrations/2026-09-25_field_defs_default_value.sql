@@ -1,0 +1,58 @@
+-- ref/migrations/2026-09-25_field_defs_default_value.sql
+--
+-- Custom-fields arc S6 — an optional per-def DEFAULT, stamped once at record
+-- creation (ref/CUSTOM_FIELDS_DESIGN.md §3 "Defaults", ruled 2026-09-25).
+--
+-- WHY A COLUMN AND NOT A `validation` KEY: a default is not a constraint. It
+-- is consulted exactly once, by the create services, and never again — it can
+-- never reject a write, and validation.* can never stamp one. Folding it into
+-- that object would put two unrelated lifetimes behind one key.
+--
+-- THE SEMANTICS THE COMMENT CARRIES (all four ruled 2026-09-25):
+--   · ONCE, AT CREATE, BY THE CREATE SERVICES. Never render-time for an
+--     existing record: a form showing "Yes" while reports, triggers and
+--     placeholders see NULL is a lie surface. Absent stays absent everywhere.
+--   · NEVER RETROACTIVE. A def gaining or changing a default affects future
+--     creates only. Backfilling existing records is a deliberate one-off
+--     UPDATE (the S5 pattern), never automatic.
+--   · REGARDLESS OF `show_when`. A default is data; show_when is display.
+--   · A DEFAULT IS A VALUE. There is no "default to clear" — NULL here means
+--     "this field has no default", which is why the column is nullable.
+--
+-- VALIDATED AT DEF SAVE, not at stamp time: fieldDefService.validateDef runs
+-- the value through validateValue against the MERGED def, so a default can
+-- never be stored that its own field would reject. One asymmetry is deliberate
+-- and documented in the service: select/multiselect defaults must reference
+-- ACTIVE options at save time, but a later-retired option leaves an existing
+-- stored default working, because writes accept active OR retired values (§3).
+--
+-- SHAPE: the JSON value itself, not a wrapper — a JSON STRING for text /
+-- date / select, a JSON number for number, a JSON boolean for boolean, a JSON
+-- ARRAY for multiselect. Measured on 8.4.11 with this repo's mysql2 (3.24.3,
+-- no `jsonStrings`): every one of those round-trips through db.query as the
+-- correct JS type, including the string '123' staying a string and '0001234'
+-- keeping its leading zeros. The service reads this column AS-IS for exactly
+-- that reason — see _defaultIn() there, and do not route it through the
+-- _parseJson used for options/validation/show_when.
+--
+-- ONLINE DDL: a plain nullable JSON ADD COLUMN with no expression default, on
+-- a table with no FULLTEXT index — ALGORITHM=INSTANT verified on MySQL 8.4.11
+-- against this table's DDL (prod is Percona 8.4.6, same LTS line). Unlike the
+-- S3 VIRTUAL adds it does spend ONE instant-DDL row version (measured 0 -> 1
+-- of the 64-per-table budget; field_defs was created 2026-09-24 and its only
+-- prior ALTER was comment-only, so this is its first). Spelled out so the
+-- engine errors rather than silently falling back to a table copy.
+--
+-- DEPLOY ORDER: SQL -> backend -> frontend, as always. This ALTER is
+-- backward-compatible on its own (the backend before S6 never selects the
+-- column), so it is safe to apply ahead of the deploy. Regenerate
+-- ref/database.sql afterwards (the pre-commit hook does).
+--
+-- ROLLBACK: ALTER TABLE `field_defs` DROP COLUMN `default_value`, ALGORITHM=INPLACE;
+--   (destroys the configured defaults, which are config, not record data —
+--    no stamped value on any record is affected.)
+
+ALTER TABLE `field_defs`
+  ADD COLUMN `default_value` json DEFAULT NULL
+    COMMENT 'Optional value stamped into <entity>.custom ONCE, at record creation, by the create services (contactService.createContact; intakeService.intakeCase and the petition route on the case side) — ref/CUSTOM_FIELDS_DESIGN.md §3. NEVER retroactive (a def gaining or changing a default affects future creates only; backfilling existing records is a deliberate one-off UPDATE). Stamped regardless of show_when (data, not display). NULL = no default; there is no "default to clear". Validated at def save through validateValue against the merged def, so a stored default always satisfies its own field; select/multiselect defaults must name an ACTIVE option at save time, though a later-retired option keeps working (writes accept retired). Holds the JSON value itself — JSON string for text/date/select, number, boolean, or ARRAY for multiselect.',
+  ALGORITHM=INSTANT;

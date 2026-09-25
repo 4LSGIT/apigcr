@@ -2194,6 +2194,12 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
  * `phone2` / `email2` write to the legacy columns only; they are NOT
  * propagated to child tables (vestigial).
  *
+ * CUSTOM FIELDS (S6, ref/CUSTOM_FIELDS_DESIGN.md §3 "Defaults"): every active
+ * contact def carrying a `default_value` is stamped into `custom` by the
+ * INSERT itself — one write, never a follow-up UPDATE, and never retroactive
+ * for contacts that already exist. An explicit cf_ key in the payload is a
+ * 400, not a silent drop: values belong to PATCH (the create-then-patch fence).
+ *
  * @param {object} db
  * @param {object} opts
  * @param {object} [opts2]
@@ -2226,7 +2232,11 @@ async function createContact(db, {
   // the orphan-adopt create-new branch to backdate ownership to the value's
   // earliest-seen log date. Validated upstream in the intake route.
   phone_start_date = null,
-  email_start_date = null
+  email_start_date = null,
+  // Everything the list above doesn't name. Collected ONLY so the S6 block
+  // below can refuse a cf_ key loudly instead of dropping it silently; no
+  // other key in here is read, and none ever reaches the INSERT.
+  ...extraAtCreate
 }, { userId = 0 } = {}) {
   // ── kind gate ────────────────────────────────────────────────
   const normalizedKind = String(kind || 'person').trim().toLowerCase();
@@ -2264,6 +2274,23 @@ async function createContact(db, {
   const normalizedEmail   = normalizeEmail(email);
   const normalizedEmail2  = normalizeEmail(email2);
 
+  // ── Custom fields at create (S6) ─────────────────────────────────────────
+  // This function is the ONLY `INSERT INTO contacts` in the codebase, so
+  // stamping here covers every entrance: POST /api/contacts, both intake
+  // routes, the petition's two debtors, and booking's find-or-create.
+  //
+  // EXPLICIT cf_ KEYS ARE REFUSED, and that is the point of this block.
+  // POST /api/contacts hands `req.body` to this function wholesale, and this
+  // signature destructures a fixed parameter list — so before S6 a cf_ key in
+  // that body was silently DROPPED. With defaults arriving, silence would get
+  // worse than nothing: the caller would receive the DEFAULT where they asked
+  // for their own value. So say so instead. Values go through the update
+  // chokepoint, which is the create-then-patch fence S2 put up on purpose
+  // (design doc §7 "Kept-small fences") and which S6 does not open.
+  fieldDefs.assertNoCustomAtCreate(extraAtCreate, 'createContact', 'PATCH /api/contacts/:id');
+  const customAtCreate = fieldDefs.customCreateValue(
+    await fieldDefs.defaultsObject(db, 'contact'));
+
   const out = await db.withTransaction(async (conn) => {
 
     // Booking token minted at birth — same format as the mint-or-return
@@ -2272,6 +2299,13 @@ async function createContact(db, {
     const bookingToken = crypto.randomBytes(16).toString('hex');
 
     // 1. Insert the contacts row
+    //
+    // `custom` (S6) is named ONLY when there is something to stamp; otherwise
+    // the column's own `NOT NULL DEFAULT (JSON_OBJECT())` supplies `{}` and
+    // this statement is byte-identical to the pre-S6 one. One write, no
+    // follow-up UPDATE (design doc §3) — the row is born with its defaults, so
+    // the post-commit `SELECT *` that builds the contact.created envelope
+    // picks up the cf_ virtual columns with no extra work.
     const [result] = await conn.query(
       `INSERT INTO contacts
          (contact_kind, contact_org_name,
@@ -2280,8 +2314,10 @@ async function createContact(db, {
           contact_address, contact_city, contact_state, contact_zip,
           contact_dob, contact_marital_status,
           contact_phone2, contact_email2,
-          contact_tags, contact_notes, contact_token, contact_created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          contact_tags, contact_notes, contact_token, contact_created
+          ${customAtCreate ? ', `custom`' : ''})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()
+          ${customAtCreate ? ', ?' : ''})`,
       [
         normalizedKind, orgName,
         fname, mname, lname, pname,
@@ -2289,7 +2325,8 @@ async function createContact(db, {
         address, city, state, zip,
         dob, marital_status,
         normalizedPhone2, normalizedEmail2,
-        tags, notes, bookingToken
+        tags, notes, bookingToken,
+        ...(customAtCreate ? [customAtCreate] : [])
       ]
     );
 

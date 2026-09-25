@@ -116,6 +116,14 @@
     .cf-valid .cf-vf input[type=text] { width: 90px; }
     .cf-valid .cf-vf input.cf-pattern { width: 180px; }
     /* show_when builder (S4) */
+    /* default_value (S6) */
+    .cf-def { margin: 4px 0 2px; }
+    .cf-def-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .cf-def-row label.fld { margin: 0; }
+    .cf-def-row input[type=text] { width: 190px; }
+    .cf-def-row input[type=date] { width: auto; }
+    .cf-def-row select { width: auto; }
+
     .cf-sw { margin: 4px 0 2px; }
     .cf-sw-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
     .cf-sw-row input[type=text] { width: 170px; }
@@ -229,6 +237,11 @@
 // key box is edited by hand; on existing fields it is display-only.
 // No delete: Deactivate is retirement. `indexed` is read-only (S3
 // reconciler) and n/a for multiselect (JSON column, never indexed).
+// default_value (S6) has a per-type input on every card. Unlike show_when it
+// is ALWAYS sent, because no default can take a shape this editor cannot
+// show — so the shown state is the sent state and blanking the box clears the
+// stored default. A select/multiselect default offers ACTIVE options only.
+//
 // show_when (S4) has a SINGLE-CONDITION builder — {field, op, value},
 // the v1 vocabulary the record-side renderer evaluates. The S1 contract
 // that an API-set value survives an edit is KEPT, narrowed to where it
@@ -291,6 +304,10 @@ function cfBlank() {
     // _swOpaque: the stored value is a shape this builder can't represent —
     // it is shown read-only and Save omits the key so the server keeps it.
     show_when: null, _swOpaque: null,
+    // default_value (S6): null = no default. Held in the def's own shape —
+    // a string for text/date/select, a number, a boolean, an array for
+    // multiselect — so the control round-trips without a parse step.
+    default_value: null,
   };
 }
 
@@ -343,7 +360,86 @@ function cfEditorBody(t, i) {
     valid.push(`<span class="cf-vf">Pattern <input type="text" class="mono cf-pattern" data-cf-v="${i}:pattern" value="${esc(v.pattern ?? '')}" placeholder="regex (optional)"></span>`);
   }
   if (t.field_type === 'number') { valid.push(numIn('min', 'Min')); valid.push(numIn('max', 'Max')); }
-  return `${opts}<div class="cf-valid">${valid.join('')}</div>${cfShowWhenBody(t, i)}`;
+  return `${opts}<div class="cf-valid">${valid.join('')}</div>${cfDefaultBody(t, i)}${cfShowWhenBody(t, i)}`;
+}
+
+/**
+ * The default-value input (S6) — one per type, shown for every type.
+ *
+ * Says what a default DOES and, more importantly, what it does NOT do: it is
+ * stamped when a record is created and never again, so turning one on today
+ * leaves every existing record exactly as it is. That is the point staff will
+ * trip on, so it is on the screen rather than only in the manual.
+ *
+ * select/multiselect offer ACTIVE options only — the server refuses a retired
+ * one (a default nobody can pick is incoherent), while a default stored before
+ * its option was retired keeps working on new records.
+ *
+ * Clearing is always available: blank the box (or pick "— none —"), and for
+ * multiselect the Clear button, since deselecting every entry in a multi-select
+ * box by hand is fiddly.
+ */
+function cfDefaultBody(t, i) {
+  const dv = t.default_value;
+  const note = `<span class="fmini">Default for NEW ${cfEntityPlural().toLowerCase()} — stamped once, when the record is created.
+    It never changes records that already exist, and it is applied even when "Show this field only when…" hides the field.
+    Leave it empty for no default.</span>`;
+  let control;
+  if (CF_OPTION_TYPES.includes(t.field_type)) {
+    const active = t.options.filter(o => o.active !== false && String(o.value || '').trim() !== '');
+    if (!active.length) {
+      return `<div class="cf-def">${note}<span class="fmini">Add an option above first — a default has to be one of them.</span></div>`;
+    }
+    if (t.field_type === 'multiselect') {
+      const picked = new Set(Array.isArray(dv) ? dv : []);
+      control = `<select class="cf-sel" multiple size="${Math.min(active.length, 4)}" data-cf-dv="${i}">
+          ${active.map(o => `<option value="${esc(o.value)}"${picked.has(o.value) ? ' selected' : ''}>${esc(o.label || o.value)}</option>`).join('')}
+        </select>
+        <button class="btn tiny btn-outline" data-cf-dvclear="${i}">Clear</button>`;
+    } else {
+      control = `<select class="cf-sel" data-cf-dv="${i}">
+          <option value="">— none —</option>
+          ${active.map(o => `<option value="${esc(o.value)}"${dv === o.value ? ' selected' : ''}>${esc(o.label || o.value)}</option>`).join('')}
+        </select>`;
+    }
+  } else if (t.field_type === 'boolean') {
+    control = `<select class="cf-sel" data-cf-dv="${i}">
+        <option value=""${dv === null || dv === undefined ? ' selected' : ''}>— none —</option>
+        <option value="true"${dv === true ? ' selected' : ''}>Yes</option>
+        <option value="false"${dv === false ? ' selected' : ''}>No</option>
+      </select>`;
+  } else if (t.field_type === 'date') {
+    control = `<input type="date" data-cf-dv="${i}" value="${esc(dv == null ? '' : dv)}">`;
+  } else if (t.field_type === 'number') {
+    control = `<input type="text" class="mono" inputmode="decimal" data-cf-dv="${i}"
+        value="${esc(dv == null ? '' : dv)}" placeholder="number">`;
+  } else {
+    control = `<input type="text" data-cf-dv="${i}" maxlength="255"
+        value="${esc(dv == null ? '' : dv)}" placeholder="default text">`;
+  }
+  return `<div class="cf-def">${note}<div class="cf-def-row"><label class="fld">Default</label>${control}</div></div>`;
+}
+
+/**
+ * Draft → wire shape for default_value.
+ *
+ * Always SENT (never omitted), unlike show_when: there is no "advanced shape"
+ * a default can take that this editor cannot represent — it is a scalar or a
+ * list of option values, and the control above covers every type. So the shown
+ * state is the sent state, the same contract the option retire toggle keeps,
+ * and clearing the box genuinely clears the stored default.
+ *
+ * `null` means no default. A number is sent as the raw STRING and the server
+ * parses it (fieldDefService.validateValue accepts a plain decimal string and
+ * stores a JSON number) — so a typo lands as one 400 naming the field rather
+ * than a silent NaN.
+ */
+function cfDefaultOut(t) {
+  const dv = t.default_value;
+  if (t.field_type === 'multiselect') return Array.isArray(dv) && dv.length ? dv : null;
+  if (t.field_type === 'boolean')     return dv === true || dv === false ? dv : null;
+  if (dv === null || dv === undefined || String(dv).trim() === '') return null;
+  return typeof dv === 'string' ? dv.trim() : dv;
 }
 
 /** The show_when builder (S4) — ONE condition, the v1 vocabulary. */
@@ -612,6 +708,18 @@ function cfBind() {
       else if (k === 'pattern') t.validation.pattern = el.value;
       else t.validation[k] = el.value.trim() === '' ? undefined : Number(el.value); // NaN → null on the wire → the route names it
       cfMarkDirty(i);
+    } else if (d.cfDv !== undefined) {
+      // default_value (S6). Kept in the def's own shape as it is typed, so
+      // cfDefaultOut has nothing to parse and the control repaints from truth.
+      const t = cfTarget(d.cfDv);
+      if (t.field_type === 'multiselect') {
+        t.default_value = Array.from(el.selectedOptions || []).map(o => o.value);
+      } else if (t.field_type === 'boolean') {
+        t.default_value = el.value === '' ? null : el.value === 'true';
+      } else {
+        t.default_value = el.value === '' ? null : el.value;
+      }
+      cfMarkDirty(d.cfDv);
     } else if (d.cfSw !== undefined) {
       const [i, k] = d.cfSw.split(':');
       const t = cfTarget(i);
@@ -659,6 +767,11 @@ function cfBind() {
       const [i, oi] = io(d.cfOdel);
       cfTarget(i).options.splice(oi, 1);
       cfRerender(i);
+    } else if (d.cfDvclear !== undefined) {
+      // Multiselect only — deselecting every entry by hand is fiddly enough
+      // that people leave a default on by accident.
+      cfTarget(d.cfDvclear).default_value = null;
+      cfRerender(d.cfDvclear);
     }
   });
 
@@ -754,6 +867,7 @@ async function cfSave(i) {
     const body = {
       label: t.label, field_type: t.field_type, sort_order: t.sort_order,
       options: cfOptionsOut(t), validation: cfValidationOut(t),
+      default_value: cfDefaultOut(t),
     };
     // OMITTED, not nulled, when the stored condition is one this builder
     // can't represent — updateDef only writes the keys a patch carries, so
@@ -765,6 +879,7 @@ async function cfSave(i) {
     t.label = t.label.trim();
     t.options = (cfOptionsOut(t) || []).map(o => ({ ...o, _vt: true, _persisted: true }));
     t.validation = { ...(cfValidationOut(t) || {}) };
+    t.default_value = body.default_value;   // the normalized form, not the raw box
     if (sw !== undefined) t.show_when = sw;
     t._dirty = false;
     cfRender();
@@ -800,6 +915,7 @@ async function cfCreate() {
     const r = await api('/api/field-defs', 'POST', {
       entity: cfEntity, field_key: t.field_key, label: t.label.trim(), field_type: t.field_type,
       sort_order: nextSort, options: cfOptionsOut(t), validation: cfValidationOut(t),
+      default_value: cfDefaultOut(t),
       ...(sw === undefined ? {} : { show_when: sw }),
     });
     cfNew = cfBlank();
@@ -830,6 +946,10 @@ async function cfLoad() {
       // represent this. Anything it can't is kept verbatim in _swOpaque,
       // shown read-only, and omitted from the next save.
       ...cfShowWhenIn(d.show_when, d.field_key),
+      // default_value (S6) arrives in the def's own shape (the service reads
+      // the JSON column as-is), so it needs no parse — undefined only if an
+      // older backend is answering, and null is what "no default" means.
+      default_value: d.default_value === undefined ? null : d.default_value,
       indexed: d.indexed ? 1 : 0, sort_order: d.sort_order | 0, active: d.active ? 1 : 0,
       _open: false, _dirty: false,
     }));

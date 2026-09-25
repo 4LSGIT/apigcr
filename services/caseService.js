@@ -44,6 +44,7 @@ const fieldDefs = require('./fieldDefService'); // custom fields S2 — cf_ writ
 // Merge consolidation recomputes the survivor's docs-checklist status. Shared
 // with routes/api.checklists.js — one copy of the rule, see the lib.
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
+const { generateCaseId } = require('../lib/caseId'); // custom-fields S6-B — createCase mints the id
 
 
 // ─────────────────────────────────────────────────────────────
@@ -366,6 +367,160 @@ async function getCase(db, caseId, include = '', {
   return result;
 }
 
+
+
+// ─────────────────────────────────────────────────────────────
+// createCase — THE case INSERT (custom-fields S6-B, 2026-09-25)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * A column value meaning "now, firm-local" — the one SQL expression both case
+ * create sites needed, so it is a sentinel rather than a raw-SQL escape hatch.
+ * `createCase` emits `CONVERT_TZ(NOW(), 'UTC', 'America/New_York')` in its
+ * place; no caller ever hands this function SQL text.
+ */
+const NOW_FIRM = Object.freeze({ __firmNow: true });
+
+/**
+ * Create a case row. **The only `INSERT INTO cases` in the codebase.**
+ *
+ * WHY IT EXISTS (S6-B). Until 2026-09-25 there was no case-creation chokepoint:
+ * `intakeService.intakeCase` and the petition route's create branch each minted
+ * an id, retried on collision and composed their own INSERT, so anything that
+ * had to happen at case birth had to be written twice. Custom-field defaults
+ * (S6) were the first such thing and the second copy was already drifting, so
+ * the duplication was extracted here. Contacts have had this shape all along
+ * (`contactService.createContact`).
+ *
+ * WHAT IT OWNS: the id (minted here — `case_id` in `fields` is a 400), the
+ * collision retry, the column gate, the write safeties `updateCase` already
+ * applies (note lengths, blank-date → NULL), the S6 default stamp, and the
+ * post-insert cf_ read-back the envelope needs.
+ *
+ * WHAT IT DELIBERATELY DOES NOT OWN — the two callers differ, and folding them
+ * would change behavior S6-B has no mandate for:
+ *   · **Linking.** intake INSERTs `case_relate` directly; the petition route
+ *     calls its idempotent `ensureRelate`.
+ *   · **The log row.** intake writes one; the petition route writes none.
+ *   · **`case.created`.** Both callers emit it themselves, AFTER their linking,
+ *     each with its own `source`, its own hand-built `data` subset and (intake
+ *     only) `extra.case_relate_id` — which is knowable only after the link.
+ *     Moving the emit in here would fire it earlier and drop that key from a
+ *     live envelope. Callers spread the returned `custom_fields` into `data`.
+ *   · **A transaction.** This is one statement; the gap worth closing is that
+ *     `cases` + `case_relate` + `log` are not atomic, and that spans the
+ *     caller's work, not this function's. Still open — `ref/plans.md`.
+ *
+ * @param {object} db
+ * @param {object} fields  column → value. `undefined` OMITS a column; `null`
+ *   writes NULL explicitly; `NOW_FIRM` writes the firm-local now.
+ *   OMITTING IS NOT THE SAME AS NULL, and the difference is sharper than the
+ *   usual non-strict handwave: `cases` is mostly NOT NULL with no DB default,
+ *   and a single-row INSERT of an explicit NULL into such a column is
+ *   ER_BAD_NULL_ERROR **even under this session's permissive sql_mode**
+ *   (measured on 8.4.11 under prod's exact mode, 2026-09-25 — non-strict
+ *   coerces truncating and out-of-range values, it does not swallow a NULL).
+ *   Omitting is the only way to get the implicit default, which is why
+ *   `intakeCase` spreads its four optional columns in rather than passing
+ *   nulls.
+ * @param {object} [opts]
+ * @param {number} [opts.attempts=10]  id-collision retries.
+ * @returns {{ case_id: string, custom_fields: object }} — `custom_fields` is
+ *   the stamped cf_ values AS THE COLUMNS READ THEM BACK (S4's envelope shape
+ *   rule: `'42.5000'`, `1`/`0`, a DATE — not the JSON forms), `{}` when nothing
+ *   was stamped. Spread it into the caller's `case.created` `data`.
+ */
+async function createCase(db, fields = {}, { attempts = 10 } = {}) {
+  const given = { ...(fields || {}) };
+  for (const k of Object.keys(given)) if (given[k] === undefined) delete given[k];
+
+  // Same fence as createContact: a cf_ value belongs to the update chokepoint,
+  // and silently dropping one would now hand the caller the DEFAULT instead.
+  fieldDefs.assertNoCustomAtCreate(given, 'createCase', 'PATCH /api/cases/:id');
+
+  if (Object.keys(given).some(k => k.toLowerCase() === 'case_id')) {
+    const e = new Error('createCase: case_id is minted here and cannot be supplied');
+    e.status = 400;
+    throw e;
+  }
+
+  // The `updateCase` gate, for the same reason: an unknown key would otherwise
+  // reach MySQL as ER_BAD_FIELD_ERROR — a 500 carrying SQL text.
+  const keys = Object.keys(given);
+  if (keys.length) {
+    const columns = await fieldDefs.writableColumns(db, 'case');
+    const unknown = keys.filter(k => !columns.has(k.toLowerCase()));
+    if (unknown.length) {
+      const e = new Error(`createCase: unknown column(s): ${unknown.join(', ')}`);
+      e.status = 400;
+      throw e;
+    }
+  }
+
+  // The firm-local-now sentinel leaves the bound set; everything else gets the
+  // write safeties updateCase applies. blankDatesToNull would not recognise a
+  // sentinel object anyway, but separating first keeps that a fact, not a hope.
+  const sqlCols = keys.filter(k => given[k] === NOW_FIRM);
+  const bound = {};
+  for (const k of keys) if (given[k] !== NOW_FIRM) bound[k] = given[k];
+  assertNoteLengths(bound);
+  const safe = blankDatesToNull('cases', bound);
+
+  // Custom-field defaults (S6). Composed ONCE, outside the retry loop — a pure
+  // function of the registry. null when nothing is defaulted, and then `custom`
+  // is not named at all and the column's own DEFAULT (JSON_OBJECT()) gives {}.
+  const customAtCreate = fieldDefs.customCreateValue(
+    await fieldDefs.defaultsObject(db, 'case'));
+
+  const boundKeys = Object.keys(safe);
+  const cols = ['`case_id`',
+                ...sqlCols.map(k => `\`${k}\``),
+                ...boundKeys.map(k => `\`${k}\``),
+                ...(customAtCreate ? ['`custom`'] : [])];
+  const vals = ['?',
+                ...sqlCols.map(() => "CONVERT_TZ(NOW(), 'UTC', 'America/New_York')"),
+                ...boundKeys.map(() => '?'),
+                ...(customAtCreate ? ['?'] : [])];
+  const tail = [...boundKeys.map(k => safe[k]), ...(customAtCreate ? [customAtCreate] : [])];
+  const sql = `INSERT INTO cases (${cols.join(', ')}) VALUES (${vals.join(', ')})`;
+
+  let caseId = null;
+  for (let attempt = 0; attempt < attempts && caseId === null; attempt++) {
+    const candidate = generateCaseId();
+    try {
+      await db.query(sql, [candidate, ...tail]);
+      caseId = candidate;
+    } catch (err) {
+      if (err.code !== 'ER_DUP_ENTRY') throw err;   // collision only — retry
+    }
+  }
+  if (caseId === null) {
+    throw new Error(`Failed to generate unique case ID after ${attempts} attempts`);
+  }
+
+  // The stamped values in the COLUMN's shape, for the caller's envelope — so
+  // `case.created.data.cf_x` and `contact.created.data.cf_x` agree for every
+  // type (S4's rule; the contact side gets this free from its `SELECT *`).
+  // Never fatal: a def deactivated between the stamp and here may already have
+  // lost its column, and a committed case must not fail over its envelope.
+  let customFields = {};
+  const stamped = customAtCreate ? Object.keys(JSON.parse(customAtCreate)) : [];
+  if (stamped.length) {
+    try {
+      const cf = stamped.filter(k => fieldDefs.KEY_RE.test(k));
+      if (cf.length) {
+        const [[post]] = await db.query(
+          `SELECT ${cf.map(k => `\`${k}\``).join(', ')} FROM cases WHERE case_id = ?`, [caseId]
+        );
+        if (post) customFields = { ...post };
+      }
+    } catch (err) {
+      console.warn(`[CASE SERVICE] cf_ post-read for the create envelope failed: ${err.message}`);
+    }
+  }
+
+  return { case_id: caseId, custom_fields: customFields };
+}
 
 
 // ─────────────────────────────────────────────────────────────
@@ -2236,6 +2391,8 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
 module.exports = {
   listCases,
   getCase,
+  createCase,
+  NOW_FIRM,
   updateCase,
   addCaseContact,
   removeCaseContact,
