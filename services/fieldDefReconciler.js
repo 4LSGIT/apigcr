@@ -87,7 +87,42 @@ const LOCK_WAIT_TIMEOUT_S = 5;
 const ER_LOCK_WAIT_TIMEOUT = 1205;
 
 /** Delays, read at call time — tests set them to 0. */
-const timing = { lockRetryMs: 10_000, mdlBackoffMs: 2_000 };
+const timing = { lockRetryMs: 10_000, mdlBackoffMs: 2_000, connectRetryMs: 2_000 };
+
+/**
+ * Pool-level transient errors — the same set startup/db.js retries, kept in
+ * sync deliberately. That wrapper only wraps pool.query / pool.execute;
+ * db.getConnection() has no retry of its own, here or anywhere. The other
+ * direct getConnection callers (withTransaction — which retries its whole
+ * callback — plus caseService merge, booking, manage, unplacehold, and the
+ * RO-pool readers) all run inside a request, where a failure surfaces as a
+ * 500 to a human who can retry. This one is fire-and-forget at boot with
+ * nobody behind it, so it retries itself.
+ *
+ * NOT imported from startup/db.js on purpose: that module's export IS the
+ * live pool, so requiring it here would open a real connection pool in every
+ * test of this file and break the dependency injection that makes the
+ * reconciler testable. A shared lib/ home for the predicate is the right
+ * fix and is filed as debt, not done here.
+ *
+ * Boot is also the exposed shape: startup/init.js fires scheduleReconcile()
+ * unawaited, so its connect attempt races the Cloud Run request-CPU throttle
+ * and a cold public-internet TCP+handshake to SiteGround. One connect over
+ * mysql2's 10s connectTimeout and the run died with no retry at all — while
+ * the far more benign lock-busy path below got one. 2026-09-24 23:06:04 UTC,
+ * alert 152: 'boot: connect ETIMEDOUT', with the alert's own INSERT (same
+ * pool) succeeding milliseconds later.
+ */
+const TRANSIENT_CONN = new Set([
+  'EPIPE', 'ECONNRESET', 'ETIMEDOUT',
+  'PROTOCOL_CONNECTION_LOST', 'PROTOCOL_SEQUENCE_TIMEOUT',
+]);
+
+function isTransientConn(err) {
+  if (!err) return false;
+  if (TRANSIENT_CONN.has(err.code)) return true;
+  return err.fatal === true && /closed state/.test(String(err.message || ''));
+}
 
 const STR = fieldDefs.STRING_MAX_LEN; // 255 — the chokepoint caps text + option values to it
 
@@ -315,6 +350,22 @@ async function _acquire(db) {
   return null;
 }
 
+/**
+ * _acquire with one retry on a transient connect/socket failure. Safe against
+ * leaks: _acquire releases its connection on every error path before it
+ * rethrows, so the retry never strands the first one.
+ */
+async function _acquireWithRetry(db) {
+  try {
+    return await _acquire(db);
+  } catch (err) {
+    if (!isTransientConn(err)) throw err;
+    console.warn(`[fieldDefReconciler] transient ${err.code || 'closed-state'} acquiring a connection — retrying once`);
+    await sleep(timing.connectRetryMs);
+    return await _acquire(db);
+  }
+}
+
 /** Restore the session, drop the lock, hand the connection back — or destroy it. */
 async function _finish(conn) {
   let clean = true;
@@ -359,17 +410,25 @@ async function reconcile(db, { trigger = 'manual', actor = null, dryRun = false 
   const result = { status: 'noop', trigger, plan: [], executed: [], failed: null, skipped: [], conflicts: [] };
   let conn = null;
   try {
-    conn = await _acquire(db);
+    conn = await _acquireWithRetry(db);
     if (!conn) {
       await sleep(Math.round(timing.lockRetryMs * (0.5 + Math.random())));
-      conn = await _acquire(db);
+      conn = await _acquireWithRetry(db);
     }
   } catch (err) {
     result.status = 'failed';
     result.failed = { sql: null, code: err.code || null, errno: err.errno || null, message: err.message };
     console.error(`[fieldDefReconciler] ${trigger}: could not get a connection / the lock:`, err.message);
-    await _alert(db, 'field_defs_reconcile_failed', 'error', 'Custom-field reconcile could not start',
-      `${trigger}: ${err.message}`, { trigger });
+    // A boot reconcile that never got a connection is a BACKSTOP miss, not a
+    // broken system: the registry is unchanged, the columns are unchanged, and
+    // the next mutation or the next instance boot re-plans the same idempotent
+    // diff. Same fail-open reasoning as the GCal freeBusy warning severity —
+    // an error-severity digest entry for a self-healing transient trains the
+    // digest to be ignored. A transient on a user-triggered run still pages,
+    // because someone is waiting on that column to appear.
+    const severity = (trigger === 'boot' && isTransientConn(err)) ? 'warning' : 'error';
+    await _alert(db, 'field_defs_reconcile_failed', severity, 'Custom-field reconcile could not start',
+      `${trigger}: ${err.message}`, { trigger, transient: isTransientConn(err) });
     return result;
   }
   if (!conn) {
@@ -465,6 +524,7 @@ module.exports = {
   timing,
   planFor,
   reconcile,
+  isTransientConn,
   scheduleReconcile,
   // exported for tests
   columnExpression,

@@ -59,6 +59,7 @@ const caseService = require('../services/caseService');
 
 reconciler.timing.lockRetryMs = 0;
 reconciler.timing.mdlBackoffMs = 0;
+reconciler.timing.connectRetryMs = 0;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -494,6 +495,51 @@ describe('reconcile — guards', () => {
     expect(alert).toHaveBeenCalledWith(db, expect.objectContaining({ kind: 'field_defs_reconcile_failed' }));
     const noConn = { getConnection: async () => { throw new Error('ECONNREFUSED'); }, query: async () => [[]] };
     await expect(reconciler.reconcile(noConn, {})).resolves.toEqual(expect.objectContaining({ status: 'failed' }));
+  });
+
+  test('transient connect (ETIMEDOUT) on the first acquire → one retry, then a normal run, no alert', async () => {
+    const db = engine({ defs: [def('case', 'cf_al', 'text')] });
+    const inner = db.getConnection;
+    let calls = 0;
+    db.getConnection = async () => {
+      if (++calls === 1) throw Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' });
+      return inner();
+    };
+    const r = await reconciler.reconcile(db, { trigger: 'boot' });
+    expect(r.status).toBe('ok');
+    expect(calls).toBe(2);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  test('transient connect on both attempts at boot → failed, WARNING severity, transient flagged', async () => {
+    const db = { getConnection: async () => { throw Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }); }, query: async () => [[]] };
+    const r = await reconciler.reconcile(db, { trigger: 'boot' });
+    expect(r.status).toBe('failed');
+    expect(r.failed).toEqual(expect.objectContaining({ code: 'ETIMEDOUT' }));
+    expect(alert).toHaveBeenCalledWith(db, expect.objectContaining({
+      kind: 'field_defs_reconcile_failed', severity: 'warning',
+      context: expect.objectContaining({ trigger: 'boot', transient: true }),
+    }));
+  });
+
+  test('transient connect on both attempts on a user-triggered run → still ERROR severity', async () => {
+    let calls = 0;
+    const db = { getConnection: async () => { calls++; throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }); }, query: async () => [[]] };
+    const r = await reconciler.reconcile(db, { trigger: 'create' });
+    expect(r.status).toBe('failed');
+    expect(calls).toBe(2);
+    expect(alert).toHaveBeenCalledWith(db, expect.objectContaining({
+      kind: 'field_defs_reconcile_failed', severity: 'error',
+    }));
+  });
+
+  test('a non-transient acquire failure is NOT retried, and boot severity stays error', async () => {
+    let calls = 0;
+    const db = { getConnection: async () => { calls++; throw Object.assign(new Error('Access denied'), { code: 'ER_ACCESS_DENIED_ERROR' }); }, query: async () => [[]] };
+    const r = await reconciler.reconcile(db, { trigger: 'boot' });
+    expect(r.status).toBe('failed');
+    expect(calls).toBe(1);
+    expect(alert).toHaveBeenCalledWith(db, expect.objectContaining({ kind: 'field_defs_reconcile_failed', severity: 'error' }));
   });
 
   test('a conflicted def raises a warning alert and is left alone', async () => {
