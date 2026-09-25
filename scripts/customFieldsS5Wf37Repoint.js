@@ -15,6 +15,12 @@
  * │    await s5Wf37Repoint('apply')     — PATCH the draft, assert the     │
  * │                                       result, STOP before publishing  │
  * │    await s5Wf37Repoint('publish')   — the same, then publish          │
+ * │                                                                        │
+ * │    await s5Wf37Repoint('publish-draft')                                │
+ * │        — publish a draft an EARLIER 'apply' already left, re-asserting │
+ * │          it first. 'publish' CANNOT do this: it restarts from the base │
+ * │          assertion, which refuses to run while a draft is open.        │
+ * │          Publishing is not enabling — see publishDraft() below.        │
  * └───────────────────────────────────────────────────────────────────────┘
  *
  * WHY IT IS THIS PARANOID (CLAUDE.md, wf27 v6, 2026-09-22): a console script
@@ -177,13 +183,83 @@
     return { meta: res.workflow, steps: res.steps };
   }
 
+  /**
+   * PUBLISH-ONLY — for a draft a previous 'apply' already created.
+   *
+   * Needed because 'publish' re-enters at the base assertion, which
+   * (correctly) refuses to run while a draft is open. The two modes are "do
+   * it all from a clean state" and "finish what was started", and only the
+   * first existed.
+   *
+   * It does NOT trust the earlier run. It re-asserts the draft as an END
+   * STATE — the edited steps exactly as EDITS specifies them, the step count,
+   * no `contact_clio_id` anywhere, #32's log key intact — rather than as a
+   * diff, because a fresh page has no before-snapshot to diff against.
+   *
+   * PUBLISHING IS NOT ENABLING. It moves draft_version into current_version;
+   * `workflows.active` is a different column that this never touches, and the
+   * post-publish check below FAILS if active came back non-zero. wf37 stays
+   * off until someone deliberately turns it on.
+   */
+  async function publishDraft(send) {
+    console.log('\n=== S5-A wf37 — PUBLISH AN EXISTING DRAFT (does NOT enable the workflow) ===\n');
+
+    const { meta, steps } = split(await send(`/workflows/${BASE.workflow_id}`, 'GET'), 'pre-publish GET');
+    if (meta.draft_version == null) {
+      fail('there is no draft to publish. To make the edits, run s5Wf37Repoint(\'apply\').');
+    }
+    if (steps.length !== BASE.step_count)        fail(`draft has ${steps.length} steps, expected ${BASE.step_count}`);
+    if (Number(meta.in_flight_executions) !== 0) fail(`${meta.in_flight_executions} execution(s) in flight — wait for them`);
+
+    const byNum = new Map(steps.map(s => [Number(s.step_number), s]));
+    const problems = [];
+    for (const e of EDITS) {
+      const s = byNum.get(e.step);
+      if (!s) { problems.push(`#${e.step} is missing from the draft`); continue; }
+      if (!e.noteOnly && canon(cfg(s)) !== canon(e.config)) {
+        problems.push(`#${e.step} config is not the S5 value\n      got:  ${canon(cfg(s))}\n      want: ${canon(e.config)}`);
+      }
+      if (e.label && s.label !== e.label) problems.push(`#${e.step} label is "${s.label}", expected "${e.label}"`);
+      if ((s.note || '') !== e.note)      problems.push(`#${e.step} note is not the S5 text`);
+    }
+    const leak = steps.filter(s => canon(cfg(s)).includes('contact_clio_id'));
+    if (leak.length) problems.push(`"contact_clio_id" still appears in step(s) ${leak.map(s => '#' + s.step_number).join(', ')}`);
+    const log32 = byNum.get(32);
+    if (!log32 || !canon(cfg(log32)).includes('"clio_matter"')) {
+      problems.push('step #32\'s create_log payload lost its `clio_matter` key — that is a LOG FIELD, not a column');
+    }
+    if (problems.length) fail(`this draft is NOT the S5 repoint — refusing to publish it:\n  - ${problems.join('\n  - ')}`);
+
+    console.log(`DRAFT v${meta.draft_version} RE-ASSERTED — ${steps.length} steps, ${EDITS.length} carry the S5 values, ` +
+      `no "contact_clio_id" anywhere, step #32's log payload intact.`);
+
+    const pub = await send(`/workflows/${BASE.workflow_id}/publish`, 'POST', {});
+    console.log(`PUBLISHED: ${JSON.stringify(pub)}`);
+
+    const { meta: final, steps: finalSteps } = split(await send(`/workflows/${BASE.workflow_id}`, 'GET'), 'post-publish GET');
+    if (final.draft_version != null) fail(`draft_version is still ${final.draft_version} after publish`);
+    if (Number(final.current_version) !== Number(meta.draft_version)) {
+      fail(`current_version is ${final.current_version}, expected ${meta.draft_version}`);
+    }
+    if (Number(final.active) !== 0) {
+      fail(`wf37 came back active=${final.active} — publishing must NOT enable it. Investigate before going further.`);
+    }
+    console.log(`\nDONE — wf37 is now v${final.current_version}, ${finalSteps.length} steps, and STILL INACTIVE ` +
+      `(active=0). Publishing changed WHICH definition would run, not WHETHER it runs.`);
+    return { applied: false, published: true, current_version: final.current_version, active: Number(final.active) };
+  }
+
   async function s5Wf37Repoint(mode) {
     const APPLY   = mode === 'apply' || mode === 'publish';
     const PUBLISH = mode === 'publish';
-    if (mode && !APPLY) fail(`unknown mode "${mode}" — use '', 'apply' or 'publish'`);
+    if (mode && mode !== 'publish-draft' && !APPLY) {
+      fail(`unknown mode "${mode}" — use '', 'apply', 'publish' or 'publish-draft'`);
+    }
 
     const send = root.apiSend;
     if (typeof send !== 'function') fail('apiSend is not on this page — run this in the top-level app shell');
+
+    if (mode === 'publish-draft') return publishDraft(send);
 
     console.log(`\n=== S5-A wf37 repoint — ${PUBLISH ? 'APPLY + PUBLISH' : APPLY ? 'APPLY (no publish)' : 'DRY RUN'} ===\n`);
 

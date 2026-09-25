@@ -573,4 +573,75 @@ describe('S5 — wf37 repoint script against the real route envelope', () => {
     const run = load(async () => envelope(LIVE_STEPS(), { in_flight_executions: 2 }));
     await expect(run()).rejects.toThrow(/2 execution\(s\) in flight/);
   });
+
+  // ── publish-draft: finishing an apply that already ran ──────────────────
+  // 'publish' re-enters at the base assertion, which refuses to run while a
+  // draft is open — so after an 'apply' there was no way to publish from the
+  // script at all. Hit for real on 2026-09-25.
+
+  /** The draft an 'apply' leaves behind: the three edits applied. */
+  const REPOINTED = () => LIVE_STEPS().map(s => {
+    const n = Number(s.step_number);
+    if (n === 8) return { ...s, label: 'Match tier 1: Clio id',
+      note: 'Exact, and free once the Clio id is populated. 245 contacts carried a Clio id at the S5 migration; tiers 2/3 write it back so this tier grows on its own. Reads the cf_clio_id custom field (S5, 2026-09-25) — the contact_clio_id column is frozen and dropped in S5-B.',
+      config: JSON.stringify({ function_name: 'query_db', params: { count_var: 'clioIdCount', format: 'raw',
+        from: 'contacts', limit: 5, output_var: 'clioIdMatches',
+        select: ['contacts.contact_id', 'contacts.contact_name'],
+        where: [{ column: 'contacts.cf_clio_id', op: '=', value: '{{clioContactId}}' }] } }) };
+    if (n === 28) return { ...s, label: "Write the contact's Clio id",
+      note: 'Self-healing: a tier-2/3 match teaches the system the mapping so the next failure for this client is an exact tier-1 hit. Writes the cf_clio_id custom field (S5, 2026-09-25); update_contact REFUSES contact_clio_id from here on.',
+      config: JSON.stringify({ function_name: 'update_contact', params: { contact_id: '{{contactId}}', fields: { cf_clio_id: '{{clioContactId}}' } } }) };
+    if (n === 3) return { ...s,
+      note: 'HARD GUARD. An empty client_id is NOT ignored by Clio — it returns all 549 matters, so data[0].id would attach both tasks to an unrelated 2018 case. Also guards the tier-1 lookup: a contact with no Clio id reads NULL from cf_clio_id (the key is absent from the bag, never empty), so an unguarded blank would still be a pointless query.' };
+    return s;
+  });
+
+  test('publish-draft re-asserts the draft, publishes, and leaves the workflow INACTIVE', async () => {
+    let published = false;
+    const run = load(async (url, method) => {
+      if (method === 'POST') { published = true; return { success: true, version: 2 }; }
+      return published
+        ? envelope(REPOINTED(), { current_version: 2, draft_version: null })
+        : envelope(REPOINTED(), { draft_version: 2 });
+    });
+    await expect(run('publish-draft')).resolves.toEqual({
+      applied: false, published: true, current_version: 2, active: 0,
+    });
+    const out = log.mock.calls.map(c => String(c[0])).join('\n');
+    expect(out).toContain('DRAFT v2 RE-ASSERTED');
+    expect(out).toContain('STILL INACTIVE');
+  });
+
+  test('publish-draft REFUSES a draft that is not the S5 repoint', async () => {
+    // Someone else's draft must never be published by this script.
+    const someoneElses = REPOINTED().map(s => Number(s.step_number) !== 8 ? s
+      : { ...s, config: JSON.stringify({ function_name: 'query_db', params: { from: 'contacts', where: [{ column: 'contacts.contact_email', op: '=', value: 'x' }] } }) });
+    const calls = [];
+    const run = load(async (url, method) => { calls.push(method); return envelope(someoneElses, { draft_version: 2 }); });
+    await expect(run('publish-draft')).rejects.toThrow(/this draft is NOT the S5 repoint — refusing to publish it/);
+    expect(calls).toEqual(['GET']);            // never POSTed
+  });
+
+  test('publish-draft with no draft open says so instead of publishing nothing', async () => {
+    const run = load(async () => envelope(LIVE_STEPS()));
+    await expect(run('publish-draft')).rejects.toThrow(/there is no draft to publish/);
+  });
+
+  test('publish-draft FAILS LOUDLY if publishing somehow enabled the workflow', async () => {
+    // The guarantee being asserted is "publish != enable". If that ever stops
+    // being true, this must not pass quietly.
+    let published = false;
+    const run = load(async (url, method) => {
+      if (method === 'POST') { published = true; return { success: true }; }
+      return published
+        ? envelope(REPOINTED(), { current_version: 2, draft_version: null, active: 1 })
+        : envelope(REPOINTED(), { draft_version: 2 });
+    });
+    await expect(run('publish-draft')).rejects.toThrow(/came back active=1 — publishing must NOT enable it/);
+  });
+
+  test('an unknown mode is rejected, and names publish-draft', async () => {
+    const run = load(async () => envelope(LIVE_STEPS()));
+    await expect(run('yolo')).rejects.toThrow(/unknown mode "yolo".*publish-draft/);
+  });
 });
