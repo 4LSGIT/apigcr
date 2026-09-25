@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-24T20:19:53.408Z
+-- Generated: 2026-09-25T00:37:14.070Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d50b94c66539879f0d269d6fc7618477
+-- Fingerprint: sha256:18e7f4010d7d5c543d70c1e584eb98b5
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -639,7 +639,8 @@ CREATE TABLE `cases` (
   `bk_outcome` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `bk_followup_email` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `bk_7steps_course` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `custom` json NOT NULL DEFAULT (json_object()) COMMENT 'Custom-field values (ref/CUSTOM_FIELDS_DESIGN.md). Keys are field_defs.field_key (cf_*, entity=case). Written ONLY by caseService.updateCase: per-key JSON_SET/JSON_REMOVE in the same UPDATE as core columns, never read-modify-write. NEVER read or compare custom->>''$.k'' in SQL (the S3 virtual column is the only comparison surface). Never store JSON null (clear = JSON_REMOVE). Excluded by name from event envelopes, resolver and reports.'
+  `custom` json NOT NULL DEFAULT (json_object()) COMMENT 'Custom-field values (ref/CUSTOM_FIELDS_DESIGN.md). Keys are field_defs.field_key (cf_*, entity=case). Written ONLY by caseService.updateCase: per-key JSON_SET/JSON_REMOVE in the same UPDATE as core columns, never read-modify-write. NEVER read or compare custom->>''$.k'' in SQL (the S3 virtual column is the only comparison surface). Never store JSON null (clear = JSON_REMOVE). Excluded by name from event envelopes, resolver and reports.',
+  `cf_clio_matter` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (json_value(`custom`, _utf8mb4'$.cf_clio_matter' returning char(255) character set utf8mb4)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -996,7 +997,8 @@ CREATE TABLE `contacts` (
   `contact_token` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'opaque per-contact bearer: booking prefill + video attribution',
   `portal_enabled` tinyint(1) NOT NULL DEFAULT '1',
   `portal_session_version` int NOT NULL DEFAULT '1',
-  `custom` json NOT NULL DEFAULT (json_object()) COMMENT 'Custom-field values (ref/CUSTOM_FIELDS_DESIGN.md). Keys are field_defs.field_key (cf_*, entity=contact). Written ONLY by contactService.updateContact: per-key JSON_SET/JSON_REMOVE in the same UPDATE as core columns, never read-modify-write. NEVER read or compare custom->>''$.k'' in SQL (the S3 virtual column is the only comparison surface). Never store JSON null (clear = JSON_REMOVE). Excluded by name from event envelopes, resolver and reports.'
+  `custom` json NOT NULL DEFAULT (json_object()) COMMENT 'Custom-field values (ref/CUSTOM_FIELDS_DESIGN.md). Keys are field_defs.field_key (cf_*, entity=contact). Written ONLY by contactService.updateContact: per-key JSON_SET/JSON_REMOVE in the same UPDATE as core columns, never read-modify-write. NEVER read or compare custom->>''$.k'' in SQL (the S3 virtual column is the only comparison surface). Never store JSON null (clear = JSON_REMOVE). Excluded by name from event envelopes, resolver and reports.',
+  `cf_clio_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (json_value(`custom`, _utf8mb4'$.cf_clio_id' returning char(255) character set utf8mb4)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --

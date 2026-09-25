@@ -444,3 +444,133 @@ describe('S5 — backfill round trip: old column → JSON_SET → virtual column
     expect(sql).not.toMatch(/^\s*(ALTER TABLE|DROP)/m);
   });
 });
+
+// ═════════════════════════════════════════════════════════════
+// 5. The wf37 repoint script, driven against the route's REAL shape
+//
+// The first cut of this script read `wf.name` / `wf.steps` off the top level
+// of GET /workflows/:id. That route answers
+// `{ success, workflow, steps, editing_version, has_draft }` — steps ARE top
+// level, the metadata is NOT — so the guard passed and the dry run aborted on
+// `name is "undefined"`. Nothing was written (the assertions did their job),
+// but the shape was assumed from the handler's QUERY rather than its
+// res.json. These tests drive the real script against the real envelope.
+// ═════════════════════════════════════════════════════════════
+
+describe('S5 — wf37 repoint script against the real route envelope', () => {
+  // wf37 v1 as it stands live (the four steps verbatim; the other 34 are
+  // filler, which is exactly what the "byte-identical" assertion must cover).
+  const STEP = (n, label, config, note = '') =>
+    ({ step_number: n, label, note, type: 'internal_function', config: JSON.stringify(config) });
+
+  const LIVE_STEPS = () => {
+    const steps = [];
+    for (let n = 1; n <= 38; n++) {
+      if (n === 3) steps.push(STEP(3, 'Have a Clio contact id?',
+        { function_name: 'evaluate_condition', params: { else: 8, then: 4, operator: 'is_not_empty', variable: 'clioContactId' } },
+        'HARD GUARD. An empty client_id is NOT ignored by Clio'));
+      else if (n === 8) steps.push(STEP(8, 'Match tier 1: Clio id',
+        { function_name: 'query_db', params: { from: 'contacts', limit: 5,
+          where: [{ op: '=', value: '{{clioContactId}}', column: 'contacts.contact_clio_id' }],
+          format: 'raw', select: ['contacts.contact_id', 'contacts.contact_name'],
+          count_var: 'clioIdCount', output_var: 'clioIdMatches' } }, 'Exact, and free'));
+      else if (n === 28) steps.push(STEP(28, 'Write contacts.contact_clio_id',
+        { function_name: 'update_contact', params: { fields: { contact_clio_id: '{{clioContactId}}' }, contact_id: '{{contactId}}' } },
+        'Self-healing'));
+      else if (n === 32) steps.push(STEP(32, 'Log to timeline',
+        { function_name: 'create_log', params: { type: 'other', data: { clio_matter: '{{clioMatterNo}}', source: 'clio_payment_failed' } } }));
+      else steps.push(STEP(n, `step ${n}`, { function_name: 'noop', params: {} }, `note ${n}`));
+    }
+    return steps;
+  };
+
+  /** The route's envelope, verbatim: metadata nested, steps top level. */
+  const envelope = (steps, over = {}) => ({
+    success: true,
+    workflow: { id: 37, name: 'Payment Failed — Intake', active: 0,
+      current_version: 1, draft_version: null, step_count: steps.length,
+      in_flight_executions: 0, ...over },
+    steps,
+    editing_version: over.draft_version ?? 1,
+    has_draft: over.draft_version != null,
+  });
+
+  /** Load the IIFE fresh and hand it a scripted apiSend. */
+  function load(send) {
+    delete globalThis.s5Wf37Repoint;
+    jest.isolateModules(() => {
+      jest.resetModules();
+      globalThis.apiSend = send;
+      require('../scripts/customFieldsS5Wf37Repoint.js');
+    });
+    return globalThis.s5Wf37Repoint;
+  }
+
+  let log;
+  beforeEach(() => { log = jest.spyOn(console, 'log').mockImplementation(() => {}); });
+  afterEach(() => { log.mockRestore(); delete globalThis.apiSend; });
+
+  test('DRY RUN passes the base assertion against the real envelope', async () => {
+    const run = load(async (url, method) => {
+      expect(method).toBe('GET');
+      return envelope(LIVE_STEPS());
+    });
+    await expect(run()).resolves.toEqual({ applied: false });
+    const out = log.mock.calls.map(c => String(c[0])).join('\n');
+    expect(out).toContain('BASE OK — wf37 v1, 38 steps, no draft, 0 in flight');
+  });
+
+  test('REGRESSION — a FLAT response aborts with a shape error, never "undefined"', async () => {
+    // What the first cut assumed. It must fail loudly and name the cause.
+    const flat = envelope(LIVE_STEPS());
+    const run = load(async () => ({ ...flat.workflow, steps: flat.steps }));
+    await expect(run()).rejects.toThrow(/response has no \.workflow — the route's shape changed/);
+  });
+
+  test('apply PATCHes exactly 3 steps, then asserts the whole draft', async () => {
+    let steps = LIVE_STEPS();
+    const patched = [];
+    const run = load(async (url, method, body) => {
+      if (method === 'GET') {
+        return envelope(steps, patched.length ? { draft_version: 2 } : {});
+      }
+      const n = Number(url.split('/steps/')[1]);
+      patched.push(n);
+      steps = steps.map(s => Number(s.step_number) !== n ? s : {
+        ...s,
+        label:  body.label !== undefined ? body.label : s.label,
+        note:   body.note  !== undefined ? body.note  : s.note,
+        config: body.config !== undefined ? JSON.stringify(body.config) : s.config,
+      });
+      return { message: `Step ${n} updated` };
+    });
+
+    await expect(run('apply')).resolves.toMatchObject({ applied: true, published: false, draft_version: 2 });
+    expect(patched.sort((a, b) => a - b)).toEqual([3, 8, 28]);
+
+    const byNum = new Map(steps.map(s => [Number(s.step_number), JSON.parse(s.config)]));
+    expect(byNum.get(8).params.where[0].column).toBe('contacts.cf_clio_id');
+    expect(byNum.get(28).params.fields).toEqual({ cf_clio_id: '{{clioContactId}}' });
+    // #3 is note-only, and #32's log payload key survives untouched.
+    expect(byNum.get(3).params.variable).toBe('clioContactId');
+    expect(byNum.get(32).params.data.clio_matter).toBe('{{clioMatterNo}}');
+  });
+
+  test('aborts before ANY write when the live base has drifted', async () => {
+    const drifted = LIVE_STEPS().map(s => Number(s.step_number) !== 8 ? s : { ...s, label: 'Match tier 1: something else' });
+    const calls = [];
+    const run = load(async (url, method) => { calls.push(method); return envelope(drifted); });
+    await expect(run('publish')).rejects.toThrow(/step #8 label is/);
+    expect(calls).toEqual(['GET']);          // nothing was written
+  });
+
+  test('aborts when a draft is already open — never edits someone else\'s work', async () => {
+    const run = load(async () => envelope(LIVE_STEPS(), { draft_version: 5 }));
+    await expect(run()).rejects.toThrow(/an UNPUBLISHED DRAFT already exists \(v5\)/);
+  });
+
+  test('aborts when an execution is in flight', async () => {
+    const run = load(async () => envelope(LIVE_STEPS(), { in_flight_executions: 2 }));
+    await expect(run()).rejects.toThrow(/2 execution\(s\) in flight/);
+  });
+});

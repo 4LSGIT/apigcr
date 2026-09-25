@@ -162,6 +162,21 @@
 
   function fail(msg) { throw new Error('S5 wf37 repoint ABORTED — ' + msg); }
 
+  /**
+   * GET /workflows/:id answers `{ success, workflow, steps, editing_version,
+   * has_draft }` — the METADATA (name, current_version, draft_version,
+   * in_flight_executions, active) is nested under `.workflow`, while `steps`
+   * is top level. Split them here once rather than at five call sites, and
+   * fail loudly if the shape is not what it was: a silent fallback to the
+   * envelope would compare `undefined` against `undefined` and pass.
+   */
+  function split(res, where) {
+    if (!res || typeof res !== 'object') fail(`${where}: no response`);
+    if (!res.workflow) fail(`${where}: response has no .workflow — the route's shape changed; re-derive this script`);
+    if (!Array.isArray(res.steps)) fail(`${where}: response has no steps array`);
+    return { meta: res.workflow, steps: res.steps };
+  }
+
   async function s5Wf37Repoint(mode) {
     const APPLY   = mode === 'apply' || mode === 'publish';
     const PUBLISH = mode === 'publish';
@@ -173,16 +188,15 @@
     console.log(`\n=== S5-A wf37 repoint — ${PUBLISH ? 'APPLY + PUBLISH' : APPLY ? 'APPLY (no publish)' : 'DRY RUN'} ===\n`);
 
     // ── 1. ASSERT THE BASE ────────────────────────────────────────────────
-    const wf = await send(`/workflows/${BASE.workflow_id}`, 'GET');
-    if (!wf || !wf.steps) fail('GET /workflows/37 returned no steps');
+    const { meta: wf, steps: wfSteps } = split(await send(`/workflows/${BASE.workflow_id}`, 'GET'), 'base GET');
 
     if (wf.name !== BASE.name)                       fail(`name is "${wf.name}", expected "${BASE.name}"`);
     if (Number(wf.current_version) !== BASE.current_version) fail(`current_version is ${wf.current_version}, expected ${BASE.current_version}`);
     if (wf.draft_version != null)                    fail(`an UNPUBLISHED DRAFT already exists (v${wf.draft_version}). Someone is mid-edit — resolve that first; this script must start from a clean published state.`);
-    if (wf.steps.length !== BASE.step_count)         fail(`step count is ${wf.steps.length}, expected ${BASE.step_count}`);
+    if (wfSteps.length !== BASE.step_count)          fail(`step count is ${wfSteps.length}, expected ${BASE.step_count}`);
     if (Number(wf.in_flight_executions) !== 0)       fail(`${wf.in_flight_executions} execution(s) in flight — wait for them`);
 
-    const byNum = new Map(wf.steps.map(s => [Number(s.step_number), s]));
+    const byNum = new Map(wfSteps.map(s => [Number(s.step_number), s]));
     for (const [numStr, want] of Object.entries(BASE.steps)) {
       const n = Number(numStr);
       const got = byNum.get(n);
@@ -193,12 +207,12 @@
         fail(`step #${n} config is not the asserted base.\n  live:     ${canon(cfg(got))}\n  expected: ${canon(want.config)}`);
       }
     }
-    console.log(`BASE OK — wf37 v${wf.current_version}, ${wf.steps.length} steps, no draft, 0 in flight; ` +
+    console.log(`BASE OK — wf37 v${wf.current_version}, ${wfSteps.length} steps, no draft, 0 in flight; ` +
       `steps ${Object.keys(BASE.steps).join(', ')} match byte for byte.`);
 
     // Snapshot every step so the post-write assertion covers the WHOLE draft,
     // not just the steps this script meant to touch.
-    const before = new Map(wf.steps.map(s => [Number(s.step_number),
+    const before = new Map(wfSteps.map(s => [Number(s.step_number),
       { label: s.label, note: s.note, type: s.type, config: canon(cfg(s)) }]));
 
     console.log('\nPlanned edits:');
@@ -225,13 +239,13 @@
     }
 
     // ── 3. ASSERT THE RESULTING DRAFT ─────────────────────────────────────
-    const after = await send(`/workflows/${BASE.workflow_id}`, 'GET');
-    if (after.draft_version == null)            fail('no draft exists after the PATCHes — nothing was written');
-    if (after.steps.length !== BASE.step_count) fail(`draft has ${after.steps.length} steps, expected ${BASE.step_count} — a step was added or lost`);
+    const { meta: after, steps: afterSteps } = split(await send(`/workflows/${BASE.workflow_id}`, 'GET'), 'draft GET');
+    if (after.draft_version == null)           fail('no draft exists after the PATCHes — nothing was written');
+    if (afterSteps.length !== BASE.step_count) fail(`draft has ${afterSteps.length} steps, expected ${BASE.step_count} — a step was added or lost`);
 
     const edited = new Map(EDITS.map(e => [e.step, e]));
     const problems = [];
-    for (const s of after.steps) {
+    for (const s of afterSteps) {
       const n = Number(s.step_number);
       const base = before.get(n);
       if (!base) { problems.push(`#${n} is NEW — it was not in the published version`); continue; }
@@ -252,21 +266,21 @@
       if ((s.note || '') !== e.note)      problems.push(`#${n} note was not applied`);
     }
     for (const n of before.keys()) {
-      if (!after.steps.some(s => Number(s.step_number) === n)) problems.push(`#${n} DISAPPEARED from the draft`);
+      if (!afterSteps.some(s => Number(s.step_number) === n)) problems.push(`#${n} DISAPPEARED from the draft`);
     }
     if (problems.length) fail(`the draft is not what was asked for:\n  - ${problems.join('\n  - ')}`);
 
     // Belt and braces: the old column name must be gone from the two configs
     // and must NOT have leaked anywhere else in the draft.
-    const leak = after.steps.filter(s => canon(cfg(s)).includes('contact_clio_id'));
+    const leak = afterSteps.filter(s => canon(cfg(s)).includes('contact_clio_id'));
     if (leak.length) fail(`"contact_clio_id" still appears in step(s) ${leak.map(s => '#' + s.step_number).join(', ')}`);
-    const log32 = after.steps.find(s => Number(s.step_number) === 32);
+    const log32 = afterSteps.find(s => Number(s.step_number) === 32);
     if (!log32 || !canon(cfg(log32)).includes('"clio_matter"')) {
       fail('step #32\'s create_log payload lost its `clio_matter` key — that is a LOG FIELD, not a column, and must survive');
     }
 
-    console.log(`\nDRAFT OK — v${after.draft_version}: ${after.steps.length} steps, ` +
-      `${EDITS.length} edited exactly as specified, ${after.steps.length - EDITS.length} byte-identical, ` +
+    console.log(`\nDRAFT OK — v${after.draft_version}: ${afterSteps.length} steps, ` +
+      `${EDITS.length} edited exactly as specified, ${afterSteps.length - EDITS.length} byte-identical, ` +
       `no "contact_clio_id" anywhere, step #32's log payload intact.`);
 
     if (!PUBLISH) {
@@ -281,12 +295,12 @@
     const pub = await send(`/workflows/${BASE.workflow_id}/publish`, 'POST', {});
     console.log(`\nPUBLISHED: ${JSON.stringify(pub)}`);
 
-    const final = await send(`/workflows/${BASE.workflow_id}`, 'GET');
+    const { meta: final, steps: finalSteps } = split(await send(`/workflows/${BASE.workflow_id}`, 'GET'), 'post-publish GET');
     if (final.draft_version != null) fail(`draft_version is still ${final.draft_version} after publish`);
     if (Number(final.current_version) !== Number(after.draft_version)) {
       fail(`current_version is ${final.current_version}, expected ${after.draft_version}`);
     }
-    console.log(`\nDONE — wf37 is now v${final.current_version}, ${final.steps.length} steps. ` +
+    console.log(`\nDONE — wf37 is now v${final.current_version}, ${finalSteps.length} steps. ` +
       `The workflow remains INACTIVE (active=${final.active}); turning it on is a separate decision.`);
     return { applied: true, published: true, current_version: final.current_version };
   }
