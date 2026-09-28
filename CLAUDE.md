@@ -133,6 +133,7 @@ The rest, in no particular order:
 - Deliberately separate: `caseService.searchCases` (picker-shaped) vs `listCases` (display-shaped). Do not converge them.
 - Cloud Tasks delivers at-least-once — every handler needs a dedup key / idempotency.
 - Sync bus: handlers triggered by a bus message must never emit on the same bus. Dirty-fence echo stamps go at fetch START, not completion.
+- Alert severity convention: transient (timeout / socket / 429 / 5xx) AND first occurrence for its subject → `warning`; repeated or non-transient → `error`. Warnings still record to `system_alerts` but never email on their own (`alert_email_min_severity` = 'error'). Born of alerts 152–154 (Sept 2026): three error-severity IT pages for self-healing blips, zero action needed. Sites: `documentSyncService.syncAll` ("repeat" = `root.last_error` still set when the tick claimed the root), `fieldDefReconciler` boot connect-fail and boot lock-busy (a boot backstop losing GET_LOCK to a sibling running the same idempotent diff is a no-op; a MUTATION trigger losing it still pages — no periodic reconcile sweeps up after it). New alert sites follow this.
 - Module resolution: `require('./internal_functions')` resolves to its `index.js` — adding function files needs no consumer updates.
 - `case.html` and `contact.html` render in quirks mode (no doctype): tables there don't inherit `font-size` — declare it on the table (`.logTable` does). Expect other quirks (box model) until the doctype slice in `ref/plans.md` lands.
 
