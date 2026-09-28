@@ -79,8 +79,49 @@ const { buildHeadersForCredential } = require('../lib/credentialInjection');
 const RPC_BASE     = 'https://api.dropboxapi.com/2';
 const CONTENT_BASE = 'https://content.dropboxapi.com/2';
 
-const RPC_TIMEOUT_MS     = 30000;
+const RPC_TIMEOUT_MS     = 60000;
 const CONTENT_TIMEOUT_MS = 120000;
+
+// ── Transient-failure retry ──────────────────────────────────────────────
+//
+// A single slow Dropbox response used to take a whole documents-sync root
+// down for the tick and page IT (alert 153, 2026-09-28: root 4 died on
+// files/list_folder/continue with "This operation was aborted" — our own
+// 30s AbortController firing — and synced clean 10 minutes later).
+//
+// Retries are OPT-IN BY ENDPOINT, not blanket: replaying files/move_v2 or
+// files/create_folder_v2 after a lost response can duplicate or double-apply
+// the mutation. Only endpoints that are safe to replay are listed below.
+// Everything else still fails on the first error, exactly as before.
+const RETRY_ATTEMPTS        = 3;      // total attempts per logical call
+const RETRY_BASE_MS         = 1000;   // 1s, then 3s (×3), jittered
+const RETRY_MAX_WAIT_MS     = 15000;  // ceiling for one backoff / Retry-After
+// Stop starting new attempts once a logical call has burned this much wall
+// clock. With a 60s timeout this stops a THIRD attempt after two full
+// hang-until-timeout attempts, so the hung-connection worst case is ~121s
+// per logical call (fast failures — 429/5xx — still get all three attempts).
+// Keeps one bad call from pushing a syncRoot run (8-min deadline, checked
+// between pages) anywhere near process_jobs' 15-minute stuck-job recovery.
+const RETRY_TOTAL_BUDGET_MS = 100000;
+
+/** Endpoints that are safe to replay: reads, plus the idempotent continue. */
+const RETRYABLE_ENDPOINTS = new Set([
+  'files/list_folder',
+  'files/list_folder/continue',
+  'files/get_metadata',
+  'files/get_temporary_link',
+  'files/get_temporary_upload_link',
+  'files/save_url/check_job_status',
+  'sharing/get_shared_link_metadata',
+  'sharing/list_shared_links',
+]);
+
+/** Socket-level failures worth another attempt (undici surfaces most as .cause). */
+const TRANSIENT_NET_CODES = new Set([
+  'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
 
 // Hard fallback if neither opts nor app_settings provide a value.
 // Credential 8 = "DropBox" (oauth2, connected). Prefer the app_settings
@@ -203,18 +244,89 @@ function _mkError(method, endpoint, status, detail, parsed) {
   return err;
 }
 
+function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/** Socket-level / DNS / connect failure that another attempt might survive. */
+function _isTransientNetworkError(err) {
+  if (!err) return false;
+  if (err.name === 'AbortError') return true;
+  if (err.code && TRANSIENT_NET_CODES.has(err.code)) return true;
+  if (err.cause && err.cause.code && TRANSIENT_NET_CODES.has(err.cause.code)) return true;
+  return false;
+}
+
 /**
- * RPC-endpoint request (api.dropboxapi.com). JSON in, JSON out.
- * Throws on non-2xx with .status / .errorSummary attached.
+ * True when an error is worth another attempt: our own client timeout, a
+ * socket-level failure, a 429, or a 5xx. Deliberately EXCLUDES every 4xx
+ * Dropbox uses to mean something (409 cursor reset, 409 path/not_found,
+ * 401 bad token) — those never heal on retry.
+ *
+ * Exported so callers (documentSyncService) can grade a failure that made it
+ * all the way out, rather than each re-deriving the shape from the message.
  */
-async function _rpc(db, credentialId, endpoint, body, { timeoutMs = RPC_TIMEOUT_MS } = {}) {
+function isTransientError(err) {
+  if (!err) return false;
+  if (err.transient === true) return true;
+  if (err.status === 429) return true;
+  if (typeof err.status === 'number' && err.status >= 500 && err.status <= 599) return true;
+  return _isTransientNetworkError(err);
+}
+
+/** Retry-After (header, or Dropbox's body `error.retry_after` seconds) → ms. */
+function _retryAfterMs(res, parsed) {
+  const raw = res?.headers?.get?.('retry-after');
+  if (raw) {
+    const secs = Number(raw);
+    if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, RETRY_MAX_WAIT_MS);
+    const when = Date.parse(raw);
+    if (!Number.isNaN(when)) return Math.min(Math.max(when - Date.now(), 0), RETRY_MAX_WAIT_MS);
+  }
+  const bodySecs = Number(parsed?.error?.retry_after);
+  if (Number.isFinite(bodySecs) && bodySecs >= 0) {
+    return Math.min(bodySecs * 1000, RETRY_MAX_WAIT_MS);
+  }
+  return null;
+}
+
+/**
+ * Run `attempt` up to `attempts` times, backing off between transient
+ * failures. Non-transient errors and a spent time budget break out
+ * immediately. The error that finally escapes carries .attempts.
+ */
+async function _withRetry(label, attempts, attempt) {
+  const startedAt = Date.now();
+  let lastErr;
+  for (let n = 1; n <= attempts; n++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      lastErr = err;
+      lastErr.attempts = n;
+      if (n >= attempts || !isTransientError(err)) break;
+      const wait = (err.retryAfterMs != null ? err.retryAfterMs
+        : Math.min(RETRY_BASE_MS * Math.pow(3, n - 1), RETRY_MAX_WAIT_MS))
+        + Math.floor(Math.random() * 250);
+      if (Date.now() - startedAt + wait >= RETRY_TOTAL_BUDGET_MS) break;
+      console.warn(
+        `[DROPBOX] ${label} attempt ${n}/${attempts} failed (${err.message}); ` +
+        `retrying in ${wait}ms`
+      );
+      await _sleep(wait);
+    }
+  }
+  throw lastErr;
+}
+
+/** ONE attempt at an RPC-endpoint request. */
+async function _rpcOnce(db, credentialId, endpoint, body, timeoutMs) {
   const url = `${RPC_BASE}/${endpoint}`;
   const authHeaders = await _authHeaders(db, credentialId, url);
 
   const controller = new AbortController();
-  const tHandle = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const tHandle = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
 
-  let res;
+  let res, text;
   try {
     res = await fetch(url, {
       method: 'POST',
@@ -222,21 +334,59 @@ async function _rpc(db, credentialId, endpoint, body, { timeoutMs = RPC_TIMEOUT_
       body: JSON.stringify(body ?? null),
       signal: controller.signal,
     });
+    // Body read stays INSIDE the armed timeout on purpose: clearing it once
+    // fetch() resolves leaves a stalled response body unbounded, and headers
+    // can arrive long before Dropbox finishes streaming a 2,000-entry page.
+    text = await res.text();
   } catch (err) {
-    throw new Error(`dropbox: request to /2/${endpoint} failed: ${err.message}`);
+    const e = new Error(
+      timedOut
+        ? `dropbox: request to /2/${endpoint} timed out after ${timeoutMs}ms`
+        : `dropbox: request to /2/${endpoint} failed: ${err.message}`
+    );
+    e.transient = timedOut || _isTransientNetworkError(err);
+    e.code = timedOut ? 'ETIMEDOUT' : (err.code || err.cause?.code || null);
+    e.cause = err;
+    throw e;
   } finally {
     clearTimeout(tHandle);
   }
 
-  const text = await res.text();
   let parsed = null;
   if (text) { try { parsed = JSON.parse(text); } catch { /* non-JSON */ } }
 
   if (!res.ok) {
     const detail = parsed?.error_summary || (text ? text.slice(0, 500) : '(empty body)');
-    throw _mkError('POST', endpoint, res.status, detail, parsed);
+    const err = _mkError('POST', endpoint, res.status, detail, parsed);
+    err.transient = res.status === 429 || res.status >= 500;
+    const ra = _retryAfterMs(res, parsed);
+    if (ra != null) err.retryAfterMs = ra;
+    throw err;
   }
   return parsed;
+}
+
+/**
+ * RPC-endpoint request (api.dropboxapi.com). JSON in, JSON out.
+ * Throws on non-2xx with .status / .errorSummary attached.
+ *
+ * Retried only when the endpoint is in RETRYABLE_ENDPOINTS (or opts.retry is
+ * set explicitly) AND the failure is transient — see isTransientError.
+ *
+ * @param {object} [opts] — { timeoutMs?, retry?, attempts? }
+ */
+async function _rpc(db, credentialId, endpoint, body, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : RPC_TIMEOUT_MS;
+  const canRetry  = opts.retry != null ? Boolean(opts.retry) : RETRYABLE_ENDPOINTS.has(endpoint);
+  const attempts  = canRetry
+    ? (Number(opts.attempts) > 0 ? Number(opts.attempts) : RETRY_ATTEMPTS)
+    : 1;
+
+  return _withRetry(
+    `POST /2/${endpoint}`,
+    attempts,
+    () => _rpcOnce(db, credentialId, endpoint, body, timeoutMs),
+  );
 }
 
 /**
@@ -246,7 +396,7 @@ async function _rpc(db, credentialId, endpoint, body, { timeoutMs = RPC_TIMEOUT_
  *       'download' → returns { buffer, metadata } (metadata from the
  *                    dropbox-api-result response header).
  */
-async function _content(db, credentialId, endpoint, arg, { mode, body, timeoutMs = CONTENT_TIMEOUT_MS } = {}) {
+async function _contentOnce(db, credentialId, endpoint, arg, mode, body, timeoutMs) {
   const url = `${CONTENT_BASE}/${endpoint}`;
   const authHeaders = await _authHeaders(db, credentialId, url);
 
@@ -255,9 +405,10 @@ async function _content(db, credentialId, endpoint, arg, { mode, body, timeoutMs
   // download: no Content-Type, no body (Dropbox rejects unexpected types)
 
   const controller = new AbortController();
-  const tHandle = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const tHandle = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
 
-  let res;
+  let res, payload;
   try {
     res = await fetch(url, {
       method: 'POST',
@@ -265,30 +416,62 @@ async function _content(db, credentialId, endpoint, arg, { mode, body, timeoutMs
       ...(mode === 'upload' && { body }),
       signal: controller.signal,
     });
+    // Body read inside the armed timeout — same reasoning as _rpcOnce, and
+    // it matters more here: a download's bytes are the slow part.
+    payload = res.ok && mode === 'download'
+      ? Buffer.from(await res.arrayBuffer())
+      : await res.text();
   } catch (err) {
-    throw new Error(`dropbox: request to /2/${endpoint} failed: ${err.message}`);
+    const e = new Error(
+      timedOut
+        ? `dropbox: request to /2/${endpoint} timed out after ${timeoutMs}ms`
+        : `dropbox: request to /2/${endpoint} failed: ${err.message}`
+    );
+    e.transient = timedOut || _isTransientNetworkError(err);
+    e.code = timedOut ? 'ETIMEDOUT' : (err.code || err.cause?.code || null);
+    e.cause = err;
+    throw e;
   } finally {
     clearTimeout(tHandle);
   }
 
   if (!res.ok) {
-    const text = await res.text();
+    const text = typeof payload === 'string' ? payload : '';
     let parsed = null;
     if (text) { try { parsed = JSON.parse(text); } catch { /* */ } }
     const detail = parsed?.error_summary || (text ? text.slice(0, 500) : '(empty body)');
-    throw _mkError('POST', endpoint, res.status, detail, parsed);
+    const err = _mkError('POST', endpoint, res.status, detail, parsed);
+    err.transient = res.status === 429 || res.status >= 500;
+    const ra = _retryAfterMs(res, parsed);
+    if (ra != null) err.retryAfterMs = ra;
+    throw err;
   }
 
   if (mode === 'download') {
-    const buffer = Buffer.from(await res.arrayBuffer());
     let metadata = null;
     const raw = res.headers.get('dropbox-api-result');
     if (raw) { try { metadata = JSON.parse(raw); } catch { /* */ } }
-    return { buffer, metadata };
+    return { buffer: payload, metadata };
   }
 
-  const text = await res.text();
-  try { return JSON.parse(text); } catch { return null; }
+  try { return JSON.parse(payload); } catch { return null; }
+}
+
+/**
+ * Content-endpoint request wrapper. Retries DOWNLOADS only (idempotent);
+ * uploads are never replayed — a lost response on files/upload may mean the
+ * write landed, and a second attempt would duplicate or autorename it.
+ * Pass { retry: true } to override for a call you know is safe.
+ */
+async function _content(db, credentialId, endpoint, arg, { mode, body, timeoutMs = CONTENT_TIMEOUT_MS, retry, attempts } = {}) {
+  const canRetry = retry != null ? Boolean(retry) : mode === 'download';
+  const n = canRetry ? (Number(attempts) > 0 ? Number(attempts) : RETRY_ATTEMPTS) : 1;
+
+  return _withRetry(
+    `POST /2/${endpoint}`,
+    n,
+    () => _contentOnce(db, credentialId, endpoint, arg, mode, body, timeoutMs),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -919,6 +1102,7 @@ module.exports = {
   listFolderContinue,
   isCursorResetError,
   isPathNotFoundError,
+  isTransientError,
   // move/rename/delete
   movePath,
   renamePath,
@@ -932,5 +1116,6 @@ module.exports = {
   downloadFile,
   // exported for testing / reuse
   _resolveCredential,
+  _rpc,
   httpHeaderSafeJson,
 };

@@ -1,0 +1,212 @@
+diff -ruN a/CLAUDE.md b/CLAUDE.md
+--- a/CLAUDE.md	2026-09-23 18:57:13.571984221 +0000
++++ b/CLAUDE.md	2026-09-24 23:31:07.667000464 +0000
+@@ -100,12 +100,14 @@
+ 
+ ## Commands & gates
+ 
+-- `npm test` — jest; 237 suites / ~7,250 tests in ~25s. Run before and after any change; CI runs the same.
++- `npm test` — jest. **The load-bearing number is the ~25s budget**: a run materially over it means a suite is
++  waiting on a wall clock, not that the suite grew. (Order of magnitude as of 2026-09-25: ~245 suites, ~7,600
++  tests — counts move every slice, so never gate on them.) Run before and after any change; CI runs the same.
+   Behavioural suites that animate (the mascot's) must fast-forward their own clock rather than wait in wall
+   clock — one such file put the whole run at 70s before it did. See the header of `tests/mascotSkins.test.js`.
+ - `node --check <file>` on every modified JS file, including inline `<script>` blocks extracted from HTML.
+ - `npm run db:ref:check` — schema-drift check against the live DB.
+-- Pre-commit hook (`.githooks/pre-commit`, enable once via `git config core.hooksPath .githooks`) refreshes `ref/database.sql` + `TRACKED_FILES.txt`, costing ~4s per commit. `SCHEMA_DUMP_ASYNC=1` backgrounds the schema step for one commit; `SKIP_SCHEMA_DUMP=1` skips it when the DB is unreachable. The hook does not touch `ref/routes.md` — regenerate that by hand.
++- Pre-commit hook (`.githooks/pre-commit`, enable once via `git config core.hooksPath .githooks`) refreshes `ref/database.sql` + `TRACKED_FILES.txt`, costing ~4s per commit. `SCHEMA_DUMP_ASYNC=1` backgrounds the schema step for one commit; `SKIP_SCHEMA_DUMP=1` skips it when the DB is unreachable. Since `b767d3e` the hook ALSO regenerates `ref/routes.md` (concurrently, no DB needed) and `git add`s it — `SKIP_ROUTES_DUMP=1` skips that step. A regen crash only prints a warning and still exits 0, so a `routes/*.js` that throws at require leaves `ref/routes.md` silently stale; diagnose with `node scripts/updateRoutes.js --no-write`.
+ 
+ ## Deploy
+ 
+@@ -141,6 +143,7 @@
+ - Readonly SQL: `POST https://app.4lsg.com/api/readonly/sql` `{sql, params?}`, header `X-Readonly-Api-Key` (session key from Fred — never commit one). SELECT/SHOW/DESCRIBE/EXPLAIN; CTEs blocked — use subqueries. Targeted queries over table dumps.
+ - Scratch (cross-session notes): `PUT/DELETE /api/scratch/:ns/:k` `{v, meta?}`; read from `rw_scratch` via the SQL endpoint. Manager state lives in `ns=fred`.
+ - IT alert (push a finding to Fred without a human round-trip): `POST /api/alert/it` `{subject, message, severity?}`, same `X-Readonly-Api-Key` header. Delivery is DERIVED from severity — `info`/`warn` email IT, `critical` also SMS; a `channel` key is a 400. Message is plain text (escaped, no sanitizer). Synchronous: a send that throws is a 502 — but `sent.email:true` only means the SMTP relay took the handoff, so confirm real delivery via `email_log.delivery_info` (the relay's queue id) rather than the response. 10/hour per key — fold overflow into one digest. Use it for things that are actually burning, not status updates.
++- Verifying that firm mail ARRIVED: the Gmail search index on `it@4lsg.com` lags delivery by up to **11 hours**, and `in:anywhere` / `includeTrash` did NOT surface the spam folder (measured 2026-09-15). An empty Gmail search proves nothing about delivery or spam state at any elapsed time — read `internalDate`, or open the folder in the UI. Outstanding, NOT a code fix: `default._domainkey.metrodetroitbankruptcylaw.com` is unpublished, so Google scores outbound firm mail `dkim=permerror` while SPF and DMARC pass; the key comes from SiteGround Site Tools → Email → Authentication and goes in Cloudflare (`ref/migrations/2026-09-15_email_log_delivery_info.sql` carries the full postmortem).
+ - Remote agents fetch the repo fresh: `curl -sL "https://codeload.github.com/4LSGIT/apigcr/tar.gz/refs/heads/main?cb=$(date +%s)"`. Never trust raw.githubusercontent for current state.
+ 
+ ## Two one-way doors
+diff -ruN a/lib/reportSchema/manifest.js b/lib/reportSchema/manifest.js
+--- a/lib/reportSchema/manifest.js	2026-09-24 22:47:25.322593139 +0000
++++ b/lib/reportSchema/manifest.js	2026-09-24 23:31:07.667000464 +0000
+@@ -329,7 +329,7 @@
+       contact_ssn: { type: "char(11)", note: "SSN for persons, EIN for orgs — ONE column serving both, by design. Selectable since the 2026-09-24 ruling. NOT NULL but usually '': 151 of 1,088 rows are non-empty (2026-09-24), so filter on contact_ssn <> '', never IS NOT NULL. FORMAT IS INCONSISTENT — staff type it both ways and 14 of the 151 carry dashes ('123-45-6789' vs '123456789'), so equality matching and LENGTH() are both unreliable; strip non-digits before comparing. A report that prints this is printing a real SSN — prefer RIGHT(<digits>, 4) unless the whole number is the point." },
+       contact_tags: { type: "varchar(255)", note: "COMMA-SEPARATED string, not a relation. Grouping on it directly gives you tag-combinations, not tags. Use FIND_IN_SET(...) to test membership." },
+       contact_created: { type: "datetime", note: "Best available 'when did this person enter the system' signal." },
+-      contact_updated: { type: "timestamp", note: "Auto-updating. Useless as a business date — it changes on any write, including bulk syncs." },
++      contact_updated: { type: "timestamp", note: "Bumped explicitly by every write path — the column has NO ON UPDATE (information_schema EXTRA is empty). Useless as a business date either way: it moves on any write, including bulk syncs." },
+       contact_sms_optout: { type: "tinyint(1)" },
+       contact_email_optout: { type: "tinyint(1)" },
+     },
+diff -ruN a/manual/03-YisraFlow/06-variables-templating.md b/manual/03-YisraFlow/06-variables-templating.md
+--- a/manual/03-YisraFlow/06-variables-templating.md	2026-09-24 07:43:19.064147114 +0000
++++ b/manual/03-YisraFlow/06-variables-templating.md	2026-09-24 23:31:07.668000464 +0000
+@@ -36,6 +36,7 @@
+ |---|---|---|---|---|
+ | **Workflow variables** | `lib/workflow_engine.js` `resolveSingle` | workflow step configs, and nothing else | **none** | becomes `''` |
+ | **Universal resolver** | `services/resolverService.js` | sequences, hooks, scheduled jobs, campaigns, portal cards, e-sign templates, appts, booking | `default:`, `date:`, `phone`, `upper`, … | left visible as `{{table.column}}` |
++| **Unplacehold** | `lib/unplacehold.js` | the legacy `POST /unplacehold` route, and nothing else | its OWN private copies of `phone`, `email_mask`, `ssn_mask`, `ssn_last4`, `upper`, … | resolved to `''` |
+ 
+ **A workflow step's config is NOT run through both.** `lib/workflow_engine.js` never requires `resolverService` — verify with a grep before believing otherwise. A workflow step config gets exactly one pass, the variable pass, and that pass **consumes every `{{…}}` token it sees**: anything it can't resolve is replaced with an empty string. So a `{{table.column|modifier}}` written into a workflow step is not "left for the universal resolver later" — it is destroyed on the way past.
+ 
+@@ -51,6 +52,18 @@
+ > plain `{{log_subject}}` — the value was always in `initData`; only the modifier was
+ > imaginary. When you want a fallback in a workflow, guarantee the variable instead.
+ 
++**There is a third chain, and it disagrees.** `lib/unplacehold.js` — which
++serves only the legacy plaintext-auth `POST /unplacehold` route — carries its
++own private copy of every formatter: `phone`, `email_mask`, `upper`, and since
++2026-09-24 `ssn_mask` / `ssn_last4`. **Add a modifier to one chain and the
++other does not get it.** The two also disagree on an **empty source value**:
++`resolverService` treats empty as UNRESOLVED and leaves the raw
++`{{table.column}}` standing, while `unplacehold` resolves it to `''`. That
++divergence is generic, not SSN-specific, and long pre-dates the SSN work;
++`tests/ssnModifiers.test.js` pins it rather than fixing it. A THIRD copy of
++the SSN masking lives in `services/esignPrefillService.js` (`ssnMasked`), for
++e-sign prefill. Unifying the three is filed in `ref/plans.md`.
++
+ The distinction is not cosmetic: the two resolvers were built for different jobs. The universal resolver fetches live DB rows and is deliberately soft-fail and visible, because it renders text a human will read and a broken token should be obvious. The workflow resolver walks an in-memory variable store, is used on machine config (URLs, ids, JSON bodies) as well as prose, and blanks unknowns so a half-resolved URL doesn't get called.
+ 
+ ### Universal resolver — `{{table.column|modifier|...}}`
+diff -ruN a/ref/AI_CONTEXT.md b/ref/AI_CONTEXT.md
+--- a/ref/AI_CONTEXT.md	2026-09-24 22:19:48.183202120 +0000
++++ b/ref/AI_CONTEXT.md	2026-09-24 23:31:42.525000480 +0000
+@@ -2,7 +2,7 @@
+ # Last updated: 2026-09-14 — compressed to skeleton form (~900 lines from ~3,100); §0 deltas folded into body; per-column facts moved to schema COMMENTs in ref/database.sql
+ 
+ <!-- ================= CURRENCY ================= -->
+-<!-- Reviewed-through: 8f6f5c3 (docs review #1, 2026-09-14). This doc is a   -->
++<!-- Reviewed-through: 9312750 (docs review #2, 2026-09-25). This doc is a   -->
+ <!-- SKELETON: what each subsystem is + the non-guessable invariants +       -->
+ <!-- pointers. Depth lives in manual/, schema truth in ref/database.sql      -->
+ <!-- (read its COMMENTs), route truth in ref/routes.md, working rules in     -->
+@@ -10,8 +10,13 @@
+ <!-- KNOWN MISSING SECTIONS (debt: docs/20260914_coverage_gaps): e-sign,     -->
+ <!-- portal, YisraForms/templates, reports, pipeline engine, document sync,  -->
+ <!-- booking landings. manual/ is authoritative for those meanwhile.        -->
+-<!-- CONSCIOUS DEFERRALS (review #1): the seven sections above --            -->
+-<!-- large, one arc of their own. Tools (29) is fully filed.                 -->
++<!-- CONSCIOUS DEFERRALS (review #2): (a) the seven sections above --        -->
++<!-- deferred a second time; large, one arc of their own. (b) Folding the    -->
++<!-- §0 entries whose section already exists (SSN->§8, FIL1->§5, UDS->§12).  -->
++<!-- (c) Prose sections for the 09-14..09-25 delta (106 commits): mascot     -->
++<!-- arc, intake S1 route->service refactor + intake_contact/intake_case,    -->
++<!-- contact scalar-demote + revive backfill, decisions context_html.        -->
++<!-- Each is filed as its own docs/* debt key. Tools (29) is fully filed.    -->
+ <!-- Doc-debt queue: scratch ns=docs. File doc≠code divergences there at    -->
+ <!-- discovery; the weekly docs review (DOCS_REVIEW.md) drains it and       -->
+ <!-- updates this block.                                                     -->
+@@ -592,6 +597,16 @@
+ allowlist, OUTFILE reject, per-query MAX_EXECUTION_TIME (default 30s / max
+ 120s), row cap (default 5000 / max 20000, payload-truncating).
+ 
++**Blind spot — `information_schema` is FILTERED for this key, not empty.**
++The grant is `SELECT` only (no `TRIGGER`, no `SHOW VIEW`) and MySQL HIDES
++rows you lack the privilege for instead of erroring. Measured 2026-09-24:
++`information_schema.TRIGGERS` returns **0 rows while 15 triggers exist**
++(`after_contact_update`, `contact_name_*`, `trg_cases_ct_compat_*`, …);
++`EVENTS` 0; `VIEWS` 0. `ROUTINES` (48), `TABLES` and `STATISTICS` are
++visible. A session that probes this endpoint for a trigger and finds none
++has learned NOTHING — `ref/database.sql` carries the `CREATE TRIGGER`
++bodies; read it, or ask Fred for a privileged run.
++
+ **Scratch:** `PUT /api/scratch/:ns/:k` `{v, meta?}` — `v` STRING-ONLY
+ (JSON.stringify objects yourself; meta may be JSON), MEDIUMTEXT ceiling.
+ `DELETE /api/scratch/:ns/:k`; `DELETE /api/scratch/:ns?confirm=1` wipes.
+@@ -599,9 +614,20 @@
+ against `rw_scratch`. Live namespaces: `fred` (manager session state),
+ `docs` (doc-debt queue — see currency header).
+ 
++**`POST /api/alert/it`** `{subject ≤200, message ≤10000 plain text,
++severity: info|warn|critical}`, same header — push a finding to Fred with
++no human round-trip. Delivery is DERIVED from severity (`info`/`warn`
++email IT; `critical` also SMS); a `channel` key is a **400**. Message is
++escaped plain text, no sanitizer. Synchronous — a send that throws is a
++502 — but `sent.email:true` only means the SMTP relay took the handoff:
++confirm real delivery via `email_log.delivery_info` (the relay's queue
++id), never the response. 10/hour per key; audited to `admin_audit_log`
++`tool=it_alert`. Reuses the existing `email_it` / `alert_from_email` /
++`alert_critical_sms_to` / `sms_staff_from` settings — no new settings.
++
+ Targeted queries over table dumps — tokens cost. Files:
+-`routes/api.readonly.js`, `routes/api.scratch.js`, `lib/sqlGuard.js`,
+-`startup/dbReadonly.js`.
++`routes/api.readonly.js`, `routes/api.scratch.js`, `routes/api.alertIt.js`,
++`lib/sqlGuard.js`, `startup/dbReadonly.js`.
+ 
+ ## 23. EVENTS SUBSYSTEM
+ 
+diff -ruN a/ref/migrations/2026-09-25_log_date_timezone_comment.sql b/ref/migrations/2026-09-25_log_date_timezone_comment.sql
+--- a/ref/migrations/2026-09-25_log_date_timezone_comment.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/ref/migrations/2026-09-25_log_date_timezone_comment.sql	2026-09-24 23:31:42.525000480 +0000
+@@ -0,0 +1,36 @@
++-- ref/migrations/2026-09-25_log_date_timezone_comment.sql
++--
++-- Docs review #2 (2026-09-25) — record, on the column itself, that `log.log_date`
++-- has FOUR writers spelling the SAME wall clock THREE different ways. Nothing is
++-- broken today; the COMMENT exists so the next reader does not have to rediscover
++-- that the disagreement is cosmetic, and so a future zone change finds all of it.
++--
++-- WHY: debt key docs/20260925_log_timezone_spellings, verified 2026-09-25 against
++-- ref/database.sql and the live source:
++--
++--   after_contact_update (trigger, ref/database.sql)
++--       CONVERT_TZ(NOW(), 'UTC', 'America/New_York')
++--   services/logService.js:998  (createLogEntry — the app-side writer)
++--       CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT')
++--   services/emailIngestService.js:551
++--       CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT')
++--   services/intakeService.js:373, :535, :584
++--       CONVERT_TZ(NOW(), 'UTC', 'America/New_York')
++--
++-- while FIRM_TIMEZONE (services/timezoneService.js) is 'America/Detroit'.
++-- All three zones carry the same offset, so every row is correct — but the
++-- three literals live in two languages and a zone change would have to find
++-- all of them. Unification is filed in ref/plans.md; this migration only
++-- documents the state.
++--
++-- LANDMINE, recorded here because it bites clone/harness work: a MySQL
++-- instance with no timezone tables loaded makes CONVERT_TZ() return NULL, and
++-- log_date is NOT NULL — every log write fails. Run mysql_tzinfo_to_sql on any
++-- real-engine clone before pointing this code at it.
++--
++-- SAFE TO RE-RUN. Comment-only: no data, type or nullability change.
++-- Column type confirmed 2026-09-25: datetime NOT NULL, no default, EXTRA ''.
++
++ALTER TABLE `log`
++  MODIFY COLUMN `log_date` datetime NOT NULL
++  COMMENT 'FIRM-LOCAL wall clock, not UTC. Four writers, three spellings of the same offset: after_contact_update trigger + intakeService use CONVERT_TZ(NOW(),UTC,America/New_York); logService.createLogEntry + emailIngestService use CONVERT_TZ(NOW(),@@session.time_zone,EST5EDT); FIRM_TIMEZONE is America/Detroit. Same offset today - see ref/plans.md before changing any of them. A MySQL with no tz tables loaded returns NULL here and this column is NOT NULL.';
+diff -ruN a/ref/plans.md b/ref/plans.md
+--- a/ref/plans.md	2026-09-24 22:18:39.949804933 +0000
++++ b/ref/plans.md	2026-09-24 23:31:07.668000464 +0000
+@@ -215,6 +215,27 @@
+   undocumented. One chapter under an existing section (+ README TOC row)
+   covers it; `ref/THEME-CHEATSHEET.md` is the developer side, not this.
+ 
++- **Three independent modifier chains** (filed at docs review #2, 2026-09-25):
++  `services/resolverService.js`, `lib/unplacehold.js` and
++  `services/esignPrefillService.js` each carry a private copy of the SSN /
++  phone / email masking formatters, and the first two DISAGREE on empty
++  source values (resolver leaves the raw placeholder; unplacehold emits
++  `''`). `tests/ssnModifiers.test.js` pins the divergence. Unify them, or at
++  minimum keep one table of which engine serves which surface. Note that
++  `POST /unplacehold` is legacy plaintext-auth — retiring the route may be
++  cheaper than unifying the chain behind it.
++- **Four `log.log_date` write sites, three timezone spellings** (filed at docs
++  review #2, 2026-09-25): the `after_contact_update` trigger writes
++  `CONVERT_TZ(NOW(),'UTC','America/New_York')`; `logService.createLogEntry`
++  and `emailIngestService` write `CONVERT_TZ(NOW(),@@session.time_zone,
++  'EST5EDT')`; `intakeService` (3 sites) writes `America/New_York`; the firm
++  TZ everywhere else is `FIRM_TIMEZONE`/`America/Detroit`. All the same
++  offset today, so nothing is broken — but a reader cannot tell that is
++  deliberate, and a zone change would touch three literals in two languages.
++  Related landmine: a MySQL instance with no tz tables loaded makes
++  `CONVERT_TZ` return NULL and `log_date` is NOT NULL — a real-engine clone
++  needs `mysql_tzinfo_to_sql`.
++
+ ---
+ 
+-*Last updated: 2026-09-23*
+\ No newline at end of file
++*Last updated: 2026-09-25*
+\ No newline at end of file

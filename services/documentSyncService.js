@@ -817,6 +817,15 @@ async function syncRoot(db, root, opts = {}) {
       root_id: root.id, path: root.path, mode, pages,
       files, linked, deleted: deletedRows,
       error: _clamp(err.message, 300), ms: Date.now() - startedAt,
+      // GRADING, for syncAll's alert severity — see the split there.
+      //   transient : Dropbox blipped (timeout / socket / 429 / 5xx) and the
+      //               dropbox client already burned its retries on it.
+      //   repeat    : last_error was ALREADY set when this tick picked the
+      //               root up, i.e. the previous tick failed too. The column
+      //               is cleared on every success, so a set value is exactly
+      //               "consecutive failure" without a new counter column.
+      transient: Boolean(dropbox.isTransientError(err)),
+      repeat: Boolean(root.last_error),
     };
   }
 
@@ -882,17 +891,55 @@ async function syncAll(db, opts = {}) {
     }));
   }
 
+  // ── Alerting: a self-healing blip is not a page ─────────────────────────
+  //
+  // This tick runs every 10 minutes and the dropbox client now retries
+  // transient failures in-call. A failure that is BOTH transient AND the
+  // root's first (last_error was clear going in) will almost certainly be
+  // gone on the next tick — alert 153 was exactly that, and it emailed IT at
+  // severity 'error' for a root that synced clean 10 minutes later.
+  //
+  // So: transient-and-first → 'warning', which records the alert and rides
+  // someone else's digest but never triggers an email on its own
+  // (alert_email_min_severity defaults to 'error'). Anything non-transient,
+  // or transient twice running, still pages.
   const errored = results.filter(r => r.error);
   if (errored.length) {
-    await _alert(db, {
-      source: 'app',
-      kind: 'documents_sync_root_error',
-      severity: 'error',
-      group_key: 'documents_sync_root_error',
-      title: `Documents sync: ${errored.length} root(s) failed`,
-      message: errored.map(r => `root ${r.root_id} (${r.path}): ${r.error}`).join('\n'),
-      context: { roots: errored.map(r => ({ root_id: r.root_id, error: r.error })) },
-    });
+    const hard = errored.filter(r => !r.transient || r.repeat);
+    const soft = errored.filter(r => r.transient && !r.repeat);
+    const line = r => `root ${r.root_id} (${r.path}): ${r.error}`;
+
+    if (hard.length) {
+      await _alert(db, {
+        source: 'app',
+        kind: 'documents_sync_root_error',
+        severity: 'error',
+        group_key: 'documents_sync_root_error',
+        title: `Documents sync: ${hard.length} root(s) failed`,
+        message: [
+          ...hard.map(line),
+          ...(soft.length ? ['', 'Also (transient, first occurrence):', ...soft.map(line)] : []),
+        ].join('\n'),
+        context: {
+          roots: hard.map(r => ({ root_id: r.root_id, error: r.error, repeat: Boolean(r.repeat) })),
+          ...(soft.length ? { transient_roots: soft.map(r => ({ root_id: r.root_id, error: r.error })) } : {}),
+        },
+      });
+    } else {
+      await _alert(db, {
+        source: 'app',
+        kind: 'documents_sync_root_error',
+        severity: 'warning',
+        group_key: 'documents_sync_root_transient',
+        title: `Documents sync: ${soft.length} root(s) hit a transient Dropbox error`,
+        message:
+          soft.map(line).join('\n') +
+          `\n\nFirst failure for these roots and the error looks transient (timeout / ` +
+          `socket / 429 / 5xx) after the client's own retries. The next tick (~10 min) ` +
+          `resumes from the persisted cursor; if it fails again this escalates to error.`,
+        context: { roots: soft.map(r => ({ root_id: r.root_id, error: r.error })) },
+      });
+    }
   }
 
   return {

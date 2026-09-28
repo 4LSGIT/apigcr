@@ -56,6 +56,10 @@ jest.mock('../services/dropboxService', () => ({
      String(err.errorSummary || '').startsWith('reset')),
   isPathNotFoundError: (err) => !!err && err.status === 409 &&
     String(err.errorSummary || '').startsWith('path/not_found'),
+  // REAL, not a stub: syncAll's alert severity turns on this verdict, and a
+  // stub that graded everything transient would silence the page that alert
+  // 153 was supposed to be (had it repeated).
+  isTransientError: jest.requireActual('../services/dropboxService').isTransientError,
 }));
 jest.mock('../lib/alerting', () => ({ alert: jest.fn(async () => {}) }));
 jest.mock('../lib/domainEvents', () => ({
@@ -1068,6 +1072,70 @@ describe('syncAll', () => {
     expect(out.roots[1].error).toBeUndefined();
     expect(alert).toHaveBeenCalledTimes(1);
     expect(alert.mock.calls[0][1].kind).toBe('documents_sync_root_error');
+    // A plain Error is NOT transient, so this still pages.
+    expect(alert.mock.calls[0][1].severity).toBe('error');
+  });
+
+  // ── Alert severity: a self-healing blip is not a page ──────────────────
+  //
+  // system_alerts 153 (2026-09-28): root 4 died on list_folder/continue with
+  // our own 30s abort and synced clean on the next tick 10 minutes later —
+  // and emailed IT at severity 'error' in between. The tick runs every 10
+  // minutes and the dropbox client now retries transient failures in-call,
+  // so a transient failure on a root whose last_error was CLEAR is expected
+  // to be gone before anyone reads the mail.
+  //
+  // 'warning' still records the alert (and rides a digest someone else
+  // triggers); it just doesn't trigger an email on its own, because
+  // alert_email_min_severity defaults to 'error'.
+
+  test('a FIRST transient failure warns instead of paging', async () => {
+    const db = makeDb({ roots: [root({ id: 4, path: '/  Law Office/   ActiveCases', last_error: null })] });
+    const timeout = Object.assign(
+      new Error('dropbox: request to /2/files/list_folder/continue timed out after 60000ms'),
+      { transient: true, code: 'ETIMEDOUT' },
+    );
+    dropbox.listFolderPage.mockRejectedValue(timeout);
+
+    await sync.syncAll(db);
+
+    expect(alert).toHaveBeenCalledTimes(1);
+    const a = alert.mock.calls[0][1];
+    expect(a.severity).toBe('warning');
+    expect(a.group_key).toBe('documents_sync_root_transient');
+  });
+
+  test('the SAME transient failure a second tick running does page', async () => {
+    // last_error is cleared on every success, so a value still sitting there
+    // when this tick claims the root means the previous tick failed too.
+    const db = makeDb({ roots: [root({ id: 4, last_error: 'timed out after 60000ms' })] });
+    dropbox.listFolderPage.mockRejectedValue(
+      Object.assign(new Error('timed out after 60000ms'), { transient: true }),
+    );
+
+    await sync.syncAll(db);
+
+    expect(alert).toHaveBeenCalledTimes(1);
+    const a = alert.mock.calls[0][1];
+    expect(a.severity).toBe('error');
+    expect(a.group_key).toBe('documents_sync_root_error');
+    expect(a.context.roots[0].repeat).toBe(true);
+  });
+
+  test('a hard failure alongside a transient one pages once, carrying both', async () => {
+    const db = makeDb({ roots: [root({ id: 1 }), root({ id: 2, path: '/r2' })] });
+    dropbox.listFolderPage
+      .mockRejectedValueOnce(Object.assign(new Error('nope'), { status: 400 }))
+      .mockRejectedValueOnce(Object.assign(new Error('blip'), { transient: true }));
+
+    await sync.syncAll(db);
+
+    expect(alert).toHaveBeenCalledTimes(1);
+    const a = alert.mock.calls[0][1];
+    expect(a.severity).toBe('error');
+    expect(a.context.roots).toHaveLength(1);          // the hard one
+    expect(a.context.transient_roots).toHaveLength(1); // folded in, not dropped
+    expect(a.message).toMatch(/blip/);
   });
 });
 

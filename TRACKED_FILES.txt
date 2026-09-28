@@ -7,6 +7,7 @@ Dockerfile
 Dockerfile.base
 TRACKED_FILES.txt
 cloudbuild.yaml
+docs_review_2_2026-09-25.patch
 jest.config.js
 lib/actionDispatchers.js
 lib/aiPrompts/courtExtract.js
@@ -835,6 +836,7 @@ tests/documentsUi.upload.test.js
 tests/documentsUpload.routes.test.js
 tests/domainEventQueue.test.js
 tests/dropboxService.normalizePath.test.js
+tests/dropboxService.retry.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
 tests/esignActionsUi.test.js
