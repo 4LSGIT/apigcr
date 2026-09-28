@@ -428,6 +428,41 @@ describe('reconcile — guards', () => {
     }));
   });
 
+  // The severity split. A MUTATION losing the lock (above) can genuinely
+  // leave a column missing — the holder may have read the registry before
+  // that def committed, and nothing sweeps up after it: there is no periodic
+  // reconcile, only boot and the next mutation. A BOOT backstop losing it
+  // cannot: the holder is running the same global, idempotent diff, almost
+  // always a sibling instance off the same deploy (_inFlight coalescing is
+  // per process and blind across Cloud Run's up-to-6 instances). Alert 154,
+  // 2026-09-28: paged IT at 'error' for a race whose column surface was
+  // verified identical afterwards.
+  test('a BOOT reconcile losing the lock warns instead of paging', async () => {
+    const db = engine({ defs: [def('case', 'cf_al', 'text')], lockHeldBy: 999 });
+    const r = await reconciler.reconcile(db, { trigger: 'boot' });
+    expect(r.status).toBe('locked');
+    expect(ddlOf(db)).toEqual([]);
+    expect(alert).toHaveBeenCalledWith(db, expect.objectContaining({
+      kind: 'field_defs_reconcile_lock_busy',
+      group_key: 'app:field_defs_reconcile_lock_busy',   // still one group — only severity differs
+      severity: 'warning',
+      context: expect.objectContaining({ trigger: 'boot', benign: true }),
+    }));
+    // The old copy ("columns may lag … POST to run it now") is wrong for
+    // boot and is what would send someone chasing a non-problem.
+    expect(alert.mock.calls[0][1].message).not.toMatch(/may lag/);
+  });
+
+  test('every non-boot trigger still pages on lock busy', async () => {
+    for (const trigger of ['create', 'update', 'deactivate', 'reactivate', 'manual']) {
+      alert.mockClear();
+      const db = engine({ defs: [def('case', 'cf_al', 'text')], lockHeldBy: 999 });
+      await reconciler.reconcile(db, { trigger });
+      expect(alert.mock.calls[0][1].severity).toBe('error');
+      expect(alert.mock.calls[0][1].message).toMatch(/may lag/);
+    }
+  });
+
   test('lock busy on the first try, free on the retry → runs', async () => {
     const db = engine({ defs: [def('case', 'cf_al', 'text')], fail: [{ re: /GET_LOCK/, times: 0 }] });
     let calls = 0;

@@ -48,7 +48,10 @@
  * - GET_LOCK('field_defs_reconcile', 0) serializes instances (Cloud Run runs up
  *   to 6) and overlapping triggers. Busy → one retry after timing.lockRetryMs
  *   (jittered ±50%, so instances that collided don't collide again on the
- *   retry), then log + alert. Within one process scheduleReconcile coalesces:
+ *   retry), then log + alert — 'warning' when the loser was a boot backstop
+ *   (the holder is running the same global diff), 'error' for a mutation
+ *   trigger (the holder may predate that def change). Within one process
+ *   scheduleReconcile coalesces:
  *   triggers that arrive while a run is in flight collapse into ONE follow-up
  *   run (it must still happen — the in-flight run may have read the registry
  *   before their mutation committed). Measured on the 8.4 clone: 7 creates in
@@ -433,12 +436,40 @@ async function reconcile(db, { trigger = 'manual', actor = null, dryRun = false 
   }
   if (!conn) {
     result.status = 'locked';
-    console.error(`[fieldDefReconciler] ${trigger}: '${LOCK_NAME}' still held after one retry — skipped`);
-    await _alert(db, 'field_defs_reconcile_lock_busy', 'error',
+    // WHICH RUN LOST THE LOCK DECIDES THE SEVERITY.
+    //
+    // A boot reconcile is a BACKSTOP over the whole registry — and so is the
+    // run that beat it to the lock, because the diff is global and
+    // idempotent. Losing means the identical work is IN PROGRESS in the
+    // holder, not that it was skipped, so there is nothing for a human to
+    // do. The _inFlight coalescing above is per PROCESS and cannot see
+    // across Cloud Run's up-to-6 instances, so every deploy reliably races
+    // two or more boot reconciles and one of them loses. Alert 154
+    // (2026-09-28 19:41:45 UTC, ~3 min after the e983344 deploy): registry
+    // and column surface verified identical afterwards, no DDL planned by
+    // anyone.
+    //
+    // A MUTATION trigger is the opposite and still pages. The holder may
+    // have read the registry before this instance's def change committed,
+    // and nothing sweeps up after it — there is no periodic reconcile job,
+    // only boot and the next mutation — so that column can stay missing
+    // until the next deploy with someone waiting on it.
+    //
+    // Same fail-open reasoning as the boot+transient downgrade above: an
+    // error-severity digest entry for a self-healing race trains the digest
+    // to be ignored. The alert is still RECORDED either way; severity only
+    // decides whether it mails on its own (alert_email_min_severity).
+    const benign = trigger === 'boot';
+    (benign ? console.warn : console.error)(
+      `[fieldDefReconciler] ${trigger}: '${LOCK_NAME}' still held after one retry — skipped`);
+    await _alert(db, 'field_defs_reconcile_lock_busy', benign ? 'warning' : 'error',
       'Custom-field reconcile skipped: lock busy',
       `${trigger}: another reconcile held '${LOCK_NAME}' through one ${timing.lockRetryMs}ms retry. ` +
-      'Columns may lag the registry until the next run — POST /api/field-defs/reconcile to run it now.',
-      { trigger });
+      (benign
+        ? 'The holder is running the same whole-registry diff — almost certainly a sibling ' +
+          'instance booting off the same deploy — so this run had nothing of its own to do.'
+        : 'Columns may lag the registry until the next run — POST /api/field-defs/reconcile to run it now.'),
+      { trigger, benign });
     return result;
   }
 
