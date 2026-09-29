@@ -443,8 +443,10 @@ async function reconcile(db, { trigger = 'manual', actor = null, dryRun = false 
     // idempotent. Losing means the identical work is IN PROGRESS in the
     // holder, not that it was skipped, so there is nothing for a human to
     // do. The _inFlight coalescing above is per PROCESS and cannot see
-    // across Cloud Run's up-to-6 instances, so every deploy reliably races
-    // two or more boot reconciles and one of them loses. Alert 154
+    // across Cloud Run's up-to-6 instances, so a deploy can race boot
+    // reconciles; the loser alerts only when it loses BOTH attempts, which
+    // takes a holder slow enough (cold SiteGround connect under the startup
+    // CPU throttle) to span the 5-15s retry window. Alert 154
     // (2026-09-28 19:41:45 UTC, ~3 min after the e983344 deploy): registry
     // and column surface verified identical afterwards, no DDL planned by
     // anyone.
