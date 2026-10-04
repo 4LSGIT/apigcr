@@ -563,6 +563,70 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     appliedOrIntended++;
   }
 
+  // Executor-derived cases.case_trustee write, from create_appointment's
+  // `trustee` field. Closes the India Gragg gap (26-31193, 2026-10-02): a 341
+  // delivered inside a hearing_adjourned/stipulation email emits only
+  // create_appointment — no update_case_fields — so the trustee used to die
+  // in the appt note and cases.case_trustee/case_341_link stayed empty until
+  // a human noticed. Landing it here gives trustee validation (FIL-1) a value
+  // to canonicalize and copy the roster Zoom link from, and makes a trustee
+  // SUBSTITUTION notice move the case off the old trustee (the 26-48181
+  // stale-link class) instead of validating the stale name.
+  //
+  // Called on create AND on the appt_exists dedup-skip (the
+  // writeShowCauseColumn precedent: a replayed notice must still converge the
+  // column). Compare-first so replays are noops. Same policy posture as
+  // update_case_fields 'overwrite', with one extra guard: when the current
+  // value already CONTAINS the extracted string (case-insensitive), skip — a
+  // continuance citing 'Caouette' must not churn 'Melissa A. Caouette' →
+  // 'Caouette' → (validator) back again. A genuinely different trustee never
+  // trips the guard and overwrites. NOT an AI action — the name is the
+  // already-cited create_appointment `trustee` field, so no prompt change and
+  // no new citation surface; the change row makes revert restore the prior
+  // name (and revertCourtActions re-resolves the twin on restore).
+  async function landTrusteeColumn(idx, trusteeStr) {
+    const newVal = String(trusteeStr == null ? '' : trusteeStr).trim();
+    if (!newVal) return;
+    if (newVal.length > 100) { // cases.case_trustee varchar(100), no STRICT mode
+      console.warn(`[courtExecutor] case ${resolved.case_id}: extracted trustee exceeds 100 chars — not landed`);
+      return;
+    }
+    if (!curCaseRow) {
+      const [rows] = await db.query(
+        `SELECT ${CASE_ROW_SELECT} FROM cases WHERE case_id=? LIMIT 1`,
+        [resolved.case_id]
+      );
+      curCaseRow = rows[0] || {};
+    }
+    const curNorm = curCaseRow.case_trustee == null ? '' : String(curCaseRow.case_trustee).trim();
+    if (curNorm === newVal) return; // converged — no write, no change row
+    if (curNorm && curNorm.toLowerCase().includes(newVal.toLowerCase())) return; // partial of current — no churn
+    if (!effectiveDryRun) {
+      await db.query(`UPDATE cases SET case_trustee=? WHERE case_id=?`, [newVal, resolved.case_id]);
+      curCaseRow.case_trustee = newVal;
+    }
+    pushChange('case', resolved.case_id, 'case_trustee', curNorm, newVal);
+    applied.push({ action_index: idx, type: 'update_case_fields', entity_type: 'case',
+      entity_id: resolved.case_id, field: 'case_trustee', old_value: curNorm, new_value: newVal });
+    appliedOrIntended++;
+    // Slice-6 twin contract: every case_trustee write re-resolves the twin,
+    // derived and unlogged — identical semantics to the update_case_fields
+    // branch (validation, when it fires, stamps the same id again; harmless).
+    if (!effectiveDryRun) {
+      try {
+        const roleResolver = require('../lib/caseRoleResolver');
+        const cid = await roleResolver.resolveTrustee(db, {
+          case_trustee: curCaseRow.case_trustee,
+          case_chapter: curCaseRow.case_chapter,
+        });
+        await db.query(`UPDATE cases SET case_trustee_contact_id=? WHERE case_id=?`,
+          [cid, resolved.case_id]);
+      } catch (twinErr) {
+        console.error('[courtExecutor] trustee twin resolve failed (non-fatal):', twinErr.message);
+      }
+    }
+  }
+
   // create_event used both by the create_event action AND by the ambiguous
   // update_event fallback. Honors the natural-key guard; returns event_id|null.
   async function doCreateEvent(idx, fields) {
@@ -753,6 +817,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       );
       if (dupe.length) {
         skipped.push({ action_index: i, type, reason: 'appt_exists', appt_id: dupe[0].appt_id });
+        await landTrusteeColumn(i, fields.trustee); // replayed notice still converges the column
         continue;
       }
 
@@ -782,6 +847,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       pushChange('appt', eid, 'create', null, summary);
       applied.push({ action_index: i, type, entity_type: 'appt', entity_id: eid, summary, appt_note: apptNote });
       appliedOrIntended++;
+      await landTrusteeColumn(i, fields.trustee);
       continue;
     }
 
