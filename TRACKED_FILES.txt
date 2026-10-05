@@ -811,6 +811,7 @@ tests/contactUi.sync.test.js
 tests/control.flow.test.js
 tests/courtResolve.test.js
 tests/courtexecutor.cancel.test.js
+tests/courtexecutor.convert.test.js
 tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.trusteeland.test.js
 tests/courtexecutor.update.test.js
@@ -935,6 +936,7 @@ tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
 tests/ingestService.evaluatorFailure.test.js
 tests/internalFn.cancelCaseAppts.test.js
+tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js
 tests/jest.setup.js
 tests/logService.setLogAbout.test.js

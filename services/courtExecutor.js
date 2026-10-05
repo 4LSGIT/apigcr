@@ -145,6 +145,26 @@ const {
   _normType,
 } = eventService;
 
+// ── Ch13-ONLY EVENT TYPES (conversion sweep, 2026-10-05) ─────────────────
+// Swept (canceled) when a case LEAVES chapter 13 — a conversion moots the
+// Ch13 confirmation machinery, but the calendar rows lived on: 26-48181
+// kept its Confirmation Hearing + objection + certificate deadlines
+// Scheduled after converting to Ch7 (feeding calendar_approaching tasks for
+// a hearing that will never be held), and 26-31193's Ch13 Confirmation
+// Hearing (event 149) survived its conversion the same way.
+// Matched on type_key OR _normType(event_type) — live rows carry both
+// shapes ('Confirmation Hearing' wf24 rows vs 'confirmation_hearing'
+// pipeline rows). POC bar dates are deliberately EXCLUDED: whether claims
+// deadlines survive a conversion is a lawyer call (SS), not executor
+// hygiene — see the 26-31193 Government-POC row left for Stuart.
+const CH13_ONLY_EVENT_KEYS = Object.freeze([
+  'confirmation_hearing',
+  'object_confirmation_due',
+  'confirmation_certificate_deadline',
+]);
+const CH13_ONLY_KEY_SET  = new Set(CH13_ONLY_EVENT_KEYS);
+const CH13_ONLY_NORM_SET = new Set(CH13_ONLY_EVENT_KEYS.map((k) => _normType(k)));
+
 // Minimal, present provenance marker stamped on the NOTE field of every
 // entity the court executor creates (events + 341 appts). Notes only — never
 // titles (the event natural-key dedupe includes event_title; a prefix there
@@ -627,6 +647,67 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     }
   }
 
+  // ── Ch13-exit conversion sweep (2026-10-05) ───────────────────────────
+  // Called from the update_case_fields branch when case_chapter LEAVES '13'
+  // (old value '13', new value anything else — the live shapes are 13→7
+  // voluntary conversions; 13→11 moots the same rows). Cancels FUTURE
+  // Scheduled events of the Ch13-only types (CH13_ONLY_EVENT_KEYS) for this
+  // case through eventService.cancelEvent, which also deletes the GCal copy
+  // and the reminder task(s).
+  //   - Date floor CURDATE(): past rows are history for staff to resolve —
+  //     same floor, same reason as the update_event reschedule branch.
+  //   - Resolution: deadlines get 'moot' ("the obligation stopped
+  //     applying"); hearings/conferences take the default 'cancelled' —
+  //     eventService rejects 'moot' off-deadline (U6a).
+  //   - Change rows carry the cancel_event branch's structured before-state,
+  //     so revertCourtActions' event/cancel arm restores row + GCal if the
+  //     conversion is reverted.
+  //   - Per-event try/catch: one failed cancel (e.g. a concurrent human
+  //     cancel) skips that row instead of aborting the batch — the
+  //     revert-path cancelAppt precedent.
+  //   - Fill-in writes (''→'13' backfills, ''→'7') never sweep: only a case
+  //     that was KNOWN to be Ch13 can have Ch13 machinery to tear down.
+  async function sweepCh13OnlyEvents(idx) {
+    const [rows] = await db.query(
+      `SELECT event_id, event_type, type_key, kind, event_title, event_date,
+              event_time, event_all_day, event_location, event_calendar_id
+         FROM events
+        WHERE event_link_type='case_number' AND event_link_id=?
+          AND event_status='Scheduled' AND event_date >= CURDATE()`,
+      [resolved.case_number]
+    );
+    const targets = rows.filter((m) =>
+      CH13_ONLY_KEY_SET.has(m.type_key) ||
+      CH13_ONLY_NORM_SET.has(_normType(m.event_type)));
+    for (const tgt of targets) {
+      const isDeadline = tgt.kind === 'deadline';
+      if (!effectiveDryRun) {
+        try {
+          await eventService.cancelEvent(db, tgt.event_id, 0,
+            isDeadline ? { resolution: 'moot' } : {});
+        } catch (cancelErr) {
+          console.error(`[courtExecutor] conversion sweep cancelEvent(${tgt.event_id}) failed:`, cancelErr.message);
+          skipped.push({ action_index: idx, type: 'update_case_fields',
+            reason: 'conversion_sweep_cancel_failed', event_id: tgt.event_id });
+          continue;
+        }
+      }
+      const oldState = JSON.stringify({
+        status: 'Scheduled',
+        date: toDatePart(tgt.event_date),
+        time: toTimePart(tgt.event_time),
+        all_day: tgt.event_all_day,
+        location: tgt.event_location == null ? null : tgt.event_location,
+        calendar_id: tgt.event_calendar_id == null ? null : tgt.event_calendar_id,
+      });
+      pushChange('event', String(tgt.event_id), 'cancel', oldState, JSON.stringify({ status: 'Canceled' }));
+      applied.push({ action_index: idx, type: 'update_case_fields',
+        entity_type: 'event', entity_id: String(tgt.event_id), field: 'conversion_event_sweep',
+        summary: `conversion sweep: cancel ${tgt.event_type || 'event'}: ${tgt.event_title} @ ${toDatePart(tgt.event_date)}${isDeadline ? ' (moot)' : ''}` });
+      appliedOrIntended++;
+    }
+  }
+
   // create_event used both by the create_event action AND by the ambiguous
   // update_event fallback. Honors the natural-key guard; returns event_id|null.
   async function doCreateEvent(idx, fields) {
@@ -778,8 +859,32 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     return eventId;
   }
 
-  try {
+  // ── DISPATCH ORDER (2026-10-05): update_case_fields runs FIRST ─────────
+  // The AI routinely lists create_appointment before update_case_fields
+  // (court_ai_log 997 is the live example). create_appointment's downstream
+  // reads the cases row as it stands: apptService.createAppt's pre_appt
+  // enrollment flattens cases.case_chapter into trigger_data (the sequence
+  // cascade key), and landTrusteeColumn's twin re-resolve reads
+  // curCaseRow.case_chapter. Payload order left both reading the
+  // PRE-conversion row — enrollment 189 recorded case_chapter "13" on a
+  // case the same payload converted to 7. Harmless for 13↔7 (template 19
+  // is chapter-wildcard), but on a Ch11→Ch7 conversion the stale "11"
+  // routes the new 341 to the Ch11 placeholder rung — no client reminders.
+  // Field updates are also the cheapest, most idempotent action type, so
+  // front-running them never makes a partial batch worse.
+  // Stable two-pass: update_case_fields in payload order, then the rest in
+  // payload order. action_index in applied[]/skipped[] stays the PAYLOAD
+  // index — the review UI and revert tooling key on it.
+  const dispatchOrder = [];
   for (let i = 0; i < actions.length; i++) {
+    if ((actions[i] || {}).type === 'update_case_fields') dispatchOrder.push(i);
+  }
+  for (let i = 0; i < actions.length; i++) {
+    if ((actions[i] || {}).type !== 'update_case_fields') dispatchOrder.push(i);
+  }
+
+  try {
+  for (const i of dispatchOrder) {
     const act = actions[i] || {};
     const type = act.type;
     const fields = act.fields || {};
@@ -1119,6 +1224,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         curCaseRow = rows[0] || {};
       }
       const roleColsWritten = new Set(); // slice 6: cols whose write should re-resolve a twin
+      let chapterLeft13 = false;         // conversion sweep: case_chapter '13' → anything else
       for (const [col, rawNew] of Object.entries(fields)) {
         const policy = CASE_FIELD_POLICY[col];
         if (!policy) {
@@ -1168,6 +1274,9 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         if (col === 'case_judge' || col === 'case_trustee' || col === 'case_chapter') {
           roleColsWritten.add(col);
         }
+        if (col === 'case_chapter' && curNorm === '13' && writeVal !== '13') {
+          chapterLeft13 = true; // sweep runs after the field loop + twins
+        }
         pushChange('case', resolved.case_id, col, isDate ? curNorm : curNorm, writeVal);
         applied.push({ action_index: i, type, entity_type: 'case', entity_id: resolved.case_id,
           field: col, old_value: isDate ? curNorm : curNorm, new_value: writeVal });
@@ -1208,6 +1317,15 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         } catch (twinErr) {
           console.error('[courtExecutor] role-twin resolve failed (non-fatal):', twinErr.message);
         }
+      }
+
+      // ── conversion sweep (see sweepCh13OnlyEvents) ────────────────────
+      // Runs on a REAL exit from Ch13 only (a noop/replay chapter write is
+      // skipped above and never sets the flag), after the twins so the
+      // sweep sees a fully-converged row. Dry-run records intent inside
+      // the helper, matching the cancel_event branch.
+      if (chapterLeft13) {
+        await sweepCh13OnlyEvents(i);
       }
       continue;
     }
