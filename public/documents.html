@@ -44,6 +44,11 @@
       border-bottom: 2px solid var(--info);
     }
     #topbar .title { font-weight: 700; letter-spacing: 0.02em; }
+    /* Phones: the title, the "N documents" count and three buttons are wider
+       than 375px; let the bar grow a second line instead of pushing the page. */
+    @media (max-width: 768px) {
+      #topbar { height: auto; min-height: 44px; flex-wrap: wrap; row-gap: 6px; padding: 6px 10px; }
+    }
     #topbar .title span { color: var(--info); }
     #topbar .spacer { flex: 1; }
     #topbar .count { color: var(--code-fg); opacity: .65; font-size: var(--fs-sm); }
@@ -53,6 +58,10 @@
     #scopedHead {
       display: none;
       align-items: center;
+      /* Wraps: in a case/contact tab on a phone (~360px) the title, toggle,
+         count and three buttons are ~520px and pushed the frame sideways. */
+      flex-wrap: wrap;
+      row-gap: 6px;
       gap: var(--gap);
       padding: 10px 12px 0;
       flex-shrink: 0;
@@ -231,6 +240,15 @@
     }
     .acts .icon-btn:hover { background: var(--page-bg); color: var(--text); }
     .acts .icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+    /* Phones (and a case/contact tab on one, ~360px): the five action icons
+       on one line took ~150px and squeezed the file name to ~70px, a word
+       per line. Here they wrap two per line, and Size (already hidden in
+       scoped mode) goes in global mode too. */
+    @media (max-width: 600px) {
+      .wide-only { display: none; }
+      .acts { white-space: normal; width: 66px; }
+      .acts .icon-btn { margin: 0 0 3px 3px; }
+    }
 
     /* Columns the compact widget drops. */
     body.scoped .wide-only { display: none; }

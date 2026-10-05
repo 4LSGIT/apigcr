@@ -597,6 +597,16 @@
     }
 
     .swal2-popup { font-size: 13px !important; }
+  
+    /* ── Phones: stack the two panes ────────────────────────────────────
+       Side by side, the 360px list left the editor ~0px at 375 (and pushed
+       the page 40px wide). Stacked: list on top, capped, editor below. */
+    @media (max-width: 768px) {
+      #panes { flex-direction: column; }
+      #listPane { width: auto; max-height: 45%; border-right: none; border-bottom: 1px solid var(--border); }
+      #editorPane { padding: 14px 12px 24px; min-width: 0; }
+      #editorEmpty { margin-top: 24px; }
+    }
   </style>
 </head>
 <body>

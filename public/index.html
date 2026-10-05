@@ -94,6 +94,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     .tab-main > iframe { display: block; height: calc(100vh - var(--header-h)); }
+    /* dvh where supported: on a phone 100vh includes the area under the
+       browser's own toolbars, so the frame's bottom sat behind them. Desktop
+       dvh == vh. Older browsers drop this line and keep the one above. */
+    .tab-main > iframe { height: calc(100dvh - var(--header-h)); }
 
     /* === HEADER + SIDEBAR === */
     /* Token definitions deleted — /theme.css is the single source of truth for
@@ -1695,7 +1699,7 @@
       Swal.fire({
         title: `Calendar`,
         html: `<iframe src="/calendar.html" width="100%" height="600" style="border:none;"></iframe>`,
-        width: "75%",
+        width: swalWide("75%"),
         heightAuto: true,
         showConfirmButton: false,
         showCloseButton: true,
@@ -1964,7 +1968,7 @@
       Swal.fire({
         title: `Appointment ${apptID}`,
         html: `<iframe src="/apptform2.html?apptID=${apptID}" width="100%"  style="border:none;height:650px;"></iframe>`,
-        width: "75%",
+        width: swalWide("75%"),
         heightAuto: true,
         showConfirmButton: false,
         showCloseButton: true,
@@ -1982,7 +1986,7 @@
       Swal.fire({
         title: `Event ${eventID}`,
         html: `<iframe src="/eventform.html?eventID=${eventID}" width="100%" style="border:none;height:650px;"></iframe>`,
-        width: "75%",
+        width: swalWide("75%"),
         heightAuto: true,
         showConfirmButton: false,
         showCloseButton: true,
@@ -3305,6 +3309,47 @@
   .pill-button:hover { border-color:#1d7fe0; }
   .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
 
+  /* Admin panel iframes carry width:100% + a 1px border inline, i.e. 2px
+     wider than their box under content-box — on a phone that widened the
+     whole shell by 2px. */
+  #tabAdmin > div > iframe { box-sizing: border-box; }
+
+  /* ── Hubs on a phone ──────────────────────────────────────────────────
+     Grid: the desktop tiles are 200px each, so a phone got ONE per line —
+     24 tiles = about 1,900px of scrolling. Here they size like the Home
+     tiles: three across, fixed height, label wrapping inside. The row <br>s
+     are the desktop "four per row" rule and go; the <br>s INSIDE each tile
+     (icon/label gap) are not direct children and stay.
+     Drilled in: the 24-pill strip wrapped to four lines and sat above the
+     hub's own heading, so a panel began ~250px down an 812px screen. The
+     strip becomes one swipeable line, the heading hides while drilled, and
+     the panel's iframe takes exactly the rest of the screen — one scroller,
+     not a page scroll wrapped around an iframe scroll. The active pill is
+     scrolled into view by syncDrillState(). */
+  @media (max-width: 768px) {
+    #tabMore > .big-button, #tabAdmin > .big-button {
+      width: calc((100% - 30px) / 3); height: 104px; margin: 3px 2px;
+      padding: 8px 4px; box-sizing: border-box; vertical-align: top;
+      white-space: normal; overflow-wrap: anywhere; font-size: var(--fs-sm);
+    }
+    #tabMore > br, #tabAdmin > br { display: none; }
+
+    .drill-active > h1 { display: none; }
+    .feature-strip {
+      flex-wrap: nowrap; overflow-x: auto; margin: 0; padding: 6px 8px;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    }
+    .feature-strip::-webkit-scrollbar { display: none; }
+    .feature-strip .pill-button { flex: 0 0 auto; }
+    /* 46px = the strip line (6px pads + ~34px pill). !important: the Admin
+       panels set height:80vh and margin-top inline. */
+    #tabMore > div > iframe, #tabAdmin > div > iframe {
+      height: calc(100vh - var(--header-h) - 46px) !important;
+      height: calc(100dvh - var(--header-h) - 46px) !important;
+    }
+    #tabAdmin > div { margin-top: 0 !important; }
+  }
+
   /* The mascot's trick panel. Lives inside a Swal TOAST, so it is 360px wide
      and the pet is still moving beside it — see catPanel(). */
   .cat-panel { text-align:left; font-size:13px; }
@@ -3369,7 +3414,7 @@
     Swal.fire({
       title: `Etch`,
       html: `<iframe src="/etch.html" width="100%" height="700" style="border:none;"></iframe>`,
-      width: "85%",
+      width: swalWide("85%"),
       heightAuto: true,
       showConfirmButton: false,
       showCloseButton: true,
@@ -3696,6 +3741,14 @@
     strip.querySelectorAll('.pill-button').forEach(p =>
       p.classList.toggle('active', p.dataset.target === openId)
     );
+    // On a phone the strip is one swipeable line (CSS above); bring the
+    // active pill into view so you can see where you are. scrollLeft on the
+    // strip only — scrollIntoView would also scroll the page and frames.
+    const act = strip.querySelector('.pill-button.active');
+    if (act && strip.scrollWidth > strip.clientWidth) {
+      const sr = strip.getBoundingClientRect(), ar = act.getBoundingClientRect();
+      strip.scrollLeft += (ar.left - sr.left) - (strip.clientWidth - ar.width) / 2;
+    }
   }
 </script>
   <script>

@@ -19,8 +19,8 @@
  *
  * The harness stubs only what the SHELL provides (apiSend, firmData, user,
  * body for the theme observer) plus the handful of globals tasks.html gets
- * from /scripts.js (E, Toast, Swal, getTabPref/setTabPref) and /js/ycPager.js
- * (YcPager). Everything else is the real file, inline script and all.
+ * from /scripts.js (E, Toast, Swal, getTabPref/setTabPref, and the filter
+ * bar's ycFiltersToggle/ycFiltersSync) and /js/ycPager.js (YcPager). Everything else is the real file, inline script and all.
  *
  *   npx jest tests/tasksUi.boot.test.js
  */
@@ -106,6 +106,10 @@ async function boot({ search = '', tasks = [mkTask()], warmShell = true } = {}) 
     renderFooter: () => {}, renderPages: () => {},
   };
   window.Toast = { fire: () => {} };
+  // The .yc-filters bar (style.css / scripts.js): the Filters toggle's onclick
+  // and the count sync at the top of fetchTasks().
+  window.ycFiltersToggle = () => {};
+  window.ycFiltersSync = () => {};
   window.Swal = { fire: async () => ({ isConfirmed: false }), close: () => {}, showLoading: () => {}, update: () => {} };
 
   // Body markup + the inline script, exactly as shipped.

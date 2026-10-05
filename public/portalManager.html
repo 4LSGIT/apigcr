@@ -112,6 +112,23 @@
       display: block;
     }
 
+    /* ── Phones (same block in portalManager / caseConfigManager /
+       automationManager — the shared manager shell) ──────────────────────
+       Title + actions share line 1; the tab nav takes line 2 as one
+       swipeable row. Before, the nav (flex:1, min-width:0) was squeezed
+       beside the title and its 48px buttons stacked into a column. The
+       sub-pages below are desktop editors and are NOT reflowed here. */
+    @media (max-width: 768px) {
+      #topbar { padding: 0 8px; }
+      #topbar .title { flex: 1 1 auto; margin-right: 8px; }
+      .tab-nav {
+        order: 3; flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto;
+        scrollbar-width: none; -webkit-overflow-scrolling: touch;
+      }
+      .tab-nav::-webkit-scrollbar { display: none; }
+      .tab-nav-btn { height: 40px; flex: 0 0 auto; }
+    }
+
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

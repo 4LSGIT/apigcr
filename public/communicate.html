@@ -74,6 +74,10 @@
     .comm-row input[type="text"],
     .comm-row input[type="email"] {
       flex: 1;
+      /* min-width:0 — a flex item's default floor is its min-content width,
+         and a sender option like "Automations ((248) 621-3656)" is wider
+         than a phone's tab panel; the select pushed the page sideways. */
+      min-width: 0;
       padding: 8px 10px;
       border: 1px solid var(--border-strong);
       border-radius: 4px;

@@ -75,6 +75,8 @@
     Users are never deleted — rows are referenced across the system. Use Disable instead.
     Disabling clears passwords immediately; an already-issued login session can persist up to 24h.
   </div>
+  <!-- overflow-x: a wide table scrolls inside its panel instead of widening the page (phones). -->
+  <div style="overflow-x:auto">
   <table>
     <thead>
       <tr>
@@ -86,6 +88,7 @@
       <tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
     </tbody>
   </table>
+  </div>
 </div>
 
 <div class="panel" id="formPanel" style="display:none;">

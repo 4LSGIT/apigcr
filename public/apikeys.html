@@ -139,6 +139,8 @@
     <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;margin-right:6px;"
             onclick="viewRejected()">Rejected calls</button>
   </h2>
+  <!-- overflow-x: a wide table scrolls inside its panel instead of widening the page (phones). -->
+  <div style="overflow-x:auto">
   <table>
     <thead>
       <tr>
@@ -150,6 +152,7 @@
       <tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
     </tbody>
   </table>
+  </div>
   <p class="note">
     Plaintext keys are shown once at creation and stored only as hashes.
     "Last used" updates at most every 5 minutes per key — it's the instrument
@@ -168,10 +171,13 @@
   </h2>
   <div id="logBanner"></div>
   <div class="muted" id="logWindow" style="margin-bottom:6px;"></div>
+  <!-- overflow-x: a wide table scrolls inside its panel instead of widening the page (phones). -->
+  <div style="overflow-x:auto">
   <table>
     <thead id="logThead"></thead>
     <tbody id="logTbody"></tbody>
   </table>
+  </div>
   <div class="row" style="margin-top:8px;">
     <button class="ghost" id="logMoreBtn" style="display:none;" onclick="loadMoreLog()">Load 100 more</button>
     <span class="muted" id="logCount"></span>

@@ -113,7 +113,9 @@
     .pane.response-pane { grid-column: 1 / -1; }
   }
   @media (max-width: 900px) {
-    .app { grid-template-columns: 1fr; }
+    /* minmax(0,…): a bare 1fr keeps a min-content floor, and the method/URL
+       row's fixed widths pushed every pane 10px past a phone's edge. */
+    .app { grid-template-columns: minmax(0, 1fr); }
     .pane.response-pane { grid-column: auto; }
   }
 </style>

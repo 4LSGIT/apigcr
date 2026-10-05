@@ -26,6 +26,23 @@
     <link rel="stylesheet" href="/theme.css">
     <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
+  <style>
+    /* ── Phone layout (same block in contact.html) ─────────────────────────
+       The tab strip itself is handled in style.css (.tab-row). Here: the
+       tab bodies. QUIRKS MODE (no doctype — see ref/plans.md): tables do not
+       inherit font-size here, so nothing below relies on inheritance into a
+       table; display:block on the <table> is unaffected by quirks. */
+    @media (max-width: 768px) {
+      .tab-content { padding: 12px 6px; }
+      .tab-content > h1 { font-size: 1.4em; margin: 0.4em 0; }
+      #tabButtons h4 { margin: 0.5em 4px; }
+      /* Tables scroll inside their own box instead of widening the page:
+         People rendered 1,003px wide, Appointments 827px. The parser-made
+         <tbody> re-forms the table inside the scroller, full width. */
+      .tab-content > table.logTable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .tab-content > table.logTable > tbody { display: table; width: 100%; }
+    }
+  </style>
 </head>
 <div
   id="tabViewCase"
@@ -1117,7 +1134,7 @@
           Create Dropbox Folder
         </button>
       </div>
-      <div id="yesDB" style="margin: auto; width: 600px; height: 800px"></div>
+      <div id="yesDB" style="margin: auto; width: 600px; max-width: 100%; height: 800px"></div>
     </div>
 
     <!-- Tasks widget (consolidated). src set lazily by the tab button. -->
@@ -1127,14 +1144,17 @@
 
     <div id="tabLog" class="tab-content">
       <h1>Case Log</h1>
-      <span
-        ><button onclick="addLog()">Add Log</button>
-        Query:
+      <!-- .yc-filters: same bar as the shell's Logs tab (style.css). -->
+      <div class="yc-filters">
+        <span class="yc-f-row"><button onclick="addLog()">Add Log</button></span>
+        <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
         <input
           id="tabLogQuery"
+          placeholder="Search this log&hellip;"
           onkeypress="if (event.keyCode == 13) {tabLogGet(0)}"
-        />
-        Type:
+        /></label>
+        <div class="yc-f-panel">
+        <span class="yc-f"><span class="yc-f-l">Type:</span>
         <select id="tabLogType">
           <option>All</option>
           <option>Appt</option>
@@ -1152,7 +1172,8 @@
           <option value="">Any Direction</option>
           <option value="outgoing">Outgoing</option>
           <option value="incoming">Incoming</option>
-        </select>Time:
+        </select></span>
+        <span class="yc-f yc-f-wide"><span class="yc-f-l">Time:</span>
         <select
           id="tabLogTime"
           style="width: 150px"
@@ -1174,10 +1195,11 @@
           id="tabLogDate2"
           type="date"
           style="width: 150px; display: none"
-        />
-
-        <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
-      </span>
+        /></span>
+        </div>
+        <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+        <button id="tabLogButton" class="yc-f-go" onclick="tabLogGet(0)">Search</button>
+      </div>
       <table id="logTable" class="logTable" style="text-align: left">
         <tr>
           <th>Log ID:</th>

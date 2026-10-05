@@ -101,6 +101,8 @@
       <input type="checkbox" id="activeOnly" onchange="loadKeys()" checked> active only
     </label>
   </h2>
+  <!-- overflow-x: a wide table scrolls inside its panel instead of widening the page (phones). -->
+  <div style="overflow-x:auto">
   <table>
     <thead>
       <tr>
@@ -113,6 +115,7 @@
       <tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
     </tbody>
   </table>
+  </div>
 </div>
 
 <div class="panel" id="logPanel" style="display:none;">
@@ -120,6 +123,8 @@
     Query log for key #<span id="logKeyId"></span>
     <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="document.getElementById('logPanel').style.display='none'">Close</button>
   </h2>
+  <!-- overflow-x: a wide table scrolls inside its panel instead of widening the page (phones). -->
+  <div style="overflow-x:auto">
   <table>
     <thead>
       <tr>
@@ -128,6 +133,7 @@
     </thead>
     <tbody id="logTbody"></tbody>
   </table>
+  </div>
 </div>
 
 <script>

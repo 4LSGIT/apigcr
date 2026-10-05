@@ -308,6 +308,31 @@
     }
 
     .prev-next span:hover { text-decoration: underline; }
+
+    /* ── Phones: the contents sidebar becomes a drawer ───────────────────
+       At 375px the fixed 220px sidebar left ~150px for the manual itself.
+       Below 768px it slides in over the page from a button beside the
+       breadcrumbs (NOT inside #topbar — that is re-rendered on every
+       navigation). Picking an entry closes it; so does the scrim. */
+    .topline { display: flex; flex-shrink: 0; }
+    .topline #topbar { flex: 1; min-width: 0; }
+    #tocBtn, #tocScrim { display: none; }
+    @media (max-width: 768px) {
+      #tocBtn {
+        display: block; flex: 0 0 auto; width: 44px; border: none;
+        border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+        background: var(--surface); color: var(--text); font-size: 20px; cursor: pointer;
+      }
+      #topbar { padding: 0 10px; overflow-x: auto; white-space: nowrap; }
+      #content { padding: 18px 14px; }
+      #sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0; z-index: 20;
+        width: 260px; max-width: 85vw; transform: translateX(-100%);
+        transition: transform .2s ease; box-shadow: var(--shadow-drawer);
+      }
+      body.toc-open #sidebar { transform: none; }
+      body.toc-open #tocScrim { display: block; position: fixed; inset: 0; z-index: 19; background: var(--backdrop); }
+    }
   </style>
 </head>
 <body>
@@ -317,12 +342,25 @@
   <div id="sidebar-nav"></div>
 </div>
 
+<div id="tocScrim" onclick="document.body.classList.remove('toc-open')"></div>
+
 <div id="main">
-  <div id="topbar"><span class="bc-current">Documentation</span></div>
+  <div class="topline">
+    <button id="tocBtn" type="button" title="Contents" aria-label="Contents"
+            onclick="document.body.classList.toggle('toc-open')">&#9776;</button>
+    <div id="topbar"><span class="bc-current">Documentation</span></div>
+  </div>
   <div id="content"><div class="state-msg">Loading…</div></div>
 </div>
 
 <script>
+// Phone contents drawer (CSS: "Phones: the contents sidebar becomes a
+// drawer"): any pick in the nav closes it. A no-op on desktop, where the
+// class has no effect.
+document.getElementById('sidebar').addEventListener('click', (e) => {
+  if (e.target.closest('.sidebar-file, .sidebar-section, .sidebar-logo')) document.body.classList.remove('toc-open');
+});
+
 // ─────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────

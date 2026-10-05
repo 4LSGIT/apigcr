@@ -344,6 +344,13 @@ function sort(header, sort) {
   go.click();
 }
 
+/* Width for a dialog that hosts a whole page in an iframe (appointment and
+   event forms, the calendar, Etch). Those ask for a share of the window —
+   "75%" — which on a phone left the page inside ~200px. Full width there. */
+function swalWide(pct) {
+  return window.matchMedia('(max-width: 768px)').matches ? '100%' : pct;
+}
+
 function sortSelect(element) {
   const tab = element.closest('.tab-main');
   const bar = tab || element.parentNode;
@@ -412,6 +419,20 @@ function ycFiltersToggle(btn) {
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   ycFiltersSync(bar);
 }
+
+/* ── tab-row scroll ─────────────────────────────────────────────────────────
+   On a phone each .tab-row (case.html / contact.html) is one swipeable line
+   (style.css). Clicking a tab — or a page restoring ?tab= by clicking it in
+   code — brings that tab into view inside its own row. scrollLeft on the row
+   only: scrollIntoView would also scroll the page and the shell's frame. */
+document.addEventListener('click', (e) => {
+  const tab = e.target && e.target.closest && e.target.closest('.tab-row > .tab');
+  if (!tab) return;
+  const row = tab.parentElement;
+  if (row.scrollWidth <= row.clientWidth) return;
+  const rr = row.getBoundingClientRect(), tr = tab.getBoundingClientRect();
+  row.scrollLeft += (tr.left - rr.left) - (row.clientWidth - tr.width) / 2;
+});
 
 /* Delegated, so bars rendered after this file loads need no wiring. 'click'
    is in the list for the values a tab sets in code (no change event fires
@@ -1280,7 +1301,9 @@ function _resolveAddFile() {
     .ncf-field label { display: block; font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.15em; }
     .ncf-field input, .ncf-field select { width: 100%; box-sizing: border-box; }
     .ncf-docket-row { display: flex; gap: 0.6em; }
-    .ncf-docket-row .ncf-field { flex: 1; }
+    /* min-width:0 — a flex item's floor is its input's intrinsic width; two of
+       them overran a phone-width dialog (the full number was cut off). */
+    .ncf-docket-row .ncf-field { flex: 1; min-width: 0; }
     .ncf-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
     /* Mirror cad's create button so the adopt dialog's two buttons match. */
     .cad-create-btn {
@@ -1325,7 +1348,10 @@ function _resolveAddFile() {
 
     /* ── newEventDialog (shared event creator/editor) ── */
     .ne-form { text-align: left; max-width: 460px; margin: 0 auto; }
-    .ne-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em 0.8em; }
+    /* minmax(0,1fr), not 1fr: a bare 1fr keeps the date/time inputs' intrinsic
+       width as its floor, and on a phone the two columns ran ~90px past the
+       dialog (Date, Length and Link were cut off). */
+    .ne-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5em 0.8em; }
     .ne-row  { display: flex; flex-direction: column; }
     .ne-row.ne-full { grid-column: 1 / -1; }
     .ne-row > label {
@@ -1347,6 +1373,15 @@ function _resolveAddFile() {
       color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em;
       margin: 0.5em 0 -0.1em; border-top: 1px solid var(--border); padding-top: 0.6em; }
     .ne-form .na-fixed { font-size: 0.92em; margin: 0; }
+    /* Phones: these dialogs' inputs mean width:100%, but this <style> is
+       injected while scripts.js runs in <head> — BEFORE style.css's link —
+       so style.css's global input rule (200px, 0,2,1) wins the tie. Two
+       200px inputs side by side overran a phone-width dialog. Restated at
+       0,3,1 for phones only; desktop keeps the 200px it has always had. */
+    @media (max-width: 768px) {
+      .ne-form input:not([type=checkbox]):not([type=radio]),
+      .ncf-field input:not([type=checkbox]):not([type=radio]) { width: 100%; }
+    }
     .na-html.ne-html .cp-dropdown { max-height: 11em; }
 
     /* ── The dialogs' own card ──────────────────────────────────────────

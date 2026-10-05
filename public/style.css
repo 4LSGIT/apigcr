@@ -64,6 +64,20 @@ body{font-family: var(--ui); font-size: var(--fs)}
   white-space: nowrap;
   text-align: center;
 }
+/* Phones: each row becomes ONE swipeable line. Wrapped, case.html's three
+   rows (19 tabs) took nine lines — ~370px, so a case opened to a screen of
+   buttons with its content below the fold. Grow-to-fill is dropped (a line
+   that scrolls has no width to fill); the active tab is scrolled into view
+   by the delegated listener in scripts.js ("tab-row scroll"). */
+@media (max-width: 768px) {
+  .tab-row {
+    flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start;
+    max-width: none; padding: 0 6px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .tab-row::-webkit-scrollbar { display: none; }
+  .tab-row .tab { flex: 0 0 auto; max-width: none; padding: 9px 11px; }
+}
 .active {
   background-color: var(--surface-2);
 }

@@ -369,6 +369,11 @@ btnRunAll.addEventListener("click", runBatch);
 document.getElementById("btnSidebar").addEventListener("click", () => {
   document.querySelector(".app").classList.toggle("sidebar-collapsed");
 });
+// Phones start collapsed: beside the 260px schema sidebar the editor column
+// got ~100px and its toolbar stacked into a column. The button still opens it.
+if (window.matchMedia("(max-width: 768px)").matches) {
+  document.querySelector(".app").classList.add("sidebar-collapsed");
+}
 
 // Wrap toggle — re-renders the last result with the new mode.
 document.getElementById("btnWrap").addEventListener("click", (e) => {

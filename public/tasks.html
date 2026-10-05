@@ -28,7 +28,7 @@
     .tk-top > button { justify-self: start; }
     .tk-top h2 { margin: 0 6px 0 0; font-size: 20px; }
     .tk-title { margin: 0; /*font-size: 22px;*/ white-space: nowrap; }
-    .tk-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+    .tk-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font-size: 13px; justify-content: flex-start; }
     .tk-filters label { color: var(--text-muted); white-space: nowrap; }
     .tk-filters select, .tk-filters input { padding: 4px 6px; }
     body.entity .tk-top { display: flex; flex-wrap: wrap; }
@@ -108,6 +108,14 @@
 
     /* ── Responsive: progressive column hiding (B-7) ─────────────────────── */
     @media (max-width: 900px) { .col-by, .col-created { display: none; } }
+    /* Phones: after the column hiding below, the five remaining columns
+       (select, actions, status, title, due) still measured ~420px. The table
+       scrolls inside its own box rather than widening the page; the parser-
+       made <tbody> re-forms the table inside it, full width. */
+    @media (max-width: 768px) {
+      #tasksTable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      #tasksTable > tbody { display: table; width: 100%; }
+    }
     @media (max-width: 640px) {
       .col-to, .col-link { display: none; } body { padding: 8px 4px; }
       /* Too narrow to centre a banner beside the button — fall back to a
@@ -197,10 +205,16 @@
     <span class="tk-preset" data-preset="scheduled" onclick="applyPreset('scheduled')">Scheduled</span>
   </div>
 
-  <div class="tk-filters">
-    <label>Query:</label>
-    <input id="fQ" style="width:170px" placeholder="title, description, name…">
-    <label>Status:</label>
+  <!-- .yc-filters (style.css): label+control units, and on a phone the
+       secondary filters collapse behind a Filters toggle with a count. The
+       count is re-synced at the top of fetchTasks(), the one funnel every
+       path that sets filters in code goes through (presets, cold-boot ?q=,
+       tasksSetFilter). -->
+  <div class="tk-filters yc-filters">
+    <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
+    <input id="fQ" style="width:170px" placeholder="title, description, name…"></label>
+    <div class="yc-f-panel">
+    <label class="yc-f"><span class="yc-f-l">Status:</span>
     <select id="fStatus" style="width:auto">
       <option>Incomplete</option>
       <option>Pending</option>
@@ -209,32 +223,26 @@
       <option>Completed</option>
       <option>Deleted</option>
       <option value="All">All</option>
-    </select>
-    <span class="shell-only">
-      <label>Source:</label>
+    </select></label>
+    <label class="yc-f shell-only"><span class="yc-f-l">Source:</span>
       <select id="fSource" style="width:auto">
         <option value="all">All</option>
         <option value="human">Work only</option>
         <option value="machine">Notices only</option>
-      </select>
-    </span>
-    <span class="shell-only">
-      <label>Timing:</label>
+      </select></label>
+    <label class="yc-f shell-only"><span class="yc-f-l">Timing:</span>
       <select id="fDefer" style="width:auto">
         <option value="all">All</option>
         <option value="active">In play now</option>
         <option value="scheduled">Scheduled (later)</option>
-      </select>
-    </span>
-    <span class="shell-only">
-      <label>Assigned By:</label>
-      <select id="fBy" style="width:auto"><option value="">All</option></select>
-    </span>
-    <span class="shell-only">
-      <label>Assigned To:</label>
-      <select id="fTo" style="width:auto"><option value="">All</option></select>
-    </span>
-    <button id="tkSearchBtn" onclick="fetchTasks(0)">Search</button>
+      </select></label>
+    <label class="yc-f shell-only"><span class="yc-f-l">Assigned By:</span>
+      <select id="fBy" style="width:auto"><option value="">All</option></select></label>
+    <label class="yc-f shell-only"><span class="yc-f-l">Assigned To:</span>
+      <select id="fTo" style="width:auto"><option value="">All</option></select></label>
+    </div>
+    <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+    <button id="tkSearchBtn" class="yc-f-go" onclick="fetchTasks(0)">Search</button>
   </div>
 
   <div id="tkBulkBar">
@@ -506,6 +514,9 @@ function renderTaskDescHtml(desc) {
 
 // ─── Fetch + render ─────────────────────────────────────────────────────────
 async function fetchTasks(off, quiet) {
+  // Filter count on the mobile Filters toggle (scripts.js ycFiltersSync): every
+  // path that sets filters in code ends here, so this is the one sync point.
+  if (typeof ycFiltersSync === 'function') ycFiltersSync(document.querySelector('.tk-filters'));
   offset = off || 0;
   E('tkSearchBtn').disabled = true;
   if (!quiet) E('tkLoad').style.display = 'block';
