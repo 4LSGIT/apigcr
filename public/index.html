@@ -3869,6 +3869,14 @@
      * can be migrated opportunistically.
      */
     async function apiSend(endpoint, method = "GET", payload = null, extraHeaders = {}, opts = {}) {
+      // Same-origin guard: this function attaches the JWT, so the endpoint
+      // must be a root-relative path — an absolute ("https://…") or
+      // protocol-relative ("//…") URL would ship the Bearer cross-origin.
+      // Every legitimate caller passes "/api/…"-style paths; throw loudly
+      // rather than send.
+      if (typeof endpoint !== "string" || !/^\/(?!\/)/.test(endpoint)) {
+        throw new Error(`apiSend: endpoint must be a root-relative path, got ${JSON.stringify(endpoint)}`);
+      }
       // Ensure JWT — prompt the user if missing or expired
       if (
         !window.AUTH_STATE.jwt ||
@@ -3883,7 +3891,12 @@
           "Authorization": `Bearer ${window.AUTH_STATE.jwt}`,
           "Content-Type": "application/json",
           ...extraHeaders
-        }
+        },
+        // No authed API route redirects (the 302s live on public routes:
+        // /r/:slug, /d/:token, /f, pageLanding). A redirect here is either a
+        // misconfiguration or an open-redirect gadget — fail loudly instead
+        // of re-sending the Authorization header to wherever it points.
+        redirect: "error"
       };
       // SU step-up (2026-08-16): attach the tab-scoped elevation token when
       // one is held. Harmless on routes that don't check it; required by the

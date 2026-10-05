@@ -88,6 +88,11 @@
   // JSON; 204 -> null; !ok -> ApiError carrying status/statusText/body.
   window.apiSend = async function (endpoint, method, payload, extraHeaders) {
     method = method || 'GET';
+    // Same-origin guard, mirroring the shell's apiSend: the Bearer only ever
+    // goes to root-relative paths; absolute/protocol-relative URLs throw.
+    if (typeof endpoint !== 'string' || !/^\/(?!\/)/.test(endpoint)) {
+      throw new Error('apiSend: endpoint must be a root-relative path, got ' + JSON.stringify(endpoint));
+    }
     var token = jwt();
     if (!token || jwtExpired(token)) {
       gate('Your session expired. Sign in on the main app tab, then press Reload here.');
@@ -99,7 +104,10 @@
       headers: Object.assign({
         'Authorization': 'Bearer ' + token,
         'Content-Type': 'application/json'
-      }, extraHeaders || {})
+      }, extraHeaders || {}),
+      // Authed routes never redirect (shell apiSend has the same stance) —
+      // fail rather than re-send the Authorization header down a redirect.
+      redirect: 'error'
     };
     if (payload != null) {
       if (options.method === 'GET' || options.method === 'HEAD') {
