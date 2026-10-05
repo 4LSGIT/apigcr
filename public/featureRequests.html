@@ -406,12 +406,16 @@ let allRequests   = [];
 let isAdmin       = false;
 
 async function init() {
-  // Detect admin from parent JWT payload
+  // Detect admin from the shell's firmData.currentUser (loaded right after
+  // login) instead of decoding the JWT — this pane never reads the token.
+  // Cosmetic only; the server enforces admin on the write routes.
   try {
-    const token = localStorage.getItem('jwt') || P?.AUTH_STATE?.jwt;
-    if (token) {
-      const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
-      if (['authorized - SU','authorized - admin'].includes(payload.user_auth)) {
+    if (P && P !== window) {
+      while (!(P.firmData && P.firmData.currentUser)) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      const u = P.firmData.currentUser;
+      if (['authorized - SU','authorized - admin'].includes(u.user_auth)) {
         document.body.classList.add('is-admin');
         isAdmin = true;
       }

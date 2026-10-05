@@ -175,19 +175,22 @@ function api(endpoint, method = "GET", payload = null) {
 // mounts jwtOrApiKey + requireAdmin with no step-up elevation. Gating this at
 // SU would only mean an admin sees the button and then a refusal.
 let authed = false;
+// Role gate rides the shell's firmData.currentUser (loaded right after
+// login) instead of decoding the JWT — this pane never reads the token.
+// Cosmetic only; the server enforces requireAdmin on the routes.
 (function checkAdmin() {
-  try {
-    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
-    if (!token) throw new Error("no token");
-    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-    if (!["authorized - SU", "authorized - admin"].includes(payload.user_auth)) {
-      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Admin access required.</div>';
-      return;
-    }
-    authed = true;
-  } catch (e) {
+  if (!P || P === window) {
     document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Not authenticated.</div>';
+    return;
   }
+  const u = P.firmData && P.firmData.currentUser;
+  if (!u) { setTimeout(checkAdmin, 100); return; }
+  if (!["authorized - SU", "authorized - admin"].includes(u.user_auth)) {
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Admin access required.</div>';
+    return;
+  }
+  authed = true;
+  bootAuthed();
 })();
 
 // ── state ────────────────────────────────────────────────────────────────────
@@ -450,7 +453,7 @@ document.querySelectorAll(".card").forEach((card) => {
   });
 });
 
-if (authed) load();
+function bootAuthed() { load(); }
 </script>
 </body>
 </html>

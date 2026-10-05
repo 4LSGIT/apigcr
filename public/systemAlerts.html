@@ -173,19 +173,22 @@ function api(endpoint, method = "GET", payload = null) {
 }
 
 let authed = false;
+// Role gate rides the shell's firmData.currentUser (loaded right after
+// login) instead of decoding the JWT — this pane never reads the token.
+// Cosmetic only; the server enforces SU on the routes.
 (function checkSU() {
-  try {
-    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
-    if (!token) throw new Error("no token");
-    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-    if (payload.user_auth !== "authorized - SU") {
-      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Superuser access required.</div>';
-      return;
-    }
-    authed = true;
-  } catch (e) {
+  if (!P || P === window) {
     document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Not authenticated.</div>';
+    return;
   }
+  const u = P.firmData && P.firmData.currentUser;
+  if (!u) { setTimeout(checkSU, 100); return; }
+  if (u.user_auth !== "authorized - SU") {
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Superuser access required.</div>';
+    return;
+  }
+  authed = true;
+  bootAuthed();
 })();
 
 // ── state ────────────────────────────────────────────────────────────────────
@@ -379,7 +382,7 @@ document.querySelectorAll(".card").forEach((card) => {
   });
 });
 
-if (authed) load();
+function bootAuthed() { load(); }
 </script>
 </body>
 </html>

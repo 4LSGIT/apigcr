@@ -265,25 +265,26 @@ let wrapMode  = false;
 let copyHintTimer = null;
 
 // ── auth guard + user hint ───────────────────────────────────────────────────
-// Prefer the parent's live JWT (it gets refreshed on expiry by apiSend);
-// localStorage is the fallback for a just-reloaded iframe. The `authed` flag
-// gates the init calls at the bottom so we don't fire redundant API requests
-// after rejecting the user.
+// Role gate rides the shell's firmData.currentUser (loaded right after
+// login) instead of decoding the JWT — this pane never reads the token.
+// Cosmetic only; the server enforces SU on the routes. The `authed` flag
+// still gates actions so we don't fire redundant API requests after
+// rejecting the user; init calls moved into bootAuthed() at the bottom.
 let authed = false;
 (function checkSU() {
-  try {
-    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
-    if (!token) throw new Error("no token");
-    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-    if (payload.user_auth !== "authorized - SU") {
-      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Superuser access required.</div>';
-      return;
-    }
-    userHint.textContent = `${payload.username || payload.sub} · SU`;
-    authed = true;
-  } catch (e) {
+  if (!P || P === window) {
     document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Not authenticated.</div>';
+    return;
   }
+  const u = P.firmData && P.firmData.currentUser;
+  if (!u) { setTimeout(checkSU, 100); return; }
+  if (u.user_auth !== "authorized - SU") {
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Superuser access required.</div>';
+    return;
+  }
+  userHint.textContent = `${u.user_name || u.user} · SU`;
+  authed = true;
+  bootAuthed();
 })();
 
 // ── stop-on-error toggle (Run All only) ──────────────────────────────────────
@@ -1371,8 +1372,8 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// ── init ─────────────────────────────────────────────────────────────────────
-if (authed) {
+// ── init (called by the gate once firmData confirms SU) ──────────────────────
+function bootAuthed() {
   loadSchema();
   loadSaved();
 }
