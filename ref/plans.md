@@ -344,6 +344,18 @@ Active surfaces with known next steps.
 
 - **`email_credentials.smtp_pass` plaintext** — replace with Connections `basic`-type credential row. Either as part of email's auth migration (above), or as its own pass.
 
+- **JWT storage decision + liveHost's last token read (2026-10-05).** The
+  token-binding cleanup (apiSend/uploadWithProgress as the only transports,
+  frozen bindings, path guard + redirect:'error', role gates off
+  firmData.currentUser — AI_CONTEXT §3 "Client token discipline") shrank the
+  client token surface to ONE read outside the shell:
+  `public/forms/liveHost.html`, a standalone tab that re-reads localStorage
+  `jwt` per call by design (picks up a fresh login in the main tab without a
+  reload). Moving the token out of localStorage/window (closure-held,
+  cookie, whatever the storage decision picks) is now a shell-plus-liveHost
+  change only. Decide storage; liveHost likely becomes a shell-hosted pane or
+  gets a postMessage token broker.
+
 
 ---
 

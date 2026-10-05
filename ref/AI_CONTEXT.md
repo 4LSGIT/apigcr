@@ -236,6 +236,36 @@ object. `/internal/mms/send` takes singular `attachment_url`.
 still carries Gmail sends, GCal for appts, some Dropbox ops. Replace
 natively when convenient; never build new dependencies on it.
 
+**Client token discipline (2026-10-05):** exactly two sanctioned ways to put
+the JWT on the wire — the shell's `apiSend` (JSON + `responseType`
+blob/text/response) and `uploadWithProgress` (multipart XHR, for progress
+events). Both live in `public/index.html`, attach the token themselves,
+enforce a root-relative endpoint (absolute/protocol-relative throws — the
+Bearer never leaves origin), set `redirect:'error'` (no authed route
+redirects; the 302s are all public: /r, /d, /f, pageLanding), and are
+frozen non-writable on `window` so late-loading code can't swap in a MITM
+wrapper. Panes never read `AUTH_STATE.jwt` or localStorage `jwt`; role-gated
+panes read `firmData.currentUser.user_auth` (cosmetic — the server enforces).
+ONE exception: `public/forms/liveHost.html` is a standalone tab outside the
+shell with its own apiSend clone (same guards) reading localStorage — it pins
+the token to localStorage until the token-storage decision (ref/plans.md).
+New raw `fetch` with a lifted token is a regression, not a pattern.
+
+**Serving invariants (2026-10-05, verified):**
+- *No Authorization persistence:* the token exists in exactly one durable
+  place, localStorage `jwt`. Nothing logs or stores auth headers: the hook
+  receiver strips `authorization`/`cookie`/`x-api-key` before persisting
+  captures (api.hooks.js SENSITIVE_HEADER_DENYLIST), the apiTester audit log
+  redacts the same set, the client diag ring records method/url/status only.
+  Keep new logging/capture sites on this side of the line.
+- *No authored-executable MIME on the app origin:* operator-authored bytes
+  never execute on app.4lsg.com. Authored page HTML serves only on
+  landing/vanity hosts (pageLanding host gate — never register the app host
+  as a vanity host); asset/video uploads serve from the GCS origin; the one
+  app-origin route serving variable-mime bytes (documents raw) allowlists
+  pdf/images by OUR extension map + nosniff, attachment otherwise — copy that
+  pattern (api.documents.js RAW_INLINE_MIME) for any new byte-serving route.
+
 ## 4. REST API — CONVENTIONS
 
 Full inventory: `ref/routes.md` (auto-generated — middleware + handler per

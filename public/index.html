@@ -3864,9 +3864,10 @@
      * This exists because binary responses previously forced callers to
      * hand-roll fetch with a lifted JWT (esignActions.esignFetchBinary /
      * esignFetchPdf, assetManager/videoManager uploads) — each one a private
-     * copy of the auth, retry and error handling that lives here. New code
-     * should pass responseType instead; the existing copies still work and
-     * can be migrated opportunistically.
+     * copy of the auth, retry and error handling that lives here. Those
+     * copies are gone (2026-10-05): binary reads ride responseType, multipart
+     * rides uploadWithProgress below. Panes never read the token — new code
+     * passes responseType rather than lifting the JWT (AI_CONTEXT §3).
      */
     async function apiSend(endpoint, method = "GET", payload = null, extraHeaders = {}, opts = {}) {
       // Same-origin guard: this function attaches the JWT, so the endpoint
