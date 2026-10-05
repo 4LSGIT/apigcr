@@ -108,7 +108,10 @@ MySQL-native).
 ### Invariants (copy into every tenancy slice spec)
 
 1. **Hostname selects tenant context; authentication never switches it.**
-   Mismatched host + token/key/session = 403, never a redirect.
+   Mismatched host + token/key/session = 403, never a redirect. The resolver
+   trusts the GFE/LB `Host` header only; `x-original-host` is honored solely
+   when accompanied by the fronting Worker's shared-secret header — otherwise
+   it is a client-spoofable tenant selector on public routes.
 2. **Tokens carry a tenant binding verified against the resolved tenant**
    (P0-7). JWT `sub` is a bare per-tenant integer and means nothing without it;
    external identity is `(tenant_id, user_id)`, never a bare id.
@@ -135,10 +138,14 @@ MySQL-native).
    STRICT_TRANS_TABLES / ONLY_FULL_GROUP_BY / NO_BACKSLASH_ESCAPES — MySQL 8.4
    defaults are strict and break `listCases` + `cases` inserts on day one);
    `utf8mb4_bin` on `documents.external_id` and
-   `case_folder_cache.folder_external_id`; trigger DEFINERs rewritten to the
-   tenant's own user when cloning (15 triggers / 7 tables; inventory pending —
-   open decision 1). Provisioning is restartable; tenant stays non-active until
-   schema + credentials + config + first admin all succeed. Never copy live
+   `case_folder_cache.folder_external_id`; triggers created by the permanent
+   migration/provisioning account with DEFINER clauses stripped on import, so
+   that account is the definer everywhere (ruled 2026-10-05 — open decision 1
+   has the inventory); `log_bin_trust_function_creators=ON` as a server flag;
+   the dead `test` table and its 2 triggers are excluded from tenant
+   provisioning (13 triggers / 6 tables ship). Provisioning is restartable;
+   tenant stays non-active until schema + credentials + config + first admin
+   all succeed. Never copy live
    4lsg settings/credentials/users as "defaults".
 9. **Credential isolation is staged.** `tenants.credential_ref` exists from day
    one (initially all rows → one account). Per-tenant MySQL users (GRANT only
@@ -162,8 +169,13 @@ Label order matters: tenant label directly under `p.` so **two wildcard certs
 cover everything forever** (`*.yisracase.com` + `*.p.yisracase.com`; wildcards
 match one label — `p.<slug>.yisracase.com` would need a cert per tenant).
 Vanity/custom domains are direct host bindings (CNAME, or A/ALIAS for an apex)
-with their own managed cert — never redirects. Front door: direct Cloud Run
-domain mappings are a dev/demo compromise only (Preview, not
+with their own managed cert — never redirects. Current state
+(registrar-verified 2026-10-05): `app.4lsg.com` (CNAME
+`ghs.googlehosted.com`) and the `4lsg.com` apex (Google anycast A/AAAA set)
+are both direct Cloud Run domain mappings, no proxy/CDN in front — and
+`4lsg.com`/`www.4lsg.com` are already `landing_hosts` rows (pages role in
+today's terms) with dead-ends redirecting to `fe-firm_site_url`. Front door:
+direct Cloud Run domain mappings are a dev/demo compromise only (Preview, not
 production-recommended, no wildcard certs); HTTPS LB + Certificate Manager
 DNS-auth wildcard certs (~$18/mo) before paying tenants — rides the
 funding-gated productionization wave with Cloud SQL.
@@ -201,14 +213,17 @@ time-limited), never a bypass account.
   P0-1/P0-2.
 - **Isolation completion — prerequisite for any usable tenant 2.** Per-tenant
   integration credentials (the audit's ~27 CRITICAL flush items: Dropbox
-  credential 8 + 4 folder paths, Google credential 11 + `'primary'` calendars +
-  user ids 1/5, pinned proxy credentials, `@4lsg.com` from-fallbacks,
-  `api.sending.js` client-comms hardcodes), FIRM_TIMEZONE parameterization (6
-  module captures + frontend `America/New_York` false-parity comments),
-  GCS/storage scoping, legacy-route retirement (`trap()`-tracked), per-tenant
-  MySQL + RO users, and a **two-tenant staging fixture with deliberately
-  colliding user/contact/case ids + a cross-tenant isolation test suite**
-  (mismatched hosts, keys, tokens — not just happy path).
+  credential 8 + 4 folder paths, Google credential 11 + `'primary'` calendars
+  + user ids 1/5, pinned proxy credentials, `@4lsg.com` from-fallbacks,
+  `api.sending.js` client-comms hardcodes, and the firm assumptions INSIDE
+  trigger bodies — `after_contact_update` hardcodes
+  `CONVERT_TZ(NOW(),'UTC','America/New_York')` and `log_by = 1`),
+  FIRM_TIMEZONE parameterization (6 module captures + frontend
+  `America/New_York` false-parity comments), GCS/storage scoping, legacy-route
+  retirement (`trap()`-tracked), per-tenant MySQL + RO users, and a
+  **two-tenant staging fixture with deliberately colliding user/contact/case
+  ids + a cross-tenant isolation test suite** (mismatched hosts, keys, tokens
+  — not just happy path).
 - **Demo tenant** (synthetic data; external side effects disabled or
   sandboxed) → **tenant-only restore drill** (Cloud SQL PITR restores an
   instance, not a schema — write and exercise the restore-aside → extract →
@@ -228,12 +243,24 @@ after that move, LRU machinery deferred until the budget shows it's needed.
 
 ### Open decisions (audit §3; answer before the affected slice)
 
-1. Trigger DEFINER inventory (§3-1; unobtainable via RO key or dump — patch
-   `lib/schemaDump.js` to capture DEFINER regardless). 2. Stored routines
-   (§3-2). 3. Shared MySQL server vs instance-per-tenant (§3-3; decides
-   GET_LOCK + JSON_OVERLAPS-probe severity). 4. sql_mode provenance (§3-4).
-5. Edge routing / `x-original-host` + Cloudflare Worker facts (§3-5; the
-   resolver's host-candidate order depends on it). 6. Grants model + per-tenant
+1. **RESOLVED 2026-10-05** (SHOW TRIGGERS pasted): 13 triggers definer
+   `sgkmtgfarbwxw@localhost` (SiteGround primary user, still extant or writes
+   would fail), 2 definer `uai6bp5cbi4ij@35.227.91.145` (`contact_name_*`,
+   2026-09-08); per-trigger saved sql_mode is heterogeneous (3 variants) —
+   harmless, but provisioning stamps the session mode at creation. Ruling:
+   strip DEFINER on every dump/import; the migration account becomes definer
+   everywhere and is permanent. **⚠ Cloud SQL migration gotcha, independent of
+   tenancy: importing a SiteGround dump with DEFINER clauses intact breaks
+   (`sgkmtgfarbwxw@localhost` won't exist there) — strip them.** Still patch
+   `lib/schemaDump.js` to record DEFINER + per-trigger sql_mode.
+2. Stored routines (§3-2; dump has none — confirm with SHOW PROCEDURE/FUNCTION
+   STATUS from phpMyAdmin). 3. Shared MySQL server vs instance-per-tenant
+   (§3-3; decides GET_LOCK + JSON_OVERLAPS-probe severity). 4. sql_mode
+   provenance (§3-4).
+5. **RESOLVED 2026-10-05** (registrar records): no proxy in front of either
+   host — both are direct Cloud Run domain mappings; Host arrives via Google's
+   front end. `x-original-host` applies only to any Worker-fronted landing
+   domains and is trusted only per invariant 1. 6. Grants model + per-tenant
    RO users (§3-6). 7. Cron fan-out: per-tenant Cloud Scheduler jobs (lean, at
    low N) vs platform fan-out endpoint (§3-7). 8. Is `CLOUD_TASKS_TARGET_URL`
    set? (§3-8 — if set, it pins dispatch to one host). 9. Queue topology:
@@ -241,8 +268,14 @@ after that move, LRU machinery deferred until the budget shows it's needed.
 10. `JWT_SECRET`: lean shared-secret + tenant claim (simpler rotation,
     upgradeable to per-tenant later); same ruling pass for
     `CREDENTIALS_ENCRYPTION_KEY` (§3-10). 11. Live Cloud Run env inventory
-    (§3-11). 12. What "get-clio-code" actually is — repo route vs tools/pages
-    row (§3-12). 13. Heartbeat per-tenant vs platform (§3-13).
+    (§3-11). 12. **RESOLVED 2026-10-05**: not built — it was the concept
+    that motivated SU landing pages. Storage
+    (`app_settings.clio_login_code`), authed `GET /clio-code`, and the shell
+    button exist; the generic shape goes to
+    the ui-customization arc as a declarative launcher **action** primitive
+    (config: fetch endpoint → Swal/display), a third registry kind beside
+    iframe panes and iframe tools — config, not authored code (§3-12).
+13. Heartbeat per-tenant vs platform (§3-13).
 14. Provider-console webhook URL inventory at migration time (§3-14).
 15. GCS per-tenant buckets vs prefixes (§3-15). 16. Freeze §B4's
     firm/platform key classification against the ratified settings/config
