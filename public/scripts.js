@@ -320,8 +320,13 @@ function dateTimeParts(dateString) {
   return dateString;
 }
 
+/* sort() / sortSelect() find their sort controls by scope, not by DOM
+   distance. Both used to count parentNode hops (th→tr→tbody→table→tab, and
+   select→bar→tab); the .yc-filters bar wraps each control in a unit, which
+   adds a hop. closest('.tab-main') is the tab either way; the old hop chain
+   stays as the fallback for a caller outside a .tab-main. */
 function sort(header, sort) {
-  const parentDiv = header.parentNode.parentNode.parentNode.parentNode;
+  const parentDiv = header.closest('.tab-main') || header.parentNode.parentNode.parentNode.parentNode;
   const sortBy = parentDiv.querySelector('select[data-type="sortBy"]');
   const sortDi = parentDiv.querySelector('select[data-type="sortDi"]');
   const go = parentDiv.querySelector('button[data-type="goButton"]');
@@ -340,10 +345,12 @@ function sort(header, sort) {
 }
 
 function sortSelect(element) {
-  const sortBy = element.parentNode.querySelector('select[data-type="sortBy"]');
-  const sortDi = element.parentNode.querySelector('select[data-type="sortDi"]');
-  const go = element.parentNode.querySelector('button[data-type="goButton"]');
-  const table = element.parentNode.parentNode.querySelector("table");
+  const tab = element.closest('.tab-main');
+  const bar = tab || element.parentNode;
+  const sortBy = bar.querySelector('select[data-type="sortBy"]');
+  const sortDi = bar.querySelector('select[data-type="sortDi"]');
+  const go = bar.querySelector('button[data-type="goButton"]');
+  const table = (tab || element.parentNode.parentNode).querySelector("table");
   const headers = table.querySelectorAll("th");
   headers.forEach((head) => {
     let header = "";
@@ -359,6 +366,63 @@ function sortSelect(element) {
   });
   go.click();
 }
+
+/* ── List filter bar (.yc-filters) — mobile collapse + active-filter count ──
+   Markup + CSS contract: the ".yc-filters" block in style.css. The Filters
+   toggle only renders at <=768px; on desktop nothing here is visible and the
+   listeners below just keep a hidden count current.
+
+   The count is "units in the bar's .yc-f-panel off their default".
+   Per UNIT, not per control: Time=Between plus two dates is one filter.
+   Default = the markup's own default (defaultSelected / defaultChecked /
+   defaultValue; a select with no selected attribute defaults to option 0),
+   so a tab whose markup pre-selects a status (Appointments: Scheduled) is
+   not counted as filtered. A control its tab has hidden inline
+   (style.display = 'none' — the date boxes when Time=All, the log direction
+   select) is off and does not count, even if it still holds a stale value.
+   Disabled controls never count. */
+function ycFiltersActive(bar) {
+  let n = 0;
+  bar.querySelectorAll('.yc-f-panel > .yc-f:not([data-nocount])').forEach((unit) => {
+    const changed = [...unit.querySelectorAll('select, input')].some((c) => {
+      if (c.disabled || c.style.display === 'none') return false;
+      if (c.type === 'checkbox' || c.type === 'radio') return c.checked !== c.defaultChecked;
+      if (c.tagName === 'SELECT') {
+        const d = [...c.options].findIndex((o) => o.defaultSelected);
+        return c.selectedIndex !== (d < 0 ? 0 : d);
+      }
+      return c.value !== c.defaultValue;
+    });
+    if (changed) n++;
+  });
+  return n;
+}
+
+function ycFiltersSync(bar) {
+  const out = bar && bar.querySelector('.yc-f-count');
+  if (!out) return;
+  const n = ycFiltersActive(bar);
+  out.textContent = n ? String(n) : '';
+}
+
+function ycFiltersToggle(btn) {
+  const bar = btn.closest('.yc-filters');
+  if (!bar) return;
+  const open = bar.classList.toggle('open');
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  ycFiltersSync(bar);
+}
+
+/* Delegated, so bars rendered after this file loads need no wiring. 'click'
+   is in the list for the values a tab sets in code (no change event fires
+   for those): the next tap anywhere in the bar — Search included — re-reads
+   them. */
+['change', 'input', 'click'].forEach((type) => {
+  document.addEventListener(type, (e) => {
+    const bar = e.target && e.target.closest && e.target.closest('.yc-filters');
+    if (bar) ycFiltersSync(bar);
+  });
+});
 
 /* ──────────────────────────────────────────────────────────────────────────
    Log tab shared helpers (Slice B.3 + B.4)

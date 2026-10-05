@@ -418,6 +418,38 @@
       /* Hide/skinny collapse bar is desktop-only — drawer is the mobile model */
       #appSidebar .sb-collapse-bar { display: none; }
       #appSidebar .sb-version { display: none; }
+
+      /* The header's fixed content (hamburger, logo, clock, right group) is
+         ~320px; at desktop padding + gaps it measured 396px wide, so on every
+         phone narrower than that the right group — Log Out first — was
+         clipped off-screen. Tighter padding/gaps: ~355px. Both spacers stay,
+         so the clock is still centred between logo and buttons. */
+      #appHeader { padding: 0 10px; gap: 6px; }
+      #appHeader .hdr-right { gap: 6px; }
+
+      /* List tables scroll inside their own box instead of widening the
+         document. A wide table used to push the whole page sideways, so the
+         filter bar and the pager scrolled away with it. display:block makes
+         the <table> the scroll box; the parser-inserted <tbody> re-forms the
+         table inside it at full width (border-collapse inherits). DOM is
+         untouched, so sort()'s header lookups and insertRow() are unaffected. */
+      .tab-main > table.logTable {
+        display: block; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      }
+      .tab-main > table.logTable > tbody { display: table; width: 100%; }
+    }
+
+    /* Small phones (320–360px CSS width): still ~355px of header after the
+       block above. Drop the clock icon and tighten the controls. */
+    @media (max-width: 380px) {
+      #appHeader { padding: 0 6px; gap: 4px; }
+      #appHeader .hdr-hamburger { padding: 6px; }
+      #appHeader .hdr-logo { height: 28px; }
+      #appHeader .hdr-clock { padding: 4px 8px; }
+      #appHeader .hdr-clock i { display: none; }
+      #appHeader .hdr-right { gap: 4px; }
+      #appHeader .hdr-btn,
+      #appHeader .hdr-logout { padding: 0 8px; }
     }
 
     /* === Resets for style.css collisions (apply in both light & dark) === */
@@ -657,27 +689,31 @@
 
   <div id="tabCases" class="tab-main">
     <h1><i class="fa-solid fa-landmark"></i> Cases <i class="fa-solid fa-landmark"></i></h1>
-    <span><button onclick="NewCaseForm()">
+    <!-- Filter bar: one .yc-f unit per label+control (style.css ".yc-filters"
+         documents the classes; scripts.js ycFilters* the mobile toggle). -->
+    <div class="yc-filters">
+      <span class="yc-f-row"><button onclick="NewCaseForm()">
         <i class="fa-solid fa-folder-plus"></i> New Case
-      </button>
-      Query:
-      <input id="tabCasesQuery" type="text" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" />
-      Case Type:
+      </button></span>
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
+      <input id="tabCasesQuery" type="text" placeholder="Search cases…" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" /></label>
+      <div class="yc-f-panel">
+      <label class="yc-f"><span class="yc-f-l">Case Type:</span>
       <select id="tabCasesType" style="width: auto">
         <option value="%">All</option>
         <!-- Type / "Type: Subtype" options are populated from fe-case_types
              (populateCaseTypeFilter in scripts.js) after firmData loads. -->
-      </select>
-      Stage:
+      </select></label>
+      <label class="yc-f"><span class="yc-f-l">Stage:</span>
       <select id="tabCasesStage" style="width: auto">
         <option value="%">All</option>
         <option>Lead</option>
         <option>Filed</option>
         <option>Closed</option>
-      </select>
-      Case Status:
-      <input id="tabCasesStatus" style="width: auto" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" />
-      Order By:
+      </select></label>
+      <label class="yc-f"><span class="yc-f-l">Case Status:</span>
+      <input id="tabCasesStatus" style="width: auto" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" /></label>
+      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By:</span>
       <select id="tabCasesOrder" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="co.contact_lname">Client Last Name</option>
         <option value="co.contact_name">Client First Name</option>
@@ -693,9 +729,11 @@
       <select id="tabCasesOrder2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
         <option value="ASC">Ascending</option>
         <option value="DESC">Descending</option>
-      </select>
-      <button onclick="tabCasesGet(0)" data-type="goButton">Search</button>
-    </span>
+      </select></span>
+      </div>
+      <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+      <button class="yc-f-go" onclick="tabCasesGet(0)" data-type="goButton">Search</button>
+    </div>
     <table id="casesTable" class="logTable">
       <tr>
         <th onclick="sort(this, 'c.case_id')">Lead ID</th>
@@ -882,12 +920,14 @@
 
   <div id="tabContacts" class="tab-main">
     <h1><i class="fa-solid fa-users"></i> Contacts <i class="fa-solid fa-users"></i></h1>
-    <span><button onclick="newContact()">
+    <div class="yc-filters">
+      <span class="yc-f-row"><button onclick="newContact()">
         <i class="fa-solid fa-user-plus"></i> New Contact
-      </button>
-      Query:
-      <input id="tabContactsQuery" type="text" onkeypress="if (event.keyCode == 13) {tabContactsGet(0)}" />
-      Role:
+      </button></span>
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
+      <input id="tabContactsQuery" type="text" placeholder="Search contacts…" onkeypress="if (event.keyCode == 13) {tabContactsGet(0)}" /></label>
+      <div class="yc-f-panel">
+      <label class="yc-f"><span class="yc-f-l">Role:</span>
       <select id="tabContactsRole" style="width: auto" onchange="tabContactsGet(0)">
         <option value="">All roles</option>
         <!-- Both fixed options are IN THE MARKUP, not appended by
@@ -896,23 +936,25 @@
              and trustees" filter — must not fail with it. "-none" is a
              sentinel, never a role_code; contactService.ROLE_NONE. -->
         <option value="-none">No roles</option>
-      </select>
-      Filter2:
+      </select></label>
+      <label class="yc-f"><span class="yc-f-l">Filter2:</span>
       <select disabled>
         <option>All</option>
         <option>All</option>
         <option>All</option>
         <option>All</option>
-      </select>
-      Sort By:
+      </select></label>
+      <label class="yc-f" data-nocount><span class="yc-f-l">Sort By:</span>
       <select id="tabContactsSort" style="width: auto">
         <option value="contact_lname ASC">Last Name (a&rarr;z)</option>
         <option value="contact_lname DESC">Last Name (a&larr;z)</option>
         <option value="contact_fname ASC">First Name (a&rarr;z)</option>
         <option value="contact_fname DESC">First Name (a&larr;z)</option>
-      </select>
-      <button onclick="tabContactsGet(0)">Search</button>
-    </span>
+      </select></label>
+      </div>
+      <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+      <button class="yc-f-go" onclick="tabContactsGet(0)">Search</button>
+    </div>
     <table id="contactsTable" class="logTable">
       <tr>
         <th>ID</th>
@@ -1097,19 +1139,22 @@
 
 <div id="tabAppts" class="tab-main">
     <h1><i class="fa-solid fa-calendar-days"></i> Appointments <i class="fa-solid fa-calendar-days"></i></h1>
-    <span>
+    <div class="yc-filters">
+      <span class="yc-f-row">
       <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
       <button id="tabApptsNew" onclick="newApptDialog({ contactPick: true, casePick: true, onCreated: () => tabApptsGet(0) })"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
-      Type:
+      </span>
+      <div class="yc-f-panel">
       <!-- U2b: the type list is built from the registry by tabApptsTypesLoad()
            (active kind='meeting' types). Default / All / Other are fixed and
            stay put; the types are inserted before Other. -->
+      <label class="yc-f"><span class="yc-f-l">Type:</span>
       <select id="tabApptsType" style="width: auto">
         <option value="__default__">Default</option>
         <option value="__all__">All</option>
         <option value="__other__">Other</option>
-      </select>
-      Status:
+      </select></label>
+      <label class="yc-f"><span class="yc-f-l">Status:</span>
       <select id="tabApptsStatus" style="width: auto">
         <option>All</option>
         <option>Attended</option>
@@ -1117,12 +1162,12 @@
         <option>No Show</option>
         <option>Rescheduled</option>
         <option selected>Scheduled</option>
-      </select>
-      With:
+      </select></label>
+      <label class="yc-f"><span class="yc-f-l">With:</span>
       <select id="tabApptsWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
         <option value="">All</option>
-      </select>
-      Time:
+      </select></label>
+      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time:</span>
       <select id="tabApptsTime" style="width: auto" onchange="tabApptsTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
@@ -1132,9 +1177,11 @@
       </select>
       <input id="tabApptsDate1" type="date" style="width: auto; display: none" />
       <label id="tabApptsDateLabel"></label>
-      <input id="tabApptsDate2" type="date" style="width: auto; display: none" />
-      <button id="tabApptsButton" onclick="tabApptsGet(0)">Search</button>
-    </span>
+      <input id="tabApptsDate2" type="date" style="width: auto; display: none" /></span>
+      </div>
+      <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+      <button id="tabApptsButton" class="yc-f-go" onclick="tabApptsGet(0)">Search</button>
+    </div>
     <table id="apptsTable" class="logTable">
       <tr>
         <th>ID</th>
@@ -1156,13 +1203,17 @@
 
   <div id="tabEvents" class="tab-main">
     <h1><i class="fa-solid fa-flag"></i> Events <i class="fa-solid fa-flag"></i></h1>
-    <span>
-      <button id="tabEventsNew" onclick="newEventDialog({ linkPick: true, onSaved: () => tabEventsGet(0) })"><i class="fa-solid fa-flag"></i> New Event</button>
-      Type:
+    <div class="yc-filters">
+      <span class="yc-f-row"><button id="tabEventsNew" onclick="newEventDialog({ linkPick: true, onSaved: () => tabEventsGet(0) })"><i class="fa-solid fa-flag"></i> New Event</button></span>
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Search:</span>
+      <input id="tabEventsQ" style="width: auto" placeholder="Search titles…"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();tabEventsGet(0);}" /></label>
+      <div class="yc-f-panel">
+      <label class="yc-f"><span class="yc-f-l">Type:</span>
       <select id="tabEventsType" class="eventtypelist" style="width: auto">
         <option value="">All types</option>
-      </select>
-      Status:
+      </select></label>
+      <label class="yc-f"><span class="yc-f-l">Status:</span>
       <select id="tabEventsStatus" style="width: auto">
         <option selected>Scheduled</option>
         <option>Completed</option>
@@ -1173,7 +1224,7 @@
              Rescheduled since long before this arc. -->
         <option>Rescheduled</option>
         <option value="all">All</option>
-      </select>
+      </select></label>
       <!-- Link state. An event is ALLOWED to be attached to nothing — the
            columns are nullable and the write path returns cleanly for it, so a
            firm-wide event (office closed, a CLE seminar) is a legitimate
@@ -1181,11 +1232,11 @@
            meant to attach a case and didn't. It composes with every other
            filter here, which is the point of putting it here rather than on a
            list of its own. -->
-      <label style="white-space: nowrap">
+      <label class="yc-f yc-f-check">
         <input type="checkbox" id="tabEventsUnlinked" onchange="tabEventsGet(0)" />
-        Unlinked only
+        <span class="yc-f-l">Unlinked only</span>
       </label>
-      Time:
+      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time:</span>
       <select id="tabEventsTime" style="width: auto" onchange="tabEventsTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
@@ -1195,17 +1246,16 @@
       </select>
       <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
       <label id="tabEventsDateLabel"></label>
-      <input id="tabEventsDate2" type="date" style="width: auto; display: none" />
-      Search:
-      <input id="tabEventsQ" style="width: auto" placeholder="title…"
-             onkeydown="if(event.key==='Enter'){event.preventDefault();tabEventsGet(0);}" />
-      Sort:
+      <input id="tabEventsDate2" type="date" style="width: auto; display: none" /></span>
+      <label class="yc-f" data-nocount><span class="yc-f-l">Sort:</span>
       <select id="tabEventsSort" style="width: auto" onchange="tabEventsGet(0)">
         <option value="asc" selected>Soonest first</option>
         <option value="desc">Latest first</option>
-      </select>
-      <button id="tabEventsButton" onclick="tabEventsGet(0)">Search</button>
-    </span>
+      </select></label>
+      </div>
+      <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+      <button id="tabEventsButton" class="yc-f-go" onclick="tabEventsGet(0)">Search</button>
+    </div>
     <table id="eventsTable" class="logTable">
       <tr>
         <th>ID</th>
@@ -1232,8 +1282,12 @@
   <style>
     #tabCalendar .calx-bar {
       display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
-      margin-bottom: 10px;
+      margin: 0 0 10px;
+      justify-content: flex-start;  /* outranks .yc-filters' centring: this bar was always left-aligned */
     }
+    /* …and this margin + gap outrank .yc-filters' mobile gutter and 8px
+       gap, so restate them to match the other list tabs. */
+    @media (max-width: 768px) { #tabCalendar .calx-bar { margin: 0 10px 10px; gap: 8px; } }
     #tabCalendar .calx-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
     #tabCalendar .calx-chip {
       padding: 3px 11px; border-radius: 14px; border: 1px solid var(--border-strong);
@@ -1260,8 +1314,12 @@
 
   <div id="tabCalendar" class="tab-main">
     <h1><i class="fa-solid fa-calendar-week"></i> Calendar <i class="fa-solid fa-calendar-week"></i></h1>
-    <div class="calx-bar">
-      <span class="calx-chips" id="calxKinds">
+    <!-- .calx-bar keeps its own look; .yc-filters adds the unit wrapping and
+         the mobile collapse (style.css). The date range sits in the panel and
+         is data-nocount: calxSetRange() always fills it, so it is never "off
+         default" in the count's sense — the preset row is how it's driven. -->
+    <div class="calx-bar yc-filters">
+      <span class="calx-chips yc-f-row" id="calxKinds">
         <span class="calx-chip on" data-kind="">All</span>
         <span class="calx-chip" data-kind="meeting">Meetings</span>
         <span class="calx-chip" data-kind="hearing">Hearings</span>
@@ -1269,30 +1327,34 @@
         <span class="calx-chip" data-kind="conference">Conferences</span>
         <span class="calx-chip" data-kind="other">Other</span>
       </span>
-      State:
+      <div class="yc-f-panel">
+      <label class="yc-f"><span class="yc-f-l">State:</span>
       <select id="calxState" style="width: auto">
         <option value="live" selected>Live</option>
         <option value="resolved">Resolved</option>
         <option value="cancelled">Cancelled</option>
         <option value="all">All</option>
-      </select>
-      <label style="white-space: nowrap">
-        <input type="checkbox" id="calxSuperseded" /> + superseded
+      </select></label>
+      <label class="yc-f yc-f-check">
+        <input type="checkbox" id="calxSuperseded" /> <span class="yc-f-l">+ superseded</span>
       </label>
-      With:
+      <label class="yc-f"><span class="yc-f-l">With:</span>
       <select id="calxWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
         <option value="">Everyone</option>
-      </select>
+      </select></label>
+      <span class="yc-f yc-f-wide" data-nocount>
       <input id="calxFrom" type="date" style="width: auto" />
       <label>to</label>
-      <input id="calxTo" type="date" style="width: auto" />
-      <span class="calx-presets">
+      <input id="calxTo" type="date" style="width: auto" /></span>
+      </div>
+      <span class="calx-presets yc-f-row">
         <button data-preset="0">Today</button>
         <button data-preset="6">Week</button>
         <button data-preset="30">30d</button>
         <button data-preset="90">90d</button>
       </span>
-      <button id="calxButton">Refresh</button>
+      <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+      <button id="calxButton" class="yc-f-go">Refresh</button>
     </div>
     <table id="calxTable" class="logTable">
       <tr>
@@ -2482,9 +2544,13 @@
 
   <div id="tabLogs" class="tab-main">
     <h1><i class="fa-solid fa-box-archive"></i> Logs <i class="fa-solid fa-box-archive"></i></h1>
-    <span>Query:
-      <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}" />
-      Type:
+    <div class="yc-filters">
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
+      <input id="tabLogQuery" placeholder="Search the log…" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}" /></label>
+      <!-- Type + the contextual direction select are ONE unit (a <span>: two
+           controls) so direction appears beside the type that reveals it. -->
+      <div class="yc-f-panel">
+      <span class="yc-f"><span class="yc-f-l">Type:</span>
       <select id="tabLogType">
         <option>All</option>
         <option>Appt</option>
@@ -2502,12 +2568,12 @@
         <option value="">Any Direction</option>
         <option value="outgoing">Outgoing</option>
         <option value="incoming">Incoming</option>
-      </select>
-      By: 
+      </select></span>
+      <label class="yc-f"><span class="yc-f-l">By:</span>
       <select id="tabLogBy" class="userslist" style="width: auto">
         <option value="">All</option>
-      </select>
-      Time:
+      </select></label>
+      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time:</span>
       <select id="tabLogTime" style="width: 150px" onchange="tabLogTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
@@ -2517,10 +2583,11 @@
       </select>
       <input id="tabLogDate1" type="date" style="width: 150px; display: none" />
       <label id="tabLogDateLabel"></label>
-      <input id="tabLogDate2" type="date" style="width: 150px; display: none" />
-  
-      <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
-    </span>
+      <input id="tabLogDate2" type="date" style="width: 150px; display: none" /></span>
+      </div>
+      <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
+      <button id="tabLogButton" class="yc-f-go" onclick="tabLogGet(0)">Search</button>
+    </div>
     <table id="logTable" class="logTable" style="text-align: left">
       <tr>
         <th>Log ID:</th>

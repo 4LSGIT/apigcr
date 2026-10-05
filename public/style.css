@@ -289,6 +289,106 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
 .logTable tr:hover {
   background-color: var(--hover);
 }
+
+/* ── List filter bar (.yc-filters) ─────────────────────────────────────────
+   One label + its control(s) = one .yc-f UNIT, and the bar wraps only
+   BETWEEN units. The bars this replaces were a bare <span> of text nodes and
+   controls, so on any narrow window a label wrapped away from its control
+   ("Case Status:" at the end of one line, its input on the next).
+
+   Desktop: a centred wrapping row — the same picture as the old inline span.
+   The secondary-filter panel is display:contents there, so its units sit in
+   the row as if it weren't there.
+   <=768px: the bar reflows into lines — .yc-f-row items first (a line each),
+   then the query + Filters toggle + Search, then .yc-f-panel as a two-up
+   grid of units, collapsed until the toggle opens it. The toggle carries a
+   count of panel units off their default, so a collapsed panel can never
+   silently hide an active filter. Behaviour (toggle + count): ycFilters* in
+   scripts.js.
+
+   Classes
+     .yc-f        label + control(s). A <label> when it holds ONE control (tap
+                  the text to focus it); a <span> when it holds several — a
+                  <label> may not contain another <label>.
+     .yc-f-l      the label text. Stacked above its control on mobile.
+     .yc-f-q      the free-text query. Stays visible on mobile; its label
+                  hides there and the placeholder carries it.
+     .yc-f-panel  wraps the secondary units — collapsed on mobile. One per bar,
+                  contiguous (DOM order inside it is the desktop order).
+     .yc-f-wide   a panel unit that takes a full mobile line (multi-control).
+     .yc-f-check  checkbox unit — the label stays beside the box.
+     .yc-f-row    always visible, a full line of its own on mobile ("New …"
+                  buttons, the calendar kind chips and presets).
+     .yc-f-main   always visible, shares the query/Search line on mobile.
+     .yc-f-go     the Search / Refresh button.
+     .yc-f-toggle the Filters button. Mobile only; holds .yc-f-tl (its word)
+                  and .yc-f-count.
+   data-nocount on a panel unit keeps it out of the count (sort order is not
+   a filter). */
+.yc-filters {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 6px 12px; margin: 0 8px 8px;
+}
+.yc-f-panel { display: contents; }
+.yc-f { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.yc-f-row { display: inline-flex; align-items: center; gap: 6px; }
+.yc-f-toggle { display: none; }
+.yc-f-count:not(:empty) {
+  display: inline-block; min-width: 1.4em; padding: 0 5px; margin-left: 2px;
+  border-radius: 9px; background: var(--accent); color: var(--accent-text);
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1.5; text-align: center;
+}
+
+@media (max-width: 768px) {
+  .yc-filters { gap: 8px; margin: 0 10px 10px; text-align: left; }
+
+  /* Line order: rows, then the query/toggle/Search line, then the panel. */
+  .yc-filters > .yc-f-row { order: 0; flex: 1 1 100%; justify-content: center; }
+  .yc-filters > .yc-f-row > button { flex: 1 1 auto; white-space: nowrap; }
+  /* Touch targets: UA buttons are ~22px tall beside 44px inputs. */
+  .yc-filters button { min-height: var(--ctl-h-lg); }
+  .yc-filters > .yc-f-q,
+  .yc-filters > .yc-f-main,
+  .yc-filters > .yc-f-toggle,
+  .yc-filters > .yc-f-go { order: 1; flex: 0 0 auto; }
+  /* Search grows, so its line is always full: with a query the query takes
+     most of the slack (4:1); without one (Appointments, Calendar) Search
+     takes all of it. */
+  .yc-filters > .yc-f-q { flex: 4 1 7em; min-width: 0; }
+  .yc-filters > .yc-f-go { flex: 1 0 auto; }
+  .yc-filters > .yc-f-q > .yc-f-l { display: none; }
+  .yc-filters > .yc-f-toggle { display: inline-flex; align-items: center; gap: 6px; }
+  .yc-filters.open > .yc-f-toggle { background: var(--accent-soft); color: var(--accent-on-soft); }
+
+  /* The panel: a full line of its own, two units per row. */
+  .yc-filters > .yc-f-panel {
+    order: 2; flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .yc-filters:not(.open) > .yc-f-panel { display: none; }
+  .yc-f-panel > .yc-f { flex: 1 1 calc(50% - 4px); min-width: 0; }
+  .yc-f-panel > .yc-f-wide { flex-basis: 100%; }
+
+  /* Inside a unit: label on its own line, the controls share the next. The
+     explicit flex-basis is what sizes the controls — it overrides both the
+     global 200px width and the inline width:auto / width:150px the markup
+     carries for desktop, so neither needs !important. */
+  .yc-filters .yc-f { flex-wrap: wrap; gap: 3px 6px; white-space: normal; }
+  .yc-filters .yc-f > .yc-f-l {
+    flex: 0 0 100%; font-size: var(--fs-sm); color: var(--text-muted);
+  }
+  .yc-filters .yc-f > select,
+  .yc-filters .yc-f > input:not([type=checkbox]):not([type=radio]) {
+    flex: 1 1 6em; min-width: 0;
+  }
+  .yc-filters .yc-f-check { align-self: end; min-height: var(--ctl-h); flex-wrap: nowrap; }
+  .yc-filters .yc-f-check > .yc-f-l { flex: 0 1 auto; font-size: var(--fs); color: var(--text); }
+}
+/* Small phones: the toggle drops its word (icon + count stay) so the query
+   box keeps a usable width. */
+@media (max-width: 360px) {
+  .yc-filters > .yc-f-toggle > .yc-f-tl { display: none; }
+}
+
 iframe {
   width: 100%;
   height: 100vh;
