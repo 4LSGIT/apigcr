@@ -69,7 +69,7 @@ const phoneSvc = require('./contactPhoneService');
 const emailSvc = require('./contactEmailService');
 const addrSvc  = require('./contactAddressService');
 const logService = require('./logService');
-const crypto = require('crypto');
+const { generateToken } = require('../lib/token');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
 const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
@@ -2179,8 +2179,9 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
  * STRICT_TRANS_TABLES, so nothing DB-side rejects a garbage kind. The
  * validation below is the only gate.
  *
- * Mints contacts.contact_token (32 hex) at creation so booking links
- * ({{contacts.contact_token}}) resolve without a separate mint step.
+ * Mints contacts.contact_token (22-char base62 via lib/token; legacy rows
+ * 32-hex) at creation so booking links ({{contacts.contact_token}}) resolve
+ * without a separate mint step.
  *
  * SLICE 2 DUAL-WRITE: after the contacts INSERT, propagate the primary
  * phone/email/address into the corresponding child tables as primary-
@@ -2293,10 +2294,11 @@ async function createContact(db, {
 
   const out = await db.withTransaction(async (conn) => {
 
-    // Booking token minted at birth — same format as the mint-or-return
-    // endpoint in routes/booking.js (32 lowercase hex, TOKEN_RE-compatible).
-    // Lets templates use {{contacts.contact_token}} without a mint step.
-    const bookingToken = crypto.randomBytes(16).toString('hex');
+    // Booking token minted at birth — same mint as the mint-or-return
+    // endpoint in routes/booking.js (lib/token base62, PUBLIC_TOKEN_RE-
+    // compatible). Lets templates use {{contacts.contact_token}} without a
+    // mint step.
+    const bookingToken = generateToken();
 
     // 1. Insert the contacts row
     //

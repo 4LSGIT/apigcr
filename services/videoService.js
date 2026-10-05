@@ -105,8 +105,9 @@ function validateActions(actions) {
     if (a?.type !== 'url') return; // future types validate their own URLs
     const raw = String(a.config?.url || '');
     // Validate the representative substituted form. {{c}}/{{ct}} only ever
-    // become a contacts.contact_token (32 hex) or empty — neither can
-    // introduce a URL scheme — so a fixed stand-in is a faithful probe.
+    // become a contacts.contact_token (base62/hex, PUBLIC_TOKEN_RE class) or
+    // empty — neither can introduce a URL scheme — so a fixed stand-in is a
+    // faithful probe.
     if (!isSafeActionUrl(raw.replace(/\{\{ct\}\}/g, '1').replace(/\{\{c\}\}/g, '1'))) {
       const e = new Error(
         `actions[${i}].config.url has a disallowed URL scheme — ` +

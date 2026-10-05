@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-09-25T08:06:36.326Z
+-- Generated: 2026-10-05T15:56:40.541Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:ba404bcb708094d9746c65be31f1980f
+-- Fingerprint: sha256:72b511f2a518277157c458421b3d31c8
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -253,7 +253,7 @@ CREATE TABLE `appts` (
   `appt_end` datetime GENERATED ALWAYS AS ((`appt_date` + interval `appt_length` minute)) STORED,
   `appt_gcal_user` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-calendar event id',
   `appt_source` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'booking view source_tag',
-  `appt_manage_token` char(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'client manage-link token',
+  `appt_manage_token` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'client manage-link token (/m/<t>); 22-char base62 via lib/token, legacy 32-hex; _bin: case-sensitive bearer',
   `appt_view_id` int unsigned DEFAULT NULL COMMENT 'booking_views.id this appt was booked/rebooked through',
   `rescheduled_from_appt_id` int DEFAULT NULL COMMENT 'E0a atom: the appt this row replaced (reschedule or manage-page rebook). NULL = original booking, or pre-2026-08-27 row (not backfilled). No FK by convention (appts carries none).'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -994,7 +994,7 @@ CREATE TABLE `contacts` (
   `contact_updated` timestamp NULL DEFAULT NULL,
   `contact_sms_optout` tinyint(1) NOT NULL DEFAULT '0',
   `contact_email_optout` tinyint(1) NOT NULL DEFAULT '0',
-  `contact_token` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'opaque per-contact bearer: booking prefill + video attribution',
+  `contact_token` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'opaque per-contact bearer: booking prefill + video attribution; 22-char base62 via lib/token, legacy 32-hex; _bin: case-sensitive',
   `portal_enabled` tinyint(1) NOT NULL DEFAULT '1',
   `portal_session_version` int NOT NULL DEFAULT '1',
   `custom` json NOT NULL DEFAULT (json_object()) COMMENT 'Custom-field values (ref/CUSTOM_FIELDS_DESIGN.md). Keys are field_defs.field_key (cf_*, entity=contact). Written ONLY by contactService.updateContact: per-key JSON_SET/JSON_REMOVE in the same UPDATE as core columns, never read-modify-write. NEVER read or compare custom->>''$.k'' in SQL (the S3 virtual column is the only comparison surface). Never store JSON null (clear = JSON_REMOVE). Excluded by name from event envelopes, resolver and reports.',
@@ -1319,7 +1319,7 @@ CREATE TABLE `credentials` (
 DROP TABLE IF EXISTS `decision_requests`;
 CREATE TABLE `decision_requests` (
   `id` bigint NOT NULL,
-  `token` varchar(32) COLLATE utf8mb4_general_ci NOT NULL,
+  `token` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'decision bearer (/d/<t>); 22-char base62 via lib/token, legacy base64url; _bin: case-sensitive',
   `workflow_execution_id` bigint NOT NULL,
   `step_number` int NOT NULL,
   `resume_step` int NOT NULL,
@@ -3066,7 +3066,7 @@ CREATE TABLE `tasks` (
   `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `task_due_job_id` bigint DEFAULT NULL,
   `task_start_job_id` bigint DEFAULT NULL,
-  `task_action_token` char(22) COLLATE utf8mb4_general_ci DEFAULT NULL
+  `task_action_token` char(22) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'one-click action bearer (/t/<t>); 22-char base62 via lib/token, legacy base64url; _bin: case-sensitive'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -3380,7 +3380,7 @@ CREATE TABLE `users` (
   `ringcentral` tinyint(1) NOT NULL,
   `task_remind_freq` set('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `password_hash` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `reset_token` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `reset_token` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'password-reset bearer; 22-char base62 via lib/token, legacy 64-hex; _bin: case-sensitive',
   `reset_expires` datetime DEFAULT NULL,
   `user_custom_tab` json NOT NULL,
   `does_appts` tinyint(1) NOT NULL DEFAULT '0',

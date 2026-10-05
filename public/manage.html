@@ -539,7 +539,9 @@
       var inner = '<div class="ot-type">' + esc(o.type || 'Appointment') + '</div>' +
                   '<div class="ot-meta">' + when +
                   (meta.length ? ' \u00B7 ' + meta.join(' \u00B7 ') : '') + '</div>';
-      if (o.manage_token && /^[0-9a-f]{32}$/.test(o.manage_token)) {
+      // Inline copy of lib/token's PUBLIC_TOKEN_RE (legacy 32-hex + current
+      // 22-char base62) — client-side, can't require. Keep in sync.
+      if (o.manage_token && /^[A-Za-z0-9_-]{10,40}$/.test(o.manage_token)) {
         return '<a class="other-item" href="/m/' + encodeURIComponent(o.manage_token) + '">' +
                inner + '</a>';
       }

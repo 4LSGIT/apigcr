@@ -39,6 +39,7 @@ const fs           = require('fs');
 const path         = require('path');
 const videoService = require('../services/videoService');
 const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
+const { PUBLIC_TOKEN_RE } = require('../lib/token');
 
 const router = express.Router();
 
@@ -115,7 +116,7 @@ function renderActions(actions, contactToken) {
   //
   // This fixes a latent bug as much as it tightens security: the canonical
   // use case for an action URL is a booking link, and routes/booking.js
-  // resolves its own ?c= against contact_token with a 32-hex TOKEN_RE — so
+  // resolves its own ?c= against contact_token with PUBLIC_TOKEN_RE — so
   // the old raw-integer substitution produced booking links that could never
   // resolve. Zero videos have actions configured (verified live 2026-08-17),
   // so there is nothing to migrate and no back-compat to keep.
@@ -260,7 +261,7 @@ router.get('/v/:slug', async (req, res) => {
     let contactId    = null;
     let contactToken = null;          // non-null ⇒ credentialed, gate may pass
     const rawCt = req.query.ct;
-    if (typeof rawCt === 'string' && /^[a-f0-9]{32}$/i.test(rawCt)) {
+    if (typeof rawCt === 'string' && PUBLIC_TOKEN_RE.test(rawCt)) {
       const [c] = await req.db.query(
         'SELECT contact_id, contact_token FROM contacts WHERE contact_token = ? LIMIT 1',
         [rawCt],

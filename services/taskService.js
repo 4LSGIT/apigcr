@@ -68,7 +68,7 @@
  *   the HTML <title> inside emailWrap() is escaped.
  */
 
-const crypto       = require('crypto');
+const { generateToken } = require('../lib/token');
 const { DateTime } = require('luxon');
 const { FIRM_TZ }  = require('./timezoneService');
 const logService   = require('./logService');
@@ -132,9 +132,10 @@ function renderDescHtml(desc) {
     .join('<br>');
 }
 
-/** Random url-safe action token (22 chars), stored in tasks.task_action_token. */
+/** Random url-safe action token (22-char base62 via lib/token; legacy rows
+ *  base64url), stored in tasks.task_action_token. */
 function newActionToken() {
-  return crypto.randomBytes(16).toString('base64url');
+  return generateToken();
 }
 
 /** Public one-click action URL for a shaped task, or null if no token. */

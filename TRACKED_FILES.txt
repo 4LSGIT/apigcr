@@ -89,6 +89,7 @@ lib/signatureValidation.js
 lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/taskQueue.js
+lib/token.js
 lib/trusteeMatch.js
 lib/trusteeRoster.js
 lib/unplacehold.js
@@ -465,6 +466,7 @@ ref/migrations/2026-09-24_field_key_comment.sql
 ref/migrations/2026-09-25_clio_pilot_backfill.sql
 ref/migrations/2026-09-25_field_defs_default_value.sql
 ref/migrations/2026-09-25_field_defs_default_value_comment.sql
+ref/migrations/2026-10-05_token_base62_bin.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1002,6 +1004,7 @@ tests/test-oauthService.js
 tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
+tests/token.test.js
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/trusteeMatch.test.js

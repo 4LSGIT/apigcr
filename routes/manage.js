@@ -114,12 +114,16 @@ const { getSettings } = require('../services/settingsService');
 const { FIRM_TZ }     = require('../services/timezoneService');
 const { alert }       = require('../lib/alerting');
 const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
+const { PUBLIC_TOKEN_RE } = require('../lib/token');
 
 // ─────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────
 
-const TOKEN_RE = /^[0-9a-f]{32}$/;
+// appt_manage_token format gate. Shared class (lib/token): accepts legacy
+// 32-hex and current 22-char base62 mints alike. public/manage.html keeps an
+// inline copy (client-side, can't require) — keep in sync.
+const TOKEN_RE = PUBLIC_TOKEN_RE;
 const DATE_RE  = /^\d{4}-\d{2}-\d{2}$/;
 const START_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
 

@@ -23,7 +23,7 @@ const { resolve: resolveTemplate } = require('./resolverService');
 const { parseUserDateTime, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
 const { alert } = require('../lib/alerting');
-const crypto = require('crypto');
+const { generateToken } = require('../lib/token');
 const domainEvents = require('../lib/domainEvents');
 // U6b — the singleton flag (v0.5 §3.4.2). Read at CALL time, exactly as
 // eventService reads it: absent from app_settings = off.
@@ -1354,10 +1354,11 @@ async function createAppt(db, {
     const supersededAppts = [];
 
     // 1) INSERT appointment — includes both local and UTC times.
-    //    appt_manage_token: minted on EVERY insert (char(32) UNIQUE hex).
+    //    appt_manage_token: minted on EVERY insert (char(32) UNIQUE utf8mb4_bin;
+    //    22-char base62 via lib/token since 2026-10-05, legacy rows 32-hex).
     //    Unused until the slice-9 client manage page; resolver-visible as a
     //    plain column so templates can later embed /m/{{appts.appt_manage_token}}.
-    const manageToken = crypto.randomBytes(16).toString('hex');
+    const manageToken = generateToken();
     const [result] = await conn.query(
       `INSERT INTO appts
          (appt_client_id, appt_case_id, appt_type, appt_length,

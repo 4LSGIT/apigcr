@@ -119,6 +119,7 @@ const { getSettings }  = require('../services/settingsService');
 const { FIRM_TZ }      = require('../services/timezoneService');
 const { alert }        = require('../lib/alerting');
 const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
+const { generateToken, PUBLIC_TOKEN_RE } = require('../lib/token');
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -127,7 +128,9 @@ const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 const SLUG_RE  = /^[a-zA-Z0-9_-]{1,100}$/;
 const DATE_RE  = /^\d{4}-\d{2}-\d{2}$/;
 const START_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
-const TOKEN_RE = /^[a-f0-9]{32}$/;
+// contact_token format gate. Shared class (lib/token): accepts legacy 32-hex
+// and current 22-char base62 mints alike.
+const TOKEN_RE = PUBLIC_TOKEN_RE;
 
 const MIN_FILL_MS  = 3 * 1000;            // POST must arrive ≥ 3s after config ts
 const MAX_FORM_AGE = 2 * 60 * 60 * 1000;  // …and ≤ 2h after
@@ -990,7 +993,7 @@ router.post('/api/contacts/:id/booking-link', jwtOrApiKey, async (req, res) => {
 
     // Mint. Guarded UPDATE so two concurrent mints can't overwrite each
     // other; loser re-reads the winner's token.
-    const token = crypto.randomBytes(16).toString('hex');
+    const token = generateToken();
     const [upd] = await req.db.query(
       'UPDATE contacts SET contact_token = ? WHERE contact_id = ? AND contact_token IS NULL',
       [token, id]

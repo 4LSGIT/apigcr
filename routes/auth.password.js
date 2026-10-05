@@ -22,7 +22,7 @@
  */
 
 const express = require("express");
-const crypto = require("crypto");
+const { generateToken } = require("../lib/token");
 const bcrypt = require("bcrypt");
 const rateLimit = require("express-rate-limit");
 const router = express.Router();
@@ -79,7 +79,7 @@ router.post("/auth/forgot-password", resetLimiter, async (req, res) => {
     const user = rows[0];
 
     // Generate token and expiry
-    const token = crypto.randomBytes(32).toString("hex"); // 64-char hex
+    const token = generateToken(); // 22-char base62 (lib/token); legacy rows 64-hex
     const expires = new Date(Date.now() + RESET_EXPIRY_MINUTES * 60 * 1000);
 
     await req.db.query(

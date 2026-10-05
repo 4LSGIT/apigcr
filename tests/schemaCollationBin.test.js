@@ -23,6 +23,15 @@ const dump = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 
 const BIN_COLUMNS = [
   ['documents',         'external_id'],
   ['case_folder_cache', 'folder_external_id'],
+  // Bearer-token columns (2026-10-05): lib/token mints case-SENSITIVE base62,
+  // and under general_ci a mixed-case alphabet never buys the entropy it
+  // appears to — the DB collapses case (lib/caseId.js hit exactly this).
+  // Migration: ref/migrations/2026-10-05_token_base62_bin.sql.
+  ['appts',             'appt_manage_token'],
+  ['contacts',          'contact_token'],
+  ['tasks',             'task_action_token'],
+  ['decision_requests', 'token'],
+  ['users',             'reset_token'],
 ];
 
 /**
