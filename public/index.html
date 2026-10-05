@@ -3994,6 +3994,14 @@
       return data;
     }
 
+    // Binding integrity: freeze the shell's apiSend so later-loading code
+    // can't swap in a wrapper and MITM the frames that look it up live
+    // (window.top.apiSend at call time). Defense-in-depth, not a boundary:
+    // same-origin code can still read AUTH_STATE or patch fetch. Legal flip:
+    // a global function declaration is already configurable:false, and
+    // writable true→false is the one change a non-configurable property allows.
+    Object.defineProperty(window, 'apiSend', { value: apiSend, writable: false, configurable: false });
+
     // ── Firm-wide data — loaded once after auth, available to all child iframes ──
     window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {}, firmTimezone: "America/Detroit" };
 
