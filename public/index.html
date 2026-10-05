@@ -4015,6 +4015,62 @@
     // writable true→false is the one change a non-configurable property allows.
     Object.defineProperty(window, 'apiSend', { value: apiSend, writable: false, configurable: false });
 
+    /**
+     * Multipart upload with progress — the XHR twin of apiSend, for the two
+     * uploaders (assetManager, videoManager) that need upload-progress events
+     * fetch can't provide. The Authorization header is attached HERE so panes
+     * never read the token; like apiSend, this is the only sanctioned way to
+     * put the JWT on the wire.
+     *
+     * @param {string} endpoint   root-relative path (querystring OK)
+     * @param {FormData} formData multipart body — Content-Type is left to XHR
+     *                            so it sets the boundary itself
+     * @param {function=} onProgress  called with 0..1 as the upload advances
+     * @returns {Promise<object|null>} parsed JSON response body
+     */
+    async function uploadWithProgress(endpoint, formData, onProgress) {
+      if (typeof endpoint !== "string" || !/^\/(?!\/)/.test(endpoint)) {
+        throw new Error(`uploadWithProgress: endpoint must be a root-relative path, got ${JSON.stringify(endpoint)}`);
+      }
+      // Pre-flight refresh (the panes' old ensureFreshJwt); a mid-upload
+      // expiry still rejects with the retry message, matching the old XHR
+      // uploaders' behavior.
+      if (!window.AUTH_STATE.jwt || isJwtExpired(window.AUTH_STATE.jwt)) {
+        await loginBlocking();
+      }
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', endpoint);
+        xhr.setRequestHeader('Authorization', 'Bearer ' + window.AUTH_STATE.jwt);
+        // Do NOT set Content-Type — XHR sets the multipart boundary itself.
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+        });
+        xhr.addEventListener('load', () => {
+          let data = null;
+          try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch {}
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(data);
+          } else {
+            // ApiError-shaped rejection (callers like esign sendForm read
+            // err.body); the 401 message matches the old pane uploaders.
+            const msg = xhr.status === 401
+              ? 'Authentication expired — please retry'
+              : ((data && (data.error || data.message)) || ('HTTP ' + xhr.status));
+            const err = new Error(msg);
+            err.name   = 'ApiError';
+            err.status = xhr.status;
+            err.body   = (data && typeof data === 'object') ? data : (data == null ? {} : { _raw: data });
+            reject(err);
+          }
+        });
+        xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+        xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+        xhr.send(formData);
+      });
+    }
+    Object.defineProperty(window, 'uploadWithProgress', { value: uploadWithProgress, writable: false, configurable: false });
+
     // ── Firm-wide data — loaded once after auth, available to all child iframes ──
     window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {}, firmTimezone: "America/Detroit" };
 

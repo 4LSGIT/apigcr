@@ -1185,22 +1185,13 @@ function buildAlterSql(tableName, cols) {
 }
 
 // ── schema download ──────────────────────────────────────────────────────────
-// apiSend parses JSON, which won't work for a binary/text download, so we
-// fetch directly with the parent's JWT.
+// Binary download via apiSend responseType:'response' (X5.1) — we need the
+// raw Response for the Content-Disposition filename. Auth, 401-relogin and
+// error parsing are apiSend's.
 document.getElementById("btnSnapshot").addEventListener("click", async () => {
   setStatus("Generating schema…");
   try {
-    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
-    if (!token) throw new Error("No JWT available — reload the admin page");
-    const res = await fetch("/admin/db/schema.sql", {
-      headers: { "Authorization": `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try { msg = (await res.json()).error || msg; } catch {}
-      if (res.status === 401) msg = "Session expired — reload the admin page";
-      throw new Error(msg);
-    }
+    const res = await P.apiSend("/admin/db/schema.sql", "GET", null, {}, { responseType: "response" });
     const blob = await res.blob();
     const disposition = res.headers.get("Content-Disposition") || "";
     const match = /filename="?([^";]+)"?/.exec(disposition);

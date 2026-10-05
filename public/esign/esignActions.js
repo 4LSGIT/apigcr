@@ -26,10 +26,9 @@
 // ── NETWORK CONTRACT ─────────────────────────────────────────
 // JSON calls ride window.top.apiSend (courtpreview.html precedent — the shell
 // index.html owns auth; these pages may be nested 2+ iframes deep).
-// Multipart uploads and the binary PDF preview CANNOT ride apiSend (it is
-// JSON-only), so they use fetch with `Authorization: Bearer <jwt>` where the
-// jwt comes from top.AUTH_STATE.jwt || localStorage 'jwt' — the established
-// raw-fetch pattern (assetManager.html, dbConsole.html, systemAlerts.html).
+// Binary reads ride apiSend too, via opts.responseType ('blob'/'response',
+// X5.1). Multipart uploads ride the shell's uploadWithProgress (the XHR twin
+// of apiSend). Nothing in this module reads the JWT — the shell attaches it.
 //
 // ── RESEND RULES (from the repo, NOT the obvious UX) ─────────
 // Since Phase 2E, every send stores its UNSIGNED source PDF server-side
@@ -263,72 +262,29 @@ if (typeof window !== 'undefined') (function () {
     return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
   }
 
-  function esignJwt() {
-    var t = _top();
-    return (t && t.AUTH_STATE && t.AUTH_STATE.jwt) || localStorage.getItem('jwt') || '';
-  }
-
   /** Multipart POST (uploads MUST be multipart — the global express.json
       ~7.5MB base64 ceiling is a server.js constraint, see api.esign.actions.js
-      header). Throws Error(message) with .body carrying the server JSON. */
-  async function esignUpload(path, formData) {
-    var res = await fetch(path, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + esignJwt() },
-      body: formData,
-    });
-    var text = await res.text();
-    var data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (_) { data = { _raw: text }; }
-    if (!res.ok) {
-      var err = new Error((data && (data.error || data.message)) || ('HTTP ' + res.status));
-      err.status = res.status;
-      err.body = data || {};
-      throw err;
-    }
-    return data;
+      header). Rides the shell's uploadWithProgress, which rejects ApiError-
+      shaped (.status/.body carrying the server JSON — sendForm reads .body). */
+  function esignUpload(path, formData) {
+    var t = _top();
+    if (t && typeof t.uploadWithProgress === 'function') return t.uploadWithProgress(path, formData, null);
+    return Promise.reject(new Error('uploadWithProgress unavailable — open this page inside YisraCase.'));
+  }
+
+  /** Authed binary GET → { blob }. The GET twin of esignFetchPdf, for routes
+      that serve stored bytes (template source pdf, request source pdf).
+      Failures throw apiSend's ApiError (.status/.body). */
+  function esignFetchBinary(path) {
+    return esignApi(path, 'GET', null, {}, { responseType: 'blob' })
+      .then(function (blob) { return { blob: blob }; });
   }
 
   /** Binary PDF POST (template preview). Returns {blob, missing:[]} — the
-      X-Esign-Missing header lists still-empty keys. Error responses are JSON;
-      parsed and rethrown with the server's message. */
-  /** Authed binary GET → { blob }. The GET twin of esignFetchPdf, for routes
-      that serve stored bytes (template source pdf, request source pdf). */
-  async function esignFetchBinary(path) {
-    var res = await fetch(path, {
-      method: 'GET',
-      headers: { Authorization: 'Bearer ' + esignJwt() },
-    });
-    if (!res.ok) {
-      var text = await res.text();
-      var data = null;
-      try { data = text ? JSON.parse(text) : null; } catch (_) { }
-      var err = new Error((data && (data.error || data.message)) || ('HTTP ' + res.status));
-      err.status = res.status;
-      err.body = data || {};
-      throw err;
-    }
-    return { blob: await res.blob() };
-  }
-
+      X-Esign-Missing header lists still-empty keys, so this needs the raw
+      Response (responseType 'response'); errors still throw ApiError. */
   async function esignFetchPdf(path, bodyObj) {
-    var res = await fetch(path, {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + esignJwt(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(bodyObj || {}),
-    });
-    if (!res.ok) {
-      var text = await res.text();
-      var data = null;
-      try { data = text ? JSON.parse(text) : null; } catch (_) { }
-      var err = new Error((data && (data.error || data.message)) || ('HTTP ' + res.status));
-      err.status = res.status;
-      err.body = data || {};
-      throw err;
-    }
+    var res = await esignApi(path, 'POST', bodyObj || {}, {}, { responseType: 'response' });
     var missingHeader = res.headers.get('X-Esign-Missing') || '';
     var missing = missingHeader.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
     var blob = await res.blob();
@@ -771,7 +727,6 @@ if (typeof window !== 'undefined') (function () {
 
   // ── expose ─────────────────────────────────────────────────
   window.esignApi             = esignApi;
-  window.esignJwt             = esignJwt;
   window.esignUpload          = esignUpload;
   window.esignFetchPdf        = esignFetchPdf;
   window.esignFetchBinary     = esignFetchBinary;

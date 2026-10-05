@@ -387,13 +387,13 @@
 <script>
 // ════════════════════════════════════════════════════════════════════════════
 // Parent bridge — mirrors videoManager.html. JSON traffic goes through
-// P.apiSend (which handles JWT injection, 401-retry, and expiry refresh).
-// Multipart upload uses XHR directly with P.AUTH_STATE.jwt so we get
-// upload-progress events (fetch can't report upload progress).
+// P.apiSend; multipart upload through P.uploadWithProgress (the shell's XHR
+// twin that reports upload progress). Both attach the JWT shell-side — this
+// pane never touches the token.
 // ════════════════════════════════════════════════════════════════════════════
 const P = window.parent;
 
-if (!P || !P.AUTH_STATE) {
+if (!P || typeof P.apiSend !== 'function') {
   // CSS-in-JS auth guard — no CSS grep sees this.
   document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">'
     + 'This page must be loaded inside the YisraCase admin app.</div>';
@@ -414,50 +414,21 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-async function ensureFreshJwt() {
-  if (!P.AUTH_STATE.jwt || (P.isJwtExpired && P.isJwtExpired(P.AUTH_STATE.jwt))) {
-    if (P.loginBlocking) await P.loginBlocking();
-  }
-}
-
 /**
- * Multipart upload of one file to POST /api/assets via XHR (for progress).
+ * Multipart upload of one file to POST /api/assets via the shell's
+ * uploadWithProgress (XHR under the hood, for progress events; auth and
+ * expiry refresh handled shell-side).
  * `fields` are appended as text parts (empty/undefined values skipped).
  * @returns {Promise<{success,url,filename,size,mime,uploadedAt,id}>}
  */
-async function uploadAsset(file, fields, onProgress) {
-  await ensureFreshJwt();
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const fd  = new FormData();
-    fd.append('file', file);
-    Object.keys(fields || {}).forEach(k => {
-      const v = fields[k];
-      if (v !== undefined && v !== null && v !== '') fd.append(k, v);
-    });
-
-    xhr.open('POST', '/api/assets');
-    xhr.setRequestHeader('Authorization', 'Bearer ' + P.AUTH_STATE.jwt);
-    // Do NOT set Content-Type — XHR sets the multipart boundary itself.
-
-    xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-    });
-    xhr.addEventListener('load', () => {
-      let data = null;
-      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch {}
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(data);
-      } else if (xhr.status === 401) {
-        reject(new Error('Authentication expired — please retry'));
-      } else {
-        reject(new Error((data && (data.error || data.message)) || ('HTTP ' + xhr.status)));
-      }
-    });
-    xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
-    xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
-    xhr.send(fd);
+function uploadAsset(file, fields, onProgress) {
+  const fd = new FormData();
+  fd.append('file', file);
+  Object.keys(fields || {}).forEach(k => {
+    const v = fields[k];
+    if (v !== undefined && v !== null && v !== '') fd.append(k, v);
   });
+  return P.uploadWithProgress('/api/assets', fd, onProgress);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -937,10 +908,10 @@ async function handleFiles(fileList) {
 })();
 
 // ════════════════════════════════════════════════════════════════════════════
-// Boot — wait for the shell's JWT (mirrors videoManager.html).
+// Boot — wait for the shell's apiSend (mirrors videoManager.html).
 // ════════════════════════════════════════════════════════════════════════════
 (function waitForParent() {
-  if (P && P.AUTH_STATE && P.AUTH_STATE.jwt) {
+  if (P && typeof P.apiSend === 'function') {
     loadCollections().then(fetchAssets);
     return;
   }
