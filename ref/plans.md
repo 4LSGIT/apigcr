@@ -51,12 +51,10 @@ go-to-market (legal first). Principles, not commitments.
   demonstrably needs; hardcode the rest until proven.
 - **Terminology is a display layer.** case/matter/sale/order is a per-tenant
   label map in settings. No schema renames; tables stay `cases`.
-- **Tenancy model (if multi-tenancy ever happens): leaning DB-per-tenant**
-  (not shared-schema tenant_id). Buys: per-tenant AI RO keys safe by
-  construction, per-tenant backup/restore, contained migration blast radius,
-  eliminates the missed-WHERE cross-tenant leak bug class. Costs: migration
-  fan-out (script it), small control-plane DB for provisioning/cross-tenant
-  admin. Supersedes the tenant_id-column item under SaaS-readiness below.
+- **Tenancy model: DB-per-tenant — RATIFIED 2026-10-05.** Full design,
+  invariants, phases, and open decisions live in the dedicated "YC 3.0 —
+  Tenancy plan" section below. Supersedes the tenant_id-column item under
+  SaaS-readiness below.
 - **Evolve, don't rewrite.** Strangler: make v2 progressively v3-shaped
   (terminology layer, config-as-data subsystem by subsystem, event-bus
   unification), 4LSG as tenant zero; tenancy extraction happens only if/when
@@ -75,8 +73,181 @@ go-to-market (legal first). Principles, not commitments.
   skippable elsewhere.
 - **Driver pattern extends** beyond SMS/email/calendar (SaaS-readiness below)
   to payments, storage, e-sign, telephony.
-- **SU landing pages** (get-clio-code-style tools served at the app domain):
-  sandboxed plugin surface, SU-only, arbitrary-code risk acknowledged.
+- **Tools / landing-pages origin ruling (2026-10-05, supersedes the earlier
+  "sandboxed plugin surface" note).** SU-authored tool pages stay same-origin
+  with the existing `P.apiSend` contract — no sandbox, no postMessage bridge.
+  Invariant: **tool authoring = root within the tenant** (a top capability in
+  the access-control arc, never a mid-tier role); if authoring ever opens
+  below SU, that content moves to the pages treatment. Any-user-authored
+  landing pages serve only from the sessionless **pages origin** (Tenancy
+  plan below) — the generalization of today's landing_hosts/pageLanding
+  origin split (`routes/pageLanding.js:314-336` documents the security
+  property to carry over).
+
+---
+
+## YC 3.0 — Tenancy plan (ratified 2026-10-05)
+
+Ratified design + sequencing, **not active development**. Grounded in
+`ref/AUDIT_TENANCY.md` (read-only repo audit, 2026-10-05, combined v2) — read it
+before working any slice; its §1 carries the file:line-level P0 slice list.
+External reviews were consulted 2026-10-05; in-house architecture knowledge
+trumps them where they conflict.
+
+**Direction.** One MySQL server → one database per tenant (identical base
+shape) + a `yc_master` control plane → tenant resolved by hostname → auth
+independently verified against that tenant. 4LSG is tenant #1 with zero
+behavior change; **app.4lsg.com never stops working** — it is simply the first
+custom (vanity) host, supported from day one. Rejected alternatives:
+shared-schema `tenant_id` (invasive rewrite of a codebase whose queries are
+already tenant-correct via `req.db` — audit: 0 db-qualified SQL, 0 service-level
+pool captures — plus a missed-WHERE catastrophic failure mode); Postgres
+(engine migration with no demonstrated payoff; the custom-fields design is
+MySQL-native).
+
+### Invariants (copy into every tenancy slice spec)
+
+1. **Hostname selects tenant context; authentication never switches it.**
+   Mismatched host + token/key/session = 403, never a redirect.
+2. **Tokens carry a tenant binding verified against the resolved tenant**
+   (P0-7). JWT `sub` is a bare per-tenant integer and means nothing without it;
+   external identity is `(tenant_id, user_id)`, never a bare id.
+3. **`yc_master` is control plane only** — no business data, ever.
+4. **No connection is created outside the tenant DB module.** `getDb()` takes a
+   validated internal tenant object from the registry — never a
+   client-supplied hostname/slug/db-name string.
+5. **Unknown, disabled, or mismatched host = hard failure.** No fallback to
+   4lsg; no default tenant once the registry exists. Legacy queued jobs get a
+   bounded, dated compatibility path, then it is removed.
+6. **Every async entry (job, Cloud Task, cron tick, webhook) carries explicit
+   trusted tenant identity** — URL path/header or trusted envelope, never
+   request-body data. Idempotency keys and task names are tenant-prefixed.
+7. **Schema changes happen only via versioned migrations** (id + checksum +
+   per-tenant applied ledger; canary order 4lsg → demo → rest; expand → deploy
+   → migrate → contract — DDL implicit-commits, so no pretending a migration
+   file is one transaction). `ref/database.sql` is demoted to generated
+   snapshot/provisioning accelerator. 4lsg's schema is **baselined, never
+   recreated**. Drift check compares each tenant DB against **its** expected
+   schema = base migrations + the generated columns derivable from its own
+   `field_defs` manifest — never tenant-vs-tenant (custom fields make physical
+   schemas legitimately diverge).
+8. **Provisioning requirements** (audit §E5): relaxed sql_mode (no
+   STRICT_TRANS_TABLES / ONLY_FULL_GROUP_BY / NO_BACKSLASH_ESCAPES — MySQL 8.4
+   defaults are strict and break `listCases` + `cases` inserts on day one);
+   `utf8mb4_bin` on `documents.external_id` and
+   `case_folder_cache.folder_external_id`; trigger DEFINERs rewritten to the
+   tenant's own user when cloning (15 triggers / 7 tables; inventory pending —
+   open decision 1). Provisioning is restartable; tenant stays non-active until
+   schema + credentials + config + first admin all succeed. Never copy live
+   4lsg settings/credentials/users as "defaults".
+9. **Credential isolation is staged.** `tenants.credential_ref` exists from day
+   one (initially all rows → one account). Per-tenant MySQL users (GRANT only
+   on own schema) and per-tenant genuinely-read-only users for
+   `/api/readonly/sql` are a **prerequisite for the first paying tenant**.
+   Registry lookups use a separate narrowly-privileged master connection;
+   migration credentials never ride request execution.
+10. **Tool authoring = root within the tenant** (see the origin ruling above).
+    The pages origin issues no sessions and serves no token-minting routes.
+
+### Registry (`yc_master`)
+
+    tenants:      id (immutable), slug, db_name, status, db_cluster_id,
+                  credential_ref, created_at
+    tenant_hosts: hostname (UNIQUE, normalized), tenant_id,
+                  role app|pages, type platform|custom, status, verified_at
+
+Day-one rows for 4lsg: `app.4lsg.com` (app/custom — unchanged behavior),
+`4lsg.yisracase.com` (app/platform), `4lsg.p.yisracase.com` (pages/platform).
+Label order matters: tenant label directly under `p.` so **two wildcard certs
+cover everything forever** (`*.yisracase.com` + `*.p.yisracase.com`; wildcards
+match one label — `p.<slug>.yisracase.com` would need a cert per tenant).
+Vanity/custom domains are direct host bindings (CNAME, or A/ALIAS for an apex)
+with their own managed cert — never redirects. Front door: direct Cloud Run
+domain mappings are a dev/demo compromise only (Preview, not
+production-recommended, no wildcard certs); HTTPS LB + Certificate Manager
+DNS-auth wildcard certs (~$18/mo) before paying tenants — rides the
+funding-gated productionization wave with Cloud SQL.
+
+### Identity ruling
+
+Per-tenant users for the transition; **global identity deliberately deferred**
+with stable identifiers preserved — not assumed free later. Guardrails now:
+`(tenant_id, user_id)` everywhere outside a tenant DB; email is never a merge
+or identity key; operator/support access is a separate audited
+explicit-elevation workflow (strong auth, explicit tenant selection,
+time-limited), never a bypass account.
+
+### Phases (each a no-behavior-change deploy for 4lsg; audit §1 has slice detail)
+
+- **P0 — chokepoint + tenanting groundwork.** P0-0 delete
+  `routes/db64.js`/`dbQuery.js` (check `legacy_route_log` first) → P0-1
+  resolver middleware (seat: ahead of `pageHostMiddleware`, `server.js:135`;
+  copy the spoof-resistant host-candidate union from
+  `pageLanding.js:314-336`) → P0-2 `getDb`/`getRoDb` registries (preserve the
+  retry wrappers + bound `withTransaction`) → P0-3 flip `req.db` → P0-4a–e the
+  boot consumers (appBuild, pageLanding closure, observers, process guards →
+  platform alert sink, init/reconciler loop) → **P0-4f firmConfig tenanting —
+  the real P0** (39 consumer files, synchronous `cfg()`; AsyncLocalStorage
+  tenant ambient, precedent `lib/domainEvents.js:99`; its own sub-arc; also
+  closes the cross-tenant `yci_` acceptance) → P0-5 tenant-key the ~24
+  process-global caches, auth-critical first (`lib/apiKeys.js`, `update_db`
+  schema cache, `fieldDefService`) → P0-6 tenant-suffix the 5 `GET_LOCK`
+  names → **P0-7 token tenancy — must land before any second tenant exists**
+  (tenant claim in staff/portal/elevation JWTs + the uploadTicket/booking
+  HMACs; `JWT_VERSION` scoping) → P0-8 Cloud Tasks/cron tenanting (tenant in
+  dispatch path/header, tenant-prefixed task names, envelope field at
+  `lib/domainEvents.js:184`, the 3 `process_jobs` handlers) → P0-9 scripts
+  gain `--tenant`. The former P1/P2 (registry, pools) are absorbed into
+  P0-1/P0-2.
+- **Isolation completion — prerequisite for any usable tenant 2.** Per-tenant
+  integration credentials (the audit's ~27 CRITICAL flush items: Dropbox
+  credential 8 + 4 folder paths, Google credential 11 + `'primary'` calendars +
+  user ids 1/5, pinned proxy credentials, `@4lsg.com` from-fallbacks,
+  `api.sending.js` client-comms hardcodes), FIRM_TIMEZONE parameterization (6
+  module captures + frontend `America/New_York` false-parity comments),
+  GCS/storage scoping, legacy-route retirement (`trap()`-tracked), per-tenant
+  MySQL + RO users, and a **two-tenant staging fixture with deliberately
+  colliding user/contact/case ids + a cross-tenant isolation test suite**
+  (mismatched hosts, keys, tokens — not just happy path).
+- **Demo tenant** (synthetic data; external side effects disabled or
+  sandboxed) → **tenant-only restore drill** (Cloud SQL PITR restores an
+  instance, not a schema — write and exercise the restore-aside → extract →
+  import procedure, files included) → **LB front door** → first external firm.
+
+### Prerequisite arcs (finish before tenancy implementation starts)
+
+Custom-fields pilot (supplies the per-tenant schema manifest, invariant 7),
+settings/config split (defines what provisioning seeds — audit §B4's 48
+firm-config keys are the raw inventory; no single registry enumerates the
+settings surface today, which is itself a finding), access-control arc
+(roles/membership = the auth half of invariant 1-2; scoped keys = webhook/RO
+tenant binding). Infra intents, **gated on funding approval**: Cloud Run
+`min_instances=1` and the Cloud SQL migration; the pool connection budget
+(per-pool limit × max resident pools per instance × max instances) is sized
+after that move, LRU machinery deferred until the budget shows it's needed.
+
+### Open decisions (audit §3; answer before the affected slice)
+
+1. Trigger DEFINER inventory (§3-1; unobtainable via RO key or dump — patch
+   `lib/schemaDump.js` to capture DEFINER regardless). 2. Stored routines
+   (§3-2). 3. Shared MySQL server vs instance-per-tenant (§3-3; decides
+   GET_LOCK + JSON_OVERLAPS-probe severity). 4. sql_mode provenance (§3-4).
+5. Edge routing / `x-original-host` + Cloudflare Worker facts (§3-5; the
+   resolver's host-candidate order depends on it). 6. Grants model + per-tenant
+   RO users (§3-6). 7. Cron fan-out: per-tenant Cloud Scheduler jobs (lean, at
+   low N) vs platform fan-out endpoint (§3-7). 8. Is `CLOUD_TASKS_TARGET_URL`
+   set? (§3-8 — if set, it pins dispatch to one host). 9. Queue topology:
+   lean single `yc-jobs` queue + tenant-prefixed names at low N (§3-9).
+10. `JWT_SECRET`: lean shared-secret + tenant claim (simpler rotation,
+    upgradeable to per-tenant later); same ruling pass for
+    `CREDENTIALS_ENCRYPTION_KEY` (§3-10). 11. Live Cloud Run env inventory
+    (§3-11). 12. What "get-clio-code" actually is — repo route vs tools/pages
+    row (§3-12). 13. Heartbeat per-tenant vs platform (§3-13).
+14. Provider-console webhook URL inventory at migration time (§3-14).
+15. GCS per-tenant buckets vs prefixes (§3-15). 16. Freeze §B4's
+    firm/platform key classification against the ratified settings/config
+    taxonomy (§3-16). 17. External health probing; `/api/version` reads
+    tenant data (§3-17 + §E4).
 
 ---
 
@@ -90,7 +261,7 @@ Abstractions that would matter for offering YC to a second firm. Not relevant to
 
 - **Public-page templating.** `/public/*.html` is hardcoded with 4LSG branding, logos, copy. SaaS deployment would need a template layer (Handlebars or similar) reading per-tenant config — name, logo URL, color tokens, custom domain. Custom-page authoring is an entirely separate problem deferred even further.
 
-- **Multi-tenancy decision.** Even if you stay one-firm-per-deployment, decide before any of the above whether `phone_lines`, `email_credentials`, `credentials`, `contacts`, etc. get a `tenant_id` column. Adding it to clean tables now is cheap; retrofitting later is expensive. Plausible within ~2 years → add as `NOT NULL DEFAULT 1` now. **Decision 2026-09-14: hold — do NOT add tenant_id columns.** Multi-tenancy is not happening in v2 and is only a maybe for v3, where the lean is DB-per-tenant (no tenant_id columns needed either way).
+- **Multi-tenancy decision.** Even if you stay one-firm-per-deployment, decide before any of the above whether `phone_lines`, `email_credentials`, `credentials`, `contacts`, etc. get a `tenant_id` column. Adding it to clean tables now is cheap; retrofitting later is expensive. Plausible within ~2 years → add as `NOT NULL DEFAULT 1` now. **Decision 2026-09-14: hold — do NOT add tenant_id columns.** Multi-tenancy is not happening in v2 and is only a maybe for v3, where the lean is DB-per-tenant (no tenant_id columns needed either way). **Ratified 2026-10-05: DB-per-tenant confirmed — see "YC 3.0 — Tenancy plan" above; the tenant_id hold is permanent.**
 
 ---
 
@@ -232,4 +403,4 @@ role-convention item were confirmed done and dropped).
 
 ---
 
-*Last updated: 2026-09-23*
+*Last updated: 2026-10-05*
