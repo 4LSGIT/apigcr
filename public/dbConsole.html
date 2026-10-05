@@ -284,7 +284,9 @@ let authed = false;
   }
   userHint.textContent = `${u.user_name || u.user} · SU`;
   authed = true;
-  bootAuthed();
+  // Defer past the const/let declarations below — a sync call here hits the
+  // TDZ when currentUser is already present (the normal boot path).
+  setTimeout(bootAuthed, 0);
 })();
 
 // ── stop-on-error toggle (Run All only) ──────────────────────────────────────

@@ -329,7 +329,10 @@ let authed = false;
   document.getElementById("userHint").textContent =
     `${u.user_name || u.user} · SU`;
   authed = true;
-  bootAuthed();
+  // Defer past the const/let declarations below — a sync call here hits the
+  // TDZ when currentUser is already present (the normal boot path), and in
+  // this pane the throw is synchronous, killing the whole script.
+  setTimeout(bootAuthed, 0);
 })();
 
 // ── tiny helpers ────────────────────────────────────────────────────────────

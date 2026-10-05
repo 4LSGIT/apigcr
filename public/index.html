@@ -3994,8 +3994,11 @@
       // must be a root-relative path — an absolute ("https://…") or
       // protocol-relative ("//…") URL would ship the Bearer cross-origin.
       // Every legitimate caller passes "/api/…"-style paths; throw loudly
-      // rather than send.
-      if (typeof endpoint !== "string" || !/^\/(?!\/)/.test(endpoint)) {
+      // rather than send. Backslash and TAB/CR/LF are rejected too: the
+      // WHATWG URL parser treats "\" as "/" and strips those control chars
+      // before parsing, so "/\evil.com" or "/\t/evil.com" would re-resolve
+      // cross-origin despite passing the leading-slash check.
+      if (typeof endpoint !== "string" || !/^\/(?!\/)/.test(endpoint) || /[\\\t\n\r]/.test(endpoint)) {
         throw new Error(`apiSend: endpoint must be a root-relative path, got ${JSON.stringify(endpoint)}`);
       }
       // Ensure JWT — prompt the user if missing or expired

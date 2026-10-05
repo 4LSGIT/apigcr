@@ -90,7 +90,9 @@
     method = method || 'GET';
     // Same-origin guard, mirroring the shell's apiSend: the Bearer only ever
     // goes to root-relative paths; absolute/protocol-relative URLs throw.
-    if (typeof endpoint !== 'string' || !/^\/(?!\/)/.test(endpoint)) {
+    // Backslash + TAB/CR/LF rejected too — the WHATWG URL parser treats "\"
+    // as "/" and strips those control chars, re-resolving cross-origin.
+    if (typeof endpoint !== 'string' || !/^\/(?!\/)/.test(endpoint) || /[\\\t\n\r]/.test(endpoint)) {
       throw new Error('apiSend: endpoint must be a root-relative path, got ' + JSON.stringify(endpoint));
     }
     var token = jwt();

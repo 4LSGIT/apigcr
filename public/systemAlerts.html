@@ -188,7 +188,9 @@ let authed = false;
     return;
   }
   authed = true;
-  bootAuthed();
+  // Defer past the const/let declarations below — a sync call here hits the
+  // TDZ when currentUser is already present (the normal boot path).
+  setTimeout(bootAuthed, 0);
 })();
 
 // ── state ────────────────────────────────────────────────────────────────────
