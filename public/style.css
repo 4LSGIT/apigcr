@@ -398,8 +398,8 @@ body.swal2-shown > [aria-hidden="true"] {
 /* Home tile buttons: keep the original look, just make long labels
    (e.g. "More Features") wrap inside the fixed tile instead of overflowing. */
 #tabHome .home-btn {
-  width: 100px;
-  height: 100px;
+  width: 120px;
+  height: 120px;
   box-sizing: border-box;
   vertical-align: top;
   white-space: normal;
