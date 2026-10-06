@@ -897,13 +897,17 @@ async function listTasks(db, {
   }
 
   if (query) {
+    // A bare number also matches the task ID (typing "1146" finds task 1146).
+    const idMatch = /^\d+$/.test(query.trim());
     where.push(`(
       t.task_title LIKE ? OR t.task_desc LIKE ?
       OR co.contact_name LIKE ?
       OR ca.case_number LIKE ? OR ca.case_number_full LIKE ?
+      ${idMatch ? 'OR t.task_id = ?' : ''}
     )`);
     const q = `%${query}%`;
     params.push(q, q, q, q, q);
+    if (idMatch) params.push(Number(query.trim()));
   }
 
   if (assigned_to) { where.push('t.task_to = ?');   params.push(assigned_to); }

@@ -344,3 +344,19 @@ describe('listTasks defer filter (S2)', () => {
     expect(rowsQuery.params.slice(-3)[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
+
+describe('listTasks text query', () => {
+  test('a bare number also matches the task ID, bound after the LIKE params', async () => {
+    const db = makeListDb();
+    await taskService.listTasks(db, { query: ' 1146 ' });
+    expect(db.seen[0].sql).toMatch(/OR t\.task_id = \?/);
+    expect(db.seen[0].params).toContain(1146);
+    expect(db.seen[0].params.indexOf(1146)).toBe(db.seen[0].params.lastIndexOf('% 1146 %') + 1);
+  });
+
+  test('non-numeric text does not add the ID match', async () => {
+    const db = makeListDb();
+    await taskService.listTasks(db, { query: 'smith 12' });
+    expect(db.seen[0].sql).not.toMatch(/task_id = \?/);
+  });
+});
