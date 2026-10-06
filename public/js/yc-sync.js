@@ -61,6 +61,16 @@
  * A handler receiving it MUST NOT merge it into entity state — it is not a
  * column. Answer it with a refetch and return.
  *
+ * ── RESERVED FIELD: `yc_pipeline` (bus audit, Oct 2026) ─────────────────────
+ *
+ * The narrow sibling: "this case's DERIVED pipeline state changed; its cases
+ * columns did not." Emitted by the requirement-override matcher — an override
+ * flips a Steps-panel status that lives in case_requirement_overrides, so
+ * there is no column diff to carry and a full `yc_refetch` would buy a case
+ * GET for a row that did not change. case.html answers it with loadPipeline()
+ * alone (same echo fence and visibility parking as the advance signature).
+ * Same non-column rule: never merged into entity state.
+ *
  * ── Addresses ───────────────────────────────────────────────────────────────
  *
  *   'case:AAAAAAAA'  'contact:1001'  'appt:55'  'event:12'
@@ -600,6 +610,16 @@
        membership DID change (the phantom fix-up) still carries `changes` with
        just the membership fields, so the board and the Cases tab hear it. */
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/move$/,    'case',    function (r) { return r && r.changes; }, ['POST']],
+    /* Requirement overrides (set + clear). Derived Steps state changed with
+       NO cases-column diff, so the marker is `yc_pipeline` (header), not
+       values and not `yc_refetch`. Unconditional: both verbs change the
+       derived status by definition, and the response ({override} / cleared
+       result) carries nothing the sniff could verify. Cost accepted: the
+       board's case:* subscriber refetches a board an override cannot have
+       changed — debounced, and cheaper than teaching the board to parse
+       field names. */
+    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/requirements\/[^/]+\/override$/, 'case',
+      function () { return { yc_pipeline: 1 }; }, ['POST', 'DELETE']],
 
     /* CASE ↔ CONTACT LINKS (Slice 3c). `case_relate` — who is attached to this
        case and in what role. Four verbs, ONE matcher, because every write to

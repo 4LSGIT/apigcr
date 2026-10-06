@@ -369,6 +369,19 @@ describe('_sniff', () => {
     expect(seen[0].fields).toEqual({ case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
   });
 
+  test('requirement override (set + clear) emits the yc_pipeline marker', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'case:AAAA');
+    w.YC._sniff('POST', '/api/cases/AAAA/pipeline/requirements/sign_retainer/override',
+                { status: 'success', override: { status: 'na' } });
+    // DELETE proves the global method gate admits it for this matcher, as it
+    // does for case_relate.
+    w.YC._sniff('DELETE', '/api/cases/AAAA/pipeline/requirements/sign_retainer/override',
+                { status: 'success', cleared: true });
+    expect(seen.map(s => s.fields)).toEqual([{ yc_pipeline: 1 }, { yc_pipeline: 1 }]);
+    expect(seen[0].addr).toBe('case:AAAA');
+  });
+
   test('a response with no changes key at all emits nothing', () => {
     const w = mkWindow();
     const seen = spy(w, 'case:*');

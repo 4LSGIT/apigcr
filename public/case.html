@@ -3066,6 +3066,22 @@ YC.on(`case:${caseID}`, '*', (fields) => {
     return;
   }
 
+  /* RESERVED FIELD `yc_pipeline` (yc-sync.js header): a requirement override
+     somewhere changed this case's derived Steps state; no cases column moved.
+     Handled BEFORE the merge for the same reason yc_refetch is — the marker is
+     not a column and must never land in entityData.case or a YCForm push —
+     and it RETURNS: the override matcher emits the marker alone by contract.
+     Same fences as the advance signature below; an override made in THIS frame
+     already called loadPipeline(), which re-stamped pwLastSet, so its own echo
+     is swallowed by pwRecentlyRefreshed. */
+  if ('yc_pipeline' in fields) {
+    if (!pwRecentlyRefreshed()) {
+      if (pageVisible()) loadPipeline();
+      else pipelineStale = true;
+    }
+    return;
+  }
+
   const c = window.entityData.case;
   if (!c) return;
 
