@@ -699,25 +699,25 @@
       <span class="yc-f-row"><button onclick="NewCaseForm()">
         <i class="fa-solid fa-folder-plus"></i> New Case
       </button></span>
-      <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Query</span>
       <input id="tabCasesQuery" type="text" placeholder="Search cases…" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" /></label>
       <div class="yc-f-panel">
-      <label class="yc-f"><span class="yc-f-l">Case Type:</span>
+      <label class="yc-f"><span class="yc-f-l">Case Type</span>
       <select id="tabCasesType" style="width: auto">
         <option value="%">All</option>
         <!-- Type / "Type: Subtype" options are populated from fe-case_types
              (populateCaseTypeFilter in scripts.js) after firmData loads. -->
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Stage:</span>
+      <label class="yc-f"><span class="yc-f-l">Stage</span>
       <select id="tabCasesStage" style="width: auto">
         <option value="%">All</option>
         <option>Lead</option>
         <option>Filed</option>
         <option>Closed</option>
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Case Status:</span>
+      <label class="yc-f"><span class="yc-f-l">Case Status</span>
       <input id="tabCasesStatus" style="width: auto" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" /></label>
-      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By:</span>
+      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabCasesOrder" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="co.contact_lname">Client Last Name</option>
         <option value="co.contact_name">Client First Name</option>
@@ -928,10 +928,10 @@
       <span class="yc-f-row"><button onclick="newContact()">
         <i class="fa-solid fa-user-plus"></i> New Contact
       </button></span>
-      <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Query</span>
       <input id="tabContactsQuery" type="text" placeholder="Search contacts…" onkeypress="if (event.keyCode == 13) {tabContactsGet(0)}" /></label>
       <div class="yc-f-panel">
-      <label class="yc-f"><span class="yc-f-l">Role:</span>
+      <label class="yc-f"><span class="yc-f-l">Role</span>
       <select id="tabContactsRole" style="width: auto" onchange="tabContactsGet(0)">
         <option value="">All roles</option>
         <!-- Both fixed options are IN THE MARKUP, not appended by
@@ -941,14 +941,14 @@
              sentinel, never a role_code; contactService.ROLE_NONE. -->
         <option value="-none">No roles</option>
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Filter2:</span>
+      <label class="yc-f"><span class="yc-f-l">Filter2</span>
       <select disabled>
         <option>All</option>
         <option>All</option>
         <option>All</option>
         <option>All</option>
       </select></label>
-      <label class="yc-f" data-nocount><span class="yc-f-l">Sort By:</span>
+      <label class="yc-f" data-nocount><span class="yc-f-l">Sort By</span>
       <select id="tabContactsSort" style="width: auto">
         <option value="contact_lname ASC">Last Name (a&rarr;z)</option>
         <option value="contact_lname DESC">Last Name (a&larr;z)</option>
@@ -1152,13 +1152,13 @@
       <!-- U2b: the type list is built from the registry by tabApptsTypesLoad()
            (active kind='meeting' types). Default / All / Other are fixed and
            stay put; the types are inserted before Other. -->
-      <label class="yc-f"><span class="yc-f-l">Type:</span>
+      <label class="yc-f"><span class="yc-f-l">Type</span>
       <select id="tabApptsType" style="width: auto">
         <option value="__default__">Default</option>
         <option value="__all__">All</option>
         <option value="__other__">Other</option>
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Status:</span>
+      <label class="yc-f"><span class="yc-f-l">Status</span>
       <select id="tabApptsStatus" style="width: auto">
         <option>All</option>
         <option>Attended</option>
@@ -1167,11 +1167,11 @@
         <option>Rescheduled</option>
         <option selected>Scheduled</option>
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">With:</span>
+      <label class="yc-f"><span class="yc-f-l">With</span>
       <select id="tabApptsWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
         <option value="">All</option>
       </select></label>
-      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time:</span>
+      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time</span>
       <select id="tabApptsTime" style="width: auto" onchange="tabApptsTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
@@ -1209,15 +1209,15 @@
     <h1><i class="fa-solid fa-flag"></i> Events <i class="fa-solid fa-flag"></i></h1>
     <div class="yc-filters">
       <span class="yc-f-row"><button id="tabEventsNew" onclick="newEventDialog({ linkPick: true, onSaved: () => tabEventsGet(0) })"><i class="fa-solid fa-flag"></i> New Event</button></span>
-      <label class="yc-f yc-f-q"><span class="yc-f-l">Search:</span>
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Search</span>
       <input id="tabEventsQ" style="width: auto" placeholder="Search titles…"
              onkeydown="if(event.key==='Enter'){event.preventDefault();tabEventsGet(0);}" /></label>
       <div class="yc-f-panel">
-      <label class="yc-f"><span class="yc-f-l">Type:</span>
+      <label class="yc-f"><span class="yc-f-l">Type</span>
       <select id="tabEventsType" class="eventtypelist" style="width: auto">
         <option value="">All types</option>
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Status:</span>
+      <label class="yc-f"><span class="yc-f-l">Status</span>
       <select id="tabEventsStatus" style="width: auto">
         <option selected>Scheduled</option>
         <option>Completed</option>
@@ -1240,7 +1240,7 @@
         <input type="checkbox" id="tabEventsUnlinked" onchange="tabEventsGet(0)" />
         <span class="yc-f-l">Unlinked only</span>
       </label>
-      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time:</span>
+      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time</span>
       <select id="tabEventsTime" style="width: auto" onchange="tabEventsTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
@@ -1251,7 +1251,7 @@
       <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
       <label id="tabEventsDateLabel"></label>
       <input id="tabEventsDate2" type="date" style="width: auto; display: none" /></span>
-      <label class="yc-f" data-nocount><span class="yc-f-l">Sort:</span>
+      <label class="yc-f" data-nocount><span class="yc-f-l">Sort</span>
       <select id="tabEventsSort" style="width: auto" onchange="tabEventsGet(0)">
         <option value="asc" selected>Soonest first</option>
         <option value="desc">Latest first</option>
@@ -1332,7 +1332,7 @@
         <span class="calx-chip" data-kind="other">Other</span>
       </span>
       <div class="yc-f-panel">
-      <label class="yc-f"><span class="yc-f-l">State:</span>
+      <label class="yc-f"><span class="yc-f-l">State</span>
       <select id="calxState" style="width: auto">
         <option value="live" selected>Live</option>
         <option value="resolved">Resolved</option>
@@ -1342,7 +1342,7 @@
       <label class="yc-f yc-f-check">
         <input type="checkbox" id="calxSuperseded" /> <span class="yc-f-l">+ superseded</span>
       </label>
-      <label class="yc-f"><span class="yc-f-l">With:</span>
+      <label class="yc-f"><span class="yc-f-l">With</span>
       <select id="calxWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
         <option value="">Everyone</option>
       </select></label>
@@ -2549,12 +2549,12 @@
   <div id="tabLogs" class="tab-main">
     <h1><i class="fa-solid fa-box-archive"></i> Logs <i class="fa-solid fa-box-archive"></i></h1>
     <div class="yc-filters">
-      <label class="yc-f yc-f-q"><span class="yc-f-l">Query:</span>
+      <label class="yc-f yc-f-q"><span class="yc-f-l">Query</span>
       <input id="tabLogQuery" placeholder="Search the log…" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}" /></label>
       <!-- Type + the contextual direction select are ONE unit (a <span>: two
            controls) so direction appears beside the type that reveals it. -->
       <div class="yc-f-panel">
-      <span class="yc-f"><span class="yc-f-l">Type:</span>
+      <span class="yc-f"><span class="yc-f-l">Type</span>
       <select id="tabLogType">
         <option>All</option>
         <option>Appt</option>
@@ -2573,11 +2573,11 @@
         <option value="outgoing">Outgoing</option>
         <option value="incoming">Incoming</option>
       </select></span>
-      <label class="yc-f"><span class="yc-f-l">By:</span>
+      <label class="yc-f"><span class="yc-f-l">By</span>
       <select id="tabLogBy" class="userslist" style="width: auto">
         <option value="">All</option>
       </select></label>
-      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time:</span>
+      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time</span>
       <select id="tabLogTime" style="width: 150px" onchange="tabLogTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
