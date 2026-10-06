@@ -392,6 +392,12 @@ Active surfaces with known next steps.
 
 - **Route handler naming.** `scripts/updateRoutes.js` writes `ref/routes.md` — a grep-able access-control matrix with middleware and handler columns per route. Handlers passed as inline arrows (`router.get('/x', mw, (req, res) => {...})`) show as `<anonymous>` in the handler column; named function declarations, `const`-bound arrows, and named function expressions all get picked up by `Function.prototype.name`. When you touch a route file for any reason, name the handlers in it — verb+noun matching URL semantics (`getCases`, `createWorkflow`, `cancelExecution`). No dedicated naming pass. Worst-offender files visible by skimming `ref/routes.md` for sections heavy on `—` in the Handler column. Pairs with the `requireAuth` self-naming convention (see Slice 1 of the client portal work) — together they make `ref/routes.md` a navigable auth + routing map.
 
+- **UI consistency leftovers (mobile arc, closed 2026-10-06).** Labels and hints are unified (AI_CONTEXT §12); still open:
+  - **Injected-CSS load order — root cause.** `scripts.js` appends its `<style>` blocks before `style.css`'s link, so every tie goes to style.css; four dialogs needed a specificity bump (CLAUDE.md). Moving the injection after the sheet fixes it at the source but flips EVERY tie at once — needs a full before/after harness at 320–1280, not a drive-by.
+  - **Checkbox/radio option labels** ("Active", "Notify assigner…", "All-day event", "SMS") vary: 13px `--text-2`, 0.9em, inherited. The next "one look" layer.
+  - **yc-forms sizes are rem-based** — `.yc-label` 0.92rem (14.72px), `.yc-sublabel` 0.8rem (12.8px) against the app's 14/12px tokens. Converge when yc-forms is next touched; check that every page loading it also loads `theme.css` first.
+  - **The mobile survey asserts overflow only.** The label/hint uniformity checks were session-scratch Playwright scripts; a `--looks` mode in `scripts/mobile-survey/` would make them a gate.
+
 - **Documentation currency** now has a mechanism (2026-09-14): doc≠code divergences are filed to scratch `ns=docs` at discovery; the weekly docs review (`ref/DOCS_REVIEW.md`) drains the queue and updates `ref/AI_CONTEXT.md`'s currency header. No more ad-hoc drift sweeps.
 
 ---

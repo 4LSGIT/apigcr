@@ -138,6 +138,8 @@ The rest, in no particular order:
 - Module resolution: `require('./internal_functions')` resolves to its `index.js` — adding function files needs no consumer updates.
 - Client JWT rides exactly two transports — the shell's `apiSend` / `uploadWithProgress` (frozen bindings, root-relative-only, `redirect:'error'`); panes never read the token (liveHost.html is the one standalone exception). Authored bytes never serve executable on the app origin — new byte-serving routes copy the documents-raw allowlist+nosniff pattern. Details: AI_CONTEXT §3.
 - `case.html` and `contact.html` render in quirks mode (no doctype): tables there don't inherit `font-size` — declare it on the table (`.logTable` does). Expect other quirks (box model) until the doctype slice in `ref/plans.md` lands.
+- `scripts.js` injects its dialog CSS from `<head>`, BEFORE `style.css`'s `<link>` — an injected rule that only TIES a style.css rule loses. The usual winner is style.css's global `input:not([type=radio]):not([type=checkbox])` (0,2,1, 200px wide). Win on specificity (scope through `.swal2-html-container` or the dialog's container), never by load order. Bit four dialogs in the Oct 2026 mobile arc.
+- Form labels and hints have one look each, set by CLASS, never inline font/colour: labels `.input-label` / `.yc-flabel` / the dialog label rules, hints `.sub-label` / `.yc-hint`. Where each is defined: AI_CONTEXT §12.
 
 ## AI session data access
 

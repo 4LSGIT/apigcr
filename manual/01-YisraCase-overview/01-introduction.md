@@ -91,6 +91,24 @@ they live behind **More Features**, and the section READMEs refer to that as
 There is also a **Help & Support** button at the bottom of the sidebar — one
 textarea that files a report with the technical state attached automatically.
 
+### On a phone
+
+YisraCase works at phone width; a few things look different:
+
+- The sidebar folds away behind the **☰** button at the top left.
+- The Cases, Contacts, Appointments, Events, Calendar, Tasks and Log tabs
+  (and the Log inside a case or contact) show a **Filters** button instead of
+  the full filter bar. The number on it is how many filters are in use; tap
+  it to open the bar.
+- Wide tables scroll sideways inside their own box — swipe the table, not the
+  page.
+- Forms and dialogs put each label above its field.
+- The appointment calendar (Appointments → **Calendar**) opens on Day view;
+  the Month / Week / Day buttons still switch.
+- The builders and editors under **More Features** (workflows, sequences,
+  forms and the like) are laid out for a desktop screen. They open on a phone,
+  but expect a lot of scrolling.
+
 ---
 
 ## A Note on Terminology
