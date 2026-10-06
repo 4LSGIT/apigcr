@@ -65,6 +65,27 @@
   This renderer stays deliberately dumb about that — it just sends the
   option's value.
 
+  ── ROW EXPAND (2026-10-06) ──────────────────────────────────────────────────
+  Every cell is ONE line (nowrap + ellipsis, full text in the title tooltip).
+  Click a row to open it — its cells switch to pre-wrap, so a long note, a
+  multi-line fee schedule, or a dismissal notice shows in full with its line
+  breaks — and click again to close it. The footer's "Expand rows" switch opens
+  every row; a clicked row then overrides the switch in the other direction.
+  This is the log table's tri-state (scripts.js, .log-data-cell), at ROW grain:
+  a view row is one record (one case on the BK Worksheet) and every cell in it
+  that runs long belongs to the same read. The log scopes to the data cell
+  because its rows carry half a dozen affordances; here every affordance is a
+  [data-act] element, so the row handler simply defers to those.
+
+  Replaces the old ">60 characters → wrap" rule, which made rows as tall as
+  their longest note on every render (lead_followups' Notes column, and the
+  BK Worksheet once it gained one).
+
+  Row state is keyed to the row's first action id (case_id, contact_id …) so it
+  survives sort, paging, and the silent refresh after an open_form save; a view
+  with no id column falls back to the row's content. Nothing is persisted
+  except the switch, per view, in localStorage (yc.customView.expand).
+
   ── ESCAPING ─────────────────────────────────────────────────────────────────
   Every definition-supplied string (title, description, labels, caveats,
   option labels) and every cell value is model- or client-written text and
@@ -126,7 +147,22 @@
   th .dir { color: var(--accent); margin-left: 4px; }
   td.num, th.num { text-align: right; }
   td.ctr, th.ctr { text-align: center; }
-  td.wrap { white-space: normal; }
+  /* Row expand — see ROW EXPAND in the header. Specificity: the two "open"
+     rules are 0,1,2; the is-collapsed override is 0,2,3 and beats them
+     outright, so a row closed while the switch is on stays closed. */
+  #tbody tr { cursor: pointer; }
+  table.rows-expanded td,
+  tr.is-expanded td {
+    white-space: pre-wrap; overflow: visible; text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  table.rows-expanded tr.is-collapsed td {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    overflow-wrap: normal;
+  }
+  /* Marks a row opened by hand (not by the switch) — with the switch on,
+     every row would carry it and it would mean nothing. */
+  tr.is-expanded td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   tr:hover td { background: rgba(96,165,250,.06); }
   a.act { color: var(--accent); text-decoration: none; }
   a.act:hover { text-decoration: underline; }
@@ -198,7 +234,7 @@
   </div>
   <div id="vStatus" class="muted small" style="margin-bottom: 6px;"></div>
   <div id="vError" class="err hidden" style="margin-bottom: 8px;"></div>
-  <div class="tablewrap"><table>
+  <div class="tablewrap"><table id="vTable">
     <thead id="thead"></thead>
     <tbody id="tbody"></tbody>
   </table></div>
@@ -262,6 +298,14 @@ let lastResult = null;     // last run payload
 let displayCols = [];      // computed visible column model
 let sortKey = null, sortDir = 1;
 let pageNo = 0;
+// Row expand state — see ROW EXPAND in the header. expandAll is the footer
+// switch (persisted per view); rowOverrides holds only rows that DIVERGE from
+// it (rowKey → true open / false closed), so flipping the switch is a clean
+// reset and a row toggled back to the switch's state follows it again.
+let expandAll = false;
+const rowOverrides = new Map();
+let downX = 0, downY = 0;   // drag-to-select guard, recorded on mousedown
+const EXPAND_STORE = "yc.customView.expand";
 
 function E(id) { return document.getElementById(id); }
 function esc(s) {
@@ -291,6 +335,7 @@ function toast(msg) {
 async function init() {
   E("vBack").onclick = showList;
   E("tbody").addEventListener("click", onCellClick);
+  E("tbody").addEventListener("mousedown", (ev) => { downX = ev.clientX; downY = ev.clientY; });
 
   try {
     const d = await P.apiSend("/api/reports?kind=view", "GET");
@@ -335,6 +380,8 @@ async function openView(id) {
     return;
   }
   sortKey = null; sortDir = 1; pageNo = 0; lastResult = null;
+  expandAll = readExpandPref(currentView.report_key);
+  rowOverrides.clear();
 
   E("listPane").classList.add("hidden");
   E("viewPane").classList.remove("hidden");
@@ -542,9 +589,13 @@ function renderTable() {
   const rows = sortedRows();
   const start = pageNo * PAGE_SIZE;
   const slice = rows.slice(start, start + PAGE_SIZE);
-  E("tbody").innerHTML = slice.map((row, ri) =>
-    "<tr>" + displayCols.map(c => cellHtml(row, c, start + ri)).join("") + "</tr>"
-  ).join("");
+  E("vTable").classList.toggle("rows-expanded", expandAll);
+  E("tbody").innerHTML = slice.map((row, ri) => {
+    const o = rowOverrides.get(rowKeyOf(row));
+    const cls = o === true ? ' class="is-expanded"' : o === false ? ' class="is-collapsed"' : "";
+    return `<tr data-r="${start + ri}"${cls}>` +
+      displayCols.map(c => cellHtml(row, c, start + ri)).join("") + "</tr>";
+  }).join("");
 
   // Pager — the shared footer (/js/ycPager.js) over the client-side slice.
   YcPager.renderFooter(E("pgFoot"), {
@@ -552,6 +603,11 @@ function renderTable() {
     onPage: (p) => { pageNo = p; renderTable(); },
     persistKey: 'customView',
     onLimit: (n) => { PAGE_SIZE = n; pageNo = 0; renderTable(); },
+    expand: {
+      label: "Expand rows", checked: expandAll,
+      title: "Show every cell in full. Click a single row to open or close just that row.",
+      onChange: setExpandAll,
+    },
   });
 }
 
@@ -566,32 +622,113 @@ function cellHtml(row, c, absIdx) {
   const v = row[c.key];
   const shown = esc(displayValue(v, c));
   const w = c.width ? ` style="max-width:${c.width}px"` : "";
-  const wrap = c.kind === "text" && String(v ?? "").length > 60 ? " wrap" : "";
   const title = ` title="${esc(v ?? "")}"`;
+  // NO whitespace between the <td> tags and their content: an expanded row is
+  // white-space:pre-wrap, which renders a template's newline + indentation as
+  // a blank line above the link or a line break before the copy button.
 
   const a = c.action;
   if (a && a.type === "copy") {
-    return `<td class="${alignClass(c)}${wrap}"${w}${title}>${shown}
-      <button class="copybtn" data-act="copy" data-r="${absIdx}" data-k="${esc(c.key)}"
-        title="Copy"><i class="fa-regular fa-copy"></i></button></td>`;
+    return `<td class="${alignClass(c)}"${w}${title}>${shown}` +
+      `<button class="copybtn" data-act="copy" data-r="${absIdx}" data-k="${esc(c.key)}" ` +
+      `title="Copy"><i class="fa-regular fa-copy"></i></button></td>`;
   }
   if (a && (ACTION_FILE_KIND[a.type] || a.type === "open_form")) {
     const id = row[a.idKey];
     if (id !== null && id !== undefined && id !== "") {
       const label = a.labelKey && row[a.labelKey] != null && row[a.labelKey] !== ""
         ? String(row[a.labelKey]) : String(v ?? id);
-      return `<td class="${alignClass(c)}"${w}${title}>
-        <a href="#" class="act" data-act="${esc(a.type)}" data-r="${absIdx}"
-           data-k="${esc(c.key)}">${esc(label)}</a></td>`;
+      return `<td class="${alignClass(c)}"${w}${title}>` +
+        `<a href="#" class="act" data-act="${esc(a.type)}" data-r="${absIdx}" ` +
+        `data-k="${esc(c.key)}">${esc(label)}</a></td>`;
     }
   }
-  return `<td class="${alignClass(c)}${wrap}"${w}${title}>${shown}</td>`;
+  return `<td class="${alignClass(c)}"${w}${title}>${shown}</td>`;
 }
 
-/** Delegated action handler — no inline JS with interpolated row values. */
+// ── Row expand ──────────────────────────────────────────────────────────────
+
+/**
+ * Stable identity for a row's expand state: the first visible column whose
+ * action names a non-empty id (the ✎/case/debtor columns on the BK Worksheet
+ * → case_id), else the row's content. Keyed by id, an opened row stays open
+ * through sort, paging and the post-save refresh even though its cells changed.
+ */
+function rowKeyOf(row) {
+  for (const c of displayCols) {
+    const k = c.action && c.action.idKey;
+    if (k && row[k] !== null && row[k] !== undefined && row[k] !== "") {
+      return `${k}\u0000${row[k]}`;
+    }
+  }
+  return `\u0001${JSON.stringify(row)}`;
+}
+
+/** Row click (anything not a [data-act] affordance) → toggle that row. */
+function toggleRow(ev) {
+  const t = ev.target;
+  if (!t || !t.closest) return;
+  if (t.closest("a, button, input, select, textarea, label")) return;
+  // Drag-to-select guard: people copy values out of these cells, and the
+  // mouseup that ends a selection still fires a click. Movement threshold plus
+  // a live-selection check, because either alone has a hole (the log's rule).
+  if (Math.abs(ev.clientX - downX) > 4 || Math.abs(ev.clientY - downY) > 4) return;
+  const sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed && sel.toString().length) return;
+
+  const tr = t.closest("tr[data-r]");
+  if (!tr) return;
+  const row = sortedRows()[Number(tr.dataset.r)];
+  if (!row) return;
+  const key = rowKeyOf(row);
+  const open = tr.classList.contains("is-expanded") ||
+    (expandAll && !tr.classList.contains("is-collapsed"));
+  const next = !open;
+  tr.classList.remove("is-expanded", "is-collapsed");
+  // Record ONLY a divergence from the switch, so a row toggled back to the
+  // switch's state follows the switch again instead of being pinned.
+  if (next !== expandAll) {
+    tr.classList.add(next ? "is-expanded" : "is-collapsed");
+    rowOverrides.set(key, next);
+  } else {
+    rowOverrides.delete(key);
+  }
+}
+
+/** The footer switch: the master reset — every per-row override is dropped. */
+function setExpandAll(on) {
+  expandAll = !!on;
+  rowOverrides.clear();
+  E("vTable").classList.toggle("rows-expanded", expandAll);
+  E("tbody").querySelectorAll("tr.is-expanded, tr.is-collapsed")
+    .forEach(tr => tr.classList.remove("is-expanded", "is-collapsed"));
+  writeExpandPref(currentView && currentView.report_key, expandAll);
+}
+
+// One localStorage entry, a JSON map report_key → true (only "on" is stored).
+// Storage can be absent or throw (private mode, blocked site data) — the
+// switch then simply starts off.
+function readExpandPref(reportKey) {
+  try {
+    const map = JSON.parse(localStorage.getItem(EXPAND_STORE) || "{}");
+    return !!(map && reportKey && map[reportKey] === true);
+  } catch (_) { return false; }
+}
+function writeExpandPref(reportKey, on) {
+  if (!reportKey) return;
+  try {
+    const raw = JSON.parse(localStorage.getItem(EXPAND_STORE) || "{}");
+    const map = raw && typeof raw === "object" ? raw : {};
+    if (on) map[reportKey] = true; else delete map[reportKey];
+    localStorage.setItem(EXPAND_STORE, JSON.stringify(map));
+  } catch (_) { /* best effort */ }
+}
+
+/** Delegated action handler — no inline JS with interpolated row values.
+ *  A click that lands on no [data-act] element is a row toggle. */
 function onCellClick(ev) {
   const el = ev.target.closest("[data-act]");
-  if (!el) return;
+  if (!el) return toggleRow(ev);
   ev.preventDefault();
   const rows = sortedRows();
   const row = rows[Number(el.dataset.r)];

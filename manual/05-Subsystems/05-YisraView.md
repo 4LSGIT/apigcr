@@ -64,6 +64,15 @@ tail.
 Opening a case from a view is the same as opening it anywhere else — if it's
 already open, you're taken to it rather than getting a duplicate.
 
+**Long cells** — every cell shows on one line, cut off with "…" when it runs
+long; hover for the full text. **Click a row** (anywhere but a link or the copy
+icon) to open it: its cells show in full, line breaks included, and the row gets
+a thin accent bar on the left. Click again to close it. **Expand rows**, beside
+the page-size picker under the table, opens every row at once — with it on, a
+click closes just that row. An opened row stays open while you sort, page, or
+save from a worksheet form; the switch is remembered per view in this browser.
+Dragging across text to select it never toggles the row.
+
 **Caveats** are printed under the table, and **Show the SQL behind this view**
 sits under those. Same principle as reports: nothing here is a black box.
 
@@ -76,6 +85,7 @@ sits under those. Same principle as reports: nothing here is a black box.
 | **Leads — Follow Ups** | Open cases and where each one stands: first credit-counseling course, pre-petition contract, notes. Defaults to Open cases with nothing sent yet. |
 | **341 Hearings** | Section 341 meetings, soonest first, with docket, chapter, trustee and the dial-in link. Set **From** to a past date to review recent hearings. |
 | **Filing Fees & Installments** | Cases on an installment filing fee: where the fee stands, when the final installment is due, any live show-cause order. Closed cases hidden unless you ask for them. |
+| **Bankruptcy Worksheet** | The bankruptcy case list, one row per filed case — the spreadsheet's columns plus the case notes (with any case alert first, marked ⚠). **✎** opens the row's worksheet form, notes and alerts included. Defaults to cases filed this year. |
 
 These are starting points, not the limit. Anyone can build a view of anything
 the database actually knows — see [Authoring a view](#authoring-a-view) — or
@@ -291,8 +301,10 @@ to the case, or into a worksheet form, is how you act on what a view shows you.
 ### The page keeps no memory
 
 A view tab with a `?key=` opens that view every time. A tab without one always
-opens the list. Nothing is remembered between loads, and **all views** is always
-available in the top-left, so no view can trap you.
+opens the list. Nothing about *where you were* is remembered between loads —
+only two display preferences, in this browser: rows per page, and each view's
+**Expand rows** switch. **All views** is always available in the top-left, so no
+view can trap you.
 
 ### Big lists are capped
 
