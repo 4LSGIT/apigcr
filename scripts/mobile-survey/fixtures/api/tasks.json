@@ -1,0 +1,78 @@
+{
+ "status": "success",
+ "total": 3,
+ "data": [
+  {
+   "id": 500,
+   "title": "Call client about documents",
+   "status": "Pending",
+   "due": "2026-10-01",
+   "start": null,
+   "to": {
+    "id": 1,
+    "name": "Alex Admin"
+   },
+   "from": {
+    "id": 2,
+    "name": "Sam Staff"
+   },
+   "link": {
+    "type": "case",
+    "id": "TESTCASE1",
+    "title": "26-99999 Jane Testcase"
+   },
+   "created": "2026-09-28T10:00:00Z",
+   "source": "human",
+   "desc": "Layout-test task",
+   "notify": 0
+  },
+  {
+   "id": 501,
+   "title": "Upload schedules to the court portal",
+   "status": "Pending",
+   "due": "2026-10-02",
+   "start": null,
+   "to": {
+    "id": 1,
+    "name": "Alex Admin"
+   },
+   "from": {
+    "id": 2,
+    "name": "Sam Staff"
+   },
+   "link": {
+    "type": "case",
+    "id": "TESTCASE1",
+    "title": "26-99999 Jane Testcase"
+   },
+   "created": "2026-09-28T10:00:00Z",
+   "source": "human",
+   "desc": "Layout-test task",
+   "notify": 0
+  },
+  {
+   "id": 502,
+   "title": "Confirm hearing link",
+   "status": "Pending",
+   "due": "2026-10-03",
+   "start": null,
+   "to": {
+    "id": 1,
+    "name": "Alex Admin"
+   },
+   "from": {
+    "id": 2,
+    "name": "Sam Staff"
+   },
+   "link": {
+    "type": "case",
+    "id": "TESTCASE1",
+    "title": "26-99999 Jane Testcase"
+   },
+   "created": "2026-09-28T10:00:00Z",
+   "source": "human",
+   "desc": "Layout-test task",
+   "notify": 0
+  }
+ ]
+}

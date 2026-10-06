@@ -1,0 +1,101 @@
+{
+ "status": "success",
+ "currentUser": {
+  "user": 1,
+  "user_name": "Alex Admin",
+  "user_fname": "Alex",
+  "user_lname": "Admin",
+  "user_initials": "AA",
+  "user_type": 1,
+  "does_appts": 1,
+  "user_auth": "authorized - SU",
+  "user_custom_tab": null
+ },
+ "phoneLines": [
+  {
+   "id": 1,
+   "phone_number": "5555550100",
+   "display_name": "Main Line",
+   "provider": "ringcentral",
+   "mms_capable": 1
+  },
+  {
+   "id": 2,
+   "phone_number": "5555550101",
+   "display_name": "Automations Outbound",
+   "provider": "quo",
+   "mms_capable": 0
+  }
+ ],
+ "emailFrom": [
+  {
+   "id": 1,
+   "email": "office@example.com",
+   "from_name": "Example Law Office",
+   "provider": "gmail",
+   "signature_html": "",
+   "signature_text": ""
+  },
+  {
+   "id": 2,
+   "email": "automations@example.com",
+   "from_name": "Automations",
+   "provider": "gmail",
+   "signature_html": "",
+   "signature_text": ""
+  }
+ ],
+ "users": [
+  {
+   "user": 1,
+   "user_name": "Alex Admin",
+   "user_fname": "Alex",
+   "user_lname": "Admin",
+   "user_initials": "AA",
+   "user_type": 1,
+   "does_appts": 1
+  },
+  {
+   "user": 2,
+   "user_name": "Sam Staff",
+   "user_fname": "Sam",
+   "user_lname": "Staff",
+   "user_initials": "SS",
+   "user_type": 1,
+   "does_appts": 1
+  },
+  {
+   "user": 3,
+   "user_name": "Pat Paralegal",
+   "user_fname": "Pat",
+   "user_lname": "Paralegal",
+   "user_initials": "PP",
+   "user_type": 1,
+   "does_appts": 0
+  }
+ ],
+ "settings": {
+  "case_types": {
+   "Bankruptcy": [
+    "Chapter 7",
+    "Chapter 13",
+    "Chapter 11"
+   ],
+   "Civil Litigation": [],
+   "Other": []
+  },
+  "event_types": [
+   "Hearing",
+   "Deadline",
+   "Conference"
+  ],
+  "lead_sources": [
+   "Website",
+   "Referral",
+   "Google"
+  ],
+  "firm_phone": "5555550100",
+  "trustees": []
+ },
+ "firmTimezone": "America/Detroit"
+}

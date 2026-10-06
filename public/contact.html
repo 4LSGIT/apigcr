@@ -18,6 +18,8 @@
   .tab-content { padding: 12px 6px; }
   .tab-content > h1 { font-size: 1.4em; margin: 0.4em 0; }
   #tabButtons h3, #tabButtons h4 { margin: 0.5em 4px; }
+  /* The phone must not split across lines ("586-" / "663-6480"). */
+  #tabButtons #phone { white-space: nowrap; }
   /* Tables scroll inside their own box instead of widening the page (Cases
      rendered 700px wide, Appointments 659px). */
   .tab-content > table.logTable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }

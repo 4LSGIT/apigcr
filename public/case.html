@@ -41,6 +41,13 @@
          <tbody> re-forms the table inside the scroller, full width. */
       .tab-content > table.logTable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
       .tab-content > table.logTable > tbody { display: table; width: 100%; }
+      /* Overview's case form: the .yc-stack rules lay it out; this is its
+         inner gutter (it has a border and no padding of its own). */
+      #tabOverview > .yc-stack { padding: 0 12px 10px; }
+      /* Header values that must not split across lines ("586-663-" / "6480",
+         "26-41234-" / "lsg"). Names and types stay wrappable — they can be
+         longer than a phone line. */
+      #phone, #leadID, #case { white-space: nowrap; }
     }
   </style>
 </head>
@@ -216,7 +223,8 @@
 
   <!-- Standard case tabs -->
   <div id="tabOverview" class="tab-content">
-    <div style="margin: 0 auto; max-width: 650px; border: 3px solid var(--border)">
+    <!-- .yc-stack: on phones each label sits above its control (style.css). -->
+    <div class="yc-stack" style="margin: 0 auto; max-width: 650px; border: 3px solid var(--border)">
       <br /><label class="input-label">Case Type:</label>
       <!-- Options populated from fe-case_types (syncCaseTypeSelects below);
            subtype select hidden when the chosen type has no subtypes. -->
@@ -1466,9 +1474,9 @@
         Swal.fire({
           title: "Add Person to Case",
           html: `
-            <div style="text-align:left;">
+            <div class="yc-stack" style="text-align:left;">
               <label class="input-label">Find a contact:</label>
-              <div id="acc-picker-mount" style="width:300px"></div>
+              <div id="acc-picker-mount" class="yc-full" style="width:300px"></div>
               <br>
               <label class="input-label">Relation to case:</label><br>
               <select id="acc-relate" style="width:300px">

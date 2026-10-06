@@ -55,6 +55,14 @@
     #calendar { max-width: 100%; }
     .fc { font-size: 0.88em; }
     .fc .fc-toolbar-title { font-size: 1.15rem; }
+    /* Phones: the three toolbar groups (nav, title, views) don't fit on one
+       line, and squeezed together the title wrapped a word per line. Let the
+       toolbar wrap, title on its own line between them. */
+    @media (max-width: 600px) {
+      .fc .fc-header-toolbar { flex-wrap: wrap; gap: 6px; }
+      .fc .fc-toolbar-chunk:nth-child(2) { order: -1; flex: 1 1 100%; text-align: center; }
+      .fc .fc-toolbar-title { font-size: 1rem; }
+    }
     .fc .fc-button {
       background: var(--surface); color: var(--accent-2);
       border: 1px solid var(--accent-2);
@@ -303,8 +311,11 @@ function providerNameOf(id) {
 
 // ── Init ─────────────────────────────────────────────────────
 function init() {
+  // Phones open on Day: a 7-column week at ~300px is ~40px per day, too
+  // narrow to read or tap. The Month/Week/Day buttons still switch views.
+  const narrow = !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
   const calendar = new FullCalendar.Calendar(E('calendar'), {
-    initialView: 'timeGridWeek',
+    initialView: narrow ? 'timeGridDay' : 'timeGridWeek',
     height: 560,            // shell modal iframe is 600px tall
     editable: false,
     selectable: false,

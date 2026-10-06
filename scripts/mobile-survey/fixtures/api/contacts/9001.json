@@ -1,0 +1,169 @@
+{
+ "status": "success",
+ "contact": {
+  "contact_id": 9001,
+  "contact_name": "Jane Testcase",
+  "contact_fname": "Jane",
+  "contact_mname": "",
+  "contact_lname": "Testcase",
+  "contact_phone": "5555550123",
+  "contact_email": "jane@example.com",
+  "contact_kind": "person",
+  "contact_type": "Client",
+  "contact_address": "100 Main St",
+  "contact_city": "Anytown",
+  "contact_state": "MI",
+  "contact_zip": "48000",
+  "contact_dob": "1980-01-01"
+ },
+ "cases": [
+  {
+   "case_id": "TESTCASE1",
+   "case_number": "26-99999",
+   "case_number_full": "26-99999-abc",
+   "case_type": "Bankruptcy",
+   "case_subtype": "Chapter 7",
+   "case_stage": "Filed",
+   "case_status": "Waiting on documents",
+   "relate_type": "Primary",
+   "case_relate_type": "Primary",
+   "case_open_date": "2026-09-01"
+  }
+ ],
+ "appts": [
+  {
+   "appt_id": 7000,
+   "appt_type": "341 Meeting",
+   "appt_datetime_local": "2026-10-05T10:00:00",
+   "format_date": "10/05/2026",
+   "time": "10:00 AM",
+   "appt_length": 30,
+   "appt_status": "Scheduled",
+   "appt_note": "Bring photo ID",
+   "contact_name": "Jane Testcase",
+   "appt_case_id": "TESTCASE1",
+   "appt_client_id": 9001,
+   "appt_with": 1,
+   "appt_platform": "Zoom"
+  },
+  {
+   "appt_id": 7001,
+   "appt_type": "341 Meeting",
+   "appt_datetime_local": "2026-10-06T10:00:00",
+   "format_date": "10/06/2026",
+   "time": "10:00 AM",
+   "appt_length": 30,
+   "appt_status": "Scheduled",
+   "appt_note": "Bring photo ID",
+   "contact_name": "Jane Testcase",
+   "appt_case_id": "TESTCASE1",
+   "appt_client_id": 9001,
+   "appt_with": 1,
+   "appt_platform": "Zoom"
+  },
+  {
+   "appt_id": 7002,
+   "appt_type": "341 Meeting",
+   "appt_datetime_local": "2026-10-07T10:00:00",
+   "format_date": "10/07/2026",
+   "time": "10:00 AM",
+   "appt_length": 30,
+   "appt_status": "Scheduled",
+   "appt_note": "Bring photo ID",
+   "contact_name": "Jane Testcase",
+   "appt_case_id": "TESTCASE1",
+   "appt_client_id": 9001,
+   "appt_with": 1,
+   "appt_platform": "Zoom"
+  },
+  {
+   "appt_id": 7003,
+   "appt_type": "341 Meeting",
+   "appt_datetime_local": "2026-10-08T10:00:00",
+   "format_date": "10/08/2026",
+   "time": "10:00 AM",
+   "appt_length": 30,
+   "appt_status": "Scheduled",
+   "appt_note": "Bring photo ID",
+   "contact_name": "Jane Testcase",
+   "appt_case_id": "TESTCASE1",
+   "appt_client_id": 9001,
+   "appt_with": 1,
+   "appt_platform": "Zoom"
+  }
+ ],
+ "log": [
+  {
+   "log_id": 800000,
+   "log_type": "email",
+   "log_direction": "incoming",
+   "formatted_date": "10/05/2026 4:40 PM",
+   "log_data": "{\"from\": \"sender@example.com\", \"subject\": \"A long subject line that wraps on a phone\", \"body\": \"Body text for layout testing.\"}",
+   "by_name": "Automations",
+   "log_by": 0,
+   "log_link": "TESTCASE1",
+   "log_link_type": "case",
+   "case_id": "TESTCASE1",
+   "case_number": "26-99999",
+   "contact_name": "Jane Testcase",
+   "contact_id": 9001
+  },
+  {
+   "log_id": 800001,
+   "log_type": "sms",
+   "log_direction": "incoming",
+   "formatted_date": "10/05/2026 4:41 PM",
+   "log_data": "{\"from\": \"sender@example.com\", \"subject\": \"A long subject line that wraps on a phone\", \"body\": \"Body text for layout testing.\"}",
+   "by_name": "Automations",
+   "log_by": 0,
+   "log_link": "TESTCASE1",
+   "log_link_type": "case",
+   "case_id": "TESTCASE1",
+   "case_number": "26-99999",
+   "contact_name": "Jane Testcase",
+   "contact_id": 9001
+  },
+  {
+   "log_id": 800002,
+   "log_type": "call",
+   "log_direction": "incoming",
+   "formatted_date": "10/05/2026 4:42 PM",
+   "log_data": "{\"from\": \"sender@example.com\", \"subject\": \"A long subject line that wraps on a phone\", \"body\": \"Body text for layout testing.\"}",
+   "by_name": "Automations",
+   "log_by": 0,
+   "log_link": "TESTCASE1",
+   "log_link_type": "case",
+   "case_id": "TESTCASE1",
+   "case_number": "26-99999",
+   "contact_name": "Jane Testcase",
+   "contact_id": 9001
+  },
+  {
+   "log_id": 800003,
+   "log_type": "note",
+   "log_direction": "incoming",
+   "formatted_date": "10/05/2026 4:43 PM",
+   "log_data": "{\"from\": \"sender@example.com\", \"subject\": \"A long subject line that wraps on a phone\", \"body\": \"Body text for layout testing.\"}",
+   "by_name": "Automations",
+   "log_by": 0,
+   "log_link": "TESTCASE1",
+   "log_link_type": "case",
+   "case_id": "TESTCASE1",
+   "case_number": "26-99999",
+   "contact_name": "Jane Testcase",
+   "contact_id": 9001
+  }
+ ],
+ "phones": [
+  {
+   "phone_number": "5555550123",
+   "phone_type": "Mobile"
+  }
+ ],
+ "emails": [
+  {
+   "email": "jane@example.com"
+  }
+ ],
+ "addresses": []
+}

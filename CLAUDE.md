@@ -105,6 +105,7 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
   clock — one such file put the whole run at 70s before it did. See the header of `tests/mascotSkins.test.js`.
 - `node --check <file>` on every modified JS file, including inline `<script>` blocks extracted from HTML.
 - `npm run db:ref:check` — schema-drift check against the live DB.
+- UI changes: `node scripts/mobile-survey/survey.js --widths 320,375,414` — boots the real shell on a mock API and fails on any horizontal overflow at phone width (every tab, panel, case/contact tab, dialog); screenshots for the eye check. `scripts/mobile-survey/README.md`.
 - Pre-commit hook (`.githooks/pre-commit`, enable once via `git config core.hooksPath .githooks`) refreshes `ref/database.sql` + `TRACKED_FILES.txt`, costing ~4s per commit. `SCHEMA_DUMP_ASYNC=1` backgrounds the schema step for one commit; `SKIP_SCHEMA_DUMP=1` skips it when the DB is unreachable. The hook does not touch `ref/routes.md` — regenerate that by hand.
 
 ## Deploy

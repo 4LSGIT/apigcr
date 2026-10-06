@@ -20,6 +20,10 @@
       border-bottom: none; cursor: pointer; font-weight: 600; border-radius: 4px 4px 0 0;
     }
     .tab-btn.active { background: var(--surface); border-bottom: 2px solid var(--accent); color: var(--accent-2); }
+    /* Small phones: three 22px-padded tabs are ~350px; share the width. */
+    @media (max-width: 400px) {
+      .tab-btn { flex: 1 1 0; min-width: 0; padding: 10px 6px; }
+    }
     .tab-panel { display: none; padding: 18px; border: 1px solid var(--border-strong); border-radius: 0 4px 4px 4px; }
     .tab-panel.active { display: block; }
 

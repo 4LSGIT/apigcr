@@ -1,0 +1,45 @@
+{
+ "status": "success",
+ "total": 3,
+ "documents": [
+  {
+   "id": 300,
+   "name": "Paystubs_September_2026_combined.pdf",
+   "title": "Pay stubs \u2014 September",
+   "ext": "pdf",
+   "size": 812233,
+   "server_modified": "2026-10-01T14:00:00Z",
+   "path": "/Clients/Testcase, Jane/Paystubs_September_2026_combined.pdf",
+   "via": [],
+   "doc_type": "",
+   "tags": [],
+   "status": "active"
+  },
+  {
+   "id": 301,
+   "name": "2025_Federal_Tax_Return_signed.pdf",
+   "title": "",
+   "ext": "pdf",
+   "size": 2234411,
+   "server_modified": "2026-10-02T14:00:00Z",
+   "path": "/Clients/Testcase, Jane/2025_Federal_Tax_Return_signed.pdf",
+   "via": [],
+   "doc_type": "",
+   "tags": [],
+   "status": "active"
+  },
+  {
+   "id": 302,
+   "name": "Photo_ID_front_and_back.jpg",
+   "title": "Photo ID",
+   "ext": "jpg",
+   "size": 301233,
+   "server_modified": "2026-10-03T14:00:00Z",
+   "path": "/Clients/Testcase, Jane/Photo_ID_front_and_back.jpg",
+   "via": [],
+   "doc_type": "",
+   "tags": [],
+   "status": "active"
+  }
+ ]
+}

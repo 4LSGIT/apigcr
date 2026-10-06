@@ -348,7 +348,7 @@ function sort(header, sort) {
    event forms, the calendar, Etch). Those ask for a share of the window —
    "75%" — which on a phone left the page inside ~200px. Full width there. */
 function swalWide(pct) {
-  return window.matchMedia('(max-width: 768px)').matches ? '100%' : pct;
+  return window.matchMedia && window.matchMedia('(max-width: 768px)').matches ? '100%' : pct;
 }
 
 function sortSelect(element) {
@@ -419,20 +419,6 @@ function ycFiltersToggle(btn) {
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   ycFiltersSync(bar);
 }
-
-/* ── tab-row scroll ─────────────────────────────────────────────────────────
-   On a phone each .tab-row (case.html / contact.html) is one swipeable line
-   (style.css). Clicking a tab — or a page restoring ?tab= by clicking it in
-   code — brings that tab into view inside its own row. scrollLeft on the row
-   only: scrollIntoView would also scroll the page and the shell's frame. */
-document.addEventListener('click', (e) => {
-  const tab = e.target && e.target.closest && e.target.closest('.tab-row > .tab');
-  if (!tab) return;
-  const row = tab.parentElement;
-  if (row.scrollWidth <= row.clientWidth) return;
-  const rr = row.getBoundingClientRect(), tr = tab.getBoundingClientRect();
-  row.scrollLeft += (tr.left - rr.left) - (row.clientWidth - tr.width) / 2;
-});
 
 /* Delegated, so bars rendered after this file loads need no wiring. 'click'
    is in the list for the values a tab sets in code (no change event fires
@@ -1335,6 +1321,9 @@ function _resolveAddFile() {
     /* slot picker (scheduler slice 4) */
     .na-slot-row { display: flex; align-items: center; gap: 0.5em; margin: 0.5em 0 0.2em; text-align: left; }
     .na-slot-row > label { font-size: 0.9em; }
+    /* Phones: the date input goes full width (.yc-stack), and as a flex item
+       it then starved the "Date:" label down to "Dat / e:". */
+    @media (max-width: 768px) { .yc-stack .na-slot-row > label { flex: none; } }
     .na-slots { display: flex; flex-wrap: wrap; gap: 0.35em; margin: 0.4em 0 0.2em;
       text-align: left; max-height: 9.5em; overflow-y: auto; }
     .na-slot { font-size: 0.85em; padding: 0.3em 0.6em; border: 1px solid var(--accent);
@@ -1917,7 +1906,7 @@ function newContact(prefill = {}, onSuccess = null) {
          collapsed whitespace gap -- the pair lands ~16px short of the
          stack, exactly as it did at 200+60 against 280. The box is inside a
          32em popup with ~442px of content width, so 320 clears it. -->
-    <div id="NCApptBox" style="display:none; border:1px solid var(--border); border-radius:5px; padding:8px; margin:4px 0; text-align:center;">
+    <div id="NCApptBox" style="display:none; border:1px solid var(--border); border-radius:5px; padding:8px; margin:4px 0;">
       <form onchange="newContact._recompute && newContact._recompute()">
       <select id="NCApptWith" style="width:320px;">${withOptions}</select><br>
       <!-- U2b: options come from the registry, surface=new_client (see
@@ -1939,15 +1928,15 @@ function newContact(prefill = {}, onSuccess = null) {
         <input id="NCApptLen" style="width:60px;" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="min">
       </span><br>
       <span style="font-size:0.85em;">Method:
-        <input type="radio" name="NCApptPlatform" id="NCApptTel" value="telephone" style="width:auto;" checked><label for="NCApptTel">Tel</label>
-        <input type="radio" name="NCApptPlatform" id="NCApptZoom" value="Zoom" style="width:auto;"><label for="NCApptZoom">Zoom</label>
-        <input type="radio" name="NCApptPlatform" id="NCApptIP" value="in-person" style="width:auto;"><label for="NCApptIP">In-person</label>
+        <span style="white-space:nowrap"><input type="radio" name="NCApptPlatform" id="NCApptTel" value="telephone" style="width:auto;" checked><label for="NCApptTel">Tel</label></span>
+        <span style="white-space:nowrap"><input type="radio" name="NCApptPlatform" id="NCApptZoom" value="Zoom" style="width:auto;"><label for="NCApptZoom">Zoom</label></span>
+        <span style="white-space:nowrap"><input type="radio" name="NCApptPlatform" id="NCApptIP" value="in-person" style="width:auto;"><label for="NCApptIP">In-person</label></span>
       </span><br>
       <input type="datetime-local" id="NCApptDate" style="width:320px; margin-top:6px;"><br>
       <textarea id="NCApptNote" placeholder="Appointment notes (optional)" style="width:320px; height:48px; margin-top:6px;"></textarea><br>
       <span style="font-size:0.85em;">Confirmation:
-        <input type="checkbox" id="NCApptSMS" style="width:auto;"><label for="NCApptSMS">SMS</label>
-        <input type="checkbox" id="NCApptEmail" style="width:auto;"><label for="NCApptEmail">Email</label>
+        <span style="white-space:nowrap"><input type="checkbox" id="NCApptSMS" style="width:auto;"><label for="NCApptSMS">SMS</label></span>
+        <span style="white-space:nowrap"><input type="checkbox" id="NCApptEmail" style="width:auto;"><label for="NCApptEmail">Email</label></span>
       </span><br>
       </form>
       <textarea id="NCApptConfirmMsg" style="display:none; width:320px; height:54px; margin-top:4px; resize:none;"></textarea>
@@ -1961,7 +1950,8 @@ function newContact(prefill = {}, onSuccess = null) {
   Swal.fire({
     customClass: { popup: 'yc-popup' },
     title: "Add New Client:",
-    html: `<label class="input-label">Name:</label>
+    // .yc-stack: on phones each label sits above its control (style.css).
+    html: `<div class="yc-stack"><label class="input-label">Name:</label>
          <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
          <label class="input-label">Phone:</label>
          <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
@@ -1980,7 +1970,7 @@ function newContact(prefill = {}, onSuccess = null) {
            <select id="NCSubtype" style="width:200px;"></select><br>
          </span>
          <label class="sub-label">Optional, select type to open a case.</label><br>
-         ${apptBlockHtml}
+         ${apptBlockHtml}</div>
          `,
     showCancelButton: true,
     showConfirmButton: true,
@@ -2677,7 +2667,8 @@ function newApptDialog(opts = {}) {
   Swal.fire({
     title: 'Schedule Appointment',
     customClass: { popup: 'yc-popup', htmlContainer: 'na-html' },
-    html: `
+    // .yc-stack: on phones every control goes full width (style.css).
+    html: `<div class="yc-stack">
       <div id="naContactHost" class="na-field"></div>
       <div id="naCaseHost" class="na-field"></div>
       <div class="na-section-label">With</div>
@@ -2696,12 +2687,13 @@ function newApptDialog(opts = {}) {
         <input id="naLen" style="width:60px" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="length">
       </span><br>
       <label>Method: </label>
-      <input style="width:auto" type="radio" id="naTel" name="naPlatform" value="telephone" checked>
-      <label for="naTel">Telephone</label>
-      <input style="width:auto" type="radio" id="naZoom" name="naPlatform" value="Zoom">
-      <label for="naZoom">Zoom</label>
-      <input style="width:auto" type="radio" id="naInPerson" name="naPlatform" value="in-person">
-      <label for="naInPerson">In-person</label><br>
+      <!-- nowrap spans: a wrapping line breaks BETWEEN options, never between a radio and its label -->
+      <span style="white-space:nowrap"><input style="width:auto" type="radio" id="naTel" name="naPlatform" value="telephone" checked>
+      <label for="naTel">Telephone</label></span>
+      <span style="white-space:nowrap"><input style="width:auto" type="radio" id="naZoom" name="naPlatform" value="Zoom">
+      <label for="naZoom">Zoom</label></span>
+      <span style="white-space:nowrap"><input style="width:auto" type="radio" id="naInPerson" name="naPlatform" value="in-person">
+      <label for="naInPerson">In-person</label></span><br>
       <div id="naSlotPicker">
         <div class="na-slot-row">
           <label for="naSlotDate">Date:</label>
@@ -2714,11 +2706,11 @@ function newApptDialog(opts = {}) {
       <input type="datetime-local" class="swal2-input" id="naDate" style="display:none;"><br>
       <textarea id="naNote" placeholder="Appointment Notes (optional)" style="height:60px;width:300px;"></textarea><br>
       <label>Confirmation Message?</label>
-      <input style="width:auto" type="checkbox" id="naSMS"> <label for="naSMS">SMS</label>
-      <input style="width:auto" type="checkbox" id="naEmail"> <label for="naEmail">Email</label><br>
+      <span style="white-space:nowrap"><input style="width:auto" type="checkbox" id="naSMS"> <label for="naSMS">SMS</label></span>
+      <span style="white-space:nowrap"><input style="width:auto" type="checkbox" id="naEmail"> <label for="naEmail">Email</label></span><br>
       </form>
       <textarea id="naConfirmMsg" style="display:none;height:60px;width:300px;resize:none;"></textarea>
-    `,
+    </div>`,
     showCancelButton: true,
     confirmButtonText: 'Schedule',
     showLoaderOnConfirm: true,

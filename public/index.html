@@ -2368,13 +2368,13 @@
           <label>Select a date and time to reschedule to</label><br>
           <input class="swal2-input" value="${date}" type="datetime-local" id="apptRescDate"
             onchange="rescheduledConfMsg('${date}', this.value)"><br><br>
-          <div style="width:300px;margin:0 auto;">Confirmation:
+          <div style="width:300px;max-width:100%;margin:0 auto;">Confirmation:
             <label for="apptRescSMS"><input type="checkbox" id="apptRescSMS" style="width:auto;"
               onchange="rescheduledConfMsg(null)"> SMS</label>&nbsp;
             <label for="apptRescEmail"><input type="checkbox" id="apptRescEmail" style="width:auto;"
               onchange="rescheduledConfMsg()"> Email</label>
           </div>
-          <textarea id="rescheduleConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">Hi {{contacts.contact_fname}}, this is to confirm that your appointment is now {{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}}. To view or cancel it: https://4lsg.com/m/{{appts.appt_manage_token|default:}}</textarea>`,
+          <textarea id="rescheduleConfirmMessage" style="display:none;height:60px;width:300px;max-width:100%;resize:none;">Hi {{contacts.contact_fname}}, this is to confirm that your appointment is now {{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}}. To view or cancel it: https://4lsg.com/m/{{appts.appt_manage_token|default:}}</textarea>`,
           showCancelButton: true,
           confirmButtonText: "Reschedule",
           showDenyButton: true,
@@ -4235,13 +4235,13 @@ YC.on('setting:*', '*', (fields, msg) => {
  async function loginBlocking() {
   await Swal.fire({
     title: "Welcome to YisraCase",
-    html: `
+    html: `<div class="yc-stack">
         <img src="assets/icon-192.png"><br>
         <label class="input-label">Username: </label>
         <input id="username" value="${AUTH_STATE.username || ""}">
         <br><br>
         <label class="input-label">Password: </label>
-        <input type="password" id="password">
+        <input type="password" id="password"></div>
       `,
           confirmButtonText:
             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Login&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;",

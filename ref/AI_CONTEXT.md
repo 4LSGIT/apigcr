@@ -444,6 +444,16 @@ tabs), `campaign.html`, `checklistView(s).html` (§19), `eventform.html`,
 `onclick=` in Swal html resolves against parent scope and breaks for
 iframe-defined functions; bind in `didOpen` instead.
 
+**Phone layout (≤768px):** one breakpoint, everything phone-specific inside
+it, desktop untouched. Shared patterns, all documented where they live:
+`.yc-filters` list filter bars (style.css; mobile Filters toggle + active
+count via `ycFilters*` in scripts.js), `.yc-stack` for the older inline
+`.input-label` forms (style.css — labels above full-width controls),
+`swalWide()` for iframe-hosting dialogs (scripts.js). Tables scroll in their
+own box rather than widen the page; case/contact tab rows WRAP (a swipeable
+single line was tried and rejected 2026-10-06). Gate:
+`scripts/mobile-survey/` (CLAUDE.md, Commands & gates).
+
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here
 was stale by definition.

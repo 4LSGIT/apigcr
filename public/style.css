@@ -64,20 +64,6 @@ body{font-family: var(--ui); font-size: var(--fs)}
   white-space: nowrap;
   text-align: center;
 }
-/* Phones: each row becomes ONE swipeable line. Wrapped, case.html's three
-   rows (19 tabs) took nine lines — ~370px, so a case opened to a screen of
-   buttons with its content below the fold. Grow-to-fill is dropped (a line
-   that scrolls has no width to fill); the active tab is scrolled into view
-   by the delegated listener in scripts.js ("tab-row scroll"). */
-@media (max-width: 768px) {
-  .tab-row {
-    flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start;
-    max-width: none; padding: 0 6px;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
-  }
-  .tab-row::-webkit-scrollbar { display: none; }
-  .tab-row .tab { flex: 0 0 auto; max-width: none; padding: 9px 11px; }
-}
 .active {
   background-color: var(--surface-2);
 }
@@ -141,6 +127,9 @@ input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
    fix to this one dialog's mount so the input fills its 300px container without
    resizing pickers elsewhere. */
 #acc-picker-mount .cp-input { width: 100%; }
+/* Same override, merge-cases dialog (case.html): its search box sat at 200px,
+   centred, over a full-width Direction select. */
+#mc-picker .cp-input { width: 100%; }
 
 /* S1 consistency: controls join the page scale (16px --ui). :where() keeps
    this at 0,0,1 so page-local class rules and swal2 still win. */
@@ -191,6 +180,16 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
    records the 280px history), so the floor is a backstop there, not the
    thing sizing it. */
 .swal2-container input[type="datetime-local"] { min-width: 320px; }
+/* Phones: a swal2 popup's content box is ~315px there, so the 320px floor
+   pushed the field past the popup's edge (Reschedule). Full width instead,
+   at the base size: at --fs the type needs ~252px (measured above), which
+   fits; it is the compounded 20.25px swal2-input size that needed 302. */
+@media (max-width: 768px) {
+  .swal2-container input[type="datetime-local"] {
+    min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box;
+    margin-left: 0; margin-right: 0; font-size: var(--fs);
+  }
+}
 
 .kselect {
   margin-left: -5px;
@@ -222,6 +221,41 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
   width: 200px;
   display: inline-block;
   font-size: var(--fs-xs);
+}
+
+/* ── Phone forms (.yc-stack) ────────────────────────────────────────────────
+   The older forms are "label: control" pairs laid out INLINE: a 150px
+   right-aligned .input-label, then a fixed-width control (the 200px global
+   rule above, or an inline 300/320px), each pair ended by a <br>. Once a
+   pair no longer fits on one line it wraps wherever it falls — right-
+   aligned labels floating over centred inputs, a second select dropping
+   under a label it does not belong to (case Overview, Add New Client).
+   On phones, a .yc-stack container re-lays the same markup as a form: each
+   label on its own line, left-aligned, each control full width beneath it;
+   the <br>s go, since block controls break their own lines. Desktop is
+   untouched — everything here is inside the media query.
+   Users: case.html Overview + Add Person, scripts.js newContact and
+   newApptDialog, index.html login.
+   !important on width only: most of these controls carry an INLINE width,
+   which nothing else outranks. display is NOT forced, so a control a page
+   hides inline (style="display:none") stays hidden. Placed after the
+   datetime-local floor above so the min-width reset wins the tie. */
+@media (max-width: 768px) {
+  .yc-stack { text-align: left; }
+  .yc-stack br { display: none; }
+  .yc-stack .input-label {
+    display: block; width: auto; text-align: left;
+    margin: 12px 0 4px; font-size: var(--fs-sm);
+  }
+  .yc-stack input:not([type=checkbox]):not([type=radio]):not([type=hidden]),
+  .yc-stack select,
+  .yc-stack textarea,
+  .yc-stack .yc-full {
+    display: block; width: 100% !important; max-width: 100%;
+    box-sizing: border-box; margin: 0 0 6px;
+  }
+  .yc-stack input[type="datetime-local"] { min-width: 0; }
+  .yc-stack .sub-label { display: block; width: auto; margin: 0 0 6px; }
 }
 /* --pad-btn, not --pad-cell: the button token; --pad-cell on a primary button
    would leave nothing distinguishing it from a table cell. Width fits the
@@ -519,6 +553,11 @@ body.swal2-shown > [aria-hidden="true"] {
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+/* Phones: at the 16px base "Appointments" is wider than the tile's content
+   box and broke as "Appointment / s". --fs-sm fits every label whole. */
+@media (max-width: 768px) {
+  #tabHome .home-btn { font-size: var(--fs-sm); }
 }
 /* ── Dark mode ───────────────────────────────────────────────────────────
    Moved out of index.html (charter §6.1; slice 9c commit 3) and unscoped

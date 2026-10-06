@@ -141,6 +141,19 @@
     .tk-dlg-grid { display: grid; grid-template-columns: 92px 1fr; gap: 8px 10px; align-items: center; text-align: left; font-size: 14px; }
     .tk-dlg-grid label { color: var(--text-muted); font-size: 13px; }
     .tk-dlg-grid input[type="text"], .tk-dlg-grid input[type="date"], .tk-dlg-grid select, .tk-dlg-grid textarea { width: 100%; box-sizing: border-box; }
+    /* Phones: one column — each label above its field, like the app's other
+       phone forms (.yc-stack in style.css). The empty <label>s that pad the
+       hint/checkbox rows into column 2 have nothing to do here. */
+    @media (max-width: 600px) {
+      .tk-dlg-grid { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+      .tk-dlg-grid > label { margin-top: 8px; font-weight: 600; color: var(--text); }
+      .tk-dlg-grid > label:empty { display: none; }
+      .tk-dlg-grid .sub-label { width: auto; margin: 0; }
+      /* The date field takes the line; its quick-date chips wrap beneath it,
+         each chip whole ("+1 mo" was splitting across lines). */
+      .tk-dlg-grid > span > input[type="date"] { display: block; width: 100% !important; margin: 0 0 4px; }
+      .tk-dlg-grid .tk-qd { display: inline-block; white-space: nowrap; margin: 2px 4px 2px 0; }
+    }
   </style>
 </head>
 <body>

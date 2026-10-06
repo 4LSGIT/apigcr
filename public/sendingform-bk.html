@@ -106,6 +106,15 @@
       .sf-tax-grid .sf-tax-year, .sf-tax-grid .sf-tax-label { font-size: 0.72rem; }
       .sf-send-settings { flex-direction: column; align-items: flex-start; }
       .sf-contact-row { flex-direction: column; }
+      /* The 280px card floor + the form's 20px padding is wider than a 320px
+         phone's case tab; stacked in a column, the cards need no floor. */
+      /* nowrap: in a WRAPPING column flexbox each line takes the width of
+         its widest card's content, not the container's — the cards came out
+         ~40px wider than the column. Single-line, they stretch to it. */
+      .sf-contact-row { flex-wrap: nowrap; }
+      .sf-contact-card { min-width: 0; }
+      .sf-contact-card .sf-edit-row input { min-width: 0; }
+      .sf-form { padding: 14px 10px; }
     }
   </style>
 </head>
