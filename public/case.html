@@ -225,13 +225,13 @@
   <div id="tabOverview" class="tab-content">
     <!-- .yc-stack: on phones each label sits above its control (style.css). -->
     <div class="yc-stack" style="margin: 0 auto; max-width: 650px; border: 3px solid var(--border)">
-      <br /><label class="input-label">Case Type:</label>
+      <br /><label class="input-label">Case Type</label>
       <!-- Options populated from fe-case_types (syncCaseTypeSelects below);
            subtype select hidden when the chosen type has no subtypes. -->
       <select id="caseTypeSelect" onchange="caseTypeChanged(this.value)"></select>
       <select id="caseSubtypeSelect" onchange="caseSubtypeChanged(this.value)" style="display:none"></select
       ><br />
-      <label class="input-label">Stage:</label>
+      <label class="input-label">Stage</label>
       <select
         id="caseStageSelect"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_stage:this.value}).then(()=>Toast.fire({icon:'success',title:'Stage updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
@@ -253,19 +253,19 @@
            it at the input is the cheap half of the fix; clipping in updateCase
            the way advanceStage already does is the robust half and is deferred
            (design v2.5) because it changes write semantics. -->
-      <label class="input-label">Status:</label>
+      <label class="input-label">Status</label>
       <input
         id="caseStatusInput"
         maxlength="50"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_status:this.value}).then(()=>Toast.fire({icon:'success',title:'Status updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><br>
-      <label class="input-label">Recommendation:</label>
+      <label class="input-label">Recommendation</label>
       <input
         id="caseRecInput"
         maxlength="128"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_rec:this.value}).then(()=>Toast.fire({icon:'success',title:'Recommendation updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><br>
-      <label class="input-label">Lead Source:</label>
+      <label class="input-label">Lead Source</label>
       <!-- cases.case_source. As of 2026-08 this means MARKETING LEAD SOURCE
            (staff-entered). Suggestions come from fe-lead_sources
            (syncLeadSourceList below); the value stays opaque free text, so
@@ -526,7 +526,7 @@
           </p>
           <div id="mc-picker"></div>
           <div style="margin-top:10px;text-align:left">
-            <label for="mc-direction" style="font-size:0.85em;font-weight:600">Direction</label>
+            <label for="mc-direction" class="yc-flabel">Direction</label>
             <select id="mc-direction" style="width:100%;padding:6px">
               <option value="into_current" selected>Absorb selected case INTO this one (this case survives)</option>
               <option value="into_selected">Merge THIS case into the selected one (selected survives)</option>
@@ -1475,10 +1475,10 @@
           title: "Add Person to Case",
           html: `
             <div class="yc-stack" style="text-align:left;">
-              <label class="input-label">Find a contact:</label>
+              <label class="input-label">Find a contact</label>
               <div id="acc-picker-mount" class="yc-full" style="width:300px"></div>
               <br>
-              <label class="input-label">Relation to case:</label><br>
+              <label class="input-label">Relation to case</label><br>
               <select id="acc-relate" style="width:300px">
                 <option value="" selected disabled>Select a relation to case</option>
                 <option>Primary</option>

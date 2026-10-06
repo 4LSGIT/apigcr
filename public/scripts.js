@@ -1284,13 +1284,18 @@ function _resolveAddFile() {
     .swal2-html-container.ncf-html { overflow: visible; }
     .ncf-html .cp-dropdown { max-height: 12em; }
     .ncf-field { margin: 0 0 0.6em; text-align: left; }
-    .ncf-field label { display: block; font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.15em; }
+    /* Field labels — the app's one label look (style.css .input-label has the
+       note): bold, --text, --fs-sm. Same values below for .na-field,
+       .na-section-label, .na-slot-row, .ne-row and .yc-flabel. */
+    .ncf-field label { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-bottom: 0.25em; }
     .ncf-field input, .ncf-field select { width: 100%; box-sizing: border-box; }
     .ncf-docket-row { display: flex; gap: 0.6em; }
     /* min-width:0 — a flex item's floor is its input's intrinsic width; two of
        them overran a phone-width dialog (the full number was cut off). */
     .ncf-docket-row .ncf-field { flex: 1; min-width: 0; }
-    .ncf-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    /* Group heading (one step above a field label; same as .ne-section). */
+    .ncf-section-label { font-weight: 700; font-size: var(--fs); color: var(--text); text-align: left;
+      margin: 0.8em 0 0.4em; border-top: 1px solid var(--border); padding-top: 0.6em; }
     /* Mirror cad's create button so the adopt dialog's two buttons match. */
     .cad-create-btn {
       font-weight: bold;
@@ -1312,15 +1317,18 @@ function _resolveAddFile() {
     .swal2-html-container.na-html { overflow: visible; }
     .na-html .cp-dropdown { max-height: 12em; }
     .na-field { margin: 0 0 0.5em; text-align: left; }
-    .na-field > label { display: block; font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.15em; }
+    .na-field > label { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-bottom: 0.25em; }
     .na-fixed { text-align: left; margin: 0 0 0.5em; font-size: 0.95em; }
-    .na-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    .na-section-label { font-weight: 700; font-size: var(--fs-sm); color: var(--text); margin: 0.6em 0 0.25em; text-align: left; }
     .na-chosen { font-size: 0.85em; color: var(--text-2); margin-top: 0.25em; text-align: left; }
     .na-chosen:empty { display: none; }
     .na-change { font-size: 0.82em; margin-left: 0.5em; color: var(--accent-2); }
     /* slot picker (scheduler slice 4) */
     .na-slot-row { display: flex; align-items: center; gap: 0.5em; margin: 0.5em 0 0.2em; text-align: left; }
-    .na-slot-row > label { font-size: 0.9em; }
+    .na-slot-row > label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
+    /* An inline field label — before radios/checkboxes on the same line
+       ("Method", "Confirmation") or a one-off control (merge "Direction"). */
+    .yc-flabel { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-right: 0.3em; }
     /* Phones: the date input goes full width (.yc-stack), and as a flex item
        it then starved the "Date:" label down to "Dat / e:". */
     @media (max-width: 768px) { .yc-stack .na-slot-row > label { flex: none; } }
@@ -1343,10 +1351,7 @@ function _resolveAddFile() {
     .ne-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5em 0.8em; }
     .ne-row  { display: flex; flex-direction: column; }
     .ne-row.ne-full { grid-column: 1 / -1; }
-    .ne-row > label {
-      font-size: 0.75em; font-weight: 600; color: var(--text-muted);
-      text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.15em;
-    }
+    .ne-row > label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 0.25em; }
     .ne-form input:not([type=checkbox]),
     .ne-form select,
     .ne-form textarea {
@@ -1358,8 +1363,7 @@ function _resolveAddFile() {
     .ne-allday > label { font-size: 0.9em; font-weight: 500; color: var(--text);
       text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4em; margin: 0; }
     .ne-allday input[type=checkbox] { width: auto; }
-    .ne-section { grid-column: 1 / -1; font-weight: 700; font-size: 0.8em;
-      color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em;
+    .ne-section { grid-column: 1 / -1; font-weight: 700; font-size: var(--fs); color: var(--text);
       margin: 0.5em 0 -0.1em; border-top: 1px solid var(--border); padding-top: 0.6em; }
     .ne-form .na-fixed { font-size: 0.92em; margin: 0; }
     /* Phones: these dialogs' inputs mean width:100%, but this <style> is
@@ -1858,11 +1862,11 @@ function newContact(prefill = {}, onSuccess = null) {
   const forceCreate = prefill.force_create === true;
 
   const phoneStartHtml = hasPhoneStart
-    ? `<label class="input-label">Phone start date:</label>
+    ? `<label class="input-label">Phone start date</label>
        <input style="width:200px;" type="date" id="NCPhoneStart"><br>`
     : '';
   const emailStartHtml = hasEmailStart
-    ? `<label class="input-label">Email start date:</label>
+    ? `<label class="input-label">Email start date</label>
        <input style="width:200px;" type="date" id="NCEmailStart"><br>`
     : '';
 
@@ -1893,7 +1897,7 @@ function newContact(prefill = {}, onSuccess = null) {
 
   // Minimal inline appt block — hidden until the checkbox is ticked.
   const apptBlockHtml = `
-    <label class="input-label">Appt:</label>
+    <label class="input-label">Appointment</label>
     <label class="sub-label" style="text-align:left; width:auto;">
       <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule first appointment <i style="color:var(--text-muted);">(optional)</i>
     </label><br>
@@ -1927,14 +1931,14 @@ function newContact(prefill = {}, onSuccess = null) {
         <input id="NCApptType" style="width:240px;" placeholder="Other type">
         <input id="NCApptLen" style="width:60px;" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="min">
       </span><br>
-      <span style="font-size:0.85em;">Method:
+      <span style="font-size:0.85em;"><span class="yc-flabel">Method</span>
         <span style="white-space:nowrap"><input type="radio" name="NCApptPlatform" id="NCApptTel" value="telephone" style="width:auto;" checked><label for="NCApptTel">Tel</label></span>
         <span style="white-space:nowrap"><input type="radio" name="NCApptPlatform" id="NCApptZoom" value="Zoom" style="width:auto;"><label for="NCApptZoom">Zoom</label></span>
         <span style="white-space:nowrap"><input type="radio" name="NCApptPlatform" id="NCApptIP" value="in-person" style="width:auto;"><label for="NCApptIP">In-person</label></span>
       </span><br>
       <input type="datetime-local" id="NCApptDate" style="width:320px; margin-top:6px;"><br>
       <textarea id="NCApptNote" placeholder="Appointment notes (optional)" style="width:320px; height:48px; margin-top:6px;"></textarea><br>
-      <span style="font-size:0.85em;">Confirmation:
+      <span style="font-size:0.85em;"><span class="yc-flabel">Confirmation</span>
         <span style="white-space:nowrap"><input type="checkbox" id="NCApptSMS" style="width:auto;"><label for="NCApptSMS">SMS</label></span>
         <span style="white-space:nowrap"><input type="checkbox" id="NCApptEmail" style="width:auto;"><label for="NCApptEmail">Email</label></span>
       </span><br>
@@ -1951,22 +1955,22 @@ function newContact(prefill = {}, onSuccess = null) {
     customClass: { popup: 'yc-popup' },
     title: "Add New Client:",
     // .yc-stack: on phones each label sits above its control (style.css).
-    html: `<div class="yc-stack"><label class="input-label">Name:</label>
+    html: `<div class="yc-stack"><label class="input-label">Name</label>
          <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
-         <label class="input-label">Phone:</label>
+         <label class="input-label">Phone</label>
          <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
          ${phoneStartHtml}
-         <label class="input-label">Email:</label>
+         <label class="input-label">Email</label>
          <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
          ${emailStartHtml}
-         <label class="input-label">Case Type:</label>
+         <label class="input-label">Case Type</label>
          <select id="NCType" style="width:200px;">
           <option selected value="">Select a case type</option>
           ${ncTypeOptions}
          </select>
          <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
          <span id="NCSubtypeRow" style="display:none;">
-           <label class="input-label">Subtype:</label>
+           <label class="input-label">Subtype</label>
            <select id="NCSubtype" style="width:200px;"></select><br>
          </span>
          <label class="sub-label">Optional, select type to open a case.</label><br>
@@ -2686,7 +2690,7 @@ function newApptDialog(opts = {}) {
         <input id="naType" style="width:240px" placeholder="Other Appointment Type">
         <input id="naLen" style="width:60px" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="length">
       </span><br>
-      <label>Method: </label>
+      <label class="yc-flabel">Method</label>
       <!-- nowrap spans: a wrapping line breaks BETWEEN options, never between a radio and its label -->
       <span style="white-space:nowrap"><input style="width:auto" type="radio" id="naTel" name="naPlatform" value="telephone" checked>
       <label for="naTel">Telephone</label></span>
@@ -2696,7 +2700,7 @@ function newApptDialog(opts = {}) {
       <label for="naInPerson">In-person</label></span><br>
       <div id="naSlotPicker">
         <div class="na-slot-row">
-          <label for="naSlotDate">Date:</label>
+          <label for="naSlotDate">Date</label>
           <input type="date" id="naSlotDate" style="width:160px;">
         </div>
         <div id="naSlots" class="na-slots"></div>
@@ -2705,7 +2709,7 @@ function newApptDialog(opts = {}) {
       <a href="#" id="naManualToggle" class="na-manual-toggle">enter time manually</a><br>
       <input type="datetime-local" class="swal2-input" id="naDate" style="display:none;"><br>
       <textarea id="naNote" placeholder="Appointment Notes (optional)" style="height:60px;width:300px;"></textarea><br>
-      <label>Confirmation Message?</label>
+      <label class="yc-flabel">Confirmation</label>
       <span style="white-space:nowrap"><input style="width:auto" type="checkbox" id="naSMS"> <label for="naSMS">SMS</label></span>
       <span style="white-space:nowrap"><input style="width:auto" type="checkbox" id="naEmail"> <label for="naEmail">Email</label></span><br>
       </form>
@@ -3485,8 +3489,8 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
   Swal.fire({
     title: 'Create new case',
     html: `
-      <div class="ncf-section-label">Primary contact</div>
-      <div class="ncf-field"><div id="ncf-picker-mount"></div></div>
+      <!-- a field label like its siblings (was a section heading) -->
+      <div class="ncf-field"><label>Primary contact</label><div id="ncf-picker-mount"></div></div>
       <div id="ncf-dup-warn" style="display:none;margin:8px 0;padding:8px;border:1px solid var(--warn);background:var(--warn-soft);color:var(--warn);border-radius:6px;text-align:left;font-size:0.88em"></div>
 
       <div class="ncf-field">

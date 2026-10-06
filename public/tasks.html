@@ -139,14 +139,15 @@
     .tk-qd { font-size: 11px; padding: 2px 9px; border-radius: 10px; cursor: pointer;
              background: var(--surface-2); border: 1px solid var(--border); margin: 0 3px; }
     .tk-dlg-grid { display: grid; grid-template-columns: 92px 1fr; gap: 8px 10px; align-items: center; text-align: left; font-size: 14px; }
-    .tk-dlg-grid label { color: var(--text-muted); font-size: 13px; }
+    /* The app's one field-label look (style.css .input-label has the note). */
+    .tk-dlg-grid label { color: var(--text); font-size: var(--fs-sm); font-weight: 700; }
     .tk-dlg-grid input[type="text"], .tk-dlg-grid input[type="date"], .tk-dlg-grid select, .tk-dlg-grid textarea { width: 100%; box-sizing: border-box; }
     /* Phones: one column — each label above its field, like the app's other
        phone forms (.yc-stack in style.css). The empty <label>s that pad the
        hint/checkbox rows into column 2 have nothing to do here. */
     @media (max-width: 600px) {
       .tk-dlg-grid { grid-template-columns: minmax(0, 1fr); gap: 4px; }
-      .tk-dlg-grid > label { margin-top: 8px; font-weight: 600; color: var(--text); }
+      .tk-dlg-grid > label { margin-top: 8px; }
       .tk-dlg-grid > label:empty { display: none; }
       .tk-dlg-grid .sub-label { width: auto; margin: 0; }
       /* The date field takes the line; its quick-date chips wrap beneath it,

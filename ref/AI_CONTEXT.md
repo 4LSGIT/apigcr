@@ -454,6 +454,13 @@ own box rather than widen the page; case/contact tab rows WRAP (a swipeable
 single line was tried and rejected 2026-10-06). Gate:
 `scripts/mobile-survey/` (CLAUDE.md, Commands & gates).
 
+**Field labels (all widths):** one look — bold, `--text`, `--fs-sm`
+(matches yc-forms' `.yc-label`); group headings ("Docket (optional)",
+"Reminder (optional)") one step up: bold `--fs` with a rule above; no
+trailing colons. Set in three places that must move together: style.css
+`.input-label` (carries the note), scripts.js dialog CSS (`.ncf-`/`.na-`/
+`.ne-` labels + `.yc-flabel` for inline labels), tasks.html `.tk-dlg-grid`.
+
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here
 was stale by definition.

@@ -2303,7 +2303,7 @@
           ${correctionBannerHtml(currentStatus, "Cancel")}
           <textarea id="cancelNote" placeholder="Cancelation note (optional):" style="height:60px;width:300px;resize:none;"></textarea><br>
           <input id="apptCancelTask" type="checkbox" style="width:10px;transform:scale(1.5);"> <span>Create follow-up task?</span><br>
-          <label>Confirmation:</label>
+          <label class="yc-flabel">Confirmation</label>
           <input style="width:auto" type="checkbox" id="cancelConfirmSMS"
             onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmEmail').checked)?'':'none'"
             name="confirmSMS">
@@ -2368,7 +2368,7 @@
           <label>Select a date and time to reschedule to</label><br>
           <input class="swal2-input" value="${date}" type="datetime-local" id="apptRescDate"
             onchange="rescheduledConfMsg('${date}', this.value)"><br><br>
-          <div style="width:300px;max-width:100%;margin:0 auto;">Confirmation:
+          <div style="width:300px;max-width:100%;margin:0 auto;"><span class="yc-flabel">Confirmation</span>
             <label for="apptRescSMS"><input type="checkbox" id="apptRescSMS" style="width:auto;"
               onchange="rescheduledConfMsg(null)"> SMS</label>&nbsp;
             <label for="apptRescEmail"><input type="checkbox" id="apptRescEmail" style="width:auto;"
@@ -4237,10 +4237,10 @@ YC.on('setting:*', '*', (fields, msg) => {
     title: "Welcome to YisraCase",
     html: `<div class="yc-stack">
         <img src="assets/icon-192.png"><br>
-        <label class="input-label">Username: </label>
+        <label class="input-label">Username</label>
         <input id="username" value="${AUTH_STATE.username || ""}">
         <br><br>
-        <label class="input-label">Password: </label>
+        <label class="input-label">Password</label>
         <input type="password" id="password"></div>
       `,
           confirmButtonText:

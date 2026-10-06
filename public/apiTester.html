@@ -44,7 +44,9 @@
   .method-url select { width: 100px; }
   .method-url #methodCustom { width: 110px; text-transform: uppercase; }
   .method-url input[type=text] { flex: 1 1 auto; min-width: 0; }   /* min-width:0 — else its intrinsic width pushed Send off a 320px screen */
-  .header-row { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; margin-bottom: 4px; }
+  /* minmax(0, …): a bare fr keeps its input's intrinsic width as a floor —
+     the name/value pair pushed the pane 50px wide at 375px. */
+  .header-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; gap: 6px; margin-bottom: 4px; }
   pre.scroll { background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 4px;
                padding: 8px; max-height: 360px; overflow: auto; white-space: pre-wrap;
                word-break: break-word; font-family: ui-monospace, monospace; font-size: 12px; margin: 0; }

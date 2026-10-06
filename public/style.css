@@ -194,10 +194,21 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
 .kselect {
   margin-left: -5px;
 }
+/* FIELD LABELS — one look across the app's forms and dialogs: bold, --text,
+   --fs-sm (≈ yc-forms' .yc-label, 0.92rem). The same three values are set on
+   the dialog labels in scripts.js ("Field labels" block) and on tasks.html's
+   task dialog — change them together. Group headings ("Docket (optional)",
+   "Reminder (optional)") are one step up: bold --fs with a rule above.
+   font-size is ABSOLUTE on purpose: these labels sit in pages (16px base)
+   and in SweetAlert popups (1.125em → 18px), and used to inherit both.
+   margin-top 13px centres 14px text on the 44px control beside it (desktop
+   layout: a 150px right-aligned column). */
 .input-label {
   vertical-align: top;
-  margin-top:10px;
-  font-weight: bold;
+  margin-top: 13px;
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  color: var(--text);
   margin-bottom: 5px;
   text-align: right;
   width: 150px;
