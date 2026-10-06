@@ -506,10 +506,15 @@ function ycFiltersToggle(btn) {
        have that problem. */
     #logTableFoot { padding: 0.6em 0; }
 
-    /* Scoped reset for the export dialog — neutralises any global
-       \`input { width: 200px; ... }\` rule that would otherwise stretch
-       the radio buttons and number inputs. Specificity (class + tag) beats
-       the bare \`input\` selector, so no !important needed. */
+    /* Scoped reset for the export dialog — neutralises style.css's global
+       \`input { width: 200px; ... }\` rule, which would otherwise stretch the
+       radio buttons and number inputs. That rule is not a bare \`input\`: it
+       is input:not([type=radio]):not([type=checkbox]), 0,2,1 — a tie with
+       \`.export-csv-dialog input[type="number"]\`, and this <style> is
+       injected BEFORE style.css's link, so the tie went to 200px and "to"
+       wrapped under the first box. The number rule is scoped through
+       .swal2-html-container (0,3,1) to win; the radio rule needs nothing,
+       since the global rule excludes radios. */
     .export-csv-dialog input[type="radio"] {
       width: auto;
       height: auto;
@@ -518,7 +523,7 @@ function ycFiltersToggle(btn) {
       flex: 0 0 auto;
       vertical-align: middle;
     }
-    .export-csv-dialog input[type="number"] {
+    .swal2-html-container .export-csv-dialog input[type="number"] {
       width: 6em;
       height: auto;
       padding: 0.2em 0.4em;
