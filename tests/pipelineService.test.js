@@ -1591,6 +1591,12 @@ describe('movePipeline', () => {
 
     expect(p.noop).toBe(false);
     expect(p.moved).toEqual({ template_id: 3, template_name: 'Bankruptcy — Chapter 13', fields_updated: true });
+
+    // Sync-bus contract: the membership write is server-side (no client sniff),
+    // so movePipeline merges it into the advance's `changes` — the /pipeline/move
+    // matcher in yc-sync.js reads exactly this key.
+    expect(p.changes).toMatchObject({ case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
+    expect(p.changes.case_stage).toBe('Filed');   // advance's own columns kept
   });
 
   test('membership already matches → updateCase never called, fields_updated false', async () => {
@@ -1609,6 +1615,7 @@ describe('movePipeline', () => {
     const insert = db.connCalls.find(c => c.sql.startsWith('INSERT INTO case_stage_log'));
     expect(insert.params[8]).toBe('hand move');          // caller note wins over default
     expect(p.moved.fields_updated).toBe(false);
+    expect(p.changes).not.toHaveProperty('case_type');   // no membership write → no merge
   });
 
   test('intake target: no membership write — the phase flip IS the move', async () => {

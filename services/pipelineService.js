@@ -1302,6 +1302,21 @@ async function movePipeline(db, caseId, templateId, stageId, {
       template_name: template.name,
       fields_updated: fieldsUpdated,
     };
+    // Sync bus (public/js/yc-sync.js): the /pipeline/move matcher reads
+    // `changes` at the top level, exactly like the advance matcher. The
+    // advance's own `changes` covers only its overwrite-on-advance columns;
+    // the membership write above went through caseService SERVER-SIDE, which
+    // no client sniff ever sees — so it is merged here or announced nowhere.
+    // Merged even when the advance was a NOOP (a phantom fix-up: position
+    // already right, membership wasn't): the type/subtype change is real and
+    // every open frame — the board above all — must hear it.
+    if (fieldsUpdated) {
+      payload.changes = {
+        ...(payload.changes || {}),
+        case_type: template.case_type,
+        case_subtype: template.case_subtype || '',
+      };
+    }
     return payload;
   } catch (err) {
     if (fieldsUpdated) {

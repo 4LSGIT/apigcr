@@ -537,8 +537,9 @@
      the routes 2026-08-24: `PATCH /api/cases/:id` (api.cases.js:86),
      `PATCH /api/contacts/:id` (api.contacts.js:135),
      `PATCH /api/cases/:id/docket` (api.cases.js:169),
-     `POST /api/cases/:id/pipeline/advance` (api.pipeline.js:57) — no other verb
-     exists on any of the four (GET aside, which the gate drops). */
+     `POST /api/cases/:id/pipeline/advance` (api.pipeline.js:57),
+     `POST /api/cases/:id/pipeline/move` (api.pipeline.js) — no other verb
+     exists on any of them (GET aside, which the gate drops). */
   var MATCHERS = [
     [/^\/api\/cases\/([A-Za-z0-9_-]+)$/,                    'case',    function (r) { return r && r.data && r.data.changes; }, ['PATCH']],
     /* Contacts. TWO entities can change in one response, so this is the array
@@ -592,6 +593,13 @@
     }, ['PATCH']],
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/docket$/,            'case',    function (r) { return r && r.changes; }, ['PATCH']],
     [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/advance$/, 'case',    function (r) { return r && r.changes; }, ['POST']],
+    /* Cross-pipeline move (api.pipeline.js). Same payload contract as the
+       advance it wraps — `changes` at the TOP LEVEL — except the service also
+       merges the membership write (case_type/case_subtype) into it, so one
+       message carries everything a move touched. A noop advance whose
+       membership DID change (the phantom fix-up) still carries `changes` with
+       just the membership fields, so the board and the Cases tab hear it. */
+    [/^\/api\/cases\/([A-Za-z0-9_-]+)\/pipeline\/move$/,    'case',    function (r) { return r && r.changes; }, ['POST']],
 
     /* CASE ↔ CONTACT LINKS (Slice 3c). `case_relate` — who is attached to this
        case and in what role. Four verbs, ONE matcher, because every write to

@@ -340,11 +340,41 @@ describe('_sniff', () => {
     expect(seen).toEqual([]);
   });
 
+  test('POST pipeline/move reads TOP-LEVEL changes (membership merged by the service)', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'case:AAAA');
+    w.YC._sniff('POST', '/api/cases/AAAA/pipeline/move', {
+      noop: false, skipped: false,
+      changes: { case_stage: 'Pending', case_status: 'Retained — Send Doc Request',
+                 case_rec: '', pipeline_phase: 'case',
+                 case_type: 'Bankruptcy', case_subtype: 'Chapter 7' },
+    });
+    expect(seen.length).toBe(1);
+    expect(seen[0].fields).toEqual({
+      case_stage: 'Pending', case_status: 'Retained — Send Doc Request',
+      case_rec: '', pipeline_phase: 'case',
+      case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
+    });
+    expect(seen[0].origin).toBe('auto:POST /api/cases/AAAA/pipeline/move');
+  });
+
+  test('a noop move whose MEMBERSHIP changed still emits (changes = membership only)', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'case:AAAA');
+    w.YC._sniff('POST', '/api/cases/AAAA/pipeline/move', {
+      noop: true, skipped: false,
+      changes: { case_type: 'Bankruptcy', case_subtype: 'Chapter 13' },
+    });
+    expect(seen.length).toBe(1);
+    expect(seen[0].fields).toEqual({ case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
+  });
+
   test('a response with no changes key at all emits nothing', () => {
     const w = mkWindow();
     const seen = spy(w, 'case:*');
     w.YC._sniff('PATCH', '/api/cases/AAAA', { status: 'success', data: {} });
     w.YC._sniff('POST', '/api/cases/AAAA/pipeline/advance', { noop: true, skipped: false });
+    w.YC._sniff('POST', '/api/cases/AAAA/pipeline/move', { noop: true, skipped: false });
     expect(seen).toEqual([]);
   });
 
