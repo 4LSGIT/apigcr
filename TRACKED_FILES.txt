@@ -34,6 +34,7 @@ lib/credentialInjection.js
 lib/domainEventDrain.js
 lib/domainEvents.js
 lib/errorMiddleware.js
+lib/escapeLike.js
 lib/firmConfig.js
 lib/ingestSampleProjection.js
 lib/internal_functions/README.md
@@ -859,6 +860,7 @@ tests/dropboxService.normalizePath.test.js
 tests/dropboxService.retry.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
+tests/escapeLike.test.js
 tests/esignActionsUi.test.js
 tests/esignAlert.test.js
 tests/esignAlertDedupe.test.js

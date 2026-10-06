@@ -73,6 +73,7 @@ const { DateTime } = require('luxon');
 const { FIRM_TZ }  = require('./timezoneService');
 const logService   = require('./logService');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
+const { escapeLike } = require('../lib/escapeLike');
 
 // ─── lazy-load to avoid circular deps ───────────────────────────────────────
 function emailSvc() { return require('./emailService'); }
@@ -905,7 +906,7 @@ async function listTasks(db, {
       OR ca.case_number LIKE ? OR ca.case_number_full LIKE ?
       ${idMatch ? 'OR t.task_id = ?' : ''}
     )`);
-    const q = `%${query}%`;
+    const q = `%${escapeLike(query)}%`;
     params.push(q, q, q, q, q);
     if (idMatch) params.push(Number(query.trim()));
   }

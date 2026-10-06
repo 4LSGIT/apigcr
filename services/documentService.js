@@ -170,17 +170,8 @@ function _sha1(s) {
   return crypto.createHash('sha1').update(String(s), 'utf8').digest('hex');
 }
 
-/**
- * Escape LIKE metacharacters so user/path input matches LITERALLY. Order
- * matters — escape the escape char first. This server's sql_mode does NOT
- * include NO_BACKSLASH_ESCAPES, so MySQL's default '\' escape is active and
- * no explicit ESCAPE clause is needed. (Same idiom as assetService.list.)
- */
-function _escapeLike(s) {
-  return String(s)
-    .replace(/\\/g, '\\\\')
-    .replace(/[%_]/g, '\\$&');
-}
+/** LIKE-metacharacter escape — the one idiom lives in lib/escapeLike.js. */
+const _escapeLike = require('../lib/escapeLike').escapeLike;
 
 /**
  * Provider timestamp → naive 'YYYY-MM-DD HH:MM:SS' for a DATETIME column.

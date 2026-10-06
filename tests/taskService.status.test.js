@@ -354,6 +354,12 @@ describe('listTasks text query', () => {
     expect(db.seen[0].params.indexOf(1146)).toBe(db.seen[0].params.lastIndexOf('% 1146 %') + 1);
   });
 
+  test('LIKE wildcards in the query match literally', async () => {
+    const db = makeListDb();
+    await taskService.listTasks(db, { query: '50%_off' });
+    expect(db.seen[0].params.slice(0, 5)).toEqual(Array(5).fill('%50\\%\\_off%'));
+  });
+
   test('non-numeric text does not add the ID match', async () => {
     const db = makeListDb();
     await taskService.listTasks(db, { query: 'smith 12' });
