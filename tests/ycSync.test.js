@@ -379,7 +379,12 @@ describe('_sniff', () => {
     w.YC._sniff('DELETE', '/api/cases/AAAA/pipeline/requirements/sign_retainer/override',
                 { status: 'success', cleared: true });
     expect(seen.map(s => s.fields)).toEqual([{ yc_pipeline: 1 }, { yc_pipeline: 1 }]);
-    expect(seen[0].addr).toBe('case:AAAA');
+    // Address is proven by RECEIPT — this spy subscribes to exact 'case:AAAA',
+    // so a message addressed anywhere else would never land here. This block's
+    // spy records {fields, origin} only (the addr-recording helper is the
+    // documents block's, line ~419).
+    expect(seen[0].origin)
+      .toBe('auto:POST /api/cases/AAAA/pipeline/requirements/sign_retainer/override');
   });
 
   test('a response with no changes key at all emits nothing', () => {
