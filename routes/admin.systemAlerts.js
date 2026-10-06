@@ -29,6 +29,7 @@
 
 const express = require("express");
 const { superuserOnlyFor, auditAdminAction } = require("../lib/auth.superuser");
+const { escapeLike } = require("../lib/escapeLike");
 
 const router = express.Router();
 const guard = superuserOnlyFor("system_alerts");
@@ -96,7 +97,7 @@ router.get("/admin/system-alerts", guard, async (req, res) => {
     if (source)   { where.push("source = ?");   params.push(source); }
     if (q) {
       where.push("(title LIKE ? OR message LIKE ? OR kind LIKE ?)");
-      const like = `%${q}%`;
+      const like = `%${escapeLike(q)}%`;
       params.push(like, like, like);
     }
     const whereSql = where.join(" AND ");

@@ -74,6 +74,7 @@ const { blankDatesToNull } = require('../lib/blankDateToNull');
 const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
 const fieldDefs = require('./fieldDefService'); // custom fields S2 — cf_ write chokepoint
+const { escapeLike } = require('../lib/escapeLike');
 
 const DEFAULT_LOG_LIMIT = 200;
 
@@ -1855,7 +1856,7 @@ async function listContacts(db, {
              AND ce.email LIKE ?
         )
       )`);
-      const q = `%${query}%`;
+      const q = `%${escapeLike(query)}%`;
       params.push(q, q, q);
     } else {
       where.push(`(
@@ -1865,7 +1866,7 @@ async function listContacts(db, {
         OR c.contact_fname LIKE ?
         OR c.contact_lname LIKE ?
       )`);
-      const q = `%${query}%`;
+      const q = `%${escapeLike(query)}%`;
       params.push(`${query}*`, q,q, q, q);
     }
   }
@@ -1877,7 +1878,7 @@ async function listContacts(db, {
 
   if (tags) {
     where.push('c.contact_tags LIKE ?');
-    params.push(`%${tags}%`);
+    params.push(`%${escapeLike(tags)}%`);
   }
 
   // Role-forms slice: filter to contacts holding an ACTIVE contact_roles row

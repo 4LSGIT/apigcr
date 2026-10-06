@@ -5,6 +5,7 @@ const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const ms = require("ms"); //  for parsing "5m", "2h", etc.
 const { CronExpressionParser } = require("cron-parser"); // resume → next future tick
 const internalFunctions = require("../lib/internal_functions"); // __validateFunctionParams (Slice 5)
+const { escapeLike } = require("../lib/escapeLike");
 
 // Helper: parse delay string to milliseconds
 function parseDelay(delayStr) {
@@ -475,7 +476,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 
     if (status) { query += ` AND status = ?`;         params.push(status); }
     if (type)   { query += ` AND type = ?`;           params.push(type); }
-    if (search) { query += ` AND (name LIKE ? OR description LIKE ?)`; params.push(`%${search}%`, `%${search}%`); }
+    if (search) { query += ` AND (name LIKE ? OR description LIKE ?)`; params.push(`%${escapeLike(search)}%`, `%${escapeLike(search)}%`); }
     if (activeFilter !== null) { query += ` AND active = ?`; params.push(activeFilter); }
 
     // Hide internal workflow/sequence jobs from the list by default

@@ -39,6 +39,7 @@ const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const { cfg }      = require('../lib/firmConfig');
 const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 const emailService = require('../services/emailService');
+const { escapeLike } = require('../lib/escapeLike');
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -337,7 +338,7 @@ router.get('/api/issue-reports', jwtOrApiKey, requireAdmin, async (req, res) => 
     if (kind) { where.push('kind = ?'); params.push(kind); }
     if (q) {
       where.push('(note LIKE ? OR user_name LIKE ?)');
-      params.push(`%${q}%`, `%${q}%`);
+      params.push(`%${escapeLike(q)}%`, `%${escapeLike(q)}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 

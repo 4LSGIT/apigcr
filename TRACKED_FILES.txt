@@ -956,6 +956,7 @@ tests/internalFn.cancelCaseAppts.test.js
 tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js
 tests/jest.setup.js
+tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js

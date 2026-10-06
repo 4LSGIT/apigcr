@@ -45,6 +45,7 @@ const fieldDefs = require('./fieldDefService'); // custom fields S2 — cf_ writ
 // with routes/api.checklists.js — one copy of the rule, see the lib.
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
 const { generateCaseId } = require('../lib/caseId'); // custom-fields S6-B — createCase mints the id
+const { escapeLike } = require('../lib/escapeLike');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ async function listCases(db, {
       OR c.case_number_full LIKE ?
       OR c.case_notes LIKE ?
     )`);
-    const q = `%${query}%`;
+    const q = `%${escapeLike(query)}%`;
     params.push(q, q, q, q, q);
   }
 
@@ -991,7 +992,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
   if (!Number.isInteger(lim) || lim <= 0) lim = 20;
   if (lim > 50) lim = 50;
 
-  const like = `%${q}%`;
+  const like = `%${escapeLike(q)}%`;
 
   const [cases] = await db.query(
     `SELECT

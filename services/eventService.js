@@ -68,6 +68,7 @@ const domainEvents = require('../lib/domainEvents');
 // No cycle: caseEventService requires only luxon, timezoneService and
 // calendarTypeService, and never touches this file.
 const { _deriveState } = require('./caseEventService');
+const { escapeLike } = require('../lib/escapeLike');
 
 // ─────────────────────────────────────────────────────────────
 // GOOGLE CALENDAR INTEGRATION
@@ -1202,7 +1203,7 @@ async function listEvents(db, {
   if (type) { where.push('e.event_type = ?'); params.push(type); }
   if (from) { where.push('e.event_date >= ?'); params.push(String(from).slice(0, 10)); }
   if (to)   { where.push('e.event_date <= ?'); params.push(String(to).slice(0, 10)); }
-  if (q)    { where.push('e.event_title LIKE ?'); params.push(`%${q}%`); }
+  if (q)    { where.push('e.event_title LIKE ?'); params.push(`%${escapeLike(q)}%`); }
 
   const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 

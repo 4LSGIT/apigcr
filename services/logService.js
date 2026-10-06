@@ -109,6 +109,8 @@
  *   await logService.updateLogLink(db, { log_id: 58197, link_type: 'contact', link_id: '412' });
  */
 
+const { escapeLike } = require('../lib/escapeLike');
+
 // ─────────────────────────────────────────────────────────────
 // Local normalization helpers (mirror contactService.{normalizePhone,
 // normalizeEmail}; kept inline to avoid require-cycle risk and to be
@@ -618,7 +620,7 @@ async function listLog(db, {
   }
 
   if (q) {
-    const like = `%${q}%`;
+    const like = `%${escapeLike(q)}%`;
     where.push(`(l.log_data LIKE ? OR l.log_from LIKE ? OR l.log_to LIKE ?
                  OR l.log_subject LIKE ? OR CAST(l.log_link AS CHAR) LIKE ?)`);
     params.push(like, like, like, like, like);

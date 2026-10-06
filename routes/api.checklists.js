@@ -84,6 +84,7 @@ const logService   = require('../services/logService');
 const uploadTarget = require('../services/uploadTargetService');
 const { getSetting } = require('../services/settingsService');
 const { cfg } = require('../lib/firmConfig');
+const { escapeLike } = require('../lib/escapeLike');
 // R1.5: services/pipelineService and lib/alerting were required here ONLY for
 // the retained→docs advance in upsert-items and its failure alert. That advance
 // is now a trigger rule (see the note at its former site), and grep confirms
@@ -402,7 +403,7 @@ router.get('/checklists', jwtOrApiKey, async (req, res) => {
     }
 
     if (q !== undefined && q !== '') {
-      where.push('cl.title LIKE CONCAT(\'%\', ?, \'%\')'); params.push(q);
+      where.push('cl.title LIKE CONCAT(\'%\', ?, \'%\')'); params.push(escapeLike(q));
     }
 
     const orderKey = order || DEFAULT_ORDER;

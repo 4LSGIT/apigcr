@@ -131,10 +131,9 @@ test('search needs no join the count query lacks', async () => {
   expect(count.sql).not.toContain('LEFT JOIN users');
 });
 
-test('% and _ are passed through as the literal term, not re-escaped into a new pattern', async () => {
-  // Documenting today's behaviour: a term containing a wildcard is a wildcard.
-  // Harmless for a staff-only picker (worst case is a broad match), and worth a
-  // failing test the day someone decides it should not be.
+test('% and _ in the term match literally (escaped via lib/escapeLike)', async () => {
   const { rows } = await list('?q=%25');
-  expect(filterParams(rows)).toEqual(['%%%', '%%%', '%%%', '%%%']);
+  expect(filterParams(rows)).toEqual(['%\\%%', '%\\%%', '%\\%%', '%\\%%']);
+  const { rows: rows2 } = await list('?q=a_b');
+  expect(filterParams(rows2)).toEqual(['%a\\_b%', '%a\\_b%', '%a\\_b%', '%a\\_b%']);
 });

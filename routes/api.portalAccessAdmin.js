@@ -38,6 +38,7 @@
 const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const { escapeLike } = require('../lib/escapeLike');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -84,7 +85,7 @@ async function searchContacts(db, { q, limit } = {}) {
     return rows;
   }
 
-  const like = `%${term}%`;
+  const like = `%${escapeLike(term)}%`;
   const idExact = /^\d+$/.test(term) ? Number(term) : -1;
   const [rows] = await db.query(
     `${CONTACT_SELECT}

@@ -226,6 +226,7 @@ async function remapBranchTargets(connection, workflowId, version, mapFn) {
 // ─────────────────────────────────────────────────────────────
 
 const internalFunctions = require("../lib/internal_functions");
+const { escapeLike } = require("../lib/escapeLike");
 
 const validateInternalFunctionParams = internalFunctions.__validateFunctionParams;
 
@@ -698,7 +699,7 @@ router.get("/executions", jwtOrApiKey, async (req, res) => {
     }
     if (search) {
       query += ` AND (w.name LIKE ? OR JSON_SEARCH(e.variables, 'one', ?) IS NOT NULL)`;
-      params.push(`%${search}%`, `%${search}%`);
+      params.push(`%${escapeLike(search)}%`, `%${escapeLike(search)}%`);
     }
     // T7 time window (see parse block above). Pushed AFTER search so the
     // count query's params.slice(0, -2) below stays position-aligned.
@@ -985,7 +986,7 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
 
     if (search) {
       query += ` AND (name LIKE ? OR description LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
+      params.push(`%${escapeLike(search)}%`, `%${escapeLike(search)}%`);
     }
     if (activeFilter !== null) {
       query += ` AND active = ?`;
@@ -1006,7 +1007,7 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
     const countParams = [];
     if (search) {
       countQuery += ` AND (name LIKE ? OR description LIKE ?)`;
-      countParams.push(`%${search}%`, `%${search}%`);
+      countParams.push(`%${escapeLike(search)}%`, `%${escapeLike(search)}%`);
     }
     if (activeFilter !== null) {
       countQuery += ` AND active = ?`;

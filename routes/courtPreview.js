@@ -24,6 +24,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const aiService          = require('../services/aiService');
 const { executeCourtActions } = require('../services/courtExecutor');
 const { getPrompt }      = require('../lib/aiPrompts');
+const { escapeLike } = require('../lib/escapeLike');
 
 const MODELS = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'];
 
@@ -69,7 +70,7 @@ router.get('/api/court-preview/emails', jwtOrApiKey, async (req, res) => {
       sql = `SELECT id, processed_at, subject FROM email_log
               WHERE subject LIKE ? AND from_email LIKE '%mieb%'
               ORDER BY id DESC LIMIT 50`;
-      params = [`%${q}%`];
+      params = [`%${escapeLike(q)}%`];
     }
     const [rows] = await req.db.query(sql, params);
     res.json(rows);

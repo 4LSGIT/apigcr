@@ -14,6 +14,8 @@
  * For limit>1: runs all applicable tiers, deduplicates, caps at limit
  */
 
+const { escapeLike } = require('../lib/escapeLike');
+
 /**
  * @param {object} db
  * @param {object} opts
@@ -166,7 +168,7 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
 
   // Build LIKE pattern: "john smith" → "%john%smith%"
   const nameParts = term.replace(/,/g, ' ').split(/\s+/).filter(Boolean);
-  const likePattern = nameParts.length ? `%${nameParts.join('%')}%` : null;
+  const likePattern = nameParts.length ? `%${nameParts.map(escapeLike).join('%')}%` : null;
 
   // Contact by name
   if (wantContacts && likePattern && !done()) {

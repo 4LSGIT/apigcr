@@ -27,6 +27,7 @@ const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const apptService  = require('../services/apptService');
 const calendarTypeService = require('../services/calendarTypeService');   // U2 — type_key on PATCH
+const { escapeLike } = require('../lib/escapeLike');
 
 // ─── LIST ───
 router.get('/api/appts', jwtOrApiKey, async (req, res) => {
@@ -129,7 +130,7 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   // widening to it means adding that join in two places, not one condition.
   const qTerm = q == null ? '' : String(q).trim();
   if (qTerm) {
-    const like = `%${qTerm}%`;
+    const like = `%${escapeLike(qTerm)}%`;
     const numeric = /^\d+$/.test(qTerm);
     conditions.push(
       '(contacts.contact_name LIKE ? OR cases.case_number LIKE ?' +
