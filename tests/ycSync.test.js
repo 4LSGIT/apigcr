@@ -1922,6 +1922,35 @@ describe('_sniff — documents matchers', () => {
     expect(linkSeen[0].origin).toBe('auto:POST /api/documents/upload-commit');
   });
 
+  test('documents/generate announces the TARGET, like upload-commit', () => {
+    const w = mkWindow();
+    const docSeen  = spy(w, 'document:*');
+    const linkSeen = spy(w, 'doclink:*');
+    w.YC._sniff('POST', '/api/documents/generate', {
+      status: 'success',
+      document_id: 91, document_name: 'Retainer - Smith.pdf',
+      link_type: 'case', link_id: 'aB3xY9',
+    });
+    expect(docSeen).toEqual([]);
+    expect(linkSeen.map(s => s.addr)).toEqual(['doclink:case:aB3xY9']);
+    expect(linkSeen[0].fields).toEqual({ yc_refetch: 1 });
+  });
+
+  test('POST /api/contacts (manual create) announces the new contact; no id → nothing', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'contact:*');
+    w.YC._sniff('POST', '/api/contacts', {
+      status: 'success', contact_id: 2101, contact_name: 'Smith, John',
+    });
+    expect(seen.map(s => s.addr)).toEqual(['contact:2101']);
+    expect(seen[0].fields).toEqual({ yc_refetch: 1 });
+    expect(seen[0].origin).toBe('auto:POST /api/contacts');
+
+    // Fail-closed: a refused/odd response without contact_id emits nothing.
+    w.YC._sniff('POST', '/api/contacts', { status: 'success' });
+    expect(seen.length).toBe(1);
+  });
+
   test('a CONTACT-scoped upload announces the contact', () => {
     const w = mkWindow();
     const seen = spy(w, 'doclink:contact:1001');

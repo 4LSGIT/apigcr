@@ -791,6 +791,21 @@
     [/^\/api\/contact-phones$/, 'contact', reviveDonorGetter('phone'), ['POST']],
     [/^\/api\/contact-emails$/, 'contact', reviveDonorGetter('email'), ['POST']],
 
+    /* CONTACT CREATE (bus audit, Oct 2026). Parity with the intake matchers
+       below: an intake-created contact announced, a NewContactForm one did
+       not — so the Contacts tab (index.html's contact:* subscriber) in any
+       OTHER tab or browser window missed manual creations until a hand
+       refresh. The creating form needs no message; it has the row in the
+       response. routes/api.contacts.js spreads createContact's
+       {contact_id, contact_name} at the TOP level — not under `data`, so
+       createGetter (appt/event shape) does not fit. Fail-closed on a
+       missing id. */
+    [/^\/api\/contacts$/, 'contact', function (r) {
+      var id = r && r.contact_id;
+      if (id == null || id === '') return null;
+      return [{ addr: 'contact:' + id, fields: { yc_refetch: 1 } }];
+    }, ['POST']],
+
     /* ── APPOINTMENTS & EVENTS (Slice 3) ──────────────────────────────────
        These matchers RETIRE the `appt-updated` / `event-updated` postMessage
        system. That system worked by having each writer post to the shell,
@@ -975,6 +990,14 @@
     // new row; see the note above. No capture group, so the getter's array
     // return is what addresses it (contract v2), as it is for the links pair.
     [/^\/api\/documents\/upload-commit$/, 'document', docLinkGetter, ['POST']],
+
+    // Generate (G2) is upload-commit's twin and was missed when S4 added that
+    // matcher: a UI (generateForm, esign sendForm, documents.html) filing a
+    // GENERATED document onto the case/contact being viewed. The route already
+    // echoes top-level link_type/link_id (documentGenerateService's return,
+    // spread by the route), so docLinkGetter plugs in unchanged and a global
+    // generate with no target fails closed exactly as upload-commit does.
+    [/^\/api\/documents\/generate$/, 'document', docLinkGetter, ['POST']],
   ];
 
   /**
