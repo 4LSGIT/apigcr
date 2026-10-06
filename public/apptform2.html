@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="/css/yc-forms.css" rel="stylesheet">
   <script src="/js/ycPager.js"></script>
+  <script src="/js/yc-frame-fit.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <style>
     body { padding: 16px; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -833,33 +834,23 @@ function mountNotes() {
   f.style.height = '';   // the previous appointment's measured height is wrong
   f.src = '/checklistView.html?link_type=appt&link=' + encodeURIComponent(apptData.appt_id);
   // checklistView.html sizes to its own content; without this it keeps the
-  // default iframe height and grows its own scrollbar inside ours. Same idiom
-  // as eventform.html's efAutoSize() and checklistsView.html's autoSize().
-  f.onload = () => { try { autoSizeNotes(f); } catch (_) {} };
-}
-
-/* Held so a remount can clear it. Only the degraded branch below sets it, but
-   one leaked 700ms interval per appointment switch — each measuring a document
-   that no longer exists — is not a thing to leave running in a dialog staff
-   keep open all day. */
-let notesFitTimer = null;
-
-function autoSizeNotes(f) {
-  if (notesFitTimer) { clearInterval(notesFitTimer); notesFitTimer = null; }
-  const fit = () => {
+  // default iframe height and grows its own scrollbar inside ours.
+  // fitFrameToContent (/js/yc-frame-fit.js) also follows a note body growing
+  // as the user types.
+  f.onload = () => {
     try {
-      const h = f.contentDocument && f.contentDocument.body && f.contentDocument.body.scrollHeight;
-      if (h) f.style.height = (h + 24) + 'px';
+      // STOP the previous appointment's watch first. Its observer would die
+      // with the old document anyway, but the polling fallback would not —
+      // one leaked 700ms interval per appointment switch, each measuring a
+      // document that no longer exists, in a dialog staff keep open all day.
+      if (notesFit) notesFit.stop();
+      notesFit = fitFrameToContent(f);
     } catch (_) {}
   };
-  fit();
-  // The widget rebuilds its DOM on every edit, so watch it rather than
-  // measuring once.
-  try {
-    const obs = new f.contentWindow.MutationObserver(fit);
-    obs.observe(f.contentDocument.body, { childList: true, subtree: true });
-  } catch (_) { notesFitTimer = setInterval(fit, 700); }
 }
+
+/* The live fitFrameToContent handle for #apptNotesFrame — see mountNotes. */
+let notesFit = null;
 
 // ─── CASE LINKING ───
 

@@ -24,6 +24,7 @@
        first (it does `window.Toast = Swal.mixin(...)` at parse time). -->
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <script src="/js/yc-frame-fit.js"></script>
   <style>
     body { padding: 16px; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     .yc-form { padding: 0; box-shadow: none; border: none; background: transparent; }
@@ -1011,25 +1012,9 @@ function efMountNotes() {
   f.dataset.mounted = '1';
   f.src = '/checklistView.html?link_type=event&link=' + encodeURIComponent(efRow.event_id);
   // checklistView.html sizes to its own content; without this it keeps the
-  // default iframe height and grows its own scrollbar. Same idiom as
-  // checklistsView.html's autoSize().
-  f.onload = () => { try { efAutoSize(f); } catch (_) {} };
-}
-
-function efAutoSize(f) {
-  const fit = () => {
-    try {
-      const h = f.contentDocument && f.contentDocument.body && f.contentDocument.body.scrollHeight;
-      if (h) f.style.height = (h + 24) + 'px';
-    } catch (_) {}
-  };
-  fit();
-  // The widget rebuilds its DOM on every edit, so watch it rather than
-  // measuring once.
-  try {
-    const obs = new f.contentWindow.MutationObserver(fit);
-    obs.observe(f.contentDocument.body, { childList: true, subtree: true });
-  } catch (_) { setInterval(fit, 700); }
+  // default iframe height and grows its own scrollbar. fitFrameToContent
+  // (/js/yc-frame-fit.js) also follows a note body growing as the user types.
+  f.onload = () => { try { fitFrameToContent(f); } catch (_) {} };
 }
 
 // ── Wiring ───────────────────────────────────────────────────────

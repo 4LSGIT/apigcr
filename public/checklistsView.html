@@ -11,6 +11,7 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/scripts.js"></script>
+  <script src="/js/yc-frame-fit.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="/style.css">
@@ -305,27 +306,14 @@ function render() {
 }
 
 /* checklistView.html sizes to its own content; without this the iframe keeps the
-   default 150px and the lists get their own scrollbar. */
+   default 150px and the lists get their own scrollbar. fitFrameToContent
+   (/js/yc-frame-fit.js) also follows a note body growing as the user types. */
 function frameTo(src) {
   const f = document.createElement('iframe');
   f.className = 'cx-frame';
   f.src = src;
-  f.onload = () => { try { autoSize(f); } catch (_) {} };
+  f.onload = () => { try { fitFrameToContent(f); } catch (_) {} };
   return f;
-}
-function autoSize(f) {
-  const fit = () => {
-    try {
-      const h = f.contentDocument?.body?.scrollHeight;
-      if (h) f.style.height = (h + 24) + 'px';
-    } catch (_) {}
-  };
-  fit();
-  // The widget re-renders on every edit, so watch it rather than measuring once.
-  try {
-    const obs = new f.contentWindow.MutationObserver(fit);
-    obs.observe(f.contentDocument.body, { childList: true, subtree: true });
-  } catch (_) { setInterval(fit, 700); }
 }
 
 /* Scope-cell navigation, by link_type (LINK_TYPES in routes/api.checklists.js

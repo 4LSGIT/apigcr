@@ -484,6 +484,16 @@ checklistView's note bodies (`resize: none` — render() rebuilds them, so a
 drag could not last). The old one-shot `resizeTextarea()` is gone; use
 autoGrow for any textarea that should fit its text.
 
+**Content-sized checklistView frames:** `fitFrameToContent(iframe)`
+(`/js/yc-frame-fit.js`, its own file because apptform2.html does not load
+scripts.js) — call from the frame's onload; returns `{ fit, stop }`. Watches
+the framed body for DOM changes AND inline-style changes: a note body
+re-fitted from code (the bus repaint of a native card — `.value` plus an
+autoGrow height write, no DOM change) left the old DOM-only watch 100px short
+with a scrollbar inside the host. Users: eventform.html, checklistsView.html,
+apptform2.html (which `stop()`s the previous appointment's watch on remount).
+The framed page must be standards-mode with a content-sized body.
+
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here
 was stale by definition.
