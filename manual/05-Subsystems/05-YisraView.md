@@ -85,7 +85,7 @@ sits under those. Same principle as reports: nothing here is a black box.
 | **Leads — Follow Ups** | Open cases and where each one stands: first credit-counseling course, pre-petition contract, notes. Defaults to Open cases with nothing sent yet. |
 | **341 Hearings** | Section 341 meetings, soonest first, with docket, chapter, trustee and the dial-in link. Set **From** to a past date to review recent hearings. |
 | **Filing Fees & Installments** | Cases on an installment filing fee: where the fee stands, when the final installment is due, any live show-cause order. Closed cases hidden unless you ask for them. |
-| **Bankruptcy Worksheet** | The bankruptcy case list, one row per filed case — the spreadsheet's columns plus the case notes (with any case alert first, marked ⚠). **✎** opens the row's worksheet form, notes and alerts included. Defaults to cases filed this year. |
+| **Bankruptcy Worksheet** | The bankruptcy case list, one row per filed case — the spreadsheet's columns plus the case notes (with any case alert first, marked ⚠) and the client's phone. **✎** opens the row's worksheet form, notes and alerts included. Defaults to cases filed this year. |
 
 These are starting points, not the limit. Anyone can build a view of anything
 the database actually knows — see [Authoring a view](#authoring-a-view) — or

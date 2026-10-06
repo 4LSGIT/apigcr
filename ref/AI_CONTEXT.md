@@ -88,7 +88,8 @@ body. Governing migrations in `ref/migrations/`.*
 - **BK Worksheet W1 (09-01):** SS's sheet as a YisraView + per-row
   `open_form` (form `bk_worksheet`) → normal `PATCH /api/cases/:id`. First
   write affordance from a view; the view stays read-only. 10-06: view gained
-  `notes` (⚠ alert + case_notes; no alerts column — ~1 live row), form v2 a
+  `notes` (⚠ alert + case_notes; no alerts column — ~1 live row) before Lead
+  Source, and Primary `phone` (formatted) / `dob` around Email; form v2 a
   Notes & Alerts section (`ref/migrations/2026-10-06_bk_worksheet_notes.console.js`).
   Same day, customView cells went one-line + row-click expand (log tri-state at
   row grain, `Expand rows` switch per view); the >60-char auto-wrap is retired.
