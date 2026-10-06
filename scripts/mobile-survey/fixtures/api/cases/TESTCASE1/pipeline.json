@@ -1,0 +1,169 @@
+{
+ "status": "success",
+ "template": {
+  "id": 2,
+  "name": "Bankruptcy — Chapter 7",
+  "role": "case",
+  "case_type": "Bankruptcy",
+  "case_subtype": "Chapter 7"
+ },
+ "current": {
+  "stage_id": 6,
+  "stage_key": "filed",
+  "case_stage": "Filed",
+  "status_label": "Filed — Waiting on documents",
+  "entered_at": "2026-09-20T15:00:00.000Z",
+  "entered_by": 1,
+  "source": "manual",
+  "note": null
+ },
+ "history": [
+  {
+   "stage_id": 5,
+   "stage_key": "docs",
+   "case_stage": "Pending",
+   "status_label": "Docs Requested",
+   "entered_at": "2026-09-02T15:00:00.000Z",
+   "entered_by": 1,
+   "source": "system",
+   "note": null
+  },
+  {
+   "stage_id": 6,
+   "stage_key": "filed",
+   "case_stage": "Filed",
+   "status_label": "Filed — Waiting on documents",
+   "entered_at": "2026-09-20T15:00:00.000Z",
+   "entered_by": 1,
+   "source": "manual",
+   "note": null
+  }
+ ],
+ "upcoming": [],
+ "stages": [
+  {
+   "stage_id": 5,
+   "stage_key": "docs",
+   "stage_number": 1,
+   "internal_label": "Docs Requested",
+   "client_label": "Gathering your documents",
+   "case_stage": "Filed",
+   "is_terminal": 0,
+   "lane": "main",
+   "default_rec": "",
+   "client_visible": 1,
+   "requirements": [
+    {
+     "requirement_key": "upload_docs",
+     "stage_key": "docs",
+     "internal_label": "Upload requested documents",
+     "client_label": "Upload requested documents",
+     "client_visible": 1,
+     "required": 1,
+     "owner": "client",
+     "kind": "task",
+     "hint": "",
+     "effort": null,
+     "group_label": "Documents",
+     "sort_order": 1,
+     "status": "done",
+     "satisfied_at": "2026-09-15T15:00:00.000Z",
+     "detail": "7 of 7 received",
+     "progress": null,
+     "override": null
+    }
+   ]
+  },
+  {
+   "stage_id": 6,
+   "stage_key": "filed",
+   "stage_number": 2,
+   "internal_label": "Filed",
+   "client_label": "Your case is filed",
+   "case_stage": "Filed",
+   "is_terminal": 0,
+   "lane": "main",
+   "default_rec": "",
+   "client_visible": 1,
+   "requirements": [
+    {
+     "requirement_key": "tax_return",
+     "stage_key": "filed",
+     "internal_label": "Provide most recent tax return to the trustee",
+     "client_label": "Provide most recent tax return to the trustee",
+     "client_visible": 1,
+     "required": 1,
+     "owner": "client",
+     "kind": "task",
+     "hint": "",
+     "effort": null,
+     "group_label": "Trustee",
+     "sort_order": 1,
+     "status": "active",
+     "satisfied_at": null,
+     "detail": null,
+     "progress": null,
+     "override": null
+    },
+    {
+     "requirement_key": "meeting_341_set",
+     "stage_key": "filed",
+     "internal_label": "341 meeting date set",
+     "client_label": "341 meeting date set",
+     "client_visible": 1,
+     "required": 1,
+     "owner": "system",
+     "kind": "event",
+     "hint": "",
+     "effort": null,
+     "group_label": "341 Meeting",
+     "sort_order": 1,
+     "status": "upcoming",
+     "satisfied_at": null,
+     "detail": null,
+     "progress": null,
+     "override": null
+    }
+   ]
+  },
+  {
+   "stage_id": 7,
+   "stage_key": "discharged",
+   "stage_number": 3,
+   "internal_label": "Discharged",
+   "client_label": "Discharge entered",
+   "case_stage": "Filed",
+   "is_terminal": 0,
+   "lane": "main",
+   "default_rec": "",
+   "client_visible": 1,
+   "requirements": []
+  },
+  {
+   "stage_id": 8,
+   "stage_key": "closed",
+   "stage_number": 4,
+   "internal_label": "Closed",
+   "client_label": "Case closed",
+   "case_stage": "Filed",
+   "is_terminal": 0,
+   "lane": "main",
+   "default_rec": "",
+   "client_visible": 1,
+   "requirements": []
+  },
+  {
+   "stage_id": 9,
+   "stage_key": "dismissed",
+   "stage_number": 9,
+   "internal_label": "Dismissed",
+   "client_label": "",
+   "case_stage": "Filed",
+   "is_terminal": 0,
+   "lane": "offramp",
+   "default_rec": "",
+   "client_visible": 0,
+   "requirements": []
+  }
+ ]
+}

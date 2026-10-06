@@ -23,6 +23,17 @@
     @media (max-width: 600px) { .yc-section-pair { flex-direction: column; } }
     /* Sublabel hints */
     .yc-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+    /* Custom Fields card. The section sits OUTSIDE the <form>, so it never
+       gets .yc-form's card box; mirror it so the two line up (the same rule
+       contact-form.html gives #rolesSection — keep the values in step with
+       .yc-form in yc-forms.css). */
+    #customFieldsSection {
+      max-width: 950px; margin: 16px auto 0; padding: 20px;
+      background: var(--surface); color: var(--text);
+      border-radius: 8px; box-shadow: var(--shadow);
+    }
+    @media (max-width: 600px) { #customFieldsSection { padding: 14px; } }
+    #customFieldsSection .yc-section-title { margin-top: 0; }
   </style>
 </head>
 <body>
@@ -296,7 +307,28 @@
   </button>
 </form>
 
+<!-- ════════════════════════════════════════════════════════════════
+     CUSTOM FIELDS (custom-fields arc S4 — moved here from the case
+     Overview 2026-10-06)
+     Admin-defined case fields from `field_defs`, rendered by the shared
+     /js/yc-custom-fields.js — the same section forms/contact-form.html
+     mounts. BOTH Case Details variants (casedetails-bk.html and
+     casedetails.html) mount it identically; a field meant for some case
+     types only is scoped by its show_when (`case_type` is one of …), never
+     by which form mounts it. Hidden until at least one active case field
+     is VISIBLE on this case.
+     OUTSIDE <form id="caseDetailsForm">: YCForm's dirty tracking, drafts
+     and PATCH never see these inputs. The section's Save sends only the
+     changed cf_ keys, and the form's Save button commits it too (see the
+     mount). Design: ref/CUSTOM_FIELDS_DESIGN.md §7 S4.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="yc-section" id="customFieldsSection" style="display:none;">
+  <div class="yc-section-title">Custom Fields</div>
+  <div id="customFieldsList"></div>
+</div>
+
 <script src="/js/yc-forms.js"></script>
+<script src="/js/yc-custom-fields.js"></script>
 <script>
   const P = window.parent;
   const params = new URLSearchParams(location.search);
@@ -305,6 +337,45 @@
   if (!caseId) {
     document.body.innerHTML = '<p style="color:var(--danger);padding:20px;">Missing case_id parameter.</p>';
   } else {
+
+    // ── Custom Fields (S4) ──────────────────────────────────────────
+    // The whole section is /js/yc-custom-fields.js; this is the mount.
+    // Called from onLoad, so it repaints with the rest of the form — on
+    // first load AND on every case.html push (pushFormsFromEntityData →
+    // form.refresh → onLoad), which is how a cf_ write from another frame
+    // reaches it. The module refuses to clobber an unsaved edit on a
+    // repaint. Fire-and-forget: it degrades to hidden by itself, and YCForm's
+    // onLoad → baseline sequencing must not wait on the field registry.
+    //
+    // It is handed the RAW case row (_loadResult.case), never onLoad's data
+    // source: that one may be a draft or a submission snapshot, already through this form's apiMap, and
+    // show_when reads real column names (`case_type`) off a real row.
+    let customFields = null;
+    function loadCustomFields(row) {
+      if (!row || !P || !P.apiSend || !window.YCCustomFields) return;
+      if (!customFields) {
+        customFields = YCCustomFields.create({
+          entity:    'case',
+          host:      document.getElementById('customFieldsList'),
+          section:   document.getElementById('customFieldsSection'),
+          apiSend:   (...a) => P.apiSend(...a),
+          patchPath: `/api/cases/${caseId}`,
+        });
+      }
+      customFields.load(row).catch(() => {});
+    }
+
+    // ONE Save for the page. The form's Save button also commits a pending
+    // custom-field edit — the section's own PATCH (cf_ keys only), sent
+    // beside YCForm's and never merged into it. Staff press the button at
+    // the foot of the form and leave; a second button they did not press
+    // must not quietly hold changes back. Guarded, so a clean section sends
+    // nothing and shows no "No changes" status. (Deliberately NOT a timer:
+    // this form's 3s autosave writes a DRAFT, not the case — every write to
+    // the record on this page is a Save click, and these fields follow suit.)
+    document.getElementById('saveBtn').addEventListener('click', () => {
+      if (customFields && customFields.isDirty()) customFields.save();
+    });
 
     const form = new YCForm({
       formKey:       'case_details',
@@ -428,6 +499,8 @@
         // so a field written later reads as an unsaved change forever. See the
         // DERIVED DATE FIELDS block below.
         applyDerivedDates();
+
+        loadCustomFields(loadResult.case);
       },
 
       onSave: () => {

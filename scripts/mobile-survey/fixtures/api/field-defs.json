@@ -1,0 +1,19 @@
+{
+ "status": "success",
+ "defs": [
+  {
+   "id": 1,
+   "entity": "case",
+   "field_key": "cf_clio_matter",
+   "label": "Clio Matter ID",
+   "field_type": "text",
+   "options": null,
+   "validation": null,
+   "show_when": null,
+   "default_value": null,
+   "indexed": 0,
+   "sort_order": 10,
+   "active": 1
+  }
+ ]
+}

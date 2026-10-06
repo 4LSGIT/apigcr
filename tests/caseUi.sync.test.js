@@ -326,6 +326,79 @@ describe('case.html boots', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Overview layout + the alerts box (2026-10-06)
+// ─────────────────────────────────────────────────────────────
+//
+// SS: "the overview is too confusing". Alerts only when set, and then FIRST;
+// Case Notes straight under the case box; the pipeline folded below them;
+// Custom Fields gone to the Case Details tab; no placeholder buttons that
+// pretend to work.
+
+describe('Overview layout', () => {
+  const $ = (w, sel) => w.document.querySelector(sel);
+  const alertsShown = (w) => $(w, '#alertsBox').style.display !== 'none';
+
+  test('order: alerts → case box → Case Notes → pipeline → actions', async () => {
+    const { window, errors } = await boot({ payloads: [casePayload({ case_alerts: 'Call before Friday' })] });
+    expect(errors).toEqual([]);
+    const tab = $(window, '#tabOverview');
+    const order = ['#alertsBox', '.yc-stack', '#overviewCaseNotes', '#pipelinePanel', '.big-button']
+      .map(sel => tab.querySelector(sel));
+    order.forEach(el => expect(el).not.toBeNull());
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) &
+             window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // The alerts box is the tab's first element — above the case type box.
+    expect(tab.firstElementChild.id).toBe('alertsBox');
+  });
+
+  test('Custom Fields are no longer mounted here', async () => {
+    const { window } = await boot();
+    expect($(window, '#cfSection')).toBeNull();
+    expect(window.YCCustomFields).toBeUndefined();
+  });
+
+  test('Delete Lead is DISABLED and can no longer wipe the page; Words Go Here is gone', async () => {
+    const { window } = await boot();
+    const btns = [...window.document.querySelectorAll('#tabOverview button.big-button')];
+    expect(btns.map(b => b.textContent.trim())).toEqual(['Delete Lead', 'Merge Case\u2026']);
+    const del = btns[0];
+    expect(del.disabled).toBe(true);
+    expect(del.getAttribute('onclick')).toBeNull();
+  });
+
+  test('NO alert → no box (it used to be an empty red heading on every case)', async () => {
+    const { window } = await boot();
+    expect(alertsShown(window)).toBe(false);
+  });
+
+  test('whitespace-only counts as no alert', async () => {
+    const { window } = await boot({ payloads: [casePayload({ case_alerts: '  \n ' })] });
+    expect(alertsShown(window)).toBe(false);
+  });
+
+  test('an alert on load → the box shows it, line breaks intact', async () => {
+    const { window } = await boot({ payloads: [casePayload({ case_alerts: 'Line one\nLine two' })] });
+    expect(alertsShown(window)).toBe(true);
+    expect($(window, '#alertsDiv').textContent).toBe('Line one\nLine two');
+  });
+
+  test('the BUS path agrees with the load path: set → shows, cleared → hides', async () => {
+    const { window } = await boot();
+    window.YC.emit(`case:${CASE_ID}`, { case_alerts: { from: '', to: 'Trustee called' } }, 'test');
+    await tick(window, 100);
+    expect(alertsShown(window)).toBe(true);
+    expect($(window, '#alertsDiv').textContent).toBe('Trustee called');
+
+    window.YC.emit(`case:${CASE_ID}`, { case_alerts: { from: 'Trustee called', to: '' } }, 'test');
+    await tick(window, 100);
+    expect(alertsShown(window)).toBe(false);
+    expect($(window, '#alertsDiv').textContent).toBe('');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // 1. The dirty fence on Overview notes  (must-have)
 // ─────────────────────────────────────────────────────────────
 

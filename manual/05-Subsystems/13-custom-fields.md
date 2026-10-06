@@ -51,7 +51,14 @@ a report".
    when the condition holds:
    - the **field** box takes any column on that record (`case_chapter`,
      `contact_kind`) or another custom field's key (`cf_band`). The list
-     suggests your other custom fields; you can type any column name.
+     suggests the usual columns (`case_type` / `case_subtype` on cases,
+     `contact_kind` on contacts) and your other custom fields; you can type
+     any column name.
+   - **a field for some case types only** is a condition on `case_type`:
+     field `case_type`, *is one of*, then the types one per line
+     (`Bankruptcy`, `Civil Litigation`). Every case type's Case Details tab
+     shows the same Custom Fields panel, so this condition — not which tab
+     you look on — is what decides where a field appears.
    - the **test** is *is* / *is not* / *is one of* / *is filled in* / *is
      empty*. *is one of* takes **one value per line** — not a comma list,
      because an option value may itself contain a comma.
@@ -75,11 +82,13 @@ Once a field is active it appears everywhere by itself. A worked example — a
    `Referral source`, key fills in as `cf_referral_source`, type `select`,
    options `google` / `friend` / `attorney` with friendly labels. **+ Add
    Field.**
-2. **See it on the record.** Open any contact. Under *Roles* there is now a
-   **Custom Fields** panel with a *Referral source* dropdown. On a case the
-   panel sits under the Overview box, above Pipeline. Pick a value and press
-   **Save** — it saves only the custom fields you changed, and nothing else on
-   the record.
+2. **See it on the record.** Open any contact. Between the contact form and
+   *Roles* there is now a **Custom Fields** panel with a *Referral source*
+   dropdown. On a case the panel is on the **Case Details** tab, under the
+   case form (it moved there from the Overview on 2026-10-06). Pick a value and
+   press **Save** — it saves only the custom fields you changed, and nothing
+   else on the record. On a case, the form's own **Save** button at the foot of
+   Case Details saves the panel too, so one press commits the whole tab.
    - If something is wrong (a value too long, an option that no longer
      exists), the message appears right under the fields, in the server's own
      words. Nothing is saved until it is right.
@@ -90,7 +99,8 @@ Once a field is active it appears everywhere by itself. A worked example — a
      not a tickbox, because "No" and "never answered" are different answers
      and a tickbox can only tell you one of them.
    - The panel is only there when the firm has at least one active field for
-     that record type. With none defined, there is no panel at all.
+     that record type **that is showing on this record**. With none defined —
+     or every one hidden by its *show only when* — there is no panel at all.
 3. **Report on it.** More → Reports → ask for what you want in plain English.
    The report author already knows the field exists, what type it is and which
    option values it accepts — it is told about every active custom field on
@@ -303,7 +313,7 @@ The server enforces these; the screen just helps you meet them.
 | `ref/migrations/2026-09-24_field_key_comment.sql` | S3: the `field_key` COMMENT follows the 60-char key rule (comment only). |
 | `tests/customFields.s3.test.js` | Reconciler plan / idempotence / lock / MDL / audit, trigger rules, the route, the 255 caps, case-merge and petition riders. |
 | `public/js/yc-custom-fields.js` | S4: THE renderer. The Custom Fields section on both records — typed inputs, `show_when` v1, the `required` gate, the changed-keys-only save. Also CommonJS, so its pure halves are unit-testable. |
-| `public/case.html` / `public/forms/contact-form.html` | S4 mount points (`cfSection` under the Overview box; `customFieldsSection` after Roles). Neither rides an aggregate form save. |
+| `public/forms/casedetails-bk.html` + `public/forms/casedetails.html` / `public/forms/contact-form.html` | Mount points, all `customFieldsSection`: on cases under the Case Details form (both variants — moved off the case Overview 2026-10-06; the form's Save also commits it), on contacts between the form and Roles. None rides an aggregate form save. |
 | `lib/reportSchema/customFieldsAppendix.js` | S4: the registry-driven appendix to the (hand-maintained) report manifest, merged into the report author's prompt per request via `aiService`'s `systemAppend`. |
 | `ref/migrations/2026-09-25_field_defs_default_value.sql` | S6: `field_defs.default_value`. Plain nullable JSON, `ALGORITHM=INSTANT`; the COMMENT carries the semantics. |
 | `ref/migrations/2026-09-25_field_defs_default_value_comment.sql` | S6-B: the COMMENT names the chokepoints after the extraction (comment only). |

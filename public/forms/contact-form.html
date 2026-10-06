@@ -300,8 +300,11 @@
     /* The section sits OUTSIDE <form id="contactForm">, so it never picked up
        .yc-form's card box (max-width 950 / centred / padded) and ran the full
        body width while the form above it stayed 950. Mirror the card here so
-       the two line up; keep the values in step with .yc-form in yc-forms.css. */
-    #rolesSection {
+       the two line up; keep the values in step with .yc-form in yc-forms.css.
+       Custom Fields sits outside the form too and had the same full-width
+       defect; it shares the card (2026-10-06 — the Case Details mounts use
+       the same rule). */
+    #rolesSection, #customFieldsSection {
       max-width: 950px;
       margin: 16px auto 0;
       padding: 20px;
@@ -310,10 +313,10 @@
       border-radius: 8px;
       box-shadow: var(--shadow);
     }
-    @media (max-width: 600px) { #rolesSection { padding: 14px; } }
+    @media (max-width: 600px) { #rolesSection, #customFieldsSection { padding: 14px; } }
     /* .yc-section-title's 20px top margin is meant to separate stacked
        sections inside a card; as the card's first line it just dents the top. */
-    #rolesSection .yc-section-title { margin-top: 0; }
+    #rolesSection .yc-section-title, #customFieldsSection .yc-section-title { margin-top: 0; }
 
     .ycr-card {
       border: 1px solid var(--border);

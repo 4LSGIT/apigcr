@@ -289,6 +289,13 @@ let cfNew = null;     // the Add form's draft
 let cfLoaded = false;
 let cfLoadTok = 0;    // drops out-of-order list responses on rapid entity switches
 
+/** Core columns the show_when "field" box SUGGESTS first, per entity — the
+ *  ones a condition is usually written against. Suggestions only: the box
+ *  still takes any column. `case_type` is how a case field is scoped to
+ *  some case types (is one of Bankruptcy …): every Case Details variant
+ *  mounts the same section, so there is no per-form placement to pick. */
+const CF_SW_CORE = { case: ['case_type', 'case_subtype'], contact: ['contact_kind'] };
+
 /** show_when v1 (S4) — operators taken from the renderer, never re-listed. */
 const CF_SW_OPS = (window.YCCustomFields && window.YCCustomFields.SHOW_WHEN_OPS) || [];
 const CF_SW_LABELS = {
@@ -459,10 +466,12 @@ function cfShowWhenBody(t, i) {
   }
   const c = t.show_when || null;
   const noValue = c && CF_SW_NOVALUE.includes(c.op);
-  const others = (cfState || []).filter(x => x.field_key !== t.field_key).map(x => x.field_key);
+  const others = (CF_SW_CORE[cfEntity] || [])
+    .concat((cfState || []).filter(x => x.field_key !== t.field_key).map(x => x.field_key));
   return `<div class="cf-sw">
     <span class="fmini">Show this field only when… — leave the first box empty to always show it.
-      The field can be any column on this ${cfEntity} or another custom field's key.</span>
+      The field can be any column on this ${cfEntity} or another custom field's key${
+        cfEntity === 'case' ? ' — for a field that belongs to some case types only, use <code>case_type</code> + <i>is one of</i>' : ''}.</span>
     <div class="cf-sw-row">
       <input type="text" class="mono" list="cfSwFields${i}" data-cf-sw="${i}:field"
              value="${esc(c ? c.field : '')}" placeholder="field or cf_key">

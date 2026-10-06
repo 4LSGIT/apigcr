@@ -19,9 +19,11 @@
   "case_judge": "",
   "case_trustee": "",
   "case_chapter": "7",
-  "case_alerts": null,
+  "case_alerts": "Layout-test alert: trustee asked for the 2025 tax return before the 341 — a long line that has to wrap inside the box on a phone.",
   "case_detailed_form": null,
-  "case_detailed_link": null
+  "case_detailed_link": null,
+  "cf_clio_matter": "1234567",
+  "custom": { "cf_clio_matter": "1234567" }
  },
  "clients": [
   {

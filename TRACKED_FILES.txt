@@ -649,8 +649,10 @@ scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
 scripts/mobile-survey/README.md
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
+scripts/mobile-survey/fixtures/api/cases/TESTCASE1/pipeline.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
 scripts/mobile-survey/fixtures/api/documents.json
+scripts/mobile-survey/fixtures/api/field-defs.json
 scripts/mobile-survey/fixtures/api/tasks.json
 scripts/mobile-survey/fixtures/firm-data.json
 scripts/mobile-survey/server.js

@@ -15,7 +15,10 @@
  *   2. RENDERER, in a real DOM (jsdom): zero defs render nothing; a failed
  *      registry read degrades silently; required BLOCKS a save; a required
  *      field hidden by show_when does NOT; only CHANGED cf_ keys are sent;
- *      the chokepoint's 400 shows verbatim; a repaint never eats an edit.
+ *      the chokepoint's 400 shows verbatim; a repaint never eats an edit;
+ *      every field hidden → no section; isDirty() is the save diff.
+ *      2b boots the REAL case mounts — both Case Details forms, with the real
+ *      YCForm (moved off the case Overview 2026-10-06).
  *   3. CHOKEPOINT + LOG: a cf_ change on a contact writes ONE app-side log
  *      row shaped like the DB trigger's; a core-only change writes NONE (the
  *      trigger owns those, and the two cannot double-log); a case cf_ change
@@ -751,126 +754,255 @@ describe('renderer: mounted in a DOM', () => {
     await s.load({ custom: { cf_matter: 'M-1' } });             // a sibling form saved
     expect($('[data-ycf-key="cf_matter"]').value).toBe('half-typed');
   });
+
+  // Per-case-type fields are a show_when on case_type (every Case Details
+  // variant mounts the same section), so "a bankruptcy-only field on a
+  // litigation case" is ordinary — and must not leave an empty titled box.
+  test('EVERY field hidden by show_when → no section, and it comes back when one shows', async () => {
+    const bkOnly = { field: 'case_type', op: 'in', value: ['Bankruptcy'] };
+    const s = mount({ defs: [def({ field_key: 'cf_trustee_ref', field_type: 'text', show_when: bkOnly })] });
+    await s.load({ case_type: 'Civil Litigation', custom: {} });
+    expect(secShown()).toBe(false);
+    await s.load({ case_type: 'Bankruptcy', custom: {} });       // the type changed elsewhere
+    expect(secShown()).toBe(true);
+    expect($('[data-ycf-field="cf_trustee_ref"]').classList.contains('ycf-hidden')).toBe(false);
+  });
+
+  test('one visible field is enough to show the section', async () => {
+    const s = mount({ defs: [
+      def({ field_key: 'cf_a', field_type: 'text', show_when: { field: 'case_type', op: 'eq', value: 'Appeal' } }),
+      def({ field_key: 'cf_b', field_type: 'text' }),
+    ] });
+    await s.load({ case_type: 'Bankruptcy', custom: {} });
+    expect(secShown()).toBe(true);
+    expect($('[data-ycf-field="cf_a"]').className).toContain('ycf-hidden');
+  });
+
+  // ── Host styling contract (2026-10-06) ──────────────────────────────────
+  // Every mount is a yc-forms page, so the section speaks yc-forms' classes
+  // and its own sheet is layout only. ycf-* stay as JS hooks beside them.
+
+  test('renders in the HOST vocabulary — yc-forms classes beside the ycf- hooks', async () => {
+    const s = mount({ defs: [
+      def({ field_key: 'cf_matter', field_type: 'text', label: 'M', validation: { required: true } }),
+      def({ field_key: 'cf_tags', field_type: 'multiselect', label: 'T', options: [OPT('x')] }),
+    ] });
+    await s.load({ custom: {} });
+    const f = $('[data-ycf-field="cf_matter"]');
+    expect([...f.classList]).toEqual(['ycf-field', 'yc-field']);
+    expect([...f.querySelector('label').classList]).toEqual(['ycf-label', 'yc-label']);
+    expect(f.querySelector('.yc-required').textContent).toBe('*');
+    expect($('[data-ycf-field="cf_tags"] .ycf-checks').classList.contains('yc-check-grid')).toBe(true);
+    expect([...$('#ycfSave').classList]).toEqual(['ycf-save', 'yc-btn', 'yc-btn-primary']);
+    expect([...$('#ycfStatus').classList]).toEqual(['ycf-status', 'yc-save-status']);
+  });
+
+  test('hiding a field TOGGLES ycf-hidden — the host classes survive', async () => {
+    const s = mount({ defs: [
+      def({ field_key: 'cf_a', field_type: 'text', show_when: { field: 'cf_b', op: 'not_empty' } }),
+      def({ field_key: 'cf_b', field_type: 'text' }),
+    ] });
+    await s.load({ custom: {} });
+    const a = $('[data-ycf-field="cf_a"]');
+    expect([...a.classList]).toEqual(['ycf-field', 'yc-field', 'ycf-hidden']);
+    const b = $('[data-ycf-key="cf_b"]');
+    b.value = 'x'; b.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    expect([...a.classList]).toEqual(['ycf-field', 'yc-field']);
+  });
+
+  test("the status line wears the host's classes: .yc-error.visible on failure, .yc-save-status otherwise", async () => {
+    const s = mount({ patch: Object.assign(new Error('x'), { body: { message: 'Bad value' } }) });
+    await s.load({ custom: { cf_matter: 'M-1' } });
+    $('[data-ycf-key="cf_matter"]').value = 'M-2';
+    await s.save();
+    expect([...$('#ycfStatus').classList]).toEqual(['ycf-status', 'ycf-err', 'yc-error', 'visible']);
+    $('[data-ycf-key="cf_matter"]').value = 'M-1';
+    await s.save();                                            // "No changes" — neutral
+    expect([...$('#ycfStatus').classList]).toEqual(['ycf-status', 'yc-save-status', 'ycf-ok']);
+  });
+
+  test('the injected sheet is LAYOUT ONLY — no type, no colour, no token fallbacks', async () => {
+    const s = mount();
+    await s.load({ custom: {} });
+    const css = dom.window.document.getElementById('ycf-style').textContent;
+    expect(css).toMatch(/\.ycf-wrap\{display:flex/);              // the layout is still there
+    expect(css).not.toMatch(/font|color|background|border|#[0-9a-f]{3}\b|var\(/i);
+  });
+
+  test('isDirty() is exactly the diff save() would send', async () => {
+    const s = mount();
+    expect(s.isDirty()).toBe(false);                             // nothing rendered yet
+    await s.load({ custom: { cf_matter: 'M-1' } });
+    expect(s.isDirty()).toBe(false);
+    $('[data-ycf-key="cf_matter"]').value = 'M-2';
+    expect(s.isDirty()).toBe(true);
+    $('[data-ycf-key="cf_matter"]').value = 'M-1';               // typed back
+    expect(s.isDirty()).toBe(false);
+    $('[data-ycf-key="cf_matter"]').value = 'M-3';
+    await s.save();
+    expect(sent).toEqual([{ path: '/api/cases/A', method: 'PATCH', body: { cf_matter: 'M-3' } }]);
+    expect(s.isDirty()).toBe(false);                             // re-baselined
+  });
 });
 
 // ═════════════════════════════════════════════════════════════
-// 2b. THE REAL case.html MOUNT — booted, not simulated
+// 2b. THE REAL CASE MOUNTS — both Case Details forms, booted
 // ═════════════════════════════════════════════════════════════
 
 /**
- * The module tests above prove the renderer. This proves the MOUNT: that
- * case.html actually reaches loadCustomFields, that every identifier it
- * leans on (caseID, Toast, E, P.apiSend) really resolves in the page's own
- * scope, and that a page with no custom fields is byte-unchanged.
- * Harness copied from tests/caseUi.detTab.test.js (same lexical-scope note:
- * the inline blocks share one global environment, so they must be evaluated
- * as a single eval).
+ * The module tests above prove the renderer. These prove the MOUNTS: the
+ * real forms/casedetails-bk.html and forms/casedetails.html, the real
+ * YCForm and the real module, loaded as <script src> by the page itself.
+ *
+ * The case section lived on the case Overview until 2026-10-06; it moved to
+ * the Case Details tab (SS: the overview is too confusing; custom fields
+ * "don't belong there"). Every claim below is made for BOTH variants: a
+ * field meant for some case types is a show_when on case_type, so the two
+ * forms must mount the same section the same way.
+ *
+ * What the page itself owns, and nothing else proves:
+ *   · onLoad hands the module the RAW case row — show_when on case_type works;
+ *   · the section sits OUTSIDE <form>, so YCForm never PATCHes a cf_ key;
+ *   · case.html's push (form.refresh → onLoad) repaints the section;
+ *   · the form's Save button commits a dirty section, and a clean one not at all.
  */
-describe('case.html mount', () => {
+describe('Case Details mounts (both variants)', () => {
   const fs = require('fs');
   const path = require('path');
-  const bcPolyfill = require('./helpers/bcPolyfill');
+  const { ResourceLoader } = require('jsdom');
 
   const ROOT = path.join(__dirname, '..');
-  const HTML = fs.readFileSync(path.join(ROOT, 'public/case.html'), 'utf8');
-  const YCSYNC = fs.readFileSync(path.join(ROOT, 'public/js/yc-sync.js'), 'utf8');
-  const YCFSRC = fs.readFileSync(path.join(ROOT, 'public/js/yc-custom-fields.js'), 'utf8');
-  const SCRIPTS = fs.readFileSync(path.join(ROOT, 'public/scripts.js'), 'utf8');
-
-  const CASE_ID = 'AAAAAAAA';
-  const DOMS = [], TEARDOWNS = [];
-  afterEach(() => {
-    TEARDOWNS.splice(0).forEach(fn => fn());
-    bcPolyfill.reset();
-    DOMS.splice(0).forEach(d => { try { d.window.close(); } catch (_) {} });
-  });
-  const tick = (w, ms) => new Promise(r => w.setTimeout(r, ms));
-
-  async function boot({ defs = [], custom = {} } = {}) {
-    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-      url: `https://app.4lsg.com/case.html?caseID=${CASE_ID}`, runScripts: 'dangerously',
-    });
-    DOMS.push(dom);
-    const { window } = dom;
-    Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => false });
-
-    const patches = [];
-    window.apiSend = async (url, method, params) => {
-      if (url === '/api/field-defs') return { status: 'success', defs };
-      if (url === `/api/cases/${CASE_ID}/pipeline`) return { template: null, stages: [], history: [], current: null };
-      if (/^\/api\/cases\/[^/]+$/.test(url) && method === 'GET') {
-        return params && params.include === 'appts' ? { appts: [] } : {
-          case: {
-            case_id: CASE_ID, case_stage: 'Open', case_status: 'New', case_rec: '', case_source: '',
-            case_notes: '', case_alerts: '', case_caption: '', case_type: 'Bankruptcy',
-            case_subtype: 'Ch. 7', case_number: '', case_number_full: '',
-            case_detailed_form: null, case_detailed_link: null, custom,
-          }, clients: [], appts: [], log: [],
-        };
-      }
-      if (/^\/api\/cases\/[^/]+$/.test(url) && method === 'PATCH') { patches.push(params); return { status: 'success' }; }
-      if (url === '/api/log') return { entries: [], total: 0 };
-      if (url === '/api/events') return { data: [] };
-      return { status: 'success' };
-    };
-    window.firmData = {
-      users: [], phoneLines: [], emailFrom: [],
-      settings: { case_types: { Bankruptcy: ['Ch. 7'] }, lead_sources: [] },
-      currentUser: { user: 6 }, firmTimezone: 'America/Detroit',
-    };
-    window.limit = 100; window.addFile = () => {};
-    window.Swal = {
-      mixin: () => ({ fire: () => {} }), fire: async () => ({ isConfirmed: false }),
-      close: () => {}, showLoading: () => {}, update: () => {},
-      showValidationMessage: () => {}, resetValidationMessage: () => {},
-      getConfirmButton: () => null, isLoading: () => false,
-      stopTimer: () => {}, resumeTimer: () => {},
-    };
-    TEARDOWNS.push(bcPolyfill.install(window));
-    window.eval(YCSYNC);
-    window.eval(YCFSRC);                                  // the <script src> mount
-
-    const noComments = HTML.replace(/<!--[\s\S]*?-->/g, '');
-    window.document.body.innerHTML = noComments.replace(/<script[\s\S]*?<\/script>/g, '');
-    const inline = [...noComments.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-
-    const errors = [];
-    window.addEventListener('error', e => errors.push(String(e.error || e.message)));
-    window.addEventListener('unhandledrejection', e => errors.push(String(e.reason)));
-    window.eval([SCRIPTS, ...inline].join('\n;\n'));
-    await tick(window, 80);
-    return { window, errors, patches, $: s => window.document.querySelector(s) };
+  const SERVED = {
+    '/js/yc-forms.js':         fs.readFileSync(path.join(ROOT, 'public/js/yc-forms.js')),
+    '/js/yc-custom-fields.js': fs.readFileSync(path.join(ROOT, 'public/js/yc-custom-fields.js')),
+  };
+  class Loader extends ResourceLoader {
+    fetch(url) {
+      const p = new URL(url).pathname;
+      return Promise.resolve(SERVED[p] || Buffer.from(''));   // CSS, CDN, themeSync: empty
+    }
   }
 
-  test('with NO defs the page is untouched — the box stays hidden, no errors', async () => {
-    const { $, errors } = await boot();
-    expect(errors).toEqual([]);
-    expect($('#cfSection').style.display).toBe('none');
-    expect($('#cfList').innerHTML).toBe('');
+  const CASE_ID = 'AAAAAAAA';
+  const DOMS = [];
+  afterEach(() => { DOMS.splice(0).forEach(d => { try { d.window.close(); } catch (_) {} }); });
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  function caseRow(over = {}) {
+    return {
+      case_id: CASE_ID, case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
+      case_number: '', case_number_full: '', case_caption: '', case_our_role: '',
+      case_judge: '', case_trustee: '', case_341_link: '', case_notes: '', case_alerts: '',
+      custom: {}, ...over,
+    };
+  }
+
+  async function boot(file, { defs = [], row = caseRow() } = {}) {
+    const calls = [];
+    const apiSend = async (url, method, body) => {
+      calls.push({ url, method, body });
+      if (url === '/api/field-defs') return { status: 'success', defs };
+      if (url.startsWith(`/api/cases/${CASE_ID}?include=clients`)) return { case: row, clients: [] };
+      if (url.startsWith('/api/forms/latest')) return { submitted: null, draft: null };
+      if (url === '/api/forms/submit') return { status: 'success', id: 1, version: 1 };
+      return { status: 'success' };
+    };
+    const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'public/forms', file), 'utf8'), {
+      url: `https://app.4lsg.com/forms/${file}?case_id=${CASE_ID}`,
+      runScripts: 'dangerously', resources: new Loader(), pretendToBeVisual: true,
+      beforeParse(w) {
+        // window.parent === window at the top level, so this IS `P`.
+        w.apiSend = apiSend;
+        w.firmData = { settings: { trustees: [] }, users: [] };
+        w.Swal = { mixin: () => ({ fire: () => {} }), fire: async () => ({ isConfirmed: false }),
+                   stopTimer() {}, resumeTimer() {} };
+        if (!w.CSS) w.CSS = {};
+        if (!w.CSS.escape) w.CSS.escape = v => String(v).replace(/[^a-zA-Z0-9_ -￿-]/g, c => '\\' + c);
+      },
+    });
+    DOMS.push(dom);
+    const w = dom.window;
+    for (let i = 0; i < 200 && !calls.some(c => c.url === '/api/field-defs'); i++) await sleep(10);
+    if (!w.ycForm) throw new Error(`${file}: YCForm never booted`);
+    await sleep(30);
+    const errors = [];
+    w.addEventListener('error', e => errors.push(String(e.error || e.message)));
+    const $ = sel => w.document.querySelector(sel);
+    const patches = () => calls.filter(c => c.method === 'PATCH').map(c => c.body);
+    const click = el => el.dispatchEvent(new w.Event('click', { bubbles: true }));
+    const type = (el, v) => { el.value = v; el.dispatchEvent(new w.Event('input', { bubbles: true })); };
+    return { w, $, calls, patches, click, type, errors };
+  }
+
+  const MATTER = () => def({ field_key: 'cf_clio_matter', field_type: 'text', label: 'Clio Matter ID' });
+
+  describe.each(['casedetails-bk.html', 'casedetails.html'])('%s', (file) => {
+    test('with NO defs the section stays hidden and empty', async () => {
+      const { $, errors } = await boot(file);
+      expect(errors).toEqual([]);
+      expect($('#customFieldsSection').style.display).toBe('none');
+      expect($('#customFieldsList').innerHTML).toBe('');
+    });
+
+    test('with a def the section shows, populated from the row, OUTSIDE the form', async () => {
+      const { $ } = await boot(file, { defs: [MATTER()], row: caseRow({ custom: { cf_clio_matter: '1234567' } }) });
+      expect($('#customFieldsSection').style.display).not.toBe('none');
+      expect($('[data-ycf-key="cf_clio_matter"]').value).toBe('1234567');
+      // Outside <form>: YCForm's listeners, dirty tracking and PATCH never see it.
+      expect($('#caseDetailsForm').contains($('#customFieldsSection'))).toBe(false);
+    });
+
+    test('show_when on case_type is read off the RAW row — that is how a field is scoped to case types', async () => {
+      const litOnly = def({ field_key: 'cf_opp_counsel', field_type: 'text',
+                            show_when: { field: 'case_type', op: 'in', value: ['Civil Litigation'] } });
+      const bk  = await boot(file, { defs: [litOnly] });
+      expect(bk.$('#customFieldsSection').style.display).toBe('none');
+      const lit = await boot(file, { defs: [litOnly], row: caseRow({ case_type: 'Civil Litigation' }) });
+      expect(lit.$('#customFieldsSection').style.display).not.toBe('none');
+    });
+
+    test("the section's own Save PATCHes ONLY the changed cf_ key", async () => {
+      const { $, click, type, patches, w } = await boot(file, { defs: [MATTER()],
+        row: caseRow({ custom: { cf_clio_matter: '1' } }) });
+      type($('[data-ycf-key="cf_clio_matter"]'), '2');
+      click($('#ycfSave'));
+      await sleep(20);
+      expect(patches()).toEqual([{ cf_clio_matter: '2' }]);
+      expect(w.ycForm.isDirty()).toBe(false);               // YCForm never saw the input
+    });
+
+    test("the FORM's Save button commits a dirty section too — one Save for the page", async () => {
+      const { $, click, type, patches } = await boot(file, { defs: [MATTER()] });
+      type($('[data-ycf-key="cf_clio_matter"]'), '777');
+      click($('#saveBtn'));
+      await sleep(30);
+      // The section's own PATCH, cf_ keys only — never merged into YCForm's.
+      expect(patches()).toEqual([{ cf_clio_matter: '777' }]);
+    });
+
+    test("…and a CLEAN section sends nothing when the form's Save is pressed", async () => {
+      const { $, click, type, patches } = await boot(file, { defs: [MATTER()] });
+      type($('[name="case_caption"]') || $('[name="case_number"]'), 'Edited');
+      click($('#saveBtn'));
+      await sleep(30);
+      expect(patches().length).toBe(1);                     // YCForm's, core keys only
+      expect(Object.keys(patches()[0]).some(k => k.startsWith('cf_'))).toBe(false);
+      expect($('#ycfStatus').textContent).toBe('');         // no "No changes" noise
+    });
+
+    test("case.html's push (form.refresh → onLoad) repaints the section with the new value", async () => {
+      const { $, w } = await boot(file, { defs: [MATTER()], row: caseRow({ custom: { cf_clio_matter: '1' } }) });
+      const fresh = caseRow({ cf_clio_matter: '9', custom: { cf_clio_matter: '9' } });
+      await w.ycForm.refresh({ liveData: fresh, loadResult: { case: fresh, clients: [] } });
+      await sleep(20);
+      expect($('[data-ycf-key="cf_clio_matter"]').value).toBe('9');
+    });
   });
 
-  test('with defs the box appears under the Overview box, populated from the row', async () => {
-    const defs = [
-      def({ field_key: 'cf_matter', field_type: 'text', label: 'Clio matter' }),
-      def({ field_key: 'cf_rush', field_type: 'boolean', label: 'Rush' }),
-    ];
-    const { $, errors, window } = await boot({ defs, custom: { cf_matter: 'M-7', cf_rush: false } });
-    expect(errors).toEqual([]);
-    expect($('#cfSection').style.display).not.toBe('none');
-    expect($('[data-ycf-key="cf_matter"]').value).toBe('M-7');
-    expect($('#ycf-cf_rush').value).toBe('0');
-    // it really is inside the Overview tab, ahead of the pipeline widget
-    const tab = window.document.getElementById('tabOverview');
-    expect(tab.contains($('#cfSection'))).toBe(true);
-  });
-
-  test('Save PATCHes the case with only the changed cf_ key', async () => {
-    const defs = [def({ field_key: 'cf_matter', field_type: 'text', label: 'Clio matter' })];
-    const { $, patches, window } = await boot({ defs, custom: { cf_matter: 'M-7' } });
-    $('[data-ycf-key="cf_matter"]').value = 'M-8';
-    $('#ycfSave').dispatchEvent(new window.Event('click', { bubbles: true }));
-    await tick(window, 20);
-    expect(patches).toEqual([{ cf_matter: 'M-8' }]);
+  test('case.html no longer carries the section or the module', () => {
+    const html = fs.readFileSync(path.join(ROOT, 'public/case.html'), 'utf8');
+    expect(html).not.toMatch(/id="cfSection"/);
+    expect(html).not.toMatch(/yc-custom-fields\.js/);
   });
 });
 

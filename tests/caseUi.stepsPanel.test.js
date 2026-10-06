@@ -199,9 +199,11 @@ function setHidden(window, hidden) {
  * @param {object[]} o.full        the /pipeline/requirements body
  * @param {boolean}  o.fullFails   make the second GET reject
  * @param {string}   o.swalInput   value the override prompt "types" (undefined = cancel)
+ * @param {object}   o.prefs       localStorage seed (the folded-panel memory), set
+ *                                 on a CLEARED store before the page's scripts run
  */
 async function boot({ pipeline = null, full = null, fullFails = false,
-                      swalInput = undefined } = {}) {
+                      swalInput = undefined, prefs = {} } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
     url: `https://app.4lsg.com/case.html?caseID=${CASE_ID}`,
     runScripts: 'dangerously',
@@ -260,6 +262,8 @@ async function boot({ pipeline = null, full = null, fullFails = false,
   };
 
   TEARDOWNS.push(bcPolyfill.install(window));
+  window.localStorage.clear();
+  Object.entries(prefs).forEach(([k, v]) => window.localStorage.setItem(k, v));
   window.eval(YCSYNC);
 
   const noComments = HTML.replace(/<!--[\s\S]*?-->/g, '');
@@ -794,5 +798,92 @@ describe('override controls', () => {
     expect(errors).toEqual([]);
     expect(toasts.some(t => t.icon === 'error')).toBe(true);
     expect($$(window, '.pw-steps-main .pw-stage')).toHaveLength(3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The folded panel (2026-10-06 — SS: "the overview is too confusing")
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The panel was a screen tall on nearly every case and sat ABOVE Case Notes,
+// the box staff actually use. It is now a <details>, closed unless this
+// browser opened it last time, and its summary line has to carry the answer
+// most visits need without opening it. Those are the three things pinned here.
+
+describe('the folded panel', () => {
+  const panel = (w) => w.document.getElementById('pipelinePanel');
+  const summary = (w) => txt(w.document.getElementById('pwSubtitle'));
+  const PREF = 'yc.overview.pipelineOpen';
+
+  test('is a <details>, CLOSED by default, below Case Notes', async () => {
+    const { window, errors } = await boot();
+    expect(errors).toEqual([]);
+    const el = panel(window);
+    expect(el.tagName).toBe('DETAILS');
+    expect(el.open).toBe(false);
+    expect(el.style.display).toBe('');                    // rendered, just folded
+    // Notes first: the whole point of the move.
+    const notes = window.document.getElementById('overviewCaseNotes');
+    expect(notes.compareDocumentPosition(el) & window.Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  test('the summary carries template · current stage · outstanding count', async () => {
+    const { window } = await boot();
+    // S_DOCS holds the one `active` requirement; S_FILED's is `upcoming` and
+    // does not count; the off-template intake rows are history and never do.
+    expect(summary(window)).toBe('Bankruptcy — Chapter 7 · Docs Requested · 1 outstanding');
+    // …and it lives INSIDE <summary>, so it reads while folded.
+    expect(panel(window).querySelector(':scope > summary #pwSubtitle')).not.toBeNull();
+  });
+
+  test('nothing outstanding → the count is left off, not "0 outstanding"', async () => {
+    const p = pipelinePayload({
+      stages: [S_RETAINED(),
+               stage({ requirements: [req({ status: 'done', satisfied_at: '2026-08-29T00:00:00.000Z' })] }),
+               S_FILED(), S_DISMISSED()],
+    });
+    const { window } = await boot({ pipeline: p });
+    expect(summary(window)).toBe('Bankruptcy — Chapter 7 · Docs Requested');
+  });
+
+  test('a case with no stage yet says so', async () => {
+    const { window } = await boot({ pipeline: pipelinePayload({ current: null, history: [] }) });
+    expect(summary(window)).toBe('Bankruptcy — Chapter 7 · no stage yet · 1 outstanding');
+  });
+
+  test('no template → the folded line says there is none', async () => {
+    const { window } = await boot({
+      pipeline: { template: null, stages: [], history: [], current: null },
+    });
+    expect(summary(window)).toBe('none for this case type');
+  });
+
+  test('opening it is REMEMBERED per browser, and a later visit opens it', async () => {
+    const first = await boot();
+    panel(first.window).open = true;
+    await tick(first.window, 20);                         // 'toggle' is async
+    expect(first.window.localStorage.getItem(PREF)).toBe('1');
+
+    const later = await boot({ prefs: { [PREF]: '1' } });
+    expect(panel(later.window).open).toBe(true);
+  });
+
+  test('closing it again is remembered too', async () => {
+    const { window } = await boot({ prefs: { [PREF]: '1' } });
+    panel(window).open = false;
+    await tick(window, 20);
+    expect(window.localStorage.getItem(PREF)).toBe('0');
+  });
+
+  test('a re-render keeps the open state — only the CHILDREN are rewritten', async () => {
+    const { window, calls } = await boot({ prefs: { [PREF]: '1' }, swalInput: '' });
+    const el = panel(window);
+    const before = pipelineGets(calls).length;
+    await window.__t.override('upload_docs', 'done');     // re-resolves → renderPipeline
+    await tick(window, 40);
+    expect(pipelineGets(calls).length).toBe(before + 1);  // it really did re-render
+    expect(panel(window)).toBe(el);
+    expect(el.open).toBe(true);
   });
 });

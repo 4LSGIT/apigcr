@@ -173,7 +173,11 @@ cases nobody has touched.
 
 ### The Steps panel (case page)
 
-The case page's pipeline panel shows one list: the pipeline's main-lane stages as sections, the
+On the case Overview the panel sits under Case Notes and is **folded by default** to one line —
+*Pipeline* over `template · current stage · N outstanding` ("outstanding" = requirements the
+server resolved *active*). Click it to open; each browser remembers whether you left it open.
+
+Opened, the panel shows one list: the pipeline's main-lane stages as sections, the
 current one highlighted with its entered-on date, each stage's requirements inside it with
 status icons, subtitles, owner badges, and override controls on hover. Off-ramps sit in a side
 rail. Below, an **Earlier** block holds two collapsibles — *Intake steps* (for a case already on a

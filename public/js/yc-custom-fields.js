@@ -1,7 +1,11 @@
 /* public/js/yc-custom-fields.js — the Custom Fields section (custom-fields arc S4)
  *
  * ONE schema-driven renderer for `field_defs`, mounted on both record
- * surfaces (case.html → Overview; forms/contact-form.html → after Roles).
+ * surfaces: cases → the Case Details tab, under the form (BOTH variants,
+ * forms/casedetails-bk.html and forms/casedetails.html — moved off the case
+ * Overview 2026-10-06); contacts → forms/contact-form.html, between the form
+ * and Roles. Per-case-type fields are a show_when on `case_type`, not a
+ * per-form mount: every Case Details variant mounts the same section.
  * Design: ref/CUSTOM_FIELDS_DESIGN.md §2 (type map) and §3 (rules).
  * Operator chapter: manual/05-Subsystems/13-custom-fields.md.
  *
@@ -12,6 +16,27 @@
  * The two schemas converging is a later question — design doc §9, "Registry
  * unification" — so this file imitates that renderer's shape and idiom
  * rather than sharing its code.
+ *
+ * ── HOST STYLING CONTRACT ───────────────────────────────────────────────────
+ *
+ * Every mount is a yc-forms page (/css/yc-forms.css + /theme.css), so the
+ * section renders in THAT vocabulary and looks like the fields around it:
+ * .yc-field / .yc-label / .yc-required for each field, .yc-check-grid for a
+ * multiselect, .yc-btn .yc-btn-primary for Save, .yc-save-status / .yc-error
+ * for the status line. The module's own injected sheet (CSS below) is LAYOUT
+ * ONLY — wrap, field basis, footer row — with no font, colour or theme
+ * token of its own (it used to hardcode 11/13px type and re-declare tokens
+ * with hex fallbacks, so it matched neither host). A host without
+ * yc-forms.css gets working, unstyled inputs; giving it a look means
+ * loading that sheet, not teaching this file a second vocabulary.
+ *
+ * The ycf-* classes and data-ycf-* attributes are JS HOOKS ONLY and stay
+ * distinct from yc-forms' classes on purpose (.ycf-field vs .yc-field is one
+ * letter — the hooks must never be bulk-renamed into the host's names).
+ * Visibility toggles ycf-hidden with classList, never by rewriting
+ * className, which would strip the host classes. yc-forms.js cannot see
+ * these .yc-field wrappers: YCForm scopes every query to its own <form>,
+ * and every mount sits outside it.
  *
  * ── WHAT IT OWNS ────────────────────────────────────────────────────────────
  *
@@ -33,7 +58,10 @@
  *   · It never writes core columns, and never rides an aggregate form save.
  *     Its Save is its own PATCH carrying cf_ keys and nothing else — the
  *     same fence the Roles section keeps ("Roles never ride the aggregate
- *     PATCH — per-card Save is the only writer").
+ *     PATCH — per-card Save is the only writer"). A host MAY call save()
+ *     from its own Save button (the Case Details forms do, guarded by
+ *     isDirty(), so one button commits the page); it is still this
+ *     section's own PATCH, sent beside the form's, never merged into it.
  *   · It never validates a value itself. Mirroring the chokepoint's rules in
  *     JS would give staff two verdicts that drift apart; `maxlength` on text
  *     inputs is the one exception, and it is a typing aid, not a gate.
@@ -42,8 +70,11 @@
  *
  * Zero active defs → the section never renders (no empty state: a firm that
  * defines no custom fields must not grow a permanently empty panel on every
- * record). A failed def fetch → console.warn and stay hidden. A record page
- * must never break because the registry was unreachable.
+ * record). The same holds when defs exist but show_when hides EVERY one of
+ * them on this record — a bankruptcy-only field on a litigation case — so
+ * the section shows only while at least one field is visible. A failed def
+ * fetch → console.warn and stay hidden. A record page must never break
+ * because the registry was unreachable.
  *
  * ── VALUES ──────────────────────────────────────────────────────────────────
  *
@@ -370,8 +401,8 @@
 
   function fieldHtml(def, value) {
     var key = esc(def.field_key);
-    var req = (def.validation && def.validation.required) ? ' <span class="ycf-req" title="Required">*</span>' : '';
-    var label = '<label class="ycf-label" for="ycf-' + key + '">' + esc(def.label || def.field_key) + req + '</label>';
+    var req = (def.validation && def.validation.required) ? '<span class="ycf-req yc-required" title="Required">*</span>' : '';
+    var label = '<label class="ycf-label yc-label" for="ycf-' + key + '">' + esc(def.label || def.field_key) + req + '</label>';
     var inner;
 
     if (def.field_type === 'select') {
@@ -385,7 +416,10 @@
 
     } else if (def.field_type === 'multiselect') {
       var picked = Array.isArray(value) ? value.map(String) : [];
-      inner = '<div class="ycf-checks">' + optionsFor(def, value).map(function (o) {
+      // .yc-check-grid is the host's checkgroup look (casedetails-bk.html's
+      // own Documents / Schedules groups) — and the rule that keeps
+      // .yc-field's 100%-wide input styling off these checkboxes.
+      inner = '<div class="ycf-checks yc-check-grid">' + optionsFor(def, value).map(function (o) {
         var on = picked.indexOf(o.value) >= 0 ? ' checked' : '';
         return '<label class="ycf-check"><input type="checkbox" data-ycf-key="' + key +
           '" data-ycf-opt="' + esc(o.value) + '"' + on + '> ' +
@@ -419,27 +453,22 @@
         '" maxlength="' + max + '" value="' + esc(value == null ? '' : value) + '">';
     }
 
-    return '<div class="ycf-field" data-ycf-field="' + key + '">' + label + inner + '</div>';
+    return '<div class="ycf-field yc-field" data-ycf-field="' + key + '">' + label + inner + '</div>';
   }
 
-  /** Injected once per document — the section looks the same on both hosts,
-   *  and neither page's stylesheet has to learn about it. case.html is in
-   *  QUIRKS MODE (no doctype), so font-size is declared here rather than
-   *  inherited. */
+  /** Injected once per document (guarded by id — each iframe host gets its
+   *  own copy). LAYOUT ONLY: see HOST STYLING CONTRACT in the header. Every
+   *  selector out-ranks yc-forms' single-class rules on SPECIFICITY (two or
+   *  three classes), never on load order — this sheet lands after the host's
+   *  <link>, and a tie that only wins by order breaks the day it moves. */
   var CSS = [
-    '.ycf-wrap{font-size:13px;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end}',
-    '.ycf-field{display:flex;flex-direction:column;gap:3px;min-width:180px;flex:1 1 180px}',
-    '.ycf-field.ycf-hidden{display:none}',
-    '.ycf-label{font-size:11px;color:var(--text-muted,#777);font-weight:600}',
-    '.ycf-field input[type=text],.ycf-field input[type=date],.ycf-field input[type=number],.ycf-field select{font-size:13px;padding:3px 5px;width:100%;box-sizing:border-box}',
-    '.ycf-checks{display:flex;flex-wrap:wrap;gap:3px 12px;padding-top:3px}',
-    '.ycf-check{font-weight:400;display:inline-flex;align-items:center;gap:4px}',
-    '.ycf-req{color:var(--danger,#c00)}',
-    '.ycf-retired{color:var(--text-muted,#777);font-size:11px}',
-    '.ycf-foot{display:flex;align-items:center;gap:10px;margin-top:8px;flex-basis:100%}',
-    '.ycf-status{font-size:11px;color:var(--text-muted,#777)}',
-    '.ycf-status.ycf-err{color:var(--danger,#c00);white-space:pre-wrap}',
-    '.ycf-status.ycf-ok{color:var(--accent-2,#2a7)}',
+    // fields flow in a wrapping row; .yc-field's margin-bottom is the row gap
+    '.ycf-wrap{display:flex;flex-wrap:wrap;column-gap:16px;align-items:flex-end}',
+    '.ycf-wrap>.ycf-field{flex:1 1 180px;min-width:180px}',
+    '.ycf-wrap>.ycf-field.ycf-hidden{display:none}',
+    '.ycf-wrap>.ycf-foot{display:flex;align-items:center;gap:10px;flex-basis:100%}',
+    // the chokepoint's message is shown verbatim, line breaks included
+    '.ycf-foot>.ycf-status.ycf-err{white-space:pre-wrap}',
   ].join('');
 
   function injectCss(doc) {
@@ -482,13 +511,19 @@
 
     function show(on) { if (section) section.style.display = on ? '' : 'none'; }
 
+    /** The status line, in the host's classes: yc-forms' .yc-error (shown
+     *  via .visible) for a failure, its .yc-save-status for everything else.
+     *  ycf-status / ycf-err / ycf-ok are the hooks. */
+    var STATUS_BASE = 'ycf-status yc-save-status';
     function status(msg, kind) {
       var el = doc.getElementById('ycfStatus');
       if (!el) return;
       el.textContent = msg || '';
-      el.className = 'ycf-status' + (kind ? ' ycf-' + kind : '');
+      el.className = kind === 'err'
+        ? 'ycf-status ycf-err yc-error visible'
+        : STATUS_BASE + (kind ? ' ycf-' + kind : '');
       if (kind === 'ok' && msg) {
-        global.setTimeout(function () { if (el.textContent === msg) { el.textContent = ''; el.className = 'ycf-status'; } }, 3000);
+        global.setTimeout(function () { if (el.textContent === msg) { el.textContent = ''; el.className = STATUS_BASE; } }, 3000);
       }
     }
 
@@ -522,17 +557,24 @@
     }
 
     /** Re-evaluate visibility in place — never a re-render, or typing into a
-     *  field that drives a show_when would lose focus on every keystroke. */
+     *  field that drives a show_when would lose focus on every keystroke.
+     *  Also the section's ONE show/hide after a render: shown while at least
+     *  one field is visible (see DEGRADE QUIETLY). Hiding the whole section
+     *  can never strand an edit — a field that drives another field's
+     *  show_when is itself visible, or it could not have been typed into. */
     function applyVisibility() {
       var ctx = context(collect());
+      var any = false;
       visible = {};
       for (var i = 0; i < defs.length; i++) {
         var d = defs[i];
         var on = evalShowWhen(parseShowWhen(d.show_when, d.label || d.field_key), ctx);
         visible[d.field_key] = on;
+        if (on) any = true;
         var el = host.querySelector('[data-ycf-field="' + d.field_key.replace(/"/g, '') + '"]');
-        if (el) el.className = 'ycf-field' + (on ? '' : ' ycf-hidden');
+        if (el) el.classList.toggle('ycf-hidden', !on);
       }
+      show(any);
     }
 
     /**
@@ -566,9 +608,9 @@
         '<div class="ycf-foot">' +
         // ALWAYS rendered, hidden when read-only. A button that is absent
         // cannot be un-hidden by the host's own readonly toggle later.
-        '<button type="button" class="ycf-save" id="ycfSave"' +
+        '<button type="button" class="ycf-save yc-btn yc-btn-primary" id="ycfSave"' +
         (ro ? ' style="display:none"' : '') + '>Save</button>' +
-        '<span class="ycf-status" id="ycfStatus"></span>' +
+        '<span class="ycf-status yc-save-status" id="ycfStatus"></span>' +
         '</div></div>';
 
       setReadonly(ro);
@@ -585,8 +627,14 @@
         host.addEventListener('change', applyVisibility);
         host.addEventListener('input', applyVisibility);
       }
-      applyVisibility();
-      show(true);
+      applyVisibility();      // shows the section iff a field is visible
+    }
+
+    /** Unsaved edits in the section — the same diff save() would send.
+     *  False before the first render (nothing on screen to be dirty). */
+    function isDirty() {
+      if (!defs || !defs.length || !baseline) return false;
+      return Object.keys(diff(defs, baseline, collect())).length > 0;
     }
 
     async function save() {
@@ -658,7 +706,7 @@
     }
 
     return {
-      load: load, save: save, setReadonly: setReadonly,
+      load: load, save: save, setReadonly: setReadonly, isDirty: isDirty,
       _collect: collect, _defs: function () { return defs; },
     };
   }

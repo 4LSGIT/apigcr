@@ -1036,13 +1036,20 @@ describe('S6 — the Fields editor sends and clears default_value', () => {
 describe('S6 — there is no pre-create custom-fields form to prefill', () => {
   test('both mounts require an existing record id', () => {
     // The census found no new-record form that renders custom fields: the case
-    // page needs a case, and the contact form PATCHes a contact id. So a
+    // mounts need a case, and the contact form PATCHes a contact id. So a
     // render-time prefill would have nowhere to live — which is just as well,
     // because a form showing a value the DB does not hold is the lie surface
     // the ruling closed. If a real create form ever mounts this section, this
     // test is where the question comes back.
+    // (The case mount moved from case.html to BOTH Case Details forms on
+    // 2026-10-06; each refuses to boot without a case_id.)
     expect(read('public/forms/contact-form.html')).toMatch(/patchPath: `\/api\/contacts\/\$\{contactId\}`/);
-    expect(read('public/case.html')).toMatch(/patchPath:/);
+    for (const f of ['public/forms/casedetails-bk.html', 'public/forms/casedetails.html']) {
+      const html = read(f);
+      expect(html).toMatch(/patchPath: `\/api\/cases\/\$\{caseId\}`/);
+      expect(html).toMatch(/if \(!caseId\) \{\s*document\.body\.innerHTML = '<p[^']*>Missing case_id parameter\.<\/p>';/);
+    }
+    expect(read('public/case.html')).not.toMatch(/patchPath:/);
   });
 
   test('the renderer stamps nothing itself — it has no notion of a default', () => {

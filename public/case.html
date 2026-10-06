@@ -21,12 +21,21 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/js/ycPager.js"></script>
-  <script src="/js/yc-custom-fields.js"></script>
   <script src="/scripts.js"></script>
     <link rel="stylesheet" href="/theme.css">
     <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
   <style>
+    /* Overview alerts box (renderAlerts). Only on screen when the case has an
+       alert, so it is styled to be seen: danger border and tint, and
+       pre-wrap because case_alerts is edited in a multi-line textarea
+       (Case Details) and its line breaks are part of the message. 656px =
+       the 650px + 2×3px border of the content-box boxes below it. */
+    #alertsBox { box-sizing: border-box; max-width: 656px; margin: 0 auto 12px;
+                 padding: 0 12px 12px; border: 3px solid var(--danger);
+                 background: var(--danger-soft); text-align: left; }
+    #alertsBox h3 { color: var(--danger); margin: 10px 0 6px; text-align: center; }
+    #alertsDiv { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
     /* ── Phone layout (same block in contact.html) ─────────────────────────
        The tab strip itself is handled in style.css (.tab-row). Here: the
        tab bodies. QUIRKS MODE (no doctype — see ref/plans.md): tables do not
@@ -223,6 +232,22 @@
 
   <!-- Standard case tabs -->
   <div id="tabOverview" class="tab-content">
+    <!-- ── Overview order (2026-10-06, SS: "the overview is too confusing") ──
+         Alerts (only when set) → the case box → Case Notes → Pipeline
+         (collapsed) → actions. Notes used to sit under a Pipeline panel a
+         screen tall on nearly every case; Custom Fields moved to the Case
+         Details tab (forms/casedetails*.html), where the record's other
+         fields already live.
+
+         Alerts — cases.case_alerts. HIDDEN WHEN EMPTY, and above everything
+         else when set: the one thing on this tab nobody should scroll past.
+         It is set on a handful of cases, so the old always-on box was an
+         empty red heading on nearly every one. renderAlerts() is the only
+         writer of its visibility. -->
+    <div id="alertsBox" style="display:none">
+      <h3>Alerts</h3>
+      <div id="alertsDiv"></div>
+    </div>
     <!-- .yc-stack: on phones each label sits above its control (style.css). -->
     <div class="yc-stack" style="margin: 0 auto; max-width: 650px; border: 3px solid var(--border)">
       <br /><label class="input-label">Case Type</label>
@@ -278,26 +303,20 @@
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_source:this.value}).then(()=>Toast.fire({icon:'success',title:'Lead source updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><datalist id="leadSourceList"></datalist><br><br>
     </div><br>
-    <!-- ── Custom Fields (custom-fields arc S4) ─────────────────────
-         Admin-defined fields from `field_defs`, rendered by the shared
-         /js/yc-custom-fields.js — the same module the contact form
-         mounts, so a field looks and behaves identically on both
-         records. Hidden until that module finds at least one ACTIVE
-         case def; a firm with none never sees this box, and a registry
-         it cannot read leaves it hidden rather than breaking the page.
-
-         Sits directly under the core Overview box, above Pipeline: the
-         fields ARE overview data, and staff should not hunt for them in
-         a tab. Unlike the inputs above — which PATCH one column on
-         `onchange` — this section batches, because `validation.required`
-         and `show_when` are section-level rules and a per-field write
-         cannot express either. Its Save sends only the cf_ keys that
-         changed. Design: ref/CUSTOM_FIELDS_DESIGN.md §7 S4.
-         ──────────────────────────────────────────────────────────── -->
-    <div id="cfSection" style="margin:0 auto;max-width:650px;border:3px solid var(--border);display:none">
-      <div style="font-weight:600;padding:6px 8px 0">Custom Fields</div>
-      <div id="cfList" style="padding:8px"></div>
-    </div><br>
+    <div style="margin:0 auto; max-width:650px; border:3px solid var(--border);">
+      <h3>Case Notes</h3>
+      <textarea
+        id="overviewCaseNotes"
+        style="width: 90%; box-sizing: border-box; resize: none; min-height: 100px; max-height: 300px;"
+        placeholder="Enter your text here..."
+        oninput="resizeTextarea(this); markNotesDirty(this)"
+      ></textarea>
+      <br>
+      <div style="width: 95%; text-align: right; box-sizing: border-box; margin-top: 5px;">
+        <button onclick="updateCaseNotes()">Update</button>
+      </div>
+    </div>
+    <br>
     <!-- ── Pipeline (Slice C1) ──────────────────────────────────────
          POSITION-ONLY widget: timeline of case_stage_log (via
          GET /api/cases/:id/pipeline) + manual advance
@@ -309,13 +328,22 @@
          internal_label is deliberate: staff review the client-facing
          vocabulary here (feeds the C2 stage editor + portal).
          Rendered by loadPipeline()/renderPipeline() in the script below;
-         hidden until the first payload arrives. -->
+         hidden until the first payload arrives.
+         COLLAPSED BY DEFAULT (2026-10-06): a <details> whose summary line
+         carries what most visits need — template · stage · outstanding
+         count (pwSummaryText). Open/closed is remembered per browser
+         (pwBindOpenState). Everything inside is unchanged. -->
     <style>
       /* pw- = pipeline widget. The page otherwise styles inline / via
          style.css; the timeline connector + row states genuinely need a
          rule block, so this is the page's first (scoped by prefix). */
       #pipelinePanel { margin:0 auto; max-width:650px; border:3px solid var(--border); text-align:left; padding:2px 18px 14px; box-sizing:border-box; }
-      #pipelinePanel h3 { text-align:center; }
+      /* The summary stands in for the old <h3>: same size and weight, and
+         clickable. The subtitle (.pw-subtitle, display:block) is the summary
+         line itself, so it stays readable while folded. */
+      #pipelinePanel > summary { cursor:pointer; text-align:center; font-weight:bold;
+                                 font-size:1.17em; padding:12px 0 10px; }
+      #pipelinePanel:not([open]) { padding-bottom:2px; }
       .pw-subtitle { display:block; text-align:center; font-weight:normal; font-size:0.72em; color:var(--text-2); margin-top:2px; }
       .pw-msg { color:var(--text-muted); font-style:italic; margin:6px 0 10px; text-align:center; }
 
@@ -432,8 +460,8 @@
       #pwNoteInput { width:60%; margin-top:6px; }
 
     </style>
-    <div id="pipelinePanel" style="display:none">
-      <h3>Pipeline<span class="pw-subtitle" id="pwSubtitle"></span></h3>
+    <details id="pipelinePanel" style="display:none">
+      <summary>Pipeline<span class="pw-subtitle" id="pwSubtitle"></span></summary>
       <!-- ONE list, not two. #pwMsg carries the "no pipeline" / "unavailable"
            states; #pwSteps carries the whole view: the stage list (which IS
            the timeline — sections in template order, dot-and-spine, entered
@@ -448,36 +476,19 @@
         <input id="pwNoteInput" maxlength="255" placeholder="Note (optional)" />
         <button onclick="pwAdvance()">Advance</button>
       </div>
-    </div>
+    </details>
     <br />
-    <div style="margin:0 auto;max-width:650px;border:3px solid var(--border);">
-      <h3 style="color: var(--danger)">Alerts:</h3>
-      <div id="alertsDiv">No Alerts</div>
-      <br />
-    </div>
-    <br />
-    <div style="margin:0 auto; max-width:650px; border:3px solid var(--border);">
-      <h3>Case Notes:</h3>
-      <textarea
-        id="overviewCaseNotes"
-        style="width: 90%; box-sizing: border-box; resize: none; min-height: 100px; max-height: 300px;"
-        placeholder="Enter your text here..."
-        oninput="resizeTextarea(this); markNotesDirty(this)"
-      ></textarea>
-      <br>
-      <div style="width: 95%; text-align: right; box-sizing: border-box; margin-top: 5px;">
-        <button onclick="updateCaseNotes()">Update</button>
-      </div>
-    </div>
-    <br>
     <div>
+        <!-- DISABLED, not wired: there is no case-delete route. The old
+             handler document.write()-ed "Case Deleted! You may close the tab."
+             over the page — it wiped the view and claimed a delete that never
+             happened. Kept as a placeholder; give it a real handler (and a
+             server route) before removing `disabled`. -->
         <button
           class="big-button"
-          onclick="Swal.fire({ title: 'Delete Case Page',
-                                              html: `<p>Are you sure you want to delete case ${caseID}?</p><p>There is no way to restore the data!</p><p>also, this doesnt work yet!</p>`,
-                                              icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, Delete!',cancelButtonText: 'No, cancel',
-                                              preConfirm: () => { document.write(`<h1 style='text-align:center'>Case Deleted! You may close the tab.</h1>`);}});"
-          style="background-color: var(--danger-fill)"
+          disabled
+          title="Not available yet"
+          style="background-color: var(--danger-fill); opacity: 0.5; cursor: not-allowed"
         >
           Delete Lead
         </button>
@@ -487,13 +498,6 @@
           style="background-color: var(--accent); color: var(--accent-text)"
         >
           Merge Case&hellip;
-        </button>
-        <button
-          class="big-button"
-          onclick="alert('Which words?')"
-          style="background-color: var(--ok-fill)"
-        >
-          Words Go Here
         </button>
       </div>
     </div>
@@ -1729,39 +1733,18 @@ function updateHeader() {
     notesEl.value = c.case_notes || "";
     resizeTextarea(notesEl);
   }
-  E("alertsDiv").textContent = c.case_alerts || "";
-  loadCustomFields(c);
+  renderAlerts(c);
 }
 
-/* ── Custom Fields (S4) ──────────────────────────────────────
- * The section is /js/yc-custom-fields.js; this is the mount. Called from
- * updateHeader, so it repaints with every other overview field — the module
- * itself refuses to clobber a half-typed edit on a repaint (same fence as
- * the notes textarea above), which is what makes that safe.
- *
- * Fire-and-forget on purpose: it degrades to a hidden section by itself, and
- * nothing else on this page should wait on the field registry.
- */
-let customFields = null;
-function loadCustomFields(c) {
-  if (!c || !window.YCCustomFields) return;
-  if (!customFields) {
-    customFields = YCCustomFields.create({
-      entity:    'case',
-      host:      E("cfList"),
-      section:   E("cfSection"),
-      apiSend:   (...a) => P.apiSend(...a),
-      patchPath: `/api/cases/${caseID}`,
-      // The Overview inputs above Toast on every write; a custom-field save
-      // is the same kind of event, so it says so the same way. The inline
-      // status in the section carries the failure text verbatim.
-      onSaved:   (keys) => Toast.fire({
-        icon: 'success',
-        title: keys.length === 1 ? 'Field updated' : `${keys.length} fields updated`,
-      }),
-    });
-  }
-  customFields.load(c).catch(() => {});
+/* The Overview alerts box — the ONE writer of its text and its visibility.
+ * Two paths paint it (updateHeader on a full row, applyFieldsToOverview on a
+ * bus message), and before this they each set only the text; a box that is
+ * hidden when empty needs both paths to agree on when it shows. Whitespace-
+ * only counts as empty. */
+function renderAlerts(c) {
+  const raw = (c && c.case_alerts) || "";
+  E("alertsDiv").textContent = raw;
+  E("alertsBox").style.display = String(raw).trim() ? "" : "none";
 }
 
 /* DIRTY IS A COMPARISON, NOT A LATCH.
@@ -2281,6 +2264,40 @@ const pwDate = (d) => d
   ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
   : "";
 
+/* The folded panel's one line: template · current stage · outstanding count.
+   "Outstanding" = requirements the server resolved `active` (R2: outstanding
+   in the stage the case is in) — counted, never re-derived, for the reason in
+   the STATUSES ARRIVE RESOLVED note below. Off-template intake rows
+   (pwOffTemplateReqs) are history and never count. An advance response
+   carries no requirements, so the count reads 0 for the moment between it and
+   the loadPipeline() that follows it; nothing reads the count but this line. */
+function pwSummaryText(p) {
+  if (!p || !p.template) return "";
+  const stages = p.stages || [];
+  let stage = "no stage yet";
+  if (p.current) {
+    const s = stages.find(x => x.stage_key === p.current.stage_key);
+    stage = p.current.status_label || (s && s.internal_label) || p.current.stage_key || stage;
+  }
+  const open = stages.reduce((n, s) =>
+    n + (s.requirements || []).filter(r => r.status === "active").length, 0);
+  return [p.template.name, stage, open ? `${open} outstanding` : ""]
+    .filter(Boolean).join(" \u00b7 ");
+}
+
+/* Collapsed by default; the choice is remembered per browser under the tab
+   pref 'overview.pipelineOpen' (scripts.js getTabPref/setTabPref — the store
+   the Case Log page size already uses). Bound ONCE, at parse: the <details>
+   is static markup above this script, and every render rewrites only its
+   children, so the state survives every re-render, advance and bus refresh. */
+(function pwBindOpenState() {
+  const el = E("pipelinePanel");
+  if (!el) return;
+  el.open = getTabPref("overview", "pipelineOpen", "0") === "1";
+  el.addEventListener("toggle", () =>
+    setTabPref("overview", "pipelineOpen", el.open ? "1" : "0"));
+})();
+
 async function loadPipeline() {
   try {
     // requirements as a GET PARAMS object, not a literal query string: apiSend
@@ -2294,7 +2311,7 @@ async function loadPipeline() {
     // Additive widget — a load failure must never break the page.
     console.error('[pipeline] load failed:', err);
     E('pipelinePanel').style.display = '';
-    E('pwSubtitle').textContent = '';
+    E('pwSubtitle').textContent = 'unavailable';
     E('pwMsg').innerHTML =
       `<div class="pw-msg">Pipeline unavailable: ${escText(err.message)}</div>`;
     E('pwSteps').innerHTML = '';
@@ -2331,7 +2348,7 @@ function renderPipeline() {
   E('pipelinePanel').style.display = '';
 
   if (!p.template) {
-    E('pwSubtitle').textContent = '';
+    E('pwSubtitle').textContent = 'none for this case type';
     E('pwMsg').innerHTML =
       '<div class="pw-msg">No pipeline configured for this case type</div>';
     E('pwSteps').innerHTML = '';
@@ -2339,7 +2356,7 @@ function renderPipeline() {
     return;
   }
 
-  E('pwSubtitle').textContent = p.template.name;
+  E('pwSubtitle').textContent = pwSummaryText(p);
   E('pwMsg').innerHTML = '';
   E('pwSteps').innerHTML = renderPwSteps(p);
   renderPwSelect();
@@ -2966,7 +2983,7 @@ function applyFieldsToOverview(fields) {
     E('captionLine').style.display = caption ? '' : 'none';
   }
 
-  if (has('case_alerts')) E('alertsDiv').textContent = c.case_alerts || '';
+  if (has('case_alerts')) renderAlerts(c);
 
   if (has('case_type') || has('case_subtype')) {
     syncCaseTypeSelects(c);
