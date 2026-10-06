@@ -811,6 +811,7 @@ tests/caseUi.detTab.test.js
 tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
+tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js

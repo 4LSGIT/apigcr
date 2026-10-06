@@ -479,8 +479,10 @@ user drag becomes a floor. Call `.fit()` after setting `.value` from code.
 Why it exists: case/contact `.tab-content` panes are `display:none` until
 `openTab()`, and both pages fill them BEFORE showing one — anything measured
 during load reads 0 (the Overview notes box sat at its 100px floor on every
-load until 2026-10-06). `resizeTextarea()` is the old one-shot, kept for
-checklistView's note bodies; new code uses autoGrow.
+load until 2026-10-06). Users: the Overview notes box (draggable) and
+checklistView's note bodies (`resize: none` — render() rebuilds them, so a
+drag could not last). The old one-shot `resizeTextarea()` is gone; use
+autoGrow for any textarea that should fit its text.
 
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here

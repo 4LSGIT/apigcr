@@ -235,23 +235,16 @@ function populateCaseTypeFilter(sel, extraTypes) {
   if (!sel.value) sel.selectedIndex = 0; // prev label no longer exists
 }
 
-/* One-shot fit, kept for checklistView's note bodies (whose CSS max-height
-   duplicates this 300 — see the comments there). New code: use autoGrow()
-   below, which also re-fits when the box is shown and lets the user drag it. */
-function resizeTextarea(textarea) {
-  textarea.style.height = "auto"; // Reset height
-  textarea.style.height = Math.min(textarea.scrollHeight, 300) + "px"; // Adjust but don't exceed max
-}
-
 /* ── autoGrow — a textarea that fits its content ─────────────────────────────
    const g = autoGrow(el, { max: 300 });   // → { fit }, or null without an el
 
    · Fits on every input, and again whenever the box's WIDTH changes — which
      includes going from hidden (0 wide) to shown, and a reflow that changes
-     where lines wrap. That is what resizeTextarea() cannot do: measured while
-     its tab or its iframe is display:none, scrollHeight is 0, the box drops
-     to its CSS min-height, and nothing ever measures it again. The case
-     Overview's notes box did exactly that on EVERY load — updateHeader()
+     where lines wrap. That is what the old one-shot resizeTextarea() could
+     not do (removed 2026-10-06, once its last caller moved here): measured
+     while its tab or its iframe is display:none, scrollHeight is 0, the box
+     drops to its CSS min-height, and nothing ever measures it again. The
+     case Overview's notes box did exactly that on EVERY load — updateHeader()
      filled and "fitted" it before openTab() showed the tab.
    · fit() skips a hidden box rather than writing a zero; the width watch
      fits it when it appears. Call fit() yourself after setting .value from
@@ -261,7 +254,10 @@ function resizeTextarea(textarea) {
      a drag becomes a floor every later fit respects, so typing never snaps
      the box back from where the user put it. A drag shorter than the text
      lasts until the next fit.
-   · Idempotent per element (the handle is cached on el._autoGrow).
+   · Idempotent per element (the handle is cached on el._autoGrow; a second
+     call returns it and ignores its opts — pass the same `max` everywhere).
+   · Users: case.html #overviewCaseNotes (draggable), checklistView.html note
+     bodies (resize:none — render() rebuilds them, so a drag could not last).
    · Without ResizeObserver (old engines, jsdom) it still fits on input; it
      just can't notice the box being shown or dragged.
    · The observer's work is deferred a frame: writing the height of the very

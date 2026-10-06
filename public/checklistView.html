@@ -263,7 +263,11 @@
 
     /* ALWAYS-EDITABLE, no click-to-edit swap — the idiom case.html
        (#overviewCaseNotes) and tabLeads.html already use for notes fields.
-       resize:none because the height is driven by resizeTextarea(). */
+       Height: autoGrow() (scripts.js), capped at NOTE_BODY_MAX_PX — it also
+       re-fits a body that was filled while this frame or its tab was hidden.
+       resize:none, unlike the Overview's notes box: render() rebuilds every
+       card on any edit anywhere on the board, so a drag would silently snap
+       back the next time something else changed. */
     .ck-note-body {
       display: block;
       width: 100%;
@@ -277,11 +281,11 @@
       line-height: 1.45;
       color: var(--text);
       resize: none;
-      /* ~3 rows floor; 300px ceiling then scroll, so one long note cannot
-         dominate the column. The 300 MUST agree with resizeTextarea() in
-         scripts.js, which caps scrollHeight at the same number. */
+      /* ~3 rows floor. The CEILING is autoGrow's NOTE_BODY_MAX_PX, not CSS:
+         one number in one place (it used to be duplicated here as a
+         max-height that had to agree with resizeTextarea()). Past it, the
+         body scrolls, so one long note cannot dominate the column. */
       min-height: 58px;
-      max-height: 300px;
       overflow-y: auto;
     }
     .ck-note-body:focus { outline: none; background: var(--surface); }
@@ -599,10 +603,14 @@ const BODY_AUTOSAVE_MS = 2000;
 /* MUST STAY IN SYNC with NOTE_MAX_CHARS in lib/noteLimits.js — the browser
    cannot require a Node module, so the number is duplicated. The SERVER is the
    guarantee (checklists, cases, contacts and appts all reject past it with a
-   400); this copy exists only so the user is stopped before the 400, the same
-   way .ck-note-body's max-height duplicates resizeTextarea()'s 300.
+   400); this copy exists only so the user is stopped before the 400.
    If you change one, change the other. */
 const NOTE_MAX_CHARS = 10000;
+
+/* A note body's automatic height ceiling (autoGrow's `max`) — past it the
+   body scrolls, so one long note cannot dominate the column. The ONLY place
+   this number lives; .ck-note-body carries no CSS max-height. */
+const NOTE_BODY_MAX_PX = 300;
 /* ── Counter visibility ───────────────────────────────────────────
    How much text a body needs before the "n / 10,000" counter appears under
    it. updateCount() shows it when `len >= COUNT_SHOW_AT` and blanks it
@@ -1089,7 +1097,10 @@ function subscribeNativeCard(cl) {
     const shown = shownBody(cl, d);                    // fence 3
     if (d.ta && d.ta.value !== shown) {                // fence 2
       d.ta.value = shown;
-      resizeTextarea(d.ta);
+      // A programmatic write fires no input event, so fit by hand. Often
+      // lands while this tab is HIDDEN (a note saved on the case Overview):
+      // fit() then skips, and autoGrow re-fits when the body is shown.
+      autoGrow(d.ta, { max: NOTE_BODY_MAX_PX }).fit();
     }
     updateCount(d, shown.length);
   });
@@ -1309,9 +1320,15 @@ function render() {
     body.appendChild(renderStack(leftover));
   }
 
-  // Height every note body now that they are in the document — scrollHeight
-  // is meaningless on a detached node.
-  body.querySelectorAll('.ck-note-body').forEach(resizeTextarea);
+  // Bind and height every note body now that they are in the document —
+  // scrollHeight is meaningless on a detached node, and render() is the only
+  // place cards are built. autoGrow then fits each on input and whenever it
+  // is shown or re-wraps. The fit is synchronous on purpose: eventform.html
+  // sizes this frame from a MutationObserver that measures right after this
+  // render, so the bodies must already be at their height. A body rendered
+  // while hidden is skipped here and fitted by autoGrow when it is shown.
+  body.querySelectorAll('.ck-note-body')
+    .forEach(ta => autoGrow(ta, { max: NOTE_BODY_MAX_PX }).fit());
 }
 
 /* The grid container (see .ck-stack). Headings, the empty message, the footer
@@ -1625,10 +1642,7 @@ function renderNoteBody(cl) {
   }
 
   ta.oninput = () => {
-    // resizeTextarea() is scripts.js's shared helper (height:auto, then
-    // scrollHeight capped at 300px). The same one case.html uses for case
-    // notes — see .ck-note-body's max-height, which must agree with it.
-    resizeTextarea(ta);
+    // (Height: autoGrow's own input listener — render() binds every body.)
     d.draft = ta.value;
     // Dirty means "differs from what the server holds" — typing and undoing
     // back to the stored text leaves nothing to save.
