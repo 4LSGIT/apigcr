@@ -11,6 +11,12 @@
  * POST /api/cases/:id/pipeline/advance  — body { stage: <stage_key|numeric stage_id>, note? }
  *                                         → advances + returns fresh pipeline payload.
  *                                         Repeating the current stage → 200 with noop:true.
+ * POST /api/cases/:id/pipeline/move     — body { template_id, stage_id, note? }
+ *                                         → cross-pipeline move: sets case_type/
+ *                                         case_subtype from the target matter
+ *                                         template (intake targets write no
+ *                                         fields), then advances by stage id.
+ *                                         Returns the advance payload + `moved`.
  * GET  /api/cases/:id/pipeline/requirements
  *                                       — (R3) the FULL resolveRequirements output for
  *                                         the case: BOTH applicable templates, so a
@@ -141,6 +147,29 @@ router.post('/api/cases/:id/pipeline/advance', jwtOrApiKey, async (req, res) => 
     res.json({ status: 'success', ...payload });
   } catch (err) {
     fail(res, 'advance', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/cases/:id/pipeline/move — cross-pipeline move
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The pipeline is DERIVED (phase + case_type/case_subtype), so moving a case
+// onto a different pipeline is a membership write PLUS an advance — advancing
+// alone onto a foreign template's stage leaves a phantom position. The service
+// owns the two-write choreography and its torn-state error message.
+
+router.post('/api/cases/:id/pipeline/move', jwtOrApiKey, async (req, res) => {
+  try {
+    const { template_id, stage_id, note } = req.body || {};
+    const payload = await svc.movePipeline(req.db, req.params.id, template_id, stage_id, {
+      userId: userId(req),
+      note: note == null ? null : note,
+    });
+    res.json({ status: 'success', ...payload });
+  } catch (err) {
+    fail(res, 'move', err);
   }
 });
 

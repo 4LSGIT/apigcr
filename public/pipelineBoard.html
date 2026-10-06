@@ -77,6 +77,16 @@
     .pb-chip-days.warm { background: var(--warn-soft); color: var(--warn-on-soft); }
     .pb-chip-days.hot { background: var(--danger-soft); color: var(--danger-on-soft); }
     .pb-move-btn { border: none; background: transparent; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; margin-left: auto; }
+    /* Cross-pipeline move (always rendered, unlike the CDN-fail .pb-move-btn).
+       Muted at rest so a per-card icon doesn't shout; accent on hover. */
+    .pb-xmove { border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 0; margin-left: auto; }
+    .pb-xmove:hover { color: var(--accent); }
+    /* Inside the Swal html container; scoped through it so style.css's global
+       input rule (0,2,1) cannot out-rank these (CLAUDE.md dialog-CSS note). */
+    .swal2-html-container .pb-mv-row { margin: 8px 0; text-align: left; }
+    .swal2-html-container .pb-mv-row label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+    .swal2-html-container .pb-mv-row select,
+    .swal2-html-container .pb-mv-row input { width: 100%; box-sizing: border-box; }
 
     .sortable-ghost { opacity: 0.4; }
     .sortable-drag { opacity: 0.9; }
@@ -356,6 +366,10 @@ function buildCard(c, isUnstaged) {
     chips.push(`<button class="pb-move-btn" onclick="movePrompt(event, '${escAttr(c.case_id)}')">
       <i class="fa-solid fa-arrow-right-arrow-left"></i> Move…</button>`);
   }
+  // Cross-pipeline move — always rendered: drag can't cross pipelines (the
+  // board shows one at a time), so this is the only route off this board.
+  chips.push(`<button class="pb-xmove" title="Move to another pipeline…"
+    onclick="xMovePrompt(event, '${escAttr(c.case_id)}')"><i class="fa-solid fa-shuffle"></i></button>`);
 
   el.innerHTML =
     `<div class="pb-card-name">${name}</div>
@@ -365,7 +379,7 @@ function buildCard(c, isUnstaged) {
 
   el.addEventListener('click', (e) => {
     if (dragging) return;
-    if (e.target.closest('.pb-move-btn')) return;
+    if (e.target.closest('.pb-move-btn') || e.target.closest('.pb-xmove')) return;
     openCase(c);
   });
   return el;
@@ -452,6 +466,130 @@ async function movePrompt(e, caseId) {
   });
   if (!r.isConfirmed || !r.value) return;
   confirmAndAdvance(caseId, r.value);
+}
+
+// ── Cross-pipeline move (the ⇄ button on every card). ───────────────────────
+// Drag covers same-board moves only (the board shows one pipeline at a time),
+// so this is the route onto a DIFFERENT pipeline. Server-side it is
+// POST /api/cases/:id/pipeline/move — a membership write (case_type/subtype
+// from the target matter template) plus an advance by stage id — never the
+// plain advance endpoint, which would leave a phantom position on a template
+// the case doesn't resolve to. Picker data: the templates list init() already
+// fetched + per-template stages (pipeline-admin reads), cached per page.
+// Default stage on the target: the SAME stage_key as the card's current
+// column when the target has it active; else the first active main stage.
+const xStagesCache = {};   // template_id → active stages
+
+async function xFetchStages(templateId) {
+  if (!xStagesCache[templateId]) {
+    const d = await api(`/api/pipeline-admin/templates/${templateId}/stages`, 'GET');
+    xStagesCache[templateId] = (d.stages || []).filter(s => s.active);
+  }
+  return xStagesCache[templateId];
+}
+
+// Which column a card sits in — its current stage_key ('unstaged' → null).
+function findCardColumnKey(caseId) {
+  for (const key of Object.keys(board.columns || {})) {
+    if ((board.columns[key] || []).some(c => c.case_id === caseId)) {
+      return key === 'unstaged' ? null : key;
+    }
+  }
+  return null;
+}
+
+async function xMovePrompt(e, caseId) {
+  e.stopPropagation();
+  const curTplId = Number(E('pb-template').value);
+  const tpls = templates.filter(t => Number(t.id) !== curTplId);
+  if (!tpls.length) {
+    Toast.fire({ icon: 'info', title: 'No other active pipelines' });
+    return;
+  }
+  const card = findCard(caseId);
+  const who = card ? (card.primary_contact_name || card.case_display || caseId) : caseId;
+  const curKey = findCardColumnKey(caseId);
+
+  const stageOptionsHtml = (stages) => {
+    const sameKey = curKey && stages.some(s => s.stage_key === curKey) ? curKey : null;
+    const main = stages.filter(s => !isOfframp(s));
+    const off  = stages.filter(isOfframp);
+    const defId = sameKey
+      ? stages.find(s => s.stage_key === sameKey).id
+      : (main[0] ? main[0].id : (off[0] ? off[0].id : null));
+    const opt = (s) =>
+      `<option value="${escAttr(s.id)}"${Number(s.id) === Number(defId) ? ' selected' : ''}>${
+        escAttr(s.internal_label)}</option>`;
+    return main.map(opt).join('') +
+      (off.length ? `<optgroup label="— off-ramps —">${off.map(opt).join('')}</optgroup>` : '');
+  };
+
+  const loadStagesInto = async (templateId, sel) => {
+    sel.disabled = true;
+    sel.innerHTML = '<option>Loading…</option>';
+    try {
+      const stages = await xFetchStages(templateId);
+      sel.innerHTML = stages.length
+        ? stageOptionsHtml(stages)
+        : '<option value="" disabled selected>No active stages</option>';
+    } catch (err) {
+      sel.innerHTML = `<option value="" disabled selected>Error: ${escAttr(err.message)}</option>`;
+    }
+    sel.disabled = false;
+  };
+
+  const r = await Swal.fire({
+    title: 'Move to another pipeline',
+    html:
+      `<p style="margin:0 0 4px">Move <b>${escText(who)}</b> to:</p>
+       <div class="pb-mv-row"><label for="pbMvTpl">Pipeline</label>
+         <select id="pbMvTpl">${tpls.map(t =>
+           `<option value="${escAttr(t.id)}">${escAttr(t.name)}</option>`).join('')}</select>
+       </div>
+       <div class="pb-mv-row"><label for="pbMvStage">Stage</label>
+         <select id="pbMvStage"><option>Loading…</option></select>
+       </div>
+       <div class="pb-mv-row"><label for="pbMvNote">Note (optional)</label>
+         <input id="pbMvNote" maxlength="255" />
+       </div>
+       <p style="font-size:11px;color:var(--text-muted);text-align:left;margin:4px 0 0">
+         Also sets the case's type/subtype to match the target pipeline.</p>`,
+    showCancelButton: true,
+    confirmButtonText: 'Move',
+    didOpen: () => {
+      const tplSel = E('pbMvTpl');
+      loadStagesInto(tplSel.value, E('pbMvStage'));
+      tplSel.addEventListener('change', () => loadStagesInto(tplSel.value, E('pbMvStage')));
+    },
+    preConfirm: () => {
+      const template_id = Number(E('pbMvTpl').value);
+      const stage_id = Number(E('pbMvStage').value);
+      if (!template_id || !stage_id) {
+        Swal.showValidationMessage('Pick a pipeline and a stage');
+        return false;
+      }
+      const note = E('pbMvNote').value.trim();
+      return note ? { template_id, stage_id, note } : { template_id, stage_id };
+    },
+  });
+  if (!r.isConfirmed || !r.value) return;
+
+  if (advancing) return;
+  advancing = true;
+  try {
+    const payload = await api(`/api/cases/${caseId}/pipeline/move`, 'POST', r.value);
+    const tpl = tpls.find(t => Number(t.id) === r.value.template_id);
+    Toast.fire({ icon: 'success', title: `Moved to ${tpl ? tpl.name : 'pipeline'}`
+      + (payload.noop ? ' (already at that stage)' : '') });
+    await loadBoard();   // the card leaves this board — authoritative refresh
+  } catch (err) {
+    if (err.status === 409) {
+      Toast.fire({ icon: 'error', title: 'Busy, try again' });
+    } else {
+      Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+    }
+  }
+  advancing = false;
 }
 
 // ── Confirm + advance. Success → re-fetch board; every other outcome

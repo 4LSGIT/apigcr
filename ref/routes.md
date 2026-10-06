@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-09-24T20:50:36.784Z_  
-_695 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 269, PUT: 35, _ALL: 2_
+_Generated 2026-10-06T18:17:27.121Z_  
+_696 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 270, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -136,6 +136,7 @@ _695 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 269, PUT: 35, _ALL:
 | POST | `/api/cases/:id/merge` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id/pipeline` | `jwtOrApiKey` | — |
 | POST | `/api/cases/:id/pipeline/advance` | `jwtOrApiKey` | — |
+| POST | `/api/cases/:id/pipeline/move` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id/pipeline/requirements` | `jwtOrApiKey` | — |
 | DELETE | `/api/cases/:id/pipeline/requirements/:key/override` | `jwtOrApiKey` | — |
 | POST | `/api/cases/:id/pipeline/requirements/:key/override` | `jwtOrApiKey` | — |
@@ -955,4 +956,4 @@ _695 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 269, PUT: 35, _ALL:
 
 ---
 
-_695 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 269, PUT: 35, _ALL: 2_
+_696 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 270, PUT: 35, _ALL: 2_

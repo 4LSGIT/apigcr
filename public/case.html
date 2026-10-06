@@ -461,6 +461,16 @@
       #pwAdvanceRow { border-top:1px solid var(--border); padding-top:10px; margin-top:4px; text-align:center; }
       #pwAdvanceRow .pw-toggle { font-size:0.8em; color:var(--text-2); margin-left:8px; white-space:nowrap; }
       #pwNoteInput { width:60%; margin-top:6px; }
+      .pw-move-link { border:none; background:transparent; color:var(--text-muted);
+                      cursor:pointer; font-size:0.78em; padding:6px 0 0; }
+      .pw-move-link:hover { color:var(--accent); text-decoration:underline; }
+      /* Inside the Swal html container; scoped through it so style.css's
+         global input rule (0,2,1) cannot out-rank these — see the CLAUDE.md
+         dialog-CSS note. */
+      .swal2-html-container .pw-mv-row { margin:8px 0; text-align:left; }
+      .swal2-html-container .pw-mv-row label { display:block; font-size:0.8em; color:var(--text-2); margin-bottom:2px; }
+      .swal2-html-container .pw-mv-row select,
+      .swal2-html-container .pw-mv-row input { width:100%; box-sizing:border-box; }
 
     </style>
     <details id="pipelinePanel" style="display:none">
@@ -478,6 +488,8 @@
         <br />
         <input id="pwNoteInput" maxlength="255" placeholder="Note (optional)" />
         <button onclick="pwAdvance()">Advance</button>
+        <br />
+        <button class="pw-move-link" onclick="pwMoveOpen()">Move to another pipeline&hellip;</button>
       </div>
     </details>
     <br />
@@ -2736,50 +2748,186 @@ async function pwAdvance() {
       `/api/cases/${caseID}/pipeline/advance`, 'POST',
       note ? { stage: key, note } : { stage: key }
     );
-    pwData = payload;                 // advance returns a fresh pipeline payload
-    pwLastSet = Date.now();
-    E('pwNoteInput').value = '';
-    renderPipeline();
-
-    // R3 — RE-RESOLVE THE STEPS. The advance route returns getPipeline WITHOUT
-    // the requirements opt-in, and an advance moves the case's POSITION, which
-    // is one of the three inputs to every requirement's status (override →
-    // detector → position). Carrying the pre-advance statuses over would show
-    // `active` on a stage the case has just left. Fire-and-forget: the timeline
-    // above is already correct from the response, and pwLastSet is re-stamped
-    // by loadPipeline so the bus echo still buys nothing.
-    loadPipeline();
-
-    if (payload.noop) {
-      Toast.fire({ icon: 'info', title: 'Already at this stage' });
-      return;                         // nothing changed server-side — no header refresh
+    await pwApplyAdvanceResult(payload, `Advanced to ${label}`,
+      { case_stage: 1, case_status: 1, case_rec: 1 });
+  } catch (err) {
+    if (err.status === 409) {
+      Toast.fire({ icon: 'error', title: 'Busy, try again' });
+    } else {
+      Toast.fire({ icon: 'error', title: 'Error', text: err.message });
     }
-    Toast.fire({ icon: 'success', title: `Advanced to ${label}` });
+  }
+}
 
-    // Overwrite-on-advance touched case_stage/case_status/case_rec — refresh
-    // the trio from a fresh case row. The GET stays (design C1): when
-    // BroadcastChannel is unavailable the sniff dispatches in the shell realm
-    // only and never reaches this frame, so this is the correctness path.
-    //
-    // ── THE REPAINT GOES THROUGH THE SAME FENCES AS EVERY BUS PAINT ────────
-    // (Slice 3c). This used to write the three inputs directly, which made it
-    // the ONE painter on the page with no focus/ycDirty guard: an advance
-    // landing while someone had the Status box open, mid-edit, ate what they
-    // were typing. applyFieldsToOverview carries those guards, and it takes its
-    // argument as a PRESENCE FILTER — it paints from entityData.case — so
-    // merging first and then naming the three columns is the whole repaint.
-    //
-    // Object.assign, not `entityData.case = d.case`: replacing the object drops
-    // any column the bus merged in between this advance and its response, and
-    // hands the form-push loop a different object than the one it read.
+/* ── Shared advance-result applier (pwAdvance + pwMoveOpen). The payload is
+   advanceStage's response — a fresh getPipeline + noop flag. ───────────── */
+async function pwApplyAdvanceResult(payload, successTitle, fields) {
+  pwData = payload;                 // advance returns a fresh pipeline payload
+  pwLastSet = Date.now();
+  E('pwNoteInput').value = '';
+  renderPipeline();
+
+  // R3 — RE-RESOLVE THE STEPS. The advance route returns getPipeline WITHOUT
+  // the requirements opt-in, and an advance moves the case's POSITION, which
+  // is one of the three inputs to every requirement's status (override →
+  // detector → position). Carrying the pre-advance statuses over would show
+  // `active` on a stage the case has just left. Fire-and-forget: the timeline
+  // above is already correct from the response, and pwLastSet is re-stamped
+  // by loadPipeline so the bus echo still buys nothing.
+  loadPipeline();
+
+  if (payload.noop) {
+    Toast.fire({ icon: 'info', title: 'Already at this stage' });
+    return;                         // nothing changed server-side — no header refresh
+  }
+  Toast.fire({ icon: 'success', title: successTitle });
+
+  // Overwrite-on-advance touched case_stage/case_status/case_rec (and, on a
+  // cross-pipeline move, case_type/case_subtype) — refresh from a fresh case
+  // row. The GET stays (design C1): when BroadcastChannel is unavailable the
+  // sniff dispatches in the shell realm only and never reaches this frame, so
+  // this is the correctness path.
+  //
+  // ── THE REPAINT GOES THROUGH THE SAME FENCES AS EVERY BUS PAINT ────────
+  // (Slice 3c). This used to write the three inputs directly, which made it
+  // the ONE painter on the page with no focus/ycDirty guard: an advance
+  // landing while someone had the Status box open, mid-edit, ate what they
+  // were typing. applyFieldsToOverview carries those guards, and it takes its
+  // argument as a PRESENCE FILTER — it paints from entityData.case — so
+  // merging first and then naming the columns is the whole repaint.
+  //
+  // Object.assign, not `entityData.case = d.case`: replacing the object drops
+  // any column the bus merged in between this advance and its response, and
+  // hands the form-push loop a different object than the one it read.
+  try {
+    const d = await P.apiSend(`/api/cases/${caseID}`, 'GET');
+    const ed = window.entityData;
+    if (ed.case) Object.assign(ed.case, d.case); else ed.case = d.case;
+    applyFieldsToOverview(fields);
+  } catch (e2) {
+    console.warn('[pipeline] header refresh failed:', e2);
+  }
+}
+
+/* ── Cross-pipeline move (Move to another pipeline…) ─────────────────────────
+   The pipeline is DERIVED server-side (phase + type/subtype), so this goes
+   through POST /api/cases/:id/pipeline/move — a membership write plus an
+   advance — never through the plain advance endpoint, which would leave a
+   phantom position on a template the case doesn't resolve to.
+
+   Picker data rides the pipeline-admin reads the board already uses
+   (templates list + per-template stages), cached per page. Default stage on
+   the target: the SAME stage_key the case is on now, when the target has it
+   active (Ch7 `filed` → Ch13 `filed`); else the target's first active
+   main-lane stage. ONE Swal (single-instance constraint): both selects and
+   the note live in its html, validation via showValidationMessage. */
+let pwMoveTemplates = null;     // active templates, fetched once per page
+const pwMoveStagesCache = {};   // template_id → active stages
+
+async function pwMoveFetchStages(templateId) {
+  if (!pwMoveStagesCache[templateId]) {
+    const d = await P.apiSend(`/api/pipeline-admin/templates/${templateId}/stages`, 'GET');
+    pwMoveStagesCache[templateId] = (d.stages || []).filter(s => s.active);
+  }
+  return pwMoveStagesCache[templateId];
+}
+
+async function pwMoveOpen() {
+  try {
+    if (!pwMoveTemplates) {
+      const d = await P.apiSend('/api/pipeline-admin/templates', 'GET');
+      pwMoveTemplates = (d.templates || []).filter(t => t.active);
+    }
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error', text: 'Could not load pipelines: ' + err.message });
+    return;
+  }
+
+  const curTplId = pwData && pwData.template ? Number(pwData.template.id) : null;
+  const tpls = pwMoveTemplates.filter(t => Number(t.id) !== curTplId);
+  if (!tpls.length) {
+    Toast.fire({ icon: 'info', title: 'No other active pipelines' });
+    return;
+  }
+  const curKey = pwData && pwData.current ? pwData.current.stage_key : null;
+
+  // Stage options for one template. Same-key default; off-ramps grouped last,
+  // mirroring the advance select.
+  const stageOptionsHtml = (stages) => {
+    const sameKey = curKey && stages.some(s => s.stage_key === curKey) ? curKey : null;
+    const isOff = (s) => String(s.lane || '').trim().toLowerCase() === 'offramp';
+    const main = stages.filter(s => !isOff(s));
+    const off  = stages.filter(isOff);
+    const defId = sameKey
+      ? stages.find(s => s.stage_key === sameKey).id
+      : (main[0] ? main[0].id : (off[0] ? off[0].id : null));
+    const opt = (s) =>
+      `<option value="${escAttr(s.id)}"${Number(s.id) === Number(defId) ? ' selected' : ''}>${
+        escAttr(s.internal_label)}</option>`;
+    return main.map(opt).join('') +
+      (off.length ? `<optgroup label="— off-ramps —">${off.map(opt).join('')}</optgroup>` : '');
+  };
+
+  const loadStagesInto = async (templateId, sel) => {
+    sel.disabled = true;
+    sel.innerHTML = '<option>Loading…</option>';
     try {
-      const d = await P.apiSend(`/api/cases/${caseID}`, 'GET');
-      const ed = window.entityData;
-      if (ed.case) Object.assign(ed.case, d.case); else ed.case = d.case;
-      applyFieldsToOverview({ case_stage: 1, case_status: 1, case_rec: 1 });
-    } catch (e2) {
-      console.warn('[pipeline] header refresh failed:', e2);
+      const stages = await pwMoveFetchStages(templateId);
+      sel.innerHTML = stages.length
+        ? stageOptionsHtml(stages)
+        : '<option value="" disabled selected>No active stages</option>';
+    } catch (err) {
+      sel.innerHTML = `<option value="" disabled selected>Error: ${escAttr(err.message)}</option>`;
     }
+    sel.disabled = false;
+  };
+
+  const r = await Swal.fire({
+    title: 'Move to another pipeline',
+    html:
+      `<div class="pw-mv-row"><label for="pwMvTpl">Pipeline</label>
+         <select id="pwMvTpl">${tpls.map(t =>
+           `<option value="${escAttr(t.id)}">${escAttr(t.name)}</option>`).join('')}</select>
+       </div>
+       <div class="pw-mv-row"><label for="pwMvStage">Stage</label>
+         <select id="pwMvStage"><option>Loading…</option></select>
+       </div>
+       <div class="pw-mv-row"><label for="pwMvNote">Note (optional)</label>
+         <input id="pwMvNote" maxlength="255" />
+       </div>
+       <p style="font-size:0.78em;color:var(--text-muted);text-align:left;margin:4px 0 0">
+         Also sets the case's type/subtype to match the target pipeline.</p>`,
+    showCancelButton: true,
+    confirmButtonText: 'Move',
+    didOpen: () => {
+      const tplSel = E('pwMvTpl');
+      loadStagesInto(tplSel.value, E('pwMvStage'));
+      tplSel.addEventListener('change', () => loadStagesInto(tplSel.value, E('pwMvStage')));
+    },
+    preConfirm: () => {
+      const template_id = Number(E('pwMvTpl').value);
+      const stage_id = Number(E('pwMvStage').value);
+      if (!template_id || !stage_id) {
+        Swal.showValidationMessage('Pick a pipeline and a stage');
+        return false;
+      }
+      const note = E('pwMvNote').value.trim();
+      return note ? { template_id, stage_id, note } : { template_id, stage_id };
+    },
+  });
+  if (!r.isConfirmed || !r.value) return;
+
+  const tpl = tpls.find(t => Number(t.id) === r.value.template_id);
+  const stages = pwMoveStagesCache[r.value.template_id] || [];
+  const stg = stages.find(s => Number(s.id) === r.value.stage_id);
+  const label = `${tpl ? tpl.name : 'pipeline'} — ${stg ? stg.internal_label : 'stage'}`;
+
+  try {
+    const payload = await P.apiSend(`/api/cases/${caseID}/pipeline/move`, 'POST', r.value);
+    // case_type/case_subtype in the presence filter: the membership write is
+    // what distinguishes a move from a plain advance.
+    await pwApplyAdvanceResult(payload, `Moved to ${label}`,
+      { case_stage: 1, case_status: 1, case_rec: 1, case_type: 1, case_subtype: 1 });
   } catch (err) {
     if (err.status === 409) {
       Toast.fire({ icon: 'error', title: 'Busy, try again' });

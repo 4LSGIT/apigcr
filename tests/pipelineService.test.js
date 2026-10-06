@@ -1505,3 +1505,183 @@ describe('getPipeline projected (R2.5)', () => {
     expect(db.calls).toHaveLength(3);
   });
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// movePipeline — cross-pipeline move (membership write + advance by stage id)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// caseService is MOCKED here (movePipeline lazy-requires it): updateCase has
+// its own suite, and scripting its real query fan-out (fieldDefs, prior-row
+// read, role-resolver) into these stubs would make every assertion about the
+// MOVE hostage to updateCase internals. The assertion of record is the call
+// shape handed to it.
+
+jest.mock('../services/caseService', () => ({
+  updateCase: jest.fn(() => Promise.resolve({ case_id: 'C1', updated_fields: ['case_subtype'] })),
+}));
+const caseService = require('../services/caseService');
+
+describe('movePipeline', () => {
+  const LOCK_OK = [{ lockAcquired: 1 }];
+  const RELEASED = [{ 'RELEASE_LOCK(?)': 1 }];
+
+  // Full pipeline_stages row shapes (movePipeline SELECT *'s them).
+  const CH13_FILED_ROW = {
+    id: 31, template_id: 3, stage_key: 'filed', stage_number: 2,
+    internal_label: 'Filed', client_label: 'Filed', case_stage: 'Filed',
+    is_terminal: 0, lane: 'main', default_rec: '', client_visible: 1, active: 1,
+  };
+  const INTAKE_LEAD_ROW = {
+    id: 1, template_id: 1, stage_key: 'lead', stage_number: 1,
+    internal_label: 'Lead', client_label: 'New lead', case_stage: 'Open',
+    is_terminal: 0, lane: 'main', default_rec: '', client_visible: 1, active: 1,
+  };
+
+  // The advance-by-id conn script shared by the happy paths (no guards).
+  const advanceConnScript = (stageRow, caseRow) => ([
+    LOCK_OK,
+    [caseRow],
+    [],                                                  // no latest log row
+    [stageRow],                                          // direct id lookup
+    [{ insertId: 1 }],                                   // INSERT case_stage_log
+    [{ role: 'case' }],                                  // T8 phase source
+    [{ affectedRows: 1 }],                               // UPDATE cases
+    RELEASED,
+  ]);
+
+  // Post-commit getPipeline (case-phase resolution → 4 pool reads, no projection).
+  const getPipelinePoolScript = (caseRow) => ([
+    [caseRow],
+    ALL_TPLS.slice(),
+    [{ stage_id: 31, stage_key: 'filed', case_stage: 'Filed', status_label: 'Filed',
+       entered_at: 't', entered_by: 6, source: 'manual', note: 'Moved to "Bankruptcy — Chapter 13"' }],
+    CH7_STAGES.slice(),   // shape only — stages of whatever template resolves
+  ]);
+
+  beforeEach(() => { caseService.updateCase.mockClear(); });
+
+  test('matter → matter: diffs membership through caseService, advances by id, default note', async () => {
+    const preCase  = { case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' };
+    const postCase = { case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 13', pipeline_phase: 'case' };
+    const db = stubTxDb(
+      advanceConnScript(CH13_FILED_ROW, postCase),
+      [
+        [{ ...TPL_CH13 }],            // movePipeline: template by id
+        [{ ...CH13_FILED_ROW }],      // movePipeline: stage by id
+        [preCase],                    // movePipeline: case row
+        ...getPipelinePoolScript(postCase),
+      ]
+    );
+
+    const p = await svc.movePipeline(db, 'C1', 3, 31, { userId: 6 });
+
+    // Membership: only the DIFFERING column, through the one writer.
+    expect(caseService.updateCase).toHaveBeenCalledTimes(1);
+    expect(caseService.updateCase).toHaveBeenCalledWith(
+      db, 'C1', { case_subtype: 'Chapter 13' }, { userId: 6, source: 'pipeline_move' }
+    );
+
+    // Position: advance resolved the NUMERIC id directly (no template resolve).
+    const stageLookup = db.connCalls.find(c => c.sql.startsWith('SELECT * FROM pipeline_stages'));
+    expect(stageLookup.params).toEqual([31]);
+
+    // Default note names the target pipeline.
+    const insert = db.connCalls.find(c => c.sql.startsWith('INSERT INTO case_stage_log'));
+    expect(insert.params[8]).toBe('Moved to "Bankruptcy — Chapter 13"');
+    expect(insert.params[7]).toBe('manual');
+
+    expect(p.noop).toBe(false);
+    expect(p.moved).toEqual({ template_id: 3, template_name: 'Bankruptcy — Chapter 13', fields_updated: true });
+  });
+
+  test('membership already matches → updateCase never called, fields_updated false', async () => {
+    const row = { case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 13', pipeline_phase: 'case' };
+    const db = stubTxDb(
+      advanceConnScript(CH13_FILED_ROW, row),
+      [
+        [{ ...TPL_CH13 }],
+        [{ ...CH13_FILED_ROW }],
+        [row],
+        ...getPipelinePoolScript(row),
+      ]
+    );
+    const p = await svc.movePipeline(db, 'C1', 3, 31, { userId: 6, note: 'hand move' });
+    expect(caseService.updateCase).not.toHaveBeenCalled();
+    const insert = db.connCalls.find(c => c.sql.startsWith('INSERT INTO case_stage_log'));
+    expect(insert.params[8]).toBe('hand move');          // caller note wins over default
+    expect(p.moved.fields_updated).toBe(false);
+  });
+
+  test('intake target: no membership write — the phase flip IS the move', async () => {
+    const row = { case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' };
+    const db = stubTxDb(
+      [
+        LOCK_OK,
+        [row],
+        [],                                              // no latest log row
+        [INTAKE_LEAD_ROW],                               // id lookup
+        [{ insertId: 1 }],
+        [{ role: 'intake' }],                            // T8 phase source
+        [{ affectedRows: 1 }],
+        RELEASED,
+      ],
+      [
+        [{ ...TPL_INTAKE }],
+        [{ ...INTAKE_LEAD_ROW }],
+        [row],
+        // post-commit getPipeline: phase intake → Intake template → projection
+        // (subtype 'Chapter 7' → exact matter match → proj stages query).
+        [{ ...row, pipeline_phase: 'intake' }],
+        ALL_TPLS.slice(),
+        [],
+        [ { stage_id: 1, stage_key: 'lead', stage_number: 1, internal_label: 'Lead',
+            client_label: 'New lead', case_stage: 'Open', is_terminal: 0, lane: 'main',
+            default_rec: '', client_visible: 1 } ],
+        CH7_STAGES.slice(),                              // projection stages
+      ]
+    );
+    const p = await svc.movePipeline(db, 'C1', 1, 1, {});
+    expect(caseService.updateCase).not.toHaveBeenCalled();
+    expect(p.moved).toEqual({ template_id: 1, template_name: 'Intake', fields_updated: false });
+  });
+
+  test('stage outside the target template → 400 before any write', async () => {
+    const strayStage = { ...CH13_FILED_ROW, template_id: 2 };   // claims Ch7
+    const db = stubTxDb([], [
+      [{ ...TPL_CH13 }],
+      [strayStage],
+    ]);
+    await expect(svc.movePipeline(db, 'C1', 3, 31, {}))
+      .rejects.toMatchObject({ status: 400 });
+    expect(caseService.updateCase).not.toHaveBeenCalled();
+    expect(db.connCalls).toHaveLength(0);
+  });
+
+  test('inactive template → 400; unknown stage → 404', async () => {
+    const db1 = stubTxDb([], [[{ ...TPL_CH13, active: 0 }]]);
+    await expect(svc.movePipeline(db1, 'C1', 3, 31, {}))
+      .rejects.toMatchObject({ status: 400 });
+
+    const db2 = stubTxDb([], [[{ ...TPL_CH13 }], []]);
+    await expect(svc.movePipeline(db2, 'C1', 3, 999, {}))
+      .rejects.toMatchObject({ status: 404 });
+    expect(caseService.updateCase).not.toHaveBeenCalled();
+  });
+
+  test('advance failure after a membership write decorates the error (torn-state signpost)', async () => {
+    const preCase = { case_id: 'C1', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' };
+    const db = stubTxDb(
+      [[{ lockAcquired: 0 }]],                           // advance: lock timeout → 409
+      [
+        [{ ...TPL_CH13 }],
+        [{ ...CH13_FILED_ROW }],
+        [preCase],
+      ]
+    );
+    await expect(svc.movePipeline(db, 'C1', 3, 31, { userId: 6 }))
+      .rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining('retry the move'),
+      });
+    expect(caseService.updateCase).toHaveBeenCalledTimes(1);   // the write that makes it torn
+  });
+});

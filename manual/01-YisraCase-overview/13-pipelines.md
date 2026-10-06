@@ -183,14 +183,24 @@ status icons, subtitles, owner badges, and override controls on hover. Off-ramps
 rail. Below, an **Earlier** block holds two collapsibles — *Intake steps* (for a case already on a
 matter pipeline) and *Stage history* (every log entry, newest first, including repeats).
 
-The **advance** control moves the case. It offers the resolved pipeline's stages; to force a case
-onto a stage of a *different* pipeline (back to an Intake stage from a matter pipeline, say), use
-the numeric stage-id form the control accepts — that is the documented route, not a bug.
+The **advance** control moves the case. It offers the resolved pipeline's stages.
+
+The **Move to another pipeline…** link under it is the cross-pipeline route: pick a pipeline,
+pick a stage (it pre-selects the same stage key where the target has one — Ch7 *Filed* defaults
+to Ch13 *Filed*), add a note. Because a case's pipeline is *derived* from its type and subtype,
+the move also sets those to match the target — an advance alone onto another pipeline's stage
+would leave the case rendering a position on a pipeline it doesn't resolve to. Moving *to* an
+Intake stage changes no fields (intake membership is the phase, which the advance itself flips);
+the subtype is kept, so the "typical next steps" projection still knows the chapter.
+`case_chapter` is **not** touched — that mapping is bankruptcy vocabulary and belongs to
+workflow 42, not the engine — so set the chapter by hand if it matters for the case.
 
 ### The board (Cases → Pipeline tab)
 
 A Kanban view: one column per stage in pipeline order, a dashed divider, then the off-ramp
 columns. Cases with no history yet sit in an *unstaged* bucket. Pick the pipeline at the top.
+Dragging a card moves it between this pipeline's stages; the small ⇄ button on every card opens
+the same **Move to another pipeline** dialog as the case page, for moves the drag can't make.
 
 ### YisraCase Config → Pipelines (admin)
 
@@ -281,7 +291,7 @@ the survivor's is kept.
 | Symptom | Why | What to do |
 |---|---|---|
 | A lead's timeline shows nothing after "Agreement sent" | No matter pipeline resolves — the lead has no chapter/subtype yet | Set the subtype; until then the generic "Retained" placeholder is correct |
-| Advance to an Intake stage fails with 400 on a retained case | The matter pipeline has no Intake keys; resolution is by the pipeline the case is on | Use the numeric stage id in the advance control |
+| A case needs to be on a different pipeline (wrong chapter, back to Intake) | The pipeline is derived from type/subtype — an advance alone can't change it | **Move to another pipeline…** on the Steps panel, or the ⇄ button on a board card |
 | YisraCase Config won't let you activate a stage | Its key is active on a pipeline of the other role (the hand-off rule) | Rename the key, or leave it inactive — never force it |
 | A requirement never becomes done | Its detector's basis isn't happening (e.g. the checklist isn't being completed) | Change the detector, or override it per case; don't expect staff marking |
 | Requirement key rename refused | A case has an override on that key | Clear the override(s) first |
@@ -308,7 +318,9 @@ registry; each detector validates its config at save time, optionally against th
 **API:** `GET /api/cases/:id/pipeline` (`?requirements=1` attaches per-stage requirements;
 `projected` present only on intake-phase payloads), `GET /api/cases/:id/pipeline/requirements`
 (both applicable pipelines — the only surface where a matter case's Intake requirements are
-visible), `POST /api/cases/:id/pipeline/advance`, `POST` / `DELETE
+visible), `POST /api/cases/:id/pipeline/advance`, `POST /api/cases/:id/pipeline/move`
+(`{ template_id, stage_id, note? }` — membership write + advance; `pipelineService.movePipeline`),
+`POST` / `DELETE
 /api/cases/:id/pipeline/requirements/:key/override`, `GET /api/pipeline-board`, and the
 `/api/pipeline-admin/*` CRUD (templates, stages, reorder, requirements, detectors, usage).
 

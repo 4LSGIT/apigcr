@@ -22,6 +22,11 @@
  *     exactly as it can already set case_stage/case_status. Doing so on a
  *     lead moves it to a chapter board with no stage; treat it as the same
  *     class of footgun as hand-editing case_stage.
+ *   - movePipeline — cross-pipeline move: membership write (case_type/
+ *     case_subtype from the target matter template, via caseService) THEN an
+ *     advanceStage by numeric stage id. Exists because the pipeline is
+ *     DERIVED — an advance alone onto another template's stage leaves a
+ *     phantom position. See its docblock.
  *   - resolveStageField — stable-key → column resolver stub for future
  *     stage config (config JSON stays unread in v1).
  *
@@ -1179,6 +1184,136 @@ async function advanceStage(db, caseId, target, {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// movePipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Move a case onto a DIFFERENT pipeline, at a chosen stage.
+ *
+ * Why this exists: a case's pipeline is DERIVED (resolveTemplate), never
+ * stored — phase picks intake vs matter, case_type/case_subtype pick which
+ * matter template. So "move to another pipeline" is NOT just an advance:
+ * advancing a Ch7-subtyped case onto a Ch13 stage by numeric id writes the
+ * log row, but every later read still resolves Ch7 and the case renders a
+ * phantom "other template" position. The correct move is two writes:
+ *
+ *   1. Membership — target is a matter template with a case_type:
+ *      caseService.updateCase sets case_type/case_subtype to the template's
+ *      values (only the ones that differ; skipped entirely when none do).
+ *      An INTAKE target writes nothing: intake membership is phase-driven,
+ *      and the advance's phase flip (T8) is the whole move. The case's
+ *      subtype is deliberately KEPT on a matter→intake move — it is the
+ *      known chapter and feeds the R2.5 projection.
+ *      case_chapter is NOT written here: chapter is bankruptcy vocabulary,
+ *      and this engine stays case-type agnostic (wf42 owns that mapping,
+ *      in tenant space, exactly as it should).
+ *   2. Position — advanceStage by NUMERIC stage id (the unrestricted escape
+ *      hatch), which appends the log row and flips pipeline_phase from the
+ *      entered stage's template role.
+ *
+ * NOT atomic — updateCase and advanceStage each run their own transaction
+ * (advanceStage additionally takes the per-case named lock). The torn state
+ * on a mid-move failure (fields written, advance 409'd) is exactly the
+ * phantom this function exists to prevent, so the error message names it
+ * and says to retry; the retry's updateCase diff is then empty and only the
+ * advance runs.
+ *
+ * Validation is loud (unguarded manual operation, mirroring the manual
+ * advance): unknown template/stage → 404, inactive template/stage or a
+ * stage outside the template → 400, unknown case → 404. Off-ramp stages are
+ * legal targets — staff must be able to land a case on Dismissed.
+ *
+ * @returns advanceStage's payload (fresh getPipeline + noop/changes) plus
+ *   `moved: { template_id, template_name, fields_updated }`.
+ */
+async function movePipeline(db, caseId, templateId, stageId, {
+  userId = null, note = null,
+} = {}) {
+  const tid = Number(templateId);
+  const sid = Number(stageId);
+  if (!Number.isInteger(tid) || tid <= 0) {
+    throw badRequest('template_id must be a positive integer');
+  }
+  if (!Number.isInteger(sid) || sid <= 0) {
+    throw badRequest('stage_id must be a positive integer');
+  }
+
+  const [[template]] = await db.query(
+    `SELECT * FROM pipeline_templates WHERE id = ?`, [tid]
+  );
+  if (!template) throw notFound(`Unknown pipeline template ${tid}`);
+  if (!template.active) {
+    throw badRequest(`Pipeline template "${template.name}" is inactive`);
+  }
+
+  const [[stage]] = await db.query(
+    `SELECT * FROM pipeline_stages WHERE id = ?`, [sid]
+  );
+  if (!stage) throw notFound(`Unknown stage ${sid}`);
+  if (Number(stage.template_id) !== tid) {
+    throw badRequest(
+      `Stage ${sid} ("${stage.stage_key}") belongs to template ` +
+      `${stage.template_id}, not "${template.name}"`
+    );
+  }
+  if (!stage.active) {
+    throw badRequest(`Stage "${stage.internal_label}" is inactive`);
+  }
+
+  const [[caseRow]] = await db.query(
+    `SELECT case_id, case_type, case_subtype FROM cases WHERE case_id = ?`,
+    [caseId]
+  );
+  if (!caseRow) throw notFound(`Case ${caseId} not found`);
+
+  // 1. Membership (matter targets only). Diffed so a same-type move (or a
+  // retry after a torn move) writes nothing and emits no case.updated.
+  // Blank-subtype matter templates (Civil Litigation) CLEAR the subtype —
+  // that is what makes the case resolve to them (branch 3, is_default).
+  let fieldsUpdated = false;
+  if (template.role === 'case' && String(template.case_type || '').trim() !== '') {
+    const fields = {};
+    if (String(caseRow.case_type || '') !== String(template.case_type || '')) {
+      fields.case_type = template.case_type;
+    }
+    if (String(caseRow.case_subtype || '') !== String(template.case_subtype || '')) {
+      fields.case_subtype = template.case_subtype || '';
+    }
+    if (Object.keys(fields).length) {
+      const caseService = require('./caseService');   // lazy require (convention)
+      await caseService.updateCase(db, String(caseId), fields, {
+        userId, source: 'pipeline_move',
+      });
+      fieldsUpdated = true;
+    }
+  }
+
+  // 2. Position — numeric id bypasses key resolution entirely.
+  try {
+    const payload = await advanceStage(db, caseId, sid, {
+      userId,
+      source: 'manual',
+      note: note != null && String(note).trim() !== ''
+        ? note
+        : `Moved to "${template.name}"`,
+    });
+    payload.moved = {
+      template_id: tid,
+      template_name: template.name,
+      fields_updated: fieldsUpdated,
+    };
+    return payload;
+  } catch (err) {
+    if (fieldsUpdated) {
+      err.message =
+        `case type/subtype updated for "${template.name}" but the stage ` +
+        `advance failed (${err.message}) — retry the move`;
+    }
+    throw err;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // resolveStageField
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1213,6 +1348,7 @@ module.exports = {
   resolveMatterTemplate,
   getPipeline,
   advanceStage,
+  movePipeline,
   resolveStageField,
   // (R2) internal handle — requirementService reuses the EXACT template
   // resolution getPipeline performs rather than re-deriving it. Pure
