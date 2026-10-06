@@ -9,7 +9,7 @@ hosts, at the widths you pass:
 | `tabs`    | every sidebar tab |
 | `panels`  | every More Features / Admin panel (each `[data-target]` tile — new tiles are picked up automatically) |
 | `files`   | a case file and a contact file, and every tab inside each (Refresh is skipped: it opens a reload confirm) |
-| `dialogs` | New Client, New Case, New Appointment, New Event, Reschedule, the appointments calendar, Show Appointment |
+| `dialogs` | New Client, New Case, New Appointment, New Event, Reschedule, the appointments calendar, Show Appointment, the two Log adopt dialogs (case docket, phone/email) |
 
 For each surface it records **horizontal overflow**: the shell document, the
 pane document, any visible nested frame (e.g. `tasks.html` inside a case tab),

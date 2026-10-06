@@ -226,12 +226,32 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
   display: inline-block;
   width: 10px;
 }
+/* HINTS — help text under a field or in a dialog ("Optional, select type to
+   open a case."): one look, --fs-xs, --text-muted, normal weight (≈ yc-forms'
+   .yc-sublabel, 0.8rem). .sub-label is the hint in the .input-label forms —
+   a 200px box in the control column; on its own line, pad it there with an
+   empty .input-label first (newContact). The same three values are
+   scripts.js's .yc-hint (dialog CSS, for pages without this sheet) — change
+   them together. */
 .sub-label {
   vertical-align: top;
   margin-left:5px;
   width: 200px;
   display: inline-block;
+  text-align: left;
   font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+/* A checkbox in the control column of an .input-label row (newContact's
+   "Schedule first appointment"): body text at the label size, down the same
+   13px as the label so the two share a baseline. */
+.input-check {
+  display: inline-block;
+  vertical-align: top;
+  margin-top: 13px;
+  text-align: left;
+  font-size: var(--fs-sm);
 }
 
 /* ── Phone forms (.yc-stack) ────────────────────────────────────────────────
@@ -267,6 +287,9 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
   }
   .yc-stack input[type="datetime-local"] { min-width: 0; }
   .yc-stack .sub-label { display: block; width: auto; margin: 0 0 6px; }
+  .yc-stack .input-check { display: block; margin: 0 0 6px; }
+  /* an empty .input-label only pads a hint into the control column */
+  .yc-stack .input-label:empty { display: none; }
 }
 /* --pad-btn, not --pad-cell: the button token; --pad-cell on a primary button
    would leave nothing distinguishing it from a table cell. Width fits the

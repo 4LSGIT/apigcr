@@ -528,10 +528,6 @@ function ycFiltersToggle(btn) {
     .export-csv-dialog label {
       cursor: pointer;
     }
-    .export-csv-dialog .hint {
-      color: var(--text-muted);
-      font-size: 0.9em;
-    }
   `;
   document.head.appendChild(style);
 
@@ -986,7 +982,7 @@ async function exportLogCsv(getFilterParams, filenamePrefix) {
     html: `
       <div class="export-csv-dialog" style="text-align:left;font-size:0.95em">
         <p style="margin:0 0 0.3em">Found <b>${totalStr}</b> matching rows.</p>
-        <p class="hint" style="margin:0 0 1em">Recommended max per export: ${MAX_EXPORT_ROWS.toLocaleString()} rows.</p>
+        <p class="yc-hint" style="margin:0 0 1em">Recommended max per export: ${MAX_EXPORT_ROWS.toLocaleString()} rows.</p>
         <label style="display:flex;align-items:center;flex-wrap:wrap;gap:0.4em;margin-bottom:0.7em">
           <input type="radio" name="exp_mode" value="range" checked>
           <span>Export rows</span>
@@ -995,7 +991,7 @@ async function exportLogCsv(getFilterParams, filenamePrefix) {
           <span>to</span>
           <input type="number" id="exp_to" min="1" max="${total}" value="${defaultTo}"
                  onfocus="this.parentNode.querySelector('input[value=&quot;range&quot;]').checked=true;this.select()">
-          <span class="hint">(of ${totalStr})</span>
+          <span class="yc-hint">(of ${totalStr})</span>
         </label>
         <label style="display:flex;align-items:center;gap:0.5em">
           <input type="radio" name="exp_mode" value="all">
@@ -1200,7 +1196,6 @@ function _resolveAddFile() {
     /* ── Header / value ── */
     .oad-header { margin-bottom: 0.4em; }
     .oad-value { font-size: 1.15em; font-weight: bold; }
-    .oad-earliest { font-size: 0.8em; color: var(--text-muted); }
 
     /* ── De-emphasized top half (the start-date is rarely touched) ──
        Muted, smaller, set apart by a hairline below it so the eye drops
@@ -1220,7 +1215,7 @@ function _resolveAddFile() {
     }
 
     /* ── Primary area: matches, create, search ── */
-    .oad-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    .oad-section-label { font-weight: 700; font-size: var(--fs-sm); color: var(--text); margin: 0.6em 0 0.2em; text-align: left; }
     .oad-match {
       display: flex; align-items: center; justify-content: space-between;
       gap: 0.5em; padding: 0.4em 0.5em; border: 1px solid var(--border);
@@ -1265,11 +1260,13 @@ function _resolveAddFile() {
     .swal2-html-container.cad-html { overflow: visible; }
     .cad-html .cp-dropdown { max-height: 12em; }
     .cad-fields { display: flex; gap: 0.6em; margin: 0.3em 0 0.6em; text-align: left; }
-    .cad-field { flex: 1; }
-    .cad-field label { display: block; font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.15em; }
+    /* min-width:0 — same as .ncf-docket-row: two side-by-side inputs ran past a
+       phone-width dialog ("Case number (full)" was cut off). */
+    .cad-field { flex: 1; min-width: 0; }
+    .cad-field label { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-bottom: 0.25em; }
     .cad-field input { width: 100%; box-sizing: border-box; }
     .cad-hint { font-size: 0.82em; color: var(--warn); margin: 0 0 0.5em; text-align: left; }
-    .cad-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    .cad-section-label { font-weight: 700; font-size: var(--fs-sm); color: var(--text); margin: 0.6em 0 0.2em; text-align: left; }
     .cad-preview {
       margin-top: 0.6em; padding: 0.45em 0.6em; text-align: left;
       font-size: 0.88em; color: var(--text-2); background: var(--surface-2);
@@ -1286,7 +1283,8 @@ function _resolveAddFile() {
     .ncf-field { margin: 0 0 0.6em; text-align: left; }
     /* Field labels — the app's one label look (style.css .input-label has the
        note): bold, --text, --fs-sm. Same values below for .na-field,
-       .na-section-label, .na-slot-row, .ne-row and .yc-flabel. */
+       .na-section-label, .na-slot-row, .ne-row and .yc-flabel, and above
+       for the adopt dialogs (.cad-field label, .cad-/.oad-section-label). */
     .ncf-field label { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-bottom: 0.25em; }
     .ncf-field input, .ncf-field select { width: 100%; box-sizing: border-box; }
     .ncf-docket-row { display: flex; gap: 0.6em; }
@@ -1329,6 +1327,11 @@ function _resolveAddFile() {
     /* An inline field label — before radios/checkboxes on the same line
        ("Method", "Confirmation") or a one-off control (merge "Direction"). */
     .yc-flabel { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin-right: 0.3em; }
+    /* Hint / help text — the app's one hint look (style.css .sub-label has the
+       note): --fs-xs, --text-muted, normal weight. Look only; the caller
+       places it. Here rather than style.css because these dialogs also open
+       on pages that don't load that sheet (calendar.html, eventform.html). */
+    .yc-hint { font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); }
     /* Phones: the date input goes full width (.yc-stack), and as a flex item
        it then starved the "Date:" label down to "Dat / e:". */
     @media (max-width: 768px) { .yc-stack .na-slot-row > label { flex: none; } }
@@ -1339,7 +1342,7 @@ function _resolveAddFile() {
       transition: background 0.12s, color 0.12s; }
     .na-slot:hover { background: var(--accent-soft); }
     .na-slot.na-slot-sel { background: var(--accent); color: var(--accent-text); }
-    .na-slot-msg { font-size: 0.85em; color: var(--text-muted); text-align: left; margin: 0.3em 0; }
+    .na-slot-msg { text-align: left; margin: 0.3em 0; }   /* + .yc-hint */
     .na-slot-msg:empty { display: none; }
     .na-manual-toggle { font-size: 0.82em; color: var(--accent-2); display: inline-block; margin: 0.2em 0 0.4em; }
 
@@ -1373,7 +1376,8 @@ function _resolveAddFile() {
        0,3,1 for phones only; desktop keeps the 200px it has always had. */
     @media (max-width: 768px) {
       .ne-form input:not([type=checkbox]):not([type=radio]),
-      .ncf-field input:not([type=checkbox]):not([type=radio]) { width: 100%; }
+      .ncf-field input:not([type=checkbox]):not([type=radio]),
+      .cad-field input:not([type=checkbox]):not([type=radio]) { width: 100%; }
     }
     .na-html.ne-html .cp-dropdown { max-height: 11em; }
 
@@ -1898,8 +1902,8 @@ function newContact(prefill = {}, onSuccess = null) {
   // Minimal inline appt block — hidden until the checkbox is ticked.
   const apptBlockHtml = `
     <label class="input-label">Appointment</label>
-    <label class="sub-label" style="text-align:left; width:auto;">
-      <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule first appointment <i style="color:var(--text-muted);">(optional)</i>
+    <label class="input-check">
+      <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule first appointment
     </label><br>
     <!-- The controls in this box are one 320px stack. It was 280px until
          style.css got a 320px min-width floor on datetime-local inside a
@@ -1973,7 +1977,8 @@ function newContact(prefill = {}, onSuccess = null) {
            <label class="input-label">Subtype</label>
            <select id="NCSubtype" style="width:200px;"></select><br>
          </span>
-         <label class="sub-label">Optional, select type to open a case.</label><br>
+         <label class="input-label"></label>
+         <span class="sub-label">Optional, select type to open a case.</span><br>
          ${apptBlockHtml}</div>
          `,
     showCancelButton: true,
@@ -2704,7 +2709,7 @@ function newApptDialog(opts = {}) {
           <input type="date" id="naSlotDate" style="width:160px;">
         </div>
         <div id="naSlots" class="na-slots"></div>
-        <div id="naSlotMsg" class="na-slot-msg"></div>
+        <div id="naSlotMsg" class="na-slot-msg yc-hint"></div>
       </div>
       <a href="#" id="naManualToggle" class="na-manual-toggle">enter time manually</a><br>
       <input type="datetime-local" class="swal2-input" id="naDate" style="display:none;"><br>
@@ -2989,7 +2994,7 @@ function newEventDialog(opts = {}) {
     if (isEdit) {
       const L = editLinkLine();
       host.innerHTML = `<div class="na-fixed"><b>${L.noun}:</b> ${escAttr(L.label)}`
-        + ` <span style="color:var(--text-muted);font-size:0.85em;">(set at creation)</span></div>`;
+        + ` <span class="yc-hint">(set at creation)</span></div>`;
       return;
     }
 
@@ -3978,7 +3983,7 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
     : '';
 
   const earliestHtml = earliest
-    ? `<div class="oad-earliest">Earliest seen ${earliest}</div>`
+    ? `<div class="yc-hint">Earliest seen ${earliest}</div>`
     : '';
 
   // Capture the chosen start date at confirm time. Set by preConfirm so the
@@ -3993,7 +3998,7 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
         ${earliestHtml}
       </div>
       <div class="oad-startdate-row">
-        <label for="oadStartDate">Start date on contact:&nbsp;</label>
+        <label for="oadStartDate">Start date on contact&nbsp;</label>
         <input type="date" id="oadStartDate" value="${defaultStart}">
       </div>
       <div id="oadMatches">${matchesHtml}</div>

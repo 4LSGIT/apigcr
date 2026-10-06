@@ -3052,8 +3052,8 @@
             title: "Clio Login Code",
             html: `
               <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${esc(d.value)}</div>
-              <div style="font-size: 13px; color: #666;"> Updated ${d.updated_at ? esc(fmtTime(d.updated_at)) : "unknown"}</div>
-              <div style="font-size: 12px; color: #888;">${esc(freshnessLabel)}</div>`,
+              <div class="yc-hint">Updated ${d.updated_at ? esc(fmtTime(d.updated_at)) : "unknown"}</div>
+              <div class="yc-hint">${esc(freshnessLabel)}</div>`,
             showCancelButton: true,
             confirmButtonText: "Copy Code",
             cancelButtonText: "Close",
@@ -3165,7 +3165,7 @@
               Start the Clio login now. The new code will appear here automatically &mdash;
               usually a few seconds after the text arrives, occasionally up to a minute.
             </div>
-            <div style="font-size: 12px; color: #888; margin-top: 14px;">
+            <div class="yc-hint" style="margin-top: 14px;">
               <span id="clioNextCheck">Next check in ${Math.round(POLL_INTERVAL_MS / 1000)}s</span>
               <button type="button" id="clioCheckNow"
                       style="margin-left:10px; font-size:12px; padding:3px 10px; cursor:pointer;
@@ -4374,7 +4374,7 @@ async function elevateBlocking() {
     title: "Confirm your password",
     html: `
       <form id="suElevForm" autocomplete="on">
-        <p style="font-size:0.9em;color:#666;margin:0 0 12px">
+        <p class="yc-hint" style="margin:0 0 12px">
           Superuser tools require re-entering your password.</p>
         <input class="swal2-input" type="text" name="username" id="suElevUser"
                autocomplete="username" value="${uname.replace(/"/g, "&quot;")}"
@@ -5716,7 +5716,7 @@ async function initAuth() {
             + 'style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e5e7eb;'
             + 'border-radius:6px;font-family:inherit;font-size:14px;line-height:1.5;'
             + 'resize:vertical;outline:none"></textarea>'
-            + '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.45">'
+            + '<div class="yc-hint" style="margin-top:10px;line-height:1.45">'
             + '<i class="fa-solid fa-circle-info" style="margin-right:5px"></i>'
             + 'Just say what happened in your own words \u2014 no need to explain where you '
             + 'were or what you clicked. That gets sent along automatically.'
@@ -5791,7 +5791,7 @@ async function initAuth() {
             html: (tooMany
                     ? 'That\u2019s a lot of reports in a short window. Try again in a few minutes.'
                     : ((err && err.message) ? String(err.message) : 'Something went wrong.'))
-                  + '<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">'
+                  + '<div class="yc-hint" style="margin-top:12px">'
                   + 'Your message has been kept \u2014 reopen Help & Support and it will '
                   + 'still be there.</div>',
             confirmButtonColor: ACCENT

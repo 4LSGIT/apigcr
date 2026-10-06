@@ -1472,43 +1472,43 @@ async function openAddRelationModal() {
   const html = `
     <div style="text-align:left">
       <div style="margin-bottom:10px">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Type</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">Type</label>
         <select id="crelm-type" style="width:100%;padding:6px">
           ${buildRelationTypeOptions(types)}
         </select>
       </div>
       <div style="margin-bottom:10px">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Other Contact</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">Other Contact</label>
         <div id="crelm-picked" style="display:none;padding:6px 10px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;margin-bottom:6px;font-size:13px"></div>
         <input id="crelm-search" placeholder="Type to search contacts..." style="width:100%;padding:6px" autocomplete="off">
         <div id="crelm-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;margin-top:4px;display:none;background:var(--surface)"></div>
       </div>
       <div id="crelm-status-wrap" style="margin-bottom:10px;display:none">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Status</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">Status</label>
         <select id="crelm-status" style="width:100%;padding:6px"></select>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Start Date</label>
+          <label class="yc-flabel" style="display:block;margin-bottom:4px">Start Date</label>
           <input type="date" id="crelm-start" style="width:100%;padding:6px">
         </div>
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Date</label>
+          <label class="yc-flabel" style="display:block;margin-bottom:4px">End Date</label>
           <input type="date" id="crelm-end" style="width:100%;padding:6px">
         </div>
       </div>
       <div id="crelm-endreason-wrap" style="margin-bottom:10px;display:none">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Reason</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">End Reason</label>
         <select id="crelm-endreason" style="width:100%;padding:6px"></select>
       </div>
       <div style="margin-bottom:10px">
-        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color: var(--text-2)">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm)">
           <input type="checkbox" id="crelm-active" checked style="width:auto">
           Active
         </label>
       </div>
       <div style="margin-bottom:6px">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Notes</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">Notes</label>
         <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000"></textarea>
       </div>
     </div>
@@ -1718,38 +1718,38 @@ async function openEditRelationModal(id) {
     <div style="text-align:left">
       <div style="margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:6px;font-size:13px;color:var(--text-2)">
         <div>Other contact: <b>${crelEsc(otherName)}</b></div>
-        <div style="font-size:11px;color: var(--text-muted)">Other contact cannot be changed. To reverse the direction of a relationship, delete it and re-add.</div>
+        <div class="yc-hint">Other contact cannot be changed. To reverse the direction of a relationship, delete it and re-add.</div>
       </div>
       <div style="margin-bottom:10px">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Type</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">Type</label>
         <select id="crelm-type" style="width:100%;padding:6px">${typeOpts}</select>
       </div>
       <div style="margin-bottom:10px">
-        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color: var(--text-2)">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm)">
           <input type="checkbox" id="crelm-active" ${row.active ? 'checked' : ''} style="width:auto">
           Active
         </label>
       </div>
       <div id="crelm-status-wrap" style="margin-bottom:10px;${statusOpts ? '' : 'display:none'}">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Status</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">Status</label>
         <select id="crelm-status" style="width:100%;padding:6px">${statusOpts}</select>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Start Date</label>
+          <label class="yc-flabel" style="display:block;margin-bottom:4px">Start Date</label>
           <input type="date" id="crelm-start" value="${crelEsc(startYmd)}" style="width:100%;padding:6px">
         </div>
         <div style="flex:1">
-          <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Date</label>
+          <label class="yc-flabel" style="display:block;margin-bottom:4px">End Date</label>
           <input type="date" id="crelm-end" value="${crelEsc(endYmd)}" style="width:100%;padding:6px">
         </div>
       </div>
       <div id="crelm-endreason-wrap" style="margin-bottom:10px;${endrOpts ? '' : 'display:none'}">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">End Reason</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">End Reason</label>
         <select id="crelm-endreason" style="width:100%;padding:6px">${endrOpts}</select>
       </div>
       <div style="margin-bottom:6px">
-        <label style="display:block;font-size:12px;color: var(--text-2);margin-bottom:4px">Notes</label>
+        <label class="yc-flabel" style="display:block;margin-bottom:4px">Notes</label>
         <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000">${crelEsc(row.notes || '')}</textarea>
       </div>
     </div>

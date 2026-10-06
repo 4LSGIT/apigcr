@@ -459,7 +459,17 @@ single line was tried and rejected 2026-10-06). Gate:
 "Reminder (optional)") one step up: bold `--fs` with a rule above; no
 trailing colons. Set in three places that must move together: style.css
 `.input-label` (carries the note), scripts.js dialog CSS (`.ncf-`/`.na-`/
-`.ne-` labels + `.yc-flabel` for inline labels), tasks.html `.tk-dlg-grid`.
+`.ne-`/`.cad-`/`.oad-` labels + `.yc-flabel` for inline labels), tasks.html
+`.tk-dlg-grid`.
+
+**Hints (help text under a field, a dialog's explanatory note):** one look —
+`--fs-xs`, `--text-muted`, weight 400 (≈ yc-forms' `.yc-sublabel`). Use the
+class, never inline font/colour: `.yc-hint` (scripts.js dialog CSS — loaded on
+pages without style.css too) for dialogs, `.sub-label` (style.css) in the
+`.input-label` forms, where it is a 200px control-column box (on its own line,
+pad it with an empty `.input-label` — hidden on phones). Warnings keep
+`--warn`/`--danger`; list-row secondary text (`.cp-sub`, quick-search rows) is
+not a hint.
 
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here

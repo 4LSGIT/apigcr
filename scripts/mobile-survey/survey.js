@@ -199,6 +199,8 @@ async function walk(page, W, record) {
       ['reschedule', "apptUpdate(7000, 'Reschedule', '2026-10-07T10:00')"],
       ['appt-calendar', 'tabApptsCal()'],
       ['show-appt', 'showAppt(7000)'],
+      ['adopt-docket', "CaseAdoptDialog('2:26-bk-41234')"],
+      ['adopt-phone', "OrphanAdoptDialog('3135550100', 'phone')"],
     ];
     for (const [key, js] of DIALOGS) {
       await page.evaluate(() => Swal.close()); await sleep(300);

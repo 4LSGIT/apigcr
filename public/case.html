@@ -609,7 +609,7 @@
            </div>`
         : '';
       const winsHtml = (plan.fields.survivor_wins || []).length
-        ? `<div style="font-size:0.85em;color:var(--text-muted);margin-top:6px">Lifecycle fields kept from survivor: ${plan.fields.survivor_wins.map(w => esc(w.column)).join(', ')}</div>`
+        ? `<div class="yc-hint" style="margin-top:6px">Lifecycle fields kept from survivor: ${plan.fields.survivor_wins.map(w => esc(w.column)).join(', ')}</div>`
         : '';
 
       const step2 = await Swal.fire({
