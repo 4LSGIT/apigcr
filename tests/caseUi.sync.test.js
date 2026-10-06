@@ -402,6 +402,50 @@ describe('Overview layout', () => {
 // 1. The dirty fence on Overview notes  (must-have)
 // ─────────────────────────────────────────────────────────────
 
+// The notes box fits its text (autoGrow, scripts.js — its mechanics are
+// pinned in tests/autoGrow.test.js). What THIS page owns: binding it once at
+// parse rather than measuring inside updateHeader (which runs while the
+// Overview is still display:none — why no note ever fitted on load), the CSS
+// that lets staff drag it, and re-fitting after every programmatic write.
+describe('Overview notes box height (autoGrow)', () => {
+  const countFits = (window) => {
+    const g = window.__t.notesEl()._autoGrow;
+    const orig = g.fit;
+    const n = { calls: 0 };
+    g.fit = () => { n.calls++; orig(); };
+    return n;
+  };
+
+  test('bound ONCE at parse; draggable (resize: vertical) with NO CSS max-height', async () => {
+    const { window, errors } = await boot();
+    expect(errors).toEqual([]);
+    const el = window.__t.notesEl();
+    expect(el._autoGrow && typeof el._autoGrow.fit).toBe('function');
+    expect(window.autoGrow(el)).toBe(el._autoGrow);       // the page's own handle
+    expect(el.style.resize).toBe('vertical');
+    expect(el.style.maxHeight).toBe('');                  // it would cap the drag
+    // the one-shot helper is gone from the input path — autoGrow binds input itself
+    expect(el.getAttribute('oninput')).not.toMatch(/resizeTextarea/);
+  });
+
+  test('a bus notes write re-fits it', async () => {
+    const { window } = await boot();
+    const fits = countFits(window);
+    window.YC.emit(`case:${CASE_ID}`,
+                   { case_notes: { from: 'stored notes', to: 'line 1\nline 2\nline 3' } }, 'test');
+    await tick(window, 100);
+    expect(window.__t.notesEl().value).toBe('line 1\nline 2\nline 3');
+    expect(fits.calls).toBeGreaterThan(0);
+  });
+
+  test('a full repaint (updateHeader) re-fits it', async () => {
+    const { window } = await boot();
+    const fits = countFits(window);
+    window.updateHeader();
+    expect(fits.calls).toBe(1);
+  });
+});
+
 describe('Overview notes dirty fence', () => {
   /** Type into the textarea the way the user does — value + the oninput hook. */
   function type(window, text) {

@@ -235,9 +235,72 @@ function populateCaseTypeFilter(sel, extraTypes) {
   if (!sel.value) sel.selectedIndex = 0; // prev label no longer exists
 }
 
+/* One-shot fit, kept for checklistView's note bodies (whose CSS max-height
+   duplicates this 300 — see the comments there). New code: use autoGrow()
+   below, which also re-fits when the box is shown and lets the user drag it. */
 function resizeTextarea(textarea) {
   textarea.style.height = "auto"; // Reset height
   textarea.style.height = Math.min(textarea.scrollHeight, 300) + "px"; // Adjust but don't exceed max
+}
+
+/* ── autoGrow — a textarea that fits its content ─────────────────────────────
+   const g = autoGrow(el, { max: 300 });   // → { fit }, or null without an el
+
+   · Fits on every input, and again whenever the box's WIDTH changes — which
+     includes going from hidden (0 wide) to shown, and a reflow that changes
+     where lines wrap. That is what resizeTextarea() cannot do: measured while
+     its tab or its iframe is display:none, scrollHeight is 0, the box drops
+     to its CSS min-height, and nothing ever measures it again. The case
+     Overview's notes box did exactly that on EVERY load — updateHeader()
+     filled and "fitted" it before openTab() showed the tab.
+   · fit() skips a hidden box rather than writing a zero; the width watch
+     fits it when it appears. Call fit() yourself after setting .value from
+     code (no input event fires for that).
+   · `max` caps the AUTOMATIC height only. Give the textarea CSS
+     `resize: vertical` and NO max-height (that would cap the drag too):
+     a drag becomes a floor every later fit respects, so typing never snaps
+     the box back from where the user put it. A drag shorter than the text
+     lasts until the next fit.
+   · Idempotent per element (the handle is cached on el._autoGrow).
+   · Without ResizeObserver (old engines, jsdom) it still fits on input; it
+     just can't notice the box being shown or dragged.
+   · The observer's work is deferred a frame: writing the height of the very
+     element being observed, inside its own callback, is what raises
+     "ResizeObserver loop completed with undelivered notifications". */
+function autoGrow(el, opts) {
+  if (!el) return null;
+  if (el._autoGrow) return el._autoGrow;
+  const max = (opts && opts.max) || 300;
+  let lastSet = null;   // rendered height (px) after our last write
+  let floor = 0;        // a height the user dragged to
+  let lastWidth = -1;
+
+  function fit() {
+    if (!el.getClientRects().length) return;           // hidden: nothing to measure
+    const cs = getComputedStyle(el);
+    const px = (v) => parseFloat(v) || 0;
+    // scrollHeight is content + padding. border-box heights add the borders;
+    // content-box heights take the padding back off.
+    const extra = cs.boxSizing === "border-box"
+      ? px(cs.borderTopWidth) + px(cs.borderBottomWidth)
+      : -(px(cs.paddingTop) + px(cs.paddingBottom));
+    el.style.height = "auto";
+    const want = Math.max(Math.min(el.scrollHeight + extra, max), floor);
+    el.style.height = want + "px";
+    lastSet = el.offsetHeight;                         // after min-height has its say
+  }
+
+  el.addEventListener("input", fit);
+  if (typeof ResizeObserver !== "undefined") {
+    const raf = window.requestAnimationFrame || ((f) => setTimeout(f, 16));
+    new ResizeObserver(() => raf(() => {
+      const w = el.offsetWidth;
+      if (w !== lastWidth) { lastWidth = w; fit(); return; }   // shown, or re-wrapped
+      const h = el.offsetHeight;
+      if (lastSet !== null && h !== lastSet) { floor = h; lastSet = h; }  // a drag
+    })).observe(el);
+  }
+  return (el._autoGrow = { fit });
 }
 
 // Function to compare dates in EST with DST consideration

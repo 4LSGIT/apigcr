@@ -305,11 +305,14 @@
     </div><br>
     <div style="margin:0 auto; max-width:650px; border:3px solid var(--border);">
       <h3>Case Notes</h3>
+      <!-- Height: autoGrow (scripts.js) — fits the text up to 300px, re-fits
+           when the tab is shown, and the user can drag it taller. NO CSS
+           max-height: it would cap the drag; autoGrow caps the auto-fit. -->
       <textarea
         id="overviewCaseNotes"
-        style="width: 90%; box-sizing: border-box; resize: none; min-height: 100px; max-height: 300px;"
+        style="width: 90%; box-sizing: border-box; resize: vertical; min-height: 100px;"
         placeholder="Enter your text here..."
-        oninput="resizeTextarea(this); markNotesDirty(this)"
+        oninput="markNotesDirty(this)"
       ></textarea>
       <br>
       <div style="width: 95%; text-align: right; box-sizing: border-box; margin-top: 5px;">
@@ -1731,7 +1734,7 @@ function updateHeader() {
   const notesEl = E("overviewCaseNotes");
   if (notesEl !== document.activeElement && notesEl.dataset.ycDirty !== '1') {
     notesEl.value = c.case_notes || "";
-    resizeTextarea(notesEl);
+    notesGrow.fit();   // a no-op while the tab is hidden; autoGrow fits it on show
   }
   renderAlerts(c);
 }
@@ -1746,6 +1749,13 @@ function renderAlerts(c) {
   E("alertsDiv").textContent = raw;
   E("alertsBox").style.display = String(raw).trim() ? "" : "none";
 }
+
+/* The Overview notes box fits its text — see autoGrow in scripts.js. Bound
+ * HERE, at parse, not in updateHeader: the first updateHeader runs while the
+ * Overview is still display:none (openTab comes after it in the initial
+ * load), which is why the old one-shot resizeTextarea() never fitted a
+ * single note on load. autoGrow re-fits when the box is shown. */
+const notesGrow = autoGrow(E("overviewCaseNotes"), { max: 300 });
 
 /* DIRTY IS A COMPARISON, NOT A LATCH.
  *
@@ -2967,7 +2977,7 @@ function applyFieldsToOverview(fields) {
     const el = E('overviewCaseNotes');
     if (el && el !== document.activeElement && el.dataset.ycDirty !== '1') {
       el.value = c.case_notes || '';
-      resizeTextarea(el);
+      notesGrow.fit();
     }
   }
 

@@ -471,6 +471,17 @@ pad it with an empty `.input-label` — hidden on phones). Warnings keep
 `--warn`/`--danger`; list-row secondary text (`.cp-sub`, quick-search rows) is
 not a hint.
 
+**Self-sizing textareas:** `autoGrow(el, { max })` (scripts.js) — fits on
+input AND re-fits when the box is shown or re-wraps (ResizeObserver on its
+width), so it survives being filled while hidden; `max` caps only the
+automatic height, and with CSS `resize: vertical` (and no CSS max-height) a
+user drag becomes a floor. Call `.fit()` after setting `.value` from code.
+Why it exists: case/contact `.tab-content` panes are `display:none` until
+`openTab()`, and both pages fill them BEFORE showing one — anything measured
+during load reads 0 (the Overview notes box sat at its 100px floor on every
+load until 2026-10-06). `resizeTextarea()` is the old one-shot, kept for
+checklistView's note bodies; new code uses autoGrow.
+
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here
 was stale by definition.
