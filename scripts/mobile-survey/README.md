@@ -75,9 +75,11 @@ repo root does — the `text/html; charset=UTF-8` header matters, because
 
 Fixtures cover one case (`TESTCASE1`) with two contacts, appointments, log
 rows, an alert, a custom-field value and a pipeline (`cases/TESTCASE1/pipeline`),
-one contact (`9001`), tasks, documents and a one-field registry
-(`field-defs`) — enough to fill the tables that tend to overflow and to put
-every conditional Overview / Case Details box on screen. The mock ignores
+one contact (`9001`), tasks, documents, a one-field registry
+(`field-defs`) and a CTA list covering every link state (`cta`, plus
+`cta/2/executions` for browsing a detail by hand) — enough to fill the tables
+that tend to overflow and to put every conditional Overview / Case Details box
+on screen. The mock ignores
 query strings, so `field-defs` answers for contacts too (a case def on the
 contact form): fine for layout, not a behaviour fixture. **They are synthetic and must stay that way** (the repo
 is treated as public): no real staff, client names, phones or emails. To

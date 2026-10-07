@@ -6,9 +6,9 @@ confirms. You decide the actions at mint time; the recipient only picks an
 option. Think of it as a decision link (`/d/…`) that doesn't need a workflow
 waiting on the other end — and that can optionally be reused.
 
-**Where:** today, the API (`/api/cta`, SU only) — typically driven from a
-Claude session that composes the email around the mint. An Admin-tab pane is
-on its way (placeholder is already in the sidebar). The links themselves live
+**Where:** **Admin → CTA Links (SU)** — list, inspect, extend, disable and
+mint (below). The same API (`/api/cta`, SU only) stays available to a Claude
+session that composes the email around the mint. The links themselves live
 at `4lsg.com/c/<token>`, on the public landing host like `/d/` and `/t/`.
 
 ## What a CTA can do
@@ -68,5 +68,28 @@ text, when the option defines one).
 Workflows mint CTAs with the `create_cta` function (that's how the RG button
 is made). Workflow mints can't use password protection — the generated
 secret would end up in step output.
+
+## The pane
+
+Like every SU tool it asks for your password first (elevation, 15 minutes).
+
+- **List** — every link with its status, uses, expiry (firm time), runs and
+  source (SU or workflow + execution id). *expired* and *exhausted* are
+  derived from the expiry and the use cap — the filter handles them, but
+  search and those two filters only cover the links loaded so far (200 per
+  page, **Load more** for the rest).
+- **Detail** — click a row: the full record, each option's confirm URL with a
+  copy button and its plan (function names), then every execution; click one
+  to see each step's output or error. Actions: **Extend / limits** (new expiry
+  — typed in firm time, or +1/+7/+30 days — and the max-uses cap),
+  **Disable**, **Re-enable** (offered only when the server would allow it),
+  **Cancel** (permanent). Refusals come back in the server's own words.
+- **+ New CTA** — the mint builder: every mint field, options with ordered
+  plan steps (`fn` + params JSON; the picker lists the eligible functions).
+  **Preview (dry run)** validates everything, shows the default protection
+  the server would apply, the placeholder URLs and the rendered email — and
+  creates nothing. **Mint** shows the receipt: token, URLs, the email HTML to
+  copy, and a generated password **once** (the pane asks before you leave it
+  uncopied).
 
 Design + internals: `ref/CTA_DESIGN.md`.

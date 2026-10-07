@@ -457,8 +457,7 @@ role-convention item were confirmed done and dropped).
 - **CTA (ref/CTA_DESIGN.md) — deferred v2 features** (§9 there has detail):
   clicker-supplied input fields; step chaining beyond `result_template`
   tokens; **S5 login tier** (shell deep-link pane + authed respond route);
-  manager UI pane (placeholder waiting in index.html Admin tab — slice
-  dispatched 2026-10-07); `min_interval_seconds` cooldown and nonce
+  `min_interval_seconds` cooldown and nonce
   idempotency (`UNIQUE(cta_id, nonce)`) for repeatable links; per-execution
   retry-from-failed-step; token/password-hash hashing at rest + rotate-PATCH
   (owned by the access-control arc); DB-backed exponential backoff on

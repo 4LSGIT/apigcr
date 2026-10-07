@@ -4,7 +4,8 @@
 **approve with changes** (verified @ `9e7fabae`) · all amendments folded below.
 **Shipped:** S0–S4 live 2026-10-07 (WF27 **v8 published**; S4 independently
 reviewed, see §11). Open: watch gate (first organic spam hit end-to-end),
-manager UI (index.html Admin-tab pane), S5 login tier (§7).
+S5 login tier (§7). Manager UI: `public/ctaManager.html` (Admin → CTA Links,
+frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run).
 **This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
 `claude/CTA_DESIGN.md` mirrors it.
 **Arc:** CTA / email action buttons · scratch `ns=fred` key `cta_state`
@@ -394,7 +395,6 @@ tier needs a shell pane. Password + attribution covers the near-term cases.
 
 - Clicker-supplied inputs; step chaining beyond `result_template` tokens.
 - Login tier S5 (shell pane + authed respond route).
-- Manager UI pane (db-tools page as interim list/disable surface).
 - `min_interval_seconds` cooldown; nonce idempotency
   (`UNIQUE(cta_id, nonce)`).
 - Per-execution retry-from-failed-step endpoint (R4 v1 = re-enable + full

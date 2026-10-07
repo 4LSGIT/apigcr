@@ -1,0 +1,80 @@
+{
+ "cta": {
+  "id": 2,
+  "uses_count": 1,
+  "failed_attempts": 0,
+  "created_at": "2026-10-07T15:59:59.087Z",
+  "updated_at": "2026-10-07T15:59:59.088Z",
+  "context_html": null,
+  "token": "fixtureTok000000000002",
+  "name": "Re-run intake for lead 4470",
+  "prompt": "Re-run intake for this lead?",
+  "options": [
+   {
+    "value": "rerun",
+    "label": "Re-run intake",
+    "plan": [
+     {
+      "fn": "lookup_contact",
+      "params": {
+       "contact_id": "1001"
+      }
+     },
+     {
+      "fn": "lookup_contact",
+      "params": {
+       "contact_id": "9999"
+      }
+     }
+    ]
+   }
+  ],
+  "mode": "once",
+  "max_uses": null,
+  "expires_at": "2029-10-09T15:59:59.087Z",
+  "timeout_option": null,
+  "protection": "none",
+  "return_plan_result": 0,
+  "attributed_user_id": null,
+  "status": "used",
+  "mint_source": "su",
+  "source_execution_id": null,
+  "minted_by": 1,
+  "link_type": null,
+  "link_id": null,
+  "state": "used",
+  "cta_url": "https://example.com/c/fixtureTok000000000002",
+  "last_executed_at": null
+ },
+ "executions": [
+  {
+   "id": 2,
+   "plan_result": [
+    {
+     "fn": "lookup_contact",
+     "ok": true,
+     "output": {
+      "contact_id": 1001,
+      "contact_name": "Pat Example",
+      "contact_email": "pat@example.com",
+      "contact_phone": "5555550199"
+     },
+     "ms": 0
+    },
+    {
+     "fn": "lookup_contact",
+     "ok": false,
+     "error": "Contact 9999 not found",
+     "ms": 0
+    }
+   ],
+   "executed_at": "2026-10-07T15:59:59.088Z",
+   "cta_id": 2,
+   "option_value": "rerun",
+   "status": "failed",
+   "responded_via": "link",
+   "responder_user_id": null,
+   "responder_ip": "198.51.100.4"
+  }
+ ]
+}

@@ -29,7 +29,9 @@ body. Governing migrations in `ref/migrations/`.*
   `ref/CTA_DESIGN.md`; operators: `manual/08-Admin-Tools/07-cta-links.md`;
   code: `services/ctaService.js` (substrate), `routes/ctaActions.js` (/c/),
   `routes/api.cta.js` (SU mgmt), `lib/ctaLinks.js` ([[tokens]]/email),
-  `lib/internal_functions/cta.js` (`cta_expiry_sweep`, `create_cta`).
+  `lib/internal_functions/cta.js` (`cta_expiry_sweep`, `create_cta`),
+  `public/ctaManager.html` (Admin → CTA Links pane; mirrors `deriveState` /
+  `isStaleRunning` / `CTA_FN_DENYLIST` client-side as hints only).
   What a session touching unrelated code needs to know:
   - **A new internal function with `__meta` is CTA-eligible by default**
     (unless `controlFlow`, `__`-prefixed, or in `CTA_FN_DENYLIST`). The

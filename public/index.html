@@ -3218,16 +3218,15 @@
 
   <!-- Layout rule: 3 buttons per row, and every row full. 12 tiles = four full
        rows, grouped by what the row is for. Keep new buttons inside the row
-       they belong to rather than appending to the end, and replace the
-       placeholder tile (row 1) before starting a fifth row — see the same
-       note on the More Features grid above. -->
+       they belong to rather than appending to the end; every row is full, so
+       the next tile starts a fifth row — see the same note on the More
+       Features grid above. -->
 
-  <!-- Who gets in: the two key registries. The placeholder holds the third
-       square until a real tool wants it; data-placeholder keeps it out of the
-       pill strip (ensureStrip skips it, since it opens no panel). -->
+  <!-- Who gets in: the two key registries, and CTA links — the bearer grants
+       (/c/<token>) you mint to let a recipient run one pre-authorized plan. -->
   <button class="big-button" data-target="readonlyKeysDiv" data-exclusive-group="admin" data-hover-anim="fa-fade" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-eye fa-2xl"></i><br><br>Readonly Keys (SU)</button>
   <button class="big-button" data-target="apiKeysDiv" data-exclusive-group="admin" data-hover-anim="fa-flip" style="--fa-animation-duration:1.8s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-key fa-2xl"></i><br><br>API Keys (SU)</button>
-  <button class="big-button" data-placeholder style="opacity:0.45; cursor:default"><i class="fa-regular fa-square-plus fa-2xl"></i><br><br>&nbsp;</button>
+  <button class="big-button" data-target="ctaLinksDiv" data-exclusive-group="admin" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.3s"><i class="fa-solid fa-hand-pointer fa-2xl"></i><br><br>CTA Links (SU)</button>
   <br><br>
   <!-- Reading and poking the live system: the rows, the outbound
        credentials, and the endpoints that serve them. -->
@@ -3253,6 +3252,10 @@
   </div>
   <div id="apiKeysDiv" style="display:none; margin-top:10px;">
     <iframe data-src="/apikeys.html"
+            style="width:100%; height:80vh; border:1px solid var(--border); border-radius:6px; background:var(--page-bg);"></iframe>
+  </div>
+  <div id="ctaLinksDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/ctaManager.html"
             style="width:100%; height:80vh; border:1px solid var(--border); border-radius:6px; background:var(--page-bg);"></iframe>
   </div>
   <div id="dbConsoleDiv" style="display:none; margin-top:10px;">

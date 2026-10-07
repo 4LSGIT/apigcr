@@ -1,0 +1,1881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTA Links</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  /* CTA Links (SU) — Admin-tab pane. CTA arc, manager-UI slice.
+     Spec: ref/CTA_DESIGN.md (canonical) · operator model:
+     manual/08-Admin-Tools/07-cta-links.md · API: routes/api.cta.js.
+     Palette and component shapes follow toolManager.html / systemAlerts.html
+     (list table, .btn, badges, modal backdrop, toast, inline errors). */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--page-bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  .panel-host { flex: 1; overflow: auto; min-height: 0; }
+  .panel { padding: 14px 16px; }
+  [hidden] { display: none !important; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .muted { color: var(--text-muted); }
+  .sep { flex: 1; }
+  details > summary { cursor: pointer; }
+  .h-aside { font-weight: 400; color: var(--text-muted); }
+  .danger-text { color: var(--danger); }
+  .warn-text { color: var(--warn); }
+
+  /* ── Labels + hints — ONE look (AI_CONTEXT §12) ─────────────────────────
+     Same values as scripts.js's dialog .yc-flabel / .yc-hint and style.css
+     .input-label / .sub-label: label bold --text --fs-sm, hint --fs-xs
+     --text-muted 400. This pane loads neither sheet (admin panes run on
+     theme.css alone), so the class is declared here; change them together.
+     Only display/margins are local — they are layout, not the look. */
+  .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+  .yc-hint code { font-size: 11px; }
+
+  /* ── Buttons ───────────────────────────────────────────────── */
+  .btn {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    transition: border-color 0.12s, background 0.12s; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 5px; line-height: 1.3;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .btn:hover { border-color: var(--accent); }
+  /* Text ON --accent: --accent-text (near-black, 7.57:1) — see toolManager. */
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.danger:hover { background: var(--danger-fill); color: var(--fill-text); }
+  .btn.danger-solid { background: var(--danger-fill); border-color: var(--danger-fill); color: var(--fill-text); font-weight: 600; }
+  .btn.warn { border-color: var(--warn); color: var(--warn); }
+  .btn.warn:hover { background: var(--warn-fill); color: var(--warn-text); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn:disabled:hover { border-color: var(--border); background: var(--surface-2); color: var(--text); }
+  .btn.small { padding: 3px 8px; font-size: 11px; }
+  .btn.icon { padding: 3px 7px; font-size: 11px; min-width: 26px; justify-content: center; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+  /* ── Instructions ──────────────────────────────────────────── */
+  details.instructions {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+    margin-bottom: 12px;
+  }
+  details.instructions summary {
+    cursor: pointer; padding: 9px 12px; font-weight: 600; color: var(--accent-2); user-select: none;
+  }
+  details.instructions .body { padding: 0 14px 12px; color: var(--text-muted); line-height: 1.55; }
+  details.instructions .body p { margin: 0 0 8px; }
+  details.instructions .body b { color: var(--text); }
+
+  /* ── Toolbar (systemAlerts.html shape) ─────────────────────── */
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .toolbar h2 { margin: 0 8px 0 0; font-size: 14px; font-weight: 600; }
+  .toolbar select, .toolbar input[type="search"] {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 8px; font-size: 12px; min-width: 0;
+  }
+  .toolbar input[type="search"] { flex: 1 1 160px; }
+  .status-line { font-size: 11px; color: var(--text-muted); margin: 0 0 6px; min-height: 14px; }
+
+  /* ── Tables ────────────────────────────────────────────────── */
+  /* Wide tables scroll in their own box rather than widen the page. */
+  .table-box { overflow-x: auto; }
+  table.list {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    border: 1px solid var(--border); background: var(--surface);
+  }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top;
+  }
+  table.list th {
+    background: var(--surface-2); color: var(--text-muted); white-space: nowrap;
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
+  }
+  table.list tbody tr.row { cursor: pointer; }
+  table.list tbody tr.row:hover { background: var(--surface-2); }
+  table.list td.nowrap { white-space: nowrap; }
+  table.list .actions-cell { white-space: nowrap; text-align: right; }
+  .empty-row td { color: var(--text-muted); padding: 18px; text-align: center; font-style: italic; }
+  .name-cell { font-weight: 600; word-break: break-word; }
+  .sub { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
+  .sub-phone { display: none; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ── Badges / chips ────────────────────────────────────────── */
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600; white-space: nowrap;
+    padding: 2px 7px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted);
+  }
+  .badge.active, .badge.success { background: var(--ok-soft); color: var(--ok-on-soft); border-color: var(--ok); }
+  .badge.used, .badge.running { background: var(--accent-soft); color: var(--accent-on-soft); border-color: var(--accent); }
+  .badge.disabled, .badge.stale { background: var(--warn-soft); color: var(--warn-on-soft); border-color: var(--warn); }
+  .badge.cancelled, .badge.failed { background: var(--danger-soft); color: var(--danger-on-soft); border-color: var(--danger); }
+  .badge.expired, .badge.exhausted { border-style: dashed; }
+  .tag {
+    display: inline-block; font-size: 10.5px; padding: 1px 6px; border-radius: 3px;
+    border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap;
+  }
+
+  /* ── Detail ────────────────────────────────────────────────── */
+  .detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .detail-head h2 { margin: 0; font-size: 16px; font-weight: 600; word-break: break-word; }
+  .section {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px; margin-bottom: 12px; min-width: 0;
+  }
+  .section > h3 { margin: 0 0 10px; font-size: 13px; font-weight: 700; }
+  .detail-grid { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 5px 12px; font-size: 12px; }
+  .detail-grid .k { color: var(--text-muted); }
+  .detail-grid .v { min-width: 0; word-break: break-word; }
+  .url-line { display: flex; gap: 6px; align-items: center; min-width: 0; }
+  .url-line code {
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 11.5px;
+  }
+  .prompt-text { white-space: pre-wrap; word-break: break-word; line-height: 1.5; margin: 0; }
+  pre.blk {
+    margin: 6px 0 0; padding: 8px 10px; background: var(--page-bg); border: 1px solid var(--border); border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+  }
+  .opt-view { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--page-bg); }
+  .opt-view-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .opt-view-h b { font-size: 13px; }
+  .opt-view .detail-grid { grid-template-columns: 110px minmax(0, 1fr); }
+  .plan-sum { display: flex; flex-wrap: wrap; gap: 4px; }
+  .plan-sum code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: 11px; }
+
+  tr.exec-detail > td { background: var(--page-bg); padding: 10px 12px 12px; }
+  .step-res { margin-top: 8px; }
+  .step-res-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+  .caret { display: inline-block; width: 12px; color: var(--text-muted); }
+
+  /* ── Builder ───────────────────────────────────────────────── */
+  .form-section { margin: 0 0 14px; }
+  /* Group headings: one step up from the labels, with a rule above (§12). */
+  .form-section > h3 {
+    margin: 0 0 10px; padding-top: 12px; border-top: 1px solid var(--border);
+    font-size: var(--fs); font-weight: 700;
+  }
+  .form-section:first-child > h3 { border-top: none; padding-top: 0; }
+  .fgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; }
+  .fld { min-width: 0; margin-bottom: 12px; }
+  .fgrid .fld { margin-bottom: 0; }
+  .fld input[type="text"], .fld input[type="number"], .fld input[type="password"],
+  .fld input[type="datetime-local"], .fld select, .fld textarea {
+    width: 100%; min-width: 0; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit;
+  }
+  .fld input:focus, .fld select:focus, .fld textarea:focus { outline: none; border-color: var(--accent); }
+  .fld input:disabled, .fld select:disabled, .fld textarea:disabled { opacity: 0.55; }
+  .fld textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
+  .fld textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; min-height: 90px; }
+  .fld .check { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); cursor: pointer; }
+  .fld .field-err { display: block; font-size: var(--fs-xs); color: var(--danger); margin-top: 4px; }
+  .req { color: var(--danger); font-weight: 700; }
+
+  .opt-card { border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 12px; margin-bottom: 10px; }
+  .opt-card-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .opt-card-h b { font-size: 13px; }
+  .step { border-left: 3px solid var(--border-strong); padding: 8px 0 4px 10px; margin: 0 0 10px; }
+  .step-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .step-h .yc-flabel { margin: 0; }
+  .fn-desc { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+  .fn-desc code { font-size: 11px; }
+
+  .preview-region { margin-top: 12px; }
+  .ok-box {
+    background: var(--ok-soft); border: 1px solid var(--ok); color: var(--ok-on-soft);
+    border-radius: 4px; padding: 10px 12px; font-size: 12px;
+  }
+  .note-list { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+  .note-list li { margin: 2px 0; }
+  .stale-note {
+    border: 1px dashed var(--warn); color: var(--warn); border-radius: 4px; padding: 6px 10px; font-size: 12px; margin-bottom: 8px;
+  }
+  .email-frame {
+    width: 100%; height: 440px; border: 1px solid var(--border); border-radius: 4px;
+    /* #fff stays a literal (toolManager's reasoning): the frame shows the
+       email's own canvas, not admin chrome. */
+    background: #fff;
+  }
+
+  /* Shown-once secret — readonlyKeys.html's .key-display, louder. */
+  .secret-box {
+    background: var(--warn-soft); border: 2px solid var(--warn); border-radius: 6px;
+    padding: 12px 14px; margin: 0 0 12px;
+  }
+  .secret-box h3 { margin: 0 0 6px; font-size: 14px; color: var(--warn-on-soft); }
+  .secret-box .secret {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 700;
+    word-break: break-all; user-select: all; background: var(--page-bg);
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; margin: 6px 0 8px;
+  }
+
+  .inline-error {
+    background: var(--danger-soft); border: 1px solid var(--danger);
+    color: var(--danger-on-soft); border-radius: 4px; padding: 10px 12px; font-size: 12px; word-break: break-word;
+  }
+  .inline-error .btn { margin-top: 8px; }
+  .warn-box {
+    background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft);
+    border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; line-height: 1.5;
+  }
+  .loading { padding: 16px; color: var(--text-muted); }
+
+  /* ── Modals (toolManager.html shape) ───────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: var(--backdrop);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 100; padding: 24px 16px; overflow: auto;
+  }
+  #confirm-backdrop { z-index: 110; }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    width: 100%; max-width: 560px; padding: 18px 20px;
+  }
+  .modal h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+  .modal p { margin: 0 0 10px; line-height: 1.5; }
+  .modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .modal-err {
+    display: none; background: var(--danger-soft); border: 1px solid var(--danger);
+    color: var(--danger-on-soft); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; word-break: break-word;
+  }
+  .modal-err.show { display: block; }
+
+  /* ── Toast ─────────────────────────────────────────────────── */
+  .toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--surface-2); border: 1px solid var(--accent); color: var(--text);
+    padding: 8px 16px; border-radius: 6px; font-size: 12px; max-width: calc(100% - 32px);
+    opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Phone (≤768px, the shell's one breakpoint) ────────────── */
+  @media (max-width: 768px) {
+    .panel { padding: 10px; }
+    /* List collapses to Name (+ a phone sub-line carrying mode/protection/
+       runs/source) · Status · Uses · Expires · actions. */
+    .col-opt { display: none; }
+    .sub-phone { display: block; }
+    table.list th, table.list td { padding: 6px 7px; }
+    .detail-grid { grid-template-columns: 96px minmax(0, 1fr); }
+    .opt-view .detail-grid { grid-template-columns: 84px minmax(0, 1fr); }
+    .section { padding: 10px; }
+    .modal { padding: 14px; }
+    .modal-backdrop { padding: 12px 8px; }
+    .email-frame { height: 360px; }
+  }
+  /* Small phones: Uses and the row's Copy URL drop too (the sub-line carries
+     uses; the detail view has every copy button). */
+  @media (max-width: 480px) {
+    .col-xs { display: none; }
+    table.list td.exp-cell { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+
+<div class="panel-host">
+  <div class="panel">
+
+    <details class="instructions" id="instructions">
+      <summary>How CTA links work</summary>
+      <div class="body">
+        <p>
+          A CTA ("call to action") is a tokenized link that runs a <b>pre-authorized set of actions</b> when
+          the recipient picks an option and confirms. Each option carries a <b>plan</b> — the same internal
+          functions workflows use. Plans are frozen when you mint: a click can never change <i>what</i>
+          happens, only <i>whether</i> it happens. Links live on the public host at
+          <code>4lsg.com/c/&lt;token&gt;</code>; every emailed button opens a confirm page first.
+        </p>
+        <p>
+          <b>once</b> (default): the first confirmed click wins; an optional timeout option runs by itself at
+          expiry if nobody clicks. <b>repeatable</b>: every click runs the plan until expiry or a
+          <code>max_uses</code> cap — standing actions, or live lookup links with a result template.
+        </p>
+        <p>
+          <b>Protection:</b> <i>none</i> — anyone holding the link can execute; <i>password</i> — the confirm
+          page asks for a secret. A generated password is shown <b>once</b>, at mint. Links that return
+          information default to password. Never a YisraCase account password.
+        </p>
+        <p>
+          <b>Lifecycle:</b> links always expire — extend instead of re-minting. <i>Disable</i> is the kill
+          switch (reversible). Re-enabling a used link whose plan failed re-runs the <b>whole</b> plan on the
+          next click. <i>Cancel</i> is permanent.
+          Stored states are active / used / disabled / cancelled; <i>expired</i> and <i>exhausted</i> are
+          derived from the expiry and the use cap.
+        </p>
+        <p>
+          <b>Results:</b> every click is an execution below, with the full per-step plan output — that detail
+          is SU-only. Recipients see only success/failure, plus the option's result template text.
+          Workflow-minted links (<code>create_cta</code>) show here with source "workflow".
+          Manual: Admin Tools → CTA Links.
+        </p>
+      </div>
+    </details>
+
+    <!-- ── LIST ─────────────────────────────────────────────────── -->
+    <section id="view-list">
+      <div class="toolbar">
+        <h2>CTA Links</h2>
+        <select id="f-status" aria-label="Status filter">
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="expired">Expired</option>
+          <option value="exhausted">Exhausted</option>
+          <option value="used">Used</option>
+          <option value="disabled">Disabled</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <input type="search" id="f-q" placeholder="Search name or #id" aria-label="Search by name" autocomplete="off">
+        <button class="btn" type="button" id="refresh-btn">Refresh</button>
+        <span class="sep"></span>
+        <button class="btn primary" type="button" id="new-btn">+ New CTA</button>
+      </div>
+      <div class="status-line" id="list-status"></div>
+      <div id="list-region"><div class="loading">Loading…</div></div>
+    </section>
+
+    <!-- ── DETAIL ───────────────────────────────────────────────── -->
+    <section id="view-detail" hidden>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn" type="button" data-nav="list">← All links</button>
+        <button class="btn" type="button" id="detail-refresh">Refresh</button>
+      </div>
+      <div id="detail-region"></div>
+    </section>
+
+    <!-- ── MINT BUILDER ─────────────────────────────────────────── -->
+    <section id="view-mint" hidden>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn" type="button" data-nav="list">← All links</button>
+        <span class="sep"></span>
+        <button class="btn small" type="button" id="reset-draft">Reset form</button>
+      </div>
+      <div id="mint-region"></div>
+    </section>
+
+    <!-- ── RECEIPT ──────────────────────────────────────────────── -->
+    <section id="view-receipt" hidden>
+      <div id="receipt-region"></div>
+    </section>
+
+  </div>
+</div>
+
+<!-- PATCH dialog: extend expiry / max_uses, and the re-enable path -->
+<div class="modal-backdrop" id="patch-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="patch-title">
+    <h3 id="patch-title">Extend / limits</h3>
+    <div class="modal-err" id="patch-err"></div>
+    <div id="patch-body"></div>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="patch-cancel">Close</button>
+      <button class="btn primary" type="button" id="patch-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Generic confirm (disable / cancel / mint) -->
+<div class="modal-backdrop" id="confirm-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <h3 id="confirm-title">Confirm</h3>
+    <div class="modal-err" id="confirm-err"></div>
+    <div id="confirm-body"></div>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="confirm-no">Back</button>
+      <button class="btn primary" type="button" id="confirm-yes">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+// ── Parent bridge ───────────────────────────────────────────
+// Same contract as toolManager.html / readonlyKeys.html: P is the shell; all
+// calls ride P.apiSend, which attaches the JWT and the X-SU-Elevation token
+// and runs the step-up password prompt itself on `elevation_required`. This
+// pane never touches the token.
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+
+// ── Server mirrors (HINTS ONLY — the server decides) ────────
+// services/ctaService.js deriveState() / isStaleRunning() / CTA_FN_DENYLIST.
+// A drift here mis-colours a chip or offers a function the server will
+// reject on dry run; it can never let a bad action through.
+const CTA_FN_DENYLIST = ['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta'];
+const STALE_RUNNING_MINUTES = 15;
+const VALUE_RE = /^[a-zA-Z0-9_\-]{1,64}$/;
+const ABOUT_TYPES = ['contact', 'case', 'appt', 'bill', 'phone', 'email', 'task', 'event']; // logService.ABOUT_TYPES
+const LIST_LIMIT = 200;   // routes/api.cta.js list max
+const EXEC_LIMIT = 500;   // ctaService EXEC_LIST_MAX
+
+function toDate(v) {
+  if (v == null || v === '') return null;
+  const d = v instanceof Date ? v : new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+/** Mirror of ctaService.deriveState. */
+function deriveState(row, now = new Date()) {
+  if (!row) return 'not_found';
+  if (row.status === 'cancelled') return 'cancelled';
+  if (row.status === 'disabled') return 'disabled';
+  if (row.status === 'used') return 'used';
+  const exp = toDate(row.expires_at);
+  if (!exp || exp.getTime() <= now.getTime()) return 'expired';
+  if (row.mode === 'repeatable' && row.max_uses != null && Number(row.uses_count) >= Number(row.max_uses)) {
+    return 'exhausted';
+  }
+  return 'active';
+}
+/** Mirror of ctaService.isStaleRunning. */
+function isStaleRunning(exec, now = new Date()) {
+  if (!exec || exec.status !== 'running') return false;
+  const at = toDate(exec.executed_at);
+  return !!at && now.getTime() - at.getTime() > STALE_RUNNING_MINUTES * 60e3;
+}
+
+// ── State ───────────────────────────────────────────────────
+const state = {
+  view: 'list',
+  rows: [], more: false, loaded: false, listErr: null, listSeq: 0,
+  detail: null,            // { id, cta, executions, err, busy }
+  expanded: new Set(),     // execution ids opened in the detail table
+  draft: null,
+  fnMeta: null, fnMetaErr: null, fnMetaBusy: false,
+  preview: null,           // { ok:true, data } | { ok:false, message, code }
+  previewStale: false,
+  minting: false,
+  receipt: null, pwCopied: false,
+  patch: null,             // { mode: 'edit'|'reenable', cta, latest }
+  confirm: null,           // { onYes }
+};
+
+// ── Helpers ─────────────────────────────────────────────────
+const E = (id) => document.getElementById(id);
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function showToast(msg) {
+  const t = E('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMsg || 'Copied');
+    return true;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    document.body.removeChild(ta);
+    showToast(ok ? (okMsg || 'Copied') : 'Copy failed — select and copy by hand');
+    return ok;
+  }
+}
+/** ApiError → the server's own words (routes write messages for humans). */
+function errText(err) {
+  if (!err) return 'Unknown error';
+  const b = err.body || {};
+  const msg = b.message || b.error || err.message || 'Request failed';
+  return b.code && b.code !== 'invalid' ? `${msg} (${b.code})` : msg;
+}
+function firmTz() {
+  return (P.firmData && P.firmData.firmTimezone) || 'America/Detroit';
+}
+function fmtFirm(v, short) {
+  const d = toDate(v);
+  if (!d) return '';
+  // Short form drops the year only when it is this year (in firm time).
+  const yr = (x) => { try { return new Intl.DateTimeFormat('en-US', { timeZone: firmTz(), year: 'numeric' }).format(x); } catch { return ''; } };
+  const o = short
+    ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(yr(d) !== yr(new Date()) ? { year: 'numeric' } : {}) }
+    : { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' };
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: firmTz(), ...o }).format(d); }
+  catch { return d.toISOString(); }
+}
+function relTime(v, now = new Date()) {
+  const d = toDate(v);
+  if (!d) return '';
+  const diff = d.getTime() - now.getTime();
+  const abs = Math.abs(diff);
+  const m = Math.round(abs / 60e3);
+  let s;
+  if (m < 1) s = 'under a minute';
+  else if (m < 60) s = `${m}m`;
+  else if (m < 48 * 60) { const h = Math.floor(m / 60); s = `${h}h${m % 60 && h < 6 ? ` ${m % 60}m` : ''}`; }
+  else { const dd = Math.floor(m / 1440); const h = Math.floor((m % 1440) / 60); s = `${dd}d${h && dd < 7 ? ` ${h}h` : ''}`; }
+  return diff >= 0 ? `in ${s}` : `${s} ago`;
+}
+/** An instant → the firm-local naive "YYYY-MM-DDTHH:mm" a datetime-local holds. */
+function firmNaive(v) {
+  const d = toDate(v);
+  if (!d) return '';
+  const parts = {};
+  for (const p of new Intl.DateTimeFormat('en-US', {
+    timeZone: firmTz(), year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d)) parts[p.type] = p.value;
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+/** Add n days to a naive firm-local datetime, keeping the wall-clock time. */
+function addDaysNaive(naive, n) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(naive || '');
+  if (!m) return naive;
+  const t = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n, +m[4], +m[5]));
+  return t.toISOString().slice(0, 16);
+}
+function userName(id) {
+  if (id == null) return '';
+  const u = ((P.firmData && P.firmData.users) || []).find((x) => Number(x.user) === Number(id));
+  return u ? (u.user_name || `user #${id}`) : `user #${id}`;
+}
+function chip(st) {
+  return `<span class="badge ${esc(st)}">${esc(st)}</span>`;
+}
+function usesText(r) {
+  if (r.mode === 'once') return `${Number(r.uses_count) || 0}/1`;
+  return `${Number(r.uses_count) || 0}/${r.max_uses == null ? '∞' : r.max_uses}`;
+}
+function sourceText(r) {
+  if (r.mint_source === 'workflow') {
+    return `workflow${r.source_execution_id != null ? ` · exec #${esc(r.source_execution_id)}` : ''}`;
+  }
+  return `SU · ${esc(userName(r.minted_by))}`;
+}
+function optionUrl(cta, value) {
+  return `${cta.cta_url}/${value}`;
+}
+function setView(v) {
+  state.view = v;
+  for (const id of ['list', 'detail', 'mint', 'receipt']) E('view-' + id).hidden = id !== v;
+  E('instructions').hidden = v === 'receipt';
+  document.querySelector('.panel-host').scrollTop = 0;
+}
+
+// ── LIST ────────────────────────────────────────────────────
+const STORED = new Set(['used', 'disabled', 'cancelled']);
+const DERIVED_FROM_ACTIVE = new Set(['active', 'expired', 'exhausted']);
+
+/** The server filters STORED status; expired/exhausted (and "really active")
+ *  are derived, so those three fetch status=active and filter here. */
+function serverStatusFor(filter) {
+  if (STORED.has(filter)) return filter;
+  if (DERIVED_FROM_ACTIVE.has(filter)) return 'active';
+  return null;
+}
+
+async function loadList({ append = false, silent = false } = {}) {
+  // Latest request wins: a filter change mid-load must not be dropped, and
+  // the older response must not paint over the newer one.
+  const seq = ++state.listSeq;
+  if (!silent && !append) {
+    state.listErr = null;
+    E('list-region').innerHTML = '<div class="loading">Loading…</div>';
+    E('list-status').textContent = '';
+  }
+  const filter = E('f-status').value;
+  const q = { limit: LIST_LIMIT, offset: append ? state.rows.length : 0 };
+  const st = serverStatusFor(filter);
+  if (st) q.status = st;
+  try {
+    const data = await api('/api/cta', 'GET', q);
+    if (seq !== state.listSeq) return;
+    const rows = Array.isArray(data && data.ctas) ? data.ctas : [];
+    state.rows = append ? state.rows.concat(rows) : rows;
+    state.more = rows.length === LIST_LIMIT;
+    state.loaded = true;
+    state.listErr = null;
+  } catch (err) {
+    if (seq !== state.listSeq) return;
+    if (silent && state.loaded) return;   // a background refresh keeps what is on screen
+    state.listErr = err;
+  }
+  renderList();
+}
+
+function filteredRows() {
+  const filter = E('f-status').value;
+  const raw = E('f-q').value.trim();
+  const q = raw.toLowerCase();
+  const idQ = /^#?\d+$/.test(raw) ? Number(raw.replace('#', '')) : null;
+  const now = new Date();
+  return state.rows.filter((r) => {
+    if (DERIVED_FROM_ACTIVE.has(filter) && deriveState(r, now) !== filter) return false;
+    if (!q) return true;
+    return String(r.name || '').toLowerCase().includes(q) || (idQ != null && Number(r.id) === idQ);
+  });
+}
+
+function renderList() {
+  const region = E('list-region');
+  const status = E('list-status');
+  if (state.listErr) {
+    status.textContent = '';
+    region.innerHTML = `
+      <div class="inline-error">
+        Couldn't load CTA links: ${esc(errText(state.listErr))}
+        <div><button class="btn small" type="button" data-act="retry-list">Retry</button></div>
+      </div>`;
+    return;
+  }
+  if (!state.loaded) return;
+  const rows = filteredRows();
+  const filter = E('f-status').value;
+  const q = E('f-q').value.trim();
+
+  const total = state.rows.length;
+  let line = `${total} link${total === 1 ? '' : 's'} loaded`;
+  if (filter !== 'all' || q) line = `${rows.length} shown · ${line}`;
+  if (state.more) line += ' · more on the server — search and derived filters only cover what is loaded';
+  status.textContent = line;
+
+  let body;
+  if (!rows.length) {
+    let msg;
+    if (!total && filter === 'all') msg = 'No CTA links yet — "+ New CTA" mints one; workflow mints (create_cta) appear here too.';
+    else if (q) msg = `No links match "${esc(q)}".`;
+    else msg = `No ${esc(filter)} links.`;
+    body = `<tr class="empty-row"><td colspan="9">${msg}</td></tr>`;
+  } else {
+    const now = new Date();
+    body = rows.map((r) => listRow(r, now)).join('');
+  }
+
+  region.innerHTML = `
+    <div class="table-box">
+      <table class="list">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th class="col-opt">Mode</th>
+            <th class="col-xs">Uses</th>
+            <th class="col-opt">Protection</th>
+            <th>Expires (firm)</th>
+            <th class="col-opt">Runs</th>
+            <th class="col-opt">Source</th>
+            <th class="col-xs"></th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    ${state.more ? `<div class="btn-row" style="margin-top:8px"><button class="btn" type="button" data-act="more">Load more</button></div>` : ''}`;
+}
+
+function listRow(r, now) {
+  const st = deriveState(r, now);
+  const runs = Number(r.exec_count) || 0;
+  const failed = Number(r.failed_count) || 0;
+  const runsHtml = runs
+    ? `${runs}${failed ? ` <span class="danger-text">(${failed} failed)</span>` : ''}`
+    : '<span class="muted">0</span>';
+  const exp = toDate(r.expires_at);
+  const expRel = st === 'used' || st === 'cancelled' ? '' : relTime(r.expires_at, now);
+  return `
+    <tr class="row" data-id="${esc(r.id)}">
+      <td class="name-cell">${esc(r.name)}
+        <span class="sub">#${esc(r.id)} · ${esc(fmtFirm(r.created_at, true))}</span>
+        <span class="sub sub-phone">${esc(r.mode)} · ${esc(usesText(r))} uses · ${esc(r.protection)} · ${runs} run${runs === 1 ? '' : 's'}${failed ? ` (${failed} failed)` : ''}${r.mint_source === 'workflow' ? ` · ${sourceText(r)}` : ''}</span>
+      </td>
+      <td>${chip(st)}</td>
+      <td class="col-opt">${esc(r.mode)}</td>
+      <td class="num nowrap col-xs">${esc(usesText(r))}</td>
+      <td class="col-opt">${esc(r.protection)}${Number(r.failed_attempts) ? ` <span class="warn-text" title="Failed password attempts">· ${esc(r.failed_attempts)} bad pw</span>` : ''}</td>
+      <td class="nowrap exp-cell">${exp ? esc(fmtFirm(r.expires_at, true)) : '—'}${expRel ? `<span class="sub">${esc(expRel)}</span>` : ''}</td>
+      <td class="col-opt num">${runsHtml}</td>
+      <td class="col-opt">${sourceText(r)}</td>
+      <td class="actions-cell col-xs">
+        <button class="btn small" type="button" data-act="copy-url" title="Copy the landing URL">Copy URL</button>
+      </td>
+    </tr>`;
+}
+
+// ── DETAIL ──────────────────────────────────────────────────
+async function openDetail(id) {
+  state.detail = { id: Number(id), cta: null, executions: [], err: null, busy: true };
+  state.expanded = new Set();
+  setView('detail');
+  renderDetail();
+  await loadDetail();
+}
+
+async function loadDetail() {
+  const d = state.detail;
+  if (!d) return;
+  d.busy = true;
+  try {
+    const data = await api(`/api/cta/${d.id}/executions`, 'GET', { limit: EXEC_LIMIT });
+    if (!data || !data.cta) throw Object.assign(new Error('Unexpected response — no CTA in it'), { body: {} });
+    d.cta = data.cta;
+    d.executions = Array.isArray(data.executions) ? data.executions : [];
+    d.err = null;
+    // Keep the list row in step with what we just read.
+    const i = state.rows.findIndex((r) => Number(r.id) === d.id);
+    if (i !== -1) {
+      state.rows[i] = {
+        ...state.rows[i], ...listShape(d.cta),
+        exec_count: d.executions.length >= EXEC_LIMIT ? state.rows[i].exec_count : d.executions.length,
+        failed_count: d.executions.length >= EXEC_LIMIT ? state.rows[i].failed_count : d.executions.filter((e) => e.status === 'failed').length,
+      };
+    }
+  } catch (err) {
+    d.err = err;
+  } finally {
+    d.busy = false;
+  }
+  if (state.detail === d) renderDetail();
+}
+
+/** Full adminRow → the fields the list row renders (options summarized like listCtas). */
+function listShape(c) {
+  return {
+    name: c.name, mode: c.mode, status: c.status, protection: c.protection, max_uses: c.max_uses,
+    uses_count: c.uses_count, expires_at: c.expires_at, failed_attempts: c.failed_attempts,
+    timeout_option: c.timeout_option, updated_at: c.updated_at, cta_url: c.cta_url,
+  };
+}
+
+function latestExecution(execs) {
+  // The API returns newest first (ORDER BY id DESC).
+  return execs && execs.length ? execs[0] : null;
+}
+
+function renderDetail() {
+  const d = state.detail;
+  const region = E('detail-region');
+  if (!d) { region.innerHTML = ''; return; }
+  if (d.err) {
+    region.innerHTML = `
+      <div class="inline-error">
+        Couldn't load CTA #${esc(d.id)}: ${esc(errText(d.err))}
+        <div><button class="btn small" type="button" data-act="retry-detail">Retry</button></div>
+      </div>`;
+    return;
+  }
+  if (!d.cta) { region.innerHTML = '<div class="loading">Loading…</div>'; return; }
+
+  const c = d.cta;
+  const now = new Date();
+  const st = deriveState(c, now);
+  const latest = latestExecution(d.executions);
+  const reenableOk = c.status === 'disabled'
+    || (c.status === 'used' && latest && (latest.status === 'failed' || isStaleRunning(latest, now)));
+  const reenableWhy = c.status === 'used'
+    ? (latest ? `Latest execution is ${latest.status} — re-enable needs a failed run (or one stuck running over ${STALE_RUNNING_MINUTES} min)` : 'No execution recorded')
+    : '';
+
+  const actions = [];
+  actions.push(`<button class="btn" type="button" data-act="copy" data-text="${esc(c.cta_url)}" data-msg="Landing URL copied">Copy link</button>`);
+  actions.push(`<a class="btn" href="${esc(c.cta_url)}" target="_blank" rel="noopener noreferrer" title="Opens the public page — viewing never runs anything">Open page ↗</a>`);
+  if (c.status === 'active' || c.status === 'disabled') {
+    actions.push(`<button class="btn" type="button" data-act="edit">Extend / limits…</button>`);
+  }
+  if (c.status === 'active') actions.push(`<button class="btn warn" type="button" data-act="disable">Disable</button>`);
+  if (c.status === 'disabled' || c.status === 'used') {
+    actions.push(`<button class="btn" type="button" data-act="reenable"${reenableOk ? '' : ` disabled title="${esc(reenableWhy)}"`}>Re-enable…</button>`);
+  }
+  if (c.status !== 'cancelled') actions.push(`<button class="btn danger" type="button" data-act="cancel">Cancel…</button>`);
+
+  const exp = toDate(c.expires_at);
+  const expRel = relTime(c.expires_at, now);
+  const linked = c.link_type ? `${esc(c.link_type)} <code>${esc(c.link_id)}</code>` : '<span class="muted">—</span>';
+
+  region.innerHTML = `
+    <div class="detail-head">
+      <h2>${esc(c.name)}</h2>
+      ${chip(st)}
+      <span class="muted">#${esc(c.id)}${st !== c.status ? ` · stored status ${esc(c.status)}` : ''}</span>
+    </div>
+    ${c.status === 'cancelled' ? '<div class="warn-box">Cancelled — permanent. This link can never be re-enabled, extended or changed.</div>' : ''}
+    ${st === 'expired' && c.status === 'active' ? '<div class="warn-box">Expired. Extend the expiry to bring it back — no re-mint needed.</div>' : ''}
+    ${st === 'exhausted' ? '<div class="warn-box">Exhausted — every allowed use is spent. Raise or clear max uses to bring it back.</div>' : ''}
+    ${c.status === 'used' && latest && latest.status === 'failed' ? '<div class="warn-box">The last run failed. Re-enabling resets the use count and the next click re-runs the <b>whole</b> plan — read the failed execution below first.</div>' : ''}
+    ${c.status === 'used' && latest && isStaleRunning(latest, now) ? `<div class="warn-box">The last run has been "running" for over ${STALE_RUNNING_MINUTES} minutes — the instance likely died mid-plan. Side effects of steps that ran are unknown.</div>` : ''}
+
+    <div class="btn-row" style="margin-bottom:12px">${actions.join('')}</div>
+
+    <div class="section">
+      <h3>Link</h3>
+      <div class="detail-grid">
+        <div class="k">Landing URL</div>
+        <div class="v"><div class="url-line"><code title="${esc(c.cta_url)}">${esc(c.cta_url)}</code>
+          <button class="btn small" type="button" data-act="copy" data-text="${esc(c.cta_url)}" data-msg="Landing URL copied">Copy</button></div></div>
+        <div class="k">Mode</div><div class="v">${esc(c.mode)}</div>
+        <div class="k">Uses</div><div class="v num">${esc(usesText(c))}${c.mode === 'repeatable' && c.max_uses == null ? ' <span class="muted">(no cap — until expiry)</span>' : ''}</div>
+        <div class="k">Expires</div><div class="v">${exp ? `${esc(fmtFirm(c.expires_at))} <span class="muted">(${esc(expRel)})</span>` : '—'}</div>
+        <div class="k">Timeout option</div><div class="v">${c.timeout_option ? `<code>${esc(c.timeout_option)}</code> <span class="muted">— runs by itself at expiry if unused</span>` : '<span class="muted">—</span>'}</div>
+        <div class="k">Protection</div><div class="v">${esc(c.protection)}${Number(c.failed_attempts) ? ` <span class="warn-text">· ${esc(c.failed_attempts)} failed password attempt${Number(c.failed_attempts) === 1 ? '' : 's'}</span>` : ''}</div>
+        <div class="k">Return plan_result</div><div class="v">${Number(c.return_plan_result) ? 'yes — the JSON respond surface includes raw step output' : 'no'}</div>
+        <div class="k">Attributed to</div><div class="v">${c.attributed_user_id != null ? esc(userName(c.attributed_user_id)) : '<span class="muted">—</span>'}</div>
+        <div class="k">Linked to</div><div class="v">${linked}</div>
+        <div class="k">Source</div><div class="v">${sourceText(c)}</div>
+        <div class="k">Created</div><div class="v">${esc(fmtFirm(c.created_at))}</div>
+        <div class="k">Updated</div><div class="v">${esc(fmtFirm(c.updated_at))}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>What the recipient sees</h3>
+      <p class="prompt-text">${esc(c.prompt)}</p>
+      ${c.context_html
+        ? `<details style="margin-top:8px"><summary class="muted">Context HTML (${esc(String(c.context_html).length)} chars, trusted — rendered on the page)</summary><pre class="blk">${esc(c.context_html)}</pre></details>`
+        : ''}
+    </div>
+
+    <div class="section">
+      <h3>Options (${(c.options || []).length})</h3>
+      ${(c.options || []).map((o) => optionView(c, o)).join('') || '<div class="muted">No options.</div>'}
+    </div>
+
+    <div class="section">
+      <h3>Executions</h3>
+      ${execTable(d.executions, now)}
+    </div>`;
+}
+
+function optionView(c, o) {
+  const url = optionUrl(c, o.value);
+  const steps = Array.isArray(o.plan) ? o.plan : [];
+  return `
+    <div class="opt-view">
+      <div class="opt-view-h">
+        <b>${esc(o.label)}</b> <code>${esc(o.value)}</code>
+        ${c.timeout_option === o.value ? '<span class="tag">timeout option</span>' : ''}
+        ${o.result_template ? '<span class="tag">result template</span>' : ''}
+      </div>
+      <div class="detail-grid">
+        <div class="k">Confirm URL</div>
+        <div class="v"><div class="url-line"><code title="${esc(url)}">${esc(url)}</code>
+          <button class="btn small" type="button" data-act="copy" data-text="${esc(url)}" data-msg="Option URL copied">Copy</button></div></div>
+        <div class="k">Plan</div>
+        <div class="v"><div class="plan-sum">${steps.map((s, i) => `<code>${i + 1}. ${esc(s && s.fn)}</code>`).join('') || '<span class="muted">—</span>'}</div></div>
+        ${o.confirm_text ? `<div class="k">Confirm text</div><div class="v">${esc(o.confirm_text)}</div>` : ''}
+        ${o.result_template ? `<div class="k">Result template</div><div class="v"><pre class="blk" style="margin:0">${esc(o.result_template)}</pre></div>` : ''}
+      </div>
+    </div>`;
+}
+
+const VIA_LABEL = { link: 'link', app: 'app', api: 'api', timeout: 'timeout (auto)' };
+/** Link/password clicks are anonymous (the outcome log uses attributed_user_id); timeout runs are user 0. */
+function responderHtml(e) {
+  if (e.responder_user_id != null) return esc(userName(e.responder_user_id));
+  return `<span class="muted">${e.responded_via === 'timeout' ? 'automations' : 'not signed in'}</span>`;
+}
+
+function execTable(execs, now) {
+  if (!execs.length) {
+    return '<div class="muted">No executions yet — nobody has confirmed an option.</div>';
+  }
+  const capped = execs.length >= EXEC_LIMIT
+    ? `<div class="yc-hint" style="margin:0 0 6px">Showing the newest ${EXEC_LIMIT}.</div>` : '';
+  const rows = execs.map((e) => {
+    const open = state.expanded.has(Number(e.id));
+    const stale = isStaleRunning(e, now);
+    const st = stale ? `<span class="badge stale" title="Running for over ${STALE_RUNNING_MINUTES} min">running · stale</span>` : chip(e.status);
+    const responder = responderHtml(e);
+    return `
+      <tr class="row" data-exec="${esc(e.id)}" aria-expanded="${open}">
+        <td class="nowrap"><span class="caret">${open ? '▾' : '▸'}</span>${esc(fmtFirm(e.executed_at, true))}<span class="sub">#${esc(e.id)} · ${esc(relTime(e.executed_at, now))}</span></td>
+        <td>${optionLabel(e.option_value)}</td>
+        <td class="col-opt">${esc(VIA_LABEL[e.responded_via] || e.responded_via)}</td>
+        <td class="col-opt">${responder}</td>
+        <td>${st}</td>
+      </tr>
+      ${open ? `<tr class="exec-detail"><td colspan="5">${execDetail(e)}</td></tr>` : ''}`;
+  }).join('');
+  return `${capped}
+    <div class="table-box">
+      <table class="list">
+        <thead><tr><th>When (firm)</th><th>Option</th><th class="col-opt">Via</th><th class="col-opt">Responder</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function optionLabel(value) {
+  const c = state.detail && state.detail.cta;
+  const o = c && (c.options || []).find((x) => x.value === value);
+  return o ? `${esc(o.label)} <code class="muted">${esc(value)}</code>` : `<code>${esc(value)}</code>`;
+}
+
+function prettyJson(v) {
+  if (v === undefined) return '';
+  if (typeof v === 'string') return v;   // truncated outputs arrive as strings
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
+function execDetail(e) {
+  const meta = `
+    <div class="detail-grid" style="margin-bottom:6px">
+      <div class="k">Execution</div><div class="v">#${esc(e.id)} · ${esc(fmtFirm(e.executed_at))}</div>
+      <div class="k">Via</div><div class="v">${esc(VIA_LABEL[e.responded_via] || e.responded_via)}</div>
+      <div class="k">Responder</div><div class="v">${responderHtml(e)}${e.responder_ip ? ` <span class="muted">· IP ${esc(e.responder_ip)}</span>` : ''}</div>
+    </div>`;
+  const steps = Array.isArray(e.plan_result) ? e.plan_result : null;
+  if (!steps) {
+    const note = e.status === 'running'
+      ? 'No plan result yet — still running (or the instance died mid-plan).'
+      : 'No plan result recorded.';
+    return `${meta}<div class="muted">${note}</div>`;
+  }
+  const blocks = steps.map((s, i) => {
+    const ok = s && s.ok === true;
+    const body = [];
+    if (s && s.error != null) body.push(`<div class="danger-text" style="margin-top:4px">${esc(s.error)}</div>`);
+    if (s && s.output !== undefined && s.output !== null) body.push(`<pre class="blk">${esc(prettyJson(s.output))}</pre>`);
+    else if (ok) body.push('<div class="yc-hint" style="margin-top:2px">No output.</div>');
+    return `
+      <div class="step-res">
+        <div class="step-res-h"><b>${i + 1}.</b> <code>${esc(s && s.fn != null ? s.fn : '(none)')}</code>
+          ${ok ? chip('success') : chip('failed')}
+          ${s && s.ms != null ? `<span class="muted">${esc(s.ms)} ms</span>` : ''}</div>
+        ${body.join('')}
+      </div>`;
+  }).join('');
+  return `${meta}${blocks || '<div class="muted">Empty plan result.</div>'}
+    <details style="margin-top:8px"><summary class="muted">Raw plan_result JSON</summary><pre class="blk">${esc(prettyJson(steps))}</pre></details>`;
+}
+
+// ── PATCH dialog (extend / limits, and re-enable) ───────────
+function openPatch(mode) {
+  const c = state.detail && state.detail.cta;
+  if (!c) return;
+  const latest = latestExecution(state.detail.executions);
+  state.patch = { mode, cta: c, latest };
+  const now = new Date();
+  const st = deriveState(c, now);
+  const expiredNow = !toDate(c.expires_at) || toDate(c.expires_at).getTime() <= now.getTime();
+  const curNaive = firmNaive(c.expires_at);
+  const rep = c.mode === 'repeatable';
+
+  E('patch-title').textContent = mode === 'reenable' ? `Re-enable "${c.name}"` : `Extend / limits — "${c.name}"`;
+  E('patch-save').textContent = mode === 'reenable' ? 'Re-enable' : 'Save';
+  hidePatchErr();
+
+  const warn = [];
+  if (mode === 'reenable' && c.status === 'used') {
+    warn.push(`<div class="warn-box">Re-enabling a used link resets its use count to 0 and the next click re-runs the
+      <b>whole</b> plan — steps that succeeded last time run again. Check the
+      ${latest && latest.status === 'running' ? 'stuck' : 'failed'} execution's plan result first.
+      ${latest && isStaleRunning(latest, now) ? 'The stuck run is closed as failed before the link reopens.' : ''}</div>`);
+  }
+  if (expiredNow) {
+    warn.push(`<div class="warn-box">This link is expired${mode === 'reenable' ? ' — a re-enable must set a new expiry in the same save' : ''}. The +days buttons count from now.</div>`);
+  }
+
+  E('patch-body').innerHTML = `
+    ${warn.join('')}
+    <div class="fld">
+      <label class="yc-flabel" for="p-exp">Expires (firm time)</label>
+      <input type="datetime-local" id="p-exp" value="${esc(curNaive)}">
+      <div class="btn-row" style="margin-top:6px">
+        <button class="btn small" type="button" data-plus="1">+1 day</button>
+        <button class="btn small" type="button" data-plus="7">+7 days</button>
+        <button class="btn small" type="button" data-plus="30">+30 days</button>
+      </div>
+      <span class="yc-hint">Naive date-times are read as firm time (${esc(firmTz())}), whatever your own timezone.
+        At most 365 days from now. Currently ${esc(fmtFirm(c.expires_at))} (${esc(relTime(c.expires_at, now))}).</span>
+    </div>
+    ${rep ? `
+    <div class="fld">
+      <label class="yc-flabel" for="p-max">Max uses</label>
+      <input type="number" id="p-max" min="1" step="1" value="${c.max_uses == null ? '' : esc(c.max_uses)}"${c.max_uses == null ? ' disabled' : ''}>
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="p-nocap"${c.max_uses == null ? ' checked' : ''}> No cap (until expiry)</label>
+      <span class="yc-hint">Used ${esc(Number(c.uses_count) || 0)} time${Number(c.uses_count) === 1 ? '' : 's'} so far — the cap can't go below that.${st === 'exhausted' ? ' Raise or clear it to revive the link.' : ''}</span>
+    </div>` : `
+    <span class="yc-hint">Single-use link — max uses applies to repeatable links only.</span>`}`;
+
+  // Quick extend: from whichever is later, now or the current expiry, keeping the wall-clock time.
+  E('patch-body').querySelectorAll('[data-plus]').forEach((b) => b.addEventListener('click', () => {
+    const exp = toDate(c.expires_at);
+    const base = exp && exp.getTime() > Date.now() ? exp : new Date();
+    E('p-exp').value = addDaysNaive(firmNaive(base), Number(b.dataset.plus));
+  }));
+  if (rep) {
+    E('p-nocap').addEventListener('change', () => {
+      E('p-max').disabled = E('p-nocap').checked;
+      if (!E('p-nocap').checked && !E('p-max').value) E('p-max').value = String((Number(c.uses_count) || 0) + 1);
+    });
+  }
+  E('patch-backdrop').classList.add('open');
+  E('p-exp').focus();
+}
+
+function closePatch() {
+  E('patch-backdrop').classList.remove('open');
+  state.patch = null;
+}
+function showPatchErr(msg) { const el = E('patch-err'); el.textContent = msg; el.classList.add('show'); }
+function hidePatchErr() { E('patch-err').classList.remove('show'); }
+
+async function savePatch() {
+  const p = state.patch;
+  if (!p) return;
+  hidePatchErr();
+  const c = p.cta;
+  const body = {};
+  const expVal = E('p-exp').value;
+  if (!expVal) return showPatchErr('Pick an expiry date and time.');
+  if (expVal !== firmNaive(c.expires_at)) body.expires_at = expVal;
+  if (c.mode === 'repeatable') {
+    if (E('p-nocap').checked) {
+      if (c.max_uses != null) body.max_uses = null;
+    } else {
+      const raw = E('p-max').value.trim();
+      if (!raw) return showPatchErr('Enter a max uses number, or tick "No cap".');
+      if (String(c.max_uses) !== raw) body.max_uses = raw;   // the server validates the integer
+    }
+  }
+  if (p.mode === 'reenable') body.status = 'active';
+  if (!Object.keys(body).length) return showPatchErr('Nothing changed.');
+
+  const btn = E('patch-save');
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/cta/${c.id}`, 'PATCH', body);
+    closePatch();
+    let msg = p.mode === 'reenable' ? 'Re-enabled' : (r && r.changed === false ? 'No change' : 'Saved');
+    if (r && r.finalized_execution_id != null) msg += ` — stuck execution #${r.finalized_execution_id} closed as failed`;
+    showToast(msg);
+    await loadDetail();
+  } catch (err) {
+    // 400/409 messages are written for humans — show them verbatim.
+    showPatchErr(errText(err));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Confirm dialog ──────────────────────────────────────────
+function openConfirm({ title, html, yes, yesClass = 'primary', onYes }) {
+  E('confirm-title').textContent = title;
+  E('confirm-body').innerHTML = html;
+  const y = E('confirm-yes');
+  y.textContent = yes;
+  y.className = `btn ${yesClass}`;
+  y.disabled = false;
+  E('confirm-err').classList.remove('show');
+  state.confirm = { onYes };
+  E('confirm-backdrop').classList.add('open');
+  E('confirm-no').focus();
+}
+function closeConfirm() {
+  E('confirm-backdrop').classList.remove('open');
+  state.confirm = null;
+}
+async function confirmYes() {
+  const cf = state.confirm;
+  if (!cf) return;
+  const y = E('confirm-yes');
+  y.disabled = true;
+  try {
+    await cf.onYes();
+    closeConfirm();
+  } catch (err) {
+    const el = E('confirm-err');
+    el.textContent = errText(err);
+    el.classList.add('show');
+  } finally {
+    y.disabled = false;
+  }
+}
+
+function confirmStatus(target) {
+  const c = state.detail && state.detail.cta;
+  if (!c) return;
+  if (target === 'disabled') {
+    openConfirm({
+      title: `Disable "${c.name}"?`,
+      html: `<p>Every click shows a "disabled" page until you re-enable it. Nothing else changes and nothing runs —
+        it is the kill switch, and it is reversible.</p>
+        <p class="yc-hint">Re-enabling later needs a future expiry; if the link has expired by then, set a new one in the same step.</p>`,
+      yes: 'Disable',
+      yesClass: 'warn',
+      onYes: () => applyStatus(c, 'disabled', 'Disabled'),
+    });
+  } else if (target === 'cancelled') {
+    openConfirm({
+      title: `Cancel "${c.name}" permanently?`,
+      html: `<p><b>This cannot be undone.</b> A cancelled link is a permanent kill: it can never be re-enabled,
+        extended, or changed again, and every click shows a "cancelled" page.</p>
+        <p>To stop it for now and keep the option of turning it back on, use <b>Disable</b> instead.</p>`,
+      yes: 'Cancel permanently',
+      yesClass: 'danger-solid',
+      onYes: () => applyStatus(c, 'cancelled', 'Cancelled permanently'),
+    });
+  }
+}
+
+async function applyStatus(c, status, okMsg) {
+  const r = await api(`/api/cta/${c.id}`, 'PATCH', { status });   // throws → shown verbatim in the dialog
+  showToast(r && r.changed === false ? 'No change' : okMsg);
+  await loadDetail();
+}
+
+// ── MINT BUILDER ────────────────────────────────────────────
+function newStep() { return { fn: '', params: '{}' }; }
+function newOption() { return { value: '', label: '', valueTouched: false, confirm_text: '', result_template: '', steps: [newStep()] }; }
+function newDraft() {
+  return {
+    name: '', prompt: '', context_html: '',
+    mode: 'once', max_uses: '',
+    expiry_kind: 'default', timeout: '', expires_at: '', timeout_option: '',
+    protection: 'auto', password: '', return_plan_result: false,
+    attributed_user_id: '', link_type: '', link_id: '',
+    email_template: '',
+    options: [newOption()],
+  };
+}
+
+function openMint() {
+  if (!state.draft) state.draft = newDraft();
+  setView('mint');
+  renderMint();
+  loadFnMeta();
+}
+
+/** GET /workflows/functions → the eligible-name datalist + per-step hints. Optional: free text works without it. */
+async function loadFnMeta() {
+  if (state.fnMeta || state.fnMetaBusy) return;
+  state.fnMetaBusy = true;
+  try {
+    const data = await api('/workflows/functions', 'GET');
+    state.fnMeta = (data && data.meta) || {};
+    state.fnMetaErr = null;
+  } catch (err) {
+    state.fnMetaErr = err;
+  } finally {
+    state.fnMetaBusy = false;
+  }
+  if (state.view === 'mint') {
+    fillDatalist();
+    document.querySelectorAll('[data-fn-desc]').forEach((el) => {
+      const [oi, si] = el.dataset.fnDesc.split('.').map(Number);
+      el.innerHTML = fnDescHtml(state.draft.options[oi].steps[si].fn);
+    });
+    const note = E('fn-list-note');
+    if (note) note.innerHTML = fnListNote();
+  }
+}
+
+/** Mirror of ctaService.isCtaEligible over the registry meta (hint only). */
+function eligibleNames() {
+  const meta = state.fnMeta || {};
+  return Object.keys(meta).filter((n) =>
+    !n.startsWith('__') && meta[n] && meta[n].controlFlow !== true && !CTA_FN_DENYLIST.includes(n)).sort();
+}
+function fillDatalist() {
+  const dl = E('fn-names');
+  if (dl) dl.innerHTML = eligibleNames().map((n) => `<option value="${esc(n)}">`).join('');
+}
+function fnListNote() {
+  if (state.fnMetaErr) return `<span class="warn-text">Function list unavailable (${esc(errText(state.fnMetaErr))}) — type names freely; the dry run validates them.</span>`;
+  if (!state.fnMeta) return 'Loading the function list…';
+  return `${eligibleNames().length} eligible functions in the picker. Control-flow and plumbing functions are excluded; the server re-checks every step.`;
+}
+function fnDescHtml(name) {
+  const n = String(name || '').trim();
+  if (!n || !state.fnMeta) return '';
+  const m = state.fnMeta[n];
+  if (!m) return state.fnMetaErr ? '' : '<span class="warn-text">Unknown function — the dry run will reject it.</span>';
+  if (m.controlFlow === true || CTA_FN_DENYLIST.includes(n)) return '<span class="warn-text">Not allowed in CTA plans.</span>';
+  const desc = String(m.description || '');
+  const short = desc.length > 220 ? desc.slice(0, 217) + '…' : desc;
+  const params = Array.isArray(m.params) ? m.params : [];
+  const sig = params.length
+    ? params.map((p) => `<code>${esc(p.name)}${p.required ? '*' : ''}</code>${p.type ? ` <span>${esc(p.type)}</span>` : ''}`).join(' · ')
+    : '<span>no params</span>';
+  return `${esc(short)}${short ? '<br>' : ''}Params: ${sig}`;
+}
+
+function slugValue(label) {
+  return String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
+}
+
+function renderMint() {
+  const d = state.draft;
+  const users = ((P.firmData && P.firmData.users) || []).filter((u) => Number(u.user) > 0);
+  const rep = d.mode === 'repeatable';
+
+  E('mint-region').innerHTML = `
+    <datalist id="fn-names"></datalist>
+
+    <div class="form-section">
+      <h3>New CTA link</h3>
+      <div class="fld">
+        <label class="yc-flabel" for="m-name">Name <span class="req">*</span></label>
+        <input type="text" id="m-name" data-bind="name" maxlength="120" value="${esc(d.name)}" autocomplete="off">
+        <span class="yc-hint">Internal label for this list (max 120). Never shown to the recipient.</span>
+      </div>
+      <div class="fld">
+        <label class="yc-flabel" for="m-prompt">Prompt <span class="req">*</span></label>
+        <textarea id="m-prompt" data-bind="prompt" maxlength="2000" rows="3">${esc(d.prompt)}</textarea>
+        <span class="yc-hint">The question the recipient sees on the page and in the default email. Plain text — it is escaped; line breaks are kept.</span>
+      </div>
+      <div class="fld">
+        <label class="yc-flabel" for="m-context">Context HTML <span class="muted">(optional)</span></label>
+        <textarea id="m-context" class="code" data-bind="context_html" rows="3">${esc(d.context_html)}</textarea>
+        <span class="yc-hint">Trusted HTML shown on the link's page under the prompt (not in the email) — the one raw-HTML slot, same contract as decision context. Only paste HTML you wrote.</span>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>Behaviour</h3>
+      <div class="fgrid">
+        <div class="fld">
+          <label class="yc-flabel" for="m-mode">Mode</label>
+          <select id="m-mode" data-bind="mode" data-structural>
+            <option value="once"${d.mode === 'once' ? ' selected' : ''}>once — first confirmed click wins</option>
+            <option value="repeatable"${rep ? ' selected' : ''}>repeatable — every click runs</option>
+          </select>
+        </div>
+        <div class="fld"${rep ? '' : ' hidden'}>
+          <label class="yc-flabel" for="m-max">Max uses</label>
+          <input type="number" id="m-max" data-bind="max_uses" min="1" step="1" value="${esc(d.max_uses)}" placeholder="no cap">
+          <span class="yc-hint">Blank = until expiry.</span>
+        </div>
+        <div class="fld"${rep ? ' hidden' : ''}>
+          <label class="yc-flabel" for="m-timeout-opt">Timeout option</label>
+          <select id="m-timeout-opt" data-bind="timeout_option">${timeoutOptionsHtml()}</select>
+          <span class="yc-hint">Runs by itself at expiry if nobody clicked (swept every ~5 min).</span>
+        </div>
+      </div>
+      <div class="fgrid" style="margin-top:12px">
+        <div class="fld">
+          <label class="yc-flabel" for="m-exp-kind">Expiry</label>
+          <select id="m-exp-kind" data-bind="expiry_kind" data-structural>
+            <option value="default"${d.expiry_kind === 'default' ? ' selected' : ''}>Firm default for the mode</option>
+            <option value="duration"${d.expiry_kind === 'duration' ? ' selected' : ''}>After a duration</option>
+            <option value="at"${d.expiry_kind === 'at' ? ' selected' : ''}>At a date and time</option>
+          </select>
+          <span class="yc-hint">Links always expire. Defaults: settings <code>cta_default_timeout_once</code> / <code>_repeatable</code> (3d / 30d unless changed). Max 365 days. Extend later without re-minting.</span>
+        </div>
+        <div class="fld"${d.expiry_kind === 'duration' ? '' : ' hidden'}>
+          <label class="yc-flabel" for="m-timeout">Duration</label>
+          <input type="text" id="m-timeout" data-bind="timeout" value="${esc(d.timeout)}" placeholder="3d" autocomplete="off">
+          <span class="yc-hint">e.g. <code>30m</code>, <code>2h</code>, <code>7d</code>.</span>
+        </div>
+        <div class="fld"${d.expiry_kind === 'at' ? '' : ' hidden'}>
+          <label class="yc-flabel" for="m-expires">Expires at (firm time)</label>
+          <input type="datetime-local" id="m-expires" data-bind="expires_at" value="${esc(d.expires_at)}">
+          <span class="yc-hint">Read as firm time (${esc(firmTz())}), whatever your own timezone.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>Protection</h3>
+      <div class="fgrid">
+        <div class="fld">
+          <label class="yc-flabel" for="m-prot">Level</label>
+          <select id="m-prot" data-bind="protection" data-structural>
+            <option value="auto"${d.protection === 'auto' ? ' selected' : ''}>Default</option>
+            <option value="none"${d.protection === 'none' ? ' selected' : ''}>none — anyone with the link</option>
+            <option value="password"${d.protection === 'password' ? ' selected' : ''}>password — confirm page asks for it</option>
+          </select>
+          <span class="yc-hint">Default is <b>none</b>, or <b>password</b> when an option has a result template (links that return information). Typing a password below also means password.</span>
+        </div>
+        <div class="fld">
+          <label class="yc-flabel" for="m-pw">Password <span class="muted">(optional)</span></label>
+          <input type="text" id="m-pw" data-bind="password" value="${esc(d.password)}" autocomplete="off" spellcheck="false"${d.protection === 'none' ? ' disabled' : ''} placeholder="${d.protection === 'none' ? 'not used' : 'leave blank to generate'}">
+          <span class="yc-hint">Blank = a 22-character password is generated and shown <b>once</b>, at mint. Your own: at least 12 characters — never a YisraCase account password.</span>
+        </div>
+      </div>
+      <div class="fld" style="margin-top:12px">
+        <label class="check"><input type="checkbox" id="m-rpr" data-bind="return_plan_result"${d.return_plan_result ? ' checked' : ''}> Return raw plan output on the JSON surface</label>
+        <span class="yc-hint">For links handed to an AI agent: the JSON respond answer includes each step's output. Off = success/failure plus the result template only.</span>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>Options</h3>
+      <span class="yc-hint" id="fn-list-note" style="margin:-4px 0 10px">${fnListNote()}</span>
+      <div id="opts-region">${d.options.map(optionCardHtml).join('')}</div>
+      <button class="btn" type="button" data-act="add-opt"${d.options.length >= 10 ? ' disabled title="Up to 10 options"' : ''}>+ Add option</button>
+    </div>
+
+    <div class="form-section">
+      <h3>Attribution and log link <span class="h-aside">(optional)</span></h3>
+      <div class="fgrid">
+        <div class="fld">
+          <label class="yc-flabel" for="m-attr">Attribute clicks to</label>
+          <select id="m-attr" data-bind="attributed_user_id">
+            <option value="">— nobody (automations) —</option>
+            ${users.map((u) => `<option value="${esc(u.user)}"${String(d.attributed_user_id) === String(u.user) ? ' selected' : ''}>${esc(u.user_name || ('user #' + u.user))}</option>`).join('')}
+          </select>
+          <span class="yc-hint">Who the outcome log names for link/password clicks — an assertion, not authentication. Timeout runs always log as automations.</span>
+        </div>
+        <div class="fld">
+          <label class="yc-flabel" for="m-ltype">Log against</label>
+          <select id="m-ltype" data-bind="link_type">
+            <option value="">— none —</option>
+            ${ABOUT_TYPES.map((t) => `<option value="${t}"${d.link_type === t ? ' selected' : ''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fld">
+          <label class="yc-flabel" for="m-lid">ID</label>
+          <input type="text" id="m-lid" data-bind="link_id" value="${esc(d.link_id)}" autocomplete="off" placeholder="case number, contact id, phone…">
+          <span class="yc-hint">Each click's outcome log entry is filed here. Type and ID go together.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>Email template <span class="h-aside">(optional)</span></h3>
+      <div class="fld">
+        <label class="yc-flabel" for="m-email">Email HTML</label>
+        <textarea id="m-email" class="code" data-bind="email_template" rows="5" placeholder="Blank = the default CTA email">${esc(d.email_template)}</textarea>
+        <span class="yc-hint">Tokens (lib/ctaLinks.js): <code>[[cta_url]]</code> landing page · <code>[[respond_url:VALUE]]</code> one option's confirm page (an unknown VALUE fails the mint) · <code>[[options_html]]</code> the styled button block · <code>[[expires_at]]</code> expiry in firm time. Any other <code>[[…]]</code> is left as written. Rendered into the preview and the receipt; never stored.</span>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn" type="button" id="dry-btn" data-act="dry">Preview (dry run)</button>
+      <button class="btn primary" type="button" id="mint-btn" data-act="mint">Mint…</button>
+      <span class="yc-hint" style="margin:0">Preview validates everything and creates nothing.</span>
+    </div>
+    <div class="preview-region" id="preview-region">${previewHtml()}</div>`;
+
+  fillDatalist();
+}
+
+function timeoutOptionsHtml() {
+  const d = state.draft;
+  const vals = d.options.map((o) => o.value.trim()).filter((v) => v);
+  if (d.timeout_option && !vals.includes(d.timeout_option)) d.timeout_option = '';
+  return `<option value="">— none —</option>` +
+    vals.map((v) => `<option value="${esc(v)}"${d.timeout_option === v ? ' selected' : ''}>${esc(v)}</option>`).join('');
+}
+
+function optionCardHtml(o, oi) {
+  const n = state.draft.options.length;
+  const valueBad = o.value.trim() !== '' && (!VALUE_RE.test(o.value.trim()) || o.value.trim() === 'respond');
+  return `
+    <div class="opt-card" data-oi="${oi}">
+      <div class="opt-card-h">
+        <b>Option ${oi + 1}</b>
+        <div class="btn-row">
+          <button class="btn icon" type="button" data-act="opt-up" title="Move up"${oi === 0 ? ' disabled' : ''}>↑</button>
+          <button class="btn icon" type="button" data-act="opt-down" title="Move down"${oi === n - 1 ? ' disabled' : ''}>↓</button>
+          <button class="btn small danger" type="button" data-act="opt-del"${n === 1 ? ' disabled title="A link needs at least one option"' : ''}>Remove</button>
+        </div>
+      </div>
+      <div class="fgrid">
+        <div class="fld">
+          <label class="yc-flabel" for="o${oi}-label">Label <span class="req">*</span></label>
+          <input type="text" id="o${oi}-label" data-bind="options.${oi}.label" maxlength="100" value="${esc(o.label)}" autocomplete="off" placeholder="Mark as spam">
+          <span class="yc-hint">The button text (max 100).</span>
+        </div>
+        <div class="fld">
+          <label class="yc-flabel" for="o${oi}-value">Value <span class="req">*</span></label>
+          <input type="text" id="o${oi}-value" class="mono" data-bind="options.${oi}.value" maxlength="64" value="${esc(o.value)}" autocomplete="off" spellcheck="false" placeholder="spam">
+          <span class="yc-hint">Rides in the URL: letters, digits, <code>_</code> and <code>-</code>. <code>respond</code> is reserved.</span>
+          ${valueBad ? '<span class="field-err">Not a valid value.</span>' : ''}
+        </div>
+      </div>
+      <div class="fld" style="margin-top:12px">
+        <label class="yc-flabel" for="o${oi}-confirm">Confirm text <span class="muted">(optional)</span></label>
+        <input type="text" id="o${oi}-confirm" data-bind="options.${oi}.confirm_text" maxlength="500" value="${esc(o.confirm_text)}" autocomplete="off">
+        <span class="yc-hint">Extra line on this option's confirm page (max 500).</span>
+      </div>
+      <div class="fld">
+        <label class="yc-flabel" for="o${oi}-tpl">Result template <span class="muted">(optional)</span></label>
+        <textarea id="o${oi}-tpl" class="code" data-bind="options.${oi}.result_template" rows="2" placeholder="Current email: [[1.output.contact_email]]">${esc(o.result_template)}</textarea>
+        <span class="yc-hint">Text shown to the clicker after a successful run — the only curated output a recipient ever sees. <code>[[N.output.path]]</code> reads step N's output. Plain text, escaped. Makes the default protection <b>password</b>.</span>
+      </div>
+      <span class="yc-flabel" style="margin-top:4px">Plan <span class="req">*</span></span>
+      <span class="yc-hint" style="margin:0 0 8px">Steps run in order, as automations (user 0); a failure stops the plan. Params are frozen JSON — no <code>{{placeholders}}</code>, no <code>_</code>-prefixed keys.</span>
+      ${o.steps.map((s, si) => stepHtml(oi, s, si, o.steps.length)).join('')}
+      <button class="btn small" type="button" data-act="step-add"${o.steps.length >= 20 ? ' disabled title="Up to 20 steps"' : ''}>+ Add step</button>
+    </div>`;
+}
+
+function stepHtml(oi, s, si, n) {
+  return `
+    <div class="step" data-si="${si}">
+      <div class="step-h">
+        <label class="yc-flabel" for="o${oi}s${si}-fn">Step ${si + 1}</label>
+        <div class="btn-row">
+          <button class="btn icon" type="button" data-act="step-up" title="Move up"${si === 0 ? ' disabled' : ''}>↑</button>
+          <button class="btn icon" type="button" data-act="step-down" title="Move down"${si === n - 1 ? ' disabled' : ''}>↓</button>
+          <button class="btn icon danger" type="button" data-act="step-del" title="Remove step"${n === 1 ? ' disabled' : ''}>✕</button>
+        </div>
+      </div>
+      <div class="fld" style="margin-bottom:6px">
+        <input type="text" id="o${oi}s${si}-fn" class="mono" list="fn-names" data-bind="options.${oi}.steps.${si}.fn" value="${esc(s.fn)}" autocomplete="off" spellcheck="false" placeholder="function name, e.g. start_workflow" aria-label="Step ${si + 1} function">
+        <span class="fn-desc" data-fn-desc="${oi}.${si}">${fnDescHtml(s.fn)}</span>
+      </div>
+      <div class="fld" style="margin-bottom:0">
+        <label class="yc-flabel" for="o${oi}s${si}-params">Params (JSON object)</label>
+        <textarea id="o${oi}s${si}-params" class="code" data-bind="options.${oi}.steps.${si}.params" rows="3" spellcheck="false">${esc(s.params)}</textarea>
+        <span class="field-err" data-json-err="${oi}.${si}"${jsonErr(s.params) ? '' : ' hidden'}>${esc(jsonErr(s.params) || '')}</span>
+      </div>
+    </div>`;
+}
+
+function jsonErr(text) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  try { JSON.parse(t); return null; } catch (e) { return `Not valid JSON: ${e.message}`; }
+}
+
+/** draft path "options.0.steps.1.fn" → set */
+function setPath(path, value) {
+  const parts = path.split('.');
+  let o = state.draft;
+  for (let i = 0; i < parts.length - 1; i++) o = o[/^\d+$/.test(parts[i]) ? Number(parts[i]) : parts[i]];
+  o[parts[parts.length - 1]] = value;
+}
+
+function onMintInput(e) {
+  const el = e.target.closest('[data-bind]');
+  if (!el) return;
+  const path = el.dataset.bind;
+  const val = el.type === 'checkbox' ? el.checked : el.value;
+  setPath(path, val);
+  markPreviewStale();
+
+  let m;
+  if ((m = /^options\.(\d+)\.label$/.exec(path))) {
+    const o = state.draft.options[Number(m[1])];
+    if (!o.valueTouched) {
+      o.value = slugValue(val);
+      const v = E(`o${m[1]}-value`);
+      if (v) v.value = o.value;
+      refreshTimeoutOptions();
+    }
+  } else if ((m = /^options\.(\d+)\.value$/.exec(path))) {
+    state.draft.options[Number(m[1])].valueTouched = val.trim() !== '';
+    refreshTimeoutOptions();
+  } else if ((m = /^options\.(\d+)\.steps\.(\d+)\.fn$/.exec(path))) {
+    const desc = document.querySelector(`[data-fn-desc="${m[1]}.${m[2]}"]`);
+    if (desc) desc.innerHTML = fnDescHtml(val);
+  } else if ((m = /^options\.(\d+)\.steps\.(\d+)\.params$/.exec(path))) {
+    const errEl = document.querySelector(`[data-json-err="${m[1]}.${m[2]}"]`);
+    const msg = jsonErr(val);
+    if (errEl) { errEl.textContent = msg || ''; errEl.hidden = !msg; }
+  }
+  // Mode / expiry kind / protection reshape the form.
+  if (el.hasAttribute('data-structural') && e.type === 'change') {
+    if (path === 'protection' && val === 'none') state.draft.password = '';
+    const host = document.querySelector('.panel-host');
+    const y = host.scrollTop;
+    renderMint();
+    host.scrollTop = y;
+  }
+}
+
+function refreshTimeoutOptions() {
+  const sel = E('m-timeout-opt');
+  if (sel) sel.innerHTML = timeoutOptionsHtml();
+}
+
+function markPreviewStale() {
+  if (state.preview && !state.previewStale) {
+    state.previewStale = true;
+    const r = E('preview-region');
+    if (r) r.innerHTML = previewHtml();
+  }
+}
+
+function onMintClick(e) {
+  const b = e.target.closest('[data-act]');
+  if (!b || b.disabled) return;
+  const d = state.draft;
+  const card = b.closest('[data-oi]');
+  const oi = card ? Number(card.dataset.oi) : -1;
+  const stepEl = b.closest('[data-si]');
+  const si = stepEl ? Number(stepEl.dataset.si) : -1;
+  const swap = (arr, i, j) => { [arr[i], arr[j]] = [arr[j], arr[i]]; };
+  let structural = true;
+  switch (b.dataset.act) {
+    case 'add-opt': if (d.options.length < 10) d.options.push(newOption()); break;
+    case 'opt-up': if (oi > 0) swap(d.options, oi, oi - 1); break;
+    case 'opt-down': if (oi < d.options.length - 1) swap(d.options, oi, oi + 1); break;
+    case 'opt-del': if (d.options.length > 1) d.options.splice(oi, 1); break;
+    case 'step-add': if (d.options[oi].steps.length < 20) d.options[oi].steps.push(newStep()); break;
+    case 'step-up': if (si > 0) swap(d.options[oi].steps, si, si - 1); break;
+    case 'step-down': if (si < d.options[oi].steps.length - 1) swap(d.options[oi].steps, si, si + 1); break;
+    case 'step-del': if (d.options[oi].steps.length > 1) d.options[oi].steps.splice(si, 1); break;
+    case 'dry': structural = false; runMint(true); break;
+    case 'mint': structural = false; confirmMint(); break;
+    case 'copy': structural = false; copyText(b.dataset.text, b.dataset.msg); break;
+    default: structural = false;
+  }
+  if (structural) {
+    markPreviewStale();
+    const y = document.querySelector('.panel-host').scrollTop;
+    renderMint();
+    document.querySelector('.panel-host').scrollTop = y;
+  }
+}
+
+/** Draft → POST /api/cta body. Returns { body } or { error } (client-side JSON problems only — the server validates the rest). */
+function buildBody(dryRun) {
+  const d = state.draft;
+  const options = [];
+  for (let oi = 0; oi < d.options.length; oi++) {
+    const o = d.options[oi];
+    const plan = [];
+    for (let si = 0; si < o.steps.length; si++) {
+      const s = o.steps[si];
+      const t = String(s.params || '').trim();
+      let params = {};
+      if (t) {
+        try { params = JSON.parse(t); }
+        catch (e) { return { error: `Option ${oi + 1}, step ${si + 1}: params is not valid JSON — ${e.message}` }; }
+      }
+      plan.push({ fn: s.fn.trim(), params });
+    }
+    const opt = { value: o.value.trim(), label: o.label.trim(), plan };
+    if (o.confirm_text.trim()) opt.confirm_text = o.confirm_text.trim();
+    if (o.result_template.trim()) opt.result_template = o.result_template;
+    options.push(opt);
+  }
+  const body = { name: d.name, prompt: d.prompt, mode: d.mode, options, dry_run: dryRun };
+  if (d.context_html.trim()) body.context_html = d.context_html;
+  if (d.mode === 'repeatable' && String(d.max_uses).trim()) body.max_uses = String(d.max_uses).trim();
+  if (d.mode === 'once' && d.timeout_option) body.timeout_option = d.timeout_option;
+  if (d.expiry_kind === 'duration') {
+    if (!d.timeout.trim()) return { error: 'Expiry: enter a duration such as 3d, or pick the firm default.' };
+    body.timeout = d.timeout.trim();
+  } else if (d.expiry_kind === 'at') {
+    if (!d.expires_at) return { error: 'Expiry: pick a date and time, or use the firm default.' };
+    body.expires_at = d.expires_at;   // naive → firm time server-side
+  }
+  if (d.protection !== 'auto') body.protection = d.protection;
+  if (d.protection !== 'none' && d.password !== '') body.password = d.password;
+  if (d.return_plan_result) body.return_plan_result = true;
+  if (d.attributed_user_id) body.attributed_user_id = d.attributed_user_id;
+  if (d.link_type || d.link_id.trim()) { body.link_type = d.link_type; body.link_id = d.link_id.trim(); }
+  if (d.email_template.trim()) body.email_template = d.email_template;
+  return { body };
+}
+
+async function runMint(dryRun) {
+  if (state.minting) return;
+  const built = buildBody(dryRun);
+  if (built.error) {
+    state.preview = { ok: false, message: built.error, client: true };
+    state.previewStale = false;
+    E('preview-region').innerHTML = previewHtml();
+    E('preview-region').scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  state.minting = true;
+  E('dry-btn').disabled = true;
+  E('mint-btn').disabled = true;
+  if (dryRun) E('preview-region').innerHTML = '<div class="loading">Validating…</div>';
+  try {
+    const r = await api('/api/cta', 'POST', built.body);
+    if (dryRun) {
+      state.preview = { ok: true, data: r };
+      state.previewStale = false;
+    } else {
+      state.receipt = r;
+      state.pwCopied = false;
+      state.preview = null;
+      state.draft = null;          // minted — the next "+ New CTA" starts clean
+      state.loaded = false;        // the list refetches on the way back
+      showReceipt();
+      return;
+    }
+  } catch (err) {
+    state.preview = { ok: false, message: errText(err), status: err.status };
+    state.previewStale = false;
+  } finally {
+    state.minting = false;
+    if (E('dry-btn')) E('dry-btn').disabled = false;
+    if (E('mint-btn')) E('mint-btn').disabled = false;
+  }
+  E('preview-region').innerHTML = previewHtml();
+  E('preview-region').scrollIntoView({ block: 'nearest' });
+}
+
+function confirmMint() {
+  const built = buildBody(false);
+  if (built.error) { runMint(false); return; }
+  const b = built.body;
+  const exp = b.timeout ? `in ${esc(b.timeout)}` : b.expires_at ? `${esc(b.expires_at.replace('T', ' '))} firm time` : 'firm default for the mode';
+  const prot = b.protection || (b.password ? 'password' : (b.options.some((o) => o.result_template) ? 'password (default for result templates)' : 'none'));
+  openConfirm({
+    title: 'Mint this CTA?',
+    html: `<p>The link is live as soon as it exists — anyone you give a URL to can act on it until it expires or you disable it.
+      Nothing is sent; you share the URLs yourself.</p>
+      <div class="detail-grid">
+        <div class="k">Name</div><div class="v">${esc(b.name)}</div>
+        <div class="k">Mode</div><div class="v">${esc(b.mode)}${b.max_uses ? ` · max ${esc(b.max_uses)} uses` : ''}</div>
+        <div class="k">Expiry</div><div class="v">${exp}</div>
+        <div class="k">Protection</div><div class="v">${esc(prot)}</div>
+        <div class="k">Options</div><div class="v">${b.options.map((o) => `${esc(o.label || '(no label)')} → ${o.plan.map((s) => `<code>${esc(s.fn || '?')}</code>`).join(', ')}`).join('<br>')}</div>
+      </div>
+      <p class="yc-hint" style="margin-top:10px">Run "Preview (dry run)" first if you haven't — a mint that fails validation creates nothing either way.</p>`,
+    yes: 'Mint',
+    onYes: async () => { await runMint(false); },
+  });
+}
+
+function previewHtml() {
+  const p = state.preview;
+  if (!p) return '';
+  const stale = state.previewStale ? '<div class="stale-note">The form changed since this preview — run it again.</div>' : '';
+  if (!p.ok) {
+    return `${stale}<div class="inline-error"><b>${p.client ? 'Fix this first' : 'Rejected'}:</b> ${esc(p.message)}</div>`;
+  }
+  const r = p.data || {};
+  const urls = r.urls || {};
+  const list = (items, cls) => items && items.length ? `<ul class="note-list ${cls}">${items.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '';
+  return `${stale}
+    <div class="ok-box"><b>Valid — nothing was created.</b>
+      ${esc(r.mode)} · protection <b>${esc(r.protection)}</b>${r.protection_source ? ` <span>(${esc(String(r.protection_source).replace(/_/g, ' '))})</span>` : ''}
+      · expires ${esc(fmtFirm(r.expires_at))}${r.max_uses != null ? ` · max ${esc(r.max_uses)} uses` : ''}${r.timeout_option ? ` · timeout option <code>${esc(r.timeout_option)}</code>` : ''}
+      ${list(r.notes, '')}
+    </div>
+    ${r.warnings && r.warnings.length ? `<div class="warn-box" style="margin-top:8px"><b>Warnings</b>${list(r.warnings, '')}</div>` : ''}
+    <div class="section" style="margin-top:10px">
+      <h3>URLs <span class="h-aside">(<code>&lt;token&gt;</code> is filled in at mint)</span></h3>
+      <div class="detail-grid">
+        <div class="k">Landing</div><div class="v"><div class="url-line"><code>${esc(r.cta_url)}</code></div></div>
+        ${Object.keys(urls).map((v) => `<div class="k">${esc(v)}</div><div class="v"><div class="url-line"><code>${esc(urls[v])}</code></div></div>`).join('')}
+      </div>
+    </div>
+    <div class="section">
+      <h3>Email preview</h3>
+      <iframe class="email-frame" id="email-preview" sandbox="" title="Email preview"></iframe>
+      <span class="yc-hint">Rendered sandboxed (no scripts, no forms). Buttons point at placeholder URLs until mint.</span>
+    </div>`;
+}
+
+// srcdoc is assigned after insertion so the HTML never passes through a template attribute.
+// Once per element: every re-render makes a fresh iframe, and re-assigning
+// srcdoc on an existing one would reload it on every keystroke-driven DOM change.
+function paintEmailFrames() {
+  const p = state.preview;
+  const f = E('email-preview');
+  if (f && !f.dataset.painted && p && p.ok && p.data) { f.srcdoc = p.data.email_html || ''; f.dataset.painted = '1'; }
+  const rf = E('receipt-email');
+  if (rf && !rf.dataset.painted && state.receipt) { rf.srcdoc = state.receipt.email_html || ''; rf.dataset.painted = '1'; }
+}
+
+// ── RECEIPT ─────────────────────────────────────────────────
+function showReceipt() {
+  closeConfirm();
+  setView('receipt');
+  const r = state.receipt;
+  const urls = r.urls || {};
+  const pw = r.password;
+  E('receipt-region').innerHTML = `
+    <div class="ok-box" style="margin-bottom:12px"><b>CTA #${esc(r.id)} minted — "${esc(r.name)}".</b>
+      ${esc(r.mode)} · protection ${esc(r.protection)} · expires ${esc(fmtFirm(r.expires_at))}
+      ${r.notes && r.notes.length ? `<ul class="note-list">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+    </div>
+    ${r.warnings && r.warnings.length ? `<div class="warn-box"><b>Warnings</b><ul class="note-list">${r.warnings.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}
+    ${pw ? `
+    <div class="secret-box" id="pw-box">
+      <h3>⚠ Password — shown once</h3>
+      <div>This password will <b>never be shown again</b>. Copy it now and give it to the recipient by a separate channel.</div>
+      <div class="secret" id="pw-value">${esc(pw)}</div>
+      <button class="btn primary" type="button" data-act="copy-pw">Copy password</button>
+      <span class="yc-hint" id="pw-copied" hidden>Copied.</span>
+    </div>` : ''}
+    <div class="section">
+      <h3>Links</h3>
+      <div class="detail-grid">
+        <div class="k">Token</div>
+        <div class="v"><div class="url-line"><code>${esc(r.token)}</code>
+          <button class="btn small" type="button" data-act="copy" data-text="${esc(r.token)}" data-msg="Token copied">Copy</button></div></div>
+        <div class="k">Landing</div>
+        <div class="v"><div class="url-line"><code title="${esc(r.cta_url)}">${esc(r.cta_url)}</code>
+          <button class="btn small" type="button" data-act="copy" data-text="${esc(r.cta_url)}" data-msg="Landing URL copied">Copy</button></div></div>
+        ${Object.keys(urls).map((v) => `
+        <div class="k">${esc(v)}</div>
+        <div class="v"><div class="url-line"><code title="${esc(urls[v])}">${esc(urls[v])}</code>
+          <button class="btn small" type="button" data-act="copy" data-text="${esc(urls[v])}" data-msg="Option URL copied">Copy</button></div></div>`).join('')}
+      </div>
+    </div>
+    <div class="section">
+      <h3>Email</h3>
+      <div class="btn-row" style="margin-bottom:8px">
+        <button class="btn" type="button" data-act="copy-email">Copy email HTML</button>
+        <button class="btn" type="button" data-act="copy-buttons">Copy buttons HTML</button>
+      </div>
+      <iframe class="email-frame" id="receipt-email" sandbox="" title="Email preview"></iframe>
+      <span class="yc-hint">Sandboxed preview. Clicking a button here only opens its confirm page — nothing runs without the confirm.</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" type="button" data-act="receipt-detail">Open its detail</button>
+      <button class="btn" type="button" data-act="receipt-list">Back to list</button>
+      <button class="btn" type="button" data-act="receipt-new">Mint another</button>
+    </div>`;
+  paintEmailFrames();
+}
+
+function leaveReceipt(go) {
+  const r = state.receipt;
+  if (r && r.password && !state.pwCopied) {
+    openConfirm({
+      title: 'Leave without copying the password?',
+      html: '<p>The generated password is <b>never shown again</b>. Without it the link can only be used after you cancel it and mint a new one.</p>',
+      yes: 'Leave anyway',
+      yesClass: 'danger',
+      onYes: async () => { state.receipt = null; go(); },
+    });
+    return;
+  }
+  state.receipt = null;
+  go();
+}
+
+async function onReceiptClick(e) {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const r = state.receipt;
+  switch (b.dataset.act) {
+    case 'copy': copyText(b.dataset.text, b.dataset.msg); break;
+    case 'copy-pw':
+      if (r && r.password && await copyText(r.password, 'Password copied')) {
+        state.pwCopied = true;
+        E('pw-copied').hidden = false;
+      }
+      break;
+    case 'copy-email': if (r) copyText(r.email_html || '', 'Email HTML copied'); break;
+    case 'copy-buttons': if (r) copyText(r.options_html || '', 'Buttons HTML copied'); break;
+    case 'receipt-detail': { const id = r && r.id; leaveReceipt(() => openDetail(id)); break; }
+    case 'receipt-list': leaveReceipt(() => goList()); break;
+    case 'receipt-new': leaveReceipt(() => openMint()); break;
+  }
+}
+
+// ── Navigation ──────────────────────────────────────────────
+function goList() {
+  state.detail = null;
+  setView('list');
+  if (!state.loaded) loadList(); else renderList();
+}
+
+// ── Init / wiring ───────────────────────────────────────────
+function init() {
+  E('f-status').addEventListener('change', () => loadList());
+  E('f-q').addEventListener('input', () => renderList());
+  E('refresh-btn').addEventListener('click', () => loadList());
+  E('new-btn').addEventListener('click', openMint);
+  E('detail-refresh').addEventListener('click', () => { if (state.detail) { state.detail.err = null; loadDetail(); } });
+  E('reset-draft').addEventListener('click', () => openConfirm({
+    title: 'Reset the form?',
+    html: '<p>Clears every field and option in this draft.</p>',
+    yes: 'Reset', yesClass: 'danger',
+    onYes: async () => { state.draft = newDraft(); state.preview = null; state.previewStale = false; renderMint(); },
+  }));
+  document.querySelectorAll('[data-nav="list"]').forEach((b) => b.addEventListener('click', goList));
+
+  E('list-region').addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]');
+    if (act) {
+      if (act.dataset.act === 'retry-list') return loadList();
+      if (act.dataset.act === 'more') return loadList({ append: true });
+      if (act.dataset.act === 'copy-url') {
+        const tr = act.closest('tr[data-id]');
+        const r = tr && state.rows.find((x) => String(x.id) === tr.dataset.id);
+        if (r) copyText(r.cta_url, 'Landing URL copied');
+        return;
+      }
+    }
+    const tr = e.target.closest('tr.row[data-id]');
+    if (tr) openDetail(tr.dataset.id);
+  });
+
+  E('detail-region').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (b && !b.disabled) {
+      switch (b.dataset.act) {
+        case 'copy': return copyText(b.dataset.text, b.dataset.msg);
+        case 'edit': return openPatch('edit');
+        case 'reenable': return openPatch('reenable');
+        case 'disable': return confirmStatus('disabled');
+        case 'cancel': return confirmStatus('cancelled');
+        case 'retry-detail': state.detail.err = null; renderDetail(); return loadDetail();
+      }
+      return;
+    }
+    const tr = e.target.closest('tr.row[data-exec]');
+    if (tr) {
+      const id = Number(tr.dataset.exec);
+      if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+      renderDetail();
+    }
+  });
+
+  const mint = E('mint-region');
+  mint.addEventListener('input', onMintInput);
+  mint.addEventListener('change', onMintInput);
+  mint.addEventListener('click', onMintClick);
+  // The preview region is re-rendered from several places; paint the sandboxed email once it is in the DOM.
+  new MutationObserver(() => paintEmailFrames()).observe(mint, { childList: true, subtree: true });
+
+  E('receipt-region').addEventListener('click', onReceiptClick);
+
+  E('patch-cancel').addEventListener('click', closePatch);
+  E('patch-save').addEventListener('click', savePatch);
+  E('patch-body').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); savePatch(); } });
+  E('confirm-no').addEventListener('click', closeConfirm);
+  E('confirm-yes').addEventListener('click', confirmYes);
+  E('patch-backdrop').addEventListener('click', (e) => { if (e.target === E('patch-backdrop')) closePatch(); });
+  E('confirm-backdrop').addEventListener('click', (e) => { if (e.target === E('confirm-backdrop')) closeConfirm(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    // Top of stack first: confirm > patch.
+    if (E('confirm-backdrop').classList.contains('open')) return closeConfirm();
+    if (E('patch-backdrop').classList.contains('open')) return closePatch();
+  });
+
+  loadList();
+}
+
+// The shell pings visible frames when their tab is re-entered (index.html
+// pingBecameVisible). Refresh quietly — never under an open dialog, and never
+// on the builder or the receipt (that would cost a draft or a shown-once secret).
+window.ycBecameVisible = () => {
+  if (E('confirm-backdrop').classList.contains('open') || E('patch-backdrop').classList.contains('open')) return;
+  if (state.view === 'list') loadList({ silent: true });
+  else if (state.view === 'detail' && state.detail && !state.detail.busy) loadDetail();
+};
+
+// ── Boot ────────────────────────────────────────────────────
+// Runs LAST (toolManager's TDZ caution): if the parent is already ready this
+// calls init() synchronously, which touches the consts above.
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+
+</body>
+</html>

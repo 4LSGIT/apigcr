@@ -252,6 +252,7 @@ public/connections.html
 public/contact.html
 public/courtpreview.html
 public/css/yc-forms.css
+public/ctaManager.html
 public/customView.html
 public/dbConsole.html
 public/docReq.html
@@ -661,6 +662,8 @@ scripts/mobile-survey/README.md
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/pipeline.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
+scripts/mobile-survey/fixtures/api/cta.json
+scripts/mobile-survey/fixtures/api/cta/2/executions.json
 scripts/mobile-survey/fixtures/api/documents.json
 scripts/mobile-survey/fixtures/api/field-defs.json
 scripts/mobile-survey/fixtures/api/tasks.json
@@ -843,6 +846,7 @@ tests/courtexecutor.update.test.js
 tests/createTaskDedupe.test.js
 tests/ctaActions.routes.test.js
 tests/ctaCreateFn.test.js
+tests/ctaManager.pane.test.js
 tests/ctaService.test.js
 tests/customFields.s2.test.js
 tests/customFields.s3.test.js

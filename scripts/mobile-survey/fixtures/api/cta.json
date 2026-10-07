@@ -1,0 +1,300 @@
+{
+ "ctas": [
+  {
+   "id": 9,
+   "token": "fixtureTok000000000009",
+   "name": "WF27 not-spam re-entry — Jordan Sample",
+   "mode": "once",
+   "status": "active",
+   "protection": "none",
+   "options": [
+    {
+     "value": "not_spam",
+     "label": "Not spam — re-run intake",
+     "steps": [
+      "start_workflow"
+     ]
+    }
+   ],
+   "max_uses": null,
+   "uses_count": 0,
+   "expires_at": "2029-10-09T03:59:59.898Z",
+   "timeout_option": null,
+   "failed_attempts": 0,
+   "return_plan_result": 0,
+   "attributed_user_id": null,
+   "mint_source": "workflow",
+   "source_execution_id": 98765,
+   "minted_by": 0,
+   "link_type": "contact",
+   "link_id": "1001",
+   "created_at": "2026-10-07T15:59:59.898Z",
+   "updated_at": "2026-10-07T15:59:59.898Z",
+   "exec_count": 0,
+   "failed_count": 0,
+   "last_executed_at": null,
+   "state": "active",
+   "cta_url": "https://example.com/c/fixtureTok000000000009"
+  },
+  {
+   "id": 8,
+   "token": "fixtureTok000000000008",
+   "name": "Cancelled — wrong recipient",
+   "mode": "once",
+   "status": "cancelled",
+   "protection": "none",
+   "options": [
+    {
+     "value": "go",
+     "label": "Go",
+     "steps": [
+      "lookup_contact"
+     ]
+    }
+   ],
+   "max_uses": null,
+   "uses_count": 0,
+   "expires_at": "2029-10-08T07:59:59.898Z",
+   "timeout_option": null,
+   "failed_attempts": 0,
+   "return_plan_result": 0,
+   "attributed_user_id": null,
+   "mint_source": "su",
+   "source_execution_id": null,
+   "minted_by": 1,
+   "link_type": null,
+   "link_id": null,
+   "created_at": "2026-10-07T15:59:59.898Z",
+   "updated_at": "2026-10-07T15:59:59.898Z",
+   "exec_count": 0,
+   "failed_count": 0,
+   "last_executed_at": null,
+   "state": "cancelled",
+   "cta_url": "https://example.com/c/fixtureTok000000000008"
+  },
+  {
+   "id": 7,
+   "token": "fixtureTok000000000007",
+   "name": "Old test link",
+   "mode": "once",
+   "status": "disabled",
+   "protection": "none",
+   "options": [
+    {
+     "value": "go",
+     "label": "Go",
+     "steps": [
+      "lookup_contact"
+     ]
+    }
+   ],
+   "max_uses": null,
+   "uses_count": 0,
+   "expires_at": "2026-10-07T10:59:59.898Z",
+   "timeout_option": null,
+   "failed_attempts": 0,
+   "return_plan_result": 0,
+   "attributed_user_id": null,
+   "mint_source": "su",
+   "source_execution_id": null,
+   "minted_by": 1,
+   "link_type": null,
+   "link_id": null,
+   "created_at": "2026-10-07T15:59:59.898Z",
+   "updated_at": "2026-10-07T15:59:59.898Z",
+   "exec_count": 0,
+   "failed_count": 0,
+   "last_executed_at": null,
+   "state": "disabled",
+   "cta_url": "https://example.com/c/fixtureTok000000000007"
+  },
+  {
+   "id": 6,
+   "token": "fixtureTok000000000006",
+   "name": "Confirm hearing attendance",
+   "mode": "once",
+   "status": "active",
+   "protection": "none",
+   "options": [
+    {
+     "value": "yes",
+     "label": "I will attend",
+     "steps": [
+      "lookup_contact"
+     ]
+    }
+   ],
+   "max_uses": null,
+   "uses_count": 0,
+   "expires_at": "2026-10-06T09:59:59.898Z",
+   "timeout_option": null,
+   "failed_attempts": 0,
+   "return_plan_result": 0,
+   "attributed_user_id": null,
+   "mint_source": "su",
+   "source_execution_id": null,
+   "minted_by": 1,
+   "link_type": null,
+   "link_id": null,
+   "created_at": "2026-10-07T15:59:59.898Z",
+   "updated_at": "2026-10-07T15:59:59.898Z",
+   "exec_count": 0,
+   "failed_count": 0,
+   "last_executed_at": null,
+   "state": "expired",
+   "cta_url": "https://example.com/c/fixtureTok000000000006"
+  },
+  {
+   "id": 5,
+   "token": "fixtureTok000000000005",
+   "name": "Resync docs (standing)",
+   "mode": "repeatable",
+   "status": "active",
+   "protection": "none",
+   "options": [
+    {
+     "value": "resync",
+     "label": "Run the resync",
+     "steps": [
+      "lookup_contact"
+     ]
+    }
+   ],
+   "max_uses": 2,
+   "uses_count": 2,
+   "expires_at": "2029-10-15T15:59:59.898Z",
+   "timeout_option": null,
+   "failed_attempts": 0,
+   "return_plan_result": 0,
+   "attributed_user_id": null,
+   "mint_source": "su",
+   "source_execution_id": null,
+   "minted_by": 1,
+   "link_type": null,
+   "link_id": null,
+   "created_at": "2026-10-07T15:59:59.898Z",
+   "updated_at": "2026-10-07T15:59:59.898Z",
+   "exec_count": 0,
+   "failed_count": 0,
+   "last_executed_at": null,
+   "state": "exhausted",
+   "cta_url": "https://example.com/c/fixtureTok000000000005"
+  },
+  {
+   "id": 3,
+   "token": "fixtureTok000000000003",
+   "name": "Pat Example — current email (agent lookup)",
+   "mode": "repeatable",
+   "status": "active",
+   "protection": "password",
+   "options": [
+    {
+     "value": "email",
+     "label": "Show current email",
+     "steps": [
+      "lookup_contact"
+     ]
+    }
+   ],
+   "max_uses": 3,
+   "uses_count": 2,
+   "expires_at": "2029-10-26T15:59:59.089Z",
+   "timeout_option": null,
+   "failed_attempts": 3,
+   "return_plan_result": 1,
+   "attributed_user_id": null,
+   "mint_source": "su",
+   "source_execution_id": null,
+   "minted_by": 1,
+   "link_type": null,
+   "link_id": null,
+   "created_at": "2026-10-07T15:59:59.361Z",
+   "updated_at": "2026-10-07T15:59:59.896Z",
+   "exec_count": 2,
+   "failed_count": 0,
+   "last_executed_at": "2026-10-07T15:59:59.896Z",
+   "state": "active",
+   "cta_url": "https://example.com/c/fixtureTok000000000003"
+  },
+  {
+   "id": 2,
+   "token": "fixtureTok000000000002",
+   "name": "Re-run intake for lead 4470",
+   "mode": "once",
+   "status": "used",
+   "protection": "none",
+   "options": [
+    {
+     "value": "rerun",
+     "label": "Re-run intake",
+     "steps": [
+      "lookup_contact",
+      "lookup_contact"
+     ]
+    }
+   ],
+   "max_uses": null,
+   "uses_count": 1,
+   "expires_at": "2029-10-09T15:59:59.087Z",
+   "timeout_option": null,
+   "failed_attempts": 0,
+   "return_plan_result": 0,
+   "attributed_user_id": null,
+   "mint_source": "su",
+   "source_execution_id": null,
+   "minted_by": 1,
+   "link_type": null,
+   "link_id": null,
+   "created_at": "2026-10-07T15:59:59.087Z",
+   "updated_at": "2026-10-07T15:59:59.088Z",
+   "exec_count": 1,
+   "failed_count": 1,
+   "last_executed_at": "2026-10-07T15:59:59.088Z",
+   "state": "used",
+   "cta_url": "https://example.com/c/fixtureTok000000000002"
+  },
+  {
+   "id": 1,
+   "token": "fixtureTok000000000001",
+   "name": "Suspect lead 4471 — spam?",
+   "mode": "once",
+   "status": "used",
+   "protection": "none",
+   "options": [
+    {
+     "value": "spam",
+     "label": "Mark as spam",
+     "steps": [
+      "lookup_contact"
+     ]
+    },
+    {
+     "value": "keep",
+     "label": "Not spam — keep",
+     "steps": [
+      "lookup_contact"
+     ]
+    }
+   ],
+   "max_uses": null,
+   "uses_count": 1,
+   "expires_at": "2029-10-09T15:59:59.079Z",
+   "timeout_option": "keep",
+   "failed_attempts": 0,
+   "return_plan_result": 0,
+   "attributed_user_id": 2,
+   "mint_source": "su",
+   "source_execution_id": null,
+   "minted_by": 1,
+   "link_type": "contact",
+   "link_id": "1001",
+   "created_at": "2026-10-07T15:59:59.083Z",
+   "updated_at": "2026-10-07T15:59:59.086Z",
+   "exec_count": 1,
+   "failed_count": 0,
+   "last_executed_at": "2026-10-07T15:59:59.086Z",
+   "state": "used",
+   "cta_url": "https://example.com/c/fixtureTok000000000001"
+  }
+ ]
+}
