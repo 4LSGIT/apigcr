@@ -667,7 +667,7 @@
     </button>
     <!-- Quick search — only shown on narrow viewports where the header search is hidden -->
     <div class="home-search">
-      <input styleid="qpInputHome" placeholder="Name, Phone, Case # or ID"
+      <input id="qpInputHome" placeholder="Name, Phone, Case # or ID"
         onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value, null, null, 10);}" />
       <button onclick="quickPick(E('qpInputHome').value, null, null, 10)">Go</button>
     </div>
