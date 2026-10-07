@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-06T18:17:27.121Z_  
-_696 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 270, PUT: 35, _ALL: 2_
+_Generated 2026-10-07T14:37:49.639Z_  
+_703 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 272, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -202,6 +202,10 @@ _696 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 270, PUT: 35, _ALL:
 | POST | `/api/credentials/:id/refresh` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/credentials/:id/reveal` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/credentials/:id/revoke` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/cta` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/cta` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| PATCH | `/api/cta/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/cta/:id/executions` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/documents` | `jwtOrApiKey` | — |
 | GET | `/api/documents/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/documents/:id` | `jwtOrApiKey` | — |
@@ -606,6 +610,14 @@ _696 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 270, PUT: 35, _ALL:
 |--------|------|-------------|---------|
 | GET | `/book/:slug,/b/:slug` | — | — |
 
+## /c
+
+| Method | Path | Middlewares | Handler |
+|--------|------|-------------|---------|
+| GET | `/c/:token([A-Za-z0-9_\-]{10,40})` | — | — |
+| GET | `/c/:token([A-Za-z0-9_\-]{10,40})/:value([A-Za-z0-9_\-]{1,64})` | — | — |
+| POST | `/c/:token([A-Za-z0-9_\-]{10,40})/respond` | — | — |
+
 ## /checkitems
 
 | Method | Path | Middlewares | Handler |
@@ -956,4 +968,4 @@ _696 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 270, PUT: 35, _ALL:
 
 ---
 
-_696 routes total — DELETE: 57, GET: 286, PATCH: 46, POST: 270, PUT: 35, _ALL: 2_
+_703 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 272, PUT: 35, _ALL: 2_

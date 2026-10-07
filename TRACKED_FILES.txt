@@ -31,6 +31,7 @@ lib/courtCitation.js
 lib/courtResolve.js
 lib/credentialCrypto.js
 lib/credentialInjection.js
+lib/ctaLinks.js
 lib/domainEventDrain.js
 lib/domainEvents.js
 lib/errorMiddleware.js
@@ -523,6 +524,7 @@ routes/api.contactRelations.js
 routes/api.contactRoles.js
 routes/api.contacts.js
 routes/api.credentials.js
+routes/api.cta.js
 routes/api.documents.js
 routes/api.dropbox.js
 routes/api.emailCredentials.js
@@ -586,6 +588,7 @@ routes/cal.js
 routes/campaign.js
 routes/courtPreview.js
 routes/courtReview.js
+routes/ctaActions.js
 routes/db.jwt.js
 routes/db64.js
 routes/dbQuery.js
@@ -796,6 +799,7 @@ tests/alertingStartLatency.test.js
 tests/apiAlertIt.routes.test.js
 tests/apiAppSettings.validate.test.js
 tests/apiCalendarTypes.routes.test.js
+tests/apiCta.routes.test.js
 tests/apiTools.routes.test.js
 tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js
@@ -836,6 +840,7 @@ tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.trusteeland.test.js
 tests/courtexecutor.update.test.js
 tests/createTaskDedupe.test.js
+tests/ctaActions.routes.test.js
 tests/ctaService.test.js
 tests/customFields.s2.test.js
 tests/customFields.s3.test.js

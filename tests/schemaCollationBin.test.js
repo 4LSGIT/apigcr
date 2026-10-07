@@ -32,6 +32,8 @@ const BIN_COLUMNS = [
   ['tasks',             'task_action_token'],
   ['decision_requests', 'token'],
   ['users',             'reset_token'],
+  // CTA bearer (/c/<t>) — ref/migrations/2026-10-07_cta.sql creates it _bin.
+  ['cta_links',         'token'],
 ];
 
 /**

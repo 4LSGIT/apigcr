@@ -102,15 +102,16 @@ const ctaAlerts = () => alert.mock.calls.map((c) => c[1]).filter((a) => a.source
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Every registry addition is an exposure decision: a new function lands here
-// only by someone editing this list on purpose. Rejected today (21 of 110
+// only by someone editing this list on purpose. Rejected today (24 of 110
 // raw keys): the 14 __-prefixed module exports/self-adds, the 6 controlFlow
-// functions, and the denylisted wait_until_time.
+// functions, and the 4 denylisted: wait_until_time (§4.2) plus the S2
+// ruling's cta_expiry_sweep, decision_timeout_cleanup, set_test_var.
 const EXPECTED_ELIGIBLE = [
   'advance_stage', 'ai_match', 'business_deadline', 'cancel_case_appointments',
   'cancel_sequences', 'cancel_workflow_execution', 'complete_event',
   'court_activity_summary', 'court_extract', 'court_review_retry',
   'create_appointment', 'create_event', 'create_log', 'create_task',
-  'cta_expiry_sweep', 'decision_timeout_cleanup', 'document_generate_from_template',
+  'document_generate_from_template',
   'documents_attribution_report', 'documents_refresh_case_cache', 'documents_sync',
   'dropbox_create_folder', 'dropbox_delete', 'dropbox_ensure_case_folder',
   'dropbox_get_shared_link', 'dropbox_list_folder', 'dropbox_move', 'dropbox_rename',
@@ -125,7 +126,7 @@ const EXPECTED_ELIGIBLE = [
   'portal_callback_reminder', 'query_ai', 'query_db', 'rc_renew_subscriptions',
   'refresh_expiring_oauth_credentials', 'render_submission_pdf', 'report_email',
   'run_error_sweep', 'run_event_digest', 'run_task_digest', 'send_email', 'send_mms',
-  'send_sms', 'set_log_about', 'set_setting', 'set_test_var', 'set_var', 'start_workflow',
+  'send_sms', 'set_log_about', 'set_setting', 'set_var', 'start_workflow',
   'sweep_calendar_missed', 'sweep_trigger_executions', 'update_appointment', 'update_case',
   'update_contact', 'update_db', 'update_event', 'update_log', 'validate_case_trustee',
 ];
@@ -139,10 +140,18 @@ describe('eligibility — layered filter (§4)', () => {
     // workflowOnly is NOT a filter (§4.6)
     expect(registry.start_workflow.__meta.workflowOnly).toBe(true);
     expect(cta.isCtaEligible('start_workflow')).toBe(true);
-    // the seeded denylist
-    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time']);
+    // the seeded denylist (+ the S2 ruling's three)
+    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var']);
     expect(registry.wait_until_time.__meta.controlFlow).toBeUndefined(); // flagless by design
     expect(cta.isCtaEligible('wait_until_time')).toBe(false);
+    // S2 ruling: each is a real meta-bearing registry function that ONLY the
+    // denylist keeps out (so dropping one from the list re-exposes it).
+    for (const f of ['cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var']) {
+      expect(typeof registry[f]).toBe('function');
+      expect(registry[f].__meta).toBeTruthy();
+      expect(registry[f].__meta.controlFlow).not.toBe(true);
+      expect(cta.isCtaEligible(f)).toBe(false);
+    }
     // __-prefixed registry members — plain data and helper functions alike
     expect(cta.isCtaEligible('__WRITE_POLICY')).toBe(false);
     expect(typeof registry.__validateFunctionParams).toBe('function');
@@ -821,7 +830,93 @@ describe('patchCta', () => {
   test('re-enable needs the latest execution to have failed', async () => {
     const m = await cta.mintCta(db, baseMint());
     await cta.respond(db, { token: m.token, value: 'spam' });
-    await expectStatus(cta.patchCta(db, m.id, { status: 'active' }), 409, /latest execution to have failed \(it is success\)/);
+    await expectStatus(cta.patchCta(db, m.id, { status: 'active' }), 409, /latest execution to have failed.*\(it is success\)/);
+  });
+
+  // ── S2 ruling: a run stuck 'running' > 15 min is a dead instance ─────────
+  const seedExec = (ctaId, over = {}) => {
+    const id = W.nextId.cta_executions++;
+    const e = {
+      id, cta_id: ctaId, option_value: 'go', status: 'running', plan_result: null,
+      responded_via: 'link', responder_user_id: null, responder_ip: null,
+      executed_at: new Date(), ...over,
+    };
+    W.tables.cta_executions.set(id, e);
+    return e;
+  };
+  const usedLink = (over = {}) => W.seedLink({
+    status: 'used', uses_count: 1, options: [{ value: 'go', label: 'Go', plan: [LOOKUP()] }], ...over,
+  });
+
+  test('STALE RUNNING: re-enable finalizes a >15-min running row as failed FIRST, then re-enables', async () => {
+    const row = usedLink();
+    const ex = seedExec(row.id, { executed_at: new Date(Date.now() - 16 * 60e3) });
+    const order = [];
+    W.on(/^UPDATE cta_executions SET status = 'failed'/, () => order.push('finalize'));
+    W.on(/^UPDATE cta_links SET uses_count = 0/, () => order.push('reenable'));
+    const p = await cta.patchCta(db, row.id, { status: 'active' });
+    expect(order).toEqual(['finalize', 'reenable']);
+    expect(p.finalized_execution_id).toBe(ex.id);
+    expect(p.after).toMatchObject({ status: 'active', uses_count: 0 });
+    expect(ex.status).toBe('failed');
+    expect(JSON.parse(ex.plan_result)[0].error).toMatch(/finalized as failed by an SU re-enable/);
+    // and the next click re-runs the plan
+    expect(await cta.respond(db, { token: row.token, value: 'go' })).toMatchObject({ ok: true, status: 'success' });
+  });
+
+  test('STALE RUNNING: the threshold is strictly over 15 min (injected clock), and under it is 409 with nothing written', async () => {
+    const row = usedLink();
+    const at = new Date(Date.now() - 60e3);
+    const ex = seedExec(row.id, { executed_at: at });
+    const exactly15 = new Date(at.getTime() + 15 * 60e3);
+    await expectStatus(cta.patchCta(db, row.id, { status: 'active' }, { now: exactly15 }), 409,
+      /stuck running over 15 min \(it is running\)/);
+    expect(ex.status).toBe('running');
+    expect(W.link(row.id)).toMatchObject({ status: 'used', uses_count: 1 });
+    expect(W.queries.some((q) => /^UPDATE /.test(q.sql))).toBe(false);
+    const p = await cta.patchCta(db, row.id, { status: 'active' }, { now: new Date(exactly15.getTime() + 1) });
+    expect(p.finalized_execution_id).toBe(ex.id);
+    expect(ex.status).toBe('failed');
+  });
+
+  test('STALE RUNNING: an expired link without an extension is 400 BEFORE the row is finalized', async () => {
+    const row = usedLink({ expires_at: new Date(Date.now() - 1000) });
+    const ex = seedExec(row.id, { executed_at: new Date(Date.now() - 20 * 60e3) });
+    await expect400(cta.patchCta(db, row.id, { status: 'active' }), /extend expires_at in the same PATCH/);
+    expect(ex.status).toBe('running');
+    expect(W.queries.some((q) => /^UPDATE /.test(q.sql))).toBe(false);
+  });
+
+  test('STALE RUNNING: a plan that finishes between the read and the finalize wins — judged on its real outcome', async () => {
+    // success lands first → nothing to re-enable
+    const a = usedLink();
+    const exA = seedExec(a.id, { executed_at: new Date(Date.now() - 16 * 60e3) });
+    W.on(/^UPDATE cta_executions SET status = 'failed'/, (sql, params) => {
+      const e = W.tables.cta_executions.get(Number(params[1]));
+      if (e.cta_id === a.id) e.status = 'success';   // executeOpened's own finalize landed first
+      else e.status = 'failed';
+    });
+    await expectStatus(cta.patchCta(db, a.id, { status: 'active' }), 409, /finished while this PATCH was applied \(now success\)/);
+    expect(exA.status).toBe('success');
+    expect(W.link(a.id)).toMatchObject({ status: 'used', uses_count: 1 });
+
+    // failure lands first → re-enable proceeds, but it was not OUR finalize
+    const b = usedLink();
+    const exB = seedExec(b.id, { executed_at: new Date(Date.now() - 16 * 60e3) });
+    const p = await cta.patchCta(db, b.id, { status: 'active' });
+    expect(exB.status).toBe('failed');
+    expect(exB.plan_result).toBeNull();               // its own (simulated) finalize, not our marker
+    expect(p.finalized_execution_id).toBeUndefined();
+    expect(p.after).toMatchObject({ status: 'active', uses_count: 0 });
+  });
+
+  test('adminRow never carries password_hash; state is derived', async () => {
+    const m = await cta.mintCta(db, baseMint({ protection: 'password' }));
+    const row = await cta.getCtaById(db, m.id);
+    expect(row.password_hash).toMatch(/^\$2[aby]\$12\$/);
+    const a = cta.adminRow(row);
+    expect(a).not.toHaveProperty('password_hash');
+    expect(a).toMatchObject({ id: m.id, state: 'active', token: m.token });
   });
 
   test('re-enabling an expired link needs an extension in the same PATCH', async () => {

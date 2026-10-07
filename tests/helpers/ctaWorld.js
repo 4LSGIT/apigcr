@@ -165,6 +165,7 @@ function makeCtaWorld() {
     ]),
     contacts: new Map(),
     logs: [],          // createLogEntry param arrays
+    audits: [],        // admin_audit_log param arrays (lib/auth.superuser.auditAdminAction order)
     queries: [],       // { sql, params, inTxn }
     commits: 0,
     gates: [],
@@ -286,9 +287,47 @@ function makeCtaWorld() {
         .map((r) => ({ id: r.id }));
       return [rows];
     }
-    if (/^SELECT id, status FROM cta_executions WHERE cta_id = \? ORDER BY id DESC LIMIT 1$/i.test(s)) {
-      const rows = W.execs(params[0]).sort((a, b) => b.id - a.id).slice(0, 1).map((e) => ({ id: e.id, status: e.status }));
+    if (/^SELECT id, status, executed_at FROM cta_executions WHERE cta_id = \? ORDER BY id DESC LIMIT 1$/i.test(s)) {
+      const rows = W.execs(params[0]).sort((a, b) => b.id - a.id).slice(0, 1)
+        .map((e) => ({ id: e.id, status: e.status, executed_at: e.executed_at }));
       return [rows];
+    }
+    // S2 SU reads (ctaService.listCtas / listExecutions). Scripted, not
+    // evaluated: no guard lives in them — but the projection IS read from the
+    // statement, so a column the service stops selecting stops appearing.
+    if ((m = /^SELECT (l\.\w+(?:, l\.\w+)*), \(SELECT COUNT\(\*\) FROM cta_executions e WHERE e\.cta_id = l\.id\) AS exec_count, \(SELECT COUNT\(\*\) FROM cta_executions e WHERE e\.cta_id = l\.id AND e\.status = 'failed'\) AS failed_count, \(SELECT MAX\(e\.executed_at\) FROM cta_executions e WHERE e\.cta_id = l\.id\) AS last_executed_at FROM cta_links l (WHERE l\.status = \? )?ORDER BY l\.id DESC LIMIT \? OFFSET \?$/i.exec(s))) {
+      const cols = m[1].split(', ').map((c) => c.slice(2));
+      const [status, lim, off] = m[2] ? params : [null, ...params];
+      const rows = [...W.tables.cta_links.values()]
+        .filter((r) => status == null || r.status === status)
+        .sort((a, b) => b.id - a.id)
+        .slice(off, off + lim)
+        .map((r) => {
+          const o = {};
+          for (const c of cols) {
+            if (!(c in r)) throw new Error(`ctaWorld: unknown column ${c}`);
+            o[c] = r[c];
+          }
+          const ex = W.execs(r.id);
+          o.exec_count = ex.length;
+          o.failed_count = ex.filter((e) => e.status === 'failed').length;
+          o.last_executed_at = ex.length ? ex.map((e) => e.executed_at).sort((a, b) => b - a)[0] : null;
+          return out(o);
+        });
+      return [rows];
+    }
+    if (/^SELECT id, cta_id, option_value, status, plan_result, responded_via, responder_user_id, responder_ip, executed_at FROM cta_executions WHERE cta_id = \? ORDER BY id DESC LIMIT \?$/i.test(s)) {
+      const rows = W.execs(params[0]).sort((a, b) => b.id - a.id).slice(0, params[1]).map((e) => out(e));
+      return [rows];
+    }
+    // routes/api.cta.js (admin_audit_log via lib/auth.superuser) and the
+    // jwtOrApiKey attempt log — recorded, never evaluated.
+    if (/^INSERT INTO admin_audit_log\b/i.test(s)) {
+      W.audits.push(params);
+      return [{ insertId: W.audits.length, affectedRows: 1 }];
+    }
+    if (/^INSERT INTO jwt_api_audit_log\b/i.test(s)) {
+      return [{ insertId: 1, affectedRows: 1 }];
     }
     if ((m = /^SELECT e\.id, e\.cta_id, e\.option_value, e\.executed_at FROM cta_executions e WHERE e\.status = 'running' AND e\.executed_at < NOW\(\) - INTERVAL (\d+) MINUTE$/i.exec(s))) {
       const cutoff = Date.now() - Number(m[1]) * 60e3;
@@ -331,6 +370,14 @@ function makeCtaWorld() {
   return db;
 }
 
+/** Decode an admin_audit_log INSERT param array (auditAdminAction order). */
+function decodeAudit(p) {
+  return {
+    tool: p[0], user_id: p[1], username: p[2], route: p[3], method: p[4], status: p[5],
+    error_message: p[6], details: p[10] == null ? null : JSON.parse(p[10]),
+  };
+}
+
 /** Decode a log INSERT param array (logService.createLogEntry order). */
 function decodeLog(p) {
   return {
@@ -340,4 +387,4 @@ function decodeLog(p) {
   };
 }
 
-module.exports = { makeCtaWorld, decodeLog, _test: { splitDepth0, makeEvaluator, numberParams } };
+module.exports = { makeCtaWorld, decodeLog, decodeAudit, _test: { splitDepth0, makeEvaluator, numberParams } };

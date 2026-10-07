@@ -21,8 +21,9 @@
  *   publicDescriptor(row)       the agent/JSON descriptor (no name/plans/templates)
  *
  * S2 adds the surfaces (routes/ctaActions.js, routes/api.cta.js) on top of
- * this; S3 adds create_cta. Nothing here builds URLs — the public origin is
- * a surface concern (firmConfig.publicUrl), composed by the routes.
+ * this, plus the SU reads listCtas / listExecutions / adminRow; S3 adds
+ * create_cta. Nothing here builds URLs — the public origin is a surface
+ * concern (firmConfig.publicUrl), composed in lib/ctaLinks.js.
  *
  * ── INVARIANTS (each one is locked by tests/ctaService.test.js) ────────────
  *
@@ -67,13 +68,26 @@ function registry() {
 
 /**
  * Registry functions a CTA plan may never call, on top of the predicate in
- * isCtaEligible(). wait_until_time is the one flagless function that returns
- * delayed_until (§4.2) — its flaglessness is deliberate (controlFlow would
- * route it through controlTarget normalization and the runaway-loop guard),
- * so it is denied by name here instead. Additions are exposure decisions:
- * tests/ctaService.test.js snapshots the eligible set.
+ * isCtaEligible(). Additions are exposure decisions: tests/ctaService.test.js
+ * snapshots the eligible set.
+ *
+ *   wait_until_time           the one flagless function that returns
+ *                             delayed_until (§4.2) — its flaglessness is
+ *                             deliberate (controlFlow would route it through
+ *                             controlTarget normalization and the runaway-loop
+ *                             guard), so it is denied by name here instead.
+ *   cta_expiry_sweep          internal plumbing (S2 ruling, 2026-10-07): a
+ *   decision_timeout_cleanup  public link must never drive the job that runs
+ *                             OTHER links' timeout plans, nor close a
+ *                             workflow's pending decision out from under it.
+ *   set_test_var              dev-only (S2 ruling): no business on a public link.
  */
-const CTA_FN_DENYLIST = Object.freeze(['wait_until_time']);
+const CTA_FN_DENYLIST = Object.freeze([
+  'wait_until_time',
+  'cta_expiry_sweep',
+  'decision_timeout_cleanup',
+  'set_test_var',
+]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */
 const CHROMIUM_FNS = new Set(['render_submission_pdf', 'document_generate_from_template']);
@@ -100,6 +114,9 @@ const MAX_PASSWORD_BYTES = 72;      // bcrypt ignores everything past 72 bytes
 
 const STEP_OUTPUT_MAX = 2000;       // plan_result truncation, per step
 const STALE_RUNNING_MINUTES = 15;
+const STALE_FINALIZE_ERROR =
+  `finalized as failed by an SU re-enable: still running over ${STALE_RUNNING_MINUTES} min — the instance likely died ` +
+  'mid-plan; side effects of any steps that ran are unknown';
 const PW_WARN_AT = 20;              // warning (records only)
 const PW_ERROR_AT = 100;            // error (emails IT)
 const DEFAULT_SWEEP_LIMIT = 50;
@@ -744,6 +761,93 @@ function publicDescriptor(row, now = new Date()) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SU reads (routes/api.cta.js) — the ONLY surfaces that see plans and the
+// full plan_result. Never password_hash, anywhere.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LIST_DEFAULT = 50;
+const LIST_MAX = 200;
+const EXEC_LIST_DEFAULT = 100;
+const EXEC_LIST_MAX = 500;
+const STORED_STATUSES = ['active', 'used', 'disabled', 'cancelled'];
+
+const LIST_COLS = [
+  'id', 'token', 'name', 'mode', 'status', 'protection', 'options', 'max_uses', 'uses_count',
+  'expires_at', 'timeout_option', 'failed_attempts', 'return_plan_result', 'attributed_user_id',
+  'mint_source', 'source_execution_id', 'minted_by', 'link_type', 'link_id', 'created_at', 'updated_at',
+].map((c) => `l.${c}`).join(', ');
+
+/** SU-side view of a full link row: everything but password_hash, plus the derived state. */
+function adminRow(row, now = new Date()) {
+  if (!row) return null;
+  const { password_hash: _omit, ...rest } = row;
+  return { ...rest, state: deriveState(row, now) };
+}
+
+/**
+ * List links, newest first, with execution counts. `status` filters the
+ * STORED status (expired/exhausted are derived — read `state`). Options are
+ * summarized ({value, label, steps:[fn…]}) — the plans' params stay out of
+ * the list; the full row comes back from PATCH and the executions read.
+ */
+async function listCtas(db, { status = null, limit = LIST_DEFAULT, offset = 0 } = {}, { now = new Date() } = {}) {
+  if (status != null && status !== '' && !STORED_STATUSES.includes(status)) {
+    throw bad(`status filter must be one of ${STORED_STATUSES.join(', ')}`);
+  }
+  const lim = Math.min(posInt(limit) || LIST_DEFAULT, LIST_MAX);
+  const offN = Number(offset);
+  const off = Number.isInteger(offN) && offN >= 0 ? offN : 0;
+  const filtered = status != null && status !== '';
+  const [rows] = await db.query(
+    `SELECT ${LIST_COLS},
+            (SELECT COUNT(*) FROM cta_executions e WHERE e.cta_id = l.id) AS exec_count,
+            (SELECT COUNT(*) FROM cta_executions e WHERE e.cta_id = l.id AND e.status = 'failed') AS failed_count,
+            (SELECT MAX(e.executed_at) FROM cta_executions e WHERE e.cta_id = l.id) AS last_executed_at
+       FROM cta_links l
+       ${filtered ? 'WHERE l.status = ?' : ''}
+      ORDER BY l.id DESC
+      LIMIT ? OFFSET ?`,
+    filtered ? [status, lim, off] : [lim, off]
+  );
+  return rows.map((r) => {
+    const opts = parseJsonCol(r.options, []);
+    return {
+      ...r,
+      options: (Array.isArray(opts) ? opts : []).map((o) => ({
+        value: o && o.value,
+        label: o && o.label,
+        steps: Array.isArray(o && o.plan) ? o.plan.map((st) => st && st.fn) : [],
+      })),
+      exec_count: Number(r.exec_count || 0),
+      failed_count: Number(r.failed_count || 0),
+      state: deriveState(r, now),
+    };
+  });
+}
+
+/** Every execution of one link, newest first — the one surface with the full plan_result (B5). */
+async function listExecutions(db, id, { limit = EXEC_LIST_DEFAULT } = {}, { now = new Date() } = {}) {
+  const ctaId = posInt(id);
+  if (ctaId == null) throw bad('invalid CTA id');
+  const row = await getCtaById(db, ctaId);
+  if (!row) throw new CtaError(404, `cta: CTA ${ctaId} not found`);
+  const lim = Math.min(posInt(limit) || EXEC_LIST_DEFAULT, EXEC_LIST_MAX);
+  const [rows] = await db.query(
+    `SELECT id, cta_id, option_value, status, plan_result, responded_via,
+            responder_user_id, responder_ip, executed_at
+       FROM cta_executions
+      WHERE cta_id = ?
+      ORDER BY id DESC
+      LIMIT ?`,
+    [ctaId, lim]
+  );
+  return {
+    cta: adminRow(row, now),
+    executions: rows.map((e) => ({ ...e, plan_result: parseJsonCol(e.plan_result, null) })),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Identity checks
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1105,15 +1209,22 @@ async function sweepExpired(db, { limit = DEFAULT_SWEEP_LIMIT } = {}) {
  *
  *   active    → disabled | cancelled; extend expiry; max_uses (repeatable)
  *   disabled  → active (400 if still expired after this patch) | cancelled
- *   used      → active ONLY when the latest execution failed — resets
- *               uses_count=0 and the next click re-runs the WHOLE plan
- *               (check plan_result first); → cancelled. Anything else is
- *               409: the link is already claimed.
+ *   used      → active ONLY when the latest execution failed, OR is still
+ *               'running' more than STALE_RUNNING_MINUTES after it started
+ *               (S2 ruling: the instance died mid-plan — the sweep has been
+ *               warning about it). The stale row is finalized 'failed'
+ *               FIRST (guarded on status='running', so a plan that finishes
+ *               in the meantime wins and is judged on its real outcome).
+ *               Resets uses_count=0 and the next click re-runs the WHOLE
+ *               plan (check plan_result / side effects first); → cancelled.
+ *               Anything else is 409: the link is already claimed.
  *   cancelled → 409 always (R8: permanent).
  *
  * Every UPDATE is guarded on the status read here: losing a race to a
- * click/sweep claim is 409, never an overwrite. Returns { before, after,
- * changed } for the caller's admin_audit_log row (S2).
+ * click/sweep claim is 409, never an overwrite. All 400s are decided before
+ * any write. Returns { before, after, changed } — plus
+ * finalized_execution_id when a stale run was closed — for the caller's
+ * admin_audit_log row.
  */
 async function patchCta(db, id, patch, { now = new Date() } = {}) {
   const ctaId = posInt(id);
@@ -1165,21 +1276,22 @@ async function patchCta(db, id, patch, { now = new Date() } = {}) {
 
   const expiredAfter = !newExpires || newExpires.getTime() <= now.getTime();
   let extraGuard = '';
+  let staleExecutionId = null;   // a dead 'running' row to finalize before re-enabling
 
   if (before.status === 'used') {
     if (target === 'cancelled') {
       // permanent kill of a spent link — fine
     } else if (target === 'active') {
-      const [[latest]] = await db.query(
-        'SELECT id, status FROM cta_executions WHERE cta_id = ? ORDER BY id DESC LIMIT 1',
-        [ctaId]
-      );
-      if (!latest || latest.status !== 'failed') {
+      const latest = await latestExecution(db, ctaId);
+      const stale = isStaleRunning(latest, now);
+      if (!latest || (latest.status !== 'failed' && !stale)) {
         throw new CtaError(409,
-          `cta: re-enable from used requires the latest execution to have failed (it is ${latest ? latest.status : 'missing'})`,
+          `cta: re-enable from used requires the latest execution to have failed, or to be stuck running over ${STALE_RUNNING_MINUTES} min` +
+          ` (it is ${latest ? latest.status : 'missing'})`,
           'not_reenableable');
       }
       if (expiredAfter) throw bad('the link is expired — extend expires_at in the same PATCH to re-enable it');
+      if (stale) staleExecutionId = latest.id;
       sets.push('uses_count = 0');
       extraGuard = ' AND uses_count = ?';
     } else {
@@ -1197,6 +1309,25 @@ async function patchCta(db, id, patch, { now = new Date() } = {}) {
     return { before, after: before, changed: false };
   }
 
+  if (staleExecutionId != null) {
+    // Finalize the dead run BEFORE the re-enable write. Guarded on 'running':
+    // if the plan finished between the read above and here, its own finalize
+    // won — re-read and let only a real failure through.
+    const [fin] = await db.query(
+      `UPDATE cta_executions SET status = 'failed', plan_result = ? WHERE id = ? AND status = 'running'`,
+      [JSON.stringify([{ fn: null, ok: false, error: STALE_FINALIZE_ERROR, ms: 0 }]), staleExecutionId]
+    );
+    if (!fin || !fin.affectedRows) {
+      const again = await latestExecution(db, ctaId);
+      if (!again || again.id !== staleExecutionId || again.status !== 'failed') {
+        throw new CtaError(409,
+          `cta: execution ${staleExecutionId} finished while this PATCH was applied (now ${again ? again.status : 'missing'}) — re-read and retry`,
+          'not_reenableable');
+      }
+      staleExecutionId = null;   // it failed on its own — nothing of ours to report
+    }
+  }
+
   const guardParams = [ctaId, before.status];
   if (extraGuard) guardParams.push(Number(before.uses_count));
   const [upd] = await db.query(
@@ -1204,10 +1335,29 @@ async function patchCta(db, id, patch, { now = new Date() } = {}) {
     [...params, ...guardParams]
   );
   if (!upd || !upd.affectedRows) {
+    // A finalized stale row stays 'failed' — it was dead either way.
     throw new CtaError(409, 'cta: the link changed while this PATCH was applied (claimed or edited) — re-read and retry', 'conflict');
   }
   const after = await getCtaById(db, ctaId);
-  return { before, after, changed: true };
+  const out = { before, after, changed: true };
+  if (staleExecutionId != null) out.finalized_execution_id = staleExecutionId;
+  return out;
+}
+
+/** The newest execution of a CTA (or undefined). */
+async function latestExecution(db, ctaId) {
+  const [[latest]] = await db.query(
+    'SELECT id, status, executed_at FROM cta_executions WHERE cta_id = ? ORDER BY id DESC LIMIT 1',
+    [ctaId]
+  );
+  return latest;
+}
+
+/** A 'running' row older than STALE_RUNNING_MINUTES — the sweep's "instance died mid-plan" test. */
+function isStaleRunning(exec, now = new Date()) {
+  if (!exec || exec.status !== 'running') return false;
+  const at = toDate(exec.executed_at);
+  return !!at && now.getTime() - at.getTime() > STALE_RUNNING_MINUTES * 60e3;
 }
 
 module.exports = {
@@ -1221,6 +1371,12 @@ module.exports = {
   getCtaByToken,
   getCtaById,
   deriveState,
+  minterAllowed,
+  // SU reads (routes/api.cta.js)
+  listCtas,
+  listExecutions,
+  adminRow,
+  isStaleRunning,
   // eligibility
   isCtaEligible,
   eligibleFunctionNames,

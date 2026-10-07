@@ -387,6 +387,18 @@ const D_ROUTE_RE      = /^\/d\/[A-Za-z0-9_-]{10,40}$/;
 const D_VALUE_RE      = /^\/d\/[A-Za-z0-9_-]{10,40}\/[A-Za-z0-9_-]{1,64}$/;
 const D_POST_RE       = /^\/d\/[A-Za-z0-9_-]{10,40}\/respond$/;
 
+// ── CTA links — 2026-10-07 (CTA arc S2, ref/CTA_DESIGN.md §5.1) ─────────────
+// routes/ctaActions.js (/c/): the /d/ shape exactly — landing, per-option
+// confirm, one mutating POST. In ALL THREE sets below for the /d/ reasons,
+// and isMigratedPath matters most: cta_links.context_html is staff-authored
+// RAW HTML, so app.4lsg.com/c/<t> must 302 to the landing host rather than
+// render it on the JWT origin. Same ordering hazard as /d/: ":value" accepts
+// the literal "respond", so C_POST_RE is tested BEFORE C_VALUE_RE in
+// landingAllowed (test-locked).
+const C_ROUTE_RE      = /^\/c\/[A-Za-z0-9_-]{10,40}$/;
+const C_VALUE_RE      = /^\/c\/[A-Za-z0-9_-]{10,40}\/[A-Za-z0-9_-]{1,64}$/;
+const C_POST_RE       = /^\/c\/[A-Za-z0-9_-]{10,40}\/respond$/;
+
 /**
  * Paths that carry a bearer credential — keep them out of indexes.
  *
@@ -435,7 +447,11 @@ function isCredentialedPath(p) {
     T_BADGE_RE.test(p) ||
     D_ROUTE_RE.test(p) ||
     D_VALUE_RE.test(p) ||
-    D_POST_RE.test(p)
+    D_POST_RE.test(p) ||
+    // CTA links (2026-10-07): bearer token in the path, same class as /d/.
+    C_ROUTE_RE.test(p) ||
+    C_VALUE_RE.test(p) ||
+    C_POST_RE.test(p)
   );
 }
 
@@ -502,6 +518,10 @@ function landingAllowed(req) {
   if (D_POST_RE.test(p))               return m === 'POST';   // BEFORE D_VALUE_RE
   if (D_ROUTE_RE.test(p))              return isRead;
   if (D_VALUE_RE.test(p))              return isRead;
+  // CTA links (2026-10-07) — the same ordering rule, the same reason.
+  if (C_POST_RE.test(p))               return m === 'POST';   // BEFORE C_VALUE_RE
+  if (C_ROUTE_RE.test(p))              return isRead;
+  if (C_VALUE_RE.test(p))              return isRead;
   // Shared static assets the allowlisted pages load. theme.css is a HARD
   // dependency of yc-forms.css, not a nicety: the density/colour arc
   // tokenised that sheet, so with theme.css missing every var() in it is
@@ -558,6 +578,11 @@ function isMigratedPath(req) {
   if (T_ROUTE_RE.test(p)) return true;
   if (D_ROUTE_RE.test(p)) return true;
   if (D_VALUE_RE.test(p)) return true;
+  // CTA HTML entry points (2026-10-07). Without these, app.4lsg.com/c/<t>
+  // would render staff-authored context_html on the JWT origin. The POST is
+  // excluded by construction (GET/HEAD gate), as for /d/.
+  if (C_ROUTE_RE.test(p)) return true;
+  if (C_VALUE_RE.test(p)) return true;
   return false;
 }
 

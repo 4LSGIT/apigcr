@@ -1600,6 +1600,10 @@ Example:
 }
 ```
 
+#### `cancel_workflow_execution`
+
+Cancel another workflow execution — `execution_id` and `reason` (≥3 chars) both required and placeholder-friendly; same effect as the Cancel button (pending resume jobs removed, pending decisions closed, paired tasks dismissed), an already-finished or missing target succeeds with `output.skipped`, and a workflow cannot cancel itself (use `set_next "cancel"`). Not workflow-only.
+
 ### Court
 
 The court-mail pipeline's automation surface. Docket extraction itself runs off an ingest rule — see [chapter 10](10-ingest.md).

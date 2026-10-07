@@ -143,6 +143,12 @@ beforeAll((done) => {
   app.get('/d/:token',                  (req, res) => res.type('html').send('DECISIONPAGE'));
   app.get('/d/:token/:value',           (req, res) => res.type('html').send('DECISIONCONFIRM'));
   app.post('/d/:token/respond',         (req, res) => res.json({ probe: 'DRESPOND' }));
+  // routes/ctaActions.js + routes/api.cta.js stand-ins (2026-10-07, CTA S2).
+  app.get('/c/:token',                  (req, res) => res.type('html').send('CTAPAGE'));
+  app.get('/c/:token/:value',           (req, res) => res.type('html').send('CTACONFIRM'));
+  app.post('/c/:token/respond',         (req, res) => res.json({ probe: 'CRESPOND' }));
+  app.get('/api/cta',                   (req, res) => res.json({ probe: 'CTALIST' }));
+  app.post('/api/cta',                  (req, res) => res.json({ probe: 'CTAMINT' }));
   app.post('/api/videos/upload-asset',  (req, res) => res.json({ probe: 'VIDEOUPLOAD' }));
   app.get('/login', (req, res) => res.send('LOGIN'));
   app.get('/api/firm-data', (req, res) => res.json({ probe: 'FIRMDATA' }));
@@ -907,5 +913,82 @@ describe('task + decision action links on the landing host', () => {
     const res = await landing('/t/short');
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe(FIRM);
+  });
+});
+
+
+// ── CTA links (2026-10-07, CTA arc S2 — ref/CTA_DESIGN.md §5.1) ────────────
+// The /d/ LOCK set, mirrored for /c/: same three sets, same ordering hazard.
+describe('CTA links on the landing host', () => {
+  const TOK = 'Ab3dEfGh1jKlMn0pQr5tUv';   // 22-char base62 — the real mint shape
+
+  test('GET /c/:token and /c/:token/:value (confirm step) serve', async () => {
+    expect(await (await landing(`/c/${TOK}`)).text()).toBe('CTAPAGE');
+    expect(await (await landing(`/c/${TOK}/spam`)).text()).toBe('CTACONFIRM');
+  });
+
+  test('LOCK: POST /c/:token/respond is allowed — the :value pattern must not shadow it', async () => {
+    // '/c/<tok>/respond' also matches C_VALUE_RE, which returns isRead
+    // (false for POST). Reorder C_POST_RE after it and the only mutating CTA
+    // route dies on the landing host — the bug class /d/ was locked against.
+    const res = await landing(`/c/${TOK}/respond`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect((await res.json()).probe).toBe('CRESPOND');
+  });
+
+  test('LOCK: the predicate itself — POST respond allowed, other /c/ POSTs and non-read methods denied', () => {
+    const allowed = (path, method) => pageLanding._landingAllowed({ path, method });
+    expect(allowed(`/c/${TOK}/respond`, 'POST')).toBe(true);
+    expect(allowed(`/c/${TOK}`, 'GET')).toBe(true);
+    expect(allowed(`/c/${TOK}`, 'HEAD')).toBe(true);
+    expect(allowed(`/c/${TOK}/spam`, 'GET')).toBe(true);
+    expect(allowed(`/c/${TOK}/spam`, 'POST')).toBe(false);     // only /respond mutates
+    expect(allowed(`/c/${TOK}`, 'POST')).toBe(false);
+    expect(allowed(`/c/${TOK}/respond`, 'PUT')).toBe(false);
+    expect(allowed(`/c/${TOK}/respond`, 'DELETE')).toBe(false);
+  });
+
+  test('LOCK: every /c/ path is noindex (bearer token in the path) — the POST included', async () => {
+    for (const p of [`/c/${TOK}`, `/c/${TOK}/spam`]) {
+      expect((await landing(p)).headers.get('x-robots-tag')).toBe('noindex, nofollow');
+    }
+    const post = await landing(`/c/${TOK}/respond`, { method: 'POST' });
+    expect(post.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  test('LOCK: app host 302s the HTML entry points to the landing host (context_html never renders on the JWT origin)', async () => {
+    for (const p of [`/c/${TOK}`, `/c/${TOK}/spam`]) {
+      const res = await appHost(p);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('https://4lsg.com' + p);
+    }
+  });
+
+  test('LOCK: POST /c/:token/respond never meets a 302 on the app host', async () => {
+    const res = await appHost(`/c/${TOK}/respond`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect((await res.json()).probe).toBe('CRESPOND');
+  });
+
+  test('the SU management API stays dead on the landing host', async () => {
+    const get = await landing('/api/cta');
+    expect(get.status).toBe(302);
+    expect(get.headers.get('location')).toBe(FIRM);
+    const post = await landing('/api/cta', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+    expect(post.status).toBe(303);                 // POST dead-page → firm site
+    expect(post.headers.get('location')).toBe(FIRM);
+    expect(await post.text()).not.toContain('CTAMINT');
+    expect(pageLanding._landingAllowed({ path: '/api/cta/1/executions', method: 'GET' })).toBe(false);
+    expect(pageLanding._landingAllowed({ path: '/api/cta/1', method: 'PATCH' })).toBe(false);
+  });
+
+  test('a too-short token, or a three-segment path, is not allowlisted', async () => {
+    for (const p of ['/c/short', `/c/${TOK}/spam/extra`]) {
+      const res = await landing(p);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe(FIRM);
+    }
   });
 });
