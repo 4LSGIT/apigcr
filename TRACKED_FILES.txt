@@ -349,6 +349,7 @@ ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-06_dbkq_definition.v1.2.json
 ref/AI_CONTEXT.md
 ref/AUDIT_TENANCY.md
+ref/CTA_DESIGN.md
 ref/CUSTOM_FIELDS_DESIGN.md
 ref/DOCS_REVIEW.md
 ref/EXTERNAL_CODE_CSS_DECISION.md
