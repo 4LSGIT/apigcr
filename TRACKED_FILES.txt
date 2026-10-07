@@ -841,6 +841,7 @@ tests/courtexecutor.trusteeland.test.js
 tests/courtexecutor.update.test.js
 tests/createTaskDedupe.test.js
 tests/ctaActions.routes.test.js
+tests/ctaCreateFn.test.js
 tests/ctaService.test.js
 tests/customFields.s2.test.js
 tests/customFields.s3.test.js

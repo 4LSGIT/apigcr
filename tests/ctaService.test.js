@@ -102,7 +102,7 @@ const ctaAlerts = () => alert.mock.calls.map((c) => c[1]).filter((a) => a.source
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Every registry addition is an exposure decision: a new function lands here
-// only by someone editing this list on purpose. Rejected today (24 of 110
+// only by someone editing this list on purpose. Rejected today (25 of 111
 // raw keys): the 14 __-prefixed module exports/self-adds, the 6 controlFlow
 // functions, and the 4 denylisted: wait_until_time (§4.2) plus the S2
 // ruling's cta_expiry_sweep, decision_timeout_cleanup, set_test_var.
@@ -141,7 +141,7 @@ describe('eligibility — layered filter (§4)', () => {
     expect(registry.start_workflow.__meta.workflowOnly).toBe(true);
     expect(cta.isCtaEligible('start_workflow')).toBe(true);
     // the seeded denylist (+ the S2 ruling's three)
-    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var']);
+    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta']);
     expect(registry.wait_until_time.__meta.controlFlow).toBeUndefined(); // flagless by design
     expect(cta.isCtaEligible('wait_until_time')).toBe(false);
     // S2 ruling: each is a real meta-bearing registry function that ONLY the

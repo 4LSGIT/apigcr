@@ -87,6 +87,10 @@ const CTA_FN_DENYLIST = Object.freeze([
   'cta_expiry_sweep',
   'decision_timeout_cleanup',
   'set_test_var',
+  // S3: create_cta needs a live workflow execution (_execution_id) that a
+  // public link can never supply — and links minting links is bearer-token
+  // recursion with no owner in the loop.
+  'create_cta',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */
