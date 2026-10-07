@@ -49,6 +49,7 @@ lib/internal_functions/connections.js
 lib/internal_functions/contacts.js
 lib/internal_functions/control.js
 lib/internal_functions/court.js
+lib/internal_functions/cta.js
 lib/internal_functions/db.js
 lib/internal_functions/decisions.js
 lib/internal_functions/dev.js
@@ -471,6 +472,7 @@ ref/migrations/2026-09-25_field_defs_default_value.sql
 ref/migrations/2026-09-25_field_defs_default_value_comment.sql
 ref/migrations/2026-10-05_token_base62_bin.sql
 ref/migrations/2026-10-06_bk_worksheet_notes.console.js
+ref/migrations/2026-10-07_cta.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -702,6 +704,7 @@ services/contactService.js
 services/courtExecutor.js
 services/courtRerun.js
 services/credentialService.js
+services/ctaService.js
 services/documentGenerateService.js
 services/documentIngestService.js
 services/documentService.js
@@ -781,6 +784,7 @@ services/timezoneService.js
 services/triggerService.js
 services/uploadTargetService.js
 services/videoService.js
+services/workflowExecutionService.js
 startup/db.js
 startup/dbReadonly.js
 startup/init.js
@@ -832,6 +836,7 @@ tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.trusteeland.test.js
 tests/courtexecutor.update.test.js
 tests/createTaskDedupe.test.js
+tests/ctaService.test.js
 tests/customFields.s2.test.js
 tests/customFields.s3.test.js
 tests/customFields.s4.test.js
@@ -939,6 +944,7 @@ tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
 tests/helpers/bcPolyfill.js
+tests/helpers/ctaWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/u6aEventsDb.js
@@ -1057,6 +1063,7 @@ tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
+tests/workflowCancel.test.js
 tests/workflowEngine.cancelAndLoopGuard.test.js
 tests/workflows.editor.roundtrip.test.js
 tests/workflows.ensureDraft.test.js

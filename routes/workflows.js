@@ -14,6 +14,7 @@ const {
 } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
 const { diffWorkflowSteps, validateWorkflowDraft, retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC } = require("../lib/versionDiff");
+const { cancelWorkflowExecution, normalizeCancelReason } = require("../services/workflowExecutionService");
 // JSON columns may come back from mysql2 as either a string (unparsed)
 // or a parsed object depending on driver version/config. Normalize to a
 // string for INSERT so mysql2 doesn't SET-expand objects.
@@ -2560,12 +2561,14 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
  *                             (Slice 4.3 Part B). Mirrors the sequence-cancel
  *                             pattern — honest audit trail for manual stops.
  *
- * Side effects:
+ * Side effects (services/workflowExecutionService.cancelWorkflowExecution):
  *   - workflow_executions: status → 'cancelled', cancel_reason set,
- *     updated_at + completed_at = NOW()
+ *     updated_at + completed_at = NOW() (status-guarded — R7)
  *   - scheduled_jobs: any pending/running 'workflow_resume' for this
  *     execution is deleted (not "failed" — deletion matches the legacy
  *     behaviour of this route, and cancelled resumes have no audit value).
+ *   - decision_requests: pending → 'cancelled'; paired tasks dismissed
+ *     post-commit.
  */
 router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
   const db = req.db;
@@ -2576,98 +2579,27 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid execution ID" });
   }
 
-  // Validate reason — required, min 3 chars after trim.
-  const rawReason = (req.body && typeof req.body.reason === 'string') ? req.body.reason : '';
-  const reason = rawReason.trim();
-  if (reason.length < 3) {
+  // Validate reason — required, min 3 chars after trim; truncated to the
+  // 500-char column rather than refused (see normalizeCancelReason).
+  const norm = normalizeCancelReason(req.body ? req.body.reason : undefined);
+  if (norm.error) {
     return res.status(400).json({
       error: "Reason required",
-      message: "reason is required and must be at least 3 characters after trim",
+      message: norm.error,
     });
   }
-  // Hard cap at the column width (500) — truncate rather than 400 here.
-  // A 500-char reason is already aggressive; silently trimming is kinder
-  // than refusing the cancel over overflow.
-  const reasonStored = reason.length > 500 ? reason.slice(0, 500) : reason;
+  const reasonStored = norm.reason;
 
   try {
-    const outcome = await db.withTransaction(async (connection) => {
-
-    // Verify execution exists and is still cancellable.
-    const [execRows] = await connection.query(
-      `
-      SELECT status 
-      FROM workflow_executions 
-      WHERE id = ? 
-        AND status IN ('active', 'processing', 'delayed', 'held')
-      `,
-      [executionId]
-    );
-
-    if (execRows.length === 0) {
-      return { respond: { status: 400, body: { error: "Cannot cancel", message: "Execution not found or already finished" } } };
+    // Transaction span, decision cascade and post-commit task dismissal all
+    // live in the service (shared with the cancel_workflow_execution internal
+    // function). Its status UPDATE is guarded (CTA arc R7) — an execution
+    // that finished between the existence check and the write reports
+    // "Cannot cancel" instead of being overwritten.
+    const outcome = await cancelWorkflowExecution(db, executionId, reasonStored, { by: 'user' });
+    if (!outcome.cancelled) {
+      return res.status(400).json({ error: "Cannot cancel", message: "Execution not found or already finished" });
     }
-
-    // Mark as cancelled (with reason).
-    await connection.query(
-      `
-      UPDATE workflow_executions 
-      SET status        = 'cancelled', 
-          cancel_reason = ?,
-          updated_at    = NOW(),
-          completed_at  = NOW()
-      WHERE id = ?
-      `,
-      [reasonStored, executionId]
-    );
-
-    // Delete any pending resume jobs for this execution.
-    await connection.query(
-      `
-      DELETE FROM scheduled_jobs 
-      WHERE type = 'workflow_resume' 
-        AND workflow_execution_id = ? 
-        AND status IN ('pending', 'running')
-      `,
-      [executionId]
-    );
-
-    // Decision cascade (HITL slice): close any pending decision_requests so
-    // their links render "no longer needed" instead of resuming a cancelled
-    // execution. Paired tasks are dismissed post-commit (taskService writes
-    // its own log rows + side effects — keep those off this transaction).
-    const [pendingDecisions] = await connection.query(
-      `SELECT id, paired_task_id FROM decision_requests
-        WHERE workflow_execution_id = ? AND status = 'pending'`,
-      [executionId]
-    );
-    if (pendingDecisions.length > 0) {
-      await connection.query(
-        `UPDATE decision_requests SET status = 'cancelled', updated_at = NOW()
-          WHERE workflow_execution_id = ? AND status = 'pending'`,
-        [executionId]
-      );
-    }
-
-      return { pendingDecisions };
-    });
-
-    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
-
-    // Post-commit, best-effort: dismiss paired tasks for cancelled decisions.
-    for (const d of (outcome.pendingDecisions || [])) {
-      if (!d.paired_task_id) continue;
-      try {
-        await require('../services/taskService').deleteTask(
-          db, d.paired_task_id, 0, { via: 'workflow_cancelled' }
-        );
-      } catch (taskErr) {
-        // Already completed/deleted races are fine.
-        console.warn(`[CANCEL] Could not dismiss decision task ${d.paired_task_id}:`, taskErr.message);
-      }
-    }
-
-    console.log(`[CANCEL] Execution ${executionId} cancelled by user — reason: ${reasonStored}`);
 
     res.json({
       success: true,
