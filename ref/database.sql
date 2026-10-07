@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-05T15:56:40.541Z
+-- Generated: 2026-10-07T13:55:19.044Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:72b511f2a518277157c458421b3d31c8
+-- Fingerprint: sha256:142eeb17a17a09a9a3eced99d1cc7872
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1309,6 +1309,59 @@ CREATE TABLE `credentials` (
   `refresh_failure_count` tinyint unsigned NOT NULL DEFAULT '0',
   `verbose` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `cta_executions`
+--
+
+DROP TABLE IF EXISTS `cta_executions`;
+CREATE TABLE `cta_executions` (
+  `id` bigint unsigned NOT NULL,
+  `cta_id` bigint unsigned NOT NULL,
+  `option_value` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('running','success','failed') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'running' COMMENT 'inserted running (same transaction as the claim) BEFORE step 1; running older than 15 min = crashed plan (sweep warns)',
+  `plan_result` json DEFAULT NULL COMMENT 'per-step [{fn, ok, output|error, ms}], outputs truncated ~2k/step; readable via RO keys - redact accordingly',
+  `responded_via` enum('link','app','api','timeout') COLLATE utf8mb4_general_ci NOT NULL,
+  `responder_user_id` int DEFAULT NULL,
+  `responder_ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `executed_at` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='One row per CTA plan run. Never add to QUERY_DB_ALLOWED_TABLES / WRITE_POLICY (R3)';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `cta_links`
+--
+
+DROP TABLE IF EXISTS `cta_links`;
+CREATE TABLE `cta_links` (
+  `id` bigint unsigned NOT NULL,
+  `token` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'CTA bearer (/c/<t>); 22-char base62 via lib/token; _bin: case-sensitive',
+  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'internal label (SU list); never shown publicly',
+  `prompt` text COLLATE utf8mb4_general_ci NOT NULL COMMENT 'shown to the recipient; ESCAPED text — context_html is the only raw-HTML slot',
+  `context_html` mediumtext COLLATE utf8mb4_general_ci COMMENT 'TRUSTED HTML, same contract as decision_requests.context_html',
+  `options` json NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?,result_template?}] 1-10; value "respond" reserved; params frozen literals (no {{...}}, no _-prefixed keys)',
+  `mode` enum('once','repeatable') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'once' COMMENT 'app-validated too (relaxed sql_mode)',
+  `max_uses` int unsigned DEFAULT NULL COMMENT 'repeatable only; NULL = until expiry',
+  `uses_count` int unsigned NOT NULL DEFAULT '0' COMMENT 'once: 0|1 (the claim sets 1); repeatable: guarded increment; reset to 0 by re-enable from used (else the timeout claim is dead)',
+  `expires_at` datetime NOT NULL COMMENT 'UTC; always set, <=365d out. expired is DERIVED from this, never stored in status',
+  `timeout_option` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'once only: option value auto-run at expiry if unused (cta_expiry_sweep claims first)',
+  `protection` enum('none','password') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
+  `password_hash` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'bcrypt, BCRYPT_ROUNDS=12; never a user password',
+  `failed_attempts` int unsigned NOT NULL DEFAULT '0' COMMENT 'cumulative wrong passwords; alerts at 20 (warning) / 100 (error); never auto-disables',
+  `return_plan_result` tinyint NOT NULL DEFAULT '0' COMMENT 'JSON respond surface may include raw plan_result (agent mints)',
+  `attributed_user_id` int DEFAULT NULL COMMENT 'log attribution for link/password responses (assertion by mint, not authentication); never used by timeout executions',
+  `status` enum('active','used','disabled','cancelled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active' COMMENT 'used = once claimed; disabled = PATCH, reversible; cancelled = permanent (R8). expired/exhausted are derived, never stored',
+  `mint_source` enum('su','workflow') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'su' COMMENT 'su: click-time check that minted_by is still an active SU (B1); workflow: no SU check',
+  `source_execution_id` bigint unsigned DEFAULT NULL COMMENT 'workflow mints: the minting execution',
+  `minted_by` int NOT NULL COMMENT 'users.user of the minting SU; 0 for workflow mints',
+  `link_type` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'logService ABOUT_TYPES value set (log_link_type family), app-validated',
+  `link_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'normalized like log about-links (phone 10 digits, email lowercased)',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='CTA links (ref/CTA_DESIGN.md). Never add to QUERY_DB_ALLOWED_TABLES / WRITE_POLICY (R3)';
 
 -- --------------------------------------------------------
 
@@ -3896,6 +3949,21 @@ ALTER TABLE `credentials`
   ADD KEY `idx_oauth_state` (`oauth_state`);
 
 --
+-- Indexes for table `cta_executions`
+--
+ALTER TABLE `cta_executions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_ctaexec_cta` (`cta_id`);
+
+--
+-- Indexes for table `cta_links`
+--
+ALTER TABLE `cta_links`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_cta_token` (`token`),
+  ADD KEY `idx_cta_status_expires` (`status`,`expires_at`);
+
+--
 -- Indexes for table `decision_requests`
 --
 ALTER TABLE `decision_requests`
@@ -4851,6 +4919,18 @@ ALTER TABLE `court_ai_log`
 --
 ALTER TABLE `credentials`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `cta_executions`
+--
+ALTER TABLE `cta_executions`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `cta_links`
+--
+ALTER TABLE `cta_links`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `decision_requests`
