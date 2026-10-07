@@ -384,6 +384,12 @@ router.get(`/d/${TOKEN_PATTERN}/${VALUE_PATTERN}`, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post(`/d/${TOKEN_PATTERN}/respond`, async (req, res) => {
+  // postLimited was declared with the 2026-08-17 rate-limit slice but never
+  // wired — the POST ran unlimited in production until the 2026-10-07 CTA
+  // design review caught it. Same guard shape as the GETs above.
+  if (postLimited(getClientIp(req))) {
+    return res.status(429).type('text/plain').send('Too many requests');
+  }
   const db = req.db;
   try {
     const row = await getDecisionByToken(db, req.params.token);

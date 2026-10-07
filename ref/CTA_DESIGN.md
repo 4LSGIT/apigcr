@@ -1,51 +1,89 @@
-# CTA (Call To Action) — Design
+# CTA (Call To Action) — Design v2
 
-**Status:** ratified 2026-10-07 (Fred), pending independent review
+**Status:** ratified 2026-10-07 (Fred) · 3-worker consolidated review 2026-10-07:
+**approve with changes** (verified @ `9e7fabae`) · all amendments folded below.
+**This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
+`claude/CTA_DESIGN.md` mirrors it.
 **Arc:** CTA / email action buttons · scratch `ns=fred` key `cta_state`
-**Author:** manager session (Claude), decisions by Fred
 
 ## 1. What this is
 
 An SU tool: mint a tokenized link (or set of option buttons) that executes a
-**pre-authorized action plan** when the recipient agrees. Compose with Claude,
-paste one `apiSend` to mint, embed the URLs in an email/SMS/chat — or hand the
-bare token to a person or an AI agent.
+**pre-authorized action plan** when the recipient agrees — and, with
+`result_template`, that returns curated information to the clicker. Compose
+with Claude, paste one `apiSend` to mint, embed the URLs in an email/SMS/chat,
+or hand the bare token to a person or an AI agent.
 
 Canonical first uses:
 - "Mark as spam" button in an ad-hoc email to SS about a suspect lead.
-- RG spam-alert "Not spam — re-run intake" button (WF27 step 25, from the
-  2026-10-04 AI-gate direction): plan = `start_workflow` 27 with the original
-  `raw_input` + `spam_override`.
-- A scoped, expiring write capability handed to a Claude session (execute
-  option X when checks pass) — no write key needed.
+- RG spam-alert "Not spam — re-run intake" button (WF27): plan =
+  `start_workflow` 27 with the formatter's expected envelope keys in
+  `init_data` plus `spam_override` (there is **no** `raw_input` variable —
+  see §10 S4).
+- A live lookup link: repeatable CTA + `result_template` = always-current
+  "click for contact's email" with no account and no key.
+- A scoped, expiring action grant handed to a Claude session. (Framing note,
+  per R3: the token is stored plaintext and readable by any RO-key holder, so
+  this is a *delegation convenience* scoped against outsiders — not a security
+  boundary against key holders.)
 
 ### Positioning vs decisions
 
-`request_decision` stays untouched: it is a **workflow-pausing HITL gate**
-built around a single-use atomic claim + timeout resume. CTA is the
-**standalone** primitive: no execution to resume, optionally repeatable, plans
-attached per option. Workflows mint CTAs via a new non-pausing `create_cta`
-internal function. CTA subsumes "standalone decisions" — do not build those
-into `decision_requests`.
+`request_decision` stays untouched: a **workflow-pausing HITL gate** built on
+a single-use atomic claim + timeout resume. CTA is the **standalone**
+primitive: no execution to resume, optionally repeatable, plans attached per
+option. Workflows mint CTAs via a new non-pausing `create_cta` internal
+function. CTA subsumes "standalone decisions" — do not build those into
+`decision_requests`.
 
-## 2. Ratified decisions (2026-10-07)
+## 2. Ratified decisions
 
+2026-10-07 (design round):
 1. Separate table (`cta_links`) + namespace (`/c/`), not an extension of
-   `decision_requests`. Repeatable mode is incompatible with the decision
+   `decision_requests` — repeatable mode is incompatible with the decision
    claim model.
-2. Plans execute **internal functions** (registry), never replayed REST/apiSend
-   calls. No credentials in the token; registry guardrails (WRITE_POLICY etc.)
-   apply; execution runs as user 0.
-3. Three protection levels: `none` / `password` / `login`. Password = secret
-   set by SU at mint, verified on the public host. Login tier deferred to S5
-   (see §7). **CTA passwords are never YisraCase user passwords** (§8).
-4. Expiry always set. Defaults: `cta_default_timeout_once` = 3d,
-   `cta_default_timeout_repeatable` = 30d (new settings). Explicit max 365d.
-   Expiry is **extendable** via PATCH — no re-mint needed.
-5. `max_uses` included in v1 (atomic guarded increment).
+2. Plans execute **internal functions** (registry), never replayed
+   REST/apiSend calls. No credentials in the token; registry guardrails
+   (WRITE_POLICY etc.) apply; execution runs as user 0.
+3. Protection levels `none` / `password` / `login`; password = mint-set
+   secret verified on the public host; login tier deferred to S5. **CTA
+   passwords are never YisraCase user passwords** (§8).
+4. Expiry always set. `cta_default_timeout_once` = 3d,
+   `cta_default_timeout_repeatable` = 30d; explicit max 365d. Expiry
+   extendable via PATCH — no re-mint.
+5. `max_uses` in v1 (atomic guarded increment).
 6. Agent/JSON surface = content negotiation on the same `/c/` routes.
-7. Timeout default action: `timeout_option` (mode=once only) names the option
-   whose plan runs at expiry if nobody responded.
+7. `timeout_option` (mode=once only): option auto-run at expiry if unused.
+
+2026-10-07 (review round — B/NB/R numbers refer to the consolidated review):
+8. **B1:** `mint_source ENUM('su','workflow')` + `source_execution_id`. The
+   active-SU click-check applies **only** to `mint_source='su'` — user 0
+   (`automations`) is not SU, so workflow mints would otherwise never execute.
+9. **B2:** layered eligibility (§4): registry predicate + seeded denylist +
+   **runtime guard** + param validation + Jest snapshot of the eligible set.
+10. **B3/B4/R1:** timeout model = recurring **`cta_expiry_sweep`** (~5 min,
+    `uiHidden`, one `scheduled_jobs type='recurring'` row inserted by the
+    migration with an `idempotency_key`). No per-CTA cleanup jobs; PATCH is a
+    plain UPDATE. The timeout path **claims before running** (§6).
+11. **B5/B5b/R2 (Fred-ratified):** `result_template` is the curated public
+    output, v1. Raw `plan_result` never on public surfaces; it lives on
+    `GET /api/cta/:id/executions`; per-CTA `return_plan_result` flag opts the
+    JSON respond surface back in for agent cases. Result-bearing CTAs default
+    `protection='password'` (auto-secret), overridable to `'none'` by explicit
+    SU choice, never required; mint response names the applied default.
+12. **NB2:** mint auto-generates the password (22-char base62 via
+    `lib/token`), returned **once** in the mint response; SU-supplied secrets
+    accepted only ≥12 chars.
+13. **B7/R4:** `cta_executions.status` = `running → success|failed`; row
+    inserted before step 1. Re-enable from `used` resets `uses_count=0` and
+    re-runs the **whole** plan — check `plan_result` first.
+14. **R3:** tokens and `password_hash` stay plaintext-at-rest/bcrypt in v1
+    (every sibling token is plaintext; RO keys are Fred+SS). Exposure filed to
+    the access-control arc. **Standing rule: never add `cta_links` or
+    `cta_executions` to `QUERY_DB_ALLOWED_TABLES` or `WRITE_POLICY`.**
+15. **R8:** `status='cancelled'` = permanent kill via PATCH; never re-enable.
+16. **R6:** `/d/:token/respond` limiter wired immediately (standalone patch,
+    2026-10-07) — `postLimited` was declared 2026-08-17 and never called.
 
 ## 3. Schema (S1 migration)
 
@@ -54,10 +92,10 @@ CREATE TABLE cta_links (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   token         VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL
                 COMMENT 'CTA bearer (/c/<t>); 22-char base62 via lib/token; _bin: case-sensitive',
-  name          VARCHAR(120) NOT NULL COMMENT 'internal label for the SU list',
-  prompt        TEXT NOT NULL COMMENT 'shown to the recipient',
+  name          VARCHAR(120) NOT NULL COMMENT 'internal label (SU list); never shown publicly',
+  prompt        TEXT NOT NULL COMMENT 'shown to the recipient; ESCAPED text — context_html is the only raw-HTML slot',
   context_html  MEDIUMTEXT NULL COMMENT 'TRUSTED HTML, same contract as decision_requests.context_html',
-  options       JSON NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?}]',
+  options       JSON NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?,result_template?}] 1-10; value "respond" reserved',
   mode          ENUM('once','repeatable') NOT NULL DEFAULT 'once',
   max_uses      INT UNSIGNED NULL COMMENT 'repeatable only; NULL = until expiry',
   uses_count    INT UNSIGNED NOT NULL DEFAULT 0,
@@ -66,11 +104,14 @@ CREATE TABLE cta_links (
   protection    ENUM('none','password') NOT NULL DEFAULT 'none',
   password_hash VARCHAR(100) NULL COMMENT 'bcrypt, BCRYPT_ROUNDS=12; never a user password',
   failed_attempts INT UNSIGNED NOT NULL DEFAULT 0,
-  attributed_user_id INT NULL COMMENT 'attribute responses to this user in logs (assertion by mint, not authentication)',
+  return_plan_result TINYINT NOT NULL DEFAULT 0 COMMENT 'JSON respond surface may include raw plan_result (agent mints)',
+  attributed_user_id INT NULL COMMENT 'log attribution for link/password responses (assertion by mint, not authentication); never used by timeout executions',
   status        ENUM('active','used','disabled','cancelled') NOT NULL DEFAULT 'active',
+  mint_source   ENUM('su','workflow') NOT NULL DEFAULT 'su',
+  source_execution_id BIGINT UNSIGNED NULL COMMENT 'workflow mints: the minting execution',
   minted_by     INT NOT NULL,
-  link_type     VARCHAR(20) NULL,
-  link_id       VARCHAR(40) NULL COMMENT 'outcome-log linkage (case/contact) — mirror tasks.task_link_* types exactly',
+  link_type     VARCHAR(20) NULL COMMENT 'logService ABOUT_TYPES value set (log_link_type family), app-validated',
+  link_id       VARCHAR(255) NULL,
   created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_cta_token (token),
@@ -81,8 +122,8 @@ CREATE TABLE cta_executions (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   cta_id        BIGINT UNSIGNED NOT NULL,
   option_value  VARCHAR(64) NOT NULL,
-  status        ENUM('success','failed') NOT NULL,
-  plan_result   JSON NULL COMMENT 'per-step [{fn, ok, output|error, ms}]',
+  status        ENUM('running','success','failed') NOT NULL DEFAULT 'running',
+  plan_result   JSON NULL COMMENT 'per-step [{fn, ok, output|error, ms}], outputs truncated ~2k/step; readable via RO keys - redact accordingly',
   responded_via ENUM('link','app','api','timeout') NOT NULL,
   responder_user_id INT NULL,
   responder_ip  VARCHAR(45) NULL,
@@ -91,68 +132,116 @@ CREATE TABLE cta_executions (
 );
 ```
 
-Settings (via migration INSERT, not new infrastructure):
-`cta_default_timeout_once` = `3d`, `cta_default_timeout_repeatable` = `30d`.
+Migration also inserts: settings `cta_default_timeout_once`=`3d`,
+`cta_default_timeout_repeatable`=`30d`; one `scheduled_jobs` row
+(`type='recurring'`, `function_name='cta_expiry_sweep'`, ~5 min
+`recurrence_rule`, `idempotency_key='cta_expiry_sweep'`) — worker copies the
+`recurrence_rule`/`data` shape from an existing recurring row.
 
-Worker notes: relaxed SQL mode — enums are app-validated too; verify
-`tasks.task_link_id` / `task_link_type` exact types before finalizing
-`link_type`/`link_id`; schema notes as COMMENTs per SCHEMA_CONVENTIONS.
+Worker notes: relaxed SQL mode — enums are app-validated too; schema facts as
+COMMENTs per `ref/SCHEMA_CONVENTIONS.md`; verify the ABOUT_TYPES value list
+against `services/logService.js` at build time.
 
 ## 4. Plans
 
 Per **option**: `plan: [{fn, params}]`, 1–20 steps. Params are **frozen
-literals at mint** — no clicker-supplied inputs, no `{{...}}` resolution at
-click time (v2 candidates, §9). When a workflow mints via `create_cta`, the
-engine's normal `{{...}}` pass resolves before the function runs, so dynamic
-content freezes into the row for free.
+literals at mint** — no clicker-supplied inputs (v2, §9) and no `{{...}}`
+resolution at click time. `create_cta` mints get the engine's normal
+`{{...}}` pass before the function runs, so dynamic content freezes into the
+row; `create_cta` strips engine-injected `_`-prefixed params before
+persisting.
 
-**Eligibility (mint-time validation):** `fn` must exist in the
-`lib/internal_functions` registry and have neither `__meta.controlFlow` nor
-`__meta.uiHidden`, and not be in `CTA_FN_DENYLIST` (exported constant, seeded
-empty or with stragglers). Explicitly: `workflowOnly` is **not** the filter —
-`start_workflow` is `workflowOnly: true` only to stay out of the sequence
-picker (composition.js comment) and must remain CTA-eligible; it is the
-load-bearing function for the not-spam button. **Worker verification step:**
-dump the registry, list every function the filter rejects and accepts, and
-eyeball both lists; anything accepted that needs `_execution_id` or returns
-`delayed_until`/`next_step` goes into the denylist.
+### Eligibility (B2 — layered)
 
-**Execution:** sequential, each step `await fns[fn](params, db)`; a throw or
-`success === false` stops the plan and marks the execution `failed`. Per-step
-results recorded in `plan_result` (truncate large outputs, e.g. 2k/step).
-`set_vars` returns are ignored (no variable context in v1 — no step chaining).
-Runs as user 0, same identity as workflow steps. Failure fires an IT alert at
-`error` severity (non-transitory: a human asked for this and it didn't happen)
-and renders an honest failure page/JSON to the responder.
+1. **Predicate:** `typeof fn === 'function' && fn.__meta &&
+   !name.startsWith('__')` — the registry holds 108 keys of which 14 are
+   `__`-prefixed module exports/self-adds (some plain data: `__WRITE_POLICY`,
+   `__USER_*`); the predicate is the existing UI-picker rule (`db.js:928`).
+2. **Denylist:** exported `CTA_FN_DENYLIST`, seeded `['wait_until_time']` —
+   the one accepted function returning `delayed_until`; its flaglessness is
+   deliberate (do **not** set `controlFlow` on it — that routes it through
+   controlTarget normalization and the runaway-loop guard).
+3. **Runtime guard:** the plan runner **fails any step whose result carries
+   `delayed_until` or `next_step`** — filter completeness is not load-bearing
+   against future flagless timing functions.
+4. **Mint-time:** reject `_`-prefixed param keys (engine-injection namespace)
+   and any unresolved `{{...}}` in params (the resolver renders them `''` —
+   `workflow_engine.js:36` — which would e.g. re-run WF27 with empty input,
+   unattended); run `__validateFunctionParams` per step, dry_run included.
+5. **Jest snapshot** of the eligible-function set — every registry addition
+   becomes a reviewed exposure decision.
+6. `workflowOnly` is NOT a filter — `start_workflow` carries it only to stay
+   out of the sequence picker and must remain eligible.
 
-**Outcome log:** one `logService` entry per execution (mirroring
-`logDecisionOutcome`), linked via `link_type`/`link_id` when set; `by` =
-`responder_user_id || attributed_user_id || 0`.
+Chromium-backed functions (`render_submission_pdf`,
+`document_generate_from_template`) stay eligible; mint warns when
+`mode='repeatable'` (public fan-out = load).
 
-**Registry gap to fill in S1:** no internal function cancels a workflow
-execution — the logic is inline in `POST /executions/:id/cancel`
-(routes/workflows.js). Extract to a service, add `cancel_workflow_execution`
-to the registry (reason param required, same cascade). The route delegates to
-the service; behavior unchanged.
+### Execution
+
+1. Insert the `cta_executions` row (`running`) — before step 1, so a crash
+   mid-plan is visible; `cta_expiry_sweep` alerts on `running` rows older
+   than 15 min.
+2. Steps sequential: `await fns[fn](params, db)`; a throw or
+   `success === false` or a tripped runtime guard stops the plan →
+   execution `failed`, IT alert (`severity='error'`, `group_key='cta:<id>'`),
+   generic failure page/JSON (no internals).
+3. Finalize row; per-step outputs truncated (~2k) into `plan_result`.
+4. `set_vars` returns ignored (no variable context; chaining is v2 — §9).
+5. Identity: runs as user 0. SU-active check on `minted_by` applies only to
+   `mint_source='su'` (B1).
+6. Outcome log: one `logService` entry per execution (mirror
+   `logDecisionOutcome`), linked via `link_type`/`link_id`;
+   `by = responder_user_id || attributed_user_id || 0` (timeout: always 0).
+
+### result_template (B5b)
+
+Per-option, optional — the **curated public output**:
+
+```json
+{ "value": "get_email", "label": "Show current email",
+  "plan": [{ "fn": "lookup_contact", "params": { "contact_id": 1001 } }],
+  "result_template": "Current email: [[1.output.contact_email]]" }
+```
+
+`[[N.output.path]]` resolves against step outputs after a **successful** plan;
+rendered (HTML-escaped, decisions `[[...]]` resolver convention) on the
+success page and returned as `result` in the JSON respond response. Unknown
+step index → mint-time throw (mirrors `[[respond_url:X]]`). Failures always
+get the generic page. When any option carries a `result_template`, mint
+defaults `protection='password'` (auto-secret; overridable — §2.11).
+
+### Registry gap filled in S1
+
+No internal function cancels a workflow execution — the logic is inline in
+`POST /executions/:id/cancel` (routes/workflows.js). Extract to a service
+(transaction span + post-commit task dismissal preserved), route delegates,
+add `cancel_workflow_execution` (reason required). Per R7: idempotent
+`{success, output:{skipped}}` on non-cancellable targets; status-guard the
+UPDATE (small **deliberate** behavior change closing the pre-existing
+overwrite-completed race — flag in the report); block self-cancel
+(`target == _execution_id`).
 
 ## 5. Surfaces
 
 ### 5.1 Public — `4lsg.com/c/…` (routes/ctaActions.js, auto-mounted)
 
-Mirror of `/d/`: GET never mutates (SafeLinks/Gmail prefetch), mutation behind
-form POST, `makeLimiter` buckets (reads 30/min, responds 10/min per IP),
-`Cache-Control: no-store`, `noindex`.
+Mirror of `/d/`: GET never mutates (SafeLinks/Gmail prefetch), mutation
+behind form POST, `Cache-Control: no-store`, `noindex`, limiter buckets
+(reads 30/min/IP; respond 10/min/IP — **wired**, unlike /d/ pre-R6).
 
-- `GET /c/:token` — landing: prompt, context block, one button per option
-  (single-option CTAs render one button). Terminal pages for
-  used/disabled/cancelled/expired/exhausted, same visual family as /d/.
+- `GET /c/:token` — landing: prompt (escaped), context block, one button per
+  option. Password-protected CTAs render the password field **here too** (the
+  landing form posts straight to /respond), not only on the `:value` page.
+  Terminal pages for used/disabled/cancelled/expired/exhausted.
 - `GET /c/:token/:value` — pre-selected confirm page (email buttons link
-  here). Password-protected CTAs render a password field on this page.
-- `POST /c/:token/respond` — body `value` (+ `password` when protected).
-  Executes. `responded_via='link'`.
+  here). Option value `respond` is reserved/rejected at mint.
+- `POST /c/:token/respond` — body `value` (+ `password` when protected; form
+  or JSON field only, never query string, never logged). Success page shows
+  the rendered `result_template` when present, else a generic receipt.
+  Failure page is generic + execution id.
 
-**pageLanding.js allowlist (load-bearing):** the public-host allowlist is
-enumerated regexes. Add:
+**pageLanding.js — three sets + an ordering rule (B6):**
 
 ```js
 const C_ROUTE_RE  = /^\/c\/[A-Za-z0-9_-]{10,40}$/;
@@ -160,50 +249,62 @@ const C_VALUE_RE  = /^\/c\/[A-Za-z0-9_-]{10,40}\/[A-Za-z0-9_-]{1,64}$/;
 const C_POST_RE   = /^\/c\/[A-Za-z0-9_-]{10,40}\/respond$/;
 ```
 
-…to the allowlist AND to `isCredentialedPath` (bearer in path → keep out of
-indexes). Forgetting either is the silent failure mode; the originsep tests
-(`tests/pageLanding.*`) get the /c/ cases added in the same slice.
+Added to `landingAllowed`, **`isMigratedPath`** (else `app.4lsg.com/c/<t>`
+renders staff-authored `context_html` on the JWT origin — `/t/`,`/d/` are in
+all three sets, pageLanding.js:556-560), and `isCredentialedPath`. In
+`landingAllowed`, test `C_POST_RE` **before** `C_VALUE_RE` (`:value` matches
+the literal `respond`; wrong order silently kills the only mutating /c/
+route on the landing host). Mirror the /d/ LOCK tests
+(`tests/pageLanding.originsep.test.js:863-888`).
 
 ### 5.2 Agent/API — same routes, content negotiation
 
-- `GET /c/:token` with `Accept: application/json` → descriptor:
-  `{name, prompt, options:[{value,label}], mode, protection, expires_at,
-  uses_remaining, status}`. Plans are **never** included in the descriptor.
-- `POST /c/:token/respond` with JSON body `{value, password?}` →
-  `{ok, status, execution_id, plan_result}`. `responded_via='api'`.
+Keyed on explicit `Accept: application/json` (not `*/*`).
+- `GET /c/:token` → descriptor `{prompt, options:[{value,label}], mode,
+  protection, expires_at, uses_remaining, status}`. **Excludes** `name`
+  (internal), plans, and `result_template`.
+- `POST /c/:token/respond` body `{value, password?}` →
+  `{ok, status, execution_id, result?}` — `result` only when the option has a
+  `result_template` and the plan succeeded. `plan_result` included **only**
+  when the CTA was minted with `return_plan_result=1` (B5). Generic failure
+  message otherwise.
 
-The token is the capability. This gives an AI session a scoped, expiring,
-SU-authored write grant without a write key (dovetails with the
-access-control arc).
+### 5.3 SU management — routes/api.cta.js, superuser-gated (lib/auth.superuser)
 
-### 5.3 SU management — `routes/api.cta.js`, superuser-gated (lib/auth.superuser)
-
-- `POST /api/cta` — mint. `dry_run: true` validates the payload and returns
-  per-option URLs + rendered default email HTML without inserting.
-- `GET /api/cta` — list with uses/exec counts; `GET /api/cta/:id/executions`.
-- `PATCH /api/cta/:id` — the refresh/kill surface:
-  - extend `expires_at` (new absolute datetime or duration; ≤365d out),
-  - raise/clear `max_uses`,
-  - `status`: `disabled` (kill switch) ↔ `active` (re-enable). Re-enable
-    allowed from `disabled` always; from `used` only when its sole execution
-    `failed` (retry-after-fix); never from `cancelled`.
-- Minting Claude-side = one pasted `await apiSend('/api/cta','POST',{...})`.
+- `POST /api/cta` — mint. Auto-generates the password when
+  `protection='password'` and no secret supplied (returned once); defaults
+  protection per §2.11 and names the applied default in the response.
+  `dry_run: true` → full validation (incl. per-step param validation and
+  `result_template` step refs) + per-option URLs with a `<token>` placeholder
+  + rendered default email HTML, no insert.
+- `GET /api/cta` — list with uses/exec counts; `GET /api/cta/:id/executions`
+  — full `plan_result` lives here and only here.
+- `PATCH /api/cta/:id` — extend `expires_at` (naive datetimes are FIRM_TZ via
+  `parseUserDateTime`, stored UTC; ≤365d out), raise/clear `max_uses`,
+  `disabled` ↔ `active`, `cancelled` (permanent). Status-guarded UPDATE;
+  409 on already-claimed `once`. Re-enable: from `disabled` freely; from
+  `used` only when the latest execution `failed` — resets `uses_count=0`
+  (else the sweep claim is permanently dead) and re-runs the whole plan on
+  next click; re-enabling an already-expired link without extending in the
+  same PATCH → 400.
+- Mint/PATCH/disable write `admin_audit_log` explicitly
+  (`superuserOnlyFor('cta')` audits only rejections on its own).
 
 ## 6. Semantics
 
-**once (default):** password verified (if protected) **before** the claim.
-Claim is the single arbiter, same mutual-exclusion story as decisions:
+**once (default):** password verified **before** the claim; claim is the
+single arbiter:
 
 ```sql
 UPDATE cta_links SET status='used', uses_count=1, updated_at=NOW()
  WHERE id=? AND status='active' AND expires_at > NOW();
 ```
 
-affectedRows=0 → re-read, render terminal page. Plan runs after the claim; a
-failed plan leaves `status='used'` + a `failed` execution row (PATCH re-enable
-to retry after fixing the cause).
+affectedRows=0 → re-read, terminal page. Plan runs after the claim; a failed
+plan leaves `used` + a `failed` execution row (PATCH re-enable per §5.3).
 
-**repeatable:** no claim; atomic guarded increment per click:
+**repeatable:** password verified **before** the increment (a wrong password
+must not burn a use):
 
 ```sql
 UPDATE cta_links SET uses_count = uses_count + 1, updated_at=NOW()
@@ -211,120 +312,138 @@ UPDATE cta_links SET uses_count = uses_count + 1, updated_at=NOW()
    AND (max_uses IS NULL OR uses_count < max_uses);
 ```
 
-Each click = one `cta_executions` row. `timeout_option` rejected at mint for
-repeatable. Extra per-token rate bucket on top of the IP bucket.
+Each click = one execution row. `timeout_option` rejected at mint for
+repeatable. Client retries can duplicate executions — `max_uses` caps it;
+nonce idempotency is §9.
 
-**Expiry/cleanup:** `cta_timeout_cleanup` (new uiHidden internal function),
-scheduled as a `one_time` job at `expires_at`, mirrors
-`decision_timeout_cleanup`:
-- row gone / not active → no-op;
-- `expires_at` now in the future (PATCH extended it) → re-insert itself at
-  the new `expires_at`, exit. This makes PATCH trivial: never touch jobs;
-- actually expired, mode=once, `timeout_option` set, `uses_count=0` → run that
-  option's plan (`responded_via='timeout'`), set `status='used'`;
-- otherwise just leave it (expired is derived from `expires_at` everywhere).
+**Expiry — `cta_expiry_sweep`** (recurring, ~5 min, `uiHidden`): over due
+rows, the timeout path **claims first** (B3):
 
-**Password tier:** bcrypt compare (rounds 12, same as auth.password.js).
-Failed attempt → increment `failed_attempts`, dedicated limiter
-(5 attempts / 15 min / token+IP), warn-severity IT alert at 20 cumulative
-failures. Deliberately **no** auto-disable: an attacker burning attempts must
-not be able to kill a live link (DoS trade-off, accepted). Password accepted
-via form field or JSON field; never via query string; never logged.
+```sql
+UPDATE cta_links SET status='used', uses_count=1, updated_at=NOW()
+ WHERE id=? AND status='active' AND mode='once' AND uses_count=0
+   AND timeout_option IS NOT NULL AND expires_at <= NOW();
+```
 
-**Attribution:** `responder_user_id` = JWT user (S5 login tier) else NULL;
-`attributed_user_id` fills the outcome-log `by` for link/password responses
-(documented as assertion-by-mint). Per-recipient attribution on public links =
-mint one CTA per recipient; rows are cheap.
+Plan only on affectedRows=1 (`responded_via='timeout'`, `by=0` — never
+`attributed_user_id`). `<= NOW()` vs. the respond claim's `> NOW()` restores
+the decisions mutual exclusion (pool `timezone:"Z"`; `NOW()` = UTC).
+Duplicate/overlapping sweep runs are benign by construction. Rows without
+`timeout_option` just stay expired (derived everywhere from `expires_at`).
+The sweep also warn-alerts on `running` executions older than 15 min.
+PATCH never touches jobs — there are none per CTA.
+
+**Password brute force:** dedicated limiter 5 attempts/15 min/token+IP
+(per-instance memory — real ceiling is 5×instances; accepted),
+`failed_attempts` counter. Alerts (`group_key='cta:<id>'`): `warn` at 20
+cumulative — **record-only by design** (`alert_email_min_severity='error'`);
+escalates to `error` (emails IT) at 100. No auto-disable: an attacker must
+not be able to kill a live link (accepted DoS trade-off).
 
 ## 7. Protection levels
 
 | level | surface | who it's for | identity |
 |---|---|---|---|
 | `none` | 4lsg.com/c | low-stakes, anyone with the link | none (optional `attributed_user_id`) |
-| `password` | 4lsg.com/c + password field | powerful plans, recipients without YC accounts, agents | holder-of-secret (+ `attributed_user_id`) |
+| `password` | 4lsg.com/c + password field | powerful plans, result-bearing CTAs, recipients without YC accounts, agents | holder-of-secret (+ `attributed_user_id`) |
 | `login` (S5, deferred) | app.4lsg.com shell deep-link `#cta=<token>` → pane → `apiSend POST /api/cta/:token/respond` | destructive plans for staff | authenticated JWT user |
 
-Login tier is deferred because the JWT rides only the shell's `apiSend`
-(frozen bindings, root-relative) — a standalone app-origin page can't read
-it, so the tier needs a shell pane. Password + attribution covers the near-term
-cases; build S5 when a destructive staff CTA actually needs authenticated
-identity.
+Login tier deferred: the JWT rides only the shell's `apiSend` (frozen
+bindings, root-relative) — a standalone app-origin page can't read it, so the
+tier needs a shell pane. Password + attribution covers the near-term cases.
 
 ## 8. Security analysis
 
 - **No user passwords on the public host — rejected by design.** Verifying
   YisraCase account passwords on 4lsg.com would (a) train staff that typing
-  their YC password into non-app origins is normal — the exact phishing
-  pattern origin separation (2026-08-17) exists to prevent; a cloned /c/ page
-  becomes a credential harvester for the whole app, vs. one CTA's throwaway
-  secret; (b) widen where real credentials transit and can be mis-logged;
-  (c) couple CTA auth to the access-control arc mid-redesign. If
-  authenticated identity is needed, that's the login tier (S5), where the
-  existing session does the authenticating.
+  their YC password into non-app origins is normal — the phishing pattern
+  origin separation (2026-08-17) exists to prevent; a cloned /c/ page becomes
+  a harvester for the whole app vs. one CTA's throwaway secret; (b) widen
+  where real credentials transit; (c) couple CTA auth to the access-control
+  arc mid-redesign. Authenticated identity = login tier (S5).
 - Bearer-token model matches /t/ and /d/: possession executes. Mitigations:
   mandatory expiry, kill switch, rate limits, single-use default, password
   tier for anything powerful, plans frozen at mint.
-- Plans are SU-authored at mint; the responder supplies only the option
-  choice (validated against the row's options). No parameter injection
-  surface in v1.
-- Execution refuses if `minted_by` is no longer an active SU at click time.
-- `context_html`/`prompt` are staff-authored HTML rendered on the public
-  landing host — the same content class and trust contract as /d/, which is
-  why /c/ lives there and not on the JWT origin.
-- Tokens: 22-char base62 (`lib/token.generateToken`), `utf8mb4_bin` column,
+- Public surfaces never leak plan internals: `plan_result` is SU-side;
+  `result_template` is the only curated public output; failures are generic
+  (B5). `lookup_contact`-class outputs (SSN column, DOB, notes) are exactly
+  why.
+- `mint_source` governs the click-time check (B1): `su` mints refuse when
+  `minted_by` is no longer an active SU. Note: exactly one users row is
+  `'authorized - SU'` — that row's `user_auth` is a **global kill switch**
+  for every su-minted CTA.
+- `prompt` is escaped text; `context_html` is the only raw-HTML slot (same
+  trust contract as decisions) — and staff-authored HTML on the landing host
+  is why /c/ lives there, in all three pageLanding sets.
+- At-rest exposure (R3): accepted for v1; filed to the access-control arc.
+  Standing rule: `cta_links`/`cta_executions` never enter
+  `QUERY_DB_ALLOWED_TABLES` or `WRITE_POLICY`.
+- Tokens: 22-char base62 (`lib/token.generateToken`), `utf8mb4_bin`,
   path-only, `isCredentialedPath` + `noindex` + `no-store`.
 
 ## 9. Deferred (v2 candidates — ref/plans.md at arc close)
 
-- Clicker-supplied inputs (e.g. "snooze until ___") — reopens injection and
-  validation questions; design separately.
-- Step chaining (`[[prev.output.x]]` in later plan steps).
-- Login tier S5 (shell pane + `/api/cta/:token/respond` authed route).
-- Manager UI pane (or a db-tools page as the interim list/disable surface).
-- `min_interval_seconds` cooldown for repeatable, if abuse shows up.
+- Clicker-supplied inputs; step chaining beyond `result_template` tokens.
+- Login tier S5 (shell pane + authed respond route).
+- Manager UI pane (db-tools page as interim list/disable surface).
+- `min_interval_seconds` cooldown; nonce idempotency
+  (`UNIQUE(cta_id, nonce)`).
+- Per-execution retry-from-failed-step endpoint (R4 v1 = re-enable + full
+  rerun).
+- Token/password-hash hashing at rest + rotate-PATCH (access-control arc).
+- DB-backed exponential backoff before bcrypt on password attempts.
 
 ## 10. Slices
 
-- **S1 — substrate.** Migration (§3) + settings; `services/ctaService.js`
-  (mint/validate/execute/patch/disable + plan runner); eligibility filter +
-  registry dump verification (§4); cancel-execution extraction +
-  `cancel_workflow_execution`; `cta_timeout_cleanup`. Jest: plan validation
-  (incl. start_workflow eligible, controlFlow rejected), once-claim race,
-  repeatable max_uses race, password verify-before-claim, cleanup reschedule-
-  on-extend, timeout_option fires only when unused. Mutation-check new
-  assertions; no mocking ctaService.
-- **S2 — surfaces.** `routes/ctaActions.js` (/c/ pages + JSON negotiation +
-  limiters) ; pageLanding allowlist + credentialed paths + originsep test
-  cases; `routes/api.cta.js` (mint/dry_run/list/executions/PATCH);
-  `[[cta_url]]`, `[[respond_url:VALUE]]`, `[[options_html]]`, `[[expires_at]]`
-  template tokens + default email renderer (decisions' visual family).
-- **S3 — workflow mint.** `create_cta` internal function (params mirror the
-  mint API; output: `cta_id`, `token`, `cta_url`, `urls` map, `options_html`).
-- **S4 — first consumers.** WF27 step-25 RG alert gains the "Not spam —
-  re-run intake" button (once, plan = `start_workflow` 27 with raw_input +
-  `spam_override`); rides/aligns with the AI-gate slice. Ad-hoc SS spam-button
-  flow documented in the manual chapter.
+- **S0 — done 2026-10-07:** /d/ respond limiter patch (R6).
+- **S1 — substrate.** Migration (§3: tables, settings, sweep job row);
+  `services/ctaService.js` (mint validation incl. eligibility §4 +
+  `result_template` refs, plan runner with running-row lifecycle + runtime
+  guard + truncation, claim/increment/timeout-claim SQL, PATCH logic, sweep
+  core); `cta_expiry_sweep` internal function (uiHidden; copy
+  recurrence/data shape from an existing recurring job row);
+  cancel-execution extraction + `cancel_workflow_execution` (§4/R7).
+  Jest: eligibility snapshot + predicate/denylist cases
+  (start_workflow eligible, `wait_until_time` denied, `__WRITE_POLICY`
+  denied), runtime guard, once-claim race, repeatable max_uses race,
+  password verify-before-claim and verify-before-increment, timeout
+  claim-before-plan + double-run attempt, running-row crash visibility,
+  re-enable resets uses_count, template render + escaping + unknown-step
+  throw. Mutation-check new assertions; no mocking ctaService.
+- **S2 — surfaces.** routes/ctaActions.js (/c/ pages, password fields on
+  both GETs, JSON negotiation, limiters **wired**); pageLanding three sets +
+  C_POST_RE-before-C_VALUE_RE + LOCK tests; routes/api.cta.js (mint/dry_run/
+  list/executions/PATCH + audit writes); `[[cta_url]]`,
+  `[[respond_url:VALUE]]`, `[[options_html]]`, `[[expires_at]]` tokens +
+  default email (decisions' visual family).
+- **S3 — workflow mint.** `create_cta` internal function: params mirror the
+  mint API minus `protection='password'` (**not supported from workflows in
+  v1** — the auto-secret would land in `workflow_execution_steps.output_data`,
+  readable via RO keys); sets `mint_source='workflow'`,
+  `source_execution_id`; strips `_`-injected params; output: `cta_id`,
+  `token`, `cta_url`, `urls` map, `options_html`.
+- **S4 — WF27 "Not spam" button (live-verified corrections).** WF27 v7 has
+  **no `raw_input`**: step 1 is a custom_code formatter over the hook
+  envelope; step 3 is `evaluate_condition ai_spam == yes → then 25`; step 25
+  is the RG alert email. S4: `create_cta` step appended at **40+** (never
+  insert at 25 — wf27-v6 asserted-base discipline), plan =
+  `start_workflow` 27 with the formatter's expected envelope keys in
+  `init_data` + `spam_override`; step 3 gains the `spam_override` branch;
+  console script asserts base step count + labels before writing and the
+  draft before publishing. Rides/aligns with the AI-gate slice.
 - **S5 — login tier.** Deferred (§7).
-- **Close-out.** manual/ chapter, AI_CONTEXT section, schema COMMENTs ride the
-  migration, `fred/cta_state` updated, learnings routed per CLAUDE.md table.
+- **Close-out.** manual/ chapter, AI_CONTEXT section, schema COMMENTs ride
+  the migration, `fred/cta_state` updated, learnings routed per CLAUDE.md.
 
 Deploy order per slice: migration → backend → (frontend none until S5).
 
-## 11. Reviewer checklist
+## 11. Review record
 
-1. Claim/increment SQL: race-safe under the relaxed SQL mode and UTC pool?
-   Any gap vs. the decisions claim analysis (decisionActions.js header)?
-2. Eligibility filter: is `controlFlow`/`uiHidden` + denylist actually
-   sufficient? Walk the registry list the worker produces.
-3. pageLanding: do the three regexes + credentialed-path entries cover every
-   /c/ shape, and does anything else on the public host collide with `/c/`?
-4. `cta_timeout_cleanup` reschedule-on-extend: any way PATCH + fire can race
-   into a double timeout_option run? (Claim-style guard on the timeout path:
-   it must win the same `status='active'` UPDATE before running the plan.)
-5. Password path: verify-before-claim ordering, limiter placement, no
-   password in logs/plan_result, bcrypt cost consistent with auth.password.js.
-6. Once-mode failed-plan → PATCH re-enable: is 'used'+failed → 'active' sound,
-   or does it need a distinct status?
-7. `cancel_workflow_execution` extraction: behavior-identical to the route
-   (incl. decision cascade + post-commit task dismissal)?
-8. Anything in §8 you'd tighten before this mints real links?
+2026-10-07 — three independent worker reviews, consolidated: **approve with
+changes**, verified against `main` @ `9e7fabae` and the live DB. Blocking
+items B1–B7 (+B5b feature ratification), non-blocking NB1–9, rulings R1–R8 —
+all folded into this v2; the consolidated report is retained in the arc chat.
+Notable negative ruling preserved: do **not** flag `wait_until_time`
+`controlFlow` — denylist + runtime guard achieve the safety with zero engine
+ripple (`BRANCH_TARGET_PARAMS` + `tests/control.flow.test.js` lock the
+current pairing).
