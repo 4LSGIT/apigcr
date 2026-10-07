@@ -23,6 +23,33 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **CTA links are live end to end (10-07, arc S0–S4):** SU-minted bearer
+  links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
+  registry internal functions as user 0. Design (canonical, review-folded):
+  `ref/CTA_DESIGN.md`; operators: `manual/08-Admin-Tools/07-cta-links.md`;
+  code: `services/ctaService.js` (substrate), `routes/ctaActions.js` (/c/),
+  `routes/api.cta.js` (SU mgmt), `lib/ctaLinks.js` ([[tokens]]/email),
+  `lib/internal_functions/cta.js` (`cta_expiry_sweep`, `create_cta`).
+  What a session touching unrelated code needs to know:
+  - **A new internal function with `__meta` is CTA-eligible by default**
+    (unless `controlFlow`, `__`-prefixed, or in `CTA_FN_DENYLIST`). The
+    explicit eligible-set test in `tests/ctaService.test.js` fails on every
+    registry addition, so eligibility is a reviewed decision, not a
+    surprise. Low stakes — mints are SU-gated and audited, plans are frozen
+    at mint, and a runtime guard fails any step returning
+    `delayed_until`/`next_step` — but decide, don't rubber-stamp.
+  - **Standing rule (review R3): `cta_links`/`cta_executions` never enter
+    `QUERY_DB_ALLOWED_TABLES` or `WRITE_POLICY`** — tokens and password
+    hashes live there in the clear (v1 posture; hashing filed to the
+    access-control arc).
+  - /c/ lives in ALL THREE pageLanding sets (allowed, migrated,
+    credentialed), `C_POST_RE` tested before `C_VALUE_RE`; raw `plan_result`
+    is SU-only (`/api/cta/:id/executions`); timeouts run via the recurring
+    `cta_expiry_sweep` job (claim-first, no per-CTA jobs — PATCH never
+    touches scheduled_jobs); CTA passwords are mint-scoped bcrypt secrets,
+    never user passwords; workflow mints (`create_cta`) are exempt from the
+    active-SU click check via `mint_source='workflow'` and refuse password
+    protection and `dry_run`.
 - **Custom fields are live end to end (09-25, arc S0–S4 + CFG-1):** admin-defined
   fields on cases and contacts. `field_defs` is the registry; values live in
   one JSON column per entity (`cases.custom`, `contacts.custom`); a reconciler

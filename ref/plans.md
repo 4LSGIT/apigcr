@@ -454,6 +454,27 @@ role-convention item were confirmed done and dropped).
   undocumented. One chapter under an existing section (+ README TOC row)
   covers it; `ref/THEME-CHEATSHEET.md` is the developer side, not this.
 
+- **CTA (ref/CTA_DESIGN.md) — deferred v2 features** (§9 there has detail):
+  clicker-supplied input fields; step chaining beyond `result_template`
+  tokens; **S5 login tier** (shell deep-link pane + authed respond route);
+  manager UI pane (placeholder waiting in index.html Admin tab — slice
+  dispatched 2026-10-07); `min_interval_seconds` cooldown and nonce
+  idempotency (`UNIQUE(cta_id, nonce)`) for repeatable links; per-execution
+  retry-from-failed-step; token/password-hash hashing at rest + rotate-PATCH
+  (owned by the access-control arc); DB-backed exponential backoff on
+  password attempts.
+- **CTA S4 residuals** (WF27 v8, 2026-10-07): anchor the recidivism email
+  LIKE as `%"<email>` to kill substring matches (`bob@` ⊂ `jimbob@` — 0
+  collisions in the 65-email corpus today); optional lowercased `ai_spam`
+  re-emit in step 45 (step 3 compares `== 'yes'` exactly; a `"Yes"` fails
+  visible, not silent); rollback note: a v8-minted CTA clicked after a
+  rollback to v7 content re-gates the lead (v7 ignores `spam_override`) —
+  one extra RG alert, no loop; recidivism coverage before 2026-09-17 (wf27
+  v5) depends on the raw phone having been typed as contiguous digits; the
+  hardcoded bad-IP ranges in the step-44 prompt rot if the campaign rotates
+  subnets — revisit against gate data, together with the parked match-list
+  idea.
+
 ---
 
-*Last updated: 2026-10-05*
+*Last updated: 2026-10-07*

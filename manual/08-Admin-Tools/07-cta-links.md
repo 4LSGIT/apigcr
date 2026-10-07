@@ -1,0 +1,72 @@
+# CTA Links (SU)
+
+A CTA ("call to action") is a tokenized link you mint that runs a
+**pre-authorized set of actions** when the recipient clicks a button and
+confirms. You decide the actions at mint time; the recipient only picks an
+option. Think of it as a decision link (`/d/…`) that doesn't need a workflow
+waiting on the other end — and that can optionally be reused.
+
+**Where:** today, the API (`/api/cta`, SU only) — typically driven from a
+Claude session that composes the email around the mint. An Admin-tab pane is
+on its way (placeholder is already in the sidebar). The links themselves live
+at `4lsg.com/c/<token>`, on the public landing host like `/d/` and `/t/`.
+
+## What a CTA can do
+
+Each option on the link carries a **plan**: a sequence of the same internal
+functions workflows use (`advance_stage`, `create_task`, `send_email`,
+`start_workflow`, `update_case`, …). Plans are frozen when you mint — a click
+can never change *what* happens, only *whether* it happens. Control-flow and
+plumbing functions are excluded, and anything the plan produces is logged per
+click under the link's executions.
+
+A live example: the spam alert RG receives for a website hit the AI gate
+rejected carries a **"Not spam — re-run intake"** button. Its plan re-runs
+workflow 27 with the original submission plus an override flag, so the lead
+is created as if the gate had passed it.
+
+## Once vs. repeatable
+
+- **once** (default): first confirmed click wins, atomically — a second
+  click shows "already used". If nobody clicks by the expiry, an optional
+  `timeout_option` runs automatically.
+- **repeatable**: every click runs the plan, until the expiry or an optional
+  `max_uses` cap. Use this for standing actions ("run the resync") or, with
+  a `result_template`, for live lookup links ("show this contact's current
+  email") you can hand to someone — or to an AI session — without an account.
+
+## Protection levels
+
+- **none** — anyone holding the link can execute. Fine for low-stakes
+  actions sent to known recipients.
+- **password** — the confirm page asks for a secret. By default the mint
+  **generates** one (shown exactly once, in the mint response — copy it then)
+  and links that return information default to this level. This is never a
+  YisraCase account password; don't reuse one.
+
+Attempts are rate-limited and counted; a brute-force burst records an alert
+but deliberately never kills the link.
+
+## Lifecycle
+
+Links always expire (default 3 days for once, 30 for repeatable). You don't
+re-mint when one lapses: `PATCH /api/cta/:id` extends the expiry, raises
+`max_uses`, disables (kill switch) or re-enables. Re-enabling a used link
+whose plan failed re-runs the **whole** plan on the next click — check its
+executions first. `cancelled` is permanent.
+
+## Reading results
+
+`GET /api/cta` lists links with use counts; `GET /api/cta/:id/executions`
+shows every click — who/when/via which surface, and the full per-step plan
+output. That detail is deliberately **SU-only**: the public pages and the
+JSON surface return only success/failure (plus the curated `result_template`
+text, when the option defines one).
+
+## Minting from a workflow
+
+Workflows mint CTAs with the `create_cta` function (that's how the RG button
+is made). Workflow mints can't use password protection — the generated
+secret would end up in step output.
+
+Design + internals: `ref/CTA_DESIGN.md`.

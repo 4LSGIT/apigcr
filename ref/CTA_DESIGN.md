@@ -2,6 +2,9 @@
 
 **Status:** ratified 2026-10-07 (Fred) · 3-worker consolidated review 2026-10-07:
 **approve with changes** (verified @ `9e7fabae`) · all amendments folded below.
+**Shipped:** S0–S4 live 2026-10-07 (WF27 **v8 published**; S4 independently
+reviewed, see §11). Open: watch gate (first organic spam hit end-to-end),
+manager UI (index.html Admin-tab pane), S5 login tier (§7).
 **This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
 `claude/CTA_DESIGN.md` mirrors it.
 **Arc:** CTA / email action buttons · scratch `ns=fred` key `cta_state`
@@ -153,14 +156,20 @@ persisting.
 
 ### Eligibility (B2 — layered)
 
-1. **Predicate:** `typeof fn === 'function' && fn.__meta &&
-   !name.startsWith('__')` — the registry holds 108 keys of which 14 are
-   `__`-prefixed module exports/self-adds (some plain data: `__WRITE_POLICY`,
-   `__USER_*`); the predicate is the existing UI-picker rule (`db.js:928`).
-2. **Denylist:** exported `CTA_FN_DENYLIST`, seeded `['wait_until_time']` —
-   the one accepted function returning `delayed_until`; its flaglessness is
-   deliberate (do **not** set `controlFlow` on it — that routes it through
-   controlTarget normalization and the runaway-loop guard).
+1. **Predicate (as shipped; S1 ruling):** `typeof fn === 'function' &&
+   fn.__meta && !fn.__meta.controlFlow && !name.startsWith('__')` — the
+   `controlFlow` exclusion was added at S1 (the review's literal predicate
+   would have accepted wait_for/schedule_resume/request_decision only for
+   the runtime guard to fail them at click). The `__` prefix excludes the
+   module exports/self-adds, some of which are plain data (`__WRITE_POLICY`,
+   `__USER_*`); same rule as the UI picker (`db.js:928`).
+2. **Denylist:** exported `CTA_FN_DENYLIST`, as shipped:
+   `wait_until_time` (the one flagless `delayed_until` returner — do **not**
+   set `controlFlow` on it; that routes it through controlTarget
+   normalization and the runaway-loop guard), `cta_expiry_sweep`,
+   `decision_timeout_cleanup`, `set_test_var` (internal plumbing / dev-only),
+   and `create_cta` (needs a live `_execution_id`; links must not mint
+   links).
 3. **Runtime guard:** the plan runner **fails any step whose result carries
    `delayed_until` or `next_step`** — filter completeness is not load-bearing
    against future flagless timing functions.
@@ -395,6 +404,10 @@ tier needs a shell pane. Password + attribution covers the near-term cases.
 
 ## 10. Slices
 
+*S0–S4 shipped 2026-10-07 — repo commits 9eb124b (S0), 02fb1f2 (S1), 7c27f30
+(S2), 2f58c47 (S3); S4 is live workflow/DB state (WF27 v8), its console
+scripts were run from the arc chat. S4 below is updated to AS-BUILT.*
+
 - **S0 — done 2026-10-07:** /d/ respond limiter patch (R6).
 - **S1 — substrate.** Migration (§3: tables, settings, sweep job row);
   `services/ctaService.js` (mint validation incl. eligibility §4 +
@@ -422,15 +435,28 @@ tier needs a shell pane. Password + attribution covers the near-term cases.
   readable via RO keys); sets `mint_source='workflow'`,
   `source_execution_id`; strips `_`-injected params; output: `cta_id`,
   `token`, `cta_url`, `urls` map, `options_html`.
-- **S4 — WF27 "Not spam" button (live-verified corrections).** WF27 v7 has
-  **no `raw_input`**: step 1 is a custom_code formatter over the hook
-  envelope; step 3 is `evaluate_condition ai_spam == yes → then 25`; step 25
-  is the RG alert email. S4: `create_cta` step appended at **40+** (never
-  insert at 25 — wf27-v6 asserted-base discipline), plan =
-  `start_workflow` 27 with the formatter's expected envelope keys in
-  `init_data` + `spam_override`; step 3 gains the `spam_override` branch;
-  console script asserts base step count + labels before writing and the
-  draft before publishing. Rides/aligns with the AI-gate slice.
+- **S4 — AS BUILT (WF27 v8, published 2026-10-07; r2.1 after independent
+  review).** Full-rebuild console script (v7 precedent), base- and
+  draft-asserted; 50 steps. Shape: the `spam_override` gate sits at **step
+  2**, BEFORE the AI chain — not on step 3 as first specced (reviewer NB4,
+  accepted: no AI cost on re-entry, and an override run structurally cannot
+  re-gate/re-alert/re-mint — reach(49) ∩ {gate/alert/mint steps} = ∅).
+  Screening chain 41–46: recidivism via `workflow_executions` LIKE (Ruling
+  1(C) — `hook_executions` stays OFF the query_db allowlist; the job_executor
+  sandbox has no db, so formatter-side lookups were impossible), then the
+  Haiku gate (step 44) with envelope metadata + recidivism counts + the
+  advance-fee genre and a 3-way `yes|suspicious|no` verdict; `suspicious`
+  still creates the lead with a ⚠ block in SS's step-12 context. CTA mint at
+  step 47 (once-mode, `start_workflow` 27 with the formatter's envelope keys
+  + `spam_override`) feeds the step-25 RG alert button; step 40 is an
+  explicit load-bearing `end` (the publish gate rejected the v6-shaped
+  fall-through). Review fixes baked in: B1 `\u0001`-prefixed no-phone/email
+  sentinels (JSON-escaping at rest kills sentinel self-match), B2 indexed
+  `known_contacts.N.contact_name` (mid-string object placeholders render
+  `[object Object]`), R1 client-controlled site/form_type moved from the
+  trusted prompt into the guarded input. Real-Haiku backtest (44 historical
+  payloads, test-step): campaign 12/12 yes, real 27 no / 5 suspicious /
+  0 yes.
 - **S5 — login tier.** Deferred (§7).
 - **Close-out.** manual/ chapter, AI_CONTEXT section, schema COMMENTs ride
   the migration, `fred/cta_state` updated, learnings routed per CLAUDE.md.
@@ -447,3 +473,14 @@ Notable negative ruling preserved: do **not** flag `wait_until_time`
 `controlFlow` — denylist + runtime guard achieve the safety with zero engine
 ripple (`BRANCH_TARGET_PARAMS` + `tests/control.flow.test.js` lock the
 current pairing).
+
+S4 (2026-10-07) — Fable executor + independent Opus review
+(executor+reviewer model): approve-with-changes; two blocking input defects
+(B1 sentinel self-match, B2 `[object Object]` contact names) found by
+verification against the real resolver/serializer and fixed in r2; prompt
+hygiene (R1) folded; r2.1 added a two-sentence in-practice clarifier after
+the real-Haiku backtest flagged debtor-side consumer matters reading as
+off-practice. The publish gate itself caught the executor's first layout
+recreating the v6 fall-through cycle — the discipline stack (asserted base,
+asserted draft, pause-free-cycle gate, independent review, real-model
+backtest) each caught something the others missed.
