@@ -252,6 +252,8 @@
     z-index: 100; padding: 24px 16px; overflow: auto;
   }
   #confirm-backdrop { z-index: 110; }
+  .seg { display: flex; gap: 16px; }
+  .sms-preview { white-space: pre-wrap; word-break: break-word; }
   .modal-backdrop.open { display: flex; }
   .modal {
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -401,6 +403,20 @@
   </div>
 </div>
 
+<!-- Send dialog: POST /api/cta/:id/send (email or SMS, with a dry-run preview) -->
+<div class="modal-backdrop" id="send-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="send-title">
+    <h3 id="send-title">Send</h3>
+    <div class="modal-err" id="send-err"></div>
+    <div id="send-body"></div>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="send-close">Close</button>
+      <button class="btn" type="button" id="send-preview">Preview</button>
+      <button class="btn primary" type="button" id="send-go">Send</button>
+    </div>
+  </div>
+</div>
+
 <!-- Generic confirm (disable / cancel / mint) -->
 <div class="modal-backdrop" id="confirm-backdrop">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
@@ -477,6 +493,7 @@ const state = {
   minting: false,
   receipt: null, pwCopied: false,
   patch: null,             // { mode: 'edit'|'reenable', cta, latest }
+  send: null,              // { id, name, protection, prompt, template } — the open Send dialog
   confirm: null,           // { onYes }
 };
 
@@ -513,13 +530,21 @@ async function copyText(text, okMsg) {
   }
 }
 /**
- * Copy RENDERED html (pastes formatted into Gmail / Outlook / Docs) with a
- * plain-text twin for text-only targets. The ClipboardItem path is the normal
- * one; the fallback selects a rendered copy and lets the browser copy it as
- * rich text — parsed inertly and stripped of scripts / handlers first, since
- * an email template is SU-authored HTML.
+ * Copy RENDERED html so it pastes formatted into Gmail / Outlook / Docs.
+ *
+ * PRIMARY: a native selection copy — the html is rendered (inertly parsed,
+ * scripts / handlers stripped: a template is SU-authored HTML) into an
+ * off-screen element of this document, selected, and copied with
+ * execCommand('copy'). The clipboard then holds exactly what a manual
+ * select + Cmd/Ctrl-C of a web page produces, the format Gmail's paste is
+ * built for. (2026-10-08: the async ClipboardItem write — Chrome re-serializes
+ * that HTML — pasted as PLAIN text in Gmail in the field, though both paths
+ * paste rich into a plain contenteditable.)
+ * FALLBACK (execCommand refused): navigator.clipboard.write with html + the
+ * plain-text twin.
  */
 async function copyRich(html, text, okMsg) {
+  if (copyRendered(html)) { showToast(okMsg); return true; }
   try {
     if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) throw new Error('no rich clipboard');
     await navigator.clipboard.write([new ClipboardItem({
@@ -529,24 +554,39 @@ async function copyRich(html, text, okMsg) {
     showToast(okMsg);
     return true;
   } catch {
+    showToast('Copy failed — select the preview and copy it by hand, or use "HTML source"');
+    return false;
+  }
+}
+
+/** Render `html` off-screen, select it, execCommand('copy'). true when the browser copied. */
+function copyRendered(html) {
+  let host = null;
+  const sel = window.getSelection();
+  try {
     const doc = new DOMParser().parseFromString(String(html), 'text/html');
-    doc.querySelectorAll('script, iframe, object, embed, form, base, meta, link').forEach((n) => n.remove());
+    doc.querySelectorAll('script, iframe, object, embed, form, base, meta, link, style').forEach((n) => n.remove());
     doc.querySelectorAll('*').forEach((n) => [...n.attributes].forEach((a) => { if (/^on/i.test(a.name)) n.removeAttribute(a.name); }));
-    const host = document.createElement('div');
-    host.setAttribute('contenteditable', 'true');
-    host.style.position = 'fixed'; host.style.left = '-10000px'; host.style.top = '0';
-    host.append(...[...doc.body.childNodes].map((n) => document.importNode(n, true)));
+    // The email's font and background sit on its <body>; carry them on a wrapper.
+    const wrap = document.createElement('div');
+    const bodyStyle = doc.body.getAttribute('style');
+    if (bodyStyle) wrap.setAttribute('style', bodyStyle);
+    wrap.append(...[...doc.body.childNodes].map((n) => document.importNode(n, true)));
+    host = document.createElement('div');
+    host.setAttribute('aria-hidden', 'true');
+    host.style.position = 'fixed'; host.style.left = '-10000px'; host.style.top = '0'; host.style.width = '640px';
+    host.appendChild(wrap);
     document.body.appendChild(host);
-    const sel = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(host);
-    sel.removeAllRanges(); sel.addRange(range);
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch { ok = false; }
     sel.removeAllRanges();
-    host.remove();
-    showToast(ok ? okMsg : 'Copy failed — use "HTML source" instead');
-    return ok;
+    sel.addRange(range);
+    return document.execCommand('copy') === true;
+  } catch {
+    return false;
+  } finally {
+    try { sel.removeAllRanges(); } catch { /* noop */ }
+    if (host) host.remove();
   }
 }
 
@@ -859,6 +899,7 @@ function renderDetail() {
   const actions = [];
   actions.push(`<button class="btn" type="button" data-act="copy" data-text="${esc(c.cta_url)}" data-msg="Landing URL copied">Copy link</button>`);
   actions.push(`<a class="btn" href="${esc(c.cta_url)}" target="_blank" rel="noopener noreferrer" title="Opens the public page — viewing never runs anything">Open page ↗</a>`);
+  if (st === 'active') actions.push(`<button class="btn primary" type="button" data-act="send" title="Email or text this link from YisraCase">Send…</button>`);
   actions.push(`<button class="btn" type="button" data-act="duplicate" title="Open the builder pre-filled from this link">Duplicate</button>`);
   if (c.status === 'active' || c.status === 'disabled') {
     actions.push(`<button class="btn" type="button" data-act="edit">Extend / limits…</button>`);
@@ -1134,6 +1175,170 @@ async function savePatch() {
   } catch (err) {
     // 400/409 messages are written for humans — show them verbatim.
     showPatchErr(errText(err));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Send dialog ─────────────────────────────────────────────
+// POST /api/cta/:id/send. The server composes, sends, logs and audits; this
+// dialog only collects channel / to / from (/ subject / template) and shows
+// the dry-run preview. Active links only — the server 409s anything else.
+function fmtPhone(p) {
+  const d = String(p || '').replace(/\D/g, '').slice(-10);
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(p || '');
+}
+function sendChannel() {
+  const r = document.querySelector('#send-body input[name="s-ch"]:checked');
+  return r ? r.value : 'email';
+}
+function fromOptionsHtml(channel) {
+  const fd = P.firmData || {};
+  if (channel === 'sms') {
+    return `<option value="">Default staff line (sms_staff_from)</option>` +
+      (fd.phoneLines || []).map((l) => `<option value="${esc(l.phone_number)}">${esc(l.display_name || 'Line')} · ${esc(fmtPhone(l.phone_number))}</option>`).join('');
+  }
+  return `<option value="">Default sender (email_automations)</option>` +
+    (fd.emailFrom || []).map((e) => `<option value="${esc(e.email)}">${esc(e.from_name ? `${e.from_name} <${e.email}>` : e.email)}</option>`).join('');
+}
+
+/** The server's default subject, for the placeholder (shortened past 60 chars). */
+function subjectHint(prompt) {
+  const one = String(prompt || '').replace(/\s+/g, ' ').trim();
+  return one.length > 60 ? `${one.slice(0, 60)}…` : one;
+}
+
+function openSend(src) {
+  if (!src || !src.id) return;
+  state.send = { ...src };
+  E('send-title').textContent = `Send "${src.name}"`;
+  E('send-err').classList.remove('show');
+  const tpl = src.template || '';
+  E('send-body').innerHTML = `
+    ${src.protection === 'password' ? `<div class="warn-box">This link is password-protected. The password is <b>never</b> included in what is sent —
+      give it to the recipient separately (a call, or another channel).</div>` : ''}
+    <div class="fld">
+      <span class="yc-flabel">Send by</span>
+      <div class="seg">
+        <label class="check"><input type="radio" name="s-ch" value="email" checked> Email</label>
+        <label class="check"><input type="radio" name="s-ch" value="sms"> SMS</label>
+      </div>
+    </div>
+    <div class="fld">
+      <label class="yc-flabel" for="s-to">To</label>
+      <input type="text" id="s-to" autocomplete="off" spellcheck="false">
+      <span class="yc-hint" id="s-to-hint"></span>
+    </div>
+    <div class="fld">
+      <label class="yc-flabel" for="s-from">From</label>
+      <select id="s-from">${fromOptionsHtml('email')}</select>
+    </div>
+    <div data-email-only>
+      <div class="fld">
+        <label class="yc-flabel" for="s-subject">Subject <span class="muted">(optional)</span></label>
+        <input type="text" id="s-subject" autocomplete="off" placeholder="Action requested: ${esc(subjectHint(src.prompt))}">
+        <span class="yc-hint">Blank = "Action requested: &lt;prompt&gt;". <code>[[expires_at]]</code> and the other link tokens work here.</span>
+      </div>
+      <div class="fld">
+        <label class="yc-flabel" for="s-tpl-kind">Email</label>
+        <select id="s-tpl-kind">
+          <option value="default"${tpl ? '' : ' selected'}>Default CTA email</option>
+          <option value="custom"${tpl ? ' selected' : ''}>Custom HTML</option>
+        </select>
+      </div>
+      <div class="fld" id="s-tpl-fld"${tpl ? '' : ' hidden'}>
+        <textarea id="s-tpl" class="code" rows="5" spellcheck="false" placeholder="&lt;p&gt;…&lt;/p&gt; [[options_html]]">${esc(tpl)}</textarea>
+        <span class="yc-hint">Tokens: <code>[[cta_url]]</code> · <code>[[respond_url:VALUE]]</code> · <code>[[options_html]]</code> · <code>[[expires_at]]</code>. An unknown VALUE is refused before anything is sent. Not stored.</span>
+      </div>
+    </div>
+    <span class="yc-hint" data-sms-only hidden>An SMS is the prompt (one line) and the link to the page; the recipient picks the option there.</span>
+    <div id="send-preview-region"></div>`;
+  syncSendChannel();
+  E('send-backdrop').classList.add('open');
+  E('s-to').focus();
+}
+
+/** Channel switch: To field shape, From list, email-only fields. Values the user typed stay. */
+function syncSendChannel() {
+  const ch = sendChannel();
+  const to = E('s-to');
+  to.placeholder = ch === 'sms' ? '(313) 555-0100' : 'name@example.com';
+  to.inputMode = ch === 'sms' ? 'tel' : 'email';
+  E('s-to-hint').textContent = ch === 'sms' ? 'A 10-digit phone number.' : 'One email address.';
+  E('s-from').innerHTML = fromOptionsHtml(ch);
+  document.querySelector('#send-body [data-email-only]').hidden = ch !== 'email';
+  document.querySelector('#send-body [data-sms-only]').hidden = ch !== 'sms';
+  E('s-tpl-fld').hidden = E('s-tpl-kind').value !== 'custom';
+  E('send-preview-region').innerHTML = '';
+}
+
+function sendBody(dryRun) {
+  const ch = sendChannel();
+  const b = { channel: ch };
+  const to = E('s-to').value.trim();
+  if (to) b.to = to;
+  if (E('s-from').value) b.from = E('s-from').value;
+  if (ch === 'email') {
+    const subj = E('s-subject').value.trim();
+    if (subj) b.subject = subj;
+    if (E('s-tpl-kind').value === 'custom' && E('s-tpl').value.trim()) b.email_template = E('s-tpl').value;
+  }
+  if (dryRun) b.dry_run = true;
+  return b;
+}
+
+function closeSend() {
+  E('send-backdrop').classList.remove('open');
+  state.send = null;
+}
+function showSendErr(msg) { const el = E('send-err'); el.textContent = msg; el.classList.add('show'); }
+
+async function previewSend() {
+  const sd = state.send;
+  if (!sd) return;
+  E('send-err').classList.remove('show');
+  const region = E('send-preview-region');
+  region.innerHTML = '<div class="loading">Composing…</div>';
+  try {
+    const r = await api(`/api/cta/${sd.id}/send`, 'POST', sendBody(true));
+    if (state.send !== sd) return;
+    if (r.channel === 'sms') {
+      region.innerHTML = `
+        <div class="section" style="margin-top:12px">
+          <h3>Preview — nothing sent</h3>
+          <div class="yc-hint" style="margin:0 0 6px">From ${esc(fmtPhone(r.from))} · ${esc(String((r.text || '').length))} characters</div>
+          <pre class="blk sms-preview">${esc(r.text || '')}</pre>
+        </div>`;
+    } else {
+      region.innerHTML = `
+        <div class="section" style="margin-top:12px">
+          <h3>Preview — nothing sent</h3>
+          <div class="yc-hint" style="margin:0 0 6px">From ${esc(r.from)} · Subject: <b>${esc(r.subject)}</b></div>
+          <iframe class="email-frame" id="send-email-preview" sandbox="" title="Email preview"></iframe>
+        </div>`;
+      E('send-email-preview').srcdoc = r.html || '';
+    }
+  } catch (err) {
+    region.innerHTML = '';
+    showSendErr(errText(err));
+  }
+}
+
+async function doSend() {
+  const sd = state.send;
+  if (!sd) return;
+  E('send-err').classList.remove('show');
+  const body = sendBody(false);
+  if (!body.to) return showSendErr(body.channel === 'sms' ? 'Enter the phone number to text.' : 'Enter the email address to send to.');
+  const btn = E('send-go');
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/cta/${sd.id}/send`, 'POST', body);
+    closeSend();
+    showToast(`Sent by ${r.channel === 'sms' ? 'SMS' : 'email'} to ${r.to}${r.log_id != null ? ' — logged on the link' : ''}`);
+  } catch (err) {
+    // 400 / 409 / 502 messages are written for humans — verbatim.
+    showSendErr(errText(err));
   } finally {
     btn.disabled = false;
   }
@@ -1755,7 +1960,9 @@ async function runMint(dryRun) {
       state.preview = { ok: true, data: r };
       state.previewStale = false;
     } else {
-      state.receipt = { ...r, _prompt: built.body.prompt };   // the receipt carries no prompt; the plain-text copy needs it
+      // The receipt carries neither the prompt (the plain-text copy needs it)
+      // nor the email template (never stored — the Send dialog offers it again).
+      state.receipt = { ...r, _prompt: built.body.prompt, _template: built.body.email_template || null };
       state.pwCopied = false;
       state.preview = null;
       state.draft = null;          // minted — the next "+ New CTA" starts clean
@@ -1881,10 +2088,13 @@ function showReceipt() {
     <div class="section">
       <h3>Email</h3>
       <div class="btn-row">
-        <button class="btn primary" type="button" data-act="copy-email" title="Paste straight into a Gmail / Outlook message body">Copy email</button>
+        <button class="btn primary" type="button" data-act="send" title="Email or text this link from YisraCase">Send…</button>
+        <button class="btn" type="button" data-act="copy-email" title="Paste straight into a Gmail / Outlook message body">Copy email</button>
         <button class="btn" type="button" data-act="copy-buttons" title="Just the option buttons — paste into an email you write yourself">Copy buttons</button>
       </div>
-      <span class="yc-hint" style="margin:6px 0 8px">Both paste <b>formatted</b> into Gmail or Outlook (in a plain-text field you get each option as "Label: URL").
+      <span class="yc-hint" style="margin:6px 0 8px">Both paste <b>formatted</b> into a Gmail or Outlook message.
+        As plain text ("Label: URL" lines, for SMS or a plain-text field):
+        <button class="linklike" type="button" data-act="copy-email-text">copy text</button>.
         HTML source, for templates and workflows:
         <button class="linklike" type="button" data-act="copy-email-src">email</button> ·
         <button class="linklike" type="button" data-act="copy-buttons-src">buttons</button>.</span>
@@ -1929,6 +2139,8 @@ async function onReceiptClick(e) {
       break;
     case 'copy-email': if (r) copyRich(r.email_html || '', receiptText(r, true), 'Email copied — paste it into the message body'); break;
     case 'copy-buttons': if (r) copyRich(r.options_html || '', receiptText(r, false), 'Buttons copied — paste them into your email'); break;
+    case 'send': if (r) openSend({ id: r.id, name: r.name, protection: r.protection, prompt: r._prompt, template: r._template }); break;
+    case 'copy-email-text': if (r) copyText(receiptText(r, true), 'Plain text copied'); break;
     case 'copy-email-src': if (r) copyText(r.email_html || '', 'Email HTML source copied'); break;
     case 'copy-buttons-src': if (r) copyText(r.options_html || '', 'Buttons HTML source copied'); break;
     case 'receipt-detail': { const id = r && r.id; leaveReceipt(() => openDetail(id)); break; }
@@ -1990,6 +2202,7 @@ function init() {
         case 'disable': return confirmStatus('disabled');
         case 'cancel': return confirmStatus('cancelled');
         case 'duplicate': return duplicateCta(state.detail.id, state.detail.cta);
+        case 'send': { const c = state.detail.cta; return openSend({ id: c.id, name: c.name, protection: c.protection, prompt: c.prompt }); }
         case 'retry-detail': state.detail.err = null; renderDetail(); return loadDetail();
       }
       return;
@@ -2014,6 +2227,16 @@ function init() {
   E('patch-cancel').addEventListener('click', closePatch);
   E('patch-save').addEventListener('click', savePatch);
   E('patch-body').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); savePatch(); } });
+  E('send-close').addEventListener('click', closeSend);
+  E('send-preview').addEventListener('click', previewSend);
+  E('send-go').addEventListener('click', doSend);
+  E('send-backdrop').addEventListener('click', (e) => { if (e.target === E('send-backdrop')) closeSend(); });
+  E('send-body').addEventListener('change', (e) => {
+    if (e.target.name === 's-ch') return syncSendChannel();
+    if (e.target.id === 's-tpl-kind') E('s-tpl-fld').hidden = e.target.value !== 'custom';
+    E('send-preview-region').innerHTML = '';
+  });
+  E('send-body').addEventListener('input', () => { E('send-preview-region').innerHTML = ''; });
   E('confirm-no').addEventListener('click', closeConfirm);
   E('confirm-yes').addEventListener('click', confirmYes);
   E('patch-backdrop').addEventListener('click', (e) => { if (e.target === E('patch-backdrop')) closePatch(); });
@@ -2023,6 +2246,7 @@ function init() {
     // Top of stack first: confirm > patch.
     if (E('confirm-backdrop').classList.contains('open')) return closeConfirm();
     if (E('patch-backdrop').classList.contains('open')) return closePatch();
+    if (E('send-backdrop').classList.contains('open')) return closeSend();
   });
 
   loadList();
@@ -2032,7 +2256,7 @@ function init() {
 // pingBecameVisible). Refresh quietly — never under an open dialog, and never
 // on the builder or the receipt (that would cost a draft or a shown-once secret).
 window.ycBecameVisible = () => {
-  if (E('confirm-backdrop').classList.contains('open') || E('patch-backdrop').classList.contains('open')) return;
+  if (['confirm-backdrop', 'patch-backdrop', 'send-backdrop'].some((id) => E(id).classList.contains('open'))) return;
   if (state.view === 'list') loadList({ silent: true });
   else if (state.view === 'detail' && state.detail && !state.detail.busy) loadDetail();
 };

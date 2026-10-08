@@ -6,10 +6,11 @@ confirms. You decide the actions at mint time; the recipient only picks an
 option. Think of it as a decision link (`/d/…`) that doesn't need a workflow
 waiting on the other end — and that can optionally be reused.
 
-**Where:** **Admin → CTA Links (SU)** — list, inspect, extend, disable and
-mint (below). The same API (`/api/cta`, SU only) stays available to a Claude
-session that composes the email around the mint. The links themselves live
-at `4lsg.com/c/<token>`, on the public landing host like `/d/` and `/t/`.
+**Where:** **Admin → CTA Links (SU)** — list, inspect, extend, disable,
+mint and send (below). The same API (`/api/cta`, SU only) stays available to
+a Claude session that composes the email around the mint. The links
+themselves live at `4lsg.com/c/<token>`, on the public landing host like
+`/d/` and `/t/`.
 
 ## What a CTA can do
 
@@ -97,10 +98,28 @@ Like every SU tool it asks for your password first (elevation, 15 minutes).
   **Preview (dry run)** validates everything, shows the default protection
   the server would apply, the placeholder URLs and the rendered email — and
   creates nothing. **Mint** shows the receipt: token, URLs, a generated
-  password **once** (the pane asks before you leave it uncopied), and
-  **Copy email** / **Copy buttons**, which paste *formatted* into a Gmail or
-  Outlook message (plain-text fields get one "Label: URL" line per option).
-  The raw HTML source is one click away for templates and workflows. The
-  email only exists at mint — copy it from the receipt.
+  password **once** (the pane asks before you leave it uncopied), **Send…**
+  (below), and **Copy email** / **Copy buttons**. Those copy the rendered
+  email the way selecting it on screen and pressing Ctrl+C would, so they
+  paste *formatted* into a Gmail or Outlook message; **copy text** gives the
+  plain version (one "Label: URL" line per option), and the raw HTML source
+  is one click away for templates and workflows. A paste that still comes
+  out as plain text usually means the compose window is in plain-text mode
+  (Gmail: ⋮ → *Plain text mode*) or was pasted with Ctrl+Shift+V.
+- **Send…** (receipt, or the detail of an **active** link) — emails or texts
+  the link from YisraCase. Pick Email or SMS, the recipient, and the sender
+  (blank = the firm default: `email_automations` for email, the staff line
+  for SMS — the same senders decision requests use). Email: optional subject
+  (default "Action requested: <prompt>"; the link tokens work in it) and the
+  default CTA email or your own HTML with the same tokens — from the receipt
+  the mint's custom template is pre-filled; it's never stored, so a later
+  send from the detail starts from the default. An SMS is the prompt and the
+  link to the page only — the recipient picks the option there.
+  **Preview** shows exactly what would go out and sends nothing. A password
+  is **never** sent; give it to the recipient another way. Only active links
+  can be sent (used, disabled, cancelled, expired or exhausted → refused).
+  When the link is attached to a case or contact, the send is logged there
+  (an email row, or a note for an SMS — the SMS row itself arrives from the
+  phone provider), and every send is in the admin audit log.
 
 Design + internals: `ref/CTA_DESIGN.md`.

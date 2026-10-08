@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-07T14:37:49.639Z_  
-_703 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 272, PUT: 35, _ALL: 2_
+_Generated 2026-10-08T01:26:49.610Z_  
+_704 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 273, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -206,6 +206,7 @@ _703 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 272, PUT: 35, _ALL:
 | POST | `/api/cta` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/cta/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/cta/:id/executions` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/cta/:id/send` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/documents` | `jwtOrApiKey` | — |
 | GET | `/api/documents/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/documents/:id` | `jwtOrApiKey` | — |
@@ -968,4 +969,4 @@ _703 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 272, PUT: 35, _ALL:
 
 ---
 
-_703 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 272, PUT: 35, _ALL: 2_
+_704 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 273, PUT: 35, _ALL: 2_

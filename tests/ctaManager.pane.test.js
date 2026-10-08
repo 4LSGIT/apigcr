@@ -575,55 +575,237 @@ describe('Duplicate', () => {
 });
 
 describe('receipt: rich copy', () => {
-  test('Copy email / Copy buttons put rendered HTML on the clipboard with a "Label: URL" text twin; source copies stay raw', async () => {
-    const R = {
-      dry_run: false, id: 9, token: 'T'.repeat(22), name: 'X', mode: 'once', expires_at: new Date(Date.now() + 3 * 86400e3).toISOString(),
-      protection: 'none', protection_source: 'explicit', options: [{ value: 'go', label: 'Go' }, { value: 'stop', label: 'Stop' }],
-      notes: [], warnings: [], cta_url: 'https://example.com/c/TT', urls: { go: 'https://example.com/c/TT/go', stop: 'https://example.com/c/TT/stop' },
-      options_html: '<a href="https://example.com/c/TT/go">Go</a><a href="https://example.com/c/TT/stop">Stop</a>',
-      email_html: '<!DOCTYPE html><html><body><table><tr><td><a href="https://example.com/c/TT/go">Go</a></td></tr></table></body></html>',
-    };
-    const { window, doc } = await boot({
+  const R = () => ({
+    dry_run: false, id: 9, token: 'T'.repeat(22), name: 'X', mode: 'once', expires_at: new Date(Date.now() + 3 * 86400e3).toISOString(),
+    protection: 'none', protection_source: 'explicit', options: [{ value: 'go', label: 'Go' }, { value: 'stop', label: 'Stop' }],
+    notes: [], warnings: [], cta_url: 'https://example.com/c/TT', urls: { go: 'https://example.com/c/TT/go', stop: 'https://example.com/c/TT/stop' },
+    options_html: '<a href="https://example.com/c/TT/go">Go</a><a href="https://example.com/c/TT/stop">Stop</a>',
+    email_html: '<!DOCTYPE html><html><body style="background:#f0f4ff;font-family:Arial"><table><tr><td><a href="https://example.com/c/TT/go" onclick="evil()">Go</a></td></tr></table><script>evil()</script></body></html>',
+  });
+  async function toReceipt() {
+    const r = R();
+    const b = await boot({
       handler: (url, method) => {
         const f = NO_FN(url); if (f) return f;
         if (url === '/api/cta' && method === 'GET') return { ctas: [] };
-        if (url === '/api/cta' && method === 'POST') return R;
+        if (url === '/api/cta' && method === 'POST') return r;
         throw new Error(`unexpected ${method} ${url}`);
       },
     });
-    const writes = [];
-    const texts = [];
+    const { window, doc } = b;
+    b.writes = []; b.texts = []; b.copied = [];
     window.ClipboardItem = class { constructor(items) { this.items = items; } };
     Object.defineProperty(window.navigator, 'clipboard', {
       configurable: true,
-      value: { write: async (arr) => { writes.push(arr); }, writeText: async (t) => { texts.push(t); } },
+      value: { write: async (arr) => { b.writes.push(arr); }, writeText: async (t) => { b.texts.push(t); } },
     });
-    const read = (b) => new Promise((res, rej) => { const fr = new window.FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsText(b); });
-
+    b.execResult = true;
+    // execCommand('copy') stand-in: record what is SELECTED at that moment.
+    doc.execCommand = (cmd) => {
+      const sel = window.getSelection();
+      const box = doc.createElement('div');
+      if (sel.rangeCount) box.appendChild(sel.getRangeAt(0).cloneContents());
+      b.copied.push({ cmd, html: box.innerHTML });
+      return b.execResult;
+    };
     doc.getElementById('new-btn').click();
     await tick(window);
     setValue(window, doc.getElementById('m-prompt'), 'Do it?');
     doc.getElementById('mint-btn').click();
     doc.getElementById('confirm-yes').click();
     await tick(window);
+    b.R = r;
+    return b;
+  }
+  const read = (window, blob) => new Promise((res, rej) => { const fr = new window.FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsText(blob); });
 
-    doc.querySelector('[data-act="copy-email"]').click();
-    await tick(window);
-    expect(writes).toHaveLength(1);
-    const email = writes[0][0].items;
-    expect(await read(email['text/html'])).toBe(R.email_html);
-    const plain = await read(email['text/plain']);
+  test('Copy email: a NATIVE selection copy of the rendered email (body style kept, scripts/handlers stripped); no async write', async () => {
+    const b = await toReceipt();
+    b.doc.querySelector('[data-act="copy-email"]').click();
+    await tick(b.window);
+    expect(b.copied).toHaveLength(1);
+    const { cmd, html } = b.copied[0];
+    expect(cmd).toBe('copy');
+    expect(html).toContain('<div style="background:#f0f4ff;font-family:Arial">');
+    expect(html).toContain('<a href="https://example.com/c/TT/go">Go</a>');
+    expect(html).not.toMatch(/onclick|<script|evil/);
+    expect(b.writes).toEqual([]);
+    expect(b.window.getSelection().rangeCount).toBe(0);                   // selection cleared
+    expect(b.doc.querySelector('[aria-hidden="true"][style*="-10000px"]')).toBeNull();   // off-screen host removed
+    b.doc.querySelector('[data-act="copy-buttons"]').click();
+    await tick(b.window);
+    expect(b.copied[1].html).toBe(`<div>${b.R.options_html}</div>`);
+  });
+
+  test('when the browser refuses execCommand, falls back to ClipboardItem: html + the "Label: URL" text twin', async () => {
+    const b = await toReceipt();
+    b.execResult = false;
+    b.doc.querySelector('[data-act="copy-email"]').click();
+    await tick(b.window);
+    expect(b.writes).toHaveLength(1);
+    const item = b.writes[0][0].items;
+    expect(await read(b.window, item['text/html'])).toBe(b.R.email_html);
+    const plain = await read(b.window, item['text/plain']);
     expect(plain.startsWith('Do it?\n\nGo: https://example.com/c/TT/go\nStop: https://example.com/c/TT/stop\n\nAll options: https://example.com/c/TT')).toBe(true);
+  });
 
-    doc.querySelector('[data-act="copy-buttons"]').click();
-    await tick(window);
-    const btns = writes[1][0].items;
-    expect(await read(btns['text/html'])).toBe(R.options_html);
-    expect(await read(btns['text/plain'])).toBe('Go: https://example.com/c/TT/go\nStop: https://example.com/c/TT/stop');
+  test('copy text / HTML source stay raw text copies', async () => {
+    const b = await toReceipt();
+    for (const act of ['copy-email-text', 'copy-email-src', 'copy-buttons-src']) b.doc.querySelector(`[data-act="${act}"]`).click();
+    await tick(b.window);
+    expect(b.texts[0].startsWith('Do it?\n\nGo: https://example.com/c/TT/go')).toBe(true);
+    expect(b.texts.slice(1)).toEqual([b.R.email_html, b.R.options_html]);
+  });
+});
 
-    doc.querySelector('[data-act="copy-email-src"]').click();
-    doc.querySelector('[data-act="copy-buttons-src"]').click();
+// ═════════════════════════════════════════════════════════════════════════════
+// Send dialog (send slice, 2026-10-08) — POST /api/cta/:id/send
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('Send dialog', () => {
+  async function boot2({ cta, sendImpl }) {
+    const calls = [];
+    const b = await boot({
+      handler: (url, method, payload) => {
+        const f = NO_FN(url); if (f) return f;
+        if (url === '/api/cta' && method === 'GET') return { ctas: [row({ id: cta.id, status: cta.status })] };
+        if (url === `/api/cta/${cta.id}/executions`) return { cta, executions: [] };
+        if (url === `/api/cta/${cta.id}/send`) { calls.push(payload); return sendImpl(payload); }
+        throw new Error(`unexpected ${method} ${url}`);
+      },
+    });
+    b.window.firmData.emailFrom = [{ email: 'office@example.com', from_name: 'Office' }];
+    b.window.firmData.phoneLines = [{ phone_number: '5555550100', display_name: 'Main Line' }];
+    b.sendCalls = calls;
+    b.doc.querySelector(`#list-region tr.row[data-id="${cta.id}"]`).click();
+    await tick(b.window);
+    return b;
+  }
+  const OK = (p) => (p.dry_run
+    ? (p.channel === 'sms' ? { dry_run: true, channel: 'sms', from: '5555550100', text: 'Do it?\nRespond: https://example.com/c/tok1' }
+      : { dry_run: true, channel: 'email', from: 'automations@example.com', subject: 'Action requested: Do it?', html: '<p>EMAIL</p>', template: 'default' })
+    : { sent: true, channel: p.channel, to: p.to, from: 'x', template: 'default', log_id: 7 });
+
+  test('offered on active links only', async () => {
+    let b = await boot2({ cta: fullRow({ id: 1 }), sendImpl: OK });
+    expect(b.doc.querySelector('#detail-region [data-act="send"]')).not.toBeNull();
+    b = await boot2({ cta: fullRow({ id: 1, status: 'used', uses_count: 1 }), sendImpl: OK });
+    expect(b.doc.querySelector('#detail-region [data-act="send"]')).toBeNull();
+    b = await boot2({ cta: fullRow({ id: 1, expires_at: new Date(Date.now() - H).toISOString() }), sendImpl: OK });
+    expect(b.doc.querySelector('#detail-region [data-act="send"]')).toBeNull();
+  });
+
+  test('email with defaults sends only {channel, to}; closes; toast names the log', async () => {
+    const { window, doc, sendCalls } = await boot2({ cta: fullRow({ id: 1 }), sendImpl: OK });
+    doc.querySelector('#detail-region [data-act="send"]').click();
+    expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(true);
+    doc.getElementById('send-go').click();
     await tick(window);
-    expect(texts).toEqual([R.email_html, R.options_html]);
+    expect(sendCalls).toEqual([]);                          // no recipient → client-side stop
+    expect(doc.getElementById('send-err').textContent).toBe('Enter the email address to send to.');
+    setValue(window, doc.getElementById('s-to'), 'ss@example.com');
+    doc.getElementById('send-go').click();
+    await tick(window);
+    expect(sendCalls).toEqual([{ channel: 'email', to: 'ss@example.com' }]);
+    expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(false);
+    expect(doc.getElementById('toast').textContent).toBe('Sent by email to ss@example.com — logged on the link');
+  });
+
+  test('email extras go up; switching to SMS drops subject/template and lists the phone lines', async () => {
+    const { window, doc, sendCalls } = await boot2({ cta: fullRow({ id: 1 }), sendImpl: OK });
+    doc.querySelector('#detail-region [data-act="send"]').click();
+    setValue(window, doc.getElementById('s-to'), 'ss@example.com');
+    setValue(window, doc.getElementById('s-from'), 'office@example.com', 'change');
+    setValue(window, doc.getElementById('s-subject'), 'Quick one');
+    setValue(window, doc.getElementById('s-tpl-kind'), 'custom', 'change');
+    setValue(window, doc.getElementById('s-tpl'), '<p>[[options_html]]</p>');
+    doc.getElementById('send-go').click();
+    await tick(window);
+    expect(sendCalls[0]).toEqual({ channel: 'email', to: 'ss@example.com', from: 'office@example.com', subject: 'Quick one', email_template: '<p>[[options_html]]</p>' });
+
+    doc.querySelector('#detail-region [data-act="send"]').click();
+    // typed in email mode, then the channel switches: none of it may reach an SMS
+    setValue(window, doc.getElementById('s-subject'), 'Quick one');
+    setValue(window, doc.getElementById('s-tpl-kind'), 'custom', 'change');
+    setValue(window, doc.getElementById('s-tpl'), '<p>x</p>');
+    const sms = doc.querySelector('input[name="s-ch"][value="sms"]');
+    sms.checked = true;
+    sms.dispatchEvent(new window.Event('change', { bubbles: true }));
+    expect([...doc.querySelectorAll('#s-from option')].map((o) => o.value)).toEqual(['', '5555550100']);
+    expect(doc.querySelector('#send-body [data-email-only]').hidden).toBe(true);
+    setValue(window, doc.getElementById('s-to'), '3135550199');
+    setValue(window, doc.getElementById('s-from'), '5555550100', 'change');
+    doc.getElementById('send-go').click();
+    await tick(window);
+    expect(sendCalls[1]).toEqual({ channel: 'sms', to: '3135550199', from: '5555550100' });
+  });
+
+  test('Preview is a dry run: sandboxed email preview / SMS text; nothing marked sent', async () => {
+    const { window, doc, sendCalls } = await boot2({ cta: fullRow({ id: 1 }), sendImpl: OK });
+    doc.querySelector('#detail-region [data-act="send"]').click();
+    doc.getElementById('send-preview').click();
+    await tick(window);
+    expect(sendCalls[0]).toEqual({ channel: 'email', dry_run: true });
+    const f = doc.getElementById('send-email-preview');
+    expect(f.getAttribute('sandbox')).toBe('');
+    expect(f.srcdoc).toBe('<p>EMAIL</p>');
+    expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(true);
+    const sms = doc.querySelector('input[name="s-ch"][value="sms"]');
+    sms.checked = true;
+    sms.dispatchEvent(new window.Event('change', { bubbles: true }));
+    doc.getElementById('send-preview').click();
+    await tick(window);
+    expect(sendCalls[1]).toEqual({ channel: 'sms', dry_run: true });
+    expect(doc.querySelector('#send-preview-region .sms-preview').textContent).toBe('Do it?\nRespond: https://example.com/c/tok1');
+  });
+
+  test('a server refusal (409) shows verbatim and the dialog stays open', async () => {
+    const { window, doc } = await boot2({
+      cta: fullRow({ id: 1 }),
+      sendImpl: () => { throw apiError(409, { status: 'error', message: 'cta: only an active link can be sent — CTA 1 is used', code: 'not_active' }); },
+    });
+    doc.querySelector('#detail-region [data-act="send"]').click();
+    setValue(window, doc.getElementById('s-to'), 'ss@example.com');
+    doc.getElementById('send-go').click();
+    await tick(window);
+    expect(doc.getElementById('send-err').textContent).toBe('cta: only an active link can be sent — CTA 1 is used (not_active)');
+    expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(true);
+  });
+
+  test('from the receipt: Send… offers the custom template used at mint (it is stored nowhere else)', async () => {
+    const sent = [];
+    const { window, doc } = await boot({
+      handler: (url, method, payload) => {
+        const f = NO_FN(url); if (f) return f;
+        if (url === '/api/cta' && method === 'GET') return { ctas: [] };
+        if (url === '/api/cta' && method === 'POST') {
+          return { dry_run: false, id: 42, token: 'T'.repeat(22), name: 'X', mode: 'once', expires_at: new Date(Date.now() + 86400e3).toISOString(),
+            protection: 'none', protection_source: 'explicit', options: [], notes: [], warnings: [], cta_url: 'https://example.com/c/TTT',
+            urls: {}, options_html: '', email_html: '' };
+        }
+        if (url === '/api/cta/42/send') { sent.push(payload); return { sent: true, channel: 'email', to: payload.to, log_id: null }; }
+        throw new Error(`unexpected ${method} ${url}`);
+      },
+    });
+    doc.getElementById('new-btn').click();
+    await tick(window);
+    setValue(window, doc.getElementById('m-email'), '<p>Mine: [[options_html]]</p>');
+    doc.getElementById('mint-btn').click();
+    doc.getElementById('confirm-yes').click();
+    await tick(window);
+    doc.querySelector('#receipt-region [data-act="send"]').click();
+    expect(doc.getElementById('s-tpl-kind').value).toBe('custom');
+    expect(doc.getElementById('s-tpl').value).toBe('<p>Mine: [[options_html]]</p>');
+    setValue(window, doc.getElementById('s-to'), 'ss@example.com');
+    doc.getElementById('send-go').click();
+    await tick(window);
+    expect(sent).toEqual([{ channel: 'email', to: 'ss@example.com', email_template: '<p>Mine: [[options_html]]</p>' }]);
+    expect(doc.getElementById('toast').textContent).toBe('Sent by email to ss@example.com');
+  });
+
+  test('a password-protected link warns that the password is never included', async () => {
+    const { doc } = await boot2({ cta: fullRow({ id: 1, protection: 'password' }), sendImpl: OK });
+    doc.querySelector('#detail-region [data-act="send"]').click();
+    expect(doc.querySelector('#send-body .warn-box').textContent).toContain('never');
   });
 });

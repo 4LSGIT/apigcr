@@ -804,6 +804,7 @@ tests/apiAlertIt.routes.test.js
 tests/apiAppSettings.validate.test.js
 tests/apiCalendarTypes.routes.test.js
 tests/apiCta.routes.test.js
+tests/apiCta.send.test.js
 tests/apiTools.routes.test.js
 tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js

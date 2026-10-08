@@ -5,7 +5,8 @@
 **Shipped:** S0–S4 live 2026-10-07 (WF27 **v8 published**; S4 independently
 reviewed, see §11). Open: watch gate (first organic spam hit end-to-end),
 S5 login tier (§7). Manager UI: `public/ctaManager.html` (Admin → CTA Links,
-frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run).
+frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run), plus the
+send slice 2026-10-08 (`POST /api/cta/:id/send` + the pane's Send… dialog).
 **This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
 `claude/CTA_DESIGN.md` mirrors it.
 **Arc:** CTA / email action buttons · scratch `ns=fred` key `cta_state`
@@ -297,8 +298,28 @@ Keyed on explicit `Accept: application/json` (not `*/*`).
   (else the sweep claim is permanently dead) and re-runs the whole plan on
   next click; re-enabling an already-expired link without extending in the
   same PATCH → 400.
-- Mint/PATCH/disable write `admin_audit_log` explicitly
-  (`superuserOnlyFor('cta')` audits only rejections on its own).
+- `POST /api/cta/:id/send` (send slice, 2026-10-08) — `{channel:
+  'email'|'sms', to, from?, subject?, email_template?, dry_run?}`; unknown
+  keys 400. **Active only**: `deriveState` ≠ `active` → 409 `not_active`
+  (used/disabled/cancelled/expired/exhausted — a dead link is not sent).
+  Composed by `ctaLinks.composeSend` from the row: email = default CTA email
+  (or `email_template` through the same `[[...]]` resolver as mint,
+  throw-on-unknown → 400 before any send, **never stored**) + subject
+  (default `Action requested: <prompt ≤80>`; tokens resolve); SMS = prompt
+  one-line ≤240 + `Respond: <landing>` (request_decision's default shape) —
+  no subject/template. `from` defaults mirror request_decision:
+  `taskService.getFromEmail` / `getSmsFrom` (no SMS line → 400). Password
+  never sent (only the hash exists). `dry_run` returns the composed message
+  and sends nothing. Transport failure → 502 `send_failed`. On success, when
+  the link has `link_type/link_id`, a best-effort `log` row: `email`
+  (emailService records nothing itself) or, for SMS, a `note` — never an
+  `sms` row (the provider webhook writes that; communicate.html's
+  duplicate-row rule). No limiter beyond the SU guard.
+- Mint/PATCH/disable/send write `admin_audit_log` explicitly
+  (`superuserOnlyFor('cta')` audits only rejections on its own); a failed
+  send audits `status='error'` with the transport message. Send details:
+  channel, to, from, template kind, subject (email), log_id — never the
+  token or a password.
 
 ## 6. Semantics
 

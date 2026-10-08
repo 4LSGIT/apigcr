@@ -41,17 +41,21 @@
  *                                   ctaService.patchCta (extend, disable ↔
  *                                   enable, re-enable after a failed or dead
  *                                   run, cancel = permanent)
+ *   POST  /api/cta/:id/send         { channel: 'email'|'sms', to, from?,
+ *                                   subject?, email_template?, dry_run? } —
+ *                                   send an ACTIVE link (send slice,
+ *                                   2026-10-08; see the handler's header)
  *
  * SERVER-OWNED FIELDS: minted_by is the calling SU and mint_source is 'su',
  * always. A body that tries to set minted_by / mint_source /
  * source_execution_id is a 400 — accepting mint_source:'workflow' here would
  * mint a row that skips the B1 click-time SU check forever.
  *
- * AUDIT: mint and every changing PATCH (disable/enable/re-enable/cancel/
- * extend) write admin_audit_log (tool 'cta') — superuserOnlyFor audits only
- * REJECTIONS on its own. Details carry ids, settings and a field diff;
- * never the token, the password or password_hash. Reads are not audited
- * (house convention, api.tools).
+ * AUDIT: mint, every changing PATCH (disable/enable/re-enable/cancel/
+ * extend) and every real send write admin_audit_log (tool 'cta') —
+ * superuserOnlyFor audits only REJECTIONS on its own. Details carry ids,
+ * settings and a field diff; never the token, the password or
+ * password_hash. Reads are not audited (house convention, api.tools).
  *
  * Never password_hash on any response (ctaService.adminRow).
  * Error shape: { status:'error', message, code? } — house standard.
@@ -83,7 +87,7 @@ function isPlainObject(v) {
 const ipOf = (req) =>
   req.headers['x-forwarded-for']?.split(',').shift() || req.socket?.remoteAddress;
 
-async function audit(req, details) {
+async function audit(req, details, { status = 'ok', errorMessage = null } = {}) {
   try {
     await auditAdminAction(req.db, {
       tool: TOOL,
@@ -91,7 +95,8 @@ async function audit(req, details) {
       username: req.auth?.username,
       route: req.originalUrl,
       method: req.method,
-      status: 'ok',
+      status,
+      errorMessage,
       ip: ipOf(req),
       userAgent: req.headers['user-agent'],
       details,
@@ -267,6 +272,178 @@ router.patch('/api/cta/:id', guard, async (req, res) => {
     res.json(out);
   } catch (err) {
     sendError(res, err, 'PATCH /api/cta/:id');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/cta/:id/send — send an ACTIVE link by email or SMS
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Send slice (2026-10-08, Fred's rulings). Server-side because the email only
+// ever exists composed from the row (templates are never stored), the send is
+// an audit event like mint/PATCH, and its log row belongs next to the link.
+//
+//   Active only: deriveState must be 'active' — used / disabled / cancelled /
+//     expired / exhausted are a 409 (code not_active). Sending a dead link is
+//     a footgun.
+//   Email: subject defaults to "Action requested: <prompt>"; email_template
+//     goes through the same [[...]] resolver as a mint (unknown
+//     [[respond_url:X]] → 400 before anything is sent) and is never stored.
+//   SMS: prompt + "Respond: <landing>" only (request_decision's default SMS);
+//     no subject, no template.
+//   from defaults: email → taskService.getFromEmail (email_automations);
+//     sms → taskService.getSmsFrom (sms_staff_from / sms_default_from) — the
+//     resolution request_decision uses.
+//   Password: never included — only the bcrypt hash exists. The pane says
+//     "send it separately".
+//   Log (success, best-effort): only when the link has link_type/link_id.
+//     email → an 'email' row (from/to/subject + the plain summary): emailService
+//       records nothing itself, so this IS the record.
+//     sms → a 'note' row ("link sent by SMS"), NOT an 'sms' row: the provider
+//       webhook writes the authoritative sms row (communicate.html's
+//       duplicate-row rule).
+//   Audit: every real attempt — 'ok', or 'error' with the transport message
+//     (a failed send to a typed address is still worth seeing). Never the
+//     token, never a password.
+//   dry_run: true → the composed message (subject/html/text or text) and the
+//     resolved from; `to` optional; nothing sent, logged or audited.
+//   No limiter beyond the SU guard's (elevation + per-tool rate limit).
+
+const SEND_KEYS = new Set(['channel', 'to', 'from', 'subject', 'email_template', 'dry_run']);
+const EMAIL_RE = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
+
+/** 10-digit NANP or null (phoneService.normalizeE164's acceptance, pre-checked for a clean 400). */
+function phone10(v) {
+  const d = String(v).replace(/\D/g, '');
+  if (d.length === 10) return d;
+  if (d.length === 11 && d[0] === '1') return d.slice(1);
+  return null;
+}
+
+router.post('/api/cta/:id/send', guard, async (req, res) => {
+  const body = req.body;
+  if (!isPlainObject(body)) return res.status(400).json(errBody('cta: send body must be a JSON object'));
+  for (const k of Object.keys(body)) {
+    if (!SEND_KEYS.has(k)) return res.status(400).json(errBody(`cta: send: unknown field "${k}"`));
+  }
+  const channel = body.channel;
+  if (channel !== 'email' && channel !== 'sms') {
+    return res.status(400).json(errBody("cta: channel must be 'email' or 'sms'"));
+  }
+  if (body.dry_run != null && typeof body.dry_run !== 'boolean') {
+    return res.status(400).json(errBody('cta: dry_run must be a boolean'));
+  }
+  const dryRun = body.dry_run === true;
+  for (const k of ['to', 'from', 'subject', 'email_template']) {
+    if (body[k] != null && typeof body[k] !== 'string') return res.status(400).json(errBody(`cta: ${k} must be a string`));
+  }
+  if (channel === 'sms') {
+    for (const k of ['subject', 'email_template']) {
+      if (body[k] != null && body[k].trim() !== '') {
+        return res.status(400).json(errBody(`cta: ${k} applies to channel 'email' only — an SMS is the prompt plus the landing link`));
+      }
+    }
+  }
+  const to = (body.to || '').trim();
+  if (!to && !dryRun) return res.status(400).json(errBody('cta: to is required'));
+  if (to && channel === 'email' && !EMAIL_RE.test(to)) {
+    return res.status(400).json(errBody(`cta: to "${to}" is not an email address`));
+  }
+  if (to && channel === 'sms' && !phone10(to)) {
+    return res.status(400).json(errBody(`cta: to "${to}" is not a 10-digit phone number`));
+  }
+  if (!/^[1-9]\d*$/.test(String(req.params.id))) return res.status(400).json(errBody('cta: invalid CTA id'));
+
+  try {
+    const row = await ctaService.getCtaById(req.db, Number(req.params.id));
+    if (!row) return res.status(404).json(errBody(`cta: CTA ${req.params.id} not found`, 'not_found'));
+    const state = ctaService.deriveState(row);
+    if (state !== 'active') {
+      return res.status(409).json(errBody(`cta: only an active link can be sent — CTA ${row.id} is ${state}`, 'not_active'));
+    }
+
+    let msg;
+    try {
+      msg = ctaLinks.composeSend({
+        channel,
+        token: row.token,
+        prompt: row.prompt,
+        options: row.options,
+        expiresAt: row.expires_at,
+        protection: row.protection,
+        timeoutOption: row.timeout_option,
+        subject: body.subject ?? null,
+        emailTemplate: body.email_template ?? null,
+      });
+    } catch (e) {
+      return res.status(400).json(errBody(`cta: email_template/subject: ${e.message}`, 'invalid'));
+    }
+
+    const taskService = require('../services/taskService');
+    const from = (body.from || '').trim()
+      || (channel === 'email' ? await taskService.getFromEmail(req.db) : await taskService.getSmsFrom(req.db));
+    if (!from) {
+      return res.status(400).json(errBody('cta: no sending line — pass from, or set the sms_staff_from / sms_default_from setting'));
+    }
+
+    if (dryRun) {
+      return res.status(200).json({ dry_run: true, channel, cta_id: row.id, from, to: to || null, ...msg });
+    }
+
+    const auditBase = {
+      action: 'send', cta_id: row.id, name: row.name, channel, to, from,
+      template: channel === 'email' ? msg.template : 'default',
+      ...(channel === 'email' ? { subject: msg.subject } : {}),
+    };
+
+    try {
+      if (channel === 'email') {
+        const emailService = require('../services/emailService');
+        const mail = { from, to, subject: msg.subject, html: msg.html };
+        if (msg.text) mail.text = msg.text;
+        await emailService.sendEmail(req.db, mail);
+      } else {
+        const phoneService = require('../services/phoneService');
+        await phoneService.sendSms(req.db, from, to, msg.text);
+      }
+    } catch (err) {
+      await audit(req, auditBase, { status: 'error', errorMessage: String(err.message || err).slice(0, 500) });
+      console.error(`POST /api/cta/:id/send ${channel} failed:`, err.message);
+      return res.status(502).json(errBody(`cta: ${channel} send failed — ${err.message}`, 'send_failed'));
+    }
+
+    let logId = null;
+    if (row.link_type && row.link_id) {
+      try {
+        const logService = require('../services/logService');
+        const entry = channel === 'email'
+          ? {
+            type: 'email', link_type: row.link_type, link_id: row.link_id, by: req.auth.userId,
+            direction: 'outgoing', from, to, subject: msg.subject,
+            data: { from, to, subject: msg.subject, body: msg.summary, cta_id: row.id, template: msg.template },
+          }
+          : {
+            type: 'note', link_type: row.link_type, link_id: row.link_id, by: req.auth.userId,
+            subject: 'CTA',
+            message: `CTA "${String(row.name).slice(0, 120)}" (#${row.id}) link sent by SMS to ${to} from ${from}`,
+            data: { cta_id: row.id, channel: 'sms', to, from },
+          };
+        const out = await logService.createLogEntry(req.db, entry);
+        logId = out && out.log_id != null ? out.log_id : null;
+      } catch (err) {
+        console.warn(`[CTA] send log failed for CTA ${row.id}:`, err.message);
+      }
+    }
+
+    await audit(req, { ...auditBase, log_id: logId });
+    return res.status(200).json({
+      sent: true, channel, cta_id: row.id, to, from,
+      template: auditBase.template,
+      ...(channel === 'email' ? { subject: msg.subject } : {}),
+      log_id: logId,
+    });
+  } catch (err) {
+    return sendError(res, err, 'POST /api/cta/:id/send');
   }
 });
 

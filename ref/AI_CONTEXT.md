@@ -28,7 +28,7 @@ body. Governing migrations in `ref/migrations/`.*
   registry internal functions as user 0. Design (canonical, review-folded):
   `ref/CTA_DESIGN.md`; operators: `manual/08-Admin-Tools/07-cta-links.md`;
   code: `services/ctaService.js` (substrate), `routes/ctaActions.js` (/c/),
-  `routes/api.cta.js` (SU mgmt), `lib/ctaLinks.js` ([[tokens]]/email),
+  `routes/api.cta.js` (SU mgmt + send), `lib/ctaLinks.js` ([[tokens]]/email),
   `lib/internal_functions/cta.js` (`cta_expiry_sweep`, `create_cta`),
   `public/ctaManager.html` (Admin → CTA Links pane; mirrors `deriveState` /
   `isStaleRunning` / `CTA_FN_DENYLIST` client-side as hints only).
