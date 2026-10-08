@@ -1,12 +1,12 @@
 # EMAIL_PROVIDER_PLAN
 
-Status: DRAFT v1 — 2026-10-08. For review/refinement; execution gated per stage.
+Status: DRAFT v2 — 2026-10-08. For review/refinement; execution gated per stage.
 Scope: move firm email off SiteGround onto Migadu; 4lsg.com cutover gated separately.
 Related: `ref/MAILBOX_SYSTEM_DESIGN.md` (YC mailbox subsystem — stage S2 here), DB→Cloud SQL plan (separate), sites→Cloudflare (separate, one site remaining).
 
 ## 1. Decision
 
-Single provider target: **Migadu** (flat-rate, unlimited mailboxes/domains, admin API, IMAP/SMTP, wildcard send-as). Start **Mini ($90/yr)**, upgrade to Standard ($290/yr) on volume pressure — upgrade is instant.
+Single provider target: **Migadu** (flat-rate, unlimited mailboxes/domains, admin API, IMAP/SMTP, wildcard send-as). Start **Standard ($290/yr)** — measured inbound already exceeds Mini's 200 in/day cap on peak days (§3); drop to Mini only if T2 shows current caps are materially higher than documented.
 
 Rejected: CloudWish/Mailbux (opaque operator, affiliate-farm reviews), Purelymail (too small for client-facing law mail), Zoho/M365/Fastmail (per-seat pricing defeats the many-mailbox goal; M365 is the fallback if we ever want native shared mailboxes with zero build), MXroute (credible budget rival, but no real provisioning API), keep-Workspace-per-seat (cost + the shared-single-seat model is the thing we're escaping).
 
@@ -28,6 +28,7 @@ Standing rules adopted:
 ## 3. Measured baselines (don't re-derive)
 
 - Outbound via YC: ~12/day avg, **45/day peak**, 16/hr peak (9am workflow burst). Gmail-UI sends invisible to log; assume <100/day firm-wide worst case.
+- Inbound via the Workspace account (90d to 2026-10-08, deduped `email_ingest_executions`): **~99 distinct msgs/day avg, peak 294/day, 2 days >200** — before counting SG boxes not forwarded into it. This is what rules out Mini: its 200 in/day cap defers over-cap mail to the next day, on exactly the busy days.
 - Campaigns: 72 email campaigns ever, 124 total recipients, **max 12 recipients** — mail-merge usage, not bulk. No ToS conflict at this profile.
 - Recipient mix (180d, 2,054 addrs): **61% Google** (clients on gmail), **15% Microsoft** (det13ksc, det13, eymgroup, woodkull, cohenlerner, mercierlegal, paletzlaw, rcrfirm, michigan.gov, hotmail — i.e. trustees + local bar), 24% other/own-MX (uscourts.gov, usdoj.gov, yahoo, icloud).
 - Migadu caps: Mini 100 out/day, 200 in/day account-wide; incoming over cap deferred to next day, outgoing refused at submission, **every attempt counted**; `smtp.js` logs FAILED and rethrows (no retry loop, no resume queue).
@@ -45,8 +46,11 @@ MS junk-folders/silently drops mail from small-provider shared IPs regardless of
 - [ ] SG inventory: all mailboxes + sizes, forwarders, filters, autoresponders, per domain; check whether any domain is REGISTERED at SG (transfer out before cancel); check how stuart@mdbl currently reaches Gmail (assumed SG forwarder).
 - [ ] mdbl DMARC ramp (10-15): proceed per existing plan, but DO NOT go p=reject before/during MX cutover — the report basis (SG relay IPs) becomes obsolete at cutover; restart observation after.
 
-### S1 — Migadu Mini, SiteGround domains
-- [ ] Create Migadu account (Mini), add mdbl, mdlit, lsg; publish per-domain DNS from admin panel (MX, SPF, DKIM, autoconfig/autodiscover).
+### S1 — Migadu Standard, SiteGround domains
+Sequencing (mailbox-design D5): only the trial tests below run now; the migration itself executes after the YC mailbox system is live, so this cutover lands on a working system.
+- [ ] **T1 — identity IMAP-login test (trial account, zero-dep):** create a test mailbox + identity; attempt IMAP login with the identity's credentials; confirm it reads the mailbox. Result selects mailbox-design D3 credential mode.
+- [ ] **T2 — cap verification (trial account, zero-dep):** confirm Migadu's CURRENT plan caps and semantics — per-account vs per-domain, what "deferred" means operationally for incoming over-cap — against the measured inbound in §3. Confirms Standard sizing (or resurrects Mini).
+- [ ] Create Migadu account (Standard), add mdbl, mdlit, lsg; publish per-domain DNS from admin panel (MX, SPF, DKIM, autoconfig/autodiscover).
 - [ ] Mailboxes: real ones only for active users; one `archive@mdbl` box; everything dead becomes alias or dies.
 - [ ] imapsync (Docker, local or YC server; NOT the hosted web version): pre-sync all boxes from `gcam1191.siteground.biz:993` → `imap.migadu.com:993`; dead accounts → `archive@` with `--subfolder2 <name>`; `--automap`; `--dry` first.
 - [ ] Flip MX per domain. Re-run imapsync for delta. Catch-all → TBD (open question) for one quarter.
@@ -68,7 +72,7 @@ Rollback: MX flips are reversible at 300s TTL; imapsync re-runs are idempotent.
 
 ## 6. Cost
 
-Mini $90/yr (→ Standard $290 if: all-firm outbound regularly >100/day, or archive pushes past ~30GB soft). Replaces SG email portion of $360–540/yr. Workspace stays 1 seat (~$84/yr) for calendar/OAuth. Transactional (bulk rule): SES ~$0.10/1k as needed.
+Standard $290/yr (Mini rejected: measured inbound peaks exceed its 200 in/day cap — §3; T2 can revisit). Replaces SG email portion of $360–540/yr. Workspace stays 1 seat (~$84/yr) for calendar/OAuth. Transactional (bulk rule): SES ~$0.10/1k as needed.
 
 ## 7. Open questions (refine before S1)
 
