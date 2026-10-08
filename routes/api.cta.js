@@ -36,7 +36,9 @@
  *                                   (?status=active|used|disabled|cancelled,
  *                                   ?limit ≤200, ?offset)
  *   GET   /api/cta/:id/executions   every run with its FULL plan_result — the
- *                                   only surface that carries it (B5)
+ *                                   only surface that carries it (B5) — plus
+ *                                   `links` (the detail's copy buttons; see
+ *                                   the handler)
  *   PATCH /api/cta/:id              { expires_at?, max_uses?, status? } —
  *                                   ctaService.patchCta (extend, disable ↔
  *                                   enable, re-enable after a failed or dead
@@ -241,11 +243,33 @@ router.get('/api/cta', guard, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/cta/:id/executions — the full plan_result surface
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// `links` (2026-10-08 r3): the pane's detail view offers the receipt's Copy
+// email / Copy buttons after the receipt is gone, so this read carries what
+// the mint receipt did — { urls, options_html, email_html } composed from the
+// row by ctaLinks.linkBundle. The DEFAULT email only: a mint-time custom
+// template was never stored. Composed at read time, so it shows the current
+// expiry (an extended link's email says so). ACTIVE links only, else null —
+// the same line as /send: a dead link's email is not something to hand out.
+
+/** The detail's copy bundle for an adminRow, or null when the link isn't active. */
+function detailLinks(cta) {
+  if (!cta || cta.state !== 'active') return null;
+  const b = ctaLinks.linkBundle({
+    token: cta.token,
+    options: cta.options,
+    expiresAt: cta.expires_at,
+    prompt: cta.prompt,
+    protection: cta.protection,
+    timeoutOption: cta.timeout_option,
+  });
+  return { urls: b.urls, options_html: b.options_html, email_html: b.email_html };
+}
 
 router.get('/api/cta/:id/executions', guard, async (req, res) => {
   try {
     const out = await ctaService.listExecutions(req.db, req.params.id, { limit: req.query.limit });
-    res.json({ cta: withUrl(out.cta), executions: out.executions });
+    res.json({ cta: withUrl(out.cta), executions: out.executions, links: detailLinks(out.cta) });
   } catch (err) {
     sendError(res, err, 'GET /api/cta/:id/executions');
   }

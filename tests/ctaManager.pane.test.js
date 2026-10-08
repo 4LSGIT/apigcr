@@ -574,6 +574,37 @@ describe('Duplicate', () => {
   });
 });
 
+/**
+ * Clipboard stand-ins on a booted pane: navigator.clipboard (write/writeText
+ * recorded) and an execCommand('copy') shaped like the browser's — with a
+ * selection, it fires ONE cancelable 'copy' event (at the selection,
+ * bubbling) whose clipboardData collects setData; records what was selected,
+ * what was written and whether the default was prevented.
+ */
+function installCopyStub(b) {
+  const { window, doc } = b;
+  b.writes = []; b.texts = []; b.copied = [];
+  window.ClipboardItem = class { constructor(items) { this.items = items; } };
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { write: async (arr) => { b.writes.push(arr); }, writeText: async (t) => { b.texts.push(t); } },
+  });
+  b.execResult = true;
+  b.fireCopy = true;
+  doc.execCommand = (cmd) => {
+    const sel = window.getSelection();
+    const data = {};
+    const box = doc.createElement('div');
+    if (sel.rangeCount) box.appendChild(sel.getRangeAt(0).cloneContents());
+    const ev = new window.Event('copy', { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'clipboardData', { value: { setData: (t, v) => { data[t] = v; } } });
+    if (b.fireCopy && sel.rangeCount) sel.getRangeAt(0).startContainer.dispatchEvent(ev);
+    b.copied.push({ cmd, selected: box.innerHTML, data, prevented: ev.defaultPrevented });
+    return b.execResult;
+  };
+  return b;
+}
+
 describe('receipt: rich copy', () => {
   const R = () => ({
     dry_run: false, id: 9, token: 'T'.repeat(22), name: 'X', mode: 'once', expires_at: new Date(Date.now() + 3 * 86400e3).toISOString(),
@@ -592,30 +623,7 @@ describe('receipt: rich copy', () => {
         throw new Error(`unexpected ${method} ${url}`);
       },
     });
-    const { window, doc } = b;
-    b.writes = []; b.texts = []; b.copied = [];
-    window.ClipboardItem = class { constructor(items) { this.items = items; } };
-    Object.defineProperty(window.navigator, 'clipboard', {
-      configurable: true,
-      value: { write: async (arr) => { b.writes.push(arr); }, writeText: async (t) => { b.texts.push(t); } },
-    });
-    b.execResult = true;
-    b.fireCopy = true;
-    // execCommand('copy') stand-in, shaped like the browser's: with a
-    // selection, it fires ONE cancelable 'copy' event (at the selection,
-    // bubbling) whose clipboardData collects setData; records what was
-    // selected, what was written and whether the default was prevented.
-    doc.execCommand = (cmd) => {
-      const sel = window.getSelection();
-      const data = {};
-      const box = doc.createElement('div');
-      if (sel.rangeCount) box.appendChild(sel.getRangeAt(0).cloneContents());
-      const ev = new window.Event('copy', { bubbles: true, cancelable: true });
-      Object.defineProperty(ev, 'clipboardData', { value: { setData: (t, v) => { data[t] = v; } } });
-      if (b.fireCopy && sel.rangeCount) sel.getRangeAt(0).startContainer.dispatchEvent(ev);
-      b.copied.push({ cmd, selected: box.innerHTML, data, prevented: ev.defaultPrevented });
-      return b.execResult;
-    };
+    const { window, doc } = installCopyStub(b);
     doc.getElementById('new-btn').click();
     await tick(window);
     setValue(window, doc.getElementById('m-prompt'), 'Do it?');
@@ -688,6 +696,90 @@ describe('receipt: rich copy', () => {
     await tick(b.window);
     expect(b.texts[0].startsWith('Do it?\n\nGo: https://example.com/c/TT/go')).toBe(true);
     expect(b.texts.slice(1)).toEqual([b.R.email_html, b.R.options_html]);
+  });
+});
+
+describe('detail: the Email block (r3 — copy after the receipt is gone)', () => {
+  const LINKS = {
+    urls: { go: 'https://example.com/c/tok1/go', stop: 'https://example.com/c/tok1/stop' },
+    options_html: '<a href="https://example.com/c/tok1/go">Go</a><a href="https://example.com/c/tok1/stop">Stop</a>',
+    email_html: '<!DOCTYPE html><html><body style="background:#f0f4ff"><p>DEFAULT EMAIL</p><a href="https://example.com/c/tok1/go">Go</a></body></html>',
+  };
+  const CTA = (over = {}) => fullRow({
+    id: 1, prompt: 'Approve it?',
+    options: [{ value: 'go', label: 'Go', plan: [] }, { value: 'stop', label: 'Stop', plan: [] }],
+    ...over,
+  });
+  async function toDetail({ cta = CTA(), links = LINKS, executions = [] } = {}) {
+    const b = await boot({
+      handler: (url, method) => {
+        const f = NO_FN(url); if (f) return f;
+        if (url === '/api/cta' && method === 'GET') return { ctas: [row({ id: 1, status: cta.status, expires_at: cta.expires_at })] };
+        if (url === '/api/cta/1/executions') return { cta, executions, links };
+        throw new Error(`unexpected ${method} ${url}`);
+      },
+    });
+    installCopyStub(b);
+    b.doc.querySelector('#list-region tr.row[data-id="1"]').click();
+    await tick(b.window);
+    b.block = () => [...b.doc.querySelectorAll('#detail-region .section')].find((x) => x.querySelector('h3') && x.querySelector('h3').textContent === 'Email');
+    return b;
+  }
+  const TEXT = 'Approve it?\n\nGo: https://example.com/c/tok1/go\nStop: https://example.com/c/tok1/stop\n\nAll options: https://example.com/c/tok1';
+
+  test('an active link: Copy email / Copy buttons from the read\'s links — both parts, the prompt and URLs from the row', async () => {
+    const b = await toDetail();
+    const block = b.block();
+    expect(block).toBeTruthy();
+    expect(block.querySelector('[data-act="send"]')).toBeNull();                 // Send… stays in the action row (one button)
+    expect(b.doc.querySelectorAll('#detail-region [data-act="send"]')).toHaveLength(1);
+    expect(block.textContent).toContain("a custom template used at mint isn't stored");
+
+    block.querySelector('[data-act="copy-email"]').click();
+    await tick(b.window);
+    expect(b.copied[0].data['text/html']).toMatch(/^<meta charset="utf-8"><div style="background:#f0f4ff"><p>DEFAULT EMAIL<\/p>/);
+    expect(b.copied[0].data['text/plain'].startsWith(TEXT)).toBe(true);
+    expect(b.doc.getElementById('toast').textContent).toBe('Email copied — paste it into the message body');
+
+    block.querySelector('[data-act="copy-buttons"]').click();
+    await tick(b.window);
+    expect(b.copied[1].data).toEqual({
+      'text/html': `<meta charset="utf-8"><div>${LINKS.options_html}</div>`,
+      'text/plain': 'Go: https://example.com/c/tok1/go\nStop: https://example.com/c/tok1/stop',
+    });
+
+    for (const act of ['copy-email-text', 'copy-email-src', 'copy-buttons-src']) block.querySelector(`[data-act="${act}"]`).click();
+    await tick(b.window);
+    expect(b.texts[0].startsWith(TEXT)).toBe(true);
+    expect(b.texts.slice(1)).toEqual([LINKS.email_html, LINKS.options_html]);
+  });
+
+  test('the preview: sandboxed, folded by default, painted with the read\'s email — and stays open across a re-render', async () => {
+    const b = await toDetail({
+      executions: [{ id: 5, option_value: 'go', status: 'success', responded_via: 'link', executed_at: new Date().toISOString(), plan_result: [] }],
+    });
+    const box = b.doc.querySelector('#detail-region details.email-preview-box');
+    expect(box.open).toBe(false);
+    const f = b.doc.getElementById('detail-email');
+    expect(f.getAttribute('sandbox')).toBe('');
+    expect(f.srcdoc).toBe(LINKS.email_html);
+    box.open = true;
+    box.dispatchEvent(new b.window.Event('toggle'));
+    b.doc.querySelector('#detail-region tr.row[data-exec="5"]').click();           // re-renders the whole detail
+    const again = b.doc.querySelector('#detail-region details.email-preview-box');
+    expect(again).not.toBe(box);
+    expect(again.open).toBe(true);
+    expect(b.doc.getElementById('detail-email').srcdoc).toBe(LINKS.email_html);  // the fresh frame is painted too
+  });
+
+  test('no block when the link is not active, or the read carried no links', async () => {
+    let b = await toDetail({ cta: CTA({ status: 'used', uses_count: 1 }), links: null });
+    expect(b.block()).toBeUndefined();
+    b = await toDetail({ cta: CTA({ status: 'used', uses_count: 1 }) });           // even if links came back, a dead link gets none
+    expect(b.block()).toBeUndefined();
+    b = await toDetail({ links: null });
+    expect(b.block()).toBeUndefined();
+    expect(b.doc.querySelector('#detail-region [data-act="copy-email"]')).toBeNull();
   });
 });
 

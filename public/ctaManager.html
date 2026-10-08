@@ -861,6 +861,8 @@ async function loadDetail() {
     if (!data || !data.cta) throw Object.assign(new Error('Unexpected response — no CTA in it'), { body: {} });
     d.cta = data.cta;
     d.executions = Array.isArray(data.executions) ? data.executions : [];
+    // r3: the copy bundle (default email + buttons), active links only — else null.
+    d.links = data.links || null;
     d.err = null;
     // Keep the list row in step with what we just read.
     const i = state.rows.findIndex((r) => Number(r.id) === d.id);
@@ -983,6 +985,14 @@ function renderDetail() {
       </div>
     </div>
 
+    ${st === 'active' && d.links ? emailSectionHtml({
+      frameId: 'detail-email',
+      withSend: false,
+      lead: 'The default CTA email, with the current expiry — a custom template used at mint isn\'t stored, so use <b>Copy buttons</b> in your own message for that.',
+      foldable: true,
+      open: !!d.emailOpen,
+    }) : ''}
+
     <div class="section">
       <h3>What the recipient sees</h3>
       <p class="prompt-text">${esc(c.prompt)}</p>
@@ -1000,6 +1010,7 @@ function renderDetail() {
       <h3>Executions</h3>
       ${execTable(d.executions, now)}
     </div>`;
+  paintEmailFrames();   // the Email block's preview (a fresh iframe on every render)
 }
 
 function optionView(c, o) {
@@ -2103,6 +2114,66 @@ function paintEmailFrames() {
   if (f && !f.dataset.painted && p && p.ok && p.data) { f.srcdoc = p.data.email_html || ''; f.dataset.painted = '1'; }
   const rf = E('receipt-email');
   if (rf && !rf.dataset.painted && state.receipt) { rf.srcdoc = state.receipt.email_html || ''; rf.dataset.painted = '1'; }
+  const df = E('detail-email');
+  const dl = state.detail && state.detail.links;
+  if (df && !df.dataset.painted && dl) { df.srcdoc = dl.email_html || ''; df.dataset.painted = '1'; }
+}
+
+/**
+ * The Email block — Copy email / Copy buttons, copy text, HTML source and a
+ * sandboxed preview. Shared by the receipt (the mint's own email, custom
+ * template included) and the detail view (r3: the default email composed at
+ * read time — GET …/executions `links`). Clicks go through copyAction.
+ */
+function emailSectionHtml({ frameId, withSend, lead = '', foldable = false, open = false }) {
+  const frame = `<iframe class="email-frame" id="${frameId}" sandbox="" title="Email preview"></iframe>
+      <span class="yc-hint">Sandboxed preview. Clicking a button here only opens its confirm page — nothing runs without the confirm.</span>`;
+  return `
+    <div class="section">
+      <h3>Email</h3>
+      ${lead ? `<span class="yc-hint" style="margin:0 0 8px">${lead}</span>` : ''}
+      <div class="btn-row">
+        ${withSend ? '<button class="btn primary" type="button" data-act="send" title="Email or text this link from YisraCase">Send…</button>' : ''}
+        <button class="btn" type="button" data-act="copy-email" title="Paste straight into a Gmail / Outlook message body">Copy email</button>
+        <button class="btn" type="button" data-act="copy-buttons" title="Just the option buttons — paste into an email you write yourself">Copy buttons</button>
+      </div>
+      <span class="yc-hint" style="margin:6px 0 8px">Both paste <b>formatted</b> into a Gmail or Outlook message; where
+        the paste comes out as plain text (Gmail's Plain text mode), you get one "Label: URL" line per option instead.
+        Plain text only:
+        <button class="linklike" type="button" data-act="copy-email-text">copy text</button>.
+        HTML source, for templates and workflows:
+        <button class="linklike" type="button" data-act="copy-email-src">email</button> ·
+        <button class="linklike" type="button" data-act="copy-buttons-src">buttons</button>.</span>
+      ${foldable
+        ? `<details class="email-preview-box"${open ? ' open' : ''}><summary class="muted">Preview the email</summary>${frame}</details>`
+        : frame}
+    </div>`;
+}
+
+/**
+ * The copy actions of an Email block over a share source
+ * { email_html, options_html, urls, options, cta_url, expires_at, _prompt }.
+ * true when `act` was one of them.
+ */
+function copyAction(act, src) {
+  if (!src) return false;
+  switch (act) {
+    case 'copy-email': copyRich(src.email_html || '', receiptText(src, true), 'Email copied — paste it into the message body'); return true;
+    case 'copy-buttons': copyRich(src.options_html || '', receiptText(src, false), 'Buttons copied — paste them into your email'); return true;
+    case 'copy-email-text': copyText(receiptText(src, true), 'Plain text copied'); return true;
+    case 'copy-email-src': copyText(src.email_html || '', 'Email HTML source copied'); return true;
+    case 'copy-buttons-src': copyText(src.options_html || '', 'Buttons HTML source copied'); return true;
+    default: return false;
+  }
+}
+
+/** The detail view's share source: the row + the read's links bundle (null unless active). */
+function detailShareSource(d) {
+  if (!d || !d.cta || !d.links) return null;
+  return {
+    email_html: d.links.email_html, options_html: d.links.options_html, urls: d.links.urls || {},
+    options: d.cta.options || [], cta_url: d.cta.cta_url, expires_at: d.cta.expires_at, _prompt: d.cta.prompt,
+  };
 }
 
 // ── RECEIPT ─────────────────────────────────────────────────
@@ -2141,23 +2212,7 @@ function showReceipt() {
           <button class="btn small" type="button" data-act="copy" data-text="${esc(urls[v])}" data-msg="Option URL copied">Copy</button></div></div>`).join('')}
       </div>
     </div>
-    <div class="section">
-      <h3>Email</h3>
-      <div class="btn-row">
-        <button class="btn primary" type="button" data-act="send" title="Email or text this link from YisraCase">Send…</button>
-        <button class="btn" type="button" data-act="copy-email" title="Paste straight into a Gmail / Outlook message body">Copy email</button>
-        <button class="btn" type="button" data-act="copy-buttons" title="Just the option buttons — paste into an email you write yourself">Copy buttons</button>
-      </div>
-      <span class="yc-hint" style="margin:6px 0 8px">Both paste <b>formatted</b> into a Gmail or Outlook message; where
-        the paste comes out as plain text (Gmail's Plain text mode), you get one "Label: URL" line per option instead.
-        Plain text only:
-        <button class="linklike" type="button" data-act="copy-email-text">copy text</button>.
-        HTML source, for templates and workflows:
-        <button class="linklike" type="button" data-act="copy-email-src">email</button> ·
-        <button class="linklike" type="button" data-act="copy-buttons-src">buttons</button>.</span>
-      <iframe class="email-frame" id="receipt-email" sandbox="" title="Email preview"></iframe>
-      <span class="yc-hint">Sandboxed preview. Clicking a button here only opens its confirm page — nothing runs without the confirm.</span>
-    </div>
+    ${emailSectionHtml({ frameId: 'receipt-email', withSend: true })}
     <div class="btn-row">
       <button class="btn primary" type="button" data-act="receipt-detail">Open its detail</button>
       <button class="btn" type="button" data-act="receipt-list">Back to list</button>
@@ -2194,12 +2249,9 @@ async function onReceiptClick(e) {
         E('pw-copied').hidden = false;
       }
       break;
-    case 'copy-email': if (r) copyRich(r.email_html || '', receiptText(r, true), 'Email copied — paste it into the message body'); break;
-    case 'copy-buttons': if (r) copyRich(r.options_html || '', receiptText(r, false), 'Buttons copied — paste them into your email'); break;
+    case 'copy-email': case 'copy-buttons': case 'copy-email-text': case 'copy-email-src': case 'copy-buttons-src':
+      copyAction(b.dataset.act, r); break;
     case 'send': if (r) openSend({ id: r.id, name: r.name, protection: r.protection, prompt: r._prompt, template: r._template }); break;
-    case 'copy-email-text': if (r) copyText(receiptText(r, true), 'Plain text copied'); break;
-    case 'copy-email-src': if (r) copyText(r.email_html || '', 'Email HTML source copied'); break;
-    case 'copy-buttons-src': if (r) copyText(r.options_html || '', 'Buttons HTML source copied'); break;
     case 'receipt-detail': { const id = r && r.id; leaveReceipt(() => openDetail(id)); break; }
     case 'receipt-list': leaveReceipt(() => goList()); break;
     case 'receipt-new': leaveReceipt(() => openMint()); break;
@@ -2257,9 +2309,13 @@ function init() {
     if (tr) openDetail(tr.dataset.id);
   });
 
+  E('detail-region').addEventListener('toggle', (e) => {
+    if (e.target.classList && e.target.classList.contains('email-preview-box') && state.detail) state.detail.emailOpen = e.target.open;
+  }, true);
   E('detail-region').addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');
     if (b && !b.disabled) {
+      if (copyAction(b.dataset.act, detailShareSource(state.detail))) return;
       switch (b.dataset.act) {
         case 'copy': return copyText(b.dataset.text, b.dataset.msg);
         case 'edit': return openPatch('edit');

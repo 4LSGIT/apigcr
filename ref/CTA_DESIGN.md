@@ -290,7 +290,11 @@ Keyed on explicit `Accept: application/json` (not `*/*`).
   `result_template` step refs) + per-option URLs with a `<token>` placeholder
   + rendered default email HTML, no insert.
 - `GET /api/cta` — list with uses/exec counts; `GET /api/cta/:id/executions`
-  — full `plan_result` lives here and only here.
+  — full `plan_result` lives here and only here. Also `links` (r3,
+  2026-10-08): `{urls, options_html, email_html}` via `ctaLinks.linkBundle`
+  from the row — the receipt's copy bundle for the pane's detail view; the
+  DEFAULT email (mint templates are never stored), composed at read time;
+  active links only, else `null` (same line as send).
 - `PATCH /api/cta/:id` — extend `expires_at` (naive datetimes are FIRM_TZ via
   `parseUserDateTime`, stored UTC; ≤365d out), raise/clear `max_uses`,
   `disabled` ↔ `active`, `cancelled` (permanent). Status-guarded UPDATE;

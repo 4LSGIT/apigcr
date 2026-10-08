@@ -334,6 +334,51 @@ describe('GET /api/cta + /executions', () => {
     expect((await su('/api/cta/999/executions')).status).toBe(404);
     expect((await su('/api/cta/abc/executions')).status).toBe(400);
   });
+
+  describe('executions → links (r3: the detail view\'s copy buttons)', () => {
+    test('an active link carries exactly what its mint receipt did: urls, options_html, the default email_html', async () => {
+      const m = await (await su('/api/cta', { method: 'POST', body: mintBody({ timeout_option: 'keep' }) })).json();
+      const j = await (await su(`/api/cta/${m.id}/executions`)).json();
+      expect(j.links).toEqual({ urls: m.urls, options_html: m.options_html, email_html: m.email_html });
+      expect(j.links.email_html).toContain(`href="https://4lsg.com/c/${m.token}/spam"`);
+      expect(j.links.email_html).toContain('Is this lead &lt;spam&gt;?');                // prompt escaped, as at mint
+      expect(j.links.email_html).toContain('a default action runs automatically');       // timeout note from the row
+    });
+
+    test('protected: the password note, never the password; a mint-time custom template is NOT what comes back', async () => {
+      const m = await (await su('/api/cta', {
+        method: 'POST', body: mintBody({ protection: 'password', email_template: '<p>CUSTOM [[options_html]]</p>' }),
+      })).json();
+      expect(m.email_html).toContain('CUSTOM');
+      const j = await (await su(`/api/cta/${m.id}/executions`)).json();
+      expect(j.links.email_html).not.toContain('CUSTOM');                                // never stored
+      expect(j.links.email_html).toContain("You'll need the password you were given");
+      expect(JSON.stringify(j)).not.toContain(m.password);
+    });
+
+    test('the email is composed at read time — an extended link shows the new expiry', async () => {
+      const m = await (await su('/api/cta', { method: 'POST', body: mintBody() })).json();
+      W.link(m.id).expires_at = new Date('2027-01-15T17:00:00Z');
+      const j = await (await su(`/api/cta/${m.id}/executions`)).json();
+      expect(j.links.email_html).toContain('This link expires Jan 15, 2027 at 12:00 PM EST.');
+    });
+
+    test('anything but active → links null (used, disabled, cancelled, expired, exhausted)', async () => {
+      const states = {
+        used: (r) => { r.status = 'used'; r.uses_count = 1; },
+        disabled: (r) => { r.status = 'disabled'; },
+        cancelled: (r) => { r.status = 'cancelled'; },
+        expired: (r) => { r.expires_at = new Date(Date.now() - 60e3); },
+        exhausted: (r) => { r.mode = 'repeatable'; r.max_uses = 1; r.uses_count = 1; },
+      };
+      for (const [state, apply] of Object.entries(states)) {
+        const m = await (await su('/api/cta', { method: 'POST', body: mintBody({ name: state }) })).json();
+        apply(W.link(m.id));
+        const j = await (await su(`/api/cta/${m.id}/executions`)).json();
+        expect([state, j.cta.state, j.links]).toEqual([state, state, null]);
+      }
+    });
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

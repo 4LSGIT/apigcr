@@ -84,8 +84,14 @@ Like every SU tool it asks for your password first (elevation, 15 minutes).
   to see each step's output or error. Actions: **Extend / limits** (new expiry
   — typed in firm time, or +1/+7/+30 days — and the max-uses cap),
   **Disable**, **Re-enable** (offered only when the server would allow it),
-  **Cancel** (permanent), and **Duplicate**. Refusals come back in the
-  server's own words.
+  **Cancel** (permanent), **Duplicate** and, on an active link, **Send…**.
+  Refusals come back in the server's own words. An active link also has an
+  **Email** block — the receipt's **Copy email** / **Copy buttons** / copy
+  text / HTML source and a preview — so the email is never lost with the
+  receipt. It is the *default* email, rebuilt from the link each time you
+  open it (an extended link's email shows the new expiry); a custom template
+  used at mint isn't stored, so for that wording paste **Copy buttons** into
+  your own message.
 - **Duplicate** (list row or detail) — opens the builder pre-filled from that
   link, named "… (copy)", for changing and minting a new one. Not carried
   over: the expiry (the firm default is selected), the email template (never
