@@ -455,7 +455,8 @@ role-convention item were confirmed done and dropped).
   covers it; `ref/THEME-CHEATSHEET.md` is the developer side, not this.
 
 - **CTA (ref/CTA_DESIGN.md) — deferred v2 features** (§9 there has detail):
-  clicker-supplied input fields; step chaining beyond `result_template`
+  ~~clicker-supplied input fields~~ (ratified → §12, 2026-10-08, S1i/S2i in
+  flight); step chaining beyond `result_template`
   tokens; **S5 login tier** (shell deep-link pane + authed respond route);
   `min_interval_seconds` cooldown and nonce
   idempotency (`UNIQUE(cta_id, nonce)`) for repeatable links; per-execution

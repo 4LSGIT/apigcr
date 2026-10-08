@@ -4,7 +4,8 @@
 **approve with changes** (verified @ `9e7fabae`) · all amendments folded below.
 **Shipped:** S0–S4 live 2026-10-07 (WF27 **v8 published**; S4 independently
 reviewed, see §11). Open: watch gate (first organic spam hit end-to-end),
-S5 login tier (§7). Manager UI: `public/ctaManager.html` (Admin → CTA Links,
+S5 login tier (§7), **clicker inputs (§12, ratified 2026-10-08 — S1i/S2i in
+flight)**. Manager UI: `public/ctaManager.html` (Admin → CTA Links,
 frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run), plus the
 send slice 2026-10-08 (`POST /api/cta/:id/send` + the pane's Send… dialog).
 **This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
@@ -150,7 +151,7 @@ against `services/logService.js` at build time.
 ## 4. Plans
 
 Per **option**: `plan: [{fn, params}]`, 1–20 steps. Params are **frozen
-literals at mint** — no clicker-supplied inputs (v2, §9) and no `{{...}}`
+literals at mint** — except declared clicker inputs (§12) — and no `{{...}}`
 resolution at click time. `create_cta` mints get the engine's normal
 `{{...}}` pass before the function runs, so dynamic content freezes into the
 row; `create_cta` strips engine-injected `_`-prefixed params before
@@ -414,7 +415,8 @@ tier needs a shell pane. Password + attribution covers the near-term cases.
 
 ## 9. Deferred (v2 candidates — ref/plans.md at arc close)
 
-- Clicker-supplied inputs; step chaining beyond `result_template` tokens.
+- ~~Clicker-supplied inputs~~ → ratified as §12 (2026-10-08). Step chaining
+  beyond `result_template` tokens remains deferred.
 - Login tier S5 (shell pane + authed respond route).
 - `min_interval_seconds` cooldown; nonce idempotency
   (`UNIQUE(cta_id, nonce)`).
@@ -505,3 +507,107 @@ off-practice. The publish gate itself caught the executor's first layout
 recreating the v6 fall-through cycle — the discipline stack (asserted base,
 asserted draft, pause-free-cycle gate, independent review, real-model
 backtest) each caught something the others missed.
+
+## 12. Clicker inputs (ratified 2026-10-08)
+
+Options may declare **inputs** the clicker supplies at respond time. The
+governing stance (Fred, 2026-10-08): this is an SU tool — gates are
+**explicit acknowledgments, not prohibitions**, with one hard rule where the
+blast radius is external (carrier/domain reputation, TCPA).
+
+### Declarations (no migration — lives in `options` JSON; update its COMMENT)
+
+Per option: `inputs: [{name, label, type, required, default?, maxlen,
+pattern?, choices?}]`.
+- `name` matches the result_var rule (`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`),
+  unique per option. `label` ≤100 chars.
+- `type` ∈ `text | phone | email | number | enum | date | html`. `phone`
+  normalizes to E.164 via the codebase's existing helper (worker: find the
+  canonical one, don't write a new one). `enum` requires `choices` (≤20,
+  option-value charset). `html` is clicker-authored raw markup and trips the
+  `raw_html_input` acknowledgment (below).
+- `maxlen` mandatory; server cap 1000. `pattern` optional: ≤100 chars,
+  mint-time nested-quantifier lint (no RE2 dependency — Ruling 4), runs
+  after type check + length cap. Residual ReDoS risk documented as accepted.
+
+### Binding
+
+`[[input:name]]` stands for a **whole param value only** — no splicing
+inside strings (Ruling 5; revisit in a later version). Mint rejects:
+a binding to an undeclared input; a declared input never bound; a binding
+into a param not opened by `ctaInputParams` (below). The existing rules
+stand unchanged: no `{{...}}`, no `_`-prefixed keys.
+
+### Opened params — `__meta.ctaInputParams` (Ruling 6c, kept)
+
+Opt-in per function: `ctaInputParams: { <param>: { kind: 'recipient'|'content',
+html?: true } }`. A Jest snapshot of the full opened set makes every opened
+param a reviewed exposure decision (same discipline as the eligible-function
+set). Seed (worker verifies exact param names against each function):
+`send_sms` {to: recipient, text: content}; `send_email` {to: recipient,
+subject: content, html: content+html}; `create_task` {description: content};
+`create_log` {message: content}.
+
+### Escape-on-substitute (supersedes the send_email exclusion)
+
+Substitution is **type-aware, server-side**: a non-`html` input bound into a
+param marked `html: true` is HTML-escaped + nl2br at substitution. A clicker
+writes a message; they cannot author markup sent from the firm's identity.
+Only a declared `type: 'html'` input passes raw — behind the acknowledgment.
+
+### Validation — twice, server-side
+
+- **Mint:** `__validateFunctionParams` runs per step with defaults (or
+  type-appropriate samples) substituted; dry_run included.
+- **Click:** each input is validated (type → normalize → maxlen → pattern),
+  substituted, then `__validateFunctionParams` runs again before step 1.
+  Per-field errors, generic — never plan internals. Client-side checks are
+  UX only, never the gate.
+
+### Policy (as ratified)
+
+- Inputs present ⇒ `protection` **defaults to `'password'`**, overridable to
+  `'none'` by explicit SU choice (the override IS the acceptance — B5b
+  pattern). Mint response names the applied default.
+- **Acknowledge-to-proceed risk codes:** a policy-triggering mint fails
+  closed (400 naming the code) unless the request carries it in
+  `accept_risks: [...]`. Acceptances are recorded in the audit row and the
+  receipt; the pane renders them as explicit checkboxes with the risk
+  spelled out. Codes: `open_recipient_repeatable` (a `kind:'recipient'`
+  binding on a repeatable link), `raw_html_input` (any `type:'html'` input).
+- **The one hard rule:** repeatable + `kind:'recipient'` binding requires
+  `max_uses` set — any value, SU's choice, but never unbounded-by-omission.
+  Rationale: a leaked open-`to` link is a relay from the firm's identity;
+  carrier 10DLC suspension, TCPA, and the DMARC reputation the MDBL arc just
+  repaired are external costs, not firm-internal risk.
+- `timeout_option` on an option with inputs requires every input to carry a
+  `default` (the sweep has no clicker); the timeout path substitutes
+  defaults.
+
+### Surfaces
+
+- HTML pages: fields render above the option buttons (labels escaped,
+  type-appropriate controls, enum as select, required/maxlen hints); the
+  confirm page echoes entered values escaped.
+- JSON: the descriptor exposes **declarations** (name, label, type,
+  required, choices, maxlen, default) per option so agents can fill them —
+  never plans; respond accepts `inputs: {...}`.
+- `result_template` may reference `[[input:x]]` (escaped, as all template
+  output).
+
+### Audit
+
+New `cta_executions.inputs` JSON column (one migration) stores submitted
+values post-normalization — same SU-only exposure and redaction posture as
+`plan_result`.
+
+### Slices
+
+- **S1i — backend:** everything above + migration + tests (binding matrix,
+  escape-on-substitute, both validators mutation-checked, the
+  ctaInputParams snapshot, ack-code gates, hard max_uses rule, timeout
+  defaults path). Executor + **independent review before deploy** — first
+  slice where clicker data crosses into function params.
+- **S2i — pane:** input builder in the mint form, ack checkboxes, dry_run
+  sample values, detail view shows submitted inputs; mobile survey;
+  manual/08-Admin-Tools/07-cta-links.md update.
