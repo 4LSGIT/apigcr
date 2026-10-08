@@ -454,3 +454,91 @@ describe('PATCH /api/cta/:id', () => {
     });
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §12 clicker inputs — accept_risks, receipt, audit, executions read (S1i)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('POST /api/cta — clicker inputs (§12)', () => {
+  const SMS_OPT = {
+    value: 'text', label: 'Text them',
+    inputs: [
+      { name: 'to', label: 'Phone', type: 'phone', required: true, maxlen: 16 },
+      { name: 'msg', label: 'Message', type: 'text', required: true, maxlen: 320, default: 'Hi from the firm' },
+    ],
+    plan: [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:to]]', message: '[[input:msg]]' } }],
+  };
+  const repeatable = (over = {}) => mintBody({ mode: 'repeatable', max_uses: 25, options: [SMS_OPT], ...over });
+
+  test('risk_acceptance_required: 400 with a machine-readable risks list — dry_run too — nothing inserted or audited', async () => {
+    for (const dry of [false, true]) {
+      const res = await su('/api/cta', { method: 'POST', body: repeatable({ dry_run: dry }) });
+      expect(res.status).toBe(400);
+      const j = await res.json();
+      expect(j).toMatchObject({ status: 'error', code: 'risk_acceptance_required' });
+      expect(j.risks).toEqual([{ code: 'open_recipient_repeatable', description: expect.stringMatching(/firm's identity/) }]);
+    }
+    expect(W.tables.cta_links.size).toBe(0);
+    expect(audits()).toHaveLength(0);
+  });
+
+  test('the hard rule is a plain 400 (no risks list): repeatable + recipient without max_uses', async () => {
+    const res = await su('/api/cta', { method: 'POST', body: repeatable({ max_uses: undefined, accept_risks: ['open_recipient_repeatable'] }) });
+    expect(res.status).toBe(400);
+    const j = await res.json();
+    expect(j.code).toBe('invalid');
+    expect(j).not.toHaveProperty('risks');
+    expect(j.message).toMatch(/must set max_uses/);
+  });
+
+  test('accepted: 201, receipt names the protection default + risks_accepted + input names; the audit row records them (never defaults/patterns)', async () => {
+    const res = await su('/api/cta', { method: 'POST', body: repeatable({ accept_risks: ['open_recipient_repeatable'] }) });
+    expect(res.status).toBe(201);
+    const r = await res.json();
+    expect(r).toMatchObject({
+      protection: 'password', protection_source: 'default_inputs',
+      risks_accepted: ['open_recipient_repeatable'],
+      options: [{ value: 'text', label: 'Text them', inputs: ['to', 'msg'] }],
+    });
+    expect(r.password).toMatch(B62_22);
+    const [a] = audits();
+    expect(a.details).toMatchObject({
+      action: 'mint', protection: 'password', protection_source: 'default_inputs',
+      risks_accepted: ['open_recipient_repeatable'],
+      options: [{ value: 'text', steps: ['send_sms'], inputs: ['to', 'msg'] }],
+    });
+    expect(JSON.stringify(a.details)).not.toMatch(/Hi from the firm|maxlen|\[\[input/);
+  });
+
+  test('B1: PATCH {max_uses:null} on a repeatable open-recipient link is a 400 — the pane\'s "No cap" can\'t undo the hard rule', async () => {
+    const r = await (await su('/api/cta', { method: 'POST', body: repeatable({ accept_risks: ['open_recipient_repeatable'] }) })).json();
+    const before = audits().length;
+    const res = await su(`/api/cta/${r.id}`, { method: 'PATCH', body: { max_uses: null } });
+    expect(res.status).toBe(400);
+    expect((await res.json()).message).toMatch(/max_uses cannot be removed/);
+    expect(W.link(r.id).max_uses).toBe(25);
+    expect(audits()).toHaveLength(before);
+  });
+
+  test('dry_run with the acknowledgment: 200 preview carrying risks_accepted, nothing inserted', async () => {
+    const res = await su('/api/cta', { method: 'POST', body: repeatable({ dry_run: true, accept_risks: ['open_recipient_repeatable'] }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ dry_run: true, risks_accepted: ['open_recipient_repeatable'] });
+    expect(W.tables.cta_links.size).toBe(0);
+  });
+
+  test('GET /api/cta/:id/executions carries each run\'s normalized inputs (SU-only surface)', async () => {
+    const cta = require('../services/ctaService');
+    const phoneService = require('../services/phoneService');
+    const spy = jest.spyOn(phoneService, 'sendSms').mockResolvedValue({ id: 's-1' });
+    try {
+      const r = await (await su('/api/cta', { method: 'POST', body: mintBody({ protection: 'none', options: [SMS_OPT] }) })).json();
+      const out = await cta.respond(db, { token: r.token, value: 'text', inputs: { to: '(248) 555-0100' } });
+      expect(out).toMatchObject({ ok: true, status: 'success' });
+      const j = await (await su(`/api/cta/${r.id}/executions`)).json();
+      expect(j.executions[0].inputs).toEqual({ to: '+12485550100', msg: 'Hi from the firm' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

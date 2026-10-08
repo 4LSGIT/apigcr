@@ -145,3 +145,44 @@ describe('registry exposure', () => {
     expect(cta.eligibleFunctionNames()).not.toContain('create_cta');
   });
 });
+
+// ── §12 clicker inputs (S1i): allowed from workflows, same rules ────────────
+describe('create_cta — clicker inputs (§12)', () => {
+  const withInputs = (extra = {}) => {
+    const p = engineParams(extra);
+    p.options[0] = {
+      value: 'note', label: 'Add a note',
+      inputs: [{ name: 'n', label: 'Note', type: 'text', required: true, maxlen: 200 }],
+      plan: [{ fn: 'create_log', params: { type: 'note', message: '[[input:n]]' } }],
+    };
+    return p;
+  };
+
+  test("inputs without explicit protection:'none' are refused BEFORE any insert (the service would mint an unknowable password)", async () => {
+    await expect(registry.create_cta(withInputs(), db)).rejects.toThrow(/clicker inputs default protection to 'password'/);
+    expect(W.tables.cta_links.size).toBe(0);
+    // the negative control: the same params straight into the service DO mint — with a generated password nobody sees
+    const { _variables, _step_number, _execution_id, ...p } = withInputs();
+    const r = await cta.mintCta(db, { ...p, mint_source: 'workflow', minted_by: 0, source_execution_id: EXEC });
+    expect(r.protection).toBe('password');
+    expect(r.password).toMatch(TOKEN_RE);
+  });
+
+  test("with protection:'none' the workflow mint carries the declarations", async () => {
+    const r = await registry.create_cta(withInputs({ protection: 'none' }), db);
+    expect(r.success).toBe(true);
+    expect(JSON.parse(W.link(r.output.cta_id).options)[0].inputs).toEqual([{ name: 'n', label: 'Note', type: 'text', required: true, maxlen: 200 }]);
+  });
+
+  test('Q2: accept_risks is refused for workflow mints — risk acceptance is an SU decision (any staff/API key can author a workflow)', async () => {
+    const html = withInputs({ protection: 'none' });
+    html.options[0].inputs[0].type = 'html';
+    // without it the service fails closed on the risk…
+    await expect(registry.create_cta(html, db)).rejects.toThrow(/raw_html_input/);
+    // …and a workflow can't supply it — not even an empty list
+    for (const accept of [['raw_html_input'], []]) {
+      await expect(registry.create_cta({ ...html, accept_risks: accept }, db)).rejects.toThrow(/accept_risks is refused for workflow mints/);
+    }
+    expect(W.tables.cta_links.size).toBe(0);
+  });
+});

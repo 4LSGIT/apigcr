@@ -47,7 +47,19 @@
  * PUBLIC STATE: a su-minted link whose minter is no longer an active SU (B1
  * kill switch) reads as 'disabled' everywhere public — the GET pre-checks it
  * so the page never offers buttons the POST would refuse, and the public
- * never learns WHY a link is off.
+ * never learns WHY a link is off. Same for the §12 link-level refusal
+ * (respond code refused — ctaService.linkRefusal), on the GETs and the POST.
+ *
+ * CLICKER INPUTS (§12, slice S1i): an option that declares inputs renders on
+ * the landing page as a link to its confirm page (like a confirm_text
+ * option); the confirm page renders its fields above the confirm button —
+ * labels and hints ESCAPED, enum as a <select>, required/maxlen hints in
+ * .sub-label. Form fields are named in_<name> (flat keys, parser-agnostic);
+ * the JSON surface sends `inputs: {name: value}`. A rejected submission
+ * re-renders the confirm page with per-field errors and the ENTERED values
+ * echoed back escaped (the password never is). Client attributes (required,
+ * maxlength, input types) are UX only — ctaService is the gate. The JSON
+ * descriptor carries each option's declarations (ctaService.publicDescriptor).
  */
 
 'use strict';
@@ -114,6 +126,21 @@ const VALUE_PATTERN = ':value([A-Za-z0-9_\\-]{1,64})';
 
 const GENERIC_FAILURE = 'The action could not be completed. Our team has been notified.';
 
+// §12 input fields. These pages load no app stylesheet (landing host), so the
+// house label/hint classes are defined here: .input-label (the password
+// label's look), .sub-label hints, .cta-field-error per-field errors.
+const FIELD_PREFIX = 'in_';
+const FIELD_CSS = `
+.input-label{display:block;margin:0 0 6px;font-size:13px;font-weight:600;color:#374151}
+.sub-label{margin:4px 0 0;font-size:12px;color:#6b7280}
+.cta-field{margin:0 0 16px}
+.cta-input{display:block;width:100%;max-width:420px;box-sizing:border-box;padding:10px 12px;font-size:15px;
+  font-family:inherit;border:1px solid #c7d2fe;border-radius:6px;background:#fff;color:#111827}
+textarea.cta-input{min-height:96px;resize:vertical}
+.cta-field-error{margin:4px 0 0;font-size:13px;font-weight:600;color:#991b1b}
+.cta-field.has-error .cta-input{border-color:#991b1b}`;
+const TEXTAREA_OVER = 120;   // a text input longer than this renders as a <textarea>
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,20 +178,29 @@ function baseHeaders(res) {
   res.vary('Accept');
 }
 
-/** deriveState + the B1 kill switch, as the public sees it (never 'minter_inactive'). */
+/**
+ * deriveState + the B1 kill switch + the §12 link-level refusal
+ * (ctaService.linkRefusal — a binding closed or retyped since mint, or a
+ * repeatable open-recipient link without max_uses), as the public sees it:
+ * 'disabled', never why. respond() runs the same checks, so the page never
+ * offers a button the POST would refuse. A refusal raises one deduplicated
+ * IT warning (system_alerts) — observability only; no link state changes.
+ */
 async function publicState(db, row) {
   const s = ctaService.deriveState(row);
   if (s !== 'active') return s;
-  return (await ctaService.minterAllowed(db, row)) ? 'active' : 'disabled';
+  if (!(await ctaService.minterAllowed(db, row))) return 'disabled';
+  if (await ctaService.linkBlocked(db, row)) return 'disabled';
+  return 'active';
 }
 
 function descriptor(row, state) {
   return { ...ctaService.publicDescriptor(row), status: state };
 }
 
-/** respond() codes → what the public sees. */
+/** respond() codes → what the public sees (never WHY a link is off). */
 function publicCode(code) {
-  return code === 'minter_inactive' ? 'disabled' : code;
+  return code === 'minter_inactive' || code === 'refused' ? 'disabled' : code;
 }
 
 const STATE_CODES = new Set(['used', 'disabled', 'cancelled', 'expired', 'exhausted']);
@@ -182,6 +218,7 @@ const JSON_MESSAGES = {
   conflict: 'Someone else used this link at the same moment. Please try again.',
   rate_limited: 'Too many requests.',
   too_many_passwords: 'Too many password attempts. Try again in 15 minutes.',
+  invalid_inputs: 'Some inputs are not valid — see errors.',
   error: 'Something went wrong. Please try again in a moment.',
 };
 
@@ -198,6 +235,7 @@ function pageWrap(title, bodyHtml) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${htmlEscape(title)}</title>
+<style>${FIELD_CSS}</style>
 </head>
 <body style="margin:0;padding:0;background:#f0f4ff;font-family:'Segoe UI',Arial,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;padding:32px 0">
@@ -285,6 +323,105 @@ function optionByValue(row, value) {
   return (row.options || []).find((o) => o && o.value === value) || null;
 }
 
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+/** §12: does this option ask the clicker for anything? */
+function hasInputs(opt) {
+  return !!opt && Array.isArray(opt.inputs) && opt.inputs.length > 0;
+}
+
+/**
+ * The clicker's inputs from the body: a JSON (or qs) `inputs` object when
+ * present, else the form's flat in_<name> fields. Null-prototype map — a
+ * field named in___proto__ is just an unknown key, never a prototype write.
+ * undefined when the body carries neither. Shape is ctaService's to judge.
+ */
+function submittedInputs(body) {
+  if (hasOwn(body, 'inputs')) return body.inputs;
+  let out;
+  for (const k of Object.keys(body)) {
+    if (!k.startsWith(FIELD_PREFIX)) continue;
+    if (!out) out = Object.create(null);
+    out[k.slice(FIELD_PREFIX.length)] = body[k];
+  }
+  return out;
+}
+
+/** What to echo back into the re-rendered fields: string values only (escaped at render). */
+function echoValues(inputs) {
+  const out = Object.create(null);
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) return out;
+  for (const k of Object.keys(inputs)) {
+    const v = inputs[k];
+    if (typeof v === 'string' || typeof v === 'number') out[k] = String(v);
+  }
+  return out;
+}
+
+const LENGTH_HINT_TYPES = new Set(['text', 'html', 'email', 'number']);
+
+const TYPE_HINT = {
+  phone: 'Phone number',
+  email: 'Email address',
+  number: 'Number',
+  date: 'Date (YYYY-MM-DD)',
+};
+
+/**
+ * One declared input as a labelled control. Everything authored or entered
+ * is escaped — labels, choices, defaults and echoed values alike.
+ */
+function inputField(d, values, errors) {
+  const id = `cta-in-${d.name}`;
+  const name = `${FIELD_PREFIX}${d.name}`;
+  const err = errors && hasOwn(errors, d.name) ? errors[d.name] : null;
+  let val = '';
+  if (values && hasOwn(values, d.name)) val = values[d.name];
+  else if (hasOwn(d, 'default')) val = String(d.default);
+  const req = d.required ? ' required' : '';
+  const aria = ` aria-describedby="${htmlEscape(id)}-hint"${err ? ' aria-invalid="true"' : ''}`;
+  const common = `id="${htmlEscape(id)}" name="${htmlEscape(name)}" class="cta-input"${req}${aria}`;
+
+  let control;
+  if (d.type === 'enum') {
+    const blank = !d.required || !hasOwn(d, 'default') || val === ''
+      ? `<option value=""${val === '' ? ' selected' : ''}>${d.required ? 'Choose…' : '(none)'}</option>`
+      : '';
+    const opts = (d.choices || []).map((c) =>
+      `<option value="${htmlEscape(c)}"${c === val ? ' selected' : ''}>${htmlEscape(c)}</option>`).join('');
+    control = `<select ${common}>${blank}${opts}</select>`;
+  } else if (d.type === 'html' || (d.type === 'text' && d.maxlen > TEXTAREA_OVER)) {
+    control = `<textarea ${common} maxlength="${d.maxlen}" rows="4">${htmlEscape(val)}</textarea>`;
+  } else {
+    const attrs = {
+      text: `type="text" maxlength="${d.maxlen}"`,
+      phone: 'type="tel" autocomplete="tel" inputmode="tel"',
+      email: 'type="email" autocomplete="email"',
+      number: 'type="text" inputmode="decimal"',
+      date: 'type="date"',
+    }[d.type] || 'type="text"';
+    control = `<input ${attrs} ${common} value="${htmlEscape(val)}">`;
+  }
+
+  // A length hint only where the clicker controls the length — a phone or
+  // date is checked on its normalized form, so "up to 16" would mislead.
+  const hint = [d.required ? 'Required' : 'Optional', TYPE_HINT[d.type]]
+    .concat(LENGTH_HINT_TYPES.has(d.type) ? [`up to ${d.maxlen} characters`] : [])
+    .filter(Boolean).join(' · ');
+  return `
+        <div class="cta-field${err ? ' has-error' : ''}">
+          <label class="input-label" for="${htmlEscape(id)}">${htmlEscape(d.label)}</label>
+          ${control}
+          <div class="sub-label" id="${htmlEscape(id)}-hint">${htmlEscape(hint)}</div>${err ? `
+          <div class="cta-field-error" role="alert">${htmlEscape(err)}</div>` : ''}
+        </div>`;
+}
+
+function inputFields(opt, values, errors) {
+  if (!hasInputs(opt)) return '';
+  return opt.inputs.map((d) => inputField(d, values, errors)).join('');
+}
+
 function notFoundPage() {
   return pageWrap('Link Not Valid', `
     <h2 style="margin:0 0 8px;font-size:22px;color:#111827">Link not valid</h2>
@@ -322,9 +459,10 @@ function landingPage(row) {
   const btnStyle = `background:${INDIGO};color:#ffffff;border:none;border-radius:6px;
                      padding:14px 28px;font-size:16px;font-weight:700;cursor:pointer;
                      margin:0 10px 10px 0;display:inline-block;text-decoration:none`;
-  // Options with confirm_text go through their confirm page (a GET link);
-  // the rest submit directly — the landing form IS a deliberate human click.
-  const buttons = row.options.map((o) => (o.confirm_text
+  // Options with confirm_text — or declared inputs (§12), whose fields live
+  // on the confirm page — go through their confirm page (a GET link); the
+  // rest submit directly — the landing form IS a deliberate human click.
+  const buttons = row.options.map((o) => (o.confirm_text || hasInputs(o)
     ? `
         <a href="${base}/${htmlEscape(o.value)}" style="${btnStyle}">${htmlEscape(o.label)}</a>`
     : `
@@ -352,7 +490,11 @@ function landingPage(row) {
       <p style="margin:14px 0 0;font-size:12px;color:#9ca3af">${expiryNote(row)}</p>`);
 }
 
-function confirmPage(row, opt, { error = null } = {}) {
+/**
+ * values/fieldErrors (§12): a re-render after a rejected POST echoes what was
+ * ENTERED (escaped) with per-field errors; a fresh GET pre-fills defaults.
+ */
+function confirmPage(row, opt, { error = null, values = null, fieldErrors = null } = {}) {
   const base = `/c/${row.token}`;  // relative: follows the serving host
   const confirmText = opt.confirm_text
     ? `
@@ -371,7 +513,7 @@ function confirmPage(row, opt, { error = null } = {}) {
       </p>
       ${confirmText}
       <form method="POST" action="${base}/respond" style="margin:0">
-        <input type="hidden" name="value" value="${htmlEscape(opt.value)}">
+        <input type="hidden" name="value" value="${htmlEscape(opt.value)}">${inputFields(opt, values, fieldErrors)}
         ${passwordField(row)}
         <button type="submit"
                 style="background:#059669;color:#ffffff;border:none;border-radius:6px;
@@ -483,7 +625,12 @@ router.get(`/c/${TOKEN_PATTERN}/${VALUE_PATTERN}`, async (req, res) => {
     if (!opt) return res.redirect(302, `/c/${row.token}`);
 
     const state = await publicState(req.db, row);
-    if (json) return res.json({ ...descriptor(row, state), selected: { value: opt.value, label: opt.label } });
+    if (json) {
+      const d = descriptor(row, state);
+      // the descriptor's own entry for this option — {value, label} plus its
+      // input declarations when it has any (§12)
+      return res.json({ ...d, selected: d.options.find((o) => o.value === opt.value) });
+    }
     if (state !== 'active') return res.send(terminalPage(row, state));
     res.send(confirmPage(row, opt));
   } catch (err) {
@@ -515,6 +662,7 @@ router.post(`/c/${TOKEN_PATTERN}/respond`, async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const value = typeof body.value === 'string' ? body.value.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
+    const inputs = submittedInputs(body);
 
     if (row.protection === 'password' && password !== '') {
       const key = `${row.token}|${ip}`;
@@ -527,7 +675,7 @@ router.post(`/c/${TOKEN_PATTERN}/respond`, async (req, res) => {
     }
 
     const out = await ctaService.respond(db, {
-      row, value, password, via: json ? 'api' : 'link', ip,
+      row, value, password, inputs, via: json ? 'api' : 'link', ip,
     });
 
     if (out.ok) {
@@ -544,6 +692,20 @@ router.post(`/c/${TOKEN_PATTERN}/respond`, async (req, res) => {
 
     const code = publicCode(out.code);
     if (code === 'bad_password') spent = true;
+
+    if (code === 'invalid_inputs') {
+      // Nothing was claimed or counted. Generic per-field messages only.
+      if (json) {
+        const b = { ok: false, code, message: JSON_MESSAGES.invalid_inputs, errors: out.errors || {} };
+        if (out.form_error) b.form_error = out.form_error;
+        return res.status(400).json(b);
+      }
+      return res.status(400).send(confirmPage(row, optionByValue(row, value), {
+        error: out.form_error || 'Please correct the highlighted fields.',
+        values: echoValues(inputs),
+        fieldErrors: out.errors,
+      }));
+    }
 
     if (json) {
       const status = code === 'not_found' ? 404
@@ -563,6 +725,7 @@ router.post(`/c/${TOKEN_PATTERN}/respond`, async (req, res) => {
       const opt = optionByValue(row, value);   // respond() checked the option before the password
       return res.status(code === 'bad_password' ? 403 : 401).send(confirmPage(row, opt, {
         error: code === 'bad_password' ? 'That password is not correct.' : 'Enter the password to continue.',
+        values: echoValues(inputs),   // keep what they typed; the password itself is never echoed
       }));
     }
     // conflict: lost a same-instant race while the link stayed active

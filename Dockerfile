@@ -15,4 +15,7 @@ RUN npm ci --omit=dev
 COPY . .
 ENV NODE_ENV=production
 EXPOSE 8080
-CMD ["node", "server.js"]
+# --enable-experimental-regexp-engine: CTA clicker-input patterns run on V8's
+# linear-time engine (the 'l' flag) — services/ctaService.js also sets it at
+# load for local/jest runs, and logs "[CTA] linear regexp engine: available".
+CMD ["node", "--enable-experimental-regexp-engine", "server.js"]

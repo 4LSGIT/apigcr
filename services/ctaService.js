@@ -44,6 +44,24 @@
  *     plan_result only when the CTA was minted with return_plan_result=1.
  *     result_template is the curated public output.
  *  6. Timeout executions always log by=0 — never attributed_user_id.
+ *  7. CLICKER INPUTS (§12, slice S1i). An option may declare `inputs`; a plan
+ *     param whose WHOLE top-level value is "[[input:name]]" is a binding, and
+ *     only into a param its function opens via __meta.ctaInputParams. Values
+ *     are validated twice server-side — each input (type → normalize → maxlen
+ *     → pattern, the pattern on V8's LINEAR-TIME engine only — see
+ *     LINEAR_RE), then __validateFunctionParams on the substituted step — at
+ *     mint (defaults or samples) and at click. At click the pipeline runs
+ *     AFTER the password check (no unauthenticated caller reaches a pattern)
+ *     and BEFORE the claim (a bad value never burns a use). A non-html input
+ *     bound into a param marked html:true is HTML-escaped + nl2br at
+ *     substitution; only a declared type:'html' input passes raw, and only
+ *     behind the raw_html_input acknowledgment.
+ *  8. Policy (§12): inputs default protection to 'password'; risk codes
+ *     (CTA_RISKS) fail the mint closed unless listed in accept_risks; a
+ *     repeatable link with a kind:'recipient' binding MUST set max_uses (hard
+ *     rule, not acknowledgeable — PATCH can't remove the cap either, and
+ *     linkRefusal refuses a link that lost it some other way); timeout_option
+ *     needs a default on every input of that option (the sweep has no clicker).
  *
  * Standing rule (R3): cta_links / cta_executions never enter
  * QUERY_DB_ALLOWED_TABLES or WRITE_POLICY.
@@ -138,8 +156,9 @@ const MINT_KEYS = new Set([
   'expires_at', 'timeout', 'timeout_option', 'protection', 'password',
   'return_plan_result', 'attributed_user_id', 'link_type', 'link_id',
   'mint_source', 'source_execution_id', 'minted_by', 'dry_run',
+  'accept_risks',
 ]);
-const OPTION_KEYS = new Set(['value', 'label', 'plan', 'confirm_text', 'result_template']);
+const OPTION_KEYS = new Set(['value', 'label', 'plan', 'confirm_text', 'result_template', 'inputs']);
 const STEP_KEYS = new Set(['fn', 'params']);
 const PATCH_KEYS = new Set(['expires_at', 'max_uses', 'status']);
 
@@ -157,6 +176,94 @@ const TIMEOUT_CLAIM_SQL =
 `UPDATE cta_links SET status='used', uses_count=1, updated_at=NOW()
  WHERE id=? AND status='active' AND mode='once' AND uses_count=0
    AND timeout_option IS NOT NULL AND expires_at <= NOW()`;
+
+// ─── §12 clicker inputs ─────────────────────────────────────────────────────
+const INPUT_TYPES = Object.freeze(['text', 'phone', 'email', 'number', 'enum', 'date', 'html']);
+const INPUT_KEYS = new Set(['name', 'label', 'type', 'required', 'default', 'maxlen', 'pattern', 'choices']);
+const INPUT_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;   // the result_var rule (decisions.js VAR_RE)
+// Names that would hit Object.prototype machinery wherever a plain object is
+// keyed by input name (a qs-parsed body, an author's spread). Every map here
+// is null-prototype anyway; this is the belt to that braces.
+const RESERVED_INPUT_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_INPUTS = 10;              // per option
+const MAX_INPUT_LABEL = 100;
+const MAX_INPUT_LEN = 1000;         // maxlen server cap (§12)
+const MAX_RAW_INPUT = 4 * MAX_INPUT_LEN;   // pre-normalization guard; maxlen is checked on the NORMALIZED value
+const MAX_PATTERN = 100;
+const MAX_CHOICES = 20;
+const BINDING_RE = /^\[\[input:([^\]]*)\]\]$/;   // a WHOLE param value — Ruling 5, no splicing
+const BINDING_MARK = '[[input:';
+const INPUT_REF_RE = /^input:([a-zA-Z_][a-zA-Z0-9_]{0,63})$/;   // result_template [[input:x]]
+// One address, nothing a mailer could read as a second recipient or a header
+// break — same character class as routes/api.cta.js (send) EMAIL_RE.
+const INPUT_EMAIL_RE = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
+const E164_RE = /^\+[1-9]\d{7,14}$/;
+const NUMBER_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/;
+const MAX_NUMBER_DIGITS = 15;       // significant digits a double round-trips exactly
+const EMAIL_INVISIBLE_RE = /[\p{Cc}\p{Cf}]/u;
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+// C0 controls except \t and \n (CR is normalized away first), plus DEL.
+const CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F]/;
+const OPENED_KINDS = new Set(['recipient', 'content']);
+// A kind:'recipient' binding takes only a type whose pipeline guarantees ONE
+// recipient. A text input into send_email.to would carry "a@x, b@y, …" — one
+// use, many recipients — and quietly defeat the max_uses hard rule.
+const RECIPIENT_TYPES = new Set(['phone', 'email']);
+
+/** Normalized-width floors: a smaller maxlen could never accept a value. */
+const MIN_MAXLEN = Object.freeze({ phone: 12, date: 10 });
+const MIN_MAXLEN_WHY = Object.freeze({ phone: '+1 and 10 digits', date: 'YYYY-MM-DD' });
+
+/** Mint-time stand-ins when an input has no default (validator pass only — never stored). */
+const INPUT_SAMPLES = Object.freeze({
+  text: 'sample text', phone: '+12485550100', email: 'sample@example.com',
+  number: '1', date: '2000-01-01', html: '<p>sample</p>',
+});
+
+/**
+ * Acknowledge-to-proceed risk codes (§12 Policy). A mint that triggers one
+ * fails closed (400 risk_acceptance_required) unless accept_risks lists it;
+ * accepted codes land in the receipt and the admin_audit_log row. The pane
+ * renders these descriptions as its checkbox text.
+ */
+const CTA_RISKS = Object.freeze({
+  open_recipient_repeatable:
+    'A clicker-supplied recipient on a repeatable link: whoever holds the link can send from the firm\'s ' +
+    'identity to any address or number they choose, once per use, until max_uses or expiry.',
+  raw_html_input:
+    'A type:"html" input passes the clicker\'s markup into the plan unescaped — they can author HTML that is ' +
+    'sent or stored under the firm\'s identity.',
+});
+
+/** Clicker-facing input errors — generic by contract: never plan internals, never the pattern. */
+const INPUT_MSG = Object.freeze({
+  required: 'This field is required.',
+  type: 'Enter a text value.',
+  chars: 'This contains characters that are not allowed.',
+  phone: 'Enter a valid phone number.',
+  email: 'Enter a single valid email address.',
+  number: 'Enter a number.',
+  enum: 'Choose one of the listed options.',
+  date: 'Enter a date as YYYY-MM-DD.',
+  pattern: 'This is not in the expected format.',
+  unknown: 'Unknown field.',
+  rejected: "This value can't be used for this action.",
+  unavailable: "This field can't be checked right now — please try again later.",
+});
+const tooLongMsg = (n) => `Use at most ${n} characters.`;
+
+// cta_executions INSERTs. The inputs column is named ONLY when an option
+// declared inputs, so the click path of an input-less link (every link minted
+// before §12 — WF27's live not-spam button included) never depends on the
+// 2026-10-08 migration having run.
+const EXEC_INSERT_SQL =
+`INSERT INTO cta_executions
+   (cta_id, option_value, status, responded_via, responder_user_id, responder_ip)
+ VALUES (?, ?, 'running', ?, ?, ?)`;
+const EXEC_INSERT_INPUTS_SQL =
+`INSERT INTO cta_executions
+   (cta_id, option_value, status, responded_via, responder_user_id, responder_ip, inputs)
+ VALUES (?, ?, 'running', ?, ?, ?, ?)`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Small helpers
@@ -318,13 +425,22 @@ function _ineligibleReason(name, reg) {
  * [[respond_url:X]] rule — a template pointing at nothing must fail loudly
  * at mint, not render blank to a recipient.
  */
-function validateResultTemplate(tpl, planLength, label) {
+function validateResultTemplate(tpl, planLength, label, inputNames = null) {
   let m;
   RESULT_TOKEN_RE.lastIndex = 0;
   while ((m = RESULT_TOKEN_RE.exec(tpl)) !== null) {
+    // §12: [[input:x]] echoes the clicker's (normalized) value — escaped like
+    // every other template output. Must name an input of THIS option.
+    const inp = INPUT_REF_RE.exec(m[1]);
+    if (inp) {
+      if (!inputNames || !inputNames.has(inp[1])) {
+        throw bad(`${label}.result_template references [[input:${inp[1]}]] — no such input is declared on this option`);
+      }
+      continue;
+    }
     const ref = RESULT_REF_RE.exec(m[1]);
     if (!ref) {
-      throw bad(`${label}.result_template: unsupported token [[${m[1]}]] — use [[N.output]] or [[N.output.path]]`);
+      throw bad(`${label}.result_template: unsupported token [[${m[1]}]] — use [[N.output]], [[N.output.path]] or [[input:name]]`);
     }
     const n = Number(ref[1]);
     if (n < 1 || n > planLength) {
@@ -339,9 +455,15 @@ function validateResultTemplate(tpl, planLength, label) {
  * `html` escapes the whole rendered string (literal + values) and turns
  * newlines into <br>; `text` is for the JSON surface. Missing paths render
  * ''; objects render as JSON; Dates as ISO. Own-property walk only.
+ * `inputs` (§12) is the execution's normalized input map for [[input:x]].
  */
-function renderResultTemplate(tpl, outputs) {
+function renderResultTemplate(tpl, outputs, inputs = null) {
   const text = String(tpl).replace(RESULT_TOKEN_RE, (_, inner) => {
+    const inp = INPUT_REF_RE.exec(inner);
+    if (inp) {
+      // an omitted optional input renders '' (same as a missing output path)
+      return inputs && hasOwn(inputs, inp[1]) && inputs[inp[1]] != null ? String(inputs[inp[1]]) : '';
+    }
     const ref = RESULT_REF_RE.exec(inner);
     if (!ref) return '';
     let v = outputs[Number(ref[1]) - 1];
@@ -361,14 +483,551 @@ function renderResultTemplate(tpl, outputs) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Clicker inputs (§12) — opened params, declarations, the value pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The opened-param spec for fn.param, or null. Opt-in per function via
+ * __meta.ctaInputParams = { <param>: { kind: 'recipient'|'content', html?: true } }
+ * (Ruling 6c). Only an ELIGIBLE function's REAL meta param can be opened;
+ * own-property lookups throughout (plan JSON is untrusted shape). The full
+ * opened set is snapshotted in tests/ctaInputs.test.js — every opened param
+ * is a reviewed exposure decision, like the eligible-function set.
+ */
+function openedParamSpec(fnName, param, reg = registry()) {
+  if (typeof param !== 'string' || !isCtaEligible(fnName, reg)) return null;
+  const meta = reg[fnName].__meta;
+  const cip = meta.ctaInputParams;
+  if (!isPlainObject(cip) || !hasOwn(cip, param)) return null;
+  const s = cip[param];
+  if (!isPlainObject(s) || !OPENED_KINDS.has(s.kind)) return null;
+  if (!Array.isArray(meta.params) || !meta.params.some((p) => p && p.name === param)) return null;
+  // N6 (S1i review): a recipient may pin the input type it takes — the
+  // transport only understands one (send_sms.to a phone, send_email.to an
+  // email). Anything else in `type` is a malformed opening: treat as closed.
+  if (s.type !== undefined && !(s.kind === 'recipient' && RECIPIENT_TYPES.has(s.type))) return null;
+  const out = { kind: s.kind, html: s.html === true };
+  if (s.type !== undefined) out.type = s.type;
+  return out;
+}
+
+/** { fn: { param: {kind, html?} } } over every eligible function — the snapshot surface. */
+function openedInputParams(reg = registry()) {
+  const out = {};
+  for (const fn of eligibleFunctionNames(reg)) {
+    const cip = reg[fn].__meta.ctaInputParams;
+    if (!isPlainObject(cip)) continue;
+    const params = {};
+    for (const p of Object.keys(cip).sort()) {
+      const s = openedParamSpec(fn, p, reg);
+      if (!s) continue;
+      const e = { kind: s.kind };
+      if (s.html) e.html = true;
+      if (s.type) e.type = s.type;
+      params[p] = e;
+    }
+    if (Object.keys(params).length) out[fn] = params;
+  }
+  return out;
+}
+
+/**
+ * Why binding input `decl` into fn.param can't run, as { code, spec }:
+ * code null = fine; 'binding_closed' = undeclared input or a param no longer
+ * opened; 'recipient_type' = a recipient fed by a type that can't guarantee
+ * ONE recipient of the kind the transport takes. Shared by the click path
+ * (prepareRun) and the link-level refusal (linkRefusal) — the mint checks the
+ * same rules with its own, more specific 400s.
+ */
+function bindingProblem(fn, param, decl, reg) {
+  const spec = openedParamSpec(fn, param, reg);
+  if (!decl || !spec) return { code: 'binding_closed', spec: null };
+  if (spec.kind === 'recipient' && !RECIPIENT_TYPES.has(decl.type)) return { code: 'recipient_type', spec };
+  if (spec.type && decl.type !== spec.type) return { code: 'recipient_type', spec };
+  return { code: null, spec };
+}
+
+/**
+ * Every [[input:x]] binding in options that DECLARE inputs, as
+ * { option, step, param, name, decl }. Input-less options are skipped: a
+ * marker there is never substituted (prepareRun returns their plan untouched),
+ * so it is just text.
+ */
+function listBindings(options) {
+  const out = [];
+  for (const o of Array.isArray(options) ? options : []) {
+    const decls = o && Array.isArray(o.inputs) ? o.inputs : [];
+    if (!decls.length) continue;
+    const byName = new Map(decls.map((d) => [d.name, d]));
+    for (const step of Array.isArray(o.plan) ? o.plan : []) {
+      if (!step || !isPlainObject(step.params)) continue;
+      for (const [k, v] of Object.entries(step.params)) {
+        const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
+        if (m) out.push({ option: o, step, param: k, name: m[1], decl: byName.get(m[1]) });
+      }
+    }
+  }
+  return out;
+}
+
+/** True when any input-declaring option binds a recipient — a closed binding counts (conservative). */
+function hasRecipientBinding(options, reg = registry()) {
+  return listBindings(options).some((b) => {
+    const spec = openedParamSpec(b.step.fn, b.param, reg);
+    return !spec || spec.kind === 'recipient';
+  });
+}
+
+/**
+ * LINK-LEVEL refusal (S1i review B1 + N2): a state the mint would have refused
+ * that exists anyway — a param closed or retyped since mint, or max_uses
+ * removed from a repeatable open-recipient link behind the hard rule's back
+ * (PATCH now refuses that; a SQL edit could still do it). Pure. Returns null
+ * or { reason, detail }. Called by BOTH respond() and the GET pre-check
+ * (routes/ctaActions.js publicState, via linkBlocked) so a page never offers
+ * what the POST would refuse. The public sees 'disabled', never why.
+ */
+function linkRefusal(row, reg = registry()) {
+  let recipient = false;
+  for (const b of listBindings(row && row.options)) {
+    const p = bindingProblem(b.step.fn, b.param, b.decl, reg);
+    if (p.code) return { reason: p.code, detail: `option "${b.option.value}": ${b.step.fn}.${b.param} ← [[input:${b.name}]]` };
+    if (p.spec.kind === 'recipient') recipient = true;
+  }
+  if (row && row.mode === 'repeatable' && row.max_uses == null && recipient) {
+    return { reason: 'unbounded_recipient', detail: 'a repeatable link with a clicker-supplied recipient has no max_uses (§12 hard rule)' };
+  }
+  return null;
+}
+
+/** linkRefusal + one deduplicated warning alert per link and reason. */
+async function linkBlocked(db, row, reg = registry()) {
+  const r = linkRefusal(row, reg);
+  if (r) {
+    await alertSafe({
+      source: 'cta', kind: 'link_refused', group_key: `cta:${row.id}`, severity: 'warning',
+      title: `CTA #${row.id} "${String(row.name).slice(0, 120)}" refused: ${r.reason}`,
+      message: `${r.detail}. Every click is refused and the public pages show "unavailable" — nothing is claimed. ` +
+        'Cancel the link or re-mint it (for unbounded_recipient, PATCH a max_uses).',
+      ref_table: 'cta_links', ref_id: row.id, dedup_key: `cta:${row.id}:refused:${r.reason}`,
+    }, db);
+  }
+  return r;
+}
+
+function listOpened(fnName, reg) {
+  const cip = reg[fnName] && reg[fnName].__meta && reg[fnName].__meta.ctaInputParams;
+  const names = isPlainObject(cip) ? Object.keys(cip).filter((p) => openedParamSpec(fnName, p, reg)) : [];
+  return names.length ? names.join(', ') : 'none';
+}
+
+// ── Clicker patterns run on V8's LINEAR-TIME regexp engine (S1i review R1) ──
+//
+// The backtracking engine cannot be made safe by linting: the S1i lint passed
+// (a?a?)+b, which took 35 s against 22 characters (measured 2026-10-08), and
+// alternation overlap like (a|a)+ is undecidable for a lint in general. The
+// experimental engine guarantees linear time and REFUSES to compile what it
+// can't run that way — lookahead, backreferences, and bounded repeats above
+// 16 — so every rejection happens at mint, as a 400, never at click.
+//
+// Enabled once per process. Prod also passes --enable-experimental-regexp-engine
+// on the Dockerfile CMD; this call covers local runs, nodemon and jest, and is
+// harmless when the flag is already set. There is NO backtracking fallback: if
+// the engine is ever unavailable (a Node upgrade that drops the flag),
+// patterns are refused at mint and a pattern-bearing input fails closed at
+// click — tests/ctaInputs.test.js asserts the engine is present so CI catches
+// that upgrade first. Ruling 4 holds: no new dependency.
+const LINEAR_RE = (() => {
+  try {
+    require('v8').setFlagsFromString('--enable-experimental-regexp-engine');
+    new RegExp('a', 'l'); // eslint-disable-line no-new
+    return true;
+  } catch (_) {
+    return false;
+  }
+})();
+console.log(`[CTA] linear regexp engine: ${LINEAR_RE ? 'available' : 'UNAVAILABLE — clicker-input patterns are refused'}`);
+
+/** True when clicker-input patterns can run (the linear engine is available). */
+function linearRegexAvailable() {
+  return LINEAR_RE;
+}
+
+const BIG_REPEAT_RE = /\{(\d+)(?:,(\d*))?\}/g;
+const MAX_LINEAR_REPEAT = 16;   // V8's linear engine refuses bounded repeats above this
+const PATTERN_LIMITS =
+  `repeat counts above ${MAX_LINEAR_REPEAT} aren't supported — use + or * with maxlen (maxlen already caps the length), ` +
+  'or write the repeat as consecutive pieces (\\d{9}\\d{8}, not \\d{17}); lookahead and backreferences aren\'t supported';
+
+const patternCache = new Map();
+/**
+ * The anchored, full-match, LINEAR-TIME RegExp for a stored pattern, or null
+ * when the linear engine is unavailable (the caller fails closed).
+ */
+function compiledPattern(p) {
+  if (!LINEAR_RE) return null;
+  let re = patternCache.get(p);
+  if (!re) {
+    // Compiled alone FIRST (at mint): an unbalanced ')' can't break out of the
+    // ^(?: … )$ wrapper, because it never got this far.
+    re = new RegExp(`^(?:${p})$`, 'l');
+    if (patternCache.size > 500) patternCache.clear();
+    patternCache.set(p, re);
+  }
+  return re;
+}
+
+function lintPattern(p, il) {
+  if (typeof p !== 'string' || p === '' || p.length > MAX_PATTERN) {
+    throw bad(`${il}.pattern must be a 1–${MAX_PATTERN} character string`);
+  }
+  try {
+    new RegExp(p); // eslint-disable-line no-new
+  } catch (err) {
+    throw bad(`${il}.pattern is not a valid regular expression: ${err.message}`);
+  }
+  if (!LINEAR_RE) {
+    throw bad(`${il}.pattern: patterns are unavailable on this server (the linear-time regexp engine is missing) — omit pattern`);
+  }
+  try {
+    new RegExp(`^(?:${p})$`, 'l'); // eslint-disable-line no-new
+  } catch (_) {
+    let big = null;
+    let m;
+    BIG_REPEAT_RE.lastIndex = 0;
+    while ((m = BIG_REPEAT_RE.exec(p)) !== null) {
+      const max = m[2] === undefined ? Number(m[1]) : (m[2] === '' ? Infinity : Number(m[2]));
+      if (Number.isFinite(max) && max > MAX_LINEAR_REPEAT) { big = m[0]; break; }
+    }
+    throw bad(`${il}.pattern must run in linear time${big ? ` (${big} is too large)` : ''}: ${PATTERN_LIMITS}`);
+  }
+}
+
+function isRealDate(s) {
+  const m = DATE_RE.exec(s);
+  if (!m) return false;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+/**
+ * The per-value pipeline (§12 "type → normalize → maxlen → pattern"): one
+ * NON-BLANK raw value against one declaration. Returns { value } (normalized,
+ * always a string) or { error } (a clicker-facing, generic message).
+ *
+ *   text/html  CRLF → LF, trimmed, C0 controls (but \t \n) rejected
+ *   phone      phoneService.normalizeE164 — the canonical helper — then a
+ *              strict E.164 shape check: that helper passes any '+…' string
+ *              through untouched, so '+44 20 7946 0958' or '+<x>' would
+ *              otherwise reach the transport as-is
+ *   email      no control/format characters (\p{Cc}\p{Cf}), then
+ *              contactEmailService.normalizeEmail (trim + lowercase) and ONE
+ *              address — no list separators, no whitespace
+ *   number     plain decimal (no exponent/hex/Infinity), ≤ 15 significant
+ *              digits and |n| < 1e15 so String(n) is exact and exponent-free
+ *   enum       exactly one of the declared choices
+ *   date       YYYY-MM-DD that is a real calendar date
+ */
+function validateInputValue(decl, raw) {
+  let s;
+  if (typeof raw === 'string') s = raw;
+  else if (typeof raw === 'number' && decl.type === 'number' && Number.isFinite(raw)) s = String(raw);
+  else return { error: INPUT_MSG.type };
+  if (s.length > MAX_RAW_INPUT) return { error: tooLongMsg(decl.maxlen) };
+  s = s.replace(/\r\n?/g, '\n').trim();
+
+  let v;
+  switch (decl.type) {
+    case 'text':
+    case 'html':
+      if (CONTROL_RE.test(s)) return { error: INPUT_MSG.chars };
+      v = s;
+      break;
+    case 'phone': {
+      const { normalizeE164 } = require('./phoneService');
+      const n = normalizeE164(s);
+      if (!n || !E164_RE.test(n)) return { error: INPUT_MSG.phone };
+      v = n;
+      break;
+    }
+    case 'email': {
+      // Every control and format character — NUL, BEL, zero-width spaces and
+      // joiners, the BOM, bidi overrides (U+202E). \s in the address regex
+      // misses all of these; a send to one fails and still burns the use.
+      if (EMAIL_INVISIBLE_RE.test(s)) return { error: INPUT_MSG.email };
+      const { normalizeEmail } = require('./contactEmailService');
+      const n = normalizeEmail(s);
+      if (!INPUT_EMAIL_RE.test(n)) return { error: INPUT_MSG.email };
+      v = n;
+      break;
+    }
+    case 'number': {
+      if (!NUMBER_RE.test(s)) return { error: INPUT_MSG.number };
+      // > 15 significant digits can't round-trip through a double: refuse
+      // rather than silently change the value the clicker typed.
+      if (s.replace(/^[+-]/, '').replace('.', '').replace(/^0+/, '').length > MAX_NUMBER_DIGITS) {
+        return { error: INPUT_MSG.number };
+      }
+      const n = Number(s);
+      if (!Number.isFinite(n) || Math.abs(n) >= 1e15) return { error: INPUT_MSG.number };
+      v = String(n);
+      if (/e/i.test(v)) return { error: INPUT_MSG.number };   // 0.0000001 → "1e-7": not a plain decimal
+      break;
+    }
+    case 'enum':
+      if (!Array.isArray(decl.choices) || !decl.choices.includes(s)) return { error: INPUT_MSG.enum };
+      v = s;
+      break;
+    case 'date':
+      if (!isRealDate(s)) return { error: INPUT_MSG.date };
+      v = s;
+      break;
+    default:
+      return { error: INPUT_MSG.type };
+  }
+  if (v.length > decl.maxlen) return { error: tooLongMsg(decl.maxlen) };
+  if (decl.pattern) {
+    const re = compiledPattern(decl.pattern);
+    if (!re) return { error: INPUT_MSG.unavailable };   // no linear engine: fail closed, never backtrack
+    if (!re.test(v)) return { error: INPUT_MSG.pattern };
+  }
+  return { value: v };
+}
+
+/**
+ * Validate an option's `inputs` declarations at mint. Returns the normalized
+ * array (stored in the option): { name, label, type, required, maxlen,
+ * choices?, pattern?, default? } — a stored default has passed the full value
+ * pipeline, so the timeout path and the HTML pre-fill can use it as-is.
+ */
+function validateInputDecls(raw, ol) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_INPUTS) {
+    throw bad(`${ol}.inputs must be an array of at most ${MAX_INPUTS} input declarations`);
+  }
+  const seen = new Set();
+  return raw.map((d, j) => {
+    const il = `${ol}.inputs[${j}]`;
+    if (!isPlainObject(d)) throw bad(`${il} must be an object {name, label, type, required, maxlen, …}`);
+    rejectUnknownKeys(d, INPUT_KEYS, il);
+
+    const name = typeof d.name === 'string' ? d.name : '';
+    if (!INPUT_NAME_RE.test(name)) throw bad(`${il}.name must match ${INPUT_NAME_RE}`);
+    if (RESERVED_INPUT_NAMES.has(name)) throw bad(`${il}.name "${name}" is reserved`);
+    if (seen.has(name)) throw bad(`${ol}.inputs: duplicate input name "${name}"`);
+    seen.add(name);
+
+    const label = typeof d.label === 'string' ? d.label.trim() : '';
+    if (!label || label.length > MAX_INPUT_LABEL) throw bad(`${il}.label must be 1–${MAX_INPUT_LABEL} chars`);
+
+    if (!INPUT_TYPES.includes(d.type)) throw bad(`${il}.type must be one of ${INPUT_TYPES.join(', ')}`);
+    if (typeof d.required !== 'boolean') throw bad(`${il}.required must be true or false`);
+    if (!Number.isInteger(d.maxlen) || d.maxlen < 1 || d.maxlen > MAX_INPUT_LEN) {
+      throw bad(`${il}.maxlen is required: an integer 1–${MAX_INPUT_LEN}`);
+    }
+    // maxlen is checked on the NORMALIZED value; below these floors every
+    // value would be rejected — a dead input, so a mint error instead.
+    const floor = MIN_MAXLEN[d.type];
+    if (floor && d.maxlen < floor) {
+      throw bad(`${il}.maxlen ${d.maxlen} is below ${floor} — every ${d.type} value normalizes to at least that (${MIN_MAXLEN_WHY[d.type]})`);
+    }
+
+    const decl = { name, label, type: d.type, required: d.required, maxlen: d.maxlen };
+
+    if (d.type === 'enum') {
+      const ch = d.choices;
+      if (!Array.isArray(ch) || ch.length < 1 || ch.length > MAX_CHOICES) {
+        throw bad(`${il}.choices: an enum needs 1–${MAX_CHOICES} choices`);
+      }
+      const uniq = new Set();
+      for (const c of ch) {
+        if (typeof c !== 'string' || !VALUE_RE.test(c)) throw bad(`${il}.choices: each choice must match ${VALUE_RE}`);
+        if (uniq.has(c)) throw bad(`${il}.choices: duplicate choice "${c}"`);
+        if (c.length > d.maxlen) throw bad(`${il}.choices: "${c}" is longer than maxlen ${d.maxlen}`);
+        uniq.add(c);
+      }
+      decl.choices = ch.slice();
+    } else if (d.choices !== undefined) {
+      throw bad(`${il}.choices applies to type enum only`);
+    }
+
+    if (d.pattern != null) {
+      lintPattern(d.pattern, il);
+      decl.pattern = d.pattern;
+    }
+
+    if (d.default != null && d.default !== '') {
+      if (typeof d.default === 'string' && PLACEHOLDER_RE.test(d.default)) {
+        throw bad(`${il}.default: unresolved {{...}} placeholder — defaults are frozen literals at mint`);
+      }
+      const r = validateInputValue(decl, d.default);
+      if (r.error) throw bad(`${il}.default: ${r.error}`);
+      decl.default = r.value;
+    }
+    return decl;
+  });
+}
+
+/** The value a binding receives: escape-on-substitute (§12) for a non-html input into an html:true param. */
+function substituteValue(value, decl, spec) {
+  if (spec && spec.html && decl.type !== 'html') {
+    return htmlEscape(value).replace(/\n/g, '<br>');
+  }
+  return value;
+}
+
+/** First path inside `v` carrying the [[input: marker, or null (deep, values only). */
+function findInputMark(v, path) {
+  if (typeof v === 'string') return v.includes(BINDING_MARK) ? path : null;
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) {
+      const p = findInputMark(v[i], `${path}[${i}]`);
+      if (p) return p;
+    }
+    return null;
+  }
+  if (v !== null && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      const p = findInputMark(x, `${path}.${k}`);
+      if (p) return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check a submission against an option's declarations. `submitted` is
+ * null/undefined (defaults only — the timeout path) or a plain object of
+ * name → raw value. Blank (missing, null, whitespace) → the default when
+ * declared, else 'required' for a required input, else omitted.
+ * Returns { values, errors, formError } — null-prototype maps.
+ */
+function resolveInputs(decls, submitted) {
+  const values = Object.create(null);
+  const errors = Object.create(null);
+  const sub = submitted == null ? {} : submitted;
+  if (!isPlainObject(sub)) {
+    return { values, errors, formError: 'inputs must be an object of input name to value' };
+  }
+  const declared = new Set(decls.map((d) => d.name));
+  for (const k of Object.keys(sub)) {
+    if (!declared.has(k)) errors[k] = INPUT_MSG.unknown;
+  }
+  for (const d of decls) {
+    const raw = hasOwn(sub, d.name) ? sub[d.name] : undefined;
+    const blank = raw == null || (typeof raw === 'string' && raw.trim() === '');
+    if (blank) {
+      if (hasOwn(d, 'default')) values[d.name] = d.default;
+      else if (d.required) errors[d.name] = INPUT_MSG.required;
+      continue;
+    }
+    const r = validateInputValue(d, raw);
+    if (r.error) errors[d.name] = r.error;
+    else values[d.name] = r.value;
+  }
+  return { values, errors, formError: null };
+}
+
+/**
+ * The click-time half of §12, for one option. Pure — no DB. Validates the
+ * submission, substitutes every binding (type-aware escape), then re-runs
+ * __validateFunctionParams on each bound step before step 1 can run.
+ *
+ *   { ok: true, plan, values }    values is null for an input-less option,
+ *                                 whose plan is returned UNTOUCHED (no
+ *                                 re-validation — byte-identical to S1)
+ *   { ok: false, code: 'invalid_inputs', errors, formError }
+ *   { ok: false, code: 'binding_closed', error }  a binding can no longer run
+ *                                 (bindingProblem: param closed or retyped
+ *                                 since mint): refused before any claim, like
+ *                                 the run-time eligibility re-check but without
+ *                                 burning a use. respond() checks linkRefusal
+ *                                 first, so there this is defense in depth; the
+ *                                 sweep relies on it
+ */
+function prepareRun(option, submitted, reg = registry()) {
+  const decls = Array.isArray(option.inputs) ? option.inputs : [];
+  if (!decls.length) {
+    if (submitted != null) {
+      if (!isPlainObject(submitted)) {
+        return { ok: false, code: 'invalid_inputs', errors: Object.create(null), formError: 'inputs must be an object of input name to value' };
+      }
+      const keys = Object.keys(submitted);
+      if (keys.length) {
+        const errors = Object.create(null);
+        for (const k of keys) errors[k] = INPUT_MSG.unknown;
+        return { ok: false, code: 'invalid_inputs', errors, formError: null };
+      }
+    }
+    return { ok: true, plan: option.plan || [], values: null };
+  }
+
+  const { values, errors, formError } = resolveInputs(decls, submitted);
+  if (formError || Object.keys(errors).length) return { ok: false, code: 'invalid_inputs', errors, formError };
+
+  const byName = new Map(decls.map((d) => [d.name, d]));
+  const plan = [];
+  for (const step of option.plan || []) {
+    const fn = step && step.fn;
+    const params = JSON.parse(JSON.stringify((step && step.params) || {}));
+    const bound = [];
+    for (const [k, v] of Object.entries(params)) {
+      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
+      if (!m) continue;
+      const decl = byName.get(m[1]);
+      const problem = bindingProblem(fn, k, decl, reg);
+      if (problem.code) return { ok: false, code: 'binding_closed', error: `${fn}.${k} ← [[input:${m[1]}]] (${problem.code})` };
+      const { spec } = problem;
+      bound.push(decl.name);
+      if (!(decl.name in values)) delete params[k];   // omitted optional input: the param is absent
+      else params[k] = substituteValue(values[decl.name], decl, spec);
+    }
+    if (bound.length) {
+      const err = reg.__validateFunctionParams(fn, params);
+      if (err) {
+        // Mint validated defaults/samples AND the blank-optional variant, so
+        // this is defense in depth — log it, answer generically.
+        console.warn(`[CTA] click-time re-validation rejected ${fn}: ${err.error}`);
+        const errs = Object.create(null);
+        for (const n of bound) errs[n] = INPUT_MSG.rejected;
+        return { ok: false, code: 'invalid_inputs', errors: errs, formError: null };
+      }
+    }
+    plan.push({ fn, params });
+  }
+  return { ok: true, plan, values };
+}
+
+/** §5.2 descriptor entries for an option's declarations (never the pattern). */
+function publicInputs(decls) {
+  return decls.map((d) => {
+    const o = { name: d.name, label: d.label, type: d.type, required: d.required };
+    if (d.choices) o.choices = d.choices.slice();
+    o.maxlen = d.maxlen;
+    if (hasOwn(d, 'default')) o.default = d.default;
+    return o;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Mint validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-function validatePlan(plan, label, reg) {
+/**
+ * Validate one option's plan. `decls` are the option's validated input
+ * declarations (§12). Returns { plan, bindings } — bindings is
+ * [{ step, param, name, kind, html }] for the policy gates in validateMint.
+ */
+function validatePlan(plan, label, reg, decls = []) {
   if (!Array.isArray(plan) || plan.length < 1 || plan.length > MAX_PLAN_STEPS) {
     throw bad(`${label}.plan must be an array of 1–${MAX_PLAN_STEPS} {fn, params} steps`);
   }
-  return plan.map((step, i) => {
+  const byName = new Map(decls.map((d) => [d.name, d]));
+  const bindings = [];
+  const out = plan.map((step, i) => {
     const sl = `${label}.plan[${i}]`;
     if (!isPlainObject(step)) throw bad(`${sl} must be an object {fn, params}`);
     rejectUnknownKeys(step, STEP_KEYS, sl);
@@ -388,20 +1047,93 @@ function validatePlan(plan, label, reg) {
     const ph = findPlaceholder(params, `${sl}.params`);
     if (ph) throw bad(`${ph}: unresolved {{...}} placeholder — CTA params are frozen literals at mint`);
 
-    const err = reg.__validateFunctionParams(step.fn, params);
-    if (err) throw bad(`${sl} (${step.fn}): ${err.error}`);
+    // §12 bindings: "[[input:name]]" as a WHOLE top-level value, into an
+    // opened param, naming a declared input. Anything else carrying the
+    // marker is a splice or a nested binding — Ruling 5, rejected.
+    const stepBindings = [];
+    for (const [k, v] of Object.entries(params)) {
+      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
+      if (!m) continue;
+      const decl = byName.get(m[1]);
+      if (!decl) throw bad(`${sl}.params.${k}: [[input:${m[1]}]] — no input "${m[1]}" is declared on this option`);
+      const spec = openedParamSpec(step.fn, k, reg);
+      if (!spec) {
+        throw bad(`${sl}.params.${k}: ${step.fn}.${k} is not open to clicker inputs (${step.fn} opens: ${listOpened(step.fn, reg)})`);
+      }
+      if (spec.kind === 'recipient' && !RECIPIENT_TYPES.has(decl.type)) {
+        throw bad(`${sl}.params.${k}: ${step.fn}.${k} is a recipient — bind a phone or email input (input "${decl.name}" is ${decl.type}, which could carry a list of recipients)`);
+      }
+      if (spec.type && decl.type !== spec.type) {
+        throw bad(`${sl}.params.${k}: ${step.fn}.${k} takes a ${spec.type} input (input "${decl.name}" is ${decl.type}) — the send would fail on every click`);
+      }
+      stepBindings.push({ step: i + 1, param: k, name: decl.name, kind: spec.kind, html: spec.html, decl, spec });
+    }
+    // Only where inputs are declared (S1i review N1): an input-less option's
+    // marker is never substituted, so it is just text — and WF27 step 47
+    // freezes the raw website form body into init_data, where a spam message
+    // carrying a literal "[[input:" must not fail the mint.
+    const bound = new Set(stepBindings.map((b) => b.param));
+    for (const [k, v] of decls.length ? Object.entries(params) : []) {
+      if (bound.has(k)) continue;
+      const stray = findInputMark(v, `${sl}.params.${k}`);
+      if (stray) {
+        throw bad(`${stray}: [[input:…]] must be a param's whole top-level value — no splicing inside strings, no nesting (§12 Ruling 5)`);
+      }
+    }
+
+    if (!stepBindings.length) {
+      const err = reg.__validateFunctionParams(step.fn, params);
+      if (err) throw bad(`${sl} (${step.fn}): ${err.error}`);
+    } else {
+      // Validator pass 1 (§12 "Mint"): every binding filled with its default,
+      // else a type-appropriate sample — substituted exactly as a click would.
+      const filled = JSON.parse(JSON.stringify(params));
+      for (const b of stepBindings) {
+        const sample = hasOwn(b.decl, 'default') ? b.decl.default
+          : (b.decl.type === 'enum' ? b.decl.choices[0] : INPUT_SAMPLES[b.decl.type]);
+        filled[b.param] = substituteValue(sample, b.decl, b.spec);
+      }
+      let err = reg.__validateFunctionParams(step.fn, filled);
+      if (err) throw bad(`${sl} (${step.fn}) with default/sample inputs: ${err.error}`);
+      // …and the blank-optional variant: an optional input with no default
+      // leaves its param ABSENT at click — a function that requires that
+      // param would fail every blank submission, so it fails the mint instead.
+      const omittable = stepBindings.filter((b) => !b.decl.required && !hasOwn(b.decl, 'default'));
+      if (omittable.length) {
+        for (const b of omittable) delete filled[b.param];
+        err = reg.__validateFunctionParams(step.fn, filled);
+        if (err) {
+          throw bad(`${sl} (${step.fn}) with optional input${omittable.length === 1 ? '' : 's'} ` +
+            `${omittable.map((b) => `"${b.name}"`).join(', ')} left blank: ${err.error} — make the input required or give it a default`);
+        }
+      }
+    }
+    for (const b of stepBindings) {
+      bindings.push({ step: b.step, param: b.param, name: b.name, kind: b.kind, html: b.html });
+    }
 
     // Round-trip: the stored plan is exactly what JSON can carry.
     return { fn: step.fn, params: JSON.parse(JSON.stringify(params)) };
   });
+
+  const used = new Set(bindings.map((b) => b.name));
+  const unused = decls.find((d) => !used.has(d.name));
+  if (unused) throw bad(`${label}.inputs: "${unused.name}" is declared but never bound to a plan param`);
+  return { plan: out, bindings };
 }
 
+/**
+ * Validate the options array. Returns { options, bindingsByValue } —
+ * bindingsByValue (option value → validatePlan bindings) feeds the §12
+ * policy gates in validateMint and is never stored.
+ */
 function validateOptions(raw, reg) {
   if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_OPTIONS) {
     throw bad(`options must be an array of 1–${MAX_OPTIONS} options`);
   }
   const seen = new Set();
-  return raw.map((o, i) => {
+  const bindingsByValue = new Map();
+  const options = raw.map((o, i) => {
     const ol = `options[${i}]`;
     if (!isPlainObject(o)) throw bad(`${ol} must be an object`);
     rejectUnknownKeys(o, OPTION_KEYS, ol);
@@ -415,8 +1147,10 @@ function validateOptions(raw, reg) {
     const label = typeof o.label === 'string' ? o.label.trim() : '';
     if (!label || label.length > MAX_LABEL) throw bad(`${ol}.label must be 1–${MAX_LABEL} chars`);
 
-    const plan = validatePlan(o.plan, ol, reg);
+    const decls = validateInputDecls(o.inputs, ol);
+    const { plan, bindings } = validatePlan(o.plan, ol, reg, decls);
     const out = { value, label, plan };
+    bindingsByValue.set(value, bindings);
 
     if (o.confirm_text != null) {
       if (typeof o.confirm_text !== 'string') throw bad(`${ol}.confirm_text must be a string`);
@@ -429,11 +1163,13 @@ function validateOptions(raw, reg) {
       const t = o.result_template;
       if (t.trim() === '') throw bad(`${ol}.result_template is blank — omit it instead`);
       if (t.length > MAX_RESULT_TEMPLATE) throw bad(`${ol}.result_template exceeds ${MAX_RESULT_TEMPLATE} chars`);
-      validateResultTemplate(t, plan.length, ol);
+      validateResultTemplate(t, plan.length, ol, new Set(decls.map((d) => d.name)));
       out.result_template = t;
     }
+    if (decls.length) out.inputs = decls;
     return out;
   });
+  return { options, bindingsByValue };
 }
 
 async function resolveExpiry(db, input, mode, now) {
@@ -522,7 +1258,7 @@ async function validateMint(db, input, { now = new Date() } = {}) {
     if (maxUses == null) throw bad('max_uses must be a positive integer (or null for "until expiry")');
   }
 
-  const options = validateOptions(input.options, reg);
+  const { options, bindingsByValue } = validateOptions(input.options, reg);
   const values = new Set(options.map((o) => o.value));
 
   let timeoutOption = null;
@@ -532,12 +1268,28 @@ async function validateMint(db, input, { now = new Date() } = {}) {
       throw bad(`timeout_option "${input.timeout_option}" is not one of the option values`);
     }
     timeoutOption = input.timeout_option;
+    // §12: the sweep has no clicker — it substitutes defaults, so every input
+    // of the timeout option needs one.
+    const tOpt = options.find((o) => o.value === timeoutOption);
+    const missing = (tOpt.inputs || []).find((d) => !hasOwn(d, 'default'));
+    if (missing) {
+      throw bad(`timeout_option "${timeoutOption}": input "${missing.name}" needs a default — the expiry sweep has no clicker to supply it`);
+    }
+  }
+
+  // ── §12 policy: the hard rule (not acknowledgeable) ───────────────────
+  const allBindings = [...bindingsByValue.values()].flat();
+  const recipientBound = allBindings.some((b) => b.kind === 'recipient');
+  if (mode === 'repeatable' && recipientBound && maxUses == null) {
+    throw bad('a repeatable link with a clicker-supplied recipient must set max_uses (any value, your choice) — ' +
+      'an open-recipient link is a relay from the firm\'s identity, never unbounded by omission');
   }
 
   const expiresAt = await resolveExpiry(db, input, mode, now);
 
-  // ── Protection (§2.11, NB2) ───────────────────────────────────────────
+  // ── Protection (§2.11, NB2; §12) ──────────────────────────────────────
   const hasTemplate = options.some((o) => o.result_template);
+  const hasInputs = options.some((o) => o.inputs && o.inputs.length);
   const passwordGiven = input.password != null && input.password !== '';
   let protection;
   let protectionSource;
@@ -550,6 +1302,13 @@ async function validateMint(db, input, { now = new Date() } = {}) {
   } else if (passwordGiven) {
     protection = 'password';
     protectionSource = 'password_supplied';
+  } else if (hasInputs) {
+    // §12: same B5b pattern — the default is password, an explicit 'none' IS
+    // the SU's acceptance, and the receipt names the default that applied.
+    protection = 'password';
+    protectionSource = 'default_inputs';
+    notes.push("protection defaulted to 'password' because an option declares clicker inputs" +
+      (hasTemplate ? ' (and an option carries result_template)' : '') + "; pass protection:'none' to override");
   } else if (hasTemplate) {
     protection = 'password';
     protectionSource = 'default_result_template';
@@ -631,6 +1390,36 @@ async function validateMint(db, input, { now = new Date() } = {}) {
     }
   }
 
+  // ── §12 acknowledge-to-proceed risks — last, so every structural error
+  // above is reported first. dry_run fails the same way (it IS the mint
+  // minus the insert): that 400's `risks` is how the pane learns which
+  // checkboxes to show.
+  const accepted = new Set();
+  if (input.accept_risks != null) {
+    if (!Array.isArray(input.accept_risks) || input.accept_risks.some((c) => typeof c !== 'string')) {
+      throw bad('accept_risks must be an array of risk codes');
+    }
+    for (const c of input.accept_risks) {
+      if (!hasOwn(CTA_RISKS, c)) throw bad(`accept_risks: unknown risk code "${c}" (known: ${Object.keys(CTA_RISKS).join(', ')})`);
+      accepted.add(c);
+    }
+  }
+  const triggered = [];
+  if (mode === 'repeatable' && recipientBound) triggered.push('open_recipient_repeatable');
+  if (options.some((o) => (o.inputs || []).some((d) => d.type === 'html'))) triggered.push('raw_html_input');
+  const missingRisks = triggered.filter((c) => !accepted.has(c));
+  if (missingRisks.length) {
+    const err = new CtaError(400,
+      `cta: this link needs explicit risk acceptance — add ${missingRisks.map((c) => `"${c}"`).join(', ')} to accept_risks. ` +
+      missingRisks.map((c) => `${c}: ${CTA_RISKS[c]}`).join(' '),
+      'risk_acceptance_required');
+    err.risks = missingRisks.map((code) => ({ code, description: CTA_RISKS[code] }));
+    throw err;
+  }
+  for (const c of accepted) {
+    if (!triggered.includes(c)) notes.push(`accept_risks "${c}" does not apply to this link — not recorded`);
+  }
+
   return {
     row: {
       name, prompt, context_html: contextHtml, options, mode, max_uses: maxUses,
@@ -642,6 +1431,7 @@ async function validateMint(db, input, { now = new Date() } = {}) {
     protectionSource,
     passwordPlain,
     passwordGenerated,
+    risksAccepted: triggered,
     notes,
     warnings,
   };
@@ -665,7 +1455,10 @@ async function mintCta(db, input, { now = new Date() } = {}) {
     timeout_option: r.timeout_option,
     protection: r.protection,
     protection_source: v.protectionSource,
-    options: r.options.map((o) => ({ value: o.value, label: o.label })),
+    options: r.options.map((o) => (o.inputs
+      ? { value: o.value, label: o.label, inputs: o.inputs.map((d) => d.name) }
+      : { value: o.value, label: o.label })),
+    risks_accepted: v.risksAccepted.slice(),
     notes: v.notes.slice(),
     warnings: v.warnings,
   };
@@ -747,7 +1540,12 @@ function deriveState(row, now = new Date()) {
   return 'active';
 }
 
-/** §5.2 agent descriptor — deliberately EXCLUDES name, plans, result_template. */
+/**
+ * §5.2 agent descriptor — deliberately EXCLUDES name, plans, result_template.
+ * §12: an option that declares inputs carries `inputs` (name, label, type,
+ * required, choices, maxlen, default — never the pattern, never bindings) so
+ * an agent can fill them; an input-less option's entry is unchanged.
+ */
 function publicDescriptor(row, now = new Date()) {
   const exp = toDate(row.expires_at);
   let usesRemaining = null;
@@ -755,7 +1553,9 @@ function publicDescriptor(row, now = new Date()) {
   else if (row.max_uses != null) usesRemaining = Math.max(0, Number(row.max_uses) - Number(row.uses_count));
   return {
     prompt: row.prompt,
-    options: (row.options || []).map((o) => ({ value: o.value, label: o.label })),
+    options: (row.options || []).map((o) => (Array.isArray(o.inputs) && o.inputs.length
+      ? { value: o.value, label: o.label, inputs: publicInputs(o.inputs) }
+      : { value: o.value, label: o.label })),
     mode: row.mode,
     protection: row.protection,
     expires_at: exp ? exp.toISOString() : null,
@@ -837,7 +1637,7 @@ async function listExecutions(db, id, { limit = EXEC_LIST_DEFAULT } = {}, { now 
   if (!row) throw new CtaError(404, `cta: CTA ${ctaId} not found`);
   const lim = Math.min(posInt(limit) || EXEC_LIST_DEFAULT, EXEC_LIST_MAX);
   const [rows] = await db.query(
-    `SELECT id, cta_id, option_value, status, plan_result, responded_via,
+    `SELECT id, cta_id, option_value, status, plan_result, inputs, responded_via,
             responder_user_id, responder_ip, executed_at
        FROM cta_executions
       WHERE cta_id = ?
@@ -847,7 +1647,9 @@ async function listExecutions(db, id, { limit = EXEC_LIST_DEFAULT } = {}, { now 
   );
   return {
     cta: adminRow(row, now),
-    executions: rows.map((e) => ({ ...e, plan_result: parseJsonCol(e.plan_result, null) })),
+    // inputs (§12 Audit): the normalized values the plan ran with — SU-only,
+    // same exposure posture as plan_result.
+    executions: rows.map((e) => ({ ...e, plan_result: parseJsonCol(e.plan_result, null), inputs: parseJsonCol(e.inputs, null) })),
   };
 }
 
@@ -902,16 +1704,14 @@ async function recordFailedPassword(db, row) {
  * one transaction (pure DB; withTransaction's single retry is safe). Returns
  * the execution id, or null when the claim lost.
  */
-async function claimAndOpen(db, claimSql, row, { optionValue, via, responderUserId, ip }) {
+async function claimAndOpen(db, claimSql, row, { optionValue, via, responderUserId, ip, inputs = null }) {
   return db.withTransaction(async (conn) => {
     const [upd] = await conn.query(claimSql, [row.id]);
     if (!upd || !upd.affectedRows) return null;
-    const [ins] = await conn.query(
-      `INSERT INTO cta_executions
-         (cta_id, option_value, status, responded_via, responder_user_id, responder_ip)
-       VALUES (?, ?, 'running', ?, ?, ?)`,
-      [row.id, optionValue, via, responderUserId ?? null, ip ?? null]
-    );
+    const base = [row.id, optionValue, via, responderUserId ?? null, ip ?? null];
+    const [ins] = inputs == null
+      ? await conn.query(EXEC_INSERT_SQL, base)
+      : await conn.query(EXEC_INSERT_INPUTS_SQL, [...base, JSON.stringify(inputs)]);
     return ins.insertId;
   });
 }
@@ -1007,11 +1807,13 @@ async function logOutcome(db, row, option, { executionId, status, via, responder
 /**
  * Run the plan for an already-opened execution and finalize everything:
  * execution row, outcome log, IT alert on failure, rendered result.
+ * `plan` is the prepareRun() output (bindings substituted); `inputValues` the
+ * normalized input map for [[input:x]] in result_template (null: no inputs).
  */
-async function executeOpened(db, row, option, { executionId, via, responderUserId }) {
+async function executeOpened(db, row, option, { executionId, via, responderUserId, plan = null, inputValues = null }) {
   let run;
   try {
-    run = await runPlan(db, option.plan || []);
+    run = await runPlan(db, plan || option.plan || []);
   } catch (err) {
     // runPlan does not throw for plan failures; this is infrastructure.
     run = { status: 'failed', steps: [], outputs: [], failedAt: null, error: truncateText(err.message) };
@@ -1053,7 +1855,7 @@ async function executeOpened(db, row, option, { executionId, via, responderUserI
     plan_result: run.steps,
   };
   if (run.status === 'success' && option.result_template) {
-    const rendered = renderResultTemplate(option.result_template, run.outputs);
+    const rendered = renderResultTemplate(option.result_template, run.outputs, inputValues);
     result.result = rendered.text;
     result.result_html = rendered.html;
   }
@@ -1068,13 +1870,20 @@ async function executeOpened(db, row, option, { executionId, via, responderUserI
  * Returns either
  *   { ok: false, code }  — not_found | cancelled | disabled | used | expired |
  *                          exhausted | unknown_option | minter_inactive |
- *                          password_required | bad_password | conflict
+ *                          password_required | bad_password | conflict |
+ *                          refused (+ reason: binding_closed | recipient_type |
+ *                          unbounded_recipient — linkRefusal; public: disabled)
+ *   { ok: false, code: 'invalid_inputs', errors, form_error? }  (§12) —
+ *                          errors: { <input name>: generic message }; nothing
+ *                          was claimed, counted or run
  *   { ok: true, status: 'success'|'failed', execution_id,
  *     result?, result_html?, plan_result? }
  * plan_result is included only for return_plan_result=1 CTAs (B5); result /
  * result_html only after a successful plan whose option has a template.
+ * `inputs` (§12): the clicker's values — a plain object of name → value, or
+ * undefined. Validated AFTER the password and BEFORE the claim.
  */
-async function respond(db, { token, row: givenRow, value, password, via = 'link', responderUserId = null, ip = null } = {}) {
+async function respond(db, { token, row: givenRow, value, password, inputs, via = 'link', responderUserId = null, ip = null } = {}) {
   if (!VIA_VALUES.has(via)) throw new CtaError(400, `cta: invalid via "${via}"`);
   const row = givenRow || await getCtaByToken(db, token);
   if (!row) return { ok: false, code: 'not_found' };
@@ -1087,6 +1896,11 @@ async function respond(db, { token, row: givenRow, value, password, via = 'link'
 
   if (!(await minterAllowed(db, row))) return { ok: false, code: 'minter_inactive' };
 
+  // Link-level refusal (S1i review B1/N2) — the same check the GET pages
+  // make, so the POST never runs what the page didn't offer.
+  const refusal = await linkBlocked(db, row);
+  if (refusal) return { ok: false, code: 'refused', reason: refusal.reason };
+
   // Password BEFORE the claim / increment (§6).
   if (row.protection === 'password') {
     if (typeof password !== 'string' || password === '') return { ok: false, code: 'password_required' };
@@ -1097,9 +1911,22 @@ async function respond(db, { token, row: givenRow, value, password, via = 'link'
     }
   }
 
+  // §12 inputs: AFTER the password (no caller without the secret reaches a
+  // pattern or the validators) and BEFORE the claim (a bad value never burns
+  // a single-use link or a repeatable use).
+  const prep = prepareRun(option, inputs);
+  if (!prep.ok) {
+    // Unreachable while linkRefusal covers every binding problem — kept so
+    // the click path can never run a binding the refusal check missed.
+    if (prep.code === 'binding_closed') return { ok: false, code: 'refused', reason: 'binding_closed' };
+    const out = { ok: false, code: 'invalid_inputs', errors: { ...prep.errors } };
+    if (prep.formError) out.form_error = prep.formError;
+    return out;
+  }
+
   const claimSql = row.mode === 'repeatable' ? INCREMENT_SQL : CLAIM_ONCE_SQL;
   const executionId = await claimAndOpen(db, claimSql, row, {
-    optionValue: option.value, via, responderUserId, ip,
+    optionValue: option.value, via, responderUserId, ip, inputs: prep.values,
   });
   if (!executionId) {
     const fresh = await getCtaById(db, row.id);
@@ -1108,7 +1935,9 @@ async function respond(db, { token, row: givenRow, value, password, via = 'link'
     return { ok: false, code: s === 'active' ? 'conflict' : s };
   }
 
-  const run = await executeOpened(db, row, option, { executionId, via, responderUserId });
+  const run = await executeOpened(db, row, option, {
+    executionId, via, responderUserId, plan: prep.plan, inputValues: prep.values,
+  });
   const out = { ok: true, status: run.status, execution_id: run.execution_id };
   if (run.result !== undefined) {
     out.result = run.result;
@@ -1130,6 +1959,10 @@ async function respond(db, { token, row: givenRow, value, password, via = 'link'
  * Kill switch: an su-minted CTA whose minter is no longer an active SU is
  * still CLAIMED (so it can never fire later by surprise if the account is
  * re-enabled) but its plan does not run — the execution is recorded failed.
+ * The same claim-then-record-failed path covers a timeout option whose input
+ * DEFAULTS no longer pass the pipeline (§12) — e.g. a param closed since mint —
+ * and any link linkRefusal() refuses (the public pages read "unavailable", so
+ * the sweep must not fire it either).
  */
 async function sweepExpired(db, { limit = DEFAULT_SWEEP_LIMIT } = {}) {
   const lim = Math.min(Math.max(posInt(limit) || DEFAULT_SWEEP_LIMIT, 1), 500);
@@ -1150,16 +1983,32 @@ async function sweepExpired(db, { limit = DEFAULT_SWEEP_LIMIT } = {}) {
       const row = await getCtaById(db, id);
       if (!row) { summary.lost++; continue; }
       const option = row.options.find((o) => o && o.value === row.timeout_option);
+      // §12: no clicker — the defaults (mint guaranteed one per input) go
+      // through the same pipeline a click does. Pure; prepared before the
+      // claim so the execution row records the values it will run with.
+      const prep = option ? prepareRun(option, null) : null;
       const executionId = await claimAndOpen(db, TIMEOUT_CLAIM_SQL, row, {
         optionValue: row.timeout_option, via: 'timeout', responderUserId: null, ip: null,
+        inputs: prep && prep.ok ? prep.values : null,
       });
       if (!executionId) { summary.lost++; continue; }   // a click, a PATCH, or another sweep got there first
       summary.claimed++;
 
-      if (!option || !(await minterAllowed(db, row))) {
-        const error = !option
-          ? `timeout_option "${row.timeout_option}" matches no option`
-          : 'minting superuser is no longer active — timeout plan not run';
+      let error = null;   // why the claimed timeout is recorded failed WITHOUT running its plan
+      if (!option) error = `timeout_option "${row.timeout_option}" matches no option`;
+      else if (!(await minterAllowed(db, row))) error = 'minting superuser is no longer active — timeout plan not run';
+      else if (!prep.ok) {
+        error = prep.code === 'binding_closed'
+          ? `an input binding is no longer open (${prep.error}) — timeout plan not run`
+          : `the timeout defaults failed input validation (${Object.keys(prep.errors || {}).join(', ') || prep.formError}) — timeout plan not run`;
+      } else {
+        // The link-level refusal (S1i re-review G1): a link the public pages
+        // show as "unavailable" — e.g. a SIBLING option's binding closed or
+        // retyped since mint — must not fire its timeout plan either.
+        const refusal = linkRefusal(row);
+        if (refusal) error = `link refused (${refusal.reason}: ${refusal.detail}) — timeout plan not run`;
+      }
+      if (error) {
         await db.query(
           `UPDATE cta_executions SET status = 'failed', plan_result = ? WHERE id = ? AND status = 'running'`,
           [JSON.stringify([{ fn: null, ok: false, error, ms: 0 }]), executionId]
@@ -1176,7 +2025,9 @@ async function sweepExpired(db, { limit = DEFAULT_SWEEP_LIMIT } = {}) {
         continue;
       }
 
-      const run = await executeOpened(db, row, option, { executionId, via: 'timeout', responderUserId: null });
+      const run = await executeOpened(db, row, option, {
+        executionId, via: 'timeout', responderUserId: null, plan: prep.plan, inputValues: prep.values,
+      });
       summary[run.status === 'success' ? 'success' : 'failed']++;
       summary.executions.push({ cta_id: row.id, execution_id: executionId, status: run.status });
     } catch (err) {
@@ -1258,6 +2109,11 @@ async function patchCta(db, id, patch, { now = new Date() } = {}) {
   if (hasOwn(patch, 'max_uses')) {
     if (before.mode !== 'repeatable') throw bad('max_uses applies to mode=repeatable only');
     if (patch.max_uses === null) {
+      // §12 hard rule, enforced here too (S1i review B1): the pane's "No cap"
+      // checkbox must not undo what the mint refused.
+      if (hasRecipientBinding(before.options)) {
+        throw bad('max_uses cannot be removed: this link takes a clicker-supplied recipient (§12 hard rule — a repeatable open-recipient link always has a cap)');
+      }
       sets.push('max_uses = NULL');
     } else {
       const n = posInt(patch.max_uses);
@@ -1388,6 +2244,18 @@ module.exports = {
   // result_template
   renderResultTemplate,
   validateResultTemplate,
+  // §12 clicker inputs
+  CTA_RISKS,
+  INPUT_TYPES,
+  openedParamSpec,
+  openedInputParams,
+  linkRefusal,
+  linkBlocked,
+  hasRecipientBinding,
+  validateInputValue,
+  prepareRun,
+  linearRegexAvailable,
+  publicInputs,
   // runner internals (exported for tests and S3)
   runPlan,
   guardTrip,

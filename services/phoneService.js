@@ -6,6 +6,7 @@
 //   sendMms(db, from, to, text, attachmentUrl)
 //   getProviderMetadata() → public-facing per-provider metadata map
 //   credentialMatchesRequirements(cred, requirements) → bool
+//   normalizeE164(num) → '+1XXXXXXXXXX' | the '+…' input as-is | null
 //
 // Dispatch:
 //   1. resolveLine: phone_lines lookup by 10-digit `from`. Reject if
@@ -284,4 +285,9 @@ module.exports = {
 
   // Exposed for the temp test route + future channel additions.
   _resolveLine: resolveLine,
+
+  // The canonical E.164 normalizer — exported for CTA phone inputs
+  // (services/ctaService.js, ref/CTA_DESIGN.md §12). Note: a '+…' input is
+  // passed through UNCHANGED; callers that need a strict shape check it.
+  normalizeE164,
 };

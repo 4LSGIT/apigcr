@@ -555,3 +555,174 @@ describe('limiters', () => {
     expect((await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'spam' } })).status).toBe(200);
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Clicker inputs (§12, slice S1i)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('clicker inputs (§12)', () => {
+  // Seeded rows carry STORED (already-normalized) declarations — the surface
+  // is under test here; mint validation lives in tests/ctaInputs.test.js.
+  const NOTE = { name: 'note', label: 'Your <b>note</b>', type: 'text', required: true, maxlen: 500, pattern: '[^#]+' };
+  const PICK = { name: 'pick', label: 'Pick', type: 'enum', required: false, maxlen: 3, choices: ['yes', 'no'] };
+  const SHORT = { name: 'ref', label: 'Ref', type: 'text', required: false, maxlen: 20, default: '"><b>dflt' };
+  const LOGN = (msg = '[[input:note]]') => ({ fn: 'create_log', params: { type: 'note', message: msg } });
+  const inputsLink = (over = {}) => seed({
+    options: [
+      { value: 'tell', label: 'Tell us', inputs: [NOTE, PICK, SHORT],
+        plan: [LOGN(), LOGN('[[input:pick]]'), LOGN('[[input:ref]]')] },
+      { value: 'keep', label: 'Keep <it>', plan: [LOOKUP()] },
+    ],
+    ...over,
+  });
+  const planMessages = () => W.logs.map((p) => require('./helpers/ctaWorld').decodeLog(p)).filter((l) => l.subject !== 'CTA');
+
+  test('landing: an option with inputs links to its confirm page (no fields on the landing form)', async () => {
+    const row = inputsLink();
+    const html = await (await req(`/c/${row.token}`)).text();
+    expect(html).toContain(`href="/c/${row.token}/tell"`);
+    expect(html).not.toContain('name="value" value="tell"');
+    expect(html).toContain('name="value" value="keep"');
+    expect(html).not.toMatch(/name="in_/);
+  });
+
+  test('confirm page: escaped labels, house label/hint classes, type-appropriate controls, defaults escaped, never the pattern; GET writes nothing', async () => {
+    const row = inputsLink();
+    const res = await req(`/c/${row.token}/tell`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('<label class="input-label" for="cta-in-note">Your &lt;b&gt;note&lt;/b&gt;</label>');
+    expect(html).not.toContain('Your <b>note</b>');
+    // long text → textarea with maxlength; required attr; hint in .sub-label
+    expect(html).toMatch(/<textarea id="cta-in-note" name="in_note" class="cta-input" required aria-describedby="cta-in-note-hint" maxlength="500" rows="4"><\/textarea>/);
+    expect(html).toContain('<div class="sub-label" id="cta-in-note-hint">Required · up to 500 characters</div>');
+    // enum → select, optional → a blank choice
+    expect(html).toMatch(/<select id="cta-in-pick" name="in_pick" class="cta-input" aria-describedby="cta-in-pick-hint"><option value="" selected>\(none\)<\/option><option value="yes">yes<\/option><option value="no">no<\/option><\/select>/);
+    expect(html).toContain('<div class="sub-label" id="cta-in-pick-hint">Optional</div>');
+    // short text → input, default pre-filled ESCAPED
+    expect(html).toContain('<input type="text" maxlength="20" id="cta-in-ref" name="in_ref" class="cta-input" aria-describedby="cta-in-ref-hint" value="&quot;&gt;&lt;b&gt;dflt">');
+    expect(html).not.toContain('"><b>dflt');
+    expect(html).not.toContain('[^#]+');
+    // fields sit inside the form, above the confirm button
+    const form = html.slice(html.indexOf('<form'));
+    expect(form.indexOf('name="in_note"')).toBeLessThan(form.indexOf('✓ Confirm'));
+    expect(allWrites()).toEqual([]);
+  });
+
+  test('POST (form): valid inputs run the plan with normalized values; stored on the execution', async () => {
+    const row = inputsLink();
+    const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'tell', in_note: '  Hello <there>  ', in_pick: 'yes' } });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('✓ Done');
+    // blank optional with a default → the default (raw: create_log.message is a text param)
+    expect(planMessages().map((l) => l.message)).toEqual(['Hello <there>', 'yes', '"><b>dflt']);
+    const [ex] = W.execs(row.id);
+    expect(JSON.parse(ex.inputs)).toEqual({ note: 'Hello <there>', pick: 'yes', ref: '"><b>dflt' });
+  });
+
+  test('POST (form): rejected inputs → 400 confirm page, per-field errors, entered values ECHOED ESCAPED, nothing claimed', async () => {
+    const row = inputsLink();
+    const evil = '"><img src=x onerror=alert(1)>#';
+    const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'tell', in_note: evil, in_pick: 'maybe', in_bogus: 'x' } });
+    expect(res.status).toBe(400);
+    expectBaseHeaders(res);
+    const html = await res.text();
+    expect(html).toContain('Please correct the highlighted fields.');
+    expect(html).toContain('&quot;&gt;&lt;img src=x onerror=alert(1)&gt;#</textarea>');
+    expect(html).not.toContain('<img src=x');
+    expect(html).toMatch(/<div class="cta-field has-error">\s*<label class="input-label" for="cta-in-note">/);
+    expect(html).toContain('<div class="cta-field-error" role="alert">This is not in the expected format.</div>');
+    expect(html).toContain('<div class="cta-field-error" role="alert">Choose one of the listed options.</div>');
+    expect(html).toContain('aria-invalid="true"');
+    expect(writes()).toEqual([]);
+    expect(W.link(row.id)).toMatchObject({ status: 'active', uses_count: 0 });
+  });
+
+  test('POST (form): a wrong password re-renders with the inputs kept — never the password', async () => {
+    const row = inputsLink({ protection: 'password', password_hash: PW_HASH });
+    const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'tell', in_note: 'kept text', password: 'wrong-guess-123' } });
+    expect(res.status).toBe(403);
+    const html = await res.text();
+    expect(html).toContain('That password is not correct.');
+    expect(html).toContain('>kept text</textarea>');
+    expect(html).not.toContain('wrong-guess-123');
+    expect(writes().filter((q) => !/failed_attempts/.test(q.sql))).toEqual([]);
+  });
+
+  test('POST (form): the qs `inputs[name]` shape is the same submission', async () => {
+    const row = inputsLink();
+    const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'tell', 'inputs[note]': 'via qs' } });
+    expect(res.status).toBe(200);
+    expect(planMessages()[0].message).toBe('via qs');
+  });
+
+  test('JSON: descriptor + selected carry the declarations (never pattern/plans); respond takes inputs:{}', async () => {
+    const row = inputsLink();
+    const d = await (await req(`/c/${row.token}`, asJson)).json();
+    expect(d.options).toEqual([
+      { value: 'tell', label: 'Tell us', inputs: [
+        { name: 'note', label: 'Your <b>note</b>', type: 'text', required: true, maxlen: 500 },
+        { name: 'pick', label: 'Pick', type: 'enum', required: false, choices: ['yes', 'no'], maxlen: 3 },
+        { name: 'ref', label: 'Ref', type: 'text', required: false, maxlen: 20, default: '"><b>dflt' },
+      ] },
+      { value: 'keep', label: 'Keep <it>' },
+    ]);
+    const sel = await (await req(`/c/${row.token}/tell`, asJson)).json();
+    expect(sel.selected).toEqual(d.options[0]);
+    expect(JSON.stringify(d) + JSON.stringify(sel)).not.toMatch(/\[\^#\]|\[\[input|create_log/);
+
+    const bad = await req(`/c/${row.token}/respond`, { method: 'POST', ...asJson, json: { value: 'tell', inputs: { note: '#', extra: 1 } } });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({
+      ok: false, code: 'invalid_inputs', message: 'Some inputs are not valid — see errors.',
+      errors: { extra: 'Unknown field.', note: 'This is not in the expected format.' },
+    });
+    const notObj = await (await req(`/c/${row.token}/respond`, { method: 'POST', ...asJson, json: { value: 'tell', inputs: 'note=x' } })).json();
+    expect(notObj).toMatchObject({ code: 'invalid_inputs', form_error: 'inputs must be an object of input name to value' });
+    const onPlain = await req(`/c/${row.token}/respond`, { method: 'POST', ...asJson, json: { value: 'keep', inputs: { note: 'x' } } });
+    expect([onPlain.status, (await onPlain.json()).errors]).toEqual([400, { note: 'Unknown field.' }]);
+    expect(writes()).toEqual([]);
+
+    const ok = await (await req(`/c/${row.token}/respond`, { method: 'POST', ...asJson, json: { value: 'tell', inputs: { note: 'agent says hi' } } })).json();
+    expect(ok).toMatchObject({ ok: true, status: 'success' });
+    expect(W.execs(row.id)[0].responded_via).toBe('api');
+  });
+
+  test('GET PRE-CHECK (S1i review): a refused link reads "unavailable" on the landing, confirm and JSON reads — no form offered', async () => {
+    const SMS_IN = [{ name: 'to', label: 'Phone', type: 'phone', required: true, maxlen: 16 }];
+    const SMS_PLAN = [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:to]]', message: 'hi' } }];
+    const cases = [
+      // B1: repeatable open-recipient link with no cap (a SQL edit — PATCH refuses it)
+      seed({ mode: 'repeatable', max_uses: null, options: [{ value: 'go', label: 'Go', inputs: SMS_IN, plan: SMS_PLAN }] }),
+      // a binding into a param that isn't open
+      seed({ options: [{ value: 'go', label: 'Go', inputs: [{ ...NOTE, name: 'cid', pattern: undefined }],
+        plan: [{ fn: 'lookup_contact', params: { contact_id: '[[input:cid]]' } }] }] }),
+      // N2: a text input feeding a recipient
+      seed({ options: [{ value: 'go', label: 'Go', inputs: [{ ...NOTE, name: 'to', pattern: undefined }], plan: SMS_PLAN }] }),
+    ];
+    for (const row of cases) {
+      for (const path of [`/c/${row.token}`, `/c/${row.token}/go`]) {
+        const html = await (await req(path)).text();
+        expect(html).toContain('Link unavailable');
+        expect(html).not.toContain('<form');
+        expect(html).not.toMatch(/binding|recipient|max_uses|\[\[input/i);
+      }
+      expect((await (await req(`/c/${row.token}`, asJson)).json()).status).toBe('disabled');
+    }
+    // a capped link is offered normally
+    const ok = seed({ mode: 'repeatable', max_uses: 3, options: [{ value: 'go', label: 'Go', inputs: SMS_IN, plan: SMS_PLAN }] });
+    expect(await (await req(`/c/${ok.token}/go`)).text()).toContain('name="in_to"');
+    expect(allWrites()).toEqual([]);
+  });
+
+  test('a binding closed since mint reads as plain "unavailable" — never why — and claims nothing', async () => {
+    const row = seed({ options: [{ value: 'go', label: 'Go', inputs: [{ ...NOTE, name: 'cid', pattern: undefined }],
+      plan: [{ fn: 'lookup_contact', params: { contact_id: '[[input:cid]]' } }] }] });
+    const html = await (await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'go', in_cid: '1001' } })).text();
+    expect(html).toContain('Link unavailable');
+    expect(html).not.toMatch(/binding|\[\[input|lookup_contact|closed/i);
+    const j = await req(`/c/${row.token}/respond`, { method: 'POST', ...asJson, json: { value: 'go', inputs: { cid: '1001' } } });
+    expect([j.status, (await j.json()).code]).toEqual([409, 'disabled']);
+    expect(writes()).toEqual([]);
+  });
+});

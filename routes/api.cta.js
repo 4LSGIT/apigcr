@@ -15,8 +15,10 @@
  *                                   mode, max_uses, expires_at | timeout,
  *                                   timeout_option, protection, password,
  *                                   return_plan_result, attributed_user_id,
- *                                   link_type, link_id, dry_run) plus the
- *                                   API-only `email_template` (below).
+ *                                   link_type, link_id, dry_run,
+ *                                   accept_risks) plus the API-only
+ *                                   `email_template` (below). Options may
+ *                                   declare clicker `inputs` (§12).
  *                                   201 { …receipt, cta_url, urls,
  *                                   options_html, email_html }. `password`
  *                                   is in the receipt ONLY when auto-
@@ -26,6 +28,13 @@
  *                                   [[respond_url:X]]), URLs carrying the
  *                                   literal "<token>", the rendered email —
  *                                   200, nothing inserted, nothing audited.
+ *     accept_risks                  §12 acknowledge-to-proceed codes. A mint
+ *                                   (dry_run too) that triggers one not
+ *                                   listed is 400 code risk_acceptance_required
+ *                                   with `risks: [{code, description}]` — the
+ *                                   pane's checkbox source. Accepted codes come
+ *                                   back as receipt.risks_accepted and land in
+ *                                   the audit row.
  *     email_template                optional HTML using [[cta_url]],
  *                                   [[respond_url:VALUE]], [[options_html]],
  *                                   [[expires_at]] (lib/ctaLinks.js). Resolved
@@ -111,7 +120,9 @@ async function audit(req, details, { status = 'ok', errorMessage = null } = {}) 
 
 function sendError(res, err, label) {
   if (err instanceof ctaService.CtaError) {
-    return res.status(err.status).json(errBody(err.message, err.code));
+    const body = errBody(err.message, err.code);
+    if (Array.isArray(err.risks)) body.risks = err.risks;   // §12 risk_acceptance_required
+    return res.status(err.status).json(body);
   }
   console.error(`${label} error:`, err.message);
   return res.status(500).json(errBody('Internal error'));
@@ -213,7 +224,15 @@ router.post('/api/cta', guard, async (req, res) => {
       return_plan_result: input.return_plan_result === true || input.return_plan_result === 1,
       attributed_user_id: input.attributed_user_id ?? null,
       link: input.link_type ? { type: input.link_type, id: String(input.link_id) } : null,
-      options: input.options.map((o) => ({ value: String(o.value).trim(), steps: o.plan.map((s) => s.fn) })),
+      // §12: input NAMES per option (the receipt's normalized list) — never
+      // defaults or patterns — and the acknowledged risk codes.
+      options: input.options.map((o, i) => {
+        const a = { value: String(o.value).trim(), steps: o.plan.map((s) => s.fn) };
+        const names = receipt.options[i] && receipt.options[i].inputs;
+        if (names) a.inputs = names;
+        return a;
+      }),
+      risks_accepted: receipt.risks_accepted,
       email_template: emailTemplate != null,
     });
 

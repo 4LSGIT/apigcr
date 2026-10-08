@@ -200,6 +200,7 @@ function makeCtaWorld() {
     // mysql2 returns JSON columns parsed.
     if (typeof c.options === 'string') c.options = JSON.parse(c.options);
     if (typeof c.plan_result === 'string') c.plan_result = JSON.parse(c.plan_result);
+    if (typeof c.inputs === 'string') c.inputs = JSON.parse(c.inputs);
     return c;
   };
 
@@ -242,7 +243,7 @@ function makeCtaWorld() {
     const id = W.nextId[table]++;
     const base = table === 'cta_links'
       ? { uses_count: 0, failed_attempts: 0, created_at: new Date(), updated_at: new Date(), context_html: null }
-      : { plan_result: null, executed_at: new Date() };
+      : { plan_result: null, inputs: null, executed_at: new Date() };
     const row = { id, ...base };
     const ev = makeEvaluator(row, params);
     cols.forEach((c, i) => { row[c] = ev.val(vals[i]); });
@@ -316,7 +317,7 @@ function makeCtaWorld() {
         });
       return [rows];
     }
-    if (/^SELECT id, cta_id, option_value, status, plan_result, responded_via, responder_user_id, responder_ip, executed_at FROM cta_executions WHERE cta_id = \? ORDER BY id DESC LIMIT \?$/i.test(s)) {
+    if (/^SELECT id, cta_id, option_value, status, plan_result, inputs, responded_via, responder_user_id, responder_ip, executed_at FROM cta_executions WHERE cta_id = \? ORDER BY id DESC LIMIT \?$/i.test(s)) {
       const rows = W.execs(params[0]).sort((a, b) => b.id - a.id).slice(0, params[1]).map((e) => out(e));
       return [rows];
     }
