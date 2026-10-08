@@ -4,8 +4,8 @@
 **approve with changes** (verified @ `9e7fabae`) · all amendments folded below.
 **Shipped:** S0–S4 live 2026-10-07 (WF27 **v8 published**; S4 independently
 reviewed, see §11). Open: watch gate (first organic spam hit end-to-end),
-S5 login tier (§7), **clicker inputs (§12, ratified 2026-10-08 — S1i/S2i in
-flight)**. Manager UI: `public/ctaManager.html` (Admin → CTA Links,
+S5 login tier (§7), **S2i** (pane support for §12 inputs; S1i backend
+shipped 2026-10-08). Manager UI: `public/ctaManager.html` (Admin → CTA Links,
 frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run), plus the
 send slice 2026-10-08 (`POST /api/cta/:id/send` + the pane's Send… dialog).
 **This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
@@ -517,7 +517,7 @@ recreating the v6 fall-through cycle — the discipline stack (asserted base,
 asserted draft, pause-free-cycle gate, independent review, real-model
 backtest) each caught something the others missed.
 
-## 12. Clicker inputs (ratified 2026-10-08)
+## 12. Clicker inputs (ratified 2026-10-08 · S1i SHIPPED 2026-10-08, independently reviewed — as-built deltas folded below)
 
 Options may declare **inputs** the clicker supplies at respond time. The
 governing stance (Fred, 2026-10-08): this is an SU tool — gates are
@@ -535,9 +535,17 @@ pattern?, choices?}]`.
   canonical one, don't write a new one). `enum` requires `choices` (≤20,
   option-value charset). `html` is clicker-authored raw markup and trips the
   `raw_html_input` acknowledgment (below).
-- `maxlen` mandatory; server cap 1000. `pattern` optional: ≤100 chars,
-  mint-time nested-quantifier lint (no RE2 dependency — Ruling 4), runs
-  after type check + length cap. Residual ReDoS risk documented as accepted.
+- `maxlen` mandatory; server cap 1000. `pattern` optional: ≤100 chars, runs
+  after type check + length cap. **As built (supersedes Ruling 4's lint):**
+  patterns execute on V8's linear-time regex engine
+  (`--enable-experimental-regexp-engine` in the Dockerfile `CMD`, with a
+  `v8.setFlagsFromString` fallback at module load; availability logged at
+  boot as `[CTA] linear regexp engine: …`). ReDoS is eliminated, not linted
+  — a pattern the linear engine can't run is refused AT MINT, and if the
+  engine ever reports UNAVAILABLE (e.g. after a Node upgrade), every mint
+  whose inputs carry a `pattern` refuses; pattern-less links are unaffected.
+  **The Dockerfile flag is load-bearing** — check the boot log after any
+  base-image change.
 
 ### Binding
 
@@ -550,12 +558,15 @@ stand unchanged: no `{{...}}`, no `_`-prefixed keys.
 ### Opened params — `__meta.ctaInputParams` (Ruling 6c, kept)
 
 Opt-in per function: `ctaInputParams: { <param>: { kind: 'recipient'|'content',
-html?: true } }`. A Jest snapshot of the full opened set makes every opened
-param a reviewed exposure decision (same discipline as the eligible-function
-set). Seed (worker verifies exact param names against each function):
-`send_sms` {to: recipient, text: content}; `send_email` {to: recipient,
-subject: content, html: content+html}; `create_task` {description: content};
-`create_log` {message: content}.
+type?: 'phone'|'email', html?: true } }`. A Jest snapshot of the full opened
+set (`tests/ctaInputs.test.js`) makes every opened param a reviewed exposure
+decision (same discipline as the eligible-function set). **As shipped:**
+`send_sms` {to: recipient/phone, **message**: content — §12's draft said
+`text`; the function's body param is `message`}; `send_email` {to:
+recipient/email, subject: content, html: content+html}; `create_task`
+{description: content}; `create_log` {message: content}. A `kind:'recipient'`
+entry carries the input `type` it accepts, and the binding is validated with
+that type — a recipient param can only take a matching phone/email input.
 
 ### Escape-on-substitute (supersedes the send_email exclusion)
 
@@ -592,6 +603,11 @@ Only a declared `type: 'html'` input passes raw — behind the acknowledgment.
 - `timeout_option` on an option with inputs requires every input to carry a
   `default` (the sweep has no clicker); the timeout path substitutes
   defaults.
+- **As built (S1i review G1):** the expiry sweep honors the same link-level
+  refusal as the click path (`linkRefusal` via the shared `getCtaById`
+  loader) — a timeout plan never runs for a link a click would refuse
+  (e.g. the minting SU deactivated); it claims, records a `failed`
+  execution, and alerts (`timeout_blocked`).
 
 ### Surfaces
 

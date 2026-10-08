@@ -64,6 +64,17 @@ output. That detail is deliberately **SU-only**: the public pages and the
 JSON surface return only success/failure (plus the curated `result_template`
 text, when the option defines one).
 
+## Clicker inputs (new)
+
+An option can declare **inputs** the clicker fills in before confirming — a
+phone number, a message, a choice from a list. You name the field, its type
+and limits at mint; the server validates and (for anything landing in an
+email body) escapes what the clicker typed, and every execution records the
+submitted values. Risky shapes ask you to acknowledge them at mint
+(reusable link with an open recipient; raw-HTML input), and a reusable link
+with an open recipient always needs a use cap. **For now inputs are minted
+via the API only** — the pane's builder support (S2i) is next.
+
 ## Minting from a workflow
 
 Workflows mint CTAs with the `create_cta` function (that's how the RG button

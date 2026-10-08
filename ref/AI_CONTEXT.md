@@ -44,6 +44,15 @@ body. Governing migrations in `ref/migrations/`.*
     `QUERY_DB_ALLOWED_TABLES` or `WRITE_POLICY`** — tokens and password
     hashes live there in the clear (v1 posture; hashing filed to the
     access-control arc).
+  - **Clicker inputs are live (10-08, §12):** options may declare typed,
+    length-capped inputs bound whole-param via `[[input:name]]` into params
+    a function opens with `__meta.ctaInputParams` (snapshot:
+    `tests/ctaInputs.test.js` — opening a param is the same reviewed
+    decision as function eligibility). Non-html inputs bound into
+    `html:true` params are escaped at substitution. **Landmine:** input
+    `pattern`s run on V8's linear-time regex engine — the Dockerfile `CMD`'s
+    `--enable-experimental-regexp-engine` is load-bearing; if the boot log
+    says UNAVAILABLE, pattern-bearing mints refuse.
   - /c/ lives in ALL THREE pageLanding sets (allowed, migrated,
     credentialed), `C_POST_RE` tested before `C_VALUE_RE`; raw `plan_result`
     is SU-only (`/api/cta/:id/executions`); timeouts run via the recurring
