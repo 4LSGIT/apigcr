@@ -656,6 +656,27 @@ describe('clicker inputs (§12)', () => {
     expect(planMessages()[0].message).toBe('via qs');
   });
 
+  test('confirm page: the SU\'s hint sits under its control, escaped, ahead of the Required line — both describe the field', async () => {
+    const row = inputsLink({
+      options: [{ value: 'tell', label: 'Tell us',
+        inputs: [{ ...NOTE, hint: 'A sentence or two — <i>no</i> case numbers' }, PICK, SHORT],
+        plan: [LOGN(), LOGN('[[input:pick]]'), LOGN('[[input:ref]]')] }],
+    });
+    const html = await (await req(`/c/${row.token}/tell`)).text();
+    expect(html).toContain('aria-describedby="cta-in-note-help cta-in-note-hint"');
+    const help = '<div class="sub-label" id="cta-in-note-help">A sentence or two — &lt;i&gt;no&lt;/i&gt; case numbers</div>';
+    expect(html).toContain(help);
+    expect(html).not.toContain('<i>no</i>');
+    const at = (s) => html.indexOf(s);
+    expect(at('<textarea id="cta-in-note"')).toBeLessThan(at(help));
+    expect(at(help)).toBeLessThan(at('<div class="sub-label" id="cta-in-note-hint">'));
+    // no hint, no help line, and the describedby stays single
+    expect(html).toContain('aria-describedby="cta-in-pick-hint"');
+    expect(html).not.toContain('cta-in-pick-help');
+    const d = await (await req(`/c/${row.token}`, asJson)).json();
+    expect(d.options[0].inputs[0].hint).toBe('A sentence or two — <i>no</i> case numbers');
+  });
+
   test('JSON: descriptor + selected carry the declarations (never pattern/plans); respond takes inputs:{}', async () => {
     const row = inputsLink();
     const d = await (await req(`/c/${row.token}`, asJson)).json();

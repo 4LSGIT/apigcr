@@ -496,7 +496,7 @@ const LIST_LIMIT = 200;   // routes/api.cta.js list max
 const EXEC_LIMIT = 500;   // ctaService EXEC_LIST_MAX
 
 // §12 clicker inputs (ctaService INPUT_TYPES, INPUT_NAME_RE, MAX_INPUTS,
-// MAX_INPUT_LEN, MAX_PATTERN, MAX_CHOICES, MIN_MAXLEN, RECIPIENT_TYPES,
+// MAX_INPUT_LEN, MAX_PATTERN, MAX_INPUT_HINT, MAX_CHOICES, MIN_MAXLEN, RECIPIENT_TYPES,
 // CTA_RISKS keys, openedParamSpec). Same contract: hints that shape the form
 // — the mint validates every one of them again.
 const INPUT_TYPES = ['text', 'phone', 'email', 'number', 'enum', 'date', 'html'];
@@ -505,6 +505,7 @@ const RESERVED_INPUT_NAMES = ['__proto__', 'constructor', 'prototype'];
 const MAX_INPUTS = 10;
 const MAX_INPUT_LEN = 1000;
 const MAX_PATTERN = 100;
+const MAX_INPUT_HINT = 200;
 const MAX_CHOICES = 20;
 const MIN_MAXLEN = { phone: 12, date: 10 };
 const RECIPIENT_TYPES = ['phone', 'email'];
@@ -1168,6 +1169,7 @@ function declSummaryHtml(dcl, steps) {
   return `
     <div class="in-val">
       <div class="in-val-k">${esc(dcl.label)} <code class="muted">${esc(dcl.name)}</code></div>
+      ${dcl.hint ? `<span class="yc-hint" style="margin-top:2px">Hint: ${esc(dcl.hint)}</span>` : ''}
       <span class="yc-hint" style="margin-top:2px">${bits.join(' · ')}${into.length ? ` → ${into.join(', ')}` : ''}</span>
     </div>`;
 }
@@ -1680,7 +1682,7 @@ function newOption() { return { value: '', label: '', valueTouched: false, confi
 /** A §12 input declaration as the builder holds it (strings, as typed) + the dry-run-only test value. */
 function newInput() {
   return {
-    name: '', nameTouched: false, label: '', type: 'text', required: true,
+    name: '', nameTouched: false, label: '', hint: '', type: 'text', required: true,
     maxlen: INPUT_MAXLEN_DEFAULT.text, maxlenTouched: false,
     default: '', pattern: '', choices: [], sample: '',
   };
@@ -2301,6 +2303,12 @@ function inputCardHtml(o, oi, inp, ij, n) {
           ${fieldErrHtml(`${p}.name`)}
         </div>
       </div>
+      <div class="fld" style="margin:10px 0 0">
+        <label class="yc-flabel" for="${id}-hint">Hint <span class="muted">(optional)</span></label>
+        <input type="text" id="${id}-hint" data-bind="${p}.hint" maxlength="${MAX_INPUT_HINT}" value="${esc(inp.hint)}" autocomplete="off" placeholder="e.g. US number — 10 digits, area code first">
+        <span class="yc-hint">Shown under the field on the confirm page (max ${MAX_INPUT_HINT}): what to enter, the format, an example.</span>
+        ${fieldErrHtml(`${p}.hint`)}
+      </div>
       <div class="fgrid" style="margin-top:10px">
         <div class="fld">
           <label class="yc-flabel" for="${id}-type">Type</label>
@@ -2334,11 +2342,11 @@ function inputCardHtml(o, oi, inp, ij, n) {
       ${t === 'enum' ? '' : `
       <div class="fld" style="margin-top:10px">
         <label class="yc-flabel" for="${id}-pattern">Pattern <span class="muted">(optional)</span></label>
-        <input type="text" id="${id}-pattern" class="mono" data-bind="${p}.pattern" maxlength="${MAX_PATTERN}" value="${esc(inp.pattern)}" autocomplete="off" spellcheck="false" placeholder="${esc(PATTERN_PLACEHOLDER[t] || '')}">
+        <input type="text" id="${id}-pattern" class="mono" data-bind="${p}.pattern" maxlength="${MAX_PATTERN}" value="${esc(inp.pattern)}" autocomplete="off" spellcheck="false" placeholder="${PATTERN_PLACEHOLDER[t] ? `e.g. ${esc(PATTERN_PLACEHOLDER[t])}` : ''}">
         <span class="yc-hint">A regular expression the <b>whole</b> tidied value must match (a phone as +1XXXXXXXXXX, an email
           lowercased). Runs on a <b>linear-time</b> engine, at most ${MAX_PATTERN} characters: no lookahead or backreferences, repeat
           counts up to 16 — write <code>\\d{9}\\d{8}</code>, not <code>\\d{17}</code>, or <code>\\d+</code> with Max length. A
-          mismatch only says "not in the expected format", so name the format in the label.</span>
+          mismatch only says "not in the expected format", so name the format in the label or hint.</span>
         ${fieldErrHtml(`${p}.pattern`)}
       </div>`}
       <div class="fld" style="margin:10px 0 0">
@@ -2540,6 +2548,7 @@ function sampleFieldHtml(oi, ij, inp) {
         <div class="fld">
           <label class="yc-flabel" for="${id}"><span data-slabel="${oi}.${ij}">${esc(sampleLabel(inp, ij))}</span>${inp.required ? ' <span class="req">*</span>' : ''}</label>
           ${control}
+          <span class="yc-hint" data-shint="${oi}.${ij}"${String(inp.hint || '').trim() ? '' : ' hidden'}>${esc(String(inp.hint || '').trim())}</span>
           <span class="yc-hint">${esc(INPUT_TYPE_LABEL[inp.type] || inp.type)}${inp.required ? '' : ' · optional'}</span>
           ${err ? `<span class="field-err" data-serr="${oi}.${ij}">${esc(err)}</span>` : ''}
         </div>`;
@@ -2624,7 +2633,8 @@ function inputFromDecl(dcl) {
   const has = (k) => !!dcl && Object.prototype.hasOwnProperty.call(dcl, k) && dcl[k] != null;
   return {
     name: has('name') ? String(dcl.name) : '', nameTouched: true,
-    label: has('label') ? String(dcl.label) : '', type: t, required: !!(dcl && dcl.required),
+    label: has('label') ? String(dcl.label) : '', hint: has('hint') ? String(dcl.hint) : '',
+    type: t, required: !!(dcl && dcl.required),
     maxlen: has('maxlen') ? String(dcl.maxlen) : (INPUT_MAXLEN_DEFAULT[t] || ''), maxlenTouched: true,
     default: has('default') ? String(dcl.default) : '',
     pattern: has('pattern') ? String(dcl.pattern) : '',
@@ -2641,6 +2651,7 @@ function inputFromDecl(dcl) {
  */
 function inputDecl(i, withSample) {
   const decl = { name: String(i.name).trim(), label: String(i.label).trim(), type: i.type, required: !!i.required };
+  if (String(i.hint || '').trim() !== '') decl.hint = String(i.hint).trim();
   const ml = String(i.maxlen).trim();
   if (/^\d+$/.test(ml)) decl.maxlen = Number(ml);
   else if (ml) decl.maxlen = ml;
@@ -2652,7 +2663,7 @@ function inputDecl(i, withSample) {
 }
 
 const FIELD_WORD = {
-  name: 'Name', label: 'Label', type: 'Type', required: 'Required', maxlen: 'Max length',
+  name: 'Name', label: 'Label', hint: 'Hint', type: 'Type', required: 'Required', maxlen: 'Max length',
   choices: 'Choices', pattern: 'Pattern', default: 'Default',
 };
 
@@ -2669,7 +2680,7 @@ function mapMintError(message) {
   let m;
   const idxByName = (oi, name) => (d.options[oi] ? d.options[oi].inputs.map((x) => String(x.name).trim()).lastIndexOf(name) : -1);
 
-  if ((m = /^options\[(\d+)\]\.inputs\[(\d+)\]\.(name|label|type|required|maxlen|choices|pattern|default)\b(:?)\s*([\s\S]*)$/.exec(msg))) {
+  if ((m = /^options\[(\d+)\]\.inputs\[(\d+)\]\.(name|label|hint|type|required|maxlen|choices|pattern|default)\b(:?)\s*([\s\S]*)$/.exec(msg))) {
     const oi = Number(m[1]); const ij = Number(m[2]);
     const inp = d.options[oi] && d.options[oi].inputs[ij];
     let field = m[3];
@@ -2837,7 +2848,7 @@ function onMintInput(e) {
     const msg = jsonErr(val);
     if (errEl) { errEl.textContent = msg || ''; errEl.hidden = !msg; }
     refreshInputDerived();
-  } else if ((m = /^options\.(\d+)\.inputs\.(\d+)\.(label|name|type|maxlen|default|sample)$/.exec(path)) || (m = /^options\.(\d+)\.inputs\.(\d+)\.(choices)\.\d+$/.exec(path))) {
+  } else if ((m = /^options\.(\d+)\.inputs\.(\d+)\.(label|name|hint|type|maxlen|default|sample)$/.exec(path)) || (m = /^options\.(\d+)\.inputs\.(\d+)\.(choices)\.\d+$/.exec(path))) {
     const oi = Number(m[1]);
     const ij = Number(m[2]);
     const inp = state.draft.options[oi].inputs[ij];
@@ -2860,6 +2871,11 @@ function onMintInput(e) {
         if (FIXED_MAXLEN[val] || !inp.maxlenTouched) { inp.maxlen = INPUT_MAXLEN_DEFAULT[val] || inp.maxlen; inp.maxlenTouched = false; }
         break;
       case 'maxlen': inp.maxlenTouched = true; break;
+      case 'hint': {
+        const sh = document.querySelector(`[data-shint="${oi}.${ij}"]`);   // the test-value field mirrors the page
+        if (sh) { sh.textContent = String(val).trim(); sh.hidden = !String(val).trim(); }
+        break;
+      }
       case 'choices': refreshEnumSelects(oi, ij); break;
       case 'default': {
         // The test-value field shows the default as its blank choice / placeholder.

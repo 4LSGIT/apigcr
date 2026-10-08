@@ -179,7 +179,7 @@ const TIMEOUT_CLAIM_SQL =
 
 // ─── §12 clicker inputs ─────────────────────────────────────────────────────
 const INPUT_TYPES = Object.freeze(['text', 'phone', 'email', 'number', 'enum', 'date', 'html']);
-const INPUT_KEYS = new Set(['name', 'label', 'type', 'required', 'default', 'maxlen', 'pattern', 'choices']);
+const INPUT_KEYS = new Set(['name', 'label', 'hint', 'type', 'required', 'default', 'maxlen', 'pattern', 'choices']);
 const INPUT_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;   // the result_var rule (decisions.js VAR_RE)
 // Names that would hit Object.prototype machinery wherever a plain object is
 // keyed by input name (a qs-parsed body, an author's spread). Every map here
@@ -187,6 +187,7 @@ const INPUT_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;   // the result_var rule 
 const RESERVED_INPUT_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_INPUTS = 10;              // per option
 const MAX_INPUT_LABEL = 100;
+const MAX_INPUT_HINT = 200;        // help text under the field (plain text, escaped)
 const MAX_INPUT_LEN = 1000;         // maxlen server cap (§12)
 const MAX_RAW_INPUT = 4 * MAX_INPUT_LEN;   // pre-normalization guard; maxlen is checked on the NORMALIZED value
 const MAX_PATTERN = 100;
@@ -799,9 +800,11 @@ function validateInputValue(decl, raw) {
 
 /**
  * Validate an option's `inputs` declarations at mint. Returns the normalized
- * array (stored in the option): { name, label, type, required, maxlen,
+ * array (stored in the option): { name, label, hint?, type, required, maxlen,
  * choices?, pattern?, default? } — a stored default has passed the full value
  * pipeline, so the timeout path and the HTML pre-fill can use it as-is.
+ * `hint` is SU help text shown under the field (escaped, like the label);
+ * blank is omitted.
  */
 function validateInputDecls(raw, ol) {
   if (raw == null) return [];
@@ -836,6 +839,13 @@ function validateInputDecls(raw, ol) {
     }
 
     const decl = { name, label, type: d.type, required: d.required, maxlen: d.maxlen };
+
+    if (d.hint != null) {
+      if (typeof d.hint !== 'string') throw bad(`${il}.hint must be a string`);
+      const hint = d.hint.trim();
+      if (hint.length > MAX_INPUT_HINT) throw bad(`${il}.hint must be at most ${MAX_INPUT_HINT} chars`);
+      if (hint) decl.hint = hint;
+    }
 
     if (d.type === 'enum') {
       const ch = d.choices;
@@ -1005,6 +1015,7 @@ function prepareRun(option, submitted, reg = registry()) {
 function publicInputs(decls) {
   return decls.map((d) => {
     const o = { name: d.name, label: d.label, type: d.type, required: d.required };
+    if (hasOwn(d, 'hint')) o.hint = d.hint;
     if (d.choices) o.choices = d.choices.slice();
     o.maxlen = d.maxlen;
     if (hasOwn(d, 'default')) o.default = d.default;
@@ -1542,7 +1553,7 @@ function deriveState(row, now = new Date()) {
 
 /**
  * §5.2 agent descriptor — deliberately EXCLUDES name, plans, result_template.
- * §12: an option that declares inputs carries `inputs` (name, label, type,
+ * §12: an option that declares inputs carries `inputs` (name, label, hint, type,
  * required, choices, maxlen, default — never the pattern, never bindings) so
  * an agent can fill them; an input-less option's entry is unchanged.
  */

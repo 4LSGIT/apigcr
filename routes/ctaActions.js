@@ -53,12 +53,13 @@
  * CLICKER INPUTS (§12, slice S1i): an option that declares inputs renders on
  * the landing page as a link to its confirm page (like a confirm_text
  * option); the confirm page renders its fields above the confirm button —
- * labels and hints ESCAPED, enum as a <select>, required/maxlen hints in
- * .sub-label. Form fields are named in_<name> (flat keys, parser-agnostic);
- * the JSON surface sends `inputs: {name: value}`. A rejected submission
- * re-renders the confirm page with per-field errors and the ENTERED values
- * echoed back escaped (the password never is). Client attributes (required,
- * maxlength, input types) are UX only — ctaService is the gate. The JSON
+ * labels and hints ESCAPED, enum as a <select>, the SU's own hint (decl.hint)
+ * and the required/maxlen line in .sub-label under the control. Form fields
+ * are named in_<name> (flat keys, parser-agnostic); the JSON surface sends
+ * `inputs: {name: value}`. A rejected submission re-renders the confirm page
+ * with per-field errors and the ENTERED values echoed back escaped (the
+ * password never is). Client attributes (required, maxlength, input types)
+ * are UX only — ctaService is the gate. The JSON
  * descriptor carries each option's declarations (ctaService.publicDescriptor).
  */
 
@@ -379,7 +380,11 @@ function inputField(d, values, errors) {
   if (values && hasOwn(values, d.name)) val = values[d.name];
   else if (hasOwn(d, 'default')) val = String(d.default);
   const req = d.required ? ' required' : '';
-  const aria = ` aria-describedby="${htmlEscape(id)}-hint"${err ? ' aria-invalid="true"' : ''}`;
+  // The SU's own help text (decl.hint) sits right under the control, ahead of
+  // the generated Required/type/length line; both describe the field.
+  const help = hasOwn(d, 'hint') && d.hint ? d.hint : null;
+  const describedBy = help ? `${id}-help ${id}-hint` : `${id}-hint`;
+  const aria = ` aria-describedby="${htmlEscape(describedBy)}"${err ? ' aria-invalid="true"' : ''}`;
   const common = `id="${htmlEscape(id)}" name="${htmlEscape(name)}" class="cta-input"${req}${aria}`;
 
   let control;
@@ -411,7 +416,8 @@ function inputField(d, values, errors) {
   return `
         <div class="cta-field${err ? ' has-error' : ''}">
           <label class="input-label" for="${htmlEscape(id)}">${htmlEscape(d.label)}</label>
-          ${control}
+          ${control}${help ? `
+          <div class="sub-label" id="${htmlEscape(id)}-help">${htmlEscape(help)}</div>` : ''}
           <div class="sub-label" id="${htmlEscape(id)}-hint">${htmlEscape(hint)}</div>${err ? `
           <div class="cta-field-error" role="alert">${htmlEscape(err)}</div>` : ''}
         </div>`;

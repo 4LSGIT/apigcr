@@ -526,10 +526,12 @@ blast radius is external (carrier/domain reputation, TCPA).
 
 ### Declarations (no migration — lives in `options` JSON; update its COMMENT)
 
-Per option: `inputs: [{name, label, type, required, default?, maxlen,
+Per option: `inputs: [{name, label, hint?, type, required, default?, maxlen,
 pattern?, choices?}]`.
 - `name` matches the result_var rule (`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`),
-  unique per option. `label` ≤100 chars.
+  unique per option. `label` ≤100 chars. `hint` (added with S2i,
+  2026-10-08) is optional SU help text, trimmed, ≤200 chars, blank not
+  stored — escaped on the page like the label.
 - `type` ∈ `text | phone | email | number | enum | date | html`. `phone`
   normalizes to E.164 via the codebase's existing helper (worker: find the
   canonical one, don't write a new one). `enum` requires `choices` (≤20,
@@ -612,9 +614,10 @@ Only a declared `type: 'html'` input passes raw — behind the acknowledgment.
 ### Surfaces
 
 - HTML pages: fields render above the option buttons (labels escaped,
-  type-appropriate controls, enum as select, required/maxlen hints); the
+  type-appropriate controls, enum as select, the SU's `hint` then the
+  required/maxlen line under each control, both in `aria-describedby`); the
   confirm page echoes entered values escaped.
-- JSON: the descriptor exposes **declarations** (name, label, type,
+- JSON: the descriptor exposes **declarations** (name, label, hint, type,
   required, choices, maxlen, default) per option so agents can fill them —
   never plans; respond accepts `inputs: {...}`.
 - `result_template` may reference `[[input:x]]` (escaped, as all template

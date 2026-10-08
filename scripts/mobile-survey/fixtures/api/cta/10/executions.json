@@ -16,7 +16,8 @@
       "label": "Mobile number",
       "type": "phone",
       "required": true,
-      "maxlen": 16
+      "maxlen": 16,
+      "hint": "US number — 10 digits, area code first."
      },
      {
       "name": "msg",

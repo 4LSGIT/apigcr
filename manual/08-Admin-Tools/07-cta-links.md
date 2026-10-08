@@ -75,7 +75,9 @@ set it up in the builder; the server checks every value again on every click.
 - **+ Add input** (up to 10 per option, reorder with ↑/↓). Give it a
   **label** (what the clicker sees), a **name** (used in bindings; it
   follows the label until you edit it or bind it), a **type**, and whether
-  it is **required**.
+  it is **required**. An optional **hint** (up to 200 characters) shows
+  under the field on the confirm page — what to enter, the format, an
+  example.
 - **Types:** Text · Phone number (normalized to +1…) · Email address (one
   address, lowercased) · Number · Choice from a list (you list the choices;
   each is also the value passed on) · Date · HTML (raw markup — see the
@@ -87,7 +89,8 @@ set it up in the builder; the server checks every value again on every click.
   +1XXXXXXXXXX). Patterns run on a linear-time engine — no lookahead or
   backreferences, repeat counts up to 16 (write `\d{9}\d{8}`, not `\d{17}`,
   or `\d+` with a max length), at most 100 characters. A mismatch only tells
-  the clicker "not in the expected format", so say the format in the label.
+  the clicker "not in the expected format", so say the format in the label
+  or the hint.
 - **Bind to:** pick a step param and the pane writes `"[[input:name]]"`
   into that step's params as the param's whole value (typing it yourself
   works too). Only params a function opens to clicker input are offered;

@@ -251,6 +251,20 @@ describe('input declarations (mint)', () => {
     await expect400(cta.mintCta(db, mint({ options: [opt({ inputs: eleven })] })), /at most 10/);
   });
 
+  test('hint: optional help text — trimmed, ≤200 chars, a string; blank is not stored', async () => {
+    const r = await cta.mintCta(db, withInput({ ...IN.note, hint: '  Two or three sentences <b>please</b>  ' }));
+    expect(JSON.parse(W.link(r.id).options)[0].inputs[0]).toEqual({
+      name: 'note', label: 'Note', type: 'text', required: true, maxlen: 500, hint: 'Two or three sentences <b>please</b>',
+    });
+    for (const blank of ['', '   ', null]) {
+      const b = await cta.mintCta(db, withInput({ ...IN.note, hint: blank }));
+      expect(JSON.parse(W.link(b.id).options)[0].inputs[0]).not.toHaveProperty('hint');
+    }
+    await expect(cta.mintCta(db, withInput({ ...IN.note, hint: 'h'.repeat(200) }))).resolves.toBeTruthy();
+    await expect400(cta.mintCta(db, withInput({ ...IN.note, hint: 'h'.repeat(201) })), /hint must be at most 200 chars/);
+    await expect400(cta.mintCta(db, withInput({ ...IN.note, hint: 42 })), /hint must be a string/);
+  });
+
   test('enum: choices required (1–20, option-value charset, unique, ≤ maxlen); choices only on enum', async () => {
     const e = { name: 'pick', label: 'Pick', type: 'enum', required: true, maxlen: 10 };
     await expect400(cta.mintCta(db, withInput(e)), /needs 1–20 choices/);
@@ -930,10 +944,10 @@ describe('audit — cta_executions.inputs (§12)', () => {
 });
 
 describe('publicDescriptor — declarations (§12 Surfaces)', () => {
-  test('exactly name/label/type/required/choices/maxlen/default per input — never pattern, plans or bindings', async () => {
+  test('exactly name/label/hint/type/required/choices/maxlen/default per input — never pattern, plans or bindings', async () => {
     const m = await cta.mintCta(db, mint({ options: [
       opt({ inputs: [
-        { ...IN.note, pattern: '[a-z ]+', default: 'hello' },
+        { ...IN.note, pattern: '[a-z ]+', default: 'hello', hint: 'Lowercase words' },
         { name: 'pick', label: 'Pick <one>', type: 'enum', required: false, maxlen: 3, choices: ['yes', 'no'] },
       ], plan: [LOG('[[input:note]]'), { fn: 'create_task', params: { title: 'T', assigned_to: 22, description: '[[input:pick]]' } }] }),
       { value: 'plain', label: 'Plain', plan: [LOG('static')] },
@@ -941,11 +955,12 @@ describe('publicDescriptor — declarations (§12 Surfaces)', () => {
     const d = cta.publicDescriptor(await cta.getCtaById(db, m.id));
     expect(d.options).toEqual([
       { value: 'go', label: 'Go', inputs: [
-        { name: 'note', label: 'Note', type: 'text', required: true, maxlen: 500, default: 'hello' },
+        { name: 'note', label: 'Note', hint: 'Lowercase words', type: 'text', required: true, maxlen: 500, default: 'hello' },
         { name: 'pick', label: 'Pick <one>', type: 'enum', required: false, choices: ['yes', 'no'], maxlen: 3 },
       ] },
       { value: 'plain', label: 'Plain' },
     ]);
+    expect(d.options[0].inputs[1]).not.toHaveProperty('hint');
     expect(JSON.stringify(d)).not.toMatch(/\[a-z|\[\[input|create_task|create_log/);
   });
 });

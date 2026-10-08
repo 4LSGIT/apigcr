@@ -1205,6 +1205,8 @@ describe('clicker inputs (§12, S2i)', () => {
     const ch = window.eval('MAX_CHOICES');
     const choices = (n) => Array.from({ length: n }, (_, i) => `c${i}`);
     expect([await accepts([D({ type: 'enum', choices: choices(ch) })]), await accepts([D({ type: 'enum', choices: choices(ch + 1) })])]).toEqual([true, false]);
+    const hint = window.eval('MAX_INPUT_HINT');
+    expect([await accepts([D({ hint: 'h'.repeat(hint) })]), await accepts([D({ hint: 'h'.repeat(hint + 1) })])]).toEqual([true, false]);
     const max = window.eval('MAX_INPUTS');
     const many = (n) => Array.from({ length: n }, (_, i) => D({ name: `v${i}` }));
     expect([await accepts(many(max)), await accepts(many(max + 1))]).toEqual([true, false]);
@@ -1229,6 +1231,7 @@ describe('clicker inputs (§12, S2i)', () => {
     expect($('o0i0-name').value).toBe('mobile_number');           // the name follows the label until edited
     setValue(window, $('o0i0-type'), 'phone', 'change');
     expect($('o0i0-maxlen')).toBeNull();                          // a phone's length is fixed by the pane
+    setValue(window, $('o0i0-hint'), '  US number — 10 digits  ');
     expect($('o0i0-used').textContent).toContain('Not bound yet');
     expect([...$('o0i0-bind').options].map((o) => o.textContent))
       .toEqual(['Choose a step param…', 'Step 1 · send_sms.message — content', 'Step 1 · send_sms.to — recipient · phone']);
@@ -1261,8 +1264,10 @@ describe('clicker inputs (§12, S2i)', () => {
     $('o0i1-req').checked = false;
     $('o0i1-req').dispatchEvent(new window.Event('change', { bubbles: true }));
     setValue(window, $('o0i1-bind'), '0|message', 'change');
-    // the sample form mirrors the clicker's: a tel field and the enum's dropdown
+    // the sample form mirrors the clicker's: a tel field (with the hint under it) and the enum's dropdown
     expect($('s0_0').getAttribute('type')).toBe('tel');
+    expect(doc.querySelector('[data-shint="0.0"]').textContent).toBe('US number — 10 digits');
+    expect(doc.querySelector('[data-shint="0.1"]').hidden).toBe(true);
     expect([...$('s0_1').options].map((o) => o.textContent)).toEqual(['default: friday', 'monday', 'friday']);
 
     await dry(b);
@@ -1273,7 +1278,7 @@ describe('clicker inputs (§12, S2i)', () => {
         value: 'text_them', label: 'Text them',
         plan: [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:mobile_number]]', message: '[[input:reminder_day]]' } }],
         inputs: [
-          { name: 'mobile_number', label: 'Cell', type: 'phone', required: true, maxlen: 16 },
+          { name: 'mobile_number', label: 'Cell', hint: 'US number — 10 digits', type: 'phone', required: true, maxlen: 16 },
           { name: 'reminder_day', label: 'Reminder day', type: 'enum', required: false, maxlen: 64, choices: ['monday', 'friday'], default: 'friday' },
         ],
       }],
@@ -1395,6 +1400,7 @@ describe('clicker inputs (§12, S2i)', () => {
       ['max length over the cap', ONE([T({ maxlen: '2000' })], [LOGM()]), 'options.0.inputs.0.maxlen', /^Max length is required: an integer 1–1000/],
       ['fixed length below its floor → the Type field', ONE([T({ type: 'phone', maxlen: '11' })], [LOGM()]), 'options.0.inputs.0.type', /^Max length 11 is below 12/],
       ['bad name', ONE([T({ name: '1msg' })], [LOGM('1msg')]), 'options.0.inputs.0.name', /^Name must match/],
+      ['hint over the cap', ONE([T({ hint: 'h'.repeat(201) })], [LOGM()]), 'options.0.inputs.0.hint', /^Hint must be at most 200 chars/],
       ['duplicate name → the later input', ONE([T(), T({ label: 'Again' })], [LOGM()]), 'options.0.inputs.1.name', /also named "msg"/],
       ['declared, never bound', ONE([T(), T({ name: 'extra', label: 'Extra' })], [LOGM()]), 'bind:0.1', /^Not bound/],
       ['bad default', ONE([T({ type: 'phone', maxlen: '16', default: 'abc' })], [LOGM()]), 'options.0.inputs.0.default', /^Default: Enter a valid phone number\.$/],
@@ -1487,7 +1493,7 @@ describe('clicker inputs (§12, S2i)', () => {
       value: 'text', label: 'Text',
       inputs: [
         { name: 'to', label: 'Mobile number', type: 'phone', required: true, maxlen: 16 },
-        { name: 'msg', label: 'Message', type: 'text', required: false, maxlen: 300, default: 'Hi' },
+        { name: 'msg', label: 'Message', hint: 'Keep it <short>', type: 'text', required: false, maxlen: 300, default: 'Hi' },
       ],
       plan: [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:to]]', message: '[[input:msg]]' } }],
     };
@@ -1510,7 +1516,7 @@ describe('clicker inputs (§12, S2i)', () => {
     await tick(window);
     const optText = doc.querySelector('#detail-region .opt-view').textContent.replace(/\s+/g, ' ');
     expect(optText).toContain('Mobile number to Phone number · required → step 1 send_sms.to');
-    expect(optText).toContain('Message msg Text · optional · max 300 · default Hi → step 1 send_sms.message');
+    expect(optText).toContain('Message msg Hint: Keep it <short> Text · optional · max 300 · default Hi → step 1 send_sms.message');
 
     for (const id of [3, 2, 1]) doc.querySelector(`#detail-region tr.row[data-exec="${id}"]`).click();
     await tick(window);
@@ -1530,7 +1536,7 @@ describe('clicker inputs (§12, S2i)', () => {
         value: 'text', label: 'Text',
         inputs: [
           { name: 'to', label: 'Phone', type: 'phone', required: true, maxlen: 16 },
-          { name: 'msg', label: 'Msg', type: 'text', required: false, maxlen: 100, default: 'Hello', pattern: '[^<>]+' },
+          { name: 'msg', label: 'Msg', hint: 'Short and plain', type: 'text', required: false, maxlen: 100, default: 'Hello', pattern: '[^<>]+' },
         ],
         plan: [SMS],
       }],

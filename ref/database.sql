@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-08T12:38:21.688Z
+-- Generated: 2026-10-08T16:52:25.578Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7723adaef4c7d132b2aebe3f618d97aa
+-- Fingerprint: sha256:0250b1e784f1f310d99da4779b038393
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1343,7 +1343,7 @@ CREATE TABLE `cta_links` (
   `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'internal label (SU list); never shown publicly',
   `prompt` text COLLATE utf8mb4_general_ci NOT NULL COMMENT 'shown to the recipient; ESCAPED text — context_html is the only raw-HTML slot',
   `context_html` mediumtext COLLATE utf8mb4_general_ci COMMENT 'TRUSTED HTML, same contract as decision_requests.context_html',
-  `options` json NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?,result_template?,inputs?}] 1-10; value "respond" reserved; params frozen literals (no {{...}}, no _-prefixed keys) EXCEPT a whole top-level value "[[input:name]]" binding a declared input into a param its function opens via __meta.ctaInputParams. inputs (CTA_DESIGN §12): [{name,label,type,required,maxlen,choices?,pattern?,default?}] <=10, type text|phone|email|number|enum|date|html, maxlen <=1000, default stored normalized',
+  `options` json NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?,result_template?,inputs?}] 1-10; value "respond" reserved; params frozen literals (no {{...}}, no _-prefixed keys) EXCEPT a whole top-level value "[[input:name]]" binding a declared input into a param its function opens via __meta.ctaInputParams. inputs (CTA_DESIGN §12): [{name,label,hint?,type,required,maxlen,choices?,pattern?,default?}] <=10, type text|phone|email|number|enum|date|html, maxlen <=1000, hint <=200, default stored normalized',
   `mode` enum('once','repeatable') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'once' COMMENT 'app-validated too (relaxed sql_mode)',
   `max_uses` int unsigned DEFAULT NULL COMMENT 'repeatable only; NULL = until expiry',
   `uses_count` int unsigned NOT NULL DEFAULT '0' COMMENT 'once: 0|1 (the claim sets 1); repeatable: guarded increment; reset to 0 by re-enable from used (else the timeout claim is dead)',
