@@ -22,7 +22,7 @@ const express = require("express");
 const router  = express.Router();
 const roPool  = require("../startup/dbReadonly");
 const { readonlyApiKeyAuth } = require("../lib/auth.readonly");
-const { isReadOnlyQuery, hasFileExfilClause, touchesSecretTable } = require("../lib/sqlGuard");
+const { isReadOnlyQuery, hasFileExfilClause, matchedSecretTable } = require("../lib/sqlGuard");
 
 const DEFAULT_MAX_ROWS  = 5000;
 const HARD_MAX_ROWS     = 20000;
@@ -90,14 +90,16 @@ router.post("/api/readonly/sql", readonlyApiKeyAuth, async (req, res) => {
     });
     return res.status(400).json({ error: "INTO OUTFILE / INTO DUMPFILE not allowed" });
   }
-  // app_settings holds is_secret credentials; see lib/sqlGuard.js
-  // SECRET_TABLES. RO keys must not escalate to internal-API authority.
-  if (touchesSecretTable(sql)) {
+  // Secret-bearing tables (app_settings, email_ingest_sources); see
+  // lib/sqlGuard.js SECRET_TABLES. RO keys must not escalate to
+  // internal-API or ingest authority.
+  const secretHit = matchedSecretTable(sql);
+  if (secretHit) {
     logQuery(req, {
       sql_text: sql, params_json: params,
       status: "rejected_secret_table", duration_ms: Date.now() - started,
     });
-    return res.status(400).json({ error: "app_settings is not readable through this endpoint" });
+    return res.status(400).json({ error: `${secretHit} is not readable through this endpoint (use the SU db console)` });
   }
 
   const rowCap  = clamp(maxRows,  1, HARD_MAX_ROWS,    DEFAULT_MAX_ROWS);

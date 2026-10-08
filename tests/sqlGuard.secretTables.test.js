@@ -7,7 +7,7 @@
 // this app-level deny is the only exclusion layer. The SU dbConsole
 // deliberately does NOT use it.
 
-const { touchesSecretTable, SECRET_TABLES } = require("../lib/sqlGuard");
+const { touchesSecretTable, matchedSecretTable, SECRET_TABLES } = require("../lib/sqlGuard");
 
 describe("sqlGuard.touchesSecretTable", () => {
   test("registry holds exactly the reviewed set", () => {
@@ -41,5 +41,16 @@ describe("sqlGuard.touchesSecretTable", () => {
     ["SELECT * FROM email_ingest_rules"],
   ])("allows: %s", (sql) => {
     expect(touchesSecretTable(sql)).toBe(false);
+  });
+
+  // The endpoint names the refused table in its 400 — it must be the one
+  // the statement actually touched.
+  test.each([
+    ["SELECT * FROM app_settings", "app_settings"],
+    ["SELECT name, api_key FROM email_ingest_sources", "email_ingest_sources"],
+    ["select * from `EMAIL_INGEST_SOURCES` s", "email_ingest_sources"],
+    ["SELECT * FROM email_ingest_executions", null],
+  ])("matchedSecretTable(%s) = %s", (sql, want) => {
+    expect(matchedSecretTable(sql)).toBe(want);
   });
 });
