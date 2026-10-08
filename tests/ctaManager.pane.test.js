@@ -299,13 +299,13 @@ describe('detail', () => {
     }
   });
 
-  test('cancelled offers no mutating action; disabled offers re-enable, extend and cancel', async () => {
+  test('cancelled offers only copy + duplicate; disabled adds re-enable, extend and cancel', async () => {
     let { doc } = await openDetail(fullRow({ id: 1, status: 'cancelled' }), []);
     let acts = [...doc.querySelectorAll('#detail-region .btn-row [data-act]')].map((b) => b.dataset.act);
-    expect(acts).toEqual(['copy']);
+    expect(acts).toEqual(['copy', 'duplicate']);
     ({ doc } = await openDetail(fullRow({ id: 1, status: 'disabled' }), []));
     acts = [...doc.querySelectorAll('#detail-region .btn-row [data-act]')].map((b) => b.dataset.act);
-    expect(acts).toEqual(['copy', 'edit', 'reenable', 'cancel']);
+    expect(acts).toEqual(['copy', 'duplicate', 'edit', 'reenable', 'cancel']);
   });
 
   test('expanding an execution shows each step\'s output and error', async () => {
@@ -439,5 +439,191 @@ describe('mint builder', () => {
     doc.querySelector('[data-act="receipt-list"]').click();
     expect(doc.getElementById('confirm-title').textContent).toContain('without copying the password');
     expect(doc.getElementById('view-receipt').hidden).toBe(false);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// v2 (2026-10-08): timeout option placement, Duplicate, rich copy
+// ═════════════════════════════════════════════════════════════════════════════
+
+const NO_FN = (url) => (url === '/workflows/functions' ? { success: true, meta: {} } : undefined);
+
+describe('builder: timeout option', () => {
+  test('sits under the options, lists them as "Label (value)", follows label edits, hides for repeatable', async () => {
+    const { window, doc } = await boot({ handler: (url, method) => NO_FN(url) || (url === '/api/cta' ? { ctas: [] } : (() => { throw new Error(`unexpected ${method} ${url}`); })()) });
+    doc.getElementById('new-btn').click();
+    await tick(window);
+    const $ = (id) => doc.getElementById(id);
+    const sel = () => $('m-timeout-opt');
+    const texts = () => [...sel().options].map((o) => o.textContent);
+    expect(sel().closest('.form-section').querySelector('h3').textContent).toBe('Options');
+    expect($('opts-region').compareDocumentPosition(sel()) & window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(texts()).toEqual(['— nothing; the link just expires —']);
+
+    setValue(window, $('o0-label'), 'Mark spam');
+    expect(texts()[1]).toBe('Mark spam (mark_spam)');
+    setValue(window, $('o0-value'), 'spam');                // value now hand-set …
+    setValue(window, $('o0-label'), 'Mark as spam');        // … a label edit still relabels the choice
+    expect(texts()[1]).toBe('Mark as spam (spam)');
+
+    doc.querySelector('[data-act="add-opt"]').click();
+    setValue(window, $('o1-label'), 'Keep');
+    expect(texts().slice(1)).toEqual(['Mark as spam (spam)', 'Keep (keep)']);
+
+    setValue(window, $('m-mode'), 'repeatable', 'change');
+    expect(sel().closest('.fld').hidden).toBe(true);
+  });
+});
+
+describe('Duplicate', () => {
+  const SRC = () => fullRow({
+    id: 5, name: 'Spam check', prompt: 'Is this spam?', context_html: '<p>ctx</p>', mode: 'once', status: 'used',
+    timeout_option: 'keep', protection: 'password', return_plan_result: 1, attributed_user_id: 2,
+    link_type: 'contact', link_id: '1981', mint_source: 'workflow', minted_by: 0, source_execution_id: 777,
+    options: [
+      { value: 'spam', label: 'Mark as spam', confirm_text: 'Closes the lead.', result_template: 'Done: [[1.output.task_id]]',
+        plan: [{ fn: 'create_task', params: { title: 'Review the spam lead and close it out', assigned_to: 6, send_assignment_email: false, link_type: 'contact', link_id: '1981' } }] },
+      { value: 'keep', label: 'Keep', plan: [{ fn: 'lookup_contact', params: { contact_id: '1981' } }, { fn: 'lookup_contact', params: {} }] },
+    ],
+  });
+  const EXPECTED_BODY = () => {
+    const c = SRC();
+    return {
+      name: 'Spam check (copy)', prompt: 'Is this spam?', context_html: '<p>ctx</p>', mode: 'once', dry_run: true,
+      timeout_option: 'keep', protection: 'password', return_plan_result: true, attributed_user_id: '2',
+      link_type: 'contact', link_id: '1981',
+      options: c.options.map((o) => {
+        const x = { value: o.value, label: o.label, plan: o.plan };
+        if (o.confirm_text) x.confirm_text = o.confirm_text;
+        if (o.result_template) x.result_template = o.result_template;
+        return x;
+      }),
+    };
+  };
+  function handler(counter) {
+    return (url, method, payload) => {
+      const f = NO_FN(url); if (f) return f;
+      if (url === '/api/cta' && method === 'GET') return { ctas: [row({ id: 5, name: 'Spam check', status: 'used' })] };
+      if (url === '/api/cta/5/executions') { counter.reads++; return { cta: SRC(), executions: [] }; }
+      if (url === '/api/cta' && method === 'POST') { counter.body = payload; return { dry_run: true, options: [], notes: [], warnings: [], urls: {}, email_html: '' }; }
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+  }
+
+  test('from the list: builder pre-filled; the dry run re-sends everything except expiry, password and email template', async () => {
+    const n = { reads: 0, body: null };
+    const { window, doc } = await boot({ handler: handler(n) });
+    doc.querySelector('#list-region tr.row[data-id="5"] [data-act="duplicate"]').click();
+    await tick(window);
+    expect(doc.getElementById('view-mint').hidden).toBe(false);
+    const note = doc.querySelector('#mint-region .info-box').textContent;
+    expect(note).toContain('Copied from #5');
+    expect(note).toContain('the password (a new one is generated');
+    expect(note).toContain('workflow execution #777');
+    expect(doc.getElementById('o0-value').value).toBe('spam');
+    expect(doc.getElementById('m-timeout-opt').value).toBe('keep');
+    expect(doc.getElementById('m-prot').value).toBe('password');
+    doc.getElementById('dry-btn').click();
+    await tick(window);
+    expect(n.body).toEqual(EXPECTED_BODY());
+    // label edits must not move a copied value (the copy keeps its URLs' shape)
+    setValue(window, doc.getElementById('o1-label'), 'Keep it');
+    expect(doc.getElementById('o1-value').value).toBe('keep');
+  });
+
+  test('from the detail view: uses the row already loaded (no second read)', async () => {
+    const n = { reads: 0, body: null };
+    const { window, doc } = await boot({ handler: handler(n) });
+    doc.querySelector('#list-region tr.row[data-id="5"]').click();
+    await tick(window);
+    expect(n.reads).toBe(1);
+    doc.querySelector('#detail-region [data-act="duplicate"]').click();
+    await tick(window);
+    expect(n.reads).toBe(1);
+    expect(doc.getElementById('m-name').value).toBe('Spam check (copy)');
+  });
+
+  test('over an unminted draft it asks first; Back keeps the draft, Replace swaps it', async () => {
+    const n = { reads: 0, body: null };
+    const { window, doc } = await boot({ handler: handler(n) });
+    doc.getElementById('new-btn').click();
+    await tick(window);
+    setValue(window, doc.getElementById('m-name'), 'my draft');
+    doc.querySelector('#view-mint [data-nav="list"]').click();
+    await tick(window);
+    doc.querySelector('#list-region tr.row[data-id="5"] [data-act="duplicate"]').click();
+    await tick(window);
+    expect(doc.getElementById('confirm-title').textContent).toBe('Replace the draft in progress?');
+    doc.getElementById('confirm-no').click();
+    doc.getElementById('new-btn').click();
+    await tick(window);
+    expect(doc.getElementById('m-name').value).toBe('my draft');
+    doc.querySelector('#view-mint [data-nav="list"]').click();
+    doc.querySelector('#list-region tr.row[data-id="5"] [data-act="duplicate"]').click();
+    await tick(window);
+    doc.getElementById('confirm-yes').click();
+    await tick(window);
+    expect(doc.getElementById('m-name').value).toBe('Spam check (copy)');
+  });
+
+  test('a long name is clipped so "(copy)" still fits the 120-char limit', async () => {
+    const { window } = await boot({ handler: listOnly([]) });
+    const d = window.draftFromCta({ name: 'x'.repeat(120), options: [] });
+    expect(d.name.length).toBe(120);
+    expect(d.name.endsWith(' (copy)')).toBe(true);
+  });
+});
+
+describe('receipt: rich copy', () => {
+  test('Copy email / Copy buttons put rendered HTML on the clipboard with a "Label: URL" text twin; source copies stay raw', async () => {
+    const R = {
+      dry_run: false, id: 9, token: 'T'.repeat(22), name: 'X', mode: 'once', expires_at: new Date(Date.now() + 3 * 86400e3).toISOString(),
+      protection: 'none', protection_source: 'explicit', options: [{ value: 'go', label: 'Go' }, { value: 'stop', label: 'Stop' }],
+      notes: [], warnings: [], cta_url: 'https://example.com/c/TT', urls: { go: 'https://example.com/c/TT/go', stop: 'https://example.com/c/TT/stop' },
+      options_html: '<a href="https://example.com/c/TT/go">Go</a><a href="https://example.com/c/TT/stop">Stop</a>',
+      email_html: '<!DOCTYPE html><html><body><table><tr><td><a href="https://example.com/c/TT/go">Go</a></td></tr></table></body></html>',
+    };
+    const { window, doc } = await boot({
+      handler: (url, method) => {
+        const f = NO_FN(url); if (f) return f;
+        if (url === '/api/cta' && method === 'GET') return { ctas: [] };
+        if (url === '/api/cta' && method === 'POST') return R;
+        throw new Error(`unexpected ${method} ${url}`);
+      },
+    });
+    const writes = [];
+    const texts = [];
+    window.ClipboardItem = class { constructor(items) { this.items = items; } };
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: { write: async (arr) => { writes.push(arr); }, writeText: async (t) => { texts.push(t); } },
+    });
+    const read = (b) => new Promise((res, rej) => { const fr = new window.FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsText(b); });
+
+    doc.getElementById('new-btn').click();
+    await tick(window);
+    setValue(window, doc.getElementById('m-prompt'), 'Do it?');
+    doc.getElementById('mint-btn').click();
+    doc.getElementById('confirm-yes').click();
+    await tick(window);
+
+    doc.querySelector('[data-act="copy-email"]').click();
+    await tick(window);
+    expect(writes).toHaveLength(1);
+    const email = writes[0][0].items;
+    expect(await read(email['text/html'])).toBe(R.email_html);
+    const plain = await read(email['text/plain']);
+    expect(plain.startsWith('Do it?\n\nGo: https://example.com/c/TT/go\nStop: https://example.com/c/TT/stop\n\nAll options: https://example.com/c/TT')).toBe(true);
+
+    doc.querySelector('[data-act="copy-buttons"]').click();
+    await tick(window);
+    const btns = writes[1][0].items;
+    expect(await read(btns['text/html'])).toBe(R.options_html);
+    expect(await read(btns['text/plain'])).toBe('Go: https://example.com/c/TT/go\nStop: https://example.com/c/TT/stop');
+
+    doc.querySelector('[data-act="copy-email-src"]').click();
+    doc.querySelector('[data-act="copy-buttons-src"]').click();
+    await tick(window);
+    expect(texts).toEqual([R.email_html, R.options_html]);
   });
 });

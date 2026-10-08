@@ -168,7 +168,8 @@
     margin: 0 0 10px; padding-top: 12px; border-top: 1px solid var(--border);
     font-size: var(--fs); font-weight: 700;
   }
-  .form-section:first-child > h3 { border-top: none; padding-top: 0; }
+  .form-section:first-child > h3,
+  .info-box + .form-section > h3 { border-top: none; padding-top: 0; }
   .fgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; }
   .fld { min-width: 0; margin-bottom: 12px; }
   .fgrid .fld { margin-bottom: 0; }
@@ -228,6 +229,16 @@
     color: var(--danger-on-soft); border-radius: 4px; padding: 10px 12px; font-size: 12px; word-break: break-word;
   }
   .inline-error .btn { margin-top: 8px; }
+  .info-box {
+    background: var(--info-soft); border: 1px solid var(--info); color: var(--text);
+    border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; line-height: 1.5;
+    display: flex; gap: 10px; align-items: flex-start; justify-content: space-between;
+  }
+  /* A button that reads as an inline link (secondary actions inside a hint). */
+  .linklike {
+    background: none; border: none; padding: 0; font: inherit; color: var(--accent-2);
+    text-decoration: underline; cursor: pointer;
+  }
   .warn-box {
     background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft);
     border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; line-height: 1.5;
@@ -459,6 +470,8 @@ const state = {
   expanded: new Set(),     // execution ids opened in the detail table
   draft: null,
   fnMeta: null, fnMetaErr: null, fnMetaBusy: false,
+  draftDirty: false,       // the builder holds edits nobody has minted
+  draftNote: null,         // { id, name, protection, source } — "copied from" banner
   preview: null,           // { ok:true, data } | { ok:false, message, code }
   previewStale: false,
   minting: false,
@@ -499,6 +512,56 @@ async function copyText(text, okMsg) {
     return ok;
   }
 }
+/**
+ * Copy RENDERED html (pastes formatted into Gmail / Outlook / Docs) with a
+ * plain-text twin for text-only targets. The ClipboardItem path is the normal
+ * one; the fallback selects a rendered copy and lets the browser copy it as
+ * rich text — parsed inertly and stripped of scripts / handlers first, since
+ * an email template is SU-authored HTML.
+ */
+async function copyRich(html, text, okMsg) {
+  try {
+    if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) throw new Error('no rich clipboard');
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([text], { type: 'text/plain' }),
+    })]);
+    showToast(okMsg);
+    return true;
+  } catch {
+    const doc = new DOMParser().parseFromString(String(html), 'text/html');
+    doc.querySelectorAll('script, iframe, object, embed, form, base, meta, link').forEach((n) => n.remove());
+    doc.querySelectorAll('*').forEach((n) => [...n.attributes].forEach((a) => { if (/^on/i.test(a.name)) n.removeAttribute(a.name); }));
+    const host = document.createElement('div');
+    host.setAttribute('contenteditable', 'true');
+    host.style.position = 'fixed'; host.style.left = '-10000px'; host.style.top = '0';
+    host.append(...[...doc.body.childNodes].map((n) => document.importNode(n, true)));
+    document.body.appendChild(host);
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    sel.removeAllRanges(); sel.addRange(range);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    sel.removeAllRanges();
+    host.remove();
+    showToast(ok ? okMsg : 'Copy failed — use "HTML source" instead');
+    return ok;
+  }
+}
+
+/** Plain-text twin of the email / button block: one "Label: URL" line per option. */
+function receiptText(r, withPrompt) {
+  const lines = [];
+  if (withPrompt && r._prompt) lines.push(r._prompt, '');
+  for (const o of r.options || []) lines.push(`${o.label}: ${(r.urls || {})[o.value] || ''}`);
+  if (withPrompt) {
+    lines.push('', `All options: ${r.cta_url}`);
+    if (r.expires_at) lines.push(`This link expires ${fmtFirm(r.expires_at)}.`);
+  }
+  return lines.join('\n');
+}
+
 /** ApiError → the server's own words (routes write messages for humans). */
 function errText(err) {
   if (!err) return 'Unknown error';
@@ -714,6 +777,7 @@ function listRow(r, now) {
       <td class="col-opt">${sourceText(r)}</td>
       <td class="actions-cell col-xs">
         <button class="btn small" type="button" data-act="copy-url" title="Copy the landing URL">Copy URL</button>
+        <button class="btn small" type="button" data-act="duplicate" title="Open the builder pre-filled from this link">Duplicate</button>
       </td>
     </tr>`;
 }
@@ -795,6 +859,7 @@ function renderDetail() {
   const actions = [];
   actions.push(`<button class="btn" type="button" data-act="copy" data-text="${esc(c.cta_url)}" data-msg="Landing URL copied">Copy link</button>`);
   actions.push(`<a class="btn" href="${esc(c.cta_url)}" target="_blank" rel="noopener noreferrer" title="Opens the public page — viewing never runs anything">Open page ↗</a>`);
+  actions.push(`<button class="btn" type="button" data-act="duplicate" title="Open the builder pre-filled from this link">Duplicate</button>`);
   if (c.status === 'active' || c.status === 'disabled') {
     actions.push(`<button class="btn" type="button" data-act="edit">Extend / limits…</button>`);
   }
@@ -1227,7 +1292,7 @@ function renderMint() {
 
   E('mint-region').innerHTML = `
     <datalist id="fn-names"></datalist>
-
+    ${draftNoteHtml()}
     <div class="form-section">
       <h3>New CTA link</h3>
       <div class="fld">
@@ -1261,11 +1326,6 @@ function renderMint() {
           <label class="yc-flabel" for="m-max">Max uses</label>
           <input type="number" id="m-max" data-bind="max_uses" min="1" step="1" value="${esc(d.max_uses)}" placeholder="no cap">
           <span class="yc-hint">Blank = until expiry.</span>
-        </div>
-        <div class="fld"${rep ? ' hidden' : ''}>
-          <label class="yc-flabel" for="m-timeout-opt">Timeout option</label>
-          <select id="m-timeout-opt" data-bind="timeout_option">${timeoutOptionsHtml()}</select>
-          <span class="yc-hint">Runs by itself at expiry if nobody clicked (swept every ~5 min).</span>
         </div>
       </div>
       <div class="fgrid" style="margin-top:12px">
@@ -1320,6 +1380,11 @@ function renderMint() {
       <span class="yc-hint" id="fn-list-note" style="margin:-4px 0 10px">${fnListNote()}</span>
       <div id="opts-region">${d.options.map(optionCardHtml).join('')}</div>
       <button class="btn" type="button" data-act="add-opt"${d.options.length >= 10 ? ' disabled title="Up to 10 options"' : ''}>+ Add option</button>
+      <div class="fld" style="margin-top:14px"${rep ? ' hidden' : ''}>
+        <label class="yc-flabel" for="m-timeout-opt">If nobody clicks before expiry</label>
+        <select id="m-timeout-opt" data-bind="timeout_option">${timeoutOptionsHtml()}</select>
+        <span class="yc-hint">Runs the chosen option automatically once the link expires unused (the sweep checks every ~5 min). Single-use links only.</span>
+      </div>
     </div>
 
     <div class="form-section">
@@ -1330,6 +1395,8 @@ function renderMint() {
           <select id="m-attr" data-bind="attributed_user_id">
             <option value="">— nobody (automations) —</option>
             ${users.map((u) => `<option value="${esc(u.user)}"${String(d.attributed_user_id) === String(u.user) ? ' selected' : ''}>${esc(u.user_name || ('user #' + u.user))}</option>`).join('')}
+            ${d.attributed_user_id && !users.some((u) => String(u.user) === String(d.attributed_user_id))
+              ? `<option value="${esc(d.attributed_user_id)}" selected>user #${esc(d.attributed_user_id)} (not in the staff list)</option>` : ''}
           </select>
           <span class="yc-hint">Who the outcome log names for link/password clicks — an assertion, not authentication. Timeout runs always log as automations.</span>
         </div>
@@ -1367,12 +1434,98 @@ function renderMint() {
   fillDatalist();
 }
 
+function draftNoteHtml() {
+  const n = state.draftNote;
+  if (!n) return '';
+  const notCarried = ['the expiry (set it under Behaviour — the firm default is selected)', 'the email template (never stored)'];
+  if (n.protection === 'password') notCarried.unshift('the password (a new one is generated at mint unless you type one)');
+  return `
+    <div class="info-box">
+      <div>Copied from <b>#${esc(n.id)}</b> "${esc(n.name)}" — review, change what you need, then mint a new link.
+        Not carried over: ${notCarried.map(esc).join('; ')}.${n.source ? ` The original was minted by ${esc(n.source)}; this copy is an SU mint.` : ''}</div>
+      <button class="btn icon" type="button" data-act="dismiss-note" title="Dismiss">✕</button>
+    </div>`;
+}
+
+/** Registry params → the textarea: compact when short, pretty when not. */
+function paramsText(p) {
+  const j = JSON.stringify(p == null ? {} : p);
+  return j.length <= 80 ? j : JSON.stringify(p, null, 2);
+}
+
+/** A full CTA row (GET /api/cta/:id/executions .cta) → a builder draft. */
+function draftFromCta(c) {
+  const d = newDraft();
+  const name = String(c.name || '');
+  d.name = name.length + 7 <= 120 ? `${name} (copy)` : `${name.slice(0, 113)} (copy)`;
+  d.prompt = c.prompt || '';
+  d.context_html = c.context_html || '';
+  d.mode = c.mode === 'repeatable' ? 'repeatable' : 'once';
+  d.max_uses = d.mode === 'repeatable' && c.max_uses != null ? String(c.max_uses) : '';
+  d.timeout_option = d.mode === 'once' && c.timeout_option ? c.timeout_option : '';
+  // Explicit, never "Default": a link minted protection 'none' despite a
+  // result template was an SU override, and the copy must keep it.
+  d.protection = c.protection === 'password' ? 'password' : 'none';
+  d.return_plan_result = !!Number(c.return_plan_result);
+  d.attributed_user_id = c.attributed_user_id != null ? String(c.attributed_user_id) : '';
+  d.link_type = c.link_type || '';
+  d.link_id = c.link_id || '';
+  const opts = (Array.isArray(c.options) ? c.options : []).map((o) => ({
+    value: String(o.value || ''), label: String(o.label || ''), valueTouched: true,
+    confirm_text: o.confirm_text || '', result_template: o.result_template || '',
+    steps: (Array.isArray(o.plan) && o.plan.length ? o.plan : [{ fn: '', params: {} }])
+      .map((s) => ({ fn: String((s && s.fn) || ''), params: paramsText(s && s.params) })),
+  }));
+  d.options = opts.length ? opts : [newOption()];
+  return d;
+}
+
+/** Duplicate a link into the builder. `cta` is the full row when the caller already has it (detail view). */
+async function duplicateCta(id, cta) {
+  let c = cta;
+  if (!c) {
+    try {
+      const data = await api(`/api/cta/${id}/executions`, 'GET', { limit: 1 });
+      c = data && data.cta;
+      if (!c) throw Object.assign(new Error('Unexpected response — no CTA in it'), { body: {} });
+    } catch (err) {
+      showToast(`Couldn't load CTA #${id}: ${errText(err)}`);
+      return;
+    }
+  }
+  const fill = () => {
+    state.draft = draftFromCta(c);
+    state.draftDirty = false;
+    state.draftNote = {
+      id: c.id, name: c.name, protection: c.protection,
+      source: c.mint_source === 'workflow' ? `workflow execution #${c.source_execution_id}` : null,
+    };
+    state.preview = null;
+    state.previewStale = false;
+    openMint();
+  };
+  if (state.draft && state.draftDirty) {
+    openConfirm({
+      title: 'Replace the draft in progress?',
+      html: '<p>The builder holds a draft you haven\'t minted. Duplicating replaces it.</p>',
+      yes: 'Replace draft', yesClass: 'danger',
+      onYes: async () => fill(),
+    });
+    return;
+  }
+  fill();
+}
+
 function timeoutOptionsHtml() {
   const d = state.draft;
   const vals = d.options.map((o) => o.value.trim()).filter((v) => v);
   if (d.timeout_option && !vals.includes(d.timeout_option)) d.timeout_option = '';
-  return `<option value="">— none —</option>` +
-    vals.map((v) => `<option value="${esc(v)}"${d.timeout_option === v ? ' selected' : ''}>${esc(v)}</option>`).join('');
+  const label = (v) => {
+    const o = d.options.find((x) => x.value.trim() === v);
+    return o && o.label.trim() ? `${o.label.trim()} (${v})` : v;
+  };
+  return `<option value="">— nothing; the link just expires —</option>` +
+    vals.map((v) => `<option value="${esc(v)}"${d.timeout_option === v ? ' selected' : ''}>${esc(label(v))}</option>`).join('');
 }
 
 function optionCardHtml(o, oi) {
@@ -1461,6 +1614,7 @@ function onMintInput(e) {
   const path = el.dataset.bind;
   const val = el.type === 'checkbox' ? el.checked : el.value;
   setPath(path, val);
+  state.draftDirty = true;
   markPreviewStale();
 
   let m;
@@ -1470,8 +1624,8 @@ function onMintInput(e) {
       o.value = slugValue(val);
       const v = E(`o${m[1]}-value`);
       if (v) v.value = o.value;
-      refreshTimeoutOptions();
     }
+    refreshTimeoutOptions();
   } else if ((m = /^options\.(\d+)\.value$/.exec(path))) {
     state.draft.options[Number(m[1])].valueTouched = val.trim() !== '';
     refreshTimeoutOptions();
@@ -1528,10 +1682,11 @@ function onMintClick(e) {
     case 'dry': structural = false; runMint(true); break;
     case 'mint': structural = false; confirmMint(); break;
     case 'copy': structural = false; copyText(b.dataset.text, b.dataset.msg); break;
+    case 'dismiss-note': state.draftNote = null; break;
     default: structural = false;
   }
   if (structural) {
-    markPreviewStale();
+    if (b.dataset.act !== 'dismiss-note') { state.draftDirty = true; markPreviewStale(); }
     const y = document.querySelector('.panel-host').scrollTop;
     renderMint();
     document.querySelector('.panel-host').scrollTop = y;
@@ -1600,10 +1755,12 @@ async function runMint(dryRun) {
       state.preview = { ok: true, data: r };
       state.previewStale = false;
     } else {
-      state.receipt = r;
+      state.receipt = { ...r, _prompt: built.body.prompt };   // the receipt carries no prompt; the plain-text copy needs it
       state.pwCopied = false;
       state.preview = null;
       state.draft = null;          // minted — the next "+ New CTA" starts clean
+      state.draftDirty = false;
+      state.draftNote = null;
       state.loaded = false;        // the list refetches on the way back
       showReceipt();
       return;
@@ -1723,10 +1880,14 @@ function showReceipt() {
     </div>
     <div class="section">
       <h3>Email</h3>
-      <div class="btn-row" style="margin-bottom:8px">
-        <button class="btn" type="button" data-act="copy-email">Copy email HTML</button>
-        <button class="btn" type="button" data-act="copy-buttons">Copy buttons HTML</button>
+      <div class="btn-row">
+        <button class="btn primary" type="button" data-act="copy-email" title="Paste straight into a Gmail / Outlook message body">Copy email</button>
+        <button class="btn" type="button" data-act="copy-buttons" title="Just the option buttons — paste into an email you write yourself">Copy buttons</button>
       </div>
+      <span class="yc-hint" style="margin:6px 0 8px">Both paste <b>formatted</b> into Gmail or Outlook (in a plain-text field you get each option as "Label: URL").
+        HTML source, for templates and workflows:
+        <button class="linklike" type="button" data-act="copy-email-src">email</button> ·
+        <button class="linklike" type="button" data-act="copy-buttons-src">buttons</button>.</span>
       <iframe class="email-frame" id="receipt-email" sandbox="" title="Email preview"></iframe>
       <span class="yc-hint">Sandboxed preview. Clicking a button here only opens its confirm page — nothing runs without the confirm.</span>
     </div>
@@ -1766,8 +1927,10 @@ async function onReceiptClick(e) {
         E('pw-copied').hidden = false;
       }
       break;
-    case 'copy-email': if (r) copyText(r.email_html || '', 'Email HTML copied'); break;
-    case 'copy-buttons': if (r) copyText(r.options_html || '', 'Buttons HTML copied'); break;
+    case 'copy-email': if (r) copyRich(r.email_html || '', receiptText(r, true), 'Email copied — paste it into the message body'); break;
+    case 'copy-buttons': if (r) copyRich(r.options_html || '', receiptText(r, false), 'Buttons copied — paste them into your email'); break;
+    case 'copy-email-src': if (r) copyText(r.email_html || '', 'Email HTML source copied'); break;
+    case 'copy-buttons-src': if (r) copyText(r.options_html || '', 'Buttons HTML source copied'); break;
     case 'receipt-detail': { const id = r && r.id; leaveReceipt(() => openDetail(id)); break; }
     case 'receipt-list': leaveReceipt(() => goList()); break;
     case 'receipt-new': leaveReceipt(() => openMint()); break;
@@ -1792,7 +1955,7 @@ function init() {
     title: 'Reset the form?',
     html: '<p>Clears every field and option in this draft.</p>',
     yes: 'Reset', yesClass: 'danger',
-    onYes: async () => { state.draft = newDraft(); state.preview = null; state.previewStale = false; renderMint(); },
+    onYes: async () => { state.draft = newDraft(); state.draftDirty = false; state.draftNote = null; state.preview = null; state.previewStale = false; renderMint(); },
   }));
   document.querySelectorAll('[data-nav="list"]').forEach((b) => b.addEventListener('click', goList));
 
@@ -1805,6 +1968,11 @@ function init() {
         const tr = act.closest('tr[data-id]');
         const r = tr && state.rows.find((x) => String(x.id) === tr.dataset.id);
         if (r) copyText(r.cta_url, 'Landing URL copied');
+        return;
+      }
+      if (act.dataset.act === 'duplicate') {
+        const tr = act.closest('tr[data-id]');
+        if (tr) duplicateCta(Number(tr.dataset.id));
         return;
       }
     }
@@ -1821,6 +1989,7 @@ function init() {
         case 'reenable': return openPatch('reenable');
         case 'disable': return confirmStatus('disabled');
         case 'cancel': return confirmStatus('cancelled');
+        case 'duplicate': return duplicateCta(state.detail.id, state.detail.cta);
         case 'retry-detail': state.detail.err = null; renderDetail(); return loadDetail();
       }
       return;

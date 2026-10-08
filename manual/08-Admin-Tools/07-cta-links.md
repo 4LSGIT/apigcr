@@ -83,13 +83,24 @@ Like every SU tool it asks for your password first (elevation, 15 minutes).
   to see each step's output or error. Actions: **Extend / limits** (new expiry
   — typed in firm time, or +1/+7/+30 days — and the max-uses cap),
   **Disable**, **Re-enable** (offered only when the server would allow it),
-  **Cancel** (permanent). Refusals come back in the server's own words.
+  **Cancel** (permanent), and **Duplicate**. Refusals come back in the
+  server's own words.
+- **Duplicate** (list row or detail) — opens the builder pre-filled from that
+  link, named "… (copy)", for changing and minting a new one. Not carried
+  over: the expiry (the firm default is selected), the email template (never
+  stored) and the password (a new one is generated). A copy of a
+  workflow-minted link is an ordinary SU mint.
 - **+ New CTA** — the mint builder: every mint field, options with ordered
-  plan steps (`fn` + params JSON; the picker lists the eligible functions).
+  plan steps (`fn` + params JSON; the picker lists the eligible functions),
+  and — for single-use links, under the options — which option to run on its
+  own if nobody clicks before expiry.
   **Preview (dry run)** validates everything, shows the default protection
   the server would apply, the placeholder URLs and the rendered email — and
-  creates nothing. **Mint** shows the receipt: token, URLs, the email HTML to
-  copy, and a generated password **once** (the pane asks before you leave it
-  uncopied).
+  creates nothing. **Mint** shows the receipt: token, URLs, a generated
+  password **once** (the pane asks before you leave it uncopied), and
+  **Copy email** / **Copy buttons**, which paste *formatted* into a Gmail or
+  Outlook message (plain-text fields get one "Label: URL" line per option).
+  The raw HTML source is one click away for templates and workflows. The
+  email only exists at mint — copy it from the receipt.
 
 Design + internals: `ref/CTA_DESIGN.md`.
