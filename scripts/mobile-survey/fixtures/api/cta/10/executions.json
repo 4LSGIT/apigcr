@@ -1,0 +1,154 @@
+{
+ "cta": {
+  "id": 10,
+  "token": "fixtureTok000000000010",
+  "name": "Text a client a reminder (clicker inputs)",
+  "mode": "repeatable",
+  "status": "active",
+  "protection": "password",
+  "options": [
+   {
+    "value": "text",
+    "label": "Text them",
+    "inputs": [
+     {
+      "name": "mobile",
+      "label": "Mobile number",
+      "type": "phone",
+      "required": true,
+      "maxlen": 16
+     },
+     {
+      "name": "msg",
+      "label": "Message (what the text says — keep it short, it goes out from the firm's line)",
+      "type": "text",
+      "required": true,
+      "maxlen": 320,
+      "default": "Reminder: your hearing is on Monday. Bring a photo ID and the notice."
+     },
+     {
+      "name": "lang",
+      "label": "Language",
+      "type": "enum",
+      "required": false,
+      "maxlen": 64,
+      "choices": [
+       "en",
+       "es",
+       "ar"
+      ],
+      "default": "en"
+     }
+    ],
+    "plan": [
+     {
+      "fn": "send_sms",
+      "params": {
+       "from": "3135550100",
+       "to": "[[input:mobile]]",
+       "message": "[[input:msg]]"
+      }
+     },
+     {
+      "fn": "create_log",
+      "params": {
+       "type": "note",
+       "link_type": "contact",
+       "link_id": "9001",
+       "message": "[[input:lang]]"
+      }
+     }
+    ]
+   },
+   {
+    "value": "note",
+    "label": "Leave a note on the file",
+    "inputs": [
+     {
+      "name": "note",
+      "label": "Note for the file",
+      "type": "text",
+      "required": false,
+      "maxlen": 500,
+      "pattern": "[A-Za-z0-9 .,'-]+"
+     }
+    ],
+    "plan": [
+     {
+      "fn": "create_log",
+      "params": {
+       "type": "note",
+       "link_type": "contact",
+       "link_id": "9001",
+       "message": "[[input:note]]"
+      }
+     }
+    ]
+   }
+  ],
+  "max_uses": 20,
+  "uses_count": 2,
+  "expires_at": "2029-11-06T15:59:59.000Z",
+  "timeout_option": null,
+  "failed_attempts": 0,
+  "return_plan_result": 0,
+  "attributed_user_id": null,
+  "mint_source": "su",
+  "source_execution_id": null,
+  "minted_by": 1,
+  "link_type": "contact",
+  "link_id": "9001",
+  "created_at": "2026-10-08T15:59:59.000Z",
+  "updated_at": "2026-10-08T16:20:00.000Z",
+  "state": "active",
+  "cta_url": "https://example.com/c/fixtureTok000000000010",
+  "prompt": "Send the client a hearing reminder?",
+  "context_html": null
+ },
+ "executions": [
+  {
+   "id": 12,
+   "cta_id": 10,
+   "option_value": "text",
+   "status": "failed",
+   "responded_via": "link",
+   "responder_user_id": null,
+   "responder_ip": "198.51.100.7",
+   "executed_at": "2026-10-08T16:20:00.000Z",
+   "inputs": {
+    "mobile": "+13135550199",
+    "msg": "Reminder: your hearing is on Monday.\nBring <b>ID</b> & the notice — a very long line that has to wrap on a phone without pushing the pane sideways at all.",
+    "lang": "es"
+   },
+   "plan_result": [
+    {
+     "fn": "send_sms",
+     "ok": false,
+     "error": "Carrier rejected the message",
+     "ms": 0
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "cta_id": 10,
+   "option_value": "note",
+   "status": "success",
+   "responded_via": "api",
+   "responder_user_id": null,
+   "responder_ip": "198.51.100.8",
+   "executed_at": "2026-10-08T16:05:00.000Z",
+   "inputs": {},
+   "plan_result": [
+    {
+     "fn": "create_log",
+     "ok": true,
+     "output": {
+      "log_id": 501
+     },
+     "ms": 0
+    }
+   ]
+  }
+ ]
+}

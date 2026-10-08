@@ -666,6 +666,7 @@ scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/pipeline.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
 scripts/mobile-survey/fixtures/api/cta.json
+scripts/mobile-survey/fixtures/api/cta/10/executions.json
 scripts/mobile-survey/fixtures/api/cta/2/executions.json
 scripts/mobile-survey/fixtures/api/documents.json
 scripts/mobile-survey/fixtures/api/field-defs.json

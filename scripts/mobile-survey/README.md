@@ -77,7 +77,8 @@ Fixtures cover one case (`TESTCASE1`) with two contacts, appointments, log
 rows, an alert, a custom-field value and a pipeline (`cases/TESTCASE1/pipeline`),
 one contact (`9001`), tasks, documents, a one-field registry
 (`field-defs`) and a CTA list covering every link state (`cta`, plus
-`cta/2/executions` for browsing a detail by hand) — enough to fill the tables
+`cta/2/executions` and — for clicker inputs, declarations and submitted
+values — `cta/10/executions` for browsing a detail by hand) — enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores
 query strings, so `field-defs` answers for contacts too (a case def on the

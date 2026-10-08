@@ -21,12 +21,23 @@
  *   - Detail: Re-enable is offered exactly when patchCta would allow it.
  *   - Bodies: the PATCH a quick-extend sends (naive FIRM-time datetime,
  *     wall clock kept) and the mint/dry-run body the builder sends.
+ *   - §12 clicker inputs (S2i): the inputs editor → declarations + bindings;
+ *     the hard rule as a required field; the acknowledge-to-proceed boxes and
+ *     what accept_risks carries; the server's mint errors placed under the
+ *     field they name; the test-values dry run; submitted inputs in the
+ *     detail; Duplicate carrying declarations. Wherever a server answer
+ *     matters these run against the REAL routes/api.cta.js + ctaService over
+ *     tests/helpers/ctaWorld.js (real JWT + SU elevation), so the error
+ *     mapping and the risk boxes are checked against the server's own words.
  *
  * In jsdom a top-level window is its own parent, so window.apiSend IS the
  * pane's P.apiSend (the pane never assigns window.apiSend — no relay loop).
  */
 
 'use strict';
+
+// §12 section boots the REAL /api/cta router (superuserOnlyFor needs a secret).
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-cta-pane';
 
 const fs = require('fs');
 const path = require('path');
@@ -1050,5 +1061,534 @@ describe('Send dialog', () => {
       expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(false);
       expect(doc.getElementById('toast').textContent).toBe("Can't send — this link is used now");
     });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §12 clicker inputs (S2i) — the REAL mint route wherever the answer matters
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('clicker inputs (§12, S2i)', () => {
+  const express = require('express');
+  const jwt = require('jsonwebtoken');
+  const firmConfig = require('../lib/firmConfig');
+  const { mintElevationToken, _resetRateLimits } = require('../lib/auth.superuser');
+  const { makeCtaWorld } = require('./helpers/ctaWorld');
+  const SU_ID = 6;   // 'authorized - SU' in the world
+  const META = internalFunctions.__getAllMeta();
+
+  const SRV = { db: null, base: null, server: null };
+  beforeAll((done) => {
+    process.env.LANDING_HOSTS = '4lsg.com';
+    firmConfig._test({ resetCache: true });
+    const app = express();
+    app.use(express.json());
+    app.use((req, res, next) => { req.db = SRV.db; next(); });
+    app.use(require('../routes/api.cta'));
+    SRV.server = app.listen(0, '127.0.0.1', () => { SRV.base = `http://127.0.0.1:${SRV.server.address().port}`; done(); });
+  });
+  afterAll((done) => {
+    delete process.env.LANDING_HOSTS;
+    firmConfig._test({ resetCache: true });
+    if (SRV.server.closeAllConnections) SRV.server.closeAllConnections();
+    SRV.server.close(done);
+  });
+  beforeEach(() => { SRV.db = makeCtaWorld(); _resetRateLimits(); });
+
+  const staffToken = () => jwt.sign(
+    { sub: SU_ID, username: 'fred', user_type: 'staff', user_auth: 'authorized - SU', aud: 'staff', roles: [] },
+    process.env.JWT_SECRET, { expiresIn: '1h' });
+  /** One call to the real routes/api.cta.js, as the shell's apiSend would make it (JWT + elevation; non-2xx throws its body). */
+  async function real(url, method, payload) {
+    const res = await fetch(SRV.base + url, {
+      method,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${staffToken()}`, 'x-su-elevation': mintElevationToken(SU_ID) },
+      ...(method === 'GET' ? {} : { body: JSON.stringify(payload || {}) }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw apiError(res.status, body);
+    return body;
+  }
+  /** The pane with the REAL registry metadata and the REAL mint route; `extra` answers anything else first. */
+  const realHandler = (extra) => async (url, method, payload) => {
+    if (extra) { const r = await extra(url, method, payload); if (r !== undefined) return r; }
+    if (url === '/workflows/functions') return { success: true, meta: META };
+    if (url === '/api/cta' && method === 'GET') return { ctas: [] };
+    if (url === '/api/cta' && method === 'POST') return real(url, method, payload);
+    throw new Error(`unexpected ${method} ${url}`);
+  };
+  const posts = (calls) => calls.filter((c) => c.url === '/api/cta' && c.method === 'POST').map((c) => c.payload);
+
+  async function openBuilder(handler) {
+    const b = await boot({ handler });
+    b.doc.getElementById('new-btn').click();
+    await tick(b.window, 60);
+    return b;
+  }
+  /** Click Preview and wait for every request it makes (a second one for test values). */
+  async function dry(b) {
+    b.doc.getElementById('dry-btn').click();
+    for (let i = 0; i < 200 && b.window.eval('state.minting'); i++) await tick(b.window, 15);
+    await tick(b.window, 10);
+  }
+  /** Put a draft straight into the builder — for cases where the server's verdict is the point, not the typing. */
+  async function injectDraft(window, spec) {
+    window.__spec = JSON.parse(JSON.stringify(spec));
+    window.eval(`(() => {
+      const s = window.__spec;
+      const d = newDraft();
+      Object.assign(d, s.top || {});
+      d.options = s.options.map((o) => ({
+        ...newOption(), valueTouched: true, ...o,
+        inputs: (o.inputs || []).map((i) => ({ ...newInput(), nameTouched: true, maxlenTouched: true, ...i })),
+        steps: o.steps.map((st) => ({ fn: st.fn, params: JSON.stringify(st.params) })),
+      }));
+      state.draft = d;
+      rerenderMint();
+    })()`);
+    await tick(window);
+  }
+
+  const PHONE = { name: 'to', label: 'Phone', type: 'phone', maxlen: '16' };
+  const TEXT = { name: 'msg', label: 'Msg', type: 'text', maxlen: '100' };
+  const HTML_IN = { name: 'msg', label: 'Msg', type: 'html', maxlen: '100' };
+  const SMS = { fn: 'send_sms', params: { from: '2485559999', to: '[[input:to]]', message: '[[input:msg]]' } };
+  const LOGM = (n = 'msg') => ({ fn: 'create_log', params: { type: 'note', message: `[[input:${n}]]` } });
+  const ONE = (inputs, steps, top = {}, opt = {}) => ({
+    top: { name: 'Inputs link', prompt: 'Tell us', protection: 'none', ...top },
+    options: [{ value: 'go', label: 'Go', inputs, steps, ...opt }],
+  });
+
+  test('mirrors: risk codes, input types and every opened param equal the server\'s; declaration limits behave like the mint', async () => {
+    const { window } = await openBuilder(realHandler());
+    expect(Object.keys(window.eval('RISK_COPY')).sort()).toEqual(Object.keys(ctaService.CTA_RISKS).sort());
+    expect(window.eval('[...INPUT_TYPES]')).toEqual([...ctaService.INPUT_TYPES]);
+    const opened = JSON.parse(window.eval(`(() => {
+      const out = {};
+      for (const fn of eligibleNames()) {
+        const ps = openedParams(fn);
+        if (!ps.length) continue;
+        out[fn] = {};
+        for (const { param, spec } of ps) out[fn][param] = { kind: spec.kind, ...(spec.html ? { html: true } : {}), ...(spec.type ? { type: spec.type } : {}) };
+      }
+      return JSON.stringify(out);
+    })()`));
+    expect(opened).toEqual(ctaService.openedInputParams());
+
+    const accepts = async (inputs, steps = inputs.map((d) => LOGM(d.name))) => {
+      try {
+        await ctaService.mintCta(makeCtaWorld(), {
+          name: 'n', prompt: 'p', minted_by: SU_ID, protection: 'none', dry_run: true,
+          options: [{ value: 'go', label: 'Go', inputs, plan: steps }],
+        });
+        return true;
+      } catch (e) {
+        if (!(e instanceof ctaService.CtaError)) throw e;
+        return false;
+      }
+    };
+    const okName = window.eval('(n) => INPUT_NAME_RE.test(n) && !RESERVED_INPUT_NAMES.includes(n)');
+    for (const name of ['a', '_x', 'A1_b', '1a', 'a-b', 'x'.repeat(64), 'x'.repeat(65), '__proto__', 'constructor', 'prototype']) {
+      expect([name, okName(name)]).toEqual([name, await accepts([{ name, label: 'L', type: 'text', required: true, maxlen: 10 }])]);
+    }
+    const D = (over) => ({ name: 'v', label: 'L', type: 'text', required: true, maxlen: 10, ...over });
+    for (const [type, floor] of Object.entries(window.eval('({ ...MIN_MAXLEN })'))) {
+      expect([type, await accepts([D({ type, maxlen: floor })]), await accepts([D({ type, maxlen: floor - 1 })])]).toEqual([type, true, false]);
+    }
+    for (const [type, len] of Object.entries(window.eval('({ ...FIXED_MAXLEN })'))) {   // the lengths the pane fixes are mintable
+      expect([type, await accepts([D({ type, maxlen: Number(len), ...(type === 'enum' ? { choices: ['a'] } : {}) })])]).toEqual([type, true]);
+    }
+    const cap = window.eval('MAX_INPUT_LEN');
+    expect([await accepts([D({ maxlen: cap })]), await accepts([D({ maxlen: cap + 1 })])]).toEqual([true, false]);
+    const pat = window.eval('MAX_PATTERN');
+    expect([await accepts([D({ maxlen: 200, pattern: 'a'.repeat(pat) })]), await accepts([D({ maxlen: 200, pattern: 'a'.repeat(pat + 1) })])]).toEqual([true, false]);
+    const ch = window.eval('MAX_CHOICES');
+    const choices = (n) => Array.from({ length: n }, (_, i) => `c${i}`);
+    expect([await accepts([D({ type: 'enum', choices: choices(ch) })]), await accepts([D({ type: 'enum', choices: choices(ch + 1) })])]).toEqual([true, false]);
+    const max = window.eval('MAX_INPUTS');
+    const many = (n) => Array.from({ length: n }, (_, i) => D({ name: `v${i}` }));
+    expect([await accepts(many(max)), await accepts(many(max + 1))]).toEqual([true, false]);
+  });
+
+  test('editor → declarations, "Bind to" writes the binding, the real dry run passes and names the protection default', async () => {
+    const b = await openBuilder(realHandler());
+    const { window, doc, calls, errors } = b;
+    const $ = (id) => doc.getElementById(id);
+    setValue(window, $('m-name'), 'Text a client');
+    setValue(window, $('m-prompt'), 'Send a reminder?');
+    setValue(window, $('o0-label'), 'Text them');
+    setValue(window, $('o0s0-fn'), 'send_sms');
+    setValue(window, $('o0s0-params'), '{"from":"2485559999"}');
+    // the step says, in words, which of its params a clicker can fill
+    expect(doc.querySelector('[data-fn-desc="0.0"]').textContent)
+      .toContain('Clicker inputs can fill: message (what it says — any input) · to (who receives it — a Phone number input)');
+
+    doc.querySelector('.opt-card[data-oi="0"] [data-act="in-add"]').click();
+    await tick(window);
+    setValue(window, $('o0i0-label'), 'Mobile number');
+    expect($('o0i0-name').value).toBe('mobile_number');           // the name follows the label until edited
+    setValue(window, $('o0i0-type'), 'phone', 'change');
+    expect($('o0i0-maxlen')).toBeNull();                          // a phone's length is fixed by the pane
+    expect($('o0i0-used').textContent).toContain('Not bound yet');
+    expect([...$('o0i0-bind').options].map((o) => o.textContent))
+      .toEqual(['Choose a step param…', 'Step 1 · send_sms.message — content', 'Step 1 · send_sms.to — recipient · phone']);
+    setValue(window, $('o0i0-bind'), '0|to', 'change');
+    expect(JSON.parse($('o0s0-params').value)).toEqual({ from: '2485559999', to: '[[input:mobile_number]]' });
+    expect($('o0i0-used').textContent).toBe('Bound to step 1 send_sms.to.');
+    setValue(window, $('o0i0-label'), 'Cell');
+    expect($('o0i0-name').value).toBe('mobile_number');           // bound → the name stays put
+    const nameErr = () => doc.querySelector('[data-name-err="0.0"]');
+    setValue(window, $('o0i0-name'), '9lives');
+    expect([nameErr().hidden, nameErr().textContent]).toEqual([false, 'Not a valid name.']);
+    expect($('o0i0-used').textContent).toContain('Not bound yet');   // the binding names the old name
+    setValue(window, $('o0i0-name'), 'mobile_number');
+    expect(nameErr().hidden).toBe(true);
+    expect($('o0i0-used').textContent).toBe('Bound to step 1 send_sms.to.');
+
+    doc.querySelector('.opt-card[data-oi="0"] [data-act="in-add"]').click();
+    await tick(window);
+    setValue(window, $('o0i1-label'), 'Reminder day');
+    setValue(window, $('o0i1-type'), 'enum', 'change');
+    const card1 = () => doc.querySelector('.opt-card[data-oi="0"] .in-card[data-ij="1"]');
+    card1().querySelector('[data-act="choice-add"]').click();
+    await tick(window);
+    card1().querySelector('[data-act="choice-add"]').click();
+    await tick(window);
+    setValue(window, $('o0i1c0'), 'monday');
+    setValue(window, $('o0i1c1'), 'friday');
+    expect([...$('o0i1-default').options].map((o) => o.value)).toEqual(['', 'monday', 'friday']);   // follows the typing
+    setValue(window, $('o0i1-default'), 'friday', 'change');
+    $('o0i1-req').checked = false;
+    $('o0i1-req').dispatchEvent(new window.Event('change', { bubbles: true }));
+    setValue(window, $('o0i1-bind'), '0|message', 'change');
+    // the sample form mirrors the clicker's: a tel field and the enum's dropdown
+    expect($('s0_0').getAttribute('type')).toBe('tel');
+    expect([...$('s0_1').options].map((o) => o.textContent)).toEqual(['default: friday', 'monday', 'friday']);
+
+    await dry(b);
+    const [body] = posts(calls);
+    expect(body).toEqual({
+      name: 'Text a client', prompt: 'Send a reminder?', mode: 'once', dry_run: true,
+      options: [{
+        value: 'text_them', label: 'Text them',
+        plan: [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:mobile_number]]', message: '[[input:reminder_day]]' } }],
+        inputs: [
+          { name: 'mobile_number', label: 'Cell', type: 'phone', required: true, maxlen: 16 },
+          { name: 'reminder_day', label: 'Reminder day', type: 'enum', required: false, maxlen: 64, choices: ['monday', 'friday'], default: 'friday' },
+        ],
+      }],
+    });
+    const ok = doc.querySelector('#preview-region .ok-box').textContent.replace(/\s+/g, ' ');
+    expect(ok).toContain('protection password (default — an option takes clicker inputs)');
+    const block = doc.querySelector('#preview-region').textContent.replace(/\s+/g, ' ');
+    expect(block).toContain('Cell mobile_number Phone number · required → step 1 send_sms.to');
+    expect(block).toContain('Fill in Test values above');
+    expect(errors).toEqual([]);
+  });
+
+  test('risk detection and the hard rule match validateMint over a config matrix (the pane\'s own body, the real service)', async () => {
+    const { window } = await openBuilder(realHandler());
+    const cases = [
+      ['once + recipient', { mode: 'once' }, [PHONE, TEXT], [SMS]],
+      ['repeatable + recipient', { mode: 'repeatable', max_uses: '3' }, [PHONE, TEXT], [SMS]],
+      ['repeatable + content only', { mode: 'repeatable', max_uses: '3' }, [TEXT], [LOGM()]],
+      ['html input', { mode: 'once' }, [HTML_IN], [LOGM()]],
+      ['repeatable + recipient + html', { mode: 'repeatable', max_uses: '3' }, [PHONE, HTML_IN], [SMS]],
+    ];
+    for (const [name, top, inputs, steps] of cases) {
+      await injectDraft(window, ONE(inputs, steps, top));
+      const client = window.eval('detectedRisks(state.draft)');
+      const needsCap = window.eval('needsMaxUses(state.draft)');
+      const body = JSON.parse(window.eval('JSON.stringify(buildBody(true).body)'));
+      let server = [];
+      try {
+        await ctaService.mintCta(makeCtaWorld(), { ...body, minted_by: SU_ID });
+      } catch (e) {
+        expect([name, e.code]).toEqual([name, 'risk_acceptance_required']);
+        server = e.risks.map((r) => r.code);
+      }
+      expect([name, [...client].sort()]).toEqual([name, server.sort()]);
+      // hard rule: the same link with every risk accepted and no max_uses
+      const uncapped = { ...body, accept_risks: Object.keys(ctaService.CTA_RISKS), minted_by: SU_ID };
+      delete uncapped.max_uses;
+      let capRefused = false;
+      try { await ctaService.mintCta(makeCtaWorld(), uncapped); } catch (e) { capRefused = /must set max_uses/.test(e.message); }
+      expect([name, needsCap]).toEqual([name, capRefused]);
+    }
+  });
+
+  test('repeatable + clicker-chosen recipient: max uses is a required field; the acknowledgment box gates the real mint', async () => {
+    const b = await openBuilder(realHandler());
+    const { window, doc, calls } = b;
+    await injectDraft(window, ONE([PHONE, TEXT], [SMS], { mode: 'repeatable' }));
+    expect(doc.getElementById('m-max-req').hidden).toBe(false);
+    expect(doc.getElementById('m-max-hint').textContent).toMatch(/^Required/);
+    const box = () => doc.querySelector('#risk-region [data-risk="open_recipient_repeatable"]');
+    expect(box().checked).toBe(false);
+    expect(doc.getElementById('risk-region').textContent).toContain('The clicker picks who gets the message');
+
+    // blank cap: stopped in the pane, the reason under the field, nothing sent
+    await dry(b);
+    expect(posts(calls)).toHaveLength(0);
+    expect(doc.querySelector('[data-ferr="max_uses"]').textContent).toMatch(/^Required/);
+    setValue(window, doc.getElementById('m-max'), '5');
+    expect(doc.querySelector('[data-ferr="max_uses"]')).toBeNull();
+
+    // capped, not acknowledged: the server's 400
+    await dry(b);
+    expect(posts(calls)[0]).not.toHaveProperty('accept_risks');
+    expect(doc.querySelector('#preview-region .inline-error').textContent.replace(/\s+/g, ' '))
+      .toMatch(/Rejected:.*needs explicit risk acceptance.*Tick the acknowledgment/);
+
+    // ticked: accepted, and the preview says it is recorded
+    box().checked = true;
+    box().dispatchEvent(new window.Event('change', { bubbles: true }));
+    await dry(b);
+    expect(posts(calls)[1]).toMatchObject({ max_uses: '5', accept_risks: ['open_recipient_repeatable'] });
+    expect(doc.querySelector('#preview-region .ok-box').textContent).toMatch(/Acknowledged: The clicker picks who gets the message/);
+
+    // single-use: the box goes, and the stale tick stays out of the body
+    setValue(window, doc.getElementById('m-mode'), 'once', 'change');
+    expect(box()).toBeNull();
+    expect(doc.getElementById('m-max-req').hidden).toBe(true);
+    await dry(b);
+    expect(posts(calls)[2]).not.toHaveProperty('accept_risks');
+    expect(doc.querySelector('#preview-region .ok-box')).not.toBeNull();
+  });
+
+  test('an HTML input asks for raw_html_input (real server); a code only the server knows still gets a box, in its words', async () => {
+    let b = await openBuilder(realHandler());
+    await injectDraft(b.window, ONE([HTML_IN], [{ fn: 'send_email', params: { from: 'info@4lsg.com', to: 'client@example.com', subject: 'Hi', html: '[[input:msg]]' } }]));
+    const box = (doc, code) => doc.querySelector(`#risk-region [data-risk="${code}"]`);
+    expect(b.doc.getElementById('risk-region').textContent).toContain('The clicker writes raw HTML');
+    box(b.doc, 'raw_html_input').checked = true;
+    box(b.doc, 'raw_html_input').dispatchEvent(new b.window.Event('change', { bubbles: true }));
+    await dry(b);
+    expect(posts(b.calls)[0].accept_risks).toEqual(['raw_html_input']);
+    expect(b.doc.querySelector('#preview-region').textContent.replace(/\s+/g, ' '))
+      .toContain('step 1 send_email.html — raw HTML, passed as typed');
+
+    let n = 0;
+    b = await openBuilder(realHandler((url, method) => {
+      if (url === '/api/cta' && method === 'POST' && ++n === 1) {
+        throw apiError(400, { status: 'error', code: 'risk_acceptance_required', message: 'cta: needs future_risk',
+          risks: [{ code: 'future_risk', description: 'Something new the server wants acknowledged.' }] });
+      }
+      return undefined;
+    }));
+    await injectDraft(b.window, ONE([TEXT], [LOGM()]));
+    expect(b.doc.getElementById('risk-region').textContent.trim()).toBe('');
+    await dry(b);
+    expect(b.doc.getElementById('risk-region').textContent).toContain('Something new the server wants acknowledged.');
+    box(b.doc, 'future_risk').checked = true;
+    box(b.doc, 'future_risk').dispatchEvent(new b.window.Event('change', { bubbles: true }));
+    await dry(b);
+    expect(posts(b.calls)[1].accept_risks).toEqual(['future_risk']);
+  });
+
+  test('the server\'s mint errors land under the field they name (real messages, every mapped shape)', async () => {
+    const b = await openBuilder(realHandler());
+    const { window, doc } = b;
+    const T = (over) => ({ ...TEXT, ...over });
+    const cases = [
+      ['pattern the linear engine refuses', ONE([T({ pattern: '\\d{17}' })], [LOGM()]), 'options.0.inputs.0.pattern', /^Pattern must run in linear time/],
+      ['max length over the cap', ONE([T({ maxlen: '2000' })], [LOGM()]), 'options.0.inputs.0.maxlen', /^Max length is required: an integer 1–1000/],
+      ['fixed length below its floor → the Type field', ONE([T({ type: 'phone', maxlen: '11' })], [LOGM()]), 'options.0.inputs.0.type', /^Max length 11 is below 12/],
+      ['bad name', ONE([T({ name: '1msg' })], [LOGM('1msg')]), 'options.0.inputs.0.name', /^Name must match/],
+      ['duplicate name → the later input', ONE([T(), T({ label: 'Again' })], [LOGM()]), 'options.0.inputs.1.name', /also named "msg"/],
+      ['declared, never bound', ONE([T(), T({ name: 'extra', label: 'Extra' })], [LOGM()]), 'bind:0.1', /^Not bound/],
+      ['bad default', ONE([T({ type: 'phone', maxlen: '16', default: 'abc' })], [LOGM()]), 'options.0.inputs.0.default', /^Default: Enter a valid phone number\.$/],
+      ['bad choice', ONE([T({ type: 'enum', maxlen: '64', choices: ['a b'] })], [LOGM()]), 'options.0.inputs.0.choices', /^Choices: each choice must match/],
+      ['closed param', ONE([T()], [{ fn: 'lookup_contact', params: { contact_id: '[[input:msg]]' } }]), 'options.0.steps.0.params', /not open to clicker inputs/],
+      ['recipient fed a text input', ONE([T()], [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:msg]]', message: 'hi' } }]), 'options.0.steps.0.params', /is a recipient — bind a phone or email input/],
+      ['undeclared binding', ONE([T()], [{ fn: 'create_log', params: { type: 'note', message: '[[input:msg]]', subject: '[[input:zzz]]' } }]), 'options.0.steps.0.params', /no input "zzz" is declared/],
+      ['unknown function', ONE([T()], [{ fn: 'nope_fn', params: {} }, LOGM()]), 'options.0.steps.0.fn', /unknown function "nope_fn"/],
+      ['timeout option without a default', ONE([T()], [LOGM()], { timeout_option: 'go' }), 'options.0.inputs.0.default', /timeout option/],
+      ['result template names no input', ONE([T()], [LOGM()], {}, { result_template: 'x [[input:nope]]' }), 'options.0.result_template', /^Result template references \[\[input:nope\]\]/],
+    ];
+    for (const [name, spec, anchor, re] of cases) {
+      await injectDraft(window, spec);
+      await dry(b);
+      const errs = [...doc.querySelectorAll('#mint-region [data-ferr]')];
+      expect([name, errs.map((e) => e.dataset.ferr)]).toEqual([name, [anchor]]);
+      expect([name, errs[0].textContent]).toEqual([name, expect.stringMatching(re)]);
+      // …and it sits with that field
+      const fld = errs[0].closest('.fld');
+      const field = anchor.startsWith('bind:') ? `[data-bind-input="${anchor.slice(5)}"]` : `[data-bind="${anchor}"], [data-bind^="${anchor}."]`;
+      expect([name, !!fld.querySelector(field)]).toEqual([name, true]);
+      expect([name, !!doc.querySelector('#preview-region [data-act="goto-err"]')]).toEqual([name, true]);
+    }
+    // editing the field clears it
+    await injectDraft(window, cases[0][1]);
+    await dry(b);
+    expect(doc.querySelector('[data-ferr="options.0.inputs.0.pattern"]')).not.toBeNull();
+    setValue(window, doc.getElementById('o0i0-pattern'), '\\d+');
+    expect(doc.querySelector('[data-ferr]')).toBeNull();
+  });
+
+  test('test values: a second dry run with them as defaults; a refused value sits by its field; the mint body never carries them', async () => {
+    const b = await openBuilder(realHandler());
+    const { window, doc, calls } = b;
+    await injectDraft(window, ONE(
+      [{ ...PHONE, sample: 'abc' }, { ...TEXT, sample: 'Hello <there>' }], [SMS], {},
+      { result_template: 'Sent: [[input:msg]] ([[1.output.id]])' },
+    ));
+    await dry(b);
+    const [realBody, sampleBody] = posts(calls);
+    const decl = [{ name: 'to', label: 'Phone', type: 'phone', required: true, maxlen: 16 }, { name: 'msg', label: 'Msg', type: 'text', required: true, maxlen: 100 }];
+    expect(realBody.options[0].inputs).toEqual(decl);
+    expect(sampleBody).toEqual({
+      ...realBody,
+      options: [{ ...realBody.options[0], inputs: [{ ...decl[0], default: 'abc' }, { ...decl[1], default: 'Hello <there>' }] }],
+    });
+    expect(doc.querySelector('[data-serr="0.0"]').textContent).toBe('Enter a valid phone number.');
+    expect(doc.querySelector('[data-serr="0.1"]')).toBeNull();
+    expect(doc.getElementById('preview-region').textContent).toContain('Test values refused');
+
+    setValue(window, doc.getElementById('s0_0'), '(248) 555-0100');
+    expect(doc.querySelector('[data-serr="0.0"]')).toBeNull();
+    await dry(b);
+    expect(posts(calls)).toHaveLength(4);
+    expect(doc.getElementById('preview-region').textContent).toContain('Test values pass');
+    const pres = [...doc.querySelectorAll('#preview-region pre.blk')].map((p) => p.textContent);
+    expect(pres).toContain('Sent: Hello <there> (‹step 1 output.id›)');
+    expect(doc.querySelector('#preview-region pre.blk there')).toBeNull();   // shown as text
+
+    // a failing real dry run sends no test-values run
+    setValue(window, doc.getElementById('m-prompt'), '');
+    await dry(b);
+    expect(posts(calls)).toHaveLength(5);
+    // no test values → one request
+    setValue(window, doc.getElementById('m-prompt'), 'Tell us');
+    setValue(window, doc.getElementById('s0_0'), '');
+    setValue(window, doc.getElementById('s0_1'), '');
+    await dry(b);
+    expect(posts(calls)).toHaveLength(6);
+    expect(doc.getElementById('preview-region').textContent).toContain('Fill in Test values above');
+  });
+
+  test('a step refusing the test values is named under that option\'s test values', async () => {
+    let n = 0;
+    const b = await openBuilder(realHandler((url, method) => {
+      if (url === '/api/cta' && method === 'POST' && ++n === 2) {
+        throw apiError(400, { status: 'error', code: 'invalid', message: 'cta: options[0].plan[0] (send_sms) with default/sample inputs: message is too long' });
+      }
+      return undefined;
+    }));
+    await injectDraft(b.window, ONE([PHONE, { ...TEXT, sample: 'x' }], [SMS]));
+    await dry(b);
+    expect(b.doc.querySelector('[data-sstep="0"]').textContent).toBe("Step 1 (send_sms) won't take these values: message is too long");
+    setValue(b.window, b.doc.getElementById('s0_1'), 'y');
+    expect(b.doc.querySelector('[data-sstep="0"]')).toBeNull();
+  });
+
+  test('detail: each option lists its inputs; an expanded execution shows the submitted values labelled, as text', async () => {
+    const opt = {
+      value: 'text', label: 'Text',
+      inputs: [
+        { name: 'to', label: 'Mobile number', type: 'phone', required: true, maxlen: 16 },
+        { name: 'msg', label: 'Message', type: 'text', required: false, maxlen: 300, default: 'Hi' },
+      ],
+      plan: [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:to]]', message: '[[input:msg]]' } }],
+    };
+    const cta = fullRow({ id: 7, mode: 'repeatable', max_uses: 5, options: [opt] });
+    const ex = (over) => ({ cta_id: 7, option_value: 'text', status: 'success', responded_via: 'link', responder_user_id: null,
+      responder_ip: '192.0.2.9', executed_at: new Date().toISOString(), plan_result: [{ fn: 'send_sms', ok: true, output: { id: 's1' }, ms: 1 }], ...over });
+    const execs = [
+      ex({ id: 3, inputs: { to: '+12485550100', msg: '<img src=x onerror=alert(1)>\nline 2' } }),
+      ex({ id: 2, inputs: { to: '+12485550100' } }),
+      ex({ id: 1, inputs: null }),
+    ];
+    const { window, doc } = await boot({
+      handler: (url, method) => {
+        if (url === '/api/cta' && method === 'GET') return { ctas: [row({ id: 7, mode: 'repeatable', max_uses: 5 })] };
+        if (url === '/api/cta/7/executions') return { cta, executions: execs };
+        throw new Error(`unexpected ${method} ${url}`);
+      },
+    });
+    doc.querySelector('#list-region tr.row[data-id="7"]').click();
+    await tick(window);
+    const optText = doc.querySelector('#detail-region .opt-view').textContent.replace(/\s+/g, ' ');
+    expect(optText).toContain('Mobile number to Phone number · required → step 1 send_sms.to');
+    expect(optText).toContain('Message msg Text · optional · max 300 · default Hi → step 1 send_sms.message');
+
+    for (const id of [3, 2, 1]) doc.querySelector(`#detail-region tr.row[data-exec="${id}"]`).click();
+    await tick(window);
+    const details = [...doc.querySelectorAll('#detail-region tr.exec-detail')];
+    expect(details[0].textContent).toContain('Submitted inputs');
+    expect(details[0].querySelector('img')).toBeNull();
+    const vals = [...details[0].querySelectorAll('.in-val')].map((v) => [v.querySelector('.in-val-k').textContent.trim(), (v.querySelector('pre') || {}).textContent]);
+    expect(vals).toEqual([['Mobile number to', '+12485550100'], ['Message msg', '<img src=x onerror=alert(1)>\nline 2']]);
+    expect(details[1].textContent).toContain('(left blank)');
+    expect(details[2].textContent).not.toContain('Submitted inputs');
+  });
+
+  test('Duplicate carries the declarations and bindings (the real server takes the copy); acknowledgments are re-asked, not carried', async () => {
+    const SRC = fullRow({
+      id: 8, name: 'Open text', mode: 'repeatable', max_uses: 4, protection: 'password', status: 'disabled',
+      options: [{
+        value: 'text', label: 'Text',
+        inputs: [
+          { name: 'to', label: 'Phone', type: 'phone', required: true, maxlen: 16 },
+          { name: 'msg', label: 'Msg', type: 'text', required: false, maxlen: 100, default: 'Hello', pattern: '[^<>]+' },
+        ],
+        plan: [SMS],
+      }],
+    });
+    const b = await boot({
+      handler: realHandler((url, method) => {
+        if (url === '/api/cta' && method === 'GET') return { ctas: [row({ id: 8, status: 'disabled', mode: 'repeatable' })] };
+        if (url === '/api/cta/8/executions') return { cta: SRC, executions: [] };
+        return undefined;
+      }),
+    });
+    const { window, doc, calls } = b;
+    doc.querySelector('#list-region tr.row[data-id="8"] [data-act="duplicate"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('o0i0-name').value).toBe('to');
+    expect(doc.getElementById('o0i1-pattern').value).toBe('[^<>]+');
+    expect(doc.querySelector('#mint-region .info-box').textContent).toContain('risk acknowledgments');
+    const box = doc.querySelector('#risk-region [data-risk="open_recipient_repeatable"]');
+    expect(box.checked).toBe(false);
+    box.checked = true;
+    box.dispatchEvent(new window.Event('change', { bubbles: true }));
+    await dry(b);
+    const body = posts(calls)[0];
+    expect(body.options[0].inputs).toEqual(SRC.options[0].inputs);
+    expect(body.options[0].plan).toEqual(SRC.options[0].plan);
+    expect(body).toMatchObject({ mode: 'repeatable', max_uses: '4', protection: 'password', accept_risks: ['open_recipient_repeatable'] });
+    expect(doc.querySelector('#preview-region .ok-box')).not.toBeNull();
+  });
+
+  test('Extend / limits: "No cap" is locked on a link whose clicker picks the recipient (the function list is fetched for it)', async () => {
+    const mk = (id, plan, inputs) => fullRow({ id, mode: 'repeatable', max_uses: 4, options: [{ value: 'go', label: 'Go', inputs, plan }] });
+    const links = { 1: mk(1, [SMS], [{ name: 'to', label: 'P', type: 'phone', required: true, maxlen: 16 }, { name: 'msg', label: 'M', type: 'text', required: true, maxlen: 10 }]),
+      2: mk(2, [LOGM()], [{ name: 'msg', label: 'M', type: 'text', required: true, maxlen: 10 }]) };
+    const { window, doc } = await boot({
+      handler: realHandler((url, method) => {
+        if (url === '/api/cta' && method === 'GET') return { ctas: [row({ id: 1, mode: 'repeatable', max_uses: 4 }), row({ id: 2, mode: 'repeatable', max_uses: 4 })] };
+        const m = /^\/api\/cta\/(\d+)\/executions$/.exec(url);
+        if (m) return { cta: links[m[1]], executions: [] };
+        return undefined;
+      }),
+    });
+    for (const [id, locked] of [[1, true], [2, false]]) {
+      doc.querySelector('[data-nav="list"]').click();
+      await tick(window);
+      doc.querySelector(`#list-region tr.row[data-id="${id}"]`).click();
+      await tick(window);
+      doc.querySelector('#detail-region [data-act="edit"]').click();
+      await tick(window);
+      expect([id, doc.getElementById('p-nocap').disabled]).toEqual([id, locked]);
+      expect([id, doc.getElementById('p-cap-lock').hidden]).toEqual([id, !locked]);
+      doc.getElementById('patch-cancel').click();
+    }
+    // with the list already loaded, the lock is there on the first paint
+    doc.querySelector('[data-nav="list"]').click();
+    await tick(window);
+    doc.querySelector('#list-region tr.row[data-id="1"]').click();
+    await tick(window);
+    doc.querySelector('#detail-region [data-act="edit"]').click();
+    expect(doc.getElementById('p-nocap').disabled).toBe(true);
   });
 });

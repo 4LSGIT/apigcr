@@ -174,7 +174,8 @@
   .fld { min-width: 0; margin-bottom: 12px; }
   .fgrid .fld { margin-bottom: 0; }
   .fld input[type="text"], .fld input[type="number"], .fld input[type="password"],
-  .fld input[type="datetime-local"], .fld select, .fld textarea {
+  .fld input[type="datetime-local"], .fld input[type="tel"], .fld input[type="email"],
+  .fld input[type="date"], .fld select, .fld textarea {
     width: 100%; min-width: 0; background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit;
   }
@@ -244,6 +245,39 @@
     border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; line-height: 1.5;
   }
   .loading { padding: 16px; color: var(--text-muted); }
+
+  /* ── Clicker inputs (§12, slice S2i) ───────────────────────── */
+  .in-block { margin: 2px 0 12px; }
+  .in-card {
+    border: 1px dashed var(--border-strong); border-radius: 6px; background: var(--page-bg);
+    padding: 10px; margin: 0 0 8px; min-width: 0;
+  }
+  .in-card-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .in-card-h b { font-size: 12px; }
+  .in-card .fld { margin-bottom: 10px; }
+  .in-card .fgrid .fld { margin-bottom: 0; }
+  .choice-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; min-width: 0; }
+  .choice-row input { flex: 1 1 auto; }
+  .bind-line { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 4px; line-height: 1.45; word-break: break-word; }
+  .bind-line code, .fn-open code { font-size: 11px; }
+  .bind-line.unbound { color: var(--warn); }
+  .fn-open { display: block; margin-top: 4px; }
+  .risk-box {
+    background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft);
+    border-radius: 4px; padding: 10px 12px; font-size: 12px; margin: 0 0 12px; line-height: 1.5;
+  }
+  .risk-head { display: block; margin-bottom: 8px; }
+  .risk-item + .risk-item { border-top: 1px solid var(--warn); margin-top: 10px; padding-top: 10px; }
+  .risk-item p { margin: 2px 0 6px; }
+  .risk-item .check { display: flex; align-items: center; gap: 6px; font-weight: 700; cursor: pointer; }
+  .sample-opt { border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 10px 12px 2px; margin-bottom: 8px; }
+  .sample-opt > .opt-view-h { margin-bottom: 8px; }
+  .in-vals { display: grid; gap: 8px; margin-top: 6px; }
+  .in-val-k { font-size: 12px; font-weight: 600; }
+  .in-val pre.blk { margin-top: 3px; }
+  .ok-text { color: var(--ok-on-soft); }
+  /* A hint that needs attention (still the hint look, in the warn colour). */
+  .yc-hint.warn { color: var(--warn); }
 
   /* ── Modals (toolManager.html shape) ───────────────────────── */
   .modal-backdrop {
@@ -324,6 +358,14 @@
           <b>Protection:</b> <i>none</i> — anyone holding the link can execute; <i>password</i> — the confirm
           page asks for a secret. A generated password is shown <b>once</b>, at mint. Links that return
           information default to password. Never a YisraCase account password.
+        </p>
+        <p>
+          <b>Clicker inputs:</b> an option can ask the clicker for values — a phone number, a message, a choice
+          from a list — and pass each one into its plan as a step param's whole value, <code>[[input:name]]</code>.
+          Only params a function opens to clicker input can take one (the step shows which). The server
+          validates every value and escapes text that lands in an email body. Inputs make the default protection
+          password; a reusable link where the clicker picks the recipient needs a use cap, and the risky shapes
+          ask for an explicit acknowledgment.
         </p>
         <p>
           <b>Lifecycle:</b> links always expire — extend instead of re-minting. <i>Disable</i> is the kill
@@ -453,6 +495,64 @@ const ABOUT_TYPES = ['contact', 'case', 'appt', 'bill', 'phone', 'email', 'task'
 const LIST_LIMIT = 200;   // routes/api.cta.js list max
 const EXEC_LIMIT = 500;   // ctaService EXEC_LIST_MAX
 
+// §12 clicker inputs (ctaService INPUT_TYPES, INPUT_NAME_RE, MAX_INPUTS,
+// MAX_INPUT_LEN, MAX_PATTERN, MAX_CHOICES, MIN_MAXLEN, RECIPIENT_TYPES,
+// CTA_RISKS keys, openedParamSpec). Same contract: hints that shape the form
+// — the mint validates every one of them again.
+const INPUT_TYPES = ['text', 'phone', 'email', 'number', 'enum', 'date', 'html'];
+const INPUT_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
+const RESERVED_INPUT_NAMES = ['__proto__', 'constructor', 'prototype'];
+const MAX_INPUTS = 10;
+const MAX_INPUT_LEN = 1000;
+const MAX_PATTERN = 100;
+const MAX_CHOICES = 20;
+const MIN_MAXLEN = { phone: 12, date: 10 };
+const RECIPIENT_TYPES = ['phone', 'email'];
+const BINDING_RE = /^\[\[input:([^\]]*)\]\]$/;   // a WHOLE param value (§12 Ruling 5)
+/** Types whose max length the pane fixes (hidden field): the value is checked normalized, so it isn't the clicker's to size. */
+const FIXED_MAXLEN = { phone: '16', date: '10', enum: '64' };
+const INPUT_MAXLEN_DEFAULT = { text: '200', phone: '16', email: '254', number: '20', enum: '64', date: '10', html: '1000' };
+const INPUT_TYPE_LABEL = {
+  text: 'Text', phone: 'Phone number', email: 'Email address', number: 'Number',
+  enum: 'Choice from a list', date: 'Date', html: 'HTML (raw markup)',
+};
+const INPUT_TYPE_HINT = {
+  text: 'Plain text. Escaped wherever it lands in an email body; line breaks are kept.',
+  phone: 'Normalized to +1XXXXXXXXXX before it is used. Phone and Email are the only types a recipient param takes.',
+  email: 'One address, lowercased. No lists.',
+  number: 'A plain decimal — 42, -3.5.',
+  enum: 'The clicker picks one of your choices from a dropdown.',
+  date: 'A date picker on the page; used as YYYY-MM-DD.',
+  html: 'Raw markup, passed on unescaped — needs the acknowledgment above the Mint button.',
+};
+/**
+ * The pane's words for each acknowledge-to-proceed code (ctaService.CTA_RISKS).
+ * Plain language on purpose — the server's description is the fallback for a
+ * code the pane doesn't know yet, and the mirror test fails until it does.
+ */
+const RISK_COPY = {
+  open_recipient_repeatable: {
+    title: 'The clicker picks who gets the message — on a reusable link',
+    body: 'Whoever holds this link, including anyone it is forwarded to, can text or email any number or address they choose, ' +
+      'from the firm\'s own line or address, once per use until the use cap or the expiry. Misuse can get the firm\'s texting ' +
+      'number suspended by the carriers and hurt email deliverability. Keep the use cap low, keep password protection on, and ' +
+      'send the link only to people you trust.',
+  },
+  raw_html_input: {
+    title: 'The clicker writes raw HTML',
+    body: 'An HTML input goes into the plan exactly as typed — not escaped — so the clicker can add links, images or formatting ' +
+      'that is sent or saved under the firm\'s name. A Text input is the safe choice: it is escaped, and its line breaks are kept.',
+  },
+};
+/** protection_source (mint receipt) → why that protection applies. */
+const PROT_WHY = {
+  explicit: 'your choice',
+  password_supplied: 'you typed a password',
+  default_inputs: 'default — an option takes clicker inputs',
+  default_result_template: 'default — an option returns information (result template)',
+  default: 'default',
+};
+
 function toDate(v) {
   if (v == null || v === '') return null;
   const d = v instanceof Date ? v : new Date(v);
@@ -485,11 +585,17 @@ const state = {
   detail: null,            // { id, cta, executions, err, busy }
   expanded: new Set(),     // execution ids opened in the detail table
   draft: null,
-  fnMeta: null, fnMetaErr: null, fnMetaBusy: false,
+  fnMeta: null, fnMetaErr: null, fnMetaBusy: false, fnMetaP: null,
   draftDirty: false,       // the builder holds edits nobody has minted
   draftNote: null,         // { id, name, protection, source } — "copied from" banner
   preview: null,           // { ok:true, data } | { ok:false, message, code }
   previewStale: false,
+  // §12 clicker inputs
+  serverRisks: [],         // [{ code, description }] from the last risk_acceptance_required 400
+  fieldErr: null,          // { anchor, text } — a rejected mint's message, placed under its field
+  sampleRun: null,         // null | { ok: true } | { ok: false, message } — the test-values dry run
+  sampleErr: {},           // 'oi.ij' → why the server refused that test value
+  sampleStepErr: {},       // oi → a step that refuses the option's test values
   minting: false,
   receipt: null, pwCopied: false,
   patch: null,             // { mode: 'edit'|'reenable', cta, latest }
@@ -1029,9 +1135,75 @@ function optionView(c, o) {
           <button class="btn small" type="button" data-act="copy" data-text="${esc(url)}" data-msg="Option URL copied">Copy</button></div></div>
         <div class="k">Plan</div>
         <div class="v"><div class="plan-sum">${steps.map((s, i) => `<code>${i + 1}. ${esc(s && s.fn)}</code>`).join('') || '<span class="muted">—</span>'}</div></div>
+        ${Array.isArray(o.inputs) && o.inputs.length ? `<div class="k">Inputs</div><div class="v"><div class="in-vals" style="margin-top:0">${o.inputs.map((dcl) => declSummaryHtml(dcl, steps)).join('')}</div></div>` : ''}
         ${o.confirm_text ? `<div class="k">Confirm text</div><div class="v">${esc(o.confirm_text)}</div>` : ''}
         ${o.result_template ? `<div class="k">Result template</div><div class="v"><pre class="blk" style="margin:0">${esc(o.result_template)}</pre></div>` : ''}
       </div>
+    </div>`;
+}
+
+/** Every whole-value "[[input:x]]" in a stored plan, as [{ si, fn, param, name }]. */
+function planBindings(steps) {
+  const out = [];
+  (Array.isArray(steps) ? steps : []).forEach((s, si) => {
+    const p = s && s.params;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return;
+    for (const [k, v] of Object.entries(p)) {
+      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
+      if (m) out.push({ si, fn: String((s && s.fn) || ''), param: k, name: m[1] });
+    }
+  });
+  return out;
+}
+
+/** One stored input declaration, for the detail view: label, name, the limits, where it is bound. */
+function declSummaryHtml(dcl, steps) {
+  const bits = [esc(INPUT_TYPE_LABEL[dcl.type] || dcl.type), dcl.required ? 'required' : 'optional'];
+  if (!FIXED_MAXLEN[dcl.type]) bits.push(`max ${esc(dcl.maxlen)}`);
+  if (Array.isArray(dcl.choices) && dcl.choices.length) bits.push(`choices ${dcl.choices.map((c) => `<code>${esc(c)}</code>`).join(' ')}`);
+  if (Object.prototype.hasOwnProperty.call(dcl, 'default')) bits.push(`default <code>${esc(dcl.default)}</code>`);
+  if (dcl.pattern) bits.push(`pattern <code>${esc(dcl.pattern)}</code>`);
+  const into = planBindings(steps).filter((b) => b.name === dcl.name)
+    .map((b) => `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>`);
+  return `
+    <div class="in-val">
+      <div class="in-val-k">${esc(dcl.label)} <code class="muted">${esc(dcl.name)}</code></div>
+      <span class="yc-hint" style="margin-top:2px">${bits.join(' · ')}${into.length ? ` → ${into.join(', ')}` : ''}</span>
+    </div>`;
+}
+
+/**
+ * An execution's submitted inputs (§12 Audit — cta_executions.inputs, SU-only
+ * like plan_result), labelled from the option's declarations. Values are the
+ * server's NORMALIZED form and are always shown as text, never rendered.
+ */
+function execInputsHtml(e) {
+  const vals = e.inputs;
+  if (!vals || typeof vals !== 'object' || Array.isArray(vals)) return '';
+  const c = state.detail && state.detail.cta;
+  const opt = c && (c.options || []).find((x) => x.value === e.option_value);
+  const decls = opt && Array.isArray(opt.inputs) ? opt.inputs : [];
+  const names = decls.map((x) => x.name);
+  for (const k of Object.keys(vals)) if (!names.includes(k)) names.push(k);   // declared since? show anyway
+  if (!names.length) return '';
+  const rows = names.map((k) => {
+    const dcl = decls.find((x) => x.name === k);
+    const has = Object.prototype.hasOwnProperty.call(vals, k) && vals[k] != null;
+    const v = has ? (typeof vals[k] === 'string' ? vals[k] : JSON.stringify(vals[k])) : '';
+    return `
+      <div class="in-val">
+        <div class="in-val-k">${esc(dcl ? dcl.label : k)} <code class="muted">${esc(k)}</code>${dcl && dcl.type === 'html' ? ' <span class="tag">raw HTML</span>' : ''}</div>
+        ${has ? `<pre class="blk">${esc(v)}</pre>` : '<div class="muted">(left blank)</div>'}
+      </div>`;
+  }).join('');
+  const note = e.responded_via === 'timeout'
+    ? 'The defaults — a timeout run has no clicker.'
+    : 'As stored, after the server normalized them (a phone as +1…, an email lowercased). Shown as text, never rendered.';
+  return `
+    <div class="section" style="margin:6px 0 4px;padding:8px 10px">
+      <h3 style="margin-bottom:4px">Submitted inputs</h3>
+      <span class="yc-hint" style="margin:0">${note}</span>
+      <div class="in-vals">${rows}</div>
     </div>`;
 }
 
@@ -1090,7 +1262,7 @@ function execDetail(e) {
       <div class="k">Execution</div><div class="v">#${esc(e.id)} · ${esc(fmtFirm(e.executed_at))}</div>
       <div class="k">Via</div><div class="v">${esc(VIA_LABEL[e.responded_via] || e.responded_via)}</div>
       <div class="k">Responder</div><div class="v">${responderHtml(e)}${e.responder_ip ? ` <span class="muted">· IP ${esc(e.responder_ip)}</span>` : ''}</div>
-    </div>`;
+    </div>${execInputsHtml(e)}`;
   const steps = Array.isArray(e.plan_result) ? e.plan_result : null;
   if (!steps) {
     const note = e.status === 'running'
@@ -1127,6 +1299,9 @@ function openPatch(mode) {
   const expiredNow = !toDate(c.expires_at) || toDate(c.expires_at).getTime() <= now.getTime();
   const curNaive = firmNaive(c.expires_at);
   const rep = c.mode === 'repeatable';
+  // §12 hard rule (the server refuses max_uses:null here anyway): known only once
+  // the function list is loaded — before that the refusal shows verbatim.
+  const capLocked = rep && c.max_uses != null && storedBindsRecipient(c);
 
   E('patch-title').textContent = mode === 'reenable' ? `Re-enable "${c.name}"` : `Extend / limits — "${c.name}"`;
   E('patch-save').textContent = mode === 'reenable' ? 'Re-enable' : 'Save';
@@ -1160,8 +1335,9 @@ function openPatch(mode) {
     <div class="fld">
       <label class="yc-flabel" for="p-max">Max uses</label>
       <input type="number" id="p-max" min="1" step="1" value="${c.max_uses == null ? '' : esc(c.max_uses)}"${c.max_uses == null ? ' disabled' : ''}>
-      <label class="check" style="margin-top:6px"><input type="checkbox" id="p-nocap"${c.max_uses == null ? ' checked' : ''}> No cap (until expiry)</label>
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="p-nocap"${c.max_uses == null ? ' checked' : ''}${capLocked ? ' disabled' : ''}> No cap (until expiry)</label>
       <span class="yc-hint">Used ${esc(Number(c.uses_count) || 0)} time${Number(c.uses_count) === 1 ? '' : 's'} so far — the cap can't go below that.${st === 'exhausted' ? ' Raise or clear it to revive the link.' : ''}</span>
+      <span class="yc-hint" id="p-cap-lock"${capLocked ? '' : ' hidden'}>The clicker picks the recipient on this link, so the cap can be raised but never removed.</span>
     </div>` : `
     <span class="yc-hint">Single-use link — max uses applies to repeatable links only.</span>`}`;
 
@@ -1179,6 +1355,27 @@ function openPatch(mode) {
   }
   E('patch-backdrop').classList.add('open');
   E('p-exp').focus();
+  // §12 hard rule: which params are recipients comes from the function list —
+  // fetch it for a capped repeatable link with inputs, then lock "No cap".
+  if (rep && c.max_uses != null && !state.fnMeta && (c.options || []).some((o) => Array.isArray(o.inputs) && o.inputs.length)) {
+    loadFnMeta().then(() => {
+      if (!state.patch || state.patch.cta !== c || !storedBindsRecipient(c)) return;
+      E('p-nocap').disabled = true;
+      E('p-cap-lock').hidden = false;
+    });
+  }
+}
+
+/** A stored link with a declared input bound into an open recipient param (needs the function list; false without it). */
+function storedBindsRecipient(c) {
+  if (!state.fnMeta) return false;
+  return (c.options || []).some((o) => {
+    const names = new Set((Array.isArray(o.inputs) ? o.inputs : []).map((x) => x.name));
+    return names.size > 0 && planBindings(o.plan).some((b) => {
+      const sp = names.has(b.name) && openedSpec(b.fn, b.param);
+      return !!sp && sp.kind === 'recipient';
+    });
+  });
 }
 
 function closePatch() {
@@ -1479,7 +1676,15 @@ async function applyStatus(c, status, okMsg) {
 
 // ── MINT BUILDER ────────────────────────────────────────────
 function newStep() { return { fn: '', params: '{}' }; }
-function newOption() { return { value: '', label: '', valueTouched: false, confirm_text: '', result_template: '', steps: [newStep()] }; }
+function newOption() { return { value: '', label: '', valueTouched: false, confirm_text: '', result_template: '', inputs: [], steps: [newStep()] }; }
+/** A §12 input declaration as the builder holds it (strings, as typed) + the dry-run-only test value. */
+function newInput() {
+  return {
+    name: '', nameTouched: false, label: '', type: 'text', required: true,
+    maxlen: INPUT_MAXLEN_DEFAULT.text, maxlenTouched: false,
+    default: '', pattern: '', choices: [], sample: '',
+  };
+}
 function newDraft() {
   return {
     name: '', prompt: '', context_html: '',
@@ -1488,8 +1693,20 @@ function newDraft() {
     protection: 'auto', password: '', return_plan_result: false,
     attributed_user_id: '', link_type: '', link_id: '',
     email_template: '',
+    accept_risks: [],        // §12 acknowledgment codes the SU ticked
     options: [newOption()],
   };
+}
+
+/** Clear everything a dry run left on the form (server field error, risk list, test-value results). */
+function resetMintFeedback() {
+  state.preview = null;
+  state.previewStale = false;
+  state.serverRisks = [];
+  state.fieldErr = null;
+  state.sampleRun = null;
+  state.sampleErr = {};
+  state.sampleStepErr = {};
 }
 
 function openMint() {
@@ -1500,8 +1717,12 @@ function openMint() {
 }
 
 /** GET /workflows/functions → the eligible-name datalist + per-step hints. Optional: free text works without it. */
-async function loadFnMeta() {
-  if (state.fnMeta || state.fnMetaBusy) return;
+function loadFnMeta() {
+  if (state.fnMeta) return Promise.resolve();
+  if (!state.fnMetaP) state.fnMetaP = loadFnMetaNow().finally(() => { state.fnMetaP = null; });
+  return state.fnMetaP;   // callers share the one request in flight
+}
+async function loadFnMetaNow() {
   state.fnMetaBusy = true;
   try {
     const data = await api('/workflows/functions', 'GET');
@@ -1520,6 +1741,7 @@ async function loadFnMeta() {
     });
     const note = E('fn-list-note');
     if (note) note.innerHTML = fnListNote();
+    refreshInputDerived();   // §12: open params feed the Bind-to pickers, the hard rule and the risks
   }
 }
 
@@ -1550,17 +1772,122 @@ function fnDescHtml(name) {
   const sig = params.length
     ? params.map((p) => `<code>${esc(p.name)}${p.required ? '*' : ''}</code>${p.type ? ` <span>${esc(p.type)}</span>` : ''}`).join(' · ')
     : '<span>no params</span>';
-  return `${esc(short)}${short ? '<br>' : ''}Params: ${sig}`;
+  const open = openedParams(n);
+  const openLine = open.length
+    ? `<span class="fn-open">Clicker inputs can fill: ${open.map((x) => `<code>${esc(x.param)}</code> (${esc(specText(x.spec))})`).join(' · ')}</span>`
+    : '';
+  return `${esc(short)}${short ? '<br>' : ''}Params: ${sig}${openLine}`;
+}
+
+/**
+ * Mirror of ctaService.openedParamSpec over the registry meta (hint only):
+ * fn.param is open to a clicker input when the function is eligible, its
+ * __meta.ctaInputParams lists the param with a known kind, the param is a real
+ * meta param, and a pinned type is a recipient's phone/email.
+ */
+function openedSpec(fn, param) {
+  const meta = state.fnMeta && Object.prototype.hasOwnProperty.call(state.fnMeta, fn) ? state.fnMeta[fn] : null;
+  if (!meta || !eligibleNames().includes(fn)) return null;
+  const cip = meta.ctaInputParams;
+  if (!cip || typeof cip !== 'object' || Array.isArray(cip) || !Object.prototype.hasOwnProperty.call(cip, param)) return null;
+  const s = cip[param];
+  if (!s || typeof s !== 'object' || (s.kind !== 'recipient' && s.kind !== 'content')) return null;
+  if (!Array.isArray(meta.params) || !meta.params.some((p) => p && p.name === param)) return null;
+  if (s.type !== undefined && !(s.kind === 'recipient' && RECIPIENT_TYPES.includes(s.type))) return null;
+  const out = { kind: s.kind, html: s.html === true };
+  if (s.type !== undefined) out.type = s.type;
+  return out;
+}
+/** fn's open params as [{ param, spec }], sorted by name (ctaService.openedInputParams order). */
+function openedParams(fn) {
+  const meta = state.fnMeta && Object.prototype.hasOwnProperty.call(state.fnMeta, fn) ? state.fnMeta[fn] : null;
+  const cip = meta && meta.ctaInputParams;
+  if (!cip || typeof cip !== 'object' || Array.isArray(cip)) return [];
+  return Object.keys(cip).sort().map((param) => ({ param, spec: openedSpec(fn, param) })).filter((x) => x.spec);
+}
+/** What an open param does, in words (kind + the input type it takes). */
+function specText(spec) {
+  if (spec.kind === 'recipient') {
+    const t = spec.type === 'phone' ? 'a Phone number input'
+      : spec.type === 'email' ? 'an Email address input' : 'a Phone number or Email address input';
+    return `who receives it — ${t}`;
+  }
+  return spec.html
+    ? 'what it says, as HTML — any input; a non-HTML input is escaped, line breaks kept'
+    : 'what it says — any input';
+}
+/** Why input type `type` can't feed a param with `spec`, or null (mirror of ctaService.bindingProblem). */
+function bindMismatch(spec, type) {
+  if (spec.kind === 'recipient' && !RECIPIENT_TYPES.includes(type)) return 'needs a Phone number or Email address input';
+  if (spec.type && type !== spec.type) return `needs ${spec.type === 'phone' ? 'a Phone number' : 'an Email address'} input`;
+  return null;
 }
 
 function slugValue(label) {
   return String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
+}
+/** Label → an input name ([a-zA-Z_][a-zA-Z0-9_]*): "Phone number" → "phone_number", "2nd line" → "_2nd_line". */
+function slugName(label) {
+  const s = String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return (/^\d/.test(s) ? `_${s}` : s).slice(0, 64);
+}
+
+// ── §12: the draft's bindings, risks and the hard rule (hints — the mint decides) ──
+/** A builder step's params as an object, or null when the JSON doesn't parse (to an object). */
+function stepParams(s) {
+  const t = String((s && s.params) || '').trim();
+  if (!t) return {};
+  try {
+    const v = JSON.parse(t);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
+/** Every whole-value "[[input:x]]" in a builder option's steps, as [{ si, fn, param, name }]. */
+function draftBindings(o) {
+  const out = [];
+  o.steps.forEach((s, si) => {
+    const p = stepParams(s);
+    if (!p) return;
+    for (const [k, v] of Object.entries(p)) {
+      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
+      if (m) out.push({ si, fn: String(s.fn || '').trim(), param: k, name: m[1] });
+    }
+  });
+  return out;
+}
+/** A declared input of `o` bound into an open RECIPIENT param — what the hard rule and open_recipient_repeatable key on. */
+function bindsRecipient(o) {
+  if (!o.inputs.length) return false;
+  const names = new Set(o.inputs.map((i) => String(i.name).trim()));
+  return draftBindings(o).some((b) => {
+    if (!names.has(b.name)) return false;
+    const sp = openedSpec(b.fn, b.param);
+    return !!sp && sp.kind === 'recipient';
+  });
+}
+/** The §12 hard rule: repeatable + a clicker-supplied recipient → max_uses is required. */
+function needsMaxUses(d) {
+  return d.mode === 'repeatable' && d.options.some(bindsRecipient);
+}
+/** Risk codes this draft trips, as the pane reads it (ctaService.validateMint's `triggered`). */
+function detectedRisks(d) {
+  const out = [];
+  if (needsMaxUses(d)) out.push('open_recipient_repeatable');
+  if (d.options.some((o) => o.inputs.some((i) => i.type === 'html'))) out.push('raw_html_input');
+  return out;
+}
+/** Detected ∪ what the server last asked for — the checkboxes on screen. */
+function shownRisks(d) {
+  const out = detectedRisks(d);
+  for (const r of state.serverRisks) if (!out.includes(r.code)) out.push(r.code);
+  return out;
 }
 
 function renderMint() {
   const d = state.draft;
   const users = ((P.firmData && P.firmData.users) || []).filter((u) => Number(u.user) > 0);
   const rep = d.mode === 'repeatable';
+  const hasInputs = d.options.some((o) => o.inputs.length);
 
   E('mint-region').innerHTML = `
     <datalist id="fn-names"></datalist>
@@ -1595,9 +1922,10 @@ function renderMint() {
           </select>
         </div>
         <div class="fld"${rep ? '' : ' hidden'}>
-          <label class="yc-flabel" for="m-max">Max uses</label>
-          <input type="number" id="m-max" data-bind="max_uses" min="1" step="1" value="${esc(d.max_uses)}" placeholder="no cap">
-          <span class="yc-hint">Blank = until expiry.</span>
+          <label class="yc-flabel" for="m-max">Max uses <span class="req" id="m-max-req"${needsMaxUses(d) ? '' : ' hidden'}>*</span></label>
+          <input type="number" id="m-max" data-bind="max_uses" min="1" step="1" value="${esc(d.max_uses)}" placeholder="${needsMaxUses(d) ? 'required' : 'no cap'}">
+          <span class="yc-hint" id="m-max-hint">${maxUsesHint(d)}</span>
+          ${fieldErrHtml('max_uses')}
         </div>
       </div>
       <div class="fgrid" style="margin-top:12px">
@@ -1633,7 +1961,8 @@ function renderMint() {
             <option value="none"${d.protection === 'none' ? ' selected' : ''}>none — anyone with the link</option>
             <option value="password"${d.protection === 'password' ? ' selected' : ''}>password — confirm page asks for it</option>
           </select>
-          <span class="yc-hint">Default is <b>none</b>, or <b>password</b> when an option has a result template (links that return information). Typing a password below also means password.</span>
+          <span class="yc-hint">Default is <b>none</b>, or <b>password</b> when an option takes clicker inputs or has a result template (links that return information). Typing a password below also means password.</span>
+          ${hasInputs && d.protection === 'none' ? '<span class="yc-hint warn">An option takes clicker inputs, so the default would be password. Choosing none is your acceptance: anyone holding the link can submit them.</span>' : ''}
         </div>
         <div class="fld">
           <label class="yc-flabel" for="m-pw">Password <span class="muted">(optional)</span></label>
@@ -1655,7 +1984,8 @@ function renderMint() {
       <div class="fld" style="margin-top:14px"${rep ? ' hidden' : ''}>
         <label class="yc-flabel" for="m-timeout-opt">If nobody clicks before expiry</label>
         <select id="m-timeout-opt" data-bind="timeout_option">${timeoutOptionsHtml()}</select>
-        <span class="yc-hint">Runs the chosen option automatically once the link expires unused (the sweep checks every ~5 min). Single-use links only.</span>
+        <span class="yc-hint">Runs the chosen option automatically once the link expires unused (the sweep checks every ~5 min). Single-use links only.${hasInputs ? ' An option with clicker inputs can run this way only if every one of its inputs has a default — nobody is there to fill them in.' : ''}</span>
+        ${fieldErrHtml('timeout_option')}
       </div>
     </div>
 
@@ -1696,6 +2026,10 @@ function renderMint() {
       </div>
     </div>
 
+    ${samplesSectionHtml()}
+
+    <div id="risk-region">${riskBoxHtml()}</div>
+
     <div class="btn-row">
       <button class="btn" type="button" id="dry-btn" data-act="dry">Preview (dry run)</button>
       <button class="btn primary" type="button" id="mint-btn" data-act="mint">Mint…</button>
@@ -1711,6 +2045,7 @@ function draftNoteHtml() {
   if (!n) return '';
   const notCarried = ['the expiry (set it under Behaviour — the firm default is selected)', 'the email template (never stored)'];
   if (n.protection === 'password') notCarried.unshift('the password (a new one is generated at mint unless you type one)');
+  if (n.inputs) notCarried.push('risk acknowledgments (tick them again if the link asks)');
   return `
     <div class="info-box">
       <div>Copied from <b>#${esc(n.id)}</b> "${esc(n.name)}" — review, change what you need, then mint a new link.
@@ -1745,6 +2080,8 @@ function draftFromCta(c) {
   const opts = (Array.isArray(c.options) ? c.options : []).map((o) => ({
     value: String(o.value || ''), label: String(o.label || ''), valueTouched: true,
     confirm_text: o.confirm_text || '', result_template: o.result_template || '',
+    // §12: the declarations come along; the plan already carries their "[[input:x]]" bindings.
+    inputs: (Array.isArray(o.inputs) ? o.inputs : []).map(inputFromDecl),
     steps: (Array.isArray(o.plan) && o.plan.length ? o.plan : [{ fn: '', params: {} }])
       .map((s) => ({ fn: String((s && s.fn) || ''), params: paramsText(s && s.params) })),
   }));
@@ -1771,9 +2108,9 @@ async function duplicateCta(id, cta) {
     state.draftNote = {
       id: c.id, name: c.name, protection: c.protection,
       source: c.mint_source === 'workflow' ? `workflow execution #${c.source_execution_id}` : null,
+      inputs: (c.options || []).some((o) => Array.isArray(o.inputs) && o.inputs.length),
     };
-    state.preview = null;
-    state.previewStale = false;
+    resetMintFeedback();
     openMint();
   };
   if (state.draft && state.draftDirty) {
@@ -1818,12 +2155,14 @@ function optionCardHtml(o, oi) {
           <label class="yc-flabel" for="o${oi}-label">Label <span class="req">*</span></label>
           <input type="text" id="o${oi}-label" data-bind="options.${oi}.label" maxlength="100" value="${esc(o.label)}" autocomplete="off" placeholder="Mark as spam">
           <span class="yc-hint">The button text (max 100).</span>
+          ${fieldErrHtml(`options.${oi}.label`)}
         </div>
         <div class="fld">
           <label class="yc-flabel" for="o${oi}-value">Value <span class="req">*</span></label>
           <input type="text" id="o${oi}-value" class="mono" data-bind="options.${oi}.value" maxlength="64" value="${esc(o.value)}" autocomplete="off" spellcheck="false" placeholder="spam">
           <span class="yc-hint">Rides in the URL: letters, digits, <code>_</code> and <code>-</code>. <code>respond</code> is reserved.</span>
           ${valueBad ? '<span class="field-err">Not a valid value.</span>' : ''}
+          ${fieldErrHtml(`options.${oi}.value`)}
         </div>
       </div>
       <div class="fld" style="margin-top:12px">
@@ -1831,13 +2170,15 @@ function optionCardHtml(o, oi) {
         <input type="text" id="o${oi}-confirm" data-bind="options.${oi}.confirm_text" maxlength="500" value="${esc(o.confirm_text)}" autocomplete="off">
         <span class="yc-hint">Extra line on this option's confirm page (max 500).</span>
       </div>
+      ${inputsBlockHtml(o, oi)}
       <div class="fld">
         <label class="yc-flabel" for="o${oi}-tpl">Result template <span class="muted">(optional)</span></label>
         <textarea id="o${oi}-tpl" class="code" data-bind="options.${oi}.result_template" rows="2" placeholder="Current email: [[1.output.contact_email]]">${esc(o.result_template)}</textarea>
-        <span class="yc-hint">Text shown to the clicker after a successful run — the only curated output a recipient ever sees. <code>[[N.output.path]]</code> reads step N's output. Plain text, escaped. Makes the default protection <b>password</b>.</span>
+        <span class="yc-hint">Text shown to the clicker after a successful run — the only curated output a recipient ever sees. <code>[[N.output.path]]</code> reads step N's output${o.inputs.length ? '; <code>[[input:name]]</code> echoes what the clicker entered' : ''}. Plain text, escaped. Makes the default protection <b>password</b>.</span>
+        ${fieldErrHtml(`options.${oi}.result_template`)}
       </div>
       <span class="yc-flabel" style="margin-top:4px">Plan <span class="req">*</span></span>
-      <span class="yc-hint" style="margin:0 0 8px">Steps run in order, as automations (user 0); a failure stops the plan. Params are frozen JSON — no <code>{{placeholders}}</code>, no <code>_</code>-prefixed keys.</span>
+      <span class="yc-hint" style="margin:0 0 8px">Steps run in order, as automations (user 0); a failure stops the plan. Params are frozen JSON — no <code>{{placeholders}}</code>, no <code>_</code>-prefixed keys${o.inputs.length ? '; a clicker input goes in as a param\'s whole value, <code>"[[input:name]]"</code> (or use <b>Bind to</b> on the input)' : ''}.</span>
       ${o.steps.map((s, si) => stepHtml(oi, s, si, o.steps.length)).join('')}
       <button class="btn small" type="button" data-act="step-add"${o.steps.length >= 20 ? ' disabled title="Up to 20 steps"' : ''}>+ Add step</button>
     </div>`;
@@ -1857,11 +2198,14 @@ function stepHtml(oi, s, si, n) {
       <div class="fld" style="margin-bottom:6px">
         <input type="text" id="o${oi}s${si}-fn" class="mono" list="fn-names" data-bind="options.${oi}.steps.${si}.fn" value="${esc(s.fn)}" autocomplete="off" spellcheck="false" placeholder="function name, e.g. start_workflow" aria-label="Step ${si + 1} function">
         <span class="fn-desc" data-fn-desc="${oi}.${si}">${fnDescHtml(s.fn)}</span>
+        ${fieldErrHtml(`options.${oi}.steps.${si}.fn`)}
       </div>
       <div class="fld" style="margin-bottom:0">
         <label class="yc-flabel" for="o${oi}s${si}-params">Params (JSON object)</label>
         <textarea id="o${oi}s${si}-params" class="code" data-bind="options.${oi}.steps.${si}.params" rows="3" spellcheck="false">${esc(s.params)}</textarea>
         <span class="field-err" data-json-err="${oi}.${si}"${jsonErr(s.params) ? '' : ' hidden'}>${esc(jsonErr(s.params) || '')}</span>
+        ${fieldErrHtml(`options.${oi}.steps.${si}.params`)}
+        ${(() => { const note = stepBindNote(state.draft.options[oi], s); return `<span class="bind-line unbound" data-step-bind="${oi}.${si}"${note ? '' : ' hidden'}>${note}</span>`; })()}
       </div>
     </div>`;
 }
@@ -1870,6 +2214,572 @@ function jsonErr(text) {
   const t = String(text || '').trim();
   if (!t) return null;
   try { JSON.parse(t); return null; } catch (e) { return `Not valid JSON: ${e.message}`; }
+}
+
+// ── §12 builder: clicker inputs ─────────────────────────────
+// Per option: an ordered list of input declarations (newInput), a "Bind to"
+// picker per input that writes "[[input:name]]" into a step's params JSON,
+// and live hints (bound or not, the hard rule, the risk checkboxes). Every
+// rule shown here is the server's (ctaService validateInputDecls /
+// validatePlan / validateMint) — the dry run is the gate.
+
+/** A rejected mint's own words under the field they are about (state.fieldErr). */
+function fieldErrHtml(anchor) {
+  const fe = state.fieldErr;
+  return fe && fe.anchor === anchor ? `<span class="field-err" data-ferr="${esc(anchor)}">${esc(fe.text)}</span>` : '';
+}
+
+function maxUsesHint(d) {
+  return needsMaxUses(d)
+    ? '<b>Required</b> — the clicker picks who receives a message on this reusable link, so it needs a use cap. ' +
+      'Any number you choose; it can be raised later, never removed.'
+    : 'Blank = until expiry.';
+}
+
+function nameErrText(o, inp, ij) {
+  const n = String(inp.name).trim();
+  if (!n) return '';
+  if (!INPUT_NAME_RE.test(n)) return 'Not a valid name.';
+  if (RESERVED_INPUT_NAMES.includes(n)) return 'Reserved name — pick another.';
+  if (o.inputs.some((x, k) => k !== ij && String(x.name).trim() === n)) return 'Another input on this option has this name.';
+  return '';
+}
+
+function isBound(o, inp) {
+  const n = String(inp.name).trim();
+  return !!n && draftBindings(o).some((b) => b.name === n);
+}
+
+function inputsBlockHtml(o, oi) {
+  const n = o.inputs.length;
+  return `
+    <div class="in-block" data-inputs="${oi}">
+      <span class="yc-flabel">Clicker inputs <span class="muted">(optional)</span></span>
+      <span class="yc-hint" style="margin:0 0 8px">Fields the clicker fills in on this option's confirm page before the plan runs — a
+        phone number, a message, a choice. Each one is passed into a step param as that param's whole value; only params a
+        function opens to clicker input can take one (each step lists them). Inputs make the default protection <b>password</b>.</span>
+      ${o.inputs.map((inp, ij) => inputCardHtml(o, oi, inp, ij, n)).join('')}
+      ${fieldErrHtml(`options.${oi}.inputs`)}
+      <button class="btn small" type="button" data-act="in-add"${n >= MAX_INPUTS ? ` disabled title="Up to ${MAX_INPUTS} inputs per option"` : ''}>+ Add input</button>
+    </div>`;
+}
+
+const PATTERN_PLACEHOLDER = {
+  text: '[A-Z]{2}\\d{6}', phone: '\\+1248\\d{7}', email: '[^@]+@example\\.com', number: '\\d+', date: '2026-.*', html: '',
+};
+
+function inputCardHtml(o, oi, inp, ij, n) {
+  const id = `o${oi}i${ij}`;
+  const p = `options.${oi}.inputs.${ij}`;
+  const t = inp.type;
+  const nameErr = nameErrText(o, inp, ij);
+  const typeOpts = INPUT_TYPES.map((x) => `<option value="${x}"${t === x ? ' selected' : ''}>${esc(INPUT_TYPE_LABEL[x])}</option>`).join('')
+    + (INPUT_TYPES.includes(t) ? '' : `<option value="${esc(t)}" selected>${esc(t)}</option>`);
+  const fixed = Object.prototype.hasOwnProperty.call(FIXED_MAXLEN, t);
+  return `
+    <div class="in-card" data-ij="${ij}">
+      <div class="in-card-h">
+        <b>Input ${ij + 1}</b>
+        <div class="btn-row">
+          <button class="btn icon" type="button" data-act="in-up" title="Move up"${ij === 0 ? ' disabled' : ''}>↑</button>
+          <button class="btn icon" type="button" data-act="in-down" title="Move down"${ij === n - 1 ? ' disabled' : ''}>↓</button>
+          <button class="btn small danger" type="button" data-act="in-del">Remove</button>
+        </div>
+      </div>
+      <div class="fgrid">
+        <div class="fld">
+          <label class="yc-flabel" for="${id}-label">Label <span class="req">*</span></label>
+          <input type="text" id="${id}-label" data-bind="${p}.label" maxlength="100" value="${esc(inp.label)}" autocomplete="off" placeholder="Mobile number">
+          <span class="yc-hint">What the clicker sees above the field (max 100).</span>
+          ${fieldErrHtml(`${p}.label`)}
+        </div>
+        <div class="fld">
+          <label class="yc-flabel" for="${id}-name">Name <span class="req">*</span></label>
+          <input type="text" id="${id}-name" class="mono" data-bind="${p}.name" maxlength="64" value="${esc(inp.name)}" autocomplete="off" spellcheck="false" placeholder="mobile_number">
+          <span class="yc-hint">Used in bindings, <code>[[input:name]]</code>: letters, digits and <code>_</code>, not starting with a digit.</span>
+          <span class="field-err" data-name-err="${oi}.${ij}"${nameErr ? '' : ' hidden'}>${esc(nameErr)}</span>
+          ${fieldErrHtml(`${p}.name`)}
+        </div>
+      </div>
+      <div class="fgrid" style="margin-top:10px">
+        <div class="fld">
+          <label class="yc-flabel" for="${id}-type">Type</label>
+          <select id="${id}-type" data-bind="${p}.type" data-structural>${typeOpts}</select>
+          <span class="yc-hint">${esc(INPUT_TYPE_HINT[t] || '')}</span>
+          ${fieldErrHtml(`${p}.type`)}
+        </div>
+        <div class="fld">
+          <span class="yc-flabel">Required</span>
+          <label class="check"><input type="checkbox" id="${id}-req" data-bind="${p}.required"${inp.required ? ' checked' : ''}> The clicker must fill it in</label>
+          <span class="yc-hint">Optional with no default: a blank answer leaves the param out of the step.</span>
+          ${fieldErrHtml(`${p}.required`)}
+        </div>
+      </div>
+      ${t === 'enum' ? choicesHtml(p, oi, ij, inp) : ''}
+      <div class="fgrid" style="margin-top:10px">
+        ${fixed ? '' : `
+        <div class="fld">
+          <label class="yc-flabel" for="${id}-maxlen">Max length <span class="req">*</span></label>
+          <input type="number" id="${id}-maxlen" data-bind="${p}.maxlen" min="1" max="${MAX_INPUT_LEN}" step="1" value="${esc(inp.maxlen)}">
+          <span class="yc-hint">Characters, counted after the server tidies the value (1–${MAX_INPUT_LEN}).</span>
+          ${fieldErrHtml(`${p}.maxlen`)}
+        </div>`}
+        <div class="fld">
+          <label class="yc-flabel" for="${id}-default">Default <span class="muted">(optional)</span></label>
+          ${defaultControlHtml(id, p, inp)}
+          <span class="yc-hint">Pre-filled on the confirm page; used when left blank.</span>
+          ${fieldErrHtml(`${p}.default`)}
+        </div>
+      </div>
+      ${t === 'enum' ? '' : `
+      <div class="fld" style="margin-top:10px">
+        <label class="yc-flabel" for="${id}-pattern">Pattern <span class="muted">(optional)</span></label>
+        <input type="text" id="${id}-pattern" class="mono" data-bind="${p}.pattern" maxlength="${MAX_PATTERN}" value="${esc(inp.pattern)}" autocomplete="off" spellcheck="false" placeholder="${esc(PATTERN_PLACEHOLDER[t] || '')}">
+        <span class="yc-hint">A regular expression the <b>whole</b> tidied value must match (a phone as +1XXXXXXXXXX, an email
+          lowercased). Runs on a <b>linear-time</b> engine, at most ${MAX_PATTERN} characters: no lookahead or backreferences, repeat
+          counts up to 16 — write <code>\\d{9}\\d{8}</code>, not <code>\\d{17}</code>, or <code>\\d+</code> with Max length. A
+          mismatch only says "not in the expected format", so name the format in the label.</span>
+        ${fieldErrHtml(`${p}.pattern`)}
+      </div>`}
+      <div class="fld" style="margin:10px 0 0">
+        <label class="yc-flabel" for="${id}-bind">Bind to</label>
+        <select id="${id}-bind" data-bind-input="${oi}.${ij}">${bindOptionsHtml(o, inp)}</select>
+        <span class="bind-line${isBound(o, inp) ? '' : ' unbound'}" id="${id}-used">${bindLineHtml(o, inp)}</span>
+        ${fieldErrHtml(`bind:${oi}.${ij}`)}
+      </div>
+    </div>`;
+}
+
+function choicesHtml(p, oi, ij, inp) {
+  const n = inp.choices.length;
+  return `
+      <div class="fld" style="margin-top:10px">
+        <span class="yc-flabel">Choices <span class="req">*</span></span>
+        ${inp.choices.map((c, ck) => `
+        <div class="choice-row" data-ck="${ck}">
+          <input type="text" class="mono" id="o${oi}i${ij}c${ck}" data-bind="${p}.choices.${ck}" maxlength="64" value="${esc(c)}" autocomplete="off" spellcheck="false" aria-label="Choice ${ck + 1}">
+          <button class="btn icon danger" type="button" data-act="choice-del" title="Remove choice">✕</button>
+        </div>`).join('')}
+        <button class="btn small" type="button" data-act="choice-add"${n >= MAX_CHOICES ? ` disabled title="Up to ${MAX_CHOICES} choices"` : ''}>+ Add choice</button>
+        <span class="yc-hint">1–${MAX_CHOICES} choices. Each is both what the clicker picks and the value passed on — letters, digits,
+          <code>_</code> and <code>-</code> only, like an option value.</span>
+        ${fieldErrHtml(`${p}.choices`)}
+      </div>`;
+}
+
+function enumOptionsHtml(inp, selected, blankLabel) {
+  const ch = inp.choices.map((c) => String(c).trim()).filter((c) => c !== '');
+  const keep = selected !== '' && !ch.includes(selected)   // a typed-away choice stays visible until changed
+    ? `<option value="${esc(selected)}" selected>${esc(selected)}</option>` : '';
+  return `<option value="">${esc(blankLabel)}</option>${keep}` +
+    ch.map((c) => `<option value="${esc(c)}"${c === selected ? ' selected' : ''}>${esc(c)}</option>`).join('');
+}
+
+function defaultControlHtml(id, p, inp) {
+  const v = String(inp.default);
+  switch (inp.type) {
+    case 'enum': return `<select id="${id}-default" data-bind="${p}.default">${enumOptionsHtml(inp, v, '— none —')}</select>`;
+    case 'html': return `<textarea id="${id}-default" class="code" data-bind="${p}.default" rows="2" spellcheck="false">${esc(v)}</textarea>`;
+    case 'date': return `<input type="date" id="${id}-default" data-bind="${p}.default" value="${esc(v)}">`;
+    case 'phone': return `<input type="tel" id="${id}-default" data-bind="${p}.default" inputmode="tel" value="${esc(v)}" autocomplete="off">`;
+    case 'email': return `<input type="email" id="${id}-default" data-bind="${p}.default" value="${esc(v)}" autocomplete="off">`;
+    case 'number': return `<input type="text" id="${id}-default" data-bind="${p}.default" inputmode="decimal" value="${esc(v)}" autocomplete="off">`;
+    default: return `<input type="text" id="${id}-default" data-bind="${p}.default" value="${esc(v)}" autocomplete="off">`;
+  }
+}
+
+/** Short kind/type tag for a picker row: "recipient · phone", "content · HTML". */
+function specShort(spec) {
+  if (spec.kind === 'recipient') return `recipient · ${spec.type || 'phone or email'}`;
+  return spec.html ? 'content · HTML' : 'content';
+}
+
+/** The "Bind to" picker: every open param of this option's steps. */
+function bindOptionsHtml(o, inp) {
+  const name = String(inp.name).trim();
+  const rows = [];
+  o.steps.forEach((s, si) => {
+    const fn = String(s.fn || '').trim();
+    const ps = stepParams(s);
+    for (const { param, spec } of openedParams(fn)) {
+      const mine = !!name && !!ps && ps[param] === `[[input:${name}]]`;
+      const why = bindMismatch(spec, inp.type);
+      const tail = mine ? ' (bound)' : !ps ? ' (fix the params JSON first)' : why ? ` (${why})` : '';
+      rows.push(`<option value="${si}|${esc(param)}"${mine || !ps ? ' disabled' : ''}>${esc(`Step ${si + 1} · ${fn}.${param} — ${specShort(spec)}${tail}`)}</option>`);
+    }
+  });
+  const head = !state.fnMeta ? (state.fnMetaErr ? 'Function list unavailable — type the binding into the params' : 'Loading the function list…')
+    : rows.length ? 'Choose a step param…' : 'No step on this option takes clicker input';
+  return `<option value="">${esc(head)}</option>${rows.join('')}`;
+}
+
+/** Where the input is bound now — or that it isn't (the mint refuses an unbound input). */
+function bindLineHtml(o, inp) {
+  const name = String(inp.name).trim();
+  if (!name) return 'Name it, then bind it to a step param.';
+  const hits = draftBindings(o).filter((b) => b.name === name);
+  if (!hits.length) {
+    return `Not bound yet — every input must feed a step: pick a param above, or put <code>"[[input:${esc(name)}]]"</code> as a param's whole value.`;
+  }
+  return `Bound to ${hits.map((b) => {
+    const sp = state.fnMeta ? openedSpec(b.fn, b.param) : undefined;
+    const why = sp === undefined ? null : sp === null ? 'not open to clicker input' : bindMismatch(sp, inp.type);
+    return `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>${why ? ` <span class="warn-text">— ${esc(why)}</span>` : ''}`;
+  }).join(', ')}.`;
+}
+
+/** Under a step: bindings the mint will refuse (an undeclared name, a closed param). Input-less options: none — their markers are just text. */
+function stepBindNote(o, s) {
+  if (!o.inputs.length) return '';
+  const ps = stepParams(s);
+  if (!ps) return '';
+  const names = new Set(o.inputs.map((i) => String(i.name).trim()));
+  const fn = String(s.fn || '').trim();
+  const bad = [];
+  for (const [k, v] of Object.entries(ps)) {
+    const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
+    if (!m) continue;
+    if (!names.has(m[1])) bad.push(`${k}: no input named "${m[1]}" on this option`);
+    else if (state.fnMeta && !openedSpec(fn, k)) bad.push(`${fn ? `${fn}.` : ''}${k} is not open to clicker input`);
+  }
+  return bad.map(esc).join(' · ');
+}
+
+/** "Bind to" picked: write "[[input:name]]" into that step param (params JSON re-serialized). */
+function bindInput(sel) {
+  const val = sel.value;
+  if (!val) return;
+  sel.value = '';
+  const [oi, ij] = sel.dataset.bindInput.split('.').map(Number);
+  const bar = val.indexOf('|');
+  const si = Number(val.slice(0, bar));
+  const param = val.slice(bar + 1);
+  const o = state.draft.options[oi];
+  const inp = o && o.inputs[ij];
+  const s = o && o.steps[si];
+  if (!inp || !s) return;
+  const name = String(inp.name).trim();
+  if (!INPUT_NAME_RE.test(name)) { showToast('Give the input a valid name first'); return; }
+  const ps = stepParams(s);
+  if (!ps) { showToast(`Step ${si + 1}: fix the params JSON first`); return; }
+  ps[param] = `[[input:${name}]]`;
+  s.params = paramsText(ps);
+  inp.name = name;
+  inp.nameTouched = true;   // a bound name stops following the label
+  const ne = E(`o${oi}i${ij}-name`);
+  if (ne) ne.value = name;
+  const ta = E(`o${oi}s${si}-params`);
+  if (ta) ta.value = s.params;
+  const je = document.querySelector(`[data-json-err="${oi}.${si}"]`);
+  if (je) { je.textContent = ''; je.hidden = true; }
+  state.draftDirty = true;
+  clearFieldErrFor(`options.${oi}.steps.${si}.params`);
+  markPreviewStale();
+  refreshInputDerived();
+  showToast(`Step ${si + 1}: ${String(s.fn).trim()}.${param} ← [[input:${name}]]`);
+}
+
+/** Drop the server field error once its field (or, for a binding error, that option's steps/inputs) is edited. */
+function clearFieldErrFor(path) {
+  const fe = state.fieldErr;
+  if (!fe) return;
+  let hit = fe.anchor === path || path.startsWith(`${fe.anchor}.`);
+  if (!hit && fe.anchor.startsWith('bind:')) {
+    const oi = fe.anchor.slice(5).split('.')[0];
+    hit = new RegExp(`^options\\.${oi}\\.(steps|inputs)\\.`).test(path);
+  }
+  if (!hit) return;
+  state.fieldErr = null;
+  document.querySelectorAll('[data-ferr]').forEach((x) => x.remove());
+}
+
+function sampleLabel(inp, ij) {
+  return String(inp.label).trim() || String(inp.name).trim() || `Input ${ij + 1}`;
+}
+
+/** The test-value fields: each option's inputs as its confirm page will show them (dry run only — never stored). */
+function samplesSectionHtml() {
+  const d = state.draft;
+  const opts = d.options.map((o, oi) => ({ o, oi })).filter((x) => x.o.inputs.length);
+  if (!opts.length) return '';
+  return `
+    <div class="form-section" id="samples-section">
+      <h3>Test values <span class="h-aside">(dry run only)</span></h3>
+      <span class="yc-hint" style="margin:-4px 0 10px">The fields each option's confirm page will show. Type what a clicker might
+        enter and <b>Preview</b> has the server check those too: the type, length and pattern checks, then every bound step with the
+        values filled in (escaped the way a click would be). Never stored or sent with the mint. Blank = the input's default, else a
+        generic sample.</span>
+      ${opts.map(({ o, oi }) => `
+      <div class="sample-opt">
+        <div class="opt-view-h"><b data-sopt="${oi}">${esc(o.label.trim() || `Option ${oi + 1}`)}</b></div>
+        ${o.inputs.map((inp, ij) => sampleFieldHtml(oi, ij, inp)).join('')}
+        ${state.sampleStepErr[oi] ? `<div class="fld"><span class="field-err" data-sstep="${oi}">${esc(state.sampleStepErr[oi])}</span></div>` : ''}
+      </div>`).join('')}
+    </div>`;
+}
+
+function sampleFieldHtml(oi, ij, inp) {
+  const id = `s${oi}_${ij}`;
+  const b = `options.${oi}.inputs.${ij}.sample`;
+  const def = String(inp.default).trim();
+  const ph = def ? `default: ${def}` : '';
+  let control;
+  if (inp.type === 'enum') {
+    control = `<select id="${id}" data-bind="${b}">${enumOptionsHtml(inp, String(inp.sample), ph || '— none —')}</select>`;
+  } else if (inp.type === 'html' || (inp.type === 'text' && Number(inp.maxlen) > 120)) {
+    control = `<textarea id="${id}" data-bind="${b}" rows="3" placeholder="${esc(ph)}">${esc(inp.sample)}</textarea>`;
+  } else {
+    const attrs = {
+      text: 'type="text"', phone: 'type="tel" inputmode="tel"', email: 'type="email"',
+      number: 'type="text" inputmode="decimal"', date: 'type="date"',
+    }[inp.type] || 'type="text"';
+    control = `<input ${attrs} id="${id}" data-bind="${b}" value="${esc(inp.sample)}" autocomplete="off" placeholder="${esc(ph)}">`;
+  }
+  const err = state.sampleErr[`${oi}.${ij}`];
+  return `
+        <div class="fld">
+          <label class="yc-flabel" for="${id}"><span data-slabel="${oi}.${ij}">${esc(sampleLabel(inp, ij))}</span>${inp.required ? ' <span class="req">*</span>' : ''}</label>
+          ${control}
+          <span class="yc-hint">${esc(INPUT_TYPE_LABEL[inp.type] || inp.type)}${inp.required ? '' : ' · optional'}</span>
+          ${err ? `<span class="field-err" data-serr="${oi}.${ij}">${esc(err)}</span>` : ''}
+        </div>`;
+}
+
+function riskTitle(code) {
+  return RISK_COPY[code] ? RISK_COPY[code].title : code;
+}
+
+/** The acknowledge-to-proceed checkboxes (§12 Policy) — detected here, or asked for by the server's last 400. */
+function riskBoxHtml() {
+  const d = state.draft;
+  const codes = shownRisks(d);
+  if (!codes.length) return '';
+  return `
+    <div class="risk-box" role="group" aria-label="Risk acknowledgments">
+      <b class="risk-head">Acknowledge before minting</b>
+      ${codes.map((code) => {
+        const copy = RISK_COPY[code];
+        const srv = state.serverRisks.find((r) => r.code === code);
+        const body = copy ? copy.body : (srv && srv.description) || 'The server asks for this acknowledgment before minting.';
+        return `
+      <div class="risk-item">
+        <div><b>${esc(riskTitle(code))}</b></div>
+        <p>${esc(body)}</p>
+        <label class="check"><input type="checkbox" data-risk="${esc(code)}"${d.accept_risks.includes(code) ? ' checked' : ''}> I understand — mint it anyway</label>
+      </div>`;
+      }).join('')}
+      <p style="margin:8px 0 0">Your acknowledgment is recorded with the mint (receipt and audit log).</p>
+    </div>`;
+}
+
+/** Repaint everything that hangs off names, bindings, the mode and the risks — without a full re-render (keeps focus). */
+function refreshInputDerived() {
+  const d = state.draft;
+  if (!d || state.view !== 'mint') return;
+  d.options.forEach((o, oi) => {
+    o.inputs.forEach((inp, ij) => {
+      const id = `o${oi}i${ij}`;
+      const sel = E(`${id}-bind`);
+      if (sel) sel.innerHTML = bindOptionsHtml(o, inp);
+      const used = E(`${id}-used`);
+      if (used) { used.innerHTML = bindLineHtml(o, inp); used.classList.toggle('unbound', !isBound(o, inp)); }
+      const ne = document.querySelector(`[data-name-err="${oi}.${ij}"]`);
+      if (ne) { const t = nameErrText(o, inp, ij); ne.textContent = t; ne.hidden = !t; }
+      const sl = document.querySelector(`[data-slabel="${oi}.${ij}"]`);
+      if (sl) sl.textContent = sampleLabel(inp, ij);
+    });
+    const so = document.querySelector(`[data-sopt="${oi}"]`);
+    if (so) so.textContent = o.label.trim() || `Option ${oi + 1}`;
+    o.steps.forEach((s, si) => {
+      const sb = document.querySelector(`[data-step-bind="${oi}.${si}"]`);
+      if (sb) { const t = stepBindNote(o, s); sb.innerHTML = t; sb.hidden = !t; }
+    });
+  });
+  const need = needsMaxUses(d);
+  const req = E('m-max-req');
+  if (req) req.hidden = !need;
+  const hint = E('m-max-hint');
+  if (hint) hint.innerHTML = maxUsesHint(d);
+  const mx = E('m-max');
+  if (mx) mx.placeholder = need ? 'required' : 'no cap';
+  const rr = E('risk-region');
+  if (rr) rr.innerHTML = riskBoxHtml();
+}
+
+/** Choices typed → the enum's Default and test-value dropdowns follow. */
+function refreshEnumSelects(oi, ij) {
+  const inp = state.draft.options[oi].inputs[ij];
+  const df = E(`o${oi}i${ij}-default`);
+  if (df && df.tagName === 'SELECT') df.innerHTML = enumOptionsHtml(inp, String(inp.default), '— none —');
+  const sf = E(`s${oi}_${ij}`);
+  if (sf && sf.tagName === 'SELECT') {
+    const def = String(inp.default).trim();
+    sf.innerHTML = enumOptionsHtml(inp, String(inp.sample), def ? `default: ${def}` : '— none —');
+  }
+}
+
+/** A stored declaration (row.options[].inputs[]) → the builder's shape (Duplicate). */
+function inputFromDecl(dcl) {
+  const t = String((dcl && dcl.type) || 'text');
+  const has = (k) => !!dcl && Object.prototype.hasOwnProperty.call(dcl, k) && dcl[k] != null;
+  return {
+    name: has('name') ? String(dcl.name) : '', nameTouched: true,
+    label: has('label') ? String(dcl.label) : '', type: t, required: !!(dcl && dcl.required),
+    maxlen: has('maxlen') ? String(dcl.maxlen) : (INPUT_MAXLEN_DEFAULT[t] || ''), maxlenTouched: true,
+    default: has('default') ? String(dcl.default) : '',
+    pattern: has('pattern') ? String(dcl.pattern) : '',
+    choices: Array.isArray(dcl && dcl.choices) ? dcl.choices.map(String) : [],
+    sample: '',
+  };
+}
+
+/**
+ * Builder input → the §12 declaration POST /api/cta takes. maxlen goes as a
+ * number when it is one (else as typed, so the server says why); choices only
+ * for enum, a pattern never for enum; blank default/pattern omitted.
+ * withSample: the test value stands in as the default (the test-values dry run).
+ */
+function inputDecl(i, withSample) {
+  const decl = { name: String(i.name).trim(), label: String(i.label).trim(), type: i.type, required: !!i.required };
+  const ml = String(i.maxlen).trim();
+  if (/^\d+$/.test(ml)) decl.maxlen = Number(ml);
+  else if (ml) decl.maxlen = ml;
+  if (i.type === 'enum') decl.choices = i.choices.map((c) => String(c).trim()).filter((c) => c !== '');
+  else if (String(i.pattern).trim() !== '') decl.pattern = i.pattern;
+  const def = withSample && String(i.sample).trim() !== '' ? i.sample : i.default;
+  if (String(def).trim() !== '') decl.default = def;
+  return decl;
+}
+
+const FIELD_WORD = {
+  name: 'Name', label: 'Label', type: 'Type', required: 'Required', maxlen: 'Max length',
+  choices: 'Choices', pattern: 'Pattern', default: 'Default',
+};
+
+/**
+ * A rejected mint's message → { anchor, text } for the field it is about, or
+ * null. Keyed on the server's own path labels (ctaService: `options[i]`,
+ * `.inputs[j].<field>`, `.plan[k]`, the timeout and hard-rule sentences) —
+ * indexes match the body buildBody just sent, which maps the draft 1:1.
+ */
+function mapMintError(message) {
+  const d = state.draft;
+  if (!d) return null;
+  const msg = String(message || '').replace(/^cta: /, '');
+  let m;
+  const idxByName = (oi, name) => (d.options[oi] ? d.options[oi].inputs.map((x) => String(x.name).trim()).lastIndexOf(name) : -1);
+
+  if ((m = /^options\[(\d+)\]\.inputs\[(\d+)\]\.(name|label|type|required|maxlen|choices|pattern|default)\b(:?)\s*([\s\S]*)$/.exec(msg))) {
+    const oi = Number(m[1]); const ij = Number(m[2]);
+    const inp = d.options[oi] && d.options[oi].inputs[ij];
+    let field = m[3];
+    if (field === 'maxlen' && inp && FIXED_MAXLEN[inp.type]) field = 'type';   // the pane fixes that length
+    return { anchor: `options.${oi}.inputs.${ij}.${field}`, text: `${FIELD_WORD[m[3]]}${m[5] ? `${m[4] ? ':' : ''} ${m[5]}` : ''}` };
+  }
+  if ((m = /^options\[(\d+)\]\.inputs: duplicate input name "([^"]*)"/.exec(msg))) {
+    const ij = idxByName(Number(m[1]), m[2]);
+    if (ij >= 0) return { anchor: `options.${m[1]}.inputs.${ij}.name`, text: `Another input on this option is also named "${m[2]}".` };
+  }
+  if ((m = /^options\[(\d+)\]\.inputs: "([^"]*)" is declared but never bound/.exec(msg))) {
+    const ij = idxByName(Number(m[1]), m[2]);
+    if (ij >= 0) return { anchor: `bind:${m[1]}.${ij}`, text: 'Not bound to any step param — the mint needs every input used.' };
+  }
+  if ((m = /^options\[(\d+)\]\.inputs\b/.exec(msg))) return { anchor: `options.${m[1]}.inputs`, text: msg };
+  if ((m = /^options\[(\d+)\]\.plan\[(\d+)\]\.fn:\s*([\s\S]*)$/.exec(msg))) {
+    return { anchor: `options.${m[1]}.steps.${m[2]}.fn`, text: m[3] };
+  }
+  if ((m = /^options\[(\d+)\]\.plan\[(\d+)\]/.exec(msg))) {
+    return { anchor: `options.${m[1]}.steps.${m[2]}.params`, text: msg.slice(m[0].length).replace(/^[.:\s]+/, '') || msg };
+  }
+  if ((m = /^options\[(\d+)\]\.(value|label|result_template)\b(:?)\s*([\s\S]*)$/.exec(msg))) {
+    const word = { value: 'Value', label: 'Label', result_template: 'Result template' }[m[2]];
+    return { anchor: `options.${m[1]}.${m[2]}`, text: `${word}${m[4] ? `${m[3] ? ':' : ''} ${m[4]}` : ''}` };
+  }
+  if ((m = /^timeout_option "([^"]*)": input "([^"]*)" needs a default/.exec(msg))) {
+    const oi = d.options.findIndex((o) => o.value.trim() === m[1]);
+    const ij = oi >= 0 ? idxByName(oi, m[2]) : -1;
+    if (ij >= 0) return { anchor: `options.${oi}.inputs.${ij}.default`, text: 'Needed: this is the timeout option, and at expiry nobody is there to fill it in.' };
+  }
+  if (/^timeout_option\b/.test(msg)) return { anchor: 'timeout_option', text: msg };
+  if (/clicker-supplied recipient must set max_uses|^max_uses\b/.test(msg)) return { anchor: 'max_uses', text: msg };
+  return null;
+}
+
+/**
+ * The test-values dry run refused: "options[i].inputs[j].default: …" is that
+ * test value (the real dry run already passed every real default), and
+ * "options[i].plan[k] (fn) with default/sample inputs: …" is a step that won't
+ * take the values. Anything else is shown whole.
+ */
+function applySampleError(err) {
+  const b = err.body || {};
+  const msg = String(b.message || err.message || '').replace(/^cta: /, '');
+  let m;
+  let placed = false;
+  if ((m = /^options\[(\d+)\]\.inputs\[(\d+)\]\.default:\s*([\s\S]*)$/.exec(msg))) {
+    state.sampleErr[`${m[1]}.${m[2]}`] = m[3];
+    placed = true;
+  } else if ((m = /^options\[(\d+)\]\.plan\[(\d+)\] \(([^)]*)\) with default\/sample inputs:\s*([\s\S]*)$/.exec(msg))) {
+    state.sampleStepErr[Number(m[1])] = `Step ${Number(m[2]) + 1} (${m[3]}) won't take these values: ${m[4]}`;
+    placed = true;
+  }
+  state.sampleRun = { ok: false, message: placed ? 'see the test values above.' : errText(err) };
+}
+
+/** A result template with the test values in (step outputs as ‹placeholders›) — display only. */
+function renderTplPreview(tpl, o) {
+  return String(tpl).replace(/\[\[([^\]]*)\]\]/g, (whole, inner) => {
+    const im = /^input:([a-zA-Z_][a-zA-Z0-9_]{0,63})$/.exec(inner);
+    if (im) {
+      const i = o.inputs.find((x) => String(x.name).trim() === im[1]);
+      if (!i) return '';
+      return String(i.sample).trim() !== '' ? String(i.sample).trim() : String(i.default).trim();
+    }
+    const rm = /^(\d+)\.output((?:\.[A-Za-z0-9_-]+)*)$/.exec(inner);
+    return rm ? `‹step ${rm[1]} output${rm[2]}›` : whole;
+  });
+}
+
+/** The dry run's "Clicker inputs" block: per option, each input → where it goes (and how it is escaped), the test-value check, the result text. */
+function previewInputsHtml() {
+  const d = state.draft;
+  if (!d) return '';
+  const opts = d.options.map((o, oi) => ({ o, oi })).filter((x) => x.o.inputs.length);
+  if (!opts.length) return '';
+  const anySample = opts.some(({ o }) => o.inputs.some((i) => String(i.sample).trim() !== ''));
+  let check = '';
+  if (!anySample) check = '<span class="yc-hint" style="margin:0 0 8px">Fill in <b>Test values</b> above to have the server check realistic answers too.</span>';
+  else if (state.sampleRun && state.sampleRun.ok) check = '<div class="ok-box" style="margin-bottom:8px"><b>Test values pass</b> the server\'s checks — type, length, pattern, and every bound step with them filled in.</div>';
+  else if (state.sampleRun) check = `<div class="inline-error" style="margin-bottom:8px"><b>Test values refused:</b> ${esc(state.sampleRun.message)}</div>`;
+  return `
+    <div class="section" style="margin-top:10px">
+      <h3>Clicker inputs</h3>
+      ${check}
+      ${opts.map(({ o }) => `
+      <div class="opt-view">
+        <div class="opt-view-h"><b>${esc(o.label.trim())}</b> <code>${esc(o.value.trim())}</code></div>
+        <div class="in-vals" style="margin-top:0">${o.inputs.map((i) => previewInputRow(o, i)).join('')}</div>
+        ${o.result_template.trim() ? `
+        <span class="yc-hint" style="margin-top:8px">Result text with these values (step output shown as ‹…›; a phone, email or number is normalized by the server first):</span>
+        <pre class="blk">${esc(renderTplPreview(o.result_template, o))}</pre>` : ''}
+      </div>`).join('')}
+    </div>`;
+}
+
+function previewInputRow(o, i) {
+  const name = String(i.name).trim();
+  const into = draftBindings(o).filter((b) => b.name === name).map((b) => {
+    const sp = openedSpec(b.fn, b.param);
+    const how = !sp || !sp.html ? '' : i.type === 'html' ? ' — raw HTML, passed as typed' : ' — escaped as text, line breaks become <br>';
+    return `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>${esc(how)}`;
+  });
+  const v = String(i.sample).trim() !== '' ? String(i.sample) : String(i.default);
+  return `
+          <div class="in-val">
+            <div class="in-val-k">${esc(String(i.label).trim())} <code class="muted">${esc(name)}</code></div>
+            <span class="yc-hint" style="margin-top:2px">${esc(INPUT_TYPE_LABEL[i.type] || i.type)} · ${i.required ? 'required' : 'optional'}${into.length ? ` → ${into.join(', ')}` : ''}</span>
+            ${v.trim() !== '' ? `<pre class="blk">${esc(v)}</pre>` : ''}
+          </div>`;
 }
 
 /** draft path "options.0.steps.1.fn" → set */
@@ -1881,12 +2791,28 @@ function setPath(path, value) {
 }
 
 function onMintInput(e) {
+  // §12 risk acknowledgment checkboxes: idempotent (input AND change both fire).
+  const rk = e.target.closest('[data-risk]');
+  if (rk) {
+    const d = state.draft;
+    const code = rk.dataset.risk;
+    d.accept_risks = d.accept_risks.filter((c) => c !== code);
+    if (rk.checked) d.accept_risks.push(code);
+    state.draftDirty = true;
+    markPreviewStale();
+    return;
+  }
+  // §12 "Bind to" picker: writes the binding, then resets itself (a second event sees '').
+  const bi = e.target.closest('[data-bind-input]');
+  if (bi) { bindInput(bi); return; }
+
   const el = e.target.closest('[data-bind]');
   if (!el) return;
   const path = el.dataset.bind;
   const val = el.type === 'checkbox' ? el.checked : el.value;
   setPath(path, val);
   state.draftDirty = true;
+  clearFieldErrFor(path);
   markPreviewStale();
 
   let m;
@@ -1898,16 +2824,60 @@ function onMintInput(e) {
       if (v) v.value = o.value;
     }
     refreshTimeoutOptions();
+    refreshInputDerived();
   } else if ((m = /^options\.(\d+)\.value$/.exec(path))) {
     state.draft.options[Number(m[1])].valueTouched = val.trim() !== '';
     refreshTimeoutOptions();
   } else if ((m = /^options\.(\d+)\.steps\.(\d+)\.fn$/.exec(path))) {
     const desc = document.querySelector(`[data-fn-desc="${m[1]}.${m[2]}"]`);
     if (desc) desc.innerHTML = fnDescHtml(val);
+    refreshInputDerived();
   } else if ((m = /^options\.(\d+)\.steps\.(\d+)\.params$/.exec(path))) {
     const errEl = document.querySelector(`[data-json-err="${m[1]}.${m[2]}"]`);
     const msg = jsonErr(val);
     if (errEl) { errEl.textContent = msg || ''; errEl.hidden = !msg; }
+    refreshInputDerived();
+  } else if ((m = /^options\.(\d+)\.inputs\.(\d+)\.(label|name|type|maxlen|default|sample)$/.exec(path)) || (m = /^options\.(\d+)\.inputs\.(\d+)\.(choices)\.\d+$/.exec(path))) {
+    const oi = Number(m[1]);
+    const ij = Number(m[2]);
+    const inp = state.draft.options[oi].inputs[ij];
+    switch (m[3]) {
+      case 'label':
+        if (!inp.nameTouched) {
+          inp.name = slugName(val);
+          const ne = E(`o${oi}i${ij}-name`);
+          if (ne) ne.value = inp.name;
+        }
+        refreshInputDerived();
+        break;
+      case 'name':
+        inp.nameTouched = val.trim() !== '';
+        refreshInputDerived();
+        break;
+      case 'type':
+        // A fixed-length type takes its fixed length; otherwise an untouched
+        // length follows the type's default. (The re-render follows on change.)
+        if (FIXED_MAXLEN[val] || !inp.maxlenTouched) { inp.maxlen = INPUT_MAXLEN_DEFAULT[val] || inp.maxlen; inp.maxlenTouched = false; }
+        break;
+      case 'maxlen': inp.maxlenTouched = true; break;
+      case 'choices': refreshEnumSelects(oi, ij); break;
+      case 'default': {
+        // The test-value field shows the default as its blank choice / placeholder.
+        if (inp.type === 'enum') { refreshEnumSelects(oi, ij); break; }
+        const sf = E(`s${oi}_${ij}`);
+        if (sf) sf.placeholder = String(val).trim() ? `default: ${String(val).trim()}` : '';
+        break;
+      }
+      case 'sample': {
+        delete state.sampleErr[`${oi}.${ij}`];
+        const se = document.querySelector(`[data-serr="${oi}.${ij}"]`);
+        if (se) se.remove();
+        delete state.sampleStepErr[oi];
+        const ss = document.querySelector(`[data-sstep="${oi}"]`);
+        if (ss) ss.remove();
+        break;
+      }
+    }
   }
   // Mode / expiry kind / protection reshape the form.
   if (el.hasAttribute('data-structural') && e.type === 'change') {
@@ -1940,9 +2910,36 @@ function onMintClick(e) {
   const oi = card ? Number(card.dataset.oi) : -1;
   const stepEl = b.closest('[data-si]');
   const si = stepEl ? Number(stepEl.dataset.si) : -1;
+  const inEl = b.closest('[data-ij]');
+  const ij = inEl ? Number(inEl.dataset.ij) : -1;
+  const ckEl = b.closest('[data-ck]');
+  const ck = ckEl ? Number(ckEl.dataset.ck) : -1;
+  const inp = oi >= 0 && ij >= 0 ? d.options[oi].inputs[ij] : null;
   const swap = (arr, i, j) => { [arr[i], arr[j]] = [arr[j], arr[i]]; };
   let structural = true;
   switch (b.dataset.act) {
+    case 'in-add': if (d.options[oi].inputs.length < MAX_INPUTS) d.options[oi].inputs.push(newInput()); break;
+    case 'in-up': if (ij > 0) swap(d.options[oi].inputs, ij, ij - 1); break;
+    case 'in-down': if (ij < d.options[oi].inputs.length - 1) swap(d.options[oi].inputs, ij, ij + 1); break;
+    case 'in-del': if (ij >= 0) d.options[oi].inputs.splice(ij, 1); break;
+    case 'choice-add': if (inp && inp.choices.length < MAX_CHOICES) inp.choices.push(''); break;
+    case 'choice-del':
+      if (inp && ck >= 0) {
+        const [gone] = inp.choices.splice(ck, 1);
+        if (String(gone).trim() !== '' && inp.default === String(gone).trim()) inp.default = '';
+        if (String(gone).trim() !== '' && inp.sample === String(gone).trim()) inp.sample = '';
+      }
+      break;
+    case 'goto-err': {
+      structural = false;
+      const fe = document.querySelector('#mint-region [data-ferr]');
+      if (fe) {
+        fe.scrollIntoView({ block: 'center' });
+        const f = fe.closest('.fld') && fe.closest('.fld').querySelector('input:not([type="checkbox"]), select, textarea');
+        if (f) f.focus();
+      }
+      break;
+    }
     case 'add-opt': if (d.options.length < 10) d.options.push(newOption()); break;
     case 'opt-up': if (oi > 0) swap(d.options, oi, oi - 1); break;
     case 'opt-down': if (oi < d.options.length - 1) swap(d.options, oi, oi + 1); break;
@@ -1958,11 +2955,24 @@ function onMintClick(e) {
     default: structural = false;
   }
   if (structural) {
-    if (b.dataset.act !== 'dismiss-note') { state.draftDirty = true; markPreviewStale(); }
-    const y = document.querySelector('.panel-host').scrollTop;
-    renderMint();
-    document.querySelector('.panel-host').scrollTop = y;
+    if (b.dataset.act !== 'dismiss-note') {
+      state.draftDirty = true;
+      markPreviewStale();
+      // Indexes may have moved: a field error or test-value result could now point at the wrong row.
+      state.fieldErr = null;
+      state.sampleErr = {};
+      state.sampleStepErr = {};
+    }
+    rerenderMint();
   }
+}
+
+/** Re-render the builder in place (scroll kept). */
+function rerenderMint() {
+  const host = document.querySelector('.panel-host');
+  const y = host.scrollTop;
+  renderMint();
+  host.scrollTop = y;
 }
 
 /** Draft → POST /api/cta body. Returns { body } or { error } (client-side JSON problems only — the server validates the rest). */
@@ -1985,7 +2995,16 @@ function buildBody(dryRun) {
     const opt = { value: o.value.trim(), label: o.label.trim(), plan };
     if (o.confirm_text.trim()) opt.confirm_text = o.confirm_text.trim();
     if (o.result_template.trim()) opt.result_template = o.result_template;
+    if (o.inputs.length) opt.inputs = o.inputs.map((i) => inputDecl(i, false));
     options.push(opt);
+  }
+  // §12 hard rule, as a required field: repeatable + a clicker-chosen recipient needs max_uses.
+  if (needsMaxUses(d) && !String(d.max_uses).trim()) {
+    return {
+      error: 'Max uses: required — this reusable link lets the clicker pick who receives a message, so it needs a use cap (any number).',
+      anchor: 'max_uses',
+      fieldText: 'Required — the clicker picks the recipient on this reusable link.',
+    };
   }
   const body = { name: d.name, prompt: d.prompt, mode: d.mode, options, dry_run: dryRun };
   if (d.context_html.trim()) body.context_html = d.context_html;
@@ -2004,16 +3023,34 @@ function buildBody(dryRun) {
   if (d.attributed_user_id) body.attributed_user_id = d.attributed_user_id;
   if (d.link_type || d.link_id.trim()) { body.link_type = d.link_type; body.link_id = d.link_id.trim(); }
   if (d.email_template.trim()) body.email_template = d.email_template;
-  return { body };
+  // Only the acknowledgments on screen (a box ticked, then made moot by an edit, stays out).
+  const shown = shownRisks(d);
+  const accept = d.accept_risks.filter((c) => shown.includes(c));
+  if (accept.length) body.accept_risks = accept;
+  // The test-values dry run (§12 "Validation — Mint" with the SU's values): the
+  // same body with each filled-in test value standing in as that input's default.
+  let sampleBody = null;
+  if (dryRun && d.options.some((o) => o.inputs.some((i) => String(i.sample).trim() !== ''))) {
+    sampleBody = JSON.parse(JSON.stringify(body));
+    d.options.forEach((o, oi) => o.inputs.forEach((i, ij) => {
+      if (String(i.sample).trim() !== '') sampleBody.options[oi].inputs[ij] = inputDecl(i, true);
+    }));
+  }
+  return { body, sampleBody };
 }
 
 async function runMint(dryRun) {
   if (state.minting) return;
   const built = buildBody(dryRun);
+  state.fieldErr = null;
+  state.sampleRun = null;
+  state.sampleErr = {};
+  state.sampleStepErr = {};
   if (built.error) {
     state.preview = { ok: false, message: built.error, client: true };
     state.previewStale = false;
-    E('preview-region').innerHTML = previewHtml();
+    if (built.anchor) state.fieldErr = { anchor: built.anchor, text: built.fieldText || built.error };
+    rerenderMint();
     E('preview-region').scrollIntoView({ block: 'nearest' });
     return;
   }
@@ -2023,15 +3060,25 @@ async function runMint(dryRun) {
   if (dryRun) E('preview-region').innerHTML = '<div class="loading">Validating…</div>';
   try {
     const r = await api('/api/cta', 'POST', built.body);
+    state.serverRisks = [];
     if (dryRun) {
       state.preview = { ok: true, data: r };
       state.previewStale = false;
+      if (built.sampleBody) {
+        // Second dry run, only once the real one passed: the test values in place of the defaults.
+        try {
+          await api('/api/cta', 'POST', built.sampleBody);
+          state.sampleRun = { ok: true };
+        } catch (err) {
+          applySampleError(err);
+        }
+      }
     } else {
       // The receipt carries neither the prompt (the plain-text copy needs it)
       // nor the email template (never stored — the Send dialog offers it again).
       state.receipt = { ...r, _prompt: built.body.prompt, _template: built.body.email_template || null };
       state.pwCopied = false;
-      state.preview = null;
+      resetMintFeedback();
       state.draft = null;          // minted — the next "+ New CTA" starts clean
       state.draftDirty = false;
       state.draftNote = null;
@@ -2040,14 +3087,19 @@ async function runMint(dryRun) {
       return;
     }
   } catch (err) {
-    state.preview = { ok: false, message: errText(err), status: err.status };
+    const b = err.body || {};
+    state.preview = { ok: false, message: errText(err), status: err.status, code: b.code };
     state.previewStale = false;
+    // §12: the server names the acknowledgments it wants — they join the checkboxes.
+    if (b.code === 'risk_acceptance_required' && Array.isArray(b.risks)) {
+      state.serverRisks = b.risks.filter((x) => x && typeof x.code === 'string')
+        .map((x) => ({ code: x.code, description: String(x.description || '') }));
+    }
+    state.fieldErr = mapMintError(b.message || err.message);
   } finally {
     state.minting = false;
-    if (E('dry-btn')) E('dry-btn').disabled = false;
-    if (E('mint-btn')) E('mint-btn').disabled = false;
   }
-  E('preview-region').innerHTML = previewHtml();
+  rerenderMint();
   E('preview-region').scrollIntoView({ block: 'nearest' });
 }
 
@@ -2056,7 +3108,9 @@ function confirmMint() {
   if (built.error) { runMint(false); return; }
   const b = built.body;
   const exp = b.timeout ? `in ${esc(b.timeout)}` : b.expires_at ? `${esc(b.expires_at.replace('T', ' '))} firm time` : 'firm default for the mode';
-  const prot = b.protection || (b.password ? 'password' : (b.options.some((o) => o.result_template) ? 'password (default for result templates)' : 'none'));
+  const prot = b.protection || (b.password ? 'password'
+    : b.options.some((o) => o.inputs && o.inputs.length) ? 'password (default for clicker inputs)'
+      : (b.options.some((o) => o.result_template) ? 'password (default for result templates)' : 'none'));
   openConfirm({
     title: 'Mint this CTA?',
     html: `<p>The link is live as soon as it exists — anyone you give a URL to can act on it until it expires or you disable it.
@@ -2066,7 +3120,8 @@ function confirmMint() {
         <div class="k">Mode</div><div class="v">${esc(b.mode)}${b.max_uses ? ` · max ${esc(b.max_uses)} uses` : ''}</div>
         <div class="k">Expiry</div><div class="v">${exp}</div>
         <div class="k">Protection</div><div class="v">${esc(prot)}</div>
-        <div class="k">Options</div><div class="v">${b.options.map((o) => `${esc(o.label || '(no label)')} → ${o.plan.map((s) => `<code>${esc(s.fn || '?')}</code>`).join(', ')}`).join('<br>')}</div>
+        <div class="k">Options</div><div class="v">${b.options.map((o) => `${esc(o.label || '(no label)')} → ${o.plan.map((s) => `<code>${esc(s.fn || '?')}</code>`).join(', ')}${o.inputs ? ` <span class="muted">· clicker inputs: ${o.inputs.map((x) => esc(x.name)).join(', ')}</span>` : ''}`).join('<br>')}</div>
+        ${b.accept_risks ? `<div class="k">Acknowledged</div><div class="v">${b.accept_risks.map((c) => esc(riskTitle(c))).join('<br>')}</div>` : ''}
       </div>
       <p class="yc-hint" style="margin-top:10px">Run "Preview (dry run)" first if you haven't — a mint that fails validation creates nothing either way.</p>`,
     yes: 'Mint',
@@ -2079,18 +3134,26 @@ function previewHtml() {
   if (!p) return '';
   const stale = state.previewStale ? '<div class="stale-note">The form changed since this preview — run it again.</div>' : '';
   if (!p.ok) {
-    return `${stale}<div class="inline-error"><b>${p.client ? 'Fix this first' : 'Rejected'}:</b> ${esc(p.message)}</div>`;
+    const risky = p.code === 'risk_acceptance_required'
+      ? '<div style="margin-top:6px">Tick the acknowledgment above the buttons (or change the link), then run it again.</div>' : '';
+    const goto = state.fieldErr ? ' <button class="linklike" type="button" data-act="goto-err">Show the field</button>' : '';
+    return `${stale}<div class="inline-error"><b>${p.client ? 'Fix this first' : 'Rejected'}:</b> ${esc(p.message)}${goto}${risky}</div>`;
   }
   const r = p.data || {};
   const urls = r.urls || {};
   const list = (items, cls) => items && items.length ? `<ul class="note-list ${cls}">${items.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '';
+  const why = r.protection_source ? (PROT_WHY[r.protection_source] || String(r.protection_source).replace(/_/g, ' ')) : '';
+  const acc = Array.isArray(r.risks_accepted) && r.risks_accepted.length
+    ? `<div style="margin-top:4px">Acknowledged: ${r.risks_accepted.map((c) => esc(riskTitle(c))).join('; ')} — recorded with the mint.</div>` : '';
   return `${stale}
     <div class="ok-box"><b>Valid — nothing was created.</b>
-      ${esc(r.mode)} · protection <b>${esc(r.protection)}</b>${r.protection_source ? ` <span>(${esc(String(r.protection_source).replace(/_/g, ' '))})</span>` : ''}
+      ${esc(r.mode)} · protection <b>${esc(r.protection)}</b>${why ? ` <span>(${esc(why)})</span>` : ''}
       · expires ${esc(fmtFirm(r.expires_at))}${r.max_uses != null ? ` · max ${esc(r.max_uses)} uses` : ''}${r.timeout_option ? ` · timeout option <code>${esc(r.timeout_option)}</code>` : ''}
+      ${acc}
       ${list(r.notes, '')}
     </div>
     ${r.warnings && r.warnings.length ? `<div class="warn-box" style="margin-top:8px"><b>Warnings</b>${list(r.warnings, '')}</div>` : ''}
+    ${previewInputsHtml()}
     <div class="section" style="margin-top:10px">
       <h3>URLs <span class="h-aside">(<code>&lt;token&gt;</code> is filled in at mint)</span></h3>
       <div class="detail-grid">
@@ -2186,6 +3249,7 @@ function showReceipt() {
   E('receipt-region').innerHTML = `
     <div class="ok-box" style="margin-bottom:12px"><b>CTA #${esc(r.id)} minted — "${esc(r.name)}".</b>
       ${esc(r.mode)} · protection ${esc(r.protection)} · expires ${esc(fmtFirm(r.expires_at))}
+      ${Array.isArray(r.risks_accepted) && r.risks_accepted.length ? `<div style="margin-top:4px">Acknowledged: ${r.risks_accepted.map((c) => esc(riskTitle(c))).join('; ')} — in the audit log.</div>` : ''}
       ${r.notes && r.notes.length ? `<ul class="note-list">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
     </div>
     ${r.warnings && r.warnings.length ? `<div class="warn-box"><b>Warnings</b><ul class="note-list">${r.warnings.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}
@@ -2276,7 +3340,7 @@ function init() {
     title: 'Reset the form?',
     html: '<p>Clears every field and option in this draft.</p>',
     yes: 'Reset', yesClass: 'danger',
-    onYes: async () => { state.draft = newDraft(); state.draftDirty = false; state.draftNote = null; state.preview = null; state.previewStale = false; renderMint(); },
+    onYes: async () => { state.draft = newDraft(); state.draftDirty = false; state.draftNote = null; resetMintFeedback(); renderMint(); },
   }));
   document.querySelectorAll('[data-nav="list"]').forEach((b) => b.addEventListener('click', goList));
 

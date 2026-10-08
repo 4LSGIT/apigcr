@@ -56,7 +56,7 @@ SQL query, an HTTP request, and an API key are.
 | 4 | [04-system-alerts.md](04-system-alerts.md) | The alert console behind the shell's red banner — why non-OAuth alerts never clear themselves, the open/acked/resolved states, and the two independent delivery channels. (Admin → System Alerts) |
 | 5 | [05-api-keys.md](05-api-keys.md) | Inbound API credentials — minting and revoking external keys, internal-key rotation and its one-rotation grace, and why the usage log's silence proves nothing. (Admin → API Keys) |
 | 6 | [06-tools.md](06-tools.md) | SU-authored HTML utilities stored in the database and served at `/tool/<key>` — writing one, what draft vs live actually means, and the version history. (Admin → Tools) |
-| 7 | [07-cta-links.md](07-cta-links.md) | CTA links — SU-minted `/c/` buttons that run a pre-authorized action plan when the recipient confirms: once vs repeatable, password protection, expiry refresh, reading executions, and sending a link by email or SMS. (Admin → CTA Links) |
+| 7 | [07-cta-links.md](07-cta-links.md) | CTA links — SU-minted `/c/` buttons that run a pre-authorized action plan when the recipient confirms: once vs repeatable, password protection, clicker inputs (typed fields the clicker fills, bound into the plan, with the use-cap rule and risk acknowledgments), expiry refresh, reading executions, and sending a link by email or SMS. (Admin → CTA Links) |
 
 > Connections (the credential store these tools draw on) is documented under
 > [Integrations → Connections](../04-Integrations/01-connections.md).
