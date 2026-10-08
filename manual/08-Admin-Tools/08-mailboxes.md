@@ -7,9 +7,9 @@ the comms hub (design: `ref/MAILBOX_SYSTEM_DESIGN.md`).
 **Where:** Admin → **Mailboxes**. Adding and editing mailboxes is SU only and
 asks for [elevation](README.md) like the other SU tools.
 
-> **Nothing reads mail yet.** Slice S0 sets up mailboxes and access. Polling
-> (ingest) arrives with S1, the inbox screen with S2, sending with S3. Rows you
-> create now are inert until then.
+> **Polling is live (S1); there is no inbox screen yet.** Every active mailbox
+> with **Ingest enabled** is read over IMAP every 5 minutes and stored in
+> YisraCase. The inbox screen arrives with S2, sending with S3.
 
 ## A mailbox is connection data
 
@@ -38,12 +38,54 @@ The table only says whether one is **set** or **missing**.
 
 ## Folders
 
-Every folder listed is polled and **stored in full** (once ingest is live).
-**Emit to rules** additionally feeds that folder into the email-ingest rules
+Every folder listed is polled and **stored in full**. **Emit to rules**
+additionally feeds that folder's **new** mail into the email-ingest rules
 pipeline (court mail, case linking, the log). New mailboxes start with
-`INBOX` emitting. Sent-folder names differ by host (Gmail:
-`[Gmail]/Sent Mail`) — add the server's exact name, normally without Emit to
-rules. Untick **Ingest enabled** to stop polling a box entirely.
+`INBOX` emitting. Folder names are the server's exact names — Sent differs by
+host (SiteGround: `INBOX.Sent`, Gmail: `[Gmail]/Sent Mail`) — normally added
+without Emit to rules. A misspelt folder shows up as a polling error (below).
+Untick **Ingest enabled** to stop polling a box entirely.
+
+- **The first poll stores history but never emits it.** Mail already in a
+  folder when YisraCase first reads it is stored (newest first, a few hundred
+  messages per run, after new mail) but never fed to rules — replaying months
+  of court or e-sign mail into rules would re-fire every one of them. Emit to
+  rules means "mail that arrives from now on".
+- **Never tick Emit to rules on a box whose mail already reaches YisraCase
+  another way** — for example a SiteGround address that forwards into the
+  Google inbox the Apps Script ingest reads. The pipeline only recognises a
+  repeat **within one source**, so every message would be logged twice and
+  every rule would fire twice. Store-only (Emit unticked) is always safe.
+- The same message in two YisraCase mailboxes (To: one, Cc: the other) is
+  logged once; both stored copies link to that log entry.
+
+## Attachments
+
+Attachments are **not copied** into YisraCase: the message's text and the
+list of its attachments are stored, and an attachment is fetched from the
+mail server when someone opens it (anyone with **Read** on the box).
+
+- If the message was deleted on the server (webmail, Outlook), its
+  attachments are gone from YisraCase too.
+- PDFs and images open in the browser; anything else (including HTML and SVG
+  attachments) downloads as a file.
+- "This mailbox is re-syncing" means the server renumbered the folder (a host
+  move does this). The next poll re-matches stored mail by Message-ID; try
+  again in about five minutes.
+
+## When polling fails
+
+Each folder keeps its own record (`ingest_state` on the mailbox row): the
+last error, and how many runs in a row have failed. After **5 failed runs in a
+row** (about 25 minutes) one **warning** naming the box and folder is recorded
+in system alerts (warnings ride the alert digest; they do not email on their
+own). The streak clears itself on the next good run. Usual causes: a changed
+password (re-enter the secret), a misspelt folder, or the mail server down.
+
+**Emergency stop for rules:** setting the `mailbox-imap` row in
+`email_ingest_sources` to inactive stops every mailbox from emitting on the
+next run. Mail is still stored; mail stored while it is off is never emitted
+afterwards.
 
 ## Access
 

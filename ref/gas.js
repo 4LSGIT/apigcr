@@ -26,7 +26,10 @@
 //
 // Deployment:
 //   1. Paste over the existing forwardEmailsToWebhook script.
-//   2. Set CONFIG.apiKey to the real gmail-firm API key (48-char hex).
+//   2. Project Settings → Script Properties: set INGEST_API_KEY (the
+//      gmail-firm key, 48-char hex) and PABBLY_DOCS_RELAY_URL. Secrets live
+//      ONLY there. This file is committed to a public repo and must stay
+//      byte-identical to the deployed script, so it never holds a secret.
 //   3. Run testWithLastEmail() first — verifies envelope + endpoint round
 //      trip on the most recent labeled message WITHOUT removing the label
 //      and WITHOUT firing side jobs.
@@ -41,7 +44,7 @@
 // ============================================================
 const CONFIG = {
   endpoint:         'https://app.4lsg.com/api/email/ingest',
-  apiKey:           'c8c6ab759067328228def726508773ec97f466874098c88b',
+  // apiKey: Script Property INGEST_API_KEY — see SECRETS below.
   source:           'gmail-firm',
   adapterVer:       'gas-1.0',
   schemaVer:        '1',
@@ -50,7 +53,7 @@ const CONFIG = {
   // Legacy side-job — to be removed; see inline notes
   pabblyDocsRelay: {
     enabled:        true,
-    url:            'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTY0MDYzMDA0MzI1MjZjNTUzMjUxMzIi_pc',
+    // url: Script Property PABBLY_DOCS_RELAY_URL — see SECRETS below.
     triggerAddress: 'docs@4lsg.com'
   },
 
@@ -69,9 +72,52 @@ const CONFIG = {
 
 
 // ============================================================
+// SECRETS — Script Properties only, never this file
+//
+// This file is committed to a public repo (ref/gas.js) as the reference
+// copy of the deployed script. The gmail-firm key sat in CONFIG here from
+// 2026-06-03 until its 2026-10 rotation, so secrets are read from Project
+// Settings → Script Properties instead, and repo == deployed code stays safe
+// to round-trip.
+//
+// Read once per execution (Apps Script globals live for one execution).
+// ============================================================
+let SECRETS_ = null;
+function secrets_() {
+  if (!SECRETS_) {
+    const p = PropertiesService.getScriptProperties();
+    SECRETS_ = {
+      ingestKey: String(p.getProperty('INGEST_API_KEY') || '').trim(),
+      pabblyUrl: String(p.getProperty('PABBLY_DOCS_RELAY_URL') || '').trim()
+    };
+  }
+  return SECRETS_;
+}
+
+// Names of required Script Properties that are unset. Callers abort BEFORE
+// touching any thread, so a half-configured deploy keeps every label and
+// shows up within one trigger tick instead of silently dropping the docs@
+// relay (whose failures are otherwise log-only).
+function missingSecrets_() {
+  const s = secrets_();
+  const missing = [];
+  if (!s.ingestKey) missing.push('INGEST_API_KEY');
+  if (CONFIG.pabblyDocsRelay.enabled && !s.pabblyUrl) missing.push('PABBLY_DOCS_RELAY_URL');
+  return missing;
+}
+
+
+// ============================================================
 // MAIN — bound to the time-based trigger
 // ============================================================
 function forwardEmailsToIngest() {
+  const missing = missingSecrets_();
+  if (missing.length) {
+    Logger.log('!!! ABORT RUN: Script Properties not set: ' + missing.join(', ') +
+               ' (Project Settings → Script Properties). All labels left in place.');
+    return;
+  }
+
   const label = GmailApp.getUserLabelByName(CONFIG.triggerLabelName);
   if (!label) {
     Logger.log('ABORT: trigger label not found: ' + CONFIG.triggerLabelName);
@@ -161,7 +207,7 @@ function processOneMessage(message, thread) {
 
   const res = sendToEndpoint(CONFIG.endpoint, envelopeJson, {
     'Content-Type':      'application/json',
-    'X-Email-Ingest-Key': CONFIG.apiKey
+    'X-Email-Ingest-Key': secrets_().ingestKey
   });
 
   // Network error (UrlFetchApp raised) → res.status === 0
@@ -230,7 +276,7 @@ function processOneMessage(message, thread) {
     try {
       const legacy = buildLegacyPayload(message);
       if (legacy.to === CONFIG.pabblyDocsRelay.triggerAddress) {
-        const pres = sendToEndpoint(CONFIG.pabblyDocsRelay.url, JSON.stringify(legacy), {
+        const pres = sendToEndpoint(secrets_().pabblyUrl, JSON.stringify(legacy), {
           'Content-Type': 'application/json'
         });
         if (pres.status >= 200 && pres.status < 300) {
@@ -710,15 +756,15 @@ function testWithLastEmail() {
   const json = JSON.stringify(envelope);
   Logger.log('=== payload size: ' + json.length + ' bytes ===');
 
-  if (CONFIG.apiKey === '<PASTE GMAIL-FIRM API KEY HERE BEFORE DEPLOYING>') {
-    Logger.log('!!! CONFIG.apiKey is still the placeholder — replace it before running the live trigger.');
+  if (!secrets_().ingestKey) {
+    Logger.log('!!! Script Property INGEST_API_KEY is not set — set it before running the live trigger.');
     Logger.log('    Skipping the POST so you can still review the envelope shape.');
     return;
   }
 
   const res = sendToEndpoint(CONFIG.endpoint, json, {
     'Content-Type':       'application/json',
-    'X-Email-Ingest-Key': CONFIG.apiKey
+    'X-Email-Ingest-Key': secrets_().ingestKey
   });
   Logger.log('=== POST ' + CONFIG.endpoint + ' ===');
   Logger.log('  http_status: ' + res.status);
@@ -734,7 +780,9 @@ function testWithLastEmail() {
 // 1. Paste this entire script into the Apps Script editor, replacing the
 //    previous forwardEmailsToWebhook script. Do NOT save yet.
 //
-// 2. Replace CONFIG.apiKey with the real gmail-firm API key (48-char hex).
+// 2. Project Settings → Script Properties: set INGEST_API_KEY (gmail-firm
+//    key, 48-char hex) and PABBLY_DOCS_RELAY_URL. Never paste them into
+//    CONFIG — this file is the public repo's copy of the deployed script.
 //
 // 3. Save. Authorize permissions if prompted (Gmail read, send mail,
 //    external request).
@@ -787,6 +835,10 @@ function testWithLastEmail() {
 // else — envelope build, endpoint, headers, Layer-3 — is identical to prod.
 // ============================================================
 function forwardTestTrigger() {
+  if (!secrets_().ingestKey) {
+    Logger.log('ABORT: Script Property INGEST_API_KEY is not set.');
+    return;
+  }
   const labelName = 'IT/Test Trigger';
   const label = GmailApp.getUserLabelByName(labelName);
   if (!label) { Logger.log('ABORT: test label not found: ' + labelName); return; }
@@ -815,7 +867,7 @@ function forwardTestTrigger() {
       const json = JSON.stringify(envelope);
       const res = sendToEndpoint(CONFIG.endpoint, json, {
         'Content-Type':       'application/json',
-        'X-Email-Ingest-Key': CONFIG.apiKey
+        'X-Email-Ingest-Key': secrets_().ingestKey
       });
       let parsed = {};
       try { parsed = JSON.parse(res.body) || {}; } catch (e) {}

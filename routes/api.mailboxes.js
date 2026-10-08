@@ -14,6 +14,9 @@
  *   POST   /api/mailboxes/:id/grants           SU or can_manage   {user, can_read, can_send, can_manage}
  *   PATCH  /api/mailboxes/:id/grants/:grantId  SU or can_manage   ownership-scoped
  *   DELETE /api/mailboxes/:id/grants/:grantId  SU or can_manage   ownership-scoped
+ *   GET    /api/mailboxes/:id/messages/:mid/parts/:part
+ *                                              SU or can_read — streams one stored
+ *                                              message's attachment from IMAP (S1, D1)
  *
  * Auto-mounted (server.js readdirSync); req.db injected. UI:
  * public/mailboxAdmin.html (Admin → Mailboxes). Spec:
@@ -57,7 +60,10 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const {
   superuserOnlyFor, auditAdminAction, verifyElevationToken, stepupEnabled,
 } = require('../lib/auth.superuser');
+const { pipeline } = require('stream');
 const svc = require('../services/mailboxService');
+const imapTransport = require('../services/mailbox/imapTransport');
+const { loadConnectionRow } = require('../services/mailbox/mailboxIngestService');
 
 const TOOL = 'mailboxes';
 
@@ -327,6 +333,138 @@ router.delete('/api/mailboxes/:id/grants/:grantId', jwtOrApiKey, requireJwt, asy
     res.json({ status: 'success', removed: 1, grant_id: before.id });
   } catch (err) {
     sendError(res, 'DELETE /api/mailboxes/:id/grants/:grantId', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// Message parts (S1) — attachments stream on demand from IMAP (D1)
+// ─────────────────────────────────────────────────────────────
+
+// INLINE-SAFE TYPES ONLY — the routes/api.documents.js RAW_INLINE_MIME
+// allowlist and reasoning, keyed on MIME type because a mail part has no
+// trustworthy extension. The type is whatever the SENDER declared in the
+// message structure, so anything absent here (svg, html, xml — script hosts
+// on THIS origin, where the staff JWT lives) is served as octet-stream +
+// attachment, with nosniff so the browser cannot second-guess it.
+const PART_INLINE_MIME = new Set([
+  'application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+]);
+
+// IMAP body part ids: "1", "2.1", "1.2.3"… (bounded so a path segment can't
+// smuggle anything else in).
+const PART_ID_RE = /^\d{1,4}(?:\.\d{1,4}){0,15}$/;
+
+/** RFC 6266 / 5987 Content-Disposition — same construction as routes/api.documents.js. */
+function contentDisposition(disposition, filename) {
+  const name  = String(filename == null ? '' : filename) || 'attachment';
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  return `${disposition}; filename="${ascii}"; ` +
+         `filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+function parseJsonCol(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch (_) { return null; }
+}
+
+// ─── GET /api/mailboxes/:id/messages/:mid/parts/:part ───  SU or can_read
+//
+// The ENFORCEMENT SEAT for reading stored mail's bytes (D6): grant check here,
+// on the interactive route. The connection is request-scoped and closes when
+// the stream ends or the client goes away.
+//
+// Like /api/documents/:id/raw this is fetched with apiSend's
+// `responseType:'blob'` — the browser sends no Authorization header on a
+// plain <a href> / <iframe src> navigation, so a direct link would 401.
+//
+// 404 when the server no longer has the message (deleted in webmail /
+// Outlook — the accepted D1 caveat: the GCS archival slice removes it).
+// 409 when the folder's UIDVALIDITY moved or the UID now holds a different
+// message: the stored UID is stale until the next ingest re-keys it, and
+// serving "whatever is at that UID now" could hand over another client's
+// document.
+router.get('/api/mailboxes/:id/messages/:mid/parts/:part', jwtOrApiKey, requireJwt, async (req, res) => {
+  const { id: idRaw, mid: midRaw, part } = req.params;
+  if (!/^\d+$/.test(String(idRaw)) || Number(idRaw) <= 0 ||
+      !/^\d+$/.test(String(midRaw)) || Number(midRaw) <= 0) {
+    return res.status(400).json({ status: 'error', message: 'mailbox id and message id must be positive integers' });
+  }
+  if (!PART_ID_RE.test(String(part))) {
+    return res.status(400).json({ status: 'error', message: 'part must be an IMAP body part id like 2 or 1.2' });
+  }
+  const id = Number(idRaw);
+  const mid = Number(midRaw);
+
+  try {
+    const access = await svc.getAccess(req.db, req.auth.userId, 'mailbox', id);
+    if (!access.can_read) {
+      // No grant at all → no existence oracle; a grant without read → 403.
+      if (!access.can_send && !access.can_manage) {
+        return res.status(404).json({ status: 'error', message: 'Mailbox not found' });
+      }
+      return res.status(403).json({ status: 'error', message: 'Read permission required on this mailbox' });
+    }
+
+    const [[msg]] = await req.db.query(
+      `SELECT id, folder, uid, message_id, attachments
+         FROM mail_messages WHERE id = ? AND mailbox_id = ? LIMIT 1`,
+      [mid, id]
+    );
+    if (!msg) return res.status(404).json({ status: 'error', message: 'Message not found' });
+
+    const atts = parseJsonCol(msg.attachments);
+    const att = Array.isArray(atts) ? atts.find(a => a && String(a.part) === String(part)) : null;
+    if (!att) return res.status(404).json({ status: 'error', message: 'Attachment not found on this message' });
+
+    const row = await loadConnectionRow(req.db, id);
+    if (!row) return res.status(404).json({ status: 'error', message: 'Mailbox not found' });
+    const cursor = (parseJsonCol(row.ingest_state) || {})[msg.folder];
+    if (msg.uid == null || !cursor || cursor.uidvalidity == null) {
+      return res.status(409).json({ status: 'error', message: 'This mailbox is re-syncing — try again after the next ingest run (about 5 minutes).' });
+    }
+
+    let got;
+    try {
+      got = await imapTransport.fetchPart(row, msg.folder, msg.uid, part, {
+        uidValidity: cursor.uidvalidity,
+        messageId: msg.message_id,
+      });
+    } catch (err) {
+      if (err && (err.code === 'UIDVALIDITY_MISMATCH' || err.code === 'MESSAGE_MISMATCH')) {
+        return res.status(409).json({ status: 'error', message: 'This mailbox is re-syncing — try again after the next ingest run (about 5 minutes).' });
+      }
+      // Sanitized by imapTransport — no credential can be in it.
+      console.warn(`[mailboxes] part fetch mailbox ${id} message ${mid}:`, err && err.message);
+      return res.status(502).json({
+        status: 'error',
+        message: 'Could not reach the mail server for this attachment',
+        code: (err && err.code) || null,
+      });
+    }
+    if (!got) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'This message is no longer on the mail server (deleted in webmail or a mail client), so its attachment is gone too.',
+      });
+    }
+
+    const mime = String(att.mime || '').toLowerCase();
+    const inline = PART_INLINE_MIME.has(mime);
+    res.setHeader('Content-Type', inline ? mime : 'application/octet-stream');
+    res.setHeader('Content-Disposition',
+      contentDisposition(inline ? 'inline' : 'attachment', att.filename || `attachment-${part}`));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // PRIVATE: client mail behind a login — never a shared cache.
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.status(200);
+    pipeline(got.stream, res, (err) => {
+      if (err) console.warn(`[mailboxes] part stream mailbox ${id} message ${mid} ended early:`, err.code || err.message);
+      got.close();
+    });
+  } catch (err) {
+    sendError(res, 'GET /api/mailboxes/:id/messages/:mid/parts/:part', err);
   }
 });
 

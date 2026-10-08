@@ -5,6 +5,7 @@
 CLAUDE.md
 Dockerfile
 Dockerfile.base
+Pasted 2026-10-09 at 12.32.09 AM.textClipping
 TRACKED_FILES.txt
 cloudbuild.yaml
 docs_review_2_2026-09-25.patch
@@ -483,6 +484,7 @@ ref/migrations/2026-10-07_cta.sql
 ref/migrations/2026-10-08_cta_input_hint_comment.sql
 ref/migrations/2026-10-08_cta_inputs.sql
 ref/migrations/2026-10-08_mailbox_s0.sql
+ref/migrations/2026-10-08_mailbox_s1.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -616,6 +618,7 @@ routes/internal/phoneTest.js
 routes/internal/sequence.js
 routes/internal/sms.js
 routes/logs.js
+routes/mailboxIngest.js
 routes/manage.js
 routes/manuals.js
 routes/pageLanding.js
@@ -766,6 +769,8 @@ services/hookService.js
 services/hookTransforms.js
 services/intakeService.js
 services/logService.js
+services/mailbox/imapTransport.js
+services/mailbox/mailboxIngestService.js
 services/mailboxService.js
 services/oauthService.js
 services/pabblyService.js
@@ -969,6 +974,7 @@ tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
 tests/helpers/bcPolyfill.js
 tests/helpers/ctaWorld.js
+tests/helpers/mailboxS1World.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/u6aEventsDb.js
@@ -993,6 +999,9 @@ tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
 tests/mailboxS0.test.js
+tests/mailboxS1.ingest.test.js
+tests/mailboxS1.routes.test.js
+tests/mailboxS1.transport.test.js
 tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
 tests/mascotSkins.test.js

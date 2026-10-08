@@ -899,6 +899,18 @@ SiteGround PHP (domain mailboxes) and Google Apps Script for the Gmail firm
 account — the deployed GAS source is tracked at `ref/gas.js` and code
 comments reference it BY LINE NUMBER (don't move it).
 
+**In-process source `mailbox-imap` (mailbox S1, 2026-10-08):** the IMAP worker
+(`services/mailbox/mailboxIngestService.js`, `ALL /mailbox-ingest`, Cloud
+Scheduler every 5 min) calls `ingestEmail` directly — no HTTP, no key (the
+row's key is unpresentable by construction; ref/migrations/2026-10-08_mailbox_s1.sql).
+It emits only folders flagged `emit_to_rules`, and only mail arriving after a
+folder's first poll (history is stored, never emitted). Its
+`headers.message_id` is the RFC Message-ID; `gmail-firm` posts Gmail's
+INTERNAL id. **Dedupe is per source** — `(source, message_id)` — so one email
+reaching both sources is logged twice and Layer 3 fires twice: never emit a
+mailbox whose mail is already forwarded into the Workspace inbox. Inactive
+source row = global emit kill switch. Operators: manual/08-Admin-Tools/08-mailboxes.md.
+
 ### Three layers — and the independence invariant
 1. **Forensic** — `email_log` row for EVERY ingest, including firm-to-firm
    and duplicates: the byte-level record. Dedup is a pre-check on

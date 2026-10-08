@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-08T17:48:14.701Z_  
-_711 routes total — DELETE: 58, GET: 292, PATCH: 49, POST: 275, PUT: 35, _ALL: 2_
+_Generated 2026-10-08T19:07:18.767Z_  
+_713 routes total — DELETE: 58, GET: 293, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -399,6 +399,7 @@ _711 routes total — DELETE: 58, GET: 292, PATCH: 49, POST: 275, PUT: 35, _ALL:
 | POST | `/api/mailboxes/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
 | PATCH | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mailboxes/:id/messages/:mid/parts/:part` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/manage-config` | — | — |
 | GET | `/api/me/signatures` | `jwtOrApiKey` | — |
 | PUT | `/api/me/signatures/:id` | `jwtOrApiKey` | — |
@@ -761,6 +762,12 @@ _711 routes total — DELETE: 58, GET: 292, PATCH: 49, POST: 275, PUT: 35, _ALL:
 | GET | `/m` | — | `serveManageShell` |
 | GET | `/m/:token` | — | `serveManageShell` |
 
+## /mailbox-ingest
+
+| Method | Path | Middlewares | Handler |
+|--------|------|-------------|---------|
+| _ALL | `/mailbox-ingest` | `jwtOrApiKey` | — |
+
 ## /manual
 
 | Method | Path | Middlewares | Handler |
@@ -976,4 +983,4 @@ _711 routes total — DELETE: 58, GET: 292, PATCH: 49, POST: 275, PUT: 35, _ALL:
 
 ---
 
-_711 routes total — DELETE: 58, GET: 292, PATCH: 49, POST: 275, PUT: 35, _ALL: 2_
+_713 routes total — DELETE: 58, GET: 293, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_

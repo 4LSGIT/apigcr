@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-08T17:48:28.659Z
+-- Generated: 2026-10-08T23:26:40.521Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:da512d30765067d1605ee45b1687f771
+-- Fingerprint: sha256:c8abe0e1435688ba676c21cc1052cd37
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2152,20 +2152,21 @@ CREATE TABLE `mail_messages` (
   `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Message-ID header; secondary dedupe key and the re-key match key',
   `in_reply_to` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `thread_key` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'from References/In-Reply-To; subject+participants fallback (OQ1)',
-  `from_addr` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `to_addrs` text COLLATE utf8mb4_general_ci,
-  `cc_addrs` text COLLATE utf8mb4_general_ci,
+  `from_addr` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'first From: address in display form - Name <a@b> (name quoted when it has specials) or bare a@b; emails lowercased',
+  `to_addrs` text COLLATE utf8mb4_general_ci COMMENT 'To: list, comma-separated display forms (see from_addr); NULL when empty',
+  `cc_addrs` text COLLATE utf8mb4_general_ci COMMENT 'Cc: list, comma-separated display forms (see from_addr); NULL when empty',
   `subject` text COLLATE utf8mb4_general_ci,
-  `date` datetime DEFAULT NULL COMMENT 'Date header, stored UTC (DB pool runs UTC)',
+  `date` datetime DEFAULT NULL COMMENT 'Date header, stored UTC (DB pool runs UTC); IMAP INTERNALDATE when the header is missing or outside 1970-2100',
   `snippet` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `body_text` mediumtext COLLATE utf8mb4_general_ci COMMENT 'inline per D1',
   `body_html` mediumtext COLLATE utf8mb4_general_ci COMMENT 'inline per D1; untrusted mail HTML - sanitize/sandbox at render (S2)',
-  `attachments` json DEFAULT NULL COMMENT '[{part, filename, size, mime}] - STRUCTURE ONLY, no bytes (D1); parts stream on demand from IMAP, grant-checked',
+  `attachments` json DEFAULT NULL COMMENT '[{part, filename, size, mime, cid?}] - STRUCTURE ONLY, no bytes (D1); every non-body leaf incl. inline images (cid) and attached messages; size = the server''s ENCODED size. Parts stream on demand via GET /api/mailboxes/:id/messages/:mid/parts/:part, grant-checked',
   `raw_ref` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): raw .eml pointer. NULL in v1',
   `gcs_ref` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): attachments pointer. NULL in v1',
   `size` int unsigned DEFAULT NULL,
   `flags` set('seen','answered','flagged','draft') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'SERVER flags (mailbox-level), mirrored read-mostly. Per-user read state lives in mail_read_state, NOT here; v1 never writes \\Seen back (§4.3)',
-  `log_id` int DEFAULT NULL COMMENT 'log.log_id bridge to the curated log tier / case linking (FK by convention); NULL = not emitted or not logged'
+  `log_id` int DEFAULT NULL COMMENT 'log.log_id bridge to the curated log tier / case linking (FK by convention); NULL = not emitted or not logged',
+  `ingested_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'when the S1 worker stored the row (UTC). The OQ2 2-year pruning axis: `date` is the sender-supplied header and can be absent or lie'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Tier-1 mailbox store (D1): every message in every ingested folder, grant-controlled. 2-year full-body mirror window (OQ2); the provider + future GCS archive are the long-term record; pruning lands by S4';
 
 -- --------------------------------------------------------
@@ -2200,7 +2201,7 @@ CREATE TABLE `mailboxes` (
   `send_credential_id` int unsigned DEFAULT NULL COMMENT 'email_credentials.id (FK by convention); NULL = read-only mailbox. Grant checks for sending live on interactive routes only, never in emailService (D6)',
   `ingest_enabled` tinyint(1) NOT NULL DEFAULT '1',
   `ingest_folders` json DEFAULT NULL COMMENT 'per-folder CONFIG: {"<folder>": {"emit_to_rules": bool}} - which folders the S1 worker polls, and which emit into the rules pipeline (§4.1). Everything polled is stored to mail_messages regardless. mailboxService always writes it; v1 default {"INBOX":{"emit_to_rules":true}} (Sent is opt-in, emit_to_rules false - host Sent names vary)',
-  `ingest_state` json DEFAULT NULL COMMENT 'per-folder CURSOR {"<folder>": {"uidvalidity": n, "last_uid": n}}; written only by the S1 ingest worker; NULL = never ingested. UIDVALIDITY change = re-key, never blanket purge (§4.1)',
+  `ingest_state` json DEFAULT NULL COMMENT 'per-folder CURSOR, written only by the ingest worker (services/mailbox/mailboxIngestService.js): {"<folder>": {uidvalidity, last_uid = new-mail cursor, backfill_uid = backlog still to store below it (absent = done), backfill_emit_after = ISO emit horizon set by a re-key (null = store-only), checked_at, errors, backfill_errors, last_error, last_error_at, rekeyed_at, backfill_done_at}}. First poll baselines at UIDNEXT: existing mail is stored, never emitted. UIDVALIDITY change = re-key, never blanket purge (§4.1). NULL = never ingested',
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'no hard delete - mail_messages rows reference mailboxes forever; 0 = deactivated',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -4362,7 +4363,8 @@ ALTER TABLE `mail_messages`
   ADD UNIQUE KEY `uq_mail_messages_folder_uid` (`mailbox_id`,`folder`,`uid`),
   ADD KEY `idx_mail_messages_mailbox_date` (`mailbox_id`,`date`),
   ADD KEY `idx_mail_messages_message_id` (`message_id`(191)),
-  ADD KEY `idx_mail_messages_thread_key` (`thread_key`(191));
+  ADD KEY `idx_mail_messages_thread_key` (`thread_key`(191)),
+  ADD KEY `idx_mail_messages_mailbox_ingested` (`mailbox_id`,`ingested_at`);
 
 --
 -- Indexes for table `mail_read_state`
