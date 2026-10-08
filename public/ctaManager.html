@@ -530,21 +530,28 @@ async function copyText(text, okMsg) {
   }
 }
 /**
- * Copy RENDERED html so it pastes formatted into Gmail / Outlook / Docs.
+ * Copy RENDERED html so it pastes formatted into Gmail / Outlook / Docs —
+ * and so a paste that takes the PLAIN part still carries every link.
  *
- * PRIMARY: a native selection copy — the html is rendered (inertly parsed,
- * scripts / handlers stripped: a template is SU-authored HTML) into an
- * off-screen element of this document, selected, and copied with
- * execCommand('copy'). The clipboard then holds exactly what a manual
- * select + Cmd/Ctrl-C of a web page produces, the format Gmail's paste is
- * built for. (2026-10-08: the async ClipboardItem write — Chrome re-serializes
- * that HTML — pasted as PLAIN text in Gmail in the field, though both paths
- * paste rich into a plain contenteditable.)
- * FALLBACK (execCommand refused): navigator.clipboard.write with html + the
- * plain-text twin.
+ * PRIMARY: the copy-event write. The html is rendered (inertly parsed;
+ * scripts / handlers / <style> stripped — a template is SU-authored HTML)
+ * into an off-screen element and selected (Safari and Firefox only fire the
+ * copy event over a real selection); execCommand('copy') then fires one
+ * 'copy' event whose handler REPLACES the clipboard with both parts:
+ *   text/html   that rendered markup (the email's inline styles, live links)
+ *   text/plain  `text` — one "Label: URL" line per option
+ * FALLBACK (no copy event): navigator.clipboard.write with the same parts.
+ *
+ * History (2026-10-08). v2 (ClipboardItem) and r1 (a bare selection copy)
+ * both pasted as PLAIN text in Fred's Gmail — r1 with no links at all,
+ * because a selection's own plain part is its innerText ("option 1option 2").
+ * Both clipboards verifiably held text/html, so the paste target chose the
+ * plain part (Gmail's Plain text mode, a paste-as-plain-text, or a clipboard
+ * tool that drops HTML). This write cannot force a target to take HTML; it
+ * makes the plain part worth having.
  */
 async function copyRich(html, text, okMsg) {
-  if (copyRendered(html)) { showToast(okMsg); return true; }
+  if (copyViaEvent(html, text)) { showToast(okMsg); return true; }
   try {
     if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) throw new Error('no rich clipboard');
     await navigator.clipboard.write([new ClipboardItem({
@@ -559,10 +566,20 @@ async function copyRich(html, text, okMsg) {
   }
 }
 
-/** Render `html` off-screen, select it, execCommand('copy'). true when the browser copied. */
-function copyRendered(html) {
+/** Render `html` off-screen, select it, execCommand('copy') and write both parts in the copy event. */
+function copyViaEvent(html, text) {
   let host = null;
+  let wrote = false;
   const sel = window.getSelection();
+  const onCopy = (e) => {
+    if (!e.clipboardData || !host) return;
+    // The charset meta is what a browser's own copy prepends — without it a
+    // Windows paste can read UTF-8 (the "—" in the header) as ANSI.
+    e.clipboardData.setData('text/html', `<meta charset="utf-8">${host.innerHTML}`);
+    e.clipboardData.setData('text/plain', String(text));
+    e.preventDefault();
+    wrote = true;
+  };
   try {
     const doc = new DOMParser().parseFromString(String(html), 'text/html');
     doc.querySelectorAll('script, iframe, object, embed, form, base, meta, link, style').forEach((n) => n.remove());
@@ -581,10 +598,12 @@ function copyRendered(html) {
     range.selectNodeContents(host);
     sel.removeAllRanges();
     sel.addRange(range);
-    return document.execCommand('copy') === true;
+    document.addEventListener('copy', onCopy, true);
+    return document.execCommand('copy') === true && wrote;
   } catch {
     return false;
   } finally {
+    document.removeEventListener('copy', onCopy, true);
     try { sel.removeAllRanges(); } catch { /* noop */ }
     if (host) host.remove();
   }
@@ -816,6 +835,7 @@ function listRow(r, now) {
       <td class="col-opt num">${runsHtml}</td>
       <td class="col-opt">${sourceText(r)}</td>
       <td class="actions-cell col-xs">
+        ${st === 'active' ? '<button class="btn small" type="button" data-act="send" title="Email or text this link from YisraCase">Send…</button>' : ''}
         <button class="btn small" type="button" data-act="copy-url" title="Copy the landing URL">Copy URL</button>
         <button class="btn small" type="button" data-act="duplicate" title="Open the builder pre-filled from this link">Duplicate</button>
       </td>
@@ -823,8 +843,9 @@ function listRow(r, now) {
 }
 
 // ── DETAIL ──────────────────────────────────────────────────
-async function openDetail(id) {
-  state.detail = { id: Number(id), cta: null, executions: [], err: null, busy: true };
+async function openDetail(id, { thenSend = false } = {}) {
+  // thenSend: the list row's Send… — open the dialog once the row is read.
+  state.detail = { id: Number(id), cta: null, executions: [], err: null, busy: true, thenSend };
   state.expanded = new Set();
   setView('detail');
   renderDetail();
@@ -855,7 +876,21 @@ async function loadDetail() {
   } finally {
     d.busy = false;
   }
-  if (state.detail === d) renderDetail();
+  if (state.detail === d) {
+    renderDetail();
+    if (d.thenSend) {
+      d.thenSend = false;
+      // Re-check on the fresh row: the list may be stale (used since it loaded).
+      const st = d.cta ? deriveState(d.cta, new Date()) : null;
+      if (st === 'active') openSend(sendSource(d.cta));
+      else if (st) showToast(`Can't send — this link is ${st} now`);
+    }
+  }
+}
+
+/** What the Send dialog needs from a full row (detail view / list row). */
+function sendSource(c) {
+  return { id: c.id, name: c.name, protection: c.protection, prompt: c.prompt };
 }
 
 /** Full adminRow → the fields the list row renders (options summarized like listCtas). */
@@ -1182,8 +1217,9 @@ async function savePatch() {
 
 // ── Send dialog ─────────────────────────────────────────────
 // POST /api/cta/:id/send. The server composes, sends, logs and audits; this
-// dialog only collects channel / to / from (/ subject / template) and shows
-// the dry-run preview. Active links only — the server 409s anything else.
+// dialog only collects channel / to / from (/ subject / template, or the SMS
+// text) and shows the dry-run preview. Active links only — the server 409s
+// anything else.
 function fmtPhone(p) {
   const d = String(p || '').replace(/\D/g, '').slice(-10);
   return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(p || '');
@@ -1202,6 +1238,15 @@ function fromOptionsHtml(channel) {
     (fd.emailFrom || []).map((e) => `<option value="${esc(e.email)}">${esc(e.from_name ? `${e.from_name} <${e.email}>` : e.email)}</option>`).join('');
 }
 
+/**
+ * The server's default SMS (ctaLinks.defaultSmsText) in TOKEN form, so the
+ * pre-filled text stays editable and resolves to exactly the default. Left
+ * untouched, the dialog sends no sms_text at all and the server composes it.
+ */
+function defaultSmsTemplate(prompt) {
+  return `${String(prompt || '').replace(/\s+/g, ' ').trim().slice(0, 240)}\nRespond: [[cta_url]]`;
+}
+
 /** The server's default subject, for the placeholder (shortened past 60 chars). */
 function subjectHint(prompt) {
   const one = String(prompt || '').replace(/\s+/g, ' ').trim();
@@ -1210,7 +1255,7 @@ function subjectHint(prompt) {
 
 function openSend(src) {
   if (!src || !src.id) return;
-  state.send = { ...src };
+  state.send = { ...src, smsDefault: defaultSmsTemplate(src.prompt) };
   E('send-title').textContent = `Send "${src.name}"`;
   E('send-err').classList.remove('show');
   const tpl = src.template || '';
@@ -1251,7 +1296,14 @@ function openSend(src) {
         <span class="yc-hint">Tokens: <code>[[cta_url]]</code> · <code>[[respond_url:VALUE]]</code> · <code>[[options_html]]</code> · <code>[[expires_at]]</code>. An unknown VALUE is refused before anything is sent. Not stored.</span>
       </div>
     </div>
-    <span class="yc-hint" data-sms-only hidden>An SMS is the prompt (one line) and the link to the page; the recipient picks the option there.</span>
+    <div class="fld" data-sms-only hidden>
+      <label class="yc-flabel" for="s-sms">Message</label>
+      <textarea id="s-sms" rows="4">${esc(state.send.smsDefault)}</textarea>
+      <span class="yc-hint">Edit freely, but keep a link: <code>[[cta_url]]</code> (the page with every option) or
+        <code>[[respond_url:VALUE]]</code> (one option's confirm page); <code>[[expires_at]]</code> works too.
+        Up to 1000 characters once the links are filled in. Not stored.
+        <button class="linklike" type="button" data-act="sms-reset">Reset to default</button></span>
+    </div>
     <div id="send-preview-region"></div>`;
   syncSendChannel();
   E('send-backdrop').classList.add('open');
@@ -1282,6 +1334,10 @@ function sendBody(dryRun) {
     const subj = E('s-subject').value.trim();
     if (subj) b.subject = subj;
     if (E('s-tpl-kind').value === 'custom' && E('s-tpl').value.trim()) b.email_template = E('s-tpl').value;
+  } else {
+    // Untouched (or emptied) = the server's own default; anything else is custom.
+    const t = E('s-sms').value;
+    if (t.trim() && t.trim() !== state.send.smsDefault.trim()) b.sms_text = t;
   }
   if (dryRun) b.dry_run = true;
   return b;
@@ -2092,8 +2148,9 @@ function showReceipt() {
         <button class="btn" type="button" data-act="copy-email" title="Paste straight into a Gmail / Outlook message body">Copy email</button>
         <button class="btn" type="button" data-act="copy-buttons" title="Just the option buttons — paste into an email you write yourself">Copy buttons</button>
       </div>
-      <span class="yc-hint" style="margin:6px 0 8px">Both paste <b>formatted</b> into a Gmail or Outlook message.
-        As plain text ("Label: URL" lines, for SMS or a plain-text field):
+      <span class="yc-hint" style="margin:6px 0 8px">Both paste <b>formatted</b> into a Gmail or Outlook message; where
+        the paste comes out as plain text (Gmail's Plain text mode), you get one "Label: URL" line per option instead.
+        Plain text only:
         <button class="linklike" type="button" data-act="copy-email-text">copy text</button>.
         HTML source, for templates and workflows:
         <button class="linklike" type="button" data-act="copy-email-src">email</button> ·
@@ -2187,6 +2244,14 @@ function init() {
         if (tr) duplicateCta(Number(tr.dataset.id));
         return;
       }
+      if (act.dataset.act === 'send') {
+        // The row has no prompt (the list doesn't carry it) — go through the
+        // detail read, then open the dialog over it. Closing it leaves you on
+        // that link's detail.
+        const tr = act.closest('tr[data-id]');
+        if (tr) openDetail(tr.dataset.id, { thenSend: true });
+        return;
+      }
     }
     const tr = e.target.closest('tr.row[data-id]');
     if (tr) openDetail(tr.dataset.id);
@@ -2202,7 +2267,7 @@ function init() {
         case 'disable': return confirmStatus('disabled');
         case 'cancel': return confirmStatus('cancelled');
         case 'duplicate': return duplicateCta(state.detail.id, state.detail.cta);
-        case 'send': { const c = state.detail.cta; return openSend({ id: c.id, name: c.name, protection: c.protection, prompt: c.prompt }); }
+        case 'send': return openSend(sendSource(state.detail.cta));
         case 'retry-detail': state.detail.err = null; renderDetail(); return loadDetail();
       }
       return;
@@ -2237,6 +2302,11 @@ function init() {
     E('send-preview-region').innerHTML = '';
   });
   E('send-body').addEventListener('input', () => { E('send-preview-region').innerHTML = ''; });
+  E('send-body').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-act="sms-reset"]') || !state.send) return;
+    E('s-sms').value = state.send.smsDefault;
+    E('send-preview-region').innerHTML = '';
+  });
   E('confirm-no').addEventListener('click', closeConfirm);
   E('confirm-yes').addEventListener('click', confirmYes);
   E('patch-backdrop').addEventListener('click', (e) => { if (e.target === E('patch-backdrop')) closePatch(); });

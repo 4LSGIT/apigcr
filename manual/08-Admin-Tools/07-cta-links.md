@@ -99,22 +99,30 @@ Like every SU tool it asks for your password first (elevation, 15 minutes).
   the server would apply, the placeholder URLs and the rendered email — and
   creates nothing. **Mint** shows the receipt: token, URLs, a generated
   password **once** (the pane asks before you leave it uncopied), **Send…**
-  (below), and **Copy email** / **Copy buttons**. Those copy the rendered
-  email the way selecting it on screen and pressing Ctrl+C would, so they
-  paste *formatted* into a Gmail or Outlook message; **copy text** gives the
-  plain version (one "Label: URL" line per option), and the raw HTML source
-  is one click away for templates and workflows. A paste that still comes
-  out as plain text usually means the compose window is in plain-text mode
-  (Gmail: ⋮ → *Plain text mode*) or was pasted with Ctrl+Shift+V.
-- **Send…** (receipt, or the detail of an **active** link) — emails or texts
+  (below), and **Copy email** / **Copy buttons**. Those put two versions on
+  the clipboard: the formatted email, which pastes as-is into a Gmail or
+  Outlook message, and a plain one with one "Label: URL" line per option,
+  for wherever the paste comes out as plain text. **copy text** copies only
+  the plain one, and the raw HTML source is one click away for templates and
+  workflows. If a paste into Gmail comes out plain, the formatted version
+  was refused at the paste end: Gmail's *Plain text mode* (⋮ in the compose
+  window; Gmail keeps it on for later messages), a paste with
+  Ctrl+Shift+V / Cmd+Shift+V, or a clipboard tool or remote-desktop session
+  that passes only text. **Send…** sidesteps all of that.
+- **Send…** (receipt, an **active** link's detail, or its list row — on
+  small phones the row buttons hide, so open the link) — emails or texts
   the link from YisraCase. Pick Email or SMS, the recipient, and the sender
   (blank = the firm default: `email_automations` for email, the staff line
   for SMS — the same senders decision requests use). Email: optional subject
   (default "Action requested: <prompt>"; the link tokens work in it) and the
   default CTA email or your own HTML with the same tokens — from the receipt
   the mint's custom template is pre-filled; it's never stored, so a later
-  send from the detail starts from the default. An SMS is the prompt and the
-  link to the page only — the recipient picks the option there.
+  send from the detail starts from the default. SMS: the message box starts
+  as the default — the prompt and the link to the page — and is yours to
+  edit, as long as it keeps a link (`[[cta_url]]`, or `[[respond_url:VALUE]]`
+  for one option's confirm page) and stays within 1000 characters once the
+  links are filled in. **Reset to default** puts the default back; the text
+  is never stored.
   **Preview** shows exactly what would go out and sends nothing. A password
   is **never** sent; give it to the recipient another way. Only active links
   can be sent (used, disabled, cancelled, expired or exhausted → refused).

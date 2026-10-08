@@ -300,16 +300,21 @@ Keyed on explicit `Accept: application/json` (not `*/*`).
   next click; re-enabling an already-expired link without extending in the
   same PATCH → 400.
 - `POST /api/cta/:id/send` (send slice, 2026-10-08) — `{channel:
-  'email'|'sms', to, from?, subject?, email_template?, dry_run?}`; unknown
-  keys 400. **Active only**: `deriveState` ≠ `active` → 409 `not_active`
-  (used/disabled/cancelled/expired/exhausted — a dead link is not sent).
+  'email'|'sms', to, from?, subject?, email_template?, sms_text?, dry_run?}`;
+  unknown keys 400. **Active only**: `deriveState` ≠ `active` → 409
+  `not_active` (used/disabled/cancelled/expired/exhausted — a dead link is
+  not sent).
   Composed by `ctaLinks.composeSend` from the row: email = default CTA email
   (or `email_template` through the same `[[...]]` resolver as mint,
   throw-on-unknown → 400 before any send, **never stored**) + subject
   (default `Action requested: <prompt ≤80>`; tokens resolve); SMS = prompt
-  one-line ≤240 + `Respond: <landing>` (request_decision's default shape) —
-  no subject/template. `from` defaults mirror request_decision:
-  `taskService.getFromEmail` / `getSmsFrom` (no SMS line → 400). Password
+  one-line ≤240 + `Respond: <landing>` (request_decision's default shape),
+  or `sms_text` (r2, same resolver + throw-on-unknown, never stored; must
+  still contain the landing URL — `[[cta_url]]`, a `[[respond_url:X]]` or
+  typed — and be ≤1000 chars resolved, RingCentral's limit; else 400) — no
+  subject/template on SMS, no `sms_text` on email. `from` defaults mirror
+  request_decision: `taskService.getFromEmail` / `getSmsFrom` (no SMS line →
+  400). Password
   never sent (only the hash exists). `dry_run` returns the composed message
   and sends nothing. Transport failure → 502 `send_failed`. On success, when
   the link has `link_type/link_id`, a best-effort `log` row: `email`

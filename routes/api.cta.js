@@ -42,7 +42,8 @@
  *                                   enable, re-enable after a failed or dead
  *                                   run, cancel = permanent)
  *   POST  /api/cta/:id/send         { channel: 'email'|'sms', to, from?,
- *                                   subject?, email_template?, dry_run? } —
+ *                                   subject?, email_template?, sms_text?,
+ *                                   dry_run? } —
  *                                   send an ACTIVE link (send slice,
  *                                   2026-10-08; see the handler's header)
  *
@@ -289,8 +290,12 @@ router.patch('/api/cta/:id', guard, async (req, res) => {
 //   Email: subject defaults to "Action requested: <prompt>"; email_template
 //     goes through the same [[...]] resolver as a mint (unknown
 //     [[respond_url:X]] → 400 before anything is sent) and is never stored.
-//   SMS: prompt + "Respond: <landing>" only (request_decision's default SMS);
-//     no subject, no template.
+//   SMS: default = prompt + "Respond: <landing>" (request_decision's default
+//     SMS). sms_text (r2, Fred 2026-10-08: "allow editing the sms, like we
+//     allow the email") replaces it: same resolver + throw-on-unknown, never
+//     stored, and it must still carry the link and fit 1000 chars once
+//     resolved (ctaLinks.composeSend) — else 400 before anything is sent.
+//     No subject / email_template on SMS; no sms_text on email.
 //   from defaults: email → taskService.getFromEmail (email_automations);
 //     sms → taskService.getSmsFrom (sms_staff_from / sms_default_from) — the
 //     resolution request_decision uses.
@@ -305,11 +310,11 @@ router.patch('/api/cta/:id', guard, async (req, res) => {
 //   Audit: every real attempt — 'ok', or 'error' with the transport message
 //     (a failed send to a typed address is still worth seeing). Never the
 //     token, never a password.
-//   dry_run: true → the composed message (subject/html/text or text) and the
+//   dry_run: true → the composed message (subject/html/text, or text) and the
 //     resolved from; `to` optional; nothing sent, logged or audited.
 //   No limiter beyond the SU guard's (elevation + per-tool rate limit).
 
-const SEND_KEYS = new Set(['channel', 'to', 'from', 'subject', 'email_template', 'dry_run']);
+const SEND_KEYS = new Set(['channel', 'to', 'from', 'subject', 'email_template', 'sms_text', 'dry_run']);
 const EMAIL_RE = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
 
 /** 10-digit NANP or null (phoneService.normalizeE164's acceptance, pre-checked for a clean 400). */
@@ -334,15 +339,17 @@ router.post('/api/cta/:id/send', guard, async (req, res) => {
     return res.status(400).json(errBody('cta: dry_run must be a boolean'));
   }
   const dryRun = body.dry_run === true;
-  for (const k of ['to', 'from', 'subject', 'email_template']) {
+  for (const k of ['to', 'from', 'subject', 'email_template', 'sms_text']) {
     if (body[k] != null && typeof body[k] !== 'string') return res.status(400).json(errBody(`cta: ${k} must be a string`));
   }
   if (channel === 'sms') {
     for (const k of ['subject', 'email_template']) {
       if (body[k] != null && body[k].trim() !== '') {
-        return res.status(400).json(errBody(`cta: ${k} applies to channel 'email' only — an SMS is the prompt plus the landing link`));
+        return res.status(400).json(errBody(`cta: ${k} applies to channel 'email' only — for an SMS, edit sms_text`));
       }
     }
+  } else if (body.sms_text != null && body.sms_text.trim() !== '') {
+    return res.status(400).json(errBody("cta: sms_text applies to channel 'sms' only — for an email, use subject / email_template"));
   }
   const to = (body.to || '').trim();
   if (!to && !dryRun) return res.status(400).json(errBody('cta: to is required'));
@@ -374,9 +381,11 @@ router.post('/api/cta/:id/send', guard, async (req, res) => {
         timeoutOption: row.timeout_option,
         subject: body.subject ?? null,
         emailTemplate: body.email_template ?? null,
+        smsText: body.sms_text ?? null,
       });
     } catch (e) {
-      return res.status(400).json(errBody(`cta: email_template/subject: ${e.message}`, 'invalid'));
+      const what = channel === 'sms' ? 'sms_text' : 'email_template/subject';
+      return res.status(400).json(errBody(`cta: ${what}: ${e.message}`, 'invalid'));
     }
 
     const taskService = require('../services/taskService');
@@ -392,7 +401,7 @@ router.post('/api/cta/:id/send', guard, async (req, res) => {
 
     const auditBase = {
       action: 'send', cta_id: row.id, name: row.name, channel, to, from,
-      template: channel === 'email' ? msg.template : 'default',
+      template: msg.template,
       ...(channel === 'email' ? { subject: msg.subject } : {}),
     };
 
@@ -426,7 +435,7 @@ router.post('/api/cta/:id/send', guard, async (req, res) => {
             type: 'note', link_type: row.link_type, link_id: row.link_id, by: req.auth.userId,
             subject: 'CTA',
             message: `CTA "${String(row.name).slice(0, 120)}" (#${row.id}) link sent by SMS to ${to} from ${from}`,
-            data: { cta_id: row.id, channel: 'sms', to, from },
+            data: { cta_id: row.id, channel: 'sms', to, from, template: msg.template },
           };
         const out = await logService.createLogEntry(req.db, entry);
         logId = out && out.log_id != null ? out.log_id : null;

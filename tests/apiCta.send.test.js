@@ -261,13 +261,80 @@ describe('sms', () => {
     expect(phoneService.sendSms).toHaveBeenCalledTimes(1);
   });
 
-  test('subject / email_template are refused for SMS', async () => {
+  test('subject / email_template are refused for SMS; sms_text is refused for email', async () => {
     const m = await mint();
     for (const extra of [{ subject: 'x' }, { email_template: '<p>x</p>' }]) {
       const r = await send(m.id, { channel: 'sms', to: '3135550199', ...extra });
       expect(r.status).toBe(400);
     }
+    const e = await send(m.id, { channel: 'email', to: 'ss@example.com', sms_text: 'Go: [[cta_url]]' });
+    expect(e.status).toBe(400);
+    expect((await e.json()).message).toContain("sms_text applies to channel 'sms' only");
     expect(phoneService.sendSms).not.toHaveBeenCalled();
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+  });
+
+  describe('sms_text (r2: editable SMS)', () => {
+    test('tokens resolve; sent verbatim (trimmed, CRLF → LF); template "custom" in the response, log note and audit; never stored', async () => {
+      const m = await mint();
+      const r = await send(m.id, {
+        channel: 'sms', to: '3135550199',
+        sms_text: '  Hi Stuart — spam? [[respond_url:spam]]\r\nKeep: [[respond_url:keep]]\r\nBy [[expires_at]] ',
+      });
+      expect(r.status).toBe(200);
+      expect((await r.json()).template).toBe('custom');
+      const text = phoneService.sendSms.mock.calls[0][3];
+      expect(text).toMatch(new RegExp(`^Hi Stuart — spam\\? https://4lsg\\.com/c/${m.token}/spam\\nKeep: https://4lsg\\.com/c/${m.token}/keep\\nBy \\w{3} \\d{1,2}, \\d{4} at .+[AP]M E[DS]T$`));
+      expect(sendAudits()[0].details).toMatchObject({ channel: 'sms', template: 'custom' });
+      expect(logs()[0].data).toMatchObject({ channel: 'sms', template: 'custom' });
+      expect(JSON.stringify(W.link(m.id))).not.toContain('Hi Stuart');
+    });
+
+    test('a typed landing URL counts as the link; blank sms_text = the default text', async () => {
+      const m = await mint();
+      expect((await send(m.id, { channel: 'sms', to: '3135550199', sms_text: `Please look: https://4lsg.com/c/${m.token}` })).status).toBe(200);
+      expect(phoneService.sendSms.mock.calls[0][3]).toBe(`Please look: https://4lsg.com/c/${m.token}`);
+      const j = await (await send(m.id, { channel: 'sms', to: '3135550199', sms_text: '   ' })).json();
+      expect(j.template).toBe('default');
+      expect(phoneService.sendSms.mock.calls[1][3]).toBe(`Is this lead spam? From the contact form.\nRespond: https://4lsg.com/c/${m.token}`);
+    });
+
+    test('400 before anything is sent, logged or audited: no link, unknown [[respond_url:X]], over 1000 chars resolved, not a string', async () => {
+      const m = await mint();
+      const cases = [
+        [{ sms_text: 'Please call the office about the lead.' }, 'the SMS must carry the link'],
+        [{ sms_text: 'Go: [[respond_url:nope]]' }, 'unknown option value "nope"'],
+        // 960 typed chars + a 41-char resolved URL: under 1000 typed, over 1000 sent
+        [{ sms_text: `${'x'.repeat(960)} [[cta_url]]` }, 'characters with the link filled in — the limit is 1000'],
+        [{ sms_text: 42 }, 'sms_text must be a string'],
+      ];
+      for (const [extra, msg] of cases) {
+        const r = await send(m.id, { channel: 'sms', to: '3135550199', ...extra });
+        expect([extra, r.status]).toEqual([extra, 400]);
+        expect((await r.json()).message).toContain(msg);
+      }
+      // dry_run gets the same refusal
+      expect((await send(m.id, { channel: 'sms', dry_run: true, sms_text: 'no link here' })).status).toBe(400);
+      expect(phoneService.sendSms).not.toHaveBeenCalled();
+      expect(logs()).toEqual([]);
+      expect(sendAudits()).toEqual([]);
+    });
+
+    test('exactly 1000 resolved characters is allowed', async () => {
+      const m = await mint();
+      const url = `https://4lsg.com/c/${m.token}`;
+      const pad = 1000 - url.length - 1;
+      const r = await send(m.id, { channel: 'sms', to: '3135550199', sms_text: `${'y'.repeat(pad)} [[cta_url]]` });
+      expect(r.status).toBe(200);
+      expect(phoneService.sendSms.mock.calls[0][3]).toHaveLength(1000);
+    });
+
+    test('dry_run returns the resolved custom text', async () => {
+      const m = await mint();
+      const j = await (await send(m.id, { channel: 'sms', dry_run: true, sms_text: 'Spam? [[respond_url:spam]]' })).json();
+      expect(j).toMatchObject({ dry_run: true, channel: 'sms', template: 'custom', text: `Spam? https://4lsg.com/c/${m.token}/spam` });
+      expect(phoneService.sendSms).not.toHaveBeenCalled();
+    });
   });
 });
 
