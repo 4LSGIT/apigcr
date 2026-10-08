@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mailboxes</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  /* Mailboxes (SU) — Admin-tab pane. Mailbox-system arc, slice S0.
+     Spec: ref/MAILBOX_SYSTEM_DESIGN.md (§3 schema, §4.4 grant admin, D6) ·
+     API: routes/api.mailboxes.js · service: services/mailboxService.js.
+     Component shapes follow ctaManager.html (list table, .btn, badges, modal,
+     toast, inline errors). Mailbox grants only — the phone section arrives
+     with slice S-PH. */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--page-bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  .panel { padding: 14px 16px; }
+  [hidden] { display: none !important; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .muted { color: var(--text-muted); }
+
+  /* ── Labels + hints — ONE look (AI_CONTEXT §12) ─────────────────────────
+     Same values as scripts.js's dialog .yc-flabel / .yc-hint and style.css
+     .input-label / .sub-label. Admin panes run on theme.css alone, so the
+     classes are declared here (ctaManager.html does the same); change them
+     together. Only display/margins are local. */
+  .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+  .yc-hint code { font-size: 11px; }
+  .yc-hint.warn { color: var(--warn); }
+
+  /* ── Buttons ───────────────────────────────────────────────── */
+  .btn {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    display: inline-flex; align-items: center; gap: 5px; line-height: 1.3;
+    white-space: nowrap; flex-shrink: 0; font-family: inherit;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.danger:hover { background: var(--danger-fill); color: var(--fill-text); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 3px 8px; font-size: 11px; }
+
+  /* ── Instructions ──────────────────────────────────────────── */
+  details.instructions {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--surface); margin-bottom: 12px;
+  }
+  details.instructions summary { cursor: pointer; padding: 9px 12px; font-weight: 600; color: var(--accent-2); user-select: none; }
+  details.instructions .body { padding: 0 14px 12px; color: var(--text-muted); line-height: 1.55; }
+  details.instructions .body p { margin: 0 0 8px; }
+  details.instructions .body b { color: var(--text); }
+
+  /* ── Toolbar ───────────────────────────────────────────────── */
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .toolbar h2 { margin: 0 8px 0 0; font-size: 14px; font-weight: 600; }
+  .toolbar input[type="search"] {
+    flex: 1 1 160px; min-width: 0; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 12px;
+  }
+  .status-line { font-size: 11px; color: var(--text-muted); margin: 0 0 6px; min-height: 14px; }
+
+  /* ── Tables (wide ones scroll in their own box) ────────────── */
+  .table-box { overflow-x: auto; }
+  table.list { width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid var(--border); background: var(--surface); }
+  table.list th, table.list td { border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+  table.list th {
+    background: var(--surface-2); color: var(--text-muted); white-space: nowrap;
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
+  }
+  table.list tr.selected td { background: var(--accent-soft); }
+  table.list td.actions-cell { white-space: nowrap; text-align: right; }
+  table.list td.flag-cell { text-align: center; }
+  .empty-row td { color: var(--text-muted); padding: 18px; text-align: center; font-style: italic; }
+  .name-cell { font-weight: 600; word-break: break-word; }
+  .sub { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); margin-top: 2px; word-break: break-word; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sub-phone { display: none; }
+  .acts { display: flex; gap: 6px; justify-content: flex-end; }
+
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600; white-space: nowrap;
+    padding: 2px 7px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted);
+  }
+  .badge.ok { background: var(--ok-soft); color: var(--ok-on-soft); border-color: var(--ok); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn-on-soft); border-color: var(--warn); }
+  .badge.off { background: var(--danger-soft); color: var(--danger-on-soft); border-color: var(--danger); }
+
+  .section {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px; margin: 12px 0; min-width: 0;
+  }
+  .section-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .section-head h3 { margin: 0; font-size: 13px; font-weight: 700; word-break: break-word; flex: 1 1 auto; min-width: 0; }
+
+  .add-grant { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 10px; }
+  .add-grant select {
+    min-width: 0; max-width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 12px; font-family: inherit;
+  }
+  .check { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-sm); cursor: pointer; }
+
+  .inline-error {
+    background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger-on-soft);
+    border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; word-break: break-word;
+  }
+  .warn-box {
+    background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft);
+    border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; line-height: 1.5;
+  }
+
+  /* ── Form ──────────────────────────────────────────────────── */
+  .fgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 16px; margin-bottom: 12px; }
+  .fld { min-width: 0; }
+  .fld input[type="text"], .fld input[type="number"], .fld input[type="password"],
+  .fld input[type="email"], .fld select {
+    width: 100%; min-width: 0; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit;
+  }
+  .fld input:focus, .fld select:focus { outline: none; border-color: var(--accent); }
+  .req { color: var(--danger); font-weight: 700; }
+  .form-section > h4 {
+    margin: 0 0 8px; padding-top: 10px; border-top: 1px solid var(--border);
+    font-size: var(--fs); font-weight: 700;
+  }
+  .folder-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; min-width: 0; flex-wrap: wrap; }
+  .folder-row input[type="text"] {
+    flex: 1 1 160px; min-width: 0; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 12px; font-family: inherit;
+  }
+
+  /* ── Modal ─────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: var(--backdrop);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 100; padding: 24px 16px; overflow: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; width: 100%; max-width: 620px; padding: 18px 20px; }
+  .modal h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; word-break: break-word; }
+  .modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .modal-err {
+    display: none; background: var(--danger-soft); border: 1px solid var(--danger);
+    color: var(--danger-on-soft); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; word-break: break-word;
+  }
+  .modal-err.show { display: block; }
+
+  .toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--surface-2); border: 1px solid var(--accent); color: var(--text);
+    padding: 8px 16px; border-radius: 6px; font-size: 12px; max-width: calc(100% - 32px);
+    opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Phone (≤768px, the shell's one breakpoint) ────────────── */
+  @media (max-width: 768px) {
+    .panel { padding: 10px; }
+    .col-wide { display: none; }
+    /* Secret + Grants ride a sub-line under the address; actions stack. */
+    .sub-phone { display: block; }
+    .acts { flex-direction: column; align-items: stretch; }
+    table.list th, table.list td { padding: 6px 7px; }
+    .section { padding: 10px; }
+    .modal { padding: 14px; }
+    .modal-backdrop { padding: 12px 8px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="panel">
+
+  <details class="instructions">
+    <summary>How mailboxes work</summary>
+    <div class="body">
+      <p>
+        A <b>mailbox</b> is one email address YisraCase reads over IMAP (and, when a send credential is
+        set, sends from). The row holds only connection data — host, user, secret — so moving a box to
+        another provider is just editing it. <b>Ingest is not live yet</b>: this slice (S0) only sets up
+        mailboxes and who may use them; polling arrives with S1.
+      </p>
+      <p>
+        <b>Access</b> is per mailbox and per person: <i>read</i>, <i>send</i>, <i>manage</i> (grant
+        others and rename the box). Superusers see everything without a grant. Automations never need one —
+        workflow and sequence sends are not checked against grants.
+      </p>
+      <p>
+        <b>The secret is write-only.</b> It is stored encrypted and never shown again; leave the field
+        blank to keep it. Changing the host or port requires re-entering it, so a stored password can never
+        be pointed at a different server by an edit.
+      </p>
+      <p>
+        <b>Folders:</b> each polled folder is stored in full; <i>emit to rules</i> also feeds it into the
+        email-ingest rules pipeline (court mail, case linking). INBOX emits by default. Sent-folder names
+        differ by host (Gmail: <code>[Gmail]/Sent Mail</code>) — add it under the server's exact name.
+      </p>
+    </div>
+  </details>
+
+  <div class="warn-box" id="gate" hidden>Adding and editing mailboxes is superuser-only. Mailboxes where you hold <b>Manage</b> appear below — you can change who has access to them.</div>
+
+  <div class="toolbar" id="toolbar">
+    <h2>Mailboxes</h2>
+    <input type="search" id="f-q" placeholder="Filter by address or name" aria-label="Filter mailboxes">
+    <button class="btn" type="button" id="refresh-btn">Refresh</button>
+    <button class="btn primary" type="button" id="new-btn" hidden>+ New mailbox</button>
+  </div>
+  <div class="status-line" id="status"></div>
+  <div id="list-error"></div>
+
+  <div class="table-box">
+    <table class="list">
+      <thead>
+        <tr>
+          <th>Mailbox</th>
+          <th class="col-wide">IMAP</th>
+          <th class="col-wide">Secret</th>
+          <th class="col-wide">Sends via</th>
+          <th class="col-wide">Ingest</th>
+          <th class="num col-wide">Grants</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="mb-tbody">
+        <tr class="empty-row"><td colspan="8">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Grants for one mailbox ── -->
+  <div class="section" id="grants-section" hidden>
+    <div class="section-head">
+      <h3 id="grants-title">Access</h3>
+      <button class="btn small" type="button" id="grants-close">Close</button>
+    </div>
+    <div id="gr-msg"></div>
+    <div class="table-box">
+      <table class="list">
+        <thead>
+          <tr><th>User</th><th class="flag-cell">Read</th><th class="flag-cell">Send</th><th class="flag-cell">Manage</th><th class="col-wide">Granted by</th><th></th></tr>
+        </thead>
+        <tbody id="gr-tbody"></tbody>
+      </table>
+    </div>
+    <div class="add-grant">
+      <select id="gr-user" aria-label="User to grant"></select>
+      <label class="check"><input type="checkbox" id="gr-read" checked> Read</label>
+      <label class="check"><input type="checkbox" id="gr-send"> Send</label>
+      <label class="check"><input type="checkbox" id="gr-manage"> Manage</label>
+      <button class="btn primary small" type="button" id="gr-add">Add</button>
+    </div>
+    <span class="yc-hint">Changes save as you tick. A grant keeps at least one box ticked — use Remove to take access away.</span>
+  </div>
+
+</div>
+
+<!-- ── Create / edit mailbox ── -->
+<div class="modal-backdrop" id="mb-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mb-title">
+    <h3 id="mb-title">New mailbox</h3>
+    <div class="modal-err" id="mb-msg" role="alert"></div>
+    <form id="mb-form" autocomplete="off" novalidate>
+      <div class="fgrid">
+        <div class="fld">
+          <label class="yc-flabel" for="mb-address">Address <span class="req">*</span></label>
+          <input type="email" id="mb-address" maxlength="255" spellcheck="false">
+        </div>
+        <div class="fld">
+          <label class="yc-flabel" for="mb-display">Display name</label>
+          <input type="text" id="mb-display" maxlength="128">
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h4>Connection (IMAP)</h4>
+        <div class="fgrid">
+          <div class="fld">
+            <label class="yc-flabel" for="mb-host">Host <span class="req">*</span></label>
+            <input type="text" id="mb-host" maxlength="255" spellcheck="false" placeholder="imap.example.com">
+            <span class="yc-hint">Host name only — no <code>https://</code>, no port.</span>
+          </div>
+          <div class="fld">
+            <label class="yc-flabel" for="mb-port">Port</label>
+            <input type="number" id="mb-port" min="1" max="65535" step="1" placeholder="993">
+          </div>
+        </div>
+        <div class="fgrid">
+          <div class="fld">
+            <label class="yc-flabel" for="mb-user">Login <span class="req">*</span></label>
+            <input type="text" id="mb-user" maxlength="255" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="fld">
+            <label class="yc-flabel" for="mb-secret">Secret</label>
+            <!-- new-password: keep the browser from autofilling the signed-in
+                 user's own password into a mailbox credential. -->
+            <input type="password" id="mb-secret" maxlength="1024" autocomplete="new-password" spellcheck="false">
+            <span class="yc-hint" id="mb-secret-hint">Write-only — stored encrypted, never shown again.</span>
+            <label class="check" id="mb-clear-wrap" hidden style="margin-top:6px"><input type="checkbox" id="mb-clear"> Clear the stored secret</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h4>Sending</h4>
+        <div class="fld">
+          <label class="yc-flabel" for="mb-cred">Send credential</label>
+          <select id="mb-cred"></select>
+          <span class="yc-hint">The Connections sender this box sends through. None = read-only mailbox.</span>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h4>Ingest</h4>
+        <label class="check"><input type="checkbox" id="mb-ingest"> Ingest enabled</label>
+        <div style="margin-top:10px">
+          <span class="yc-flabel">Folders</span>
+          <div id="mb-folders"></div>
+          <button class="btn small" type="button" id="mb-add-folder">+ Add folder</button>
+          <span class="yc-hint">Every listed folder is polled and stored. <i>Emit to rules</i> also feeds it into the rules pipeline.</span>
+        </div>
+      </div>
+
+      <div class="form-section" id="mb-active-section" hidden>
+        <h4>Status</h4>
+        <label class="check"><input type="checkbox" id="mb-active"> Active</label>
+        <span class="yc-hint">Mailboxes are never deleted (their stored mail references them) — deactivate instead.</span>
+      </div>
+    </form>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="mb-cancel">Cancel</button>
+      <button class="btn primary" type="button" id="mb-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+// ── Parent bridge ───────────────────────────────────────────
+// P is the shell; every call rides P.apiSend, which attaches the JWT and the
+// X-SU-Elevation token and runs the step-up password prompt itself on
+// `elevation_required`. This pane never touches the token.
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = (id) => document.getElementById(id);
+
+const DEFAULT_FOLDERS = { INBOX: { emit_to_rules: true } }; // mailboxService DEFAULT_INGEST_FOLDERS
+
+const state = {
+  su: false,
+  rows: [],
+  users: [],        // GET /api/users (user > 0)
+  creds: [],        // GET /api/email-credentials
+  refsLoaded: false,
+  editing: null,    // null = create; else the row being edited
+  grantsFor: null,  // mailbox row whose grants are open
+  grants: [],
+};
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = E('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+function userLabel(u) {
+  if (!u) return '';
+  return u.user_name || u.username || ('user ' + u.user);
+}
+
+// ── References (users, senders) ─────────────────────────────
+async function loadRefs() {
+  if (state.refsLoaded) return;
+  const [u, c] = await Promise.allSettled([api('/api/users', 'GET'), api('/api/email-credentials', 'GET')]);
+  state.users = (u.status === 'fulfilled' && Array.isArray(u.value && u.value.users) ? u.value.users : [])
+    .filter((x) => Number(x.user) > 0);
+  state.creds = c.status === 'fulfilled' && Array.isArray(c.value && c.value.email_credentials) ? c.value.email_credentials : [];
+  state.refsLoaded = u.status === 'fulfilled' && c.status === 'fulfilled';
+}
+
+// ── List ────────────────────────────────────────────────────
+async function loadList({ silent = false } = {}) {
+  if (!silent) E('status').textContent = 'Loading…';
+  E('list-error').innerHTML = '';
+  try {
+    const data = await api('/api/mailboxes', 'GET');
+    state.su = !!(data && data.viewer && data.viewer.su);
+    state.rows = Array.isArray(data && data.mailboxes) ? data.mailboxes : [];
+    E('gate').hidden = state.su;
+    E('new-btn').hidden = !state.su;
+    if (state.su) await loadRefs();
+    renderList();
+    if (state.grantsFor) {
+      const fresh = state.rows.find((r) => r.id === state.grantsFor.id);
+      if (fresh) { state.grantsFor = fresh; renderGrantsHead(); } else closeGrants();
+    }
+  } catch (err) {
+    E('status').textContent = '';
+    E('list-error').innerHTML = `<div class="inline-error">Couldn't load mailboxes: ${esc(err.message)}</div>`;
+    E('mb-tbody').innerHTML = '<tr class="empty-row"><td colspan="8">—</td></tr>';
+  }
+}
+
+function renderList() {
+  const q = E('f-q').value.trim().toLowerCase();
+  const rows = state.rows.filter((r) => !q ||
+    String(r.address || '').toLowerCase().includes(q) ||
+    String(r.display_name || '').toLowerCase().includes(q));
+  E('status').textContent = state.rows.length
+    ? `${rows.length} of ${state.rows.length} mailbox${state.rows.length === 1 ? '' : 'es'}`
+    : '';
+  if (!rows.length) {
+    E('mb-tbody').innerHTML = `<tr class="empty-row"><td colspan="8">${state.rows.length ? 'No mailbox matches the filter.' : (state.su ? 'No mailboxes yet — add one.' : 'No mailboxes.')}</td></tr>`;
+    return;
+  }
+  E('mb-tbody').innerHTML = rows.map((r) => {
+    const folders = r.ingest_folders && typeof r.ingest_folders === 'object' ? Object.keys(r.ingest_folders) : [];
+    const emitting = folders.filter((f) => r.ingest_folders[f] && r.ingest_folders[f].emit_to_rules);
+    const imap = r.imap_host
+      ? `<span class="mono">${esc(r.imap_host)}:${esc(r.imap_port)}</span><span class="sub">${esc(r.imap_user)}</span>`
+      : '<span class="muted">—</span>';
+    const secret = state.su
+      ? (r.has_secret ? '<span class="badge ok">set</span>' : '<span class="badge warn">missing</span>')
+      : '<span class="muted">—</span>';
+    const sends = r.send_credential_id
+      ? esc(r.send_credential_email || ('credential ' + r.send_credential_id))
+      : '<span class="muted">read-only</span>';
+    const ingest = !state.su ? '<span class="muted">—</span>'
+      : (r.ingest_enabled ? 'on' : '<span class="muted">off</span>') +
+        `<span class="sub">${esc(folders.join(', ') || 'no folders')}${emitting.length ? ` · rules: ${esc(emitting.join(', '))}` : ''}</span>`;
+    const status = r.active ? '<span class="badge ok">active</span>' : '<span class="badge off">inactive</span>';
+    const sel = state.grantsFor && state.grantsFor.id === r.id ? ' class="selected"' : '';
+    const canManage = state.su || (r.access && r.access.can_manage);
+    const phoneBits = [];
+    if (state.su) phoneBits.push(r.has_secret ? 'secret set' : 'no secret');
+    if (r.grant_count != null) phoneBits.push(`${r.grant_count} grant${Number(r.grant_count) === 1 ? '' : 's'}`);
+    return `<tr data-id="${esc(r.id)}"${sel}>
+      <td class="name-cell">${esc(r.address)}${r.display_name ? `<span class="sub">${esc(r.display_name)}</span>` : ''}${phoneBits.length ? `<span class="sub sub-phone">${esc(phoneBits.join(' · '))}</span>` : ''}</td>
+      <td class="col-wide">${imap}</td>
+      <td class="col-wide">${secret}</td>
+      <td class="col-wide">${sends}</td>
+      <td class="col-wide">${ingest}</td>
+      <td class="num col-wide">${r.grant_count == null ? '—' : esc(r.grant_count)}</td>
+      <td>${status}</td>
+      <td class="actions-cell">${canManage ? `<div class="acts">
+        <button class="btn small" type="button" data-act="grants">Access</button>
+        ${state.su ? '<button class="btn small" type="button" data-act="edit">Edit</button>' : ''}</div>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Create / edit ───────────────────────────────────────────
+function showFormError(msg) {
+  const m = E('mb-msg');
+  m.textContent = msg || '';
+  m.classList.toggle('show', !!msg);
+}
+
+function renderCredOptions(selected) {
+  const opts = ['<option value="">— none (read-only) —</option>'].concat(
+    state.creds.map((c) => `<option value="${esc(c.id)}">${esc(c.email)}${c.provider ? ` (${esc(c.provider)})` : ''}</option>`)
+  );
+  // Keep a stored id selectable even if the credential list failed to load.
+  if (selected && !state.creds.some((c) => Number(c.id) === Number(selected))) {
+    opts.push(`<option value="${esc(selected)}">credential ${esc(selected)}</option>`);
+  }
+  E('mb-cred').innerHTML = opts.join('');
+  E('mb-cred').value = selected ? String(selected) : '';
+}
+
+function folderRowHtml(name, emit) {
+  return `<div class="folder-row">
+    <input type="text" class="f-name" value="${esc(name)}" maxlength="128" spellcheck="false" aria-label="Folder name" placeholder="Folder name">
+    <label class="check"><input type="checkbox" class="f-emit"${emit ? ' checked' : ''}> Emit to rules</label>
+    <button class="btn small danger" type="button" data-act="rm-folder" aria-label="Remove folder">Remove</button>
+  </div>`;
+}
+
+function renderFolders(folders) {
+  const entries = Object.entries(folders && typeof folders === 'object' ? folders : DEFAULT_FOLDERS);
+  E('mb-folders').innerHTML = entries.map(([n, cfg]) => folderRowHtml(n, cfg && cfg.emit_to_rules)).join('');
+}
+
+function readFolders() {
+  const out = {};
+  const rows = [...E('mb-folders').querySelectorAll('.folder-row')];
+  for (const row of rows) {
+    const name = row.querySelector('.f-name').value.trim();
+    if (!name) continue;
+    if (Object.prototype.hasOwnProperty.call(out, name)) throw new Error(`Folder "${name}" is listed twice.`);
+    out[name] = { emit_to_rules: row.querySelector('.f-emit').checked };
+  }
+  if (!Object.keys(out).length) throw new Error('List at least one folder (untick "Ingest enabled" to stop ingest).');
+  return out;
+}
+
+async function openForm(row) {
+  if (!state.refsLoaded) await loadRefs();
+  state.editing = row || null;
+  showFormError('');
+  E('mb-title').textContent = row ? `Edit ${row.address}` : 'New mailbox';
+  E('mb-address').value = row ? row.address : '';
+  E('mb-display').value = row && row.display_name ? row.display_name : '';
+  E('mb-host').value = row ? row.imap_host : '';
+  E('mb-port').value = row ? row.imap_port : 993;
+  E('mb-user').value = row ? row.imap_user : '';
+  E('mb-secret').value = '';
+  E('mb-secret').placeholder = row ? (row.has_secret ? '(unchanged)' : '(not set)') : '';
+  E('mb-clear').checked = false;
+  E('mb-clear-wrap').hidden = !(row && row.has_secret);
+  E('mb-secret-hint').textContent = row
+    ? 'Write-only. Leave blank to keep the stored secret; typing replaces it.'
+    : 'Write-only — stored encrypted, never shown again. Can be set later.';
+  E('mb-secret-hint').classList.remove('warn');
+  renderCredOptions(row ? row.send_credential_id : null);
+  E('mb-ingest').checked = row ? !!row.ingest_enabled : true;
+  renderFolders(row ? row.ingest_folders : DEFAULT_FOLDERS);
+  E('mb-active-section').hidden = !row;
+  E('mb-active').checked = row ? !!row.active : true;
+  E('mb-backdrop').classList.add('open');
+  E('mb-address').focus();
+}
+
+function closeForm() {
+  E('mb-backdrop').classList.remove('open');
+  E('mb-secret').value = '';
+  state.editing = null;
+}
+
+function hostOrPortChanged() {
+  const row = state.editing;
+  if (!row) return false;
+  const host = E('mb-host').value.trim().toLowerCase();
+  const port = Number(E('mb-port').value || 993);
+  return host !== String(row.imap_host || '').toLowerCase() || port !== Number(row.imap_port);
+}
+
+function syncSecretHint() {
+  if (!state.editing) return;
+  const needs = hostOrPortChanged() && !E('mb-secret').value && !E('mb-clear').checked;
+  const hint = E('mb-secret-hint');
+  hint.classList.toggle('warn', needs);
+  hint.textContent = needs
+    ? 'Host or port changed — re-enter the secret (or tick Clear) to save.'
+    : (E('mb-secret').value
+        ? 'Saving replaces the stored secret.'
+        : 'Write-only. Leave blank to keep the stored secret; typing replaces it.');
+}
+
+/** Build the request body. Create: every field. Edit: only what changed. */
+function buildBody() {
+  const row = state.editing;
+  const folders = readFolders();
+  const portRaw = E('mb-port').value.trim();
+  const fields = {
+    address: E('mb-address').value.trim(),
+    display_name: E('mb-display').value.trim(),
+    imap_host: E('mb-host').value.trim(),
+    imap_port: portRaw === '' ? 993 : Number(portRaw),
+    imap_user: E('mb-user').value.trim(),
+    send_credential_id: E('mb-cred').value === '' ? null : Number(E('mb-cred').value),
+    ingest_enabled: E('mb-ingest').checked,
+    ingest_folders: folders,
+  };
+  if (row) fields.active = E('mb-active').checked;
+
+  const secret = E('mb-secret').value;
+  const clear = !!(row && E('mb-clear').checked);
+
+  if (!row) {
+    const body = { ...fields };
+    if (secret) body.imap_secret = secret;
+    return body;
+  }
+  const body = {};
+  const was = {
+    address: row.address || '',
+    display_name: row.display_name || '',
+    imap_host: String(row.imap_host || '').toLowerCase(),
+    imap_port: Number(row.imap_port),
+    imap_user: row.imap_user || '',
+    send_credential_id: row.send_credential_id == null ? null : Number(row.send_credential_id),
+    ingest_enabled: !!row.ingest_enabled,
+    ingest_folders: row.ingest_folders || null,
+    active: !!row.active,
+  };
+  for (const [k, v] of Object.entries(fields)) {
+    const cur = k === 'imap_host' ? String(v).toLowerCase() : (k === 'address' ? String(v).toLowerCase() : v);
+    const old = k === 'address' ? String(was.address).toLowerCase() : was[k];
+    if (JSON.stringify(cur) !== JSON.stringify(old)) body[k] = v;
+  }
+  if (clear) body.imap_secret = '';
+  else if (secret) body.imap_secret = secret;
+  return body;
+}
+
+async function saveForm() {
+  showFormError('');
+  let body;
+  try {
+    body = buildBody();
+  } catch (err) {
+    showFormError(err.message);
+    return;
+  }
+  const row = state.editing;
+  if (!body.address && !row) return showFormError('Address is required.');
+  if (!row && (!body.imap_host || !body.imap_user)) return showFormError('Host and login are required.');
+  if (row && hostOrPortChanged() && !Object.prototype.hasOwnProperty.call(body, 'imap_secret')) {
+    return showFormError('Changing the host or port requires re-entering the secret (or ticking Clear the stored secret).');
+  }
+  if (row && !Object.keys(body).length) { closeForm(); toast('No changes'); return; }
+
+  const btn = E('mb-save');
+  btn.disabled = true;
+  try {
+    if (row) {
+      await api(`/api/mailboxes/${encodeURIComponent(row.id)}`, 'PATCH', body);
+      toast('Mailbox saved');
+    } else {
+      await api('/api/mailboxes', 'POST', body);
+      toast('Mailbox added');
+    }
+    closeForm();
+    await loadList({ silent: true });
+  } catch (err) {
+    showFormError(err.message || 'Save failed');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Grants ──────────────────────────────────────────────────
+function grantsError(msg) {
+  E('gr-msg').innerHTML = msg ? `<div class="inline-error">${esc(msg)}</div>` : '';
+}
+
+function renderGrantsHead() {
+  const r = state.grantsFor;
+  E('grants-title').textContent = r ? `Access — ${r.address}` : 'Access';
+}
+
+async function openGrants(row) {
+  if (!state.refsLoaded) await loadRefs();
+  state.grantsFor = row;
+  state.grants = [];
+  grantsError('');
+  renderGrantsHead();
+  E('grants-section').hidden = false;
+  E('gr-tbody').innerHTML = '<tr class="empty-row"><td colspan="6">Loading…</td></tr>';
+  renderList();
+  await loadGrants();
+  E('grants-section').scrollIntoView({ block: 'nearest' });
+}
+
+function closeGrants() {
+  state.grantsFor = null;
+  state.grants = [];
+  E('grants-section').hidden = true;
+  renderList();
+}
+
+async function loadGrants() {
+  const r = state.grantsFor;
+  if (!r) return;
+  try {
+    const data = await api(`/api/mailboxes/${encodeURIComponent(r.id)}/grants`, 'GET');
+    if (!state.grantsFor || state.grantsFor.id !== r.id) return;
+    state.grants = Array.isArray(data && data.grants) ? data.grants : [];
+    renderGrants();
+  } catch (err) {
+    E('gr-tbody').innerHTML = '<tr class="empty-row"><td colspan="6">—</td></tr>';
+    grantsError(`Couldn't load access: ${err.message}`);
+  }
+}
+
+function renderGrants() {
+  const box = (g, f) => `<input type="checkbox" data-grant="${esc(g.id)}" data-flag="${f}"${g[f] ? ' checked' : ''} aria-label="${f.replace('can_', '')} for ${esc(g.user_name || g.username || g.user)}">`;
+  E('gr-tbody').innerHTML = state.grants.length
+    ? state.grants.map((g) => `<tr>
+        <td class="name-cell">${esc(g.user_name || g.username || ('user ' + g.user))}${g.user_auth === 'disabled' ? ' <span class="badge off">disabled</span>' : ''}</td>
+        <td class="flag-cell">${box(g, 'can_read')}</td>
+        <td class="flag-cell">${box(g, 'can_send')}</td>
+        <td class="flag-cell">${box(g, 'can_manage')}</td>
+        <td class="col-wide muted">${esc(g.granted_by_username || ('user ' + g.granted_by))}</td>
+        <td class="actions-cell"><button class="btn small danger" type="button" data-rm="${esc(g.id)}">Remove</button></td>
+      </tr>`).join('')
+    : '<tr class="empty-row"><td colspan="6">No grants — only superusers can use this mailbox.</td></tr>';
+
+  const taken = new Set(state.grants.map((g) => Number(g.user)));
+  const choices = state.users.filter((u) => !taken.has(Number(u.user)) && u.user_auth !== 'disabled');
+  E('gr-user').innerHTML = choices.length
+    ? choices.map((u) => `<option value="${esc(u.user)}">${esc(userLabel(u))}</option>`).join('')
+    : '<option value="">No one left to add</option>';
+  E('gr-add').disabled = !choices.length;
+}
+
+async function toggleFlag(input) {
+  const r = state.grantsFor;
+  const g = state.grants.find((x) => String(x.id) === input.dataset.grant);
+  if (!r || !g) return;
+  const flag = input.dataset.flag;
+  const next = { can_read: g.can_read, can_send: g.can_send, can_manage: g.can_manage, [flag]: input.checked };
+  if (!next.can_read && !next.can_send && !next.can_manage) {
+    input.checked = true;
+    grantsError('A grant keeps at least one box ticked — use Remove to take access away.');
+    return;
+  }
+  grantsError('');
+  input.disabled = true;
+  try {
+    const data = await api(`/api/mailboxes/${encodeURIComponent(r.id)}/grants/${encodeURIComponent(g.id)}`, 'PATCH', { [flag]: input.checked });
+    Object.assign(g, data.grant || next);
+    toast('Access updated');
+  } catch (err) {
+    input.checked = !input.checked;
+    grantsError(err.message || 'Update failed');
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function addGrant() {
+  const r = state.grantsFor;
+  if (!r) return;
+  const user = E('gr-user').value;
+  const body = {
+    user: Number(user),
+    can_read: E('gr-read').checked,
+    can_send: E('gr-send').checked,
+    can_manage: E('gr-manage').checked,
+  };
+  if (!user) return;
+  if (!body.can_read && !body.can_send && !body.can_manage) {
+    grantsError('Tick at least one of Read, Send, Manage.');
+    return;
+  }
+  grantsError('');
+  E('gr-add').disabled = true;
+  try {
+    await api(`/api/mailboxes/${encodeURIComponent(r.id)}/grants`, 'POST', body);
+    toast('Access granted');
+    await loadGrants();
+    loadList({ silent: true });
+  } catch (err) {
+    grantsError(err.message || 'Grant failed');
+    E('gr-add').disabled = false;
+  }
+}
+
+async function removeGrant(grantId) {
+  const r = state.grantsFor;
+  const g = state.grants.find((x) => String(x.id) === String(grantId));
+  if (!r || !g) return;
+  if (!confirm(`Remove ${g.user_name || g.username || ('user ' + g.user)}'s access to ${r.address}?`)) return;
+  grantsError('');
+  try {
+    await api(`/api/mailboxes/${encodeURIComponent(r.id)}/grants/${encodeURIComponent(g.id)}`, 'DELETE');
+    toast('Access removed');
+    await loadGrants();
+    loadList({ silent: true });
+  } catch (err) {
+    grantsError(err.message || 'Remove failed');
+  }
+}
+
+// ── Wiring ──────────────────────────────────────────────────
+function init() {
+  E('f-q').addEventListener('input', renderList);
+  E('refresh-btn').addEventListener('click', () => loadList());
+  E('new-btn').addEventListener('click', () => openForm(null));
+
+  E('mb-tbody').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    const tr = e.target.closest('tr[data-id]');
+    if (!b || !tr) return;
+    const row = state.rows.find((r) => String(r.id) === tr.dataset.id);
+    if (!row) return;
+    if (b.dataset.act === 'edit') openForm(row);
+    else if (b.dataset.act === 'grants') openGrants(row);
+  });
+
+  E('grants-close').addEventListener('click', closeGrants);
+  E('gr-add').addEventListener('click', addGrant);
+  E('gr-tbody').addEventListener('change', (e) => {
+    if (e.target.matches('input[type="checkbox"][data-grant]')) toggleFlag(e.target);
+  });
+  E('gr-tbody').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-rm]');
+    if (b) removeGrant(b.dataset.rm);
+  });
+
+  E('mb-add-folder').addEventListener('click', () => {
+    E('mb-folders').insertAdjacentHTML('beforeend', folderRowHtml('', false));
+    const inputs = E('mb-folders').querySelectorAll('.f-name');
+    inputs[inputs.length - 1].focus();
+  });
+  E('mb-folders').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act="rm-folder"]');
+    if (b) b.closest('.folder-row').remove();
+  });
+  ['mb-host', 'mb-port', 'mb-secret', 'mb-clear'].forEach((id) => {
+    E(id).addEventListener('input', syncSecretHint);
+    E(id).addEventListener('change', syncSecretHint);
+  });
+  E('mb-clear').addEventListener('change', () => {
+    E('mb-secret').disabled = E('mb-clear').checked;
+    if (E('mb-clear').checked) E('mb-secret').value = '';
+  });
+  E('mb-form').addEventListener('submit', (e) => { e.preventDefault(); saveForm(); });
+  E('mb-form').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') { e.preventDefault(); saveForm(); }
+  });
+  E('mb-save').addEventListener('click', saveForm);
+  E('mb-cancel').addEventListener('click', closeForm);
+  E('mb-backdrop').addEventListener('click', (e) => { if (e.target === E('mb-backdrop')) closeForm(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && E('mb-backdrop').classList.contains('open')) closeForm();
+  });
+
+  loadList();
+}
+
+// The shell pings visible frames when their tab is re-entered (index.html
+// pingBecameVisible). Refresh quietly — never under the open form.
+window.ycBecameVisible = () => {
+  if (E('mb-backdrop').classList.contains('open')) return;
+  loadList({ silent: true });
+  if (state.grantsFor) loadGrants();
+};
+
+// ── Boot ────────────────────────────────────────────────────
+// Runs LAST: if the parent is already ready this calls init() synchronously.
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+
+</body>
+</html>

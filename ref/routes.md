@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-08T01:26:49.610Z_  
-_704 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 273, PUT: 35, _ALL: 2_
+_Generated 2026-10-08T17:48:14.701Z_  
+_711 routes total — DELETE: 58, GET: 292, PATCH: 49, POST: 275, PUT: 35, _ALL: 2_
 
 ## Global middleware chain
 
@@ -392,6 +392,13 @@ _704 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 273, PUT: 35, _ALL:
 | POST | `/api/m/:token/cancel` | — | — |
 | POST | `/api/m/:token/reschedule` | — | — |
 | GET | `/api/m/:token/slots` | — | — |
+| GET | `/api/mailboxes` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mailboxes` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| PATCH | `/api/mailboxes/:id` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mailboxes/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mailboxes/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
+| DELETE | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
+| PATCH | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/manage-config` | — | — |
 | GET | `/api/me/signatures` | `jwtOrApiKey` | — |
 | PUT | `/api/me/signatures/:id` | `jwtOrApiKey` | — |
@@ -969,4 +976,4 @@ _704 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 273, PUT: 35, _ALL:
 
 ---
 
-_704 routes total — DELETE: 57, GET: 290, PATCH: 47, POST: 273, PUT: 35, _ALL: 2_
+_711 routes total — DELETE: 58, GET: 292, PATCH: 49, POST: 275, PUT: 35, _ALL: 2_

@@ -1,0 +1,42 @@
+{
+  "status": "success",
+  "viewer": { "su": true },
+  "mailboxes": [
+    {
+      "id": 1,
+      "address": "billing@example-firm.test",
+      "domain": "example-firm.test",
+      "display_name": "Billing",
+      "imap_host": "imap.example-firm.test",
+      "imap_port": 993,
+      "imap_user": "billing@example-firm.test",
+      "has_secret": true,
+      "send_credential_id": 3,
+      "send_credential_email": "billing@example-firm.test",
+      "ingest_enabled": true,
+      "ingest_folders": { "INBOX": { "emit_to_rules": true }, "INBOX.Sent": { "emit_to_rules": false } },
+      "ingest_state": null,
+      "active": true,
+      "grant_count": 2,
+      "access": { "can_read": true, "can_send": true, "can_manage": true, "su": true }
+    },
+    {
+      "id": 2,
+      "address": "a-very-long-intake-address-for-overflow@another-long-domain-name.test",
+      "domain": "another-long-domain-name.test",
+      "display_name": "Intake (shared) — a long display name to wrap",
+      "imap_host": "mail.another-long-domain-name.test",
+      "imap_port": 993,
+      "imap_user": "a-very-long-intake-address-for-overflow@another-long-domain-name.test",
+      "has_secret": false,
+      "send_credential_id": null,
+      "send_credential_email": null,
+      "ingest_enabled": false,
+      "ingest_folders": { "INBOX": { "emit_to_rules": true } },
+      "ingest_state": null,
+      "active": false,
+      "grant_count": 0,
+      "access": { "can_read": true, "can_send": true, "can_manage": true, "su": true }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-08T16:52:25.578Z
+-- Generated: 2026-10-08T17:48:28.659Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:0250b1e784f1f310d99da4779b038393
+-- Fingerprint: sha256:da512d30765067d1605ee45b1687f771
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -686,6 +686,25 @@ CREATE TRIGGER `trg_cases_ct_compat_upd` BEFORE UPDATE ON `cases` FOR EACH ROW B
 END
 $$
 DELIMITER ;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `channel_grants`
+--
+
+DROP TABLE IF EXISTS `channel_grants`;
+CREATE TABLE `channel_grants` (
+  `id` int unsigned NOT NULL,
+  `user` tinyint NOT NULL COMMENT 'users.user (FK by convention); never 0 - automation bypasses grants (D6)',
+  `channel_type` varchar(16) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'mailbox | phone_line - app-validated vocabulary, VARCHAR not ENUM so a new channel needs no ALTER',
+  `channel_id` int unsigned NOT NULL COMMENT 'mailboxes.id when mailbox; phone_lines.id when phone_line (FK by convention)',
+  `can_read` tinyint(1) NOT NULL DEFAULT '0',
+  `can_send` tinyint(1) NOT NULL DEFAULT '0',
+  `can_manage` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'grant others on this channel + edit its non-connection settings; never implies read/send',
+  `granted_by` tinyint NOT NULL COMMENT 'users.user who created the row; history of later flag edits lives in admin_audit_log (tool=mailboxes)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Channel access grants (D6). Enforced on INTERACTIVE routes only - never inside emailService/phoneService, so automation sends bypass. SU short-circuits in mailboxService. phone_line rows arrive with slice S-PH (no unenforced phone rows before then)';
 
 -- --------------------------------------------------------
 
@@ -1994,6 +2013,23 @@ CREATE TABLE `image_library` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `inbox_views`
+--
+
+DROP TABLE IF EXISTS `inbox_views`;
+CREATE TABLE `inbox_views` (
+  `id` int unsigned NOT NULL,
+  `user` tinyint NOT NULL COMMENT 'users.user (FK by convention)',
+  `name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `mailbox_ids` json DEFAULT NULL COMMENT '[mailboxes.id, ...]. A view never grants access: every id is re-checked against channel_grants at read time (S2)',
+  `filters` json DEFAULT NULL COMMENT 'unread-only, has-case, from-domain, etc. - vocabulary defined by S2',
+  `is_default` tinyint(1) NOT NULL DEFAULT '0',
+  `sort_order` int NOT NULL DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Per-user saved mixed-inbox views (S2). Created in S0, read by nothing until S2';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `issue_reports`
 --
 
@@ -2100,6 +2136,75 @@ CREATE TABLE `log` (
   `log_form_sub` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_direction` enum('incoming','outgoing') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='text, includes email body, sms message, note, etc';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `mail_messages`
+--
+
+DROP TABLE IF EXISTS `mail_messages`;
+CREATE TABLE `mail_messages` (
+  `id` bigint unsigned NOT NULL,
+  `mailbox_id` int unsigned NOT NULL COMMENT 'mailboxes.id (FK by convention)',
+  `folder` varchar(128) COLLATE utf8mb4_general_ci NOT NULL,
+  `uid` int unsigned DEFAULT NULL COMMENT 'IMAP UID within (mailbox, folder, UIDVALIDITY). NULLABLE on purpose: UIDVALIDITY re-key parks rows at NULL, then sets finals (§4.1) - UNIQUE allows many NULLs. Never make NOT NULL',
+  `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Message-ID header; secondary dedupe key and the re-key match key',
+  `in_reply_to` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `thread_key` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'from References/In-Reply-To; subject+participants fallback (OQ1)',
+  `from_addr` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `to_addrs` text COLLATE utf8mb4_general_ci,
+  `cc_addrs` text COLLATE utf8mb4_general_ci,
+  `subject` text COLLATE utf8mb4_general_ci,
+  `date` datetime DEFAULT NULL COMMENT 'Date header, stored UTC (DB pool runs UTC)',
+  `snippet` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `body_text` mediumtext COLLATE utf8mb4_general_ci COMMENT 'inline per D1',
+  `body_html` mediumtext COLLATE utf8mb4_general_ci COMMENT 'inline per D1; untrusted mail HTML - sanitize/sandbox at render (S2)',
+  `attachments` json DEFAULT NULL COMMENT '[{part, filename, size, mime}] - STRUCTURE ONLY, no bytes (D1); parts stream on demand from IMAP, grant-checked',
+  `raw_ref` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): raw .eml pointer. NULL in v1',
+  `gcs_ref` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): attachments pointer. NULL in v1',
+  `size` int unsigned DEFAULT NULL,
+  `flags` set('seen','answered','flagged','draft') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'SERVER flags (mailbox-level), mirrored read-mostly. Per-user read state lives in mail_read_state, NOT here; v1 never writes \\Seen back (§4.3)',
+  `log_id` int DEFAULT NULL COMMENT 'log.log_id bridge to the curated log tier / case linking (FK by convention); NULL = not emitted or not logged'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Tier-1 mailbox store (D1): every message in every ingested folder, grant-controlled. 2-year full-body mirror window (OQ2); the provider + future GCS archive are the long-term record; pruning lands by S4';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `mail_read_state`
+--
+
+DROP TABLE IF EXISTS `mail_read_state`;
+CREATE TABLE `mail_read_state` (
+  `user` tinyint NOT NULL COMMENT 'users.user (FK by convention)',
+  `message_fk` bigint unsigned NOT NULL COMMENT 'mail_messages.id (FK by convention); delete with the message on prune / orphan purge',
+  `read_at` datetime NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='PER-USER read state (§4.3): IMAP \\Seen is per-mailbox and cannot represent many users. Row present = read';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `mailboxes`
+--
+
+DROP TABLE IF EXISTS `mailboxes`;
+CREATE TABLE `mailboxes` (
+  `id` int unsigned NOT NULL,
+  `address` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'mailbox email address, lowercased at write; unique (general_ci = case-insensitive)',
+  `domain` varchar(128) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'derived from address at write (part after @) by mailboxService; never client-supplied',
+  `display_name` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `imap_host` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'row data, never a code constant (D2); changing host/port requires re-entering imap_secret in the same write (credential-redirect guard)',
+  `imap_port` int NOT NULL DEFAULT '993',
+  `imap_user` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `imap_secret` text COLLATE utf8mb4_general_ci COMMENT 'ENCv1 ciphertext via lib/credentialCrypto (same pattern as email_credentials.smtp_pass); identity creds or mailbox password per D3 - transport-agnostic. WRITE-ONLY: no API response carries it in any shape (has_secret boolean instead). NULL = not set',
+  `send_credential_id` int unsigned DEFAULT NULL COMMENT 'email_credentials.id (FK by convention); NULL = read-only mailbox. Grant checks for sending live on interactive routes only, never in emailService (D6)',
+  `ingest_enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `ingest_folders` json DEFAULT NULL COMMENT 'per-folder CONFIG: {"<folder>": {"emit_to_rules": bool}} - which folders the S1 worker polls, and which emit into the rules pipeline (§4.1). Everything polled is stored to mail_messages regardless. mailboxService always writes it; v1 default {"INBOX":{"emit_to_rules":true}} (Sent is opt-in, emit_to_rules false - host Sent names vary)',
+  `ingest_state` json DEFAULT NULL COMMENT 'per-folder CURSOR {"<folder>": {"uidvalidity": n, "last_uid": n}}; written only by the S1 ingest worker; NULL = never ingested. UIDVALIDITY change = re-key, never blanket purge (§4.1)',
+  `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'no hard delete - mail_messages rows reference mailboxes forever; 0 = deactivated',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='YC-native mailboxes (ref/MAILBOX_SYSTEM_DESIGN.md). Provider-blind connection rows; access via channel_grants(channel_type=mailbox)';
 
 -- --------------------------------------------------------
 
@@ -3806,6 +3911,14 @@ ALTER TABLE `cases`
   ADD KEY `idx_cases_trustee_contact` (`case_trustee_contact_id`);
 
 --
+-- Indexes for table `channel_grants`
+--
+ALTER TABLE `channel_grants`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_channel_grants_user_channel` (`user`,`channel_type`,`channel_id`),
+  ADD KEY `idx_channel_grants_channel` (`channel_type`,`channel_id`);
+
+--
 -- Indexes for table `checkitems`
 --
 ALTER TABLE `checkitems`
@@ -4196,6 +4309,13 @@ ALTER TABLE `image_library`
   ADD KEY `idx_il_deleted` (`deleted_at`);
 
 --
+-- Indexes for table `inbox_views`
+--
+ALTER TABLE `inbox_views`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_inbox_views_user` (`user`,`sort_order`);
+
+--
 -- Indexes for table `issue_reports`
 --
 ALTER TABLE `issue_reports`
@@ -4233,6 +4353,30 @@ ALTER TABLE `log`
   ADD KEY `idx_log_type` (`log_type`),
   ADD KEY `idx_log_link_type_id` (`log_link_type`,`log_link_id`),
   ADD KEY `idx_log_about` (`log_about_type`,`log_about_id`);
+
+--
+-- Indexes for table `mail_messages`
+--
+ALTER TABLE `mail_messages`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_mail_messages_folder_uid` (`mailbox_id`,`folder`,`uid`),
+  ADD KEY `idx_mail_messages_mailbox_date` (`mailbox_id`,`date`),
+  ADD KEY `idx_mail_messages_message_id` (`message_id`(191)),
+  ADD KEY `idx_mail_messages_thread_key` (`thread_key`(191));
+
+--
+-- Indexes for table `mail_read_state`
+--
+ALTER TABLE `mail_read_state`
+  ADD PRIMARY KEY (`user`,`message_fk`),
+  ADD KEY `idx_mail_read_state_message` (`message_fk`);
+
+--
+-- Indexes for table `mailboxes`
+--
+ALTER TABLE `mailboxes`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_mailboxes_address` (`address`);
 
 --
 -- Indexes for table `pages`
@@ -4844,6 +4988,12 @@ ALTER TABLE `case_stage_log`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `channel_grants`
+--
+ALTER TABLE `channel_grants`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `checkitems`
 --
 ALTER TABLE `checkitems`
@@ -5108,6 +5258,12 @@ ALTER TABLE `image_library`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `inbox_views`
+--
+ALTER TABLE `inbox_views`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `issue_reports`
 --
 ALTER TABLE `issue_reports`
@@ -5136,6 +5292,18 @@ ALTER TABLE `legacy_route_log`
 --
 ALTER TABLE `log`
   MODIFY `log_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `mail_messages`
+--
+ALTER TABLE `mail_messages`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `mailboxes`
+--
+ALTER TABLE `mailboxes`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `pages`
