@@ -1,9 +1,11 @@
 // tests/alertingDigestCta.test.js
 //
 /**
- * Digest CTA buttons — lib/alerting.js Phase B mints a per-group
- * Acknowledge/Resolve /c/ link (ref/CTA_DESIGN.md) and renders the buttons
- * into each group block of the failure-digest email.
+ * Alert CTA buttons — lib/alerting.js mints a per-group Acknowledge/Resolve
+ * /c/ link (ref/CTA_DESIGN.md) and renders the buttons into each group block
+ * of the failure-digest email (Phase B) AND into alert()'s critical
+ * immediate email (kind='critical', `before` read back from the inserted
+ * row so the cutoff is the DB's clock, not this process's).
  *
  * WHAT IS LOAD-BEARING HERE
  *
@@ -63,13 +65,15 @@ function undigestedRow(id, group_key, created_at) {
  * suRows        → the `SELECT user, user_auth FROM users` answer
  * failCtaInsert → INSERT INTO cta_links throws (the resilience case)
  */
-function makeDb({ undigested = [], suRows = [], failCtaInsert = false } = {}) {
+function makeDb({ undigested = [], suRows = [], failCtaInsert = false,
+  throttled = false, criticalRowCreatedAt = T1, failCreatedAtSelect = false } = {}) {
   const ctaInserts = [];
   const digestedStamps = [];
+  const alertInserts = [];
   let nextCtaId = 1;
 
   const db = {
-    ctaInserts, digestedStamps,
+    ctaInserts, digestedStamps, alertInserts,
     query: jest.fn(async (sql, params = []) => {
       // ── settings ────────────────────────────────────────────────────────
       if (/FROM app_settings/i.test(sql)) {
@@ -90,6 +94,19 @@ function makeDb({ undigested = [], suRows = [], failCtaInsert = false } = {}) {
       if (/FROM system_alerts a\s+LEFT JOIN alert_state/i.test(sql)) return [undigested];
       if (/SELECT `user`, user_auth FROM users/i.test(sql)) return [suRows];
 
+      // ── alert() critical path ───────────────────────────────────────────
+      if (/SELECT last_alerted_at FROM alert_state/i.test(sql)) {
+        return [throttled ? [{ last_alerted_at: new Date() }] : []];
+      }
+      if (/SELECT created_at FROM system_alerts WHERE id = \?/i.test(sql)) {
+        if (failCreatedAtSelect) throw new Error('created_at lookup blew up');
+        return [[{ created_at: criticalRowCreatedAt }]];
+      }
+      if (/^\s*INSERT (IGNORE )?INTO system_alerts/i.test(sql)) {
+        alertInserts.push({ sql, params });
+        return [{ affectedRows: 1, insertId: 900 }];
+      }
+
       // ── the CTA mint (real ctaService) ──────────────────────────────────
       if (/INSERT INTO cta_links/i.test(sql)) {
         if (failCtaInsert) throw new Error('cta_links is on fire');
@@ -101,6 +118,10 @@ function makeDb({ undigested = [], suRows = [], failCtaInsert = false } = {}) {
       if (/UPDATE system_alerts SET digested_at = NOW\(\) WHERE id IN/i.test(sql)) {
         digestedStamps.push({ sql, params });
         return [{ affectedRows: params[0].length }];
+      }
+      if (/UPDATE system_alerts SET digested_at = NOW\(\) WHERE id = \?/i.test(sql)) {
+        digestedStamps.push({ sql, params });
+        return [{ affectedRows: 1 }];
       }
       if (/INSERT INTO alert_state/i.test(sql)) return [{ affectedRows: 1 }];
       if (/UPDATE system_alerts SET resolved_at/i.test(sql)) return [{ affectedRows: 0 }];
@@ -217,5 +238,80 @@ describe('digest buttons', () => {
     expect(html).toContain(GROUP_A);        // the block itself is intact
     expect(html).not.toContain('/c/');      // just without buttons
     expect(db.digestedStamps).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe('critical immediate email buttons', () => {
+  const CRITICAL = {
+    source: 'oauth', kind: 'refresh_failed', group_key: 'oauth:42',
+    severity: 'critical', title: 'OAuth credential 42 refresh failed',
+    message: 'boom',
+  };
+
+  test("mints one kind='critical' CTA, before frozen to the row's DB created_at, buttons in the html", async () => {
+    const db = makeDb({ suRows: SU, criticalRowCreatedAt: T2 });
+    await alerting.alert(db, CRITICAL);
+
+    expect(db.ctaInserts).toHaveLength(1);
+    const m = parseMint(db.ctaInserts[0]);
+    expect(m.name).toBe('critical oauth:42');
+    expect(m.mode).toBe('repeatable');
+    expect(m.protection).toBe('none');
+    expect(m.mint_source).toBe('su');
+    expect(m.minted_by).toBe(1);
+    for (const o of m.options) {
+      expect(o.plan).toEqual([{
+        fn: 'set_system_alert_status',
+        params: {
+          action: o.value, group_key: 'oauth:42',
+          before: T2.toISOString(),            // the row read back, not Date.now()
+          by: 'email-critical',
+        },
+      }]);
+    }
+
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    const { subject, html } = emailService.sendEmail.mock.calls[0][1];
+    expect(subject).toMatch(/CRITICAL/);
+    expect(html).toContain(`https://4lsg.com/c/${m.token}/ack`);
+    expect(html).toContain(`https://4lsg.com/c/${m.token}/resolve`);
+    expect(html).toContain('Acknowledge/Resolve act on this alert');
+    // the delivered row is stamped digested, as before
+    expect(db.digestedStamps).toHaveLength(1);
+    expect(db.digestedStamps[0].params).toEqual([900]);
+  });
+
+  test('throttled group → no mint, no email (the pre-existing contract)', async () => {
+    const db = makeDb({ suRows: SU, throttled: true });
+    await alerting.alert(db, CRITICAL);
+    expect(db.ctaInserts).toHaveLength(0);
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+  });
+
+  test('a mint that throws costs the buttons, never the critical email', async () => {
+    const db = makeDb({ suRows: SU, failCtaInsert: true });
+    await alerting.alert(db, CRITICAL);
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    const { html } = emailService.sendEmail.mock.calls[0][1];
+    expect(html).toContain('oauth:42');
+    expect(html).not.toContain('/c/');
+    expect(db.digestedStamps).toHaveLength(1);
+  });
+
+  test('a cutoff lookup that throws costs the buttons, never the critical email (the wrapper catch)', async () => {
+    const db = makeDb({ suRows: SU, failCreatedAtSelect: true });
+    await alerting.alert(db, CRITICAL);
+    expect(db.ctaInserts).toHaveLength(0);
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(emailService.sendEmail.mock.calls[0][1].html).not.toContain('/c/');
+  });
+
+  test('no active SU → no mint, email still sends', async () => {
+    const db = makeDb({ suRows: [] });
+    await alerting.alert(db, CRITICAL);
+    expect(db.ctaInserts).toHaveLength(0);
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(emailService.sendEmail.mock.calls[0][1].html).not.toContain('/c/');
   });
 });

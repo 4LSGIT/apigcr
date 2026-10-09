@@ -80,7 +80,9 @@ recurring job, and is exposed as the `run_error_sweep`
 ### Acknowledge / Resolve buttons in the digest
 
 Each group block in the digest email carries **Acknowledge** and **Resolve**
-buttons — [CTA links](07-cta-links.md) (repeatable, max 4 uses, 7-day expiry,
+buttons — and the **critical immediate email** carries the same pair for its
+one alert (attribution `email-critical` instead of `email-digest`, same rules
+below). They are [CTA links](07-cta-links.md) (repeatable, max 4 uses, 7-day expiry,
 no password, su-attributed) whose plans call the `set_system_alert_status`
 internal function. Each button opens a `/c/` confirmation page; nothing runs
 until you confirm there.
