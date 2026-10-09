@@ -347,6 +347,11 @@ function makeWorld() {
         .sort(cmpDesc).slice(0, Number(p[3]))
         .map(x => project(joined(x, p[0]), fullCols))];
     }
+    // listMessages: the page's bodies, for the inline-vs-attached count only
+    if (sql === 'SELECT id, body_html FROM mail_messages WHERE id IN (?)') {
+      const ids = new Set(p[0].map(Number));
+      return [T.mail_messages.filter(x => ids.has(x.id)).map(x => ({ id: x.id, body_html: x.body_html }))];
+    }
     if (sql === `SELECT ${FULL_COLS} FROM mail_messages m ${JOINS} WHERE m.id = ? LIMIT 1`) {
       const x = T.mail_messages.find(r => r.id === Number(p[1]));
       return [x ? [project(joined(x, p[0]), fullCols)] : []];

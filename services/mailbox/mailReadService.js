@@ -224,6 +224,39 @@ function attachmentParts(v) {
   }));
 }
 
+/*
+ * INLINE vs ATTACHED. A part is INLINE — drawn inside the HTML body, not
+ * listed as a file — only when it is an image that the body actually
+ * references as `cid:<Content-ID>` (RFC 2392: the URL is the URL-encoded
+ * Content-ID; mailRender.cidKey reads it the same way). Having a Content-ID
+ * is NOT enough: Gmail gives EVERY attachment one (X-Attachment-Id), so the
+ * old "has a cid = inline" rule hid every Gmail PDF from the list count and
+ * the thread. The stored structure carries no disposition (and Apple Mail
+ * marks plain PDFs `inline` anyway), so the body reference is the test.
+ */
+const CID_REF_RE = /cid:([^\s"'()<>]+)/gi;
+
+/** Lowercased Content-IDs the HTML references as cid: URLs. */
+function referencedCids(html) {
+  const out = new Set();
+  if (html == null || html === '') return out;
+  for (const m of String(html).matchAll(CID_REF_RE)) {
+    let k = m[1];
+    try { k = decodeURIComponent(k); } catch (_) { /* keep it as written */ }
+    out.add(k.replace(/^<|>$/g, '').toLowerCase());
+  }
+  return out;
+}
+
+/** attachmentParts() rows + `inline` (see INLINE vs ATTACHED). */
+function markInline(parts, html) {
+  const refs = parts.some(p => p.cid) ? referencedCids(html) : new Set();
+  return parts.map(p => ({
+    ...p,
+    inline: !!(p.cid && p.mime && p.mime.startsWith('image/') && refs.has(p.cid.replace(/^<|>$/g, '').toLowerCase())),
+  }));
+}
+
 function caseOf(r) {
   if (r.case_id == null) return null;
   return { case_id: r.case_id, case_number: r.case_number_full || r.case_number || null };
@@ -424,9 +457,19 @@ async function listMessages(db, userId, query = {}) {
   );
 
   const page = rows.slice(0, limit);
+  // Whether a cid part is inline depends on the HTML body, which the list
+  // projection never carries: read it server-side for just the rows on this
+  // (already grant-scoped) page that HAVE a cid part — used for the count,
+  // never sent.
+  const htmlFor = new Map();
+  const needHtml = page.filter(r => attachmentParts(r.attachments).some(p => p.cid)).map(r => Number(r.id));
+  if (needHtml.length) {
+    const [hrows] = await db.query('SELECT id, body_html FROM mail_messages WHERE id IN (?)', [needHtml]);
+    for (const h of hrows) htmlFor.set(Number(h.id), h.body_html);
+  }
   const messages = page.map(r => {
     const mb = scope.get(Number(r.mailbox_id)) || {};
-    const parts = attachmentParts(r.attachments);
+    const parts = markInline(attachmentParts(r.attachments), htmlFor.get(Number(r.id)));
     return {
       id: Number(r.id),
       mailbox_id: Number(r.mailbox_id),
@@ -440,7 +483,7 @@ async function listMessages(db, userId, query = {}) {
       date: toDate(r.date),
       snippet: r.snippet || null,
       unread: !!Number(r.unread),
-      attachment_count: parts.filter(p => !p.cid).length,
+      attachment_count: parts.filter(p => !p.inline).length,
       log_id: r.log_id == null ? null : Number(r.log_id),
       case: caseOf(r),
     };
@@ -475,7 +518,7 @@ function shapeFull(r, scope) {
     snippet: r.snippet || null,
     body_text: r.body_text == null ? null : String(r.body_text),
     body_html: r.body_html == null ? null : String(r.body_html),
-    attachments: attachmentParts(r.attachments),
+    attachments: markInline(attachmentParts(r.attachments), r.body_html),
     unread: !!Number(r.unread),
     log_id: r.log_id == null ? null : Number(r.log_id),
     case: caseOf(r),
@@ -973,6 +1016,8 @@ module.exports = {
   folderEmits,
   STORE_ONLY_GRACE_MIN,
   emailsIn,
+  referencedCids,
+  markInline,
   parseCursor,
   cursorOf,
   FILTER_KEYS,

@@ -28,6 +28,10 @@
  *   - earliest() → the header date alone                                 → future-Date test
  *   - markRead {all} ignoring scopeWhere (old statement)                 → filtered mark-all tests
  *   - getThread back to oldest-first LIMIT                               → newest-window test
+ * Inline vs attached (follow-up), mutation-checked:
+ *   - attachment_count back to "no cid"                                 → Gmail-PDF count test
+ *   - markInline ignoring the body reference / the image test           → thread inline tests
+ *   - the page-body read unconditional / dropped                        → body-read tests
  * Mailbox colour (v3), mutation-checked:
  *   - summary dropping `color` / passing it through un-normalized        → colour test
  */
@@ -257,13 +261,36 @@ describe('the list carries no bodies', () => {
     ]);
   });
 
-  test('attachment_count excludes inline (cid) parts', async () => {
-    W.T.mail_messages.find((m) => m.id === 104).attachments = JSON.stringify([
+  test('attachment_count excludes only images the HTML body draws (cid: referenced) — a Content-ID alone is not "inline"', async () => {
+    const m104 = W.T.mail_messages.find((m) => m.id === 104);
+    m104.body_html = '<p>hi</p><img src="cid:logo%40x"><div style="background:url(cid:BG@X)"></div>';
+    m104.attachments = JSON.stringify([
       { part: '2', filename: 'a.pdf', size: 1, mime: 'application/pdf' },
-      { part: '3', filename: 'logo.png', size: 1, mime: 'image/png', cid: 'logo@x' },
+      { part: '3', filename: 'logo.png', size: 1, mime: 'image/png', cid: 'logo@x' },  // drawn (URL-encoded ref)
+      { part: '4', filename: 'bg.gif', size: 1, mime: 'image/gif', cid: '<bg@x>' },   // drawn (CSS url, case-blind)
     ]);
+    // Gmail: EVERY attachment carries a Content-ID (X-Attachment-Id) — the live "email with pdf" (mail_messages 2)
+    const m103 = W.T.mail_messages.find((m) => m.id === 103);
+    m103.body_html = '<div dir="ltr">see attached</div>';
+    m103.attachments = JSON.stringify([
+      { part: '2', filename: 'Untitled.pdf', size: 63118, mime: 'application/pdf', cid: 'f_mv06z1bd0' },
+      { part: '3', filename: 'photo.jpg', size: 9, mime: 'image/jpeg', cid: 'f_mv06z1be1' },           // attached, not drawn
+    ]);
+    W.statements.length = 0;
     const r = await call('GET', '/api/mail/messages', { t: tok(READER) });
-    expect(r.json.messages.find((m) => m.id === 104).attachment_count).toBe(1);
+    const count = (id) => r.json.messages.find((m) => m.id === id).attachment_count;
+    expect([count(104), count(103), count(101)]).toEqual([1, 2, 0]);
+    expect(r.text).not.toMatch(/see attached|cid:/); // bodies read for the count, never sent
+    // the page's bodies come from ONE query, only for rows that have a cid part
+    const reads = W.statements.filter((x) => x.sql.startsWith('SELECT id, body_html'));
+    expect(reads).toHaveLength(1);
+    expect([...reads[0].params[0]].sort()).toEqual([103, 104]);
+  });
+
+  test('no cid part on the page → no body read at all', async () => {
+    W.statements.length = 0;
+    await call('GET', '/api/mail/messages', { t: tok(READER) });
+    expect(W.statements.filter((x) => /body_html/.test(x.sql))).toEqual([]);
   });
 });
 
@@ -393,6 +420,29 @@ describe('threads', () => {
     expect(got[0]).toBe(1005);
     expect(got[got.length - 1]).toBe(1000 + N - 1);
     expect(got).toEqual([...got].sort((a, b) => a - b));
+  });
+
+  test('thread attachments carry `inline`: only images the body draws by cid: (Gmail PDFs with a Content-ID stay files)', async () => {
+    W.message(120, {
+      mailbox_id: 1, thread_key: 'att@x.test',
+      body_html: '<img src="cid:ii_abc">',
+      attachments: JSON.stringify([
+        { part: '2', filename: 'Untitled.pdf', size: 5, mime: 'application/pdf', cid: 'f_mv06z1bd0' },
+        { part: '3', filename: 'sig.png', size: 5, mime: 'image/png', cid: 'ii_abc' },
+        { part: '4', filename: 'scan.png', size: 5, mime: 'image/png', cid: 'f_other' },
+        { part: '5', filename: 'plain.txt', size: 5, mime: 'text/plain' },
+      ]),
+    });
+    const r = await call('GET', '/api/mail/threads/att%40x.test', { t: tok(READER) });
+    expect(r.json.messages[0].attachments.map((a) => [a.part, a.inline])).toEqual([['2', false], ['3', true], ['4', false], ['5', false]]);
+    const one = await call('GET', '/api/mail/messages/120', { t: tok(READER) });
+    expect(one.json.messages[0].attachments.filter((a) => a.inline).map((a) => a.part)).toEqual(['3']);
+  });
+
+  test('referencedCids: RFC 2392 URL-encoded, <bracketed>, case-blind; a cid: that is not an image is never inline', () => {
+    expect([...read.referencedCids('<img src="cid:a%40b"> <img src=CID:X@Y> url(\'cid:%3Cz@q%3E\') cid:%E0%A4%A')].sort()).toEqual(['a@b', 'x@y', 'z@q', '%e0%a4%a'].sort());
+    expect(read.markInline([{ cid: 'p@x', mime: 'application/pdf' }], '<img src="cid:p@x">')[0].inline).toBe(false);
+    expect(read.markInline([{ cid: null, mime: 'image/png' }], '<img src="cid:null">')[0].inline).toBe(false);
   });
 
   test('thread keys with reserved URL characters round-trip', async () => {

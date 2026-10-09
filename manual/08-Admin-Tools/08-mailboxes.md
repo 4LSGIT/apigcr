@@ -176,8 +176,14 @@ phone slice.
   any combination of boxes — say shoshana@ and billing@ together), the
   search (sender or subject — not the message text), a sender domain,
   **Unread**, **On a case**, and **All folders** (adds Sent).
-- **Read / unread is yours alone.** Opening a conversation marks it read for
-  you, not for the other people on the box; **Mark unread** puts it back.
+- **Read / unread is yours alone.** An unread message stands out in the
+  list: a blue dot, bold sender, subject and date, on a white row (the lighter
+  row in the dark theme); read ones are plain, on the page's grey. Opening a
+  conversation marks it read for you, not for the other people on the box. In
+  the conversation, messages that were unread when you opened it keep a
+  **New** tag (and a blue left edge), so you can still see what arrived since
+  you last looked; **Mark unread** / **Mark read** on a message switches it
+  (the tag then says **Unread**).
   YisraCase never marks anything read on the mail server, so Outlook and
   webmail are unaffected. **Mark all read** clears exactly what the list
   shows — the ticked boxes and the filters on screen, including pages not
@@ -189,8 +195,11 @@ phone slice.
   the sender that you opened the message. Message content is displayed
   boxed off from YisraCase — scripts and forms in an email never run, and
   links open in a new tab.
-- **Attachments** download from the mail server when clicked (see
-  Attachments above).
+- **Attachments** show as a paperclip and count on the message in the list
+  and on its header in the conversation, and as buttons under it; they
+  download from the mail server when clicked (see Attachments above). Only an
+  image drawn inside the message itself (a signature logo) is not listed —
+  it appears in the message when you click **Show images**.
 - **Link to case** puts the email on a case's log. If the email is already
   on the log (the old Gmail sync logs Stuart's inbox, for instance), that entry
   is linked — never a second copy. If it is not on the log yet (a box that

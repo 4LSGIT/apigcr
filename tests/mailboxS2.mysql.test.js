@@ -246,6 +246,17 @@ maybe('mailbox S2 on real MySQL', () => {
     expect([th.json.truncated, got.length, got[0], got[got.length - 1]]).toEqual([true, svc.THREAD_MAX, 5003, 5000 + N - 1]);
   });
 
+  test('inline vs attached on the engine: a Gmail-style PDF with a Content-ID counts; an image the body draws does not', async () => {
+    await q(`UPDATE mail_messages SET body_html = '<p>x</p><img src="cid:ii_sig">',
+      attachments = '[{"part":"2","filename":"Untitled.pdf","size":63118,"mime":"application/pdf","cid":"f_mv06z1bd0"},{"part":"3","filename":"sig.png","size":9,"mime":"image/png","cid":"ii_sig"}]'
+      WHERE id = 103`);
+    const r = await call('GET', '/api/mail/messages', { t: tok(READER) });
+    expect(r.json.messages.find((m) => m.id === 103).attachment_count).toBe(1);
+    expect(JSON.stringify(r.json)).not.toMatch(/ii_sig|cid:/);
+    const t = await call('GET', '/api/mail/messages/103', { t: tok(READER) });
+    expect(t.json.messages[0].attachments.map((a) => [a.filename, a.inline])).toEqual([['Untitled.pdf', false], ['sig.png', true]]);
+  });
+
   test('mailbox colour on the engine (ref/migrations/2026-10-09_mailbox_s2.sql applied): default on create, manager edit, every projection', async () => {
     const { mintElevationToken } = require('../lib/auth.superuser');
     const C = require('../public/js/mailboxColor');

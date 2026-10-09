@@ -82,17 +82,29 @@
 
   .msg-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
   .msg {
-    padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; position: relative;
-    display: flex; flex-direction: column; gap: 2px; min-width: 0;
+    padding: 8px 10px 8px 22px; border-bottom: 1px solid var(--border); cursor: pointer; position: relative;
+    display: flex; flex-direction: column; gap: 2px; min-width: 0; background: var(--page-bg);
   }
-  .msg:hover { background: var(--hover); }
-  .msg.selected { background: var(--accent-soft); }
-  .msg.unread::before { content: ''; position: absolute; left: 6px; top: 13px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
   .msg .r1, .msg .r2 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
   .msg .from { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msg .date { flex: 0 0 auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
   .msg .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .msg.unread .from, .msg.unread .subject { font-weight: 700; }
+  /* ── Read vs unread ──────────────────────────────────────────
+     Four cues, so no single one (colour, weight) carries it alone:
+       unread → a raised row (--surface is the lighter tone in BOTH themes),
+                sender + subject + date bold in --text, and an 8px dot in
+                --accent-2 (--accent itself is under 3:1 on the light
+                surfaces, theme.css);
+       read   → the page tone, regular weight, sender + subject in --text-2.
+     Screen readers get "Unread." as text (.sr-state). Hover and selected
+     come after, so they still win. */
+  .msg.unread { background: var(--surface); }
+  .msg .from, .msg .subject { color: var(--text-2); }
+  .msg.unread .from, .msg.unread .subject, .msg.unread .date { font-weight: 700; color: var(--text); }
+  .msg.unread::before { content: ''; position: absolute; left: 8px; top: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-2); }
+  .msg:hover { background: var(--hover); }
+  .msg.selected { background: var(--accent-soft); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .msg .snippet { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .chips { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
   .msg .chips { margin-top: 2px; }
@@ -146,9 +158,21 @@
   .mcard { border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); margin-bottom: 8px; min-width: 0; }
   .mcard.anchor { border-color: var(--accent); }
   .mhead { padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .mhead .r1 { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
-  .mhead .mfrom { font-weight: 700; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .mhead .r1 { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; min-width: 0; }
+  /* the sender takes the line on a phone; pill / clip / date wrap under it */
+  .mhead .mfrom { font-weight: 700; flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
   .mhead .mdate { font-size: 11px; color: var(--text-muted); white-space: nowrap; flex: 0 0 auto; }
+  /* Read state on a card: "Unread" (filled) while it is unread for you, "New"
+     (outlined) when it was unread as this conversation opened — opening marks
+     it read, so without this the new messages in a long thread are lost. */
+  .mstate {
+    flex: 0 0 auto; align-self: center; font-size: 10.5px; font-weight: 700; line-height: 1.5; white-space: nowrap;
+    padding: 0 7px; border-radius: 9px; border: 1px solid var(--accent-2); color: var(--accent-2);
+  }
+  .mstate.unread { background: var(--accent-2); color: var(--surface); }
+  .mstate:empty { display: none; }
+  .mcard.is-unread, .mcard.is-new { border-left: 3px solid var(--accent-2); }
+  .mclip { flex: 0 0 auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
   .mhead .mmeta { font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
   .mhead .msnip { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mcard:not(.collapsed) .msnip { display: none; }
@@ -320,7 +344,7 @@ const state = {
   loading: false,
   seq: 0,               // list request guard
   selectedId: null,
-  thread: null,         // { key, subject, messages, anchorId }
+  thread: null,         // { key, subject, messages, anchorId, truncated, newIds: Set — unread as it opened }
   threadSeq: 0,
   render: new Map(),    // message id → { allowRemote, mode, cidMap, tall }
   linking: null,        // message being case-linked
@@ -582,6 +606,7 @@ function msgRow(m) {
     onclick: () => openMessage(m),
     onkeydown: (e) => { if (e.key === 'Enter') openMessage(m); },
   },
+    h('span', { className: 'sr-only sr-state' }, m.unread ? 'Unread. ' : ''),
     h('div', { className: 'r1' }, h('span', { className: 'from', title: m.from_addr || '' }, personName(m.from_addr)), h('span', { className: 'date' }, listDate(m.date))),
     h('div', { className: 'r2' }, h('span', { className: 'subject' }, m.subject || '(no subject)')),
     m.snippet ? h('div', { className: 'snippet' }, m.snippet) : null,
@@ -618,7 +643,10 @@ function markRowsRead(ids, unread) {
   const set = new Set(ids.map(Number));
   for (const m of state.messages) if (set.has(m.id)) m.unread = unread;
   for (const li of E('msg-list').querySelectorAll('.msg')) {
-    if (set.has(Number(li.dataset.id))) li.classList.toggle('unread', unread);
+    if (!set.has(Number(li.dataset.id))) continue;
+    li.classList.toggle('unread', unread);
+    const sr = li.querySelector('.sr-state');
+    if (sr) sr.textContent = unread ? 'Unread. ' : '';
   }
 }
 
@@ -644,7 +672,10 @@ async function openMessage(m) {
     const data = await api(url, 'GET');
     if (seq !== state.threadSeq) return;
     const msgs = Array.isArray(data && data.messages) ? data.messages : [];
-    state.thread = { key: m.thread_key, subject: data.subject, messages: msgs, anchorId: m.id, truncated: !!data.truncated };
+    state.thread = {
+      key: m.thread_key, subject: data.subject, messages: msgs, anchorId: m.id, truncated: !!data.truncated,
+      newIds: new Set(msgs.filter((x) => x.unread).map((x) => x.id)),
+    };
     renderThread();
     // Mark-read on open: every unread copy of every message shown.
     const ids = [];
@@ -653,6 +684,7 @@ async function openMessage(m) {
       api('/api/mail/read', 'POST', { ids }).then(() => {
         for (const x of msgs) { x.unread = false; for (const c of (x.copies || [])) c.unread = false; }
         markRowsRead(ids, false);
+        if (state.thread && state.thread.messages === msgs) for (const x of msgs) paintCardState(x);
         refreshCountsSoon();
       }).catch((err) => toast(`Couldn't mark as read: ${err.message}`));
     }
@@ -690,8 +722,13 @@ function renderThread() {
 
 function messageCard(m, { expanded, anchor }) {
   const card = h('div', { className: 'mcard' + (expanded ? '' : ' collapsed') + (anchor ? ' anchor' : ''), dataset: { id: String(m.id) } });
+  const files = attachedFiles(m);
   const head = h('div', { className: 'mhead', role: 'button', tabindex: '0', title: 'Show / hide this message' },
-    h('div', { className: 'r1' }, h('span', { className: 'mfrom' }, m.from_addr || '(no sender)'), h('span', { className: 'mdate' }, fullDate(m.date))),
+    h('div', { className: 'r1' },
+      h('span', { className: 'mfrom' }, m.from_addr || '(no sender)'),
+      h('span', { className: 'mstate' }),
+      files.length ? h('span', { className: 'mclip', title: `${files.length} attachment${files.length === 1 ? '' : 's'}` }, icon('fa-paperclip'), ` ${files.length}`) : null,
+      h('span', { className: 'mdate' }, fullDate(m.date))),
     h('div', { className: 'mmeta mexp' }, m.to_addrs ? `To: ${m.to_addrs}` : '', m.cc_addrs ? ` · Cc: ${m.cc_addrs}` : ''),
     h('div', { className: 'mmeta mexp' }, (m.copies || [m]).map((c) => h('span', { className: 'cp' }, boxDot(c.mailbox_id),
       `${c.mailbox_address || ''}${c.folder && c.folder.toUpperCase() !== 'INBOX' ? ` / ${c.folder}` : ''}`))),
@@ -706,7 +743,28 @@ function messageCard(m, { expanded, anchor }) {
   head.addEventListener('keydown', (e) => { if (e.key === 'Enter') toggle(); });
   card.append(head, h('div', { className: 'mexp mslot' }));
   if (expanded) fillCard(card, m);
+  paintCardState(m, card);
   return card;
+}
+
+/** Files to list: every part except images the body draws (server `inline`). */
+function attachedFiles(m) {
+  return (m.attachments || []).filter((a) => !a.inline);
+}
+
+/** The card's read-state pill, border and Mark read / Mark unread button. */
+function paintCardState(m, cardIn) {
+  const card = cardIn || E('thread-body').querySelector(`.mcard[data-id="${m.id}"]`);
+  if (!card) return;
+  const isNew = !!(state.thread && state.thread.newIds && state.thread.newIds.has(m.id));
+  const pill = card.querySelector('.mstate');
+  pill.textContent = m.unread ? 'Unread' : (isNew ? 'New' : '');
+  pill.classList.toggle('unread', !!m.unread);
+  pill.title = m.unread ? 'You have not read this yet' : (isNew ? 'Unread when you opened this conversation' : '');
+  card.classList.toggle('is-unread', !!m.unread);
+  card.classList.toggle('is-new', !m.unread && isNew);
+  const btn = card.querySelector('.read-toggle');
+  if (btn) btn.replaceChildren(icon(m.unread ? 'fa-envelope-open' : 'fa-envelope'), m.unread ? 'Mark read' : 'Mark unread');
 }
 
 /** Actions, notice, attachments and the sandboxed body for one card. */
@@ -723,9 +781,9 @@ function fillCard(card, m) {
 
   const actions = h('div', { className: 'mactions' });
   actions.append(h('button', {
-    className: 'btn small', type: 'button',
-    onclick: () => markUnread(m),
-  }, icon('fa-envelope'), 'Mark unread'));
+    className: 'btn small read-toggle', type: 'button',
+    onclick: () => (m.unread ? markRead(m) : markUnread(m)),
+  }, icon(m.unread ? 'fa-envelope-open' : 'fa-envelope'), m.unread ? 'Mark read' : 'Mark unread'));
   if (hasHtml) {
     actions.append(h('button', {
       className: 'btn small', type: 'button',
@@ -748,7 +806,7 @@ function fillCard(card, m) {
       `Images hidden to protect your privacy (${built.blocked.remote} remote${built.blocked.inline ? `, ${built.blocked.inline} inline` : ''}). Remote images tell the sender you opened this.`,
       h('button', { className: 'btn small', type: 'button', onclick: (e) => showImages(card, m, e.target) }, 'Show images')));
   }
-  const files = (m.attachments || []).filter((a) => !a.cid);
+  const files = attachedFiles(m);
   if (files.length) {
     kids.push(h('div', { className: 'atts' }, files.map((a) => h('button', {
       className: 'btn small att', type: 'button', title: `${a.filename || 'attachment'}${a.mime ? ` · ${a.mime}` : ''}`,
@@ -768,7 +826,7 @@ async function showImages(card, m, btn) {
   const rs = state.render.get(m.id);
   if (btn) btn.disabled = true;
   rs.allowRemote = true;
-  const inline = (m.attachments || []).filter((a) => a.cid && INLINE_IMAGE_MIME.includes(a.mime) && (a.size == null || a.size <= INLINE_IMAGE_BYTES)).slice(0, INLINE_IMAGE_MAX);
+  const inline = (m.attachments || []).filter((a) => a.inline && a.cid && INLINE_IMAGE_MIME.includes(a.mime) && (a.size == null || a.size <= INLINE_IMAGE_BYTES)).slice(0, INLINE_IMAGE_MAX);
   if (inline.length) {
     rs.cidMap = rs.cidMap || {};
     // One at a time: every part fetch is its own IMAP login on the server
@@ -812,11 +870,30 @@ async function markUnread(m) {
   try {
     await api(`/api/mail/messages/${id}/read`, 'DELETE');
     m.unread = true;
+    for (const c of (m.copies || [])) if (c.id === id) c.unread = true;
     markRowsRead([id], true);
+    paintCardState(m);
     refreshCountsSoon();
     toast('Marked unread');
   } catch (err) {
     toast(`Couldn't mark unread: ${err.message}`);
+  }
+}
+
+async function markRead(m) {
+  // Every unread copy, like opening the conversation does.
+  const unreadCopies = (m.copies || []).filter((c) => c.unread).map((c) => c.id);
+  const ids = unreadCopies.length ? unreadCopies : [m.id];
+  try {
+    await api('/api/mail/read', 'POST', { ids });
+    m.unread = false;
+    for (const c of (m.copies || [])) c.unread = false;
+    markRowsRead(ids, false);
+    paintCardState(m);
+    refreshCountsSoon();
+    toast('Marked read');
+  } catch (err) {
+    toast(`Couldn't mark read: ${err.message}`);
   }
 }
 

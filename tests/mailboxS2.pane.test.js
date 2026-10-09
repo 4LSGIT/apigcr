@@ -27,6 +27,11 @@
  *     its chip, the picker and the thread; no colour = muted grey.
  *   - Mark all read sends the picker set + the on-screen filters, after a
  *     confirm (per-user state, no undo).
+ *   - Read state is unmistakable (follow-up): unread rows carry the class +
+ *     "Unread." screen-reader text; thread cards say Unread / New and toggle
+ *     Mark read ↔ Mark unread against the server and the list row.
+ *   - Files vs inline: the server's `inline` decides (a Content-ID alone does
+ *     not — Gmail gives every attachment one).
  *   - Phone tab rendered and disabled; the empty hub explains itself.
  *   - Phone widths: opening a message switches to the thread (stacked
  *     navigation, .show-thread), Back returns to the list.
@@ -64,8 +69,14 @@ const THREAD = {
     id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', message_id: 'root@x.test', thread_key: 'root@x.test',
     from_addr: `Evil ${EVIL} <evil@x.test>`, to_addrs: 'billing@firm.test', cc_addrs: null, subject: `Subject ${EVIL}`,
     date: '2026-10-08T14:00:00.000Z', snippet: 'snip',
-    body_text: 'plain', body_html: `<p>Hello</p><script>window.top.__pwned=2</script><img src="https://track.test/p.gif">${EVIL}`,
-    attachments: [{ part: '2', filename: `bill ${EVIL}.pdf`, size: 2048, mime: 'application/pdf', cid: null }, { part: '3', filename: 'logo.png', size: 10, mime: 'image/png', cid: 'logo@x' }],
+    body_text: 'plain', body_html: `<p>Hello</p><script>window.top.__pwned=2</script><img src="https://track.test/p.gif"><img src="cid:logo@x">${EVIL}`,
+    // `inline` is the server's call (mailReadService.markInline: an image the body draws by cid:);
+    // the Gmail-style PDF carries a Content-ID too and is still a FILE
+    attachments: [
+      { part: '2', filename: `bill ${EVIL}.pdf`, size: 2048, mime: 'application/pdf', cid: 'f_mv06z1bd0', inline: false },
+      { part: '3', filename: 'logo.png', size: 10, mime: 'image/png', cid: 'logo@x', inline: true },
+      { part: '4', filename: 'photo.jpg', size: 20, mime: 'image/jpeg', cid: 'f_photo', inline: false }, // attached, not drawn
+    ],
     unread: true, log_id: null, case: null,
     copies: [{ id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', unread: true }, { id: 31, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', unread: true }],
   }],
@@ -103,13 +114,16 @@ async function boot({ handler, width = 1024 } = {}) {
   return { window, doc: window.document, calls, errors };
 }
 
+// Fresh copies per response: the pane mutates what it is handed (read flags),
+// and a shared fixture would leak one test's clicks into the next.
+const fresh = (v) => JSON.parse(JSON.stringify(v));
 function standard(over = {}) {
   return (url, method, payload, opts) => {
     if (over[`${method} ${url}`]) return over[`${method} ${url}`](payload, opts);
-    if (url === '/api/mail/mailboxes') return { mailboxes: MB, viewer: { su: true, role: null } };
+    if (url === '/api/mail/mailboxes') return { mailboxes: fresh(MB), viewer: { su: true, role: null } };
     if (url === '/api/mail/views') return { views: [] };
-    if (url === '/api/mail/messages' && method === 'GET') return { messages: ROWS, next_cursor: null };
-    if (url === '/api/mail/threads/root%40x.test') return THREAD;
+    if (url === '/api/mail/messages' && method === 'GET') return { messages: fresh(ROWS), next_cursor: null };
+    if (url === '/api/mail/threads/root%40x.test') return fresh(THREAD);
     if (url === '/api/mail/messages/12') return { thread_key: null, subject: 'Threadless', messages: [{ ...ROWS[1], body_text: 'only text', body_html: null, attachments: [], copies: [{ id: 12, mailbox_id: 2, folder: 'INBOX', unread: false }] }] };
     if (url === '/api/mail/read' && method === 'POST') return { marked: (payload.ids || []).length };
     throw new Error(`unexpected ${method} ${url}`);
@@ -160,7 +174,7 @@ describe('comms hub pane', () => {
     expect(window.__pwned).toBeUndefined();
     // privacy notice offers to load the hidden image; the inline (cid) part is not listed as a file
     expect(doc.querySelector('.notice').textContent).toMatch(/Images hidden.*2 remote/); // the tracker + the relative src
-    expect(doc.querySelectorAll('.att')).toHaveLength(1);
+    expect(doc.querySelectorAll('.att')).toHaveLength(2);
     // the row lost its unread marker
     expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(false);
   });
@@ -186,6 +200,8 @@ describe('comms hub pane', () => {
     doc.querySelector('.notice button').click();
     await tick(window, 120);
     expect(blobs).toEqual([{ responseType: 'blob' }]);
+    // only the image the body draws — the attached photo (a Content-ID, not inline) is not fetched for the body
+    expect(calls.filter((c) => /\/parts\//.test(c.url)).map((c) => c.url)).toEqual(['/api/mailboxes/1/messages/11/parts/3']);
     const f = doc.querySelector('iframe');
     expect(f.srcdoc).toContain("img-src data: https: http:");
     expect(f.srcdoc).toContain('src="https://track.test/p.gif"');
@@ -210,6 +226,103 @@ describe('comms hub pane', () => {
     expect(c).toMatchObject({ method: 'GET', opts: { responseType: 'blob' } });
     expect(downloads).toEqual([['blob:https://app.4lsg.com/x', `bill ${EVIL}.pdf`]]);
     expect(doc.querySelector('a[href*="/api/"]')).toBeNull();
+  });
+
+  test('read vs unread in the list: class + screen-reader text, and the CSS gives unread four cues', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    const rows = [...doc.querySelectorAll('#msg-list .msg')];
+    expect(rows.map((r) => [r.classList.contains('unread'), r.querySelector('.sr-state').textContent])).toEqual([[true, 'Unread. '], [false, '']]);
+    // the rules themselves (jsdom does not cascade the pane's <style>; real Chrome is checked in the screenshot pass)
+    for (const rule of [
+      '.msg.unread { background: var(--surface); }',
+      '.msg .from, .msg .subject { color: var(--text-2); }',
+      '.msg.unread .from, .msg.unread .subject, .msg.unread .date { font-weight: 700; color: var(--text); }',
+      'background: var(--accent-2); }',
+    ]) expect(HTML).toContain(rule);
+    expect(HTML.indexOf('.msg.unread { background')).toBeLessThan(HTML.indexOf('.msg:hover { background'));
+    expect(HTML.indexOf('.msg:hover { background')).toBeLessThan(HTML.indexOf('.msg.selected { background'));
+    rows[0].click();
+    await tick(window, 80);
+    expect(rows[0].querySelector('.sr-state').textContent).toBe('');
+  });
+
+  test('thread cards: Unread → New once opened; Mark unread / Mark read toggle the card, the row and the server', async () => {
+    const { window, doc, calls } = await boot({
+      handler: standard({ 'DELETE /api/mail/messages/11/read': () => ({ id: 11, unread: true }) }),
+    });
+    const row = () => doc.querySelector('#msg-list .msg[data-id="11"]');
+    row().click();
+    await tick(window, 80);
+    const card = doc.querySelector('.mcard[data-id="11"]');
+    const state = () => [card.querySelector('.mstate').textContent, card.querySelector('.mstate').classList.contains('unread'),
+      card.classList.contains('is-unread'), card.classList.contains('is-new'), card.querySelector('.read-toggle').textContent.trim()];
+    // it WAS unread as the conversation opened: marked read on open, still flagged New
+    expect(state()).toEqual(['New', false, false, true, 'Mark unread']);
+    card.querySelector('.read-toggle').click();
+    await tick(window, 40);
+    expect(calls.some((c) => c.url === '/api/mail/messages/11/read' && c.method === 'DELETE')).toBe(true);
+    expect(state()).toEqual(['Unread', true, true, false, 'Mark read']);
+    expect([row().classList.contains('unread'), row().querySelector('.sr-state').textContent]).toEqual([true, 'Unread. ']);
+    card.querySelector('.read-toggle').click();
+    await tick(window, 40);
+    expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [11] });
+    expect(state()).toEqual(['New', false, false, true, 'Mark unread']);
+    expect(row().classList.contains('unread')).toBe(false);
+  });
+
+  test('a longer conversation: every card that was unread flips to New once the open\'s mark-read lands; read ones show nothing', async () => {
+    const thread = JSON.parse(JSON.stringify(THREAD));
+    const older = { ...JSON.parse(JSON.stringify(thread.messages[0])), id: 9, message_id: 'older@x.test', date: '2026-10-07T09:00:00.000Z', unread: false, attachments: [],
+      copies: [{ id: 9, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', unread: false }] };
+    const mid = { ...JSON.parse(JSON.stringify(thread.messages[0])), id: 10, message_id: 'mid@x.test', date: '2026-10-07T12:00:00.000Z', unread: true, attachments: [],
+      copies: [{ id: 10, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', unread: true }] };
+    thread.messages = [older, mid, thread.messages[0]];
+    const { window, doc, calls, errors } = await boot({ handler: standard({ 'GET /api/mail/threads/root%40x.test': () => JSON.parse(JSON.stringify(thread)) }) });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [10, 11, 31] });
+    expect([...doc.querySelectorAll('.mcard')].map((c) => [c.dataset.id, c.querySelector('.mstate').textContent])).toEqual([['9', ''], ['10', 'New'], ['11', 'New']]);
+    expect(doc.getElementById('toast').textContent).not.toMatch(/Couldn't/);
+    expect(errors).toEqual([]);
+  });
+
+  test('a read message opened again shows no pill', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    doc.querySelectorAll('#msg-list .msg')[1].click();
+    await tick(window, 80);
+    const card = doc.querySelector('.mcard');
+    expect([card.querySelector('.mstate').textContent, card.classList.contains('is-new'), card.querySelector('.read-toggle').textContent.trim()])
+      .toEqual(['', false, 'Mark unread']);
+  });
+
+  test('a PDF with a Content-ID (every Gmail attachment has one) is a FILE: listed, and counted on the card head; the drawn image is not', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    expect([...doc.querySelectorAll('.att .nm')].map((n) => n.textContent)).toEqual([`bill ${EVIL}.pdf`, 'photo.jpg']);
+    expect(doc.querySelector('.mcard .mclip').textContent.trim()).toBe('2');
+    expect(doc.querySelector('.mcard .mclip').title).toBe('2 attachments');
+  });
+
+  test('Mark read after Mark unread clears the copy that was marked — even when the card\'s message id is another copy', async () => {
+    // the thread collapses copies 11 (box 1, the opened row) and 31 (box 2, primary — it carries the log row)
+    const thread = JSON.parse(JSON.stringify(THREAD));
+    thread.messages[0].id = 31;
+    thread.messages[0].copies = [{ id: 31, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', unread: false }, { id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', unread: true }];
+    const { window, doc, calls } = await boot({
+      handler: standard({ 'GET /api/mail/threads/root%40x.test': () => JSON.parse(JSON.stringify(thread)), 'DELETE /api/mail/messages/11/read': () => ({ id: 11, unread: true }) }),
+    });
+    doc.querySelector('#msg-list .msg[data-id="11"]').click();
+    await tick(window, 80);
+    expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [11] });
+    const btn = doc.querySelector('.mcard .read-toggle');
+    btn.click(); // Mark unread → the opened copy (11), not the card's id (31)
+    await tick(window, 40);
+    expect(calls.some((c) => c.url === '/api/mail/messages/11/read' && c.method === 'DELETE')).toBe(true);
+    btn.click(); // Mark read → that same copy
+    await tick(window, 40);
+    expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [11] });
+    expect(doc.querySelector('#msg-list .msg[data-id="11"]').classList.contains('unread')).toBe(false);
   });
 
   test('mark unread → DELETE …/read for the copy the reader opened', async () => {

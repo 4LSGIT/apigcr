@@ -45,6 +45,10 @@ body. Governing migrations in `ref/migrations/`.*
     `email_ingest_executions` row carries under the RFC Message-ID or a
     provider id (gmail-firm keys Workspace mail by Gmail id = `provider_id`).
     The pipeline itself still dedupes per source only (§27).
+  - **A Content-ID does not make an attachment inline** — Gmail gives every
+    attachment one. Inline = an image the HTML body references as `cid:`
+    (`mailReadService.markInline`; the API's `inline` flag). Anything listing
+    or forwarding attachments (S3 compose) uses that flag, never `cid`.
   - **`mailboxes.color`** (migration `2026-10-09_mailbox_s2.sql`): stored
     `#rrggbb` per box, cosmetic, manager-editable like `display_name`; random
     unused `PALETTE` default on create. Every mailbox projection selects it —
