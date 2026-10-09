@@ -24,6 +24,10 @@
  *     connection/plumbing fields 403, grant rows ownership-scoped to :id.
  *   - changing imap_host/imap_port requires imap_secret in the same write.
  *   - x-api-key callers are refused (grants resolve against a human).
+ *   - (S2) mailboxes.color: a create without one gets an UNUSED palette
+ *     colour; values are normalized/validated by public/js/mailboxColor.js;
+ *     a manager may change it (cosmetic, like display_name); every projection
+ *     carries it; a change is audited as a diff.
  *
  * The same scenarios were also run against a real MySQL 8.0 engine with the
  * migration applied (worker verification, 2026-10-08).
@@ -862,5 +866,70 @@ describe('S1-G backlog policy (ingest_folders.<folder>.backfill)', () => {
     });
     expect(r.status).toBe(400);
     expect(r.json.message).toMatch(/backfill must be a boolean/);
+  });
+});
+
+describe('S2 mailbox colour (mailboxes.color)', () => {
+  const C = require('../public/js/mailboxColor');
+
+  test('a create without a colour gets a palette colour no other box uses; an explicit one is normalized', async () => {
+    const a = await seedMailbox({ color: '#2F6FD1' });
+    expect(W.T.mailboxes.find(x => x.id === a).color).toBe('#2f6fd1');
+    const seen = new Set(['#2f6fd1']);
+    // nine more boxes take the nine unused palette colours, one each, before any repeats
+    for (let i = 0; i < C.PALETTE.length - 1; i++) {
+      const r = await call('POST', '/api/mailboxes', {
+        t: SU(), elev: ELEV(), body: { address: `b${i}@4lsg.com`, imap_host: 'h.example.com', imap_user: `b${i}` },
+      });
+      expect(r.status).toBe(201);
+      const c = W.T.mailboxes.find(x => x.id === r.json.id).color;
+      expect(C.PALETTE).toContain(c);
+      expect(seen.has(c)).toBe(false);
+      seen.add(c);
+      expect(r.json.mailbox.color).toBe(c);
+    }
+    expect(seen.size).toBe(C.PALETTE.length);
+    // the expanded #rgb form and an explicit null (= none) are honoured on create
+    const b = await call('POST', '/api/mailboxes', {
+      t: SU(), elev: ELEV(), body: { address: 'x@4lsg.com', imap_host: 'h.example.com', imap_user: 'x', color: '#AbC' },
+    });
+    expect(W.T.mailboxes.find(x => x.id === b.json.id).color).toBe('#aabbcc');
+    const n = await call('POST', '/api/mailboxes', {
+      t: SU(), elev: ELEV(), body: { address: 'n@4lsg.com', imap_host: 'h.example.com', imap_user: 'n', color: null },
+    });
+    expect(W.T.mailboxes.find(x => x.id === n.json.id).color).toBeNull();
+  });
+
+  test.each([['red'], ['#12345'], ['#1234567'], ['rgb(0,0,0)'], ['#ggg000'], [123], [true]])('color %p is refused (400, nothing written)', async (bad) => {
+    const id = await seedMailbox({ color: '#2f6fd1' });
+    const before = JSON.stringify(W.T.mailboxes);
+    const r = await call('PATCH', `/api/mailboxes/${id}`, { t: SU(), elev: ELEV(), body: { color: bad } });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toMatch(/color must be a hex colour/);
+    expect(JSON.stringify(W.T.mailboxes)).toBe(before);
+  });
+
+  test('a manager may change it (like display_name), it is in every projection, and the change is audited', async () => {
+    const id = await seedMailbox({ color: '#2f6fd1' });
+    await seedGrant(id, { user: 5, can_read: true, can_manage: true });
+    await seedGrant(id, { user: 22, can_read: true });
+    let r = await call('PATCH', `/api/mailboxes/${id}`, { t: tok(5), body: { color: '#C2255C' } });
+    expect(r.status).toBe(200);
+    expect(r.json.mailbox.color).toBe('#c2255c');
+    expect(W.T.mailboxes.find(x => x.id === id).color).toBe('#c2255c');
+    const upd = W.T.admin_audit_log.map(a => JSON.parse(a.details || 'null'))
+      .filter(d => d && d.action === 'mailbox_update').pop();
+    expect(upd.diff).toEqual({ color: { from: '#2f6fd1', to: '#c2255c' } });
+    // a reader cannot; '' clears to none
+    expect((await call('PATCH', `/api/mailboxes/${id}`, { t: tok(22), body: { color: '#000000' } })).status).toBe(403);
+    r = await call('PATCH', `/api/mailboxes/${id}`, { t: tok(5), body: { color: '' } });
+    expect(r.json.mailbox.color).toBeNull();
+    await call('PATCH', `/api/mailboxes/${id}`, { t: tok(5), body: { color: '#0b7f86' } });
+    // GET: SU (full) and manager / reader (public) projections all carry it
+    for (const t of [SU(), tok(5), tok(22)]) {
+      const g = await call('GET', '/api/mailboxes', { t });
+      expect(g.json.mailboxes.find(m => m.id === id).color).toBe('#0b7f86');
+    }
+    expect(svc.MANAGER_EDITABLE_FIELDS.has('color')).toBe(true);
   });
 });

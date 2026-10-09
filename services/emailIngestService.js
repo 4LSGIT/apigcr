@@ -790,6 +790,9 @@ module.exports = {
   // Helpers (exported for testability / cross-service use)
   inferDirection,
   isFirmToFirm,
+  // Mailbox S2: the case-link route infers a stored message's direction the
+  // way this pipeline does when it writes a log row on demand.
+  firmDomains,
   // T7/F-8: exported for testing, mirroring phoneIngestService's existing
   // export of the same function. Pipeline-internal — no production caller.
   _buildMetadata,

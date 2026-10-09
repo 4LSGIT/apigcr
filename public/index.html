@@ -3220,9 +3220,12 @@
        rows, grouped by what the row is for. Keep new buttons inside the row
        they belong to rather than appending to the end; every row is full, so
        the next tile starts a fifth row — see the same note on the More
-       Features grid above. Row 5 (comms: mailboxes, 2026-10-08) is that row,
-       short by design until the comms hub's phone/phonebook admin tiles join
-       it (ref/MAILBOX_SYSTEM_DESIGN.md §5). -->
+       Features grid above. Row 5 (comms: mailboxes, 2026-10-08; the comms hub
+       itself, S2 2026-10-09) is that row, short by design until the comms
+       hub's phone/phonebook admin tiles join it (ref/MAILBOX_SYSTEM_DESIGN.md
+       §5). The hub sits here for its pilot: Admin is shown to SU/admin only,
+       so it moves to a staff-wide home (sidebar or Home) when it goes
+       firm-wide — the attorney read bypass is live in the API already. -->
 
   <!-- Who gets in: the two key registries, and CTA links — the bearer grants
        (/c/<token>) you mint to let a recipient run one pre-authorized plan. -->
@@ -3247,8 +3250,11 @@
   <button class="big-button" data-target="systemAlertsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.25; --fa-animation-duration:0.7s"><i class="fa-solid fa-triangle-exclamation fa-2xl"></i><br><br>System Alerts (SU)</button>
   <button class="big-button" data-target="issueReportsDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-life-ring fa-2xl"></i><br><br>Support Inbox</button>
   <br><br>
-  <!-- Comms: mailboxes and who may read / send / manage each one. -->
+  <!-- Comms: mailboxes and who may read / send / manage each one, and the
+       hub where granted staff read them (Email tab; Phone arrives with S-PH).
+       Comms is NOT "(SU)": what it shows is decided by mailbox grants. -->
   <button class="big-button" data-target="mailboxesDiv" data-exclusive-group="admin" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-envelope-open-text fa-2xl"></i><br><br>Mailboxes (SU)</button>
+  <button class="big-button" data-target="commsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:1.1s"><i class="fa-solid fa-comments fa-2xl"></i><br><br>Comms</button>
 
   <div id="sequencesDiv" style="display:none"></div>
   <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
@@ -3299,6 +3305,10 @@
   </div>
   <div id="mailboxesDiv" style="display:none; margin-top:10px;">
     <iframe data-src="/mailboxAdmin.html"
+            style="width:100%; height:80vh; border:1px solid var(--border); border-radius:6px; background:var(--page-bg);"></iframe>
+  </div>
+  <div id="commsDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/comms.html"
             style="width:100%; height:80vh; border:1px solid var(--border); border-radius:6px; background:var(--page-bg);"></iframe>
   </div>
 </div>

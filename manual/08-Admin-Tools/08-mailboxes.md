@@ -7,9 +7,10 @@ the comms hub (design: `ref/MAILBOX_SYSTEM_DESIGN.md`).
 **Where:** Admin → **Mailboxes**. Adding and editing mailboxes is SU only and
 asks for [elevation](README.md) like the other SU tools.
 
-> **Polling is live (S1); there is no inbox screen yet.** Every active mailbox
-> with **Ingest enabled** is read over IMAP every 5 minutes and stored in
-> YisraCase. The inbox screen arrives with S2, sending with S3.
+> **Polling is live (S1) and so is reading (S2).** Every active mailbox with
+> **Ingest enabled** is read over IMAP every 5 minutes and stored in
+> YisraCase; people with **Read** see it in **Comms** (below). Sending arrives
+> with S3.
 
 ## A mailbox is connection data
 
@@ -24,6 +25,20 @@ from one host to another is just editing the row.
 - **Send credential**: none means the box is **read-only** in YisraCase.
 - **Mailboxes are never deleted** — stored mail will reference them. Untick
   **Active** to retire one.
+
+## Colour
+
+Each mailbox has a **colour** that tells it apart in Comms — the stripe beside
+its messages and the dot on its tag, the same for everyone. A new mailbox
+starts on a **random colour no other box uses** (shown in the form before you
+save — **Random** picks another, or choose your own). Change it any time:
+click the round swatch beside the address in the list, or use the edit form.
+Anyone who can **Manage** the box may change it, like its name.
+
+- Any colour works. Where one would be hard to see — pale yellow on the light
+  theme, navy on the dark one — Comms draws a deeper or brighter shade of the
+  same colour on that theme; the form says so under the picker. Your choice
+  itself is kept as picked.
 
 ## The secret is write-only
 
@@ -126,20 +141,65 @@ Click **Access** on a row. Each person gets any mix of:
 
 | Flag | Means |
 |---|---|
-| **Read** | sees the box's mail in their inbox (S2) |
+| **Read** | sees the box's mail in Comms |
 | **Send** | can send as the box (S3) |
-| **Manage** | can grant and revoke access on this box, and rename it |
+| **Manage** | can grant and revoke access on this box, rename it and change its colour |
 
 - Ticks **save immediately**. A grant keeps at least one tick — use **Remove**
   to take access away entirely.
 - **Superusers need no grant** — they see every mailbox.
+- **Attorneys read every mailbox without a grant** (the `attorney` role in
+  Users — Stuart). Read only: sending or managing a box still needs the tick.
+  The role is checked on every request, so removing it takes effect at once.
 - **Automations need no grant**: workflow, sequence and campaign sends are not
   checked against mailbox access (and the automations user cannot hold one).
 - A **Manage** holder who is not a superuser may change who has access to that
-  box and its display name — nothing else; host, login, secret, send
+  box, its display name and its colour — nothing else; host, login, secret, send
   credential, folders and Active stay superuser-only. The server enforces
-  this today, but the Admin tab is superuser-only, so their screen for it
-  arrives with the comms hub (S2).
+  this today, but the Admin tab is superuser-only, so they have no screen for
+  it until the comms hub moves out of Admin.
 
 Every change — mailbox or grant — is recorded in `admin_audit_log` under the
 tool `mailboxes`.
+
+## Reading mail — Comms
+
+**Where:** Admin → **Comms** for now (the pilot). It shows the mail of every
+box you can read in one list; the **Phone** tab is a placeholder until the
+phone slice.
+
+- **The list** is the Inbox of every box you can read, newest first, with
+  the box shown when you can read more than one. Each mailbox has its own
+  colour (the stripe on the left of a message and the dot on its mailbox
+  tag), the same for everyone — chosen in Admin → Mailboxes (Colour, above).
+  Narrow it with the **mailbox picker** (tick
+  any combination of boxes — say shoshana@ and billing@ together), the
+  search (sender or subject — not the message text), a sender domain,
+  **Unread**, **On a case**, and **All folders** (adds Sent).
+- **Read / unread is yours alone.** Opening a conversation marks it read for
+  you, not for the other people on the box; **Mark unread** puts it back.
+  YisraCase never marks anything read on the mail server, so Outlook and
+  webmail are unaffected. **Mark all read** clears exactly what the list
+  shows — the ticked boxes and the filters on screen, including pages not
+  loaded yet — after asking you to confirm (there is no undo).
+- **Conversations** gather every message with the same thread across all the
+  boxes you can read. The same email in two boxes appears once. A very long
+  conversation shows its latest 100 messages.
+- **Images are hidden** until you click **Show images**: a remote image tells
+  the sender that you opened the message. Message content is displayed
+  boxed off from YisraCase — scripts and forms in an email never run, and
+  links open in a new tab.
+- **Attachments** download from the mail server when clicked (see
+  Attachments above).
+- **Link to case** puts the email on a case's log. If the email is already
+  on the log (the old Gmail sync logs Stuart's inbox, for instance), that entry
+  is linked — never a second copy. If it is not on the log yet (a box that
+  does not emit to rules, Sent mail) it is added now, dated when it was sent.
+  "Still being processed" means the 5-minute sync has not finished with that
+  message; "arrived in the last few minutes" means another sync may still log
+  it — both clear within about 10 minutes.
+- **Saved views** (the bookmark button) keep the ticked mailboxes plus the
+  filters under a name; one can be your default. **Update** on a view
+  replaces its mailboxes and filters with the ones on screen. A view only
+  narrows what you can already read — if every box in it stops being shared
+  with you, it shows nothing.

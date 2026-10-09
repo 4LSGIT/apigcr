@@ -823,6 +823,12 @@ async function getLogEntry(db, logId) {
  * @param {string}  [opts.message]   - log_message + folded into log_data.message
  * @param {string}  [opts.direction] - 'incoming' or 'outgoing' (normalized from
  *                                     'Inbound'/'Outbound'/etc.) — column only
+ * @param {Date|string} [opts.date]  - mailbox S2: when the logged event HAPPENED,
+ *   as a UTC instant (Date, or an ISO / 'YYYY-MM-DD HH:MM:SS' UTC string).
+ *   Stored like every log_date — firm-local naive (EST5EDT). Omitted, null or
+ *   unparseable → NOW(), the historical behavior. For rows written after the
+ *   fact (a stored email linked to a case days later) so the case log shows
+ *   the email where it happened, not where it was linked.
  * @returns {{ log_id: number }}
  */
 async function createLogEntry(db, {
@@ -838,7 +844,8 @@ async function createLogEntry(db, {
   to         = null,
   subject    = null,
   message    = null,
-  direction  = null
+  direction  = null,
+  date       = null
 }) {
   if (!type) throw new Error('createLogEntry requires type');
 
@@ -986,6 +993,19 @@ async function createLogEntry(db, {
     aboutType = about_type;
   }
 
+  // Mailbox S2: optional event time (UTC instant → EST5EDT, like NOW() below).
+  let logDateExpr = `CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT')`;
+  const logDateParams = [];
+  if (date != null && date !== '') {
+    const d = date instanceof Date ? date : new Date(
+      typeof date === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date) ? `${date.replace(' ', 'T')}Z` : date
+    );
+    if (!Number.isNaN(d.getTime())) {
+      logDateExpr = `CONVERT_TZ(?, '+00:00', 'EST5EDT')`;
+      logDateParams.push(d.toISOString().slice(0, 19).replace('T', ' '));
+    }
+  }
+
   console.log(
     `[CREATE_LOG] type=${type} link=${link_type}:${link_id} by=${by} ` +
     `direction=${direction}\u2192${normalizedDirection} extra=${logExtra ? 'set' : 'null'}` +
@@ -997,11 +1017,12 @@ async function createLogEntry(db, {
        (log_type, log_date, log_link, log_link_type, log_link_id,
         log_about_type, log_about_id,
         log_by, log_data, log_extra, log_from, log_to, log_subject, log_message, log_direction)
-     VALUES (?, CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT'), ?, ?, ?,
+     VALUES (?, ${logDateExpr}, ?, ?, ?,
              ?, ?,
              ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       type,
+      ...logDateParams,
       logLink,
       link_type,
       normalizedLinkId,

@@ -19,8 +19,14 @@
  *     demoted SU loses the bypass immediately (fail-closed). Routes still
  *     demand step-up elevation before an SU-bypass WRITE (elevation can only
  *     be minted by a JWT-SU), so SU writes need both sources to agree.
- *   - access-control arc: the designated-role bypass (SS/attorney, design
- *     D6/§3) lands in roleBypass() below — S0 implements SU only.
+ *   - Role bypass (S2): users.roles containing 'attorney' (READ_BYPASS_ROLES)
+ *     grants READ on every mailbox without a grant row — design §1 "SU and SS
+ *     see everything". READ ONLY: can_send / can_manage still come from the
+ *     user's grant row (send semantics are S3's decision), and `su` stays
+ *     false, so a role reader is never treated as an SU by the routes (no
+ *     SU projection, no SU-only diagnostics, no bypass writes). DB-sourced
+ *     for the same reason as the SU check: a role removed in the Users pane
+ *     takes effect on the next request. Rows carry `role` when it applied.
  *   - Enforcement seat (D6): grant checks run on INTERACTIVE routes only —
  *     never inside emailService / phoneService — so workflow and automation
  *     sends are untouched. Nothing in this file is called from those services.
@@ -37,8 +43,8 @@
  * the only future reader that decrypts it.
  *
  * MANAGER SCOPE. A non-SU `can_manage` holder may grant/revoke on that one
- * mailbox and edit its display_name. Connection and plumbing fields (address,
- * imap_*, send_credential_id, ingest_*, emit_*, active) are SU-only: re-pointing
+ * mailbox and edit its display_name and color. Connection and plumbing fields
+ * (address, imap_*, send_credential_id, ingest_*, emit_*, active) are SU-only: re-pointing
  * imap_host would ship the stored secret to an arbitrary server on the next
  * ingest, re-pointing send_credential_id would let grantees send through
  * another mailbox's credential, and ingest_* decides what enters the firm-wide
@@ -57,6 +63,13 @@
  * is unique per account, not across accounts — two accounts under one
  * source would log the same email twice).
  *
+ * COLOUR (S2). `color` is the box's comms-hub colour ('#rrggbb', NULL = none):
+ * cosmetic, never an access or routing input, so it sits with display_name in
+ * MANAGER_EDITABLE_FIELDS. A create without one gets a random default from
+ * public/js/mailboxColor.js PALETTE (an unused entry first); validation and
+ * the palette live in that one shared module so the admin pane and this file
+ * cannot disagree. Every projection carries it.
+ *
  * NO MODULE-SCOPE STATE. No caches of mailbox or grant data, no connections
  * (design §2; tenancy audit A3). Every call reads the DB.
  *
@@ -67,8 +80,13 @@
 'use strict';
 
 const { encrypt } = require('../lib/credentialCrypto');
+const mailboxColor = require('../public/js/mailboxColor');
 
 const SU_AUTH = 'authorized - SU'; // lib/auth.superuser.js convention
+
+// users.roles values whose holders READ every mailbox without a grant (S2;
+// design §1 "SU and SS see everything" — SS holds 'attorney'). READ ONLY.
+const READ_BYPASS_ROLES = Object.freeze(['attorney']);
 
 // Read vocabulary (getAccess / listReadable / listGrants).
 const CHANNEL_TYPES = new Set(['mailbox', 'phone_line']);
@@ -83,13 +101,13 @@ const MAX_INGEST_FOLDERS = 25;
 const MAX_SECRET_LEN = 1024;
 
 const MAILBOX_FIELDS = new Set([
-  'address', 'display_name', 'imap_host', 'imap_port', 'imap_user', 'imap_secret',
+  'address', 'display_name', 'color', 'imap_host', 'imap_port', 'imap_user', 'imap_secret',
   'send_credential_id', 'ingest_enabled', 'ingest_folders', 'active',
   ...EMIT_FIELDS,
 ]);
 const MAILBOX_REQUIRED_ON_CREATE = ['address', 'imap_host', 'imap_user'];
 // What a non-SU can_manage holder may PATCH (see MANAGER SCOPE above).
-const MANAGER_EDITABLE_FIELDS = new Set(['display_name']);
+const MANAGER_EDITABLE_FIELDS = new Set(['display_name', 'color']);
 
 const GRANT_FLAGS = ['can_read', 'can_send', 'can_manage'];
 
@@ -102,7 +120,7 @@ const FOLDER_RE = /^[^\u0000-\u001f\u007f]{1,128}$/;
 
 // ── Read projections. NEVER add imap_secret to either list. ──────────────────
 const SU_MAILBOX_SELECT = `
-  m.id, m.address, m.domain, m.display_name, m.imap_host, m.imap_port, m.imap_user,
+  m.id, m.address, m.domain, m.display_name, m.color, m.imap_host, m.imap_port, m.imap_user,
   (m.imap_secret IS NOT NULL AND m.imap_secret <> '') AS has_secret,
   m.send_credential_id, ec.email AS send_credential_email,
   m.ingest_enabled, m.ingest_folders, m.ingest_state, m.active,
@@ -112,7 +130,7 @@ const SU_MAILBOX_SELECT = `
     WHERE cg.channel_type = 'mailbox' AND cg.channel_id = m.id) AS grant_count`;
 
 const PUBLIC_MAILBOX_SELECT = `
-  m.id, m.address, m.domain, m.display_name, m.active,
+  m.id, m.address, m.domain, m.display_name, m.color, m.active,
   (SELECT COUNT(*) FROM channel_grants cg
     WHERE cg.channel_type = 'mailbox' AND cg.channel_id = m.id) AS grant_count`;
 
@@ -198,42 +216,57 @@ async function isSuperuser(db, userId) {
 }
 
 /**
- * access-control arc: role bypass lands here. The design names a designated
- * role (SS/attorney) that short-circuits grant checks like SU does; that
- * mechanism belongs to the access-control arc and is NOT invented in S0.
- * Always false until that arc wires it.
+ * The READ-bypass role this user holds, or null (S2). users.roles is a MySQL
+ * SET ('it','admin','staff','attorney','automation','form_dev') and comes
+ * back as a comma-separated string; parsed here rather than with
+ * FIND_IN_SET so the check reads exactly like the SU one. Read access only —
+ * see the header (Role bypass).
  */
-async function roleBypass(/* db, userId */) {
-  return false;
+async function roleBypass(db, userId) {
+  const n = Number(userId);
+  if (!Number.isInteger(n) || n < 0) return null;
+  const [[row]] = await db.query('SELECT roles FROM users WHERE user = ? LIMIT 1', [n]);
+  if (!row || row.roles == null) return null;
+  const held = String(row.roles).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  return READ_BYPASS_ROLES.find(r => held.includes(r)) || null;
 }
 
 /**
  * Effective access of one user on one channel.
- * @returns {{can_read:boolean, can_send:boolean, can_manage:boolean, su:boolean}}
+ * @returns {{can_read:boolean, can_send:boolean, can_manage:boolean, su:boolean, role?:string}}
  *   `su` is true when the SU bypass (not a grant row) produced the access.
+ *   `role` is present when the READ bypass applied (mailbox channel only):
+ *   can_read is then true whatever the grant says; send/manage are the grant's.
  */
 async function getAccess(db, userId, channelType, channelId) {
   assertReadChannel(channelType);
   const cid = toId(channelId, 'channel_id');
   if (await isSuperuser(db, userId)) return fullAccess();
-  if (await roleBypass(db, userId)) return fullAccess();
   const uid = Number(userId);
   if (!Number.isInteger(uid) || uid < 0) return noAccess();
+  // Phone lines: no role bypass until slice S-PH decides it (no unenforced
+  // phone semantics before then).
+  const role = channelType === 'mailbox' ? await roleBypass(db, uid) : null;
   const [[g]] = await db.query(
     `SELECT can_read, can_send, can_manage FROM channel_grants
       WHERE user = ? AND channel_type = ? AND channel_id = ? LIMIT 1`,
     [uid, channelType, cid]
   );
-  if (!g) return noAccess();
-  return { can_read: !!g.can_read, can_send: !!g.can_send, can_manage: !!g.can_manage, su: false };
+  const access = g
+    ? { can_read: !!g.can_read, can_send: !!g.can_send, can_manage: !!g.can_manage, su: false }
+    : noAccess();
+  if (role) { access.can_read = true; access.role = role; }
+  return access;
 }
 
 /**
  * What a user can READ on a channel type.
- *   'mailbox'    → [{id, address, domain, display_name, active, can_read,
- *                    can_send, can_manage}] — SU: every mailbox; others:
- *                    mailboxes with a can_read grant. Inactive boxes included
- *                    (their stored mail stays readable); callers filter.
+ *   'mailbox'    → [{id, address, domain, display_name, color, active, can_read,
+ *                    can_send, can_manage, role?}] — SU: every mailbox; a
+ *                    READ-bypass role: every mailbox, can_read true, send /
+ *                    manage from their grant rows; others: mailboxes with a
+ *                    can_read grant. Inactive boxes included (their stored
+ *                    mail stays readable); callers filter.
  *   'phone_line' → grant-shaped rows [{channel_id, can_read, can_send,
  *                    can_manage}] for can_read grants. Empty in S0 (no phone
  *                    rows can be written yet); SU enumeration of phone lines
@@ -241,20 +274,32 @@ async function getAccess(db, userId, channelType, channelId) {
  */
 async function listReadable(db, userId, channelType = 'mailbox') {
   assertReadChannel(channelType);
-  const su = (await isSuperuser(db, userId)) || (await roleBypass(db, userId));
   const uid = Number(userId);
 
   if (channelType === 'mailbox') {
-    if (su) {
+    if (await isSuperuser(db, userId)) {
       const [rows] = await db.query(
-        `SELECT m.id, m.address, m.domain, m.display_name, m.active
+        `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active
            FROM mailboxes m ORDER BY m.address ASC`
       );
       return rows.map(r => ({ ...shapeFlags(r), can_read: true, can_send: true, can_manage: true }));
     }
     if (!Number.isInteger(uid) || uid < 0) return [];
+    const role = await roleBypass(db, uid);
+    if (role) {
+      const [rows] = await db.query(
+        `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active,
+                g.can_send, g.can_manage
+           FROM mailboxes m
+           LEFT JOIN channel_grants g
+             ON g.channel_type = 'mailbox' AND g.channel_id = m.id AND g.user = ?
+          ORDER BY m.address ASC`,
+        [uid]
+      );
+      return rows.map(r => ({ ...shapeFlags(r), ...shapeGrantFlags(r), can_read: true, role }));
+    }
     const [rows] = await db.query(
-      `SELECT m.id, m.address, m.domain, m.display_name, m.active,
+      `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active,
               g.can_read, g.can_send, g.can_manage
          FROM channel_grants g
          JOIN mailboxes m ON m.id = g.channel_id
@@ -306,13 +351,16 @@ function stripSecret(row) {
  * Mailboxes visible to a user, for GET /api/mailboxes.
  *   SU     → every mailbox, full projection (connection fields, has_secret,
  *            send credential, ingest config, grant_count).
+ *   role   → (READ bypass, S2) every mailbox, PUBLIC projection — a role
+ *            reader is not an SU — with can_read true and send/manage from
+ *            their grant rows.
  *   others → mailboxes they hold ANY grant on (read, send or manage), public
- *            projection (id, address, domain, display_name, active) plus
+ *            projection (id, address, domain, display_name, color, active) plus
  *            their access flags; grant_count only where they can_manage.
  * Every row carries `access` = the caller's flags.
  */
 async function listMailboxesFor(db, userId) {
-  if ((await isSuperuser(db, userId)) || (await roleBypass(db, userId))) {
+  if (await isSuperuser(db, userId)) {
     const [rows] = await db.query(
       `SELECT ${SU_MAILBOX_SELECT}
          FROM mailboxes m
@@ -323,6 +371,29 @@ async function listMailboxesFor(db, userId) {
   }
   const uid = Number(userId);
   if (!Number.isInteger(uid) || uid < 0) return { su: false, mailboxes: [] };
+  const role = await roleBypass(db, uid);
+  if (role) {
+    const [all] = await db.query(
+      `SELECT ${PUBLIC_MAILBOX_SELECT}, g.can_send, g.can_manage
+         FROM mailboxes m
+         LEFT JOIN channel_grants g
+           ON g.channel_type = 'mailbox' AND g.channel_id = m.id AND g.user = ?
+        ORDER BY m.address ASC`,
+      [uid]
+    );
+    return {
+      su: false,
+      role,
+      mailboxes: all.map(r => {
+        const access = { ...shapeGrantFlags(r), can_read: true, su: false, role };
+        const out = shapeFlags(r);
+        for (const f of GRANT_FLAGS) delete out[f];
+        if (!access.can_manage) delete out.grant_count;
+        out.access = access;
+        return stripSecret(out);
+      }),
+    };
+  }
   const [rows] = await db.query(
     `SELECT ${PUBLIC_MAILBOX_SELECT}, g.can_read, g.can_send, g.can_manage
        FROM channel_grants g
@@ -463,6 +534,16 @@ function validateMailboxBody(body, { partial }) {
     }
   }
 
+  if (has(body, 'color')) {
+    const v = body.color;
+    if (v === null || v === '') clean.color = null;
+    else {
+      const c = mailboxColor.normalize(v);
+      if (!c) throw httpError(400, 'color must be a hex colour like #2f6fd1 (or null for none)');
+      clean.color = c;
+    }
+  }
+
   if (has(body, 'imap_host')) {
     if (typeof body.imap_host !== 'string') throw httpError(400, 'imap_host must be a string');
     const h = body.imap_host.trim().toLowerCase();
@@ -598,12 +679,18 @@ function toDbAssignments(clean) {
 
 /**
  * Create a mailbox (SU-only — the route gates). Required: address, imap_host,
- * imap_user. imap_secret optional (has_secret false until set).
+ * imap_user. imap_secret optional (has_secret false until set). No `color` in
+ * the body = a random PALETTE default, unused by the other boxes when one is
+ * left (an explicit null = none).
  * @returns {{id:number, mailbox:object}} mailbox in the SU projection
  */
 async function createMailbox(db, body) {
   const clean = validateMailboxBody(body, { partial: false });
   if (!has(clean, 'ingest_folders')) clean.ingest_folders = JSON.parse(JSON.stringify(DEFAULT_INGEST_FOLDERS));
+  if (!has(clean, 'color')) {
+    const [used] = await db.query('SELECT color FROM mailboxes WHERE color IS NOT NULL');
+    clean.color = mailboxColor.pick(used.map(r => r.color));
+  }
   await assertSendCredential(db, clean.send_credential_id);
 
   const { cols, vals } = toDbAssignments(clean);
@@ -840,6 +927,7 @@ async function deleteGrant(db, { channelType = 'mailbox', channelId, grantId }) 
 module.exports = {
   // resolution
   isSuperuser,
+  roleBypass,
   getAccess,
   listReadable,
   // mailboxes
@@ -864,4 +952,5 @@ module.exports = {
   DEFAULT_EMIT_SOURCE,
   EMIT_ID_KINDS,
   SU_AUTH,
+  READ_BYPASS_ROLES,
 };

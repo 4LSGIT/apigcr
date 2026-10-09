@@ -132,6 +132,11 @@ function makeWorld() {
     if (sql === 'SELECT user_auth FROM users WHERE user = ? LIMIT 1') {
       return [T.users.filter(u => u.user === Number(p[0])).map(clone)];
     }
+    // S2: mailboxService.roleBypass (the READ bypass). users.roles is a SET —
+    // mysql2 returns it as a comma-separated string ('' when empty).
+    if (sql === 'SELECT roles FROM users WHERE user = ? LIMIT 1') {
+      return [T.users.filter(u => u.user === Number(p[0])).map(u => ({ roles: u.roles == null ? '' : u.roles }))];
+    }
     if (sql === 'SELECT can_read, can_send, can_manage FROM channel_grants WHERE user = ? AND channel_type = ? AND channel_id = ? LIMIT 1') {
       return [T.channel_grants.filter(g => g.user === Number(p[0]) && g.channel_type === p[1] && g.channel_id === Number(p[2])).map(clone)];
     }

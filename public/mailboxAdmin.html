@@ -6,6 +6,7 @@
 <title>Mailboxes</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/mailboxColor.js"></script>
 <style>
   /* Mailboxes (SU) — Admin-tab pane. Mailbox-system arc, slice S0.
      Spec: ref/MAILBOX_SYSTEM_DESIGN.md (§3 schema, §4.4 grant admin, D6) ·
@@ -162,6 +163,27 @@
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+  /* ── Mailbox colour (S2) ─────────────────────────────────────
+     The comms hub's quick-glance colour per box (mailboxes.color). Managers
+     edit it in place with the native swatch; the dot / preview are drawn the
+     way the hub draws them (YCMailboxColor.variants via paint(): the stored
+     colour where it clears 3:1 on this theme, else a shade of the same hue). */
+  .mbc { --mbc: var(--mbc-l); }
+  html[data-theme="dark"] .mbc { --mbc: var(--mbc-d); }
+  .mdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--mbc, var(--text-muted)); flex: 0 0 auto; vertical-align: middle; }
+  .name-line { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
+  .name-line .addr { min-width: 0; word-break: break-word; }
+  input[type="color"].swatch {
+    width: 22px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 50%;
+    background: none; cursor: pointer; flex: 0 0 auto; overflow: hidden;
+  }
+  input[type="color"].swatch::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type="color"].swatch::-webkit-color-swatch { border: none; border-radius: 50%; }
+  input[type="color"].swatch::-moz-color-swatch { border: none; border-radius: 50%; }
+  .color-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .color-row input[type="color"] { width: 42px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); cursor: pointer; }
+  .color-prev { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-muted); min-width: 0; }
+
   /* ── Phone (≤768px, the shell's one breakpoint) ────────────── */
   @media (max-width: 768px) {
     .panel { padding: 10px; }
@@ -280,6 +302,15 @@
           <label class="yc-flabel" for="mb-display">Display name</label>
           <input type="text" id="mb-display" maxlength="128">
         </div>
+        <div class="fld">
+          <label class="yc-flabel" for="mb-color">Colour</label>
+          <div class="color-row">
+            <input type="color" id="mb-color">
+            <button class="btn small" type="button" id="mb-color-random" title="Pick a colour no other mailbox uses">Random</button>
+            <span class="color-prev" id="mb-color-prev"></span>
+          </div>
+          <span class="yc-hint">Tells this box apart in the Comms hub — the same for everyone. New boxes get a random unused colour; pick your own any time.</span>
+        </div>
       </div>
 
       <div class="form-section">
@@ -365,6 +396,7 @@ const state = {
   creds: [],        // GET /api/email-credentials
   refsLoaded: false,
   editing: null,    // null = create; else the row being edited
+  colorNone: false, // the open form's box has no colour and the picker is untouched
   grantsFor: null,  // mailbox row whose grants are open
   grants: [],
 };
@@ -382,6 +414,23 @@ function toast(msg) {
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ── Mailbox colour (S2) ─────────────────────────────────────
+const MC = () => window.YCMailboxColor || null;
+const NONE_SWATCH = '#868e96'; // what a colourless box's native swatch shows
+/** Set the per-theme drawing values on `el` (see the CSS note). */
+function paint(el, color) {
+  const v = MC() ? MC().variants(color) : null;
+  el.classList.add('mbc');
+  el.style.setProperty('--mbc-l', v ? v.light : 'var(--text-muted)');
+  el.style.setProperty('--mbc-d', v ? v.dark : 'var(--text-muted)');
+  return el;
+}
+/** The colour a new box starts with: unused by the others when one is left. */
+function randomColor() {
+  const used = state.rows.map((r) => r.color).filter(Boolean);
+  return MC() ? MC().pick(used) : NONE_SWATCH;
 }
 
 function userLabel(u) {
@@ -462,8 +511,11 @@ function renderList() {
     const phoneBits = [];
     if (state.su) phoneBits.push(r.has_secret ? 'secret set' : 'no secret');
     if (r.grant_count != null) phoneBits.push(`${r.grant_count} grant${Number(r.grant_count) === 1 ? '' : 's'}`);
+    const swatch = canManage
+      ? `<input type="color" class="swatch" data-act="color" value="${esc(r.color || NONE_SWATCH)}" aria-label="Colour for ${esc(r.address)}" title="${r.color ? 'Comms hub colour — click to change' : 'No colour yet — click to pick one'}">`
+      : `<span class="mdot" data-color="${esc(r.color || '')}" title="Comms hub colour"></span>`;
     return `<tr data-id="${esc(r.id)}"${sel}>
-      <td class="name-cell">${esc(r.address)}${r.display_name ? `<span class="sub">${esc(r.display_name)}</span>` : ''}${phoneBits.length ? `<span class="sub sub-phone">${esc(phoneBits.join(' · '))}</span>` : ''}</td>
+      <td class="name-cell"><span class="name-line">${swatch}<span class="addr">${esc(r.address)}</span></span>${r.display_name ? `<span class="sub">${esc(r.display_name)}</span>` : ''}${phoneBits.length ? `<span class="sub sub-phone">${esc(phoneBits.join(' · '))}</span>` : ''}</td>
       <td class="col-wide">${imap}</td>
       <td class="col-wide">${secret}</td>
       <td class="col-wide">${sends}</td>
@@ -476,6 +528,24 @@ function renderList() {
       </td>
     </tr>`;
   }).join('');
+  E('mb-tbody').querySelectorAll('.mdot[data-color]').forEach((d) => paint(d, d.dataset.color || null));
+}
+
+/** Inline colour change from the list swatch (SU or the box's managers). */
+async function saveColor(row, input) {
+  const color = input.value;
+  if (row.color && color.toLowerCase() === String(row.color).toLowerCase()) return;
+  input.disabled = true;
+  try {
+    const data = await api(`/api/mailboxes/${encodeURIComponent(row.id)}`, 'PATCH', { color });
+    row.color = data && data.mailbox ? data.mailbox.color : color;
+    toast('Colour saved');
+  } catch (err) {
+    input.value = row.color || NONE_SWATCH;
+    E('list-error').innerHTML = `<div class="inline-error">Couldn't save the colour: ${esc(err.message)}</div>`;
+  } finally {
+    input.disabled = false;
+  }
 }
 
 // ── Create / edit ───────────────────────────────────────────
@@ -533,6 +603,9 @@ async function openForm(row) {
   E('mb-title').textContent = row ? `Edit ${row.address}` : 'New mailbox';
   E('mb-address').value = row ? row.address : '';
   E('mb-display').value = row && row.display_name ? row.display_name : '';
+  state.colorNone = !!row && !row.color;
+  E('mb-color').value = row ? (row.color || NONE_SWATCH) : randomColor();
+  syncColorPreview();
   E('mb-host').value = row ? row.imap_host : '';
   E('mb-port').value = row ? row.imap_port : 993;
   E('mb-user').value = row ? row.imap_user : '';
@@ -551,6 +624,18 @@ async function openForm(row) {
   E('mb-active').checked = row ? !!row.active : true;
   E('mb-backdrop').classList.add('open');
   E('mb-address').focus();
+}
+
+/** The preview beside the picker: the hub's dot for it (shaded if it needs to be). */
+function syncColorPreview() {
+  const c = state.colorNone ? null : E('mb-color').value.toLowerCase();
+  const dot = document.createElement('span');
+  dot.className = 'mdot';
+  paint(dot, c);
+  const v = c && MC() ? MC().variants(c) : null;
+  const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  E('mb-color-prev').replaceChildren(dot, !c ? 'No colour yet — pick one'
+    : (v && v[theme] !== c ? 'adjusted on this theme to stay visible' : 'as drawn in the hub'));
 }
 
 function closeForm() {
@@ -600,6 +685,7 @@ function buildBody() {
   const fields = {
     address: E('mb-address').value.trim(),
     display_name: E('mb-display').value.trim(),
+    color: state.colorNone ? null : E('mb-color').value.toLowerCase(),
     imap_host: E('mb-host').value.trim(),
     imap_port: portRaw === '' ? 993 : Number(portRaw),
     imap_user: E('mb-user').value.trim(),
@@ -621,6 +707,7 @@ function buildBody() {
   const was = {
     address: row.address || '',
     display_name: row.display_name || '',
+    color: row.color ? String(row.color).toLowerCase() : null,
     imap_host: String(row.imap_host || '').toLowerCase(),
     imap_port: Number(row.imap_port),
     imap_user: row.imap_user || '',
@@ -823,6 +910,21 @@ function init() {
     if (!row) return;
     if (b.dataset.act === 'edit') openForm(row);
     else if (b.dataset.act === 'grants') openGrants(row);
+  });
+
+  E('mb-tbody').addEventListener('change', (e) => {
+    const input = e.target.closest('input[data-act="color"]');
+    const tr = e.target.closest('tr[data-id]');
+    if (!input || !tr) return;
+    const row = state.rows.find((r) => String(r.id) === tr.dataset.id);
+    if (row) saveColor(row, input);
+  });
+  E('mb-color').addEventListener('input', () => { state.colorNone = false; syncColorPreview(); });
+  E('mb-color-random').addEventListener('click', () => {
+    const others = state.rows.filter((r) => !state.editing || r.id !== state.editing.id).map((r) => r.color).filter(Boolean);
+    E('mb-color').value = MC() ? MC().pick(others) : NONE_SWATCH;
+    state.colorNone = false;
+    syncColorPreview();
   });
 
   E('grants-close').addEventListener('click', closeGrants);

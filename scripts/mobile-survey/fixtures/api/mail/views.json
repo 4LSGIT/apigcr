@@ -1,0 +1,7 @@
+{
+  "status": "success",
+  "views": [
+    { "id": 1, "name": "Unread intake", "mailbox_ids": [2], "filters": { "unread_only": true }, "is_default": false, "sort_order": 0 },
+    { "id": 2, "name": "Court and trustee mail — a deliberately long saved view name", "mailbox_ids": null, "filters": { "from_domain": "court.example.test" }, "is_default": false, "sort_order": 1 }
+  ]
+}

@@ -9,7 +9,7 @@
  *                                              on (public projection). Every row
  *                                              carries the caller's `access` flags.
  *   POST   /api/mailboxes                      SU only (superuserOnlyFor + step-up)
- *   PATCH  /api/mailboxes/:id                  SU, or can_manage (display_name only)
+ *   PATCH  /api/mailboxes/:id                  SU, or can_manage (display_name + color only)
  *   GET    /api/mailboxes/:id/grants           SU or can_manage
  *   POST   /api/mailboxes/:id/grants           SU or can_manage   {user, can_read, can_send, can_manage}
  *   PATCH  /api/mailboxes/:id/grants/:grantId  SU or can_manage   ownership-scoped
@@ -50,7 +50,7 @@
  * NO ESCALATION BEYOND THE BOX. A non-SU manager passes only where they hold
  * can_manage on THAT :id; grant rows are ownership-scoped to :id (404
  * otherwise — routes/api.contactRoles.js precedent); and mailboxService
- * limits their PATCH to display_name (connection/plumbing fields are SU-only,
+ * limits their PATCH to display_name + color (connection/plumbing fields are SU-only,
  * see the service header for why).
  *
  * SECRETS. imap_secret is accepted on POST/PATCH mailbox bodies only. It is
@@ -255,7 +255,7 @@ router.post('/api/mailboxes', ...superuserOnlyFor(TOOL), async (req, res) => {
   }
 });
 
-// ─── PATCH /api/mailboxes/:id ───  SU (all fields) or can_manage (display_name)
+// ─── PATCH /api/mailboxes/:id ───  SU (all fields) or can_manage (display_name, color)
 router.patch('/api/mailboxes/:id', jwtOrApiKey, requireJwt, async (req, res) => {
   try {
     const ctx = await resolveAccess(req, res, { write: true });

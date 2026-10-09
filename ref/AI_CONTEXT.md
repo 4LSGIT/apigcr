@@ -23,6 +23,35 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Comms hub read side is live (mailbox S2, 10-09):** `routes/api.mail.js`
+  → `services/mailbox/mailReadService.js`; pane `public/comms.html` (Admin →
+  Comms); design `ref/MAILBOX_SYSTEM_DESIGN.md` §4.3/§4.4 "As built";
+  operators `manual/08-Admin-Tools/08-mailboxes.md`. What a session touching
+  unrelated code needs to know:
+  - **Mail HTML has ONE sink:** `public/js/mailRender.js` → the `srcdoc` of an
+    iframe whose sandbox has no `allow-scripts`/`allow-same-origin`, after the
+    vendored DOMPurify (`public/js/vendor/purify-3.4.16.min.js`, hash-pinned in
+    `tests/mailboxS2.render.test.js`), with a CSP `<meta>` first. Never render
+    `body_html` any other way; `body_html`/`body_text` leave the API only from
+    the thread / single-message routes, never the list.
+  - **`users.roles` 'attorney' = READ on every mailbox** (`mailboxService.roleBypass`,
+    DB-sourced). READ only: `getAccess` keeps `su:false` and send/manage from
+    the grant row — routes that test `access.su` still mean SU.
+  - **`logService.createLogEntry` takes an optional `date`** (UTC instant →
+    EST5EDT like NOW()); omitted = NOW(), unchanged for every other caller.
+    The case-link route uses it for store-only mail logged after the fact.
+  - **Case-link is the ONE cross-source log match** (`mailReadService.priorLogId`):
+    before creating a log row for stored mail it reuses any live log row an
+    `email_ingest_executions` row carries under the RFC Message-ID or a
+    provider id (gmail-firm keys Workspace mail by Gmail id = `provider_id`).
+    The pipeline itself still dedupes per source only (§27).
+  - **`mailboxes.color`** (migration `2026-10-09_mailbox_s2.sql`): stored
+    `#rrggbb` per box, cosmetic, manager-editable like `display_name`; random
+    unused `PALETTE` default on create. Every mailbox projection selects it —
+    so the S2 backend needs the column (SQL first). Palette, validation and
+    the per-theme drawing rule live in ONE module shared by server and panes:
+    `public/js/mailboxColor.js` (its SURFACES mirror `theme.css`, test-pinned —
+    retune the surfaces there and that test tells you to follow).
 - **CTA links are live end to end (10-07, arc S0–S4):** SU-minted bearer
   links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
   registry internal functions as user 0. Design (canonical, review-folded):

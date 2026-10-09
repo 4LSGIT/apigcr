@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comms</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<!-- Hostile-HTML rendering: DOMPurify (vendored, pinned) then the renderer
+     whose srcdoc iframe is the ONE sink for mail HTML. Order matters. -->
+<script src="/js/vendor/purify-3.4.16.min.js"></script>
+<script src="/js/mailRender.js"></script>
+<script src="/js/mailboxColor.js"></script>
+<style>
+  /* Comms hub — mailbox-system arc, slice S2 (Email tab; Phone arrives with
+     slice S-PH). Spec: ref/MAILBOX_SYSTEM_DESIGN.md §4.3, §4.4, D6 · API:
+     routes/api.mail.js · service: services/mailbox/mailReadService.js ·
+     renderer: public/js/mailRender.js. Component shapes follow
+     mailboxAdmin.html (theme.css tokens only, .btn, badges, modal, toast).
+
+     MAIL CONTENT NEVER BECOMES MARKUP HERE. Every envelope field, snippet and
+     filename is written with textContent (the h() helper); message bodies go
+     only through YCMailRender.createFrame (sandboxed srcdoc). This page has
+     no innerHTML / outerHTML / insertAdjacentHTML / document.write at all —
+     tests/mailboxS2.pane.test.js greps for them. */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--page-bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  [hidden] { display: none !important; }
+  .muted { color: var(--text-muted); }
+  .hub { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+  /* ── Labels + hints — ONE look (AI_CONTEXT §12), as mailboxAdmin.html ── */
+  .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
+  /* ── Buttons ───────────────────────────────────────────────── */
+  .btn {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px;
+    display: inline-flex; align-items: center; gap: 5px; line-height: 1.3;
+    white-space: nowrap; flex-shrink: 0; font-family: inherit;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 3px 8px; font-size: 11px; }
+  .btn.icon { padding: 5px 8px; }
+
+  /* ── Tabs ──────────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 2px; padding: 8px 12px 0; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+  .tab {
+    background: transparent; border: 1px solid transparent; border-bottom: none; color: var(--text-muted);
+    padding: 7px 14px; border-radius: 6px 6px 0 0; cursor: pointer; font: inherit; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .tab.on { background: var(--surface); color: var(--text); border-color: var(--border); margin-bottom: -1px; }
+  .tab:disabled { cursor: not-allowed; opacity: 0.55; }
+  .tab .soon { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+
+  /* ── Email tab: list | thread ─────────────────────────────── */
+  .email { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; }
+  .list-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
+  .thread-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .bar select, .bar input[type="search"], .bar input[type="text"] {
+    min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 8px; font-size: 12px; font-family: inherit;
+  }
+  .bar select { max-width: 100%; flex: 1 1 120px; }
+  .bar input[type="search"] { flex: 1 1 140px; }
+  .bar input.domain { flex: 0 1 130px; }
+  .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .status-line { font-size: 11px; color: var(--text-muted); padding: 5px 10px; min-height: 22px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  .msg-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+  .msg {
+    padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; position: relative;
+    display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  }
+  .msg:hover { background: var(--hover); }
+  .msg.selected { background: var(--accent-soft); }
+  .msg.unread::before { content: ''; position: absolute; left: 6px; top: 13px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .msg .r1, .msg .r2 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .msg .from { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg .date { flex: 0 0 auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .msg .subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg.unread .from, .msg.unread .subject { font-weight: 700; }
+  .msg .snippet { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+  .msg .chips { margin-top: 2px; }
+  .mactions .chips { display: inline-flex; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600; white-space: nowrap;
+    padding: 1px 6px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted);
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chip.case { background: var(--accent-soft); color: var(--accent-on-soft); border-color: var(--accent); cursor: pointer; }
+  .chip.box { border-color: var(--mbc, var(--border)); }
+
+  /* ── Mailbox colours ─────────────────────────────────────────
+     Each box's STORED colour (mailboxes.color — picked or randomly assigned
+     when the box was added, Admin → Mailboxes), the same for everyone.
+     paint() sets --mbc-l / --mbc-d inline on the element from
+     YCMailboxColor.variants(): the stored value wherever it already clears
+     3:1 (a dot / stripe is a non-text graphic) on that theme's surfaces,
+     else the same hue lighter or darker. The theme switch is pure CSS (no
+     repaint). No colour = the muted grey. A quick-glance aid only: the
+     address is always printed beside it. */
+  .mbc { --mbc: var(--mbc-l); }
+  html[data-theme="dark"] .mbc { --mbc: var(--mbc-d); }
+  .mdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--mbc, var(--text-muted)); flex: 0 0 auto; }
+  .msg.boxed { box-shadow: inset 3px 0 0 var(--mbc, var(--text-muted)); }
+
+  /* ── Mailbox picker: combine any readable boxes in one list ── */
+  .mb-btn { flex: 1 1 130px; min-width: 0; max-width: 100%; justify-content: flex-start; }
+  .mb-btn #mb-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+  .mb-dots { display: inline-flex; gap: 2px; flex: 0 0 auto; }
+  .mb-panel { display: flex; flex-wrap: wrap; gap: 2px 14px; padding: 6px 10px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .mb-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; min-width: 0; max-width: 100%; padding: 3px 0; }
+  .mb-opt .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mb-opt .n { color: var(--text-muted); font-size: 11px; }
+  .vw-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: -4px 0 10px; font-size: 11.5px; color: var(--text-muted); min-width: 0; }
+  .cp { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; min-width: 0; overflow-wrap: anywhere; }
+  .chip.folder { background: var(--warn-soft); color: var(--warn-on-soft); border-color: var(--warn); }
+  .more { padding: 10px; text-align: center; }
+  .empty { padding: 26px 16px; text-align: center; color: var(--text-muted); font-style: italic; }
+  .inline-error {
+    background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger-on-soft);
+    border-radius: 4px; padding: 8px 10px; font-size: 12px; margin: 8px 10px; word-break: break-word;
+  }
+
+  /* ── Thread ────────────────────────────────────────────────── */
+  .thread-head { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .thread-head h2 { margin: 0; font-size: 15px; font-weight: 700; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .back-btn { display: none; }
+  .thread-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 8px 10px 20px; }
+  .thread-note { font-size: 11px; color: var(--text-muted); margin: 0 2px 8px; }
+  .mcard { border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); margin-bottom: 8px; min-width: 0; }
+  .mcard.anchor { border-color: var(--accent); }
+  .mhead { padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mhead .r1 { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .mhead .mfrom { font-weight: 700; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .mhead .mdate { font-size: 11px; color: var(--text-muted); white-space: nowrap; flex: 0 0 auto; }
+  .mhead .mmeta { font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+  .mhead .msnip { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mcard:not(.collapsed) .msnip { display: none; }
+  .mcard.collapsed .mexp { display: none; }
+  .mactions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
+  .notice {
+    margin: 0 10px 8px; padding: 6px 9px; border-radius: 4px; font-size: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft);
+  }
+  .atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
+  .att { max-width: 100%; }
+  .att .nm { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  .mbody { padding: 0 10px 10px; }
+  /* The frame's sandbox/srcdoc are set by mailRender.js; only its box is styled here. */
+  .mail-frame { display: block; width: 100%; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+  .mail-frame.tall { height: 85vh !important; }
+
+  /* ── Modal ─────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: var(--backdrop);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 100; padding: 24px 16px; overflow: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; width: 100%; max-width: 520px; padding: 16px 18px; }
+  .modal h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+  .modal input[type="text"], .modal input[type="search"] {
+    width: 100%; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit;
+  }
+  .modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .modal-err {
+    display: none; background: var(--danger-soft); border: 1px solid var(--danger);
+    color: var(--danger-on-soft); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; word-break: break-word;
+  }
+  .modal-err.show { display: block; }
+  .pick-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 50vh; overflow-y: auto; }
+  .pick-list li { padding: 7px 8px; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 5px; cursor: pointer; min-width: 0; }
+  .pick-list li:hover { border-color: var(--accent); }
+  .pick-list .l1 { font-weight: 700; overflow-wrap: anywhere; }
+  .pick-list .l2 { font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+  .view-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .view-row input[type="text"] { flex: 1 1 160px; width: auto; }
+
+  .toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--surface-2); border: 1px solid var(--accent); color: var(--text);
+    padding: 8px 16px; border-radius: 6px; font-size: 12px; max-width: calc(100% - 32px);
+    opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Phone (≤768px, the shell's one breakpoint): stacked navigation ── */
+  @media (max-width: 768px) {
+    .tabs { padding: 6px 8px 0; }
+    .email { grid-template-columns: 1fr; }
+    .list-col { border-right: none; }
+    .email:not(.show-thread) .thread-col { display: none; }
+    .email.show-thread .list-col { display: none; }
+    .back-btn { display: inline-flex; }
+    .bar { padding: 6px 8px; }
+    .bar input.domain { flex: 1 1 120px; }
+    .chip { max-width: 120px; }
+    .att .nm { max-width: 150px; }
+    .thread-body { padding: 6px 6px 16px; }
+    .modal { padding: 14px; }
+    .modal-backdrop { padding: 12px 8px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hub">
+  <div class="tabs" role="tablist">
+    <button class="tab on" type="button" role="tab" aria-selected="true" id="tab-email"><i class="fa-solid fa-envelope"></i> Email</button>
+    <button class="tab" type="button" role="tab" aria-selected="false" id="tab-phone" disabled aria-disabled="true"
+            title="Coming with the phone slice — SMS and calls from Quo, under the same access grants"><i class="fa-solid fa-phone"></i> Phone <span class="soon">soon</span></button>
+  </div>
+
+  <div class="email" id="email">
+    <!-- ── List ── -->
+    <section class="list-col" aria-label="Messages">
+      <div class="bar">
+        <select id="view-sel" aria-label="Saved view"></select>
+        <button class="btn mb-btn" type="button" id="mb-btn" aria-expanded="false" aria-controls="mb-panel" title="Choose which mailboxes this list combines" hidden><span class="mb-dots" id="mb-dots"></span><span id="mb-label">All mailboxes</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+        <button class="btn icon" type="button" id="refresh-btn" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
+        <button class="btn icon" type="button" id="views-btn" title="Saved views"><i class="fa-solid fa-bookmark"></i></button>
+      </div>
+      <div class="mb-panel" id="mb-panel" role="group" aria-label="Mailboxes in this list" hidden></div>
+      <div class="bar">
+        <input type="search" id="f-q" placeholder="From or subject" aria-label="Search from or subject" maxlength="200">
+        <input type="text" class="domain" id="f-domain" placeholder="from domain" aria-label="Sender domain" maxlength="128" spellcheck="false">
+        <label class="check"><input type="checkbox" id="f-unread"> Unread</label>
+        <label class="check"><input type="checkbox" id="f-case"> On a case</label>
+        <label class="check" title="Include Sent and other ingested folders, not just the Inbox"><input type="checkbox" id="f-folders"> All folders</label>
+      </div>
+      <div class="status-line"><span id="status"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
+      <div id="list-error"></div>
+      <ul class="msg-list" id="msg-list" aria-live="polite"></ul>
+    </section>
+
+    <!-- ── Thread ── -->
+    <section class="thread-col" aria-label="Conversation">
+      <div class="thread-head" id="thread-head" hidden>
+        <button class="btn icon back-btn" type="button" id="back-btn" title="Back to messages"><i class="fa-solid fa-arrow-left"></i></button>
+        <h2 id="thread-subject"></h2>
+      </div>
+      <div class="thread-body" id="thread-body">
+        <div class="empty" id="thread-empty">Select a message to read it.</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ── Saved views ── -->
+<div class="modal-backdrop" id="views-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="views-title">
+    <h3 id="views-title">Saved views</h3>
+    <div class="modal-err" id="views-msg" role="alert"></div>
+    <label class="yc-flabel" for="vw-name">Save the current mailboxes + filters as</label>
+    <div class="view-row">
+      <input type="text" id="vw-name" maxlength="64" placeholder="View name">
+      <label class="check"><input type="checkbox" id="vw-default"> Default</label>
+      <button class="btn primary small" type="button" id="vw-save">Save view</button>
+    </div>
+    <span class="yc-hint">A view only narrows what you can already read — it never grants access to a mailbox.</span>
+    <div id="vw-list" style="margin-top:14px"></div>
+    <div class="modal-actions"><button class="btn" type="button" id="views-close">Close</button></div>
+  </div>
+</div>
+
+<!-- ── Link to case ── -->
+<div class="modal-backdrop" id="case-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="case-title">
+    <h3 id="case-title">Link to a case</h3>
+    <div class="modal-err" id="case-msg" role="alert"></div>
+    <input type="search" id="case-q" placeholder="Case number, caption or client name" aria-label="Search cases" maxlength="100">
+    <span class="yc-hint" id="case-hint">The email is put on the case's log (a message that was not logged yet gets its log entry now).</span>
+    <ul class="pick-list" id="case-results"></ul>
+    <div class="modal-actions"><button class="btn" type="button" id="case-cancel">Cancel</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+// ── Parent bridge ───────────────────────────────────────────
+// Every call rides the shell's P.apiSend (JWT attached there; this pane
+// never touches the token). Attachments ride the same transport with
+// responseType 'blob' — a bare <a href> to the part route would 401.
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = (id) => document.getElementById(id);
+const R = window.YCMailRender;
+
+const INLINE_IMAGE_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']; // the part route's inline allowlist (images)
+const INLINE_IMAGE_MAX = 12;           // cid images fetched per message on "Show images"
+const INLINE_IMAGE_BYTES = 3 * 1024 * 1024;
+
+const state = {
+  mailboxes: [],        // GET /api/mail/mailboxes
+  viewer: { su: false, role: null },
+  views: [],            // GET /api/mail/views
+  viewId: null,         // active saved view (null = none)
+  boxSel: null,         // Set of mailbox ids the list combines (null = every readable box)
+  messages: [],
+  nextCursor: null,
+  loading: false,
+  seq: 0,               // list request guard
+  selectedId: null,
+  thread: null,         // { key, subject, messages, anchorId }
+  threadSeq: 0,
+  render: new Map(),    // message id → { allowRemote, mode, cidMap, tall }
+  linking: null,        // message being case-linked
+};
+
+/**
+ * The ONLY way this page builds DOM from data: strings become TEXT nodes.
+ * attrs: className / dataset / event handlers (on*) / plain attributes.
+ */
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'className') el.className = v;
+    else if (k === 'dataset') Object.assign(el.dataset, v);
+    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : String(v));
+  }
+  for (const c of kids.flat()) {
+    if (c == null || c === false) continue;
+    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+const icon = (cls) => h('i', { className: `fa-solid ${cls}`, 'aria-hidden': 'true' });
+
+let toastTimer = null;
+function toast(msg) {
+  const t = E('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+function showError(where, msg) {
+  where.replaceChildren(msg ? h('div', { className: 'inline-error' }, msg) : '');
+}
+
+// ── Formatting ──────────────────────────────────────────────
+function firmTz() { return (P.firmData && P.firmData.firmTimezone) || 'America/Detroit'; }
+function fmt(d, o) {
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: firmTz(), ...o }).format(d); } catch (_) { return ''; }
+}
+function listDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const day = (x) => fmt(x, { year: 'numeric', month: '2-digit', day: '2-digit' });
+  if (day(d) === day(new Date())) return fmt(d, { hour: 'numeric', minute: '2-digit' });
+  if (fmt(d, { year: 'numeric' }) === fmt(new Date(), { year: 'numeric' })) return fmt(d, { month: 'short', day: 'numeric' });
+  return fmt(d, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function fullDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' :
+    fmt(d, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+}
+/** "Name <a@b>" → Name ; bare a@b → a@b */
+function personName(addr) {
+  if (!addr) return '(no sender)';
+  const m = /^\s*"?(.*?)"?\s*<([^>]+)>\s*$/.exec(String(addr));
+  return m ? (m[1].replace(/\\(.)/g, '$1').trim() || m[2]) : String(addr);
+}
+function bytes(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '';
+  n = Number(n);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+const multiBox = () => state.mailboxes.length > 1;
+const boxLabel = (m) => m.display_name ? `${m.display_name} — ${m.address}` : m.address;
+const boxById = (id) => state.mailboxes.find((m) => m.id === Number(id)) || null;
+/**
+ * Paint `el` in mailbox `id`'s stored colour (see the CSS note): both theme
+ * values are set every time — never left to inherit a parent row's box — and
+ * through setProperty, which hands the value to the CSS parser AS a value
+ * (it is a validated #rrggbb from YCMailboxColor anyway).
+ */
+function paint(el, id) {
+  const m = boxById(id);
+  const MC = window.YCMailboxColor; // absent only if its script failed: grey dots, not a broken list
+  const v = MC ? MC.variants(m && m.color) : null;
+  el.classList.add('mbc');
+  el.style.setProperty('--mbc-l', v ? v.light : 'var(--text-muted)');
+  el.style.setProperty('--mbc-d', v ? v.dark : 'var(--text-muted)');
+  return el;
+}
+const boxDot = (id) => paint(h('span', { className: 'mdot', 'aria-hidden': 'true' }), id);
+/** The READABLE boxes the list combines, in summary order; null = all of them. */
+function selectedIds() {
+  return state.boxSel ? state.mailboxes.filter((m) => state.boxSel.has(m.id)).map((m) => m.id) : null;
+}
+
+// ── References: mailboxes + views ───────────────────────────
+async function loadSummary() {
+  const data = await api('/api/mail/mailboxes', 'GET');
+  state.mailboxes = Array.isArray(data && data.mailboxes) ? data.mailboxes : [];
+  state.viewer = (data && data.viewer) || state.viewer;
+  renderMailboxPicker();
+}
+
+async function loadViews() {
+  const data = await api('/api/mail/views', 'GET');
+  state.views = Array.isArray(data && data.views) ? data.views : [];
+  if (state.viewId != null && !state.views.some((v) => v.id === state.viewId)) state.viewId = null;
+  renderViewSelect();
+}
+
+/**
+ * The mailbox picker: a button summarizing the combination + an in-flow panel
+ * of checkboxes (one per readable box, with its colour and INBOX unread).
+ * Any set can be combined; "All" (or unticking the last box) = every box.
+ */
+function renderMailboxPicker() {
+  const btn = E('mb-btn');
+  const panel = E('mb-panel');
+  btn.hidden = !multiBox();
+  if (!multiBox()) { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+  const sel = selectedIds();
+  const shown = sel || state.mailboxes.map((m) => m.id);
+  const unread = state.mailboxes.filter((m) => shown.includes(m.id)).reduce((n, m) => n + (m.inbox_unread || 0), 0);
+  E('mb-dots').replaceChildren(...shown.slice(0, 4).map(boxDot));
+  const label = !sel ? 'All mailboxes'
+    : sel.length === 1 ? boxLabel(boxById(sel[0]))
+    : sel.length ? `${sel.length} mailboxes` : 'No shared mailboxes';
+  E('mb-label').textContent = label + (unread ? ` (${unread})` : '');
+  btn.title = sel && sel.length ? sel.map((id) => boxById(id).address).join(', ') : 'Choose which mailboxes this list combines';
+  panel.replaceChildren(
+    h('label', { className: 'mb-opt' }, h('input', {
+      type: 'checkbox', checked: !sel, onchange: () => { state.boxSel = null; renderMailboxPicker(); loadList(); },
+    }), 'All'),
+    ...state.mailboxes.map((m) => h('label', { className: 'mb-opt', title: m.address },
+      h('input', { type: 'checkbox', checked: !sel || sel.includes(m.id), dataset: { id: String(m.id) }, onchange: (e) => toggleBox(m.id, e.target.checked) }),
+      boxDot(m.id),
+      h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`),
+      m.inbox_unread ? h('span', { className: 'n' }, String(m.inbox_unread)) : null)),
+  );
+}
+
+function toggleBox(id, on) {
+  const cur = new Set(selectedIds() || state.mailboxes.map((m) => m.id));
+  if (on) cur.add(id); else cur.delete(id);
+  state.boxSel = !cur.size || cur.size === state.mailboxes.length ? null : cur;
+  renderMailboxPicker();
+  loadList();
+}
+
+function toggleBoxPanel(open) {
+  const panel = E('mb-panel');
+  const show = open == null ? panel.hidden : open;
+  panel.hidden = !show;
+  E('mb-btn').setAttribute('aria-expanded', show ? 'true' : 'false');
+}
+
+function renderViewSelect() {
+  const sel = E('view-sel');
+  const opts = [h('option', { value: '' }, 'No saved view')];
+  for (const v of state.views) opts.push(h('option', { value: String(v.id) }, v.name + (v.is_default ? ' ★' : '')));
+  sel.replaceChildren(...opts);
+  sel.value = state.viewId != null ? String(state.viewId) : '';
+  sel.hidden = !state.views.length;
+}
+
+/**
+ * Load a view: its mailbox set into the picker, its filters into the bar.
+ * Its ids are kept as stored — one that is no longer readable just narrows
+ * (the server intersects), so a view whose boxes were all revoked shows
+ * nothing rather than falling back to everything.
+ */
+function applyView(v) {
+  state.viewId = v ? v.id : null;
+  state.boxSel = v && Array.isArray(v.mailbox_ids) && v.mailbox_ids.length ? new Set(v.mailbox_ids.map(Number)) : null;
+  const f = (v && v.filters) || {};
+  E('f-q').value = f.q || '';
+  E('f-domain').value = f.from_domain || '';
+  E('f-unread').checked = !!f.unread_only;
+  E('f-case').checked = !!f.has_case;
+  E('f-folders').checked = !!f.all_folders;
+  renderViewSelect();
+  renderMailboxPicker();
+}
+
+function currentFilters() {
+  const f = {};
+  const q = E('f-q').value.trim();
+  const d = E('f-domain').value.trim().replace(/^@/, '');
+  if (q) f.q = q;
+  if (d) f.from_domain = d;
+  if (E('f-unread').checked) f.unread_only = true;
+  if (E('f-case').checked) f.has_case = true;
+  if (E('f-folders').checked) f.all_folders = true;
+  return f;
+}
+
+// ── List ────────────────────────────────────────────────────
+/** The scope a request names: the mailbox set (absent = every readable box). */
+function scopeIds() {
+  return state.boxSel && state.boxSel.size ? [...state.boxSel].sort((a, b) => a - b) : null;
+}
+
+function listParams(cursor) {
+  // Fully explicit — the picker's set + every toggle (false included) — so
+  // the list is exactly what the screen shows, whether or not a saved view
+  // was the starting point (the server's `view=` stays for API callers).
+  const p = {};
+  const ids = scopeIds();
+  if (ids) p.mailbox_ids = ids.join(',');
+  const f = currentFilters();
+  p.unread_only = f.unread_only ? 1 : 0;
+  p.has_case = f.has_case ? 1 : 0;
+  p.all_folders = f.all_folders ? 1 : 0;
+  p.q = f.q || '';
+  p.from_domain = f.from_domain || '';
+  if (cursor) p.cursor = cursor;
+  return p;
+}
+
+async function loadList({ append = false, silent = false } = {}) {
+  const seq = ++state.seq;
+  state.loading = true;
+  if (!append && !silent) E('status').textContent = 'Loading…';
+  showError(E('list-error'), '');
+  try {
+    const data = await api('/api/mail/messages', 'GET', listParams(append ? state.nextCursor : null));
+    if (seq !== state.seq) return;
+    const rows = Array.isArray(data && data.messages) ? data.messages : [];
+    state.messages = append ? state.messages.concat(rows) : rows;
+    state.nextCursor = (data && data.next_cursor) || null;
+    renderList();
+  } catch (err) {
+    if (seq !== state.seq) return;
+    E('status').textContent = '';
+    showError(E('list-error'), `Couldn't load messages: ${err.message}`);
+  } finally {
+    if (seq === state.seq) state.loading = false;
+  }
+}
+
+function caseChip(c) {
+  return h('span', {
+    className: 'chip case', title: `Open case ${c.case_number || c.case_id}`,
+    onclick: (e) => { e.stopPropagation(); openCase(c); },
+  }, icon('fa-briefcase'), c.case_number || c.case_id);
+}
+
+function msgRow(m) {
+  const chips = h('span', { className: 'chips' });
+  if (multiBox() && m.mailbox_address) chips.append(paint(h('span', { className: 'chip box', title: m.mailbox_address }, boxDot(m.mailbox_id), m.mailbox_address), m.mailbox_id));
+  if (m.folder && m.folder.toUpperCase() !== 'INBOX') chips.append(h('span', { className: 'chip folder' }, m.folder));
+  if (m.case) chips.append(caseChip(m.case));
+  else if (m.log_id) chips.append(h('span', { className: 'chip', title: 'On the firm log' }, icon('fa-box-archive'), 'Logged'));
+  if (m.attachment_count) chips.append(h('span', { className: 'chip', title: `${m.attachment_count} attachment(s)` }, icon('fa-paperclip'), String(m.attachment_count)));
+  const li = h('li', {
+    className: 'msg' + (m.unread ? ' unread' : '') + (state.selectedId === m.id ? ' selected' : '') + (multiBox() ? ' boxed' : ''),
+    dataset: { id: String(m.id) }, tabindex: '0', role: 'button',
+    onclick: () => openMessage(m),
+    onkeydown: (e) => { if (e.key === 'Enter') openMessage(m); },
+  },
+    h('div', { className: 'r1' }, h('span', { className: 'from', title: m.from_addr || '' }, personName(m.from_addr)), h('span', { className: 'date' }, listDate(m.date))),
+    h('div', { className: 'r2' }, h('span', { className: 'subject' }, m.subject || '(no subject)')),
+    m.snippet ? h('div', { className: 'snippet' }, m.snippet) : null,
+    chips.childNodes.length ? chips : null,
+  );
+  return multiBox() ? paint(li, m.mailbox_id) : li;
+}
+
+function renderList() {
+  const list = E('msg-list');
+  const unread = state.messages.filter((m) => m.unread).length;
+  E('status').textContent = state.messages.length
+    ? `${state.messages.length}${state.nextCursor ? '+' : ''} message${state.messages.length === 1 ? '' : 's'}${unread ? ` · ${unread} unread shown` : ''}`
+    : '';
+  E('readall-btn').hidden = !state.mailboxes.some((m) => m.inbox_unread);
+  if (!state.messages.length) {
+    const msg = !state.mailboxes.length
+      ? 'No mailboxes are shared with you yet. Ask whoever manages a mailbox to grant you read access.'
+      : 'No messages match.';
+    list.replaceChildren(h('li', { className: 'empty' }, msg));
+    return;
+  }
+  const items = state.messages.map(msgRow);
+  if (state.nextCursor) {
+    items.push(h('li', { className: 'more' }, h('button', {
+      className: 'btn', type: 'button', id: 'more-btn',
+      onclick: (e) => { e.target.disabled = true; loadList({ append: true }); },
+    }, 'Load more')));
+  }
+  list.replaceChildren(...items);
+}
+
+function markRowsRead(ids, unread) {
+  const set = new Set(ids.map(Number));
+  for (const m of state.messages) if (set.has(m.id)) m.unread = unread;
+  for (const li of E('msg-list').querySelectorAll('.msg')) {
+    if (set.has(Number(li.dataset.id))) li.classList.toggle('unread', unread);
+  }
+}
+
+let summaryTimer = null;
+function refreshCountsSoon() {
+  clearTimeout(summaryTimer);
+  summaryTimer = setTimeout(() => { loadSummary().then(renderList).catch(() => {}); }, 400);
+}
+
+// ── Thread ──────────────────────────────────────────────────
+async function openMessage(m) {
+  state.selectedId = m.id;
+  for (const li of E('msg-list').querySelectorAll('.msg')) li.classList.toggle('selected', Number(li.dataset.id) === m.id);
+  E('email').classList.add('show-thread');
+  const seq = ++state.threadSeq;
+  E('thread-head').hidden = false;
+  E('thread-subject').textContent = m.subject || '(no subject)';
+  E('thread-body').replaceChildren(h('div', { className: 'empty' }, 'Loading…'));
+  try {
+    const url = m.thread_key
+      ? `/api/mail/threads/${encodeURIComponent(m.thread_key)}`
+      : `/api/mail/messages/${m.id}`;
+    const data = await api(url, 'GET');
+    if (seq !== state.threadSeq) return;
+    const msgs = Array.isArray(data && data.messages) ? data.messages : [];
+    state.thread = { key: m.thread_key, subject: data.subject, messages: msgs, anchorId: m.id, truncated: !!data.truncated };
+    renderThread();
+    // Mark-read on open: every unread copy of every message shown.
+    const ids = [];
+    for (const x of msgs) for (const c of (x.copies || [])) if (c.unread) ids.push(c.id);
+    if (ids.length) {
+      api('/api/mail/read', 'POST', { ids }).then(() => {
+        for (const x of msgs) { x.unread = false; for (const c of (x.copies || [])) c.unread = false; }
+        markRowsRead(ids, false);
+        refreshCountsSoon();
+      }).catch((err) => toast(`Couldn't mark as read: ${err.message}`));
+    }
+  } catch (err) {
+    if (seq !== state.threadSeq) return;
+    E('thread-body').replaceChildren(h('div', { className: 'inline-error' }, `Couldn't open this conversation: ${err.message}`));
+  }
+}
+
+function closeThread() {
+  E('email').classList.remove('show-thread');
+}
+
+function renderThread() {
+  const t = state.thread;
+  if (!t) return;
+  E('thread-subject').textContent = t.subject || '(no subject)';
+  const body = E('thread-body');
+  const nodes = [];
+  if (t.messages.length > 1 || t.truncated) {
+    nodes.push(h('div', { className: 'thread-note' },
+      `${t.messages.length} message${t.messages.length === 1 ? '' : 's'} in this conversation` +
+      (t.truncated ? ' (showing the latest 100)' : '')));
+  }
+  const last = t.messages[t.messages.length - 1];
+  for (const m of t.messages) {
+    const isAnchor = (m.copies || []).some((c) => c.id === t.anchorId) || m.id === t.anchorId;
+    const expanded = isAnchor || m.unread || m === last;
+    nodes.push(messageCard(m, { expanded, anchor: isAnchor }));
+  }
+  body.replaceChildren(...nodes);
+  const a = body.querySelector('.mcard.anchor');
+  if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest' });
+}
+
+function messageCard(m, { expanded, anchor }) {
+  const card = h('div', { className: 'mcard' + (expanded ? '' : ' collapsed') + (anchor ? ' anchor' : ''), dataset: { id: String(m.id) } });
+  const head = h('div', { className: 'mhead', role: 'button', tabindex: '0', title: 'Show / hide this message' },
+    h('div', { className: 'r1' }, h('span', { className: 'mfrom' }, m.from_addr || '(no sender)'), h('span', { className: 'mdate' }, fullDate(m.date))),
+    h('div', { className: 'mmeta mexp' }, m.to_addrs ? `To: ${m.to_addrs}` : '', m.cc_addrs ? ` · Cc: ${m.cc_addrs}` : ''),
+    h('div', { className: 'mmeta mexp' }, (m.copies || [m]).map((c) => h('span', { className: 'cp' }, boxDot(c.mailbox_id),
+      `${c.mailbox_address || ''}${c.folder && c.folder.toUpperCase() !== 'INBOX' ? ` / ${c.folder}` : ''}`))),
+    h('div', { className: 'msnip' }, m.snippet || ''),
+  );
+  const toggle = () => {
+    const willOpen = card.classList.contains('collapsed');
+    card.classList.toggle('collapsed');
+    if (willOpen && !card.querySelector('.mail-frame')) fillCard(card, m);
+  };
+  head.addEventListener('click', toggle);
+  head.addEventListener('keydown', (e) => { if (e.key === 'Enter') toggle(); });
+  card.append(head, h('div', { className: 'mexp mslot' }));
+  if (expanded) fillCard(card, m);
+  return card;
+}
+
+/** Actions, notice, attachments and the sandboxed body for one card. */
+function fillCard(card, m) {
+  const slot = card.querySelector('.mslot');
+  const rs = state.render.get(m.id) || { allowRemote: false, mode: 'html', cidMap: null, tall: false };
+  state.render.set(m.id, rs);
+  const hasHtml = m.body_html != null && String(m.body_html).trim() !== '';
+  const built = R.createFrame(document, m, {
+    mode: hasHtml ? rs.mode : 'text', allowRemote: rs.allowRemote, cidMap: rs.cidMap || {},
+    title: `Message from ${personName(m.from_addr)}`,
+  });
+  if (rs.tall) built.frame.classList.add('tall');
+
+  const actions = h('div', { className: 'mactions' });
+  actions.append(h('button', {
+    className: 'btn small', type: 'button',
+    onclick: () => markUnread(m),
+  }, icon('fa-envelope'), 'Mark unread'));
+  if (hasHtml) {
+    actions.append(h('button', {
+      className: 'btn small', type: 'button',
+      onclick: () => { rs.mode = rs.mode === 'text' ? 'html' : 'text'; refill(card, m); },
+    }, icon(rs.mode === 'text' ? 'fa-code' : 'fa-align-left'), rs.mode === 'text' ? 'Formatted' : 'Plain text'));
+  }
+  actions.append(h('button', {
+    className: 'btn small', type: 'button',
+    onclick: () => { rs.tall = !rs.tall; built.frame.classList.toggle('tall', rs.tall); },
+  }, icon('fa-up-down'), 'Taller'));
+  actions.append(m.case
+    ? h('span', { className: 'chips' }, caseChip(m.case), h('button', { className: 'btn small', type: 'button', onclick: () => openCaseLink(m) }, 'Change case'))
+    : h('button', { className: 'btn small', type: 'button', onclick: () => openCaseLink(m) }, icon('fa-link'), 'Link to case'));
+
+  const kids = [actions];
+  const nBlocked = built.blocked.remote + built.blocked.inline;
+  if (built.mode === 'html' && nBlocked && !rs.allowRemote) {
+    kids.push(h('div', { className: 'notice' },
+      icon('fa-eye-slash'),
+      `Images hidden to protect your privacy (${built.blocked.remote} remote${built.blocked.inline ? `, ${built.blocked.inline} inline` : ''}). Remote images tell the sender you opened this.`,
+      h('button', { className: 'btn small', type: 'button', onclick: (e) => showImages(card, m, e.target) }, 'Show images')));
+  }
+  const files = (m.attachments || []).filter((a) => !a.cid);
+  if (files.length) {
+    kids.push(h('div', { className: 'atts' }, files.map((a) => h('button', {
+      className: 'btn small att', type: 'button', title: `${a.filename || 'attachment'}${a.mime ? ` · ${a.mime}` : ''}`,
+      onclick: (e) => downloadPart(m, a, e.currentTarget),
+    }, icon('fa-paperclip'), h('span', { className: 'nm' }, a.filename || `part ${a.part}`), h('span', { className: 'muted' }, bytes(a.size))))));
+  }
+  kids.push(h('div', { className: 'mbody' }, built.frame));
+  slot.replaceChildren(...kids);
+}
+
+function refill(card, m) {
+  card.querySelector('.mslot').replaceChildren();
+  fillCard(card, m);
+}
+
+async function showImages(card, m, btn) {
+  const rs = state.render.get(m.id);
+  if (btn) btn.disabled = true;
+  rs.allowRemote = true;
+  const inline = (m.attachments || []).filter((a) => a.cid && INLINE_IMAGE_MIME.includes(a.mime) && (a.size == null || a.size <= INLINE_IMAGE_BYTES)).slice(0, INLINE_IMAGE_MAX);
+  if (inline.length) {
+    rs.cidMap = rs.cidMap || {};
+    // One at a time: every part fetch is its own IMAP login on the server
+    // (request-scoped connection), and Gmail caps concurrent IMAP sessions.
+    for (const a of inline) {
+      try {
+        const blob = await api(`/api/mailboxes/${m.mailbox_id}/messages/${m.id}/parts/${encodeURIComponent(a.part)}`, 'GET', null, {}, { responseType: 'blob' });
+        if (!blob || !INLINE_IMAGE_MIME.includes(String(blob.type).toLowerCase())) continue;
+        rs.cidMap[String(a.cid).replace(/^<|>$/g, '').toLowerCase()] = await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(String(fr.result));
+          fr.onerror = () => rej(fr.error);
+          fr.readAsDataURL(blob);
+        });
+      } catch (_) { /* that image stays hidden */ }
+    }
+  }
+  refill(card, m);
+}
+
+async function downloadPart(m, a, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const blob = await api(`/api/mailboxes/${m.mailbox_id}/messages/${m.id}/parts/${encodeURIComponent(a.part)}`, 'GET', null, {}, { responseType: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const link = h('a', { href: url, download: a.filename || `attachment-${a.part}` });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (err) {
+    toast(err.message || 'Download failed');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function markUnread(m) {
+  // The copy in the list's scope is the one the reader sees again as unread.
+  const id = m.copies && m.copies.some((c) => c.id === state.selectedId) ? state.selectedId : m.id;
+  try {
+    await api(`/api/mail/messages/${id}/read`, 'DELETE');
+    m.unread = true;
+    markRowsRead([id], true);
+    refreshCountsSoon();
+    toast('Marked unread');
+  } catch (err) {
+    toast(`Couldn't mark unread: ${err.message}`);
+  }
+}
+
+function openCase(c) {
+  try { P.addFile(String(c.case_number || c.case_id), 'case', String(c.case_id)); }
+  catch (_) { toast('Could not open the case'); }
+}
+
+// ── Link to case ────────────────────────────────────────────
+let caseTimer = null;
+let caseSeq = 0;
+function openCaseLink(m) {
+  state.linking = m;
+  E('case-msg').classList.remove('show');
+  E('case-q').value = '';
+  E('case-results').replaceChildren();
+  E('case-hint').textContent = m.log_id
+    ? 'The email is already on the firm log; this links that entry to the case.'
+    : 'This email is not on the log yet — linking adds it to the log of the case you pick.';
+  E('case-backdrop').classList.add('open');
+  E('case-q').focus();
+}
+function closeCaseLink() {
+  E('case-backdrop').classList.remove('open');
+  state.linking = null;
+}
+async function searchCases() {
+  const q = E('case-q').value.trim();
+  const seq = ++caseSeq;
+  if (!q) { E('case-results').replaceChildren(); return; }
+  try {
+    const data = await api('/api/cases/search', 'GET', { q, limit: 20 });
+    if (seq !== caseSeq) return;
+    const rows = (data && data.cases) || [];
+    E('case-results').replaceChildren(...(rows.length ? rows.map((c) => h('li', {
+      tabindex: '0', onclick: () => linkCase(c), onkeydown: (e) => { if (e.key === 'Enter') linkCase(c); },
+    },
+      h('div', { className: 'l1' }, c.case_number_full || c.case_number || '(no case number)'),
+      h('div', { className: 'l2' }, [c.case_id, c.case_type, c.case_stage].filter(Boolean).join(' · ')),
+      h('div', { className: 'l2' }, [c.case_caption, c.primary_contact_name].filter(Boolean).join(' — ') || '(no primary contact)'),
+    )) : [h('li', { className: 'empty' }, 'No matches')]));
+  } catch (err) {
+    if (seq !== caseSeq) return;
+    E('case-results').replaceChildren(h('li', { className: 'empty' }, `Search failed: ${err.message}`));
+  }
+}
+async function linkCase(c) {
+  const m = state.linking;
+  if (!m) return;
+  try {
+    const out = await api(`/api/mail/messages/${m.id}/case-link`, 'POST', { case_id: c.case_id });
+    const linked = out.case || { case_id: c.case_id, case_number: c.case_number_full || c.case_number };
+    m.case = linked;
+    m.log_id = out.log_id;
+    const ids = new Set((m.copies || [m]).map((x) => x.id));
+    for (const row of state.messages) if (ids.has(row.id)) { row.case = linked; row.log_id = out.log_id; }
+    closeCaseLink();
+    renderList();
+    const card = document.querySelector(`.mcard[data-id="${m.id}"]`);
+    if (card) refill(card, m);
+    toast(out.log_created ? `Logged and linked to ${linked.case_number || linked.case_id}` : `Linked to ${linked.case_number || linked.case_id}`);
+  } catch (err) {
+    const box = E('case-msg');
+    box.textContent = err.message || 'Linking failed';
+    box.classList.add('show');
+  }
+}
+
+// ── Saved views ─────────────────────────────────────────────
+function openViews() {
+  E('views-msg').classList.remove('show');
+  E('vw-name').value = '';
+  E('vw-default').checked = false;
+  renderViewList();
+  E('views-backdrop').classList.add('open');
+}
+function closeViews() { E('views-backdrop').classList.remove('open'); }
+function viewsError(msg) {
+  const b = E('views-msg');
+  b.textContent = msg || '';
+  b.classList.toggle('show', !!msg);
+}
+/** "billing@ · shoshana@ — unread, on a case" (the view's scope in words, with colours). */
+function viewSummary(v) {
+  const f = v.filters || {};
+  const bits = [];
+  if (f.unread_only) bits.push('unread');
+  if (f.has_case) bits.push('on a case');
+  if (f.all_folders) bits.push('all folders');
+  if (f.from_domain) bits.push(`from ${f.from_domain}`);
+  if (f.q) bits.push(`"${f.q}"`);
+  const boxes = Array.isArray(v.mailbox_ids) && v.mailbox_ids.length
+    ? v.mailbox_ids.map((id) => { const m = boxById(id); return h('span', { className: 'cp' }, boxDot(id), m ? (m.display_name || m.address) : 'a mailbox no longer shared'); })
+    : [h('span', { className: 'cp' }, 'All mailboxes')];
+  return h('div', { className: 'vw-sum' }, ...boxes, bits.length ? `— ${bits.join(', ')}` : '');
+}
+
+/** The current picker set for a view body; refuses a set with nothing readable left in it. */
+function viewScope() {
+  const sel = selectedIds();
+  if (sel && !sel.length) throw new Error('Pick at least one mailbox first.');
+  return sel; // null = every readable box
+}
+
+function renderViewList() {
+  const box = E('vw-list');
+  if (!state.views.length) { box.replaceChildren(h('div', { className: 'muted' }, 'No saved views yet.')); return; }
+  box.replaceChildren(h('span', { className: 'yc-flabel' }, 'Your views'), ...state.views.map((v) => {
+    const name = h('input', { type: 'text', value: v.name, maxlength: '64', 'aria-label': 'View name' });
+    return h('div', null,
+      h('div', { className: 'view-row' }, name,
+        h('button', { className: 'btn small', type: 'button', onclick: () => patchView(v, { name: name.value.trim() }) }, 'Rename'),
+        h('button', {
+          className: 'btn small', type: 'button', title: 'Replace this view\'s mailboxes and filters with the ones on screen now',
+          onclick: () => { try { patchView(v, { mailbox_ids: viewScope(), filters: currentFilters() }); } catch (err) { viewsError(err.message); } },
+        }, 'Update'),
+        h('button', { className: 'btn small' + (v.is_default ? ' primary' : ''), type: 'button', onclick: () => patchView(v, { is_default: !v.is_default }) }, v.is_default ? 'Default ★' : 'Make default'),
+        h('button', { className: 'btn small danger', type: 'button', onclick: () => deleteView(v) }, 'Delete')),
+      viewSummary(v));
+  }));
+}
+async function saveView() {
+  const name = E('vw-name').value.trim();
+  if (!name) { viewsError('Give the view a name.'); return; }
+  const body = { name, filters: currentFilters(), is_default: E('vw-default').checked };
+  try {
+    const sel = viewScope();
+    if (sel) body.mailbox_ids = sel;
+  } catch (err) { viewsError(err.message); return; }
+  try {
+    const out = await api('/api/mail/views', 'POST', body);
+    await loadViews();
+    if (out && out.view) applyView(state.views.find((v) => v.id === out.view.id) || out.view);
+    viewsError('');
+    E('vw-name').value = '';
+    renderViewList();
+    toast('View saved');
+  } catch (err) { viewsError(err.message); }
+}
+async function patchView(v, body) {
+  if (body.name === '') { viewsError('A view needs a name.'); return; }
+  try {
+    await api(`/api/mail/views/${v.id}`, 'PATCH', body);
+    await loadViews();
+    viewsError('');
+    renderViewList();
+    if (has(body, 'mailbox_ids') || has(body, 'filters')) toast('View updated');
+  } catch (err) { viewsError(err.message); }
+}
+function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+async function deleteView(v) {
+  try {
+    await api(`/api/mail/views/${v.id}`, 'DELETE');
+    if (state.viewId === v.id) applyView(null);
+    await loadViews();
+    viewsError('');
+    renderViewList();
+    loadList();
+  } catch (err) { viewsError(err.message); }
+}
+
+/**
+ * Everything the list shows — the picker's boxes + the filters on screen,
+ * every page — and nothing behind it (the server applies the same scope).
+ * Read state is per user and has no undo, hence the confirm.
+ */
+async function markAllRead() {
+  const body = { all: true, filters: currentFilters() };
+  const ids = scopeIds();
+  if (ids) body.mailbox_ids = ids;
+  const narrowed = Object.keys(body.filters).some((k) => k !== 'all_folders');
+  if (!window.confirm(`Mark every message in this list as read${narrowed ? ' (only those matching the filters)' : ''}, including pages not loaded yet?`)) return;
+  E('readall-btn').disabled = true;
+  try {
+    const out = await api('/api/mail/read', 'POST', body);
+    toast(`${out.marked || 0} marked read`);
+    await loadSummary();
+    loadList({ silent: true });
+  } catch (err) {
+    toast(`Couldn't mark all read: ${err.message}`);
+  } finally {
+    E('readall-btn').disabled = false;
+  }
+}
+
+// ── Wiring ──────────────────────────────────────────────────
+async function init() {
+  let qTimer = null;
+  const debounced = () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadList(), 350); };
+  E('f-q').addEventListener('input', debounced);
+  E('f-domain').addEventListener('change', () => loadList());
+  for (const id of ['f-unread', 'f-case', 'f-folders']) E(id).addEventListener('change', () => loadList());
+  E('view-sel').addEventListener('change', () => {
+    const v = state.views.find((x) => String(x.id) === E('view-sel').value) || null;
+    applyView(v);
+    loadList();
+  });
+  E('mb-btn').addEventListener('click', () => toggleBoxPanel());
+  E('refresh-btn').addEventListener('click', () => { loadSummary().catch(() => {}); loadList(); });
+  E('readall-btn').addEventListener('click', markAllRead);
+  E('back-btn').addEventListener('click', closeThread);
+  E('views-btn').addEventListener('click', openViews);
+  E('views-close').addEventListener('click', closeViews);
+  E('vw-save').addEventListener('click', saveView);
+  E('views-backdrop').addEventListener('click', (e) => { if (e.target === E('views-backdrop')) closeViews(); });
+  E('case-q').addEventListener('input', () => { clearTimeout(caseTimer); caseTimer = setTimeout(searchCases, 250); });
+  E('case-cancel').addEventListener('click', closeCaseLink);
+  E('case-backdrop').addEventListener('click', (e) => { if (e.target === E('case-backdrop')) closeCaseLink(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (E('case-backdrop').classList.contains('open')) closeCaseLink();
+    else if (E('views-backdrop').classList.contains('open')) closeViews();
+    else if (!E('mb-panel').hidden) toggleBoxPanel(false);
+  });
+
+  const [s, v] = await Promise.allSettled([loadSummary(), loadViews()]);
+  if (s.status === 'rejected') showError(E('list-error'), `Couldn't load your mailboxes: ${s.reason && s.reason.message}`);
+  if (v.status === 'fulfilled') {
+    const def = state.views.find((x) => x.is_default);
+    if (def) applyView(def);
+  }
+  loadList();
+}
+
+// The shell pings visible frames when their tab is re-entered (index.html
+// pingBecameVisible). Refresh the list and counts quietly; an open thread stays.
+window.ycBecameVisible = () => {
+  if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open')) return;
+  loadSummary().catch(() => {});
+  loadList({ silent: true });
+};
+
+// ── Boot ────────────────────────────────────────────────────
+// Runs LAST: if the parent is already ready this calls init() synchronously.
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+
+</body>
+</html>

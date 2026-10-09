@@ -1,0 +1,441 @@
+/**
+ * @jest-environment node
+ *
+ * tests/mailboxS2.pane.test.js — the comms hub pane (public/comms.html),
+ * mailbox-system arc slice S2. Run: npx jest tests/mailboxS2.pane.test.js
+ *
+ * BOOTS the real pane in jsdom — the real vendored DOMPurify and the real
+ * public/js/mailRender.js load as classic scripts — against a stub shell
+ * apiSend, and drives it through the DOM. In jsdom a top-level window is its
+ * own parent, so window.apiSend IS the pane's P.apiSend.
+ *
+ * WHAT IS LOCKED
+ *   - Mail content never becomes markup: a hostile subject / sender / snippet /
+ *     filename lands as TEXT; the body reaches the page only as the srcdoc of
+ *     a sandboxed iframe, sanitized.
+ *   - Calls: the list never asks for bodies; a thread opens by thread_key (or
+ *     by message for threadless mail); opening marks every unread copy read in
+ *     ONE bulk call; attachments ride apiSend's blob transport (the part route
+ *     needs the JWT header — a bare link would 401).
+ *   - Views: the default view is applied on boot; Save view sends the current
+ *     mailbox set + filters; every list call is fully explicit (mailbox_ids
+ *     + every toggle), so it is what the screen shows.
+ *   - Mailbox picker (review follow-up): any combination of readable boxes;
+ *     a view whose boxes were all revoked shows nothing, never everything.
+ *   - Mailbox colour (v3): each box's STORED colour (mailboxes.color) through
+ *     YCMailboxColor.variants() — per-theme legible values on the row stripe,
+ *     its chip, the picker and the thread; no colour = muted grey.
+ *   - Mark all read sends the picker set + the on-screen filters, after a
+ *     confirm (per-user state, no undo).
+ *   - Phone tab rendered and disabled; the empty hub explains itself.
+ *   - Phone widths: opening a message switches to the thread (stacked
+ *     navigation, .show-thread), Back returns to the list.
+ */
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { JSDOM } = require('jsdom');
+
+const ROOT = path.join(__dirname, '..');
+const HTML = fs.readFileSync(path.join(ROOT, 'public/comms.html'), 'utf8');
+const PURIFY = fs.readFileSync(path.join(ROOT, 'public/js/vendor/purify-3.4.16.min.js'), 'utf8');
+const RENDER = fs.readFileSync(path.join(ROOT, 'public/js/mailRender.js'), 'utf8');
+const COLOR = fs.readFileSync(path.join(ROOT, 'public/js/mailboxColor.js'), 'utf8');
+const MC = require('../public/js/mailboxColor');
+
+const DOMS = [];
+afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }); });
+const tick = (w, ms = 40) => new Promise((r) => w.setTimeout(r, ms));
+
+const EVIL = '<img src=x onerror="window.top.__pwned=1">';
+const MB = [
+  { id: 1, address: 'billing@firm.test', display_name: 'Billing', color: '#2f6fd1', active: true, can_send: true, can_manage: false, inbox_total: 3, inbox_unread: 2 },
+  { id: 2, address: 'intake@firm.test', display_name: null, color: '#fff3bf', active: true, can_send: false, can_manage: false, inbox_total: 1, inbox_unread: 1 },
+];
+const ROWS = [
+  { id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', thread_key: 'root@x.test', from_addr: `Evil ${EVIL} <evil@x.test>`, to_addrs: 'billing@firm.test', cc_addrs: null, subject: `Subject ${EVIL}`, date: '2026-10-08T14:00:00.000Z', snippet: `snip ${EVIL}`, unread: true, attachment_count: 1, log_id: null, case: null },
+  { id: 12, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', thread_key: null, from_addr: 'a@b.test', to_addrs: null, cc_addrs: null, subject: 'Threadless', date: '2026-10-07T14:00:00.000Z', snippet: null, unread: false, attachment_count: 0, log_id: 5, case: { case_id: 'CaseA1', case_number: '26-11111' } },
+];
+const THREAD = {
+  thread_key: 'root@x.test', subject: `Subject ${EVIL}`, truncated: false,
+  messages: [{
+    id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', message_id: 'root@x.test', thread_key: 'root@x.test',
+    from_addr: `Evil ${EVIL} <evil@x.test>`, to_addrs: 'billing@firm.test', cc_addrs: null, subject: `Subject ${EVIL}`,
+    date: '2026-10-08T14:00:00.000Z', snippet: 'snip',
+    body_text: 'plain', body_html: `<p>Hello</p><script>window.top.__pwned=2</script><img src="https://track.test/p.gif">${EVIL}`,
+    attachments: [{ part: '2', filename: `bill ${EVIL}.pdf`, size: 2048, mime: 'application/pdf', cid: null }, { part: '3', filename: 'logo.png', size: 10, mime: 'image/png', cid: 'logo@x' }],
+    unread: true, log_id: null, case: null,
+    copies: [{ id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', unread: true }, { id: 31, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', unread: true }],
+  }],
+};
+
+async function boot({ handler, width = 1024 } = {}) {
+  const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
+    url: 'https://app.4lsg.com/comms.html', runScripts: 'dangerously', pretendToBeVisual: true,
+  });
+  DOMS.push(dom);
+  const { window } = dom;
+  window.Element.prototype.scrollIntoView = function () {};
+  Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+  window.firmData = { firmTimezone: 'America/Detroit' };
+  const calls = [];
+  window.apiSend = async (url, method = 'GET', payload = null, headers = {}, opts = {}) => {
+    calls.push({ url, method, payload: payload == null ? null : JSON.parse(JSON.stringify(payload)), opts });
+    return handler(url, method, payload, opts);
+  };
+  window.addFile = (...a) => calls.push({ addFile: a });
+  const noComments = HTML.replace(/<!--[\s\S]*?-->/g, '');
+  const bodyHtml = (noComments.match(/<body[^>]*>([\s\S]*)<\/body>/) || [])[1] || '';
+  window.document.body.innerHTML = bodyHtml.replace(/<script[\s\S]*?<\/script>/g, '');
+  const inline = [...noComments.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  expect(inline.length).toBe(1); // a second inline block means this harness is stale
+  const errors = [];
+  window.addEventListener('error', (e) => errors.push(String(e.error || e.message)));
+  window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
+  for (const src of [PURIFY, RENDER, COLOR, inline[0]]) {
+    const sc = window.document.createElement('script');
+    sc.textContent = src;
+    window.document.body.appendChild(sc);
+  }
+  await tick(window, 80);
+  return { window, doc: window.document, calls, errors };
+}
+
+function standard(over = {}) {
+  return (url, method, payload, opts) => {
+    if (over[`${method} ${url}`]) return over[`${method} ${url}`](payload, opts);
+    if (url === '/api/mail/mailboxes') return { mailboxes: MB, viewer: { su: true, role: null } };
+    if (url === '/api/mail/views') return { views: [] };
+    if (url === '/api/mail/messages' && method === 'GET') return { messages: ROWS, next_cursor: null };
+    if (url === '/api/mail/threads/root%40x.test') return THREAD;
+    if (url === '/api/mail/messages/12') return { thread_key: null, subject: 'Threadless', messages: [{ ...ROWS[1], body_text: 'only text', body_html: null, attachments: [], copies: [{ id: 12, mailbox_id: 2, folder: 'INBOX', unread: false }] }] };
+    if (url === '/api/mail/read' && method === 'POST') return { marked: (payload.ids || []).length };
+    throw new Error(`unexpected ${method} ${url}`);
+  };
+}
+
+describe('comms hub pane', () => {
+  test('boots: Phone tab disabled, mailboxes + views + list loaded, no bodies asked for', async () => {
+    const { doc, calls, errors } = await boot({ handler: standard() });
+    expect(errors).toEqual([]);
+    const phone = doc.getElementById('tab-phone');
+    expect(phone.disabled).toBe(true);
+    expect(phone.getAttribute('title')).toMatch(/phone slice/i);
+    expect(calls.map((c) => c.url)).toEqual(['/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
+    expect(doc.querySelectorAll('#msg-list .msg')).toHaveLength(2);
+    expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(true);
+    // mailbox chips because two boxes are readable; the case chip on row 2
+    expect(doc.querySelectorAll('#msg-list .msg')[1].querySelector('.chip.case').textContent).toContain('26-11111');
+  });
+
+  test('hostile envelope fields render as TEXT — no element is created from them', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    const row = doc.querySelector('#msg-list .msg');
+    expect(row.querySelector('.subject').textContent).toBe(`Subject ${EVIL}`);
+    expect(row.querySelector('img')).toBeNull();
+    expect(doc.querySelectorAll('img').length).toBe(0);
+    expect(window.__pwned).toBeUndefined();
+  });
+
+  test('opening a message: thread by key, ONE bulk mark-read of every unread copy, body only in a sandboxed srcdoc', async () => {
+    const { window, doc, calls } = await boot({ handler: standard() });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    expect(calls.find((c) => c.url === '/api/mail/threads/root%40x.test')).toBeTruthy();
+    const reads = calls.filter((c) => c.url === '/api/mail/read');
+    expect(reads).toEqual([expect.objectContaining({ method: 'POST', payload: { ids: [11, 31] } })]);
+    const frames = doc.querySelectorAll('iframe');
+    expect(frames).toHaveLength(1);
+    const f = frames[0];
+    expect(f.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox');
+    expect(f.srcdoc).toMatch(/^<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy"/);
+    expect(f.srcdoc).toContain('<p>Hello</p>');
+    expect(f.srcdoc).not.toMatch(/<script|onerror|track\.test/);
+    // the hostile header and filename stay text in the PARENT document
+    expect(doc.querySelector('.mfrom').textContent).toBe(`Evil ${EVIL} <evil@x.test>`);
+    expect(doc.querySelector('.att .nm').textContent).toBe(`bill ${EVIL}.pdf`);
+    expect([...doc.querySelectorAll('img')]).toEqual([]);
+    expect(window.__pwned).toBeUndefined();
+    // privacy notice offers to load the hidden image; the inline (cid) part is not listed as a file
+    expect(doc.querySelector('.notice').textContent).toMatch(/Images hidden.*2 remote/); // the tracker + the relative src
+    expect(doc.querySelectorAll('.att')).toHaveLength(1);
+    // the row lost its unread marker
+    expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(false);
+  });
+
+  test('threadless mail opens by message id', async () => {
+    const { window, doc, calls } = await boot({ handler: standard() });
+    doc.querySelectorAll('#msg-list .msg')[1].click();
+    await tick(window, 80);
+    expect(calls.find((c) => c.url === '/api/mail/messages/12' && c.method === 'GET')).toBeTruthy();
+    const f = doc.querySelector('iframe');
+    expect(f.srcdoc).toContain('<pre>only text</pre>');
+  });
+
+  test('"Show images" re-renders with remote allowed and fetches inline images through the part route (blob)', async () => {
+    const blobs = [];
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mailboxes/1/messages/11/parts/3': (p, opts) => { blobs.push(opts); return new window.Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }); },
+      }),
+    });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    doc.querySelector('.notice button').click();
+    await tick(window, 120);
+    expect(blobs).toEqual([{ responseType: 'blob' }]);
+    const f = doc.querySelector('iframe');
+    expect(f.srcdoc).toContain("img-src data: https: http:");
+    expect(f.srcdoc).toContain('src="https://track.test/p.gif"');
+    expect(f.srcdoc).not.toMatch(/<script/);
+    expect(doc.querySelector('.notice')).toBeNull();
+    expect(calls.filter((c) => /\/parts\//.test(c.url)).every((c) => c.opts && c.opts.responseType === 'blob')).toBe(true);
+  });
+
+  test('attachments download through apiSend\'s blob transport, never a bare link', async () => {
+    const { window, doc, calls } = await boot({
+      handler: standard({ 'GET /api/mailboxes/1/messages/11/parts/2': () => new window.Blob(['%PDF'], { type: 'application/pdf' }) }),
+    });
+    window.URL.createObjectURL = () => 'blob:https://app.4lsg.com/x';
+    window.URL.revokeObjectURL = () => {};
+    const downloads = [];
+    window.HTMLAnchorElement.prototype.click = function () { downloads.push([this.getAttribute('href'), this.getAttribute('download')]); };
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    doc.querySelector('.att').click();
+    await tick(window, 40);
+    const c = calls.find((x) => x.url === '/api/mailboxes/1/messages/11/parts/2');
+    expect(c).toMatchObject({ method: 'GET', opts: { responseType: 'blob' } });
+    expect(downloads).toEqual([['blob:https://app.4lsg.com/x', `bill ${EVIL}.pdf`]]);
+    expect(doc.querySelector('a[href*="/api/"]')).toBeNull();
+  });
+
+  test('mark unread → DELETE …/read for the copy the reader opened', async () => {
+    const { window, doc, calls } = await boot({ handler: standard({ 'DELETE /api/mail/messages/11/read': () => ({ id: 11, unread: true }) }) });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    [...doc.querySelectorAll('.mactions button')].find((b) => /Mark unread/.test(b.textContent)).click();
+    await tick(window, 40);
+    expect(calls.some((c) => c.url === '/api/mail/messages/11/read' && c.method === 'DELETE')).toBe(true);
+    expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(true);
+  });
+
+  test('case link: search, pick, POST, chip appears', async () => {
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/cases/search': () => ({ cases: [{ case_id: 'CaseA1', case_number: '26-11111', case_number_full: '26-11111-tjt', case_type: 'BK', primary_contact_name: 'Doe' }] }),
+        'POST /api/mail/messages/11/case-link': () => ({ id: 11, log_id: 77, log_created: true, case: { case_id: 'CaseA1', case_number: '26-11111-tjt' } }),
+      }),
+    });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    [...doc.querySelectorAll('.mactions button')].find((b) => /Link to case/.test(b.textContent)).click();
+    expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(true);
+    const q = doc.getElementById('case-q');
+    q.value = '26-111';
+    q.dispatchEvent(new window.Event('input'));
+    await tick(window, 320);
+    expect(calls.find((c) => c.url === '/api/cases/search')).toMatchObject({ payload: { q: '26-111', limit: 20 } });
+    doc.querySelector('#case-results li').click();
+    await tick(window, 60);
+    expect(calls.find((c) => c.url === '/api/mail/messages/11/case-link')).toMatchObject({ method: 'POST', payload: { case_id: 'CaseA1' } });
+    expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(false);
+    expect(doc.querySelector('#msg-list .msg .chip.case').textContent).toContain('26-11111-tjt');
+    expect(doc.querySelector('.mactions .chip.case').textContent).toContain('26-11111-tjt');
+  });
+
+  test('default view applied on boot; toggles ride every list call; Save view sends the current filters', async () => {
+    const views = [{ id: 4, name: 'Unread billing', mailbox_ids: [1], filters: { unread_only: true, q: 'plan' }, is_default: true, sort_order: 0 }];
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/views': () => ({ views }),
+        'POST /api/mail/views': (p) => ({ view: { id: 5, ...p, mailbox_ids: p.mailbox_ids || null, sort_order: 0 } }),
+      }),
+    });
+    const first = calls.find((c) => c.url === '/api/mail/messages');
+    expect(first.payload).toEqual({ mailbox_ids: '1', unread_only: 1, q: 'plan', has_case: 0, all_folders: 0, from_domain: '' });
+    expect(doc.getElementById('f-unread').checked).toBe(true);
+    expect(doc.getElementById('mb-label').textContent).toBe('Billing — billing@firm.test (2)');
+    doc.getElementById('f-case').checked = true;
+    doc.getElementById('f-case').dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ mailbox_ids: '1', unread_only: 1, has_case: 1 });
+    doc.getElementById('views-btn').click();
+    doc.getElementById('vw-name').value = 'Mine';
+    doc.getElementById('vw-save').click();
+    await tick(window, 60);
+    expect(calls.find((c) => c.url === '/api/mail/views' && c.method === 'POST').payload)
+      .toEqual({ name: 'Mine', filters: { q: 'plan', unread_only: true, has_case: true }, is_default: false, mailbox_ids: [1] });
+  });
+
+  test('mailbox picker: any combination of boxes rides mailbox_ids; All clears it', async () => {
+    const MB3 = [...MB, { id: 3, address: 'shoshana@mdbl.test', display_name: null, active: true, can_send: true, can_manage: false, inbox_total: 4, inbox_unread: 4 }];
+    const { window, doc, calls } = await boot({ handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: MB3, viewer: { su: true, role: null } }) }) });
+    const btn = doc.getElementById('mb-btn');
+    const panel = doc.getElementById('mb-panel');
+    expect([btn.hidden, panel.hidden, doc.getElementById('mb-label').textContent]).toEqual([false, true, 'All mailboxes (7)']);
+    btn.click();
+    expect([panel.hidden, btn.getAttribute('aria-expanded')]).toEqual([false, 'true']);
+    const box = (id) => panel.querySelector(`input[data-id="${id}"]`);
+    expect([1, 2, 3].map((id) => box(id).checked)).toEqual([true, true, true]);
+    box(2).checked = false;
+    box(2).dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload.mailbox_ids).toBe('1,3');
+    expect(doc.getElementById('mb-label').textContent).toBe('2 mailboxes (6)');
+    expect(btn.title).toBe('billing@firm.test, shoshana@mdbl.test');
+    box(3).checked = false;
+    box(3).dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload.mailbox_ids).toBe('1');
+    const all = panel.querySelector('input:not([data-id])');
+    all.checked = true;
+    all.dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).not.toHaveProperty('mailbox_ids');
+    // unticking the last remaining box = every box again, never an empty scope
+    box(1).checked = false; box(1).dispatchEvent(new window.Event('change'));
+    box(2).checked = false; box(2).dispatchEvent(new window.Event('change'));
+    box(3).checked = false; box(3).dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).not.toHaveProperty('mailbox_ids');
+    expect(doc.getElementById('mb-label').textContent).toBe('All mailboxes (7)');
+  });
+
+  test('each box is drawn in its STORED colour (per-theme legible values) on the row, its chip, the picker and the thread', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    const vars = (el) => [el.style.getPropertyValue('--mbc-l'), el.style.getPropertyValue('--mbc-d')];
+    const blue = MC.variants('#2f6fd1');  // clears 3:1 on light as stored; lifted on dark
+    const pale = MC.variants('#fff3bf');  // too pale for light: darkened there; as stored on dark
+    expect(blue.light).toBe('#2f6fd1');
+    expect(blue.dark).not.toBe('#2f6fd1');
+    expect(pale.light).not.toBe('#fff3bf');
+    expect(pale.dark).toBe('#fff3bf');
+    const rows = doc.querySelectorAll('#msg-list .msg');
+    expect([...rows].map((r) => [r.classList.contains('boxed'), r.classList.contains('mbc'), ...vars(r)]))
+      .toEqual([[true, true, blue.light, blue.dark], [true, true, pale.light, pale.dark]]);
+    expect(vars(rows[0].querySelector('.chip.box'))).toEqual([blue.light, blue.dark]);
+    expect(vars(rows[0].querySelector('.chip.box .mdot'))).toEqual([blue.light, blue.dark]);
+    expect(vars(doc.querySelector('#mb-panel input[data-id="2"]').parentNode.querySelector('.mdot'))).toEqual([pale.light, pale.dark]);
+    rows[0].click();
+    await tick(window, 80);
+    expect([...doc.querySelectorAll('.mcard .cp .mdot')].map(vars)).toEqual([[blue.light, blue.dark], [pale.light, pale.dark]]);
+    // the theme switch is CSS: .mbc reads --mbc-l, the dark theme --mbc-d
+    expect(HTML).toContain('.mbc { --mbc: var(--mbc-l); }');
+    expect(HTML).toContain('html[data-theme="dark"] .mbc { --mbc: var(--mbc-d); }');
+    // the colour is the box's data, not its id or position: re-colour the boxes and
+    // list them in another order (the summary sorts by address) — the colours follow the boxes
+    const swapped = await boot({ handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: [{ ...MB[1], color: null }, { ...MB[0], color: '#fff3bf' }], viewer: { su: true, role: null } }) }) });
+    expect([...swapped.doc.querySelectorAll('#msg-list .msg')].map(vars))
+      .toEqual([[pale.light, pale.dark], ['var(--text-muted)', 'var(--text-muted)']]);
+    // a single readable box: no stripe, no picker
+    const one = await boot({ handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: [MB[0]], viewer: { su: false, role: null } }) }) });
+    const r1 = one.doc.querySelector('#msg-list .msg');
+    expect([r1.classList.contains('boxed'), r1.style.getPropertyValue('--mbc-l')]).toEqual([false, '']);
+    expect(one.doc.getElementById('mb-btn').hidden).toBe(true);
+  });
+
+  test('views keep a combined set: Save stores it, Update replaces it, the list shows each view\'s boxes', async () => {
+    const MB3 = [...MB, { id: 3, address: 'shoshana@mdbl.test', display_name: null, active: true, can_send: true, can_manage: false, inbox_total: 4, inbox_unread: 4 }];
+    let views = [{ id: 4, name: 'Old', mailbox_ids: [2], filters: {}, is_default: false, sort_order: 0 }];
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/mailboxes': () => ({ mailboxes: MB3, viewer: { su: false, role: null } }),
+        'GET /api/mail/views': () => ({ views }),
+        'POST /api/mail/views': (p) => { const v = { id: 5, sort_order: 0, ...p, mailbox_ids: p.mailbox_ids || null }; views = views.concat(v); return { view: v }; },
+        'PATCH /api/mail/views/4': (p) => { views = views.map((v) => (v.id === 4 ? { ...v, ...p } : v)); return { view: views[0] }; },
+      }),
+    });
+    doc.getElementById('mb-btn').click();
+    const box = (id) => doc.querySelector(`#mb-panel input[data-id="${id}"]`);
+    box(2).checked = false;
+    box(2).dispatchEvent(new window.Event('change'));
+    doc.getElementById('f-unread').checked = true;
+    doc.getElementById('f-unread').dispatchEvent(new window.Event('change'));
+    await tick(window);
+    doc.getElementById('views-btn').click();
+    expect(doc.querySelector('#vw-list .vw-sum').textContent).toBe('intake@firm.test');
+    doc.getElementById('vw-name').value = 'SB desk';
+    doc.getElementById('vw-save').click();
+    await tick(window, 60);
+    expect(calls.find((c) => c.url === '/api/mail/views' && c.method === 'POST').payload)
+      .toEqual({ name: 'SB desk', filters: { unread_only: true }, is_default: false, mailbox_ids: [1, 3] });
+    const sums = [...doc.querySelectorAll('#vw-list .vw-sum')].map((x) => x.textContent);
+    expect(sums).toEqual(['intake@firm.test', 'Billingshoshana@mdbl.test— unread']);
+    [...doc.querySelectorAll('#vw-list button')].find((b) => b.textContent === 'Update').click();
+    await tick(window, 60);
+    expect(calls.find((c) => c.url === '/api/mail/views/4' && c.method === 'PATCH').payload)
+      .toEqual({ mailbox_ids: [1, 3], filters: { unread_only: true } });
+  });
+
+  test('a view whose mailboxes were all revoked shows nothing — never falls back to everything', async () => {
+    const views = [{ id: 7, name: 'Gone', mailbox_ids: [9], filters: {}, is_default: true, sort_order: 0 }];
+    const { doc, calls } = await boot({ handler: standard({ 'GET /api/mail/views': () => ({ views }), 'GET /api/mail/messages': () => ({ messages: [], next_cursor: null }) }) });
+    expect(calls.find((c) => c.url === '/api/mail/messages').payload.mailbox_ids).toBe('9');
+    expect(doc.getElementById('mb-label').textContent).toBe('No shared mailboxes');
+    // and it cannot be saved as a new view in that state
+    doc.getElementById('views-btn').click();
+    doc.getElementById('vw-name').value = 'x';
+    doc.getElementById('vw-save').click();
+    expect(doc.getElementById('views-msg').textContent).toMatch(/at least one mailbox/);
+    expect(calls.some((c) => c.url === '/api/mail/views' && c.method === 'POST')).toBe(false);
+  });
+
+  test('Mark all read: the picker set + on-screen filters, only after a confirm', async () => {
+    const { window, doc, calls } = await boot({ handler: standard({ 'POST /api/mail/read': () => ({ marked: 3 }) }) });
+    doc.getElementById('mb-btn').click();
+    const b2 = doc.querySelector('#mb-panel input[data-id="2"]');
+    b2.checked = false; b2.dispatchEvent(new window.Event('change'));
+    const dom = doc.getElementById('f-domain');
+    dom.value = 'court.test'; dom.dispatchEvent(new window.Event('change'));
+    await tick(window);
+    const asked = [];
+    window.confirm = (m) => { asked.push(m); return false; };
+    doc.getElementById('readall-btn').click();
+    await tick(window);
+    expect(calls.some((c) => c.url === '/api/mail/read')).toBe(false);
+    expect(asked[0]).toMatch(/only those matching the filters/);
+    window.confirm = () => true;
+    doc.getElementById('readall-btn').click();
+    await tick(window, 60);
+    expect(calls.find((c) => c.url === '/api/mail/read').payload).toEqual({ all: true, filters: { from_domain: 'court.test' }, mailbox_ids: [1] });
+  });
+
+  test('load more passes next_cursor back unchanged', async () => {
+    let n = 0;
+    const { window, doc, calls } = await boot({
+      handler: standard({ 'GET /api/mail/messages': () => (n++ === 0 ? { messages: [ROWS[0]], next_cursor: '1759932000000.11' } : { messages: [ROWS[1]], next_cursor: null }) }),
+    });
+    doc.getElementById('more-btn').click();
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages')[1].payload.cursor).toBe('1759932000000.11');
+    expect(doc.querySelectorAll('#msg-list .msg')).toHaveLength(2);
+    expect(doc.getElementById('more-btn')).toBeNull();
+  });
+
+  test('no mailboxes shared → the empty hub says why (not an error)', async () => {
+    const { doc, errors } = await boot({
+      handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: [], viewer: { su: false, role: null } }), 'GET /api/mail/messages': () => ({ messages: [], next_cursor: null }) }),
+    });
+    expect(errors).toEqual([]);
+    expect(doc.querySelector('#msg-list .empty').textContent).toMatch(/No mailboxes are shared with you/);
+    expect(doc.getElementById('list-error').textContent).toBe('');
+  });
+
+  test('stacked navigation: opening switches to the thread, Back returns to the list', async () => {
+    const { window, doc } = await boot({ handler: standard(), width: 375 });
+    const email = doc.getElementById('email');
+    expect(email.classList.contains('show-thread')).toBe(false);
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    expect(email.classList.contains('show-thread')).toBe(true);
+    doc.getElementById('back-btn').click();
+    expect(email.classList.contains('show-thread')).toBe(false);
+    // the CSS that makes it stacked lives in the phone media block
+    const css = HTML.match(/@media \(max-width: 768px\) \{([\s\S]*?)\n  \}/)[1];
+    expect(css).toMatch(/\.email:not\(\.show-thread\) \.thread-col \{ display: none; \}/);
+    expect(css).toMatch(/\.email\.show-thread \.list-col \{ display: none; \}/);
+  });
+});

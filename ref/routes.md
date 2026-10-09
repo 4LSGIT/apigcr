@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-09T13:03:17.279Z_  
-_715 routes total — DELETE: 58, GET: 295, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_
+_Generated 2026-10-09T13:04:30.265Z_  
+_727 routes total — DELETE: 60, GET: 300, PATCH: 50, POST: 279, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -392,6 +392,18 @@ _715 routes total — DELETE: 58, GET: 295, PATCH: 49, POST: 275, PUT: 35, _ALL:
 | POST | `/api/m/:token/cancel` | — | — |
 | POST | `/api/m/:token/reschedule` | — | — |
 | GET | `/api/m/:token/slots` | — | — |
+| GET | `/api/mail/mailboxes` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mail/messages` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mail/messages/:id` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mail/messages/:id/case-link` | `jwtOrApiKey`, `requireJwt` | — |
+| DELETE | `/api/mail/messages/:id/read` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mail/messages/:id/read` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mail/read` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mail/threads/:threadKey` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mail/views` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mail/views` | `jwtOrApiKey`, `requireJwt` | — |
+| DELETE | `/api/mail/views/:id` | `jwtOrApiKey`, `requireJwt` | — |
+| PATCH | `/api/mail/views/:id` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mailboxes` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mailboxes` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/mailboxes/:id` | `jwtOrApiKey`, `requireJwt` | — |
@@ -985,4 +997,4 @@ _715 routes total — DELETE: 58, GET: 295, PATCH: 49, POST: 275, PUT: 35, _ALL:
 
 ---
 
-_715 routes total — DELETE: 58, GET: 295, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_
+_727 routes total — DELETE: 60, GET: 300, PATCH: 50, POST: 279, PUT: 35, _ALL: 3_
