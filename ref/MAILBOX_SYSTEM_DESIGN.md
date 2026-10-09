@@ -1,6 +1,6 @@
 # MAILBOX_SYSTEM_DESIGN
 
-Status: v4 — 2026-10-08, + S1-G addendum 2026-10-09. D1–D6 decided; OQ2 answered; remaining OQs open. S0 + S1 live; S1-G (Gmail pilot, emission identity — §4.1, `ref/MAILBOX_GMAIL_PARITY.md`) in review.
+Status: v4 — 2026-10-08, + S1-G addendum 2026-10-09. D1–D6 decided; OQ2 answered; remaining OQs open. S0 + S1 live; S1-G (Gmail pilot, emission identity — §4.1, `ref/MAILBOX_GMAIL_PARITY.md`) live through runbook step 2 (mailbox 2 storing, store-only); its htmlToText follow-up in review.
 Scope: YisraCase-native mailbox subsystem and the comms hub that hosts it — many-to-many channel access (mailboxes now, phone lines later through the same grants), per-user mixed inboxes, ingest + send on top of a commodity mail host. Phone gets NO message store in this arc (§4.4, §6).
 Related: `ref/EMAIL_PROVIDER_PLAN.md` (provider migration; this is its S2), access-control arc (roles), about-link/case-link machinery, email-ingest rules engine, YC3 tenancy plan.
 
@@ -147,7 +147,7 @@ Phone tab (slice S-PH): per-line SMS inbox + call log read **live from Quo via t
 
 - **S0** schema (incl. `channel_grants`, channel-general; pane + write API mailbox-only per D6) + grants service/API + grant-admin UI. No ingest.
 - **S1** ingest worker, ONE pilot mailbox — can be the Workspace account via Gmail IMAP, or archive@mdbl post-trial; canonical-envelope emission + `mail_messages` + on-demand part fetch.
-- **S1-G** Gmail second pilot: provider-id capture, per-mailbox emission override (`gmail-firm` + hex X-GM-MSGID), `backfill:false`, SU folder listing + emission preview, the live gate and the 14-day parity window that retires the Apps Script source (`ref/MAILBOX_GMAIL_PARITY.md`).
+- **S1-G** Gmail second pilot: provider-id capture, per-mailbox emission override (`gmail-firm` + hex X-GM-MSGID), `backfill:false`, SU folder listing + emission preview, the live gate and the 14-day parity window that retires the Apps Script source (`ref/MAILBOX_GMAIL_PARITY.md`). Follow-up: `htmlToText` matches Gmail's plain text where Layer 3 reads it (links as `label <url>`, LF, bare `&nbsp`, `<hr>` breaks, `<img alt>`), and the G4 script classifies the residual Gmail renderings (80 live NEFs: STOP → REVIEW, 0 VALUE).
 - **S2** inbox/thread read-only UI + views + read state.
 - **S3** send (identity picker, Sent APPEND, budget guardrails + `bulk_ok`).
 - **S4** remaining mailboxes, flags polish, filters. (Retention pruning per OQ2's answer lands by here.)

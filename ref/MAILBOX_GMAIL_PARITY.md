@@ -22,12 +22,14 @@ hex id) but is a hypothesis here until G2 proves it on live data.
 
 | Fact | Evidence | Consequence |
 |---|---|---|
-| The Apps Script account is **stuart@4lsg.com** | its Gmail holds `Trigger Label` + `IT/Test Trigger` (Gmail connector label listing) | the mailbox row is `stuart@4lsg.com` — **Fred confirms** |
+| The Apps Script account is **stuart@4lsg.com** | its Gmail holds `Trigger Label` + `IT/Test Trigger` (Gmail connector label listing); Fred confirmed | the mailbox row is `stuart@4lsg.com` (mailbox **2**, created 2026-10-09; X-GM-EXT-1 confirmed: `provider_id_kind: 'gmail'`) |
+| `Trigger Label` is a **queue**, applied by the Gmail filter `deliveredto:@4lsg.com` (Fred) and removed by GAS once a thread posts — and it covers **everything**: every one of 111 messages Gmail received 2026-10-06…09 (63 in INBOX, newsletters included; 48 filed out of INBOX by other filters) has a gmail-firm `email_log` row (Gmail connector ids vs `email_log.message_id`) | the "skipped newsletters" are **Layer-2 suppression**: 40 of the 111 executions are `skipped_suppression` (LinkedIn, list mail …), 61 `logged`, 10 firm-to-firm | emitting all of INBOX at step 4 adds **no** new Layer-3/log exposure (same source, same suppressions). G2's `gas_never_posted` re-checks it live |
+| **~43% of what GAS posts lives OUTSIDE INBOX/Sent** (48 of the 111): skip-inbox filters file it under labels (`IT`, `Marketing/*`, `Clio/*`, `Management - Vendors/*`, `Student Loan Grads`, `Court News/*` …) | same sample; label listing | the worker (INBOX + Sent) never sees it → W2 class 4 will be large. Two **automations depend on it**: rule **21** (Clio payment failed, ~66 / 30 d — 0 of them in INBOX; label `Clio/Clio Team - Payments`) and rule **18** (Adobe Sign sent tracking, ~14 / 30 d; `Management - Vendors/Adobe Sign - Sent`). Retiring GAS without polling those folders silently stops both — **retirement decision, §5** |
 | INBOX **62,012** messages, Sent **26,206** | same listing | full backfill would pull GBs over Gmail IMAP (≈2.5 GB/day download cap per account — a lockout also hits Stuart's own IMAP clients) and multiply the SiteGround DB (897 MB) → both folders run **`backfill:false`** (store only mail arriving after first sight) |
 | GAS posts every message of every thread under `Trigger Label`, **including the firm's own replies** | `forwardEmailsToIngest()` walks `thread.getMessages()`; ~30% of 30-day gmail-firm volume is from firm domains | in Gmail IMAP a sent reply lives in `[Gmail]/Sent Mail`, which is **store-only** (D6). After retirement those outgoing log rows stop unless Sent is opted in — a **retirement decision** (§5) |
 | GAS runs two side jobs: Pabbly **docs@** relay, **Clio "Payment method submitted"** forward | `processOneMessage()` | disabling the GAS trigger kills both — **retirement prerequisite** (§5) |
 | Court NEFs are single-part **text/html**; GAS `text` is Gmail's `getPlainBody()`, the worker's is `htmlToText()` | 316/316 sampled court executions `content_type text/html` | the text Layer 3 sees differs by feeder; and from step 4 whichever feeder arrives FIRST runs Layer 3 — so text parity is part of the **gate**, before anything emits (G4) |
-| **htmlToText diverges materially today** | 80 recent court NEFs replayed through rules 8/9/10/15/16/22 (S1-G worker report): rules **9/10 (341 meetings) identical**; rule **8** `filer` differs in 7/80 (Gmail's wrap truncates names — the worker's is the complete one); rules **15/22** `message`/`description` lose the **docket / doc1 links** (htmlToText drops `href`s; Gmail renders `text <url>`) and differ in wrapping / `*bold*`; rule **16** differs only by `* name *` vs `name` | **G4 returns STOP with the current htmlToText.** Ruling needed before step 4 (worker report: prototype link rendering + CRLF/`&nbsp` fixes leave only wrap/bold format differences) |
+| **htmlToText now matches Gmail where it matters** (S1-G follow-up, 2026-10-09) | Before: 80 recent court NEFs replayed through the gate script → **STOP**, 151 court VALUE differences (links dropped — Gmail renders `label <url>` — plus CRLF, `&nbsp`). The follow-up renders `<a href>` as `label <url>` (quoted / unquoted, `HREF=`), LF line ends, bare `&nbsp` decoded, `<hr>` as a break, `<img alt>` as its alt. After: the same 80 → **REVIEW, 0 VALUE** (prod-matched rules: 136 format, 12 gas-tail-cut, 6 gmail-render, 1 gmail-css-leak, 1 gmail-input-artifact); with rules 8/12/15/16/22 forced onto all 80 → still 0 VALUE (rule 16's 57 and rule 8's 7 differences are all gmail-input-artifact). Rules 9/10 (341 meetings) identical throughout | The residual differences are Gmail's renderings, and in each the worker's value is equal or better (complete filer names, the claims-NEF tail Gmail drops, no `*`/`&nbsp`/CSS junk). They are the **documented REVIEW-pass classes** (§2 G4) |
 
 ---
 
@@ -89,12 +91,15 @@ stored from the next 5-minute tick. After a few hours run **G1** (§2).
 
 ### Step 3 — the verification gate (store-only; still nothing emits)
 After ≥ 20 INBOX messages have been stored for ≥ 30 minutes (usually within a
-working day), run **G1–G3** (§2) and the **G4** script. PASS = all four pass.
-**On FAIL everything stays store-only and the worker reports (G-outputs
-attached) — no fallback is improvised live.** (G4 is expected to STOP until
-the htmlToText ruling in §0 lands.)
+working day), run **G1–G3** (§2) and the **G4** script. PASS = G1 and G2 pass,
+G3 explains every LOOKALIKE row, and G4 is PASS — or REVIEW with its examples
+read and accepted by the manager's ruling (the follow-up's 80-NEF replay in §0
+is the reference distribution). **On FAIL everything stays store-only and the
+worker reports (G-outputs attached) — no fallback is improvised live.** G4
+needs the htmlToText follow-up deployed: before it, STOP is the known result.
 
 ### Step 4 — emit: ONE atomic PATCH, then a live test
+**Prerequisite:** the gate (step 3) passed.
 Override and INBOX emission in the SAME request (one UPDATE — there is no
 tick on which INBOX emits under the default `mailbox-imap` identity, which
 would double-fire every message GAS also posts):
@@ -158,45 +163,97 @@ SELECT folder, COUNT(*) AS stored_rows, SUM(provider_id IS NULL) AS no_provider_
  GROUP BY folder;
 ```
 
-**G2 — the equality hypothesis.** PASS iff `eligible ≥ 20`, `match_pct ≥ 95`
-and `from_mismatch = 0`. A `match_pct` near 0 means X-GM-MSGID ≠ the Apps
-Script id → STOP (the slice's premise is false). Anything between 5 and 95 is
-an anomaly → STOP and report G3. `subject_mismatch` is informational (header
-decoding / folding can differ).
+**G2 — the equality hypothesis**, tested only where GAS demonstrably posted
+the same email. GAS posts only threads that reached `Trigger Label` (§0), so a
+row it never posted proves nothing either way; "GAS posted it" is decided
+WITHOUT the hypothesis — a gmail-firm log row with the same sender and subject
+within ±6 h. PASS iff `matched_by_id ≥ 20`, `from_mismatch = 0` and
+`lookalike_unmatched = 0` (or each G3 LOOKALIKE row explained — e.g. one email
+delivered into the mailbox twice). The premise is FALSE when `matched_by_id = 0`
+while `lookalike_unmatched > 0` → STOP. `gas_never_posted` is informational:
+with the catch-all filter it should be near 0; G3 lists what it is.
 ```sql
-SELECT COUNT(*) AS eligible,
-       SUM(l.id IS NOT NULL) AS matched,
-       ROUND(100 * SUM(l.id IS NOT NULL) / NULLIF(COUNT(*), 0), 1) AS match_pct,
-       SUM(l.id IS NOT NULL AND LOCATE(LOWER(l.from_email), LOWER(m.from_addr)) = 0) AS from_mismatch,
-       SUM(l.id IS NOT NULL AND TRIM(l.subject) <> TRIM(COALESCE(m.subject, ''))) AS subject_mismatch
-  FROM mail_messages m
-  LEFT JOIN email_log l ON l.source = 'gmail-firm' AND l.message_id = m.provider_id
- WHERE m.mailbox_id = (SELECT id FROM mailboxes WHERE address = 'stuart@4lsg.com')
-   AND m.folder = 'INBOX' AND m.provider_id IS NOT NULL
-   AND m.ingested_at < UTC_TIMESTAMP() - INTERVAL 30 MINUTE;
+SELECT COUNT(*) AS inbox_rows,
+       SUM(x.by_id) AS matched_by_id,
+       SUM(x.by_id AND NOT x.from_ok) AS from_mismatch,
+       SUM(NOT x.by_id AND x.lookalike) AS lookalike_unmatched,
+       SUM(NOT x.by_id AND NOT x.lookalike) AS gas_never_posted
+  FROM (
+    SELECT m.id,
+           EXISTS (SELECT 1 FROM email_log l
+                    WHERE l.source = 'gmail-firm' AND l.message_id = m.provider_id) AS by_id,
+           EXISTS (SELECT 1 FROM email_log l
+                    WHERE l.source = 'gmail-firm' AND l.message_id = m.provider_id
+                      AND LOCATE(LOWER(l.from_email), LOWER(m.from_addr)) > 0) AS from_ok,
+           EXISTS (SELECT 1 FROM email_log l
+                    WHERE l.id >= f.floor_id AND l.source = 'gmail-firm'
+                      AND TRIM(l.subject) = TRIM(COALESCE(m.subject, ''))
+                      AND LOCATE(LOWER(l.from_email), LOWER(m.from_addr)) > 0
+                      AND l.processed_at BETWEEN CONVERT_TZ(m.ingested_at, '+00:00', 'America/Detroit') - INTERVAL 6 HOUR
+                                            AND CONVERT_TZ(m.ingested_at, '+00:00', 'America/Detroit') + INTERVAL 6 HOUR) AS lookalike
+      FROM mail_messages m
+      JOIN (SELECT id AS mb_id FROM mailboxes WHERE address = 'stuart@4lsg.com') b ON b.mb_id = m.mailbox_id
+      JOIN (SELECT COALESCE(MIN(e.email_log_id), 0) AS floor_id FROM email_ingest_executions e
+             WHERE e.source_id = 1
+               AND e.created_at >= (SELECT MIN(mm.ingested_at) FROM mail_messages mm
+                                     WHERE mm.mailbox_id = (SELECT id FROM mailboxes WHERE address = 'stuart@4lsg.com')) - INTERVAL 1 DAY) f
+     WHERE m.folder = 'INBOX' AND m.provider_id IS NOT NULL
+       AND m.ingested_at < UTC_TIMESTAMP() - INTERVAL 30 MINUTE) x;
 ```
+(`email_log.processed_at` is Eastern — hence the CONVERT_TZ. `floor_id`
+bounds the look-alike scan to log rows of the pilot's era through the
+executions' `(source_id, created_at)` index; ~0.2 s on live.)
 
-**G3 — what did not match** (expected: only mail GAS never posted — outside
-the `Trigger Label` filter).
+**G3 — the rows G2 did not match by id.** Class 1 (LOOKALIKE) must each be
+explained; class 2 is mail GAS never posted (outside `deliveredto:@4lsg.com`,
+or GAS still behind).
 ```sql
-SELECT m.id, m.uid, m.provider_id, m.ingested_at, LEFT(m.from_addr, 60) AS from_addr, LEFT(m.subject, 80) AS subject
+SELECT IF(EXISTS (SELECT 1 FROM email_log l
+                   WHERE l.id >= f.floor_id AND l.source = 'gmail-firm'
+                     AND TRIM(l.subject) = TRIM(COALESCE(m.subject, ''))
+                     AND LOCATE(LOWER(l.from_email), LOWER(m.from_addr)) > 0
+                     AND l.processed_at BETWEEN CONVERT_TZ(m.ingested_at, '+00:00', 'America/Detroit') - INTERVAL 6 HOUR
+                                           AND CONVERT_TZ(m.ingested_at, '+00:00', 'America/Detroit') + INTERVAL 6 HOUR),
+          '1 LOOKALIKE - GAS logged a same-sender/subject mail under another id: explain',
+          '2 gas never posted') AS cls,
+       m.id, m.uid, m.provider_id, m.ingested_at, LEFT(m.from_addr, 60) AS from_addr, LEFT(m.subject, 80) AS subject
   FROM mail_messages m
-  LEFT JOIN email_log l ON l.source = 'gmail-firm' AND l.message_id = m.provider_id
- WHERE m.mailbox_id = (SELECT id FROM mailboxes WHERE address = 'stuart@4lsg.com')
-   AND m.folder = 'INBOX' AND m.provider_id IS NOT NULL
+  JOIN (SELECT id AS mb_id FROM mailboxes WHERE address = 'stuart@4lsg.com') b ON b.mb_id = m.mailbox_id
+  JOIN (SELECT COALESCE(MIN(e.email_log_id), 0) AS floor_id FROM email_ingest_executions e
+         WHERE e.source_id = 1
+           AND e.created_at >= (SELECT MIN(mm.ingested_at) FROM mail_messages mm
+                                 WHERE mm.mailbox_id = (SELECT id FROM mailboxes WHERE address = 'stuart@4lsg.com')) - INTERVAL 1 DAY) f
+ WHERE m.folder = 'INBOX' AND m.provider_id IS NOT NULL
    AND m.ingested_at < UTC_TIMESTAMP() - INTERVAL 30 MINUTE
-   AND l.id IS NULL
- ORDER BY m.id DESC LIMIT 50;
+   AND NOT EXISTS (SELECT 1 FROM email_log l WHERE l.source = 'gmail-firm' AND l.message_id = m.provider_id)
+ ORDER BY cls, m.id DESC
+ LIMIT 50;
 ```
 
 **G4 — text parity, pre-emission.** Paste `ref/MAILBOX_GMAIL_PARITY.console.js`
 into an SU tab's console. For every INBOX message that GAS logged and that
 matched a rule in production, it runs each matched rule's PRODUCTION transform
 on GAS's envelope and on the same envelope carrying the worker's text/html
-(`GET …/emit-preview`, the worker's own derivation) and classifies every
-output field: `format` (equal once `*` and whitespace are normalized) or
-`VALUE`. PASS / REVIEW (format-only) / **STOP (any court-mail VALUE
-difference)**. A STOP is a finding for the manager, never a tweak made live.
+(`GET …/emit-preview`, the worker's own derivation), and gives every differing
+output field ONE class:
+
+| Class | Meaning | Seen on live NEFs (§0) |
+|---|---|---|
+| `format` | equal ignoring whitespace, `*` and `_` — Gmail's ~75-column hard wrap, `*bold*` / `_underline_` markers, `____` rules | the bulk: every rule 12/15/22 text |
+| `gmail-render` | equal once Gmail's renderings are undone on the GAS side: literal `&nbsp` (no semicolon), `------` lines for `<hr>`, `[image: alt]` | claims NEFs (`&nbsp &nbsp Claims Register`), docket texts after `<HR>` |
+| `gas-tail-cut` | a whole-text field where GAS's text is a strict prefix of the worker's — Gmail dropped the tail | claims NEFs with an unclosed `<b>`: Gmail's text stops at "Amount Claimed"; the worker keeps the rest (document, notice list) |
+| `gmail-css-leak` | a whole-text field where GAS's text = the worker's + CSS rule(s) Gmail leaked from a `<style>` block | the GovDelivery CM/ECF downtime notice |
+| `gmail-input-artifact` | a rule field where the SAME rule run a third time, on GAS's text with Gmail's renderings undone (hard wraps rejoined, `*`, `&nbsp`, `------`, `[image:]`), gives the worker's value — Gmail's rendering broke the capture | rule 8 `filer` cut at a wrap ("Elizabeth Q." / "Uwedjojevwe"); rule 16's doc number hidden by `*Document Number:* 30` |
+| `VALUE` | anything else | none after the follow-up |
+
+The first five are the **REVIEW-pass classes** — in each the worker's value is
+equal or better. Verdict: **STOP** on any court-mail `VALUE`; **REVIEW** when
+only REVIEW-pass classes (or non-court differences) remain — read the
+`byField` examples (each points at the first difference that is not
+whitespace/markup), then the manager accepts by ruling; **PASS** when
+identical. A STOP is a finding for the manager, never a tweak made live. The
+classifier is pinned by `tests/mailboxGmailParity.console.test.js`, which runs
+this file verbatim.
 
 ---
 
@@ -254,7 +311,8 @@ SELECT c.cls, COUNT(*) AS n
   ) c
  GROUP BY c.cls ORDER BY c.cls;
 ```
-(`email_log.processed_at` is Eastern — hence the CONVERT_TZ; restricting to
+(`email_log.processed_at` is Eastern for every INGESTED source — hence the
+CONVERT_TZ; outbound-* rows are UTC (scratch `docs/20261009_email_log_processed_at_tz`); restricting to
 rows FIRST logged in the window keeps GAS's whole-thread re-posts of old mail
 out of the count.)
 
@@ -320,21 +378,36 @@ SELECT DATE(e.created_at) AS day_utc, COUNT(*) AS worker_first_with_rules,
 
 1. **~14 clean days**: W2 class 2 = 0 or every row explained by something
    other than the worker; W5 (a) and (b) = 0; worker failures in W1 explained.
-2. **No text divergence on court mail**: W4 verdict PASS — or REVIEW with the
-   format-only differences accepted by an explicit ruling.
+2. **No text divergence on court mail**: W4 verdict PASS — or REVIEW with its
+   classes (§2 G4) accepted by an explicit ruling.
 3. No open `mailbox_ingest_failing` / `mailbox_ingest_no_provider_id` /
    `mailbox_ingest_source_missing` alert for this mailbox.
 4. §5's decisions made and their prerequisites done.
 
-## 5. Decisions the retirement needs (not code in S1-G)
+## 5. Decisions
+
+**Before step 4 (emission):** none open. (Raised 2026-10-09 — "the filter
+skips newsletters" — and closed the same day by the 111-message check in §0:
+GAS posts everything; the skipping is Layer-2 suppression, which applies to
+the worker's emissions identically.)
+
+**Before step 6 (retirement):**
+
 
 - **Outgoing mail** (W2 class 3): GAS logs the firm's replies in labelled
   threads; the worker stores Sent but never emits it (D6). Either accept that
   outgoing gmail-firm log rows end at retirement, or opt `[Gmail]/Sent Mail`
   into `emit_to_rules` — safe under provider ids (the Sent copy collides with
   any INBOX copy of the same Gmail message), but a D6 change.
-- **Mail outside INBOX/Sent** (W2 class 4): skip-inbox filters / other labels.
-  Size it; accept or add folders (never All Mail).
+- **Mail outside INBOX/Sent** (W2 class 4 — ~43% of GAS's volume, §0):
+  skip-inbox filters file it under labels the worker does not poll. Must-add
+  before retirement, because automations ride them: `Clio/Clio Team - Payments`
+  (rule 21) and `Management - Vendors/Adobe Sign - Sent` (rule 18) — as
+  emitting folders, `backfill:false`; adding them during the window is safe
+  (they collide with GAS's rows under provider ids). For the rest (IT,
+  Marketing/*, lists …) decide: add the ones whose logging matters, or accept
+  that their gmail-firm log rows end at retirement. Never All Mail (it repeats
+  every labelled message). Re-size from W2 class 4 at window close.
 - **GAS side jobs**: the Pabbly **docs@** relay (~60 messages / 30 days) and
   the **Clio "Payment method submitted"** forward live only in the Apps Script
   (`processOneMessage()`). Rebuild as ingest rules (their removal notes in

@@ -316,34 +316,99 @@ function displayList(list) {
 const ENTITIES = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'" };
 
 /**
- * HTML → readable text, for HTML-only mail. Parity matters: the court rules
- * (8–10) regex the envelope's `text`, and court NEFs are text/html only — the
- * Apps Script source gets Gmail's derived plain text there; this is ours.
- * Approximate by nature; verify against Gmail's during the Gmail-IMAP parity
- * window before the Apps Script source retires.
+ * Character references → text: numeric and the named set above, semicolon
+ * required (attribute-safe: an href's `&nbsp=2` is a query parameter, not a
+ * space). Numeric references to C0 controls other than TAB/LF decode to
+ * nothing — they are not text, and U+0001/U+0002 are htmlToText's link
+ * placeholders.
  */
-function htmlToText(html) {
+function decodeEntities(s) {
+  return String(s).replace(/&(#x[0-9a-f]+|#\d+|[a-z0-9]+);/gi, (m, e) => {
+    const k = e.toLowerCase();
+    if (k[0] === '#') {
+      const cp = k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+      if (!Number.isFinite(cp) || cp <= 0 || cp >= 0x110000) return m;
+      return cp < 0x20 && cp !== 9 && cp !== 10 ? '' : String.fromCodePoint(cp);
+    }
+    return Object.prototype.hasOwnProperty.call(ENTITIES, k) ? ENTITIES[k] : m;
+  });
+}
+
+const LINK_OPEN = '\u0001';
+const LINK_CLOSE = '\u0002';
+const LINK_SLOT = /\u0001(\d+)\u0002/g;
+
+/**
+ * `<a href="http(s)://…">label</a>` → `label` + a placeholder for ` <url>`,
+ * Gmail's plain-text link form (court NEFs: `26-44883-mlo <https://ecf…>`,
+ * the docket and doc1 links staff open from case notes). href quoted either
+ * way or unquoted (NEFs use both, upper- and lower-case). Label empty → the
+ * `<url>` alone; label equal to the URL → the label alone (no duplicate).
+ * Other schemes, relative hrefs and name-anchors keep only the label. The
+ * URL rides a placeholder so the tag/entity/whitespace passes never touch it.
+ * The label scan is bounded (ANCHOR_LABEL_MAX) so a message full of unclosed
+ * <a> tags costs linear time, not a scan to the end per tag; a longer label
+ * keeps its text and loses only the URL.
+ */
+const ANCHOR_LABEL_MAX = 4000;
+const ANCHOR_RE = new RegExp(`<a\\b([^>]*)>([\\s\\S]{0,${ANCHOR_LABEL_MAX}}?)<\\/a\\s*>`, 'gi');
+function anchorsToText(html, urls) {
+  return html.replace(ANCHOR_RE, (m, attrs, inner) => {
+    const hm = /(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i.exec(attrs);
+    const href = hm ? decodeEntities(hm[1] ?? hm[2] ?? hm[3]).replace(/[\t\n]/g, '').trim() : '';
+    if (!/^https?:\/\/[^\s<>]/i.test(href)) return inner;
+    const label = decodeEntities(inner.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+    if (label === href) return inner;
+    const slot = `${LINK_OPEN}${urls.push(href) - 1}${LINK_CLOSE}`;
+    return label ? `${inner} ${slot}` : slot;
+  });
+}
+
+/**
+ * HTML → readable text, for HTML-only mail. Parity matters: the court rules
+ * regex the envelope's `text` (8–10 fields, 16 docket text) or carry it
+ * whole (15 message, 22 description, 12 AI extract), and court NEFs are
+ * text/html only — the Apps Script source gets Gmail's derived plain text
+ * there; this is ours. Matches Gmail where it matters (links as `label
+ * <url>`, LF line ends) and differs deliberately where Gmail is worse: no
+ * ~75-column hard wrap (Gmail's wrap truncates rule 8's filer), no `*bold*`
+ * / `_underline_` markers, no dash or underscore lines for <hr> (a line
+ * break instead), bare `&nbsp` decoded. <img alt> renders as its alt text,
+ * as Gmail's does. Measured: ref/MAILBOX_GMAIL_PARITY.md §0.
+ *
+ * opts.links = false keeps link URLs out (mail_messages.snippet).
+ */
+function htmlToText(html, { links = true } = {}) {
   if (!html) return '';
-  return String(html)
+  const urls = [];
+  let s = String(html)
+    .replace(/[\u0001\u0002]/g, '')
+    .replace(/\r\n?/g, '\n')
     .replace(/<(script|style|head|title)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<!--[\s\S]*?-->/g, ' ');
+  s = s.replace(/<img\b([^>]*)>/gi, (m, attrs) => {
+    const a = /(?:^|\s)alt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i.exec(attrs);
+    const alt = a ? String(a[1] ?? a[2] ?? a[3]).trim() : '';
+    return alt ? ` ${alt} ` : ' ';
+  });
+  if (links) s = anchorsToText(s, urls);
+  // Bare `&nbsp` (no semicolon — court NEFs carry `&nbsp &nbsp` runs): text
+  // only, so after the hrefs are parked and BEFORE tags go (`&nbsp<b>` still
+  // ends the reference). A space as browsers show it; Gmail's plain text
+  // leaves it literal. `&amp;nbsp` is untouched here and decodes to the
+  // literal "&nbsp" below.
+  s = decodeEntities(s
+    .replace(/&nbsp(?![a-z0-9;])/gi, ' ')
+    .replace(/<(br|hr)\b[^>]*>/gi, '\n')
     .replace(/<\/(p|div|tr|li|h[1-6]|table|blockquote|pre|section|article|header|footer)\s*>/gi, '\n')
     .replace(/<(p|div|tr|li|h[1-6]|table|blockquote|pre)\b[^>]*>/gi, '\n')
     .replace(/<\/(td|th)\s*>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&(#x[0-9a-f]+|#\d+|[a-z0-9]+);/gi, (m, e) => {
-      const k = e.toLowerCase();
-      if (k[0] === '#') {
-        const cp = k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
-        return Number.isFinite(cp) && cp > 0 && cp < 0x110000 ? String.fromCodePoint(cp) : m;
-      }
-      return Object.prototype.hasOwnProperty.call(ENTITIES, k) ? ENTITIES[k] : m;
-    })
+    .replace(/<[^>]+>/g, ''))
     .replace(/[ \t\f\v\u00a0]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  return urls.length ? s.replace(LINK_SLOT, (m, i) => `<${urls[Number(i)]}>`) : s;
 }
 
 /** Header Date when sane, else INTERNALDATE, else null. */
@@ -370,7 +435,7 @@ function buildRow(mailboxId, folder, m) {
   // else the message itself. Subject/participants fallback is S2's (OQ1).
   const threadKey = refs[0] || inReplyTo || env.messageId || null;
   const from = envelopeAddrs(env.from);
-  const snippetSrc = m.text != null ? m.text : htmlToText(m.html);
+  const snippetSrc = m.text != null ? m.text : htmlToText(m.html, { links: false });
   return {
     mailbox_id: mailboxId,
     folder,

@@ -1001,10 +1001,12 @@ tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
+tests/mailboxGmailParity.console.test.js
 tests/mailboxS0.test.js
 tests/mailboxS1.ingest.test.js
 tests/mailboxS1.routes.test.js
 tests/mailboxS1.transport.test.js
+tests/mailboxS1G.htmlToText.test.js
 tests/mailboxS1G.ingest.test.js
 tests/mailboxS1G.routes.test.js
 tests/mailboxS1G.transport.test.js
