@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-09T06:08:35.572Z
+-- Generated: 2026-10-09T13:03:30.575Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7c52e3d8959fc42f139d4fcb3af0d901
+-- Fingerprint: sha256:046eae9275368b1307e307c46ab5e490
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2195,6 +2195,7 @@ CREATE TABLE `mailboxes` (
   `address` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'mailbox email address, lowercased at write; unique (general_ci = case-insensitive)',
   `domain` varchar(128) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'derived from address at write (part after @) by mailboxService; never client-supplied',
   `display_name` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `color` varchar(7) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'comms hub colour (S2): #rrggbb lowercase, app-validated; NULL = none chosen (neutral). Set at create (pick, else a random unused public/js/mailboxColor.js PALETTE entry) and editable by SU or the box''s can_manage holders. Cosmetic only - drawn as given where it clears 3:1 on the theme, else a lighter/darker shade of the same hue',
   `imap_host` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'row data, never a code constant (D2); changing host/port requires re-entering imap_secret in the same write (credential-redirect guard)',
   `imap_port` int NOT NULL DEFAULT '993',
   `imap_user` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,

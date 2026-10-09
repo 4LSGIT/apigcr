@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-08T19:07:18.767Z_  
-_713 routes total — DELETE: 58, GET: 293, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_
+_Generated 2026-10-09T13:03:17.279Z_  
+_715 routes total — DELETE: 58, GET: 295, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -985,4 +985,4 @@ _713 routes total — DELETE: 58, GET: 293, PATCH: 49, POST: 275, PUT: 35, _ALL:
 
 ---
 
-_713 routes total — DELETE: 58, GET: 293, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_
+_715 routes total — DELETE: 58, GET: 295, PATCH: 49, POST: 275, PUT: 35, _ALL: 3_

@@ -77,6 +77,24 @@ recurring job, and is exposed as the `run_error_sweep`
   `system_alerts`.
 - **Phase B** emails **one** grouped digest of undigested rows.
 
+### Acknowledge / Resolve buttons in the digest
+
+Each group block in the digest email carries **Acknowledge** and **Resolve**
+buttons — [CTA links](07-cta-links.md) (repeatable, max 4 uses, 7-day expiry,
+no password, su-attributed) whose plans call the `set_system_alert_status`
+internal function. Each button opens a `/c/` confirmation page; nothing runs
+until you confirm there.
+
+- Scope is **frozen at digest time**: only the group's rows created at or
+  before this email's latest row are touched. A click days later can never
+  close failures that arrived *after* the email.
+- Semantics are exactly this screen's: ack clears the banner; resolve implies
+  ack; both reversible here via **Reopen**.
+- This clears open-state only — it never suppresses. New failures are new
+  rows and still alert.
+- Best-effort: if no active SU exists or the mint fails, the digest sends
+  without buttons.
+
 ### Status semantics
 
 Mirrored exactly by `routes/api.systemStatus.js`, so the banner and this screen

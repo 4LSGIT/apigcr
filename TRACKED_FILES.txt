@@ -818,6 +818,7 @@ tests/adminapikeys.k2.test.js
 tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js
 tests/aimatch.service.test.js
+tests/alertingDigestCta.test.js
 tests/alertingStartLatency.test.js
 tests/apiAlertIt.routes.test.js
 tests/apiAppSettings.validate.test.js
@@ -1063,6 +1064,7 @@ tests/smtpAdapter.deliveryInfo.test.js
 tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js
 tests/su.stepup.test.js
+tests/systemAlertStatusFn.test.js
 tests/taskQueue.accel.test.js
 tests/taskService.status.test.js
 tests/taskService.test.js

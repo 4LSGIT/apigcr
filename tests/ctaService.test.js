@@ -102,7 +102,7 @@ const ctaAlerts = () => alert.mock.calls.map((c) => c[1]).filter((a) => a.source
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Every registry addition is an exposure decision: a new function lands here
-// only by someone editing this list on purpose. Rejected today (25 of 111
+// only by someone editing this list on purpose. Rejected today (25 of 112
 // raw keys): the 14 __-prefixed module exports/self-adds, the 6 controlFlow
 // functions, and the 4 denylisted: wait_until_time (§4.2) plus the S2
 // ruling's cta_expiry_sweep, decision_timeout_cleanup, set_test_var.
@@ -126,7 +126,8 @@ const EXPECTED_ELIGIBLE = [
   'portal_callback_reminder', 'query_ai', 'query_db', 'rc_renew_subscriptions',
   'refresh_expiring_oauth_credentials', 'render_submission_pdf', 'report_email',
   'run_error_sweep', 'run_event_digest', 'run_task_digest', 'send_email', 'send_mms',
-  'send_sms', 'set_log_about', 'set_setting', 'set_var', 'start_workflow',
+  'send_sms', 'set_log_about', 'set_setting', 'set_system_alert_status', 'set_var',
+  'start_workflow',
   'sweep_calendar_missed', 'sweep_trigger_executions', 'update_appointment', 'update_case',
   'update_contact', 'update_db', 'update_event', 'update_log', 'validate_case_trustee',
 ];
