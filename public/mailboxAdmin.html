@@ -327,7 +327,7 @@
           <span class="yc-flabel">Folders</span>
           <div id="mb-folders"></div>
           <button class="btn small" type="button" id="mb-add-folder">+ Add folder</button>
-          <span class="yc-hint">Every listed folder is polled and stored. <i>Emit to rules</i> also feeds it into the rules pipeline.</span>
+          <span class="yc-hint">Every listed folder is polled and stored. <i>Emit to rules</i> also feeds it into the rules pipeline. Untick <i>Store history</i> on very large folders: only mail arriving after the first read is stored (decided at that first read).</span>
         </div>
       </div>
 
@@ -446,9 +446,16 @@ function renderList() {
     const sends = r.send_credential_id
       ? esc(r.send_credential_email || ('credential ' + r.send_credential_id))
       : '<span class="muted">read-only</span>';
+    const noHistory = folders.filter((f) => r.ingest_folders[f] && r.ingest_folders[f].backfill === false);
+    // S1-G emission override (set by PATCH from the console checklist, shown
+    // read-only here — the form never sends emit_*).
+    const emitAs = r.emit_source_name
+      ? ` · emits as ${esc(r.emit_source_name)}${r.emit_id_kind === 'provider' ? ' (provider id)' : ''}`
+      : '';
     const ingest = !state.su ? '<span class="muted">—</span>'
       : (r.ingest_enabled ? 'on' : '<span class="muted">off</span>') +
-        `<span class="sub">${esc(folders.join(', ') || 'no folders')}${emitting.length ? ` · rules: ${esc(emitting.join(', '))}` : ''}</span>`;
+        `<span class="sub">${esc(folders.join(', ') || 'no folders')}${emitting.length ? ` · rules: ${esc(emitting.join(', '))}` : ''}` +
+        `${noHistory.length ? ` · no history: ${esc(noHistory.join(', '))}` : ''}${emitAs}</span>`;
     const status = r.active ? '<span class="badge ok">active</span>' : '<span class="badge off">inactive</span>';
     const sel = state.grantsFor && state.grantsFor.id === r.id ? ' class="selected"' : '';
     const canManage = state.su || (r.access && r.access.can_manage);
@@ -490,17 +497,18 @@ function renderCredOptions(selected) {
   E('mb-cred').value = selected ? String(selected) : '';
 }
 
-function folderRowHtml(name, emit) {
+function folderRowHtml(name, emit, backfill = true) {
   return `<div class="folder-row">
     <input type="text" class="f-name" value="${esc(name)}" maxlength="128" spellcheck="false" aria-label="Folder name" placeholder="Folder name">
     <label class="check"><input type="checkbox" class="f-emit"${emit ? ' checked' : ''}> Emit to rules</label>
+    <label class="check" title="Store the mail already in this folder the first time it is read. Untick for very large folders: only mail arriving from then on is stored."><input type="checkbox" class="f-backfill"${backfill ? ' checked' : ''}> Store history</label>
     <button class="btn small danger" type="button" data-act="rm-folder" aria-label="Remove folder">Remove</button>
   </div>`;
 }
 
 function renderFolders(folders) {
   const entries = Object.entries(folders && typeof folders === 'object' ? folders : DEFAULT_FOLDERS);
-  E('mb-folders').innerHTML = entries.map(([n, cfg]) => folderRowHtml(n, cfg && cfg.emit_to_rules)).join('');
+  E('mb-folders').innerHTML = entries.map(([n, cfg]) => folderRowHtml(n, cfg && cfg.emit_to_rules, !(cfg && cfg.backfill === false))).join('');
 }
 
 function readFolders() {
@@ -510,7 +518,9 @@ function readFolders() {
     const name = row.querySelector('.f-name').value.trim();
     if (!name) continue;
     if (Object.prototype.hasOwnProperty.call(out, name)) throw new Error(`Folder "${name}" is listed twice.`);
+    // backfill is written only when false — the server's normalized shape.
     out[name] = { emit_to_rules: row.querySelector('.f-emit').checked };
+    if (!row.querySelector('.f-backfill').checked) out[name].backfill = false;
   }
   if (!Object.keys(out).length) throw new Error('List at least one folder (untick "Ingest enabled" to stop ingest).');
   return out;
@@ -569,6 +579,19 @@ function syncSecretHint() {
         : 'Write-only. Leave blank to keep the stored secret; typing replaces it.');
 }
 
+/**
+ * Key-order-insensitive JSON for change detection: MySQL's JSON column
+ * returns object keys in its own order ({"backfill":…,"emit_to_rules":…}),
+ * so a plain JSON.stringify compare would see an untouched folder as edited.
+ */
+function canon(v) {
+  if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
 /** Build the request body. Create: every field. Edit: only what changed. */
 function buildBody() {
   const row = state.editing;
@@ -609,7 +632,7 @@ function buildBody() {
   for (const [k, v] of Object.entries(fields)) {
     const cur = k === 'imap_host' ? String(v).toLowerCase() : (k === 'address' ? String(v).toLowerCase() : v);
     const old = k === 'address' ? String(was.address).toLowerCase() : was[k];
-    if (JSON.stringify(cur) !== JSON.stringify(old)) body[k] = v;
+    if (canon(cur) !== canon(old)) body[k] = v;
   }
   if (clear) body.imap_secret = '';
   else if (secret) body.imap_secret = secret;

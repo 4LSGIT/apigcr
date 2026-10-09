@@ -16,6 +16,10 @@
  *                         email_ingest_executions rows into the world and
  *                         dedupes on (source, message_id) like the real one.
  *
+ * S1-G: mailboxes carry emit_source_name / emit_id_kind, mail_messages carry
+ * provider_id, the fake IMAP session reports providerIdKind and lists
+ * folders, and msg() takes a providerId.
+ *
  * FIDELITY THAT MATTERS
  *   - UNIQUE(mailbox_id, folder, uid) is enforced ROW BY ROW in ascending id
  *     order, on INSERT and on every UPDATE of uid — as InnoDB does for a
@@ -46,7 +50,7 @@ function makeWorld() {
     mailboxes: [],
     mail_messages: [],
     mail_read_state: [],
-    email_ingest_sources: [{ id: 3, name: 'mailbox-imap', active: 1 }],
+    email_ingest_sources: [{ id: 3, name: 'mailbox-imap', active: 1 }, { id: 1, name: 'gmail-firm', active: 1 }],
     email_ingest_executions: [],
     channel_grants: [],
     users: [
@@ -102,14 +106,22 @@ function makeWorld() {
     }
 
     // ── sources / mailboxes ──
-    if (sql === 'SELECT id, name, active FROM email_ingest_sources WHERE name = ? LIMIT 1') {
-      return [T.email_ingest_sources.filter(s => s.name === p[0]).slice(0, 1).map(clone)];
+    if (sql === 'SELECT id, name, active FROM email_ingest_sources WHERE name IN (?)') {
+      T.sourceLookups = (T.sourceLookups || 0) + 1;
+      const want = new Set(p[0].map(n => String(n).toLowerCase()));
+      return [T.email_ingest_sources.filter(s => want.has(String(s.name).toLowerCase())).map(clone)];
     }
-    if ((m = /^SELECT (id, address, imap_host, imap_port, imap_user, imap_secret, ingest_folders, ingest_state, active, ingest_enabled) FROM mailboxes WHERE active = 1 AND ingest_enabled = 1 ORDER BY id ASC$/.exec(sql))) {
+    if ((m = /^SELECT (id, address, imap_host, imap_port, imap_user, imap_secret, ingest_folders, ingest_state, active, ingest_enabled, emit_source_name, emit_id_kind) FROM mailboxes WHERE active = 1 AND ingest_enabled = 1 ORDER BY id ASC$/.exec(sql))) {
       return [T.mailboxes.filter(b => b.active && b.ingest_enabled).sort((a, b) => a.id - b.id).map(b => parseRow(clone(b)))];
     }
-    if (/^SELECT id, address, imap_host, imap_port, imap_user, imap_secret, ingest_folders, ingest_state, active, ingest_enabled FROM mailboxes WHERE id = \? LIMIT 1$/.test(sql)) {
+    if (/^SELECT id, address, imap_host, imap_port, imap_user, imap_secret, ingest_folders, ingest_state, active, ingest_enabled, emit_source_name, emit_id_kind FROM mailboxes WHERE id = \? LIMIT 1$/.test(sql)) {
       return [T.mailboxes.filter(b => b.id === Number(p[0])).map(b => parseRow(clone(b)))];
+    }
+    if (sql === 'SELECT id, address, ingest_folders, emit_source_name, emit_id_kind FROM mailboxes WHERE id = ? LIMIT 1') {
+      return [T.mailboxes.filter(b => b.id === Number(p[0])).map(b => parseRow({
+        id: b.id, address: b.address, ingest_folders: b.ingest_folders,
+        emit_source_name: b.emit_source_name, emit_id_kind: b.emit_id_kind,
+      }))];
     }
     if (sql === 'UPDATE mailboxes SET ingest_state = ?, updated_at = updated_at WHERE id = ?') {
       if (T.failStateWrite) throw Object.assign(new Error('write failed'), { code: 'ECONNRESET' });
@@ -133,11 +145,14 @@ function makeWorld() {
     if (sql === 'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND message_id = ? LIMIT 1') {
       return [msgRowsIn(p[0], p[1]).filter(r => r.message_id != null && ci(r.message_id, p[2])).slice(0, 1).map(r => ({ id: r.id }))];
     }
+    if (sql === 'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND provider_id = ? LIMIT 1') {
+      return [msgRowsIn(p[0], p[1]).filter(r => r.provider_id != null && ci(r.provider_id, p[2])).slice(0, 1).map(r => ({ id: r.id }))];
+    }
     if (sql === 'SELECT id, log_id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND uid = ? LIMIT 1') {
       return [msgRowsIn(p[0], p[1]).filter(r => Number(r.uid) === Number(p[2])).slice(0, 1).map(r => ({ id: r.id, log_id: r.log_id }))];
     }
-    if (sql === 'SELECT id, uid, message_id FROM mail_messages WHERE mailbox_id = ? AND folder = ?') {
-      return [msgRowsIn(p[0], p[1]).map(r => ({ id: r.id, uid: r.uid, message_id: r.message_id }))];
+    if (sql === 'SELECT id, uid, message_id, provider_id FROM mail_messages WHERE mailbox_id = ? AND folder = ?') {
+      return [msgRowsIn(p[0], p[1]).map(r => ({ id: r.id, uid: r.uid, message_id: r.message_id, provider_id: r.provider_id ?? null }))];
     }
     if (sql === 'SELECT COUNT(*) AS n FROM mail_messages WHERE mailbox_id = ? AND folder = ?') {
       return [[{ n: msgRowsIn(p[0], p[1]).length }]];
@@ -158,6 +173,13 @@ function makeWorld() {
       const r = T.mail_messages.find(x => x.id === Number(p[1]) && x.log_id == null);
       if (r) r.log_id = p[0];
       return [{ affectedRows: r ? 1 : 0 }];
+    }
+    if (sql === 'SELECT id, folder, uid, message_id, provider_id, subject, from_addr, to_addrs, date, body_text, body_html, log_id FROM mail_messages WHERE id = ? AND mailbox_id = ? LIMIT 1') {
+      return [T.mail_messages.filter(r => r.id === Number(p[0]) && r.mailbox_id === Number(p[1])).map(r => ({
+        id: r.id, folder: r.folder, uid: r.uid, message_id: r.message_id ?? null, provider_id: r.provider_id ?? null,
+        subject: r.subject ?? null, from_addr: r.from_addr ?? null, to_addrs: r.to_addrs ?? null, date: r.date ?? null,
+        body_text: r.body_text ?? null, body_html: r.body_html ?? null, log_id: r.log_id ?? null,
+      }))];
     }
     if (sql === 'SELECT id, folder, uid, message_id, attachments FROM mail_messages WHERE id = ? AND mailbox_id = ? LIMIT 1') {
       return [T.mail_messages.filter(r => r.id === Number(p[0]) && r.mailbox_id === Number(p[1]))
@@ -264,6 +286,8 @@ function makeWorld() {
         ingest_state: null,
         active: 1,
         ingest_enabled: 1,
+        emit_source_name: null,
+        emit_id_kind: null,
         ...over,
       };
       if (row.ingest_folders && typeof row.ingest_folders !== 'string') row.ingest_folders = JSON.stringify(row.ingest_folders);
@@ -290,6 +314,7 @@ function msg(uid, over = {}) {
   const mid = Object.prototype.hasOwnProperty.call(over, 'messageId') ? over.messageId : `m${uid}@example.com`;
   return {
     uid,
+    providerId: over.providerId === undefined ? null : over.providerId,
     size: 1000 + uid,
     flags: over.flags || [],
     internalDate: over.internalDate || new Date('2026-10-01T12:00:00Z'),
@@ -319,6 +344,8 @@ function makeImapServer() {
     folders: {},           // name → { uidValidity, uidNext, messages: [msg] }
     connects: 0,
     logouts: 0,
+    providerIdKind: null,  // 'gmail' to model an X-GM-EXT-1 server
+    folderList: null,      // listFolders() result override
     failConnect: null,     // Error to throw from withMailbox before fn
     failOpen: {},          // folder → Error
     failFetchOnUid: null,  // uid → Error thrown by fetchMessages when it includes that uid
@@ -357,8 +384,16 @@ function makeImapServer() {
           .sort((a, b) => a - b);
       },
       async listMessageIds() {
-        return opened.messages.map(m => ({ uid: m.uid, messageId: m.envelope.messageId })).sort((a, b) => a.uid - b.uid);
+        return opened.messages.map(m => ({ uid: m.uid, messageId: m.envelope.messageId, providerId: m.providerId ?? null }))
+          .sort((a, b) => a.uid - b.uid);
       },
+      async listFolders() {
+        return server.folderList || Object.entries(server.folders).map(([path, f]) => ({
+          path, delimiter: '/', special_use: null, flags: [], selectable: true,
+          messages: f.messages.length, uid_next: f.uidNext, uid_validity: f.uidValidity,
+        }));
+      },
+      get providerIdKind() { return server.providerIdKind; },
       async fetchMessages(uids) {
         server.fetchCalls.push(uids.slice());
         if (server.failFetchOnUid != null && uids.includes(server.failFetchOnUid)) throw server.failFetchErr;

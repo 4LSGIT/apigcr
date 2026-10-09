@@ -105,6 +105,13 @@ function makeWorld() {
       { user: 22, username: 'RENA', user_name: 'Rena', user_auth: 'authorized' },
     ],
     email_credentials: [{ id: 3, email: 'billing@4lsg.com' }],
+    // S1-G: the emission override validates against these (api_key omitted —
+    // the service never selects it).
+    email_ingest_sources: [
+      { id: 3, name: 'mailbox-imap', active: 1 },
+      { id: 1, name: 'gmail-firm', active: 1 },
+      { id: 4, name: 'dead-relay', active: 0 },
+    ],
     mailboxes: [],
     channel_grants: [],
     admin_audit_log: [],
@@ -728,5 +735,132 @@ describe('resolution service', () => {
     );
     expect(list.json.mailboxes.find(m => m.id === id2)).not.toHaveProperty('grant_count');
     assertSecretNeverSelected();
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S1-G — the emission override and the backlog policy (PATCH validation)
+//
+// Mutation-checked:
+//   - emit_* added to MANAGER_EDITABLE_FIELDS     → "SU-only: a manager gets 403"
+//   - pair rule dropped                            → "set as a pair"
+//   - provider-under-mailbox-imap check dropped    → "provider never under mailbox-imap"
+//   - active-source check dropped                  → "must name an ACTIVE source row"
+//   - one-provider-mailbox-per-source check dropped → "one provider-keyed mailbox per source"
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('S1-G emission override', () => {
+  const patch = (id, body, opts = {}) => call('PATCH', `/api/mailboxes/${id}`, { t: SU(), elev: ELEV(), body, ...opts });
+  const GMAIL = { emit_source_name: 'gmail-firm', emit_id_kind: 'provider' };
+
+  test('PATCH-only: a create that names emit_* is refused (every box starts store-only on the default)', async () => {
+    const r = await call('POST', '/api/mailboxes', {
+      t: SU(), elev: ELEV(),
+      body: { address: 'stuart@4lsg.com', imap_host: 'imap.gmail.com', imap_user: 'stuart@4lsg.com', ...GMAIL },
+    });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toMatch(/PATCH once the mailbox exists/);
+    expect(W.T.mailboxes).toEqual([]);
+  });
+
+  test('valid pair: stored under the source row\'s spelling, projected, audited as a diff', async () => {
+    const id = await seedMailbox();
+    const r = await patch(id, { emit_source_name: 'Gmail-Firm', emit_id_kind: 'provider' });
+    expect(r.status).toBe(200);
+    expect(r.json.mailbox).toMatchObject({ emit_source_name: 'gmail-firm', emit_id_kind: 'provider' });
+    const row = W.T.mailboxes.find(x => x.id === id);
+    expect(row).toMatchObject({ emit_source_name: 'gmail-firm', emit_id_kind: 'provider' });
+    const upd = W.T.admin_audit_log.map(a => JSON.parse(a.details || 'null')).filter(d => d && d.action === 'mailbox_update').pop();
+    expect(upd.diff).toEqual({
+      emit_source_name: { from: null, to: 'gmail-firm' },
+      emit_id_kind: { from: null, to: 'provider' },
+    });
+    // Both null resets to the default.
+    const back = await patch(id, { emit_source_name: null, emit_id_kind: null });
+    expect(back.status).toBe(200);
+    expect(W.T.mailboxes.find(x => x.id === id)).toMatchObject({ emit_source_name: null, emit_id_kind: null });
+  });
+
+  test('set as a pair', async () => {
+    const id = await seedMailbox();
+    for (const [body, msg] of [
+      [{ emit_source_name: 'gmail-firm' }, /set together/],
+      [{ emit_id_kind: 'provider' }, /set together/],
+      [{ emit_source_name: 'gmail-firm', emit_id_kind: null }, /both set or both null/],
+      [{ emit_source_name: null, emit_id_kind: 'rfc' }, /both set or both null/],
+    ]) {
+      const r = await patch(id, body);
+      expect(r.status).toBe(400);
+      expect(r.json.message).toMatch(msg);
+    }
+    expect(W.T.mailboxes.find(x => x.id === id).emit_source_name ?? null).toBeNull();
+  });
+
+  test('provider never under mailbox-imap; unknown kind refused', async () => {
+    const id = await seedMailbox();
+    let r = await patch(id, { emit_source_name: 'mailbox-imap', emit_id_kind: 'provider' });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toMatch(/never emitted under the shared 'mailbox-imap'/);
+    r = await patch(id, { emit_source_name: 'gmail-firm', emit_id_kind: 'hex' });
+    expect(r.status).toBe(400);
+    r = await patch(id, { emit_source_name: 'mailbox-imap', emit_id_kind: 'rfc' }); // explicit default: allowed
+    expect(r.status).toBe(200);
+  });
+
+  test('must name an ACTIVE source row', async () => {
+    const id = await seedMailbox();
+    let r = await patch(id, { emit_source_name: 'no-such-source', emit_id_kind: 'rfc' });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toMatch(/not an email_ingest_sources row/);
+    r = await patch(id, { emit_source_name: 'dead-relay', emit_id_kind: 'rfc' });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toMatch(/inactive/);
+  });
+
+  test('one provider-keyed mailbox per source', async () => {
+    const a = await seedMailbox();
+    const b = await seedMailbox({ address: 'other@4lsg.com', imap_user: 'other@4lsg.com' });
+    expect((await patch(a, GMAIL)).status).toBe(200);
+    const r = await patch(b, GMAIL);
+    expect(r.status).toBe(409);
+    expect(r.json.message).toMatch(/billing@4lsg.com already emits provider ids as 'gmail-firm'/);
+    // Re-saving the owner itself is fine.
+    expect((await patch(a, GMAIL)).status).toBe(200);
+  });
+
+  test('SU-only: a manager gets 403; an SU without elevation gets 401', async () => {
+    const id = await seedMailbox();
+    await seedGrant(id, { user: 5, can_read: true, can_manage: true });
+    let r = await call('PATCH', `/api/mailboxes/${id}`, { t: tok(5), body: GMAIL });
+    expect(r.status).toBe(403);
+    r = await call('PATCH', `/api/mailboxes/${id}`, { t: SU(), body: GMAIL });
+    expect(r.status).toBe(401);
+    expect(W.T.mailboxes.find(x => x.id === id).emit_source_name ?? null).toBeNull();
+  });
+
+  test('the source lookup never selects api_key', async () => {
+    const id = await seedMailbox();
+    await patch(id, GMAIL);
+    const lookups = W.selects.filter(s => /email_ingest_sources/.test(s));
+    expect(lookups.length).toBeGreaterThan(0);
+    for (const s of lookups) expect(s).not.toMatch(/api_key/);
+  });
+});
+
+describe('S1-G backlog policy (ingest_folders.<folder>.backfill)', () => {
+  test('backfill:false is kept, backfill:true normalizes away, non-boolean is refused', async () => {
+    const id = await seedMailbox({
+      ingest_folders: { INBOX: { emit_to_rules: false, backfill: false }, '[Gmail]/Sent Mail': { emit_to_rules: false, backfill: true } },
+    });
+    expect(JSON.parse(W.T.mailboxes.find(x => x.id === id).ingest_folders)).toEqual({
+      INBOX: { emit_to_rules: false, backfill: false },
+      '[Gmail]/Sent Mail': { emit_to_rules: false },
+    });
+    const r = await call('PATCH', `/api/mailboxes/${id}`, {
+      t: SU(), elev: ELEV(), body: { ingest_folders: { INBOX: { emit_to_rules: true, backfill: 'no' } } },
+    });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toMatch(/backfill must be a boolean/);
   });
 });

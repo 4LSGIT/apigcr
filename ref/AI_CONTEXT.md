@@ -911,7 +911,19 @@ folder's first poll (history is stored, never emitted). Its
 INTERNAL id. **Dedupe is per source** — `(source, message_id)` — so one email
 reaching both sources is logged twice and Layer 3 fires twice: never emit a
 mailbox whose mail is already forwarded into the Workspace inbox. Inactive
-source row = global emit kill switch. Operators: manual/08-Admin-Tools/08-mailboxes.md.
+source row = emit kill switch for every mailbox emitting under it.
+**Emission override (S1-G):** `mailboxes.emit_source_name` + `emit_id_kind`
+(SU PATCH only, as a pair, active source, `provider` never under
+`mailbox-imap`, one provider-keyed mailbox per source) let a mailbox emit
+under another source — the Gmail mailbox emits as `gmail-firm` keyed by
+`mail_messages.provider_id` = hex(X-GM-MSGID), the Apps Script's own key, so
+both feeders collide into one log row. A provider-keyed message without a
+provider id is stored + alerted, NEVER emitted under the RFC id. In-process
+emission reads source `id`/`name`/`active` only — never `api_key`, never
+stamps `last_used_at` (that column = last HTTP post). Feeder tell in
+`email_ingest_executions`: `remote_ip` NULL = worker, set = HTTP adapter.
+Pilot, gate and retirement runbook: `ref/MAILBOX_GMAIL_PARITY.md`.
+Operators: manual/08-Admin-Tools/08-mailboxes.md.
 
 ### Three layers — and the independence invariant
 1. **Forensic** — `email_log` row for EVERY ingest, including firm-to-firm

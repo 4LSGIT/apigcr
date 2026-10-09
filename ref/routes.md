@@ -395,10 +395,12 @@ _713 routes total — DELETE: 58, GET: 293, PATCH: 49, POST: 275, PUT: 35, _ALL:
 | GET | `/api/mailboxes` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mailboxes` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/mailboxes/:id` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mailboxes/:id/folders` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mailboxes/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mailboxes/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
 | PATCH | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mailboxes/:id/messages/:mid/emit-preview` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mailboxes/:id/messages/:mid/parts/:part` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/manage-config` | — | — |
 | GET | `/api/me/signatures` | `jwtOrApiKey` | — |

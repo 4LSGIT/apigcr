@@ -16,10 +16,37 @@
  * Every message in every polled folder is stored in `mail_messages` (tier 1,
  * complete, grant-scoped). Folders whose ingest_folders entry says
  * `emit_to_rules: true` ALSO hand a canonical envelope to
- * emailIngestService.ingestEmail in-process, under the `mailbox-imap` source
- * row — rules, suppressions, firm-to-firm, executions and the log run exactly
- * as they do for the Apps Script source. The returned log_id is stamped on
- * the stored row (the tier bridge).
+ * emailIngestService.ingestEmail in-process, under the mailbox's EMIT SOURCE
+ * (below) — rules, suppressions, firm-to-firm, executions and the log run
+ * exactly as they do for the Apps Script source. The returned log_id is
+ * stamped on the stored row (the tier bridge).
+ *
+ * ── EMISSION IDENTITY (S1-G) ─────────────────────────────────────────────────
+ * email_log dedupes on (source, message_id) ONLY — per source, never across
+ * sources (AI_CONTEXT §27). So the identity a message is emitted under is the
+ * whole dedupe story:
+ *   default (emit_source_name NULL)  source 'mailbox-imap', key = the RFC
+ *                                    Message-ID.
+ *   override (SU PATCH, both set)    source = emit_source_name, key = the RFC
+ *                                    Message-ID ('rfc') or the provider id
+ *                                    ('provider': Gmail's X-GM-MSGID in hex —
+ *                                    the key the Apps Script `gmail-firm`
+ *                                    adapter has always posted, so both
+ *                                    feeders collide into one log row).
+ * A 'provider' mailbox message WITHOUT a provider id is stored and NEVER
+ * emitted — falling back to the RFC id under a provider-keyed source would
+ * mint a second identity for the same mail and fire Layer 3 twice. It is
+ * counted (summary.noProviderId, the folder's no_provider_id_total) and
+ * alerted. The override never changes WHICH folders emit (emit_to_rules
+ * does) or whether history emits (it never does).
+ *
+ * ── BACKLOG POLICY (ingest_folders.<folder>.backfill, S1-G) ─────────────────
+ * Default true: first sight stores the folder's history (below). `false`
+ * stores only mail that arrives from first sight on — for big mailboxes
+ * (a Workspace INBOX of 60k messages would blow the Gmail IMAP daily
+ * download cap and multiply the database). Decided at first sight; flipping
+ * it later does not resume a skipped backlog. A re-key of a backfill:false
+ * folder backfills only above the highest re-mapped UID (backfill_floor_uid).
  *
  * ── THE CURSOR (ingest_state[folder]) ────────────────────────────────────────
  *   uidvalidity           the folder's UIDVALIDITY the cursor belongs to
@@ -88,6 +115,7 @@ const emailIngestService = require('../emailIngestService');
 const { withTransaction } = require('../../lib/withTransaction');
 
 const SOURCE_NAME = 'mailbox-imap';
+const ID_KINDS = Object.freeze(['rfc', 'provider']);
 const ADAPTER_VERSION = 'yc-imap-1';
 // The ONE spelling of the lock name. Every GET/IS_USED/RELEASE uses it.
 const LOCK_EXPR = "CONCAT('mailbox_ingest:', DATABASE())";
@@ -101,6 +129,14 @@ const limits = {
   heartbeatMs: 20_000,        // lock-connection ping (SiteGround wait_timeout is 60 s)
   rekeyEmitSlackMs: 10 * 60_000,
   idChunk: 500,
+  // Emit sources this worker is the SOLE feeder of. A failure streak on an
+  // emitting folder of a mailbox emitting under one of these means mail is
+  // not reaching the rules pipeline at all → the streak alert is 'error'
+  // (CLAUDE.md alert convention: repeated → error). Everything else stays
+  // 'warning' (another feeder still covers it, or a pilot). RETIREMENT FLIP
+  // (ref/MAILBOX_GMAIL_PARITY.md step 6): when the Apps Script trigger is
+  // disabled, this becomes ['gmail-firm'].
+  soleFeederSources: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,14 +188,51 @@ function cut(v, n) {
   return s.length > n ? s.slice(0, n) : s;
 }
 
-/** Folder config → [[name, {emit_to_rules:boolean}]]. Absent/empty → INBOX emitting. */
+/**
+ * Folder config → [[name, {emit_to_rules:boolean, backfill:boolean}]].
+ * Absent/empty → INBOX emitting. emit_to_rules is true only when exactly
+ * true; backfill is false only when exactly false (S1 default: store history).
+ */
 function folderConfig(ingestFolders) {
   const cfg = parseJson(ingestFolders);
   const src = cfg && typeof cfg === 'object' && !Array.isArray(cfg) && Object.keys(cfg).length
     ? cfg : DEFAULT_FOLDERS;
   return Object.keys(src)
     .filter(name => typeof name === 'string' && name.length)
-    .map(name => [name, { emit_to_rules: !!(src[name] && src[name].emit_to_rules === true) }]);
+    .map(name => [name, {
+      emit_to_rules: !!(src[name] && src[name].emit_to_rules === true),
+      backfill: !(src[name] && src[name].backfill === false),
+    }]);
+}
+
+/**
+ * A mailbox row's emission identity (EMISSION IDENTITY above), from its two
+ * override columns. Pure — the source ROW is resolved by the caller.
+ *   → { sourceName, kind: 'rfc'|'provider', misconfig: string|null }
+ * misconfig (only reachable by editing the row outside the PATCH route) means
+ * "emit nothing for this mailbox": a half-set pair, an unknown kind, or
+ * 'provider' under the shared default source.
+ */
+function emissionConfig(mb) {
+  const name = mb && mb.emit_source_name != null && String(mb.emit_source_name).trim() !== ''
+    ? String(mb.emit_source_name) : null;
+  const kind = mb && mb.emit_id_kind != null && String(mb.emit_id_kind).trim() !== ''
+    ? String(mb.emit_id_kind) : null;
+  if (!name && !kind) return { sourceName: SOURCE_NAME, kind: 'rfc', misconfig: null };
+  if (!name || !kind) {
+    return { sourceName: name || SOURCE_NAME, kind: kind || 'rfc', misconfig: 'emit_source_name and emit_id_kind must be set together' };
+  }
+  if (!ID_KINDS.includes(kind)) return { sourceName: name, kind, misconfig: `unknown emit_id_kind ${JSON.stringify(kind)}` };
+  if (kind === 'provider' && name === SOURCE_NAME) {
+    return { sourceName: name, kind, misconfig: `provider ids are never emitted under the shared '${SOURCE_NAME}' source` };
+  }
+  return { sourceName: name, kind, misconfig: null };
+}
+
+/** The dedupe key a transport message is emitted under, or null (never emit). */
+function emitKeyOf(kind, m) {
+  if (kind === 'provider') return (m && m.providerId) || null;
+  return (m && m.envelope && m.envelope.messageId) || null;
 }
 
 function backfillPending(st) {
@@ -303,6 +376,7 @@ function buildRow(mailboxId, folder, m) {
     folder,
     uid: m.uid,
     message_id: cut(env.messageId, 512),
+    provider_id: m.providerId ? cut(String(m.providerId), 64) : null,
     in_reply_to: cut(inReplyTo, 512),
     thread_key: cut(threadKey, 512),
     from_addr: from.length ? cut(displayAddr(from[0]), 255) : null,
@@ -320,11 +394,24 @@ function buildRow(mailboxId, folder, m) {
 }
 
 /**
+ * The `text` an envelope carries: the text/plain part, or — when that is
+ * absent or empty and there is HTML — htmlToText(html). ONE derivation, used
+ * by buildEnvelope AND by previewEmission (the pre-emission text-parity
+ * check), so the preview cannot drift from what is emitted.
+ */
+function emitText(text, html) {
+  const t = text != null ? String(text) : '';
+  const h = html != null ? String(html) : '';
+  if (!t && h) return { text: htmlToText(h), derived: true };
+  return { text: t, derived: false };
+}
+
+/**
  * A transport message → the canonical envelope emailIngestService consumes
  * (same shape the Apps Script adapter posts — ref/gas.js
  * buildCanonicalEnvelope), plus a `mailbox` provenance block.
  */
-function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt }) {
+function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, idKind = 'rfc' }) {
   const hdr = parseHeaderBlock(m.headerBlock);
   const env = m.envelope || {};
   const warnings = [];
@@ -352,9 +439,10 @@ function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt }) 
 
   const authRaw = firstHeader(hdr, 'authentication-results');
   const date = effectiveDate(m);
-  let text = m.text != null ? m.text : '';
   const html = m.html != null ? m.html : '';
-  if (!text && html) { text = htmlToText(html); warnings.push('text_derived_from_html'); }
+  const et = emitText(m.text, html);
+  const text = et.text;
+  if (et.derived) warnings.push('text_derived_from_html');
   if (m.textTruncated) warnings.push('text_truncated');
   if (m.htmlTruncated) warnings.push('html_truncated');
 
@@ -394,9 +482,11 @@ function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt }) 
       raw_authentication_results: authRaw,
     },
     headers: {
-      // The RFC Message-ID (NOT a provider-internal id) — this source's
-      // (source, message_id) dedupe key in email_log.
-      message_id: env.messageId || null,
+      // This source's (source, message_id) dedupe key in email_log — the
+      // EMISSION IDENTITY above: the RFC Message-ID ('rfc'), or the provider
+      // id ('provider') with the RFC id still in headers.all['message-id']
+      // and mailbox.rfc_message_id. emitKeyOf is the one place it is chosen.
+      message_id: emitKeyOf(idKind, m),
       in_reply_to: firstHeader(hdr, 'in-reply-to'),
       references: firstHeader(hdr, 'references'),
       content_type: firstHeader(hdr, 'content-type'),
@@ -404,7 +494,10 @@ function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt }) 
       all: hdr.flat,
     },
     raw: { headers_block: m.headerBlock || null, body_block: null },
-    mailbox: { id: mailbox.id, address: mailbox.address, folder, uid: m.uid, uidvalidity: uidValidity },
+    mailbox: {
+      id: mailbox.id, address: mailbox.address, folder, uid: m.uid, uidvalidity: uidValidity,
+      id_kind: idKind, provider_id: m.providerId || null, rfc_message_id: env.messageId || null,
+    },
     _parse_warnings: warnings,
   };
 }
@@ -420,41 +513,56 @@ function envelopeAddrsFromHeader(raw) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * stored:  [{id, uid, message_id}] — this folder's mail_messages rows
- * current: [{uid, messageId}]       — the server's folder right now
+ * stored:  [{id, uid, message_id, provider_id?}] — this folder's mail_messages rows
+ * current: [{uid, messageId, providerId?}]       — the server's folder right now
  *
- * A stored row re-maps only when its Message-ID is present AND unique among
- * stored rows AND unique on the server. Everything else stored is an orphan
- * (purged); everything on the server that matched nothing is `unmatched`
- * (the backfill pass stores it).
+ * Match key per stored row: its provider id when it has one AND the server
+ * listing carries provider ids (Gmail's X-GM-MSGID survives a UIDVALIDITY
+ * change and is unique where Message-IDs are not); otherwise its Message-ID.
+ * A row re-maps only when its key is present AND unique among stored rows AND
+ * unique on the server, and the server UID is not already taken. Everything
+ * else stored is an orphan (purged); everything on the server that matched
+ * nothing is `unmatched` (the backfill pass stores it).
  *
  * @returns {{ remap: Array<{id, oldUid, newUid}>, moving: Array<{id, oldUid, newUid}>,
  *             orphans: number[], unmatchedUids: number[] }}
  */
 function planRekey(stored, current) {
   const norm = (v) => transport.normalizeMessageId(v);
-  const storedBy = new Map();
+  const pidNorm = (v) => (v == null || String(v).trim() === '' ? null : String(v).trim().toLowerCase());
+  const serverHasPids = (current || []).some(c => pidNorm(c.providerId));
+  const group = (map, key, v) => { (map.get(key) || map.set(key, []).get(key)).push(v); };
+
+  const storedByPid = new Map();
+  const storedByMid = new Map();
   for (const r of stored || []) {
+    const pid = serverHasPids ? pidNorm(r.provider_id) : null;
+    if (pid) { group(storedByPid, pid, r); continue; }
     const mid = norm(r.message_id);
-    if (!mid) continue;
-    (storedBy.get(mid) || storedBy.set(mid, []).get(mid)).push(r);
+    if (mid) group(storedByMid, mid, r);
   }
-  const currentBy = new Map();
+  const currentByPid = new Map();
+  const currentByMid = new Map();
   for (const c of current || []) {
+    const pid = pidNorm(c.providerId);
+    if (pid) group(currentByPid, pid, Number(c.uid));
     const mid = norm(c.messageId);
-    if (!mid) continue;
-    (currentBy.get(mid) || currentBy.set(mid, []).get(mid)).push(Number(c.uid));
+    if (mid) group(currentByMid, mid, Number(c.uid));
   }
   const remap = [];
   const matchedIds = new Set();
   const taken = new Set();
-  for (const [mid, rows] of storedBy) {
-    const uids = currentBy.get(mid);
-    if (rows.length !== 1 || !uids || uids.length !== 1) continue;
-    remap.push({ id: rows[0].id, oldUid: rows[0].uid == null ? null : Number(rows[0].uid), newUid: uids[0] });
-    matchedIds.add(rows[0].id);
-    taken.add(uids[0]);
-  }
+  const match = (storedBy, currentBy) => {
+    for (const [key, rows] of storedBy) {
+      const uids = currentBy.get(key);
+      if (rows.length !== 1 || !uids || uids.length !== 1 || taken.has(uids[0])) continue;
+      remap.push({ id: rows[0].id, oldUid: rows[0].uid == null ? null : Number(rows[0].uid), newUid: uids[0] });
+      matchedIds.add(rows[0].id);
+      taken.add(uids[0]);
+    }
+  };
+  match(storedByPid, currentByPid);
+  match(storedByMid, currentByMid);
   const orphans = (stored || []).filter(r => !matchedIds.has(r.id)).map(r => r.id);
   const unmatchedUids = (current || []).map(c => Number(c.uid)).filter(u => !taken.has(u)).sort((a, b) => a - b);
   const moving = remap.filter(r => r.oldUid !== r.newUid);
@@ -468,7 +576,7 @@ function planRekey(stored, current) {
 // The ONLY projections that select imap_secret (ciphertext). It is handed to
 // imapTransport, which alone decrypts it. Never log one of these rows.
 const CONNECTION_COLUMNS =
-  'id, address, imap_host, imap_port, imap_user, imap_secret, ingest_folders, ingest_state, active, ingest_enabled';
+  'id, address, imap_host, imap_port, imap_user, imap_secret, ingest_folders, ingest_state, active, ingest_enabled, emit_source_name, emit_id_kind';
 
 async function listIngestMailboxes(db) {
   const [rows] = await db.query(
@@ -483,11 +591,22 @@ async function loadConnectionRow(db, mailboxId) {
   return row || null;
 }
 
-async function loadSource(db) {
-  const [[row]] = await db.query(
-    'SELECT id, name, active FROM email_ingest_sources WHERE name = ? LIMIT 1', [SOURCE_NAME]
+/**
+ * The source rows this run may emit under: name → {id, name, active}. Only
+ * id/name/active are read — never api_key: an in-process emission does not
+ * authenticate (emailIngestService.ingestEmail uses source.id and source.name
+ * only), so an HTTP-keyed row like gmail-firm works here untouched, and its
+ * last_used_at keeps meaning "last HTTP post".
+ */
+async function loadSources(db, names) {
+  const want = [...new Set((names || []).filter(Boolean).map(String))];
+  const out = new Map();
+  if (!want.length) return out;
+  const [rows] = await db.query(
+    'SELECT id, name, active FROM email_ingest_sources WHERE name IN (?)', [want]
   );
-  return row ? { id: row.id, name: row.name, active: !!Number(row.active) } : null;
+  for (const r of rows) out.set(String(r.name).toLowerCase(), { id: r.id, name: r.name, active: !!Number(r.active) });
+  return out;
 }
 
 /**
@@ -513,7 +632,7 @@ async function existingRows(db, mailboxId, folder, uids) {
   return out;
 }
 
-/** An earlier mailbox-imap execution's log row for this Message-ID, if any. */
+/** An earlier execution's log row for this emit key under this source, if any. */
 async function recoverLogId(db, sourceId, messageId) {
   if (!sourceId || !messageId) return null;
   const [[row]] = await db.query(
@@ -530,7 +649,7 @@ async function stampLogId(db, rowId, logId) {
 }
 
 const INSERT_COLS = [
-  'mailbox_id', 'folder', 'uid', 'message_id', 'in_reply_to', 'thread_key', 'from_addr',
+  'mailbox_id', 'folder', 'uid', 'message_id', 'provider_id', 'in_reply_to', 'thread_key', 'from_addr',
   'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'body_text', 'body_html',
   'attachments', 'size', 'flags',
 ];
@@ -649,34 +768,48 @@ function newSummary() {
     rekeyed: 0,
     skippedBudget: 0,
     errors: 0,
+    noProviderId: 0,
     pipeline: {},
     emitDisabled: null,
+    emitSources: {},
     details: [],
     durationMs: 0,
   };
 }
 
 /**
- * Store (and maybe emit) one message.
- * @returns {Promise<'stored'|'present'|'duplicate'>}
+ * Store (and maybe emit) one message. `mb._emit` is the mailbox's emission
+ * context ({source, kind, sourceName}, resolved once per run).
+ * @returns {Promise<'stored'|'present'|'duplicate'|'unemittable'>}
  */
 async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
-  const { db, summary, source } = ctx;
+  const { db, summary } = ctx;
+  const em = mb._emit || { source: null, kind: 'rfc' };
+  const source = em.source;
   const mid = m.envelope && m.envelope.messageId;
+  const key = emitKeyOf(em.kind, m);
   let rowId = existing ? existing.id : null;
   let logIdNull = existing ? existing.log_id == null : true;
   let inserted = false;
 
   if (!existing) {
-    // Secondary dedupe: the same Message-ID already stored in this folder
-    // under another UID (duplicate delivery, a client re-append).
-    if (mid) {
-      const [[dup]] = await db.query(
-        'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND message_id = ? LIMIT 1',
-        [mb.id, folder, String(mid).slice(0, 512)]
-      );
-      if (dup) { summary.duplicates++; ctx.folderStats.duplicates++; return 'duplicate'; }
-    }
+    // Secondary dedupe: the same message already stored in this folder under
+    // another UID (duplicate delivery, a client re-append). A provider id is
+    // the message's identity where the server has one (two Gmail messages
+    // can share a Message-ID and the Apps Script adapter logs both); the
+    // Message-ID otherwise.
+    const [[dup]] = m.providerId
+      ? await db.query(
+          'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND provider_id = ? LIMIT 1',
+          [mb.id, folder, String(m.providerId).slice(0, 64)]
+        )
+      : mid
+        ? await db.query(
+            'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND message_id = ? LIMIT 1',
+            [mb.id, folder, String(mid).slice(0, 512)]
+          )
+        : [[null]];
+    if (dup) { summary.duplicates++; ctx.folderStats.duplicates++; return 'duplicate'; }
     const id = await insertRow(db, buildRow(mb.id, folder, m));
     if (id) {
       rowId = id;
@@ -710,21 +843,37 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
     }
   }
 
+  // ── The provider-id guard (EMISSION IDENTITY) ──
+  // A provider-keyed mailbox never emits a message it has no provider id
+  // for — no RFC fallback. Stored, counted, alerted; the cursor moves on.
+  if (emit && em.kind === 'provider' && !key) {
+    summary.noProviderId++;
+    summary.errors++;
+    ctx.folderStats.no_provider_id = (ctx.folderStats.no_provider_id || 0) + 1;
+    st.no_provider_id_total = (Number(st.no_provider_id_total) || 0) + 1;
+    st.last_no_provider_id_at = new Date(ctx.now()).toISOString();
+    st.last_no_provider_id_uid = m.uid;
+    return 'unemittable';
+  }
+
   if (emit) {
     const envelope = buildEnvelope({
-      source, mailbox: mb, folder, uidValidity: st.uidvalidity, m, receivedAt: new Date(ctx.now()).toISOString(),
+      source, mailbox: mb, folder, uidValidity: st.uidvalidity, m,
+      receivedAt: new Date(ctx.now()).toISOString(), idKind: em.kind,
     });
     let result;
     try {
       result = await emailIngestService.ingestEmail(db, source, envelope, null);
     } catch (err) {
       // Mirror routes/api.emailIngest.js: a pipeline throw still leaves an
-      // execution row. Best effort; the folder then stops and retries.
+      // execution row — keyed like the emission it failed (same source, same
+      // key), so a retry's row and this one name the same message. Best
+      // effort; the folder then stops and retries.
       try {
         await db.query(
           `INSERT INTO email_ingest_executions (source_id, message_id, status, error, remote_ip)
            VALUES (?, ?, 'error', ?, NULL)`,
-          [source.id, mid ? String(mid).slice(0, 255) : null, errText(err).slice(0, 1000)]
+          [source.id, key ? String(key).slice(0, 255) : null, errText(err).slice(0, 1000)]
         );
       } catch (writeErr) {
         console.error('[mailboxIngest] failed to write error execution:', writeErr.code || '', writeErr.message);
@@ -736,12 +885,14 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
     const status = (result && result.status) || 'unknown';
     summary.pipeline[status] = (summary.pipeline[status] || 0) + 1;
     let logId = result && result.logId ? Number(result.logId) : null;
-    if (!logId && status === 'duplicate') logId = await recoverLogId(db, source.id, mid);
+    if (!logId && status === 'duplicate') logId = await recoverLogId(db, source.id, key);
     if (logId) await stampLogId(db, rowId, logId);
-  } else if (inserted && mid && source) {
+  } else if (inserted && key && source) {
     // Not emitted from here, but the same message may already be in the log
-    // via another mailbox / folder of this source — bridge to it.
-    const logId = await recoverLogId(db, source.id, mid);
+    // under this mailbox's emit identity (another mailbox / folder of this
+    // source, or — for a provider-keyed Gmail box — the Apps Script adapter)
+    // — bridge to it.
+    const logId = await recoverLogId(db, source.id, key);
     if (logId) await stampLogId(db, rowId, logId);
   }
   return inserted ? 'stored' : 'present';
@@ -761,7 +912,8 @@ async function processUids(ctx, session, mb, folder, cfg, st, uids, pass, onBatc
     if (last != null) await onBatch(last);
     if (ctx.stop()) return { last, stopped: true };
     const have = await existingRows(db, mb.id, folder, batch);
-    const emitting = cfg.emit_to_rules && ctx.source && ctx.source.active;
+    const src = mb._emit && mb._emit.source;
+    const emitting = cfg.emit_to_rules && src && src.active;
     const need = batch.filter(u => {
       const row = have.get(u);
       if (!row) return true;
@@ -788,12 +940,12 @@ async function processUids(ctx, session, mb, folder, cfg, st, uids, pass, onBatc
   return { last, stopped: false };
 }
 
-async function rekey(ctx, session, mb, folder, box, state) {
+async function rekey(ctx, session, mb, folder, cfg, box, state) {
   const { db } = ctx;
   const prev = state[folder] || {};
   const current = await session.listMessageIds();
   const [stored] = await db.query(
-    'SELECT id, uid, message_id FROM mail_messages WHERE mailbox_id = ? AND folder = ?',
+    'SELECT id, uid, message_id, provider_id FROM mail_messages WHERE mailbox_id = ? AND folder = ?',
     [mb.id, folder]
   );
   const plan = planRekey(stored, current);
@@ -810,6 +962,21 @@ async function rekey(ctx, session, mb, folder, box, state) {
     rekeyed_at: nowIso,
   };
   delete next.backfill_done_at;
+  delete next.backfill_floor_uid;
+  if (cfg && cfg.backfill === false) {
+    // BACKLOG POLICY: this folder never stored its history, so the re-key
+    // must not store it now. Backfill only above the highest re-mapped UID —
+    // mail delivered since we last looked (servers number arrivals upward);
+    // nothing re-mapped → nothing is known to be recent → re-baseline.
+    const floor = plan.remap.reduce((mx, r) => Math.max(mx, Number(r.newUid) || 0), 0) || maxUid;
+    if (floor >= maxUid) {
+      delete next.backfill_uid;
+      delete next.backfill_emit_after;
+      next.backfill_skipped_below = maxUid + 1;
+    } else {
+      next.backfill_floor_uid = floor;
+    }
+  }
   const nextState = { ...state, [folder]: next };
 
   await withTransaction(db, async (conn) => {
@@ -852,9 +1019,10 @@ async function rekey(ctx, session, mb, folder, box, state) {
     remapped: plan.remap.length, moved: plan.moving.length,
     orphans: plan.orphans.length, unmatched: plan.unmatchedUids.length,
   };
+  if (next.backfill_floor_uid != null) ctx.folderStats.rekey.backfill_floor_uid = next.backfill_floor_uid;
   console.log(`[mailboxIngest] mailbox ${mb.id} ${JSON.stringify(folder)}: re-keyed to UIDVALIDITY ${box.uidValidity}` +
     ` (remapped ${plan.remap.length}, moved ${plan.moving.length}, orphans ${plan.orphans.length},` +
-    ` left for backfill ${plan.unmatchedUids.length})`);
+    ` left for backfill ${plan.unmatchedUids.length}${next.backfill_floor_uid != null ? ` above uid ${next.backfill_floor_uid}` : ''})`);
 }
 
 async function newPass(ctx, session, mb, folder, cfg, state) {
@@ -869,24 +1037,22 @@ async function newPass(ctx, session, mb, folder, cfg, state) {
       'SELECT COUNT(*) AS n FROM mail_messages WHERE mailbox_id = ? AND folder = ?', [mb.id, folder]
     );
     if (hasCursor || Number(cnt.n) > 0) {
-      await rekey(ctx, session, mb, folder, box, state);
+      await rekey(ctx, session, mb, folder, cfg, box, state);
     } else {
       // First sight of this folder: new mail starts at UIDNEXT; what is
-      // already here is backlog (stored, never emitted). Written BEFORE any
-      // processing — a crash must not let the next run re-baseline later and
-      // misfile mail that arrived in between as backlog.
+      // already here is backlog (stored, never emitted) — or, with
+      // backfill:false, not stored at all (BACKLOG POLICY). Written BEFORE
+      // any processing — a crash must not let the next run re-baseline later
+      // and misfile mail that arrived in between as backlog.
       let uidNext = box.uidNext;
       if (!uidNext) {
         const all = await session.searchUids(1);
         uidNext = (all.length ? all[all.length - 1] : 0) + 1;
       }
-      state[folder] = {
-        ...(st || {}),
-        uidvalidity: box.uidValidity,
-        last_uid: uidNext - 1,
-        backfill_uid: uidNext,
-        backfill_emit_after: null,
-      };
+      const base = { ...(st || {}), uidvalidity: box.uidValidity, last_uid: uidNext - 1 };
+      state[folder] = cfg.backfill === false
+        ? { ...base, backfill_skipped_below: uidNext, backfill_skipped_at: openedAt }
+        : { ...base, backfill_uid: uidNext, backfill_emit_after: null };
       await writeState(db, mb.id, state);
     }
     st = state[folder];
@@ -916,10 +1082,14 @@ async function backfillPass(ctx, session, mb, folder, cfg, state) {
   const box = await session.openFolder(folder);
   // Changed under us since phase 1 — the next new pass re-keys first.
   if (box.uidValidity !== Number(st.uidvalidity)) return { stopped: false };
-  const uids = (await session.searchUids(1, Number(st.backfill_uid) - 1)).sort((a, b) => b - a);
+  // A re-key of a backfill:false folder stores only above its floor.
+  const lo = Math.max(1, (Number(st.backfill_floor_uid) || 0) + 1);
+  const hi = Number(st.backfill_uid) - 1;
+  const uids = hi >= lo ? (await session.searchUids(lo, hi)).sort((a, b) => b - a) : [];
   const finish = () => {
     delete st.backfill_uid;
     delete st.backfill_emit_after;
+    delete st.backfill_floor_uid;
     st.backfill_done_at = new Date(ctx.now()).toISOString();
   };
   if (!uids.length) { finish(); return { stopped: false }; }
@@ -938,6 +1108,14 @@ async function backfillPass(ctx, session, mb, folder, cfg, state) {
   }
 }
 
+/** The failure-streak alert severity for one mailbox (limits.soleFeederSources). */
+function streakSeverity(mb, alerts) {
+  const name = mb && mb._emit && mb._emit.sourceName;
+  const sole = !!name && (limits.soleFeederSources || [])
+    .some(s => String(s).toLowerCase() === String(name).toLowerCase());
+  return sole && alerts.some(a => a.emits) && mb._emit.source ? 'error' : 'warning';
+}
+
 async function runMailbox(ctx, mb, phase) {
   const { db, summary } = ctx;
   const folders = folderConfig(mb.ingest_folders);
@@ -947,18 +1125,24 @@ async function runMailbox(ctx, mb, phase) {
   if (phase === 'new') summary.mailboxes++;
 
   const alerts = [];
+  const emitsByFolder = new Map(targets.map(([f, c]) => [f, !!c.emit_to_rules]));
   const record = (folder, err) => {
     summary.errors++;
     const n = markError(state, folder, phase, err, new Date(ctx.now()).toISOString());
-    if (n === limits.alertAfter) alerts.push({ folder, phase, n, error: errText(err) });
+    if (n === limits.alertAfter) alerts.push({ folder, phase, n, error: errText(err), emits: !!emitsByFolder.get(folder) });
   };
+  const noPidBefore = summary.noProviderId;
 
   const settled = new Set(); // folders whose outcome is recorded AND persisted this phase
   try {
     await transport.withMailbox(mb, async (session) => {
       for (const [folder, cfg] of targets) {
         if (phase === 'new') summary.folders++;
-        ctx.folderStats = { mailbox_id: mb.id, folder, phase, outcome: 'ok', fetched: 0, stored: 0, backfilled: 0, emitted: 0, duplicates: 0 };
+        ctx.folderStats = {
+          mailbox_id: mb.id, folder, phase, outcome: 'ok', fetched: 0, stored: 0, backfilled: 0, emitted: 0, duplicates: 0,
+          emit_source: cfg.emit_to_rules ? (mb._emit && mb._emit.sourceName) || null : null,
+        };
+        if (cfg.emit_to_rules && mb._emit && mb._emit.kind !== 'rfc') ctx.folderStats.emit_id_kind = mb._emit.kind;
         summary.details.push(ctx.folderStats);
         if (ctx.stop()) { summary.skippedBudget++; ctx.folderStats.outcome = 'not_reached'; settled.add(folder); continue; }
         try {
@@ -1002,10 +1186,30 @@ async function runMailbox(ctx, mb, phase) {
     await sendAlert(db, {
       kind: 'mailbox_ingest_failing',
       group_key: `app:mailbox_ingest_failing:${mb.id}`,
-      severity: 'warning', // degraded, not down (FreeBusy fail-open precedent)
+      // degraded, not down (FreeBusy fail-open precedent) — unless this
+      // worker is the only feeder of the source those folders emit under.
+      severity: streakSeverity(mb, alerts),
       title: `Mailbox ingest failing: ${mb.address}`,
       message: alerts.map(a => `${a.folder} (${a.phase}): ${a.n} consecutive failed runs — ${a.error}`).join('\n'),
       context: { mailbox_id: mb.id, folders: alerts },
+      ref_table: 'mailboxes',
+      ref_id: mb.id,
+    });
+  }
+
+  const noPid = summary.noProviderId - noPidBefore;
+  if (noPid > 0) {
+    const day = new Date(ctx.now()).toISOString().slice(0, 10);
+    await sendAlert(db, {
+      kind: 'mailbox_ingest_no_provider_id',
+      group_key: `app:mailbox_ingest_no_provider_id:${mb.id}`,
+      dedup_key: `mailbox_ingest_no_provider_id:${mb.id}:${day}`,
+      severity: streakSeverity(mb, [{ emits: true }]),
+      title: `Mailbox ingest: ${mb.address} stored mail it cannot emit`,
+      message: `${noPid} new message(s) had no provider id, so they were stored but NOT emitted under ` +
+        `'${mb._emit && mb._emit.sourceName}' (emit_id_kind provider never falls back to the RFC Message-ID). ` +
+        'Check the folder listing: the server must advertise X-GM-EXT-1 (and not OBJECTID).',
+      context: { mailbox_id: mb.id, count: noPid },
       ref_table: 'mailboxes',
       ref_id: mb.id,
     });
@@ -1030,28 +1234,57 @@ async function runIngest(db, opts = {}) {
   }
   const deadline = started + resolveBudgetMs(opts.budgetMs);
   try {
-    const source = await loadSource(db);
     const mailboxes = await listIngestMailboxes(db);
     for (const mb of mailboxes) mb._state = parseJson(mb.ingest_state) || {};
+    const configs = new Map(mailboxes.map(mb => [mb.id, emissionConfig(mb)]));
+    const sources = await loadSources(db, [SOURCE_NAME, ...[...configs.values()].map(c => c.sourceName)]);
+    const source = sources.get(SOURCE_NAME) || null;
 
-    const wantsEmit = mailboxes.some(mb => folderConfig(mb.ingest_folders).some(([, c]) => c.emit_to_rules));
     if (!source) summary.emitDisabled = 'source_missing';
     else if (!source.active) summary.emitDisabled = 'source_inactive';
-    if (!source && wantsEmit) {
-      // The S1 migration registers the source; missing = it was not run (or
-      // the row was deleted). Mail is still stored; nothing reaches the log.
+
+    // Per-mailbox emission context. Folders that want to emit but cannot
+    // (source row missing / inactive / override misconfigured) are still
+    // stored; the state lands in summary.emitSources and missing/misconfigured
+    // ones alert once a day.
+    const missing = new Map(); // sourceName → reason
+    for (const mb of mailboxes) {
+      const c = configs.get(mb.id);
+      const row = c.misconfig ? null : (sources.get(String(c.sourceName).toLowerCase()) || null);
+      mb._emit = { sourceName: c.sourceName, kind: c.kind, source: row, misconfig: c.misconfig };
+      const wants = folderConfig(mb.ingest_folders).some(([, f]) => f.emit_to_rules);
+      const status = c.misconfig ? 'misconfigured' : (!row ? 'missing' : (!row.active ? 'inactive' : 'ok'));
+      if (!summary.emitSources[c.sourceName] || summary.emitSources[c.sourceName] === 'ok') {
+        summary.emitSources[c.sourceName] = status;
+      }
+      if (wants && (status === 'missing' || status === 'misconfigured')) {
+        missing.set(c.sourceName, c.misconfig || 'missing');
+      }
+    }
+    const day = new Date(started).toISOString().slice(0, 10);
+    for (const [name, why] of missing) {
+      const isDefault = name === SOURCE_NAME && why === 'missing';
+      // The S1 migration registers the default source; missing = it was not
+      // run (or the row was deleted). Mail is still stored; nothing reaches
+      // the log from mailboxes emitting under it.
       await sendAlert(db, {
         kind: 'mailbox_ingest_source_missing',
-        group_key: 'app:mailbox_ingest_source_missing',
-        dedup_key: `mailbox_ingest_source_missing:${new Date(started).toISOString().slice(0, 10)}`,
+        group_key: isDefault ? 'app:mailbox_ingest_source_missing' : `app:mailbox_ingest_source_missing:${name}`,
+        dedup_key: isDefault ? `mailbox_ingest_source_missing:${day}` : `mailbox_ingest_source_missing:${name}:${day}`,
         severity: 'warning',
-        title: `Mailbox ingest: email_ingest_sources row '${SOURCE_NAME}' is missing`,
-        message: 'Folders set to Emit to rules are being stored but NOT emitted into the rules pipeline. Run the S1 migration.',
+        title: why === 'missing'
+          ? `Mailbox ingest: email_ingest_sources row '${name}' is missing`
+          : `Mailbox ingest: emission override for '${name}' is misconfigured`,
+        message: why === 'missing'
+          ? (isDefault
+            ? 'Folders set to Emit to rules are being stored but NOT emitted into the rules pipeline. Run the S1 migration.'
+            : `Mailboxes set to emit as '${name}' are being stored but NOT emitted. Restore the source row or PATCH the mailbox's emit override back to null.`)
+          : `${why}. Affected mailboxes store mail but emit nothing; fix the pair with PATCH /api/mailboxes/:id.`,
       });
     }
 
     const ctx = {
-      db, source, summary, now,
+      db, summary, now,
       folderStats: null,
       stop: () => now() >= deadline || lock.lost(),
     };
@@ -1092,13 +1325,73 @@ async function runIngest(db, opts = {}) {
   return summary;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Emission preview (S1-G) — the pre-emission text-parity check
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the worker WOULD emit for one stored message, computed from the stored
+ * row with the same helpers emission uses (emitText, emissionConfig) — no
+ * IMAP, no pipeline, no writes. Lets the Gmail parity gate compare our
+ * HTML→text against the Apps Script copy BEFORE the mailbox emits: once both
+ * feeders run, whichever arrives first is the one Layer 3 sees.
+ *
+ * @returns {Promise<null | object>} null when the mailbox or message is not found
+ */
+async function previewEmission(db, mailboxId, messageRowId) {
+  const [[mb]] = await db.query(
+    'SELECT id, address, ingest_folders, emit_source_name, emit_id_kind FROM mailboxes WHERE id = ? LIMIT 1',
+    [mailboxId]
+  );
+  if (!mb) return null;
+  const [[row]] = await db.query(
+    `SELECT id, folder, uid, message_id, provider_id, subject, from_addr, to_addrs, date,
+            body_text, body_html, log_id
+       FROM mail_messages WHERE id = ? AND mailbox_id = ? LIMIT 1`,
+    [messageRowId, mailboxId]
+  );
+  if (!row) return null;
+  const c = emissionConfig(mb);
+  const cfg = folderConfig(mb.ingest_folders)
+    .find(([f]) => String(f).toLowerCase() === String(row.folder).toLowerCase());
+  const key = c.kind === 'provider' ? (row.provider_id || null) : (row.message_id || null);
+  const t = emitText(row.body_text, row.body_html);
+  return {
+    id: row.id,
+    mailbox_id: mb.id,
+    folder: row.folder,
+    uid: row.uid,
+    message_id: row.message_id,
+    provider_id: row.provider_id,
+    log_id: row.log_id,
+    emit: {
+      source: c.sourceName,
+      id_kind: c.kind,
+      key,
+      misconfig: c.misconfig,
+      folder_emits: !!(cfg && cfg[1].emit_to_rules),
+    },
+    subject: row.subject,
+    from_addr: row.from_addr,
+    to_addrs: row.to_addrs,
+    date: row.date,
+    text: t.text,
+    text_derived_from_html: t.derived,
+    html: row.body_html,
+  };
+}
+
 module.exports = {
   runIngest,
   loadConnectionRow,
+  previewEmission,
   // exported for tests
   planRekey,
   buildRow,
   buildEnvelope,
+  emitText,
+  emitKeyOf,
+  emissionConfig,
   htmlToText,
   parseHeaderBlock,
   folderConfig,
@@ -1106,5 +1399,6 @@ module.exports = {
   acquireLock,
   limits,
   SOURCE_NAME,
+  ID_KINDS,
   LOCK_EXPR,
 };

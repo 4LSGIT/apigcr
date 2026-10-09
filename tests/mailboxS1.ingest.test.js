@@ -629,9 +629,10 @@ describe('row + envelope builders (pure)', () => {
   });
 
   test('folderConfig: absent or empty → INBOX emitting; non-boolean emit → false', () => {
-    expect(svc.folderConfig(null)).toEqual([['INBOX', { emit_to_rules: true }]]);
-    expect(svc.folderConfig({})).toEqual([['INBOX', { emit_to_rules: true }]]);
-    expect(svc.folderConfig({ Sent: { emit_to_rules: 'yes' } })).toEqual([['Sent', { emit_to_rules: false }]]);
+    // S1-G: every entry also carries backfill (true unless exactly false).
+    expect(svc.folderConfig(null)).toEqual([['INBOX', { emit_to_rules: true, backfill: true }]]);
+    expect(svc.folderConfig({})).toEqual([['INBOX', { emit_to_rules: true, backfill: true }]]);
+    expect(svc.folderConfig({ Sent: { emit_to_rules: 'yes' } })).toEqual([['Sent', { emit_to_rules: false, backfill: true }]]);
   });
 });
 

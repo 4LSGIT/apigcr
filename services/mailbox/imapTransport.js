@@ -17,6 +17,9 @@
  *   fetchPart(row, …)      the on-demand attachment route. Request-scoped
  *                          connection that closes when the returned stream
  *                          ends, errors or is destroyed.
+ *   listFolders(row)       the SU folder listing (S1-G): every folder with its
+ *                          special-use flag and STATUS counts, plus whether
+ *                          the server will hand us provider ids. Read-only.
  *
  * ── NO PROCESS-GLOBAL STATE (design §2, tenancy audit A3/P0-5) ───────────────
  * No module-scope caches, no pooled or reused connections. A connection lives
@@ -49,6 +52,20 @@
  * Port 143 → STARTTLS, mandatory (`doSTARTTLS:true` refuses a server that does
  * not offer it). Every other port → implicit TLS. There is no cleartext mode
  * and no way to turn off certificate verification from a row.
+ *
+ * ── PROVIDER-NATIVE IDS (S1-G) ───────────────────────────────────────────────
+ * Gmail's X-GM-MSGID is a 64-bit unsigned decimal whose lowercase hex is the
+ * id the Gmail web UI, the Gmail API and Apps Script GmailMessage.getId() use
+ * (developers.google.com/workspace/gmail/imap/imap-extensions) — the id the
+ * `gmail-firm` source has keyed email_log on since 2025. imapflow 2.3.0 adds
+ * X-GM-MSGID to EVERY fetch when the server advertises X-GM-EXT-1 and surfaces
+ * it as `emailId` — UNLESS the server also advertises OBJECTID, in which case
+ * it asks for RFC 8474 EMAILID instead and `emailId` is an opaque objectid,
+ * not a Gmail id (tests/mailboxS1G.transport.test.js pins both). So a message
+ * carries `providerId` (hex) only on X-GM-EXT-1 without OBJECTID and only when
+ * the value is a decimal 64-bit integer; everywhere else it is null, and the
+ * worker never emits a provider-keyed message without one. The transport
+ * still never asks which provider it is talking to — it reads capabilities.
  *
  * ── ATTACHMENTS ARE NOT DOWNLOADED (D1) ──────────────────────────────────────
  * fetchMessages() reads ENVELOPE, BODYSTRUCTURE, flags, size, internal date,
@@ -89,6 +106,8 @@ const TRANSIENT_CODES = new Set([
 ]);
 
 const FLAG_MAP = { '\\seen': 'seen', '\\answered': 'answered', '\\flagged': 'flagged', '\\draft': 'draft' };
+
+const MAX_U64 = (1n << 64n) - 1n;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Errors
@@ -218,6 +237,25 @@ function normalizeMessageId(v) {
   return s || null;
 }
 
+/**
+ * Which provider id this connection yields: 'gmail' (X-GM-MSGID) or null.
+ * Read from the live capability set after login — see PROVIDER-NATIVE IDS.
+ */
+function providerIdKind(client) {
+  const caps = client && client.capabilities;
+  if (!caps || typeof caps.has !== 'function') return null;
+  return caps.has('X-GM-EXT-1') && !caps.has('OBJECTID') ? 'gmail' : null;
+}
+
+/** X-GM-MSGID (decimal string) → lowercase hex; anything else → null. */
+function gmailHexId(v) {
+  const s = v == null ? '' : String(v).trim();
+  if (!/^\d{1,20}$/.test(s)) return null;
+  const n = BigInt(s);
+  if (n <= 0n || n > MAX_U64) return null;
+  return n.toString(16);
+}
+
 function mapFlags(set) {
   const out = [];
   for (const f of set || []) {
@@ -301,6 +339,8 @@ async function readStream(stream, maxBytes) {
 
 function makeSession(client, row, secret) {
   const user = row.imap_user;
+  const idKind = providerIdKind(client);
+  const providerIdOf = (m) => (idKind === 'gmail' ? gmailHexId(m && m.emailId) : null);
   const guard = (fn) => async (...args) => {
     try {
       return await fn(...args);
@@ -346,15 +386,20 @@ function makeSession(client, row, secret) {
     }),
 
     /**
-     * Every message in the open folder as {uid, messageId} — the UIDVALIDITY
-     * re-key scan. ENVELOPE (not a header fetch) so the Message-ID is parsed
-     * by exactly the same code path that stored it.
+     * Every message in the open folder as {uid, messageId, providerId} — the
+     * UIDVALIDITY re-key scan. ENVELOPE (not a header fetch) so the
+     * Message-ID is parsed by exactly the same code path that stored it;
+     * providerId rides along on Gmail (imapflow fetches it unasked).
      */
     listMessageIds: guard(async () => {
       const out = [];
       // No other command may run inside this loop (imapflow fetch contract).
       for await (const m of client.fetch('1:*', { uid: true, envelope: true }, { uid: true })) {
-        out.push({ uid: Number(m.uid), messageId: normalizeMessageId(m.envelope && m.envelope.messageId) });
+        out.push({
+          uid: Number(m.uid),
+          messageId: normalizeMessageId(m.envelope && m.envelope.messageId),
+          providerId: providerIdOf(m),
+        });
       }
       return out.sort((a, b) => a.uid - b.uid);
     }),
@@ -384,6 +429,7 @@ function makeSession(client, row, secret) {
         const st = analyzeStructure(m.bodyStructure);
         const msg = {
           uid,
+          providerId: providerIdOf(m),
           size: Number.isFinite(Number(m.size)) ? Number(m.size) : null,
           flags: mapFlags(m.flags),
           internalDate: toDate(m.internalDate),
@@ -417,6 +463,33 @@ function makeSession(client, row, secret) {
       }
       return out;
     }),
+
+    /**
+     * Every folder on the account: path (what ingest_folders names), its
+     * special-use flag (\\Sent, \\All …), selectability and STATUS counts.
+     * For the SU folder listing — never called by the ingest worker.
+     */
+    listFolders: guard(async () => {
+      const list = await client.list({ statusQuery: { messages: true, uidNext: true, uidValidity: true } });
+      const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+      return (Array.isArray(list) ? list : []).map((f) => {
+        const flags = [...(f.flags || [])].map(String);
+        const st = f.status || {};
+        return {
+          path: String(f.path),
+          delimiter: f.delimiter != null ? String(f.delimiter) : null,
+          special_use: f.specialUse ? String(f.specialUse) : null,
+          flags,
+          selectable: !flags.some(x => /^\\(noselect|nonexistent)$/i.test(x)),
+          messages: num(st.messages),
+          uid_next: num(st.uidNext),
+          uid_validity: num(st.uidValidity),
+        };
+      }).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    }),
+
+    /** 'gmail' when this connection yields X-GM-MSGID provider ids, else null. */
+    get providerIdKind() { return idKind; },
 
     get folder() { return opened; },
   };
@@ -501,12 +574,28 @@ async function fetchPart(row, folder, uid, partId, { uidValidity = null, message
   }
 }
 
+/**
+ * The SU folder listing (S1-G): {provider_id_kind, folders:[…]} for one
+ * mailbox. Connect, LIST + STATUS, log out — no folder is opened, nothing is
+ * written. `provider_id_kind` is 'gmail' when ingest will capture X-GM-MSGID
+ * (the precondition for emitting under a provider-id source), else null.
+ */
+async function listFolders(row) {
+  return withMailbox(row, async (session) => ({
+    provider_id_kind: session.providerIdKind,
+    folders: await session.listFolders(),
+  }));
+}
+
 module.exports = {
   withMailbox,
   fetchPart,
+  listFolders,
   // exported for the worker + tests
   analyzeStructure,
   normalizeMessageId,
+  providerIdKind,
+  gmailHexId,
   mapFlags,
   sanitizeError,
   scrub,

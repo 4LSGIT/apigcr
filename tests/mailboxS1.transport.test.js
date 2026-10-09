@@ -233,7 +233,7 @@ describe('session facade', () => {
     script.envelopes = [{ uid: 2, envelope: { messageId: '<b@x>' } }, { uid: 1, envelope: { messageId: ' <a@x> ' } }, { uid: 3, envelope: {} }];
     await T.withMailbox(row(), async (s) => {
       await s.openFolder('INBOX');
-      expect(await s.listMessageIds()).toEqual([{ uid: 1, messageId: 'a@x' }, { uid: 2, messageId: 'b@x' }, { uid: 3, messageId: null }]);
+      expect(await s.listMessageIds()).toEqual([{ uid: 1, messageId: 'a@x', providerId: null }, { uid: 2, messageId: 'b@x', providerId: null }, { uid: 3, messageId: null, providerId: null }]);
     });
   });
 });

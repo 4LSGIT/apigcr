@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-08T23:26:40.521Z
+-- Generated: 2026-10-09T06:08:35.572Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:c8abe0e1435688ba676c21cc1052cd37
+-- Fingerprint: sha256:7c52e3d8959fc42f139d4fcb3af0d901
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2149,7 +2149,8 @@ CREATE TABLE `mail_messages` (
   `mailbox_id` int unsigned NOT NULL COMMENT 'mailboxes.id (FK by convention)',
   `folder` varchar(128) COLLATE utf8mb4_general_ci NOT NULL,
   `uid` int unsigned DEFAULT NULL COMMENT 'IMAP UID within (mailbox, folder, UIDVALIDITY). NULLABLE on purpose: UIDVALIDITY re-key parks rows at NULL, then sets finals (§4.1) - UNIQUE allows many NULLs. Never make NOT NULL',
-  `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Message-ID header; secondary dedupe key and the re-key match key',
+  `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Message-ID header (brackets stripped). Secondary dedupe + re-key match key for rows WITHOUT provider_id; the emit key under the default emission (mailbox-imap)',
+  `provider_id` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-native message id: Gmail = lowercase hex X-GM-MSGID (the id Gmail web/API/Apps Script use, = gmail-firm email_log.message_id); NULL for hosts without one. Identity for secondary dedupe + re-key where present; the emit key when mailboxes.emit_id_kind = provider (S1-G)',
   `in_reply_to` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `thread_key` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'from References/In-Reply-To; subject+participants fallback (OQ1)',
   `from_addr` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'first From: address in display form - Name <a@b> (name quoted when it has specials) or bare a@b; emails lowercased',
@@ -2200,8 +2201,10 @@ CREATE TABLE `mailboxes` (
   `imap_secret` text COLLATE utf8mb4_general_ci COMMENT 'ENCv1 ciphertext via lib/credentialCrypto (same pattern as email_credentials.smtp_pass); identity creds or mailbox password per D3 - transport-agnostic. WRITE-ONLY: no API response carries it in any shape (has_secret boolean instead). NULL = not set',
   `send_credential_id` int unsigned DEFAULT NULL COMMENT 'email_credentials.id (FK by convention); NULL = read-only mailbox. Grant checks for sending live on interactive routes only, never in emailService (D6)',
   `ingest_enabled` tinyint(1) NOT NULL DEFAULT '1',
-  `ingest_folders` json DEFAULT NULL COMMENT 'per-folder CONFIG: {"<folder>": {"emit_to_rules": bool}} - which folders the S1 worker polls, and which emit into the rules pipeline (§4.1). Everything polled is stored to mail_messages regardless. mailboxService always writes it; v1 default {"INBOX":{"emit_to_rules":true}} (Sent is opt-in, emit_to_rules false - host Sent names vary)',
-  `ingest_state` json DEFAULT NULL COMMENT 'per-folder CURSOR, written only by the ingest worker (services/mailbox/mailboxIngestService.js): {"<folder>": {uidvalidity, last_uid = new-mail cursor, backfill_uid = backlog still to store below it (absent = done), backfill_emit_after = ISO emit horizon set by a re-key (null = store-only), checked_at, errors, backfill_errors, last_error, last_error_at, rekeyed_at, backfill_done_at}}. First poll baselines at UIDNEXT: existing mail is stored, never emitted. UIDVALIDITY change = re-key, never blanket purge (§4.1). NULL = never ingested',
+  `ingest_folders` json DEFAULT NULL COMMENT 'per-folder CONFIG: {"<folder>": {"emit_to_rules": bool, "backfill"?: false}} - which folders the worker polls, which emit into the rules pipeline (§4.1), and (S1-G) backfill:false = store only mail arriving after first sight (no history; decided at first sight; a later re-key stores only above the highest re-mapped UID). Everything polled is stored to mail_messages regardless. mailboxService always writes it (backfill only when false); v1 default {"INBOX":{"emit_to_rules":true}} (Sent is opt-in, emit_to_rules false - host Sent names vary; never Gmail All Mail)',
+  `ingest_state` json DEFAULT NULL COMMENT 'per-folder CURSOR, written only by the ingest worker (services/mailbox/mailboxIngestService.js): {"<folder>": {uidvalidity, last_uid = new-mail cursor, backfill_uid = backlog still to store below it (absent = done), backfill_floor_uid = re-key of a backfill:false folder stores only above this, backfill_emit_after = ISO emit horizon set by a re-key (null = store-only), backfill_skipped_below / backfill_skipped_at = backfill:false baseline, checked_at, errors, backfill_errors, last_error, last_error_at, rekeyed_at, backfill_done_at, no_provider_id_total / last_no_provider_id_at / last_no_provider_id_uid = provider-keyed mail stored but not emitted}}. First poll baselines at UIDNEXT: existing mail is stored (or skipped), never emitted. UIDVALIDITY change = re-key, never blanket purge (§4.1). NULL = never ingested',
+  `emit_source_name` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): email_ingest_sources.name the worker emits this mailbox under. NULL (with emit_id_kind NULL) = mailbox-imap. SU PATCH only, set as a pair, must be an ACTIVE source row; decides the email_log dedupe space — see services/mailbox/mailboxIngestService.js EMISSION IDENTITY',
+  `emit_id_kind` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): rfc | provider (app-validated). The (source, message_id) key: rfc = RFC Message-ID, provider = mail_messages.provider_id. A provider mailbox NEVER falls back to the RFC id - a message without provider_id is stored, counted, alerted, never emitted. provider never under mailbox-imap; one provider mailbox per source',
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'no hard delete - mail_messages rows reference mailboxes forever; 0 = deactivated',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -4364,7 +4367,8 @@ ALTER TABLE `mail_messages`
   ADD KEY `idx_mail_messages_mailbox_date` (`mailbox_id`,`date`),
   ADD KEY `idx_mail_messages_message_id` (`message_id`(191)),
   ADD KEY `idx_mail_messages_thread_key` (`thread_key`(191)),
-  ADD KEY `idx_mail_messages_mailbox_ingested` (`mailbox_id`,`ingested_at`);
+  ADD KEY `idx_mail_messages_mailbox_ingested` (`mailbox_id`,`ingested_at`),
+  ADD KEY `idx_mail_messages_mailbox_provider` (`mailbox_id`,`provider_id`);
 
 --
 -- Indexes for table `mail_read_state`

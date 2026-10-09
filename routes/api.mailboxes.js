@@ -17,6 +17,14 @@
  *   GET    /api/mailboxes/:id/messages/:mid/parts/:part
  *                                              SU or can_read — streams one stored
  *                                              message's attachment from IMAP (S1, D1)
+ *   GET    /api/mailboxes/:id/folders          SU only — the server's folder list
+ *                                              with STATUS counts + provider_id_kind,
+ *                                              checked against ingest_folders (S1-G)
+ *   GET    /api/mailboxes/:id/messages/:mid/emit-preview
+ *                                              SU only — what the worker WOULD emit
+ *                                              for a stored message (emit identity +
+ *                                              derived text); the Gmail parity gate's
+ *                                              pre-emission text check (S1-G)
  *
  * Auto-mounted (server.js readdirSync); req.db injected. UI:
  * public/mailboxAdmin.html (Admin → Mailboxes). Spec:
@@ -63,7 +71,7 @@ const {
 const { pipeline } = require('stream');
 const svc = require('../services/mailboxService');
 const imapTransport = require('../services/mailbox/imapTransport');
-const { loadConnectionRow } = require('../services/mailbox/mailboxIngestService');
+const { loadConnectionRow, previewEmission, folderConfig } = require('../services/mailbox/mailboxIngestService');
 
 const TOOL = 'mailboxes';
 
@@ -184,6 +192,30 @@ function mailboxDiff(before, after, changed, secretChange) {
 
 function grantFlags(g) {
   return g ? { can_read: g.can_read, can_send: g.can_send, can_manage: g.can_manage } : null;
+}
+
+/**
+ * SU-only gate for the S1-G diagnostic reads (DB-sourced SU, like every other
+ * bypass here). Reads need no elevation (S0 rule). Sends the 4xx itself and
+ * returns null on a miss: no grant at all → 404 (no existence oracle), a
+ * grant of any kind → 403.
+ */
+async function resolveSuOnly(req, res) {
+  if (!/^\d+$/.test(String(req.params.id)) || Number(req.params.id) <= 0) {
+    res.status(400).json({ status: 'error', message: 'mailbox id must be a positive integer' });
+    return null;
+  }
+  const id = Number(req.params.id);
+  const access = await svc.getAccess(req.db, req.auth.userId, 'mailbox', id);
+  if (!access.su) {
+    if (!access.can_read && !access.can_send && !access.can_manage) {
+      res.status(404).json({ status: 'error', message: 'Mailbox not found' });
+    } else {
+      res.status(403).json({ status: 'error', message: 'Superuser access required' });
+    }
+    return null;
+  }
+  return id;
 }
 
 
@@ -465,6 +497,89 @@ router.get('/api/mailboxes/:id/messages/:mid/parts/:part', jwtOrApiKey, requireJ
     });
   } catch (err) {
     sendError(res, 'GET /api/mailboxes/:id/messages/:mid/parts/:part', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// S1-G diagnostics — SU only, read-only
+// ─────────────────────────────────────────────────────────────
+
+// ─── GET /api/mailboxes/:id/folders ───  SU only
+//
+// Connects with the stored secret (request-scoped, like the part fetch), runs
+// LIST + STATUS and logs out — nothing is opened or written. Answers the two
+// questions the Gmail pilot checklist asks before creating or emitting:
+//   - which folder names does this server use (Gmail's Sent is localized),
+//     and how big are they (the backfill decision);
+//   - will ingest capture provider ids (provider_id_kind 'gmail') — the
+//     precondition for an emit_id_kind 'provider' override.
+// `configured` checks the mailbox's ingest_folders against the server: a
+// folder that does not exist, or one that is \All (Gmail All Mail — every
+// labelled message again, never poll it).
+router.get('/api/mailboxes/:id/folders', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    const id = await resolveSuOnly(req, res);
+    if (!id) return;
+    const row = await loadConnectionRow(req.db, id);
+    if (!row) return res.status(404).json({ status: 'error', message: 'Mailbox not found' });
+    let out;
+    try {
+      out = await imapTransport.listFolders(row);
+    } catch (err) {
+      // Sanitized by imapTransport — no credential can be in it.
+      console.warn(`[mailboxes] folder list mailbox ${id}:`, err && err.message);
+      return res.status(502).json({
+        status: 'error',
+        message: 'Could not list folders on the mail server',
+        code: (err && err.code) || null,
+        detail: String((err && err.message) || '').slice(0, 300),
+      });
+    }
+    const byPath = new Map(out.folders.map(f => [String(f.path).toLowerCase(), f]));
+    const configured = folderConfig(row.ingest_folders).map(([name, cfg]) => {
+      const f = byPath.get(String(name).toLowerCase()) || null;
+      return {
+        folder: name,
+        emit_to_rules: cfg.emit_to_rules,
+        backfill: cfg.backfill,
+        exists: !!f,
+        special_use: f ? f.special_use : null,
+        messages: f ? f.messages : null,
+        all_mail: !!(f && f.special_use === '\\All'),
+      };
+    });
+    res.json({
+      status: 'success',
+      mailbox_id: id,
+      provider_id_kind: out.provider_id_kind,
+      emit_override: { emit_source_name: row.emit_source_name || null, emit_id_kind: row.emit_id_kind || null },
+      configured,
+      folders: out.folders,
+    });
+  } catch (err) {
+    sendError(res, 'GET /api/mailboxes/:id/folders', err);
+  }
+});
+
+// ─── GET /api/mailboxes/:id/messages/:mid/emit-preview ───  SU only
+//
+// What the ingest worker would emit for one stored message, from the stored
+// row with the worker's own helpers (previewEmission) — no IMAP, no pipeline,
+// no writes. The Gmail parity gate compares this `text` with the Apps Script
+// copy's BEFORE the mailbox emits (ref/MAILBOX_GMAIL_PARITY.md).
+router.get('/api/mailboxes/:id/messages/:mid/emit-preview', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    const id = await resolveSuOnly(req, res);
+    if (!id) return;
+    if (!/^\d+$/.test(String(req.params.mid)) || Number(req.params.mid) <= 0) {
+      return res.status(400).json({ status: 'error', message: 'message id must be a positive integer' });
+    }
+    const preview = await previewEmission(req.db, id, Number(req.params.mid));
+    if (!preview) return res.status(404).json({ status: 'error', message: 'Message not found' });
+    res.json({ status: 'success', preview });
+  } catch (err) {
+    sendError(res, 'GET /api/mailboxes/:id/messages/:mid/emit-preview', err);
   }
 });
 

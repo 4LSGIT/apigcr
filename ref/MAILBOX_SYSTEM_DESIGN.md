@@ -1,6 +1,6 @@
 # MAILBOX_SYSTEM_DESIGN
 
-Status: DRAFT v4 — 2026-10-08. D1–D6 decided; OQ2 answered; remaining OQs open. No code yet.
+Status: v4 — 2026-10-08, + S1-G addendum 2026-10-09. D1–D6 decided; OQ2 answered; remaining OQs open. S0 + S1 live; S1-G (Gmail pilot, emission identity — §4.1, `ref/MAILBOX_GMAIL_PARITY.md`) in review.
 Scope: YisraCase-native mailbox subsystem and the comms hub that hosts it — many-to-many channel access (mailboxes now, phone lines later through the same grants), per-user mixed inboxes, ingest + send on top of a commodity mail host. Phone gets NO message store in this arc (§4.4, §6).
 Related: `ref/EMAIL_PROVIDER_PLAN.md` (provider migration; this is its S2), access-control arc (roles), about-link/case-link machinery, email-ingest rules engine, YC3 tenancy plan.
 
@@ -42,7 +42,7 @@ Every user gets personal inbox(es); some users hold several addresses (billing@4
 
 - All IMAP calls live in `services/mailbox/imapTransport.js` — not an interface framework, just discipline. A future JMAP module would be a sibling, added only when real.
 - Hostnames/ports are config/row data, never constants.
-- Not just a pilot path: from S1 the worker **is the ingest for the current providers** — SiteGround mailboxes over `gcam1191.siteground.biz:993` and the Workspace account over Gmail IMAP — pre-migration, superseding the dead exim/PHP relay (ingest source 2, dead since 2026-05-27; provider-plan S1 keeps its deactivate+delete cleanup). The Apps Script source retires parity-gated: ~14 clean days of Gmail-IMAP ingest feeding the same pipeline (message-id dedupe covers the overlap), no later than provider-plan S3.
+- Not just a pilot path: from S1 the worker **is the ingest for the current providers** — SiteGround mailboxes over `gcam1191.siteground.biz:993` and the Workspace account over Gmail IMAP — pre-migration, superseding the dead exim/PHP relay (ingest source 2, dead since 2026-05-27; provider-plan S1 keeps its deactivate+delete cleanup). The Apps Script source retires parity-gated: ~14 clean days of Gmail-IMAP ingest feeding the same pipeline, no later than provider-plan S3. **Dedupe does NOT cover the overlap by itself** — `email_log` dedupes on `(source, message_id)` per source only (AI_CONTEXT §27), and `gmail-firm` keys on Gmail's internal id while the worker's default is the RFC Message-ID under `mailbox-imap`. The overlap is safe only because the Gmail mailbox emits under `gmail-firm` keyed by hex(X-GM-MSGID) — the Apps Script key — via the S1-G emission override (§4.1), verified live before it emits (`ref/MAILBOX_GMAIL_PARITY.md`). The same per-source rule keeps **SiteGround boxes that forward into the Workspace inbox store-only**: their `mailbox-imap` copy would cross-source-duplicate the Gmail copy until those forwarders die at the Migadu migration.
 - No process-global state: `mailboxService`/`imapTransport` hold no module-scope caches of mailbox/grant data and no persistent IMAP connections — per-run connections (ingest) and per-request connections (part fetch) only (tenancy audit §A3 / P0-5).
 
 ## 3. Schema
@@ -59,7 +59,10 @@ mailboxes (
   send_credential_id INT NULL,        -- FK email_credentials; NULL = read-only mailbox
   ingest_enabled TINYINT(1) DEFAULT 1,
   ingest_folders JSON,                -- per-folder CONFIG: which folders to poll + emit_to_rules (§4.1; v1 default INBOX:true, Sent:false)
+                                      -- + backfill:false (S1-G) = store only mail arriving after first sight
   ingest_state JSON,                  -- per-folder CURSOR {uidvalidity, last_uid}
+  emit_source_name VARCHAR(64) NULL,  -- S1-G emission override: the email_ingest_sources row emitted under (NULL = mailbox-imap)
+  emit_id_kind VARCHAR(12) NULL,      -- S1-G: 'rfc' | 'provider' — the (source, message_id) key; set as a pair, SU PATCH only
   active TINYINT(1) DEFAULT 1,
   created_at, updated_at
 )
@@ -83,6 +86,7 @@ mail_messages (
   id BIGINT PK AI,
   mailbox_id FK, folder VARCHAR(128), uid INT UNSIGNED,             -- uid NULLABLE: re-key parking (§4.1)
   message_id VARCHAR(512), in_reply_to VARCHAR(512), thread_key VARCHAR(512),
+  provider_id VARCHAR(64) NULL,                   -- S1-G: provider-native id (Gmail: hex X-GM-MSGID); NULL elsewhere
   from_addr VARCHAR(255), to_addrs TEXT, cc_addrs TEXT,
   subject TEXT, date DATETIME, snippet VARCHAR(512),
   body_text MEDIUMTEXT, body_html MEDIUMTEXT,     -- inline per D1
@@ -120,6 +124,10 @@ Per D1, the worker fetches envelope + text parts + BODYSTRUCTURE only — attach
 
 **Pipeline reuse (key decision):** the worker emits the existing canonical envelope into `emailIngestService` — same path as the Apps Script / `POST /api/email/ingest` sources, registered as a new row in `email_ingest_sources`. Rules, suppressions, firm-to-firm skip, executions logging, and case-linking work unchanged. Additionally it writes the full message into `mail_messages` (`log_id` bridges). Apps Script source retires parity-gated (§2), no later than provider-plan S3.
 
+**Emission identity (S1-G).** Which `(source, message_id)` a mailbox's mail is emitted under IS its dedupe space. Default: `mailbox-imap` + RFC Message-ID. Override (`mailboxes.emit_source_name` + `emit_id_kind`, SU PATCH only, set as a pair, active source row required, `provider` never under `mailbox-imap`, one provider-keyed mailbox per source): emit under another source keyed by the RFC id or by `mail_messages.provider_id`. The transport captures Gmail's X-GM-MSGID (imapflow surfaces it as `emailId` on X-GM-EXT-1 servers that do not advertise OBJECTID) as lowercase hex — the id Gmail's web UI, API and Apps Script use. A provider-keyed message without a provider id is stored, counted and alerted, **never** emitted under the RFC id (that would mint a second identity). Where present, the provider id is also the secondary-dedupe and re-key identity. The override never changes which folders emit or whether history emits. Runbook + live gate: `ref/MAILBOX_GMAIL_PARITY.md`.
+
+**Backlog policy (S1-G).** `ingest_folders.<folder>.backfill:false` stores only mail arriving after first sight (decided then; a later UIDVALIDITY re-key backfills only above the highest re-mapped UID). For large accounts — the Workspace INBOX holds 62k messages; a full backfill would exceed Gmail's ~2.5 GB/day IMAP download cap and multiply the SiteGround DB. Bounded history (the 2-year cutoff) stays S4's.
+
 **Per-folder rules policy (v1):** the worker consults `mailboxes.ingest_folders` — only folders flagged `emit_to_rules` (default: INBOX yes, Sent no) emit into the rules pipeline; everything ingested is stored to `mail_messages` regardless. Deliberate consequences: externally-sent mail (Outlook/Apple Mail) becomes visible in the mailbox tier immediately but reaches the log tier only if a later rule opts Sent in; YC's own APPENDed sends are stored without re-entering the pipeline.
 
 ### 4.2 Send
@@ -139,6 +147,7 @@ Phone tab (slice S-PH): per-line SMS inbox + call log read **live from Quo via t
 
 - **S0** schema (incl. `channel_grants`, channel-general; pane + write API mailbox-only per D6) + grants service/API + grant-admin UI. No ingest.
 - **S1** ingest worker, ONE pilot mailbox — can be the Workspace account via Gmail IMAP, or archive@mdbl post-trial; canonical-envelope emission + `mail_messages` + on-demand part fetch.
+- **S1-G** Gmail second pilot: provider-id capture, per-mailbox emission override (`gmail-firm` + hex X-GM-MSGID), `backfill:false`, SU folder listing + emission preview, the live gate and the 14-day parity window that retires the Apps Script source (`ref/MAILBOX_GMAIL_PARITY.md`).
 - **S2** inbox/thread read-only UI + views + read state.
 - **S3** send (identity picker, Sent APPEND, budget guardrails + `bulk_ok`).
 - **S4** remaining mailboxes, flags polish, filters. (Retention pruning per OQ2's answer lands by here.)

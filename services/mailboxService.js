@@ -38,12 +38,24 @@
  *
  * MANAGER SCOPE. A non-SU `can_manage` holder may grant/revoke on that one
  * mailbox and edit its display_name. Connection and plumbing fields (address,
- * imap_*, send_credential_id, ingest_*, active) are SU-only: re-pointing
+ * imap_*, send_credential_id, ingest_*, emit_*, active) are SU-only: re-pointing
  * imap_host would ship the stored secret to an arbitrary server on the next
  * ingest, re-pointing send_credential_id would let grantees send through
  * another mailbox's credential, and ingest_* decides what enters the firm-wide
  * rules pipeline (court mail). Changing imap_host/imap_port requires
  * imap_secret in the same write for everyone (credential-redirect guard).
+ *
+ * EMISSION OVERRIDE (S1-G). emit_source_name + emit_id_kind decide the
+ * identity the ingest worker emits a mailbox's mail under (worker header,
+ * EMISSION IDENTITY) — i.e. which email_log dedupe space it lands in, which is
+ * what keeps a mailbox from firing court / e-sign rules twice. So: SU-only
+ * (never in MANAGER_EDITABLE_FIELDS), PATCH-only (every mailbox starts on the
+ * default and runs store-only through the verification gate before it
+ * emits), set as a PAIR (both null = default), validated against an ACTIVE
+ * email_ingest_sources row, 'provider' never under the shared 'mailbox-imap'
+ * source, and one mailbox per source may emit provider ids (a provider id
+ * is unique per account, not across accounts — two accounts under one
+ * source would log the same email twice).
  *
  * NO MODULE-SCOPE STATE. No caches of mailbox or grant data, no connections
  * (design §2; tenancy audit A3). Every call reads the DB.
@@ -64,12 +76,16 @@ const CHANNEL_TYPES = new Set(['mailbox', 'phone_line']);
 const WRITABLE_CHANNEL_TYPES = new Set(['mailbox']);
 
 const DEFAULT_INGEST_FOLDERS = Object.freeze({ INBOX: Object.freeze({ emit_to_rules: true }) });
+const DEFAULT_EMIT_SOURCE = 'mailbox-imap'; // services/mailbox/mailboxIngestService SOURCE_NAME
+const EMIT_ID_KINDS = Object.freeze(['rfc', 'provider']);
+const EMIT_FIELDS = ['emit_source_name', 'emit_id_kind'];
 const MAX_INGEST_FOLDERS = 25;
 const MAX_SECRET_LEN = 1024;
 
 const MAILBOX_FIELDS = new Set([
   'address', 'display_name', 'imap_host', 'imap_port', 'imap_user', 'imap_secret',
   'send_credential_id', 'ingest_enabled', 'ingest_folders', 'active',
+  ...EMIT_FIELDS,
 ]);
 const MAILBOX_REQUIRED_ON_CREATE = ['address', 'imap_host', 'imap_user'];
 // What a non-SU can_manage holder may PATCH (see MANAGER SCOPE above).
@@ -90,6 +106,7 @@ const SU_MAILBOX_SELECT = `
   (m.imap_secret IS NOT NULL AND m.imap_secret <> '') AS has_secret,
   m.send_credential_id, ec.email AS send_credential_email,
   m.ingest_enabled, m.ingest_folders, m.ingest_state, m.active,
+  m.emit_source_name, m.emit_id_kind,
   m.created_at, m.updated_at,
   (SELECT COUNT(*) FROM channel_grants cg
     WHERE cg.channel_type = 'mailbox' AND cg.channel_id = m.id) AS grant_count`;
@@ -354,9 +371,11 @@ async function mailboxExists(db, mailboxId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * ingest_folders shape: a plain object of folderName → {emit_to_rules: bool},
- * 1..MAX_INGEST_FOLDERS entries, no other keys. Returns a fresh normalized
- * object (insertion order kept).
+ * ingest_folders shape: a plain object of folderName → {emit_to_rules: bool,
+ * backfill?: bool}, 1..MAX_INGEST_FOLDERS entries, no other keys. backfill
+ * (S1-G) defaults to true — store the folder's history at first sight — and
+ * is written only when false. Returns a fresh normalized object (insertion
+ * order kept).
  */
 function validateIngestFolders(v) {
   if (v === null || typeof v !== 'object' || Array.isArray(v)) {
@@ -379,7 +398,9 @@ function validateIngestFolders(v) {
       throw httpError(400, `ingest_folders.${name} must be an object {emit_to_rules: boolean}`);
     }
     for (const k of Object.keys(cfg)) {
-      if (k !== 'emit_to_rules') throw httpError(400, `ingest_folders.${name}: unknown property "${k}"`);
+      if (k !== 'emit_to_rules' && k !== 'backfill') {
+        throw httpError(400, `ingest_folders.${name}: unknown property "${k}"`);
+      }
     }
     if (!has(cfg, 'emit_to_rules')) {
       throw httpError(400, `ingest_folders.${name}.emit_to_rules is required`);
@@ -387,7 +408,12 @@ function validateIngestFolders(v) {
     if (typeof cfg.emit_to_rules !== 'boolean') {
       throw httpError(400, `ingest_folders.${name}.emit_to_rules must be a boolean`);
     }
-    out[name] = { emit_to_rules: cfg.emit_to_rules };
+    if (has(cfg, 'backfill') && typeof cfg.backfill !== 'boolean') {
+      throw httpError(400, `ingest_folders.${name}.backfill must be a boolean`);
+    }
+    out[name] = cfg.backfill === false
+      ? { emit_to_rules: cfg.emit_to_rules, backfill: false }
+      : { emit_to_rules: cfg.emit_to_rules };
   }
   return out;
 }
@@ -478,7 +504,70 @@ function validateMailboxBody(body, { partial }) {
 
   if (has(body, 'ingest_folders')) clean.ingest_folders = validateIngestFolders(body.ingest_folders);
 
+  const emitPresent = EMIT_FIELDS.filter(f => has(body, f));
+  if (emitPresent.length) {
+    if (!partial) {
+      throw httpError(400, 'emit_source_name / emit_id_kind are set with PATCH once the mailbox exists — ' +
+        `every mailbox starts on the default (${DEFAULT_EMIT_SOURCE}, RFC Message-ID) and runs store-only first`);
+    }
+    if (emitPresent.length !== EMIT_FIELDS.length) {
+      throw httpError(400, 'emit_source_name and emit_id_kind are set together ' +
+        `(both null = the default: ${DEFAULT_EMIT_SOURCE} + RFC Message-ID)`);
+    }
+    const blank = (v) => v === null || v === '';
+    const nameRaw = body.emit_source_name;
+    const kindRaw = body.emit_id_kind;
+    if (blank(nameRaw) && blank(kindRaw)) {
+      clean.emit_source_name = null;
+      clean.emit_id_kind = null;
+    } else if (blank(nameRaw) || blank(kindRaw)) {
+      throw httpError(400, 'emit_source_name and emit_id_kind are both set or both null');
+    } else {
+      if (typeof nameRaw !== 'string') throw httpError(400, 'emit_source_name must be a string');
+      const name = nameRaw.trim();
+      if (!name || name.length > 64) throw httpError(400, 'emit_source_name must be 1-64 characters');
+      if (typeof kindRaw !== 'string' || !EMIT_ID_KINDS.includes(kindRaw)) {
+        throw httpError(400, `emit_id_kind must be one of: ${EMIT_ID_KINDS.join(', ')}`);
+      }
+      if (kindRaw === 'provider' && name.toLowerCase() === DEFAULT_EMIT_SOURCE) {
+        throw httpError(400, `provider ids are never emitted under the shared '${DEFAULT_EMIT_SOURCE}' source ` +
+          '— its dedupe key is the RFC Message-ID for every mailbox');
+      }
+      clean.emit_source_name = name;
+      clean.emit_id_kind = kindRaw;
+    }
+  }
+
   return clean;
+}
+
+/**
+ * The emission override against live rows (S1-G): the source must be an
+ * ACTIVE email_ingest_sources row (stored under its canonical name), and a
+ * provider-keyed source may have only one mailbox. Reads id/name/active only
+ * — never api_key. Mutates clean.emit_source_name to the row's spelling.
+ */
+async function assertEmitOverride(db, mailboxId, clean) {
+  if (!has(clean, 'emit_source_name') || clean.emit_source_name == null) return;
+  const [[src]] = await db.query(
+    'SELECT id, name, active FROM email_ingest_sources WHERE name = ? LIMIT 1', [clean.emit_source_name]
+  );
+  if (!src) throw httpError(400, `emit_source_name '${clean.emit_source_name}' is not an email_ingest_sources row`);
+  if (!Number(src.active)) {
+    throw httpError(400, `email_ingest_sources '${src.name}' is inactive — activate it first (it is also that source's kill switch)`);
+  }
+  clean.emit_source_name = src.name;
+  if (clean.emit_id_kind === 'provider') {
+    const [[other]] = await db.query(
+      `SELECT id, address FROM mailboxes
+        WHERE id <> ? AND emit_source_name = ? AND emit_id_kind = 'provider' LIMIT 1`,
+      [mailboxId, src.name]
+    );
+    if (other) {
+      throw httpError(409, `mailbox ${other.address} already emits provider ids as '${src.name}' — ` +
+        'a provider id is unique within one account only, so one source holds one provider-keyed mailbox');
+    }
+  }
 }
 
 /** send_credential_id must name an email_credentials row (FK by convention). */
@@ -570,6 +659,7 @@ async function updateMailbox(db, mailboxId, body, { su = false } = {}) {
   }
 
   if (has(clean, 'send_credential_id')) await assertSendCredential(db, clean.send_credential_id);
+  await assertEmitOverride(db, id, clean);
 
   const before = await getMailbox(db, id, { su });
   const { cols, vals } = toDbAssignments(clean);
@@ -771,5 +861,7 @@ module.exports = {
   WRITABLE_CHANNEL_TYPES,
   MANAGER_EDITABLE_FIELDS,
   DEFAULT_INGEST_FOLDERS,
+  DEFAULT_EMIT_SOURCE,
+  EMIT_ID_KINDS,
   SU_AUTH,
 };
