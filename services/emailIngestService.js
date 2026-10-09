@@ -61,7 +61,7 @@ const emailIngestRuleService = require('./emailIngestRuleService');
 const RAW_INPUT_LIMIT = 16 * 1024;            // 16 KB cap on raw_input snapshots
 const LOG_MESSAGE_SOFT_CAP = 50000;           // mirror routes/logs.js soft cap
 
-// The GAS test-replay marker. ref/gas.js:784's forwardTestTrigger() appends
+// The GAS test-replay marker. ref/gas.js forwardTestTrigger() appends
 // "-test-<base36 ts>-<rand6>" to the real Gmail message_id specifically so the
 // (source, message_id) dedup below treats a re-POST as a NEW message and Layer 3
 // fires again. Anything carrying it is a REPLAY of mail we have already handled.
@@ -493,7 +493,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
 
   // ── 2b. TEST-ENVELOPE DETECTION (Slice 4 Phase B).
   //   A GAS forwardTestTrigger() replay mangles the Gmail message_id into
-  //   "<id>-test-<base36ts>-<rand6>" (ref/gas.js:784) for the EXPLICIT purpose
+  //   "<id>-test-<base36ts>-<rand6>" (ref/gas.js forwardTestTrigger()) for the EXPLICIT purpose
   //   of defeating the (source, message_id) dedup two steps below, so that
   //   Layer-3 rules fire again. Its own comment calls that "SAFER". It is not.
   //

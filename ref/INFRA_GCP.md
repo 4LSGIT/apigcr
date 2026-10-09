@@ -1,6 +1,6 @@
 # INFRA_GCP.md — Google Cloud setup for svpcac (app.4lsg.com)
 
-Captured from live state 2026-09-20. No open TODOs. Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
+Captured from live state 2026-09-20; `mailbox-ingest` scheduler job added 2026-10-09. No open TODOs. Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
 
 **Why this file exists.** The deploy pipeline (`cloudbuild.yaml`) only ever runs
 `gcloud run services update --image=...` — every other piece of the system (env vars,
@@ -55,6 +55,7 @@ Front door: `app.4lsg.com` is a **Cloud Run domain mapping** (DNS CNAME →
 | AR legacy | `gcr.io` (us, ~113 MB), `cloud-run-source-deploy` (us-central1, ~147 MB, 2024) | Unused, ≈$0.03/mo. Delete if confirmed unreferenced, or ignore. |
 | Build trigger (active) | `rmgpgab-svpcac-us-east1-4LSGIT-apigcr--maulx`, id `deae68ad-1912-4a06-9db6-516dab663a64`, location **global** | GitHub App, `4LSGIT/apigcr` push `^main$`, builds `cloudbuild.yaml`, SA = default compute. Two disabled June-2026 triggers remain (buildpack `3a276457`, docker `8934804e`) — keep disabled or delete. |
 | Cloud Scheduler | `process-jobs`, us-east1, `* * * * *`, tz America/Cancun | `POST https://svpcac-<PROJECT_NUMBER>.us-east1.run.app/process-jobs` with header `x-api-key: <yck_ write key>` (value lives in the job config; view with `gcloud scheduler jobs describe`, mint/rotate in the app). Deliberately targets the run.app URL, not the custom domain — **the URL embeds the project number, so it changes on a project rebuild**. attemptDeadline 900 s; retries backoff 5 s→300 s. Tz is DST-less EST; irrelevant at every-minute but don't copy the pattern for daily jobs (FIRM_TZ is America/Detroit). |
+| Cloud Scheduler | `mailbox-ingest`, us-east1, `*/5 * * * *`, tz Etc/UTC (created 2026-10-09) | `POST https://svpcac-<PROJECT_NUMBER>.us-east1.run.app/mailbox-ingest` with header `x-api-key: <yck_ key>` — its OWN key (labelled "scheduler mailbox-ingest"), revocable without touching `process-jobs`. attemptDeadline 600 s; **no retries** (`--max-retry-attempts=0`): every tick is a retry, and the run's `GET_LOCK('mailbox_ingest:<db>')` would turn a retry into a skip. Run budget 240 s (`MAILBOX_INGEST_BUDGET_MS`) sits inside the deadline. Deliberately NOT folded into the `process-jobs` tick: own pause switch (`gcloud scheduler jobs pause mailbox-ingest`), an IMAP-appropriate cadence, and failure isolation (an IMAP stall can't hold `process-jobs` open). Emit kill switch is DB-side: `email_ingest_sources` row `mailbox-imap` `active=0`. |
 | Cloud Tasks | queue `yc-jobs`, us-east1 | Referenced by env `CLOUD_TASKS_LOCATION`/`CLOUD_TASKS_QUEUE`. |
 | GCS | bucket `uploads.4lsg.com` (US multi-region) | Served via CNAME `uploads.4lsg.com → c.storage.googleapis.com` (HTTP path). |
 | Domain mapping | `app.4lsg.com` → svpcac | DNS: CNAME `app` → `ghs.googlehosted.com.` (DNS-only record at the DNS host; NOT proxied through Cloudflare — Express/GFE headers visible). |
@@ -187,7 +188,7 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
                                         # and `gcloud run services replace` it
    ```
 8. **Scheduler** (after the service exists — the URI embeds the NEW project number;
-   mint a fresh `yck_` write key in the app first):
+   mint a fresh `yck_` write key PER JOB in the app first):
    ```
    gcloud scheduler jobs create http process-jobs --location=$R \
      --schedule="* * * * *" --time-zone="America/Cancun" \
@@ -196,6 +197,13 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
      --headers=x-api-key=<yck_ write key> \
      --attempt-deadline=900s \
      --min-backoff=5s --max-backoff=300s --max-doublings=5
+
+   gcloud scheduler jobs create http mailbox-ingest --location=$R \
+     --schedule="*/5 * * * *" --time-zone="Etc/UTC" \
+     --http-method=POST \
+     --uri="https://svpcac-<PROJECT_NUMBER>.$R.run.app/mailbox-ingest" \
+     --headers=x-api-key=<its own yck_ key> \
+     --attempt-deadline=600s --max-retry-attempts=0
    ```
 9. **Cloud Tasks:** `gcloud tasks queues create yc-jobs --location=$R`
 10. **GCS:** `gsutil mb -l US gs://uploads.4lsg.com` (domain-named bucket requires the
@@ -206,7 +214,8 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
     `uploads` → `c.storage.googleapis.com.`
 12. **Smoke:** app loads over `https://app.4lsg.com`; DB queries succeed (proves NAT +
     allowlist); an outbound-IP check from inside the app equals the reserved IP;
-    scheduler tick processes a job; a test push deploys end-to-end.
+    scheduler tick processes a job; a `mailbox-ingest` tick advances
+    `mailboxes.ingest_state.<folder>.checked_at`; a test push deploys end-to-end.
 
 ## 7. Gotchas
 
@@ -223,7 +232,8 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
 - Old triggers `3a276457` (buildpack) and `8934804e` (docker) exist disabled — re-enabling
   the buildpack one would bypass the Dockerfile/base-image pipeline entirely.
 - Scheduler tz `America/Cancun` ≠ `FIRM_TZ` (Detroit observes DST, Cancun doesn't).
-  Harmless at `* * * * *`; wrong template for anything daily.
+  Harmless at `* * * * *`; wrong template for anything daily. `mailbox-ingest` uses
+  `Etc/UTC` — the pattern to copy for new cadence jobs.
 - July-2026 billing showed a $0.01 Cloud SQL snapshot; no Cloud SQL instance exists now
   (`sqladmin` API is enabled but idle).
 
@@ -241,7 +251,9 @@ echo "== ar";        gcloud artifacts repositories list --project=$P
 echo "== ar policy"; gcloud artifacts repositories describe cloud-run-source-deploy --location=$R --project=$P
 echo "== triggers";  gcloud builds triggers list --project=$P --region=global; \
                      gcloud builds triggers list --project=$P --region=$R
-echo "== scheduler"; gcloud scheduler jobs describe process-jobs --location=$R --project=$P
+echo "== scheduler"; gcloud scheduler jobs list --location=$R --project=$P; \
+                     for j in process-jobs mailbox-ingest; do \
+                       gcloud scheduler jobs describe $j --location=$R --project=$P; done
 echo "== tasks";     gcloud tasks queues list --location=$R --project=$P
 echo "== domains";   gcloud beta run domain-mappings list --region=$R --project=$P
 } 2>&1 | tee /tmp/infra_dump.txt

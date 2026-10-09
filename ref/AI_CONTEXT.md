@@ -897,7 +897,9 @@ court_processed/trustee_validated`, `contact.created/updated`,
 api-key auth against `email_ingest_sources`. Adapters normalize and push:
 SiteGround PHP (domain mailboxes) and Google Apps Script for the Gmail firm
 account — the deployed GAS source is tracked at `ref/gas.js` and code
-comments reference it BY LINE NUMBER (don't move it).
+comments cite it by FUNCTION name, never line number. It carries no secrets —
+the ingest key and Pabbly URL live in its Script Properties (`INGEST_API_KEY`,
+`PABBLY_DOCS_RELAY_URL`); the key was committed here 2026-06-03 → rotated 2026-10-08.
 
 **In-process source `mailbox-imap` (mailbox S1, 2026-10-08):** the IMAP worker
 (`services/mailbox/mailboxIngestService.js`, `ALL /mailbox-ingest`, Cloud

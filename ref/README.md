@@ -17,9 +17,11 @@ Reference material that lives next to the code. Three tiers:
   `EXTERNAL_CODE_CSS_DECISION.md`, `UNIFIED_EVENTS_DESIGN_V0_5.md`,
   `YISRACASE_STORE_AND_BUS_DESIGN_V2.md`, `THEME-CHEATSHEET.md`,
   `THEME-HANDOFF-v2.md`, `TOKEN-MAP.md`.
-- `gas.js` — deployed Apps Script source; code comments reference it by line
-  number (`services/emailIngestService.js` cites `ref/gas.js:784`), so adding or
-  removing lines invalidates those citations.
+- `gas.js` — deployed Apps Script source, kept byte-identical to the live
+  script. Cite it by FUNCTION name (`services/emailIngestService.js` cites
+  `forwardTestTrigger()`), never by line number — the file is re-pasted from the
+  editor whenever the script changes. It holds no secrets: those live in the
+  script's Script Properties (`INGEST_API_KEY`, `PABBLY_DOCS_RELAY_URL`).
 - `artifact-registry-cleanup-policy.json` — GCP artifact-registry retention
   policy, applied out-of-band.
 - **dbkq script I/O** — a captured source page, the definitions the converter
