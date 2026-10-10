@@ -174,9 +174,19 @@ phone slice.
   tag), the same for everyone — chosen in Admin → Mailboxes (Colour, above).
   Narrow it with the **mailbox picker** (tick
   any combination of boxes — say shoshana@ and billing@ together), the
-  search (sender or subject — not the message text), a sender domain,
-  **Unread**, **Client mail**, **Has files**, the case menu (**On a case** /
-  **Not on a case**), and **All folders** (adds Sent).
+  search (sender or subject — not the message text), a sender domain, and
+  the filter buttons (a pressed button is on): **Inbox** / **All folders**
+  (adds Sent — a message a mailbox sent shows who it went to, "To: …"),
+  **Unread**, **Client mail**, **Has files**, **On a case** / **Not on a
+  case** (one or the other).
+- **On a wide screen** your saved views and the mailboxes sit in a column
+  on the left instead of the two menus: click a view (or **All mail** — every
+  box, no filters) to show it; tick mailboxes to combine them. Each box shows
+  your unread count and your access (R read · S send · M manage); a view
+  shows its unread count when it narrows only by mailbox and Unread. When
+  the screen no longer matches the view you picked, **Unsaved changes**
+  offers **Save as view** or **Update** that view; **Manage** renames,
+  deletes or sets the default. The Email tab shows your unread total.
   - **Client mail** keeps mail to or from a client — someone who is Primary or
     Secondary on a case — by its sender or one of its first five recipients
     (To, then Cc). The firm's own addresses never count, even when a staff

@@ -43,6 +43,12 @@
  *     (never a stale conversation's); outside the shell it says so.
  *   - Client mail / Has files / the case menu (On / Not on a case) ride every
  *     list call explicitly, restore from a view, save, mark-all, read back.
+ *   - Rail (desktop, borrowed from the other agent's Comms mockup): views +
+ *     mailboxes as lists over the same state as the menus; a view's unread
+ *     count only when its filters narrow nothing but unread; "Unsaved
+ *     changes" → Save as view / Update the active one. Filter chips are
+ *     pressed buttons; Inbox | All folders is one choice; a row a mailbox
+ *     sent reads "To: <recipient>"; the Email tab carries the unread total.
  *   - Phone tab rendered and disabled; the empty hub explains itself.
  *   - Phone widths: opening a message switches to the thread (stacked
  *     navigation, .show-thread), Back returns to the list.
@@ -124,6 +130,9 @@ async function boot({ handler, width = 1024 } = {}) {
   await tick(window, 80);
   return { window, doc: window.document, calls, errors };
 }
+
+/** Filter chips are buttons; aria-pressed is their state. */
+const on = (doc, id) => doc.getElementById(id).getAttribute('aria-pressed') === 'true';
 
 // Fresh copies per response: the pane mutates what it is handed (read flags),
 // and a shared fixture would leak one test's clicks into the next.
@@ -590,18 +599,20 @@ describe('comms hub pane', () => {
         'POST /api/mail/read': () => ({ marked: 0 }),
       }),
     });
-    expect([doc.getElementById('f-client').checked, doc.getElementById('f-files').checked, doc.getElementById('f-case').value]).toEqual([true, false, 'no']);
+    expect(['f-client', 'f-files', 'f-hascase', 'f-nocase'].map((id) => on(doc, id))).toEqual([true, false, false, true]);
     expect(calls.find((c) => c.url === '/api/mail/messages').payload).toMatchObject({ client_only: 1, has_files: 0, has_case: 0, no_case: 1 });
-    doc.getElementById('f-files').checked = true;
-    doc.getElementById('f-files').dispatchEvent(new window.Event('change'));
+    doc.getElementById('f-files').click();
     await tick(window);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ client_only: 1, has_files: 1, has_case: 0, no_case: 1 });
-    doc.getElementById('f-case').value = 'has';
-    doc.getElementById('f-case').dispatchEvent(new window.Event('change'));
+    // On a case / Not on a case are exclusive: pressing one releases the other
+    doc.getElementById('f-hascase').click();
     await tick(window);
+    expect([on(doc, 'f-hascase'), on(doc, 'f-nocase')]).toEqual([true, false]);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ has_case: 1, no_case: 0 });
-    doc.getElementById('f-case').value = 'no';
-    doc.getElementById('f-case').dispatchEvent(new window.Event('change'));
+    doc.getElementById('f-hascase').click();               // …and pressing it again is "any"
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ has_case: 0, no_case: 0 });
+    doc.getElementById('f-nocase').click();
     await tick(window);
     doc.getElementById('views-btn').click();
     expect(doc.querySelector('#vw-list .vw-sum').textContent).toBe('All mailboxes— client mail, not on a case');
@@ -618,7 +629,92 @@ describe('comms hub pane', () => {
     // a view without them clears the controls
     doc.getElementById('view-sel').value = '';
     doc.getElementById('view-sel').dispatchEvent(new window.Event('change'));
-    expect([doc.getElementById('f-client').checked, doc.getElementById('f-files').checked, doc.getElementById('f-case').value]).toEqual([false, false, '']);
+    expect(['f-client', 'f-files', 'f-hascase', 'f-nocase'].map((id) => on(doc, id))).toEqual([false, false, false, false]);
+  });
+
+  test('rail: views and mailboxes as lists over the SAME state as the menus — counts only when honest, Unsaved changes → Save / Update', async () => {
+    let views = [
+      { id: 4, name: 'Billing unread', mailbox_ids: [1], filters: { unread_only: true }, is_default: false, sort_order: 0 },
+      { id: 5, name: 'Client docs', mailbox_ids: null, filters: { client_only: true, has_files: true }, is_default: true, sort_order: 1 },
+    ];
+    const { window, doc, calls, errors } = await boot({
+      handler: standard({
+        'GET /api/mail/mailboxes': () => ({ mailboxes: [{ ...fresh(MB[0]), can_manage: true }, fresh(MB[1])], viewer: { su: false, role: null } }),
+        'GET /api/mail/views': () => ({ views: fresh(views) }),
+        'PATCH /api/mail/views/5': (p) => { views = views.map((v) => (v.id === 5 ? { ...v, ...p } : v)); return { view: views[1] }; },
+      }),
+    });
+    const lastList = () => calls.filter((c) => c.url === '/api/mail/messages').pop().payload;
+    const vitems = () => [...doc.querySelectorAll('#rail-views .vitem')];
+    const bitems = () => [...doc.querySelectorAll('#rail-boxes .bitem')];
+    // All mail = every box's INBOX unread; a view narrowing only by unread gets its boxes' count; a client/files view none
+    expect(vitems().map((b) => b.textContent)).toEqual(['All mail3', 'Billing unread2', 'Client docs ★']);
+    expect(vitems().map((b) => b.classList.contains('on'))).toEqual([false, false, true]); // the default view is active
+    expect(doc.getElementById('rail-dirty').textContent).toBe('');
+    expect(doc.getElementById('tab-email-n').textContent).toBe('3');
+    // one row per readable box: ticked, its colour, name + address, access, unread
+    expect(bitems().map((b) => [b.getAttribute('aria-pressed'), b.querySelector('.nm').textContent, b.querySelector('.acc').textContent, (b.querySelector('.cnt') || {}).textContent]))
+      .toEqual([['true', 'Billingbilling@firm.test', 'R·S·M', '2'], ['true', 'intake@firm.test', 'R', '1']]);
+    expect(bitems()[1].querySelector('.mdot').style.getPropertyValue('--mbc-l')).toBe(MC.variants('#fff3bf').light);
+    // untick a box: the list narrows (same as the picker), the picker agrees, the view is now "unsaved"
+    bitems()[1].click();
+    await tick(window);
+    expect(lastList()).toMatchObject({ mailbox_ids: '1', client_only: 1, has_files: 1 });
+    expect(doc.querySelector('#mb-panel input[data-id="2"]').checked).toBe(false);
+    expect(bitems().map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
+    expect(vitems().some((b) => b.classList.contains('on'))).toBe(false);
+    expect(doc.getElementById('rail-dirty').textContent).toBe('Unsaved changesSave as viewUpdate “Client docs”');
+    // Update writes the screen into the active view; the rail is clean again
+    doc.getElementById('rail-update').click();
+    await tick(window, 60);
+    expect(calls.find((c) => c.url === '/api/mail/views/5' && c.method === 'PATCH').payload).toEqual({ mailbox_ids: [1], filters: { client_only: true, has_files: true } });
+    expect(doc.getElementById('rail-dirty').textContent).toBe('');
+    expect(vitems()[2].classList.contains('on')).toBe(true);
+    // All mail = no view: every box, no filters
+    vitems()[0].click();
+    await tick(window);
+    expect(lastList()).not.toHaveProperty('mailbox_ids');
+    expect(lastList()).toMatchObject({ client_only: 0, has_files: 0, unread_only: 0, all_folders: 0 });
+    expect(vitems()[0].classList.contains('on')).toBe(true);
+    expect(doc.getElementById('view-sel').value).toBe('');
+    // a view from the rail = the same as picking it in the menu
+    vitems()[1].click();
+    await tick(window);
+    expect(lastList()).toMatchObject({ mailbox_ids: '1', unread_only: 1 });
+    expect(doc.getElementById('view-sel').value).toBe('4');
+    // a filter change makes it unsaved; Save as view opens the views dialog on the name
+    doc.getElementById('f-unread').click();
+    await tick(window);
+    expect(doc.getElementById('rail-dirty').textContent).toBe('Unsaved changesSave as viewUpdate “Billing unread”');
+    doc.getElementById('rail-save').click();
+    expect(doc.getElementById('views-backdrop').classList.contains('open')).toBe(true);
+    expect(doc.activeElement).toBe(doc.getElementById('vw-name'));
+    doc.getElementById('views-close').click();
+    doc.getElementById('rail-manage').click();
+    expect(doc.getElementById('views-backdrop').classList.contains('open')).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test('Inbox | All folders is one choice; mail a mailbox SENT names its recipient, not the firm', async () => {
+    const sent = { ...ROWS[1], id: 13, folder: '[Gmail]/Sent Mail', from_addr: 'Billing <billing@firm.test>', to_addrs: '"Doe, Jane" <jane@x.test>, b@y.test', thread_key: null };
+    const { window, doc, calls } = await boot({ handler: standard({ 'GET /api/mail/messages': () => ({ messages: fresh([ROWS[0], sent]), next_cursor: null }) }) });
+    const from = [...doc.querySelectorAll('#msg-list .msg .from')];
+    expect(from.map((f) => [f.textContent, f.title])).toEqual([
+      ['Evil <img src=x onerror="window.top.__pwned=1">', ROWS[0].from_addr],
+      ['To: Doe, Jane', 'To: "Doe, Jane" <jane@x.test>, b@y.test'],
+    ]);
+    const lastList = () => calls.filter((c) => c.url === '/api/mail/messages').pop().payload;
+    expect([on(doc, 'f-inbox'), on(doc, 'f-folders')]).toEqual([true, false]);
+    doc.getElementById('f-folders').click();
+    await tick(window);
+    expect([on(doc, 'f-inbox'), on(doc, 'f-folders'), lastList().all_folders]).toEqual([false, true, 1]);
+    const n = calls.length;
+    doc.getElementById('f-folders').click();               // already on: nothing to do
+    await tick(window);
+    expect(calls.length).toBe(n);
+    doc.getElementById('f-inbox').click();
+    await tick(window);
+    expect([on(doc, 'f-inbox'), on(doc, 'f-folders'), lastList().all_folders]).toEqual([true, false, 0]);
   });
 
   test('mark unread → DELETE …/read for the copy the reader opened', async () => {
@@ -665,10 +761,9 @@ describe('comms hub pane', () => {
     });
     const first = calls.find((c) => c.url === '/api/mail/messages');
     expect(first.payload).toEqual({ mailbox_ids: '1', unread_only: 1, q: 'plan', client_only: 0, has_files: 0, has_case: 0, no_case: 0, all_folders: 0, from_domain: '' });
-    expect(doc.getElementById('f-unread').checked).toBe(true);
+    expect(on(doc, 'f-unread')).toBe(true);
     expect(doc.getElementById('mb-label').textContent).toBe('Billing — billing@firm.test (2)');
-    doc.getElementById('f-case').value = 'has';
-    doc.getElementById('f-case').dispatchEvent(new window.Event('change'));
+    doc.getElementById('f-hascase').click();
     await tick(window);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ mailbox_ids: '1', unread_only: 1, has_case: 1 });
     doc.getElementById('views-btn').click();
@@ -761,8 +856,7 @@ describe('comms hub pane', () => {
     const box = (id) => doc.querySelector(`#mb-panel input[data-id="${id}"]`);
     box(2).checked = false;
     box(2).dispatchEvent(new window.Event('change'));
-    doc.getElementById('f-unread').checked = true;
-    doc.getElementById('f-unread').dispatchEvent(new window.Event('change'));
+    doc.getElementById('f-unread').click();
     await tick(window);
     doc.getElementById('views-btn').click();
     expect(doc.querySelector('#vw-list .vw-sum').textContent).toBe('intake@firm.test');

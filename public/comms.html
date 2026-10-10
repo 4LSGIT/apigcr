@@ -63,6 +63,8 @@
   .tab.on { background: var(--surface); color: var(--text); border-color: var(--border); margin-bottom: -1px; }
   .tab:disabled { cursor: not-allowed; opacity: 0.55; }
   .tab .soon { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+  .tab .tab-n { font-size: 11px; font-weight: 700; color: var(--accent-2); }
+  .tab .tab-n:empty { display: none; }
 
   /* ── Email tab: list | thread ─────────────────────────────── */
   .email { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; }
@@ -77,7 +79,49 @@
   .bar select { max-width: 100%; flex: 1 1 120px; }
   .bar input[type="search"] { flex: 1 1 140px; }
   .bar input.domain { flex: 0 1 130px; }
-  .bar select.case-sel { flex: 0 1 auto; }
+  /* the list's top bar: picker row, then search row (.brk forces the wrap; gone with the rail) */
+  .bar .brk { flex-basis: 100%; height: 0; }
+
+  /* ── Filter chips (borrowed from the Comms mockup): pressed = on ── */
+  .fbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 10px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .fchip {
+    height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    font: inherit; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  }
+  .fchip:hover, .seg button:hover { background: var(--hover); }
+  .fchip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-on-soft); font-weight: 700; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex: 0 0 auto; }
+  .seg button { border: 0; border-right: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 10px; height: 26px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 700; }
+
+  /* ── Rail: views + mailboxes, desktop only (borrowed from the Comms mockup).
+     The same state as the view menu + mailbox picker, which phones keep. ── */
+  .rail { display: none; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; border-right: 1px solid var(--border); background: var(--surface); padding-bottom: 12px; }
+  .rail .ph { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); padding: 12px 12px 6px; }
+  .rail .ph .linkish { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 11.5px; font-weight: 600; }
+  .vitem, .bitem {
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 12px; border: 0; background: transparent;
+    cursor: pointer; text-align: left; font: inherit; color: var(--text); min-width: 0;
+  }
+  .vitem:hover, .bitem:hover { background: var(--hover); }
+  .vitem.on { background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 700; }
+  .vitem .nm, .bitem .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bitem .nm .sub { display: block; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+  .bitem .tickbox {
+    width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--border-strong); background: var(--surface);
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; font-size: 9px; color: transparent;
+  }
+  .bitem[aria-pressed="true"] .tickbox { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .rail .cnt { font-size: 11.5px; font-weight: 700; color: var(--accent-2); flex: 0 0 auto; }
+  .rail .acc { font-family: var(--mono); font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); white-space: nowrap; flex: 0 0 auto; }
+  .rail .dirty { margin: 6px 12px 2px; padding: 6px 8px; border: 1px dashed var(--accent-2); border-radius: 6px; font-size: 11.5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text-2); }
+  .rail .hint { font-size: 11px; color: var(--text-muted); padding: 8px 12px 0; line-height: 1.4; }
+  @media (min-width: 1000px) {
+    .email { grid-template-columns: 210px minmax(300px, 36%) 1fr; }
+    .rail { display: flex; }
+    #view-sel, #mb-btn, #mb-panel, .bar .brk { display: none !important; }
+  }
   .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
   .status-line { font-size: 11px; color: var(--text-muted); padding: 5px 10px; min-height: 22px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
@@ -281,33 +325,44 @@
 
 <div class="hub">
   <div class="tabs" role="tablist">
-    <button class="tab on" type="button" role="tab" aria-selected="true" id="tab-email"><i class="fa-solid fa-envelope"></i> Email</button>
+    <button class="tab on" type="button" role="tab" aria-selected="true" id="tab-email"><i class="fa-solid fa-envelope"></i> Email <span class="tab-n" id="tab-email-n" title="Unread in your inboxes"></span></button>
     <button class="tab" type="button" role="tab" aria-selected="false" id="tab-phone" disabled aria-disabled="true"
             title="Coming with the phone slice — SMS and calls from Quo, under the same access grants"><i class="fa-solid fa-phone"></i> Phone <span class="soon">soon</span></button>
   </div>
 
   <div class="email" id="email">
+    <!-- ── Rail: views + mailboxes (desktop; phones keep the menus in the bar) ── -->
+    <aside class="rail" id="rail" aria-label="Views and mailboxes">
+      <div class="ph">Views <button class="linkish" type="button" id="rail-manage" title="Rename, update, delete or make a view the default">Manage</button></div>
+      <div id="rail-views"></div>
+      <div id="rail-dirty"></div>
+      <div class="ph">Mailboxes</div>
+      <div id="rail-boxes" role="group" aria-label="Mailboxes in this list"></div>
+      <div class="hint">Tick mailboxes to combine them in one list. Unread counts are yours alone.</div>
+    </aside>
+
     <!-- ── List ── -->
     <section class="list-col" aria-label="Messages">
       <div class="bar">
         <select id="view-sel" aria-label="Saved view"></select>
         <button class="btn mb-btn" type="button" id="mb-btn" aria-expanded="false" aria-controls="mb-panel" title="Choose which mailboxes this list combines" hidden><span class="mb-dots" id="mb-dots"></span><span id="mb-label">All mailboxes</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+        <span class="brk" aria-hidden="true"></span>
+        <input type="search" id="f-q" placeholder="From or subject" aria-label="Search from or subject" maxlength="200">
+        <input type="text" class="domain" id="f-domain" placeholder="from domain" aria-label="Sender domain" maxlength="128" spellcheck="false">
         <button class="btn icon" type="button" id="refresh-btn" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
         <button class="btn icon" type="button" id="views-btn" title="Saved views"><i class="fa-solid fa-bookmark"></i></button>
       </div>
       <div class="mb-panel" id="mb-panel" role="group" aria-label="Mailboxes in this list" hidden></div>
-      <div class="bar">
-        <input type="search" id="f-q" placeholder="From or subject" aria-label="Search from or subject" maxlength="200">
-        <input type="text" class="domain" id="f-domain" placeholder="from domain" aria-label="Sender domain" maxlength="128" spellcheck="false">
-        <label class="check"><input type="checkbox" id="f-unread"> Unread</label>
-        <label class="check" title="Mail to or from a client — someone Primary or Secondary on a case: the sender, or one of the first five recipients. The firm's own addresses never count."><input type="checkbox" id="f-client"> Client mail</label>
-        <label class="check" title="Has attachments (images drawn inside the message do not count)"><input type="checkbox" id="f-files"> Has files</label>
-        <select id="f-case" class="case-sel" aria-label="Case link" title="Whether the email is on a case's log">
-          <option value="">Any case</option>
-          <option value="has">On a case</option>
-          <option value="no">Not on a case</option>
-        </select>
-        <label class="check" title="Include Sent and other ingested folders, not just the Inbox"><input type="checkbox" id="f-folders"> All folders</label>
+      <div class="fbar" role="group" aria-label="Filters">
+        <span class="seg" role="group" aria-label="Folders">
+          <button type="button" id="f-inbox" aria-pressed="true" title="The Inbox of each mailbox">Inbox</button>
+          <button type="button" id="f-folders" aria-pressed="false" title="Include Sent and other ingested folders, not just the Inbox">All folders</button>
+        </span>
+        <button class="fchip" type="button" id="f-unread" aria-pressed="false">Unread</button>
+        <button class="fchip" type="button" id="f-client" aria-pressed="false" title="Mail to or from a client — someone Primary or Secondary on a case: the sender, or one of the first five recipients. The firm's own addresses never count."><i class="fa-solid fa-user" aria-hidden="true"></i> Client mail</button>
+        <button class="fchip" type="button" id="f-files" aria-pressed="false" title="Has attachments (images drawn inside the message do not count)"><i class="fa-solid fa-paperclip" aria-hidden="true"></i> Has files</button>
+        <button class="fchip" type="button" id="f-hascase" aria-pressed="false" title="On a case's log">On a case</button>
+        <button class="fchip" type="button" id="f-nocase" aria-pressed="false" title="Not on any case's log yet">Not on a case</button>
       </div>
       <div class="status-line"><span id="status"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
       <div id="list-error"></div>
@@ -497,6 +552,36 @@ function personName(addr) {
   const m = /^\s*"?(.*?)"?\s*<([^>]+)>\s*$/.exec(String(addr));
   return m ? (m[1].replace(/\\(.)/g, '$1').trim() || m[2]) : String(addr);
 }
+/** The first address of a display-form list (commas inside "quotes" or <angle> do not split). */
+function firstAddress(list) {
+  const s = String(list || '');
+  let quoted = false;
+  let angle = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"' && !angle) quoted = !quoted;
+    else if (!quoted && c === '<') angle = true;
+    else if (!quoted && c === '>') angle = false;
+    else if (c === ',' && !quoted && !angle) return s.slice(0, i).trim();
+  }
+  return s.trim();
+}
+/** Bare lowercase address of one display-form address. */
+function bareAddress(addr) {
+  const m = /<([^<>]+)>\s*$/.exec(String(addr || ''));
+  return (m ? m[1] : String(addr || '')).trim().toLowerCase();
+}
+/**
+ * Who a list row is about: the sender — or, for mail one of the hub's own
+ * mailboxes SENT (All folders), "To: <first recipient>" (the mockup's rule;
+ * the firm's own name on every Sent row says nothing).
+ */
+function rowWho(m) {
+  const own = m.from_addr && state.mailboxes.some((b) => String(b.address).toLowerCase() === bareAddress(m.from_addr));
+  return own && m.to_addrs
+    ? { text: `To: ${personName(firstAddress(m.to_addrs))}`, title: `To: ${m.to_addrs}` }
+    : { text: personName(m.from_addr), title: m.from_addr || '' };
+}
 function bytes(n) {
   if (n == null || !Number.isFinite(Number(n))) return '';
   n = Number(n);
@@ -523,6 +608,12 @@ function paint(el, id) {
   return el;
 }
 const boxDot = (id) => paint(h('span', { className: 'mdot', 'aria-hidden': 'true' }), id);
+/** Filter chips are buttons: aria-pressed is the state (and what CSS draws). */
+const pressed = (id) => E(id).getAttribute('aria-pressed') === 'true';
+function setPressed(id, on) { E(id).setAttribute('aria-pressed', on ? 'true' : 'false'); }
+/** Inbox | All folders — exactly one is pressed. */
+function setFolders(all) { setPressed('f-folders', all); setPressed('f-inbox', !all); }
+
 /** The READABLE boxes the list combines, in summary order; null = all of them. */
 function selectedIds() {
   return state.boxSel ? state.mailboxes.filter((m) => state.boxSel.has(m.id)).map((m) => m.id) : null;
@@ -561,6 +652,8 @@ function renderMailboxPicker() {
     : sel.length === 1 ? boxLabel(boxById(sel[0]))
     : sel.length ? `${sel.length} mailboxes` : 'No shared mailboxes';
   E('mb-label').textContent = label + (unread ? ` (${unread})` : '');
+  const total = state.mailboxes.reduce((n, m) => n + (m.inbox_unread || 0), 0);
+  E('tab-email-n').textContent = total ? String(total) : '';
   btn.title = sel && sel.length ? sel.map((id) => boxById(id).address).join(', ') : 'Choose which mailboxes this list combines';
   panel.replaceChildren(
     h('label', { className: 'mb-opt' }, h('input', {
@@ -572,6 +665,7 @@ function renderMailboxPicker() {
       h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`),
       m.inbox_unread ? h('span', { className: 'n' }, String(m.inbox_unread)) : null)),
   );
+  renderRail();
 }
 
 function toggleBox(id, on) {
@@ -596,6 +690,83 @@ function renderViewSelect() {
   sel.replaceChildren(...opts);
   sel.value = state.viewId != null ? String(state.viewId) : '';
   sel.hidden = !state.views.length;
+  renderRail();
+}
+
+// ── Rail (desktop): views + mailboxes ───────────────────────
+/*
+ * Borrowed from the Comms mockup: views and mailboxes as always-visible
+ * lists instead of two menus. Pure presentation over the SAME state as the
+ * view menu and the mailbox picker (phones and narrow windows keep those;
+ * CSS shows one or the other) — applyView / toggleBox do the work.
+ *   - "All mail" = no view: every readable box, no filters.
+ *   - A view's unread count is shown only when the summary can say it
+ *     honestly: its filters narrow nothing but unread (INBOX unread of its
+ *     boxes); a client / case / files / search view would need a server count.
+ *   - "Unsaved changes" appears when the screen no longer matches the active
+ *     view (or "All mail"): Save as view, or Update the active one.
+ */
+const isNarrowing = (f) => Object.keys(f || {}).some((k) => k !== 'unread_only' && f[k] !== false && f[k] !== null && f[k] !== '');
+function normFilters(f) {
+  return JSON.stringify(Object.keys(f || {}).filter((k) => f[k] !== false && f[k] !== null && f[k] !== '').sort().map((k) => [k, f[k]]));
+}
+const normIds = (ids) => (ids && ids.length ? [...ids].map(Number).sort((a, b) => a - b).join(',') : '*');
+function railDirty() {
+  const v = state.views.find((x) => x.id === state.viewId) || null;
+  const f = currentFilters();
+  return v
+    ? normIds(scopeIds()) !== normIds(v.mailbox_ids) || normFilters(f) !== normFilters(v.filters)
+    : scopeIds() !== null || Object.keys(f).length > 0;
+}
+function viewUnread(v) {
+  if (v && isNarrowing(v.filters)) return null;
+  const ids = v && Array.isArray(v.mailbox_ids) && v.mailbox_ids.length ? v.mailbox_ids.map(Number) : null;
+  return state.mailboxes.filter((m) => !ids || ids.includes(m.id)).reduce((n, m) => n + (m.inbox_unread || 0), 0);
+}
+function accessLabel(m) {
+  return ['R', m.can_send ? 'S' : '', m.can_manage ? 'M' : ''].filter(Boolean).join('·');
+}
+function renderRail() {
+  if (!E('rail')) return;
+  const dirty = railDirty();
+  const item = (v, name) => {
+    const n = viewUnread(v);
+    const on = !dirty && (v ? state.viewId === v.id : state.viewId == null);
+    return h('button', {
+      className: 'vitem' + (on ? ' on' : ''), type: 'button', 'aria-current': on ? 'true' : null, dataset: { view: v ? String(v.id) : '' },
+      title: v ? `${v.name}${v.is_default ? ' (your default)' : ''}` : 'Every mailbox you can read, no filters',
+      onclick: () => { applyView(v); loadList(); },
+    }, h('span', { className: 'nm' }, name), n ? h('span', { className: 'cnt' }, String(n)) : null);
+  };
+  E('rail-views').replaceChildren(item(null, 'All mail'), ...state.views.map((v) => item(v, v.name + (v.is_default ? ' ★' : ''))));
+  const active = state.views.find((x) => x.id === state.viewId) || null;
+  E('rail-dirty').replaceChildren(dirty ? h('div', { className: 'dirty' }, 'Unsaved changes',
+    h('button', { className: 'btn small', type: 'button', id: 'rail-save', onclick: () => { openViews(); E('vw-name').focus(); } }, 'Save as view'),
+    active ? h('button', { className: 'btn small', type: 'button', id: 'rail-update', title: `Replace "${active.name}" with what is on screen`, onclick: updateActiveView }, `Update “${active.name}”`) : null) : '');
+  const sel = selectedIds();
+  E('rail-boxes').replaceChildren(...state.mailboxes.map((m) => {
+    const on = !sel || sel.includes(m.id);
+    return h('button', {
+      className: 'bitem', type: 'button', 'aria-pressed': on ? 'true' : 'false', dataset: { id: String(m.id) }, title: m.address,
+      onclick: () => toggleBox(m.id, !on),
+    },
+      h('span', { className: 'tickbox', 'aria-hidden': 'true' }, icon('fa-check')),
+      boxDot(m.id),
+      h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`, m.display_name ? h('span', { className: 'sub' }, m.address) : null),
+      h('span', { className: 'acc', title: 'Your access: R read · S send · M manage' }, accessLabel(m)),
+      m.inbox_unread ? h('span', { className: 'cnt' }, String(m.inbox_unread)) : null);
+  }));
+}
+async function updateActiveView() {
+  const v = state.views.find((x) => x.id === state.viewId);
+  if (!v) return;
+  let ids;
+  try { ids = viewScope(); } catch (err) { toast(err.message); return; }
+  try {
+    await api(`/api/mail/views/${v.id}`, 'PATCH', { mailbox_ids: ids, filters: currentFilters() });
+    await loadViews();
+    toast(`Updated “${v.name}”`);
+  } catch (err) { toast(`Couldn't update the view: ${err.message}`); }
 }
 
 /**
@@ -610,11 +781,12 @@ function applyView(v) {
   const f = (v && v.filters) || {};
   E('f-q').value = f.q || '';
   E('f-domain').value = f.from_domain || '';
-  E('f-unread').checked = !!f.unread_only;
-  E('f-client').checked = !!f.client_only;
-  E('f-files').checked = !!f.has_files;
-  E('f-case').value = f.has_case ? 'has' : (f.no_case ? 'no' : '');
-  E('f-folders').checked = !!f.all_folders;
+  setPressed('f-unread', !!f.unread_only);
+  setPressed('f-client', !!f.client_only);
+  setPressed('f-files', !!f.has_files);
+  setPressed('f-hascase', !!f.has_case);
+  setPressed('f-nocase', !!f.no_case);
+  setFolders(!!f.all_folders);
   renderViewSelect();
   renderMailboxPicker();
 }
@@ -625,12 +797,12 @@ function currentFilters() {
   const d = E('f-domain').value.trim().replace(/^@/, '');
   if (q) f.q = q;
   if (d) f.from_domain = d;
-  if (E('f-unread').checked) f.unread_only = true;
-  if (E('f-client').checked) f.client_only = true;
-  if (E('f-files').checked) f.has_files = true;
-  if (E('f-case').value === 'has') f.has_case = true;
-  else if (E('f-case').value === 'no') f.no_case = true;
-  if (E('f-folders').checked) f.all_folders = true;
+  if (pressed('f-unread')) f.unread_only = true;
+  if (pressed('f-client')) f.client_only = true;
+  if (pressed('f-files')) f.has_files = true;
+  if (pressed('f-hascase')) f.has_case = true;
+  else if (pressed('f-nocase')) f.no_case = true;
+  if (pressed('f-folders')) f.all_folders = true;
   return f;
 }
 
@@ -662,6 +834,7 @@ function listParams(cursor) {
 
 async function loadList({ append = false, silent = false } = {}) {
   const seq = ++state.seq;
+  if (!append) renderRail();
   state.loading = true;
   if (!append && !silent) E('status').textContent = 'Loading…';
   showError(E('list-error'), '');
@@ -702,7 +875,7 @@ function msgRow(m) {
     onkeydown: (e) => { if (e.key === 'Enter') openMessage(m); },
   },
     h('span', { className: 'sr-only sr-state' }, m.unread ? 'Unread. ' : ''),
-    h('div', { className: 'r1' }, h('span', { className: 'from', title: m.from_addr || '' }, personName(m.from_addr)), h('span', { className: 'date' }, listDate(m.date))),
+    h('div', { className: 'r1' }, h('span', { className: 'from', title: rowWho(m).title }, rowWho(m).text), h('span', { className: 'date' }, listDate(m.date))),
     h('div', { className: 'r2' }, h('span', { className: 'subject' }, m.subject || '(no subject)')),
     m.snippet ? h('div', { className: 'snippet' }, m.snippet) : null,
     chips.childNodes.length ? chips : null,
@@ -1462,7 +1635,13 @@ async function init() {
   const debounced = () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadList(), 350); };
   E('f-q').addEventListener('input', debounced);
   E('f-domain').addEventListener('change', () => loadList());
-  for (const id of ['f-unread', 'f-client', 'f-files', 'f-case', 'f-folders']) E(id).addEventListener('change', () => loadList());
+  for (const id of ['f-unread', 'f-client', 'f-files']) E(id).addEventListener('click', () => { setPressed(id, !pressed(id)); loadList(); });
+  // On a case / Not on a case: one, the other, or neither
+  E('f-hascase').addEventListener('click', () => { const on = !pressed('f-hascase'); setPressed('f-hascase', on); if (on) setPressed('f-nocase', false); loadList(); });
+  E('f-nocase').addEventListener('click', () => { const on = !pressed('f-nocase'); setPressed('f-nocase', on); if (on) setPressed('f-hascase', false); loadList(); });
+  E('f-inbox').addEventListener('click', () => { if (pressed('f-folders')) { setFolders(false); loadList(); } });
+  E('f-folders').addEventListener('click', () => { if (!pressed('f-folders')) { setFolders(true); loadList(); } });
+  E('rail-manage').addEventListener('click', openViews);
   E('view-sel').addEventListener('change', () => {
     const v = state.views.find((x) => String(x.id) === E('view-sel').value) || null;
     applyView(v);
