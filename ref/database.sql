@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-09T13:03:30.575Z
+-- Generated: 2026-10-10T18:15:07.983Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:046eae9275368b1307e307c46ab5e490
+-- Fingerprint: sha256:3dbdfa1e5075f4934312e5a5be85d12b
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2136,6 +2136,20 @@ CREATE TABLE `log` (
   `log_form_sub` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_direction` enum('incoming','outgoing') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='text, includes email body, sms message, note, etc';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `mail_image_senders`
+--
+
+DROP TABLE IF EXISTS `mail_image_senders`;
+CREATE TABLE `mail_image_senders` (
+  `id` int unsigned NOT NULL,
+  `user` tinyint NOT NULL COMMENT 'users.user (FK by convention) - whose trust this is; every query carries user = caller',
+  `address` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sender address as the hub parses From (the <angle> part), lowercased at write; app-validated',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms hub: per-user "always show images from" senders (S2). Remote images are blocked by default (read receipts); a row here makes this user''s view of mail From this address load them. Never a grant, never firm-wide.';
 
 -- --------------------------------------------------------
 
@@ -4360,6 +4374,13 @@ ALTER TABLE `log`
   ADD KEY `idx_log_about` (`log_about_type`,`log_about_id`);
 
 --
+-- Indexes for table `mail_image_senders`
+--
+ALTER TABLE `mail_image_senders`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_mail_image_senders_user_address` (`user`,`address`);
+
+--
 -- Indexes for table `mail_messages`
 --
 ALTER TABLE `mail_messages`
@@ -5299,6 +5320,12 @@ ALTER TABLE `legacy_route_log`
 --
 ALTER TABLE `log`
   MODIFY `log_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `mail_image_senders`
+--
+ALTER TABLE `mail_image_senders`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `mail_messages`
